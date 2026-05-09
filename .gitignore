@@ -1,0 +1,45 @@
+# Build artifacts
+.build/
+.test-output/
+*.test
+*.out
+
+# Generated code
+api/gen/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials & local config
+*.key
+*.crt
+*.pem
+credentials/
+.env
+.env.local
+
+# Task runner
+.task/
+
+# Worktrees
+.worktrees/
+
+# Downloaded schemas (fetch with: task fetch-schemas)
+schemas/*
+!schemas/README.md

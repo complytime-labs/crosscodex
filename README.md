@@ -343,7 +343,6 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
 
 - **Issues**: [github.com/complytime-labs/crosscodex/issues](https://github.com/complytime-labs/crosscodex/issues)
 - **Discussions**: [github.com/complytime-labs/crosscodex/discussions](https://github.com/complytime-labs/crosscodex/discussions)
-- **Security**: [SECURITY.md](./SECURITY.md)
 - **License**: [Apache 2.0](./LICENSE)
 
 ### Related Projects
