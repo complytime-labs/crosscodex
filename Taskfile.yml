@@ -1,0 +1,167 @@
+version: '3'
+
+vars:
+  MODULE: github.com/complytime-labs/crosscodex
+  BUILD_DIR: .build
+  TEST_OUTPUT: .test-output
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  generate:
+    desc: Generate protobuf code using buf
+    dir: api/proto/crosscodex/v1
+    cmds:
+      - buf generate
+    sources:
+      - "**/*.proto"
+      - buf.gen.yaml
+    generates:
+      - ../../../../api/gen/go/**/*.pb.go
+
+  build:
+    desc: Build all binaries
+    deps: [generate]
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+      GIT_COMMIT:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+      BUILD_DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
+      LDFLAGS: >-
+        -X {{.MODULE}}/internal/version.Version={{.VERSION}}
+        -X {{.MODULE}}/internal/version.GitCommit={{.GIT_COMMIT}}
+        -X {{.MODULE}}/internal/version.BuildDate={{.BUILD_DATE}}
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex ./cmd/crosscodex
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodexd ./cmd/crosscodexd
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BUILD_DIR}}/crosscodex"
+      - "{{.BUILD_DIR}}/crosscodexd"
+
+  test:unit:
+    desc: Run unit tests
+    deps: [generate]
+    cmds:
+      - mkdir -p {{.TEST_OUTPUT}}
+      - go test -v -race -coverprofile={{.TEST_OUTPUT}}/coverage.out ./...
+
+  lint:
+    desc: Run linters
+    deps: [generate]
+    cmds:
+      - go vet ./...
+      - go fmt ./...
+      - cmd: golangci-lint run
+        ignore_error: true
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - rm -rf {{.TEST_OUTPUT}}
+      - rm -rf api/gen
+
+  deps:
+    desc: Download dependencies
+    cmds:
+      - go mod download
+
+  tidy:
+    desc: Tidy dependencies (run after generate to avoid removing generated code deps)
+    deps: [generate]
+    cmds:
+      - go mod tidy
+
+  fetch-schemas:
+    desc: Fetch OSCAL and gemara schemas
+    vars:
+      OSCAL_VERSION:
+        sh: curl -s https://api.github.com/repos/usnistgov/OSCAL/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
+      GEMARA_VERSION:
+        sh: curl -s https://api.github.com/repos/gemaraproj/gemara/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
+      OSCAL_BASE_URL: https://github.com/usnistgov/OSCAL/releases/download/v{{.OSCAL_VERSION}}
+      GEMARA_BASE_URL: https://raw.githubusercontent.com/gemaraproj/gemara/v{{.GEMARA_VERSION}}
+      SCHEMAS_DIR: schemas
+    cmds:
+      - echo "Fetching OSCAL schemas version {{.OSCAL_VERSION}}..."
+      - mkdir -p {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema
+      - mkdir -p {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema
+      - mkdir -p {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}
+      - |
+        # Fetch OSCAL JSON schemas from release assets
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_complete_schema.json \
+          {{.OSCAL_BASE_URL}}/oscal_complete_schema.json
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_catalog_schema.json \
+          {{.OSCAL_BASE_URL}}/oscal_catalog_schema.json
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_profile_schema.json \
+          {{.OSCAL_BASE_URL}}/oscal_profile_schema.json
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_component_schema.json \
+          {{.OSCAL_BASE_URL}}/oscal_component_schema.json
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_ssp_schema.json \
+          {{.OSCAL_BASE_URL}}/oscal_ssp_schema.json
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_assessment-plan_schema.json \
+          {{.OSCAL_BASE_URL}}/oscal_assessment-plan_schema.json
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_assessment-results_schema.json \
+          {{.OSCAL_BASE_URL}}/oscal_assessment-results_schema.json
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_poam_schema.json \
+          {{.OSCAL_BASE_URL}}/oscal_poam_schema.json
+      - |
+        # Fetch OSCAL metaschema definitions
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema/oscal_catalog_metaschema_RESOLVED.xml \
+          {{.OSCAL_BASE_URL}}/oscal_catalog_metaschema_RESOLVED.xml
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema/oscal_profile_metaschema_RESOLVED.xml \
+          {{.OSCAL_BASE_URL}}/oscal_profile_metaschema_RESOLVED.xml
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema/oscal_component_metaschema_RESOLVED.xml \
+          {{.OSCAL_BASE_URL}}/oscal_component_metaschema_RESOLVED.xml
+        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema/oscal_ssp_metaschema_RESOLVED.xml \
+          {{.OSCAL_BASE_URL}}/oscal_ssp_metaschema_RESOLVED.xml
+      - echo "OSCAL schemas downloaded to {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/"
+      - echo "Fetching gemara CUE schemas version {{.GEMARA_VERSION}}..."
+      - |
+        # Fetch gemara CUE schema files
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/auditlog.cue \
+          {{.GEMARA_BASE_URL}}/auditlog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/capabilitycatalog.cue \
+          {{.GEMARA_BASE_URL}}/capabilitycatalog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/collections.cue \
+          {{.GEMARA_BASE_URL}}/collections.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/controlcatalog.cue \
+          {{.GEMARA_BASE_URL}}/controlcatalog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/enforcementlog.cue \
+          {{.GEMARA_BASE_URL}}/enforcementlog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/entities.cue \
+          {{.GEMARA_BASE_URL}}/entities.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/evaluationlog.cue \
+          {{.GEMARA_BASE_URL}}/evaluationlog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/guidancecatalog.cue \
+          {{.GEMARA_BASE_URL}}/guidancecatalog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/lexicon.cue \
+          {{.GEMARA_BASE_URL}}/lexicon.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/mapping_inline.cue \
+          {{.GEMARA_BASE_URL}}/mapping_inline.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/mappingdocument.cue \
+          {{.GEMARA_BASE_URL}}/mappingdocument.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/metadata.cue \
+          {{.GEMARA_BASE_URL}}/metadata.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/policy.cue \
+          {{.GEMARA_BASE_URL}}/policy.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/principlecatalog.cue \
+          {{.GEMARA_BASE_URL}}/principlecatalog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/riskcatalog.cue \
+          {{.GEMARA_BASE_URL}}/riskcatalog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/threatcatalog.cue \
+          {{.GEMARA_BASE_URL}}/threatcatalog.cue
+        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/vectorcatalog.cue \
+          {{.GEMARA_BASE_URL}}/vectorcatalog.cue
+      - echo "Gemara schemas downloaded to {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/"
+      - echo "Schemas fetch complete."

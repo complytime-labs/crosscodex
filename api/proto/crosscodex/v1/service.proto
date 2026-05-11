@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+// Placeholder service definition
+service HealthService {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;
+}
