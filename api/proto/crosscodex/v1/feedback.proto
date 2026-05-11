@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+import "crosscodex/v1/common.proto";
+import "crosscodex/v1/synthesis.proto";
+
+// FeedbackService handles human-in-the-loop voting on synthesis determinations.
+//
+// COUPLING: Operates on synthesis.ControlMapping, updates graph temporal attributes
+// PROCESS: User votes → aggregation → high-agreement becomes determination
+service FeedbackService {
+  // Submit vote on a mapping
+  rpc SubmitVote(SubmitVoteRequest) returns (SubmitVoteResponse);
+
+  // Get votes for a mapping
+  rpc GetVotes(GetVotesRequest) returns (GetVotesResponse);
+
+  // Get user's voting history
+  rpc GetUserVotes(GetUserVotesRequest) returns (GetUserVotesResponse);
+
+  // Get mappings needing review
+  rpc GetReviewQueue(GetReviewQueueRequest) returns (GetReviewQueueResponse);
+
+  // Escalate mapping for expert review
+  rpc EscalateMapping(EscalateMappingRequest) returns (EscalateMappingResponse);
+
+  // Record determination (final human decision)
+  rpc RecordDetermination(RecordDeterminationRequest) returns (RecordDeterminationResponse);
+}
+
+enum VoteType {
+  VOTE_TYPE_UNSPECIFIED = 0;
+  VOTE_TYPE_AGREE = 1;
+  VOTE_TYPE_DISAGREE = 2;
+  VOTE_TYPE_REFINE = 3;
+  VOTE_TYPE_ESCALATE = 4;
+}
+
+message SubmitVoteRequest {
+  TenantContext tenant_context = 1;
+  string mapping_id = 2;
+  VoteType vote_type = 3;
+  RelationshipType suggested_type = 4;  // If REFINE
+  string rationale = 5;
+  map<string, string> evidence = 6;
+}
+
+message SubmitVoteResponse {
+  string vote_id = 1;
+  VoteAggregation aggregation = 2;
+}
+
+message Vote {
+  string vote_id = 1;
+  TenantContext tenant_context = 2;
+  string mapping_id = 3;
+  VoteType vote_type = 4;
+  RelationshipType suggested_type = 5;
+  string rationale = 6;
+  map<string, string> evidence = 7;
+  AuditMetadata audit = 8;
+}
+
+message VoteAggregation {
+  string mapping_id = 1;
+  int32 agree_count = 2;
+  int32 disagree_count = 3;
+  int32 refine_count = 4;
+  int32 escalate_count = 5;
+  float agreement_score = 6;
+  RelationshipType consensus_type = 7;
+  bool needs_escalation = 8;
+}
+
+message GetVotesRequest {
+  TenantContext tenant_context = 1;
+  string mapping_id = 2;
+}
+
+message GetVotesResponse {
+  repeated Vote votes = 1;
+  VoteAggregation aggregation = 2;
+}
+
+message GetUserVotesRequest {
+  TenantContext tenant_context = 1;
+  string user_id = 2;
+  ListOptions options = 3;
+}
+
+message GetUserVotesResponse {
+  repeated Vote votes = 1;
+  PageInfo page_info = 2;
+}
+
+enum ReviewQueueFilter {
+  REVIEW_QUEUE_FILTER_UNSPECIFIED = 0;
+  REVIEW_QUEUE_FILTER_LOW_CONFIDENCE = 1;
+  REVIEW_QUEUE_FILTER_HIGH_DISAGREEMENT = 2;
+  REVIEW_QUEUE_FILTER_ESCALATED = 3;
+  REVIEW_QUEUE_FILTER_UNVOTED = 4;
+}
+
+message GetReviewQueueRequest {
+  TenantContext tenant_context = 1;
+  ReviewQueueFilter filter = 2;
+  ListOptions options = 3;
+}
+
+message GetReviewQueueResponse {
+  repeated ReviewItem items = 1;
+  PageInfo page_info = 2;
+}
+
+message ReviewItem {
+  ControlMapping mapping = 1;
+  VoteAggregation aggregation = 2;
+  ReviewQueueFilter reason = 3;
+}
+
+message EscalateMappingRequest {
+  TenantContext tenant_context = 1;
+  string mapping_id = 2;
+  string escalation_reason = 3;
+  string assignee = 4;  // Optional
+}
+
+message EscalateMappingResponse {
+  string escalation_id = 1;
+}
+
+message RecordDeterminationRequest {
+  TenantContext tenant_context = 1;
+  string mapping_id = 2;
+  bool is_valid = 3;
+  RelationshipType final_type = 4;
+  string determination_rationale = 5;
+  map<string, string> evidence = 6;
+}
+
+message RecordDeterminationResponse {
+  string determination_id = 1;
+  bool graph_updated = 2;
+}

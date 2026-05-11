@@ -1,0 +1,162 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+import "crosscodex/v1/common.proto";
+
+// AnalysisService coordinates analyzer plugins and work items.
+//
+// COUPLING: Consumes catalog.Control, produces work items for synthesis
+// ANALYZER PLUGINS: classify, embedding, relationship, requires, artifacts
+service AnalysisService {
+  // Register analyzer plugin (called by analyzer at startup)
+  rpc RegisterAnalyzer(RegisterAnalyzerRequest) returns (RegisterAnalyzerResponse);
+
+  // Unregister analyzer (graceful shutdown)
+  rpc UnregisterAnalyzer(UnregisterAnalyzerRequest) returns (UnregisterAnalyzerResponse);
+
+  // List registered analyzers
+  rpc ListAnalyzers(ListAnalyzersRequest) returns (ListAnalyzersResponse);
+
+  // Create work item for control analysis
+  rpc CreateWorkItem(CreateWorkItemRequest) returns (CreateWorkItemResponse);
+
+  // Get work item status
+  rpc GetWorkItem(GetWorkItemRequest) returns (GetWorkItemResponse);
+
+  // List work items
+  rpc ListWorkItems(ListWorkItemsRequest) returns (ListWorkItemsResponse);
+
+  // Submit analysis result (called by analyzer)
+  rpc SubmitResult(SubmitResultRequest) returns (SubmitResultResponse);
+}
+
+enum AnalyzerType {
+  ANALYZER_TYPE_UNSPECIFIED = 0;
+  ANALYZER_TYPE_CLASSIFY = 1;      // Control type/level classification
+  ANALYZER_TYPE_EMBEDDING = 2;     // Vector embedding generation
+  ANALYZER_TYPE_RELATIONSHIP = 3;  // LLM panel voting (NIST IR 8477)
+  ANALYZER_TYPE_REQUIRES = 4;      // Multi-pass prerequisite detection
+  ANALYZER_TYPE_ARTIFACTS = 5;     // Observable artifact extraction
+}
+
+message RegisterAnalyzerRequest {
+  TenantContext tenant_context = 1;
+  string analyzer_name = 2;          // Unique name
+  AnalyzerType analyzer_type = 3;
+  string version = 4;
+  map<string, string> capabilities = 5;
+  string endpoint = 6;               // gRPC endpoint
+}
+
+message RegisterAnalyzerResponse {
+  string analyzer_id = 1;
+}
+
+message UnregisterAnalyzerRequest {
+  TenantContext tenant_context = 1;
+  string analyzer_id = 2;
+}
+
+message UnregisterAnalyzerResponse {}
+
+message ListAnalyzersRequest {
+  TenantContext tenant_context = 1;
+  AnalyzerType analyzer_type = 2;  // Optional filter
+  ListOptions options = 3;          // Pagination and sorting
+}
+
+message ListAnalyzersResponse {
+  repeated AnalyzerInfo analyzers = 1;
+  PageInfo page_info = 2;
+}
+
+message AnalyzerInfo {
+  string analyzer_id = 1;
+  string analyzer_name = 2;
+  AnalyzerType analyzer_type = 3;
+  string version = 4;
+  map<string, string> capabilities = 5;
+  AuditMetadata audit = 6;
+  bool is_active = 7;
+}
+
+enum WorkItemStatus {
+  WORK_ITEM_STATUS_UNSPECIFIED = 0;
+  WORK_ITEM_STATUS_PENDING = 1;
+  WORK_ITEM_STATUS_ASSIGNED = 2;
+  WORK_ITEM_STATUS_PROCESSING = 3;
+  WORK_ITEM_STATUS_COMPLETED = 4;
+  WORK_ITEM_STATUS_FAILED = 5;
+  WORK_ITEM_STATUS_CANCELLED = 6;
+}
+
+message CreateWorkItemRequest {
+  TenantContext tenant_context = 1;
+  string control_id = 2;              // References catalog.Control
+  AnalyzerType analyzer_type = 3;
+  string job_id = 4;                  // Parent pipeline job
+  map<string, string> parameters = 5;
+}
+
+message CreateWorkItemResponse {
+  string work_item_id = 1;
+  WorkItemStatus status = 2;
+}
+
+message WorkItem {
+  string work_item_id = 1;
+  TenantContext tenant_context = 2;
+  string control_id = 3;
+  AnalyzerType analyzer_type = 4;
+  string analyzer_id = 5;
+  string job_id = 6;
+  WorkItemStatus status = 7;
+  AuditMetadata audit = 8;
+  ProvenanceMetadata provenance = 9;
+  Error error = 10;
+  repeated AnalysisResult results = 11;
+}
+
+message AnalysisResult {
+  string result_id = 1;
+  string result_type = 2;  // "classification", "embedding", "relationship"
+  map<string, string> attributes = 3;
+  float confidence = 4;
+  ProvenanceMetadata provenance = 5;
+}
+
+message GetWorkItemRequest {
+  TenantContext tenant_context = 1;
+  string work_item_id = 2;
+}
+
+message GetWorkItemResponse {
+  WorkItem work_item = 1;
+}
+
+message ListWorkItemsRequest {
+  TenantContext tenant_context = 1;
+  string job_id = 2;          // Optional filter
+  WorkItemStatus status = 3;  // Optional filter
+  ListOptions options = 4;
+}
+
+message ListWorkItemsResponse {
+  repeated WorkItem work_items = 1;
+  PageInfo page_info = 2;
+}
+
+message SubmitResultRequest {
+  TenantContext tenant_context = 1;
+  string work_item_id = 2;
+  repeated AnalysisResult results = 3;
+  WorkItemStatus final_status = 4;  // COMPLETED or FAILED
+  Error error = 5;
+}
+
+message SubmitResultResponse {
+  bool accepted = 1;
+}

@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+import "crosscodex/v1/common.proto";
+import "crosscodex/v1/catalog.proto";
+import "crosscodex/v1/synthesis.proto";
+import "google/protobuf/timestamp.proto";
+
+// PipelineService orchestrates end-to-end job workflows.
+//
+// COUPLING: Orchestrates all services (ingestion → catalog → analysis → synthesis → graph)
+// RETRY LOGIC: Exponential backoff with jitter, configurable max attempts
+service PipelineService {
+  // Create full analysis pipeline job
+  rpc CreateJob(CreateJobRequest) returns (CreateJobResponse);
+
+  // Get job status and progress
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+
+  // List jobs
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+
+  // Cancel running job
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+
+  // Retry failed job
+  rpc RetryJob(RetryJobRequest) returns (RetryJobResponse);
+
+  // Get job execution trace
+  rpc GetJobTrace(GetJobTraceRequest) returns (GetJobTraceResponse);
+}
+
+enum JobType {
+  JOB_TYPE_UNSPECIFIED = 0;
+  JOB_TYPE_FULL_ANALYSIS = 1;     // Document → catalog → analysis → synthesis → graph
+  JOB_TYPE_INCREMENTAL_SYNC = 2;  // Re-analyze changed controls only
+  JOB_TYPE_CATALOG_IMPORT = 3;    // Document → catalog only
+  JOB_TYPE_SYNTHESIS_ONLY = 4;    // Re-run synthesis on existing analyses
+}
+
+message CreateJobRequest {
+  TenantContext tenant_context = 1;
+  JobType job_type = 2;
+  JobConfig config = 3;
+}
+
+message JobConfig {
+  oneof source {
+    bytes document_content = 1;
+    string document_uri = 2;
+    string catalog_id = 3;
+  }
+  CatalogFormat catalog_format = 4;
+  string catalog_name = 5;
+  string target_catalog_id = 6;
+  SynthesisConfig synthesis_config = 7;
+  map<string, string> options = 8;
+}
+
+message CreateJobResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+}
+
+message PipelineJob {
+  string job_id = 1;
+  TenantContext tenant_context = 2;
+  JobType job_type = 3;
+  JobConfig config = 4;
+  JobStatus status = 5;
+  AuditMetadata audit = 6;
+  ProvenanceMetadata provenance = 7;
+  JobProgress progress = 8;
+  Error error = 9;
+  repeated JobStage stages = 10;
+}
+
+message JobProgress {
+  int32 total_steps = 1;
+  int32 completed_steps = 2;
+  int32 failed_steps = 3;
+  float completion_percentage = 4;
+  google.protobuf.Timestamp estimated_completion = 5;
+}
+
+message JobStage {
+  string stage_id = 1;
+  string stage_name = 2;  // "ingestion", "catalog_parse", "analysis", etc.
+  JobStatus status = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp completed_at = 5;
+  int32 retry_count = 6;
+  Error error = 7;
+  repeated ResourceRef outputs = 8;
+}
+
+message GetJobRequest {
+  TenantContext tenant_context = 1;
+  string job_id = 2;
+}
+
+message GetJobResponse {
+  PipelineJob job = 1;
+}
+
+message ListJobsRequest {
+  TenantContext tenant_context = 1;
+  JobStatus status = 2;  // Optional filter
+  JobType job_type = 3;  // Optional filter
+  ListOptions options = 4;
+}
+
+message ListJobsResponse {
+  repeated PipelineJob jobs = 1;
+  PageInfo page_info = 2;
+}
+
+message CancelJobRequest {
+  TenantContext tenant_context = 1;
+  string job_id = 2;
+  string reason = 3;
+}
+
+message CancelJobResponse {
+  bool cancelled = 1;
+}
+
+message RetryJobRequest {
+  TenantContext tenant_context = 1;
+  string job_id = 2;
+  bool retry_from_failure = 3;
+}
+
+message RetryJobResponse {
+  string new_job_id = 1;
+}
+
+message GetJobTraceRequest {
+  TenantContext tenant_context = 1;
+  string job_id = 2;
+}
+
+message GetJobTraceResponse {
+  repeated TraceEvent events = 1;
+}
+
+message TraceEvent {
+  google.protobuf.Timestamp timestamp = 1;
+  string stage_name = 2;
+  string event_type = 3;  // "stage_started", "rpc_called", "stage_completed"
+  map<string, string> details = 4;
+  string trace_id = 5;  // OpenTelemetry trace ID
+  string span_id = 6;
+}

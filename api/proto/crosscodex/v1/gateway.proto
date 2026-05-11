@@ -1,0 +1,197 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+import "crosscodex/v1/common.proto";
+import "crosscodex/v1/catalog.proto";
+import "crosscodex/v1/pipeline.proto";
+import "crosscodex/v1/graph.proto";
+import "crosscodex/v1/feedback.proto";
+import "crosscodex/v1/synthesis.proto";
+import "crosscodex/v1/admin.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+// GatewayService is the public REST API.
+//
+// SECURITY: Extracts TenantContext from mTLS/SAML/Kerberos
+// TRACEABILITY: Each RPC documents internal service call chains
+service GatewayService {
+  // Submit document for full analysis
+  // INTERNAL: ingestion.ConvertDocument → catalog.ParseCatalog → pipeline.CreateJob(FULL_ANALYSIS)
+  rpc SubmitDocument(SubmitDocumentRequest) returns (SubmitDocumentResponse) {
+    option (google.api.http) = {
+      post: "/v1/documents"
+      body: "*"
+    };
+  }
+
+  // Get job status
+  // INTERNAL: pipeline.GetJob
+  rpc GetJob(GetJobRequest) returns (GetJobResponse) {
+    option (google.api.http) = {
+      get: "/v1/jobs/{job_id}"
+    };
+  }
+
+  // List jobs
+  // INTERNAL: pipeline.ListJobs
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse) {
+    option (google.api.http) = {
+      get: "/v1/jobs"
+    };
+  }
+
+  // Cancel job
+  // INTERNAL: pipeline.CancelJob
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse) {
+    option (google.api.http) = {
+      post: "/v1/jobs/{job_id}/cancel"
+      body: "*"
+    };
+  }
+
+  // List catalogs
+  // INTERNAL: catalog.ListCatalogs
+  rpc ListCatalogs(ListCatalogsRequest) returns (ListCatalogsResponse) {
+    option (google.api.http) = {
+      get: "/v1/catalogs"
+    };
+  }
+
+  // Get catalog
+  // INTERNAL: catalog.GetCatalog
+  rpc GetCatalog(GetCatalogRequest) returns (GetCatalogResponse) {
+    option (google.api.http) = {
+      get: "/v1/catalogs/{catalog_id}"
+    };
+  }
+
+  // Search controls
+  // INTERNAL: catalog.SearchControls
+  rpc SearchControls(SearchControlsRequest) returns (SearchControlsResponse) {
+    option (google.api.http) = {
+      get: "/v1/controls"
+    };
+  }
+
+  // Get control details
+  // INTERNAL: catalog.GetControl
+  rpc GetControl(GetControlRequest) returns (GetControlResponse) {
+    option (google.api.http) = {
+      get: "/v1/controls/{control_id}"
+    };
+  }
+
+  // Get control mappings
+  // INTERNAL: graph.Traverse (outbound from control node)
+  rpc GetControlMappings(GetControlMappingsRequest) returns (GetControlMappingsResponse) {
+    option (google.api.http) = {
+      get: "/v1/controls/{control_id}/mappings"
+    };
+  }
+
+  // Query graph
+  // INTERNAL: graph.Query (restricted Cypher subset for safety)
+  rpc QueryGraph(QueryGraphRequest) returns (QueryGraphResponse) {
+    option (google.api.http) = {
+      post: "/v1/graph/query"
+      body: "*"
+    };
+  }
+
+  // Similarity search
+  // INTERNAL: graph.SimilaritySearch
+  rpc FindSimilar(FindSimilarRequest) returns (FindSimilarResponse) {
+    option (google.api.http) = {
+      post: "/v1/controls/{control_id}/similar"
+      body: "*"
+    };
+  }
+
+  // Submit vote on mapping
+  // INTERNAL: feedback.SubmitVote
+  rpc SubmitVote(SubmitVoteRequest) returns (SubmitVoteResponse) {
+    option (google.api.http) = {
+      post: "/v1/mappings/{mapping_id}/vote"
+      body: "*"
+    };
+  }
+
+  // Get review queue
+  // INTERNAL: feedback.GetReviewQueue
+  rpc GetReviewQueue(GetReviewQueueRequest) returns (GetReviewQueueResponse) {
+    option (google.api.http) = {
+      get: "/v1/review/queue"
+    };
+  }
+
+  // Health check (public, no auth required)
+  // INTERNAL: admin.HealthCheck
+  rpc Health(HealthRequest) returns (HealthCheckResponse) {
+    option (google.api.http) = {
+      get: "/health"
+    };
+  }
+}
+
+// Gateway-specific request types
+
+message HealthRequest {
+  string service = 1;  // Optional: specific service
+}
+
+message SubmitDocumentRequest {
+  // TenantContext extracted from auth, not in request body
+  oneof source {
+    bytes content = 1;
+    string source_uri = 2;
+  }
+  ContentMetadata metadata = 3;
+  CatalogFormat catalog_format = 4;
+  string catalog_name = 5;
+  string target_catalog_id = 6;  // Optional: auto-create synthesis
+  SynthesisConfig synthesis_config = 7;
+}
+
+message SubmitDocumentResponse {
+  string job_id = 1;
+  string document_id = 2;
+  JobStatus status = 3;
+}
+
+message GetControlMappingsRequest {
+  // TenantContext from auth
+  string control_id = 1;
+  float min_confidence = 2;
+  int32 limit = 3;
+}
+
+message GetControlMappingsResponse {
+  repeated ControlMapping mappings = 1;
+  PageInfo page_info = 2;
+}
+
+message QueryGraphRequest {
+  // TenantContext from auth
+  string cypher = 1;  // Restricted subset validated at gateway
+  map<string, string> parameters = 2;
+  google.protobuf.Timestamp as_of = 3;
+}
+
+message QueryGraphResponse {
+  QueryResponse response = 1;
+}
+
+message FindSimilarRequest {
+  // TenantContext from auth
+  string control_id = 1;
+  int32 limit = 2;
+  repeated string catalog_ids = 3;
+}
+
+message FindSimilarResponse {
+  SimilaritySearchResponse response = 1;
+}

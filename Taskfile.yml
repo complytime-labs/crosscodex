@@ -13,14 +13,14 @@ tasks:
 
   generate:
     desc: Generate protobuf code using buf
-    dir: api/proto/crosscodex/v1
+    dir: api/proto
     cmds:
       - buf generate
     sources:
       - "**/*.proto"
       - buf.gen.yaml
     generates:
-      - ../../../../api/gen/go/**/*.pb.go
+      - ../gen/go/**/*.pb.go
 
   build:
     desc: Build all binaries
