@@ -48,8 +48,34 @@ tasks:
       - "{{.BUILD_DIR}}/crosscodex"
       - "{{.BUILD_DIR}}/crosscodexd"
 
+  test:
+    desc: Run all tests
+    vars:
+      MODE: '{{.MODE | default "human"}}'
+    cmds:
+      - mkdir -p {{.TEST_OUTPUT}}
+      - cmd: go test -v -race -count=1 -coverprofile={{.TEST_OUTPUT}}/coverage.out ./... 2>&1 | tee {{.TEST_OUTPUT}}/test.log
+        ignore_error: true
+      - task: test:report
+
+  test:report:
+    desc: Display test results
+    internal: true
+    vars:
+      MODE: '{{.MODE | default "human"}}'
+    cmds:
+      - cmd: |
+          if [ "{{.MODE}}" = "llm" ]; then
+            grep -E '(^---\s+(FAIL|PASS)|^FAIL|^ok\s)' {{.TEST_OUTPUT}}/test.log
+          else
+            echo ""
+            echo "Coverage:"
+            go tool cover -func={{.TEST_OUTPUT}}/coverage.out | tail -1
+          fi
+      - cmd: grep -q '^FAIL' {{.TEST_OUTPUT}}/test.log && exit 1 || true
+
   test:unit:
-    desc: Run unit tests
+    desc: Run unit tests (with protobuf generation)
     deps: [generate]
     cmds:
       - mkdir -p {{.TEST_OUTPUT}}

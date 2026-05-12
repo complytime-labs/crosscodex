@@ -43,3 +43,6 @@ credentials/
 # Downloaded schemas (fetch with: task fetch-schemas)
 schemas/*
 !schemas/README.md
+
+# Planning Cruft
+docs/superpowers/

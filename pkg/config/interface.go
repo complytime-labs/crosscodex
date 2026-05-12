@@ -2,15 +2,17 @@ package config
 
 import "context"
 
-// Loader handles configuration resolution from multiple sources.
+// Loader resolves configuration from nine layers in priority order:
 //
-// Implementations must resolve configuration with the following precedence:
-//  1. Command-line flags (highest)
-//  2. Environment variables
-//  3. Configuration files
-//  4. Default values (lowest)
+//  1. Compiled defaults (lowest)
+//  2. System config (/etc/crosscodex/config.yaml)
+//  3. System drop-ins (/etc/crosscodex/conf.d/*.yaml)
+//  4. User config ($XDG_CONFIG_HOME/crosscodex/config.yaml)
+//  5. User drop-ins ($XDG_CONFIG_HOME/crosscodex/conf.d/*.yaml)
+//  6. Profile (~/.config/crosscodex/profiles/<name>.yaml)
+//  7. Project config (.crosscodex/config.yaml)
+//  8. Environment variables (CROSSCODEX_*)
+//  9. CLI flag overrides (highest)
 type Loader interface {
-	// Load resolves and validates configuration from all sources.
-	// Returns an error if configuration is invalid or required values are missing.
 	Load(ctx context.Context, opts ...Option) (*Config, error)
 }
