@@ -1,0 +1,208 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+import "crosscodex/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// AdminService provides system administration.
+//
+// SECURITY: Admin-only endpoints, enforced by gateway RBAC
+service AdminService {
+  // Tenant management
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
+  rpc GetTenant(GetTenantRequest) returns (GetTenantResponse);
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+  rpc UpdateTenant(UpdateTenantRequest) returns (UpdateTenantResponse);
+  rpc DeleteTenant(DeleteTenantRequest) returns (DeleteTenantResponse);
+
+  // Health checks
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetServiceStatus(GetServiceStatusRequest) returns (GetServiceStatusResponse);
+
+  // PKI management (for mTLS)
+  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
+  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse);
+  rpc ListCertificates(ListCertificatesRequest) returns (ListCertificatesResponse);
+
+  // Data retention
+  rpc ApplyRetentionPolicy(ApplyRetentionPolicyRequest) returns (ApplyRetentionPolicyResponse);
+  rpc GetRetentionStats(GetRetentionStatsRequest) returns (GetRetentionStatsResponse);
+}
+
+message CreateTenantRequest {
+  string tenant_id = 1;
+  string display_name = 2;
+  TenantConfig config = 3;
+}
+
+message TenantConfig {
+  int64 max_catalogs = 1;
+  int64 max_storage_bytes = 2;
+  bool enable_feedback = 3;
+  map<string, string> settings = 4;
+}
+
+message CreateTenantResponse {
+  Tenant tenant = 1;
+}
+
+message Tenant {
+  string tenant_id = 1;
+  string display_name = 2;
+  TenantConfig config = 3;
+  AuditMetadata audit = 4;
+  bool is_active = 5;
+}
+
+message GetTenantRequest {
+  string tenant_id = 1;
+}
+
+message GetTenantResponse {
+  Tenant tenant = 1;
+}
+
+message ListTenantsRequest {
+  ListOptions options = 1;
+}
+
+message ListTenantsResponse {
+  repeated Tenant tenants = 1;
+  PageInfo page_info = 2;
+}
+
+message UpdateTenantRequest {
+  string tenant_id = 1;
+  TenantConfig config = 2;
+}
+
+message UpdateTenantResponse {
+  Tenant tenant = 1;
+}
+
+message DeleteTenantRequest {
+  string tenant_id = 1;
+  bool purge_data = 2;
+}
+
+message DeleteTenantResponse {
+  bool deleted = 1;
+}
+
+message HealthCheckRequest {
+  string service = 1;  // Optional: specific service
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+}
+
+message HealthCheckResponse {
+  HealthStatus status = 1;
+  map<string, ServiceHealth> services = 2;
+}
+
+message ServiceHealth {
+  string service_name = 1;
+  HealthStatus status = 2;
+  string message = 3;
+  google.protobuf.Timestamp last_check = 4;
+}
+
+message GetServiceStatusRequest {}
+
+message GetServiceStatusResponse {
+  repeated ServiceInfo services = 1;
+}
+
+message ServiceInfo {
+  string service_name = 1;
+  string version = 2;
+  google.protobuf.Timestamp started_at = 3;
+  int64 requests_handled = 4;
+  map<string, string> metadata = 5;
+}
+
+message IssueCertificateRequest {
+  string subject = 1;
+  string tenant_id = 2;
+  int32 validity_days = 3;
+  repeated string dns_names = 4;
+}
+
+message IssueCertificateResponse {
+  string certificate_pem = 1;
+  // Private key is ONLY returned on initial certificate issuance.
+  // Never stored server-side. Never returned by ListCertificates or other RPCs.
+  // Client MUST persist this value securely - cannot be retrieved later.
+  string private_key_pem = 2;
+  string serial_number = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message RevokeCertificateRequest {
+  string serial_number = 1;
+  string revocation_reason = 2;
+}
+
+message RevokeCertificateResponse {
+  bool revoked = 1;
+}
+
+message ListCertificatesRequest {
+  string tenant_id = 1;  // Optional filter
+  ListOptions options = 2;
+}
+
+message ListCertificatesResponse {
+  repeated CertificateInfo certificates = 1;
+  PageInfo page_info = 2;
+}
+
+message CertificateInfo {
+  string serial_number = 1;
+  string subject = 2;
+  string tenant_id = 3;
+  google.protobuf.Timestamp issued_at = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  bool is_revoked = 6;
+}
+
+message ApplyRetentionPolicyRequest {
+  TenantContext tenant_context = 1;
+  RetentionPolicy policy = 2;
+  bool dry_run = 3;
+}
+
+message RetentionPolicy {
+  int32 job_retention_days = 1;
+  int32 audit_retention_days = 2;
+  int32 synthesis_retention_days = 3;
+  bool delete_superseded_edges = 4;
+}
+
+message ApplyRetentionPolicyResponse {
+  int32 jobs_deleted = 1;
+  int32 audits_deleted = 2;
+  int32 syntheses_deleted = 3;
+  int32 edges_deleted = 4;
+}
+
+message GetRetentionStatsRequest {
+  TenantContext tenant_context = 1;
+}
+
+message GetRetentionStatsResponse {
+  int64 total_jobs = 1;
+  int64 total_audits = 2;
+  int64 total_syntheses = 3;
+  int64 total_edges = 4;
+  int64 superseded_edges = 5;
+  int64 storage_bytes_used = 6;
+}

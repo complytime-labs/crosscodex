@@ -1,0 +1,247 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+import "crosscodex/v1/common.proto";
+import "crosscodex/v1/synthesis.proto";
+import "google/protobuf/timestamp.proto";
+
+// GraphService manages compliance relationship graph with temporal support.
+//
+// COUPLING: Consumes synthesis.ControlMapping, provides traversal for gateway
+// STORAGE: PostgreSQL + Apache AGE (openCypher) + pgvector
+// TEMPORAL: All edges/nodes track valid_from, valid_to for point-in-time queries
+service GraphService {
+  // Create node (typically a catalog control)
+  rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
+
+  // Create relationship edge
+  rpc CreateEdge(CreateEdgeRequest) returns (CreateEdgeResponse);
+
+  // Bulk create edges from synthesis
+  rpc BulkCreateEdges(BulkCreateEdgesRequest) returns (BulkCreateEdgesResponse);
+
+  // Get node by ID
+  rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+
+  // Get edge by ID
+  rpc GetEdge(GetEdgeRequest) returns (GetEdgeResponse);
+
+  // Traverse graph from starting node
+  rpc Traverse(TraverseRequest) returns (TraverseResponse);
+
+  // Execute openCypher query
+  rpc Query(QueryRequest) returns (QueryResponse);
+
+  // Vector similarity search
+  rpc SimilaritySearch(SimilaritySearchRequest) returns (SimilaritySearchResponse);
+
+  // Temporal query: graph state at specific time
+  rpc TemporalQuery(TemporalQueryRequest) returns (QueryResponse);
+
+  // Update node/edge to mark as superseded
+  rpc SupersedeFact(SupersedeFactRequest) returns (SupersedeFactResponse);
+}
+
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_CONTROL = 1;
+  NODE_TYPE_CATALOG = 2;
+  NODE_TYPE_ARTIFACT = 3;
+}
+
+message Node {
+  string node_id = 1;
+  TenantContext tenant_context = 2;
+  NodeType node_type = 3;
+  string label = 4;  // "Control", "Catalog", "Artifact"
+  ResourceRef resource_ref = 5;
+  map<string, string> properties = 6;
+  repeated float embedding = 7;  // Vector embedding
+  TemporalAttributes temporal = 8;
+  AuditMetadata audit = 9;
+  ProvenanceMetadata provenance = 10;
+}
+
+message Edge {
+  string edge_id = 1;
+  TenantContext tenant_context = 2;
+  string source_node_id = 3;
+  string target_node_id = 4;
+  RelationshipType relationship_type = 5;
+  string label = 6;  // "MAPS_TO", "REQUIRES", "IMPLEMENTS"
+  map<string, string> properties = 7;
+  TemporalAttributes temporal = 8;
+  AuditMetadata audit = 9;
+  ProvenanceMetadata provenance = 10;
+}
+
+message CreateNodeRequest {
+  TenantContext tenant_context = 1;
+  NodeType node_type = 2;
+  string label = 3;
+  ResourceRef resource_ref = 4;
+  map<string, string> properties = 5;
+  repeated float embedding = 6;
+  TemporalAttributes temporal = 7;
+  ProvenanceMetadata provenance = 8;
+}
+
+message CreateNodeResponse {
+  string node_id = 1;
+}
+
+message CreateEdgeRequest {
+  TenantContext tenant_context = 1;
+  string source_node_id = 2;
+  string target_node_id = 3;
+  RelationshipType relationship_type = 4;
+  string label = 5;
+  map<string, string> properties = 6;
+  TemporalAttributes temporal = 7;
+  ProvenanceMetadata provenance = 8;
+}
+
+message CreateEdgeResponse {
+  string edge_id = 1;
+}
+
+message BulkCreateEdgesRequest {
+  TenantContext tenant_context = 1;
+  repeated CreateEdgeRequest edges = 2;
+  string synthesis_id = 3;
+}
+
+message BulkCreateEdgesResponse {
+  repeated string edge_ids = 1;
+  int32 created_count = 2;
+  repeated Error errors = 3;
+}
+
+message GetNodeRequest {
+  TenantContext tenant_context = 1;
+  string node_id = 2;
+}
+
+message GetEdgeRequest {
+  TenantContext tenant_context = 1;
+  string edge_id = 2;
+}
+
+message GetNodeResponse {
+  Node node = 1;
+}
+
+message GetEdgeResponse {
+  Edge edge = 1;
+}
+
+enum TraversalDirection {
+  TRAVERSAL_DIRECTION_UNSPECIFIED = 0;
+  TRAVERSAL_DIRECTION_OUTBOUND = 1;
+  TRAVERSAL_DIRECTION_INBOUND = 2;
+  TRAVERSAL_DIRECTION_BOTH = 3;
+}
+
+message TraverseRequest {
+  TenantContext tenant_context = 1;
+  string start_node_id = 2;
+  TraversalDirection direction = 3;
+  repeated string edge_labels = 4;
+  int32 max_depth = 5;  // 0 = unlimited
+  google.protobuf.Timestamp as_of = 6;  // Temporal query
+  ListOptions options = 7;
+}
+
+message TraverseResponse {
+  repeated Node nodes = 1;
+  repeated Edge edges = 2;
+  PageInfo page_info = 3;
+}
+
+// QueryRequest executes raw openCypher queries.
+//
+// SECURITY: Always use parameterized queries to prevent Cypher injection.
+// Pass user input via the 'parameters' map, not by interpolating into 'cypher'.
+//
+// Example (SECURE):
+//   cypher: "MATCH (n:Control {tenant_id: $tenant}) WHERE n.id = $control_id RETURN n"
+//   parameters: {"tenant": "acme", "control_id": "AC-1"}
+//
+// Example (INSECURE - DO NOT DO THIS):
+//   cypher: "MATCH (n:Control) WHERE n.id = '" + userInput + "' RETURN n"
+//
+message QueryRequest {
+  TenantContext tenant_context = 1;
+  string cypher = 2;  // openCypher query with $param placeholders
+  map<string, string> parameters = 3;  // Parameter values for $param placeholders
+  google.protobuf.Timestamp as_of = 4;
+}
+
+message QueryResponse {
+  repeated GraphRow rows = 1;
+  int32 row_count = 2;
+}
+
+message GraphRow {
+  repeated GraphValue values = 1;
+}
+
+message GraphValue {
+  oneof value {
+    Node node = 1;
+    Edge edge = 2;
+    string scalar = 3;
+    int64 integer = 4;
+    double float_val = 5;
+    bool boolean = 6;
+  }
+}
+
+message EmbeddingQuery {
+  repeated float embedding = 1;
+}
+
+message SimilaritySearchRequest {
+  TenantContext tenant_context = 1;
+  oneof query {
+    EmbeddingQuery query_embedding = 2;
+    string control_id = 3;
+  }
+  int32 limit = 4;
+  NodeType node_type = 5;
+  google.protobuf.Timestamp as_of = 6;
+}
+
+message SimilaritySearchResponse {
+  repeated SimilarityMatch matches = 1;
+}
+
+message SimilarityMatch {
+  Node node = 1;
+  float similarity_score = 2;
+  float distance = 3;
+}
+
+message TemporalQueryRequest {
+  TenantContext tenant_context = 1;
+  google.protobuf.Timestamp as_of = 2;
+  string cypher = 3;
+  map<string, string> parameters = 4;
+}
+
+message SupersedeFactRequest {
+  TenantContext tenant_context = 1;
+  oneof target {
+    string node_id = 2;
+    string edge_id = 3;
+  }
+  google.protobuf.Timestamp superseded_at = 4;
+  string superseded_by_job_id = 5;
+}
+
+message SupersedeFactResponse {
+  bool updated = 1;
+}

@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+import "crosscodex/v1/common.proto";
+
+// SynthesisService aggregates analysis results and computes rankings.
+//
+// COUPLING: Consumes analysis.AnalysisResult, feeds graph.CreateEdge
+// PROCESS: analysis results → ranking → viability → graph insertion
+service SynthesisService {
+  // Create synthesis job for catalog pair
+  rpc CreateSynthesis(CreateSynthesisRequest) returns (CreateSynthesisResponse);
+
+  // Get synthesis status
+  rpc GetSynthesis(GetSynthesisRequest) returns (GetSynthesisResponse);
+
+  // List syntheses
+  rpc ListSyntheses(ListSynthesesRequest) returns (ListSynthesesResponse);
+
+  // Get ranked mappings for controls
+  rpc GetMappings(GetMappingsRequest) returns (GetMappingsResponse);
+
+  // Get quality metrics
+  rpc GetQualityMetrics(GetQualityMetricsRequest) returns (GetQualityMetricsResponse);
+}
+
+message CreateSynthesisRequest {
+  TenantContext tenant_context = 1;
+  string source_catalog_id = 2;
+  string target_catalog_id = 3;
+  string job_id = 4;
+  SynthesisConfig config = 5;
+}
+
+message SynthesisConfig {
+  float confidence_threshold = 1;      // Min for viable mapping (default 0.7)
+  int32 max_mappings_per_control = 2;  // Top N to keep (default 10)
+  bool enable_multi_pass = 3;
+  map<string, float> analyzer_weights = 4;
+}
+
+message CreateSynthesisResponse {
+  string synthesis_id = 1;
+  JobStatus status = 2;
+}
+
+enum SynthesisStatus {
+  SYNTHESIS_STATUS_UNSPECIFIED = 0;
+  SYNTHESIS_STATUS_PENDING = 1;
+  SYNTHESIS_STATUS_ANALYZING = 2;
+  SYNTHESIS_STATUS_RANKING = 3;
+  SYNTHESIS_STATUS_COMPLETED = 4;
+  SYNTHESIS_STATUS_FAILED = 5;
+}
+
+message Synthesis {
+  string synthesis_id = 1;
+  TenantContext tenant_context = 2;
+  string source_catalog_id = 3;
+  string target_catalog_id = 4;
+  string job_id = 5;
+  SynthesisStatus status = 6;
+  SynthesisConfig config = 7;
+  AuditMetadata audit = 8;
+  ProvenanceMetadata provenance = 9;
+  QualityMetrics metrics = 10;
+  Error error = 11;
+}
+
+message GetSynthesisResponse {
+  Synthesis synthesis = 1;
+}
+
+message GetSynthesisRequest {
+  TenantContext tenant_context = 1;
+  string synthesis_id = 2;
+}
+
+message ListSynthesesRequest {
+  TenantContext tenant_context = 1;
+  ListOptions options = 2;
+}
+
+message ListSynthesesResponse {
+  repeated Synthesis syntheses = 1;
+  PageInfo page_info = 2;
+}
+
+message GetMappingsRequest {
+  TenantContext tenant_context = 1;
+  string synthesis_id = 2;
+  string control_id = 3;      // Optional filter
+  float min_confidence = 4;   // Optional filter
+  ListOptions options = 5;
+}
+
+message GetMappingsResponse {
+  repeated ControlMapping mappings = 1;
+  PageInfo page_info = 2;
+}
+
+enum RelationshipType {
+  RELATIONSHIP_TYPE_UNSPECIFIED = 0;
+  RELATIONSHIP_TYPE_EQUAL = 1;       // NIST IR 8477
+  RELATIONSHIP_TYPE_SUBSET = 2;
+  RELATIONSHIP_TYPE_INTERSECTS = 3;
+  RELATIONSHIP_TYPE_NOT_RELATED = 4;
+}
+
+message ControlMapping {
+  string mapping_id = 1;
+  string source_control_id = 2;
+  string target_control_id = 3;
+  RelationshipType relationship_type = 4;
+  float confidence = 5;
+  float viability_score = 6;
+  bool is_viable = 7;
+  repeated AnalyzerContribution contributions = 8;
+  TemporalAttributes temporal = 9;
+  ProvenanceMetadata provenance = 10;
+}
+
+message AnalyzerContribution {
+  string analyzer_id = 1;
+  string analyzer_type_name = 2;  // String representation of AnalyzerType
+  float confidence = 3;
+  RelationshipType suggested_type = 4;
+  map<string, string> evidence = 5;
+}
+
+message QualityMetrics {
+  int32 total_mappings = 1;
+  int32 viable_mappings = 2;
+  float avg_confidence = 3;
+  float avg_viability = 4;
+  map<string, int32> relationship_type_counts = 5;
+  map<string, float> analyzer_agreement_scores = 6;
+  AuditMetadata computed_at = 7;
+}
+
+message GetQualityMetricsRequest {
+  TenantContext tenant_context = 1;
+  string synthesis_id = 2;
+}
+
+message GetQualityMetricsResponse {
+  QualityMetrics metrics = 1;
+}

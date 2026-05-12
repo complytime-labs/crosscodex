@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+import "crosscodex/v1/common.proto";
+
+// CatalogService parses multi-format compliance catalogs.
+// Supports OSCAL, Gemara, and future formats via unified model.
+//
+// DESIGN NOTE: Format enum rather than format-specific RPCs because
+// analysis/synthesis/graph operate on unified control model.
+// If future formats require fundamentally different entity types,
+// revisit this decision.
+//
+// COUPLING: Consumes ingestion.Document, feeds analysis.WorkItem
+service CatalogService {
+  // Parse catalog from structured JSON
+  rpc ParseCatalog(ParseCatalogRequest) returns (ParseCatalogResponse);
+
+  // Get catalog metadata
+  rpc GetCatalog(GetCatalogRequest) returns (GetCatalogResponse);
+
+  // List catalogs
+  rpc ListCatalogs(ListCatalogsRequest) returns (ListCatalogsResponse);
+
+  // Get individual control
+  rpc GetControl(GetControlRequest) returns (GetControlResponse);
+
+  // Search controls by text/metadata
+  rpc SearchControls(SearchControlsRequest) returns (SearchControlsResponse);
+}
+
+enum CatalogFormat {
+  CATALOG_FORMAT_UNSPECIFIED = 0;
+  CATALOG_FORMAT_OSCAL = 1;      // NIST OSCAL
+  CATALOG_FORMAT_GEMARA = 2;     // OpenSSF Gemara
+  // Future: CIS, SCAP, ISO 27001 Annex A
+}
+
+message ParseCatalogRequest {
+  TenantContext tenant_context = 1;
+  string document_id = 2;        // References ingestion.Document
+  CatalogFormat format = 3;      // Required - which parser to use
+  string catalog_name = 4;       // User-provided name
+  map<string, string> parse_options = 5;  // Format-specific hints
+}
+
+message ParseCatalogResponse {
+  string catalog_id = 1;
+  JobStatus status = 2;
+}
+
+message Catalog {
+  string catalog_id = 1;
+  TenantContext tenant_context = 2;
+  string name = 3;
+  CatalogFormat format = 4;      // Source format
+  string version = 5;            // Format version
+  AuditMetadata audit = 6;
+  ProvenanceMetadata provenance = 7;
+  int32 control_count = 8;
+  map<string, string> properties = 9;  // Format-specific metadata
+}
+
+message Control {
+  string control_id = 1;           // Qualified: catalog_id/AC-1
+  string catalog_id = 2;
+  string identifier = 3;           // "AC-1", "SI-2.1", "REQ-SBOM-001"
+  string title = 4;
+  string statement = 5;            // Full control/requirement prose
+  repeated string parameters = 6;  // Parameter IDs
+  map<string, string> parts = 7;  // guidance, objectives, etc.
+  AuditMetadata audit = 8;
+}
+
+message GetCatalogRequest {
+  TenantContext tenant_context = 1;
+  string catalog_id = 2;
+}
+
+message GetCatalogResponse {
+  Catalog catalog = 1;
+}
+
+message ListCatalogsRequest {
+  TenantContext tenant_context = 1;
+  ListOptions options = 2;
+}
+
+message ListCatalogsResponse {
+  repeated Catalog catalogs = 1;
+  PageInfo page_info = 2;
+}
+
+message GetControlRequest {
+  TenantContext tenant_context = 1;
+  string control_id = 2;
+}
+
+message GetControlResponse {
+  Control control = 1;
+}
+
+message SearchControlsRequest {
+  TenantContext tenant_context = 1;
+  string query = 2;  // Full-text search
+  repeated string catalog_ids = 3;  // Optional filter
+  CatalogFormat format = 4;  // Optional filter
+  ListOptions options = 5;
+}
+
+message SearchControlsResponse {
+  repeated Control controls = 1;
+  PageInfo page_info = 2;
+}

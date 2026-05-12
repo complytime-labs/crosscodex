@@ -47,6 +47,102 @@ import pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 - ❌ Never import sibling `internal/` packages (e.g., `internal/catalog` from `internal/ingestion`)
 - ✅ Always import through `pkg/` interfaces for cross-service dependencies
 
+## Protobuf Definitions
+
+**Location:** `api/proto/crosscodex/v1/`
+
+All protobuf definitions are organized under a single versioned package:
+
+```
+api/proto/crosscodex/v1/
+├── common.proto           # Shared types (timestamps, metadata, errors)
+├── tenant.proto           # Multi-tenant isolation primitives
+├── catalog.proto          # Catalog service messages
+├── ingestion.proto        # Ingestion service messages
+├── analysis.proto         # Analysis service messages
+├── synthesis.proto        # Synthesis service messages
+├── graph.proto            # Graph service messages
+├── llm_worker.proto       # LLM worker messages
+└── pipeline.proto         # Pipeline service messages
+```
+
+**Import Pattern:**
+
+Always import the specific proto files you need rather than a monolithic definition:
+
+```protobuf
+syntax = "proto3";
+package crosscodex.v1;
+
+import "crosscodex/v1/common.proto";
+import "crosscodex/v1/tenant.proto";
+
+// Your service definition
+```
+
+**Multi-Tenant Isolation:**
+
+Every message that represents tenant-scoped data MUST include `tenant_id`:
+
+```protobuf
+message CatalogRecord {
+  string tenant_id = 1;  // Required for all tenant-scoped messages
+  string catalog_id = 2;
+  // ...
+}
+```
+
+**Admin Service Tenant Isolation:**
+
+The AdminService intentionally does NOT require TenantContext for system-level operations:
+
+- **HealthCheck, GetServiceStatus** - Monitor cluster-wide health, not tenant-specific
+- **IssueCertificate, RevokeCertificate, ListCertificates** - PKI operations span tenants (certificates identify tenants)
+- **CreateTenant, ListTenants, DeleteTenant** - Tenant lifecycle management by platform operators
+
+These operations are **platform-administrator only**, enforced by gateway RBAC. Tenant-scoped admin operations (ApplyRetentionPolicy, GetRetentionStats) DO include TenantContext and are filtered accordingly.
+
+This follows standard practice for multi-tenant systems (Kubernetes system:masters, Consul acl:write, AWS root account).
+
+**Temporal Graph Attributes:**
+
+Messages representing graph nodes or edges include temporal attributes for versioning and audit trails:
+
+```protobuf
+message ControlNode {
+  string tenant_id = 1;
+  string control_id = 2;
+  
+  // Temporal attributes for graph versioning
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+  google.protobuf.Timestamp valid_from = 12;
+  google.protobuf.Timestamp valid_to = 13;
+  
+  // Audit metadata
+  Metadata metadata = 100;
+}
+```
+
+**Code Generation:**
+
+Generated Go code is placed in `api/gen/go/crosscodex/v1/` and is gitignored. Regenerate after any proto changes:
+
+```bash
+task generate  # Runs buf generate
+```
+
+**Validation:**
+
+All proto changes must pass linting and breaking change detection:
+
+```bash
+cd api/proto
+buf build  # Validate syntax
+buf lint   # Check style
+buf breaking --against '.git#branch=main'  # Detect breaking changes
+```
+
 ## Package Ownership & Responsibility
 
 | Package | Purpose | Key Dependencies |
