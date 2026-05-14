@@ -14,43 +14,34 @@ CrossCodex delivers composable microservices, provider-agnostic LLM integration,
 
 ----
 
-## Quick Start
+## Status
 
-### Embedded Mode (Single User)
-
-```bash
-# Install CrossCodex CLI
-curl -sSL https://github.com/complytime-labs/crosscodex/releases/latest/download/install.sh | sh
-
-# Initialize a project
-crosscodex project init my-compliance-analysis
-cd my-compliance-analysis
-
-# Import compliance catalogs
-crosscodex catalog import --url https://example.com/nist-800-53.json --name "NIST 800-53"
-crosscodex catalog import --url https://example.com/iso27001.json --name "ISO 27001"
-
-# Run semantic analysis
-crosscodex run start --source "NIST 800-53" --target "ISO 27001"
-
-# View results
-crosscodex results summary
-```
-
-The CLI automatically starts an embedded daemon on first use - no additional setup required.
+CrossCodex is in early development. The Go monorepo provides package interfaces, protobuf service contracts, and a configuration system. The CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
 
 ## Architecture
 
-CrossCodex consists of seven core services that can run embedded in a single process or distributed across multiple hosts:
+The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides package-level foundations (`pkg/oscal`, `pkg/analyzer`, `pkg/llmclient`, `pkg/graphdb`, `pkg/natsbus`); full service implementations are not yet built.
 
 ```mermaid
-flowchart TB
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#333333',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'clusterBkg': '#e8e8e8',
+  'clusterBorder': '#7c8ba1',
+  'transitionColor': '#333333',
+  'transitionLabelColor': '#333333',
+  'stateLabelColor': '#333333',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+flowchart TD
     subgraph external ["External Sources"]
         docs["Documents<br/>PDF, DOCX, HTML"]
     end
 
     subgraph processing ["Processing Pipeline"]
-        direction TB
         ingestion["Ingestion Service<br/>Python + Docling"]
         catalog["Catalog Service<br/>Go + OSCAL"]
         analysis["Analysis Engine<br/>Go + Plugins"]
@@ -58,7 +49,6 @@ flowchart TB
     end
 
     subgraph datalayer ["Data Layer"]
-        direction LR
         synthesis["Synthesis<br/>Quality Ranking"]
         graphdb["Graph Store<br/>PostgreSQL + AGE"]
         pipeline["Pipeline<br/>Go + NATS"]
@@ -73,6 +63,13 @@ flowchart TB
     pipeline --> analysis
     pipeline --> synthesis
     graphdb --> pipeline
+
+    classDef sysA fill:#3e6fa0,color:#ffffff,stroke:#7c8ba1
+    classDef sysB fill:#3a8054,color:#ffffff,stroke:#7c8ba1
+    classDef sysC fill:#2d747e,color:#ffffff,stroke:#7c8ba1
+    class docs sysA
+    class ingestion,catalog,analysis,llm sysB
+    class synthesis,graphdb,pipeline sysC
 
 ```
 
@@ -90,17 +87,48 @@ flowchart TB
 
 ### Analyzer Plugin Architecture
 
-Analysis capabilities are implemented as independent analyzers that register with the Analysis Engine:
+Analysis capabilities will be implemented as independent analyzers that register with the Analysis Engine. The `Analyzer` interface is defined in `pkg/analyzer/`; planned analyzers include:
 
 - `classify` - Control type and level classification
 - `embedding` - Vector embedding generation and similarity
-- `relationship` - LLM panel voting on NIST IR 8477 relationship types
-- `requires` - Multi-pass prerequisite detection  
+- `relationship` - LLM panel voting on relationship types
+- `requires` - Multi-pass prerequisite detection
 - `artifacts` - Observable artifact extraction with deduplication
 
-Adding new analysis capabilities requires only implementing the Analyzer interface - no modifications to existing services.
+Adding new analysis capabilities requires only implementing the Analyzer interface — no modifications to existing services.
 
 ## Deployment Modes
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#333333',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'clusterBkg': '#e8e8e8',
+  'clusterBorder': '#7c8ba1',
+  'transitionColor': '#333333',
+  'transitionLabelColor': '#333333',
+  'stateLabelColor': '#333333',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+stateDiagram-v2
+    [*] --> Embedded
+    Embedded --> Quadlet : Team grows
+    Quadlet --> Distributed : Production scale
+
+    Embedded : All services in one process
+    Embedded : PostgreSQL in container
+    Embedded : Local filesystem storage
+
+    Quadlet : Systemd-managed containers
+    Quadlet : Shared PostgreSQL / NATS / MinIO
+
+    Distributed : Services scale independently
+    Distributed : External PostgreSQL + NATS cluster
+    Distributed : S3-compatible object storage
+```
 
 ### Embedded (Laptop, CI)
 - All services in one process
@@ -111,7 +139,7 @@ Adding new analysis capabilities requires only implementing the Analyzer interfa
 ### Quadlet (Small Team, Single Host)
 - Systemd-managed containers via quadlet
 - Shared PostgreSQL, NATS, MinIO
-- `deploy/quadlet/` unit files + `deploy/kustomize/overlays/`
+- Deployment manifests planned under `deploy/`
 
 ### Distributed (Production, Multi-tenant)
 - Services scale independently
@@ -139,6 +167,54 @@ Project directory:
 ```
 
 ### Configuration Resolution Order
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#333333',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'clusterBkg': '#e8e8e8',
+  'clusterBorder': '#7c8ba1',
+  'transitionColor': '#333333',
+  'transitionLabelColor': '#333333',
+  'stateLabelColor': '#333333',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+flowchart TD
+    subgraph system ["System-wide"]
+        defaults["Compiled defaults"]
+        syscfg["/etc/crosscodex/config.yaml"]
+        sysdrop["/etc/crosscodex/conf.d/*.yaml"]
+    end
+    subgraph user ["User-level"]
+        usercfg["$XDG_CONFIG_HOME/.../config.yaml"]
+        userdrop["$XDG_CONFIG_HOME/.../conf.d/*.yaml"]
+        profile["--profile selection"]
+    end
+    subgraph runtime ["Runtime"]
+        projcfg[".crosscodex/config.yaml"]
+        envvars["CROSSCODEX_* env vars"]
+        cliflags["CLI flags"]
+    end
+
+    defaults --> syscfg
+    syscfg --> sysdrop
+    sysdrop --> usercfg
+    usercfg --> userdrop
+    userdrop --> profile
+    profile --> projcfg
+    projcfg --> envvars
+    envvars --> cliflags
+
+    classDef sysA fill:#3e6fa0,color:#ffffff,stroke:#7c8ba1
+    classDef sysB fill:#3a8054,color:#ffffff,stroke:#7c8ba1
+    classDef sysC fill:#a55726,color:#ffffff,stroke:#7c8ba1
+    class defaults,syscfg,sysdrop sysA
+    class usercfg,userdrop,profile sysB
+    class projcfg,envvars,cliflags sysC
+```
 
 1. Compiled defaults
 2. System config (`/etc/crosscodex/config.yaml`)
@@ -192,9 +268,9 @@ crosscodex/                      # Main monorepo
   api/proto/                     # Protobuf definitions
   pkg/                           # Public SDK packages
   cmd/                           # CLI and daemon binaries
-  internal/                      # Service implementations
-  deploy/                        # Quadlet units, kustomize manifests, skaffold config
-  tests/                         # Integration and E2E tests
+  internal/                      # Service implementations (planned)
+  deploy/                        # Deployment manifests (planned)
+  tests/                         # Integration and E2E tests (planned)
 ```
 
 ### Build Commands
@@ -206,30 +282,26 @@ curl -sL https://taskfile.dev/install.sh | sh
 # Build all binaries
 task build
 
-# Run unit tests
+# Run all tests
+task test
+
+# Run unit tests only
 task test:unit
 
-# Run integration tests (requires containers)
-task test:integration:embedded
-task test:integration:distributed
-
-# Build container images
-task build:images
-
-# Format and lint
-task fmt
+# Lint
 task lint
+
+# Generate protobuf code
+task generate
 ```
 
 ### Testing Strategy
 
-| Test Type | Framework | Scope |
-|-----------|-----------|-------|
-| **Unit** | Go testing | Individual packages, mocked dependencies |
-| **Integration** | Go testing + containers | Service interactions, real database |
-| **E2E** | Venom | Full pipeline, user scenarios |
-
-Integration tests use quadlet-managed containers (via skaffold) to spin up real infrastructure (PostgreSQL, NATS, MinIO) and test against actual service endpoints.
+| Test Type | Framework | Status |
+|-----------|-----------|--------|
+| **Unit** | Go testing | Available (`task test:unit`) |
+| **Integration** | Go testing + containers | Planned |
+| **E2E** | Venom | Planned |
 
 ### Contributing
 
@@ -245,6 +317,44 @@ For large features, open an issue first to discuss the approach.
 ## Security & Compliance
 
 ### Multi-tenant Isolation (Defense-in-Depth)
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#333333',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'clusterBkg': '#e8e8e8',
+  'clusterBorder': '#7c8ba1',
+  'transitionColor': '#333333',
+  'transitionLabelColor': '#333333',
+  'stateLabelColor': '#333333',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+flowchart TD
+    req["Tenant Request"]
+    gw["Gateway<br/>mTLS, JWT, RBAC"]
+    svc["Services<br/>gRPC metadata validation"]
+    nats["NATS<br/>Tenant-scoped subjects + ACLs"]
+    pg["PostgreSQL<br/>Row-Level Security"]
+    obj["Object Store<br/>Tenant-prefixed paths"]
+    age["Graph / AGE<br/>Separate graph per tenant"]
+
+    req --> gw
+    gw -->|identity verified| svc
+    svc --> nats
+    svc --> pg
+    svc --> obj
+    svc --> age
+
+    classDef sysA fill:#3e6fa0,color:#ffffff,stroke:#7c8ba1
+    classDef sysB fill:#3a8054,color:#ffffff,stroke:#7c8ba1
+    classDef sysC fill:#7457b8,color:#ffffff,stroke:#7c8ba1
+    class req sysA
+    class gw,svc sysB
+    class nats,pg,obj,age sysC
+```
 
 Every layer enforces tenant isolation independently:
 
@@ -284,6 +394,34 @@ Pipeline outputs include in-toto attestation for audit trails:
 ## Storage Architecture
 
 ### Unified Database Strategy
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#333333',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'clusterBkg': '#e8e8e8',
+  'clusterBorder': '#7c8ba1',
+  'transitionColor': '#333333',
+  'transitionLabelColor': '#333333',
+  'stateLabelColor': '#333333',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+erDiagram
+    PostgreSQL ||--|| RelationalStore : "core engine"
+    PostgreSQL ||--|| GraphStore : "Apache AGE"
+    PostgreSQL ||--|| VectorStore : "pgvector"
+    RelationalStore ||--o{ Job : tracks
+    RelationalStore ||--o{ Catalog : stores
+    RelationalStore ||--o{ Classification : records
+    RelationalStore ||--o{ TenantConfig : isolates
+    GraphStore ||--o{ Relationship : maps
+    VectorStore ||--o{ Embedding : indexes
+    Catalog ||--o{ Relationship : links
+    Classification ||--o{ Embedding : generates
+```
 
 PostgreSQL with extensions handles all data:
 
@@ -328,16 +466,18 @@ JetStream provides persistent audit streams:
 | **LLM Calls** | 90 days    | Full prompts, responses, model versions |
 | **Events**    | 30 days    | Pipeline lifecycle, debugging           |
 
-### Monitoring
+### Monitoring (Planned)
+
+Once the CLI is implemented, these commands will be available:
 
 ```bash
-# Health check all services
+# Health check all services (planned)
 crosscodexd admin health
 
-# View job status
+# View job status (planned)
 crosscodex run status <job-id>
 
-# Export traces
+# Export traces (works with any OTLP-compatible backend)
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
 ```
 

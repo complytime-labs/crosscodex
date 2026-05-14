@@ -25,6 +25,9 @@ type Provider interface {
 	// List returns metadata for all objects matching the prefix.
 	List(ctx context.Context, prefix string) ([]ObjectMetadata, error)
 
+	// Exists reports whether an object with the given key exists.
+	Exists(ctx context.Context, key string) (bool, error)
+
 	// Stat retrieves metadata for a single object.
 	// Returns ErrNotFound if the object does not exist.
 	Stat(ctx context.Context, key string) (*ObjectMetadata, error)
