@@ -14,43 +14,30 @@ CrossCodex delivers composable microservices, provider-agnostic LLM integration,
 
 ----
 
-## Quick Start
+## Status
 
-### Embedded Mode (Single User)
-
-```bash
-# Install CrossCodex CLI
-curl -sSL https://github.com/complytime-labs/crosscodex/releases/latest/download/install.sh | sh
-
-# Initialize a project
-crosscodex project init my-compliance-analysis
-cd my-compliance-analysis
-
-# Import compliance catalogs
-crosscodex catalog import --url https://example.com/nist-800-53.json --name "NIST 800-53"
-crosscodex catalog import --url https://example.com/iso27001.json --name "ISO 27001"
-
-# Run semantic analysis
-crosscodex run start --source "NIST 800-53" --target "ISO 27001"
-
-# View results
-crosscodex results summary
-```
-
-The CLI automatically starts an embedded daemon on first use - no additional setup required.
+CrossCodex is in early development. The Go monorepo provides package interfaces, protobuf service contracts, and a configuration system. The CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
 
 ## Architecture
 
-CrossCodex consists of seven core services that can run embedded in a single process or distributed across multiple hosts:
+The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides package-level foundations (`pkg/oscal`, `pkg/analyzer`, `pkg/llmclient`, `pkg/graphdb`, `pkg/natsbus`); full service implementations are not yet built.
 
 ```mermaid
-flowchart TB
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#ffffff',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+flowchart TD
     subgraph external ["External Sources"]
         docs["Documents<br/>PDF, DOCX, HTML"]
     end
 
     subgraph processing ["Processing Pipeline"]
-        direction TB
+        direction TD
         ingestion["Ingestion Service<br/>Python + Docling"]
         catalog["Catalog Service<br/>Go + OSCAL"]
         analysis["Analysis Engine<br/>Go + Plugins"]
@@ -102,6 +89,32 @@ Adding new analysis capabilities requires only implementing the Analyzer interfa
 
 ## Deployment Modes
 
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#ffffff',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+stateDiagram-v2
+    [*] --> Embedded
+    Embedded --> Quadlet : Team grows
+    Quadlet --> Distributed : Production scale
+
+    Embedded : All services in one process
+    Embedded : PostgreSQL in container
+    Embedded : Local filesystem storage
+
+    Quadlet : Systemd-managed containers
+    Quadlet : Shared PostgreSQL / NATS / MinIO
+
+    Distributed : Services scale independently
+    Distributed : External PostgreSQL + NATS cluster
+    Distributed : S3-compatible object storage
+```
+
 ### Embedded (Laptop, CI)
 - All services in one process
 - PostgreSQL in container (auto-managed)
@@ -111,7 +124,7 @@ Adding new analysis capabilities requires only implementing the Analyzer interfa
 ### Quadlet (Small Team, Single Host)
 - Systemd-managed containers via quadlet
 - Shared PostgreSQL, NATS, MinIO
-- `deploy/quadlet/` unit files + `deploy/kustomize/overlays/`
+- Deployment manifests planned under `deploy/`
 
 ### Distributed (Production, Multi-tenant)
 - Services scale independently
@@ -192,9 +205,9 @@ crosscodex/                      # Main monorepo
   api/proto/                     # Protobuf definitions
   pkg/                           # Public SDK packages
   cmd/                           # CLI and daemon binaries
-  internal/                      # Service implementations
-  deploy/                        # Quadlet units, kustomize manifests, skaffold config
-  tests/                         # Integration and E2E tests
+  internal/                      # Service implementations (planned)
+  deploy/                        # Deployment manifests (planned)
+  tests/                         # Integration and E2E tests (planned)
 ```
 
 ### Build Commands
@@ -206,30 +219,26 @@ curl -sL https://taskfile.dev/install.sh | sh
 # Build all binaries
 task build
 
-# Run unit tests
+# Run all tests
+task test
+
+# Run unit tests only
 task test:unit
 
-# Run integration tests (requires containers)
-task test:integration:embedded
-task test:integration:distributed
-
-# Build container images
-task build:images
-
-# Format and lint
-task fmt
+# Lint
 task lint
+
+# Generate protobuf code
+task generate
 ```
 
 ### Testing Strategy
 
-| Test Type | Framework | Scope |
-|-----------|-----------|-------|
-| **Unit** | Go testing | Individual packages, mocked dependencies |
-| **Integration** | Go testing + containers | Service interactions, real database |
-| **E2E** | Venom | Full pipeline, user scenarios |
-
-Integration tests use quadlet-managed containers (via skaffold) to spin up real infrastructure (PostgreSQL, NATS, MinIO) and test against actual service endpoints.
+| Test Type | Framework | Status |
+|-----------|-----------|--------|
+| **Unit** | Go testing | Available (`task test:unit`) |
+| **Integration** | Go testing + containers | Planned |
+| **E2E** | Venom | Planned |
 
 ### Contributing
 
@@ -245,6 +254,39 @@ For large features, open an issue first to discuss the approach.
 ## Security & Compliance
 
 ### Multi-tenant Isolation (Defense-in-Depth)
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#ffffff',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+flowchart TD
+    req["Tenant Request"]
+    gw["Gateway<br/>mTLS, JWT, RBAC"]
+    svc["Services<br/>gRPC metadata validation"]
+    nats["NATS<br/>Tenant-scoped subjects + ACLs"]
+    pg["PostgreSQL<br/>Row-Level Security"]
+    obj["Object Store<br/>Tenant-prefixed paths"]
+    age["Graph / AGE<br/>Separate graph per tenant"]
+
+    req --> gw
+    gw -->|identity verified| svc
+    svc --> nats
+    svc --> pg
+    svc --> obj
+    svc --> age
+
+    classDef sysA fill:#3e6fa0,color:#ffffff,stroke:#7c8ba1
+    classDef sysB fill:#3a8054,color:#ffffff,stroke:#7c8ba1
+    classDef sysC fill:#7457b8,color:#ffffff,stroke:#7c8ba1
+    class req sysA
+    class gw,svc sysB
+    class nats,pg,obj,age sysC
+```
 
 Every layer enforces tenant isolation independently:
 
