@@ -1,248 +1,48 @@
 version: '3'
 
-vars:
-  MODULE: github.com/complytime-labs/crosscodex
-  BUILD_DIR: .build
-  TEST_OUTPUT: .test-output
-
 includes:
   dev:
     taskfile: .taskfiles/dev.yml
 
+vars:
+  MODULE: github.com/complytime-labs/crosscodex
+  BUILD_DIR: .build
+  TEST_DIR: '{{.TEST_DIR | default ".test-output"}}'
+
 tasks:
   default:
-    desc: Show available tasks
-    cmds:
-      - task --list
+    silent: true
+    cmd: |
+      task --list 2>/dev/null
 
   generate:
-    desc: Generate protobuf code using buf
-    dir: api/proto
+    desc: "Alias for dev:generate"
     cmds:
-      - buf generate
-    sources:
-      - "**/*.proto"
-      - buf.gen.yaml
-    generates:
-      - ../gen/go/**/*.pb.go
+      - task: dev:generate
 
   build:
-    desc: Build all binaries
-    deps: [generate]
-    vars:
-      VERSION:
-        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
-      GIT_COMMIT:
-        sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
-      BUILD_DATE:
-        sh: date -u +%Y-%m-%dT%H:%M:%SZ
-      LDFLAGS: >-
-        -X {{.MODULE}}/internal/version.Version={{.VERSION}}
-        -X {{.MODULE}}/internal/version.GitCommit={{.GIT_COMMIT}}
-        -X {{.MODULE}}/internal/version.BuildDate={{.BUILD_DATE}}
+    desc: "Alias for dev:build"
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex ./cmd/crosscodex
-      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodexd ./cmd/crosscodexd
-    sources:
-      - "**/*.go"
-      - go.mod
-      - go.sum
-    generates:
-      - "{{.BUILD_DIR}}/crosscodex"
-      - "{{.BUILD_DIR}}/crosscodexd"
+      - task: dev:build
 
   test:
-    desc: Run all tests
-    vars:
-      MODE: '{{.MODE | default "human"}}'
+    desc: "Alias for dev:test"
     cmds:
-      - mkdir -p {{.TEST_OUTPUT}}
-      - cmd: go test -v -race -count=1 -coverprofile={{.TEST_OUTPUT}}/coverage.out ./... 2>&1 | tee {{.TEST_OUTPUT}}/test.log
-        ignore_error: true
-      - task: test:report
-
-  test:report:
-    desc: Display test results
-    internal: true
-    vars:
-      MODE: '{{.MODE | default "human"}}'
-    cmds:
-      - cmd: |
-          if [ "{{.MODE}}" = "llm" ]; then
-            grep -E '(^---\s+(FAIL|PASS)|^FAIL|^ok\s)' {{.TEST_OUTPUT}}/test.log
-          else
-            echo ""
-            echo "Coverage:"
-            go tool cover -func={{.TEST_OUTPUT}}/coverage.out | tail -1
-          fi
-      - cmd: grep -q '^FAIL' {{.TEST_OUTPUT}}/test.log && exit 1 || true
-
-  test:unit:
-    desc: Run unit tests (with protobuf generation)
-    deps: [generate]
-    cmds:
-      - mkdir -p {{.TEST_OUTPUT}}
-      - go test -v -race -coverprofile={{.TEST_OUTPUT}}/coverage.out ./...
-
-  test:integration:db:up:
-    desc: Start PostgreSQL container for integration tests
-    vars:
-      CONTAINER_NAME: crosscodex-test-db
-      CONTAINER_IMAGE: crosscodex-test-db:latest
-      CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
-    cmds:
-      - '{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f pkg/db/testdata/Containerfile pkg/db/testdata'
-      - |
-        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
-          -p 15432:5432 \
-          -e POSTGRES_USER=postgres \
-          -e POSTGRES_PASSWORD=integration \
-          -e POSTGRES_DB=crosscodex_test \
-          {{.CONTAINER_IMAGE}}
-      - |
-        echo "Waiting for PostgreSQL..."
-        for i in $(seq 1 30); do
-          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -U postgres -q 2>/dev/null && break
-          sleep 1
-        done
-        {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -U postgres -q || (echo "PostgreSQL failed to start"; exit 1)
-
-  test:integration:
-    desc: Run integration tests (starts container if needed)
-    deps: [test:integration:db:up]
-    env:
-      TEST_DATABASE_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=disable"
-    cmds:
-      - mkdir -p {{.TEST_OUTPUT}}
-      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_OUTPUT}}/integration-coverage.out ./pkg/db/... 2>&1 | tee {{.TEST_OUTPUT}}/integration.log
-
-  test:integration:db:down:
-    desc: Stop and remove the integration test database container
-    vars:
-      CONTAINER_NAME: crosscodex-test-db
-      CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
-    cmds:
-      - '{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}'
+      - task: dev:test
 
   lint:
-    desc: Run linters
-    deps: [generate]
+    desc: "Alias for dev:lint"
     cmds:
-      - go vet ./...
-      - go fmt ./...
-      - cmd: golangci-lint run
-        ignore_error: true
+      - task: dev:lint
 
-  mega-lint:
-    desc: "Alias for dev:mega-lint"
-    cmds:
-      - task: dev:mega-lint
-
-  mega-lint-fix:
-    desc: "Alias for dev:mega-lint-fix"
-    cmds:
-      - task: dev:mega-lint-fix
+  check:
+    desc: Run all quality gates
+    deps: [lint, test]
 
   clean:
-    desc: Remove build artifacts
+    desc: Remove build artifacts and test output
     cmds:
       - rm -rf {{.BUILD_DIR}}
-      - rm -rf {{.TEST_OUTPUT}}
+      - rm -rf {{.TEST_DIR}}
       - rm -rf api/gen
-      - rm -rf megalint_reports
-
-  deps:
-    desc: Download dependencies
-    cmds:
-      - go mod download
-
-  tidy:
-    desc: Tidy dependencies (run after generate to avoid removing generated code deps)
-    deps: [generate]
-    cmds:
-      - go mod tidy
-
-  fetch-schemas:
-    desc: Fetch OSCAL and gemara schemas
-    vars:
-      OSCAL_VERSION:
-        sh: curl -s https://api.github.com/repos/usnistgov/OSCAL/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
-      GEMARA_VERSION:
-        sh: curl -s https://api.github.com/repos/gemaraproj/gemara/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
-      OSCAL_BASE_URL: https://github.com/usnistgov/OSCAL/releases/download/v{{.OSCAL_VERSION}}
-      GEMARA_BASE_URL: https://raw.githubusercontent.com/gemaraproj/gemara/v{{.GEMARA_VERSION}}
-      SCHEMAS_DIR: schemas
-    cmds:
-      - echo "Fetching OSCAL schemas version {{.OSCAL_VERSION}}..."
-      - mkdir -p {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema
-      - mkdir -p {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema
-      - mkdir -p {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}
-      - |
-        # Fetch OSCAL JSON schemas from release assets
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_complete_schema.json \
-          {{.OSCAL_BASE_URL}}/oscal_complete_schema.json
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_catalog_schema.json \
-          {{.OSCAL_BASE_URL}}/oscal_catalog_schema.json
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_profile_schema.json \
-          {{.OSCAL_BASE_URL}}/oscal_profile_schema.json
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_component_schema.json \
-          {{.OSCAL_BASE_URL}}/oscal_component_schema.json
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_ssp_schema.json \
-          {{.OSCAL_BASE_URL}}/oscal_ssp_schema.json
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_assessment-plan_schema.json \
-          {{.OSCAL_BASE_URL}}/oscal_assessment-plan_schema.json
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_assessment-results_schema.json \
-          {{.OSCAL_BASE_URL}}/oscal_assessment-results_schema.json
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/json-schema/oscal_poam_schema.json \
-          {{.OSCAL_BASE_URL}}/oscal_poam_schema.json
-      - |
-        # Fetch OSCAL metaschema definitions
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema/oscal_catalog_metaschema_RESOLVED.xml \
-          {{.OSCAL_BASE_URL}}/oscal_catalog_metaschema_RESOLVED.xml
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema/oscal_profile_metaschema_RESOLVED.xml \
-          {{.OSCAL_BASE_URL}}/oscal_profile_metaschema_RESOLVED.xml
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema/oscal_component_metaschema_RESOLVED.xml \
-          {{.OSCAL_BASE_URL}}/oscal_component_metaschema_RESOLVED.xml
-        curl -sSL -o {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/metaschema/oscal_ssp_metaschema_RESOLVED.xml \
-          {{.OSCAL_BASE_URL}}/oscal_ssp_metaschema_RESOLVED.xml
-      - echo "OSCAL schemas downloaded to {{.SCHEMAS_DIR}}/oscal/{{.OSCAL_VERSION}}/"
-      - echo "Fetching gemara CUE schemas version {{.GEMARA_VERSION}}..."
-      - |
-        # Fetch gemara CUE schema files
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/auditlog.cue \
-          {{.GEMARA_BASE_URL}}/auditlog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/capabilitycatalog.cue \
-          {{.GEMARA_BASE_URL}}/capabilitycatalog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/collections.cue \
-          {{.GEMARA_BASE_URL}}/collections.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/controlcatalog.cue \
-          {{.GEMARA_BASE_URL}}/controlcatalog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/enforcementlog.cue \
-          {{.GEMARA_BASE_URL}}/enforcementlog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/entities.cue \
-          {{.GEMARA_BASE_URL}}/entities.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/evaluationlog.cue \
-          {{.GEMARA_BASE_URL}}/evaluationlog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/guidancecatalog.cue \
-          {{.GEMARA_BASE_URL}}/guidancecatalog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/lexicon.cue \
-          {{.GEMARA_BASE_URL}}/lexicon.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/mapping_inline.cue \
-          {{.GEMARA_BASE_URL}}/mapping_inline.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/mappingdocument.cue \
-          {{.GEMARA_BASE_URL}}/mappingdocument.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/metadata.cue \
-          {{.GEMARA_BASE_URL}}/metadata.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/policy.cue \
-          {{.GEMARA_BASE_URL}}/policy.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/principlecatalog.cue \
-          {{.GEMARA_BASE_URL}}/principlecatalog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/riskcatalog.cue \
-          {{.GEMARA_BASE_URL}}/riskcatalog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/threatcatalog.cue \
-          {{.GEMARA_BASE_URL}}/threatcatalog.cue
-        curl -sSL -o {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/vectorcatalog.cue \
-          {{.GEMARA_BASE_URL}}/vectorcatalog.cue
-      - echo "Gemara schemas downloaded to {{.SCHEMAS_DIR}}/gemara/{{.GEMARA_VERSION}}/"
-      - echo "Schemas fetch complete."
+      - rm -rf megalinter-reports

@@ -32,9 +32,9 @@ func TestWithConnMaxLifetime(t *testing.T) {
 }
 
 func TestNewPoolConfigFrom(t *testing.T) {
-	cfg := NewPoolConfigFrom("postgres://localhost/test", 20, "require", []string{"age", "vector"})
-	if cfg.DSN != "postgres://localhost/test" {
-		t.Errorf("DSN = %q, want postgres://localhost/test", cfg.DSN)
+	cfg := NewPoolConfigFrom("postgres://localhost/test", 20, "require", []string{"age", "vector"}) // DevSkim: ignore DS162092 — test fixture
+	if cfg.DSN != "postgres://localhost/test" {                                                     // DevSkim: ignore DS162092 — test fixture
+		t.Errorf("DSN = %q, want postgres://localhost/test", cfg.DSN)                               // DevSkim: ignore DS162092 — test fixture
 	}
 	if cfg.MaxOpenConns != 20 {
 		t.Errorf("MaxOpenConns = %d, want 20", cfg.MaxOpenConns)

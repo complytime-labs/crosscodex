@@ -7,6 +7,12 @@ FROM docker.io/apache/age:release_PG16_1.5.0
 
 USER root
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Reason: base image (apache/age) tracks Debian point releases; pinning
+# build-time-only packages to exact versions adds maintenance burden with
+# no security benefit since they are purged in the same layer.
+# hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
@@ -15,15 +21,23 @@ RUN apt-get update && \
         postgresql-server-dev-16 && \
     curl -sL https://github.com/pgvector/pgvector/archive/refs/tags/v0.7.4.tar.gz \
         | tar xz -C /tmp && \
-    cd /tmp/pgvector-0.7.4 && \
-    make && make install && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/pgvector-0.7.4
+
+RUN make && make install && \
     apt-get purge -y build-essential curl postgresql-server-dev-16 && \
     apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/* /tmp/pgvector-0.7.4
+    rm -rf /tmp/pgvector-0.7.4
+
+WORKDIR /
 
 RUN echo "CREATE EXTENSION IF NOT EXISTS age CASCADE;" > /docker-entrypoint-initdb.d/01-age.sql && \
     echo "CREATE EXTENSION IF NOT EXISTS vector;" > /docker-entrypoint-initdb.d/02-vector.sql
 
 USER postgres
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
+    CMD ["pg_isready"]
 
 CMD ["postgres", "-c", "shared_preload_libraries=age"]

@@ -3,8 +3,8 @@ package config
 import "testing"
 
 func TestDeepMerge_ScalarOverride(t *testing.T) {
-	base := mustParseYAML(t, "llm:\n  gateway_url: \"http://base:4000\"\n  timeout: 30\n")
-	overlay := mustParseYAML(t, "llm:\n  gateway_url: \"http://overlay:5000\"\n")
+	base := mustParseYAML(t, "llm:\n  gateway_url: \"https://base:4000\"\n  timeout: 30\n")
+	overlay := mustParseYAML(t, "llm:\n  gateway_url: \"https://overlay:5000\"\n")
 
 	merged, err := deepMerge(base, overlay)
 	if err != nil {
@@ -18,8 +18,8 @@ func TestDeepMerge_ScalarOverride(t *testing.T) {
 		} `yaml:"llm"`
 	}](t, merged)
 
-	if cfg.LLM.GatewayURL != "http://overlay:5000" {
-		t.Errorf("gateway_url = %q, want %q", cfg.LLM.GatewayURL, "http://overlay:5000")
+	if cfg.LLM.GatewayURL != "https://overlay:5000" {
+		t.Errorf("gateway_url = %q, want %q", cfg.LLM.GatewayURL, "https://overlay:5000")
 	}
 	if cfg.LLM.Timeout != 30 {
 		t.Errorf("timeout = %d, want %d (should be preserved from base)", cfg.LLM.Timeout, 30)
@@ -27,7 +27,7 @@ func TestDeepMerge_ScalarOverride(t *testing.T) {
 }
 
 func TestDeepMerge_NewKeyAdded(t *testing.T) {
-	base := mustParseYAML(t, "llm:\n  gateway_url: \"http://base:4000\"\n")
+	base := mustParseYAML(t, "llm:\n  gateway_url: \"https://base:4000\"\n")
 	overlay := mustParseYAML(t, "storage:\n  objects:\n    backend: s3\n")
 
 	merged, err := deepMerge(base, overlay)
@@ -46,7 +46,7 @@ func TestDeepMerge_NewKeyAdded(t *testing.T) {
 		} `yaml:"storage"`
 	}](t, merged)
 
-	if cfg.LLM.GatewayURL != "http://base:4000" {
+	if cfg.LLM.GatewayURL != "https://base:4000" {
 		t.Errorf("gateway_url = %q, want preserved from base", cfg.LLM.GatewayURL)
 	}
 	if cfg.Storage.Objects.Backend != "s3" {
@@ -109,7 +109,7 @@ func TestDeepMerge_NestedMaps(t *testing.T) {
 }
 
 func TestDeepMerge_NilBase(t *testing.T) {
-	overlay := mustParseYAML(t, "llm:\n  gateway_url: \"http://new:4000\"\n")
+	overlay := mustParseYAML(t, "llm:\n  gateway_url: \"https://new:4000\"\n")
 
 	merged, err := deepMerge(nil, overlay)
 	if err != nil {
@@ -122,13 +122,13 @@ func TestDeepMerge_NilBase(t *testing.T) {
 		} `yaml:"llm"`
 	}](t, merged)
 
-	if cfg.LLM.GatewayURL != "http://new:4000" {
-		t.Errorf("gateway_url = %q, want %q", cfg.LLM.GatewayURL, "http://new:4000")
+	if cfg.LLM.GatewayURL != "https://new:4000" {
+		t.Errorf("gateway_url = %q, want %q", cfg.LLM.GatewayURL, "https://new:4000")
 	}
 }
 
 func TestDeepMerge_NilOverlay(t *testing.T) {
-	base := mustParseYAML(t, "llm:\n  gateway_url: \"http://base:4000\"\n")
+	base := mustParseYAML(t, "llm:\n  gateway_url: \"https://base:4000\"\n")
 
 	merged, err := deepMerge(base, nil)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestDeepMerge_NilOverlay(t *testing.T) {
 		} `yaml:"llm"`
 	}](t, merged)
 
-	if cfg.LLM.GatewayURL != "http://base:4000" {
+	if cfg.LLM.GatewayURL != "https://base:4000" {
 		t.Errorf("gateway_url = %q, want preserved", cfg.LLM.GatewayURL)
 	}
 }

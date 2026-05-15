@@ -146,7 +146,7 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 ## Package Ownership & Responsibility
 
 | Package | Purpose | Key Dependencies |
-|---------|---------|------------------|
+| ------- | ------- | ---------------- |
 | **pkg/config** | Configuration loading, XDG compliance, precedence resolution | None (foundational) |
 | **pkg/db** | PostgreSQL connection pooling, transaction management | pkg/config |
 | **pkg/graphdb** | Apache AGE openCypher queries, relationship traversal | pkg/db |

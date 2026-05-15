@@ -59,12 +59,12 @@ message TemporalAttributes {
 // Pagination for list operations.
 message Pagination {
   int32 page_size = 1;   // Max results per page (default 50, max 1000)
-  string page_token = 2; // Opaque continuation token
+  string page_token = 2; // Opaque continuation token // kics-scan ignore-line
 }
 
 // PageInfo returned with list responses.
 message PageInfo {
-  string next_page_token = 1;
+  string next_page_token = 1; // kics-scan ignore-line
   int64 total_count = 2;  // Total matching records (optional, expensive)
 }
 

@@ -1,28 +1,156 @@
-version: "3"
+version: '3'
 
 vars:
-  # Task v3 does not inherit root vars in included files; keep in sync with Taskfile.yml.
-  TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
+  MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
+  BUILD_DIR: '{{.ROOT_DIR}}/{{.BUILD_DIR | default ".build"}}'
+  TEST_DIR: '{{.ROOT_DIR}}/{{.TEST_DIR | default ".test-output"}}'
+  CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+  POSTGRES_USER: '{{.POSTGRES_USER | default "postgres"}}'
+  POSTGRES_PASSWORD: '{{.POSTGRES_PASSWORD | default "integration"}}'
+  POSTGRES_DB: '{{.POSTGRES_DB | default "crosscodex_test"}}'
 
 tasks:
-  mega-lint:
-    desc: Run MegaLinter in a container (auto-detects docker/podman)
-    vars:
-      CONTAINER_RUNTIME:
-        sh: 'command -v podman >/dev/null 2>&1 && echo "podman" || echo "docker"'
-      APPLY_FIXES: '{{.APPLY_FIXES | default "none"}}'
-    cmds:
-      - >-
-        {{.CONTAINER_RUNTIME}} run --rm
-        --platform linux/amd64
-        -v {{.ROOT_DIR}}:/tmp/lint:rw,z
-        -e SHOW_ELAPSED_TIME=true
-        -e APPLY_FIXES={{.APPLY_FIXES}}
-        ghcr.io/oxsecurity/megalinter:v9
+  default:
+    silent: true
+    cmd: task dev --list
 
-  mega-lint-fix:
-    desc: Run MegaLinter with auto-fix enabled
+  generate:
+    desc: Generate protobuf code using buf
+    dir: '{{.ROOT_DIR}}/api/proto'
     cmds:
-      - task: mega-lint
+      - buf generate
+    sources:
+      - "**/*.proto"
+      - buf.gen.yaml
+    generates:
+      - ../gen/go/**/*.pb.go
+
+  build:
+    desc: Build all binaries
+    deps: [generate]
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+      GIT_COMMIT:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+      BUILD_DATE:
+        sh: date -u +%Y-%m-%dT%H:%M:%SZ
+      LDFLAGS: >-
+        -X {{.MODULE}}/internal/version.Version={{.VERSION}}
+        -X {{.MODULE}}/internal/version.GitCommit={{.GIT_COMMIT}}
+        -X {{.MODULE}}/internal/version.BuildDate={{.BUILD_DATE}}
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex ./cmd/crosscodex
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodexd ./cmd/crosscodexd
+    sources:
+      - "{{.ROOT_DIR}}/**/*.go"
+      - "{{.ROOT_DIR}}/go.mod"
+      - "{{.ROOT_DIR}}/go.sum"
+    generates:
+      - "{{.BUILD_DIR}}/crosscodex"
+      - "{{.BUILD_DIR}}/crosscodexd"
+
+  test:
+    desc: Run all tests
+    vars:
+      MODE: '{{.MODE | default "human"}}'
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - cmd: go test -v -race -count=1 -coverprofile={{.TEST_DIR}}/coverage.out ./... 2>&1 | tee {{.TEST_DIR}}/test.log
+        ignore_error: true
+      - task: test-report
         vars:
-          APPLY_FIXES: "all"
+          MODE: '{{.MODE}}'
+
+  test-report:
+    desc: Display test results
+    internal: true
+    vars:
+      MODE: '{{.MODE | default "human"}}'
+    cmds:
+      - cmd: |
+          if [ "{{.MODE}}" = "llm" ]; then
+            grep -E '(^---\s+(FAIL|PASS)|^FAIL|^ok\s)' {{.TEST_DIR}}/test.log
+          else
+            echo ""
+            echo "Coverage:"
+            go tool cover -func={{.TEST_DIR}}/coverage.out | tail -1
+          fi
+      - cmd: grep -q '^FAIL' {{.TEST_DIR}}/test.log && exit 1 || true
+
+  test-unit:
+    desc: Run unit tests (with protobuf generation)
+    deps: [generate]
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -race -coverprofile={{.TEST_DIR}}/coverage.out ./...
+
+  test-integration-db-up:
+    desc: Start PostgreSQL container for integration tests
+    vars:
+      CONTAINER_NAME: crosscodex-test-db
+      CONTAINER_IMAGE: crosscodex-test-db:latest
+    cmds:
+      - '{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/pkg/db/testdata/Containerfile {{.ROOT_DIR}}/pkg/db/testdata'
+      - |
+        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
+          -p 15432:5432 \
+          -e POSTGRES_USER={{.POSTGRES_USER}} \
+          -e POSTGRES_PASSWORD={{.POSTGRES_PASSWORD}} \
+          -e POSTGRES_DB={{.POSTGRES_DB}} \
+          {{.CONTAINER_IMAGE}}
+      - |
+        echo "Waiting for PostgreSQL..."
+        for i in $(seq 1 30); do
+          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -U {{.POSTGRES_USER}} -q 2>/dev/null && break
+          sleep 1
+        done
+        {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -U {{.POSTGRES_USER}} -q || (echo "PostgreSQL failed to start"; exit 1)
+
+  test-integration:
+    desc: Run integration tests (starts container if needed)
+    deps: [test-integration-db-up]
+    env:
+      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=disable" # DevSkim: ignore DS162092 — integration test fixture DSN
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out ./pkg/db/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+
+  test-integration-db-down:
+    desc: Stop and remove the integration test database container
+    vars:
+      CONTAINER_NAME: crosscodex-test-db
+    cmds:
+      - '{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}'
+
+  lint:
+    desc: Run linters
+    deps: [generate]
+    cmds:
+      - go vet ./...
+      - go fmt ./...
+      - cmd: golangci-lint run
+        ignore_error: true
+
+  deps:
+    desc: Download dependencies
+    cmds:
+      - go mod download
+
+  tidy:
+    desc: Tidy dependencies (run after generate to avoid removing generated code deps)
+    deps: [generate]
+    cmds:
+      - go mod tidy
+
+  fetch-schemas:
+    desc: Fetch OSCAL and gemara schemas
+    vars:
+      OSCAL_VERSION:
+        sh: curl -s https://api.github.com/repos/usnistgov/OSCAL/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
+      GEMARA_VERSION:
+        sh: curl -s https://api.github.com/repos/gemaraproj/gemara/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
+      SCHEMAS_DIR: '{{.ROOT_DIR}}/schemas'
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/fetch-schemas.sh" "{{.OSCAL_VERSION}}" "{{.GEMARA_VERSION}}" "{{.SCHEMAS_DIR}}"
