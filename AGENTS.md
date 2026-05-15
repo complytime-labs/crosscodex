@@ -274,7 +274,7 @@ When `tls.fips.enabled: true` in configuration:
 
 ## Build & Task Automation
 
-Use `task` (https://taskfile.dev) for all build operations:
+Use `task` (<https://taskfile.dev>) for all build operations:
 
 ```bash
 task --list         # Show available tasks
@@ -337,6 +337,56 @@ func NewClient(endpoint string, opts ...Option) (*Client, error) {
     // Apply options
 }
 ```
+
+## Defensive Design Principles
+
+These principles apply to all packages, not just database code. They reflect hard-won decisions about how CrossCodex handles failure, isolation, and human error.
+
+### Fail Closed, Not Open
+
+When a safety mechanism is absent or misconfigured, the system must deny access rather than grant it. Examples:
+- If `app.current_tenant` is not set, RLS policies match zero rows (not all rows).
+- If a graph name can't be derived, the query fails with an error (not a fallback graph).
+- If an extension is missing at startup, the service refuses to start with a clear error.
+
+Design every isolation boundary so that the default state — before any configuration — is "deny all."
+
+### Errors Must Be Actionable
+
+Every error a human can trigger must tell them: what happened, why it was blocked, and what to do instead. This applies to database triggers, API responses, CLI output, and log messages. A tired operator at 2am should be able to read the error and know their next step without consulting documentation.
+
+Bad: `ERROR: permission denied`
+Good: `ERROR: cannot modify job abc123: status is "completed". To retry, create a new job instead of resetting this one.`
+
+### Verify the Negative Path
+
+Every safety mechanism needs a test that proves it works by attempting the forbidden operation and asserting three things:
+1. The operation returned an error (not silent success).
+2. The error message is actionable (contains enough context to diagnose).
+3. The data is unchanged after the failed operation (the error wasn't raised but swallowed).
+
+Skipping step 3 is how silent data corruption ships.
+
+### Threat Model: Tired Admin at 2am
+
+Design guardrails assuming the adversary is not a malicious attacker but a well-intentioned operator making reasonable-seeming manual interventions under pressure. Test for:
+- Bulk operations that hit a mix of protected and unprotected rows (must fail entirely, not partially).
+- Attempts to disable safety mechanisms (triggers, RLS) via direct SQL.
+- Privilege escalation through operations the application role shouldn't have (TRUNCATE, ALTER, COPY).
+- Manual "fixes" like resetting a completed job's status or reassigning rows between tenants.
+
+The system should make the wrong thing hard and the right thing obvious.
+
+### Privilege Separation
+
+Application code runs under a restricted database role, not the table owner. The table owner (superuser) bypasses RLS and triggers. This is PostgreSQL's design, not a bug — but it means:
+- Tests must use the restricted role to verify isolation, not the superuser.
+- GRANTs must be explicit and minimal (SELECT, INSERT, UPDATE, DELETE — not TRUNCATE, not ALTER, not TRIGGER).
+- Comment in the codebase WHY the restricted role exists, because the next person will be tempted to simplify by using the superuser for everything.
+
+### No Partial Success on Safety-Critical Operations
+
+When a batch operation (UPDATE, DELETE) touches rows with mixed protection states (some completed, some not), the entire statement must fail — not silently succeed for the unprotected rows. PostgreSQL's per-row BEFORE triggers provide this guarantee, but tests must verify it explicitly because it's the kind of behavior that breaks silently if someone refactors triggers into rules or policies.
 
 ## Next Steps
 

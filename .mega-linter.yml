@@ -1,0 +1,139 @@
+# =============================================================================
+# MegaLinter Configuration for ComplyTime org-infra
+# =============================================================================
+#
+# Enterprise-ready linting configuration optimized for infrastructure repositories.
+# Provides comprehensive security scanning, code quality, and IaC validation.
+#
+# Usage in other repos:
+#   EXTENDS: https://github.com/complytime/org-infra/raw/main/.mega-linter.yml
+#
+# Documentation: https://megalinter.io/latest/supported-linters/
+# =============================================================================
+
+# =============================================================================
+# Core Configuration
+# =============================================================================
+
+# Global settings
+IGNORE_GITIGNORED_FILES: true
+PRINT_ALPACA: false
+SARIF_REPORTER: true
+
+# Exclude tool directories and temporary files
+ADDITIONAL_EXCLUDED_DIRECTORIES:
+  - ".agents"          # AI agent configurations
+  - ".claude"          # Claude AI configurations
+  - ".cursor"          # Cursor IDE configurations
+  - ".opencode"        # OpenCode framework
+  - ".specify"         # SpecKit framework
+  - ".test-output"     # Test artifacts
+  - ".uf"              # Unbound Force tooling
+  - ".venv"            # Python virtual environments
+  - "openspec"         # OpenSpec specifications
+  - "specs"            # SpecKit specifications
+
+# =============================================================================
+# Enabled Linters
+# =============================================================================
+
+ENABLE_LINTERS:
+  # ---------------------------------------------------------------------------
+  # Core Languages (present in this repository)
+  # ---------------------------------------------------------------------------
+  - BASH_SHELLCHECK               # Shell script analysis
+  - BASH_SHFMT                    # Shell script formatting
+  - PYTHON_RUFF                   # Modern Python linter (replaces flake8/pylint)
+  - PYTHON_BLACK                  # Python code formatting
+  - PYTHON_ISORT                  # Python import sorting
+
+  # ---------------------------------------------------------------------------
+  # Configuration File Formats
+  # ---------------------------------------------------------------------------
+  - JSON_JSONLINT                 # JSON syntax validation
+  - YAML_YAMLLINT                 # YAML syntax validation
+  - MARKDOWN_MARKDOWNLINT         # Markdown formatting
+  - EDITORCONFIG_EDITORCONFIG_CHECKER  # Cross-editor consistency
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure-as-Code (valuable for org-wide reuse)
+  # ---------------------------------------------------------------------------
+  - ACTION_ACTIONLINT             # GitHub Actions workflow validation
+  - DOCKERFILE_HADOLINT           # Dockerfile best practices
+  - KUBERNETES_KUBECONFORM        # Kubernetes manifest validation
+  - TERRAFORM_TFLINT              # Terraform configuration validation
+  - CLOUDFORMATION_CFN_LINT       # AWS CloudFormation validation
+
+  # ---------------------------------------------------------------------------
+  # Security & Compliance (multi-layer defense)
+  # ---------------------------------------------------------------------------
+  - REPOSITORY_CHECKOV            # Infrastructure security scanning
+  - REPOSITORY_DEVSKIM            # Security pattern detection
+  - REPOSITORY_GRYPE              # Vulnerability scanning
+  - REPOSITORY_KICS               # Infrastructure security analysis
+  - REPOSITORY_SECRETLINT         # Secrets detection
+  - REPOSITORY_TRIVY              # Container/dependency security
+  - REPOSITORY_TRUFFLEHOG         # Additional secrets detection
+
+  # ---------------------------------------------------------------------------
+  # Code Quality & Documentation
+  # ---------------------------------------------------------------------------
+  - COPYPASTE_JSCPD               # Copy-paste detection
+
+# =============================================================================
+# Disabled Linters
+# =============================================================================
+
+DISABLE_LINTERS:
+  # Python - redundant with ruff
+  - PYTHON_FLAKE8                 # Replaced by PYTHON_RUFF
+  - PYTHON_PYLINT                 # Replaced by PYTHON_RUFF
+  - PYTHON_MYPY                   # Type checking not needed for infrastructure scripts
+  - PYTHON_PYRIGHT                # Redundant with mypy
+
+  # Security - high false positive rate
+  - PYTHON_BANDIT                 # 94 false positive assert warnings in test files
+  - REPOSITORY_GITLEAKS           # 152 false positives from test data (foo.sarif)
+
+  # Other
+  - REPOSITORY_KINGFISHER         # Redundant with other security tools
+
+# =============================================================================
+# Linter-Specific Configuration
+# =============================================================================
+
+# Python: Comprehensive ruff rule selection
+PYTHON_RUFF_ARGUMENTS:
+  - "--select=E,W,F,I,N,UP,YTT,BLE,B,A,COM,C4,DTZ,T10,DJ,EM,EXE,ICN,G,INP,PIE,T20,PT,Q,RSE,RET,SLF,SIM,TID,TCH,INT,ARG,PTH,TD,FIX,ERA,PD,PGH,PL,TRY,FLY,NPY,PERF,FURB,LOG,RUF"
+
+# Markdown: Disable language specification requirement for code blocks
+MARKDOWN_MARKDOWNLINT_ARGUMENTS:
+  - "--disable"
+  - "MD040"  # Fenced code blocks should have a language specified
+
+# KICS: Focus on actionable high/medium severity issues
+REPOSITORY_KICS_ARGUMENTS:
+  - "--minimal-ui"
+  - "--no-color"
+  - "--fail-on=high,medium"
+
+# DevSkim: Use external configuration file for rule customization
+REPOSITORY_DEVSKIM_CONFIG_FILE: .devskim.json
+
+# GitHub Actions: Prevent hangs on complex workflows
+ACTION_ACTIONLINT_ARGUMENTS:
+  - "-shellcheck="              # Disable shellcheck integration (prevents hangs)
+  - "-pyflakes="               # Disable pyflakes integration
+
+# GitHub Actions: Exclude problematic workflow causing hangs
+# reusable_crapload_analysis.yml line 95 contains a complex shell pipeline:
+# PACKAGES=$(echo "$CHANGED_FILES" | xargs -I{} dirname {} | grep -v '/vendor/' | grep -v '^vendor' | sort -u | sed 's|^|./|' | paste -sd ' ')
+# This 6-command pipeline with custom xargs flags causes actionlint to hang indefinitely.
+# The workflow is functionally correct per GitHub's native validation.
+ACTION_FILTER_REGEX_EXCLUDE: "reusable_crapload_analysis\\.yml"
+
+# =============================================================================
+# Development/Debugging (uncomment as needed)
+# =============================================================================
+
+#LOG_LEVEL: DEBUG

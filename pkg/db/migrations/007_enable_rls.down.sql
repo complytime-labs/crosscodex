@@ -1,0 +1,21 @@
+DROP POLICY IF EXISTS tenant_isolation ON embeddings;
+DROP POLICY IF EXISTS tenant_isolation ON vote_summaries;
+DROP POLICY IF EXISTS tenant_isolation ON classifications;
+DROP POLICY IF EXISTS tenant_isolation ON catalogs;
+DROP POLICY IF EXISTS tenant_isolation ON job_stages;
+DROP POLICY IF EXISTS tenant_isolation ON jobs;
+DROP POLICY IF EXISTS tenant_isolation ON tenants;
+
+ALTER TABLE embeddings DISABLE ROW LEVEL SECURITY;
+ALTER TABLE vote_summaries DISABLE ROW LEVEL SECURITY;
+ALTER TABLE classifications DISABLE ROW LEVEL SECURITY;
+ALTER TABLE catalogs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE job_stages DISABLE ROW LEVEL SECURITY;
+ALTER TABLE jobs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE tenants DISABLE ROW LEVEL SECURITY;
+
+REVOKE SELECT, INSERT, UPDATE, DELETE
+    ON ALL TABLES IN SCHEMA public
+    FROM app_user;
+
+DROP ROLE IF EXISTS app_user;

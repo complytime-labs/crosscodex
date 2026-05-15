@@ -1,0 +1,17 @@
+---
+extends: default
+
+# https://yamllint.readthedocs.io/en/stable/rules.html
+ignore: |
+  megalinter-reports/
+
+rules:
+  comments: disable
+  document-start: disable
+  empty-lines:
+    level: warning
+  indentation:
+    spaces: consistent
+  line-length: disable
+  truthy:
+    allowed-values: ["true", "false", "on"]
