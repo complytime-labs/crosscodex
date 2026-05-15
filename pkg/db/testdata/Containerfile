@@ -1,0 +1,29 @@
+# Integration test image: PostgreSQL 16 + Apache AGE 1.5.0 + pgvector 0.7.4
+#
+# Single-stage build: install pgvector from source tarball into the AGE
+# image (which is based on postgres:16 with AGE pre-installed).
+
+FROM docker.io/apache/age:release_PG16_1.5.0
+
+USER root
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        postgresql-server-dev-16 && \
+    curl -sL https://github.com/pgvector/pgvector/archive/refs/tags/v0.7.4.tar.gz \
+        | tar xz -C /tmp && \
+    cd /tmp/pgvector-0.7.4 && \
+    make && make install && \
+    apt-get purge -y build-essential curl postgresql-server-dev-16 && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/* /tmp/pgvector-0.7.4
+
+RUN echo "CREATE EXTENSION IF NOT EXISTS age CASCADE;" > /docker-entrypoint-initdb.d/01-age.sql && \
+    echo "CREATE EXTENSION IF NOT EXISTS vector;" > /docker-entrypoint-initdb.d/02-vector.sql
+
+USER postgres
+
+CMD ["postgres", "-c", "shared_preload_libraries=age"]

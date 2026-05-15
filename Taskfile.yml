@@ -5,6 +5,10 @@ vars:
   BUILD_DIR: .build
   TEST_OUTPUT: .test-output
 
+includes:
+  dev:
+    taskfile: .taskfiles/dev.yml
+
 tasks:
   default:
     desc: Show available tasks
@@ -81,6 +85,46 @@ tasks:
       - mkdir -p {{.TEST_OUTPUT}}
       - go test -v -race -coverprofile={{.TEST_OUTPUT}}/coverage.out ./...
 
+  test:integration:db:up:
+    desc: Start PostgreSQL container for integration tests
+    vars:
+      CONTAINER_NAME: crosscodex-test-db
+      CONTAINER_IMAGE: crosscodex-test-db:latest
+      CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+    cmds:
+      - '{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f pkg/db/testdata/Containerfile pkg/db/testdata'
+      - |
+        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
+          -p 15432:5432 \
+          -e POSTGRES_USER=postgres \
+          -e POSTGRES_PASSWORD=integration \
+          -e POSTGRES_DB=crosscodex_test \
+          {{.CONTAINER_IMAGE}}
+      - |
+        echo "Waiting for PostgreSQL..."
+        for i in $(seq 1 30); do
+          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -U postgres -q 2>/dev/null && break
+          sleep 1
+        done
+        {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -U postgres -q || (echo "PostgreSQL failed to start"; exit 1)
+
+  test:integration:
+    desc: Run integration tests (starts container if needed)
+    deps: [test:integration:db:up]
+    env:
+      TEST_DATABASE_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=disable"
+    cmds:
+      - mkdir -p {{.TEST_OUTPUT}}
+      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_OUTPUT}}/integration-coverage.out ./pkg/db/... 2>&1 | tee {{.TEST_OUTPUT}}/integration.log
+
+  test:integration:db:down:
+    desc: Stop and remove the integration test database container
+    vars:
+      CONTAINER_NAME: crosscodex-test-db
+      CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+    cmds:
+      - '{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}'
+
   lint:
     desc: Run linters
     deps: [generate]
@@ -90,12 +134,23 @@ tasks:
       - cmd: golangci-lint run
         ignore_error: true
 
+  mega-lint:
+    desc: "Alias for dev:mega-lint"
+    cmds:
+      - task: dev:mega-lint
+
+  mega-lint-fix:
+    desc: "Alias for dev:mega-lint-fix"
+    cmds:
+      - task: dev:mega-lint-fix
+
   clean:
     desc: Remove build artifacts
     cmds:
       - rm -rf {{.BUILD_DIR}}
       - rm -rf {{.TEST_OUTPUT}}
       - rm -rf api/gen
+      - rm -rf megalint_reports
 
   deps:
     desc: Download dependencies

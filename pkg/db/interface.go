@@ -2,42 +2,41 @@ package db
 
 import "context"
 
-// Connection represents a database connection pool.
-//
-// Implementations must be safe for concurrent use.
 type Connection interface {
-	// Begin starts a new transaction.
 	Begin(ctx context.Context) (Transaction, error)
-
-	// Query executes a query that returns rows.
 	Query(ctx context.Context, query string, args ...any) (Rows, error)
-
-	// QueryRow executes a query that returns at most one row.
 	QueryRow(ctx context.Context, query string, args ...any) Row
-
-	// Exec executes a query that does not return rows.
 	Exec(ctx context.Context, query string, args ...any) error
-
-	// Close closes the connection pool and releases resources.
 	Close() error
 }
 
-// Transaction provides ACID guarantees for a set of operations.
-//
-// Implementations must not be used concurrently.
 type Transaction interface {
-	// Commit commits the transaction.
 	Commit() error
-
-	// Rollback aborts the transaction.
 	Rollback() error
-
-	// Query executes a query within the transaction.
 	Query(ctx context.Context, query string, args ...any) (Rows, error)
-
-	// QueryRow executes a query that returns at most one row.
 	QueryRow(ctx context.Context, query string, args ...any) Row
-
-	// Exec executes a query that does not return rows.
 	Exec(ctx context.Context, query string, args ...any) error
+}
+
+// Pool extends Connection with lifecycle management and observability.
+type Pool interface {
+	Connection
+	Health(ctx context.Context) (*HealthStatus, error)
+	VerifyExtensions(ctx context.Context) error
+}
+
+// Migrator manages database schema migrations.
+type Migrator interface {
+	Up(ctx context.Context) error
+	Version(ctx context.Context) (version uint, dirty bool, err error)
+	Close() error
+}
+
+// TenantConnection wraps a Connection with tenant-scoped RLS enforcement.
+// Every transaction started via Begin() automatically sets
+// app.current_tenant for the duration of that transaction via SET LOCAL.
+// Query, QueryRow, and Exec are rejected with ErrTenantRequired because
+// SET LOCAL has no effect outside a transaction.
+type TenantConnection interface {
+	Connection
 }

@@ -1,0 +1,28 @@
+version: "3"
+
+vars:
+  # Task v3 does not inherit root vars in included files; keep in sync with Taskfile.yml.
+  TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
+
+tasks:
+  mega-lint:
+    desc: Run MegaLinter in a container (auto-detects docker/podman)
+    vars:
+      CONTAINER_RUNTIME:
+        sh: 'command -v podman >/dev/null 2>&1 && echo "podman" || echo "docker"'
+      APPLY_FIXES: '{{.APPLY_FIXES | default "none"}}'
+    cmds:
+      - >-
+        {{.CONTAINER_RUNTIME}} run --rm
+        --platform linux/amd64
+        -v {{.ROOT_DIR}}:/tmp/lint:rw,z
+        -e SHOW_ELAPSED_TIME=true
+        -e APPLY_FIXES={{.APPLY_FIXES}}
+        ghcr.io/oxsecurity/megalinter:v9
+
+  mega-lint-fix:
+    desc: Run MegaLinter with auto-fix enabled
+    cmds:
+      - task: mega-lint
+        vars:
+          APPLY_FIXES: "all"

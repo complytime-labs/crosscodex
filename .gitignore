@@ -44,5 +44,8 @@ credentials/
 schemas/*
 !schemas/README.md
 
+# Megalinter output
+megalinter-reports/
+
 # Planning Cruft
 docs/superpowers/
