@@ -5,7 +5,7 @@ import "testing"
 func TestConfig_ServiceConfig(t *testing.T) {
 	cfg := Config{
 		LLM: LLMConfig{
-			GatewayURL:     "http://localhost:4000",
+			GatewayURL:     "http://localhost:4000", // DevSkim: ignore DS162092 — test fixture
 			DefaultModel:   "qwen3:8b",
 			EmbeddingModel: "qwen3-embedding",
 			Timeout:        30,
@@ -22,7 +22,7 @@ func TestConfig_ServiceConfig(t *testing.T) {
 			},
 		},
 		Database: DatabaseConfig{
-			DSN:        "postgres://localhost:5432/crosscodex",
+			DSN:        "postgres://localhost:5432/crosscodex", // DevSkim: ignore DS162092 — test fixture
 			Extensions: []string{"age", "vector"},
 		},
 	}
@@ -38,25 +38,25 @@ func TestConfig_ServiceConfig(t *testing.T) {
 	if sc.Workers != 4 {
 		t.Errorf("Workers = %d, want %d", sc.Workers, 4)
 	}
-	if sc.LLM.GatewayURL != "http://localhost:4000" {
-		t.Errorf("LLM.GatewayURL = %q, want %q", sc.LLM.GatewayURL, "http://localhost:4000")
+	if sc.LLM.GatewayURL != "http://localhost:4000" { // DevSkim: ignore DS162092 — test fixture
+		t.Errorf("LLM.GatewayURL = %q, want %q", sc.LLM.GatewayURL, "http://localhost:4000") // DevSkim: ignore DS162092 — test fixture
 	}
-	if sc.Database.DSN != "postgres://localhost:5432/crosscodex" {
-		t.Errorf("Database.DSN = %q, want %q", sc.Database.DSN, "postgres://localhost:5432/crosscodex")
+	if sc.Database.DSN != "postgres://localhost:5432/crosscodex" { // DevSkim: ignore DS162092 — test fixture
+		t.Errorf("Database.DSN = %q, want %q", sc.Database.DSN, "postgres://localhost:5432/crosscodex") // DevSkim: ignore DS162092 — test fixture
 	}
 }
 
 func TestConfig_CLIConfig(t *testing.T) {
 	cfg := Config{
 		LLM: LLMConfig{
-			GatewayURL:   "http://localhost:4000",
+			GatewayURL:   "http://localhost:4000", // DevSkim: ignore DS162092 — test fixture
 			DefaultModel: "qwen3:8b",
 			Timeout:      30,
 		},
 		CLI: CLISettings{
 			Output:   "table",
 			NoColor:  true,
-			Endpoint: "http://localhost:8080",
+			Endpoint: "http://localhost:8080", // DevSkim: ignore DS162092 — test fixture
 		},
 	}
 
@@ -68,10 +68,10 @@ func TestConfig_CLIConfig(t *testing.T) {
 	if !cc.NoColor {
 		t.Error("NoColor = false, want true")
 	}
-	if cc.Endpoint != "http://localhost:8080" {
-		t.Errorf("Endpoint = %q, want %q", cc.Endpoint, "http://localhost:8080")
+	if cc.Endpoint != "http://localhost:8080" { // DevSkim: ignore DS162092 — test fixture
+		t.Errorf("Endpoint = %q, want %q", cc.Endpoint, "http://localhost:8080") // DevSkim: ignore DS162092 — test fixture
 	}
-	if cc.LLM.GatewayURL != "http://localhost:4000" {
-		t.Errorf("LLM.GatewayURL = %q, want %q", cc.LLM.GatewayURL, "http://localhost:4000")
+	if cc.LLM.GatewayURL != "http://localhost:4000" { // DevSkim: ignore DS162092 — test fixture
+		t.Errorf("LLM.GatewayURL = %q, want %q", cc.LLM.GatewayURL, "http://localhost:4000") // DevSkim: ignore DS162092 — test fixture
 	}
 }

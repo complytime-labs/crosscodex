@@ -33,7 +33,7 @@ func TestLoader_UserConfigOverridesDefaults(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpHome)
 
 	userDir := filepath.Join(tmpHome, "crosscodex")
-	writeFile(t, filepath.Join(userDir, "config.yaml"), "llm:\n  gateway_url: \"http://user:4000\"\n  timeout: 60\n")
+	writeFile(t, filepath.Join(userDir, "config.yaml"), "llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
 
 	loader := NewLoader()
 	cfg, err := loader.Load(context.Background())
@@ -41,7 +41,7 @@ func TestLoader_UserConfigOverridesDefaults(t *testing.T) {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if cfg.LLM.GatewayURL != "http://user:4000" {
+	if cfg.LLM.GatewayURL != "https://user:4000" {
 		t.Errorf("LLM.GatewayURL = %q, want user config value", cfg.LLM.GatewayURL)
 	}
 	if cfg.LLM.Timeout != 60 {
@@ -57,8 +57,8 @@ func TestLoader_DropInsOverrideUserConfig(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpHome)
 
 	userDir := filepath.Join(tmpHome, "crosscodex")
-	writeFile(t, filepath.Join(userDir, "config.yaml"), "llm:\n  gateway_url: \"http://user:4000\"\n  timeout: 60\n")
-	writeFile(t, filepath.Join(userDir, "conf.d", "10-override.yaml"), "llm:\n  gateway_url: \"http://dropin:5000\"\n")
+	writeFile(t, filepath.Join(userDir, "config.yaml"), "llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+	writeFile(t, filepath.Join(userDir, "conf.d", "10-override.yaml"), "llm:\n  gateway_url: \"https://dropin:5000\"\n")
 
 	loader := NewLoader()
 	cfg, err := loader.Load(context.Background())
@@ -66,7 +66,7 @@ func TestLoader_DropInsOverrideUserConfig(t *testing.T) {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if cfg.LLM.GatewayURL != "http://dropin:5000" {
+	if cfg.LLM.GatewayURL != "https://dropin:5000" {
 		t.Errorf("LLM.GatewayURL = %q, want drop-in override", cfg.LLM.GatewayURL)
 	}
 	if cfg.LLM.Timeout != 60 {
@@ -79,8 +79,8 @@ func TestLoader_ProjectConfigOverridesUser(t *testing.T) {
 	projectDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpHome)
 
-	writeFile(t, filepath.Join(tmpHome, "crosscodex", "config.yaml"), "llm:\n  gateway_url: \"http://user:4000\"\n  timeout: 60\n")
-	writeFile(t, filepath.Join(projectDir, ".crosscodex", "config.yaml"), "llm:\n  gateway_url: \"http://project:7000\"\n")
+	writeFile(t, filepath.Join(tmpHome, "crosscodex", "config.yaml"), "llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+	writeFile(t, filepath.Join(projectDir, ".crosscodex", "config.yaml"), "llm:\n  gateway_url: \"https://project:7000\"\n")
 
 	loader := NewLoader()
 	cfg, err := loader.Load(context.Background(), WithProjectDir(projectDir))
@@ -88,7 +88,7 @@ func TestLoader_ProjectConfigOverridesUser(t *testing.T) {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if cfg.LLM.GatewayURL != "http://project:7000" {
+	if cfg.LLM.GatewayURL != "https://project:7000" {
 		t.Errorf("LLM.GatewayURL = %q, want project override", cfg.LLM.GatewayURL)
 	}
 	if cfg.LLM.Timeout != 60 {
@@ -99,9 +99,9 @@ func TestLoader_ProjectConfigOverridesUser(t *testing.T) {
 func TestLoader_EnvOverridesProjectConfig(t *testing.T) {
 	projectDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("CROSSCODEX_LLM_GATEWAY_URL", "http://env:9000")
+	t.Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
 
-	writeFile(t, filepath.Join(projectDir, ".crosscodex", "config.yaml"), "llm:\n  gateway_url: \"http://project:7000\"\n  timeout: 45\n")
+	writeFile(t, filepath.Join(projectDir, ".crosscodex", "config.yaml"), "llm:\n  gateway_url: \"https://project:7000\"\n  timeout: 45\n")
 
 	loader := NewLoader()
 	cfg, err := loader.Load(context.Background(), WithProjectDir(projectDir))
@@ -109,7 +109,7 @@ func TestLoader_EnvOverridesProjectConfig(t *testing.T) {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if cfg.LLM.GatewayURL != "http://env:9000" {
+	if cfg.LLM.GatewayURL != "https://env:9000" {
 		t.Errorf("LLM.GatewayURL = %q, want env override", cfg.LLM.GatewayURL)
 	}
 	if cfg.LLM.Timeout != 45 {
@@ -119,17 +119,17 @@ func TestLoader_EnvOverridesProjectConfig(t *testing.T) {
 
 func TestLoader_OverridesAreHighestPriority(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("CROSSCODEX_LLM_GATEWAY_URL", "http://env:9000")
+	t.Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
 
 	loader := NewLoader()
 	cfg, err := loader.Load(context.Background(), WithOverrides(map[string]string{
-		"llm.gateway_url": "http://flag:1111",
+		"llm.gateway_url": "https://flag:1111",
 	}))
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if cfg.LLM.GatewayURL != "http://flag:1111" {
+	if cfg.LLM.GatewayURL != "https://flag:1111" {
 		t.Errorf("LLM.GatewayURL = %q, want CLI flag override", cfg.LLM.GatewayURL)
 	}
 }
@@ -138,7 +138,7 @@ func TestLoader_ProfileLoadsCorrectly(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpHome)
 
-	writeFile(t, filepath.Join(tmpHome, "crosscodex", "profiles", "local.yaml"), "server:\n  workers: 2\nllm:\n  gateway_url: \"http://local:4000\"\n")
+	writeFile(t, filepath.Join(tmpHome, "crosscodex", "profiles", "local.yaml"), "server:\n  workers: 2\nllm:\n  gateway_url: \"https://local:4000\"\n")
 
 	loader := NewLoader()
 	cfg, err := loader.Load(context.Background(), WithProfile("local"))
@@ -149,7 +149,7 @@ func TestLoader_ProfileLoadsCorrectly(t *testing.T) {
 	if cfg.Server.Workers != 2 {
 		t.Errorf("Server.Workers = %d, want 2 from profile", cfg.Server.Workers)
 	}
-	if cfg.LLM.GatewayURL != "http://local:4000" {
+	if cfg.LLM.GatewayURL != "https://local:4000" {
 		t.Errorf("LLM.GatewayURL = %q, want profile value", cfg.LLM.GatewayURL)
 	}
 }
@@ -225,10 +225,10 @@ func TestLoader_WithConfigPathSkipsLayeredResolution(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpHome)
 
-	writeFile(t, filepath.Join(tmpHome, "crosscodex", "config.yaml"), "llm:\n  gateway_url: \"http://user-should-be-skipped:4000\"\n")
+	writeFile(t, filepath.Join(tmpHome, "crosscodex", "config.yaml"), "llm:\n  gateway_url: \"https://user-should-be-skipped:4000\"\n")
 
 	singleFile := filepath.Join(t.TempDir(), "custom.yaml")
-	writeFile(t, singleFile, "llm:\n  gateway_url: \"http://custom:8000\"\n")
+	writeFile(t, singleFile, "llm:\n  gateway_url: \"https://custom:8000\"\n")
 
 	loader := NewLoader()
 	cfg, err := loader.Load(context.Background(), WithConfigPath(singleFile))
@@ -236,7 +236,7 @@ func TestLoader_WithConfigPathSkipsLayeredResolution(t *testing.T) {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if cfg.LLM.GatewayURL != "http://custom:8000" {
+	if cfg.LLM.GatewayURL != "https://custom:8000" {
 		t.Errorf("LLM.GatewayURL = %q, want custom file value", cfg.LLM.GatewayURL)
 	}
 }
@@ -249,10 +249,10 @@ func TestLoader_FullPrecedenceStack(t *testing.T) {
 
 	userDir := filepath.Join(tmpHome, "crosscodex")
 
-	writeFile(t, filepath.Join(userDir, "config.yaml"), "llm:\n  gateway_url: \"http://user:4000\"\n  timeout: 60\nlogging:\n  level: warn\n")
+	writeFile(t, filepath.Join(userDir, "config.yaml"), "llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\nlogging:\n  level: warn\n")
 	writeFile(t, filepath.Join(userDir, "conf.d", "10-team.yaml"), "llm:\n  timeout: 45\n")
 	writeFile(t, filepath.Join(userDir, "profiles", "local.yaml"), "server:\n  workers: 1\n")
-	writeFile(t, filepath.Join(projectDir, ".crosscodex", "config.yaml"), "llm:\n  gateway_url: \"http://project:7000\"\n")
+	writeFile(t, filepath.Join(projectDir, ".crosscodex", "config.yaml"), "llm:\n  gateway_url: \"https://project:7000\"\n")
 
 	loader := NewLoader()
 	cfg, err := loader.Load(context.Background(),
@@ -266,7 +266,7 @@ func TestLoader_FullPrecedenceStack(t *testing.T) {
 		t.Fatalf("Load error: %v", err)
 	}
 
-	if cfg.LLM.GatewayURL != "http://project:7000" {
+	if cfg.LLM.GatewayURL != "https://project:7000" {
 		t.Errorf("LLM.GatewayURL = %q, want project override", cfg.LLM.GatewayURL)
 	}
 	if cfg.LLM.Timeout != 45 {

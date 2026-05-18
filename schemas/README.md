@@ -57,7 +57,7 @@ The `gemara/{version}/` directory contains CUE-based validation schemas from the
 The following CUE schemas are fetched:
 
 | Schema | Purpose |
-|--------|---------|
+| ------ | ------- |
 | `auditlog.cue` | Audit logging structures |
 | `capabilitycatalog.cue` | Capability tracking and cataloging |
 | `collections.cue` | Collection definitions and structures |

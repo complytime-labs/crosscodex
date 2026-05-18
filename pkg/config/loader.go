@@ -114,28 +114,10 @@ func (l *loader) resolve(o *loaderOptions) (*yaml.Node, *sourceTracker, error) {
 		}
 	}
 
-	// Layer 8: environment variables
-	envOverlay, err := buildEnvOverlay(o.envPrefix, tracker)
+	// Layers 8-9: environment variables and CLI flag overrides
+	merged, err = l.applyOverlays(merged, o, tracker)
 	if err != nil {
 		return nil, nil, err
-	}
-	if envOverlay != nil {
-		merged, err = deepMerge(merged, envOverlay)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	// Layer 9: CLI flag overrides
-	flagOverlay, err := buildOverrideOverlay(o.overrides, tracker)
-	if err != nil {
-		return nil, nil, err
-	}
-	if flagOverlay != nil {
-		merged, err = deepMerge(merged, flagOverlay)
-		if err != nil {
-			return nil, nil, err
-		}
 	}
 
 	return merged, tracker, nil
@@ -148,29 +130,44 @@ func (l *loader) resolveWithConfigPath(merged *yaml.Node, o *loaderOptions, trac
 		return nil, nil, err
 	}
 
-	envOverlay, err := buildEnvOverlay(o.envPrefix, tracker)
+	merged, err = l.applyOverlays(merged, o, tracker)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	return merged, tracker, nil
+}
+
+// applyOverlays merges environment variable and CLI flag override layers onto
+// the base config node. Both resolve and resolveWithConfigPath share these
+// final two layers, so this helper avoids duplicating the build-then-merge
+// sequence for each overlay type.
+func (l *loader) applyOverlays(base *yaml.Node, o *loaderOptions, tracker *sourceTracker) (*yaml.Node, error) {
+	merged := base
+
+	envOverlay, err := buildEnvOverlay(o.envPrefix, tracker)
+	if err != nil {
+		return nil, err
 	}
 	if envOverlay != nil {
 		merged, err = deepMerge(merged, envOverlay)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
 	flagOverlay, err := buildOverrideOverlay(o.overrides, tracker)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if flagOverlay != nil {
 		merged, err = deepMerge(merged, flagOverlay)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
-	return merged, tracker, nil
+	return merged, nil
 }
 
 func (l *loader) mergeFileTracked(base *yaml.Node, path string, tracker *sourceTracker) (*yaml.Node, error) {

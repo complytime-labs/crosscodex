@@ -8,7 +8,7 @@ import (
 func TestValidate_ValidConfig(t *testing.T) {
 	cfg := &Config{
 		LLM: LLMConfig{
-			GatewayURL: "http://localhost:4000",
+			GatewayURL: "http://localhost:4000", // DevSkim: ignore DS162092 — test fixture
 			Timeout:    30,
 		},
 		Storage: StorageConfig{
@@ -16,7 +16,7 @@ func TestValidate_ValidConfig(t *testing.T) {
 		},
 		TLS: TLSConfig{Mode: "off"},
 		Database: DatabaseConfig{
-			DSN:     "postgres://localhost:5432/crosscodex",
+			DSN:     "postgres://localhost:5432/crosscodex", // DevSkim: ignore DS162092 — test fixture
 			SSLMode: "prefer",
 		},
 		Logging: LoggingConfig{Level: "info", Format: "text"},

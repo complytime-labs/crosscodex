@@ -44,6 +44,10 @@ credentials/
 schemas/*
 !schemas/README.md
 
+# Agent tool directories (local only)
+.claude
+.opencode/
+
 # Megalinter output
 megalinter-reports/
 

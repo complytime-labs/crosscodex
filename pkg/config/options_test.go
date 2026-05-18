@@ -47,16 +47,16 @@ func TestOptions_ApplyCorrectly(t *testing.T) {
 		{
 			name: "WithOverrides sets overrides",
 			opt: WithOverrides(map[string]string{
-				"llm.gateway_url": "http://override:4000",
+				"llm.gateway_url": "https://override:4000",
 				"tls.mode":        "off",
 			}),
 			check: func(t *testing.T, o loaderOptions) {
 				if len(o.overrides) != 2 {
 					t.Fatalf("overrides length = %d, want 2", len(o.overrides))
 				}
-				if o.overrides["llm.gateway_url"] != "http://override:4000" {
+				if o.overrides["llm.gateway_url"] != "https://override:4000" {
 					t.Errorf("overrides[llm.gateway_url] = %q, want %q",
-						o.overrides["llm.gateway_url"], "http://override:4000")
+						o.overrides["llm.gateway_url"], "https://override:4000")
 				}
 			},
 		},

@@ -7,10 +7,10 @@ import (
 )
 
 func TestApplyEnvVars_ScalarOverride(t *testing.T) {
-	t.Setenv("CROSSCODEX_LLM_GATEWAY_URL", "http://env:9000")
+	t.Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
 	t.Setenv("CROSSCODEX_LLM_TIMEOUT", "60")
 
-	base := mustParseYAML(t, "llm:\n  gateway_url: \"http://file:4000\"\n  timeout: 30\n")
+	base := mustParseYAML(t, "llm:\n  gateway_url: \"https://file:4000\"\n  timeout: 30\n")
 
 	result, err := applyEnvVars(base, "CROSSCODEX")
 	if err != nil {
@@ -24,7 +24,7 @@ func TestApplyEnvVars_ScalarOverride(t *testing.T) {
 		} `yaml:"llm"`
 	}](t, result)
 
-	if cfg.LLM.GatewayURL != "http://env:9000" {
+	if cfg.LLM.GatewayURL != "https://env:9000" {
 		t.Errorf("gateway_url = %q, want env override", cfg.LLM.GatewayURL)
 	}
 	if cfg.LLM.Timeout != 60 {
@@ -61,7 +61,7 @@ func TestApplyEnvVars_NestedPath(t *testing.T) {
 }
 
 func TestApplyEnvVars_NoMatchingVars(t *testing.T) {
-	base := mustParseYAML(t, "llm:\n  gateway_url: \"http://file:4000\"\n")
+	base := mustParseYAML(t, "llm:\n  gateway_url: \"https://file:4000\"\n")
 
 	result, err := applyEnvVars(base, "CROSSCODEX")
 	if err != nil {
@@ -74,7 +74,7 @@ func TestApplyEnvVars_NoMatchingVars(t *testing.T) {
 		} `yaml:"llm"`
 	}](t, result)
 
-	if cfg.LLM.GatewayURL != "http://file:4000" {
+	if cfg.LLM.GatewayURL != "https://file:4000" {
 		t.Errorf("gateway_url = %q, want preserved from file", cfg.LLM.GatewayURL)
 	}
 }
@@ -144,7 +144,7 @@ func TestApplyEnvVars_NonNumericForIntField(t *testing.T) {
 }
 
 func TestApplyEnvVars_NilBase(t *testing.T) {
-	t.Setenv("CROSSCODEX_LLM_GATEWAY_URL", "http://env:9000")
+	t.Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
 
 	result, err := applyEnvVars(nil, "CROSSCODEX")
 	if err != nil {
@@ -157,7 +157,7 @@ func TestApplyEnvVars_NilBase(t *testing.T) {
 		} `yaml:"llm"`
 	}](t, result)
 
-	if cfg.LLM.GatewayURL != "http://env:9000" {
+	if cfg.LLM.GatewayURL != "https://env:9000" {
 		t.Errorf("gateway_url = %q, want env value", cfg.LLM.GatewayURL)
 	}
 }

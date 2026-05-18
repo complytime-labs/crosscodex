@@ -4,7 +4,7 @@ A Go-first, multi-service compliance mapping platform that compares compliance s
 
 CrossCodex delivers composable microservices, provider-agnostic LLM integration, and multi-tenant security with defense-in-depth.
 
-----
+______________________________________________________________________
 
 > 🤖 LLM WARNING 🤖
 >
@@ -12,7 +12,7 @@ CrossCodex delivers composable microservices, provider-agnostic LLM integration,
 >
 > 🤖 LLM WARNING 🤖
 
-----
+______________________________________________________________________
 
 ## Status
 
@@ -76,7 +76,7 @@ flowchart TD
 ### Service Responsibilities
 
 | Service | Purpose | Technology |
-|---------|---------|------------|
+| ------- | ------- | ---------- |
 | **Ingestion** | Multi-format document conversion via Docling | Python gRPC service |
 | **Catalog** | OSCAL parsing, document structuring, validation | Go |
 | **Analysis Engine** | Host for analyzer plugins, DAG execution | Go |
@@ -131,17 +131,20 @@ stateDiagram-v2
 ```
 
 ### Embedded (Laptop, CI)
+
 - All services in one process
 - PostgreSQL in container (auto-managed)
 - Local filesystem storage
 - Zero external dependencies beyond LLM endpoint
 
 ### Quadlet (Small Team, Single Host)
+
 - Systemd-managed containers via quadlet
 - Shared PostgreSQL, NATS, MinIO
 - Deployment manifests planned under `deploy/`
 
 ### Distributed (Production, Multi-tenant)
+
 - Services scale independently
 - External PostgreSQL cluster with AGE + pgvector
 - NATS cluster with JetStream
@@ -217,18 +220,19 @@ flowchart TD
 ```
 
 1. Compiled defaults
-2. System config (`/etc/crosscodex/config.yaml`)
-3. System drop-ins (`/etc/crosscodex/conf.d/*.yaml`)
-4. User config (`$XDG_CONFIG_HOME/crosscodex/config.yaml`)
-5. User drop-ins (`$XDG_CONFIG_HOME/crosscodex/conf.d/*.yaml`)
-6. Profile (`--profile local`)
-7. Project config (`.crosscodex/config.yaml`)
-8. Environment variables (`CROSSCODEX_*`)
-9. CLI flags (highest priority)
+1. System config (`/etc/crosscodex/config.yaml`)
+1. System drop-ins (`/etc/crosscodex/conf.d/*.yaml`)
+1. User config (`$XDG_CONFIG_HOME/crosscodex/config.yaml`)
+1. User drop-ins (`$XDG_CONFIG_HOME/crosscodex/conf.d/*.yaml`)
+1. Profile (`--profile local`)
+1. Project config (`.crosscodex/config.yaml`)
+1. Environment variables (`CROSSCODEX_*`)
+1. CLI flags (highest priority)
 
 ### Key Configuration Examples
 
 #### LLM Gateway
+
 ```yaml
 llm:
   gateway_url: "http://localhost:4000"
@@ -238,17 +242,19 @@ llm:
 ```
 
 #### Storage
+
 ```yaml
 storage:
   objects:
     backend: local                # local | s3
   database:
     postgres:
-      dsn: "postgres://crosscodex:crosscodex@localhost:5432/crosscodex"
+      dsn: "${DATABASE_DSN}"  # e.g. postgres://user:password@localhost:5432/crosscodex
       extensions: [age, vector]
 ```
 
 #### TLS (Global Default)
+
 ```yaml
 tls:
   mode: "mutual"                  # off | server-only | mutual
@@ -298,7 +304,7 @@ task generate
 ### Testing Strategy
 
 | Test Type | Framework | Status |
-|-----------|-----------|--------|
+| --------- | --------- | ------ |
 | **Unit** | Go testing | Available (`task test:unit`) |
 | **Integration** | Go testing + containers | Planned |
 | **E2E** | Venom | Planned |
@@ -306,11 +312,11 @@ task generate
 ### Contributing
 
 1. **Fork and clone** the repository
-2. **Create feature branch** from main
-3. **Write tests** for new functionality (TDD approach)
-4. **Implement** following existing patterns
-5. **Run full test suite** before submitting
-6. **Submit PR** with clear description
+1. **Create feature branch** from main
+1. **Write tests** for new functionality (TDD approach)
+1. **Implement** following existing patterns
+1. **Run full test suite** before submitting
+1. **Submit PR** with clear description
 
 For large features, open an issue first to discuss the approach.
 
@@ -359,10 +365,10 @@ flowchart TD
 Every layer enforces tenant isolation independently:
 
 | Layer | Mechanism | Purpose |
-|-------|-----------|---------|
+| ----- | --------- | ------- |
 | **Gateway** | mTLS client certificates, JWT sessions, RBAC | Identity verification |
 | **Services** | gRPC metadata validation | Context propagation |
-| **NATS** | Tenant-scoped subjects and ACLs | Message isolation |  
+| **NATS** | Tenant-scoped subjects and ACLs | Message isolation |
 | **PostgreSQL** | Row-Level Security policies | Data isolation |
 | **Object Store** | Tenant-prefixed paths, bucket policies | Artifact isolation |
 | **Graph (AGE)** | Separate graph per tenant | Traversal isolation |
@@ -370,7 +376,7 @@ Every layer enforces tenant isolation independently:
 ### Authentication Methods
 
 | Method | Use Case | How It Works |
-|--------|----------|-------------|
+| ------ | -------- | ------------ |
 | **X.509 (mTLS)** | CLI, service-to-service, automation | Client certificate during TLS handshake |
 | **GSSAPI (Kerberos)** | Enterprise SSO, Active Directory | Kerberos ticket via SPNEGO |
 | **SAML** | Web UI, browser SSO | SAML assertion from IdP |
@@ -425,16 +431,16 @@ erDiagram
 
 PostgreSQL with extensions handles all data:
 
-| Store          | Extension  | Purpose                                                     |
-|----------------|------------|-------------------------------------------------------------|
-| **Relational** | PostgreSQL | Job metadata, catalogs, classifications, tenant config      |
-| **Graph**      | Apache AGE | Relationship graph, openCypher queries, temporal attributes |
-| **Vector**     | pgvector   | Embedding similarity search                                 |
+| Store | Extension | Purpose |
+| ----- | --------- | ------- |
+| **Relational** | PostgreSQL | Job metadata, catalogs, classifications, tenant config |
+| **Graph** | Apache AGE | Relationship graph, openCypher queries, temporal attributes |
+| **Vector** | pgvector | Embedding similarity search |
 
 ### Additional Storage
 
 | Store | Technology | Purpose |
-|-------|------------|---------|
+| ----- | ---------- | ------- |
 | **Object Store** | Local FS / S3 | Documents, embeddings, attestation bundles |
 | **Message Bus** | NATS JetStream | Audit trails, work distribution, service communication |
 
@@ -460,11 +466,11 @@ Built-in observability with OTLP export:
 
 JetStream provides persistent audit streams:
 
-| Stream        | Retention  | Content                                 |
-|---------------|------------|-----------------------------------------|
-| **Decisions** | Indefinite | Final compliance determinations         |
-| **LLM Calls** | 90 days    | Full prompts, responses, model versions |
-| **Events**    | 30 days    | Pipeline lifecycle, debugging           |
+| Stream | Retention | Content |
+| ------ | --------- | ------- |
+| **Decisions** | Indefinite | Final compliance determinations |
+| **LLM Calls** | 90 days | Full prompts, responses, model versions |
+| **Events** | 30 days | Pipeline lifecycle, debugging |
 
 ### Monitoring (Planned)
 

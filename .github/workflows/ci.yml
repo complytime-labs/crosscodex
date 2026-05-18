@@ -34,7 +34,7 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Download dependencies
-        run: task deps
+        run: task dev:deps
 
       - name: Generate code
         run: task generate
@@ -49,4 +49,4 @@ jobs:
         run: govulncheck ./...
 
       - name: Test
-        run: task test:unit
+        run: task test

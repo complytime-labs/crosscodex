@@ -1,6 +1,0 @@
-# Gitleaks ignore patterns
-# Ignore test data files that may contain pattern matches
-**/test/**/*.sarif
-**/tests/**/*.sarif
-**/examples/**/*.sarif
-megalinter-reports/**

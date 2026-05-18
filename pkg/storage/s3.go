@@ -225,6 +225,22 @@ func (p *s3Provider) List(ctx context.Context, prefix string) ([]ObjectMetadata,
 	return result, nil
 }
 
+// headObject issues a HeadObject request and translates S3 not-found errors.
+// Returns nil output when the key does not exist (with notFoundErr as the error).
+func (p *s3Provider) headObject(ctx context.Context, key string) (*s3.HeadObjectOutput, error) {
+	output, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(p.bucket),
+		Key:    aws.String(p.fullKey(key)),
+	})
+	if err != nil {
+		if isS3NotFound(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("s3 head: %w", err)
+	}
+	return output, nil
+}
+
 func (p *s3Provider) Exists(ctx context.Context, key string) (bool, error) {
 	if p.closed.Load() {
 		return false, ErrProviderClosed
@@ -233,15 +249,12 @@ func (p *s3Provider) Exists(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 
-	_, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(p.bucket),
-		Key:    aws.String(p.fullKey(key)),
-	})
+	_, err := p.headObject(ctx, key)
 	if err != nil {
-		if isS3NotFound(err) {
+		if errors.Is(err, ErrNotFound) {
 			return false, nil
 		}
-		return false, fmt.Errorf("s3 head: %w", err)
+		return false, err
 	}
 	return true, nil
 }
@@ -254,15 +267,9 @@ func (p *s3Provider) Stat(ctx context.Context, key string) (*ObjectMetadata, err
 		return nil, err
 	}
 
-	output, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(p.bucket),
-		Key:    aws.String(p.fullKey(key)),
-	})
+	output, err := p.headObject(ctx, key)
 	if err != nil {
-		if isS3NotFound(err) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("s3 head: %w", err)
+		return nil, err
 	}
 
 	meta := &ObjectMetadata{Key: key}
