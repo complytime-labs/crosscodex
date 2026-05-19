@@ -1,6 +1,9 @@
 package tlsconfig
 
-import "crypto/tls"
+import (
+	"context"
+	"crypto/tls"
+)
 
 // Builder creates tls.Config with FIPS enforcement.
 //
@@ -9,19 +12,19 @@ import "crypto/tls"
 type Builder interface {
 	// BuildServer creates a server TLS configuration.
 	// Requires client certificate verification if clientCA is provided.
-	BuildServer(certFile, keyFile, clientCA string) (*tls.Config, error)
+	BuildServer(ctx context.Context, certFile, keyFile, clientCA string) (*tls.Config, error)
 
 	// BuildClient creates a client TLS configuration.
 	// Uses client certificates if certFile and keyFile are provided.
-	BuildClient(certFile, keyFile, serverCA string) (*tls.Config, error)
+	BuildClient(ctx context.Context, certFile, keyFile, serverCA string) (*tls.Config, error)
 
 	// ValidateFIPS checks that the system is running in FIPS mode.
 	// Returns an error if FIPS mode is required but not active.
-	ValidateFIPS() error
+	ValidateFIPS(ctx context.Context) error
 
 	// GetFIPSStatus returns the current FIPS mode status.
-	GetFIPSStatus() (*FIPSStatus, error)
+	GetFIPSStatus(ctx context.Context) (*FIPSStatus, error)
 
 	// ParseCertificate loads and parses a certificate file.
-	ParseCertificate(certFile string) (*CertificateInfo, error)
+	ParseCertificate(ctx context.Context, certFile string) (*CertificateInfo, error)
 }

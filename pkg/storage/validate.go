@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 func validateKey(key string) error {
@@ -35,8 +37,5 @@ func validateKey(key string) error {
 }
 
 func validateTenantID(tenantID string) error {
-	if tenantID == "" {
-		return ErrTenantRequired
-	}
-	return nil
+	return tenant.ValidateTenantID(tenantID)
 }

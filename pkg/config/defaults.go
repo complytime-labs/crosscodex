@@ -29,6 +29,7 @@ tls:
     enabled: false
 database:
   dsn: ""
+  graph_dsn: ""
   extensions: []
   max_conns: 10
   ssl_mode: prefer

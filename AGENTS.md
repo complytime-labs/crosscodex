@@ -145,22 +145,22 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 
 ## Package Ownership & Responsibility
 
-| Package | Purpose | Key Dependencies |
-| ------- | ------- | ---------------- |
-| **pkg/config** | Configuration loading, XDG compliance, precedence resolution | None (foundational) |
-| **pkg/db** | PostgreSQL connection pooling, transaction management | pkg/config |
-| **pkg/graphdb** | Apache AGE openCypher queries, relationship traversal | pkg/db |
-| **pkg/vectordb** | pgvector similarity search for embeddings | pkg/db |
-| **pkg/natsbus** | NATS JetStream publish/subscribe, stream management | pkg/config |
-| **pkg/storage** | Object storage abstraction (local FS / S3) | pkg/config |
-| **pkg/tlsconfig** | TLS setup, FIPS validation, certificate loading | pkg/config |
-| **pkg/authn** | mTLS, Kerberos, SAML authentication | pkg/tlsconfig, pkg/tenant |
-| **pkg/tenant** | Multi-tenant context propagation, isolation enforcement | None (foundational) |
-| **pkg/telemetry** | OpenTelemetry traces, metrics, logs | pkg/config |
-| **pkg/llmclient** | LLM gateway client, completion & embedding requests | pkg/config, pkg/telemetry |
-| **pkg/oscal** | OSCAL catalog parsing, validation | None (domain logic) |
-| **pkg/attestation** | in-toto layout, link generation, signing | pkg/tlsconfig |
-| **pkg/analyzer** | Plugin interface for analysis capabilities | None (interface only) |
+| Package | Status | Purpose | Key Dependencies |
+| ------- | ------ | ------- | ---------------- |
+| **pkg/config** | `[implemented]` | Configuration loading, XDG compliance, precedence resolution | None (foundational) |
+| **pkg/db** | `[implemented]` | PostgreSQL connection pooling, tenant RLS isolation, migrations | pkg/config |
+| **pkg/graphdb** | `[scaffold]` | Apache AGE openCypher queries, relationship traversal | pkg/db |
+| **pkg/vectordb** | `[scaffold]` | pgvector similarity search for embeddings | pkg/db |
+| **pkg/natsbus** | `[scaffold]` | NATS JetStream publish/subscribe, stream management | pkg/config |
+| **pkg/storage** | `[implemented]` | Object storage abstraction (local FS / S3) | pkg/config |
+| **pkg/tlsconfig** | `[scaffold]` | TLS setup, FIPS validation, certificate loading | pkg/config |
+| **pkg/authn** | `[scaffold]` | mTLS, Kerberos, SAML authentication | pkg/tlsconfig, pkg/tenant |
+| **pkg/tenant** | `[scaffold]` | Multi-tenant context propagation, isolation enforcement | None (foundational) |
+| **pkg/telemetry** | `[scaffold]` | OpenTelemetry traces, metrics, logs | pkg/config |
+| **pkg/llmclient** | `[scaffold]` | LLM gateway client, completion & embedding requests | pkg/config, pkg/telemetry |
+| **pkg/oscal** | `[scaffold]` | OSCAL catalog parsing, validation | None (domain logic) |
+| **pkg/attestation** | `[scaffold]` | in-toto layout, link generation, signing | pkg/tlsconfig |
+| **pkg/analyzer** | `[scaffold]` | Plugin interface for analysis capabilities | None (interface only) |
 
 **Dependency Flow:**
 
@@ -387,6 +387,12 @@ Application code runs under a restricted database role, not the table owner. The
 ### No Partial Success on Safety-Critical Operations
 
 When a batch operation (UPDATE, DELETE) touches rows with mixed protection states (some completed, some not), the entire statement must fail — not silently succeed for the unprotected rows. PostgreSQL's per-row BEFORE triggers provide this guarantee, but tests must verify it explicitly because it's the kind of behavior that breaks silently if someone refactors triggers into rules or policies.
+
+## Recent Changes
+
+- **pkg/db implementation** — Added PostgreSQL connection pool with tenant-scoped Row-Level Security, schema migrations via golang-migrate, extension verification, immutability triggers, and comprehensive integration tests including tenant isolation, immutability, and tired-admin threat model scenarios.
+- **Build consolidation** — Consolidated all task definitions (build, test, lint, integration) into `.taskfiles/dev.yml`, replacing scattered top-level task definitions.
+- **pkg/tenant package** — Added the `pkg/tenant` public API package with `ValidateTenantID` (regex-enforced format: lowercase alphanumeric with hyphens, 3-64 characters), error sentinels (`ErrNoTenant`, `ErrInvalidTenant`, `ErrTenantMismatch`), and the `Context` interface for tenant propagation. The `Context` interface remains unimplemented; `pkg/db` now delegates tenant validation to `pkg/tenant`.
 
 ## Next Steps
 

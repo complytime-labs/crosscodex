@@ -9,8 +9,10 @@ import (
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Printf("crosscodex %s (commit: %s, built: %s)\n",
-			version.Version, version.GitCommit, version.BuildDate)
+		info := version.GetInfo()
+		fmt.Printf("crosscodex %s (commit: %s, built: %s, go: %s, %s/%s)\n",
+			info.Version, info.GitCommit, info.BuildDate,
+			info.GoVersion, info.OS, info.Arch)
 		return
 	}
 

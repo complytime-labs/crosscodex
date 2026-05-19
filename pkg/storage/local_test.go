@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 func newTestLocal(t *testing.T) (Provider, string) {
@@ -24,13 +26,15 @@ func newTestLocal(t *testing.T) (Provider, string) {
 }
 
 func TestNewLocal_EmptyTenant(t *testing.T) {
+	t.Parallel()
 	_, err := NewLocal(t.TempDir(), "")
-	if !errors.Is(err, ErrTenantRequired) {
-		t.Errorf("NewLocal(root, \"\") error = %v, want ErrTenantRequired", err)
+	if !errors.Is(err, tenant.ErrInvalidTenant) {
+		t.Errorf("NewLocal(root, \"\") error = %v, want tenant.ErrInvalidTenant", err)
 	}
 }
 
 func TestNewLocal_CreatesTenantDir(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	_, err := NewLocal(root, "acme")
 	if err != nil {
@@ -49,6 +53,7 @@ func TestNewLocal_CreatesTenantDir(t *testing.T) {
 }
 
 func TestLocal_PutThenGet(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 	want := []byte("hello world")
@@ -73,6 +78,7 @@ func TestLocal_PutThenGet(t *testing.T) {
 }
 
 func TestLocal_PutOverwrites(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 
@@ -95,6 +101,7 @@ func TestLocal_PutOverwrites(t *testing.T) {
 }
 
 func TestLocal_GetMissing(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	_, err := p.Get(context.Background(), "nonexistent.json")
 	if !errors.Is(err, ErrNotFound) {
@@ -103,6 +110,7 @@ func TestLocal_GetMissing(t *testing.T) {
 }
 
 func TestLocal_DeleteExisting(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 
@@ -119,6 +127,7 @@ func TestLocal_DeleteExisting(t *testing.T) {
 }
 
 func TestLocal_DeleteMissing(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	err := p.Delete(context.Background(), "nonexistent.json")
 	if err != nil {
@@ -127,6 +136,7 @@ func TestLocal_DeleteMissing(t *testing.T) {
 }
 
 func TestLocal_ListWithPrefix(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 
@@ -160,6 +170,7 @@ func TestLocal_ListWithPrefix(t *testing.T) {
 }
 
 func TestLocal_ListEmptyPrefix(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 
@@ -180,6 +191,7 @@ func TestLocal_ListEmptyPrefix(t *testing.T) {
 }
 
 func TestLocal_ExistsFound(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 
@@ -197,6 +209,7 @@ func TestLocal_ExistsFound(t *testing.T) {
 }
 
 func TestLocal_ExistsNotFound(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ok, err := p.Exists(context.Background(), "nonexistent.json")
 	if err != nil {
@@ -208,6 +221,7 @@ func TestLocal_ExistsNotFound(t *testing.T) {
 }
 
 func TestLocal_StatExisting(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 	data := []byte("stat test data")
@@ -232,6 +246,7 @@ func TestLocal_StatExisting(t *testing.T) {
 }
 
 func TestLocal_StatMissing(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	_, err := p.Stat(context.Background(), "missing.json")
 	if !errors.Is(err, ErrNotFound) {
@@ -240,6 +255,7 @@ func TestLocal_StatMissing(t *testing.T) {
 }
 
 func TestLocal_OperationsAfterClose(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 
@@ -268,6 +284,7 @@ func TestLocal_OperationsAfterClose(t *testing.T) {
 }
 
 func TestLocal_PutFilePermissions(t *testing.T) {
+	t.Parallel()
 	p, root := newTestLocal(t)
 	ctx := context.Background()
 
@@ -285,6 +302,7 @@ func TestLocal_PutFilePermissions(t *testing.T) {
 }
 
 func TestLocal_InvalidKeys(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestLocal(t)
 	ctx := context.Background()
 
@@ -309,6 +327,7 @@ func TestLocal_InvalidKeys(t *testing.T) {
 }
 
 func TestLocal_SymlinkEscape(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	p, err := NewLocal(root, "victim")
 	if err != nil {
@@ -350,6 +369,7 @@ func TestLocal_SymlinkEscape(t *testing.T) {
 }
 
 func TestLocal_ChainedSymlinkEscape(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	p, err := NewLocal(root, "victim")
 	if err != nil {
@@ -375,6 +395,7 @@ func TestLocal_ChainedSymlinkEscape(t *testing.T) {
 }
 
 func TestLocal_CrossTenantAccess(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 
 	pA, err := NewLocal(root, "tenant-a")

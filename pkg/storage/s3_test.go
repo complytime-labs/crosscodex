@@ -15,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithy "github.com/aws/smithy-go"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 type testAPIError struct {
@@ -126,20 +128,23 @@ func newTestS3(t *testing.T) (Provider, *mockS3) {
 }
 
 func TestNewS3_EmptyTenant(t *testing.T) {
+	t.Parallel()
 	_, err := NewS3("bucket", "")
-	if !errors.Is(err, ErrTenantRequired) {
-		t.Errorf("NewS3(bucket, \"\") error = %v, want ErrTenantRequired", err)
+	if !errors.Is(err, tenant.ErrInvalidTenant) {
+		t.Errorf("NewS3(bucket, \"\") error = %v, want tenant.ErrInvalidTenant", err)
 	}
 }
 
 func TestNewS3_EmptyBucket(t *testing.T) {
+	t.Parallel()
 	_, err := NewS3("", "tenant")
-	if err == nil {
-		t.Errorf("NewS3(\"\", tenant) error = nil, want error")
+	if !errors.Is(err, ErrBucketRequired) {
+		t.Errorf("NewS3(\"\", tenant) error = %v, want ErrBucketRequired", err)
 	}
 }
 
 func TestS3_PutThenGet(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 	want := []byte("hello s3")
@@ -160,6 +165,7 @@ func TestS3_PutThenGet(t *testing.T) {
 }
 
 func TestS3_PutOverwrites(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 
@@ -182,6 +188,7 @@ func TestS3_PutOverwrites(t *testing.T) {
 }
 
 func TestS3_GetMissing(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	_, err := p.Get(context.Background(), "nonexistent.json")
 	if !errors.Is(err, ErrNotFound) {
@@ -190,6 +197,7 @@ func TestS3_GetMissing(t *testing.T) {
 }
 
 func TestS3_DeleteExisting(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 
@@ -206,6 +214,7 @@ func TestS3_DeleteExisting(t *testing.T) {
 }
 
 func TestS3_DeleteMissing(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	err := p.Delete(context.Background(), "nonexistent.json")
 	if err != nil {
@@ -214,6 +223,7 @@ func TestS3_DeleteMissing(t *testing.T) {
 }
 
 func TestS3_ListWithPrefix(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 
@@ -246,6 +256,7 @@ func TestS3_ListWithPrefix(t *testing.T) {
 }
 
 func TestS3_ListEmptyPrefix(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 
@@ -266,6 +277,7 @@ func TestS3_ListEmptyPrefix(t *testing.T) {
 }
 
 func TestS3_ExistsFound(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 
@@ -283,6 +295,7 @@ func TestS3_ExistsFound(t *testing.T) {
 }
 
 func TestS3_ExistsNotFound(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ok, err := p.Exists(context.Background(), "nonexistent.json")
 	if err != nil {
@@ -294,6 +307,7 @@ func TestS3_ExistsNotFound(t *testing.T) {
 }
 
 func TestS3_StatExisting(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 	data := []byte("stat test")
@@ -318,6 +332,7 @@ func TestS3_StatExisting(t *testing.T) {
 }
 
 func TestS3_StatMissing(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	_, err := p.Stat(context.Background(), "missing.json")
 	if !errors.Is(err, ErrNotFound) {
@@ -326,6 +341,7 @@ func TestS3_StatMissing(t *testing.T) {
 }
 
 func TestS3_OperationsAfterClose(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 	if err := p.Close(); err != nil {
@@ -353,6 +369,7 @@ func TestS3_OperationsAfterClose(t *testing.T) {
 }
 
 func TestS3_InvalidKeys(t *testing.T) {
+	t.Parallel()
 	p, _ := newTestS3(t)
 	ctx := context.Background()
 
@@ -368,6 +385,7 @@ func TestS3_InvalidKeys(t *testing.T) {
 }
 
 func TestS3_TenantPrefixIsolation(t *testing.T) {
+	t.Parallel()
 	mock := newMockS3()
 	pA := newS3WithClient(mock, "bucket", "tenant-a")
 	pB := newS3WithClient(mock, "bucket", "tenant-b")

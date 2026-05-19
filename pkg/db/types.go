@@ -34,6 +34,7 @@ type HealthStatus struct {
 
 type PoolConfig struct {
 	DSN          string
+	GraphDSN     string
 	MaxOpenConns int
 	MaxIdleConns int
 	ConnMaxLife  time.Duration

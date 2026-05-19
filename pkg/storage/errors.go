@@ -12,6 +12,6 @@ var (
 	// ErrProviderClosed indicates the provider has been closed.
 	ErrProviderClosed = errors.New("storage provider closed")
 
-	// ErrTenantRequired indicates the tenant ID was empty.
-	ErrTenantRequired = errors.New("tenant ID is required")
+	// ErrBucketRequired indicates the bucket name was empty.
+	ErrBucketRequired = errors.New("bucket name is required")
 )

@@ -14,7 +14,6 @@ func TestSentinelErrors_NonNil(t *testing.T) {
 		{"ErrNotFound", ErrNotFound},
 		{"ErrInvalidKey", ErrInvalidKey},
 		{"ErrProviderClosed", ErrProviderClosed},
-		{"ErrTenantRequired", ErrTenantRequired},
 	}
 
 	for _, s := range sentinels {
@@ -25,7 +24,7 @@ func TestSentinelErrors_NonNil(t *testing.T) {
 }
 
 func TestSentinelErrors_Distinct(t *testing.T) {
-	sentinels := []error{ErrNotFound, ErrInvalidKey, ErrProviderClosed, ErrTenantRequired}
+	sentinels := []error{ErrNotFound, ErrInvalidKey, ErrProviderClosed}
 
 	for i := 0; i < len(sentinels); i++ {
 		for j := i + 1; j < len(sentinels); j++ {
