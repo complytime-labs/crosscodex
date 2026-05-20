@@ -58,7 +58,7 @@ func NewS3(bucket, tenantID string, opts ...S3Option) (Provider, error) {
 		return nil, err
 	}
 	if bucket == "" {
-		return nil, fmt.Errorf("bucket name is required")
+		return nil, ErrBucketRequired
 	}
 
 	options := &s3Options{}

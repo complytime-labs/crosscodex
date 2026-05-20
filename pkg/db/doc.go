@@ -47,14 +47,58 @@
 //	// ... process rows ...
 //	return tx.Commit()
 //
-// # Security Model
+// # Security Model — Three Roles
 //
-// The migration role (superuser) owns all tables and is used only for
-// schema changes. Application connections use the app_user role, which
-// has SELECT/INSERT/UPDATE/DELETE but no DDL privileges. Row-Level
-// Security policies on every table enforce tenant isolation at the
-// database level. Immutability triggers prevent modification of
-// completed job data. This defense-in-depth means that even if
-// application code has a bug, PostgreSQL itself blocks cross-tenant
-// access and completed-data tampering.
+// Three PostgreSQL roles enforce defense-in-depth at the database level.
+// Each role has the minimum privileges needed for its purpose, and none
+// can escalate to another's capabilities.
+//
+//   - postgres (superuser): Owns all tables and extensions. Used only for
+//     schema migrations and tenant provisioning (INSERT INTO tenants).
+//     Never used by application code at runtime.
+//
+//   - app_user: SELECT/INSERT/UPDATE/DELETE on public-schema tables, with
+//     Row-Level Security (RLS) policies enforcing tenant isolation per
+//     transaction. Has NO access to graph schemas or ag_catalog. Cannot
+//     perform DDL. This is the role used by the relational connection pool
+//     (configured via database.dsn).
+//
+//   - graph_user: Owns per-tenant graph schemas (crosscodex_{tenant_id})
+//     created by the tenant provisioning trigger. AGE cypher commands
+//     internally perform DDL (creating label tables, updating sequences),
+//     which requires ownership — GRANT INSERT/UPDATE/DELETE is not
+//     sufficient. graph_user has USAGE/SELECT/EXECUTE on ag_catalog for
+//     graph metadata queries, but has NO access to public-schema relational
+//     tables. This is the role used by the graph connection pool (configured
+//     via database.graph_dsn).
+//
+// This separation means a bug in graph-handling code cannot read or modify
+// relational data (jobs, classifications, vote summaries), and a bug in
+// relational code cannot modify graph structure. Even if application code
+// is compromised, PostgreSQL itself blocks cross-boundary access.
+//
+// # Privilege Matrix
+//
+// The matrix below summarizes what each role can and cannot do. The
+// integration tests in integration_test.go ("Role Isolation" section)
+// verify every cell marked "no" and every cell marked "yes" — making
+// this matrix an executable specification, not just documentation.
+//
+//	Capability                     postgres  app_user  graph_user
+//	─────────────────────────────  ────────  ────────  ──────────
+//	DDL (CREATE/ALTER/DROP)        yes       no        graph schemas only
+//	Relational DML (public)        yes       yes+RLS   no
+//	ag_catalog read                yes       no        yes
+//	ag_catalog execute (cypher)    yes       no        yes
+//	Graph schema DML               yes       no        yes (owner)
+//	LOAD shared library            yes       no        no
+//	Tenant provisioning (INSERT)   yes       via RLS   no
+//	TRUNCATE relational tables     yes       no        no
+//	Disable RLS / triggers         yes       no        no
+//
+// The AGE shared library is loaded at server startup via
+// shared_preload_libraries=age in postgresql.conf. Application code must
+// NOT use the LOAD command — PostgreSQL restricts LOAD to superusers.
+// shared_preload_libraries makes the library available to all sessions
+// without per-session LOAD calls.
 package db

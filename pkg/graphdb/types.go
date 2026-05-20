@@ -1,31 +1,52 @@
 package graphdb
 
-// Node represents a graph vertex.
+import "time"
+
 type Node struct {
-	ID         string         // Unique node identifier
-	Label      string         // Node label (e.g., "Control", "Requirement")
-	Properties map[string]any // Node properties
+	ID             string
+	Label          string
+	Properties     map[string]any
+	ValidFrom      time.Time
+	ValidTo        *time.Time
+	CreatedBy      string
+	CreationMethod string
 }
 
-// Edge represents a graph relationship.
 type Edge struct {
-	ID         string         // Unique edge identifier
-	Label      string         // Relationship type (e.g., "MAPS_TO", "DEPENDS_ON")
-	Source     string         // Source node ID
-	Target     string         // Target node ID
-	Properties map[string]any // Edge properties
+	ID                string
+	Label             string
+	Source            string
+	Target            string
+	Properties        map[string]any
+	ValidFrom         time.Time
+	ValidTo           *time.Time
+	DeterminedBy      string
+	DeterminationType string
+	Confidence        float64
+	Supersedes        string
 }
 
-// Result represents the result of a graph query.
-type Result struct {
-	Nodes []Node // All nodes in the result
-	Edges []Edge // All edges in the result
+type Relationship struct {
+	Source Node
+	Edge   Edge
+	Target Node
 }
 
-// TraversalQuery defines a graph traversal operation.
+type RelationshipQuery struct {
+	SourceLabel string
+	TargetLabel string
+	EdgeLabel   string
+	Properties  map[string]any
+}
+
 type TraversalQuery struct {
-	StartNode  string   // Starting node ID
-	Direction  string   // "outbound", "inbound", or "both"
-	EdgeLabels []string // Filter by edge labels (empty = all)
-	MaxDepth   int      // Maximum traversal depth (0 = unlimited)
+	StartNode  string
+	Direction  string // "outbound", "inbound", or "both"
+	EdgeLabels []string
+	MaxDepth   int // 0 = unlimited
+}
+
+type Path struct {
+	Nodes []Node
+	Edges []Edge
 }

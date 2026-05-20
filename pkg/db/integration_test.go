@@ -47,7 +47,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Set password for app_user (migrations create the role without one).
+	// Set passwords for application roles (migrations create them without one).
+	//
+	// Two non-superuser roles enforce privilege separation:
+	//   app_user   — relational DML + RLS, zero graph access
+	//   graph_user — graph schema owner, zero relational access
+	// See doc.go "Security Model — Three Roles" for the full design.
 	adminDB, err := sql.Open("pgx", suDSN)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to open admin connection: %v\n", err)
@@ -57,9 +62,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to set app_user password: %v\n", err)
 		os.Exit(1)
 	}
-	// Grant usage on schema to app_user for function execution.
-	if _, err := adminDB.ExecContext(ctx, "GRANT USAGE ON SCHEMA ag_catalog TO app_user"); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to grant ag_catalog usage: %v\n", err)
+	if _, err := adminDB.ExecContext(ctx, "ALTER ROLE graph_user WITH PASSWORD 'graphpass'"); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to set graph_user password: %v\n", err)
 		os.Exit(1)
 	}
 	if err := adminDB.Close(); err != nil {
@@ -98,6 +102,27 @@ func appUserConn(t *testing.T) *sql.DB {
 	conn, err := sql.Open("pgx", appUserDSN())
 	if err != nil {
 		t.Fatalf("failed to open app_user connection: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+// graphUserDSN returns the DSN for graph_user, derived from the superuser DSN.
+func graphUserDSN() string {
+	u, err := url.Parse(suDSN)
+	if err != nil {
+		panic(fmt.Sprintf("bad suDSN: %v", err))
+	}
+	u.User = url.UserPassword("graph_user", "graphpass")
+	return u.String()
+}
+
+// graphUserConn opens a raw *sql.DB as graph_user. The caller must close it.
+func graphUserConn(t *testing.T) *sql.DB {
+	t.Helper()
+	conn, err := sql.Open("pgx", graphUserDSN())
+	if err != nil {
+		t.Fatalf("failed to open graph_user connection: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
 	return conn
@@ -1339,5 +1364,311 @@ func TestIntegration_TenantPool_BeginSetsUser(t *testing.T) {
 	}
 	if got != userID {
 		t.Errorf("current_setting = %q, want %q", got, userID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Role Isolation
+//
+// The three-role model (postgres / app_user / graph_user) enforces a hard
+// boundary between relational data and graph data at the PostgreSQL level.
+// Even if application code has a bug — a SQL injection, a misrouted query,
+// a confused-deputy attack — PostgreSQL itself blocks cross-boundary access.
+//
+//   app_user  → relational tables (public schema) with RLS. Zero graph access.
+//   graph_user → per-tenant graph schemas + ag_catalog. Zero relational access.
+//   postgres  → everything. Used only for migrations, never at runtime.
+//
+// The tests below are organized into two groups:
+//
+//   Positive tests: verify that each role CAN do what it is designed to do.
+//     These catch grant regressions — a migration that accidentally revokes
+//     a needed privilege would break the positive test first.
+//
+//   Negative tests: verify that each role CANNOT cross the boundary.
+//     These catch over-granting — a migration that accidentally grants
+//     ag_catalog access to app_user would break the negative test.
+//
+// Together they form an executable security specification. Each test comment
+// states what it proves, what breaks if the assertion fails, and which
+// PostgreSQL mechanism (GRANT/REVOKE, schema ownership, RLS) enforces it.
+// ---------------------------------------------------------------------------
+
+// --- Positive: app_user can do its job ---
+
+// TestIntegration_AppUser_CanQueryRelationalData verifies app_user can
+// SELECT from tenants and jobs with proper tenant context. This proves
+// migration 007's DML grants (SELECT/INSERT/UPDATE/DELETE on public-schema
+// tables) are in effect. If this breaks, app_user has lost the ability to
+// do its primary job: serve relational queries for the application layer.
+// Enforced by: GRANT SELECT, INSERT, UPDATE, DELETE on public tables to
+// app_user (migration 007).
+func TestIntegration_AppUser_CanQueryRelationalData(t *testing.T) {
+	tenantID := "role-appuser-dml"
+	setupTenant(t, tenantID, "AppUser DML Corp")
+	conn := appUserConn(t)
+
+	execAsTenant(t, conn, tenantID, func(tx *sql.Tx) {
+		_, err := tx.ExecContext(context.Background(),
+			"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'pending', 'test') ON CONFLICT DO NOTHING",
+			"job-role-dml-1", tenantID)
+		if err != nil {
+			t.Fatalf("app_user INSERT into jobs failed: %v", err)
+		}
+
+		var count int
+		if err := tx.QueryRowContext(context.Background(),
+			"SELECT count(*) FROM jobs WHERE job_id = $1", "job-role-dml-1").Scan(&count); err != nil {
+			t.Fatalf("app_user SELECT from jobs failed: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("app_user sees %d rows, want 1", count)
+		}
+	})
+}
+
+// --- Positive: graph_user can do its job ---
+
+// TestIntegration_GraphUser_CanQueryAgCatalog verifies graph_user can
+// SELECT from ag_catalog.ag_graph. This proves migration 009's GRANT
+// USAGE ON SCHEMA ag_catalog + GRANT SELECT ON ALL TABLES are in effect.
+// If this breaks, the graph client cannot discover or verify tenant
+// graphs, blocking all graph operations. Enforced by: GRANT USAGE on
+// ag_catalog schema and GRANT SELECT on ag_catalog tables to graph_user
+// (migration 009).
+func TestIntegration_GraphUser_CanQueryAgCatalog(t *testing.T) {
+	tenantID := "role-graphcat"
+	setupTenant(t, tenantID, "Graph Catalog Corp")
+	conn := graphUserConn(t)
+	ctx := context.Background()
+
+	var count int
+	err := conn.QueryRowContext(ctx,
+		"SELECT count(*) FROM ag_catalog.ag_graph WHERE name = $1",
+		"crosscodex_"+tenantID).Scan(&count)
+	if err != nil {
+		t.Fatalf("graph_user SELECT from ag_catalog.ag_graph failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("graph_user sees %d graphs for tenant %s, want 1", count, tenantID)
+	}
+}
+
+// TestIntegration_GraphUser_CanAccessGraphSchema verifies graph_user can
+// SELECT from per-tenant graph schema tables (e.g. _ag_label_vertex).
+// AGE creates these tables when a graph is created; the provisioning
+// trigger transfers ownership to graph_user. If this breaks, the graph
+// client cannot read or write vertices/edges, which is its entire purpose.
+// Enforced by: ALTER SCHEMA/TABLE/SEQUENCE OWNER TO graph_user in the
+// provisioning trigger (migration 009).
+func TestIntegration_GraphUser_CanAccessGraphSchema(t *testing.T) {
+	tenantID := "role-graphschema"
+	setupTenant(t, tenantID, "Graph Schema Corp")
+	conn := graphUserConn(t)
+	ctx := context.Background()
+
+	schemaName := "crosscodex_" + tenantID
+	query := fmt.Sprintf(
+		`SELECT count(*) FROM "%s"._ag_label_vertex`, schemaName)
+	var count int
+	if err := conn.QueryRowContext(ctx, query).Scan(&count); err != nil {
+		t.Fatalf("graph_user SELECT from %s._ag_label_vertex failed: %v", schemaName, err)
+	}
+}
+
+// --- Negative: app_user blocked from graph layer ---
+
+// TestIntegration_AppUser_CannotReadAgCatalog verifies app_user has no
+// access to the ag_catalog schema. Without this boundary, a bug in
+// relational code could enumerate all tenant graphs, leaking the tenant
+// directory across the graph/relational privilege boundary. Enforced by
+// REVOKE: migration 009 grants ag_catalog access to graph_user only;
+// app_user has no USAGE on the ag_catalog schema.
+func TestIntegration_AppUser_CannotReadAgCatalog(t *testing.T) {
+	conn := appUserConn(t)
+	ctx := context.Background()
+
+	_, err := conn.ExecContext(ctx, "SELECT count(*) FROM ag_catalog.ag_graph")
+	if err == nil {
+		t.Error("app_user should not be able to read ag_catalog.ag_graph")
+		return
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("expected 'permission denied', got: %v", err)
+	}
+}
+
+// TestIntegration_AppUser_CannotReadGraphSchema verifies app_user cannot
+// SELECT from per-tenant graph schema tables. Without this boundary, a
+// SQL injection in relational code could read graph vertices/edges,
+// exfiltrating compliance relationship data that should only be accessible
+// through the graph API. Enforced by: app_user has no USAGE on per-tenant
+// graph schemas (owned by graph_user); PostgreSQL denies access by default
+// to schemas the role has no USAGE grant on.
+func TestIntegration_AppUser_CannotReadGraphSchema(t *testing.T) {
+	tenantID := "role-appgraph"
+	setupTenant(t, tenantID, "AppGraph Corp")
+	conn := appUserConn(t)
+	ctx := context.Background()
+
+	schemaName := "crosscodex_" + tenantID
+	query := fmt.Sprintf(
+		`SELECT count(*) FROM "%s"._ag_label_vertex`, schemaName)
+	_, err := conn.ExecContext(ctx, query)
+	if err == nil {
+		t.Errorf("app_user should not be able to read %s._ag_label_vertex", schemaName)
+		return
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("expected 'permission denied', got: %v", err)
+	}
+}
+
+// TestIntegration_AppUser_CannotCallCypher verifies app_user cannot
+// EXECUTE ag_catalog.cypher(). Without this boundary, a bug in relational
+// code could run arbitrary Cypher queries against tenant graphs — reading,
+// creating, or deleting vertices and edges. Enforced by: app_user has no
+// EXECUTE on ag_catalog functions (migration 009 grants EXECUTE to
+// graph_user only).
+func TestIntegration_AppUser_CannotCallCypher(t *testing.T) {
+	tenantID := "role-appnocypher"
+	setupTenant(t, tenantID, "AppNoCypher Corp")
+	conn := appUserConn(t)
+	ctx := context.Background()
+
+	query := fmt.Sprintf(
+		"SELECT * FROM ag_catalog.cypher('crosscodex_%s', $$ MATCH (n) RETURN n $$) AS (v agtype)",
+		tenantID)
+	_, err := conn.ExecContext(ctx, query)
+	if err == nil {
+		t.Error("app_user should not be able to call ag_catalog.cypher()")
+		return
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "permission denied") {
+		t.Errorf("expected 'permission denied', got: %v", err)
+	}
+}
+
+// TestIntegration_AppUser_CannotCreateGraph verifies app_user cannot
+// EXECUTE ag_catalog.create_graph(). Without this boundary, compromised
+// relational code could create rogue graphs outside the tenant
+// provisioning flow, bypassing ownership transfer and audit controls.
+// Enforced by: app_user has no EXECUTE on ag_catalog functions
+// (migration 009 grants EXECUTE to graph_user only).
+func TestIntegration_AppUser_CannotCreateGraph(t *testing.T) {
+	conn := appUserConn(t)
+	ctx := context.Background()
+
+	_, err := conn.ExecContext(ctx, "SELECT ag_catalog.create_graph('rogue_graph')")
+	if err == nil {
+		t.Error("app_user should not be able to call ag_catalog.create_graph()")
+		return
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "permission denied") {
+		t.Errorf("expected 'permission denied', got: %v", err)
+	}
+}
+
+// --- Negative: graph_user blocked from relational layer ---
+
+// TestIntegration_GraphUser_CannotReadTenants verifies graph_user cannot
+// SELECT from the tenants table. Without this boundary, a bug in graph
+// code could enumerate all tenants — including ones the graph_user has no
+// graph for — leaking the tenant directory. Enforced by: graph_user has
+// no privileges on public-schema tables (only app_user has DML grants).
+func TestIntegration_GraphUser_CannotReadTenants(t *testing.T) {
+	conn := graphUserConn(t)
+	ctx := context.Background()
+
+	_, err := conn.ExecContext(ctx, "SELECT count(*) FROM tenants")
+	if err == nil {
+		t.Error("graph_user should not be able to read tenants table")
+		return
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("expected 'permission denied', got: %v", err)
+	}
+}
+
+// TestIntegration_GraphUser_CannotReadJobs verifies graph_user cannot
+// SELECT from the jobs table. Without this boundary, a bug in graph code
+// could read job configurations, statuses, and user identifiers —
+// sensitive operational data outside the graph domain. Enforced by:
+// graph_user has no privileges on public-schema tables.
+func TestIntegration_GraphUser_CannotReadJobs(t *testing.T) {
+	conn := graphUserConn(t)
+	ctx := context.Background()
+
+	_, err := conn.ExecContext(ctx, "SELECT count(*) FROM jobs")
+	if err == nil {
+		t.Error("graph_user should not be able to read jobs table")
+		return
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("expected 'permission denied', got: %v", err)
+	}
+}
+
+// TestIntegration_GraphUser_CannotInsertTenants verifies graph_user
+// cannot INSERT into the tenants table. Without this boundary,
+// compromised graph code could provision rogue tenants, creating new
+// graph schemas and bypassing whatever onboarding controls the
+// application enforces. Enforced by: graph_user has no INSERT privilege
+// on public-schema tables.
+func TestIntegration_GraphUser_CannotInsertTenants(t *testing.T) {
+	conn := graphUserConn(t)
+	ctx := context.Background()
+
+	_, err := conn.ExecContext(ctx,
+		"INSERT INTO tenants (tenant_id, display_name) VALUES ('rogue-tenant', 'Rogue Corp')")
+	if err == nil {
+		t.Error("graph_user should not be able to insert into tenants")
+		return
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("expected 'permission denied', got: %v", err)
+	}
+}
+
+// TestIntegration_GraphUser_CannotTruncateRelational verifies graph_user
+// cannot TRUNCATE relational tables. Without this boundary, compromised
+// graph code could wipe all job history, classifications, and vote
+// summaries in a single statement. Enforced by: TRUNCATE requires table
+// ownership or explicit TRUNCATE grant, neither of which graph_user has
+// on public-schema tables.
+func TestIntegration_GraphUser_CannotTruncateRelational(t *testing.T) {
+	conn := graphUserConn(t)
+	ctx := context.Background()
+
+	_, err := conn.ExecContext(ctx, "TRUNCATE TABLE jobs CASCADE")
+	if err == nil {
+		t.Error("graph_user should not be able to truncate jobs")
+		return
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("expected 'permission denied', got: %v", err)
+	}
+}
+
+// TestIntegration_GraphUser_CannotAlterRelational verifies graph_user
+// cannot ALTER relational tables. Without this boundary, compromised
+// graph code could add columns, drop constraints, or disable RLS on
+// relational tables — subverting the entire tenant isolation model.
+// Enforced by: ALTER TABLE requires table ownership; public-schema
+// tables are owned by postgres, not graph_user.
+func TestIntegration_GraphUser_CannotAlterRelational(t *testing.T) {
+	conn := graphUserConn(t)
+	ctx := context.Background()
+
+	_, err := conn.ExecContext(ctx, "ALTER TABLE jobs ADD COLUMN hacked TEXT")
+	if err == nil {
+		t.Error("graph_user should not be able to alter relational tables")
+		return
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "permission denied") && !strings.Contains(errMsg, "must be owner") {
+		t.Errorf("expected 'permission denied' or 'must be owner', got: %v", err)
 	}
 }

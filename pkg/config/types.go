@@ -66,9 +66,15 @@ type TenantsConfig struct {
 	AllowedTenants []string `yaml:"allowed_tenants"`
 }
 
-// DatabaseConfig configures PostgreSQL connection.
+// DatabaseConfig configures PostgreSQL connections.
+//
+// Two DSNs support the three-role security model (see pkg/db/doc.go):
+//   - DSN connects as app_user for relational data behind RLS.
+//   - GraphDSN connects as graph_user for AGE cypher queries.
+//     graph_user owns per-tenant graph schemas but has no relational access.
 type DatabaseConfig struct {
 	DSN        string   `yaml:"dsn"`
+	GraphDSN   string   `yaml:"graph_dsn"`
 	Extensions []string `yaml:"extensions"`
 	MaxConns   int      `yaml:"max_conns"`
 	SSLMode    string   `yaml:"ssl_mode"`

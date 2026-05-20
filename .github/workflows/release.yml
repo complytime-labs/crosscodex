@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26'
+
+      - name: Install Task
+        uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2
+        with:
+          version: 3.x
+
+      - name: Install Buf
+        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Download dependencies
+        run: task dev:deps
+
+      - name: Generate code
+        run: task generate
+
+      - name: Build
+        run: task build
+
+      - name: Lint
+        run: task lint
+
+      - name: Security scan
+        run: govulncheck ./...
+
+      - name: Test
+        run: task test
+
+      - name: Build release binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+          GIT_COMMIT: ${{ github.sha }}
+          MODULE: github.com/complytime-labs/crosscodex
+        run: |
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LDFLAGS="-X ${MODULE}/internal/version.Version=${VERSION} -X ${MODULE}/internal/version.GitCommit=${GIT_COMMIT} -X ${MODULE}/internal/version.BuildDate=${BUILD_DATE}"
+
+          platforms=(
+            "linux/amd64"
+            "linux/arm64"
+            "darwin/amd64"
+            "darwin/arm64"
+          )
+
+          for platform in "${platforms[@]}"; do
+            os="${platform%/*}"
+            arch="${platform#*/}"
+            echo "Building for ${os}/${arch}..."
+            GOOS="${os}" GOARCH="${arch}" go build -ldflags "${LDFLAGS}" -o ".build/crosscodex-${os}-${arch}" ./cmd/crosscodex
+            GOOS="${os}" GOARCH="${arch}" go build -ldflags "${LDFLAGS}" -o ".build/crosscodexd-${os}-${arch}" ./cmd/crosscodexd
+          done
+
+      - name: Generate checksums
+        run: |
+          cd .build
+          sha256sum crosscodex-* crosscodexd-* > checksums.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release create "${TAG_NAME}" \
+            --generate-notes \
+            .build/crosscodex-linux-amd64 \
+            .build/crosscodexd-linux-amd64 \
+            .build/crosscodex-linux-arm64 \
+            .build/crosscodexd-linux-arm64 \
+            .build/crosscodex-darwin-amd64 \
+            .build/crosscodexd-darwin-amd64 \
+            .build/crosscodex-darwin-arm64 \
+            .build/crosscodexd-darwin-arm64 \
+            .build/checksums.txt

@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -104,5 +105,39 @@ func TestValidate_InvalidConfigs(t *testing.T) {
 				t.Errorf("error = %v, want ErrInvalidConfig", err)
 			}
 		})
+	}
+}
+
+// TestValidate_MultipleInvalidFields_ReturnsFirstError documents that
+// validate() uses early-return semantics: when multiple fields are
+// invalid, only the first error encountered is returned. The
+// validation order is TLS -> Storage -> Logging, so a TLS error
+// takes precedence over a Storage or Logging error.
+func TestValidate_MultipleInvalidFields_ReturnsFirstError(t *testing.T) {
+	cfg := &Config{
+		TLS:     TLSConfig{Mode: "bogus"},
+		Storage: StorageConfig{Objects: ObjectStorageConfig{Backend: "azure"}},
+		Logging: LoggingConfig{Level: "verbose", Format: "yaml"},
+	}
+
+	err := validate(cfg, nil)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Errorf("error = %v, want ErrInvalidConfig", err)
+	}
+
+	// The error should mention the TLS mode (validated first) and
+	// not the storage backend or logging fields.
+	msg := err.Error()
+	if !strings.Contains(msg, "tls.mode") {
+		t.Errorf("expected error about tls.mode, got: %s", msg)
+	}
+	if strings.Contains(msg, "storage.objects.backend") {
+		t.Errorf("expected no storage error (early return), got: %s", msg)
+	}
+	if strings.Contains(msg, "logging.level") {
+		t.Errorf("expected no logging error (early return), got: %s", msg)
 	}
 }

@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
+	"regexp"
+	"strings"
 	"sync"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -28,9 +31,11 @@ func NewPool(cfg PoolConfig, opts ...Option) (Pool, error) {
 		o.connMaxLife = cfg.ConnMaxLife
 	}
 
+	redacted := redactDSN(cfg.DSN)
+
 	db, err := sql.Open("pgx", cfg.DSN)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("failed to open database (%s): %w", redacted, err)
 	}
 	if cfg.MaxOpenConns > 0 {
 		db.SetMaxOpenConns(cfg.MaxOpenConns)
@@ -40,7 +45,7 @@ func NewPool(cfg PoolConfig, opts ...Option) (Pool, error) {
 
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("failed to ping database (%s): %w", redacted, err)
 	}
 
 	return &pgPool{
@@ -49,9 +54,10 @@ func NewPool(cfg PoolConfig, opts ...Option) (Pool, error) {
 	}, nil
 }
 
-func NewPoolConfigFrom(dsn string, maxConns int, sslMode string, extensions []string) PoolConfig {
+func NewPoolConfigFrom(dsn string, graphDSN string, maxConns int, sslMode string, extensions []string) PoolConfig {
 	return PoolConfig{
 		DSN:          dsn,
+		GraphDSN:     graphDSN,
 		MaxOpenConns: maxConns,
 		SSLMode:      sslMode,
 		Extensions:   extensions,
@@ -127,3 +133,33 @@ func (r *pgRows) Next() bool             { return r.rows.Next() }
 func (r *pgRows) Scan(dest ...any) error { return r.rows.Scan(dest...) }
 func (r *pgRows) Close() error           { return r.rows.Close() }
 func (r *pgRows) Err() error             { return r.rows.Err() }
+
+// kvPasswordRe matches the password field in a keyword=value DSN.
+// It handles both unquoted values (non-whitespace) and single-quoted values.
+var kvPasswordRe = regexp.MustCompile(`(?i)(password\s*=\s*)('[^']*'|\S+)`)
+
+// redactDSN replaces the password in a DSN with "REDACTED" and returns the
+// sanitised string. It supports both URI-style DSNs
+// (postgres://user:pass@host/db) and PostgreSQL keyword=value DSNs
+// (host=localhost password=secret dbname=mydb).
+//
+// If the DSN cannot be parsed, it returns the literal "<unparseable-dsn>"
+// to avoid leaking credentials from malformed connection strings.
+func redactDSN(dsn string) string {
+	// Keyword=value format: contains "key=value" pairs without a URI scheme.
+	// PostgreSQL keyword=value DSNs always contain "=" but never "://".
+	if strings.Contains(dsn, "=") && !strings.Contains(dsn, "://") {
+		return kvPasswordRe.ReplaceAllString(dsn, "${1}REDACTED")
+	}
+
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme == "" {
+		return "<unparseable-dsn>"
+	}
+	if u.User != nil {
+		if _, hasPassword := u.User.Password(); hasPassword {
+			u.User = url.UserPassword(u.User.Username(), "REDACTED")
+		}
+	}
+	return u.String()
+}

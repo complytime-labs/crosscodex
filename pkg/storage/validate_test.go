@@ -3,9 +3,12 @@ package storage
 import (
 	"errors"
 	"testing"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 func TestValidateKey(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		key     string
@@ -28,6 +31,7 @@ func TestValidateKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := validateKey(tt.key)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
@@ -41,18 +45,20 @@ func TestValidateKey(t *testing.T) {
 }
 
 func TestValidateTenantID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		tenantID string
 		wantErr  error
 	}{
-		{name: "empty tenant", tenantID: "", wantErr: ErrTenantRequired},
+		{name: "empty tenant", tenantID: "", wantErr: tenant.ErrInvalidTenant},
 		{name: "valid tenant", tenantID: "acme-corp", wantErr: nil},
-		{name: "uuid tenant", tenantID: "550e8400-e29b-41d4-a716-446655440000", wantErr: nil},
+		{name: "leading digit rejected", tenantID: "550e8400-e29b-41d4-a716-446655440000", wantErr: tenant.ErrInvalidTenant},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := validateTenantID(tt.tenantID)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {

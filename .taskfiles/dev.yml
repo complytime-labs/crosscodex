@@ -8,6 +8,9 @@ vars:
   POSTGRES_USER: '{{.POSTGRES_USER | default "postgres"}}'
   POSTGRES_PASSWORD: '{{.POSTGRES_PASSWORD | default "integration"}}'
   POSTGRES_DB: '{{.POSTGRES_DB | default "crosscodex_test"}}'
+  RUSTFS_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY | default "rustfsadmin"}}'
+  RUSTFS_SECRET_KEY: '{{.RUSTFS_SECRET_KEY | default "rustfsadmin"}}'
+  RUSTFS_BUCKET: '{{.RUSTFS_BUCKET | default "crosscodex-test"}}'
 
 tasks:
   default:
@@ -27,7 +30,7 @@ tasks:
 
   build:
     desc: Build all binaries
-    deps: [generate]
+    deps: [deps, generate]
     vars:
       VERSION:
         sh: git describe --tags --always --dirty 2>/dev/null || echo dev
@@ -53,12 +56,12 @@ tasks:
 
   test:
     desc: Run all tests
+    deps: [deps]
     vars:
       MODE: '{{.MODE | default "human"}}'
     cmds:
       - mkdir -p {{.TEST_DIR}}
       - cmd: go test -v -race -count=1 -coverprofile={{.TEST_DIR}}/coverage.out ./... 2>&1 | tee {{.TEST_DIR}}/test.log
-        ignore_error: true
       - task: test-report
         vars:
           MODE: '{{.MODE}}'
@@ -81,7 +84,7 @@ tasks:
 
   test-unit:
     desc: Run unit tests (with protobuf generation)
-    deps: [generate]
+    deps: [deps, generate]
     cmds:
       - mkdir -p {{.TEST_DIR}}
       - go test -v -race -coverprofile={{.TEST_DIR}}/coverage.out ./...
@@ -102,20 +105,31 @@ tasks:
           {{.CONTAINER_IMAGE}}
       - |
         echo "Waiting for PostgreSQL..."
-        for i in $(seq 1 30); do
-          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -U {{.POSTGRES_USER}} -q 2>/dev/null && break
+        for i in $(seq 1 60); do
+          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -h 127.0.0.1 -U {{.POSTGRES_USER}} -q 2>/dev/null && break
           sleep 1
         done
-        {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -U {{.POSTGRES_USER}} -q || (echo "PostgreSQL failed to start"; exit 1)
+        {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -h 127.0.0.1 -U {{.POSTGRES_USER}} -q || (echo "PostgreSQL failed to start"; exit 1)
 
   test-integration:
-    desc: Run integration tests (starts container if needed)
-    deps: [test-integration-db-up]
+    desc: Run all integration tests (starts containers if needed)
+    deps: [deps, test-integration-db-up, test-integration-storage-up]
     env:
       TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=disable" # DevSkim: ignore DS162092 — integration test fixture DSN
+      TEST_S3_ENDPOINT: "http://localhost:19000"
+      TEST_S3_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY}}'
+      TEST_S3_SECRET_KEY: '{{.RUSTFS_SECRET_KEY}}'
+      TEST_S3_BUCKET: '{{.RUSTFS_BUCKET}}'
     cmds:
+      - defer: { task: test-integration-db-down }
+      - defer: { task: test-integration-storage-down }
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out ./pkg/db/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+      # -p 1: pkg/db and pkg/graphdb both run migrations and ALTER ROLE in
+      # TestMain. Without -p 1, go test runs packages in parallel and both
+      # TestMain functions race on the pg_authid catalog row, causing
+      # "tuple concurrently updated" errors.
+      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out ./pkg/db/... ./pkg/graphdb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out ./pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
 
   test-integration-db-down:
     desc: Stop and remove the integration test database container
@@ -124,14 +138,58 @@ tasks:
     cmds:
       - '{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}'
 
+  test-integration-storage-up:
+    desc: Start RustFS container for S3 integration tests
+    vars:
+      CONTAINER_NAME: crosscodex-test-storage
+    cmds:
+      - |
+        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
+          -p 19000:9000 \
+          -p 19001:9001 \
+          -e RUSTFS_ROOT_USER={{.RUSTFS_ACCESS_KEY}} \
+          -e RUSTFS_ROOT_PASSWORD={{.RUSTFS_SECRET_KEY}} \
+          docker.io/rustfs/rustfs:1.0.0-beta.3 server /data --console-address ":9001"
+      - |
+        echo "Waiting for RustFS S3 API..."
+        for i in $(seq 1 30); do
+          curl -so /dev/null http://localhost:19000/ 2>/dev/null && break
+          sleep 1
+        done
+        curl -so /dev/null http://localhost:19000/ 2>/dev/null || (echo "RustFS failed to start"; exit 1)
+
+  test-integration-storage:
+    desc: Run S3 storage integration tests (starts container if needed)
+    deps: [deps, test-integration-storage-up]
+    env:
+      TEST_S3_ENDPOINT: "http://localhost:19000"
+      TEST_S3_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY}}'
+      TEST_S3_SECRET_KEY: '{{.RUSTFS_SECRET_KEY}}'
+      TEST_S3_BUCKET: '{{.RUSTFS_BUCKET}}'
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out ./pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
+
+  test-integration-storage-down:
+    desc: Stop and remove the RustFS integration test container
+    vars:
+      CONTAINER_NAME: crosscodex-test-storage
+    cmds:
+      - '{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}'
+
+  test-integration-clean:
+    desc: Remove all integration test containers and their volumes
+    cmds:
+      - '{{.CONTAINER_ENGINE}} rm -f crosscodex-test-db crosscodex-test-storage 2>/dev/null || true'
+      - '{{.CONTAINER_ENGINE}} volume prune -f'
+
   lint:
     desc: Run linters
-    deps: [generate]
+    deps: [deps, generate]
     cmds:
       - go vet ./...
       - go fmt ./...
-      - cmd: golangci-lint run
-        ignore_error: true
+      - go tool golangci-lint run
 
   deps:
     desc: Download dependencies
@@ -140,7 +198,7 @@ tasks:
 
   tidy:
     desc: Tidy dependencies (run after generate to avoid removing generated code deps)
-    deps: [generate]
+    deps: [deps, generate]
     cmds:
       - go mod tidy
 

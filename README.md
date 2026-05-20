@@ -16,7 +16,39 @@ ______________________________________________________________________
 
 ## Status
 
-CrossCodex is in early development. The Go monorepo provides package interfaces, protobuf service contracts, and a configuration system. The CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
+CrossCodex is in early development. Three foundational packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
+
+| Package | Status | Summary |
+| ------- | ------ | ------- |
+| **pkg/config** | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking |
+| **pkg/storage** | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes |
+| **pkg/db** | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification |
+| **pkg/tenant** | Partial | Tenant ID validation implemented; context propagation interface scaffolded |
+| All others | Scaffolded | Interfaces and types defined; implementation pending |
+
+Unit tests cover the implemented packages. Integration tests for `pkg/db` run against a containerized PostgreSQL instance with Apache AGE and pgvector extensions (`task test:integration`).
+
+## Implemented Packages
+
+### pkg/config
+
+Configuration loading with XDG Base Directory compliance. Merges values from nine layers in defined precedence order: compiled defaults, system config, system drop-ins, user config, user drop-ins, profile selection, project config, environment variables, and CLI flags. Each resolved value carries provenance metadata indicating which layer set it. Validation runs after merge and reports all errors with source locations.
+
+See [Configuration](#configuration) below for the full resolution order and examples.
+
+### pkg/storage
+
+Object storage abstraction supporting local filesystem and S3-compatible backends. Both backends enforce tenant isolation through path prefixing and validate paths to prevent directory traversal and symlink attacks. Writes are atomic (write-to-temp then rename) to prevent partial artifacts. The S3 backend supports configurable endpoints for MinIO or other S3-compatible services.
+
+### pkg/db
+
+PostgreSQL connection pool with tenant-scoped Row-Level Security. The package provides three main components:
+
+- **Pool** — Connection pool built on `database/sql` with health checks and PostgreSQL extension verification (AGE, pgvector).
+- **TenantPool** — Wraps a Pool to automatically set `app.current_tenant` (and optionally `app.current_user`) via `SET LOCAL` on every transaction. Direct queries outside a transaction are rejected.
+- **Migrator** — Schema migrations using `golang-migrate/migrate/v4` with SQL files embedded via `//go:embed`. Migrations create tables, RLS policies, immutability triggers, and tenant-scoped graph lifecycle functions.
+
+Application connections use a restricted `app_user` role with no DDL privileges. The migration role (superuser) is used only for schema changes. See `docs/dev/migrations.md` for operational details.
 
 ## Architecture
 
@@ -306,7 +338,7 @@ task generate
 | Test Type | Framework | Status |
 | --------- | --------- | ------ |
 | **Unit** | Go testing | Available (`task test:unit`) |
-| **Integration** | Go testing + containers | Planned |
+| **Integration** | Go testing + containers | Available for pkg/db and pkg/storage (`task test:integration`) |
 | **E2E** | Venom | Planned |
 
 ### Contributing
