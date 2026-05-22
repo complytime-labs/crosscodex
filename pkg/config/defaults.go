@@ -37,6 +37,11 @@ nats:
   url: ""
   cluster: ""
   tls: false
+  embedded:
+    store_dir: ""
+  streams:
+    audit_llm_retention: 2160h
+    audit_events_retention: 720h
 server:
   grpc_addr: ":50051"
   http_addr: ":8080"

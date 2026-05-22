@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // Config is the unified merge target for all configuration layers.
 type Config struct {
 	LLM      LLMConfig      `yaml:"llm"`
@@ -82,9 +84,23 @@ type DatabaseConfig struct {
 
 // NATSConfig configures NATS JetStream connection.
 type NATSConfig struct {
-	URL     string `yaml:"url"`
-	Cluster string `yaml:"cluster"`
-	TLS     bool   `yaml:"tls"`
+	URL      string             `yaml:"url"`      // External NATS URL; empty = embedded mode
+	Cluster  string             `yaml:"cluster"`  // Cluster name (external mode)
+	TLS      bool               `yaml:"tls"`      // Enable TLS
+	Embedded NATSEmbeddedConfig `yaml:"embedded"` // Embedded server settings
+	Streams  NATSStreamsConfig  `yaml:"streams"`  // JetStream stream settings
+}
+
+// NATSEmbeddedConfig configures the embedded NATS server.
+type NATSEmbeddedConfig struct {
+	StoreDir string `yaml:"store_dir"` // JetStream storage dir; empty = $XDG_STATE_HOME/crosscodex/nats/
+}
+
+// NATSStreamsConfig configures JetStream audit stream retention.
+type NATSStreamsConfig struct {
+	AuditLLMRetention    time.Duration `yaml:"audit_llm_retention"`    // Default: 2160h (90 days)
+	AuditEventsRetention time.Duration `yaml:"audit_events_retention"` // Default: 720h (30 days)
+	// AuditDecisions is always indefinite; no config knob.
 }
 
 // ServerConfig holds daemon-specific settings.

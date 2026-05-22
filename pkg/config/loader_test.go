@@ -9,13 +9,7 @@ import (
 )
 
 func TestLoader_DefaultsOnly(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	loader := NewLoader()
-	cfg, err := loader.Load(context.Background())
-	if err != nil {
-		t.Fatalf("Load error: %v", err)
-	}
+	cfg := loadDefaults(t)
 
 	if cfg.LLM.Timeout != 30 {
 		t.Errorf("LLM.Timeout = %d, want default 30", cfg.LLM.Timeout)
@@ -287,13 +281,7 @@ func TestLoader_FullPrecedenceStack(t *testing.T) {
 }
 
 func TestLoader_ServiceConfigAndCLIConfig(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-
-	loader := NewLoader()
-	cfg, err := loader.Load(context.Background())
-	if err != nil {
-		t.Fatalf("Load error: %v", err)
-	}
+	cfg := loadDefaults(t)
 
 	sc := cfg.ServiceConfig()
 	if sc.GRPCAddr != ":50051" {

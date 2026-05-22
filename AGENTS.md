@@ -151,7 +151,7 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | **pkg/db** | `[implemented]` | PostgreSQL connection pooling, tenant RLS isolation, migrations | pkg/config |
 | **pkg/graphdb** | `[scaffold]` | Apache AGE openCypher queries, relationship traversal | pkg/db |
 | **pkg/vectordb** | `[scaffold]` | pgvector similarity search for embeddings | pkg/db, pkg/tenant, pkg/telemetry |
-| **pkg/natsbus** | `[scaffold]` | NATS JetStream publish/subscribe, stream management | pkg/config |
+| **pkg/natsbus** | `[implemented]` | NATS JetStream publish/subscribe, stream management, embedded/external dual mode, provenance headers | pkg/config, pkg/tenant |
 | **pkg/storage** | `[implemented]` | Object storage abstraction (local FS / S3) | pkg/config |
 | **pkg/tlsconfig** | `[scaffold]` | TLS setup, FIPS validation, certificate loading | pkg/config |
 | **pkg/authn** | `[scaffold]` | mTLS, Kerberos, SAML authentication | pkg/tlsconfig, pkg/tenant |
@@ -271,6 +271,8 @@ When `tls.fips.enabled: true` in configuration:
 - Only FIPS-approved cipher suites are used
 - TLS 1.2+ required
 - `pkg/tlsconfig.Builder.ValidateFIPS()` must pass
+- Go binaries must be built using GOEXPERIMENT=boringcrypto
+- Use the global `FIPS=1` task variable to enable FIPS mode across all build and test tasks (e.g., `task build FIPS=1`, `task test FIPS=1`, `task test:integration:nats FIPS=1`)
 
 ## Observability & Attestation
 
@@ -459,6 +461,11 @@ When a batch operation (UPDATE, DELETE) touches rows with mixed protection state
 - **pkg/db implementation** — Added PostgreSQL connection pool with tenant-scoped Row-Level Security, schema migrations via golang-migrate, extension verification, immutability triggers, and comprehensive integration tests including tenant isolation, immutability, and tired-admin threat model scenarios.
 - **Build consolidation** — Consolidated all task definitions (build, test, lint, integration) into `.taskfiles/dev.yml`, replacing scattered top-level task definitions.
 - **pkg/tenant package** — Added the `pkg/tenant` public API package with `ValidateTenantID` (regex-enforced format: lowercase alphanumeric with hyphens, 3-64 characters), error sentinels (`ErrNoTenant`, `ErrInvalidTenant`, `ErrTenantMismatch`), and the `Context` interface for tenant propagation. The `Context` interface remains unimplemented; `pkg/db` now delegates tenant validation to `pkg/tenant`.
+- **pkg/natsbus implementation** — Added dual-mode NATS client (embedded + external) with tenant-scoped subjects, provenance headers (X-Trace-Id, X-Span-Id, X-Tenant-Id, X-Timestamp, X-Content-SHA256), three JetStream audit streams (AUDIT_LLM 90d, AUDIT_DECISIONS indefinite, AUDIT_EVENTS 30d), queue group work distribution, XDG_STATE_HOME-compliant embedded storage, and comprehensive integration tests with TLS.
+
+**TODO:** NATS account-level tenant authorization is deferred until `pkg/authn` is implemented. Currently, tenant isolation is enforced at the subject level via `pkg/tenant.ValidateTenantID()`. When `pkg/authn` adds NATS account support, add per-tenant NATS accounts for server-level isolation.
+
+**Attestation Testing Requirement:** Every package that produces provenance data (natsbus, llmclient, future services) must test: (1) content hashes are computed correctly and deterministically, (2) trace context propagates through publish/subscribe round-trips, (3) all mandatory provenance headers are present on every published message, (4) content hash in metadata matches recomputed hash of received payload, (5) missing or corrupt provenance headers produce actionable errors.
 
 ## Next Steps
 

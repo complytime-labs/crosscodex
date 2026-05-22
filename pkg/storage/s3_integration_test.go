@@ -31,7 +31,7 @@ var (
 func TestMain(m *testing.M) {
 	testEndpoint = os.Getenv("TEST_S3_ENDPOINT")
 	if testEndpoint == "" {
-		fmt.Fprintln(os.Stderr, "TEST_S3_ENDPOINT not set — run: task dev:test-integration-storage")
+		fmt.Fprintln(os.Stderr, "TEST_S3_ENDPOINT not set — run: task test:integration:storage")
 		os.Exit(1)
 	}
 	testAccessKey = os.Getenv("TEST_S3_ACCESS_KEY")
@@ -107,6 +107,49 @@ func cleanupKeys(t *testing.T, p storage.Provider, keys ...string) {
 	}
 }
 
+// getAndCompare reads the given key and asserts its content matches want.
+func getAndCompare(t *testing.T, p storage.Provider, key string, want []byte) {
+	t.Helper()
+	rc, err := p.Get(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Get(%s) error: %v", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll() error: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("Get(%s) = %q, want %q", key, got, want)
+	}
+}
+
+// listAndCompareKeys lists objects with the given prefix, sorts the keys, and
+// asserts they match want exactly.
+func listAndCompareKeys(t *testing.T, p storage.Provider, prefix string, want []string) {
+	t.Helper()
+	list, err := p.List(context.Background(), prefix)
+	if err != nil {
+		t.Fatalf("List(%s) error: %v", prefix, err)
+	}
+
+	var keys []string
+	for _, m := range list {
+		keys = append(keys, m.Key)
+	}
+	sort.Strings(keys)
+
+	if len(keys) != len(want) {
+		t.Fatalf("List returned %d items, want %d: %v", len(keys), len(want), keys)
+	}
+	for i, k := range keys {
+		if k != want[i] {
+			t.Errorf("List[%d] = %q, want %q", i, k, want[i])
+		}
+	}
+}
+
 func TestIntegrationS3_PutThenGet(t *testing.T) {
 	t.Parallel()
 	p := newIntegrationProvider(t, "integ-put-get")
@@ -120,19 +163,7 @@ func TestIntegrationS3_PutThenGet(t *testing.T) {
 		t.Fatalf("Put() error: %v", err)
 	}
 
-	rc, err := p.Get(ctx, key)
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	defer func() { _ = rc.Close() }()
-
-	got, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("ReadAll() error: %v", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("Get() = %q, want %q", got, want)
-	}
+	getAndCompare(t, p, key, want)
 }
 
 func TestIntegrationS3_PutOverwrite(t *testing.T) {
@@ -150,19 +181,7 @@ func TestIntegrationS3_PutOverwrite(t *testing.T) {
 		t.Fatalf("Put(v2) error: %v", err)
 	}
 
-	rc, err := p.Get(ctx, key)
-	if err != nil {
-		t.Fatalf("Get() error: %v", err)
-	}
-	defer func() { _ = rc.Close() }()
-
-	got, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("ReadAll() error: %v", err)
-	}
-	if string(got) != "v2" {
-		t.Errorf("Get() = %q, want %q", got, "v2")
-	}
+	getAndCompare(t, p, key, []byte("v2"))
 }
 
 func TestIntegrationS3_GetMissing(t *testing.T) {
@@ -218,34 +237,14 @@ func TestIntegrationS3_ListWithPrefix(t *testing.T) {
 		}
 	}
 
-	list, err := p.List(ctx, "docs/")
-	if err != nil {
-		t.Fatalf("List() error: %v", err)
-	}
-
-	var keys []string
-	for _, m := range list {
-		keys = append(keys, m.Key)
-	}
-	sort.Strings(keys)
-
-	want := []string{"docs/a.json", "docs/b.json"}
-	if len(keys) != len(want) {
-		t.Fatalf("List returned %d items, want %d: %v", len(keys), len(want), keys)
-	}
-	for i, k := range keys {
-		if k != want[i] {
-			t.Errorf("List[%d] = %q, want %q", i, k, want[i])
-		}
-	}
+	listAndCompareKeys(t, p, "docs/", []string{"docs/a.json", "docs/b.json"})
 }
 
 func TestIntegrationS3_ListEmpty(t *testing.T) {
 	t.Parallel()
 	p := newIntegrationProvider(t, "integ-list-empty")
-	ctx := context.Background()
 
-	list, err := p.List(ctx, "nonexistent-prefix/")
+	list, err := p.List(context.Background(), "nonexistent-prefix/")
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
 	}
@@ -345,59 +344,12 @@ func TestIntegrationS3_TenantIsolation(t *testing.T) {
 		t.Fatalf("Put(beta) error: %v", err)
 	}
 
-	// Alpha reads its own data.
-	rcA, err := pA.Get(ctx, key)
-	if err != nil {
-		t.Fatalf("Get(alpha) error: %v", err)
-	}
-	defer func() { _ = rcA.Close() }()
-	gotA, err := io.ReadAll(rcA)
-	if err != nil {
-		t.Fatalf("ReadAll(alpha) error: %v", err)
-	}
-	if string(gotA) != "from-alpha" {
-		t.Errorf("alpha Get() = %q, want %q", gotA, "from-alpha")
-	}
-
-	// Beta reads its own data.
-	rcB, err := pB.Get(ctx, key)
-	if err != nil {
-		t.Fatalf("Get(beta) error: %v", err)
-	}
-	defer func() { _ = rcB.Close() }()
-	gotB, err := io.ReadAll(rcB)
-	if err != nil {
-		t.Fatalf("ReadAll(beta) error: %v", err)
-	}
-	if string(gotB) != "from-beta" {
-		t.Errorf("beta Get() = %q, want %q", gotB, "from-beta")
-	}
+	getAndCompare(t, pA, key, []byte("from-alpha"))
+	getAndCompare(t, pB, key, []byte("from-beta"))
 
 	// Alpha listing does not show beta's objects.
-	listA, err := pA.List(ctx, "isolation/")
-	if err != nil {
-		t.Fatalf("List(alpha) error: %v", err)
-	}
-	if len(listA) != 1 {
-		t.Errorf("alpha List returned %d items, want 1", len(listA))
-	}
-	for _, m := range listA {
-		if m.Key != key {
-			t.Errorf("alpha List contains unexpected key: %q", m.Key)
-		}
-	}
+	listAndCompareKeys(t, pA, "isolation/", []string{key})
 
 	// Beta listing does not show alpha's objects.
-	listB, err := pB.List(ctx, "isolation/")
-	if err != nil {
-		t.Fatalf("List(beta) error: %v", err)
-	}
-	if len(listB) != 1 {
-		t.Errorf("beta List returned %d items, want 1", len(listB))
-	}
-	for _, m := range listB {
-		if m.Key != key {
-			t.Errorf("beta List contains unexpected key: %q", m.Key)
-		}
-	}
+	listAndCompareKeys(t, pB, "isolation/", []string{key})
 }

@@ -1,0 +1,64 @@
+version: "3"
+
+includes:
+  integration:
+    taskfile: test/integration.yml
+    dir: "{{.ROOT_DIR}}"
+
+vars:
+  MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
+  TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
+
+tasks:
+  default:
+    silent: true
+    cmd: task test --list
+
+  unit:
+    desc: Run unit tests with coverage
+    deps:
+      - :dev:deps
+      - :dev:generate
+    vars:
+      MODE: '{{.MODE | default "human"}}'
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - cmd: go test -v -race -count=1 -coverprofile={{.TEST_DIR}}/coverage.out {{.ROOT_DIR}}/... 2>&1 | tee {{.TEST_DIR}}/test.log
+      - task: report
+        vars:
+          MODE: "{{.MODE}}"
+
+  # --- Internal helpers ---
+
+  report:
+    internal: true
+    vars:
+      MODE: '{{.MODE | default "human"}}'
+    cmds:
+      - cmd: |
+          if [ "{{.MODE}}" = "llm" ]; then
+            grep -E '(^---\s+(FAIL|PASS)|^FAIL|^ok\s)' {{.TEST_DIR}}/test.log
+          else
+            echo ""
+            echo "Coverage:"
+            go tool cover -func={{.TEST_DIR}}/coverage.out | tail -1
+          fi
+      - cmd: grep -q '^FAIL' {{.TEST_DIR}}/test.log && exit 1 || true
+
+  ensure-deps:
+    internal: true
+    run: once
+    cmds:
+      - go mod download
+
+  ensure-generate:
+    internal: true
+    run: once
+    dir: "{{.ROOT_DIR}}/api/proto"
+    cmds:
+      - buf generate
+    sources:
+      - "**/*.proto"
+      - buf.gen.yaml
+    generates:
+      - ../gen/go/**/*.pb.go
