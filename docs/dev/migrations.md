@@ -128,7 +128,7 @@ task test:integration-db-down
 To inspect the test database manually:
 
 ```bash
-psql "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=disable"
+psql "postgres://username:password@localhost:15432/dbname?sslmode=disable"
 ```
 
 ## Rollback Procedures

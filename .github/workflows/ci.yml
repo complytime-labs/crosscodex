@@ -21,9 +21,7 @@ jobs:
           go-version: '1.26'
 
       - name: Install Task
-        uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2
-        with:
-          version: 3.x
+        run: go install tool github.com/go-task/task/v3/cmd/task
 
       - name: Install Buf
         uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1
@@ -63,9 +61,7 @@ jobs:
           go-version: '1.26'
 
       - name: Install Task
-        uses: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611 # v2
-        with:
-          version: 3.x
+        run: go install tool github.com/go-task/task/v3/cmd/task
 
       - name: Install Buf
         uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1
@@ -90,7 +86,9 @@ jobs:
 
       - name: Run integration tests
         env:
+          # secretlint-disable
           TEST_DATABASE_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=disable"
+          # secretlint-enable
           TEST_S3_ENDPOINT: http://localhost:19000
           TEST_S3_ACCESS_KEY: rustfsadmin
           TEST_S3_SECRET_KEY: rustfsadmin

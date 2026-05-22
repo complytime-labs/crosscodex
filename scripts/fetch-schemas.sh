@@ -2,7 +2,10 @@
 set -euo pipefail
 
 for cmd in curl sha256sum; do
-  command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: required command '$cmd' not found" >&2; exit 1; }
+	command -v "$cmd" >/dev/null 2>&1 || {
+		echo "ERROR: required command '$cmd' not found" >&2
+		exit 1
+	}
 done
 
 OSCAL_VERSION="${1:?Usage: fetch-schemas.sh <oscal-version> <gemara-version> <schemas-dir>}"
@@ -87,12 +90,12 @@ for schema in "${gemara_schemas[@]}"; do
 done
 
 for f in "${all_files[@]}"; do
-	if [ ! -s "$f" ]; then
+	if [[ ! -s "$f" ]]; then
 		echo "ERROR: missing or empty file: $f"
 		fail=1
 	fi
 done
-if [ "$fail" -ne 0 ]; then
+if [[ "$fail" -ne 0 ]]; then
 	echo "Verification failed: one or more schema files are missing or empty."
 	exit 1
 fi

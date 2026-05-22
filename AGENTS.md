@@ -150,7 +150,7 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | **pkg/config** | `[implemented]` | Configuration loading, XDG compliance, precedence resolution | None (foundational) |
 | **pkg/db** | `[implemented]` | PostgreSQL connection pooling, tenant RLS isolation, migrations | pkg/config |
 | **pkg/graphdb** | `[scaffold]` | Apache AGE openCypher queries, relationship traversal | pkg/db |
-| **pkg/vectordb** | `[scaffold]` | pgvector similarity search for embeddings | pkg/db |
+| **pkg/vectordb** | `[scaffold]` | pgvector similarity search for embeddings | pkg/db, pkg/tenant, pkg/telemetry |
 | **pkg/natsbus** | `[scaffold]` | NATS JetStream publish/subscribe, stream management | pkg/config |
 | **pkg/storage** | `[implemented]` | Object storage abstraction (local FS / S3) | pkg/config |
 | **pkg/tlsconfig** | `[scaffold]` | TLS setup, FIPS validation, certificate loading | pkg/config |
@@ -271,6 +271,72 @@ When `tls.fips.enabled: true` in configuration:
 - Only FIPS-approved cipher suites are used
 - TLS 1.2+ required
 - `pkg/tlsconfig.Builder.ValidateFIPS()` must pass
+
+## Observability & Attestation
+
+**OpenTelemetry Integration (pkg/telemetry):**
+
+All packages that perform business operations MUST integrate OpenTelemetry:
+- ✅ **Traces:** Instrument all public method calls with spans, including tenant and operation metadata
+- ✅ **Metrics:** Counter for operations, histogram for duration, gauge for resource usage
+- ✅ **Logs:** Structured logging with tenant context and correlation IDs
+- ✅ **Context:** Propagate trace context through all internal calls
+
+**Required telemetry for all packages:**
+```go
+// Example instrumentation pattern
+func (s *Service) PublicMethod(ctx context.Context, req Request) error {
+    ctx, span := telemetry.StartSpan(ctx, "service.public_method")
+    defer span.End()
+    
+    // Add tenant and operation attributes
+    span.SetAttributes(
+        attribute.String("tenant.id", tenant.FromContext(ctx)),
+        attribute.String("operation.type", req.Type),
+    )
+    
+    telemetry.Counter("service.operations").Add(ctx, 1)
+    start := time.Now()
+    defer func() {
+        telemetry.Histogram("service.duration").Record(ctx, time.Since(start).Milliseconds())
+    }()
+    
+    // ... business logic
+}
+```
+
+**in-toto Attestation (pkg/attestation):**
+
+Compliance-critical operations MUST generate cryptographic attestations:
+- ✅ **Catalog ingestion:** Attest to OSCAL/Gemara document authenticity and validation
+- ✅ **Control mappings:** Attest to AI-generated compliance mapping accuracy and model used
+- ✅ **Risk assessments:** Attest to evaluation results and evidence collection
+- ✅ **Policy violations:** Attest to enforcement actions taken and audit trails
+
+**Required attestation for compliance operations:**
+```go
+// Example attestation pattern
+func (s *ComplianceService) GenerateMapping(ctx context.Context, req MappingRequest) error {
+    // ... perform mapping operation
+    
+    // Generate attestation for compliance audit
+    predicate := &attestation.CompliancePredicate{
+        Operation: "control.mapping",
+        Subject:   req.ControlID,
+        Evidence:  result.Evidence,
+        Model:     req.LLMModel,
+        Timestamp: time.Now(),
+    }
+    
+    return s.attestor.Sign(ctx, predicate)
+}
+```
+
+**Integration Requirements:**
+- **pkg/vectordb** MUST emit telemetry for similarity searches, model validation, tenant access
+- **pkg/graphdb** MUST emit telemetry for relationship queries and graph traversals
+- **pkg/llmclient** MUST generate attestations for AI-generated compliance content
+- **All services** MUST propagate trace context via NATS message headers
 
 ## Build & Task Automation
 

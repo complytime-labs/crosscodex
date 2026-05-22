@@ -121,14 +121,14 @@ tasks:
       TEST_S3_SECRET_KEY: '{{.RUSTFS_SECRET_KEY}}'
       TEST_S3_BUCKET: '{{.RUSTFS_BUCKET}}'
     cmds:
-      - defer: { task: test-integration-db-down }
-      - defer: { task: test-integration-storage-down }
+      - defer: {task: test-integration-db-down}
+      - defer: {task: test-integration-storage-down}
       - mkdir -p {{.TEST_DIR}}
       # -p 1: pkg/db and pkg/graphdb both run migrations and ALTER ROLE in
       # TestMain. Without -p 1, go test runs packages in parallel and both
       # TestMain functions race on the pg_authid catalog row, causing
       # "tuple concurrently updated" errors.
-      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out ./pkg/db/... ./pkg/graphdb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out ./pkg/db/... ./pkg/graphdb/... ./pkg/vectordb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
       - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out ./pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
 
   test-integration-db-down:
@@ -195,6 +195,13 @@ tasks:
     desc: Download dependencies
     cmds:
       - go mod download
+
+  update-deps:
+    desc: Update all Go dependencies to latest minor/patch versions
+    deps: [generate]
+    cmds:
+      - go get -u ./...
+      - go mod tidy
 
   tidy:
     desc: Tidy dependencies (run after generate to avoid removing generated code deps)
