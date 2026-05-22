@@ -11,4 +11,10 @@ var (
 
 	// ErrIndexNotFound indicates the specified index does not exist.
 	ErrIndexNotFound = errors.New("index not found")
+
+	// ErrIncompatibleModel indicates query model doesn't match stored embeddings
+	ErrIncompatibleModel = errors.New("query model does not match stored embeddings")
+
+	// ErrModelNotFound indicates no embeddings exist for the specified model
+	ErrModelNotFound = errors.New("no embeddings found for specified model")
 )

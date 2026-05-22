@@ -42,7 +42,7 @@ func TestNewPoolConfigFrom(t *testing.T) {
 	t.Parallel()
 
 	cfg := NewPoolConfigFrom("postgres://localhost/test", "postgres://localhost/test_graph", 20, "require", []string{"age", "vector"}) // DevSkim: ignore DS162092 — test fixture
-	if cfg.DSN != "postgres://localhost/test" {                                                                                       // DevSkim: ignore DS162092 — test fixture
+	if cfg.DSN != "postgres://localhost/test" {                                                                                        // DevSkim: ignore DS162092 — test fixture
 		t.Errorf("DSN = %q, want postgres://localhost/test", cfg.DSN) // DevSkim: ignore DS162092 — test fixture
 	}
 	if cfg.MaxOpenConns != 20 {
@@ -96,7 +96,7 @@ func TestRedactDSN(t *testing.T) {
 	}{
 		{
 			name:       "password redacted",
-			dsn:        "postgres://user:secret@localhost:5432/db?sslmode=disable", // DevSkim: ignore DS162092 — test fixture
+			dsn:        "postgres://user:secret@localhost:5432/db?sslmode=disable",
 			want:       "postgres://user:REDACTED@localhost:5432/db?sslmode=disable",
 			notContain: "secret",
 		},
