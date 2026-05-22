@@ -2,6 +2,9 @@
 #
 # Single-stage build: install pgvector from source tarball into the AGE
 # image (which is based on postgres:16 with AGE pre-installed).
+#
+# TLS: The image bundles pg_hba.conf requiring client certificates for TCP
+# connections. SSL certs are mounted at runtime from .test-output/certs/.
 
 FROM docker.io/apache/age:release_PG16_1.5.0
 
@@ -35,9 +38,13 @@ WORKDIR /
 RUN echo "CREATE EXTENSION IF NOT EXISTS age CASCADE;" > /docker-entrypoint-initdb.d/01-age.sql && \
     echo "CREATE EXTENSION IF NOT EXISTS vector;" > /docker-entrypoint-initdb.d/02-vector.sql
 
+# Copy mTLS-enforcing pg_hba.conf into the image.
+# SSL cert/key paths are passed at runtime via CMD overrides.
+COPY pg_hba.conf /etc/postgresql/pg_hba.conf
+
 USER postgres
 
 HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
     CMD ["pg_isready"]
 
-CMD ["postgres", "-c", "shared_preload_libraries=age"]
+CMD ["postgres", "-c", "shared_preload_libraries=age", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]

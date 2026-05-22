@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 
 	suDSN = os.Getenv("TEST_DATABASE_DSN")
 	if suDSN == "" {
-		fmt.Fprintln(os.Stderr, "TEST_DATABASE_DSN not set — run: task dev:test-integration")
+		fmt.Fprintln(os.Stderr, "TEST_DATABASE_DSN not set — run: task test:integration:db")
 		os.Exit(1)
 	}
 

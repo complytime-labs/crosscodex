@@ -12,38 +12,30 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        fips: ["", "1"]
+    name: build (${{ matrix.fips == '1' && 'FIPS' || 'standard' }})
+    env:
+      FIPS: ${{ matrix.fips }}
+      GOEXPERIMENT: ${{ matrix.fips == '1' && 'boringcrypto' || '' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version: '1.26'
-
-      - name: Install Task
-        run: go install tool github.com/go-task/task/v3/cmd/task
-
-      - name: Install Buf
-        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
-
-      - name: Download dependencies
-        run: task dev:deps
-
-      - name: Generate code
-        run: task generate
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          install-govulncheck: "true"
 
       - name: Build
         run: task build
 
       - name: Lint
+        if: matrix.fips == ''
         run: task lint
 
       - name: Security scan
+        if: matrix.fips == ''
         run: govulncheck ./...
 
       - name: Test
@@ -55,39 +47,25 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: ./.github/actions/go-setup
         with:
-          go-version: '1.26'
-
-      - name: Install Task
-        run: go install tool github.com/go-task/task/v3/cmd/task
-
-      - name: Install Buf
-        uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download dependencies
-        run: task dev:deps
-
-      - name: Generate code
-        run: task generate
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          generate-test-certs: "true"
 
       - name: Start PostgreSQL (custom image with AGE + pgvector)
-        run: task dev:test-integration-db-up
+        run: task test:integration:db-up
         env:
           CONTAINER_ENGINE: podman
 
       - name: Start RustFS
-        run: task dev:test-integration-storage-up
+        run: task test:integration:storage-up
         env:
           CONTAINER_ENGINE: podman
 
       - name: Run integration tests
         env:
           # secretlint-disable
-          TEST_DATABASE_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=disable"
+          TEST_DATABASE_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert=${{ github.workspace }}/.test-output/certs/ca.pem&sslcert=${{ github.workspace }}/.test-output/certs/client.pem&sslkey=${{ github.workspace }}/.test-output/certs/client-key.pem"
           # secretlint-enable
           TEST_S3_ENDPOINT: http://localhost:19000
           TEST_S3_ACCESS_KEY: rustfsadmin
@@ -97,7 +75,7 @@ jobs:
           mkdir -p .test-output
           # -p 1: pkg/db and pkg/graphdb both run migrations and ALTER ROLE in
           # TestMain. Without serialization they race on the pg_authid catalog row.
-          go test -v -tags integration -race -count=1 -p 1 -timeout 300s ./pkg/db/... ./pkg/graphdb/... ./pkg/storage/... 2>&1 | tee .test-output/integration.log
+          go test -v -tags integration -race -count=1 -p 1 -timeout 300s ./pkg/db/... ./pkg/graphdb/... ./pkg/vectordb/... ./pkg/storage/... 2>&1 | tee .test-output/integration.log
 
       - name: Stop containers
         if: always()
@@ -106,3 +84,44 @@ jobs:
         run: |
           ${CONTAINER_ENGINE} rm -f crosscodex-test-db || true
           ${CONTAINER_ENGINE} rm -f crosscodex-test-storage || true
+          ${CONTAINER_ENGINE} volume rm -f crosscodex-test-certs || true
+
+  integration-nats:
+    needs: [build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        fips: ["", "1"]
+    name: integration-nats (${{ matrix.fips == '1' && 'FIPS' || 'standard' }})
+    env:
+      GOEXPERIMENT: ${{ matrix.fips == '1' && 'boringcrypto' || '' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          generate-test-certs: "true"
+
+      - name: Start NATS with TLS
+        run: task test:integration:nats-up
+        env:
+          CONTAINER_ENGINE: podman
+
+      - name: Run NATS integration tests
+        env:
+          TEST_NATS_URL: tls://localhost:14222
+          TEST_NATS_CA: ${{ github.workspace }}/.test-output/certs/ca.pem
+          TEST_NATS_CERT: ${{ github.workspace }}/.test-output/certs/client.pem
+          TEST_NATS_KEY: ${{ github.workspace }}/.test-output/certs/client-key.pem
+        run: |
+          mkdir -p .test-output
+          go test -v -tags integration_nats -race -count=1 -timeout 120s ./pkg/natsbus/... 2>&1 | tee .test-output/integration-nats.log
+
+      - name: Stop NATS
+        if: always()
+        env:
+          CONTAINER_ENGINE: podman
+        run: |
+          ${CONTAINER_ENGINE} rm -f crosscodex-test-nats || true
+          ${CONTAINER_ENGINE} volume rm -f crosscodex-test-certs || true

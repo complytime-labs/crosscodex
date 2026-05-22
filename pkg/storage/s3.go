@@ -119,6 +119,15 @@ func isS3NotFound(err error) bool {
 	return false
 }
 
+// wrapS3Error translates S3 not-found errors to ErrNotFound
+// and wraps other errors with the given operation label.
+func wrapS3Error(err error, op string) error {
+	if isS3NotFound(err) {
+		return ErrNotFound
+	}
+	return fmt.Errorf("s3 %s: %w", op, err)
+}
+
 func (p *s3Provider) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	if p.closed.Load() {
 		return nil, ErrProviderClosed
@@ -132,10 +141,7 @@ func (p *s3Provider) Get(ctx context.Context, key string) (io.ReadCloser, error)
 		Key:    aws.String(p.fullKey(key)),
 	})
 	if err != nil {
-		if isS3NotFound(err) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("s3 get: %w", err)
+		return nil, wrapS3Error(err, "get")
 	}
 	return output.Body, nil
 }
@@ -233,10 +239,7 @@ func (p *s3Provider) headObject(ctx context.Context, key string) (*s3.HeadObject
 		Key:    aws.String(p.fullKey(key)),
 	})
 	if err != nil {
-		if isS3NotFound(err) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("s3 head: %w", err)
+		return nil, wrapS3Error(err, "head")
 	}
 	return output, nil
 }

@@ -1,0 +1,56 @@
+name: Go Setup
+description: Shared Go toolchain setup — Go, Task, Buf, deps, codegen
+
+inputs:
+  go-version:
+    description: Go version to install
+    required: false
+    default: "1.26"
+  github-token:
+    description: GitHub token for Buf setup
+    required: true
+  install-govulncheck:
+    description: Whether to install govulncheck
+    required: false
+    default: "false"
+  generate-test-certs:
+    description: Whether to generate test TLS certificates
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      with:
+        go-version: ${{ inputs.go-version }}
+
+    - name: Install Task
+      shell: bash
+      run: go install tool github.com/go-task/task/v3/cmd/task
+
+    - name: Install Buf
+      uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1
+      with:
+        github_token: ${{ inputs.github-token }}
+
+    - name: Install govulncheck
+      if: inputs.install-govulncheck == 'true'
+      shell: bash
+      run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+    - name: Download dependencies
+      shell: bash
+      run: task dev:deps
+
+    - name: Generate code
+      shell: bash
+      run: task generate
+
+    - name: Generate test certs
+      if: inputs.generate-test-certs == 'true'
+      shell: bash
+      run: |
+        mkdir -p .test-output/certs
+        go run ./internal/testcerts/gen.go .test-output/certs

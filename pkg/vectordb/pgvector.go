@@ -247,13 +247,7 @@ func (db *PgVectorStore) Count(ctx context.Context) (int64, error) {
 
 // StoreEmbedding adds or updates a single embedding with compliance metadata
 func (db *PgVectorStore) StoreEmbedding(ctx context.Context, tenantID string, embedding Embedding) error {
-	// Use struct's tracer if available, otherwise get from context
-	var span trace.Span
-	if db.tracer != nil {
-		ctx, span = db.tracer.Start(ctx, "vectordb.store_embedding")
-	} else {
-		ctx, span = trace.SpanFromContext(ctx).TracerProvider().Tracer("vectordb").Start(ctx, "vectordb.store_embedding")
-	}
+	ctx, span := db.startSpan(ctx, "vectordb.store_embedding")
 	defer span.End()
 
 	// Add telemetry attributes
@@ -265,15 +259,8 @@ func (db *PgVectorStore) StoreEmbedding(ctx context.Context, tenantID string, em
 		attribute.Int("vector.dimensions", len(embedding.Vector)),
 	)
 
-	// Validate tenant from context
-	contextTenant, err := tenant.FromContext(ctx)
-	if err != nil {
-		span.SetStatus(codes.Error, "tenant context missing")
-		return fmt.Errorf("tenant context required: %w", err)
-	}
-	if contextTenant != tenantID {
-		span.SetStatus(codes.Error, "tenant mismatch")
-		return fmt.Errorf("tenant mismatch: context=%s, param=%s: %w", contextTenant, tenantID, tenant.ErrTenantMismatch)
+	if err := validateTenantContext(ctx, span, tenantID); err != nil {
+		return err
 	}
 
 	// Start timing
@@ -296,13 +283,12 @@ func (db *PgVectorStore) StoreEmbedding(ctx context.Context, tenantID string, em
         ON CONFLICT (catalog_id, control_id, model) 
         DO UPDATE SET vector = EXCLUDED.vector, tenant_id = EXCLUDED.tenant_id`
 
-	_, err = db.db.ExecContext(ctx, query,
+	_, err := db.db.ExecContext(ctx, query,
 		embedding.CatalogID,
 		embedding.ControlID,
 		embedding.Model,
-		vectorToString(embedding.Vector), // Helper function to implement
+		vectorToString(embedding.Vector),
 		tenantID)
-
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("failed to store embedding: %w", err)
@@ -333,13 +319,7 @@ func vectorToString(vector []float32) string {
 // StoreBatch efficiently stores multiple embeddings in a single transaction.
 // An empty batch is a no-op that returns nil without touching the database.
 func (db *PgVectorStore) StoreBatch(ctx context.Context, tenantID string, embeddings []Embedding) error {
-	// Use struct's tracer if available, otherwise get from context
-	var span trace.Span
-	if db.tracer != nil {
-		ctx, span = db.tracer.Start(ctx, "vectordb.store_batch")
-	} else {
-		ctx, span = trace.SpanFromContext(ctx).TracerProvider().Tracer("vectordb").Start(ctx, "vectordb.store_batch")
-	}
+	ctx, span := db.startSpan(ctx, "vectordb.store_batch")
 	defer span.End()
 
 	span.SetAttributes(
@@ -347,15 +327,8 @@ func (db *PgVectorStore) StoreBatch(ctx context.Context, tenantID string, embedd
 		attribute.Int("batch.size", len(embeddings)),
 	)
 
-	// Validate tenant from context
-	contextTenant, err := tenant.FromContext(ctx)
-	if err != nil {
-		span.SetStatus(codes.Error, "tenant context missing")
-		return fmt.Errorf("tenant context required: %w", err)
-	}
-	if contextTenant != tenantID {
-		span.SetStatus(codes.Error, "tenant mismatch")
-		return fmt.Errorf("tenant mismatch: context=%s, param=%s: %w", contextTenant, tenantID, tenant.ErrTenantMismatch)
+	if err := validateTenantContext(ctx, span, tenantID); err != nil {
+		return err
 	}
 
 	if len(embeddings) == 0 {
@@ -423,13 +396,7 @@ func (db *PgVectorStore) StoreBatch(ctx context.Context, tenantID string, embedd
 // Only searches embeddings from the specified model to ensure vector compatibility.
 // Returns ErrModelNotFound if no embeddings exist for the given model and catalog.
 func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query FindSimilarQuery) ([]SimilarityResult, error) {
-	// Use struct's tracer if available, otherwise get from context
-	var span trace.Span
-	if db.tracer != nil {
-		ctx, span = db.tracer.Start(ctx, "vectordb.find_similar")
-	} else {
-		ctx, span = trace.SpanFromContext(ctx).TracerProvider().Tracer("vectordb").Start(ctx, "vectordb.find_similar")
-	}
+	ctx, span := db.startSpan(ctx, "vectordb.find_similar")
 	defer span.End()
 
 	// Add telemetry attributes
@@ -441,15 +408,8 @@ func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query
 		attribute.Int("query.dimensions", len(query.Vector)),
 	)
 
-	// Validate tenant from context
-	contextTenant, err := tenant.FromContext(ctx)
-	if err != nil {
-		span.SetStatus(codes.Error, "tenant context missing")
-		return nil, fmt.Errorf("tenant context required: %w", err)
-	}
-	if contextTenant != tenantID {
-		span.SetStatus(codes.Error, "tenant mismatch")
-		return nil, fmt.Errorf("tenant mismatch: context=%s, param=%s: %w", contextTenant, tenantID, tenant.ErrTenantMismatch)
+	if err := validateTenantContext(ctx, span, tenantID); err != nil {
+		return nil, err
 	}
 
 	// Validate query parameters
@@ -482,7 +442,7 @@ func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query
 	// because similarity searches are not latency-critical hot paths.
 	var count int
 	checkQuery := `SELECT COUNT(*) FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND model = $3`
-	err = db.db.QueryRowContext(ctx, checkQuery, tenantID, query.CatalogID, query.Model).Scan(&count)
+	err := db.db.QueryRowContext(ctx, checkQuery, tenantID, query.CatalogID, query.Model).Scan(&count)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to check model existence: %w", err)
@@ -537,13 +497,7 @@ func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query
 // DeleteByModel removes all embeddings for a specific catalog and model.
 // This is used when reprocessing after switching embedding models.
 func (db *PgVectorStore) DeleteByModel(ctx context.Context, tenantID, catalogID, model string) error {
-	// Use struct's tracer if available, otherwise get from context
-	var span trace.Span
-	if db.tracer != nil {
-		ctx, span = db.tracer.Start(ctx, "vectordb.delete_by_model")
-	} else {
-		ctx, span = trace.SpanFromContext(ctx).TracerProvider().Tracer("vectordb").Start(ctx, "vectordb.delete_by_model")
-	}
+	ctx, span := db.startSpan(ctx, "vectordb.delete_by_model")
 	defer span.End()
 
 	span.SetAttributes(
@@ -552,15 +506,8 @@ func (db *PgVectorStore) DeleteByModel(ctx context.Context, tenantID, catalogID,
 		attribute.String("model", model),
 	)
 
-	// Validate tenant from context
-	contextTenant, err := tenant.FromContext(ctx)
-	if err != nil {
-		span.SetStatus(codes.Error, "tenant context missing")
-		return fmt.Errorf("tenant context required: %w", err)
-	}
-	if contextTenant != tenantID {
-		span.SetStatus(codes.Error, "tenant mismatch")
-		return fmt.Errorf("tenant mismatch: context=%s, param=%s: %w", contextTenant, tenantID, tenant.ErrTenantMismatch)
+	if err := validateTenantContext(ctx, span, tenantID); err != nil {
+		return err
 	}
 
 	query := `DELETE FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND model = $3`
@@ -605,6 +552,31 @@ func parseVectorString(s string) ([]float32, error) {
 	}
 
 	return result, nil
+}
+
+// startSpan begins a new trace span using the store's configured tracer,
+// falling back to the context's tracer provider when no explicit tracer is set.
+func (db *PgVectorStore) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
+	if db.tracer != nil {
+		return db.tracer.Start(ctx, name)
+	}
+	return trace.SpanFromContext(ctx).TracerProvider().Tracer("vectordb").Start(ctx, name)
+}
+
+// validateTenantContext checks that the context carries a tenant ID matching
+// the explicit tenantID parameter. Returns a non-nil error (with span status
+// set) when the context has no tenant or the IDs disagree.
+func validateTenantContext(ctx context.Context, span trace.Span, tenantID string) error {
+	contextTenant, err := tenant.FromContext(ctx)
+	if err != nil {
+		span.SetStatus(codes.Error, "tenant context missing")
+		return fmt.Errorf("tenant context required: %w", err)
+	}
+	if contextTenant != tenantID {
+		span.SetStatus(codes.Error, "tenant mismatch")
+		return fmt.Errorf("tenant mismatch: context=%s, param=%s: %w", contextTenant, tenantID, tenant.ErrTenantMismatch)
+	}
+	return nil
 }
 
 // Verify interface compliance at compile time

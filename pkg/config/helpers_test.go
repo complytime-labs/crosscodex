@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,6 +29,20 @@ func mustUnmarshalNode[T any](t *testing.T, node *yaml.Node) T {
 		t.Fatalf("failed to unmarshal node: %v", err)
 	}
 	return v
+}
+
+// loadDefaults sets XDG_CONFIG_HOME to a temp dir, creates a Loader,
+// and returns the config produced by loading defaults only.
+func loadDefaults(t *testing.T) *Config {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	loader := NewLoader()
+	cfg, err := loader.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	return cfg
 }
 
 func writeFile(t *testing.T, path, content string) {

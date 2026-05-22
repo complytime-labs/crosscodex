@@ -33,7 +33,7 @@ func testVector(seed ...float32) []float32 {
 func TestMain(m *testing.M) {
 	testDSN = os.Getenv("TEST_DATABASE_DSN")
 	if testDSN == "" {
-		fmt.Fprintln(os.Stderr, "TEST_DATABASE_DSN not set — run: task dev:test-integration")
+		fmt.Fprintln(os.Stderr, "TEST_DATABASE_DSN not set — run: task test:integration:db")
 		os.Exit(1)
 	}
 

@@ -12,16 +12,58 @@ import (
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
-func TestNewPgVectorStore(t *testing.T) {
-	db := &sql.DB{} // Mock DB for test
-
-	store, err := NewPgVectorStore(db)
+// newTestStore creates a PgVectorStore with a zero-value sql.DB for unit tests
+// that only exercise pre-database validation paths. Options are applied in order.
+func newTestStore(t *testing.T, opts ...Option) *PgVectorStore {
+	t.Helper()
+	store, err := NewPgVectorStore(&sql.DB{}, opts...)
 	if err != nil {
 		t.Fatalf("NewPgVectorStore() error = %v, want nil", err)
 	}
-	if store == nil {
-		t.Fatal("NewPgVectorStore() returned nil store")
+	return store
+}
+
+// requireNoTenantErr asserts that err wraps tenant.ErrNoTenant.
+func requireNoTenantErr(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Expected error for missing tenant context, but got nil")
 	}
+	if !errors.Is(err, tenant.ErrNoTenant) {
+		t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
+	}
+}
+
+// requireTenantMismatchErr asserts that err wraps tenant.ErrTenantMismatch.
+func requireTenantMismatchErr(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Expected error for tenant mismatch, but got nil")
+	}
+	if !errors.Is(err, tenant.ErrTenantMismatch) {
+		t.Fatalf("Expected errors.Is(err, tenant.ErrTenantMismatch), got: %v", err)
+	}
+}
+
+// mismatchCtx returns a context with "context-tenant" set, intended for use
+// with a param tenant of "param-tenant" to trigger a mismatch error.
+func mismatchCtx() context.Context {
+	return tenant.WithTenant(context.Background(), "context-tenant")
+}
+
+// testFindSimilarQuery returns a FindSimilarQuery with standard test values.
+// Override fields after construction when non-default values are needed.
+func testFindSimilarQuery() FindSimilarQuery {
+	return FindSimilarQuery{
+		CatalogID: "test-catalog",
+		Model:     "test-model",
+		Vector:    []float32{0.1, 0.2, 0.3},
+		Limit:     5,
+	}
+}
+
+func TestNewPgVectorStore(t *testing.T) {
+	store := newTestStore(t)
 
 	// Verify store implements both interfaces
 	var _ Index = store
@@ -29,11 +71,7 @@ func TestNewPgVectorStore(t *testing.T) {
 }
 
 func TestPgVectorStore_StoreEmbedding(t *testing.T) {
-	db := &sql.DB{} // Mock - will be replaced with real testing in integration tests
-	store, err := NewPgVectorStore(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestStore(t)
 
 	embedding := Embedding{
 		CatalogID: "test-catalog",
@@ -46,26 +84,11 @@ func TestPgVectorStore_StoreEmbedding(t *testing.T) {
 	}
 
 	t.Run("missing_tenant_context", func(t *testing.T) {
-		// Test with no tenant in context - should fail with tenant context missing
-		err = store.StoreEmbedding(context.Background(), "test-tenant", embedding)
-		if err == nil {
-			t.Fatal("Expected error for missing tenant context, but got nil")
-		}
-		if !errors.Is(err, tenant.ErrNoTenant) {
-			t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-		}
+		requireNoTenantErr(t, store.StoreEmbedding(context.Background(), "test-tenant", embedding))
 	})
 
 	t.Run("tenant_mismatch", func(t *testing.T) {
-		// Test with mismatched tenant IDs - should fail with tenant mismatch
-		ctx := tenant.WithTenant(context.Background(), "context-tenant")
-		err = store.StoreEmbedding(ctx, "param-tenant", embedding)
-		if err == nil {
-			t.Fatal("Expected error for tenant mismatch, but got nil")
-		}
-		if !errors.Is(err, tenant.ErrTenantMismatch) {
-			t.Fatalf("Expected errors.Is(err, tenant.ErrTenantMismatch), got: %v", err)
-		}
+		requireTenantMismatchErr(t, store.StoreEmbedding(mismatchCtx(), "param-tenant", embedding))
 	})
 
 	// Note: valid_tenant_context test omitted for scaffolding phase
@@ -74,54 +97,23 @@ func TestPgVectorStore_StoreEmbedding(t *testing.T) {
 }
 
 func TestPgVectorStore_FindSimilar(t *testing.T) {
-	db := &sql.DB{}
-	store, err := NewPgVectorStore(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestStore(t)
 
 	t.Run("missing_tenant_context", func(t *testing.T) {
-		query := FindSimilarQuery{
-			CatalogID: "test-catalog",
-			Model:     "test-model",
-			Vector:    []float32{0.1, 0.2, 0.3},
-			Limit:     5,
-		}
-		_, err := store.FindSimilar(context.Background(), "test-tenant", query)
-		if err == nil {
-			t.Fatal("Expected error for missing tenant context, but got nil")
-		}
-		if !errors.Is(err, tenant.ErrNoTenant) {
-			t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-		}
+		_, err := store.FindSimilar(context.Background(), "test-tenant", testFindSimilarQuery())
+		requireNoTenantErr(t, err)
 	})
 
 	t.Run("tenant_mismatch", func(t *testing.T) {
-		ctx := tenant.WithTenant(context.Background(), "context-tenant")
-		query := FindSimilarQuery{
-			CatalogID: "test-catalog",
-			Model:     "test-model",
-			Vector:    []float32{0.1, 0.2, 0.3},
-			Limit:     5,
-		}
-		_, err := store.FindSimilar(ctx, "param-tenant", query)
-		if err == nil {
-			t.Fatal("Expected error for tenant mismatch, but got nil")
-		}
-		if !errors.Is(err, tenant.ErrTenantMismatch) {
-			t.Fatalf("Expected errors.Is(err, tenant.ErrTenantMismatch), got: %v", err)
-		}
+		_, err := store.FindSimilar(mismatchCtx(), "param-tenant", testFindSimilarQuery())
+		requireTenantMismatchErr(t, err)
 	})
 
 	t.Run("invalid_limit", func(t *testing.T) {
 		ctx := tenant.WithTenant(context.Background(), "test-tenant")
-		query := FindSimilarQuery{
-			CatalogID: "test-catalog",
-			Model:     "test-model",
-			Vector:    []float32{0.1, 0.2, 0.3},
-			Limit:     0,
-		}
-		_, err := store.FindSimilar(ctx, "test-tenant", query)
+		q := testFindSimilarQuery()
+		q.Limit = 0
+		_, err := store.FindSimilar(ctx, "test-tenant", q)
 		if err == nil {
 			t.Fatal("Expected error for invalid limit, but got nil")
 		}
@@ -132,13 +124,9 @@ func TestPgVectorStore_FindSimilar(t *testing.T) {
 
 	t.Run("negative_limit", func(t *testing.T) {
 		ctx := tenant.WithTenant(context.Background(), "test-tenant")
-		query := FindSimilarQuery{
-			CatalogID: "test-catalog",
-			Model:     "test-model",
-			Vector:    []float32{0.1, 0.2, 0.3},
-			Limit:     -1,
-		}
-		_, err := store.FindSimilar(ctx, "test-tenant", query)
+		q := testFindSimilarQuery()
+		q.Limit = -1
+		_, err := store.FindSimilar(ctx, "test-tenant", q)
 		if err == nil {
 			t.Fatal("Expected error for negative limit, but got nil")
 		}
@@ -149,13 +137,9 @@ func TestPgVectorStore_FindSimilar(t *testing.T) {
 
 	t.Run("empty_vector", func(t *testing.T) {
 		ctx := tenant.WithTenant(context.Background(), "test-tenant")
-		query := FindSimilarQuery{
-			CatalogID: "test-catalog",
-			Model:     "test-model",
-			Vector:    []float32{},
-			Limit:     5,
-		}
-		_, err := store.FindSimilar(ctx, "test-tenant", query)
+		q := testFindSimilarQuery()
+		q.Vector = []float32{}
+		_, err := store.FindSimilar(ctx, "test-tenant", q)
 		if err == nil {
 			t.Fatal("Expected error for empty vector, but got nil")
 		}
@@ -166,13 +150,9 @@ func TestPgVectorStore_FindSimilar(t *testing.T) {
 
 	t.Run("nil_vector", func(t *testing.T) {
 		ctx := tenant.WithTenant(context.Background(), "test-tenant")
-		query := FindSimilarQuery{
-			CatalogID: "test-catalog",
-			Model:     "test-model",
-			Vector:    nil,
-			Limit:     5,
-		}
-		_, err := store.FindSimilar(ctx, "test-tenant", query)
+		q := testFindSimilarQuery()
+		q.Vector = nil
+		_, err := store.FindSimilar(ctx, "test-tenant", q)
 		if err == nil {
 			t.Fatal("Expected error for nil vector, but got nil")
 		}
@@ -183,11 +163,7 @@ func TestPgVectorStore_FindSimilar(t *testing.T) {
 }
 
 func TestPgVectorStore_StoreBatch(t *testing.T) {
-	db := &sql.DB{}
-	store, err := NewPgVectorStore(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestStore(t)
 
 	embeddings := []Embedding{
 		{CatalogID: "cat1", ControlID: "ctrl1", Model: "model1", Vector: []float32{0.1}},
@@ -195,24 +171,11 @@ func TestPgVectorStore_StoreBatch(t *testing.T) {
 	}
 
 	t.Run("missing_tenant_context", func(t *testing.T) {
-		err := store.StoreBatch(context.Background(), "test-tenant", embeddings)
-		if err == nil {
-			t.Fatal("Expected error for missing tenant context, but got nil")
-		}
-		if !errors.Is(err, tenant.ErrNoTenant) {
-			t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-		}
+		requireNoTenantErr(t, store.StoreBatch(context.Background(), "test-tenant", embeddings))
 	})
 
 	t.Run("tenant_mismatch", func(t *testing.T) {
-		ctx := tenant.WithTenant(context.Background(), "context-tenant")
-		err := store.StoreBatch(ctx, "param-tenant", embeddings)
-		if err == nil {
-			t.Fatal("Expected error for tenant mismatch, but got nil")
-		}
-		if !errors.Is(err, tenant.ErrTenantMismatch) {
-			t.Fatalf("Expected errors.Is(err, tenant.ErrTenantMismatch), got: %v", err)
-		}
+		requireTenantMismatchErr(t, store.StoreBatch(mismatchCtx(), "param-tenant", embeddings))
 	})
 
 	t.Run("empty_batch", func(t *testing.T) {
@@ -225,21 +188,11 @@ func TestPgVectorStore_StoreBatch(t *testing.T) {
 }
 
 func TestPgVectorStore_IndexMethods(t *testing.T) {
-	db := &sql.DB{}
-	store, err := NewPgVectorStore(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestStore(t)
 
 	t.Run("Insert", func(t *testing.T) {
 		t.Run("missing_tenant_context", func(t *testing.T) {
-			err := store.Insert(context.Background(), "ctrl-1", []float32{0.1, 0.2}, nil)
-			if err == nil {
-				t.Fatal("Expected error for missing tenant context, but got nil")
-			}
-			if !errors.Is(err, tenant.ErrNoTenant) {
-				t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-			}
+			requireNoTenantErr(t, store.Insert(context.Background(), "ctrl-1", []float32{0.1, 0.2}, nil))
 		})
 
 		// Note: delegation to StoreEmbedding (default metadata, custom metadata)
@@ -249,48 +202,27 @@ func TestPgVectorStore_IndexMethods(t *testing.T) {
 	t.Run("Search", func(t *testing.T) {
 		t.Run("missing_tenant_context", func(t *testing.T) {
 			_, err := store.Search(context.Background(), []float32{0.1, 0.2}, 5)
-			if err == nil {
-				t.Fatal("Expected error for missing tenant context, but got nil")
-			}
-			if !errors.Is(err, tenant.ErrNoTenant) {
-				t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-			}
+			requireNoTenantErr(t, err)
 		})
 	})
 
 	t.Run("Delete", func(t *testing.T) {
 		t.Run("missing_tenant_context", func(t *testing.T) {
-			err := store.Delete(context.Background(), "ctrl-1")
-			if err == nil {
-				t.Fatal("Expected error for missing tenant context, but got nil")
-			}
-			if !errors.Is(err, tenant.ErrNoTenant) {
-				t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-			}
+			requireNoTenantErr(t, store.Delete(context.Background(), "ctrl-1"))
 		})
 	})
 
 	t.Run("Get", func(t *testing.T) {
 		t.Run("missing_tenant_context", func(t *testing.T) {
 			_, err := store.Get(context.Background(), "ctrl-1")
-			if err == nil {
-				t.Fatal("Expected error for missing tenant context, but got nil")
-			}
-			if !errors.Is(err, tenant.ErrNoTenant) {
-				t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-			}
+			requireNoTenantErr(t, err)
 		})
 	})
 
 	t.Run("Count", func(t *testing.T) {
 		t.Run("missing_tenant_context", func(t *testing.T) {
 			_, err := store.Count(context.Background())
-			if err == nil {
-				t.Fatal("Expected error for missing tenant context, but got nil")
-			}
-			if !errors.Is(err, tenant.ErrNoTenant) {
-				t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-			}
+			requireNoTenantErr(t, err)
 		})
 	})
 }
@@ -372,13 +304,8 @@ func TestParseVectorString(t *testing.T) {
 }
 
 func TestNewPgVectorStoreWithTelemetry(t *testing.T) {
-	db := &sql.DB{}
-
 	t.Run("nil_telemetry_fields_without_options", func(t *testing.T) {
-		store, err := NewPgVectorStore(db)
-		if err != nil {
-			t.Fatalf("NewPgVectorStore() error = %v, want nil", err)
-		}
+		store := newTestStore(t)
 
 		// Without WithTelemetry, all telemetry fields should be nil/zero
 		if store.tracer != nil {
@@ -407,10 +334,7 @@ func TestNewPgVectorStoreWithTelemetry(t *testing.T) {
 		mp := metricnoop.NewMeterProvider()
 		meter := mp.Meter("vectordb-test")
 
-		store, err := NewPgVectorStore(db, WithTelemetry(tracer, meter))
-		if err != nil {
-			t.Fatalf("NewPgVectorStore() with telemetry error = %v, want nil", err)
-		}
+		store := newTestStore(t, WithTelemetry(tracer, meter))
 
 		if store.tracer == nil {
 			t.Error("expected non-nil tracer with telemetry provider")
@@ -449,30 +373,13 @@ func TestNewPgVectorStoreWithTelemetry(t *testing.T) {
 }
 
 func TestPgVectorStore_DeleteByModel(t *testing.T) {
-	db := &sql.DB{}
-	store, err := NewPgVectorStore(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestStore(t)
 
 	t.Run("missing_tenant_context", func(t *testing.T) {
-		err := store.DeleteByModel(context.Background(), "test-tenant", "test-catalog", "test-model")
-		if err == nil {
-			t.Fatal("Expected error for missing tenant context, but got nil")
-		}
-		if !errors.Is(err, tenant.ErrNoTenant) {
-			t.Fatalf("Expected errors.Is(err, tenant.ErrNoTenant), got: %v", err)
-		}
+		requireNoTenantErr(t, store.DeleteByModel(context.Background(), "test-tenant", "test-catalog", "test-model"))
 	})
 
 	t.Run("tenant_mismatch", func(t *testing.T) {
-		ctx := tenant.WithTenant(context.Background(), "context-tenant")
-		err := store.DeleteByModel(ctx, "param-tenant", "test-catalog", "test-model")
-		if err == nil {
-			t.Fatal("Expected error for tenant mismatch, but got nil")
-		}
-		if !errors.Is(err, tenant.ErrTenantMismatch) {
-			t.Fatalf("Expected errors.Is(err, tenant.ErrTenantMismatch), got: %v", err)
-		}
+		requireTenantMismatchErr(t, store.DeleteByModel(mismatchCtx(), "param-tenant", "test-catalog", "test-model"))
 	})
 }

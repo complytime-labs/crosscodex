@@ -1,0 +1,231 @@
+version: "3"
+
+vars:
+  MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
+  TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
+  CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+  POSTGRES_USER: '{{.POSTGRES_USER | default "postgres"}}'
+  POSTGRES_PASSWORD: '{{.POSTGRES_PASSWORD | default "integration"}}'
+  POSTGRES_DB: '{{.POSTGRES_DB | default "crosscodex_test"}}'
+  RUSTFS_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY | default "rustfsadmin"}}'
+  RUSTFS_SECRET_KEY: '{{.RUSTFS_SECRET_KEY | default "rustfsadmin"}}'
+  RUSTFS_BUCKET: '{{.RUSTFS_BUCKET | default "crosscodex-test"}}'
+
+tasks:
+  default:
+    silent: true
+    cmd: task test:integration --list
+
+  all:
+    desc: Run all integration tests (db, storage, and NATS)
+    deps: [ensure-deps, db-up, storage-up, nats-up]
+    env:
+      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 — integration test fixture DSN
+      TEST_S3_ENDPOINT: "http://localhost:19000"
+      TEST_S3_ACCESS_KEY: "{{.RUSTFS_ACCESS_KEY}}"
+      TEST_S3_SECRET_KEY: "{{.RUSTFS_SECRET_KEY}}"
+      TEST_S3_BUCKET: "{{.RUSTFS_BUCKET}}"
+      TEST_NATS_URL: "tls://localhost:14222"
+      TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
+      TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
+      TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+    cmds:
+      - defer: { task: db-down }
+      - defer: { task: storage-down }
+      - defer: { task: nats-down }
+      - mkdir -p {{.TEST_DIR}}
+      # -p 1: pkg/db and pkg/graphdb both run migrations and ALTER ROLE in
+      # TestMain. Without -p 1, go test runs packages in parallel and both
+      # TestMain functions race on the pg_authid catalog row, causing
+      # "tuple concurrently updated" errors.
+      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out {{.ROOT_DIR}}/pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
+      - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
+
+  db:
+    desc: Run database integration tests (db, graphdb, vectordb)
+    deps: [ensure-deps, db-up]
+    env:
+      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 — integration test fixture DSN
+    cmds:
+      - defer: { task: db-down }
+      - mkdir -p {{.TEST_DIR}}
+      # -p 1: see comment in 'all' task
+      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+
+  storage:
+    desc: Run S3 storage integration tests
+    deps: [ensure-deps, storage-up]
+    env:
+      TEST_S3_ENDPOINT: "http://localhost:19000"
+      TEST_S3_ACCESS_KEY: "{{.RUSTFS_ACCESS_KEY}}"
+      TEST_S3_SECRET_KEY: "{{.RUSTFS_SECRET_KEY}}"
+      TEST_S3_BUCKET: "{{.RUSTFS_BUCKET}}"
+    cmds:
+      - defer: { task: storage-down }
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out {{.ROOT_DIR}}/pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
+
+  nats:
+    desc: Run external NATS integration tests
+    deps: [ensure-deps, nats-up]
+    env:
+      TEST_NATS_URL: "tls://localhost:14222"
+      TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
+      TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
+      TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+    cmds:
+      - defer: { task: nats-down }
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
+
+  clean:
+    desc: Remove all integration test containers and their volumes
+    cmds:
+      - "{{.CONTAINER_ENGINE}} rm -f crosscodex-test-db crosscodex-test-storage crosscodex-test-nats 2>/dev/null || true"
+      - "{{.CONTAINER_ENGINE}} volume rm -f crosscodex-test-certs 2>/dev/null || true"
+      - "{{.CONTAINER_ENGINE}} volume prune -f"
+
+  # --- Infrastructure: container lifecycle ---
+
+  db-up:
+    desc: Start PostgreSQL container for integration tests
+    deps: [prepare-cert-volume]
+    vars:
+      CONTAINER_NAME: crosscodex-test-db
+      CONTAINER_IMAGE: crosscodex-test-db:latest
+      VOLUME_NAME: crosscodex-test-certs
+    cmds:
+      - |
+        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
+          -p 15432:5432 \
+          -e POSTGRES_USER={{.POSTGRES_USER}} \
+          -e POSTGRES_PASSWORD={{.POSTGRES_PASSWORD}} \
+          -e POSTGRES_DB={{.POSTGRES_DB}} \
+          -v {{.VOLUME_NAME}}:/certs \
+          {{.CONTAINER_IMAGE}} \
+          postgres -c shared_preload_libraries=age \
+            -c hba_file=/etc/postgresql/pg_hba.conf \
+            -c ssl=on \
+            -c ssl_cert_file=/certs/server.pem \
+            -c ssl_key_file=/certs/server-key.pem \
+            -c ssl_ca_file=/certs/ca.pem
+      - |
+        echo "Waiting for PostgreSQL..."
+        for i in $(seq 1 60); do
+          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -h 127.0.0.1 -U {{.POSTGRES_USER}} -q 2>/dev/null && break
+          sleep 1
+        done
+        {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -h 127.0.0.1 -U {{.POSTGRES_USER}} -q || (echo "PostgreSQL failed to start"; exit 1)
+
+  db-down:
+    desc: Stop and remove the integration test database container
+    vars:
+      CONTAINER_NAME: crosscodex-test-db
+    cmds:
+      - "{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}"
+
+  storage-up:
+    desc: Start RustFS container for S3 integration tests
+    vars:
+      CONTAINER_NAME: crosscodex-test-storage
+    cmds:
+      - |
+        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
+          -p 19000:9000 \
+          -p 19001:9001 \
+          -e RUSTFS_ROOT_USER={{.RUSTFS_ACCESS_KEY}} \
+          -e RUSTFS_ROOT_PASSWORD={{.RUSTFS_SECRET_KEY}} \
+          docker.io/rustfs/rustfs:1.0.0-beta.3 server /data --console-address ":9001"
+      - |
+        echo "Waiting for RustFS S3 API..."
+        for i in $(seq 1 30); do
+          curl -so /dev/null http://localhost:19000/ 2>/dev/null && break
+          sleep 1
+        done
+        curl -so /dev/null http://localhost:19000/ 2>/dev/null || (echo "RustFS failed to start"; exit 1)
+
+  storage-down:
+    desc: Stop and remove the RustFS integration test container
+    vars:
+      CONTAINER_NAME: crosscodex-test-storage
+    cmds:
+      - "{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}"
+
+  nats-up:
+    desc: Start NATS container with TLS for integration tests
+    deps: [prepare-cert-volume]
+    vars:
+      CONTAINER_NAME: crosscodex-test-nats
+      VOLUME_NAME: crosscodex-test-certs
+    cmds:
+      - |
+        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
+          -p 14222:4222 \
+          -v {{.VOLUME_NAME}}:/certs \
+          docker.io/nats:2-alpine \
+          --tls \
+          --tlscert=/certs/server.pem \
+          --tlskey=/certs/server-key.pem \
+          --tlscacert=/certs/ca.pem \
+          --tlsverify \
+          --jetstream
+      - |
+        echo "Waiting for NATS..."
+        for i in $(seq 1 30); do
+          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} nats-server --help >/dev/null 2>&1 && break || true
+          sleep 1
+        done
+        sleep 2
+
+  nats-down:
+    desc: Stop and remove the NATS integration test container
+    vars:
+      CONTAINER_NAME: crosscodex-test-nats
+    cmds:
+      - "{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}"
+
+  # --- Internal helpers ---
+
+  ensure-deps:
+    internal: true
+    run: once
+    cmds:
+      - go mod download
+
+  generate-certs:
+    desc: Generate ephemeral TLS certificates for integration tests
+    vars:
+      CERTS_DIR: "{{.TEST_DIR}}/certs"
+    cmds:
+      - mkdir -p {{.CERTS_DIR}}
+      - go run {{.ROOT_DIR}}/internal/testcerts/gen.go {{.CERTS_DIR}}
+    status:
+      - test -f {{.TEST_DIR}}/certs/ca.pem
+      - test -f {{.TEST_DIR}}/certs/server.pem
+      - test -f {{.TEST_DIR}}/certs/client.pem
+    sources:
+      - "{{.ROOT_DIR}}/internal/testcerts/*.go"
+
+  prepare-cert-volume:
+    desc: Populate a named container volume with TLS certs (correct ownership)
+    deps: [generate-certs]
+    vars:
+      VOLUME_NAME: crosscodex-test-certs
+      CONTAINER_IMAGE: crosscodex-test-db:latest
+    cmds:
+      # Build the DB image so we can reference its postgres user for chown
+      - "{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/pkg/db/testdata/Containerfile {{.ROOT_DIR}}/pkg/db/testdata"
+      - "{{.CONTAINER_ENGINE}} volume create {{.VOLUME_NAME}} 2>/dev/null || true"
+      # Copy certs into the volume and chown to postgres (for PostgreSQL's
+      # strict ssl_key_file permission check). NATS runs as root and can
+      # read these regardless.
+      - |
+        {{.CONTAINER_ENGINE}} run --rm --user root \
+          -v {{.VOLUME_NAME}}:/certs \
+          -v {{.TEST_DIR}}/certs:/src:ro \
+          --entrypoint sh \
+          {{.CONTAINER_IMAGE}} \
+          -c 'cp /src/* /certs/ && chown postgres:postgres /certs/* && chmod 600 /certs/*-key.pem'
+    status:
+      - "{{.CONTAINER_ENGINE}} volume inspect {{.VOLUME_NAME}} >/dev/null 2>&1"

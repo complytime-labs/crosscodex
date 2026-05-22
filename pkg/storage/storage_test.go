@@ -9,19 +9,24 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
+// mustNewFromConfig creates a Provider from config, failing the test on error,
+// and registers a cleanup to close it.
+func mustNewFromConfig(t *testing.T, cfg config.ObjectStorageConfig, tenantID string) Provider {
+	t.Helper()
+	p, err := NewFromConfig(cfg, tenantID)
+	if err != nil {
+		t.Fatalf("NewFromConfig() error = %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
 func TestNewFromConfig(t *testing.T) {
 	t.Run("local backend with XDG default", func(t *testing.T) {
 		xdgDir := t.TempDir()
 		t.Setenv("XDG_DATA_HOME", xdgDir)
 
-		cfg := config.ObjectStorageConfig{
-			Backend: "local",
-		}
-		p, err := NewFromConfig(cfg, "test-tenant")
-		if err != nil {
-			t.Fatalf("NewFromConfig() error = %v", err)
-		}
-		defer func() { _ = p.Close() }()
+		mustNewFromConfig(t, config.ObjectStorageConfig{Backend: "local"}, "test-tenant")
 
 		expectedDir := filepath.Join(xdgDir, "crosscodex", "objects", "test-tenant")
 		info, err := os.Stat(expectedDir)
@@ -38,14 +43,7 @@ func TestNewFromConfig(t *testing.T) {
 		t.Setenv("HOME", homeDir)
 		t.Setenv("XDG_DATA_HOME", "")
 
-		cfg := config.ObjectStorageConfig{
-			Backend: "local",
-		}
-		p, err := NewFromConfig(cfg, "test-tenant")
-		if err != nil {
-			t.Fatalf("NewFromConfig() error = %v", err)
-		}
-		defer func() { _ = p.Close() }()
+		mustNewFromConfig(t, config.ObjectStorageConfig{Backend: "local"}, "test-tenant")
 
 		expectedDir := filepath.Join(homeDir, ".local", "share", "crosscodex", "objects", "test-tenant")
 		if _, err := os.Stat(expectedDir); err != nil {
@@ -58,15 +56,10 @@ func TestNewFromConfig(t *testing.T) {
 		t.Setenv("XDG_DATA_HOME", xdgDir)
 
 		explicitDir := t.TempDir()
-		cfg := config.ObjectStorageConfig{
+		mustNewFromConfig(t, config.ObjectStorageConfig{
 			Backend:  "local",
 			BasePath: explicitDir,
-		}
-		p, err := NewFromConfig(cfg, "test-tenant")
-		if err != nil {
-			t.Fatalf("NewFromConfig() error = %v", err)
-		}
-		defer func() { _ = p.Close() }()
+		}, "test-tenant")
 
 		// Explicit path should be used, not XDG
 		if _, err := os.Stat(filepath.Join(explicitDir, "test-tenant")); err != nil {
@@ -80,16 +73,10 @@ func TestNewFromConfig(t *testing.T) {
 	})
 
 	t.Run("local backend", func(t *testing.T) {
-		dir := t.TempDir()
-		cfg := config.ObjectStorageConfig{
+		mustNewFromConfig(t, config.ObjectStorageConfig{
 			Backend:  "local",
-			BasePath: dir,
-		}
-		p, err := NewFromConfig(cfg, "test-tenant")
-		if err != nil {
-			t.Fatalf("NewFromConfig() error = %v", err)
-		}
-		defer func() { _ = p.Close() }()
+			BasePath: t.TempDir(),
+		}, "test-tenant")
 	})
 
 	t.Run("unsupported backend", func(t *testing.T) {

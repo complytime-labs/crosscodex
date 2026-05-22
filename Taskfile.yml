@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 # pipefail: without this, `go test | tee` always exits 0 (tee's exit code)
 # even when tests fail, silently masking failures. Must be set here in the
@@ -6,20 +6,33 @@ version: '3'
 # taskfiles (.taskfiles/*.yml).
 set: [pipefail]
 
+env:
+  # When FIPS=1 (e.g., `task build FIPS=1`), all Go commands use
+  # GOEXPERIMENT=boringcrypto for FIPS-validated cryptography.
+  GOEXPERIMENT: '{{if eq .FIPS "1"}}boringcrypto{{end}}'
+
 includes:
   dev:
     taskfile: .taskfiles/dev.yml
+  test:
+    taskfile: .taskfiles/test.yml
+    dir: "{{.ROOT_DIR}}"
 
 vars:
   MODULE: github.com/complytime-labs/crosscodex
-  BUILD_DIR: .build
-  TEST_DIR: '{{.TEST_DIR | default ".test-output"}}'
+  BUILD_DIR: "{{.ROOT_DIR}}/.build"
+  TEST_DIR: "{{.ROOT_DIR}}/.test-output"
+  FIPS: '{{.FIPS | default ""}}'
 
 tasks:
   default:
     silent: true
-    cmd: |
-      task --list 2>/dev/null
+    cmds:
+      - |
+        echo "Global variables (pass to any task):"
+        echo "  FIPS=1    Enable FIPS mode (GOEXPERIMENT=boringcrypto)"
+        echo ""
+      - task --list 2>/dev/null
 
   generate:
     desc: "Alias for dev:generate"
@@ -32,9 +45,9 @@ tasks:
       - task: dev:build
 
   test:
-    desc: "Alias for dev:test"
+    desc: "Alias for test:unit"
     cmds:
-      - task: dev:test
+      - task: test:unit
 
   lint:
     desc: "Alias for dev:lint"

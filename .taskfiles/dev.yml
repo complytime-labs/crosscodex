@@ -1,16 +1,8 @@
-version: '3'
+version: "3"
 
 vars:
   MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
-  BUILD_DIR: '{{.ROOT_DIR}}/{{.BUILD_DIR | default ".build"}}'
-  TEST_DIR: '{{.ROOT_DIR}}/{{.TEST_DIR | default ".test-output"}}'
-  CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
-  POSTGRES_USER: '{{.POSTGRES_USER | default "postgres"}}'
-  POSTGRES_PASSWORD: '{{.POSTGRES_PASSWORD | default "integration"}}'
-  POSTGRES_DB: '{{.POSTGRES_DB | default "crosscodex_test"}}'
-  RUSTFS_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY | default "rustfsadmin"}}'
-  RUSTFS_SECRET_KEY: '{{.RUSTFS_SECRET_KEY | default "rustfsadmin"}}'
-  RUSTFS_BUCKET: '{{.RUSTFS_BUCKET | default "crosscodex-test"}}'
+  BUILD_DIR: '{{.BUILD_DIR | default (printf "%s/.build" .ROOT_DIR)}}'
 
 tasks:
   default:
@@ -19,7 +11,7 @@ tasks:
 
   generate:
     desc: Generate protobuf code using buf
-    dir: '{{.ROOT_DIR}}/api/proto'
+    dir: "{{.ROOT_DIR}}/api/proto"
     cmds:
       - buf generate
     sources:
@@ -44,8 +36,8 @@ tasks:
         -X {{.MODULE}}/internal/version.BuildDate={{.BUILD_DATE}}
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex ./cmd/crosscodex
-      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodexd ./cmd/crosscodexd
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex {{.ROOT_DIR}}/cmd/crosscodex
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodexd {{.ROOT_DIR}}/cmd/crosscodexd
     sources:
       - "{{.ROOT_DIR}}/**/*.go"
       - "{{.ROOT_DIR}}/go.mod"
@@ -54,142 +46,13 @@ tasks:
       - "{{.BUILD_DIR}}/crosscodex"
       - "{{.BUILD_DIR}}/crosscodexd"
 
-  test:
-    desc: Run all tests
-    deps: [deps]
-    vars:
-      MODE: '{{.MODE | default "human"}}'
-    cmds:
-      - mkdir -p {{.TEST_DIR}}
-      - cmd: go test -v -race -count=1 -coverprofile={{.TEST_DIR}}/coverage.out ./... 2>&1 | tee {{.TEST_DIR}}/test.log
-      - task: test-report
-        vars:
-          MODE: '{{.MODE}}'
-
-  test-report:
-    desc: Display test results
-    internal: true
-    vars:
-      MODE: '{{.MODE | default "human"}}'
-    cmds:
-      - cmd: |
-          if [ "{{.MODE}}" = "llm" ]; then
-            grep -E '(^---\s+(FAIL|PASS)|^FAIL|^ok\s)' {{.TEST_DIR}}/test.log
-          else
-            echo ""
-            echo "Coverage:"
-            go tool cover -func={{.TEST_DIR}}/coverage.out | tail -1
-          fi
-      - cmd: grep -q '^FAIL' {{.TEST_DIR}}/test.log && exit 1 || true
-
-  test-unit:
-    desc: Run unit tests (with protobuf generation)
-    deps: [deps, generate]
-    cmds:
-      - mkdir -p {{.TEST_DIR}}
-      - go test -v -race -coverprofile={{.TEST_DIR}}/coverage.out ./...
-
-  test-integration-db-up:
-    desc: Start PostgreSQL container for integration tests
-    vars:
-      CONTAINER_NAME: crosscodex-test-db
-      CONTAINER_IMAGE: crosscodex-test-db:latest
-    cmds:
-      - '{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/pkg/db/testdata/Containerfile {{.ROOT_DIR}}/pkg/db/testdata'
-      - |
-        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
-          -p 15432:5432 \
-          -e POSTGRES_USER={{.POSTGRES_USER}} \
-          -e POSTGRES_PASSWORD={{.POSTGRES_PASSWORD}} \
-          -e POSTGRES_DB={{.POSTGRES_DB}} \
-          {{.CONTAINER_IMAGE}}
-      - |
-        echo "Waiting for PostgreSQL..."
-        for i in $(seq 1 60); do
-          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -h 127.0.0.1 -U {{.POSTGRES_USER}} -q 2>/dev/null && break
-          sleep 1
-        done
-        {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -h 127.0.0.1 -U {{.POSTGRES_USER}} -q || (echo "PostgreSQL failed to start"; exit 1)
-
-  test-integration:
-    desc: Run all integration tests (starts containers if needed)
-    deps: [deps, test-integration-db-up, test-integration-storage-up]
-    env:
-      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=disable" # DevSkim: ignore DS162092 — integration test fixture DSN
-      TEST_S3_ENDPOINT: "http://localhost:19000"
-      TEST_S3_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY}}'
-      TEST_S3_SECRET_KEY: '{{.RUSTFS_SECRET_KEY}}'
-      TEST_S3_BUCKET: '{{.RUSTFS_BUCKET}}'
-    cmds:
-      - defer: {task: test-integration-db-down}
-      - defer: {task: test-integration-storage-down}
-      - mkdir -p {{.TEST_DIR}}
-      # -p 1: pkg/db and pkg/graphdb both run migrations and ALTER ROLE in
-      # TestMain. Without -p 1, go test runs packages in parallel and both
-      # TestMain functions race on the pg_authid catalog row, causing
-      # "tuple concurrently updated" errors.
-      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out ./pkg/db/... ./pkg/graphdb/... ./pkg/vectordb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
-      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out ./pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
-
-  test-integration-db-down:
-    desc: Stop and remove the integration test database container
-    vars:
-      CONTAINER_NAME: crosscodex-test-db
-    cmds:
-      - '{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}'
-
-  test-integration-storage-up:
-    desc: Start RustFS container for S3 integration tests
-    vars:
-      CONTAINER_NAME: crosscodex-test-storage
-    cmds:
-      - |
-        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
-          -p 19000:9000 \
-          -p 19001:9001 \
-          -e RUSTFS_ROOT_USER={{.RUSTFS_ACCESS_KEY}} \
-          -e RUSTFS_ROOT_PASSWORD={{.RUSTFS_SECRET_KEY}} \
-          docker.io/rustfs/rustfs:1.0.0-beta.3 server /data --console-address ":9001"
-      - |
-        echo "Waiting for RustFS S3 API..."
-        for i in $(seq 1 30); do
-          curl -so /dev/null http://localhost:19000/ 2>/dev/null && break
-          sleep 1
-        done
-        curl -so /dev/null http://localhost:19000/ 2>/dev/null || (echo "RustFS failed to start"; exit 1)
-
-  test-integration-storage:
-    desc: Run S3 storage integration tests (starts container if needed)
-    deps: [deps, test-integration-storage-up]
-    env:
-      TEST_S3_ENDPOINT: "http://localhost:19000"
-      TEST_S3_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY}}'
-      TEST_S3_SECRET_KEY: '{{.RUSTFS_SECRET_KEY}}'
-      TEST_S3_BUCKET: '{{.RUSTFS_BUCKET}}'
-    cmds:
-      - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out ./pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
-
-  test-integration-storage-down:
-    desc: Stop and remove the RustFS integration test container
-    vars:
-      CONTAINER_NAME: crosscodex-test-storage
-    cmds:
-      - '{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}'
-
-  test-integration-clean:
-    desc: Remove all integration test containers and their volumes
-    cmds:
-      - '{{.CONTAINER_ENGINE}} rm -f crosscodex-test-db crosscodex-test-storage 2>/dev/null || true'
-      - '{{.CONTAINER_ENGINE}} volume prune -f'
-
   lint:
     desc: Run linters
     deps: [deps, generate]
     cmds:
-      - go vet ./...
-      - go fmt ./...
-      - go tool golangci-lint run
+      - go vet {{.ROOT_DIR}}/...
+      - go fmt {{.ROOT_DIR}}/...
+      - go tool golangci-lint run {{.ROOT_DIR}}/...
 
   deps:
     desc: Download dependencies
@@ -200,7 +63,7 @@ tasks:
     desc: Update all Go dependencies to latest minor/patch versions
     deps: [generate]
     cmds:
-      - go get -u ./...
+      - go get -u {{.ROOT_DIR}}/...
       - go mod tidy
 
   tidy:
@@ -216,6 +79,6 @@ tasks:
         sh: curl -s https://api.github.com/repos/usnistgov/OSCAL/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
       GEMARA_VERSION:
         sh: curl -s https://api.github.com/repos/gemaraproj/gemara/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
-      SCHEMAS_DIR: '{{.ROOT_DIR}}/schemas'
+      SCHEMAS_DIR: "{{.ROOT_DIR}}/schemas"
     cmds:
       - bash "{{.ROOT_DIR}}/scripts/fetch-schemas.sh" "{{.OSCAL_VERSION}}" "{{.GEMARA_VERSION}}" "{{.SCHEMAS_DIR}}"
