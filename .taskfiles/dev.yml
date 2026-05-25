@@ -59,7 +59,7 @@ tasks:
     cmds:
       - go mod download
 
-  update-deps:
+  deps:update:
     desc: Update all Go dependencies to latest minor/patch versions
     deps: [generate]
     cmds:

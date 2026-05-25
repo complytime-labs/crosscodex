@@ -11,6 +11,10 @@ env:
   # GOEXPERIMENT=boringcrypto for FIPS-validated cryptography.
   GOEXPERIMENT: '{{if eq .FIPS "1"}}boringcrypto{{end}}'
 
+  # Gomega test parallelism: 1 in CI, CPUs-1 otherwise
+  GOMEGA_PROCS:
+    sh: 'if [ -n "$CI" ]; then echo 1; else echo $(($(nproc 2>/dev/null || echo 2) - 1)); fi'
+
 includes:
   dev:
     taskfile: .taskfiles/dev.yml

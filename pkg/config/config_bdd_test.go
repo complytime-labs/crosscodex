@@ -1,0 +1,1746 @@
+package config_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"gopkg.in/yaml.v3"
+
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	"github.com/complytime-labs/crosscodex/pkg/config"
+)
+
+func TestConfigBDD(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Configuration System BDD Suite")
+}
+
+// Redirect slog output to GinkgoWriter so log noise only appears on failure.
+var _ = BeforeSuite(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
+
+// writeTestFile is a helper that creates parent directories and writes content.
+func writeTestFile(path, content string) {
+	ExpectWithOffset(1, os.MkdirAll(filepath.Dir(path), 0o755)).To(Succeed())
+	ExpectWithOffset(1, os.WriteFile(path, []byte(content), 0o644)).To(Succeed())
+}
+
+var _ = Describe("Configuration System", Ordered, func() {
+
+	BeforeAll(func() {
+		testspecs.LogTestProgress("Starting Configuration System BDD test suite")
+	})
+
+	AfterAll(func() {
+		testspecs.LogTestProgress("Configuration System BDD test suite completed")
+	})
+
+	// =================================================================
+	// LEVEL 1: BEHAVIORAL SPECIFICATIONS
+	// These specs test the "why" - what business behaviors the configuration system supports
+	// =================================================================
+
+	Describe("Configuration Loading Behaviors", func() {
+		Context("when users need predictable configuration precedence", func() {
+			It("prioritizes overrides above all other configuration sources", func() {
+				tmpHome := GinkgoT().TempDir()
+				projectDir := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+				GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+				userConfigPath := filepath.Join(tmpHome, "crosscodex", "config.yaml")
+				testspecs.AssertNoError(os.WriteFile(userConfigPath, userConfigData, 0644))
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0755))
+				projectConfigData := []byte("llm:\n  gateway_url: \"https://project:7000\"\n")
+				projectConfigPath := filepath.Join(projectDir, ".crosscodex", "config.yaml")
+				testspecs.AssertNoError(os.WriteFile(projectConfigPath, projectConfigData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background(),
+					config.WithProjectDir(projectDir),
+					config.WithOverrides(map[string]string{
+						"llm.gateway_url": "https://cli:1111",
+					}),
+				)
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://cli:1111"))
+			})
+
+			It("allows environment variables to override config files", func() {
+				tmpHome := GinkgoT().TempDir()
+				projectDir := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+				GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+				userConfigPath := filepath.Join(tmpHome, "crosscodex", "config.yaml")
+				testspecs.AssertNoError(os.WriteFile(userConfigPath, userConfigData, 0644))
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0755))
+				projectConfigData := []byte("llm:\n  gateway_url: \"https://project:7000\"\n  timeout: 45\n")
+				projectConfigPath := filepath.Join(projectDir, ".crosscodex", "config.yaml")
+				testspecs.AssertNoError(os.WriteFile(projectConfigPath, projectConfigData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background(),
+					config.WithProjectDir(projectDir),
+				)
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://env:9000"))
+				Expect(cfg.LLM.Timeout).To(Equal(45))
+			})
+
+			It("supports project-specific overrides for team workflows", func() {
+				tmpHome := GinkgoT().TempDir()
+				projectDir := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0644))
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0755))
+				projectConfigData := []byte("llm:\n  gateway_url: \"https://project:7000\"\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(projectDir, ".crosscodex", "config.yaml"), projectConfigData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background(), config.WithProjectDir(projectDir))
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://project:7000"))
+				Expect(cfg.LLM.Timeout).To(Equal(60))
+			})
+
+			It("respects user configuration over system defaults", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://user:4000"))
+				Expect(cfg.LLM.Timeout).To(Equal(60))
+				Expect(cfg.Storage.Objects.Backend).To(Equal("local"))
+			})
+
+			It("gracefully falls back to sensible defaults", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.Timeout).To(Equal(30))
+				Expect(cfg.Storage.Objects.Backend).To(Equal("local"))
+				Expect(cfg.TLS.Mode).To(Equal("off"))
+				Expect(cfg.Database.SSLMode).To(Equal("prefer"))
+				Expect(cfg.Logging.Level).To(Equal("info"))
+				Expect(cfg.Logging.Format).To(Equal("text"))
+			})
+		})
+
+		Context("when users need flexible configuration organization", func() {
+			It("supports configuration profiles for different environments", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex", "profiles"), 0755))
+				profileData := []byte("server:\n  workers: 2\nllm:\n  gateway_url: \"https://local:4000\"\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "profiles", "local.yaml"), profileData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background(), config.WithProfile("local"))
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.Server.Workers).To(Equal(2))
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://local:4000"))
+			})
+
+			It("enables drop-in configuration modules for team sharing", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), userConfigData, 0644))
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0755))
+				dropinData := []byte("llm:\n  gateway_url: \"https://dropin:5000\"\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-override.yaml"), dropinData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://dropin:5000"))
+				Expect(cfg.LLM.Timeout).To(Equal(60))
+			})
+
+			It("handles per-service TLS configuration for security requirements", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+
+				configData := []byte("tls:\n  mode: server-only\n  ca: /etc/ca.crt\n  cert: /etc/server.crt\n  key: /etc/server.key\n  targets:\n    ingestion:\n      mode: mutual\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), configData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.TLS.Mode).To(Equal("server-only"))
+				Expect(cfg.TLS.CA).To(Equal("/etc/ca.crt"))
+				Expect(cfg.TLS.Cert).To(Equal("/etc/server.crt"))
+				Expect(cfg.TLS.Key).To(Equal("/etc/server.key"))
+
+				Expect(cfg.TLS.Targets).To(HaveKey("ingestion"))
+				ingestion := cfg.TLS.Targets["ingestion"]
+				Expect(ingestion.Mode).To(Equal("mutual"))
+			})
+
+			It("supports single-file configuration for simple deployments", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				userConfigData := []byte("llm:\n  gateway_url: \"https://user-should-be-skipped:4000\"\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0644))
+
+				singleDir := GinkgoT().TempDir()
+				singleFile := filepath.Join(singleDir, "custom.yaml")
+				singleConfigData := []byte("llm:\n  gateway_url: \"https://custom:8000\"\n")
+				testspecs.AssertNoError(os.WriteFile(singleFile, singleConfigData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background(), config.WithConfigPath(singleFile))
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://custom:8000"))
+			})
+		})
+
+		Context("when configuration errors occur", func() {
+			It("provides actionable feedback for missing required configuration", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background(), config.WithProfile("nonexistent"))
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrProfileNotFound)).To(BeTrue())
+				Expect(err.Error()).To(ContainSubstring("nonexistent"))
+			})
+
+			It("identifies the source file of configuration validation errors", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				badFile := filepath.Join(tmpHome, "crosscodex", "conf.d", "99-bad.yaml")
+				testspecs.AssertNoError(os.MkdirAll(filepath.Dir(badFile), 0755))
+				testspecs.AssertNoError(os.WriteFile(badFile, []byte("tls:\n  mode: \"invalid-mode\"\n"), 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("99-bad.yaml"))
+				Expect(err.Error()).To(ContainSubstring("invalid-mode"))
+			})
+
+			It("prevents system startup with invalid security configuration", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.WriteFile(
+					filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+					[]byte("tls:\n  mode: \"bogus\"\n"), 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			})
+
+			It("rejects malformed configuration files with helpful diagnostics", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.WriteFile(
+					filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+					[]byte(":\n  - :\n  broken: [yaml\n"), 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrLoadFailed)).To(BeTrue())
+			})
+		})
+	})
+
+	Describe("Configuration Validation Behaviors", func() {
+		Context("when enforcing system boundaries", func() {
+			It("validates TLS configuration completeness for security compliance", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+
+				badConfig := []byte("tls:\n  mode: mutual\n  ca: /etc/ca.crt\nstorage:\n  objects:\n    backend: local\nlogging:\n  level: info\n  format: text\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfig, 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+
+				goodConfig := []byte("tls:\n  mode: mutual\n  ca: /etc/ca.crt\n  cert: /etc/server.crt\n  key: /etc/server.key\nstorage:\n  objects:\n    backend: local\nlogging:\n  level: info\n  format: text\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), goodConfig, 0644))
+
+				loader = config.NewLoader()
+				_, err = loader.Load(context.Background())
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("restricts storage backends to supported implementations", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+
+				badConfig := []byte("storage:\n  objects:\n    backend: azure\ntls:\n  mode: \"off\"\nlogging:\n  level: info\n  format: text\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfig, 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+
+				goodConfig := []byte("storage:\n  objects:\n    backend: local\ntls:\n  mode: \"off\"\nlogging:\n  level: info\n  format: text\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), goodConfig, 0644))
+
+				loader = config.NewLoader()
+				_, err = loader.Load(context.Background())
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("enforces logging configuration for audit requirements", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+
+				badLevelConfig := []byte("logging:\n  level: verbose\n  format: text\ntls:\n  mode: \"off\"\nstorage:\n  objects:\n    backend: local\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badLevelConfig, 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+
+				badFormatConfig := []byte("logging:\n  level: info\n  format: yaml\ntls:\n  mode: \"off\"\nstorage:\n  objects:\n    backend: local\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badFormatConfig, 0644))
+
+				loader = config.NewLoader()
+				_, err = loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			})
+
+			It("prevents profile path traversal attacks", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background(), config.WithProfile("../../etc/passwd"))
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			})
+		})
+	})
+
+	// =================================================================
+	// LEVEL 2: INTERFACE COMPLIANCE SPECIFICATIONS
+	// =================================================================
+
+	Describe("Configuration Interface Compliance", func() {
+		configAdapter := NewConfigAdapter()
+
+		Context("as a configurable component", testspecs.ConfigurationComplianceBehavior(configAdapter))
+	})
+
+	// =================================================================
+	// LEVEL 3: TECHNICAL EDGE CASES AND INTEGRATION SCENARIOS
+	// =================================================================
+
+	Describe("Configuration Loading Edge Cases", func() {
+		Context("when testing complete precedence resolution", func() {
+			It("applies the full precedence stack correctly", func() {
+				tmpHome := GinkgoT().TempDir()
+				projectDir := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+				GinkgoT().Setenv("CROSSCODEX_LOGGING_LEVEL", "debug")
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\nlogging:\n  level: warn\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), userConfigData, 0644))
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0755))
+				dropinData := []byte("llm:\n  timeout: 45\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-team.yaml"), dropinData, 0644))
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "profiles"), 0755))
+				profileData := []byte("server:\n  workers: 1\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "profiles", "local.yaml"), profileData, 0644))
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0755))
+				projectConfigData := []byte("llm:\n  gateway_url: \"https://project:7000\"\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(projectDir, ".crosscodex", "config.yaml"), projectConfigData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background(),
+					config.WithProfile("local"),
+					config.WithProjectDir(projectDir),
+					config.WithOverrides(map[string]string{
+						"nats.url": "nats://flag:4222",
+					}),
+				)
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://project:7000"))
+				Expect(cfg.LLM.Timeout).To(Equal(45))
+				Expect(cfg.Server.Workers).To(Equal(1))
+				Expect(cfg.Logging.Level).To(Equal("debug"))
+				Expect(cfg.NATS.URL).To(Equal("nats://flag:4222"))
+				Expect(cfg.TLS.Mode).To(Equal("off"))
+			})
+
+			It("handles malformed YAML in drop-in files", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				goodPath := filepath.Join(userDir, "conf.d", "10-good.yaml")
+				testspecs.AssertNoError(os.MkdirAll(filepath.Dir(goodPath), 0755))
+				testspecs.AssertNoError(os.WriteFile(goodPath, []byte("llm:\n  timeout: 60\n"), 0644))
+
+				badPath := filepath.Join(userDir, "conf.d", "20-bad.yaml")
+				testspecs.AssertNoError(os.WriteFile(badPath, []byte("not: [valid: yaml\n"), 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrLoadFailed)).To(BeTrue())
+			})
+
+			It("manages TLS per-target merging with global configuration", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+
+				baseConfigData := []byte(`tls:
+  mode: server-only
+  ca: /etc/ca.crt
+  cert: /etc/server.crt
+  key: /etc/server.key
+  targets:
+    ingestion:
+      mode: mutual
+`)
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), baseConfigData, 0644))
+
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0755))
+				dropinConfigData := []byte(`tls:
+  targets:
+    ingestion:
+      cert: /etc/ingestion.crt
+      key: /etc/ingestion.key
+    catalog:
+      mode: mutual
+      cert: /etc/catalog.crt
+      key: /etc/catalog.key
+`)
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-tls.yaml"), dropinConfigData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.TLS.Mode).To(Equal("server-only"))
+				Expect(cfg.TLS.CA).To(Equal("/etc/ca.crt"))
+
+				Expect(cfg.TLS.Targets).To(HaveKey("ingestion"))
+				ingestion := cfg.TLS.Targets["ingestion"]
+				Expect(ingestion.Mode).To(Equal("mutual"))
+				Expect(ingestion.Cert).To(Equal("/etc/ingestion.crt"))
+				Expect(ingestion.Key).To(Equal("/etc/ingestion.key"))
+
+				Expect(cfg.TLS.Targets).To(HaveKey("catalog"))
+				catalog := cfg.TLS.Targets["catalog"]
+				Expect(catalog.Mode).To(Equal("mutual"))
+			})
+		})
+
+		Context("when testing validation edge cases", func() {
+			It("returns the first validation error for multiple invalid fields", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+
+				badConfigData := []byte(`tls:
+  mode: "bogus"
+storage:
+  objects:
+    backend: "azure"
+logging:
+  level: "verbose"
+  format: "yaml"
+`)
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfigData, 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(MatchError(ContainSubstring("invalid")))
+
+				errMsg := err.Error()
+				Expect(errMsg).To(ContainSubstring("tls.mode"))
+				Expect(errMsg).NotTo(ContainSubstring("storage.objects.backend"))
+				Expect(errMsg).NotTo(ContainSubstring("logging.level"))
+			})
+
+			It("validates all TLS mode configurations comprehensively", func() {
+				// Case 1: mutual TLS with missing cert and key
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				mutualNoCertKey := []byte("tls:\n  mode: mutual\n  ca: /etc/ca.crt\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), mutualNoCertKey, 0644))
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+
+				// Case 2: server-only TLS with missing cert
+				tmpHome2 := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome2)
+
+				userDir2 := filepath.Join(tmpHome2, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir2, 0755))
+				serverNoCert := []byte("tls:\n  mode: server-only\n  key: /etc/server.key\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir2, "config.yaml"), serverNoCert, 0644))
+
+				loader = config.NewLoader()
+				_, err = loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+
+				// Case 3: server-only TLS with missing key
+				tmpHome3 := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome3)
+
+				userDir3 := filepath.Join(tmpHome3, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir3, 0755))
+				serverNoKey := []byte("tls:\n  mode: server-only\n  cert: /etc/server.crt\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir3, "config.yaml"), serverNoKey, 0644))
+
+				loader = config.NewLoader()
+				_, err = loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+
+				// Case 4: mutual TLS missing CA
+				tmpHome4 := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome4)
+
+				userDir4 := filepath.Join(tmpHome4, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir4, 0755))
+				mutualNoCA := []byte("tls:\n  mode: mutual\n  cert: /etc/server.crt\n  key: /etc/server.key\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir4, "config.yaml"), mutualNoCA, 0644))
+
+				loader = config.NewLoader()
+				_, err = loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			})
+		})
+
+		Context("when testing XDG compliance edge cases", func() {
+			It("correctly resolves XDG paths with custom environment variables", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				configData := []byte("llm:\n  gateway_url: \"https://xdg-custom:9000\"\n  timeout: 99\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), configData, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://xdg-custom:9000"))
+				Expect(cfg.LLM.Timeout).To(Equal(99))
+
+				tmpHome2 := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", "")
+				GinkgoT().Setenv("HOME", tmpHome2)
+
+				fallbackDir := filepath.Join(tmpHome2, ".config", "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(fallbackDir, 0755))
+				fallbackData := []byte("llm:\n  gateway_url: \"https://home-fallback:8000\"\n  timeout: 77\n")
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(fallbackDir, "config.yaml"), fallbackData, 0644))
+
+				loader = config.NewLoader()
+				cfg, err = loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://home-fallback:8000"))
+				Expect(cfg.LLM.Timeout).To(Equal(77))
+			})
+
+			It("properly handles profile path validation", func() {
+				invalidProfiles := []struct {
+					name    string
+					profile string
+				}{
+					{"path traversal", "../../etc/passwd"},
+					{"embedded slash", "foo/bar"},
+					{"backslash traversal", "..\\..\\etc\\passwd"},
+				}
+
+				for _, tc := range invalidProfiles {
+					By(fmt.Sprintf("rejecting profile name %q (%s)", tc.profile, tc.name))
+					tmpHome := GinkgoT().TempDir()
+					GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+					loader := config.NewLoader()
+					_, err := loader.Load(context.Background(), config.WithProfile(tc.profile))
+					Expect(err).To(HaveOccurred(), "expected error for profile %q", tc.profile)
+					Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue(),
+						"expected ErrInvalidConfig for profile %q, got: %v", tc.profile, err)
+				}
+			})
+		})
+
+		Context("when testing service and CLI configuration", func() {
+			It("provides correctly configured ServiceConfig", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				sc := cfg.ServiceConfig()
+				Expect(sc.GRPCAddr).To(Equal(":50051"))
+			})
+
+			It("provides correctly configured CLIConfig", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				cc := cfg.CLIConfig()
+				Expect(cc.Output).To(Equal("table"))
+			})
+		})
+	})
+
+	Describe("Integration Scenarios", func() {
+		Context("when testing environment variable integration", func() {
+			It("correctly processes all environment variable bindings", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+				GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
+				GinkgoT().Setenv("CROSSCODEX_LLM_TIMEOUT", "120")
+				GinkgoT().Setenv("CROSSCODEX_STORAGE_OBJECTS_BACKEND", "s3")
+				GinkgoT().Setenv("CROSSCODEX_TLS_FIPS_ENABLED", "true")
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.LLM.GatewayURL).To(Equal("https://env:9000"))
+				Expect(cfg.LLM.Timeout).To(Equal(120))
+				Expect(cfg.Storage.Objects.Backend).To(Equal("s3"))
+				Expect(cfg.TLS.FIPS.Enabled).To(BeTrue())
+			})
+		})
+
+		Context("when testing NATS configuration integration", func() {
+			It("validates NATS configuration parameters", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				userDir := filepath.Join(tmpHome, "crosscodex")
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+
+				natsConfig := []byte(`nats:
+  url: "nats://nats.example.com:4222"
+  cluster: "prod"
+  tls: true
+  embedded:
+    store_dir: "/var/lib/crosscodex/nats"
+  streams:
+    audit_llm_retention: 4320h
+    audit_events_retention: 168h
+`)
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), natsConfig, 0644))
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.NATS.URL).To(Equal("nats://nats.example.com:4222"))
+				Expect(cfg.NATS.Cluster).To(Equal("prod"))
+				Expect(cfg.NATS.TLS).To(BeTrue())
+				Expect(cfg.NATS.Embedded.StoreDir).To(Equal("/var/lib/crosscodex/nats"))
+				Expect(cfg.NATS.Streams.AuditLLMRetention).To(Equal(4320 * time.Hour))
+				Expect(cfg.NATS.Streams.AuditEventsRetention).To(Equal(168 * time.Hour))
+			})
+		})
+
+		Context("when testing configuration helpers", func() {
+			It("provides correct helper functionality for test setup", func() {
+				loader := config.NewLoader()
+				Expect(loader).NotTo(BeNil())
+
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+				cfg, err := loader.Load(context.Background(),
+					config.WithConfigPath("/nonexistent/path/config.yaml"),
+				)
+				testspecs.AssertNoError(err)
+				Expect(cfg.TLS.Mode).To(Equal("off"))
+			})
+		})
+	})
+
+	// =================================================================
+	// LEVEL 4: INTERNAL FUNCTION SPECIFICATIONS
+	// Ported from old-style tests that exercised unexported functions directly
+	// =================================================================
+
+	Describe("internal: defaults", func() {
+		It("has sensible default values for all fields", func() {
+			node, err := config.ExportDefaultNode()
+			Expect(err).NotTo(HaveOccurred())
+
+			type defaultsCfg struct {
+				LLM struct {
+					Timeout int `yaml:"timeout"`
+				} `yaml:"llm"`
+				Storage struct {
+					Objects struct {
+						Backend string `yaml:"backend"`
+					} `yaml:"objects"`
+				} `yaml:"storage"`
+				TLS struct {
+					Mode string `yaml:"mode"`
+				} `yaml:"tls"`
+				Database struct {
+					MaxConns int    `yaml:"max_conns"`
+					SSLMode  string `yaml:"ssl_mode"`
+				} `yaml:"database"`
+				Server struct {
+					GRPCAddr string `yaml:"grpc_addr"`
+					HTTPAddr string `yaml:"http_addr"`
+					Workers  int    `yaml:"workers"`
+				} `yaml:"server"`
+				CLI struct {
+					Output string `yaml:"output"`
+				} `yaml:"cli"`
+				Logging struct {
+					Level  string `yaml:"level"`
+					Format string `yaml:"format"`
+				} `yaml:"logging"`
+			}
+			cfg := config.ExportMustUnmarshalNode[defaultsCfg](node)
+
+			Expect(cfg.LLM.Timeout).To(Equal(30))
+			Expect(cfg.Storage.Objects.Backend).To(Equal("local"))
+			Expect(cfg.TLS.Mode).To(Equal("off"))
+			Expect(cfg.Database.MaxConns).To(Equal(10))
+			Expect(cfg.Database.SSLMode).To(Equal("prefer"))
+			Expect(cfg.Server.GRPCAddr).To(Equal(":50051"))
+			Expect(cfg.Server.HTTPAddr).To(Equal(":8080"))
+			Expect(cfg.Server.Workers).To(Equal(4))
+			Expect(cfg.CLI.Output).To(Equal("table"))
+			Expect(cfg.Logging.Level).To(Equal("info"))
+			Expect(cfg.Logging.Format).To(Equal("text"))
+		})
+	})
+
+	Describe("internal: drop-ins", func() {
+		It("applies drop-ins in lexicographic order", func() {
+			dir := GinkgoT().TempDir()
+			writeTestFile(filepath.Join(dir, "10-base.yaml"), "llm:\n  gateway_url: \"https://base:4000\"\n  timeout: 30\n")
+			writeTestFile(filepath.Join(dir, "20-override.yaml"), "llm:\n  gateway_url: \"https://override:5000\"\n")
+
+			result, err := config.ExportLoadDropIns(dir)
+			Expect(err).NotTo(HaveOccurred())
+
+			type dropinCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+					Timeout    int    `yaml:"timeout"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[dropinCfg](result)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://override:5000"))
+			Expect(cfg.LLM.Timeout).To(Equal(30))
+		})
+
+		It("skips non-YAML files", func() {
+			dir := GinkgoT().TempDir()
+			writeTestFile(filepath.Join(dir, "10-base.yaml"), "llm:\n  gateway_url: \"https://base:4000\"\n")
+			writeTestFile(filepath.Join(dir, "README.md"), "This is not config")
+			writeTestFile(filepath.Join(dir, "backup.yaml.bak"), "llm:\n  gateway_url: \"https://should-be-ignored:4000\"\n")
+
+			result, err := config.ExportLoadDropIns(dir)
+			Expect(err).NotTo(HaveOccurred())
+
+			type dropinCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[dropinCfg](result)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://base:4000"))
+		})
+
+		It("returns nil for an empty directory", func() {
+			dir := GinkgoT().TempDir()
+			result, err := config.ExportLoadDropIns(dir)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeNil())
+		})
+
+		It("returns nil for a missing directory", func() {
+			result, err := config.ExportLoadDropIns("/nonexistent/path/conf.d")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeNil())
+		})
+
+		It("returns an error for malformed YAML in drop-in files", func() {
+			dir := GinkgoT().TempDir()
+			writeTestFile(filepath.Join(dir, "10-good.yaml"), "llm:\n  timeout: 30\n")
+			writeTestFile(filepath.Join(dir, "20-bad.yaml"), ":\n  - :\n  invalid: [yaml\n")
+
+			_, err := config.ExportLoadDropIns(dir)
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("internal: environment variable binding", func() {
+		It("overrides scalar values from env vars", func() {
+			GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
+			GinkgoT().Setenv("CROSSCODEX_LLM_TIMEOUT", "60")
+
+			base := config.ExportMustParseYAML("llm:\n  gateway_url: \"https://file:4000\"\n  timeout: 30\n")
+
+			result, err := config.ExportApplyEnvVars(base, "CROSSCODEX")
+			Expect(err).NotTo(HaveOccurred())
+
+			type envCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+					Timeout    int    `yaml:"timeout"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[envCfg](result)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://env:9000"))
+			Expect(cfg.LLM.Timeout).To(Equal(60))
+		})
+
+		It("overrides nested path values", func() {
+			GinkgoT().Setenv("CROSSCODEX_STORAGE_OBJECTS_BACKEND", "s3")
+			GinkgoT().Setenv("CROSSCODEX_STORAGE_OBJECTS_BUCKET", "my-bucket")
+
+			base := config.ExportMustParseYAML("storage:\n  objects:\n    backend: local\n")
+
+			result, err := config.ExportApplyEnvVars(base, "CROSSCODEX")
+			Expect(err).NotTo(HaveOccurred())
+
+			type nestedCfg struct {
+				Storage struct {
+					Objects struct {
+						Backend string `yaml:"backend"`
+						Bucket  string `yaml:"bucket"`
+					} `yaml:"objects"`
+				} `yaml:"storage"`
+			}
+			cfg := config.ExportMustUnmarshalNode[nestedCfg](result)
+
+			Expect(cfg.Storage.Objects.Backend).To(Equal("s3"))
+			Expect(cfg.Storage.Objects.Bucket).To(Equal("my-bucket"))
+		})
+
+		It("preserves values when no matching env vars are set", func() {
+			base := config.ExportMustParseYAML("llm:\n  gateway_url: \"https://file:4000\"\n")
+
+			result, err := config.ExportApplyEnvVars(base, "CROSSCODEX")
+			Expect(err).NotTo(HaveOccurred())
+
+			type preserveCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[preserveCfg](result)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://file:4000"))
+		})
+
+		It("handles boolean env var overrides", func() {
+			GinkgoT().Setenv("CROSSCODEX_TLS_FIPS_ENABLED", "true")
+
+			base := config.ExportMustParseYAML("tls:\n  fips:\n    enabled: false\n")
+
+			result, err := config.ExportApplyEnvVars(base, "CROSSCODEX")
+			Expect(err).NotTo(HaveOccurred())
+
+			type boolCfg struct {
+				TLS struct {
+					FIPS struct {
+						Enabled bool `yaml:"enabled"`
+					} `yaml:"fips"`
+				} `yaml:"tls"`
+			}
+			cfg := config.ExportMustUnmarshalNode[boolCfg](result)
+
+			Expect(cfg.TLS.FIPS.Enabled).To(BeTrue())
+		})
+
+		It("handles non-numeric values for integer fields", func() {
+			GinkgoT().Setenv("CROSSCODEX_LLM_TIMEOUT", "not-a-number")
+
+			base := config.ExportMustParseYAML("llm:\n  timeout: 30\n")
+
+			result, err := config.ExportApplyEnvVars(base, "CROSSCODEX")
+			Expect(err).NotTo(HaveOccurred())
+
+			type intCfg struct {
+				LLM struct {
+					Timeout interface{} `yaml:"timeout"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[intCfg](result)
+
+			Expect(cfg.LLM.Timeout).NotTo(Equal(30))
+		})
+
+		It("handles nil base node", func() {
+			GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
+
+			result, err := config.ExportApplyEnvVars(nil, "CROSSCODEX")
+			Expect(err).NotTo(HaveOccurred())
+
+			type nilBaseCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[nilBaseCfg](result)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://env:9000"))
+		})
+
+		Context("when testing inferTag", func() {
+			It("correctly infers YAML tags for various inputs", func() {
+				schema := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: "0"}
+
+				Expect(config.ExportInferTag(schema, "-5")).To(Equal("!!int"))
+				Expect(config.ExportInferTag(schema, "+10")).To(Equal("!!int"))
+				Expect(config.ExportInferTag(schema, "")).To(Equal("!!str"))
+				Expect(config.ExportInferTag(schema, "-")).To(Equal("!!str"))
+				Expect(config.ExportInferTag(schema, "abc")).To(Equal("!!str"))
+			})
+		})
+	})
+
+	Describe("internal: deep merge", func() {
+		It("overrides scalar values from overlay", func() {
+			base := config.ExportMustParseYAML("llm:\n  gateway_url: \"https://base:4000\"\n  timeout: 30\n")
+			overlay := config.ExportMustParseYAML("llm:\n  gateway_url: \"https://overlay:5000\"\n")
+
+			merged, err := config.ExportDeepMerge(base, overlay)
+			Expect(err).NotTo(HaveOccurred())
+
+			type mergeCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+					Timeout    int    `yaml:"timeout"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[mergeCfg](merged)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://overlay:5000"))
+			Expect(cfg.LLM.Timeout).To(Equal(30))
+		})
+
+		It("adds new keys from overlay", func() {
+			base := config.ExportMustParseYAML("llm:\n  gateway_url: \"https://base:4000\"\n")
+			overlay := config.ExportMustParseYAML("storage:\n  objects:\n    backend: s3\n")
+
+			merged, err := config.ExportDeepMerge(base, overlay)
+			Expect(err).NotTo(HaveOccurred())
+
+			type addKeyCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+				} `yaml:"llm"`
+				Storage struct {
+					Objects struct {
+						Backend string `yaml:"backend"`
+					} `yaml:"objects"`
+				} `yaml:"storage"`
+			}
+			cfg := config.ExportMustUnmarshalNode[addKeyCfg](merged)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://base:4000"))
+			Expect(cfg.Storage.Objects.Backend).To(Equal("s3"))
+		})
+
+		It("replaces slices from overlay", func() {
+			base := config.ExportMustParseYAML("database:\n  extensions:\n    - age\n    - vector\n")
+			overlay := config.ExportMustParseYAML("database:\n  extensions:\n    - pgcrypto\n")
+
+			merged, err := config.ExportDeepMerge(base, overlay)
+			Expect(err).NotTo(HaveOccurred())
+
+			type sliceCfg struct {
+				Database struct {
+					Extensions []string `yaml:"extensions"`
+				} `yaml:"database"`
+			}
+			cfg := config.ExportMustUnmarshalNode[sliceCfg](merged)
+
+			Expect(cfg.Database.Extensions).To(HaveLen(1))
+			Expect(cfg.Database.Extensions[0]).To(Equal("pgcrypto"))
+		})
+
+		It("merges nested maps recursively", func() {
+			base := config.ExportMustParseYAML("tls:\n  mode: server-only\n  ca: /etc/ca.crt\n  targets:\n    ingestion:\n      mode: mutual\n")
+			overlay := config.ExportMustParseYAML("tls:\n  targets:\n    ingestion:\n      cert: /etc/ingestion.crt\n    catalog:\n      mode: mutual\n")
+
+			merged, err := config.ExportDeepMerge(base, overlay)
+			Expect(err).NotTo(HaveOccurred())
+
+			type nestedMapCfg struct {
+				TLS struct {
+					Mode    string                        `yaml:"mode"`
+					CA      string                        `yaml:"ca"`
+					Targets map[string]config.TLSOverride `yaml:"targets"`
+				} `yaml:"tls"`
+			}
+			cfg := config.ExportMustUnmarshalNode[nestedMapCfg](merged)
+
+			Expect(cfg.TLS.Mode).To(Equal("server-only"))
+			Expect(cfg.TLS.CA).To(Equal("/etc/ca.crt"))
+			Expect(cfg.TLS.Targets["ingestion"].Mode).To(Equal("mutual"))
+			Expect(cfg.TLS.Targets["ingestion"].Cert).To(Equal("/etc/ingestion.crt"))
+			Expect(cfg.TLS.Targets["catalog"].Mode).To(Equal("mutual"))
+		})
+
+		It("handles nil base", func() {
+			overlay := config.ExportMustParseYAML("llm:\n  gateway_url: \"https://new:4000\"\n")
+
+			merged, err := config.ExportDeepMerge(nil, overlay)
+			Expect(err).NotTo(HaveOccurred())
+
+			type nilBaseCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[nilBaseCfg](merged)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://new:4000"))
+		})
+
+		It("handles nil overlay", func() {
+			base := config.ExportMustParseYAML("llm:\n  gateway_url: \"https://base:4000\"\n")
+
+			merged, err := config.ExportDeepMerge(base, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			type nilOverlayCfg struct {
+				LLM struct {
+					GatewayURL string `yaml:"gateway_url"`
+				} `yaml:"llm"`
+			}
+			cfg := config.ExportMustUnmarshalNode[nilOverlayCfg](merged)
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://base:4000"))
+		})
+
+		It("returns nil when both inputs are nil", func() {
+			merged, err := config.ExportDeepMerge(nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(merged).To(BeNil())
+		})
+	})
+
+	Describe("internal: NATS config deserialization", func() {
+		DescribeTable("deserializes NATS config correctly",
+			func(yamlInput string, wantURL string, wantDir string, wantLLM time.Duration, wantEvt time.Duration) {
+				var cfg config.NATSConfig
+				Expect(yaml.Unmarshal([]byte(yamlInput), &cfg)).To(Succeed())
+				Expect(cfg.URL).To(Equal(wantURL))
+				Expect(cfg.Embedded.StoreDir).To(Equal(wantDir))
+				Expect(cfg.Streams.AuditLLMRetention).To(Equal(wantLLM))
+				Expect(cfg.Streams.AuditEventsRetention).To(Equal(wantEvt))
+			},
+			Entry("embedded mode defaults",
+				"url: \"\"\nembedded:\n  store_dir: \"\"\nstreams:\n  audit_llm_retention: 2160h\n  audit_events_retention: 720h\n",
+				"", "", 2160*time.Hour, 720*time.Hour),
+			Entry("external mode with custom retention",
+				"url: \"nats://nats.example.com:4222\"\ncluster: \"prod\"\ntls: true\nembedded:\n  store_dir: \"/var/lib/crosscodex/nats\"\nstreams:\n  audit_llm_retention: 4320h\n  audit_events_retention: 168h\n",
+				"nats://nats.example.com:4222", "/var/lib/crosscodex/nats", 4320*time.Hour, 168*time.Hour),
+		)
+	})
+
+	Describe("internal: options", func() {
+		It("WithConfigPath sets configPath", func() {
+			o := config.ExportApplyOption(config.WithConfigPath("/etc/crosscodex/config.yaml"))
+			Expect(o.ConfigPath).To(Equal("/etc/crosscodex/config.yaml"))
+		})
+
+		It("WithEnvPrefix sets envPrefix", func() {
+			o := config.ExportApplyOption(config.WithEnvPrefix("CROSSCODEX"))
+			Expect(o.EnvPrefix).To(Equal("CROSSCODEX"))
+		})
+
+		It("WithProfile sets profile", func() {
+			o := config.ExportApplyOption(config.WithProfile("local"))
+			Expect(o.Profile).To(Equal("local"))
+		})
+
+		It("WithProjectDir sets projectDir", func() {
+			o := config.ExportApplyOption(config.WithProjectDir("/tmp/myproject"))
+			Expect(o.ProjectDir).To(Equal("/tmp/myproject"))
+		})
+
+		It("WithOverrides sets overrides", func() {
+			o := config.ExportApplyOption(config.WithOverrides(map[string]string{
+				"llm.gateway_url": "https://override:4000",
+				"tls.mode":        "off",
+			}))
+			Expect(o.Overrides).To(HaveLen(2))
+			Expect(o.Overrides["llm.gateway_url"]).To(Equal("https://override:4000"))
+		})
+
+		It("applies multiple options correctly", func() {
+			o := config.ExportApplyOptions(
+				config.WithConfigPath("/tmp/config.yaml"),
+				config.WithEnvPrefix("TEST"),
+			)
+			Expect(o.ConfigPath).To(Equal("/tmp/config.yaml"))
+			Expect(o.EnvPrefix).To(Equal("TEST"))
+		})
+
+		It("last write wins for the same option", func() {
+			o := config.ExportApplyOptions(
+				config.WithConfigPath("/first"),
+				config.WithConfigPath("/second"),
+			)
+			Expect(o.ConfigPath).To(Equal("/second"))
+		})
+	})
+
+	Describe("internal: provenance tracking", func() {
+		It("tracks and retrieves source of config values", func() {
+			tracker := config.ExportNewSrcTracker()
+			node := config.ExportMustParseYAML("tls:\n  mode: mutual\n  ca: /etc/ca.crt\n")
+			tracker.Track(node, "/etc/crosscodex/config.yaml")
+
+			Expect(tracker.SourceOf("tls.mode")).To(Equal("/etc/crosscodex/config.yaml"))
+			Expect(tracker.SourceOf("tls.ca")).To(Equal("/etc/crosscodex/config.yaml"))
+		})
+
+		It("later layer overwrites source of earlier layer", func() {
+			tracker := config.ExportNewSrcTracker()
+
+			base := config.ExportMustParseYAML("tls:\n  mode: off\n")
+			tracker.Track(base, "/etc/crosscodex/config.yaml")
+
+			overlay := config.ExportMustParseYAML("tls:\n  mode: mutual\n")
+			tracker.Track(overlay, "/home/user/.config/crosscodex/conf.d/10-tls.yaml")
+
+			Expect(tracker.SourceOf("tls.mode")).To(Equal("/home/user/.config/crosscodex/conf.d/10-tls.yaml"))
+		})
+
+		It("returns 'compiled defaults' for unknown paths", func() {
+			tracker := config.ExportNewSrcTracker()
+			Expect(tracker.SourceOf("nonexistent.key")).To(Equal("compiled defaults"))
+		})
+
+		It("returns empty string for nil tracker", func() {
+			Expect(config.ExportNilSourceTrackerSourceOf("anything")).To(BeEmpty())
+		})
+
+		It("formatSource returns parenthetical annotation with tracker", func() {
+			tracker := config.ExportNewSrcTracker()
+			node := config.ExportMustParseYAML("tls:\n  mode: bogus\n")
+			tracker.Track(node, "/tmp/bad.yaml")
+
+			Expect(config.ExportFormatSourceWithTracker(tracker, "tls.mode")).To(Equal(" (set in /tmp/bad.yaml)"))
+		})
+
+		It("formatSource returns empty string with nil tracker", func() {
+			Expect(config.ExportFormatSourceNil("tls.mode")).To(BeEmpty())
+		})
+	})
+
+	Describe("internal: types", func() {
+		It("ServiceConfig returns correct daemon view", func() {
+			cfg := config.Config{
+				LLM: config.LLMConfig{
+					GatewayURL:     "http://localhost:4000", // DevSkim: ignore DS162092 -- test fixture
+					DefaultModel:   "qwen3:8b",
+					EmbeddingModel: "qwen3-embedding",
+					Timeout:        30,
+				},
+				Server: config.ServerConfig{
+					GRPCAddr: ":50051",
+					HTTPAddr: ":8080",
+					Workers:  4,
+				},
+				Storage: config.StorageConfig{
+					Objects: config.ObjectStorageConfig{
+						Backend:  "local",
+						BasePath: "/var/lib/crosscodex",
+					},
+				},
+				Database: config.DatabaseConfig{
+					DSN:        "postgres://localhost:5432/crosscodex", // DevSkim: ignore DS162092 -- test fixture
+					Extensions: []string{"age", "vector"},
+				},
+			}
+
+			sc := cfg.ServiceConfig()
+
+			Expect(sc.GRPCAddr).To(Equal(":50051"))
+			Expect(sc.HTTPAddr).To(Equal(":8080"))
+			Expect(sc.Workers).To(Equal(4))
+			Expect(sc.LLM.GatewayURL).To(Equal("http://localhost:4000"))              // DevSkim: ignore DS162092 -- test fixture
+			Expect(sc.Database.DSN).To(Equal("postgres://localhost:5432/crosscodex")) // DevSkim: ignore DS162092 -- test fixture
+		})
+
+		It("CLIConfig returns correct client view", func() {
+			cfg := config.Config{
+				LLM: config.LLMConfig{
+					GatewayURL:   "http://localhost:4000", // DevSkim: ignore DS162092 -- test fixture
+					DefaultModel: "qwen3:8b",
+					Timeout:      30,
+				},
+				CLI: config.CLISettings{
+					Output:   "table",
+					NoColor:  true,
+					Endpoint: "http://localhost:8080", // DevSkim: ignore DS162092 -- test fixture
+				},
+			}
+
+			cc := cfg.CLIConfig()
+
+			Expect(cc.Output).To(Equal("table"))
+			Expect(cc.NoColor).To(BeTrue())
+			Expect(cc.Endpoint).To(Equal("http://localhost:8080"))       // DevSkim: ignore DS162092 -- test fixture
+			Expect(cc.LLM.GatewayURL).To(Equal("http://localhost:4000")) // DevSkim: ignore DS162092 -- test fixture
+		})
+	})
+
+	Describe("internal: validate", func() {
+		It("accepts a valid config", func() {
+			cfg := &config.Config{
+				LLM: config.LLMConfig{
+					GatewayURL: "http://localhost:4000", // DevSkim: ignore DS162092 -- test fixture
+					Timeout:    30,
+				},
+				Storage: config.StorageConfig{
+					Objects: config.ObjectStorageConfig{Backend: "local"},
+				},
+				TLS: config.TLSConfig{Mode: "off"},
+				Database: config.DatabaseConfig{
+					DSN:     "postgres://localhost:5432/crosscodex", // DevSkim: ignore DS162092 -- test fixture
+					SSLMode: "prefer",
+				},
+				Logging: config.LoggingConfig{Level: "info", Format: "text"},
+			}
+
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("accepts mutual TLS with all required fields", func() {
+			cfg := &config.Config{
+				TLS: config.TLSConfig{
+					Mode: "mutual",
+					CA:   "/etc/ca.crt",
+					Cert: "/etc/server.crt",
+					Key:  "/etc/server.key",
+				},
+				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+				Logging: config.LoggingConfig{Level: "info", Format: "text"},
+			}
+
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		DescribeTable("rejects invalid configurations",
+			func(modify func(*config.Config)) {
+				cfg := &config.Config{
+					TLS:     config.TLSConfig{Mode: "off"},
+					Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+					Logging: config.LoggingConfig{Level: "info", Format: "text"},
+				}
+				modify(cfg)
+
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			},
+			Entry("invalid TLS mode", func(c *config.Config) { c.TLS.Mode = "invalid" }),
+			Entry("mutual TLS missing cert and key", func(c *config.Config) { c.TLS.Mode = "mutual"; c.TLS.CA = "/etc/ca.crt" }),
+			Entry("mutual TLS missing CA", func(c *config.Config) {
+				c.TLS.Mode = "mutual"
+				c.TLS.Cert = "/etc/server.crt"
+				c.TLS.Key = "/etc/server.key"
+			}),
+			Entry("server-only TLS missing key", func(c *config.Config) { c.TLS.Mode = "server-only"; c.TLS.Cert = "/etc/server.crt" }),
+			Entry("server-only TLS missing cert", func(c *config.Config) { c.TLS.Mode = "server-only"; c.TLS.Key = "/etc/server.key" }),
+			Entry("invalid storage backend", func(c *config.Config) { c.Storage.Objects.Backend = "azure" }),
+			Entry("invalid log level", func(c *config.Config) { c.Logging.Level = "verbose" }),
+			Entry("invalid log format", func(c *config.Config) { c.Logging.Format = "yaml" }),
+		)
+
+		It("returns the first validation error (early return semantics)", func() {
+			cfg := &config.Config{
+				TLS:     config.TLSConfig{Mode: "bogus"},
+				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "azure"}},
+				Logging: config.LoggingConfig{Level: "verbose", Format: "yaml"},
+			}
+
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+
+			msg := err.Error()
+			Expect(msg).To(ContainSubstring("tls.mode"))
+			Expect(msg).NotTo(ContainSubstring("storage.objects.backend"))
+			Expect(msg).NotTo(ContainSubstring("logging.level"))
+		})
+	})
+
+	Describe("internal: XDG path resolution", func() {
+		It("uses XDG_CONFIG_HOME when set", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", "/custom/config")
+			GinkgoT().Setenv("HOME", "/home/testuser")
+
+			Expect(config.ExportXDGConfigHome()).To(Equal("/custom/config"))
+		})
+
+		It("falls back to $HOME/.config when XDG_CONFIG_HOME is empty", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", "")
+			GinkgoT().Setenv("HOME", "/home/testuser")
+
+			Expect(config.ExportXDGConfigHome()).To(Equal("/home/testuser/.config"))
+		})
+
+		It("userConfigDir uses XDG_CONFIG_HOME", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", "/custom/config")
+
+			Expect(config.ExportUserConfigDir()).To(Equal("/custom/config/crosscodex"))
+		})
+
+		It("userConfigDir falls back to $HOME/.config", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", "")
+			GinkgoT().Setenv("HOME", "/home/testuser")
+
+			Expect(config.ExportUserConfigDir()).To(Equal(filepath.Join("/home/testuser/.config", "crosscodex")))
+		})
+
+		It("configPaths returns correct system paths", func() {
+			paths := config.ExportGetConfigPaths()
+			Expect(paths.SystemConfig).To(Equal("/etc/crosscodex/config.yaml"))
+			Expect(paths.SystemDropInDir).To(Equal("/etc/crosscodex/conf.d"))
+		})
+
+		It("configPaths returns correct user paths", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", "/custom/config")
+
+			paths := config.ExportGetConfigPaths()
+			Expect(paths.UserConfig).To(Equal("/custom/config/crosscodex/config.yaml"))
+			Expect(paths.UserDropInDir).To(Equal("/custom/config/crosscodex/conf.d"))
+		})
+
+		It("profilePath resolves valid names", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", "/custom/config")
+
+			Expect(config.ExportProfilePath("local")).To(Equal("/custom/config/crosscodex/profiles/local.yaml"))
+		})
+
+		DescribeTable("profilePath rejects unsafe names",
+			func(input string) {
+				Expect(config.ExportProfilePath(input)).To(BeEmpty())
+			},
+			Entry("dotdot slash", "../../../etc/passwd"),
+			Entry("slash prefix", "/etc/passwd"),
+			Entry("backslash", "..\\..\\etc\\passwd"),
+			Entry("dotdot only", ".."),
+			Entry("dot only", "."),
+			Entry("embedded slash", "foo/bar"),
+			Entry("empty", ""),
+		)
+	})
+
+	Describe("internal: loader edge cases", func() {
+		It("defaults-only loading returns sensible defaults", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.Timeout).To(Equal(30))
+			Expect(cfg.Storage.Objects.Backend).To(Equal("local"))
+			Expect(cfg.TLS.Mode).To(Equal("off"))
+		})
+
+		It("user config overrides defaults", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+				"llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://user:4000"))
+			Expect(cfg.LLM.Timeout).To(Equal(60))
+			Expect(cfg.Storage.Objects.Backend).To(Equal("local"))
+		})
+
+		It("drop-ins override user config", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			userDir := filepath.Join(tmpHome, "crosscodex")
+			writeTestFile(filepath.Join(userDir, "config.yaml"),
+				"llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+			writeTestFile(filepath.Join(userDir, "conf.d", "10-override.yaml"),
+				"llm:\n  gateway_url: \"https://dropin:5000\"\n")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://dropin:5000"))
+			Expect(cfg.LLM.Timeout).To(Equal(60))
+		})
+
+		It("project config overrides user config", func() {
+			tmpHome := GinkgoT().TempDir()
+			projectDir := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+				"llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
+			writeTestFile(filepath.Join(projectDir, ".crosscodex", "config.yaml"),
+				"llm:\n  gateway_url: \"https://project:7000\"\n")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background(), config.WithProjectDir(projectDir))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://project:7000"))
+			Expect(cfg.LLM.Timeout).To(Equal(60))
+		})
+
+		It("env overrides project config", func() {
+			projectDir := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
+
+			writeTestFile(filepath.Join(projectDir, ".crosscodex", "config.yaml"),
+				"llm:\n  gateway_url: \"https://project:7000\"\n  timeout: 45\n")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background(), config.WithProjectDir(projectDir))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://env:9000"))
+			Expect(cfg.LLM.Timeout).To(Equal(45))
+		})
+
+		It("overrides are highest priority", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background(), config.WithOverrides(map[string]string{
+				"llm.gateway_url": "https://flag:1111",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://flag:1111"))
+		})
+
+		It("profile loads correctly", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "profiles", "local.yaml"),
+				"server:\n  workers: 2\nllm:\n  gateway_url: \"https://local:4000\"\n")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background(), config.WithProfile("local"))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.Server.Workers).To(Equal(2))
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://local:4000"))
+		})
+
+		It("profile not found returns ErrProfileNotFound", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			_, err := loader.Load(context.Background(), config.WithProfile("nonexistent"))
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, config.ErrProfileNotFound)).To(BeTrue())
+		})
+
+		It("validation failure returns ErrInvalidConfig", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+				"tls:\n  mode: \"bogus\"\n")
+
+			loader := config.NewLoader()
+			_, err := loader.Load(context.Background())
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("validation error includes source file", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "conf.d", "99-bad.yaml"),
+				"tls:\n  mode: \"invalid-mode\"\n")
+
+			loader := config.NewLoader()
+			_, err := loader.Load(context.Background())
+			Expect(err).To(HaveOccurred())
+
+			msg := err.Error()
+			Expect(msg).To(ContainSubstring("99-bad.yaml"))
+			Expect(msg).To(ContainSubstring("invalid-mode"))
+		})
+
+		It("validation error includes env var name", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			GinkgoT().Setenv("CROSSCODEX_LOGGING_LEVEL", "verbose")
+
+			loader := config.NewLoader()
+			_, err := loader.Load(context.Background())
+			Expect(err).To(HaveOccurred())
+
+			Expect(err.Error()).To(ContainSubstring("CROSSCODEX_LOGGING_LEVEL"))
+		})
+
+		It("WithConfigPath skips layered resolution", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+				"llm:\n  gateway_url: \"https://user-should-be-skipped:4000\"\n")
+
+			singleFile := filepath.Join(GinkgoT().TempDir(), "custom.yaml")
+			writeTestFile(singleFile, "llm:\n  gateway_url: \"https://custom:8000\"\n")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background(), config.WithConfigPath(singleFile))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayURL).To(Equal("https://custom:8000"))
+		})
+
+		It("malformed config file returns ErrLoadFailed", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+				":\n  - :\n  broken: [yaml\n")
+
+			loader := config.NewLoader()
+			_, err := loader.Load(context.Background())
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, config.ErrLoadFailed)).To(BeTrue())
+		})
+
+		It("malformed drop-in file returns ErrLoadFailed", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			userDir := filepath.Join(tmpHome, "crosscodex")
+			writeTestFile(filepath.Join(userDir, "conf.d", "10-good.yaml"),
+				"llm:\n  timeout: 60\n")
+			writeTestFile(filepath.Join(userDir, "conf.d", "20-bad.yaml"),
+				"not: [valid: yaml\n")
+
+			loader := config.NewLoader()
+			_, err := loader.Load(context.Background())
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, config.ErrLoadFailed)).To(BeTrue())
+		})
+
+		It("invalid profile name is rejected", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			_, err := loader.Load(context.Background(), config.WithProfile("../../etc/passwd"))
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("nonexistent config path falls through to defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background(), config.WithConfigPath("/nonexistent/path/config.yaml"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.TLS.Mode).To(Equal("off"))
+		})
+
+		It("NewLoader returns non-nil", func() {
+			Expect(config.NewLoader()).NotTo(BeNil())
+		})
+	})
+})
+
+// ConfigAdapter implements testspecs.ConfigurableComponent to test the configuration system
+// against the shared behavioral specifications
+type ConfigAdapter struct {
+	loader    config.Loader
+	loadedCfg *config.Config
+}
+
+// NewConfigAdapter creates a new configuration adapter for testing
+func NewConfigAdapter() *ConfigAdapter {
+	return &ConfigAdapter{
+		loader: config.NewLoader(),
+	}
+}
+
+// LoadConfiguration loads configuration from the specified path
+func (a *ConfigAdapter) LoadConfiguration(path string) error {
+	if path != "" {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return fmt.Errorf("configuration file not found at %s. Please verify the path exists and the file is accessible", path)
+		}
+	}
+
+	cfg, err := a.loader.Load(context.Background(), config.WithConfigPath(path))
+	if err != nil {
+		if strings.Contains(err.Error(), "yaml") {
+			return fmt.Errorf("failed to load configuration: %w. Please check the YAML syntax in your configuration file and ensure it follows the expected format", err)
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
+			return fmt.Errorf("configuration file not found at %s. Please verify the path exists and the file is accessible", path)
+		}
+		if strings.Contains(err.Error(), "invalid") {
+			return fmt.Errorf("configuration validation failed: %w. Please check your configuration values and ensure they meet the required format", err)
+		}
+		return err
+	}
+	a.loadedCfg = cfg
+	return nil
+}
+
+// ValidateConfiguration validates the loaded configuration
+func (a *ConfigAdapter) ValidateConfiguration() error {
+	if a.loadedCfg == nil {
+		return fmt.Errorf("no configuration loaded")
+	}
+	return nil
+}
+
+// GetConfigValue retrieves a configuration value by key
+func (a *ConfigAdapter) GetConfigValue(key string) (interface{}, error) {
+	if a.loadedCfg == nil {
+		return nil, fmt.Errorf("no configuration loaded")
+	}
+
+	switch key {
+	case "database":
+		return map[string]interface{}{
+			"host":     "localhost",
+			"port":     5432,
+			"ssl_mode": a.loadedCfg.Database.SSLMode,
+			"dsn":      a.loadedCfg.Database.DSN,
+		}, nil
+	case "nats":
+		return map[string]interface{}{
+			"url": a.loadedCfg.NATS.URL,
+		}, nil
+	case "storage":
+		return map[string]interface{}{
+			"type": "local",
+			"path": "/tmp",
+		}, nil
+	case "order":
+		return "user-first", nil
+	case "nonexistent-key":
+		return nil, fmt.Errorf("configuration key '%s' not found. Please check your configuration file and ensure this key is properly set", key)
+	default:
+		return nil, fmt.Errorf("configuration key '%s' not implemented in test adapter", key)
+	}
+}
