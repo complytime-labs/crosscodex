@@ -28,7 +28,7 @@ func SetupTestDatabase() (*sql.DB, TestCleanup) {
 	testDSN := os.Getenv("TEST_DATABASE_DSN")
 	if testDSN == "" {
 		// Use a mock DSN for unit tests when no real database is available
-		testDSN = "postgres://test:test@localhost/test?sslmode=disable"
+		testDSN = "postgres://test:test@localhost/test?sslmode=disable" // DevSkim: ignore DS162092 — test fixture
 	}
 
 	// Create database pool configuration

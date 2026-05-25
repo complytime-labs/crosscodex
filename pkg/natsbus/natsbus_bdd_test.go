@@ -192,6 +192,7 @@ var _ = Describe("NATSBus System", Ordered, func() {
 
 				By("listing all missing fields in the error for actionable remediation")
 				errMsg := err.Error()
+				// DevSkim: ignore DS197836 — HTTP header field names, not content for hashing
 				for _, field := range []string{"X-Tenant-Id", "X-Content-SHA256", "X-Timestamp", "X-Trace-Id", "X-Span-Id"} {
 					Expect(errMsg).To(ContainSubstring(field))
 				}
@@ -227,7 +228,7 @@ var _ = Describe("NATSBus System", Ordered, func() {
 
 			It("allows overriding all options via functional option pattern", func() {
 				logger := testspecs.GinkgoLogger()
-				tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+				tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12} // DevSkim: ignore DS112852 — TLS 1.2 minimum for test security
 
 				opts := natsbus.DefaultClientOptions()
 				for _, o := range []natsbus.Option{
@@ -528,21 +529,24 @@ var _ = Describe("NATSBus System", Ordered, func() {
 					headers: map[string][]string{
 						"X-Tenant-Id": {"acme-corp"},
 					},
+					// DevSkim: ignore DS197836 — HTTP header field names, not content for hashing
 					wantMissing:    []string{"X-Content-SHA256", "X-Timestamp", "X-Trace-Id", "X-Span-Id"},
 					wantNotMissing: []string{"X-Tenant-Id"},
 				}),
 				Entry("everything except tenant", partialCase{
 					headers: map[string][]string{
-						"X-Trace-Id":       {"trace-1"},
-						"X-Span-Id":        {"span-1"},
-						"X-Timestamp":      {"2026-01-01T00:00:00Z"},
 						"X-Content-SHA256": {"abc123"},
+						"X-Timestamp":      {"2024-01-01T00:00:00Z"},
+						"X-Trace-Id":       {"trace123"},
+						"X-Span-Id":        {"span123"},
 					},
-					wantMissing:    []string{"X-Tenant-Id"},
+					wantMissing: []string{"X-Tenant-Id"},
+					// DevSkim: ignore DS197836 — HTTP header field names, not content for hashing
 					wantNotMissing: []string{"X-Content-SHA256", "X-Timestamp", "X-Trace-Id", "X-Span-Id"},
 				}),
 				Entry("nil headers map", partialCase{
-					headers:        nil,
+					headers: nil,
+					// DevSkim: ignore DS197836 — HTTP header field names, not content for hashing
 					wantMissing:    []string{"X-Tenant-Id", "X-Content-SHA256", "X-Timestamp", "X-Trace-Id", "X-Span-Id"},
 					wantNotMissing: nil,
 				}),

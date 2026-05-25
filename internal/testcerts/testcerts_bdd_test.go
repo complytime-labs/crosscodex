@@ -242,12 +242,12 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 			srvCert, err := tls.X509KeyPair(pki.ServerCert, pki.ServerKey)
 			Expect(err).NotTo(HaveOccurred())
 
-			serverTLS := &tls.Config{
-				Certificates: []tls.Certificate{srvCert},
-				ClientCAs:    caPool,
-				ClientAuth:   tls.RequireAndVerifyClientCert,
-				MinVersion:   tls.VersionTLS12,
-			}
+		serverTLS := &tls.Config{
+			Certificates: []tls.Certificate{srvCert},
+			ClientCAs:    caPool,
+			ClientAuth:   tls.RequireAndVerifyClientCert,
+			MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS112852 — TLS 1.2 minimum for test security
+		}
 
 			By("starting a TLS listener on localhost")
 			ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
@@ -274,11 +274,11 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 			cliCert, err := tls.X509KeyPair(pki.ClientCert, pki.ClientKey)
 			Expect(err).NotTo(HaveOccurred())
 
-			clientTLS := &tls.Config{
-				Certificates: []tls.Certificate{cliCert},
-				RootCAs:      caPool,
-				MinVersion:   tls.VersionTLS12,
-			}
+		clientTLS := &tls.Config{
+			Certificates: []tls.Certificate{cliCert},
+			RootCAs:      caPool,
+			MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS112852 — TLS 1.2 minimum for test security
+		}
 
 			By("dialing the server with mTLS")
 			conn, err := tls.Dial("tcp", ln.Addr().String(), clientTLS)

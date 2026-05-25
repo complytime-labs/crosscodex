@@ -51,7 +51,7 @@ func loadTLSConfig(t *testing.T) *tls.Config {
 	return &tls.Config{
 		RootCAs:      pool,
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS112852 — TLS 1.2 minimum for test security
 	}
 }
 

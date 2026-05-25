@@ -1,0 +1,29 @@
+# Grype vulnerability scanner configuration
+# Reference: https://github.com/anchore/grype#configuration
+
+# Ignore vulnerabilities that are false positives or acceptable risks
+ignore:
+  # Docker dependency vulnerabilities from golang-migrate/migrate/v4
+  # These vulnerabilities are in Docker v28.5.2+incompatible which is only used 
+  # by golang-migrate for testing container databases, not at runtime.
+  # Our application does not directly use Docker and these vulnerabilities do not affect production systems.
+  - vulnerability: GHSA-pxq6-2prw-chj9
+    package:
+      name: github.com/docker/docker
+      type: go-module
+  - vulnerability: GHSA-x744-4wpc-v9h2  
+    package:
+      name: github.com/docker/docker
+      type: go-module
+  - vulnerability: GHSA-rg2x-37c3-w2rh
+    package:
+      name: github.com/docker/docker
+      type: go-module
+  - vulnerability: GHSA-x86f-5xw2-fm2r
+    package:
+      name: github.com/docker/docker
+      type: go-module
+  - vulnerability: GHSA-vp62-88p7-qqf5
+    package:
+      name: github.com/docker/docker
+      type: go-module
