@@ -437,7 +437,7 @@ func (m *dbConnectionMatcher) Match(actual interface{}) (bool, error) {
 
 	// Check if it implements the standard driver.Pinger interface
 	if pinger, ok := actual.(driver.Pinger); ok {
-		ctx := context.TODO() // Use context.TODO() instead of nil
+		ctx := context.TODO() // DevSkim: ignore DS176209 — Standard Go context pattern, not actual TODO
 		return pinger.Ping(ctx) == nil, nil
 	}
 
