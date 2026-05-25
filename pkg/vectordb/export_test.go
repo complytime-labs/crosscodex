@@ -1,0 +1,32 @@
+package vectordb
+
+// ParseVectorString exports parseVectorString for use by the external
+// test package (vectordb_test). This follows the standard Go convention
+// of export_test.go files that live in the internal package but expose
+// unexported symbols solely for testing.
+var ParseVectorString = parseVectorString
+
+// TelemetryFields holds the telemetry state of a PgVectorStore,
+// exported solely for assertions in the external test package.
+type TelemetryFields struct {
+	HasTracer        bool
+	HasMeter         bool
+	HasSearchCounter bool
+	HasSearchLatency bool
+	HasStoreCounter  bool
+	HasStoreLatency  bool
+}
+
+// GetTelemetryFields returns the telemetry initialisation state of
+// a PgVectorStore so the external test package can verify that
+// WithTelemetry populates (or omits) every instrument.
+func (s *PgVectorStore) GetTelemetryFields() TelemetryFields {
+	return TelemetryFields{
+		HasTracer:        s.tracer != nil,
+		HasMeter:         s.meter != nil,
+		HasSearchCounter: s.searchCounter != nil,
+		HasSearchLatency: s.searchLatency != nil,
+		HasStoreCounter:  s.storeCounter != nil,
+		HasStoreLatency:  s.storeLatency != nil,
+	}
+}

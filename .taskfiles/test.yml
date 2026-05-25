@@ -15,7 +15,26 @@ tasks:
     cmd: task test --list
 
   unit:
-    desc: Run unit tests with coverage
+    desc: Run unit tests with spec tree output
+    deps:
+      - :dev:deps
+      - :dev:generate
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/...
+      - go run ./internal/tools/treeformat {{.TEST_DIR}}/ginkgo-report.json
+
+  unit:verbose:
+    desc: Run unit tests with Ginkgo verbose output (no tree)
+    deps:
+      - :dev:deps
+      - :dev:generate
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -v -r --randomize-all --fail-on-pending ./pkg/... ./internal/...
+
+  unit:legacy:
+    desc: Run unit tests with Go testing (legacy)
     deps:
       - :dev:deps
       - :dev:generate
@@ -23,7 +42,7 @@ tasks:
       MODE: '{{.MODE | default "human"}}'
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - cmd: go test -v -race -count=1 -coverprofile={{.TEST_DIR}}/coverage.out {{.ROOT_DIR}}/... 2>&1 | tee {{.TEST_DIR}}/test.log
+      - cmd: go test -v -race -count=1 -coverprofile={{.TEST_DIR}}/coverage.out ./pkg/... 2>&1 | tee {{.TEST_DIR}}/test.log
       - task: report
         vars:
           MODE: "{{.MODE}}"

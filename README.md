@@ -16,23 +16,27 @@ ______________________________________________________________________
 
 ## Status
 
-CrossCodex is in early development. Three foundational packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
+CrossCodex is in early development. Four foundational packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
 
-| Package | Status | Summary |
-| ------- | ------ | ------- |
-| **pkg/config** | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking |
-| **pkg/storage** | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes |
-| **pkg/db** | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification |
-| **pkg/tenant** | Partial | Tenant ID validation implemented; context propagation interface scaffolded |
-| All others | Scaffolded | Interfaces and types defined; implementation pending |
+| Package         | Status      | Summary                                                                                      |
+|-----------------|-------------|----------------------------------------------------------------------------------------------|
+| **pkg/config**  | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking               |
+| **pkg/storage** | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes                  |
+| **pkg/db**      | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
+| **pkg/natsbus** | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
+| **pkg/tenant**  | Partial     | Tenant ID validation implemented; context propagation interface scaffolded                   |
+| All others      | Scaffolded  | Interfaces and types defined; implementation pending                                         |
 
-Unit tests cover the implemented packages. Integration tests for `pkg/db` run against a containerized PostgreSQL instance with Apache AGE and pgvector extensions (`task test:integration`).
+Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, and `pkg/natsbus` run against containerized services (`task test:integration:all`).
 
 ## Implemented Packages
 
 ### pkg/config
 
-Configuration loading with XDG Base Directory compliance. Merges values from nine layers in defined precedence order: compiled defaults, system config, system drop-ins, user config, user drop-ins, profile selection, project config, environment variables, and CLI flags. Each resolved value carries provenance metadata indicating which layer set it. Validation runs after merge and reports all errors with source locations.
+Configuration loading with XDG Base Directory compliance. Merges values from nine layers in defined precedence order:
+compiled defaults, system config, system drop-ins, user config, user drop-ins, profile selection, project config,
+environment variables, and CLI flags. Each resolved value carries provenance metadata indicating which layer set it.
+Validation runs after merge and reports all errors with source locations.
 
 See [Configuration](#configuration) below for the full resolution order and examples.
 
@@ -52,7 +56,7 @@ Application connections use a restricted `app_user` role with no DDL privileges.
 
 ## Architecture
 
-The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides package-level foundations (`pkg/oscal`, `pkg/analyzer`, `pkg/llmclient`, `pkg/graphdb`, `pkg/natsbus`); full service implementations are not yet built.
+The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`) and scaffolded domain packages (`pkg/oscal`, `pkg/analyzer`, `pkg/llmclient`, `pkg/graphdb`); full service implementations are not yet built.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {
@@ -107,15 +111,15 @@ flowchart TD
 
 ### Service Responsibilities
 
-| Service | Purpose | Technology |
-| ------- | ------- | ---------- |
-| **Ingestion** | Multi-format document conversion via Docling | Python gRPC service |
-| **Catalog** | OSCAL parsing, document structuring, validation | Go |
-| **Analysis Engine** | Host for analyzer plugins, DAG execution | Go |
-| **LLM Workers** | Horizontally scalable LLM task execution | Go |
-| **Synthesis** | Ranking, viability weighting, quality metrics | Go |
-| **Graph** | openCypher queries via Apache AGE on PostgreSQL | Go |
-| **Pipeline** | Job orchestration, state tracking, retry logic | Go |
+| Service             | Purpose                                         | Technology          |
+|---------------------|-------------------------------------------------|---------------------|
+| **Ingestion**       | Multi-format document conversion via Docling    | Python gRPC service |
+| **Catalog**         | OSCAL parsing, document structuring, validation | Go                  |
+| **Analysis Engine** | Host for analyzer plugins, DAG execution        | Go                  |
+| **LLM Workers**     | Horizontally scalable LLM task execution        | Go                  |
+| **Synthesis**       | Ranking, viability weighting, quality metrics   | Go                  |
+| **Graph**           | openCypher queries via Apache AGE on PostgreSQL | Go                  |
+| **Pipeline**        | Job orchestration, state tracking, retry logic  | Go                  |
 
 ### Analyzer Plugin Architecture
 
@@ -270,7 +274,7 @@ llm:
   gateway_url: "http://localhost:4000"
   default_model: "qwen3:8b"
   embedding_model: "qwen3-embedding"
-  timeout: 30s
+  timeout: 30
 ```
 
 #### Storage
@@ -279,10 +283,14 @@ llm:
 storage:
   objects:
     backend: local                # local | s3
-  database:
-    postgres:
-      dsn: "${DATABASE_DSN}"  # e.g. postgres://user:password@localhost:5432/crosscodex
-      extensions: [age, vector]
+```
+
+#### Database
+
+```yaml
+database:
+  dsn: "${DATABASE_DSN}"          # e.g. postgres://user:password@localhost:5432/crosscodex
+  extensions: [age, vector]
 ```
 
 #### TLS (Global Default)
@@ -335,11 +343,11 @@ task generate
 
 ### Testing Strategy
 
-| Test Type | Framework | Status |
-| --------- | --------- | ------ |
-| **Unit** | Go testing | Available (`task test:unit`) |
-| **Integration** | Go testing + containers | Available for pkg/db and pkg/storage (`task test:integration`) |
-| **E2E** | Venom | Planned |
+| Test Type       | Framework               | Status                                                                           |
+|-----------------|-------------------------|----------------------------------------------------------------------------------|
+| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                     |
+| **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, and pkg/natsbus (`task test:integration:all`) |
+| **E2E**         | Venom                   | Planned                                                                          |
 
 ### Contributing
 
@@ -396,22 +404,22 @@ flowchart TD
 
 Every layer enforces tenant isolation independently:
 
-| Layer | Mechanism | Purpose |
-| ----- | --------- | ------- |
-| **Gateway** | mTLS client certificates, JWT sessions, RBAC | Identity verification |
-| **Services** | gRPC metadata validation | Context propagation |
-| **NATS** | Tenant-scoped subjects and ACLs | Message isolation |
-| **PostgreSQL** | Row-Level Security policies | Data isolation |
-| **Object Store** | Tenant-prefixed paths, bucket policies | Artifact isolation |
-| **Graph (AGE)** | Separate graph per tenant | Traversal isolation |
+| Layer            | Mechanism                                    | Purpose               |
+|------------------|----------------------------------------------|-----------------------|
+| **Gateway**      | mTLS client certificates, JWT sessions, RBAC | Identity verification |
+| **Services**     | gRPC metadata validation                     | Context propagation   |
+| **NATS**         | Tenant-scoped subjects and ACLs              | Message isolation     |
+| **PostgreSQL**   | Row-Level Security policies                  | Data isolation        |
+| **Object Store** | Tenant-prefixed paths, bucket policies       | Artifact isolation    |
+| **Graph (AGE)**  | Separate graph per tenant                    | Traversal isolation   |
 
 ### Authentication Methods
 
-| Method | Use Case | How It Works |
-| ------ | -------- | ------------ |
-| **X.509 (mTLS)** | CLI, service-to-service, automation | Client certificate during TLS handshake |
-| **GSSAPI (Kerberos)** | Enterprise SSO, Active Directory | Kerberos ticket via SPNEGO |
-| **SAML** | Web UI, browser SSO | SAML assertion from IdP |
+| Method                | Use Case                            | How It Works                            |
+|-----------------------|-------------------------------------|-----------------------------------------|
+| **X.509 (mTLS)**      | CLI, service-to-service, automation | Client certificate during TLS handshake |
+| **GSSAPI (Kerberos)** | Enterprise SSO, Active Directory    | Kerberos ticket via SPNEGO              |
+| **SAML**              | Web UI, browser SSO                 | SAML assertion from IdP                 |
 
 ### FIPS 140 Support
 
@@ -463,18 +471,18 @@ erDiagram
 
 PostgreSQL with extensions handles all data:
 
-| Store | Extension | Purpose |
-| ----- | --------- | ------- |
-| **Relational** | PostgreSQL | Job metadata, catalogs, classifications, tenant config |
-| **Graph** | Apache AGE | Relationship graph, openCypher queries, temporal attributes |
-| **Vector** | pgvector | Embedding similarity search |
+| Store          | Extension  | Purpose                                                     |
+|----------------|------------|-------------------------------------------------------------|
+| **Relational** | PostgreSQL | Job metadata, catalogs, classifications, tenant config      |
+| **Graph**      | Apache AGE | Relationship graph, openCypher queries, temporal attributes |
+| **Vector**     | pgvector   | Embedding similarity search                                 |
 
 ### Additional Storage
 
-| Store | Technology | Purpose |
-| ----- | ---------- | ------- |
-| **Object Store** | Local FS / S3 | Documents, embeddings, attestation bundles |
-| **Message Bus** | NATS JetStream | Audit trails, work distribution, service communication |
+| Store            | Technology     | Purpose                                                |
+|------------------|----------------|--------------------------------------------------------|
+| **Object Store** | Local FS / S3  | Documents, embeddings, attestation bundles             |
+| **Message Bus**  | NATS JetStream | Audit trails, work distribution, service communication |
 
 ### Why PostgreSQL Everywhere
 
@@ -498,11 +506,11 @@ Built-in observability with OTLP export:
 
 JetStream provides persistent audit streams:
 
-| Stream | Retention | Content |
-| ------ | --------- | ------- |
-| **Decisions** | Indefinite | Final compliance determinations |
-| **LLM Calls** | 90 days | Full prompts, responses, model versions |
-| **Events** | 30 days | Pipeline lifecycle, debugging |
+| Stream        | Retention  | Content                                 |
+|---------------|------------|-----------------------------------------|
+| **Decisions** | Indefinite | Final compliance determinations         |
+| **LLM Calls** | 90 days    | Full prompts, responses, model versions |
+| **Events**    | 30 days    | Pipeline lifecycle, debugging           |
 
 ### Monitoring (Planned)
 

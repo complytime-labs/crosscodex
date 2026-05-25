@@ -14,11 +14,11 @@ vars:
 tasks:
   default:
     silent: true
-    cmd: task test:integration --list
+    cmds:
+      - task: all
 
   all:
     desc: Run all integration tests (db, storage, and NATS)
-    deps: [ensure-deps, db-up, storage-up, nats-up]
     env:
       TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 — integration test fixture DSN
       TEST_S3_ENDPOINT: "http://localhost:19000"
@@ -30,6 +30,12 @@ tasks:
       TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
       TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
     cmds:
+      # Start infrastructure sequentially to avoid parallel podman builds
+      # racing on the same image (prepare-cert-volume → podman build).
+      - task: ensure-deps
+      - task: db-up
+      - task: storage-up
+      - task: nats-up
       - defer: { task: db-down }
       - defer: { task: storage-down }
       - defer: { task: nats-down }

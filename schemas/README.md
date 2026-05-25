@@ -18,7 +18,7 @@ schemas/
 Schemas are not committed to the repository and must be fetched using the Taskfile task:
 
 ```bash
-task fetch-schemas
+task dev:fetch-schemas
 ```
 
 This task will:
@@ -56,25 +56,25 @@ The `gemara/{version}/` directory contains CUE-based validation schemas from the
 
 The following CUE schemas are fetched:
 
-| Schema | Purpose |
-| ------ | ------- |
-| `auditlog.cue` | Audit logging structures |
-| `capabilitycatalog.cue` | Capability tracking and cataloging |
-| `collections.cue` | Collection definitions and structures |
-| `controlcatalog.cue` | Security control definitions |
-| `enforcementlog.cue` | Enforcement action logging |
-| `entities.cue` | Entity definitions and relationships |
-| `evaluationlog.cue` | Evaluation records and results |
-| `guidancecatalog.cue` | Guidance documentation structures |
-| `lexicon.cue` | Term definitions and vocabulary |
-| `mappingdocument.cue` | Control mapping schemas |
-| `mapping_inline.cue` | Inline mapping definitions |
-| `metadata.cue` | Metadata structures |
-| `policy.cue` | Policy definitions and validation |
-| `principlecatalog.cue` | Security principles catalog |
-| `riskcatalog.cue` | Risk catalogs and classifications |
-| `threatcatalog.cue` | Threat models and cataloging |
-| `vectorcatalog.cue` | Attack vector definitions |
+| Schema                  | Purpose                               |
+|-------------------------|---------------------------------------|
+| `auditlog.cue`          | Audit logging structures              |
+| `capabilitycatalog.cue` | Capability tracking and cataloging    |
+| `collections.cue`       | Collection definitions and structures |
+| `controlcatalog.cue`    | Security control definitions          |
+| `enforcementlog.cue`    | Enforcement action logging            |
+| `entities.cue`          | Entity definitions and relationships  |
+| `evaluationlog.cue`     | Evaluation records and results        |
+| `guidancecatalog.cue`   | Guidance documentation structures     |
+| `lexicon.cue`           | Term definitions and vocabulary       |
+| `mappingdocument.cue`   | Control mapping schemas               |
+| `mapping_inline.cue`    | Inline mapping definitions            |
+| `metadata.cue`          | Metadata structures                   |
+| `policy.cue`            | Policy definitions and validation     |
+| `principlecatalog.cue`  | Security principles catalog           |
+| `riskcatalog.cue`       | Risk catalogs and classifications     |
+| `threatcatalog.cue`     | Threat models and cataloging          |
+| `vectorcatalog.cue`     | Attack vector definitions             |
 
 These CUE schemas provide strongly-typed validation and constraint checking for compliance data, complementing OSCAL's JSON Schema definitions.
 
@@ -92,7 +92,7 @@ Schemas are organized by version to support:
 - Upgrading OSCAL support without breaking existing functionality
 - Version-specific validation rules
 
-To fetch a specific OSCAL version (instead of latest), modify the `OSCAL_VERSION` variable in the `fetch-schemas` task.
+To fetch a specific OSCAL version instead of the latest, pass the version as a variable override: `task dev:fetch-schemas OSCAL_VERSION=v1.2.2`.
 
 ## References
 

@@ -104,7 +104,7 @@ Integration tests run against a containerized PostgreSQL instance with AGE and p
 ### Starting the Test Database
 
 ```bash
-task test:integration-db-up
+task test:integration:db-up
 ```
 
 This builds a custom PostgreSQL container image from `pkg/db/testdata/Containerfile` (which includes the AGE and pgvector extensions) and starts it on port 15432.
@@ -112,7 +112,7 @@ This builds a custom PostgreSQL container image from `pkg/db/testdata/Containerf
 ### Running Integration Tests
 
 ```bash
-task test:integration
+task test:integration:all
 ```
 
 This starts the database container (if not already running), sets `TEST_DATABASE_DSN`, and runs tests tagged with `//go:build integration`.
@@ -120,7 +120,7 @@ This starts the database container (if not already running), sets `TEST_DATABASE
 ### Stopping the Test Database
 
 ```bash
-task test:integration-db-down
+task test:integration:db-down
 ```
 
 ### Manual Connection
@@ -188,4 +188,6 @@ Never force-apply a modified migration by resetting the version in `schema_migra
 
 - Migrations run as the superuser role, which owns all tables and bypasses RLS. This is intentional: the migration role is the only role with DDL privileges.
 - The application role (`app_user`) cannot run migrations, alter tables, disable RLS, or disable triggers. This privilege separation is enforced by PostgreSQL GRANTs configured in the migration files themselves.
-- Never embed credentials in migration SQL. Database roles and passwords are configured through DSN connection strings passed to `NewMigrator` and `NewPool`.
+- Never embed credentials in migration SQL. Database roles and passwords are configured through DSN connection strings
+  passed to `NewMigrator` and `NewPool`.
+
