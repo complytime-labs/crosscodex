@@ -25,7 +25,7 @@ func main() {
 
 	fmt.Printf("crosscodexd %s starting\n", info.Version)
 
-	// TODO: start services here // DevSkim: ignore DS176209 — scaffold placeholder, tracked in backlog
+	// TODO: start services here // DevSkim: ignore DS176209 - scaffold placeholder, tracked in backlog
 
 	<-ctx.Done()
 	stop()

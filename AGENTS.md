@@ -230,13 +230,12 @@ feature/<issue-number>-<short-description>
 - Mock external dependencies (database, NATS, HTTP clients)
 
 **Integration Tests:**
-- Located in `tests/` directory
-- Test service interactions (e.g., NATS + database + storage)
+- Colocated with the packages they test (e.g., `pkg/db/integration_test.go`)
 - Use Docker Compose or Podman Compose for dependencies
+- Run via `task test:integration:<name>` tasks
 
 **E2E Tests:**
-- Use Venom (YAML-based test suites) for full pipeline validation
-- Located in `tests/e2e/`
+- Use Venom (YAML-based test suites) for full pipeline validation (planned)
 
 **All tests must pass before merge.**
 

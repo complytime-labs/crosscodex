@@ -224,7 +224,164 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 	})
 
 	// =================================================================
-	// LEVEL 3: MUTUAL TLS HANDSHAKE
+	// LEVEL 3: CERTIFICATE VERIFICATION
+	// =================================================================
+
+	Describe("VerifyDir", func() {
+		Context("when certs are freshly generated", func() {
+			It("returns nil for a valid cert directory", func() {
+				pki, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+
+				dir := GinkgoT().TempDir()
+				Expect(pki.WriteToDir(dir)).To(Succeed())
+
+				Expect(testcerts.VerifyDir(dir)).To(Succeed())
+			})
+		})
+
+		Context("when the CA cert is missing", func() {
+			It("returns an actionable error", func() {
+				pki, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+
+				dir := GinkgoT().TempDir()
+				Expect(pki.WriteToDir(dir)).To(Succeed())
+				Expect(os.Remove(filepath.Join(dir, "ca.pem"))).To(Succeed())
+
+				err = testcerts.VerifyDir(dir)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("ca.pem"))
+			})
+		})
+
+		Context("when a leaf cert is corrupt", func() {
+			It("returns an actionable error mentioning the file", func() {
+				pki, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+
+				dir := GinkgoT().TempDir()
+				Expect(pki.WriteToDir(dir)).To(Succeed())
+
+				By("corrupting server.pem")
+				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), []byte("not a cert"), 0644)).To(Succeed())
+
+				err = testcerts.VerifyDir(dir)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("server.pem"))
+			})
+		})
+
+		Context("when server cert is signed by a different CA", func() {
+			It("returns a CA chain verification error", func() {
+				By("generating two independent PKIs")
+				pki1, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+				pki2, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+
+				dir := GinkgoT().TempDir()
+				Expect(pki1.WriteToDir(dir)).To(Succeed())
+
+				By("replacing server cert with one from a different CA")
+				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), pki2.ServerCert, 0644)).To(Succeed())
+
+				err = testcerts.VerifyDir(dir)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("CA chain verification failed"))
+			})
+		})
+
+		Context("when a key file is corrupt", func() {
+			It("returns an actionable error mentioning the key file", func() {
+				pki, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+
+				dir := GinkgoT().TempDir()
+				Expect(pki.WriteToDir(dir)).To(Succeed())
+
+				By("corrupting client-key.pem")
+				Expect(os.WriteFile(filepath.Join(dir, "client-key.pem"), []byte("not a key"), 0600)).To(Succeed())
+
+				err = testcerts.VerifyDir(dir)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("client-key.pem"))
+			})
+		})
+	})
+
+	// =================================================================
+	// LEVEL 4: FINGERPRINTING
+	// =================================================================
+
+	Describe("Fingerprint", func() {
+		Context("when computing fingerprints", func() {
+			It("is deterministic for the same cert files", func() {
+				pki, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+
+				dir := GinkgoT().TempDir()
+				Expect(pki.WriteToDir(dir)).To(Succeed())
+
+				fp1, err := testcerts.ComputeFingerprint(dir)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fp1).NotTo(BeEmpty())
+
+				fp2, err := testcerts.ComputeFingerprint(dir)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fp2).To(Equal(fp1))
+			})
+
+			It("differs for different cert files", func() {
+				pki1, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+				pki2, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+
+				dir1 := GinkgoT().TempDir()
+				dir2 := GinkgoT().TempDir()
+				Expect(pki1.WriteToDir(dir1)).To(Succeed())
+				Expect(pki2.WriteToDir(dir2)).To(Succeed())
+
+				fp1, err := testcerts.ComputeFingerprint(dir1)
+				Expect(err).NotTo(HaveOccurred())
+				fp2, err := testcerts.ComputeFingerprint(dir2)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(fp1).NotTo(Equal(fp2))
+			})
+		})
+
+		Context("when writing and reading fingerprints", func() {
+			It("round-trips correctly", func() {
+				pki, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+
+				dir := GinkgoT().TempDir()
+				Expect(pki.WriteToDir(dir)).To(Succeed())
+				Expect(testcerts.WriteFingerprint(dir)).To(Succeed())
+
+				stored, err := testcerts.ReadFingerprint(dir)
+				Expect(err).NotTo(HaveOccurred())
+
+				computed, err := testcerts.ComputeFingerprint(dir)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(stored).To(Equal(computed))
+			})
+
+			It("returns empty string for missing fingerprint file", func() {
+				dir := GinkgoT().TempDir()
+
+				fp, err := testcerts.ReadFingerprint(dir)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fp).To(BeEmpty())
+			})
+		})
+	})
+
+	// =================================================================
+	// LEVEL 5: MUTUAL TLS HANDSHAKE
 	// =================================================================
 
 	Describe("TLS Handshake", func() {
@@ -242,12 +399,12 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 			srvCert, err := tls.X509KeyPair(pki.ServerCert, pki.ServerKey)
 			Expect(err).NotTo(HaveOccurred())
 
-		serverTLS := &tls.Config{
-			Certificates: []tls.Certificate{srvCert},
-			ClientCAs:    caPool,
-			ClientAuth:   tls.RequireAndVerifyClientCert,
-			MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS112852 — TLS 1.2 minimum for test security
-		}
+			serverTLS := &tls.Config{
+				Certificates: []tls.Certificate{srvCert},
+				ClientCAs:    caPool,
+				ClientAuth:   tls.RequireAndVerifyClientCert,
+				MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS440001,DS112852 - TLS 1.2 minimum for test security
+			}
 
 			By("starting a TLS listener on localhost")
 			ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
@@ -274,11 +431,11 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 			cliCert, err := tls.X509KeyPair(pki.ClientCert, pki.ClientKey)
 			Expect(err).NotTo(HaveOccurred())
 
-		clientTLS := &tls.Config{
-			Certificates: []tls.Certificate{cliCert},
-			RootCAs:      caPool,
-			MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS112852 — TLS 1.2 minimum for test security
-		}
+			clientTLS := &tls.Config{
+				Certificates: []tls.Certificate{cliCert},
+				RootCAs:      caPool,
+				MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS440001,DS112852 - TLS 1.2 minimum for test security
+			}
 
 			By("dialing the server with mTLS")
 			conn, err := tls.Dial("tcp", ln.Addr().String(), clientTLS)

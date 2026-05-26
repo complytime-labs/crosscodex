@@ -19,14 +19,17 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -177,6 +180,147 @@ func serialNumber() (*big.Int, error) {
 		return nil, fmt.Errorf("generate serial number: %w", err)
 	}
 	return serial, nil
+}
+
+// certFiles lists the PEM files that must be present in a valid cert
+// directory, in the order used for fingerprint computation.
+var certFiles = []string{
+	"ca.pem",
+	"ca-key.pem",
+	"server.pem",
+	"server-key.pem",
+	"client.pem",
+	"client-key.pem",
+}
+
+// fingerprintFile is the name of the SHA-256 fingerprint written alongside
+// the PEM files. It allows external tools to detect when on-disk certs have
+// been regenerated without parsing X.509.
+const fingerprintFile = ".fingerprint"
+
+// VerifyDir validates that the certificates in dir are parseable, not
+// expired, and form a valid CA trust chain (CA signs both server and
+// client certs). Returns nil on success.
+func VerifyDir(dir string) error {
+	// Read CA cert
+	caPEM, err := os.ReadFile(filepath.Join(dir, "ca.pem"))
+	if err != nil {
+		return fmt.Errorf("read ca.pem: %w", err)
+	}
+	caBlock, _ := pem.Decode(caPEM)
+	if caBlock == nil {
+		return fmt.Errorf("ca.pem: not valid PEM")
+	}
+	caCert, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		return fmt.Errorf("ca.pem: parse: %w", err)
+	}
+	if !caCert.IsCA {
+		return fmt.Errorf("ca.pem: certificate is not a CA")
+	}
+	now := time.Now()
+	if now.Before(caCert.NotBefore) || now.After(caCert.NotAfter) {
+		return fmt.Errorf("ca.pem: certificate not valid at current time (notBefore=%s, notAfter=%s)",
+			caCert.NotBefore.Format(time.RFC3339), caCert.NotAfter.Format(time.RFC3339))
+	}
+
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+
+	// Verify server cert
+	if err := verifyLeaf(dir, "server.pem", pool, x509.ExtKeyUsageServerAuth); err != nil {
+		return err
+	}
+
+	// Verify client cert
+	if err := verifyLeaf(dir, "client.pem", pool, x509.ExtKeyUsageClientAuth); err != nil {
+		return err
+	}
+
+	// Verify keys are parseable
+	for _, keyFile := range []string{"ca-key.pem", "server-key.pem", "client-key.pem"} {
+		keyPEM, err := os.ReadFile(filepath.Join(dir, keyFile))
+		if err != nil {
+			return fmt.Errorf("read %s: %w", keyFile, err)
+		}
+		keyBlock, _ := pem.Decode(keyPEM)
+		if keyBlock == nil {
+			return fmt.Errorf("%s: not valid PEM", keyFile)
+		}
+		if _, err := x509.ParseECPrivateKey(keyBlock.Bytes); err != nil {
+			return fmt.Errorf("%s: parse: %w", keyFile, err)
+		}
+	}
+
+	return nil
+}
+
+// verifyLeaf reads a leaf certificate from dir/name, checks it is not
+// expired, and verifies it against the given CA pool with the specified
+// extended key usage.
+func verifyLeaf(dir, name string, pool *x509.CertPool, usage x509.ExtKeyUsage) error {
+	leafPEM, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", name, err)
+	}
+	leafBlock, _ := pem.Decode(leafPEM)
+	if leafBlock == nil {
+		return fmt.Errorf("%s: not valid PEM", name)
+	}
+	leafCert, err := x509.ParseCertificate(leafBlock.Bytes)
+	if err != nil {
+		return fmt.Errorf("%s: parse: %w", name, err)
+	}
+	now := time.Now()
+	if now.Before(leafCert.NotBefore) || now.After(leafCert.NotAfter) {
+		return fmt.Errorf("%s: certificate not valid at current time (notBefore=%s, notAfter=%s)",
+			name, leafCert.NotBefore.Format(time.RFC3339), leafCert.NotAfter.Format(time.RFC3339))
+	}
+	if _, err := leafCert.Verify(x509.VerifyOptions{
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{usage},
+	}); err != nil {
+		return fmt.Errorf("%s: CA chain verification failed: %w", name, err)
+	}
+	return nil
+}
+
+// WriteFingerprint computes a SHA-256 hash of all cert PEM files in dir
+// and writes it to dir/.fingerprint. This allows tools to detect when
+// certs have been regenerated without parsing X.509.
+func WriteFingerprint(dir string) error {
+	fp, err := ComputeFingerprint(dir)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, fingerprintFile), []byte(fp+"\n"), 0644)
+}
+
+// ComputeFingerprint returns a SHA-256 hex digest computed over the
+// concatenated contents of all PEM files in dir (in deterministic order).
+func ComputeFingerprint(dir string) (string, error) {
+	h := sha256.New()
+	for _, name := range certFiles {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return "", fmt.Errorf("fingerprint: read %s: %w", name, err)
+		}
+		h.Write(data)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// ReadFingerprint reads the stored fingerprint from dir/.fingerprint.
+// Returns empty string and nil error if the file does not exist.
+func ReadFingerprint(dir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, fingerprintFile))
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read fingerprint: %w", err)
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 func encodeCert(der []byte) []byte {
