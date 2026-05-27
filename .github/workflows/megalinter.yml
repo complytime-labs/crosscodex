@@ -1,0 +1,57 @@
+name: MegaLinter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run full scan weekly on Mondays at 3:17 AM UTC to catch issues from scanner updates
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  megalinter:
+    name: MegaLinter Analysis
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: MegaLinter
+        id: ml
+        # zizmor:ignore ref-version-mismatch - No version tags available
+        uses: trevor-vaughan/megalint-config@5112c06b07bedb0505eb63c707dda651a44d2a27
+        with:
+          validate-all-codebase: ${{ github.event_name == 'schedule' }}
+
+      - name: Archive reports
+        if: success() || failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: megalinter-reports
+          path: |
+            ${{ steps.ml.outputs.reports-dir }}
+            mega-linter.log
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: success() || failure()
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          sarif_file: ${{ steps.ml.outputs.sarif-file }}

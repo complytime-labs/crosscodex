@@ -41,7 +41,7 @@ var _ = Describe("Database Package", Ordered, func() {
 			It("never leaks database passwords in connection errors", func() {
 				By("attempting to connect with a password-bearing DSN to an unreachable host")
 				password := "s3cret-passw0rd!"
-				dsn := "postgres://admin:" + password + "@unreachable-host:5432/mydb?sslmode=disable" // DevSkim: ignore DS162092 — test fixture
+				dsn := "postgres://admin:" + password + "@unreachable-host:5432/mydb?sslmode=disable" // DevSkim: ignore DS162092 - test fixture
 
 				_, err := db.NewPool(db.PoolConfig{DSN: dsn})
 				Expect(err).To(HaveOccurred())
@@ -65,14 +65,14 @@ var _ = Describe("Database Package", Ordered, func() {
 			It("constructs a pool configuration from discrete parameters", func() {
 				By("creating a config with explicit values")
 				cfg := db.NewPoolConfigFrom(
-					"postgres://localhost/test",       // DevSkim: ignore DS162092 — test fixture
-					"postgres://localhost/test_graph", // DevSkim: ignore DS162092 — test fixture
+					"postgres://localhost/test",       // DevSkim: ignore DS162092 - test fixture
+					"postgres://localhost/test_graph", // DevSkim: ignore DS162092 - test fixture
 					20, "require", []string{"age", "vector"},
 				)
 
 				By("verifying all fields are populated correctly")
-				Expect(cfg.DSN).To(Equal("postgres://localhost/test"))            // DevSkim: ignore DS162092 — test fixture
-				Expect(cfg.GraphDSN).To(Equal("postgres://localhost/test_graph")) // DevSkim: ignore DS162092 — test fixture
+				Expect(cfg.DSN).To(Equal("postgres://localhost/test"))            // DevSkim: ignore DS162092 - test fixture
+				Expect(cfg.GraphDSN).To(Equal("postgres://localhost/test_graph")) // DevSkim: ignore DS162092 - test fixture
 				Expect(cfg.MaxOpenConns).To(Equal(20))
 				Expect(cfg.SSLMode).To(Equal("require"))
 				Expect(cfg.Extensions).To(HaveLen(2))
@@ -82,7 +82,7 @@ var _ = Describe("Database Package", Ordered, func() {
 			It("applies functional options to override defaults", func() {
 				By("creating a pool config with custom idle conns via option")
 				cfg := db.PoolConfig{
-					DSN:          "postgres://admin:pass@unreachable-host:5432/mydb?sslmode=disable", // DevSkim: ignore DS162092 — test fixture
+					DSN:          "postgres://admin:pass@unreachable-host:5432/mydb?sslmode=disable", // DevSkim: ignore DS162092 - test fixture
 					MaxOpenConns: 10,
 				}
 
@@ -191,13 +191,13 @@ var _ = Describe("Database Package", Ordered, func() {
 		Context("when constructing PoolConfig via NewPoolConfigFrom", func() {
 			It("stores all provided parameters", func() {
 				cfg := db.NewPoolConfigFrom(
-					"postgres://localhost/db1",       // DevSkim: ignore DS162092 — test fixture
-					"postgres://localhost/db1_graph", // DevSkim: ignore DS162092 — test fixture
+					"postgres://localhost/db1",       // DevSkim: ignore DS162092 - test fixture
+					"postgres://localhost/db1_graph", // DevSkim: ignore DS162092 - test fixture
 					50, "verify-full", []string{"pgcrypto"},
 				)
 
-				Expect(cfg.DSN).To(Equal("postgres://localhost/db1"))            // DevSkim: ignore DS162092 — test fixture
-				Expect(cfg.GraphDSN).To(Equal("postgres://localhost/db1_graph")) // DevSkim: ignore DS162092 — test fixture
+				Expect(cfg.DSN).To(Equal("postgres://localhost/db1"))            // DevSkim: ignore DS162092 - test fixture
+				Expect(cfg.GraphDSN).To(Equal("postgres://localhost/db1_graph")) // DevSkim: ignore DS162092 - test fixture
 				Expect(cfg.MaxOpenConns).To(Equal(50))
 				Expect(cfg.SSLMode).To(Equal("verify-full"))
 				Expect(cfg.Extensions).To(Equal([]string{"pgcrypto"}))
@@ -205,8 +205,8 @@ var _ = Describe("Database Package", Ordered, func() {
 
 			It("handles zero extensions gracefully", func() {
 				cfg := db.NewPoolConfigFrom(
-					"postgres://localhost/db2",       // DevSkim: ignore DS162092 — test fixture
-					"postgres://localhost/db2_graph", // DevSkim: ignore DS162092 — test fixture
+					"postgres://localhost/db2",       // DevSkim: ignore DS162092 - test fixture
+					"postgres://localhost/db2_graph", // DevSkim: ignore DS162092 - test fixture
 					5, "disable", nil,
 				)
 				Expect(cfg.Extensions).To(BeNil())
@@ -214,8 +214,8 @@ var _ = Describe("Database Package", Ordered, func() {
 
 			It("handles empty extensions slice", func() {
 				cfg := db.NewPoolConfigFrom(
-					"postgres://localhost/db3",       // DevSkim: ignore DS162092 — test fixture
-					"postgres://localhost/db3_graph", // DevSkim: ignore DS162092 — test fixture
+					"postgres://localhost/db3",       // DevSkim: ignore DS162092 - test fixture
+					"postgres://localhost/db3_graph", // DevSkim: ignore DS162092 - test fixture
 					5, "disable", []string{},
 				)
 				Expect(cfg.Extensions).To(BeEmpty())
@@ -235,7 +235,7 @@ var _ = Describe("Database Package", Ordered, func() {
 
 			It("redacts URI-style passwords in error output", func() {
 				password := "hunter2"
-				dsn := "postgres://user:" + password + "@unreachable:5432/db?sslmode=disable" // DevSkim: ignore DS162092 — test fixture
+				dsn := "postgres://user:" + password + "@unreachable:5432/db?sslmode=disable" // DevSkim: ignore DS162092 - test fixture
 				_, err := db.NewPool(db.PoolConfig{DSN: dsn})
 				Expect(err).To(HaveOccurred())
 
@@ -383,10 +383,10 @@ var _ = Describe("Database Package", Ordered, func() {
 				}
 			},
 			Entry("URI with password",
-				"postgres://user:secret@unreachable:5432/db?sslmode=disable", // DevSkim: ignore DS162092 — test fixture
+				"postgres://user:secret@unreachable:5432/db?sslmode=disable", // DevSkim: ignore DS162092 - test fixture
 				"secret"),
 			Entry("URI without password",
-				"postgres://user@unreachable:5432/db", // DevSkim: ignore DS162092 — test fixture
+				"postgres://user@unreachable:5432/db", // DevSkim: ignore DS162092 - test fixture
 				""),
 			Entry("keyword=value with password",
 				"host=unreachable port=5432 user=admin password=secret dbname=mydb sslmode=disable",
@@ -456,8 +456,8 @@ var _ = Describe("Database Package", Ordered, func() {
 	Describe("PoolConfig Struct Edge Cases", func() {
 		It("supports all configuration fields including optional ones", func() {
 			cfg := db.PoolConfig{
-				DSN:          "postgres://localhost/db",  // DevSkim: ignore DS162092 — test fixture
-				GraphDSN:     "postgres://localhost/dbg", // DevSkim: ignore DS162092 — test fixture
+				DSN:          "postgres://localhost/db",  // DevSkim: ignore DS162092 - test fixture
+				GraphDSN:     "postgres://localhost/dbg", // DevSkim: ignore DS162092 - test fixture
 				MaxOpenConns: 25,
 				MaxIdleConns: 10,
 				ConnMaxLife:  15 * time.Minute,
@@ -484,7 +484,7 @@ var _ = Describe("Database Package", Ordered, func() {
 
 	Describe("Security: DSN Password Redaction via NewPool", func() {
 		It("redacts passwords in URI-style DSNs", func() {
-			dsn := "postgres://user:supersecret@unreachable:5432/db?sslmode=disable" // DevSkim: ignore DS162092 — test fixture
+			dsn := "postgres://user:supersecret@unreachable:5432/db?sslmode=disable" // DevSkim: ignore DS162092 - test fixture
 			_, err := db.NewPool(db.PoolConfig{DSN: dsn})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).NotTo(ContainSubstring("supersecret"))
@@ -492,7 +492,7 @@ var _ = Describe("Database Package", Ordered, func() {
 		})
 
 		It("leaves URI-style DSNs without passwords unmodified in errors", func() {
-			dsn := "postgres://user@unreachable:5432/db" // DevSkim: ignore DS162092 — test fixture
+			dsn := "postgres://user@unreachable:5432/db" // DevSkim: ignore DS162092 - test fixture
 			_, err := db.NewPool(db.PoolConfig{DSN: dsn})
 			Expect(err).To(HaveOccurred())
 			// No REDACTED because there's no password to redact
@@ -582,7 +582,7 @@ var _ = Describe("Database Package", Ordered, func() {
 				"postgres://user:REDACTED@localhost:5432/db?sslmode=disable",
 				"secret"),
 			Entry("URI without password",
-				"postgres://user@localhost:5432/db", // DevSkim: ignore DS162092 — test fixture
+				"postgres://user@localhost:5432/db", // DevSkim: ignore DS162092 - test fixture
 				"postgres://user@localhost:5432/db",
 				""),
 			Entry("unparseable DSN",

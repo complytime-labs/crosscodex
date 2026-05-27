@@ -1,13 +1,13 @@
 version: v2
 deps:
-  - buf.build/googleapis/googleapis  # For google/api/annotations.proto
+  - buf.build/googleapis/googleapis # For google/api/annotations.proto
 lint:
   use:
     - STANDARD
   except:
-    - COMMENT_FIELD  # Allow fields without comments for simple types
-    - RPC_REQUEST_RESPONSE_UNIQUE  # Query and TemporalQuery intentionally share QueryResponse (they return the same data structure)
-    - RPC_RESPONSE_STANDARD_NAME  # TemporalQuery uses QueryResponse per spec, not TemporalQueryResponse
+    - COMMENT_FIELD # Allow fields without comments for simple types
+    - RPC_REQUEST_RESPONSE_UNIQUE # Query and TemporalQuery intentionally share QueryResponse (they return the same data structure)
+    - RPC_RESPONSE_STANDARD_NAME # TemporalQuery uses QueryResponse per spec, not TemporalQueryResponse
 breaking:
   use:
     - FILE

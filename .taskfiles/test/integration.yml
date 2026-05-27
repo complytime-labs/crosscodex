@@ -20,7 +20,7 @@ tasks:
   all:
     desc: Run all integration tests (db, storage, and NATS)
     env:
-      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 — integration test fixture DSN
+      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
       TEST_S3_ENDPOINT: "http://localhost:19000"
       TEST_S3_ACCESS_KEY: "{{.RUSTFS_ACCESS_KEY}}"
       TEST_S3_SECRET_KEY: "{{.RUSTFS_SECRET_KEY}}"
@@ -52,7 +52,7 @@ tasks:
     desc: Run database integration tests (db, graphdb, vectordb)
     deps: [ensure-deps, db-up]
     env:
-      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 — integration test fixture DSN
+      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
     cmds:
       - defer: { task: db-down }
       - mkdir -p {{.TEST_DIR}}
@@ -207,9 +207,9 @@ tasks:
       - mkdir -p {{.CERTS_DIR}}
       - go run {{.ROOT_DIR}}/internal/testcerts/gen.go {{.CERTS_DIR}}
     status:
-      - test -f {{.TEST_DIR}}/certs/ca.pem
-      - test -f {{.TEST_DIR}}/certs/server.pem
-      - test -f {{.TEST_DIR}}/certs/client.pem
+      # Verify certs exist, are parseable, not expired, and CA chain is valid.
+      # Exits non-zero (triggering regeneration) if anything is wrong.
+      - go run {{.ROOT_DIR}}/internal/testcerts/gen.go --verify {{.TEST_DIR}}/certs
     sources:
       - "{{.ROOT_DIR}}/internal/testcerts/*.go"
 
@@ -225,7 +225,8 @@ tasks:
       - "{{.CONTAINER_ENGINE}} volume create {{.VOLUME_NAME}} 2>/dev/null || true"
       # Copy certs into the volume and chown to postgres (for PostgreSQL's
       # strict ssl_key_file permission check). NATS runs as root and can
-      # read these regardless.
+      # read these regardless. Also copies the fingerprint file so we can
+      # detect stale volumes.
       - |
         {{.CONTAINER_ENGINE}} run --rm --user root \
           -v {{.VOLUME_NAME}}:/certs \
@@ -234,4 +235,15 @@ tasks:
           {{.CONTAINER_IMAGE}} \
           -c 'cp /src/* /certs/ && chown postgres:postgres /certs/* && chmod 600 /certs/*-key.pem'
     status:
+      # Volume must exist AND its fingerprint must match the on-disk certs.
+      # If certs were regenerated (sources changed), the fingerprint won't
+      # match and the volume gets repopulated.
       - "{{.CONTAINER_ENGINE}} volume inspect {{.VOLUME_NAME}} >/dev/null 2>&1"
+      - |
+        DISK_FP=$(cat {{.TEST_DIR}}/certs/.fingerprint 2>/dev/null) || exit 1
+        VOL_FP=$({{.CONTAINER_ENGINE}} run --rm \
+          -v {{.VOLUME_NAME}}:/certs:ro \
+          --entrypoint cat \
+          docker.io/library/alpine:3 \
+          /certs/.fingerprint 2>/dev/null) || exit 1
+        [ "$DISK_FP" = "$VOL_FP" ]

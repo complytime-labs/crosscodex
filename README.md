@@ -316,7 +316,6 @@ crosscodex/                      # Main monorepo
   cmd/                           # CLI and daemon binaries
   internal/                      # Service implementations (planned)
   deploy/                        # Deployment manifests (planned)
-  tests/                         # Integration and E2E tests (planned)
 ```
 
 ### Build Commands
@@ -359,6 +358,13 @@ task generate
 1. **Submit PR** with clear description
 
 For large features, open an issue first to discuss the approach.
+
+## CI Security
+
+All GitHub Actions workflows follow least-privilege principles:
+
+- Default to no permissions (`permissions: {}`) with explicit per-job grants
+- MegaLinter runs actionlint and other YAML-aware linters for workflow validation
 
 ## Security & Compliance
 
