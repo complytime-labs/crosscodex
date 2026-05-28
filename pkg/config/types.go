@@ -40,12 +40,14 @@ type ObjectStorageConfig struct {
 
 // TLSConfig configures TLS certificates and mode.
 type TLSConfig struct {
-	Mode    string                 `yaml:"mode"`
-	CA      string                 `yaml:"ca"`
-	Cert    string                 `yaml:"cert"`
-	Key     string                 `yaml:"key"`
-	FIPS    FIPSConfig             `yaml:"fips"`
-	Targets map[string]TLSOverride `yaml:"targets"`
+	Mode        string                 `yaml:"mode"`
+	CA          string                 `yaml:"ca"`
+	Cert        string                 `yaml:"cert"`
+	Key         string                 `yaml:"key"`
+	FIPS        FIPSConfig             `yaml:"fips"`
+	CipherAllow []string               `yaml:"cipher_allow"` // Substring-match cipher allowlist
+	CipherDeny  []string               `yaml:"cipher_deny"`  // Substring-match cipher denylist
+	Targets     map[string]TLSOverride `yaml:"targets"`
 }
 
 // FIPSConfig controls FIPS 140 enforcement.

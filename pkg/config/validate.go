@@ -40,6 +40,15 @@ func validateTLS(tls *TLSConfig, tracker *sourceTracker) error {
 				formatSource(tracker, "tls.mode"), ErrInvalidConfig)
 		}
 	}
+
+	// Validate per-target overrides
+	for name, override := range tls.Targets {
+		if override.Mode != "" && !validTLSModes[override.Mode] {
+			return fmt.Errorf("tls.targets.%s.mode %q must be one of off, server-only, mutual: %w",
+				name, override.Mode, ErrInvalidConfig)
+		}
+	}
+
 	return nil
 }
 

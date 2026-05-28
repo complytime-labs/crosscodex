@@ -1,18 +1,12 @@
 package tlsconfig
 
-// FIPSStatus represents the FIPS mode status.
-type FIPSStatus struct {
-	Enabled  bool   // Whether FIPS mode is active
-	Provider string // Cryptographic provider name
-	Version  string // Provider version
-}
+// Resolver holds no state. Methods are exported for consumers who want to hold
+// a reference rather than calling package-level functions. A zero-value Resolver
+// is ready to use.
+type Resolver struct{}
 
-// CertificateInfo holds parsed certificate information.
-type CertificateInfo struct {
-	Subject      string   // Certificate subject DN
-	Issuer       string   // Certificate issuer DN
-	NotBefore    int64    // Validity start (Unix timestamp)
-	NotAfter     int64    // Validity end (Unix timestamp)
-	SerialNumber string   // Certificate serial number
-	DNSNames     []string // Subject alternative names (DNS)
+// FIPSStatus reports whether the binary was built with BoringCrypto.
+type FIPSStatus struct {
+	Enabled  bool   // Whether BoringCrypto is linked
+	Provider string // "BoringCrypto" or ""
 }

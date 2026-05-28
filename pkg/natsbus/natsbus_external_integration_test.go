@@ -3,8 +3,6 @@
 package natsbus_test
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -12,6 +10,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
 
 func TestMain(m *testing.M) {
@@ -23,7 +22,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func loadTLSConfig(t *testing.T) *tls.Config {
+func loadTLSConfig(t *testing.T) *config.TLSConfig {
 	t.Helper()
 
 	caFile := os.Getenv("TEST_NATS_CA")
@@ -34,24 +33,11 @@ func loadTLSConfig(t *testing.T) *tls.Config {
 		t.Skip("TEST_NATS_CA, TEST_NATS_CERT, TEST_NATS_KEY must be set for TLS tests")
 	}
 
-	caPEM, err := os.ReadFile(caFile)
-	if err != nil {
-		t.Fatalf("read CA cert: %v", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
-		t.Fatal("failed to parse CA cert")
-	}
-
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		t.Fatalf("load client cert: %v", err)
-	}
-
-	return &tls.Config{
-		RootCAs:      pool,
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS112852 - TLS 1.2 minimum for test security
+	return &config.TLSConfig{
+		Mode: "mutual",
+		CA:   caFile,
+		Cert: certFile,
+		Key:  keyFile,
 	}
 }
 
@@ -59,7 +45,12 @@ func newExternalClient(t *testing.T) natsbus.Client {
 	t.Helper()
 
 	natsURL := os.Getenv("TEST_NATS_URL")
-	tlsCfg := loadTLSConfig(t)
+	tlsCfgInput := loadTLSConfig(t)
+
+	tlsCfg, err := tlsconfig.BuildTLSConfig(*tlsCfgInput, "nats")
+	if err != nil {
+		t.Fatalf("build TLS config: %v", err)
+	}
 
 	cfg := config.NATSConfig{
 		URL:     natsURL,

@@ -16,16 +16,17 @@ ______________________________________________________________________
 
 ## Status
 
-CrossCodex is in early development. Four foundational packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
+CrossCodex is in early development. Five foundational packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
 
-| Package         | Status      | Summary                                                                                      |
-|-----------------|-------------|----------------------------------------------------------------------------------------------|
-| **pkg/config**  | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking               |
-| **pkg/storage** | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes                  |
-| **pkg/db**      | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
-| **pkg/natsbus** | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
-| **pkg/tenant**  | Partial     | Tenant ID validation implemented; context propagation interface scaffolded                   |
-| All others      | Scaffolded  | Interfaces and types defined; implementation pending                                         |
+| Package           | Status      | Summary                                                                                      |
+|-------------------|-------------|----------------------------------------------------------------------------------------------|
+| **pkg/config**    | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking               |
+| **pkg/storage**   | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes                  |
+| **pkg/db**        | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
+| **pkg/natsbus**   | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
+| **pkg/tlsconfig** | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI        |
+| **pkg/tenant**    | Partial     | Tenant ID validation implemented; context propagation interface scaffolded                   |
+| All others        | Scaffolded  | Interfaces and types defined; implementation pending                                         |
 
 Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, and `pkg/natsbus` run against containerized services (`task test:integration:all`).
 

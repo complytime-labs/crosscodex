@@ -27,6 +27,8 @@ tls:
   key: ""
   fips:
     enabled: false
+  cipher_allow: []
+  cipher_deny: []
 database:
   dsn: ""
   graph_dsn: ""
