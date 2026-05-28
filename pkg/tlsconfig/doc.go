@@ -1,18 +1,23 @@
-// Package tlsconfig provides TLS configuration with FIPS enforcement.
+// Package tlsconfig provides shared TLS configuration for CrossCodex services.
 //
-// Handles certificate loading, validation, and FIPS mode compliance checks.
+// It resolves global TLS settings with per-target deep-merge overrides,
+// producing stdlib *tls.Config instances. FIPS cipher suite enforcement
+// auto-discovers safe suites via tls.CipherSuites() and filters for GCM.
 //
 // Example usage:
 //
-//	builder := tlsconfig.NewBuilder()
-//	serverTLS, err := builder.BuildServer(ctx, "server.crt", "server.key", "ca.crt")
+//	tlsCfg, err := tlsconfig.BuildTLSConfig(cfg.TLS, "nats")
 //	if err != nil {
-//	    return err
+//	    return fmt.Errorf("build NATS TLS config: %w", err)
+//	}
+//	if tlsCfg == nil {
+//	    // TLS mode is "off", proceed without TLS
 //	}
 //
-//	if cfg.TLS.FIPSEnabled {
-//	    if err := builder.ValidateFIPS(ctx); err != nil {
-//	        return fmt.Errorf("FIPS validation failed: %w", err)
-//	    }
+//	// FIPS verification:
+//	status, err := tlsconfig.VerifyFIPSBuild()
+//	if err != nil {
+//	    return fmt.Errorf("FIPS check failed: %w", err)
 //	}
+//	fmt.Printf("FIPS: %v, provider: %s\n", status.Enabled, status.Provider)
 package tlsconfig

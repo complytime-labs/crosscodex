@@ -132,7 +132,7 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 				Expect(cliCert.IsCA).To(BeFalse())
 
 				By("verifying the CommonName")
-				Expect(cliCert.Subject.CommonName).To(Equal("crosscodex-test-client"))
+				Expect(cliCert.Subject.CommonName).To(Equal("client"))
 			})
 		})
 

@@ -153,7 +153,7 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | **pkg/vectordb** | `[scaffold]` | pgvector similarity search for embeddings | pkg/db, pkg/tenant, pkg/telemetry |
 | **pkg/natsbus** | `[implemented]` | NATS JetStream publish/subscribe, stream management, embedded/external dual mode, provenance headers | pkg/config, pkg/tenant |
 | **pkg/storage** | `[implemented]` | Object storage abstraction (local FS / S3) | pkg/config |
-| **pkg/tlsconfig** | `[scaffold]` | TLS setup, FIPS validation, certificate loading | pkg/config |
+| **pkg/tlsconfig** | `[implemented]` | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI generation | pkg/config |
 | **pkg/authn** | `[scaffold]` | mTLS, Kerberos, SAML authentication | pkg/tlsconfig, pkg/tenant |
 | **pkg/tenant** | `[scaffold]` | Multi-tenant context propagation, isolation enforcement | None (foundational) |
 | **pkg/telemetry** | `[scaffold]` | OpenTelemetry traces, metrics, logs | pkg/config |
@@ -269,7 +269,7 @@ Tenant isolation is enforced at **EVERY** layer:
 When `tls.fips.enabled: true` in configuration:
 - Only FIPS-approved cipher suites are used
 - TLS 1.2+ required
-- `pkg/tlsconfig.Builder.ValidateFIPS()` must pass
+- `pkg/tlsconfig.VerifyFIPSBuild()` must pass
 - Go binaries must be built using GOEXPERIMENT=boringcrypto
 - Use the global `FIPS=1` task variable to enable FIPS mode across all build and test tasks (e.g., `task build FIPS=1`, `task test FIPS=1`, `task test:integration:nats FIPS=1`)
 
@@ -461,6 +461,7 @@ When a batch operation (UPDATE, DELETE) touches rows with mixed protection state
 - **Build consolidation** — Consolidated all task definitions (build, test, lint, integration) into `.taskfiles/dev.yml`, replacing scattered top-level task definitions.
 - **pkg/tenant package** — Added the `pkg/tenant` public API package with `ValidateTenantID` (regex-enforced format: lowercase alphanumeric with hyphens, 3-64 characters), error sentinels (`ErrNoTenant`, `ErrInvalidTenant`, `ErrTenantMismatch`), and the `Context` interface for tenant propagation. The `Context` interface remains unimplemented; `pkg/db` now delegates tenant validation to `pkg/tenant`.
 - **pkg/natsbus implementation** — Added dual-mode NATS client (embedded + external) with tenant-scoped subjects, provenance headers (X-Trace-Id, X-Span-Id, X-Tenant-Id, X-Timestamp, X-Content-SHA256), three JetStream audit streams (AUDIT_LLM 90d, AUDIT_DECISIONS indefinite, AUDIT_EVENTS 30d), queue group work distribution, XDG_STATE_HOME-compliant embedded storage, and comprehensive integration tests with TLS.
+- **pkg/tlsconfig implementation** — Added shared TLS configuration builder with global + per-target config merging (deep-merge overrides), three TLS modes (off, server-only, mutual), FIPS cipher enforcement via BoringCrypto with auto-discovered GCM-only filtering, general cipher allow/deny lists, certificate reload callbacks for zero-downtime rotation, and a `pki` sub-package for ECDSA P-256 dev certificate generation. Refactored `internal/testcerts` to delegate crypto generation to `pkg/tlsconfig/pki`.
 
 **TODO:** NATS account-level tenant authorization is deferred until `pkg/authn` is implemented. Currently, tenant isolation is enforced at the subject level via `pkg/tenant.ValidateTenantID()`. When `pkg/authn` adds NATS account support, add per-tenant NATS accounts for server-level isolation.
 

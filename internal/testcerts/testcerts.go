@@ -1,8 +1,8 @@
 // Package testcerts generates ephemeral TLS certificates for integration tests.
 //
-// It produces an ECDSA P-256 certificate authority, a server certificate
-// (localhost + 127.0.0.1 SANs), and a client certificate. All certs have
-// 10-year validity.
+// It delegates certificate generation to pkg/tlsconfig/pki, keeping only
+// the test-oriented PKI struct and file management utilities (WriteToDir,
+// VerifyDir, fingerprinting).
 //
 // Usage:
 //
@@ -16,21 +16,18 @@
 package testcerts
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	pkigen "github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 )
 
 // PKI holds a complete certificate authority, server cert, and client cert.
@@ -45,101 +42,23 @@ type PKI struct {
 
 // Generate creates a new PKI with ECDSA P-256 keys and 10-year validity.
 func Generate() (*PKI, error) {
-	notBefore := time.Now()
-	notAfter := notBefore.Add(3650 * 24 * time.Hour)
-
-	// --- CA ---
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	bundle, err := pkigen.GenerateDevPKI(
+		pkigen.WithOrganization("CrossCodex Test"),
+		pkigen.WithValidDuration(3650*24*time.Hour),
+		pkigen.WithDNSNames("localhost"),
+		pkigen.WithIPs(net.IPv4(127, 0, 0, 1)),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("generate CA key: %w", err)
-	}
-
-	caSerial, err := serialNumber()
-	if err != nil {
-		return nil, err
-	}
-
-	caTemplate := &x509.Certificate{
-		SerialNumber: caSerial,
-		Subject: pkix.Name{
-			CommonName: "CrossCodex Test CA",
-		},
-		NotBefore:             notBefore,
-		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            1,
-	}
-
-	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	if err != nil {
-		return nil, fmt.Errorf("create CA cert: %w", err)
-	}
-
-	// --- Server cert ---
-	srvKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generate server key: %w", err)
-	}
-
-	srvSerial, err := serialNumber()
-	if err != nil {
-		return nil, err
-	}
-
-	srvTemplate := &x509.Certificate{
-		SerialNumber: srvSerial,
-		Subject: pkix.Name{
-			CommonName: "localhost",
-		},
-		NotBefore:   notBefore,
-		NotAfter:    notAfter,
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:    []string{"localhost"},
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
-	}
-
-	srvCertDER, err := x509.CreateCertificate(rand.Reader, srvTemplate, caTemplate, &srvKey.PublicKey, caKey)
-	if err != nil {
-		return nil, fmt.Errorf("create server cert: %w", err)
-	}
-
-	// --- Client cert ---
-	cliKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generate client key: %w", err)
-	}
-
-	cliSerial, err := serialNumber()
-	if err != nil {
-		return nil, err
-	}
-
-	cliTemplate := &x509.Certificate{
-		SerialNumber: cliSerial,
-		Subject: pkix.Name{
-			CommonName: "crosscodex-test-client",
-		},
-		NotBefore:   notBefore,
-		NotAfter:    notAfter,
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-
-	cliCertDER, err := x509.CreateCertificate(rand.Reader, cliTemplate, caTemplate, &cliKey.PublicKey, caKey)
-	if err != nil {
-		return nil, fmt.Errorf("create client cert: %w", err)
+		return nil, fmt.Errorf("generate test PKI: %w", err)
 	}
 
 	return &PKI{
-		CACert:     encodeCert(caCertDER),
-		CAKey:      encodeECKey(caKey),
-		ServerCert: encodeCert(srvCertDER),
-		ServerKey:  encodeECKey(srvKey),
-		ClientCert: encodeCert(cliCertDER),
-		ClientKey:  encodeECKey(cliKey),
+		CACert:     bundle.CA.CertPEM,
+		CAKey:      bundle.CA.KeyPEM,
+		ServerCert: bundle.Server.CertPEM,
+		ServerKey:  bundle.Server.KeyPEM,
+		ClientCert: bundle.Client.CertPEM,
+		ClientKey:  bundle.Client.KeyPEM,
 	}, nil
 }
 
@@ -171,15 +90,6 @@ func (p *PKI) WriteToDir(dir string) error {
 		}
 	}
 	return nil
-}
-
-func serialNumber() (*big.Int, error) {
-	limit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serial, err := rand.Int(rand.Reader, limit)
-	if err != nil {
-		return nil, fmt.Errorf("generate serial number: %w", err)
-	}
-	return serial, nil
 }
 
 // certFiles lists the PEM files that must be present in a valid cert
@@ -321,19 +231,4 @@ func ReadFingerprint(dir string) (string, error) {
 		return "", fmt.Errorf("read fingerprint: %w", err)
 	}
 	return strings.TrimSpace(string(data)), nil
-}
-
-func encodeCert(der []byte) []byte {
-	return pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: der,
-	})
-}
-
-func encodeECKey(key *ecdsa.PrivateKey) []byte {
-	der, _ := x509.MarshalECPrivateKey(key)
-	return pem.EncodeToMemory(&pem.Block{
-		Type:  "EC PRIVATE KEY",
-		Bytes: der,
-	})
 }
