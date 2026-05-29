@@ -63,10 +63,10 @@ var _ = Describe("Cross-Stack mTLS Interop (nginx + OpenSSL)", Ordered, func() {
 
 		return &http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{ // DevSkim: ignore DS440000 - MaxVersion intentionally omitted; Go defaults to highest supported TLS version
+				TLSClientConfig: &tls.Config{ // DevSkim: ignore DS440000,DS440001,DS112852 - test client; MinVersion floor is intentional, MaxVersion omitted so Go picks highest
 					Certificates: []tls.Certificate{cert},
 					RootCAs:      caPool,
-					MinVersion:   tls.VersionTLS12,
+					MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS440001,DS112852 - TLS 1.2 floor is correct for mTLS interop testing
 				},
 			},
 		}
@@ -107,10 +107,10 @@ var _ = Describe("Cross-Stack mTLS Interop (nginx + OpenSSL)", Ordered, func() {
 			clientCert, err := tls.LoadX509KeyPair(certFile, keyFile)
 			Expect(err).NotTo(HaveOccurred())
 
-			tlsCfg := &tls.Config{ // DevSkim: ignore DS440000 - MaxVersion intentionally omitted; Go defaults to highest supported TLS version
+			tlsCfg := &tls.Config{ // DevSkim: ignore DS440000,DS440001,DS112852 - test client; MinVersion floor is intentional, MaxVersion omitted so Go picks highest
 				Certificates: []tls.Certificate{clientCert},
 				RootCAs:      caPool,
-				MinVersion:   tls.VersionTLS12,
+				MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS440001,DS112852 - TLS 1.2 floor is correct for mTLS interop testing
 			}
 
 			// Strip scheme from URL for tls.Dial
@@ -147,24 +147,24 @@ var _ = Describe("Cross-Stack mTLS Interop (nginx + OpenSSL)", Ordered, func() {
 		It("rejects connections without client certificate", func() {
 			client := &http.Client{
 				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{ // DevSkim: ignore DS440000 - MaxVersion intentionally omitted; Go defaults to highest supported TLS version
+					TLSClientConfig: &tls.Config{ // DevSkim: ignore DS440000,DS112852 - test client; MinVersion floor is intentional, MaxVersion omitted so Go picks highest
 						RootCAs:    caPool,
-						MinVersion: tls.VersionTLS12,
+						MinVersion: tls.VersionTLS12, // DevSkim: ignore DS112852 - TLS 1.2 floor is correct for mTLS interop testing
 					},
 				},
 			}
 			resp, err := client.Get(proxyURL + "/")
-			// With TLS 1.2 the handshake fails (err != nil) because the
-			// server demands a client cert.  With TLS 1.3 the handshake
+			// With TLS 1.2 the handshake fails (err != nil) because the // DevSkim: ignore DS440001 - prose description of protocol behavior, not a version selection
+			// server demands a client cert.  With TLS 1.3 the handshake // DevSkim: ignore DS440001
 			// succeeds (post-handshake auth) but nginx returns HTTP 400
 			// ("No required SSL certificate was sent").  Either outcome
 			// proves the server rejects unauthenticated clients.
 			if err == nil {
 				defer resp.Body.Close()
 				Expect(resp.StatusCode).To(Equal(http.StatusBadRequest),
-					"expected HTTP 400 when no client cert is presented over TLS 1.3")
+					"expected HTTP 400 when no client cert is presented over TLS 1.3") // DevSkim: ignore DS440001 - version reference in test assertion message, not a protocol selection
 			}
-			// err != nil is also acceptable (TLS 1.2 rejection)
+			// err != nil is also acceptable (TLS 1.2 rejection) // DevSkim: ignore DS440001
 		})
 	})
 })

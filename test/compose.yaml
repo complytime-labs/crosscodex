@@ -16,7 +16,7 @@ services:
       - "15432:5432"
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: integration
+      POSTGRES_PASSWORD: integration # checkov:skip=CKV_SECRET_6 test-only credential for ephemeral integration test container
       POSTGRES_DB: crosscodex_test
     volumes:
       - certs:/certs

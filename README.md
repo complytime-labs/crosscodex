@@ -25,7 +25,7 @@ CrossCodex is in early development. Six foundational packages are implemented an
 | **pkg/db**        | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
 | **pkg/natsbus**   | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
 | **pkg/tlsconfig** | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI        |
-| **pkg/authn**     | Implemented | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed         |
+| **pkg/authn**     | Implemented | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed          |
 | **pkg/tenant**    | Partial     | Tenant ID validation implemented; context propagation interface scaffolded                   |
 | All others        | Scaffolded  | Interfaces and types defined; implementation pending                                         |
 
@@ -66,7 +66,10 @@ Authentication events are emitted via the `AuditEmitter` interface for audit log
 
 ## Architecture
 
-The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`) and scaffolded domain packages (`pkg/oscal`, `pkg/analyzer`, `pkg/llmclient`, `pkg/graphdb`); full service implementations are not yet built.
+The target architecture consists of seven core services that can run embedded in a single process or distributed across
+multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`,
+`pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`) and scaffolded domain packages (`pkg/oscal`, `pkg/analyzer`,
+`pkg/llmclient`, `pkg/graphdb`); full service implementations are not yet built.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {
@@ -371,11 +374,11 @@ task generate
 
 ### Testing Strategy
 
-| Test Type       | Framework               | Status                                                                           |
-|-----------------|-------------------------|----------------------------------------------------------------------------------|
-| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                     |
+| Test Type       | Framework               | Status                                                                                      |
+|-----------------|-------------------------|---------------------------------------------------------------------------------------------|
+| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                                |
 | **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, pkg/natsbus, and pkg/authn (`task test:integration:all`) |
-| **E2E**         | Venom                   | Planned                                                                          |
+| **E2E**         | Venom                   | Planned                                                                                     |
 
 ### Contributing
 

@@ -17,10 +17,15 @@ vars:
       engine="{{.CONTAINER_ENGINE}}"
       case "$engine" in
         podman)
-          if podman compose version >/dev/null 2>&1; then
-            echo "podman compose"
-          elif command -v podman-compose >/dev/null 2>&1; then
+          # Prefer standalone podman-compose (pip) over "podman compose" plugin.
+          # On GitHub Actions, "podman compose version" succeeds by discovering
+          # /usr/libexec/docker/cli-plugins/docker-compose, which then fails at
+          # runtime because it needs a Docker daemon socket.  The pip-installed
+          # podman-compose speaks to podman natively and always works.
+          if command -v podman-compose >/dev/null 2>&1; then
             echo "podman-compose"
+          elif podman compose version >/dev/null 2>&1; then
+            echo "podman compose"
           else
             echo "MISSING"
           fi
@@ -36,7 +41,7 @@ vars:
           echo "MISSING"
           ;;
       esac
-  COMPOSE_FILE: '{{.ROOT_DIR}}/test/compose.yaml'
+  COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.yaml"
 
 tasks:
   default:
@@ -146,7 +151,7 @@ tasks:
   clean:
     desc: Remove all integration test containers and their volumes
     cmds:
-      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile all down -v 2>/dev/null || true'
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile all down -v 2>/dev/null || true"
       - "{{.CONTAINER_ENGINE}} volume rm -f crosscodex-test-certs 2>/dev/null || true"
 
   compose-up:
@@ -160,7 +165,7 @@ tasks:
       NEEDS_CERTS: '{{if or (eq .PROFILE "db") (eq .PROFILE "nats") (eq .PROFILE "authn") (eq .PROFILE "all")}}true{{else}}false{{end}}'
     cmds:
       - task: '{{if eq .NEEDS_CERTS "true"}}prepare-cert-volume{{else}}ensure-deps{{end}}'
-      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} up -d'
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} up -d"
       - task: compose-health
         vars:
           PROFILE: "{{.PROFILE}}"
@@ -217,7 +222,7 @@ tasks:
       - sh: '[ "{{.COMPOSE_CMD}}" != "MISSING" ]'
         msg: "Neither 'docker compose' nor 'podman-compose' found."
     cmds:
-      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} down'
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} down"
 
   # --- Internal helpers ---
 
