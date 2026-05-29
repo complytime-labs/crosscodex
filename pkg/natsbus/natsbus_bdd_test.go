@@ -538,11 +538,11 @@ var _ = Describe("NATSBus System", Ordered, func() {
 						"X-Trace-Id":       {"trace123"},
 						"X-Span-Id":        {"span123"},
 					},
-					wantMissing: []string{"X-Tenant-Id"},
+					wantMissing:    []string{"X-Tenant-Id"},
 					wantNotMissing: []string{"X-Content-SHA256", "X-Timestamp", "X-Trace-Id", "X-Span-Id"}, // DevSkim: ignore DS197836 - HTTP header field names, not content for hashing
 				}),
 				Entry("nil headers map", partialCase{
-					headers: nil,
+					headers:        nil,
 					wantMissing:    []string{"X-Tenant-Id", "X-Content-SHA256", "X-Timestamp", "X-Trace-Id", "X-Span-Id"}, // DevSkim: ignore DS197836 - HTTP header field names, not content for hashing
 					wantNotMissing: nil,
 				}),

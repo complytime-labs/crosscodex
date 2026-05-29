@@ -46,11 +46,11 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 	})
 
 	// Helper to get cert file paths
-	caPath := func() string     { return filepath.Join(certDir, "ca.pem") }
-	certPath := func() string   { return filepath.Join(certDir, "server.pem") }
-	keyPath := func() string    { return filepath.Join(certDir, "server-key.pem") }
+	caPath := func() string { return filepath.Join(certDir, "ca.pem") }
+	certPath := func() string { return filepath.Join(certDir, "server.pem") }
+	keyPath := func() string { return filepath.Join(certDir, "server-key.pem") }
 	clientCert := func() string { return filepath.Join(certDir, "client.pem") }
-	clientKey := func() string  { return filepath.Join(certDir, "client-key.pem") }
+	clientKey := func() string { return filepath.Join(certDir, "client-key.pem") }
 
 	// =================================================================
 	// LEVEL 1: CONFIG MERGING
@@ -180,7 +180,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(tlsCfg).NotTo(BeNil())
 
-				By("verifying MinVersion is TLS 1.2") // DevSkim: ignore DS440001 - test step description
+				By("verifying MinVersion is TLS 1.2")                         // DevSkim: ignore DS440001 - test step description
 				Expect(tlsCfg.MinVersion).To(Equal(uint16(tls.VersionTLS12))) // DevSkim: ignore DS440001,DS112852 - asserting TLS 1.2 minimum is enforced
 
 				By("verifying static Certificates are loaded")

@@ -13,6 +13,7 @@ type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	CLI      CLISettings    `yaml:"cli"`
 	Logging  LoggingConfig  `yaml:"logging"`
+	Auth     AuthConfig     `yaml:"auth"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -68,6 +69,28 @@ type TenantsConfig struct {
 	Enabled        bool     `yaml:"enabled"`
 	DefaultTenant  string   `yaml:"default_tenant"`
 	AllowedTenants []string `yaml:"allowed_tenants"`
+}
+
+// AuthConfig configures authentication methods.
+type AuthConfig struct {
+	X509Mappings []X509MappingConfig `yaml:"x509_mappings"`
+}
+
+// X509MappingConfig maps X.509 certificate field patterns to tenant and roles.
+type X509MappingConfig struct {
+	Match  X509MatchConfig `yaml:"match"`
+	Tenant string          `yaml:"tenant"`
+	Roles  []string        `yaml:"roles"`
+}
+
+// X509MatchConfig holds glob patterns for X.509 certificate field matching.
+type X509MatchConfig struct {
+	CN           string `yaml:"cn"`
+	Organization string `yaml:"organization"`
+	OrgUnit      string `yaml:"org_unit"`
+	SANEmail     string `yaml:"san_email"`
+	SANDNS       string `yaml:"san_dns"`
+	SANURI       string `yaml:"san_uri"`
 }
 
 // DatabaseConfig configures PostgreSQL connections.
@@ -137,6 +160,7 @@ type DaemonConfig struct {
 	Database DatabaseConfig
 	NATS     NATSConfig
 	Logging  LoggingConfig
+	Auth     AuthConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -162,6 +186,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Database: c.Database,
 		NATS:     c.NATS,
 		Logging:  c.Logging,
+		Auth:     c.Auth,
 	}
 }
 

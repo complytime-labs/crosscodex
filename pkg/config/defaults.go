@@ -59,6 +59,8 @@ tenants:
   enabled: false
   default_tenant: ""
   allowed_tenants: []
+auth:
+  x509_mappings: []
 `
 
 func defaultNode() (*yaml.Node, error) {

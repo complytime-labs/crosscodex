@@ -114,15 +114,18 @@ func GenerateCert(ca *CertKeyPair, opts ...Option) (*CertKeyPair, error) {
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			Organization: []string{o.organization},
-			CommonName:   cn,
+			Organization:       []string{o.organization},
+			OrganizationalUnit: orgUnitSlice(o.orgUnit),
+			CommonName:         cn,
 		},
-		NotBefore:   now,
-		NotAfter:    now.Add(o.validDuration),
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage: o.extKeyUsage,
-		DNSNames:    o.dnsNames,
-		IPAddresses: o.ips,
+		NotBefore:      now,
+		NotAfter:       now.Add(o.validDuration),
+		KeyUsage:       x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:    o.extKeyUsage,
+		DNSNames:       o.dnsNames,
+		IPAddresses:    o.ips,
+		EmailAddresses: o.emailAddresses,
+		URIs:           o.uris,
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, ca.Cert, &key.PublicKey, caKey)
@@ -178,8 +181,8 @@ func GenerateDevPKI(opts ...Option) (*PKIBundle, error) {
 		WithOrganization(o.organization),
 		WithValidDuration(o.validDuration),
 		WithDNSNames("client"),
-		WithIPs(),                                       // no IP SANs for client cert
-		WithExtKeyUsage(x509.ExtKeyUsageClientAuth),     // client cert: ClientAuth only
+		WithIPs(),                                   // no IP SANs for client cert
+		WithExtKeyUsage(x509.ExtKeyUsageClientAuth), // client cert: ClientAuth only
 	)
 	if err != nil {
 		return nil, fmt.Errorf("generate dev client cert: %w", err)
@@ -227,6 +230,14 @@ func writeBundle(bundle *PKIBundle, dir string) error {
 		}
 	}
 	return nil
+}
+
+// orgUnitSlice returns a single-element slice if ou is non-empty, nil otherwise.
+func orgUnitSlice(ou string) []string {
+	if ou == "" {
+		return nil
+	}
+	return []string{ou}
 }
 
 func serialNumber() (*big.Int, error) {

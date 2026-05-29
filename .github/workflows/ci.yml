@@ -46,6 +46,8 @@ jobs:
   integration-tests:
     needs: [build]
     runs-on: ubuntu-latest
+    env:
+      CONTAINER_ENGINE: podman
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -56,39 +58,14 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           generate-test-certs: "true"
 
-      - name: Start PostgreSQL (custom image with AGE + pgvector)
-        run: task test:integration:db-up
-        env:
-          CONTAINER_ENGINE: podman
+      - name: Install podman-compose
+        run: pip install podman-compose
 
-      - name: Start RustFS
-        run: task test:integration:storage-up
-        env:
-          CONTAINER_ENGINE: podman
+      - name: Run database integration tests (db, graphdb, vectordb)
+        run: task test:integration:db
 
-      - name: Run integration tests
-        env:
-          # secretlint-disable
-          TEST_DATABASE_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert=${{ github.workspace }}/.test-output/certs/ca.pem&sslcert=${{ github.workspace }}/.test-output/certs/client.pem&sslkey=${{ github.workspace }}/.test-output/certs/client-key.pem"
-          # secretlint-enable
-          TEST_S3_ENDPOINT: http://localhost:19000
-          TEST_S3_ACCESS_KEY: rustfsadmin
-          TEST_S3_SECRET_KEY: rustfsadmin
-          TEST_S3_BUCKET: crosscodex-test
-        run: |
-          mkdir -p .test-output
-          # -p 1: pkg/db and pkg/graphdb both run migrations and ALTER ROLE in
-          # TestMain. Without serialization they race on the pg_authid catalog row.
-          go test -v -tags integration -race -count=1 -p 1 -timeout 300s ./pkg/db/... ./pkg/graphdb/... ./pkg/vectordb/... ./pkg/storage/... 2>&1 | tee .test-output/integration.log
-
-      - name: Stop containers
-        if: always()
-        env:
-          CONTAINER_ENGINE: podman
-        run: |
-          ${CONTAINER_ENGINE} rm -f crosscodex-test-db || true
-          ${CONTAINER_ENGINE} rm -f crosscodex-test-storage || true
-          ${CONTAINER_ENGINE} volume rm -f crosscodex-test-certs || true
+      - name: Run storage integration tests
+        run: task test:integration:storage
 
   integration-nats:
     needs: [build]
@@ -98,7 +75,8 @@ jobs:
         fips: ["", "1"]
     name: integration-nats (${{ matrix.fips == '1' && 'FIPS' || 'standard' }})
     env:
-      GOEXPERIMENT: ${{ matrix.fips == '1' && 'boringcrypto' || '' }}
+      FIPS: ${{ matrix.fips }}
+      CONTAINER_ENGINE: podman
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -109,25 +87,34 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           generate-test-certs: "true"
 
-      - name: Start NATS with TLS
-        run: task test:integration:nats-up
-        env:
-          CONTAINER_ENGINE: podman
+      - name: Install podman-compose
+        run: pip install podman-compose
 
       - name: Run NATS integration tests
-        env:
-          TEST_NATS_URL: tls://localhost:14222
-          TEST_NATS_CA: ${{ github.workspace }}/.test-output/certs/ca.pem
-          TEST_NATS_CERT: ${{ github.workspace }}/.test-output/certs/client.pem
-          TEST_NATS_KEY: ${{ github.workspace }}/.test-output/certs/client-key.pem
-        run: |
-          mkdir -p .test-output
-          go test -v -tags integration_nats -race -count=1 -timeout 120s ./pkg/natsbus/... 2>&1 | tee .test-output/integration-nats.log
+        run: task test:integration:nats
 
-      - name: Stop NATS
-        if: always()
-        env:
-          CONTAINER_ENGINE: podman
-        run: |
-          ${CONTAINER_ENGINE} rm -f crosscodex-test-nats || true
-          ${CONTAINER_ENGINE} volume rm -f crosscodex-test-certs || true
+  integration-authn:
+    needs: [build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        fips: ["", "1"]
+    name: integration-authn (${{ matrix.fips == '1' && 'FIPS' || 'standard' }})
+    env:
+      FIPS: ${{ matrix.fips }}
+      CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          generate-test-certs: "true"
+
+      - name: Install podman-compose
+        run: pip install podman-compose
+
+      - name: Run authn container integration tests
+        run: task test:integration:authn

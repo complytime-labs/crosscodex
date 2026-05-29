@@ -16,7 +16,7 @@ ______________________________________________________________________
 
 ## Status
 
-CrossCodex is in early development. Five foundational packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
+CrossCodex is in early development. Six foundational packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
 
 | Package           | Status      | Summary                                                                                      |
 |-------------------|-------------|----------------------------------------------------------------------------------------------|
@@ -25,10 +25,11 @@ CrossCodex is in early development. Five foundational packages are implemented a
 | **pkg/db**        | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
 | **pkg/natsbus**   | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
 | **pkg/tlsconfig** | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI        |
+| **pkg/authn**     | Implemented | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed          |
 | **pkg/tenant**    | Partial     | Tenant ID validation implemented; context propagation interface scaffolded                   |
 | All others        | Scaffolded  | Interfaces and types defined; implementation pending                                         |
 
-Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, and `pkg/natsbus` run against containerized services (`task test:integration:all`).
+Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, `pkg/natsbus`, and `pkg/authn` run against containerized services (`task test:integration:all`).
 
 ## Implemented Packages
 
@@ -55,9 +56,20 @@ PostgreSQL connection pool with tenant-scoped Row-Level Security. The package pr
 
 Application connections use a restricted `app_user` role with no DDL privileges. The migration role (superuser) is used only for schema changes. See `docs/dev/migrations.md` for operational details.
 
+### pkg/authn
+
+Multi-method authentication with registry-based dispatch. The Registry holds an ordered list of Authenticator implementations and tries each in sequence -- `ErrUnsupportedMethod` means "try next," any other error stops iteration.
+
+The X.509 mTLS authenticator maps client certificate fields (CN, Organization, OrgUnit, SAN Email/DNS/URI) to tenant identities using glob patterns. In single-tenant mode, any valid client certificate receives the default tenant and admin role. In multi-tenant mode, ordered mapping rules determine tenant and role assignment (first match wins).
+
+Authentication events are emitted via the `AuditEmitter` interface for audit logging. The package never imports `pkg/natsbus` directly -- the gateway provides the natsbus-backed implementation.
+
 ## Architecture
 
-The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`) and scaffolded domain packages (`pkg/oscal`, `pkg/analyzer`, `pkg/llmclient`, `pkg/graphdb`); full service implementations are not yet built.
+The target architecture consists of seven core services that can run embedded in a single process or distributed across
+multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`,
+`pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`) and scaffolded domain packages (`pkg/oscal`, `pkg/analyzer`,
+`pkg/llmclient`, `pkg/graphdb`); full service implementations are not yet built.
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {
@@ -304,6 +316,25 @@ tls:
   key: /etc/crosscodex/tls/server.key
 ```
 
+#### Authentication
+
+```yaml
+# Multi-tenant X.509 certificate-to-tenant mapping
+tenants:
+  enabled: true
+auth:
+  x509_mappings:
+    - match:
+        organization: "Acme*"
+        org_unit: "Engineering"
+      tenant: acme-engineering
+      roles: [admin, writer]
+    - match:
+        san_email: "*@partner.com"
+      tenant: partner-org
+      roles: [reader]
+```
+
 ## Development
 
 ### Repository Structure
@@ -343,11 +374,11 @@ task generate
 
 ### Testing Strategy
 
-| Test Type       | Framework               | Status                                                                           |
-|-----------------|-------------------------|----------------------------------------------------------------------------------|
-| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                     |
-| **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, and pkg/natsbus (`task test:integration:all`) |
-| **E2E**         | Venom                   | Planned                                                                          |
+| Test Type       | Framework               | Status                                                                                      |
+|-----------------|-------------------------|---------------------------------------------------------------------------------------------|
+| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                                |
+| **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, pkg/natsbus, and pkg/authn (`task test:integration:all`) |
+| **E2E**         | Venom                   | Planned                                                                                     |
 
 ### Contributing
 

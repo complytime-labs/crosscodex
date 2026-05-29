@@ -170,7 +170,10 @@ To recover:
 
 ### Checksum Verification Failure
 
-golang-migrate tracks applied migration versions in the `schema_migrations` table but does not store file checksums. If a migration SQL file is edited after it has been applied, the database schema will silently diverge from what the file describes. This is dangerous because future rollbacks will execute SQL that does not match the actual schema state, and developers reading the migration history will have a false picture of the database.
+golang-migrate tracks applied migration versions in the `schema_migrations` table but does not store file checksums. If
+a migration SQL file is edited after it has been applied, the database schema will silently diverge from what the file
+describes. This is dangerous because future rollbacks will execute SQL that does not match the actual schema state, and
+developers reading the migration history will have a false picture of the database.
 
 **Rule: never edit a migration file that has been applied to any environment.** If you need to change something an earlier migration created, write a new migration with the next sequence number.
 

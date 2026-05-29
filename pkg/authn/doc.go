@@ -1,14 +1,25 @@
-// Package authn provides multi-method authentication.
+// Package authn provides multi-method authentication for CrossCodex services.
 //
-// Supports mTLS, Kerberos, and SAML authentication with extensible
-// authenticator interface.
+// Each authentication method (X.509 mTLS, Kerberos, SAML) is a standalone
+// Authenticator implementation. A Registry holds authenticators in order
+// and dispatches requests to each until one succeeds or returns a fatal error.
+//
+// X.509 is fully implemented. GSSAPI (Kerberos) and SAML are stubbed with
+// ErrUnsupportedMethod for future implementation.
 //
 // Example usage:
 //
-//	auth := authn.NewMTLSAuthenticator(tlsConfig)
-//	identity, err := auth.Authenticate(ctx, req)
+//	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
+//	    SingleTenant:  true,
+//	    DefaultTenant: "default",
+//	})
 //	if err != nil {
-//	    return err
+//	    log.Fatal(err)
 //	}
-//	fmt.Printf("Authenticated: %s (tenant: %s)\n", identity.Subject, identity.TenantID)
+//
+//	registry := authn.NewRegistry(auditEmitter, x509Auth)
+//	identity, err := registry.Authenticate(ctx, &authn.Request{
+//	    TLSState: conn.ConnectionState(),
+//	    ClientIP: remoteAddr,
+//	})
 package authn
