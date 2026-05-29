@@ -10,6 +10,33 @@ vars:
   RUSTFS_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY | default "rustfsadmin"}}'
   RUSTFS_SECRET_KEY: '{{.RUSTFS_SECRET_KEY | default "rustfsadmin"}}'
   RUSTFS_BUCKET: '{{.RUSTFS_BUCKET | default "crosscodex-test"}}'
+  COMPOSE_CMD:
+    sh: |
+      # Derive compose command from CONTAINER_ENGINE to avoid cross-engine
+      # volume/container mismatches (e.g. podman volumes invisible to docker).
+      engine="{{.CONTAINER_ENGINE}}"
+      case "$engine" in
+        podman)
+          if podman compose version >/dev/null 2>&1; then
+            echo "podman compose"
+          elif command -v podman-compose >/dev/null 2>&1; then
+            echo "podman-compose"
+          else
+            echo "MISSING"
+          fi
+          ;;
+        docker)
+          if docker compose version >/dev/null 2>&1; then
+            echo "docker compose"
+          else
+            echo "MISSING"
+          fi
+          ;;
+        *)
+          echo "MISSING"
+          ;;
+      esac
+  COMPOSE_FILE: '{{.ROOT_DIR}}/test/compose.yaml'
 
 tasks:
   default:
@@ -18,7 +45,7 @@ tasks:
       - task: all
 
   all:
-    desc: Run all integration tests (db, storage, and NATS)
+    desc: Run all integration tests (db, storage, NATS, and authn)
     env:
       TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
       TEST_S3_ENDPOINT: "http://localhost:19000"
@@ -29,16 +56,17 @@ tasks:
       TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
       TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
       TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+      TEST_AUTHN_URL: "https://localhost:18443"
+      TEST_AUTHN_CA: "{{.TEST_DIR}}/certs/ca.pem"
+      TEST_AUTHN_CERT: "{{.TEST_DIR}}/certs/client.pem"
+      TEST_AUTHN_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
     cmds:
-      # Start infrastructure sequentially to avoid parallel podman builds
-      # racing on the same image (prepare-cert-volume → podman build).
       - task: ensure-deps
-      - task: db-up
-      - task: storage-up
-      - task: nats-up
-      - defer: { task: db-down }
-      - defer: { task: storage-down }
-      - defer: { task: nats-down }
+      - task: compose-up
+        vars: { PROFILE: all }
+      - defer:
+          task: compose-down
+          vars: { PROFILE: all }
       - mkdir -p {{.TEST_DIR}}
       # -p 1: pkg/db and pkg/graphdb both run migrations and ALTER ROLE in
       # TestMain. Without -p 1, go test runs packages in parallel and both
@@ -47,149 +75,149 @@ tasks:
       - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
       - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out {{.ROOT_DIR}}/pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
       - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
+      - go test -v -tags integration_authn -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-authn-coverage.out {{.ROOT_DIR}}/pkg/authn/... 2>&1 | tee {{.TEST_DIR}}/integration-authn.log
 
   db:
     desc: Run database integration tests (db, graphdb, vectordb)
-    deps: [ensure-deps, db-up]
+    deps: [ensure-deps]
     env:
       TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
     cmds:
-      - defer: { task: db-down }
+      - task: compose-up
+        vars: { PROFILE: db }
+      - defer:
+          task: compose-down
+          vars: { PROFILE: db }
       - mkdir -p {{.TEST_DIR}}
       # -p 1: see comment in 'all' task
       - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
 
   storage:
     desc: Run S3 storage integration tests
-    deps: [ensure-deps, storage-up]
+    deps: [ensure-deps]
     env:
       TEST_S3_ENDPOINT: "http://localhost:19000"
       TEST_S3_ACCESS_KEY: "{{.RUSTFS_ACCESS_KEY}}"
       TEST_S3_SECRET_KEY: "{{.RUSTFS_SECRET_KEY}}"
       TEST_S3_BUCKET: "{{.RUSTFS_BUCKET}}"
     cmds:
-      - defer: { task: storage-down }
+      - task: compose-up
+        vars: { PROFILE: storage }
+      - defer:
+          task: compose-down
+          vars: { PROFILE: storage }
       - mkdir -p {{.TEST_DIR}}
       - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out {{.ROOT_DIR}}/pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
 
   nats:
     desc: Run external NATS integration tests
-    deps: [ensure-deps, nats-up]
+    deps: [ensure-deps]
     env:
       TEST_NATS_URL: "tls://localhost:14222"
       TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
       TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
       TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
     cmds:
-      - defer: { task: nats-down }
+      - task: compose-up
+        vars: { PROFILE: nats }
+      - defer:
+          task: compose-down
+          vars: { PROFILE: nats }
       - mkdir -p {{.TEST_DIR}}
       - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
+
+  authn:
+    desc: Run authn container integration tests (nginx mTLS proxy)
+    deps: [ensure-deps]
+    env:
+      TEST_AUTHN_URL: "https://localhost:18443"
+      TEST_AUTHN_CA: "{{.TEST_DIR}}/certs/ca.pem"
+      TEST_AUTHN_CERT: "{{.TEST_DIR}}/certs/client.pem"
+      TEST_AUTHN_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+    cmds:
+      - task: compose-up
+        vars: { PROFILE: authn }
+      - defer:
+          task: compose-down
+          vars: { PROFILE: authn }
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration_authn -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-authn-coverage.out {{.ROOT_DIR}}/pkg/authn/... 2>&1 | tee {{.TEST_DIR}}/integration-authn.log
 
   clean:
     desc: Remove all integration test containers and their volumes
     cmds:
-      - "{{.CONTAINER_ENGINE}} rm -f crosscodex-test-db crosscodex-test-storage crosscodex-test-nats 2>/dev/null || true"
+      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile all down -v 2>/dev/null || true'
       - "{{.CONTAINER_ENGINE}} volume rm -f crosscodex-test-certs 2>/dev/null || true"
-      - "{{.CONTAINER_ENGINE}} volume prune -f"
 
-  # --- Infrastructure: container lifecycle ---
-
-  db-up:
-    desc: Start PostgreSQL container for integration tests
-    deps: [prepare-cert-volume]
+  compose-up:
+    desc: "Start integration test containers (PROFILE=db|storage|nats|authn|all)"
+    requires:
+      vars: [PROFILE]
+    preconditions:
+      - sh: '[ "{{.COMPOSE_CMD}}" != "MISSING" ]'
+        msg: "Neither 'docker compose' nor 'podman-compose' found. Install one to run integration tests."
     vars:
-      CONTAINER_NAME: crosscodex-test-db
-      CONTAINER_IMAGE: crosscodex-test-db:latest
-      VOLUME_NAME: crosscodex-test-certs
+      NEEDS_CERTS: '{{if or (eq .PROFILE "db") (eq .PROFILE "nats") (eq .PROFILE "authn") (eq .PROFILE "all")}}true{{else}}false{{end}}'
     cmds:
-      - |
-        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
-          -p 15432:5432 \
-          -e POSTGRES_USER={{.POSTGRES_USER}} \
-          -e POSTGRES_PASSWORD={{.POSTGRES_PASSWORD}} \
-          -e POSTGRES_DB={{.POSTGRES_DB}} \
-          -v {{.VOLUME_NAME}}:/certs \
-          {{.CONTAINER_IMAGE}} \
-          postgres -c shared_preload_libraries=age \
-            -c hba_file=/etc/postgresql/pg_hba.conf \
-            -c ssl=on \
-            -c ssl_cert_file=/certs/server.pem \
-            -c ssl_key_file=/certs/server-key.pem \
-            -c ssl_ca_file=/certs/ca.pem
-      - |
-        echo "Waiting for PostgreSQL..."
-        for i in $(seq 1 60); do
-          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -h 127.0.0.1 -U {{.POSTGRES_USER}} -q 2>/dev/null && break
-          sleep 1
-        done
-        {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} pg_isready -h 127.0.0.1 -U {{.POSTGRES_USER}} -q || (echo "PostgreSQL failed to start"; exit 1)
+      - task: '{{if eq .NEEDS_CERTS "true"}}prepare-cert-volume{{else}}ensure-deps{{end}}'
+      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} up -d'
+      - task: compose-health
+        vars:
+          PROFILE: "{{.PROFILE}}"
 
-  db-down:
-    desc: Stop and remove the integration test database container
-    vars:
-      CONTAINER_NAME: crosscodex-test-db
+  compose-health:
+    internal: true
+    requires:
+      vars: [PROFILE]
     cmds:
-      - "{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}"
-
-  storage-up:
-    desc: Start RustFS container for S3 integration tests
-    vars:
-      CONTAINER_NAME: crosscodex-test-storage
-    cmds:
+      # Direct host-side probes. podman-compose has a multi-minute delay
+      # before running container healthchecks, so we probe the published
+      # ports from the host instead.
       - |
-        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
-          -p 19000:9000 \
-          -p 19001:9001 \
-          -e RUSTFS_ROOT_USER={{.RUSTFS_ACCESS_KEY}} \
-          -e RUSTFS_ROOT_PASSWORD={{.RUSTFS_SECRET_KEY}} \
-          docker.io/rustfs/rustfs:1.0.0-beta.3 server /data --console-address ":9001"
-      - |
-        echo "Waiting for RustFS S3 API..."
-        for i in $(seq 1 30); do
-          curl -so /dev/null http://localhost:19000/ 2>/dev/null && break
-          sleep 1
-        done
-        curl -so /dev/null http://localhost:19000/ 2>/dev/null || (echo "RustFS failed to start"; exit 1)
+        wait_for() {
+          local label="$1"; shift
+          echo "Waiting for $label ..."
+          for i in $(seq 1 60); do
+            "$@" >/dev/null 2>&1 && break
+            sleep 2
+          done
+          if ! "$@" >/dev/null 2>&1; then
+            echo "ERROR: $label did not become ready after 120s"
+            return 1
+          fi
+          echo "$label is ready."
+        }
 
-  storage-down:
-    desc: Stop and remove the RustFS integration test container
-    vars:
-      CONTAINER_NAME: crosscodex-test-storage
-    cmds:
-      - "{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}"
+        case "{{.PROFILE}}" in
+          db)
+            wait_for "postgres" {{.CONTAINER_ENGINE}} exec crosscodex-test-db pg_isready -U postgres
+            ;;
+          storage)
+            wait_for "rustfs" curl -so /dev/null http://localhost:19000/
+            ;;
+          nats)
+            wait_for "nats" {{.CONTAINER_ENGINE}} exec crosscodex-test-nats nats-server --help
+            ;;
+          authn)
+            wait_for "authn-proxy" {{.CONTAINER_ENGINE}} exec crosscodex-test-authn nginx -t
+            ;;
+          all)
+            wait_for "postgres" {{.CONTAINER_ENGINE}} exec crosscodex-test-db pg_isready -U postgres || exit 1
+            wait_for "rustfs" curl -so /dev/null http://localhost:19000/ || exit 1
+            wait_for "nats" {{.CONTAINER_ENGINE}} exec crosscodex-test-nats nats-server --help || exit 1
+            wait_for "authn-proxy" {{.CONTAINER_ENGINE}} exec crosscodex-test-authn nginx -t
+            ;;
+        esac
 
-  nats-up:
-    desc: Start NATS container with TLS for integration tests
-    deps: [prepare-cert-volume]
-    vars:
-      CONTAINER_NAME: crosscodex-test-nats
-      VOLUME_NAME: crosscodex-test-certs
+  compose-down:
+    desc: "Stop integration test containers (PROFILE=db|storage|nats|authn|all)"
+    requires:
+      vars: [PROFILE]
+    preconditions:
+      - sh: '[ "{{.COMPOSE_CMD}}" != "MISSING" ]'
+        msg: "Neither 'docker compose' nor 'podman-compose' found."
     cmds:
-      - |
-        {{.CONTAINER_ENGINE}} run -d --name {{.CONTAINER_NAME}} --replace \
-          -p 14222:4222 \
-          -v {{.VOLUME_NAME}}:/certs \
-          docker.io/nats:2-alpine \
-          --tls \
-          --tlscert=/certs/server.pem \
-          --tlskey=/certs/server-key.pem \
-          --tlscacert=/certs/ca.pem \
-          --tlsverify \
-          --jetstream
-      - |
-        echo "Waiting for NATS..."
-        for i in $(seq 1 30); do
-          {{.CONTAINER_ENGINE}} exec {{.CONTAINER_NAME}} nats-server --help >/dev/null 2>&1 && break || true
-          sleep 1
-        done
-        sleep 2
-
-  nats-down:
-    desc: Stop and remove the NATS integration test container
-    vars:
-      CONTAINER_NAME: crosscodex-test-nats
-    cmds:
-      - "{{.CONTAINER_ENGINE}} rm -f {{.CONTAINER_NAME}}"
+      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} down'
 
   # --- Internal helpers ---
 
@@ -233,7 +261,7 @@ tasks:
           -v {{.TEST_DIR}}/certs:/src:ro \
           --entrypoint sh \
           {{.CONTAINER_IMAGE}} \
-          -c 'cp /src/* /certs/ && chown postgres:postgres /certs/* && chmod 600 /certs/*-key.pem'
+          -c 'cp /src/*.pem /src/.fingerprint /certs/ && chown postgres:postgres /certs/* /certs/.fingerprint && chmod 600 /certs/*-key.pem'
     status:
       # Volume must exist AND its fingerprint must match the on-disk certs.
       # If certs were regenerated (sources changed), the fingerprint won't

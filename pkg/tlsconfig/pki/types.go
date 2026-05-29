@@ -3,6 +3,7 @@ package pki
 import (
 	"crypto/x509"
 	"net"
+	"net/url"
 	"time"
 )
 
@@ -29,12 +30,15 @@ type PKIBundle struct {
 type Option func(*options)
 
 type options struct {
-	organization  string
-	validDuration time.Duration
-	dnsNames      []string
-	ips           []net.IP
-	extKeyUsage   []x509.ExtKeyUsage
-	outputDir     string
+	organization   string
+	validDuration  time.Duration
+	dnsNames       []string
+	ips            []net.IP
+	extKeyUsage    []x509.ExtKeyUsage
+	outputDir      string
+	orgUnit        string
+	emailAddresses []string
+	uris           []*url.URL
 }
 
 func defaultOptions() options {
@@ -81,4 +85,19 @@ func WithExtKeyUsage(usages ...x509.ExtKeyUsage) Option {
 // The directory is created if it does not exist. Default: "" (in-memory only).
 func WithOutputDir(dir string) Option {
 	return func(o *options) { o.outputDir = dir }
+}
+
+// WithOrgUnit sets the OrganizationalUnit on leaf certificates.
+func WithOrgUnit(ou string) Option {
+	return func(o *options) { o.orgUnit = ou }
+}
+
+// WithEmailAddresses sets email Subject Alternative Names on leaf certificates.
+func WithEmailAddresses(emails ...string) Option {
+	return func(o *options) { o.emailAddresses = emails }
+}
+
+// WithURIs sets URI Subject Alternative Names on leaf certificates.
+func WithURIs(uris ...*url.URL) Option {
+	return func(o *options) { o.uris = uris }
 }

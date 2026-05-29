@@ -1,0 +1,93 @@
+# Consolidated integration test infrastructure.
+# Usage:
+#   podman-compose -f test/compose.yaml up -d db storage nats
+#   docker compose -f test/compose.yaml up -d db storage nats
+#
+# Certificate volume (crosscodex-test-certs) must be populated before
+# starting services that need TLS. Use: task test:integration:generate-certs
+# followed by task test:integration:prepare-cert-volume
+
+services:
+  db:
+    profiles: [db, all]
+    image: crosscodex-test-db:latest
+    container_name: crosscodex-test-db
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: integration
+      POSTGRES_DB: crosscodex_test
+    volumes:
+      - certs:/certs
+    command: >
+      postgres
+        -c shared_preload_libraries=age
+        -c hba_file=/etc/postgresql/pg_hba.conf
+        -c ssl=on
+        -c ssl_cert_file=/certs/server.pem
+        -c ssl_key_file=/certs/server-key.pem
+        -c ssl_ca_file=/certs/ca.pem
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  storage:
+    profiles: [storage, all]
+    image: docker.io/rustfs/rustfs:1.0.0-beta.3
+    container_name: crosscodex-test-storage
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    environment:
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: rustfsadmin # DevSkim: ignore DS126858 - test-only credential for ephemeral integration test container
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null http://localhost:9000/"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  nats:
+    profiles: [nats, all]
+    image: docker.io/nats:2.11-alpine
+    container_name: crosscodex-test-nats
+    ports:
+      - "14222:4222"
+    volumes:
+      - certs:/certs
+    command: >
+      --tls
+      --tlscert=/certs/server.pem
+      --tlskey=/certs/server-key.pem
+      --tlscacert=/certs/ca.pem
+      --tlsverify
+      --jetstream
+    healthcheck:
+      test: ["CMD-SHELL", "nats-server --help >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  authn-proxy:
+    profiles: [authn, all]
+    image: docker.io/library/nginx:1.27-alpine
+    container_name: crosscodex-test-authn
+    ports:
+      - "18443:443"
+    volumes:
+      - certs:/certs:ro
+      - ./authn/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  certs:
+    external: true
+    name: crosscodex-test-certs

@@ -6,6 +6,8 @@ version: "3"
 # taskfiles (.taskfiles/*.yml).
 set: [pipefail]
 
+silent: true
+
 env:
   # When FIPS=1 (e.g., `task build FIPS=1`), all Go commands use
   # GOEXPERIMENT=boringcrypto for FIPS-validated cryptography.
