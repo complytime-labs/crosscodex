@@ -1,0 +1,44 @@
+# Test gRPC server for tenant integration testing.
+# Multi-stage build: compile Go binary, copy into distroless.
+
+FROM docker.io/library/golang:1.26 AS builder
+
+WORKDIR /build
+
+# Cache dependency downloads.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source.
+COPY . .
+
+# Install build tools (pinned versions).
+RUN go install github.com/bufbuild/buf/cmd/buf@v1.70.0 && \
+    go install github.com/grpc-ecosystem/grpc-health-probe@v0.4.37
+
+# Generate proto code.
+WORKDIR /build/internal/testgrpc/proto
+RUN buf generate
+
+# Build the server binary.
+WORKDIR /build
+RUN CGO_ENABLED=0 go build -o /testgrpc-server ./internal/testgrpc/cmd/testgrpc-server
+
+# --- Runtime stage ---
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=builder /testgrpc-server /testgrpc-server
+COPY --from=builder /go/bin/grpc-health-probe /grpc-health-probe
+
+USER nonroot
+
+EXPOSE 9090
+
+# Certs are volume-mounted at runtime; probe verifies gRPC health over mTLS.
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["/grpc-health-probe", "-addr=localhost:9090", \
+       "-tls", "-tls-ca-cert=/certs/ca.pem", \
+       "-tls-client-cert=/certs/client.pem", \
+       "-tls-client-key=/certs/client-key.pem"]
+
+ENTRYPOINT ["/testgrpc-server"]

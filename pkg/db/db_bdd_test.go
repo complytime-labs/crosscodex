@@ -95,77 +95,17 @@ var _ = Describe("Database Package", Ordered, func() {
 		})
 	})
 
-	Describe("Tenant Context Propagation Behaviors", func() {
-		Context("when enforcing tenant-scoped database access", func() {
-			It("propagates tenant identity through context for RLS enforcement", func() {
-				By("setting a tenant ID in context")
-				ctx := db.ContextWithTenant(context.Background(), "acme-corp")
-
-				By("extracting the tenant ID downstream")
-				tenantID := db.TenantFromContext(ctx)
-				Expect(tenantID).To(Equal("acme-corp"))
-			})
-
-			It("propagates user identity through context for job ownership", func() {
-				By("setting a user ID in context")
-				ctx := db.ContextWithUser(context.Background(), "alice")
-
-				By("extracting the user ID downstream")
-				userID := db.UserFromContext(ctx)
-				Expect(userID).To(Equal("alice"))
-			})
-
-			It("prevents non-transactional queries to enforce RLS boundaries", func() {
-				// TenantPool rejects Query/Exec/QueryRow outside transactions
-				// because SET LOCAL (for RLS) has no effect without a transaction.
-				tp := db.NewTenantPool(nil)
-
-				By("rejecting Query without a transaction")
-				_, err := tp.Query(context.Background(), "SELECT 1")
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, db.ErrTenantRequired)).To(BeTrue())
-
-				By("rejecting Exec without a transaction")
-				err = tp.Exec(context.Background(), "SELECT 1")
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, db.ErrTenantRequired)).To(BeTrue())
-
-				By("rejecting QueryRow without a transaction")
-				row := tp.QueryRow(context.Background(), "SELECT 1")
-				err = row.Scan()
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, db.ErrTenantRequired)).To(BeTrue())
-			})
-
-			It("requires tenant context to begin a transaction", func() {
-				tp := db.NewTenantPool(nil)
-
-				By("attempting Begin without tenant in context")
-				_, err := tp.Begin(context.Background())
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, db.ErrTenantRequired)).To(BeTrue())
-			})
-
-			It("maintains independent tenant and user contexts", func() {
-				By("setting both tenant and user on the same context")
-				ctx := db.ContextWithTenant(context.Background(), "tenant-a")
-				ctx = db.ContextWithUser(ctx, "user-bob")
-
-				By("extracting each independently")
-				Expect(db.TenantFromContext(ctx)).To(Equal("tenant-a"))
-				Expect(db.UserFromContext(ctx)).To(Equal("user-bob"))
-			})
-		})
-	})
+	// Tenant context propagation (WithTenant, FromContext, WithUser,
+	// UserFromContext) is now tested in pkg/tenant. The db package
+	// delegates all tenant context operations to pkg/tenant.
 
 	// =================================================================
 	// LEVEL 2: INTERFACE COMPLIANCE SPECIFICATIONS
 	// These specs verify that db types satisfy CrossCodex interface contracts.
-	// The db package's tenant context helpers use a private context key
-	// (tenantKey{}) distinct from pkg/tenant, so TenantIsolatedComponent
-	// adaptation is not applicable here. The tenant_pool enforces
-	// isolation via ErrTenantRequired on non-transactional operations,
-	// which is covered in Level 1 and Level 3 specs.
+	// The db package now delegates tenant context to pkg/tenant.
+	// The tenant_pool enforces isolation via ErrTenantRequired on
+	// non-transactional operations, which is covered in Level 1 and
+	// Level 3 specs.
 	// =================================================================
 
 	Describe("Interface Compliance", func() {
@@ -271,55 +211,8 @@ var _ = Describe("Database Package", Ordered, func() {
 		})
 	})
 
-	Describe("Tenant Context Edge Cases", func() {
-		Context("when extracting tenant from context", func() {
-			It("returns empty string for a bare context", func() {
-				ctx := context.Background()
-				Expect(db.TenantFromContext(ctx)).To(BeEmpty())
-			})
-
-			It("returns the set tenant ID", func() {
-				ctx := db.ContextWithTenant(context.Background(), "acme")
-				Expect(db.TenantFromContext(ctx)).To(Equal("acme"))
-			})
-
-			It("returns empty for a context without tenant key", func() {
-				// A context with an unrelated key should not confuse TenantFromContext
-				type unrelatedKey string
-				ctx := context.WithValue(context.Background(), unrelatedKey("unrelated"), "value")
-				Expect(db.TenantFromContext(ctx)).To(BeEmpty())
-			})
-		})
-
-		Context("when extracting user from context", func() {
-			It("returns empty string for a bare context", func() {
-				ctx := context.Background()
-				Expect(db.UserFromContext(ctx)).To(BeEmpty())
-			})
-
-			It("returns the set user ID", func() {
-				ctx := db.ContextWithUser(context.Background(), "alice")
-				Expect(db.UserFromContext(ctx)).To(Equal("alice"))
-			})
-		})
-
-		Context("when stacking tenant and user context values", func() {
-			It("preserves both values when layered", func() {
-				ctx := db.ContextWithTenant(context.Background(), "tenant-x")
-				ctx = db.ContextWithUser(ctx, "user-y")
-
-				Expect(db.TenantFromContext(ctx)).To(Equal("tenant-x"))
-				Expect(db.UserFromContext(ctx)).To(Equal("user-y"))
-			})
-
-			It("allows overwriting tenant on the same context chain", func() {
-				ctx := db.ContextWithTenant(context.Background(), "first")
-				ctx = db.ContextWithTenant(ctx, "second")
-
-				Expect(db.TenantFromContext(ctx)).To(Equal("second"))
-			})
-		})
-	})
+	// Tenant context edge cases (extracting tenant/user from context,
+	// stacking values, overwriting) are now tested in pkg/tenant.
 
 	Describe("TenantPool Operation Rejection Edge Cases", func() {
 		var tp db.TenantConnection

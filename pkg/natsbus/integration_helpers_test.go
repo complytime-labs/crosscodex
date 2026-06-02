@@ -26,7 +26,11 @@ func defaultTestStreamsConfig() config.NATSStreamsConfig {
 // testTenantCtx creates a context with the given tenant ID for testing.
 func testTenantCtx(t *testing.T, tenantID string) context.Context {
 	t.Helper()
-	return tenant.WithTenant(context.Background(), tenantID)
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	if err != nil {
+		t.Fatalf("testTenantCtx(%q): %v", tenantID, err)
+	}
+	return ctx
 }
 
 // subscribeOne sets up a buffered-channel subscriber on the given subject

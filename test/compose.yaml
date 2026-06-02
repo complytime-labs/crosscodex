@@ -87,6 +87,36 @@ services:
       timeout: 5s
       retries: 15
 
+  grpc:
+    profiles: [grpc, all]
+    build:
+      context: ../
+      dockerfile: test/grpc/Containerfile
+    container_name: crosscodex-test-grpc
+    # Run as postgres (999) so the test binary can read the shared TLS key
+    # files which are chowned to postgres:postgres with mode 0600.
+    user: "999:999"
+    ports:
+      - "19090:9090"
+    volumes:
+      - certs:/certs
+    environment:
+      TEST_DATABASE_DSN: "postgres://postgres:integration@db:5432/crosscodex_test?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN # checkov:skip=CKV_SECRET_4:test-only credential for ephemeral integration test container # checkov:skip=CKV_SECRET_6:test-only credential for ephemeral integration test container
+      TEST_NATS_URL: "tls://nats:4222" # checkov:skip=CKV_SECRET_6 not a credential
+      TEST_NATS_CA: "/certs/ca.pem"
+      TEST_NATS_CERT: "/certs/client.pem"
+      TEST_NATS_KEY: "/certs/client-key.pem"
+    depends_on:
+      db:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/grpc-health-probe", "-addr=localhost:9090", "-tls", "-tls-ca-cert=/certs/ca.pem", "-tls-client-cert=/certs/client.pem", "-tls-client-key=/certs/client-key.pem"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
 volumes:
   certs:
     external: true

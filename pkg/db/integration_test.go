@@ -15,6 +15,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // suDSN is the superuser connection string, set by TestMain.
@@ -1315,7 +1316,10 @@ func TestIntegration_TenantPool_BeginSetsTenant(t *testing.T) {
 	defer pool.Close()
 
 	tp := db.NewTenantPool(pool)
-	ctx := db.ContextWithTenant(context.Background(), tenantID)
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	if err != nil {
+		t.Fatalf("WithTenant: %v", err)
+	}
 
 	tx, err := tp.Begin(ctx)
 	if err != nil {
@@ -1348,8 +1352,11 @@ func TestIntegration_TenantPool_BeginSetsUser(t *testing.T) {
 	defer pool.Close()
 
 	tp := db.NewTenantPool(pool)
-	ctx := db.ContextWithTenant(context.Background(), tenantID)
-	ctx = db.ContextWithUser(ctx, userID)
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	if err != nil {
+		t.Fatalf("WithTenant: %v", err)
+	}
+	ctx = tenant.WithUser(ctx, userID)
 
 	tx, err := tp.Begin(ctx)
 	if err != nil {
@@ -1364,6 +1371,127 @@ func TestIntegration_TenantPool_BeginSetsUser(t *testing.T) {
 	}
 	if got != userID {
 		t.Errorf("current_setting = %q, want %q", got, userID)
+	}
+}
+
+func TestIntegration_TenantPool_ContextPropagation(t *testing.T) {
+	tenantA := "ctx-prop-alpha"
+	tenantB := "ctx-prop-bravo"
+	setupTenant(t, tenantA, "Context Prop Alpha")
+	setupTenant(t, tenantB, "Context Prop Bravo")
+
+	pool, err := db.NewPool(db.PoolConfig{
+		DSN:          appUserDSN(),
+		MaxOpenConns: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	defer pool.Close()
+
+	tp := db.NewTenantPool(pool)
+
+	// Insert a job as tenant A via TenantPool.
+	ctxA, err := tenant.WithTenant(context.Background(), tenantA)
+	if err != nil {
+		t.Fatalf("WithTenant(%q): %v", tenantA, err)
+	}
+
+	txA, err := tp.Begin(ctxA)
+	if err != nil {
+		t.Fatalf("Begin(tenantA): %v", err)
+	}
+
+	err = txA.Exec(context.Background(),
+		"INSERT INTO jobs (tenant_id, job_id, created_by, status) VALUES ($1, $2, $3, $4)",
+		tenantA, "ctx-prop-job-a", "test-user", "pending")
+	if err != nil {
+		txA.Rollback()
+		t.Fatalf("INSERT job A: %v", err)
+	}
+	if err := txA.Commit(); err != nil {
+		t.Fatalf("Commit A: %v", err)
+	}
+
+	// Insert a job as tenant B via TenantPool.
+	ctxB, err := tenant.WithTenant(context.Background(), tenantB)
+	if err != nil {
+		t.Fatalf("WithTenant(%q): %v", tenantB, err)
+	}
+
+	txB, err := tp.Begin(ctxB)
+	if err != nil {
+		t.Fatalf("Begin(tenantB): %v", err)
+	}
+
+	err = txB.Exec(context.Background(),
+		"INSERT INTO jobs (tenant_id, job_id, created_by, status) VALUES ($1, $2, $3, $4)",
+		tenantB, "ctx-prop-job-b", "test-user", "pending")
+	if err != nil {
+		txB.Rollback()
+		t.Fatalf("INSERT job B: %v", err)
+	}
+	if err := txB.Commit(); err != nil {
+		t.Fatalf("Commit B: %v", err)
+	}
+
+	// Query as tenant A — should see only A's job, not B's.
+	txA2, err := tp.Begin(ctxA)
+	if err != nil {
+		t.Fatalf("Begin(tenantA) read: %v", err)
+	}
+	defer txA2.Rollback()
+
+	rows, err := txA2.Query(context.Background(),
+		"SELECT job_id, tenant_id FROM jobs WHERE job_id IN ($1, $2)",
+		"ctx-prop-job-a", "ctx-prop-job-b")
+	if err != nil {
+		t.Fatalf("Query as tenantA: %v", err)
+	}
+	defer rows.Close()
+
+	var found []string
+	for rows.Next() {
+		var jobID, tid string
+		if err := rows.Scan(&jobID, &tid); err != nil {
+			t.Fatalf("Scan: %v", err)
+		}
+		if tid != tenantA {
+			t.Errorf("RLS leaked: got tenant_id=%q in tenant A's query", tid)
+		}
+		found = append(found, jobID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows iteration: %v", err)
+	}
+
+	if len(found) != 1 || found[0] != "ctx-prop-job-a" {
+		t.Errorf("expected exactly [ctx-prop-job-a], got %v", found)
+	}
+}
+
+func TestIntegration_TenantPool_InvalidTenantRejected(t *testing.T) {
+	pool, err := db.NewPool(db.PoolConfig{
+		DSN:          appUserDSN(),
+		MaxOpenConns: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	defer pool.Close()
+
+	tp := db.NewTenantPool(pool)
+
+	// WithTenant should reject the invalid ID.
+	_, wtErr := tenant.WithTenant(context.Background(), "BAD!")
+	if wtErr == nil {
+		t.Fatal("expected WithTenant to reject invalid tenant ID")
+	}
+
+	// A bare context (no tenant) should be rejected by TenantPool.Begin.
+	_, beginErr := tp.Begin(context.Background())
+	if !errors.Is(beginErr, db.ErrTenantRequired) {
+		t.Errorf("expected ErrTenantRequired, got: %v", beginErr)
 	}
 }
 

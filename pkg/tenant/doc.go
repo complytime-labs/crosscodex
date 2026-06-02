@@ -1,16 +1,16 @@
-// Package tenant provides multi-tenant context propagation.
+// Package tenant provides tenant context propagation for multi-tenant
+// services. It owns the single source of truth for tenant identity in
+// [context.Context] — all packages that need tenant-scoped behavior
+// use these functions rather than maintaining their own context keys.
 //
-// Handles tenant isolation across service boundaries by propagating
-// tenant IDs through context.Context.
+// Tenant IDs are validated at the point of injection ([WithTenant]),
+// so any ID extracted via [FromContext] is guaranteed to be well-formed.
 //
-// Example usage:
+// Usage:
 //
-//	ctx := tenant.WithTenant(ctx, "acme-corp")
-//
-//	tenantID, err := tenant.FromContext(ctx)
+//	ctx, err := tenant.WithTenant(ctx, "acme-corp")
 //	if err != nil {
-//	    return err
+//	    // handle invalid tenant ID
 //	}
-//
-//	// Use tenantID to scope database queries, NATS subjects, etc.
+//	id, err := tenant.FromContext(ctx)
 package tenant

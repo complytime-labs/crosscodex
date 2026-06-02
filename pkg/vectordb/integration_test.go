@@ -103,7 +103,10 @@ func TestVectorDBIntegration(t *testing.T) {
 		t.Fatalf("failed to create vector store: %v", err)
 	}
 
-	ctx := tenant.WithTenant(context.Background(), "test-tenant")
+	ctx, err := tenant.WithTenant(context.Background(), "test-tenant")
+	if err != nil {
+		t.Fatalf("WithTenant: %v", err)
+	}
 
 	// t.Cleanup runs in LIFO order. Register Close first so it runs last,
 	// after the data cleanup has finished using the connection.
@@ -247,11 +250,17 @@ func testModelIsolation(t *testing.T, store *vectordb.PgVectorStore, ctx context
 func testTenantIsolation(t *testing.T, store *vectordb.PgVectorStore, sqlDB *sql.DB) {
 	t.Helper()
 
-	ctx1 := tenant.WithTenant(context.Background(), "tenant-1")
-	ctx2 := tenant.WithTenant(context.Background(), "tenant-2")
+	ctx1, err := tenant.WithTenant(context.Background(), "tenant-1")
+	if err != nil {
+		t.Fatalf("WithTenant(tenant-1): %v", err)
+	}
+	ctx2, err := tenant.WithTenant(context.Background(), "tenant-2")
+	if err != nil {
+		t.Fatalf("WithTenant(tenant-2): %v", err)
+	}
 
 	// Store embeddings for tenant-1
-	err := store.StoreEmbedding(ctx1, "tenant-1", vectordb.Embedding{
+	err = store.StoreEmbedding(ctx1, "tenant-1", vectordb.Embedding{
 		CatalogID: "iso-27001",
 		ControlID: "A.5.1",
 		Model:     "text-embedding-ada-002",

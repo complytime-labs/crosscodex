@@ -138,9 +138,14 @@ func SetupTestConfig(configData []byte) (string, TestCleanup) {
 	return configPath, cleanup
 }
 
-// SetupTenantContext creates a context with the specified tenant ID
+// SetupTenantContext creates a context with the specified tenant ID.
+// Panics if the tenant ID is invalid — test helpers must use valid IDs.
 func SetupTenantContext(tenantID string) context.Context {
-	return tenant.WithTenant(context.Background(), tenantID)
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	if err != nil {
+		panic(fmt.Sprintf("SetupTenantContext(%q): %v", tenantID, err))
+	}
+	return ctx
 }
 
 // WaitForCondition waits for a condition to become true with timeout

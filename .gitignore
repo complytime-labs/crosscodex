@@ -6,6 +6,7 @@
 
 # Generated code
 api/gen/
+internal/testgrpc/gen/
 
 # Go
 *.exe
