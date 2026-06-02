@@ -45,7 +45,9 @@ func Generate() (*PKI, error) {
 	bundle, err := pkigen.GenerateDevPKI(
 		pkigen.WithOrganization("CrossCodex Test"),
 		pkigen.WithValidDuration(3650*24*time.Hour),
-		pkigen.WithDNSNames("localhost"),
+		// Include compose service names so containers can verify each other's
+		// server certs when connecting by service name (e.g. db, nats).
+		pkigen.WithDNSNames("localhost", "db", "nats", "storage", "authn-proxy", "grpc"),
 		pkigen.WithIPs(net.IPv4(127, 0, 0, 1)),
 	)
 	if err != nil {

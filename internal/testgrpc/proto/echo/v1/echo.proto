@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package echo.v1;
+
+// TenantEchoService is a minimal gRPC service for integration testing.
+// It echoes the tenant ID extracted from context and optionally queries
+// the database via TenantPool to verify RLS isolation.
+service TenantEchoService {
+  // Echo returns the tenant ID from the server's context along with
+  // optional database query results.
+  rpc Echo(EchoRequest) returns (EchoResponse);
+}
+
+// EchoRequest is the input to the Echo RPC.
+message EchoRequest {
+  // Optional payload echoed back in the response.
+  string payload = 1;
+  // When true, the handler queries the database via TenantPool.
+  bool query_db = 2;
+  // When true, the handler publishes to NATS and returns the subject.
+  bool publish_nats = 3;
+}
+
+// EchoResponse contains the tenant context and optional query results.
+message EchoResponse {
+  // The tenant ID extracted from the request context.
+  string tenant_id = 1;
+  // The user ID extracted from the request context (may be empty).
+  string user_id = 2;
+  // Echoed payload from the request.
+  string payload = 3;
+  // Number of rows returned by the database query (when query_db=true).
+  int32 db_row_count = 4;
+  // NATS subject used for publish (when publish_nats=true).
+  string nats_subject = 5;
+}

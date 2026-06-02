@@ -3,6 +3,7 @@ package vectordb_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -33,8 +34,13 @@ func newTestStore(opts ...vectordb.Option) *vectordb.PgVectorStore {
 
 // mismatchCtx returns a context with "context-tenant" set, intended for use
 // with a param tenant of "param-tenant" to trigger a mismatch error.
+// Panics if the tenant ID is invalid — test helpers must use valid IDs.
 func mismatchCtx() context.Context {
-	return tenant.WithTenant(context.Background(), "context-tenant")
+	ctx, err := tenant.WithTenant(context.Background(), "context-tenant")
+	if err != nil {
+		panic(fmt.Sprintf("mismatchCtx: %v", err))
+	}
+	return ctx
 }
 
 // testFindSimilarQuery returns a FindSimilarQuery with standard test values.
@@ -130,12 +136,13 @@ var _ = Describe("VectorDB System", Ordered, func() {
 		Context("when validating query parameters for search safety", func() {
 			It("rejects queries with invalid limits to prevent resource exhaustion", func() {
 				store := newTestStore()
-				ctx := tenant.WithTenant(context.Background(), "test-tenant")
+				ctx, err := tenant.WithTenant(context.Background(), "test-tenant")
+				Expect(err).NotTo(HaveOccurred())
 
 				By("rejecting zero limit")
 				q := testFindSimilarQuery()
 				q.Limit = 0
-				_, err := store.FindSimilar(ctx, "test-tenant", q)
+				_, err = store.FindSimilar(ctx, "test-tenant", q)
 				Expect(err).To(HaveOccurred())
 				Expect(err).To(MatchError(ContainSubstring("limit must be positive")))
 
@@ -148,12 +155,13 @@ var _ = Describe("VectorDB System", Ordered, func() {
 
 			It("rejects queries with empty vectors to prevent meaningless searches", func() {
 				store := newTestStore()
-				ctx := tenant.WithTenant(context.Background(), "test-tenant")
+				ctx, err := tenant.WithTenant(context.Background(), "test-tenant")
+				Expect(err).NotTo(HaveOccurred())
 
 				By("rejecting empty vector slice")
 				q := testFindSimilarQuery()
 				q.Vector = []float32{}
-				_, err := store.FindSimilar(ctx, "test-tenant", q)
+				_, err = store.FindSimilar(ctx, "test-tenant", q)
 				Expect(err).To(HaveOccurred())
 				Expect(err).To(MatchError(ContainSubstring("query vector cannot be empty")))
 
@@ -168,9 +176,10 @@ var _ = Describe("VectorDB System", Ordered, func() {
 		Context("when handling batch operations efficiently", func() {
 			It("treats empty batch as a no-op without errors", func() {
 				store := newTestStore()
-				ctx := tenant.WithTenant(context.Background(), "test-tenant")
+				ctx, err := tenant.WithTenant(context.Background(), "test-tenant")
+				Expect(err).NotTo(HaveOccurred())
 
-				err := store.StoreBatch(ctx, "test-tenant", []vectordb.Embedding{})
+				err = store.StoreBatch(ctx, "test-tenant", []vectordb.Embedding{})
 				Expect(err).NotTo(HaveOccurred())
 			})
 		})

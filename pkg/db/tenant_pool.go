@@ -3,66 +3,46 @@ package db
 import (
 	"context"
 	"fmt"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-type tenantKey struct{}
-type userKey struct{}
-
-// ContextWithTenant returns a context carrying the given tenant ID.
-func ContextWithTenant(ctx context.Context, tenantID string) context.Context {
-	return context.WithValue(ctx, tenantKey{}, tenantID)
-}
-
-// ContextWithUser returns a context carrying the given user ID.
-// When set, RLS job ownership policies restrict visibility to the user's
-// own jobs. When not set, service-level access sees all jobs in the tenant.
-func ContextWithUser(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, userKey{}, userID)
-}
-
-// TenantFromContext extracts the tenant ID from a context.
-func TenantFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(tenantKey{}).(string)
-	return v
-}
-
-// UserFromContext extracts the user ID from a context.
-func UserFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(userKey{}).(string)
-	return v
-}
-
+// tenantPool wraps a Pool and enforces tenant-scoped Row-Level Security.
+// All operations require a tenant ID in the context (set via tenant.WithTenant).
 type tenantPool struct {
 	pool Pool
 }
 
-// NewTenantPool creates a TenantConnection that enforces tenant-scoped
-// RLS on every transaction.
+// NewTenantPool creates a TenantConnection that enforces RLS on every transaction.
 func NewTenantPool(pool Pool) TenantConnection {
 	return &tenantPool{pool: pool}
 }
 
+// Begin starts a transaction with tenant-scoped RLS.
+// The tenant ID is extracted from the context via tenant.FromContext.
+// Returns ErrTenantRequired if no tenant is present in the context.
 func (tp *tenantPool) Begin(ctx context.Context) (Transaction, error) {
-	tenantID := TenantFromContext(ctx)
-	if tenantID == "" {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
 		return nil, ErrTenantRequired
 	}
 
 	tx, err := tp.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("begin tenant transaction: %w", err)
 	}
 
+	// Set the tenant for RLS policies
 	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
 		_ = tx.Rollback()
-		return nil, fmt.Errorf("failed to set tenant context: %w", err)
+		return nil, fmt.Errorf("set tenant session variable: %w", err)
 	}
 
-	userID := UserFromContext(ctx)
-	if userID != "" {
+	// Set the user if present (optional for RLS)
+	if userID := tenant.UserFromContext(ctx); userID != "" {
 		if err := tx.Exec(ctx, "SELECT set_config('app.current_user', $1, true)", userID); err != nil {
 			_ = tx.Rollback()
-			return nil, fmt.Errorf("failed to set user context: %w", err)
+			return nil, fmt.Errorf("set user session variable: %w", err)
 		}
 	}
 
@@ -86,10 +66,12 @@ func (tp *tenantPool) Exec(_ context.Context, _ string, _ ...any) error {
 	return ErrTenantRequired
 }
 
+// Close releases the underlying connection pool.
 func (tp *tenantPool) Close() error {
 	return tp.pool.Close()
 }
 
+// errRow implements Row for rejected QueryRow calls.
 type errRow struct {
 	err error
 }

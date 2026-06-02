@@ -3,8 +3,10 @@
 package natsbus_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -302,5 +304,27 @@ func TestEmbeddedXDGStateHome(t *testing.T) {
 	expectedDir := filepath.Join(customDir, "crosscodex", "nats")
 	if _, err := os.Stat(expectedDir); os.IsNotExist(err) {
 		t.Errorf("expected store dir %q to exist", expectedDir)
+	}
+}
+
+func TestIntegration_Publish_MissingTenantContext(t *testing.T) {
+	client := newEmbeddedClient(t)
+
+	// A subject requires a valid tenant to construct, so we use a pre-built
+	// subject string to test the publish path with a bare context.
+	subject, err := natsbus.WorkSubject("acme-corp", natsbus.TaskClassify, "job-001")
+	if err != nil {
+		t.Fatalf("subject: %v", err)
+	}
+
+	// Publish with a context that has no tenant — should fail.
+	err = client.Publish(context.Background(), subject, []byte("hello"))
+	if err == nil {
+		t.Fatal("expected error when publishing without tenant context, got nil")
+	}
+
+	// Verify the error mentions tenant.
+	if !strings.Contains(err.Error(), "tenant") {
+		t.Errorf("error should mention tenant, got: %v", err)
 	}
 }

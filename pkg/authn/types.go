@@ -19,6 +19,11 @@ const (
 	AuthMethodSAML AuthMethod = "saml"
 )
 
+const (
+	// RoleAdmin is the well-known admin role identifier.
+	RoleAdmin = "admin"
+)
+
 // Identity represents an authenticated user or service.
 type Identity struct {
 	Subject  string         // Who: CN, email, or principal name

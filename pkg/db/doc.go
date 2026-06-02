@@ -36,8 +36,8 @@
 // commit. Direct Query/Exec calls on TenantPool return ErrTenantRequired
 // because SET LOCAL has no effect outside a transaction.
 //
-//	ctx := db.ContextWithTenant(ctx, tenantID)
-//	ctx  = db.ContextWithUser(ctx, userID)  // optional: limits to user's own jobs
+//	ctx, err := tenant.WithTenant(ctx, tenantID)
+//	ctx  = tenant.WithUser(ctx, userID)  // optional: limits to user's own jobs
 //
 //	tx, err := tenantConn.Begin(ctx)
 //	if err != nil { return err }

@@ -56,7 +56,8 @@ var _ = Describe("Tenant System", Ordered, func() {
 
 				By("creating tenant-scoped context")
 				validTenant := testspecs.StandardTenantContexts["valid-tenant"]
-				ctx := tenant.WithTenant(context.Background(), validTenant.TenantID)
+				ctx, err := tenant.WithTenant(context.Background(), validTenant.TenantID)
+				Expect(err).NotTo(HaveOccurred())
 
 				By("extracting tenant ID reliably from context")
 				extractedTenantID, err := tenant.FromContext(ctx)
@@ -79,8 +80,10 @@ var _ = Describe("Tenant System", Ordered, func() {
 				tenant2 := testspecs.StandardTenantContexts["min-length"]
 
 				By("creating isolated contexts for different tenants")
-				ctx1 := tenant.WithTenant(context.Background(), tenant1.TenantID)
-				ctx2 := tenant.WithTenant(context.Background(), tenant2.TenantID)
+				ctx1, err1 := tenant.WithTenant(context.Background(), tenant1.TenantID)
+				Expect(err1).NotTo(HaveOccurred())
+				ctx2, err2 := tenant.WithTenant(context.Background(), tenant2.TenantID)
+				Expect(err2).NotTo(HaveOccurred())
 
 				By("ensuring contexts maintain separate tenant identities")
 				id1, err1 := tenant.FromContext(ctx1)
@@ -302,12 +305,79 @@ var _ = Describe("Tenant System", Ordered, func() {
 
 			It("creates context with tenant correctly", func() {
 				tenantID := "test-tenant"
-				ctx := tenant.WithTenant(context.Background(), tenantID)
+				ctx, err := tenant.WithTenant(context.Background(), tenantID)
+				Expect(err).NotTo(HaveOccurred())
 
 				extractedID, err := tenant.FromContext(ctx)
 				testspecs.AssertNoError(err)
 				Expect(extractedID).To(Equal(tenantID))
 			})
+		})
+	})
+
+	// =================================================================
+	// LEVEL 4: WITHTENANT VALIDATION AT INJECTION
+	// These specs test that WithTenant rejects invalid IDs before storing them
+	// =================================================================
+
+	Describe("WithTenant Validation at Injection", func() {
+		Context("when injecting tenant with validation", func() {
+			It("rejects an invalid tenant ID", func() {
+				ctx, err := tenant.WithTenant(context.Background(), "BAD!")
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, tenant.ErrInvalidTenant)).To(BeTrue())
+				// Original context returned unchanged
+				_, extractErr := tenant.FromContext(ctx)
+				Expect(errors.Is(extractErr, tenant.ErrNoTenant)).To(BeTrue())
+			})
+
+			It("rejects an empty tenant ID", func() {
+				ctx, err := tenant.WithTenant(context.Background(), "")
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, tenant.ErrInvalidTenant)).To(BeTrue())
+				_, extractErr := tenant.FromContext(ctx)
+				Expect(errors.Is(extractErr, tenant.ErrNoTenant)).To(BeTrue())
+			})
+
+			It("accepts a valid tenant ID", func() {
+				ctx, err := tenant.WithTenant(context.Background(), "acme-corp")
+				Expect(err).NotTo(HaveOccurred())
+				id, extractErr := tenant.FromContext(ctx)
+				Expect(extractErr).NotTo(HaveOccurred())
+				Expect(id).To(Equal("acme-corp"))
+			})
+		})
+	})
+
+	// =================================================================
+	// LEVEL 5: USER CONTEXT PROPAGATION
+	// These specs test WithUser / UserFromContext functionality
+	// =================================================================
+
+	Describe("User Context", func() {
+		It("stores and retrieves a user ID", func() {
+			ctx := tenant.WithUser(context.Background(), "alice")
+			Expect(tenant.UserFromContext(ctx)).To(Equal("alice"))
+		})
+
+		It("returns empty string when no user is set", func() {
+			Expect(tenant.UserFromContext(context.Background())).To(BeEmpty())
+		})
+
+		It("ignores empty user ID (no-op)", func() {
+			ctx := tenant.WithUser(context.Background(), "")
+			Expect(tenant.UserFromContext(ctx)).To(BeEmpty())
+		})
+
+		It("coexists with tenant context", func() {
+			ctx, err := tenant.WithTenant(context.Background(), "acme-corp")
+			Expect(err).NotTo(HaveOccurred())
+			ctx = tenant.WithUser(ctx, "bob")
+
+			id, err := tenant.FromContext(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(id).To(Equal("acme-corp"))
+			Expect(tenant.UserFromContext(ctx)).To(Equal("bob"))
 		})
 	})
 })

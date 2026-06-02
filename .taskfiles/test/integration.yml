@@ -65,6 +65,10 @@ tasks:
       TEST_AUTHN_CA: "{{.TEST_DIR}}/certs/ca.pem"
       TEST_AUTHN_CERT: "{{.TEST_DIR}}/certs/client.pem"
       TEST_AUTHN_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+      TEST_GRPC_ADDR: "localhost:19090"
+      TEST_GRPC_CA: "{{.TEST_DIR}}/certs/ca.pem"
+      TEST_GRPC_CERT: "{{.TEST_DIR}}/certs/client.pem"
+      TEST_GRPC_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
     cmds:
       - task: ensure-deps
       - task: compose-up
@@ -81,6 +85,7 @@ tasks:
       - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out {{.ROOT_DIR}}/pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
       - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
       - go test -v -tags integration_authn -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-authn-coverage.out {{.ROOT_DIR}}/pkg/authn/... 2>&1 | tee {{.TEST_DIR}}/integration-authn.log
+      - go test -v -tags integration_grpc -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-grpc-coverage.out {{.ROOT_DIR}}/internal/testgrpc/... 2>&1 | tee {{.TEST_DIR}}/integration-grpc.log
 
   db:
     desc: Run database integration tests (db, graphdb, vectordb)
@@ -148,6 +153,28 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       - go test -v -tags integration_authn -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-authn-coverage.out {{.ROOT_DIR}}/pkg/authn/... 2>&1 | tee {{.TEST_DIR}}/integration-authn.log
 
+  grpc:
+    desc: Run gRPC tenant integration tests
+    deps: [ensure-deps]
+    env:
+      TEST_GRPC_ADDR: "localhost:19090"
+      TEST_GRPC_CA: "{{.TEST_DIR}}/certs/ca.pem"
+      TEST_GRPC_CERT: "{{.TEST_DIR}}/certs/client.pem"
+      TEST_GRPC_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
+      TEST_NATS_URL: "tls://localhost:14222"
+      TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
+      TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
+      TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+    cmds:
+      - task: compose-up
+        vars: { PROFILE: grpc }
+      - defer:
+          task: compose-down
+          vars: { PROFILE: grpc }
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration_grpc -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-grpc-coverage.out {{.ROOT_DIR}}/internal/testgrpc/... 2>&1 | tee {{.TEST_DIR}}/integration-grpc.log
+
   clean:
     desc: Remove all integration test containers and their volumes
     cmds:
@@ -162,10 +189,10 @@ tasks:
       - sh: '[ "{{.COMPOSE_CMD}}" != "MISSING" ]'
         msg: "Neither 'docker compose' nor 'podman-compose' found. Install one to run integration tests."
     vars:
-      NEEDS_CERTS: '{{if or (eq .PROFILE "db") (eq .PROFILE "nats") (eq .PROFILE "authn") (eq .PROFILE "all")}}true{{else}}false{{end}}'
+      NEEDS_CERTS: '{{if or (eq .PROFILE "db") (eq .PROFILE "nats") (eq .PROFILE "authn") (eq .PROFILE "grpc") (eq .PROFILE "all")}}true{{else}}false{{end}}'
     cmds:
       - task: '{{if eq .NEEDS_CERTS "true"}}prepare-cert-volume{{else}}ensure-deps{{end}}'
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} up -d"
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} up -d --build"
       - task: compose-health
         vars:
           PROFILE: "{{.PROFILE}}"
@@ -206,11 +233,17 @@ tasks:
           authn)
             wait_for "authn-proxy" {{.CONTAINER_ENGINE}} exec crosscodex-test-authn nginx -t
             ;;
+          grpc)
+            wait_for "postgres" {{.CONTAINER_ENGINE}} exec crosscodex-test-db pg_isready -U postgres || exit 1
+            wait_for "nats" {{.CONTAINER_ENGINE}} exec crosscodex-test-nats nats-server --help || exit 1
+            wait_for "grpc" bash -c "echo > /dev/tcp/localhost/19090"
+            ;;
           all)
             wait_for "postgres" {{.CONTAINER_ENGINE}} exec crosscodex-test-db pg_isready -U postgres || exit 1
             wait_for "rustfs" curl -so /dev/null http://localhost:19000/ || exit 1
             wait_for "nats" {{.CONTAINER_ENGINE}} exec crosscodex-test-nats nats-server --help || exit 1
-            wait_for "authn-proxy" {{.CONTAINER_ENGINE}} exec crosscodex-test-authn nginx -t
+            wait_for "authn-proxy" {{.CONTAINER_ENGINE}} exec crosscodex-test-authn nginx -t || exit 1
+            wait_for "grpc" bash -c "echo > /dev/tcp/localhost/19090"
             ;;
         esac
 

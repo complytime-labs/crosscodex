@@ -2,6 +2,7 @@ package testspecs
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -137,9 +138,14 @@ var StandardErrors = map[string]ErrorCondition{
 
 // Context creation helpers for test setup
 
-// CreateTenantContext creates a context with the specified tenant ID
+// CreateTenantContext builds a context with the given tenant ID.
+// Panics if the tenant ID is invalid — test fixtures must use valid IDs.
 func CreateTenantContext(tenantID string) context.Context {
-	return tenant.WithTenant(context.Background(), tenantID)
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	if err != nil {
+		panic(fmt.Sprintf("CreateTenantContext(%q): %v", tenantID, err))
+	}
+	return ctx
 }
 
 // CreateTimeoutContext creates a context with the specified timeout

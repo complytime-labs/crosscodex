@@ -10,7 +10,11 @@ tasks:
     cmd: task dev --list
 
   generate:
-    desc: Generate protobuf code using buf
+    desc: Generate all protobuf code
+    deps: [generate:api, generate:testgrpc]
+
+  generate:api:
+    desc: Generate API protobuf code using buf
     dir: "{{.ROOT_DIR}}/api/proto"
     cmds:
       - buf generate
@@ -19,6 +23,17 @@ tasks:
       - buf.gen.yaml
     generates:
       - ../gen/go/**/*.pb.go
+
+  generate:testgrpc:
+    desc: Generate testgrpc protobuf code using buf
+    dir: "{{.ROOT_DIR}}/internal/testgrpc/proto"
+    cmds:
+      - buf generate
+    sources:
+      - "**/*.proto"
+      - buf.gen.yaml
+    generates:
+      - ../gen/**/*.pb.go
 
   build:
     desc: Build all binaries
