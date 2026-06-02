@@ -87,6 +87,12 @@ tasks:
     cmds:
       - go mod tidy
 
+  vulncheck:
+    desc: Run govulncheck vulnerability scanner
+    deps: [deps]
+    cmds:
+      - go tool govulncheck {{.ROOT_DIR}}/...
+
   fetch-schemas:
     desc: Fetch OSCAL and gemara schemas
     vars:

@@ -1,6 +1,6 @@
 module github.com/complytime-labs/crosscodex
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.10
@@ -10,7 +10,7 @@ require (
 	github.com/aws/smithy-go v1.27.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/nats-io/nats-server/v2 v2.14.2
 	github.com/nats-io/nats.go v1.52.0
 	github.com/onsi/ginkgo/v2 v2.29.0
@@ -303,12 +303,12 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260508192327-42602be52be6 // indirect
 	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
-	golang.org/x/tools/go/expect v0.1.1-deprecated // indirect
-	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated // indirect
+	golang.org/x/vuln v1.3.0 // indirect
 	google.golang.org/api v0.271.0 // indirect
 	google.golang.org/genproto v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
@@ -324,4 +324,5 @@ require (
 tool (
 	github.com/go-task/task/v3/cmd/task
 	github.com/golangci/golangci-lint/cmd/golangci-lint
+	golang.org/x/vuln/cmd/govulncheck
 )

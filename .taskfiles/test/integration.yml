@@ -5,8 +5,10 @@ vars:
   TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
   CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
   POSTGRES_USER: '{{.POSTGRES_USER | default "postgres"}}'
+  # Test-only credentials for local integration testing. Do NOT use in staging or production.
   POSTGRES_PASSWORD: '{{.POSTGRES_PASSWORD | default "integration"}}'
   POSTGRES_DB: '{{.POSTGRES_DB | default "crosscodex_test"}}'
+  # Test-only credentials for local integration testing. Do NOT use in staging or production.
   RUSTFS_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY | default "rustfsadmin"}}'
   RUSTFS_SECRET_KEY: '{{.RUSTFS_SECRET_KEY | default "rustfsadmin"}}'
   RUSTFS_BUCKET: '{{.RUSTFS_BUCKET | default "crosscodex-test"}}'

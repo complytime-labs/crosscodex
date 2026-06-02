@@ -27,7 +27,6 @@ jobs:
       - uses: ./.github/actions/go-setup
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          install-govulncheck: "true"
 
       - name: Build
         run: task build
@@ -38,7 +37,7 @@ jobs:
 
       - name: Security scan
         if: matrix.fips == ''
-        run: govulncheck ./...
+        run: task dev:vulncheck
 
       - name: Test
         run: task test
