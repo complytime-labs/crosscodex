@@ -8,6 +8,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
@@ -118,6 +120,37 @@ var _ = Describe("Database Package", Ordered, func() {
 
 				// Also verify it is usable as a Connection
 				var _ db.Connection = conn
+			})
+		})
+	})
+
+	Describe("Telemetry Integration", func() {
+		Context("when creating a pool without telemetry", func() {
+			It("has nil telemetry fields", func() {
+				conn := db.ExportNewClosedPool()
+				// ExportNewClosedPool returns Connection; the underlying
+				// *pgPool also satisfies Pool, which ExportTelemetryFields expects.
+				pool, ok := conn.(db.Pool)
+				Expect(ok).To(BeTrue(), "closed pool should satisfy Pool interface")
+				tf := db.ExportTelemetryFields(pool)
+				Expect(tf.HasTracer).To(BeFalse(), "tracer should be nil without telemetry")
+				Expect(tf.HasMeter).To(BeFalse(), "meter should be nil without telemetry")
+				Expect(tf.HasQueryCounter).To(BeFalse(), "queryCounter should be nil without telemetry")
+				Expect(tf.HasQueryLatency).To(BeFalse(), "queryLatency should be nil without telemetry")
+				Expect(tf.HasTxCounter).To(BeFalse(), "txCounter should be nil without telemetry")
+				Expect(tf.HasConnGauge).To(BeFalse(), "connGauge should be nil without telemetry")
+			})
+		})
+
+		Context("when WithTelemetry option is provided", func() {
+			It("creates a valid option function", func() {
+				tp := tracenoop.NewTracerProvider()
+				tracer := tp.Tracer("db-test")
+				mp := metricnoop.NewMeterProvider()
+				meter := mp.Meter("db-test")
+
+				opt := db.WithTelemetry(tracer, meter)
+				Expect(opt).NotTo(BeNil())
 			})
 		})
 	})

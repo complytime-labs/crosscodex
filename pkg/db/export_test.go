@@ -45,3 +45,29 @@ func ExportNewClosedPool() Connection {
 func ExportNewErrRow(err error) Row {
 	return &errRow{err: err}
 }
+
+// TelemetryFields exposes telemetry instrument state for test assertions.
+type TelemetryFields struct {
+	HasTracer       bool
+	HasMeter        bool
+	HasQueryCounter bool
+	HasQueryLatency bool
+	HasTxCounter    bool
+	HasConnGauge    bool
+}
+
+// ExportTelemetryFields returns telemetry instrument state from a pgPool.
+func ExportTelemetryFields(p Pool) TelemetryFields {
+	pp, ok := p.(*pgPool)
+	if !ok {
+		return TelemetryFields{}
+	}
+	return TelemetryFields{
+		HasTracer:       pp.tracer != nil,
+		HasMeter:        pp.meter != nil,
+		HasQueryCounter: pp.queryCounter != nil,
+		HasQueryLatency: pp.queryLatency != nil,
+		HasTxCounter:    pp.txCounter != nil,
+		HasConnGauge:    pp.connGauge != nil,
+	}
+}

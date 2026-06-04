@@ -38,7 +38,7 @@ func testTenantCtx(t *testing.T, tenantID string) context.Context {
 func subscribeOne(t *testing.T, client natsbus.Client, ctx context.Context, subject string) <-chan *natsbus.Message {
 	t.Helper()
 	received := make(chan *natsbus.Message, 1)
-	sub, err := client.Subscribe(ctx, subject, func(msg *natsbus.Message) error {
+	sub, err := client.Subscribe(ctx, subject, func(_ context.Context, msg *natsbus.Message) error {
 		received <- msg
 		return nil
 	})

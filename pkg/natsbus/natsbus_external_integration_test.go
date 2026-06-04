@@ -3,6 +3,7 @@
 package natsbus_test
 
 import (
+	"context"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -47,7 +48,7 @@ func newExternalClient(t *testing.T) natsbus.Client {
 	natsURL := os.Getenv("TEST_NATS_URL")
 	tlsCfgInput := loadTLSConfig(t)
 
-	tlsCfg, err := tlsconfig.BuildTLSConfig(*tlsCfgInput, "nats")
+	tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), *tlsCfgInput, "nats")
 	if err != nil {
 		t.Fatalf("build TLS config: %v", err)
 	}
@@ -120,7 +121,7 @@ func TestExternalQueueGroup(t *testing.T) {
 	const numMessages = 10
 	var count atomic.Int64
 
-	sub, err := client.QueueSubscribe(ctx, subject, "ext-workers", func(msg *natsbus.Message) error {
+	sub, err := client.QueueSubscribe(ctx, subject, "ext-workers", func(_ context.Context, msg *natsbus.Message) error {
 		count.Add(1)
 		return nil
 	})

@@ -33,3 +33,39 @@ type ExportS3API interface {
 func ExportNewS3WithClient(client ExportS3API, bucket, tenantID string) Provider {
 	return newS3WithClient(client, bucket, tenantID)
 }
+
+// TelemetryFields exposes telemetry state for test assertions.
+type TelemetryFields struct {
+	HasTracer    bool
+	HasMeter     bool
+	HasOpCounter bool
+	HasOpLatency bool
+}
+
+// ExportLocalTelemetryFields returns telemetry field presence for local providers.
+func ExportLocalTelemetryFields(p Provider) TelemetryFields {
+	lp, ok := p.(*localProvider)
+	if !ok {
+		return TelemetryFields{}
+	}
+	return TelemetryFields{
+		HasTracer:    lp.tracer != nil,
+		HasMeter:     lp.meter != nil,
+		HasOpCounter: lp.opCounter != nil,
+		HasOpLatency: lp.opLatency != nil,
+	}
+}
+
+// ExportS3TelemetryFields returns telemetry field presence for S3 providers.
+func ExportS3TelemetryFields(p Provider) TelemetryFields {
+	sp, ok := p.(*s3Provider)
+	if !ok {
+		return TelemetryFields{}
+	}
+	return TelemetryFields{
+		HasTracer:    sp.tracer != nil,
+		HasMeter:     sp.meter != nil,
+		HasOpCounter: sp.opCounter != nil,
+		HasOpLatency: sp.opLatency != nil,
+	}
+}

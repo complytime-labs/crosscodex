@@ -1,19 +1,22 @@
 // Package telemetry provides OpenTelemetry setup for traces, metrics, and logs.
 //
-// Configures exporters, samplers, and resource attributes for distributed tracing.
+// Init creates TracerProvider and MeterProvider with OTLP exporters, registers
+// them globally, wraps the default slog handler with trace ID injection, and
+// returns a shutdown function. An empty resolved endpoint disables the signal
+// (no-op provider, no error).
 //
 // Example usage:
 //
-//	provider, err := telemetry.NewProvider(ctx, telemetry.Config{
-//	    ServiceName: "crosscodex-ingestion",
-//	    Endpoint:    "localhost:4317",
-//	})
+//	shutdown, err := telemetry.Init(ctx, cfg.Observability,
+//	    telemetry.WithServiceName("crosscodex-ingestion"),
+//	    telemetry.WithServiceVersion("0.1.0"),
+//	)
 //	if err != nil {
 //	    return err
 //	}
-//	defer provider.Shutdown(ctx)
+//	defer shutdown(ctx)
 //
-//	tracer := provider.TracerProvider().Tracer("ingestion")
+//	tracer := otel.GetTracerProvider().Tracer("ingestion")
 //	ctx, span := tracer.Start(ctx, "process-document")
 //	defer span.End()
 package telemetry

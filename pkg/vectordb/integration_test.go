@@ -13,6 +13,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
@@ -333,5 +334,107 @@ func testTenantIsolation(t *testing.T, store *vectordb.PgVectorStore, sqlDB *sql
 	}
 	if !found {
 		t.Error("tenant-2 cannot see their own control A.6.1")
+	}
+}
+
+// TestVectorDBTelemetry verifies that StoreEmbedding and FindSimilar produce
+// the expected OpenTelemetry spans and metrics when WithTelemetry is configured.
+func TestVectorDBTelemetry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	sqlDB, err := sql.Open("pgx", testDSN)
+	if err != nil {
+		t.Fatalf("failed to connect to database: %v", err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	t.Cleanup(func() { cleanupTestData(t, sqlDB) })
+
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("failed to create test provider: %v", err)
+	}
+	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+
+	tracer := tp.TracerProvider().Tracer("test")
+	meter := tp.MeterProvider().Meter("test")
+
+	store, err := vectordb.NewPgVectorStore(sqlDB, vectordb.WithTelemetry(tracer, meter))
+	if err != nil {
+		t.Fatalf("failed to create vector store: %v", err)
+	}
+
+	ctx, err := tenant.WithTenant(context.Background(), "test-tenant")
+	if err != nil {
+		t.Fatalf("WithTenant: %v", err)
+	}
+
+	// Exercise StoreEmbedding
+	err = store.StoreEmbedding(ctx, "test-tenant", vectordb.Embedding{
+		CatalogID: "nist-800-53",
+		ControlID: "TEL-1",
+		Model:     "text-embedding-ada-002",
+		Vector:    testVector(0.7, 0.8, 0.9),
+	})
+	if err != nil {
+		t.Fatalf("StoreEmbedding failed: %v", err)
+	}
+
+	// Exercise FindSimilar
+	_, err = store.FindSimilar(ctx, "test-tenant", vectordb.FindSimilarQuery{
+		CatalogID: "nist-800-53",
+		Model:     "text-embedding-ada-002",
+		Vector:    testVector(0.7, 0.8, 0.9),
+		Limit:     5,
+	})
+	if err != nil {
+		t.Fatalf("FindSimilar failed: %v", err)
+	}
+
+	// Assert spans
+	spans := tp.GetSpans()
+
+	storeSpan := telemetrytest.FindSpan(spans, "vectordb.store_embedding")
+	if storeSpan == nil {
+		t.Fatal("expected span vectordb.store_embedding, not found")
+	}
+	if val, ok := telemetrytest.SpanAttribute(storeSpan, "tenant.id"); !ok || val.AsString() != "test-tenant" {
+		t.Errorf("store_embedding span: want tenant.id=test-tenant, got ok=%v val=%v", ok, val)
+	}
+
+	searchSpan := telemetrytest.FindSpan(spans, "vectordb.find_similar")
+	if searchSpan == nil {
+		t.Fatal("expected span vectordb.find_similar, not found")
+	}
+	if val, ok := telemetrytest.SpanAttribute(searchSpan, "tenant.id"); !ok || val.AsString() != "test-tenant" {
+		t.Errorf("find_similar span: want tenant.id=test-tenant, got ok=%v val=%v", ok, val)
+	}
+
+	// Assert metrics
+	rm := tp.GetMetrics()
+
+	storedMetric := telemetrytest.FindMetric(rm, "vectordb.embeddings.stored.total")
+	if storedMetric == nil {
+		t.Fatal("expected metric vectordb.embeddings.stored.total, not found")
+	}
+	storedCount, err := telemetrytest.CounterValue(storedMetric)
+	if err != nil {
+		t.Fatalf("CounterValue(embeddings.stored.total): %v", err)
+	}
+	if storedCount < 1 {
+		t.Errorf("vectordb.embeddings.stored.total = %d, want >= 1", storedCount)
+	}
+
+	searchMetric := telemetrytest.FindMetric(rm, "vectordb.searches.total")
+	if searchMetric == nil {
+		t.Fatal("expected metric vectordb.searches.total, not found")
+	}
+	searchCount, err := telemetrytest.CounterValue(searchMetric)
+	if err != nil {
+		t.Fatalf("CounterValue(searches.total): %v", err)
+	}
+	if searchCount < 1 {
+		t.Errorf("vectordb.searches.total = %d, want >= 1", searchCount)
 	}
 }

@@ -1,6 +1,9 @@
 package natsbus
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Stage represents a pipeline stage event.
 type Stage string
@@ -53,7 +56,9 @@ type MessageMetadata struct {
 }
 
 // MessageHandler processes received messages.
-type MessageHandler func(msg *Message) error
+// The context carries the reconstructed OTel trace context from the
+// publisher's provenance headers, enabling trace continuity across NATS.
+type MessageHandler func(ctx context.Context, msg *Message) error
 
 // StreamConfig defines a JetStream stream.
 type StreamConfig struct {

@@ -12,8 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
 func newEmbeddedClient(t *testing.T) natsbus.Client {
@@ -99,7 +103,7 @@ func TestEmbeddedQueueGroupDistribution(t *testing.T) {
 	subs := make([]natsbus.Subscription, numWorkers)
 	for i := range numWorkers {
 		workerIdx := i
-		sub, err := client.QueueSubscribe(ctx, subject, "test-workers", func(msg *natsbus.Message) error {
+		sub, err := client.QueueSubscribe(ctx, subject, "test-workers", func(_ context.Context, msg *natsbus.Message) error {
 			counts[workerIdx].Add(1)
 			return nil
 		})
@@ -202,7 +206,7 @@ func TestEmbeddedTenantIsolation(t *testing.T) {
 	var receivedByA atomic.Int64
 	var receivedByB atomic.Int64
 
-	subA, err := client.Subscribe(ctxA, subjectA, func(msg *natsbus.Message) error {
+	subA, err := client.Subscribe(ctxA, subjectA, func(_ context.Context, msg *natsbus.Message) error {
 		receivedByA.Add(1)
 		return nil
 	})
@@ -211,7 +215,7 @@ func TestEmbeddedTenantIsolation(t *testing.T) {
 	}
 	defer subA.Unsubscribe()
 
-	subB, err := client.Subscribe(ctxB, subjectB, func(msg *natsbus.Message) error {
+	subB, err := client.Subscribe(ctxB, subjectB, func(_ context.Context, msg *natsbus.Message) error {
 		receivedByB.Add(1)
 		return nil
 	})
@@ -326,5 +330,324 @@ func TestIntegration_Publish_MissingTenantContext(t *testing.T) {
 	// Verify the error mentions tenant.
 	if !strings.Contains(err.Error(), "tenant") {
 		t.Errorf("error should mention tenant, got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry
+// ---------------------------------------------------------------------------
+
+func newEmbeddedClientWithTelemetry(t *testing.T, tracer trace.Tracer, meter metric.Meter) natsbus.Client {
+	t.Helper()
+
+	storeDir := filepath.Join(t.TempDir(), "nats-store")
+	cfg := config.NATSConfig{
+		URL: "",
+		Embedded: config.NATSEmbeddedConfig{
+			StoreDir: storeDir,
+		},
+		Streams: defaultTestStreamsConfig(),
+	}
+
+	client, err := natsbus.New(cfg, natsbus.WithTelemetry(tracer, meter))
+	if err != nil {
+		t.Fatalf("failed to create embedded client with telemetry: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close error: %v", err)
+		}
+	})
+	return client
+}
+
+func TestTelemetrySpansOnPublish(t *testing.T) {
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("telemetrytest.NewTestProvider: %v", err)
+	}
+	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+
+	tracer := tp.TracerProvider().Tracer("natsbus-test")
+	meter := tp.MeterProvider().Meter("natsbus-test")
+	client := newEmbeddedClientWithTelemetry(t, tracer, meter)
+
+	ctx := testTenantCtx(t, "acme-corp")
+	subject, err := natsbus.WorkSubject("acme-corp", natsbus.TaskClassify, "job-tel")
+	if err != nil {
+		t.Fatalf("subject: %v", err)
+	}
+
+	received := subscribeOne(t, client, ctx, subject)
+
+	payload := []byte(`{"task":"classify","control":"AC-1"}`)
+	publishOrFail(t, client, ctx, subject, payload)
+	receiveOne(t, received, 5*time.Second)
+
+	// Assert publish span exists with expected attributes.
+	spans := tp.GetSpans()
+	pubSpan := telemetrytest.FindSpan(spans, "natsbus.Publish")
+	if pubSpan == nil {
+		t.Fatal("expected natsbus.Publish span, got none")
+	}
+
+	subjectAttr, ok := telemetrytest.SpanAttribute(pubSpan, "messaging.subject")
+	if !ok {
+		t.Error("natsbus.Publish span missing messaging.subject attribute")
+	} else if subjectAttr.AsString() != subject {
+		t.Errorf("messaging.subject = %q, want %q", subjectAttr.AsString(), subject)
+	}
+
+	tenantAttr, ok := telemetrytest.SpanAttribute(pubSpan, "tenant.id")
+	if !ok {
+		t.Error("natsbus.Publish span missing tenant.id attribute")
+	} else if tenantAttr.AsString() != "acme-corp" {
+		t.Errorf("tenant.id = %q, want %q", tenantAttr.AsString(), "acme-corp")
+	}
+
+	// Assert publish counter metric >= 1.
+	rm := tp.GetMetrics()
+	m := telemetrytest.FindMetric(rm, "natsbus.publish.total")
+	if m == nil {
+		t.Fatal("expected natsbus.publish.total metric, got none")
+	}
+	val, err := telemetrytest.CounterValue(m)
+	if err != nil {
+		t.Fatalf("CounterValue: %v", err)
+	}
+	if val < 1 {
+		t.Errorf("natsbus.publish.total = %d, want >= 1", val)
+	}
+
+	// Assert natsbus.Subscribe span exists with messaging.subject attribute.
+	subSpan := telemetrytest.FindSpan(spans, "natsbus.Subscribe")
+	if subSpan == nil {
+		t.Fatal("expected natsbus.Subscribe span, got none")
+	}
+	subSubjectAttr, ok := telemetrytest.SpanAttribute(subSpan, "messaging.subject")
+	if !ok {
+		t.Error("natsbus.Subscribe span missing messaging.subject attribute")
+	} else if subSubjectAttr.AsString() != subject {
+		t.Errorf("Subscribe messaging.subject = %q, want %q", subSubjectAttr.AsString(), subject)
+	}
+
+	// Assert publish duration histogram.
+	hm := telemetrytest.FindMetric(rm, "natsbus.publish.duration_ms")
+	if hm == nil {
+		t.Fatal("expected natsbus.publish.duration_ms metric, got none")
+	}
+	hc, err := telemetrytest.HistogramCount(hm)
+	if err != nil {
+		t.Fatalf("HistogramCount: %v", err)
+	}
+	if hc < 1 {
+		t.Errorf("natsbus.publish.duration_ms count = %d, want >= 1", hc)
+	}
+}
+
+func TestTelemetryTraceContextRoundTrip(t *testing.T) {
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("telemetrytest.NewTestProvider: %v", err)
+	}
+	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+
+	tracer := tp.TracerProvider().Tracer("natsbus-test")
+	meter := tp.MeterProvider().Meter("natsbus-test")
+	client := newEmbeddedClientWithTelemetry(t, tracer, meter)
+
+	ctx := testTenantCtx(t, "acme-corp")
+	subject, err := natsbus.WorkSubject("acme-corp", natsbus.TaskClassify, "job-trace")
+	if err != nil {
+		t.Fatalf("subject: %v", err)
+	}
+
+	// Create a parent span whose trace ID must survive the NATS round-trip.
+	ctx, parentSpan := tracer.Start(ctx, "test-publish")
+	publisherTraceID := parentSpan.SpanContext().TraceID()
+
+	// Subscribe with a handler that captures the delivered context.
+	type result struct {
+		sc trace.SpanContext
+	}
+	resultCh := make(chan result, 1)
+	sub, err := client.Subscribe(ctx, subject, func(handlerCtx context.Context, _ *natsbus.Message) error {
+		resultCh <- result{sc: trace.SpanContextFromContext(handlerCtx)}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	t.Cleanup(func() { sub.Unsubscribe() })
+
+	// Small delay for subscription propagation.
+	time.Sleep(100 * time.Millisecond)
+
+	payload := []byte(`{"task":"classify","control":"AC-1"}`)
+	publishOrFail(t, client, ctx, subject, payload)
+	parentSpan.End()
+
+	// Wait for the subscriber to deliver the context.
+	select {
+	case r := <-resultCh:
+		if r.sc.TraceID() != publisherTraceID {
+			t.Errorf("subscriber trace ID = %s, want %s (publisher trace ID)",
+				r.sc.TraceID(), publisherTraceID)
+		}
+		// After adding the consumer span, the context should carry a
+		// non-remote span (the natsbus.process span), not the raw
+		// remote span context from headers.
+		if !r.sc.IsValid() {
+			t.Error("subscriber SpanContext is not valid")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for subscriber context")
+	}
+
+	// Assert natsbus.process span exists with correct trace ID.
+	time.Sleep(100 * time.Millisecond) // allow span to flush
+	spans := tp.GetSpans()
+	processSpan := telemetrytest.FindSpan(spans, "natsbus.process")
+	if processSpan == nil {
+		t.Fatal("expected natsbus.process span, got none")
+	}
+	if processSpan.SpanContext().TraceID() != publisherTraceID {
+		t.Errorf("natsbus.process trace ID = %s, want %s",
+			processSpan.SpanContext().TraceID(), publisherTraceID)
+	}
+
+	subjectAttr, ok := telemetrytest.SpanAttribute(processSpan, "messaging.subject")
+	if !ok {
+		t.Error("natsbus.process span missing messaging.subject attribute")
+	} else if subjectAttr.AsString() != subject {
+		t.Errorf("messaging.subject = %q, want %q", subjectAttr.AsString(), subject)
+	}
+
+	tenantAttr, ok := telemetrytest.SpanAttribute(processSpan, "tenant.id")
+	if !ok {
+		t.Error("natsbus.process span missing tenant.id attribute")
+	} else if tenantAttr.AsString() != "acme-corp" {
+		t.Errorf("tenant.id = %q, want %q", tenantAttr.AsString(), "acme-corp")
+	}
+}
+
+func TestTelemetryQueueSubscribeSpan(t *testing.T) {
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("telemetrytest.NewTestProvider: %v", err)
+	}
+	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+
+	tracer := tp.TracerProvider().Tracer("natsbus-test")
+	meter := tp.MeterProvider().Meter("natsbus-test")
+	client := newEmbeddedClientWithTelemetry(t, tracer, meter)
+
+	ctx := testTenantCtx(t, "acme-corp")
+	subject, err := natsbus.WorkSubject("acme-corp", natsbus.TaskClassify, "job-qsub")
+	if err != nil {
+		t.Fatalf("subject: %v", err)
+	}
+
+	queueName := "telemetry-workers"
+	sub, err := client.QueueSubscribe(ctx, subject, queueName, func(_ context.Context, _ *natsbus.Message) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("QueueSubscribe: %v", err)
+	}
+	t.Cleanup(func() { sub.Unsubscribe() })
+
+	spans := tp.GetSpans()
+	qsSpan := telemetrytest.FindSpan(spans, "natsbus.QueueSubscribe")
+	if qsSpan == nil {
+		t.Fatal("expected natsbus.QueueSubscribe span, got none")
+	}
+
+	subjectAttr, ok := telemetrytest.SpanAttribute(qsSpan, "messaging.subject")
+	if !ok {
+		t.Error("natsbus.QueueSubscribe span missing messaging.subject attribute")
+	} else if subjectAttr.AsString() != subject {
+		t.Errorf("messaging.subject = %q, want %q", subjectAttr.AsString(), subject)
+	}
+
+	queueAttr, ok := telemetrytest.SpanAttribute(qsSpan, "messaging.queue")
+	if !ok {
+		t.Error("natsbus.QueueSubscribe span missing messaging.queue attribute")
+	} else if queueAttr.AsString() != queueName {
+		t.Errorf("messaging.queue = %q, want %q", queueAttr.AsString(), queueName)
+	}
+}
+
+func TestSubscriberMetrics(t *testing.T) {
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("telemetrytest.NewTestProvider: %v", err)
+	}
+	t.Cleanup(func() { tp.Shutdown(context.Background()) })
+
+	tracer := tp.TracerProvider().Tracer("natsbus-test")
+	meter := tp.MeterProvider().Meter("natsbus-test")
+	client := newEmbeddedClientWithTelemetry(t, tracer, meter)
+
+	ctx := testTenantCtx(t, "acme-corp")
+	subject, err := natsbus.WorkSubject("acme-corp", natsbus.TaskClassify, "job-metrics")
+	if err != nil {
+		t.Fatalf("subject: %v", err)
+	}
+
+	const messageCount = 3
+	var received atomic.Int32
+	done := make(chan struct{})
+
+	sub, err := client.Subscribe(ctx, subject, func(_ context.Context, _ *natsbus.Message) error {
+		if received.Add(1) == messageCount {
+			close(done)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	t.Cleanup(func() { sub.Unsubscribe() })
+
+	time.Sleep(100 * time.Millisecond)
+
+	payload := []byte(`{"task":"classify"}`)
+	for i := 0; i < messageCount; i++ {
+		publishOrFail(t, client, ctx, subject, payload)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timeout: received %d/%d messages", received.Load(), messageCount)
+	}
+
+	// Allow metrics to flush.
+	time.Sleep(100 * time.Millisecond)
+
+	rm := tp.GetMetrics()
+	counterMetric := telemetrytest.FindMetric(rm, "natsbus.process.total")
+	if counterMetric == nil {
+		t.Fatal("expected natsbus.process.total metric, got none")
+	}
+	counterVal, err := telemetrytest.CounterValue(counterMetric)
+	if err != nil {
+		t.Fatalf("counter value: %v", err)
+	}
+	if counterVal != int64(messageCount) {
+		t.Errorf("natsbus.process.total = %d, want %d", counterVal, messageCount)
+	}
+
+	histMetric := telemetrytest.FindMetric(rm, "natsbus.process.duration_ms")
+	if histMetric == nil {
+		t.Fatal("expected natsbus.process.duration_ms metric, got none")
+	}
+	histCount, err := telemetrytest.HistogramCount(histMetric)
+	if err != nil {
+		t.Fatalf("histogram count: %v", err)
+	}
+	if histCount != uint64(messageCount) {
+		t.Errorf("natsbus.process.duration_ms count = %d, want %d", histCount, messageCount)
 	}
 }

@@ -20,10 +20,13 @@ import (
 	smithy "github.com/aws/smithy-go"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -563,6 +566,182 @@ var _ = Describe("Storage System", Ordered, func() {
 			mock := newBDDMockS3()
 			return storage.ExportNewS3WithClient(mock, "test-bucket", "test-tenant")
 		}))
+	})
+
+	Describe("Telemetry Integration", func() {
+		Context("Local provider", func() {
+			Context("when created without telemetry", func() {
+				It("has nil telemetry fields", func() {
+					p, err := storage.NewLocal(GinkgoT().TempDir(), "test-tenant")
+					Expect(err).NotTo(HaveOccurred())
+					defer p.Close()
+
+					tf := storage.ExportLocalTelemetryFields(p)
+					Expect(tf.HasTracer).To(BeFalse(), "tracer should be nil without telemetry")
+					Expect(tf.HasMeter).To(BeFalse(), "meter should be nil without telemetry")
+					Expect(tf.HasOpCounter).To(BeFalse(), "opCounter should be nil without telemetry")
+					Expect(tf.HasOpLatency).To(BeFalse(), "opLatency should be nil without telemetry")
+				})
+			})
+
+			Context("when created with telemetry", func() {
+				It("initializes all telemetry instruments", func() {
+					tp := tracenoop.NewTracerProvider()
+					tracer := tp.Tracer("storage-test")
+					mp := metricnoop.NewMeterProvider()
+					meter := mp.Meter("storage-test")
+
+					p, err := storage.NewLocal(GinkgoT().TempDir(), "test-tenant", storage.WithLocalTelemetry(tracer, meter))
+					Expect(err).NotTo(HaveOccurred())
+					defer p.Close()
+
+					tf := storage.ExportLocalTelemetryFields(p)
+					Expect(tf.HasTracer).To(BeTrue(), "tracer should be set with telemetry")
+					Expect(tf.HasMeter).To(BeTrue(), "meter should be set with telemetry")
+					Expect(tf.HasOpCounter).To(BeTrue(), "opCounter should be set with telemetry")
+					Expect(tf.HasOpLatency).To(BeTrue(), "opLatency should be set with telemetry")
+				})
+			})
+		})
+
+		Context("S3 provider", func() {
+			Context("when created without telemetry", func() {
+				It("has nil telemetry fields", func() {
+					mock := newBDDMockS3()
+					p := storage.ExportNewS3WithClient(mock, "test-bucket", "test-tenant")
+
+					tf := storage.ExportS3TelemetryFields(p)
+					Expect(tf.HasTracer).To(BeFalse(), "tracer should be nil without telemetry")
+					Expect(tf.HasMeter).To(BeFalse(), "meter should be nil without telemetry")
+					Expect(tf.HasOpCounter).To(BeFalse(), "opCounter should be nil without telemetry")
+					Expect(tf.HasOpLatency).To(BeFalse(), "opLatency should be nil without telemetry")
+				})
+			})
+		})
+
+		Context("when local operations produce spans (success path)", func() {
+			var (
+				tp       *telemetrytest.TestProvider
+				provider storage.Provider
+			)
+
+			BeforeEach(func() {
+				var err error
+				tp, err = telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+
+				tracer := tp.TracerProvider().Tracer("storage-test")
+				meter := tp.MeterProvider().Meter("storage-test")
+				tmpDir := GinkgoT().TempDir()
+				provider, err = storage.NewLocal(tmpDir, "test-tenant",
+					storage.WithLocalTelemetry(tracer, meter))
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			AfterEach(func() {
+				_ = provider.Close()
+				Expect(tp.Shutdown(context.Background())).To(Succeed())
+			})
+
+			It("emits storage.Put and storage.Get spans with storage.key attribute", func() {
+				ctx := context.Background()
+				err := provider.Put(ctx, "telemetry-test/file.txt",
+					bytes.NewReader([]byte("hello")))
+				Expect(err).NotTo(HaveOccurred())
+
+				rc, err := provider.Get(ctx, "telemetry-test/file.txt")
+				Expect(err).NotTo(HaveOccurred())
+				_ = rc.Close()
+
+				spans := tp.GetSpans()
+
+				putSpan := telemetrytest.FindSpan(spans, "storage.Put")
+				Expect(putSpan).NotTo(BeNil(), "expected storage.Put span")
+				Expect(putSpan.Status().Code.String()).To(Equal("Ok"))
+				val, ok := telemetrytest.SpanAttribute(putSpan, "storage.key")
+				Expect(ok).To(BeTrue())
+				Expect(val.AsString()).To(Equal("telemetry-test/file.txt"))
+
+				getSpan := telemetrytest.FindSpan(spans, "storage.Get")
+				Expect(getSpan).NotTo(BeNil(), "expected storage.Get span")
+				Expect(getSpan.Status().Code.String()).To(Equal("Ok"))
+			})
+
+			It("emits storage.List span with storage.prefix attribute", func() {
+				ctx := context.Background()
+				_ = provider.Put(ctx, "list-test/a.txt",
+					bytes.NewReader([]byte("a")))
+
+				tp.Reset() // clear Put spans
+
+				_, err := provider.List(ctx, "list-test/")
+				Expect(err).NotTo(HaveOccurred())
+
+				spans := tp.GetSpans()
+				listSpan := telemetrytest.FindSpan(spans, "storage.List")
+				Expect(listSpan).NotTo(BeNil(), "expected storage.List span")
+				val, ok := telemetrytest.SpanAttribute(listSpan, "storage.prefix")
+				Expect(ok).To(BeTrue())
+				Expect(val.AsString()).To(Equal("list-test/"))
+			})
+
+			It("emits storage.Exists, storage.Stat, and storage.Delete spans", func() {
+				ctx := context.Background()
+				_ = provider.Put(ctx, "lifecycle/obj.txt",
+					bytes.NewReader([]byte("data")))
+
+				tp.Reset()
+
+				exists, err := provider.Exists(ctx, "lifecycle/obj.txt")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(exists).To(BeTrue())
+
+				_, err = provider.Stat(ctx, "lifecycle/obj.txt")
+				Expect(err).NotTo(HaveOccurred())
+
+				err = provider.Delete(ctx, "lifecycle/obj.txt")
+				Expect(err).NotTo(HaveOccurred())
+
+				spans := tp.GetSpans()
+				Expect(telemetrytest.FindSpan(spans, "storage.Exists")).NotTo(BeNil())
+				Expect(telemetrytest.FindSpan(spans, "storage.Stat")).NotTo(BeNil())
+				Expect(telemetrytest.FindSpan(spans, "storage.Delete")).NotTo(BeNil())
+			})
+
+			It("records storage.operations.total and storage.operation.duration_ms", func() {
+				ctx := context.Background()
+				_ = provider.Put(ctx, "metrics-test/x.txt",
+					bytes.NewReader([]byte("x")))
+
+				rm := tp.GetMetrics()
+
+				counter := telemetrytest.FindMetric(rm, "storage.operations.total")
+				Expect(counter).NotTo(BeNil())
+				val, err := telemetrytest.CounterValue(counter)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(val).To(BeNumerically(">=", 1))
+
+				hist := telemetrytest.FindMetric(rm, "storage.operation.duration_ms")
+				Expect(hist).NotTo(BeNil())
+				count, err := telemetrytest.HistogramCount(hist)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(BeNumerically(">=", 1))
+			})
+
+			It("emits storage.Get span with Error status on missing key", func() {
+				ctx := context.Background()
+
+				tp.Reset()
+
+				_, err := provider.Get(ctx, "nonexistent/missing.txt")
+				Expect(err).To(HaveOccurred())
+
+				spans := tp.GetSpans()
+				getSpan := telemetrytest.FindSpan(spans, "storage.Get")
+				Expect(getSpan).NotTo(BeNil(), "expected storage.Get span on error path")
+				Expect(getSpan.Status().Code.String()).To(Equal("Error"))
+			})
+		})
 	})
 
 	// =================================================================

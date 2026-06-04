@@ -465,3 +465,48 @@ func (db *testVectorDBImpl) FindSimilar(_ context.Context, _ string, _ vectordb.
 func (db *testVectorDBImpl) DeleteByModel(_ context.Context, _, _, _ string) error {
 	return nil
 }
+
+var _ = Describe("Telemetry Wiring", func() {
+	Context("when PgVectorStore is created without telemetry", func() {
+		It("has nil telemetry fields", func() {
+			store := newTestStore()
+			tf := store.GetTelemetryFields()
+			Expect(tf.HasTracer).To(BeFalse(), "tracer should be nil without telemetry")
+			Expect(tf.HasMeter).To(BeFalse(), "meter should be nil without telemetry")
+			Expect(tf.HasSearchCounter).To(BeFalse(), "searchCounter should be nil without telemetry")
+			Expect(tf.HasSearchLatency).To(BeFalse(), "searchLatency should be nil without telemetry")
+			Expect(tf.HasStoreCounter).To(BeFalse(), "storeCounter should be nil without telemetry")
+			Expect(tf.HasStoreLatency).To(BeFalse(), "storeLatency should be nil without telemetry")
+		})
+	})
+
+	Context("when PgVectorStore is created with telemetry", func() {
+		It("populates all telemetry fields", func() {
+			tp := tracenoop.NewTracerProvider()
+			tracer := tp.Tracer("vectordb-test")
+			mp := metricnoop.NewMeterProvider()
+			meter := mp.Meter("vectordb-test")
+
+			store := newTestStore(vectordb.WithTelemetry(tracer, meter))
+			tf := store.GetTelemetryFields()
+			Expect(tf.HasTracer).To(BeTrue(), "tracer should be set with telemetry")
+			Expect(tf.HasMeter).To(BeTrue(), "meter should be set with telemetry")
+			Expect(tf.HasSearchCounter).To(BeTrue(), "searchCounter should be set with telemetry")
+			Expect(tf.HasSearchLatency).To(BeTrue(), "searchLatency should be set with telemetry")
+			Expect(tf.HasStoreCounter).To(BeTrue(), "storeCounter should be set with telemetry")
+			Expect(tf.HasStoreLatency).To(BeTrue(), "storeLatency should be set with telemetry")
+		})
+	})
+
+	Context("when WithTelemetry option is provided", func() {
+		It("creates a non-nil option function", func() {
+			tp := tracenoop.NewTracerProvider()
+			tracer := tp.Tracer("vectordb-test")
+			mp := metricnoop.NewMeterProvider()
+			meter := mp.Meter("vectordb-test")
+
+			opt := vectordb.WithTelemetry(tracer, meter)
+			Expect(opt).NotTo(BeNil())
+		})
+	})
+})

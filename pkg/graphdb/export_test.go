@@ -14,3 +14,25 @@ var EscapeCypher = escapeCypher
 var CypherValue = cypherValue
 var NodeToAGProperties = nodeToAGProperties
 var EdgeToAGProperties = edgeToAGProperties
+
+// TelemetryFields exposes telemetry instrument state for test assertions.
+type TelemetryFields struct {
+	HasTracer       bool
+	HasMeter        bool
+	HasQueryCounter bool
+	HasQueryLatency bool
+}
+
+// ExportTelemetryFields returns telemetry field presence for assertions.
+func ExportTelemetryFields(g GraphDB) TelemetryFields {
+	c, ok := g.(*ageClient)
+	if !ok {
+		return TelemetryFields{}
+	}
+	return TelemetryFields{
+		HasTracer:       c.tracer != nil,
+		HasMeter:        c.meter != nil,
+		HasQueryCounter: c.queryCounter != nil,
+		HasQueryLatency: c.queryLatency != nil,
+	}
+}

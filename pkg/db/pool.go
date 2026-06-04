@@ -8,8 +8,12 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type pgPool struct {
@@ -17,6 +21,14 @@ type pgPool struct {
 	extensions []string
 	closed     bool
 	mu         sync.Mutex
+
+	// Telemetry (optional, nil-safe)
+	tracer       trace.Tracer
+	meter        metric.Meter
+	queryCounter metric.Int64Counter
+	queryLatency metric.Int64Histogram
+	txCounter    metric.Int64Counter
+	connGauge    metric.Int64Gauge
 }
 
 func NewPool(cfg PoolConfig, opts ...Option) (Pool, error) {
@@ -48,10 +60,42 @@ func NewPool(cfg PoolConfig, opts ...Option) (Pool, error) {
 		return nil, fmt.Errorf("failed to ping database (%s): %w", redacted, err)
 	}
 
-	return &pgPool{
+	p := &pgPool{
 		db:         db,
 		extensions: cfg.Extensions,
-	}, nil
+		tracer:     o.tracer,
+		meter:      o.meter,
+	}
+
+	if o.meter != nil {
+		var err error
+		p.queryCounter, err = o.meter.Int64Counter("db.queries.total",
+			metric.WithDescription("Total database queries executed"))
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to create query counter: %w", err)
+		}
+		p.queryLatency, err = o.meter.Int64Histogram("db.query.duration_ms",
+			metric.WithDescription("Database query duration in milliseconds"))
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to create query latency histogram: %w", err)
+		}
+		p.txCounter, err = o.meter.Int64Counter("db.transactions.total",
+			metric.WithDescription("Total database transactions started"))
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to create transaction counter: %w", err)
+		}
+		p.connGauge, err = o.meter.Int64Gauge("db.pool.open_connections",
+			metric.WithDescription("Current number of open database connections"))
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("failed to create connection gauge: %w", err)
+		}
+	}
+
+	return p, nil
 }
 
 func NewPoolConfigFrom(dsn string, graphDSN string, maxConns int, sslMode string, extensions []string) PoolConfig {
@@ -65,28 +109,74 @@ func NewPoolConfigFrom(dsn string, graphDSN string, maxConns int, sslMode string
 }
 
 func (p *pgPool) Begin(ctx context.Context) (Transaction, error) {
+	ctx, span := p.startSpan(ctx, "db.Begin")
+	defer span.End()
+
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
+	if p.txCounter != nil {
+		p.txCounter.Add(ctx, 1)
+	}
+	span.SetStatus(codes.Ok, "")
 	return &pgTx{tx: tx}, nil
 }
 
 func (p *pgPool) Query(ctx context.Context, query string, args ...any) (Rows, error) {
+	start := time.Now()
+	ctx, span := p.startSpan(ctx, "db.Query")
+	defer span.End()
+
 	rows, err := p.db.QueryContext(ctx, query, args...)
+	if p.queryCounter != nil {
+		p.queryCounter.Add(ctx, 1)
+	}
+	if p.queryLatency != nil {
+		p.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
+	span.SetStatus(codes.Ok, "")
 	return &pgRows{rows: rows}, nil
 }
 
+// QueryRow instruments the call with a span and counter. Note: sql.QueryRowContext
+// defers the actual database round-trip until .Scan(), so span timing and status
+// reflect only the call setup, not query execution. Callers needing accurate
+// per-query observability should prefer Query + scan.
 func (p *pgPool) QueryRow(ctx context.Context, query string, args ...any) Row {
+	_, span := p.startSpan(ctx, "db.QueryRow")
+	defer span.End()
+
+	if p.queryCounter != nil {
+		p.queryCounter.Add(ctx, 1)
+	}
+	span.SetStatus(codes.Ok, "")
 	return p.db.QueryRowContext(ctx, query, args...)
 }
 
 func (p *pgPool) Exec(ctx context.Context, query string, args ...any) error {
+	start := time.Now()
+	ctx, span := p.startSpan(ctx, "db.Exec")
+	defer span.End()
+
 	_, err := p.db.ExecContext(ctx, query, args...)
-	return err
+	if p.queryCounter != nil {
+		p.queryCounter.Add(ctx, 1)
+	}
+	if p.queryLatency != nil {
+		p.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+	span.SetStatus(codes.Ok, "")
+	return nil
 }
 
 func (p *pgPool) Close() error {
@@ -133,6 +223,13 @@ func (r *pgRows) Next() bool             { return r.rows.Next() }
 func (r *pgRows) Scan(dest ...any) error { return r.rows.Scan(dest...) }
 func (r *pgRows) Close() error           { return r.rows.Close() }
 func (r *pgRows) Err() error             { return r.rows.Err() }
+
+func (p *pgPool) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
+	if p.tracer != nil {
+		return p.tracer.Start(ctx, name)
+	}
+	return trace.SpanFromContext(ctx).TracerProvider().Tracer("db").Start(ctx, name)
+}
 
 // kvPasswordRe matches the password field in a keyword=value DSN.
 // It handles both unquoted values (non-whitespace) and single-quoted values.

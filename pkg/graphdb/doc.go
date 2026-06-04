@@ -9,7 +9,7 @@
 //
 // Example usage:
 //
-//	client := graphdb.New(db)
+//	client, err := graphdb.New(db)
 //
 //	err := client.CreateNode(ctx, "acme", graphdb.Node{
 //	    ID:        "ctrl-1",

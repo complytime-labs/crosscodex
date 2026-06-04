@@ -156,10 +156,10 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | **pkg/tlsconfig** | `[implemented]` | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI generation | pkg/config |
 | **pkg/authn** | `[implemented]` | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed | pkg/tlsconfig, pkg/tenant |
 | **pkg/tenant** | `[scaffold]` | Multi-tenant context propagation, isolation enforcement | None (foundational) |
-| **pkg/telemetry** | `[scaffold]` | OpenTelemetry traces, metrics, logs | pkg/config |
+| **pkg/telemetry** | `[implemented]` | OpenTelemetry traces, metrics, structured logging with trace correlation | pkg/config |
 | **pkg/llmclient** | `[scaffold]` | LLM gateway client, completion & embedding requests | pkg/config, pkg/telemetry |
 | **pkg/oscal** | `[scaffold]` | OSCAL catalog parsing, validation | None (domain logic) |
-| **pkg/attestation** | `[scaffold]` | in-toto layout, link generation, signing | pkg/tlsconfig |
+| **pkg/attestation** | `[implemented]` | in-toto layout/link generation, signature verification, trace correlation | pkg/tlsconfig, in-toto-golang |
 | **pkg/analyzer** | `[scaffold]` | Plugin interface for analysis capabilities | None (interface only) |
 
 **Dependency Flow:**
@@ -275,69 +275,158 @@ When `tls.fips.enabled: true` in configuration:
 
 ## Observability & Attestation
 
-**OpenTelemetry Integration (pkg/telemetry):**
+### Goal: Full Provenance Tracing for Auditors
 
-All packages that perform business operations MUST integrate OpenTelemetry:
-- ✅ **Traces:** Instrument all public method calls with spans, including tenant and operation metadata
-- ✅ **Metrics:** Counter for operations, histogram for duration, gauge for resource usage
-- ✅ **Logs:** Structured logging with tenant context and correlation IDs
-- ✅ **Context:** Propagate trace context through all internal calls
+CrossCodex is a compliance platform. Auditors must be able to cryptographically verify every step of compliance processing — from framework ingestion through AI-generated mappings to final compliance reports. This requires two complementary systems:
 
-**Required telemetry for all packages:**
+1. **OpenTelemetry (pkg/telemetry):** Distributed tracing and metrics across all services. Every operation that touches compliance data produces spans with tenant, operation, and data lineage attributes. Trace IDs flow through NATS messages, database operations, and gRPC calls so that an auditor can reconstruct the full processing chain for any compliance artifact.
+
+2. **in-toto Attestation (pkg/attestation):** Cryptographic attestations for compliance-critical operations. Each attestation embeds the OTel trace ID from the active span (via `telemetry.TraceIDFromContext(ctx)`), creating a bidirectional link between the distributed trace and the cryptographic proof. An auditor can start from either the trace or the attestation and reach the other.
+
+The proto field `AuditMetadata.correlation_id` is documented as "OpenTelemetry trace ID" — every service that populates `AuditMetadata` must set this field from the active span context.
+
+### OpenTelemetry Integration (pkg/telemetry)
+
+**Every package that performs I/O, business logic, or cross-service communication MUST integrate `pkg/telemetry`.** This is not optional. A package cannot be marked `[implemented]` without telemetry instrumentation.
+
+Requirements:
+- **Traces:** Instrument all public method calls with spans, including tenant and operation metadata
+- **Metrics:** Counter for operations, histogram for duration, gauge for resource usage
+- **Logs:** Structured logging via slog (trace IDs are injected automatically by `telemetry.Init`)
+- **Context:** Propagate `context.Context` through all internal calls; never drop it
+
+**Initialization (service mains):**
 ```go
-// Example instrumentation pattern
+// In cmd/daemon/main.go or equivalent service entry point
+shutdown, err := telemetry.Init(ctx, cfg.Observability,
+    telemetry.WithServiceName("crosscodex-catalog"),
+    telemetry.WithServiceVersion(version.Version),
+)
+if err != nil {
+    log.Fatalf("telemetry init: %v", err)
+}
+defer shutdown(ctx)
+// After Init: global TracerProvider, MeterProvider, and slog trace injection are active.
+```
+
+**Instrumentation (per-package):**
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/attribute"
+    "go.opentelemetry.io/otel/codes"
+    "github.com/complytime-labs/crosscodex/pkg/telemetry"
+)
+
+// Package-level tracer — call otel.GetTracerProvider() after Init has run.
+var tracer = otel.GetTracerProvider().Tracer("crosscodex/pkg/mypackage")
+
 func (s *Service) PublicMethod(ctx context.Context, req Request) error {
-    ctx, span := telemetry.StartSpan(ctx, "service.public_method")
+    ctx, span := tracer.Start(ctx, "mypackage.PublicMethod")
     defer span.End()
-    
-    // Add tenant and operation attributes
+
     span.SetAttributes(
         attribute.String("tenant.id", tenant.FromContext(ctx)),
         attribute.String("operation.type", req.Type),
     )
-    
-    telemetry.Counter("service.operations").Add(ctx, 1)
-    start := time.Now()
-    defer func() {
-        telemetry.Histogram("service.duration").Record(ctx, time.Since(start).Milliseconds())
-    }()
-    
+
     // ... business logic
+
+    if err != nil {
+        span.RecordError(err)
+        span.SetStatus(codes.Error, err.Error())
+        return err
+    }
+    span.SetStatus(codes.Ok, "")
+    return nil
 }
 ```
 
-**in-toto Attestation (pkg/attestation):**
+**Metrics (instrument factories enforce `crosscodex` namespace):**
+```go
+counter, _ := telemetry.NewCounter("mypackage.operations.total")
+histogram, _ := telemetry.NewHistogram("mypackage.duration_ms")
+gauge, _ := telemetry.NewGauge("mypackage.pool.utilization")
+intCounter, _ := telemetry.NewIntCounter("mypackage.errors.total")
+```
+
+**Correlation helpers (for attestation bridge):**
+```go
+traceID := telemetry.TraceIDFromContext(ctx) // hex string or ""
+spanID := telemetry.SpanIDFromContext(ctx)   // hex string or ""
+```
+
+**Testing (in-memory assertions, no network):**
+```go
+import "github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
+
+tp := telemetrytest.NewTestProvider()
+// Use tp.TracerProvider() / tp.MeterProvider() in tests
+spans := tp.GetSpans()
+metrics := tp.GetMetrics()
+tp.Reset()
+```
+
+**Config shape (in pkg/config):**
+```yaml
+observability:
+  endpoint: ""              # shared OTLP endpoint; empty = all disabled
+  protocol: grpc            # grpc | http
+  tracing:
+    endpoint: ""            # per-signal override
+    protocol: ""            # per-signal override
+    sample_rate: 1.0
+  metrics:
+    endpoint: ""            # per-signal override
+    protocol: ""            # per-signal override
+    interval: 30s
+```
+
+### in-toto Attestation (pkg/attestation)
 
 Compliance-critical operations MUST generate cryptographic attestations:
-- ✅ **Catalog ingestion:** Attest to OSCAL/Gemara document authenticity and validation
-- ✅ **Control mappings:** Attest to AI-generated compliance mapping accuracy and model used
-- ✅ **Risk assessments:** Attest to evaluation results and evidence collection
-- ✅ **Policy violations:** Attest to enforcement actions taken and audit trails
+- **Catalog ingestion:** Attest to OSCAL/Gemara document authenticity and validation
+- **Control mappings:** Attest to AI-generated compliance mapping accuracy and model used
+- **Risk assessments:** Attest to evaluation results and evidence collection
+- **Policy violations:** Attest to enforcement actions taken and audit trails
 
-**Required attestation for compliance operations:**
+Every attestation MUST embed the OTel trace ID from the active span:
 ```go
-// Example attestation pattern
 func (s *ComplianceService) GenerateMapping(ctx context.Context, req MappingRequest) error {
+    ctx, span := tracer.Start(ctx, "compliance.GenerateMapping")
+    defer span.End()
+
     // ... perform mapping operation
-    
-    // Generate attestation for compliance audit
+
     predicate := &attestation.CompliancePredicate{
-        Operation: "control.mapping",
-        Subject:   req.ControlID,
-        Evidence:  result.Evidence,
-        Model:     req.LLMModel,
-        Timestamp: time.Now(),
+        Operation:   "control.mapping",
+        Subject:     req.ControlID,
+        Evidence:    result.Evidence,
+        Model:       req.LLMModel,
+        Timestamp:   time.Now(),
+        TraceID:     telemetry.TraceIDFromContext(ctx), // Links attestation to trace
     }
-    
+
     return s.attestor.Sign(ctx, predicate)
 }
 ```
 
-**Integration Requirements:**
-- **pkg/vectordb** MUST emit telemetry for similarity searches, model validation, tenant access
-- **pkg/graphdb** MUST emit telemetry for relationship queries and graph traversals
-- **pkg/llmclient** MUST generate attestations for AI-generated compliance content
-- **All services** MUST propagate trace context via NATS message headers
+### Telemetry Integration Requirements
+
+**Already instrumented:**
+- **pkg/vectordb** — spans and metrics on all VectorDB operations (StoreEmbedding, FindSimilar, etc.)
+
+**Must be retrofitted (telemetry was built after these packages):**
+- **pkg/db** — spans on connection acquisition, query execution, migration, health checks, tenant context setup
+- **pkg/natsbus** — subscriber consumer span, content hash verification, subscriber metrics still need integration testing against external NATS; W3C traceparent propagation migration pending
+- **pkg/authn** — spans on authentication flow, metrics for auth latency/failure rates, OTel trace ID in AuditEvent.SessionID
+- **pkg/graphdb** — spans on graph queries, relationship traversal, graph lifecycle
+- **pkg/storage** — spans on object get/put/delete/list, metrics for operation latency
+
+**Future packages (must include telemetry from the start):**
+- **pkg/llmclient** — spans on LLM calls, metrics for latency/token usage/error rate, attestations for AI-generated content
+- **pkg/oscal** — spans on catalog parsing and validation
+- **All internal/ services** — must call `telemetry.Init()` at startup and propagate trace context via NATS message headers and gRPC metadata
 
 ## Build & Task Automation
 
@@ -463,6 +552,7 @@ When a batch operation (UPDATE, DELETE) touches rows with mixed protection state
 - **pkg/natsbus implementation** — Added dual-mode NATS client (embedded + external) with tenant-scoped subjects, provenance headers (X-Trace-Id, X-Span-Id, X-Tenant-Id, X-Timestamp, X-Content-SHA256), three JetStream audit streams (AUDIT_LLM 90d, AUDIT_DECISIONS indefinite, AUDIT_EVENTS 30d), queue group work distribution, XDG_STATE_HOME-compliant embedded storage, and comprehensive integration tests with TLS.
 - **pkg/tlsconfig implementation** — Added shared TLS configuration builder with global + per-target config merging (deep-merge overrides), three TLS modes (off, server-only, mutual), FIPS cipher enforcement via BoringCrypto with auto-discovered GCM-only filtering, general cipher allow/deny lists, certificate reload callbacks for zero-downtime rotation, and a `pki` sub-package for ECDSA P-256 dev certificate generation. Refactored `internal/testcerts` to delegate crypto generation to `pkg/tlsconfig/pki`.
 - **pkg/authn implementation** — Added multi-method authentication with registry-based dispatch. X.509 mTLS authenticator maps client certificates to tenant identities via glob-pattern matching on CN, Organization, OrgUnit, SAN Email, SAN DNS, and SAN URI fields. Registry dispatches to ordered authenticators (`ErrUnsupportedMethod` = try next, any other error = stop). Audit emission via `AuditEmitter` interface (natsbus-backed in production). GSSAPI (Kerberos) and SAML authenticators stubbed with `ErrUnsupportedMethod`. New `auth` config section added to `pkg/config`. Extended `pkg/tlsconfig/pki` with `WithOrgUnit`, `WithEmailAddresses`, and `WithURIs` options. Container integration tests validate cross-stack mTLS interop with nginx/OpenSSL.
+- **pkg/telemetry implementation** — Added OpenTelemetry package with `Init(ctx, cfg, ...Option)` returning shutdown function, OTLP exporters (gRPC and HTTP), TracerProvider and MeterProvider with global registration, slog handler wrapping for automatic `trace_id`/`span_id` injection in structured logs, `TraceIDFromContext()`/`SpanIDFromContext()` correlation helpers for attestation bridge, thin instrument factories (`NewCounter`, `NewHistogram`, `NewGauge`, `NewIntCounter`) enforcing `crosscodex` meter namespace, `telemetrytest.NewTestProvider()` subpackage with in-memory exporters for unit test assertions, `ObservabilityConfig` added to `pkg/config` with shared endpoint + per-signal override pattern matching `pkg/tlsconfig`. Empty endpoint = disabled (no-op, no error). Integration test infrastructure added with Jaeger all-in-one container in `test/compose.yaml` under `telemetry` profile.
 
 **TODO:** NATS account-level tenant authorization is not yet integrated with `pkg/authn`. While `pkg/authn` is now implemented (X.509 mTLS), NATS account-level isolation requires a separate integration layer. Currently, tenant isolation is enforced at the subject level via `pkg/tenant.ValidateTenantID()`. When the NATS-authn integration is built, add per-tenant NATS accounts for server-level isolation.
 

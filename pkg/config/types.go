@@ -4,16 +4,17 @@ import "time"
 
 // Config is the unified merge target for all configuration layers.
 type Config struct {
-	LLM      LLMConfig      `yaml:"llm"`
-	Storage  StorageConfig  `yaml:"storage"`
-	TLS      TLSConfig      `yaml:"tls"`
-	Tenants  TenantsConfig  `yaml:"tenants"`
-	Database DatabaseConfig `yaml:"database"`
-	NATS     NATSConfig     `yaml:"nats"`
-	Server   ServerConfig   `yaml:"server"`
-	CLI      CLISettings    `yaml:"cli"`
-	Logging  LoggingConfig  `yaml:"logging"`
-	Auth     AuthConfig     `yaml:"auth"`
+	LLM           LLMConfig           `yaml:"llm"`
+	Storage       StorageConfig       `yaml:"storage"`
+	TLS           TLSConfig           `yaml:"tls"`
+	Tenants       TenantsConfig       `yaml:"tenants"`
+	Database      DatabaseConfig      `yaml:"database"`
+	NATS          NATSConfig          `yaml:"nats"`
+	Server        ServerConfig        `yaml:"server"`
+	CLI           CLISettings         `yaml:"cli"`
+	Logging       LoggingConfig       `yaml:"logging"`
+	Auth          AuthConfig          `yaml:"auth"`
+	Observability ObservabilityConfig `yaml:"observability"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -148,19 +149,46 @@ type LoggingConfig struct {
 	Format string `yaml:"format"`
 }
 
+// ObservabilityConfig configures OpenTelemetry tracing and metrics export.
+//
+// A shared Endpoint serves as the default OTLP endpoint for all signals.
+// Per-signal Endpoint fields override the shared default when non-empty.
+// Empty resolved endpoint = signal disabled (no-op provider, no error).
+type ObservabilityConfig struct {
+	Endpoint string                     `yaml:"endpoint"`
+	Protocol string                     `yaml:"protocol"`
+	Tracing  ObservabilityTracingConfig `yaml:"tracing"`
+	Metrics  ObservabilityMetricsConfig `yaml:"metrics"`
+}
+
+// ObservabilityTracingConfig configures the tracing signal.
+type ObservabilityTracingConfig struct {
+	Endpoint   string  `yaml:"endpoint"`
+	Protocol   string  `yaml:"protocol"`
+	SampleRate float64 `yaml:"sample_rate"`
+}
+
+// ObservabilityMetricsConfig configures the metrics signal.
+type ObservabilityMetricsConfig struct {
+	Endpoint string `yaml:"endpoint"`
+	Protocol string `yaml:"protocol"`
+	Interval string `yaml:"interval"`
+}
+
 // DaemonConfig is the derived view for crosscodexd.
 type DaemonConfig struct {
-	GRPCAddr string
-	HTTPAddr string
-	Workers  int
-	LLM      LLMConfig
-	Storage  StorageConfig
-	TLS      TLSConfig
-	Tenants  TenantsConfig
-	Database DatabaseConfig
-	NATS     NATSConfig
-	Logging  LoggingConfig
-	Auth     AuthConfig
+	GRPCAddr      string
+	HTTPAddr      string
+	Workers       int
+	LLM           LLMConfig
+	Storage       StorageConfig
+	TLS           TLSConfig
+	Tenants       TenantsConfig
+	Database      DatabaseConfig
+	NATS          NATSConfig
+	Logging       LoggingConfig
+	Auth          AuthConfig
+	Observability ObservabilityConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -176,17 +204,18 @@ type ClientConfig struct {
 // ServiceConfig returns the daemon-oriented view of this configuration.
 func (c *Config) ServiceConfig() DaemonConfig {
 	return DaemonConfig{
-		GRPCAddr: c.Server.GRPCAddr,
-		HTTPAddr: c.Server.HTTPAddr,
-		Workers:  c.Server.Workers,
-		LLM:      c.LLM,
-		Storage:  c.Storage,
-		TLS:      c.TLS,
-		Tenants:  c.Tenants,
-		Database: c.Database,
-		NATS:     c.NATS,
-		Logging:  c.Logging,
-		Auth:     c.Auth,
+		GRPCAddr:      c.Server.GRPCAddr,
+		HTTPAddr:      c.Server.HTTPAddr,
+		Workers:       c.Server.Workers,
+		LLM:           c.LLM,
+		Storage:       c.Storage,
+		TLS:           c.TLS,
+		Tenants:       c.Tenants,
+		Database:      c.Database,
+		NATS:          c.NATS,
+		Logging:       c.Logging,
+		Auth:          c.Auth,
+		Observability: c.Observability,
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 )
@@ -117,7 +118,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			Cert: filepath.Join(certDir, "server.pem"),
 			Key:  filepath.Join(certDir, "server-key.pem"),
 		}
-		serverTLS, err := tlsconfig.BuildTLSConfig(cfg, "")
+		serverTLS, err := tlsconfig.BuildTLSConfig(context.Background(), cfg, "")
 		Expect(err).NotTo(HaveOccurred(), "failed to build server TLS config")
 		Expect(serverTLS).NotTo(BeNil())
 		return serverTLS
@@ -277,11 +278,12 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			recorder := &recordingEmitter{}
-			registry := authn.NewRegistry(recorder,
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{
 				authn.NewGSSAPIAuthenticator(),
 				authn.NewSAMLAuthenticator(),
 				x509Auth,
-			)
+			})
+			Expect(err).NotTo(HaveOccurred())
 
 			identity, err := registry.Authenticate(context.Background(), &authn.Request{
 				TLSState:  connState,
@@ -301,6 +303,97 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			Expect(event.Method).To(Equal(authn.AuthMethodMTLS))
 			Expect(event.ClientIP).To(Equal("127.0.0.1"))
 			Expect(event.SessionID).To(Equal("integration-session-001"))
+		})
+	})
+
+	// =====================================================================
+	// Telemetry integration with real TLS handshake
+	// =====================================================================
+
+	Context("telemetry integration with real TLS handshake", func() {
+		var (
+			tp       *telemetrytest.TestProvider
+			recorder *recordingEmitter
+		)
+
+		BeforeEach(func() {
+			var err error
+			tp, err = telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			recorder = &recordingEmitter{}
+		})
+
+		AfterEach(func() {
+			Expect(tp.Shutdown(context.Background())).To(Succeed())
+		})
+
+		It("emits span, metrics, and backfills SessionID from trace context", func() {
+			tracer := tp.TracerProvider().Tracer("authn-integration")
+			meter := tp.MeterProvider().Meter("authn-integration")
+
+			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
+				SingleTenant: false,
+				Mappings: []authn.X509Mapping{
+					{
+						Match:  authn.X509Match{Organization: "Acme*"},
+						Tenant: "acme-corp",
+						Roles:  []string{"admin"},
+					},
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{x509Auth},
+				authn.WithTelemetry(tracer, meter))
+			Expect(err).NotTo(HaveOccurred())
+
+			// Perform a real mTLS handshake.
+			serverCfg := buildServerTLSConfig()
+			connState := performTLSHandshake(serverCfg, acmeClient)
+
+			// Create a parent span so TraceIDFromContext returns a real ID.
+			ctx, parentSpan := tracer.Start(context.Background(), "test.parent")
+			expectedTraceID := parentSpan.SpanContext().TraceID().String()
+
+			// Authenticate with SessionID left empty to test backfill.
+			identity, err := registry.Authenticate(ctx, &authn.Request{
+				TLSState: connState,
+				ClientIP: "127.0.0.1",
+			})
+			parentSpan.End()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(identity.TenantID).To(Equal("acme-corp"))
+			Expect(identity.Method).To(Equal(authn.AuthMethodMTLS))
+
+			// --- Span assertions ---
+			spans := tp.GetSpans()
+			authSpan := telemetrytest.FindSpan(spans, "authn.Authenticate")
+			Expect(authSpan).NotTo(BeNil(), "expected authn.Authenticate span")
+
+			successVal, ok := telemetrytest.SpanAttribute(authSpan, "auth.success")
+			Expect(ok).To(BeTrue(), "auth.success attribute missing")
+			Expect(successVal.AsBool()).To(BeTrue())
+
+			tenantVal, ok := telemetrytest.SpanAttribute(authSpan, "tenant.id")
+			Expect(ok).To(BeTrue(), "tenant.id attribute missing")
+			Expect(tenantVal.AsString()).To(Equal("acme-corp"))
+
+			// --- SessionID backfill (attestation audit path) ---
+			event := recorder.lastEvent()
+			Expect(event).NotTo(BeNil())
+			Expect(event.Success).To(BeTrue())
+			Expect(event.SessionID).NotTo(BeEmpty(),
+				"SessionID should be backfilled from trace context")
+			Expect(event.SessionID).To(Equal(expectedTraceID),
+				"SessionID should equal the parent span's trace ID")
+
+			// --- Metric assertions ---
+			rm := tp.GetMetrics()
+			counter := telemetrytest.FindMetric(rm, "authn.attempts.total")
+			Expect(counter).NotTo(BeNil(), "authn.attempts.total metric missing")
+			val, err := telemetrytest.CounterValue(counter)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(val).To(BeNumerically(">=", 1))
 		})
 	})
 })

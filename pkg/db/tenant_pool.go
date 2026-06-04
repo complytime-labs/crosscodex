@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -22,19 +26,26 @@ func NewTenantPool(pool Pool) TenantConnection {
 // The tenant ID is extracted from the context via tenant.FromContext.
 // Returns ErrTenantRequired if no tenant is present in the context.
 func (tp *tenantPool) Begin(ctx context.Context) (Transaction, error) {
+	ctx, span := otel.GetTracerProvider().Tracer("crosscodex/pkg/db").Start(ctx, "db.TenantBegin")
+	defer span.End()
+
 	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
+		span.SetStatus(codes.Error, "tenant context missing")
 		return nil, ErrTenantRequired
 	}
+	span.SetAttributes(attribute.String("tenant.id", tenantID))
 
 	tx, err := tp.pool.Begin(ctx)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("begin tenant transaction: %w", err)
 	}
 
 	// Set the tenant for RLS policies
 	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
 		_ = tx.Rollback()
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("set tenant session variable: %w", err)
 	}
 
@@ -42,10 +53,12 @@ func (tp *tenantPool) Begin(ctx context.Context) (Transaction, error) {
 	if userID := tenant.UserFromContext(ctx); userID != "" {
 		if err := tx.Exec(ctx, "SELECT set_config('app.current_user', $1, true)", userID); err != nil {
 			_ = tx.Rollback()
+			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("set user session variable: %w", err)
 		}
 	}
 
+	span.SetStatus(codes.Ok, "")
 	return tx, nil
 }
 

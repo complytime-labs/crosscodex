@@ -1,12 +1,6 @@
 package attestation
 
-// Layout defines the expected supply chain workflow.
-type Layout struct {
-	Steps   []Step            // Pipeline steps
-	Inspect []Inspection      // Inspections to perform
-	Keys    map[string][]byte // Public keys for verification
-	Expires int64             // Expiration timestamp
-}
+import "time"
 
 // Step represents a pipeline step.
 type Step struct {
@@ -24,23 +18,38 @@ type Inspection struct {
 	Passes []string // Success criteria
 }
 
-// Link represents the execution record of a step.
-type Link struct {
-	Name       string         // Step name
-	Materials  []Artifact     // Input artifacts
-	Products   []Artifact     // Output artifacts
-	Command    []string       // Executed command
-	ByProducts map[string]any // Additional metadata
-}
-
-// Artifact represents a file or artifact.
+// Artifact represents a file or artifact with its content digest.
 type Artifact struct {
 	URI    string // Artifact URI or path
-	Digest string // SHA256 digest
+	Digest string // SHA256 hex digest
 }
 
-// Signature represents a cryptographic signature.
-type Signature struct {
-	KeyID     string // Key identifier
-	Signature []byte // Signature bytes
+// LayoutOptions configures a supply chain layout.
+type LayoutOptions struct {
+	Steps       []Step
+	Inspections []Inspection
+	ExpiresIn   time.Duration // Layout validity period
+}
+
+// SignedLayout is a signed in-toto layout envelope.
+type SignedLayout struct {
+	Raw     []byte    // Serialized signed envelope (JSON)
+	Expires time.Time // Computed from ExpiresIn at creation
+}
+
+// SignedLink is a signed in-toto link envelope with trace correlation.
+type SignedLink struct {
+	Raw       []byte     // Serialized signed envelope (JSON)
+	Step      string     // Step name
+	TraceID   string     // OTel trace ID embedded in ByProducts["trace_id"]
+	Materials []Artifact // Input artifacts
+	Products  []Artifact // Output artifacts
+}
+
+// VerifiedLink is the result of verifying a signed link envelope.
+type VerifiedLink struct {
+	Step       string         // Step name
+	Materials  []Artifact     // Input artifacts
+	Products   []Artifact     // Output artifacts
+	ByProducts map[string]any // Additional metadata including trace_id
 }

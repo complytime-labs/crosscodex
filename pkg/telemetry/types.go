@@ -1,14 +1,5 @@
 package telemetry
 
-// Config configures the telemetry provider.
-type Config struct {
-	ServiceName    string  // Service name for resource attributes
-	ServiceVersion string  // Service version
-	Endpoint       string  // OTLP collector endpoint
-	SampleRate     float64 // Trace sampling rate (0.0 to 1.0)
-	Enabled        bool    // Enable telemetry
-}
-
 // SpanKind represents the type of span.
 type SpanKind string
 
