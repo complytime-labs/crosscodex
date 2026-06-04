@@ -14,4 +14,10 @@ var (
 
 	// ErrExpired indicates the attestation has expired.
 	ErrExpired = errors.New("attestation expired")
+
+	// ErrKeyNotFound indicates the key provider could not locate the requested key.
+	ErrKeyNotFound = errors.New("attestation key not found")
+
+	// ErrKeyLoadFailed indicates key material exists but could not be parsed.
+	ErrKeyLoadFailed = errors.New("attestation key load failed")
 )

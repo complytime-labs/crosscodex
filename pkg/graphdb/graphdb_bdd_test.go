@@ -1,15 +1,19 @@
 package graphdb_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
 func TestGraphDBBDD(t *testing.T) {
@@ -99,7 +103,9 @@ var _ = Describe("GraphDB System", Ordered, func() {
 
 			BeforeEach(func() {
 				// nil db is safe because validation fires before any SQL
-				client = graphdb.New(nil)
+				var newErr error
+				client, newErr = graphdb.New(nil)
+				Expect(newErr).NotTo(HaveOccurred())
 			})
 
 			It("rejects nodes missing required identity to prevent orphaned vertices", func() {
@@ -266,6 +272,111 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				Entry("bool false", false, "false"),
 				Entry("other type", []int{1, 2}, "'[1 2]'"),
 			)
+		})
+	})
+
+	Describe("Telemetry Integration", func() {
+		Context("when creating a client without telemetry", func() {
+			It("initializes with nil telemetry fields", func() {
+				client, err := graphdb.New(nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(client).NotTo(BeNil())
+
+				tf := graphdb.ExportTelemetryFields(client)
+				Expect(tf.HasTracer).To(BeFalse(), "tracer should be nil without telemetry")
+				Expect(tf.HasMeter).To(BeFalse(), "meter should be nil without telemetry")
+				Expect(tf.HasQueryCounter).To(BeFalse(), "queryCounter should be nil without telemetry")
+				Expect(tf.HasQueryLatency).To(BeFalse(), "queryLatency should be nil without telemetry")
+			})
+		})
+
+		Context("when creating a client with telemetry", func() {
+			It("initializes all telemetry instruments", func() {
+				tp := tracenoop.NewTracerProvider()
+				tracer := tp.Tracer("graphdb-test")
+				mp := metricnoop.NewMeterProvider()
+				meter := mp.Meter("graphdb-test")
+
+				client, err := graphdb.New(nil, graphdb.WithTelemetry(tracer, meter))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(client).NotTo(BeNil())
+
+				tf := graphdb.ExportTelemetryFields(client)
+				Expect(tf.HasTracer).To(BeTrue(), "tracer should be set with telemetry")
+				Expect(tf.HasMeter).To(BeTrue(), "meter should be set with telemetry")
+				Expect(tf.HasQueryCounter).To(BeTrue(), "queryCounter should be set with telemetry")
+				Expect(tf.HasQueryLatency).To(BeTrue(), "queryLatency should be set with telemetry")
+			})
+		})
+
+		Context("when operations produce spans (error path, no DB)", func() {
+			var (
+				tp     *telemetrytest.TestProvider
+				client graphdb.GraphDB
+			)
+
+			BeforeEach(func() {
+				var err error
+				tp, err = telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+
+				tracer := tp.TracerProvider().Tracer("graphdb-test")
+				meter := tp.MeterProvider().Meter("graphdb-test")
+				client, err = graphdb.New(nil, graphdb.WithTelemetry(tracer, meter))
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			AfterEach(func() {
+				Expect(tp.Shutdown(context.Background())).To(Succeed())
+			})
+
+			It("emits a graphdb.CreateNode span with Error status on empty tenant", func() {
+				By("calling CreateNode with valid fields but empty tenant")
+				err := client.CreateNode(context.Background(), "", graphdb.Node{
+					ID:        "n1",
+					Label:     "Test",
+					ValidFrom: time.Now(),
+				})
+				Expect(err).To(HaveOccurred())
+
+				spans := tp.GetSpans()
+				span := telemetrytest.FindSpan(spans, "graphdb.CreateNode")
+				Expect(span).NotTo(BeNil(), "expected graphdb.CreateNode span")
+				Expect(span.Status().Code.String()).To(Equal("Error"))
+			})
+
+			It("emits a graphdb.CreateEdge span with Error status on empty tenant", func() {
+				By("calling CreateEdge with valid fields but empty tenant")
+				err := client.CreateEdge(context.Background(), "", graphdb.Edge{
+					Label:     "SATISFIES",
+					Source:    "req-1",
+					Target:    "ctrl-1",
+					ValidFrom: time.Now(),
+				})
+				Expect(err).To(HaveOccurred())
+
+				spans := tp.GetSpans()
+				span := telemetrytest.FindSpan(spans, "graphdb.CreateEdge")
+				Expect(span).NotTo(BeNil(), "expected graphdb.CreateEdge span")
+				Expect(span.Status().Code.String()).To(Equal("Error"))
+			})
+
+			It("sets tenant.id span attribute even on error paths", func() {
+				By("calling CreateEdge with valid fields and a specific tenant that fails at beginTx")
+				_ = client.CreateNode(context.Background(), "", graphdb.Node{
+					ID:        "n1",
+					Label:     "Test",
+					ValidFrom: time.Now(),
+				})
+
+				spans := tp.GetSpans()
+				span := telemetrytest.FindSpan(spans, "graphdb.CreateNode")
+				Expect(span).NotTo(BeNil(), "expected graphdb.CreateNode span")
+
+				tenantAttr, found := telemetrytest.SpanAttribute(span, "tenant.id")
+				Expect(found).To(BeTrue(), "expected tenant.id attribute on span")
+				Expect(tenantAttr.AsString()).To(Equal(""))
+			})
 		})
 	})
 
@@ -440,7 +551,9 @@ var _ = Describe("GraphDB System", Ordered, func() {
 		var client graphdb.GraphDB
 
 		BeforeEach(func() {
-			client = graphdb.New(nil)
+			var newErr error
+			client, newErr = graphdb.New(nil)
+			Expect(newErr).NotTo(HaveOccurred())
 		})
 
 		Context("when validating node creation inputs", func() {
@@ -470,7 +583,9 @@ var _ = Describe("GraphDB System", Ordered, func() {
 		var client graphdb.GraphDB
 
 		BeforeEach(func() {
-			client = graphdb.New(nil)
+			var newErr error
+			client, newErr = graphdb.New(nil)
+			Expect(newErr).NotTo(HaveOccurred())
 		})
 
 		Context("when validating edge creation inputs", func() {

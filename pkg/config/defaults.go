@@ -61,6 +61,17 @@ tenants:
   allowed_tenants: []
 auth:
   x509_mappings: []
+observability:
+  endpoint: ""
+  protocol: grpc
+  tracing:
+    endpoint: ""
+    protocol: ""
+    sample_rate: 1.0
+  metrics:
+    endpoint: ""
+    protocol: ""
+    interval: 30s
 `
 
 func defaultNode() (*yaml.Node, error) {

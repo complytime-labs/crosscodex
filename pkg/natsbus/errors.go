@@ -28,4 +28,8 @@ var (
 	// ErrMissingProvenance indicates a received message is missing one or more
 	// mandatory provenance headers. The error message lists the missing fields.
 	ErrMissingProvenance = errors.New("missing provenance headers")
+
+	// ErrContentHashMismatch indicates the received message payload does not
+	// match the content hash in the X-Content-SHA256 provenance header.
+	ErrContentHashMismatch = errors.New("content hash mismatch")
 )

@@ -6,17 +6,41 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ageClient implements GraphDB using Apache AGE on PostgreSQL.
 type ageClient struct {
-	db *sql.DB
+	db           *sql.DB
+	tracer       trace.Tracer
+	meter        metric.Meter
+	queryCounter metric.Int64Counter
+	queryLatency metric.Int64Histogram
 }
 
 // New creates a GraphDB client backed by Apache AGE.
 // The caller owns the *sql.DB and is responsible for closing it.
-func New(db *sql.DB) GraphDB {
-	return &ageClient{db: db}
+func New(db *sql.DB, opts ...Option) (GraphDB, error) {
+	c := &ageClient{db: db}
+	for _, opt := range opts {
+		if err := opt(c); err != nil {
+			return nil, fmt.Errorf("apply graphdb option: %w", err)
+		}
+	}
+	return c, nil
+}
+
+// startSpan begins a new trace span using the client's configured tracer,
+// falling back to the context's tracer provider when no explicit tracer is set.
+func (c *ageClient) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
+	if c.tracer != nil {
+		return c.tracer.Start(ctx, name)
+	}
+	return trace.SpanFromContext(ctx).TracerProvider().Tracer("graphdb").Start(ctx, name)
 }
 
 // graphName returns the AGE graph name scoped to the given tenant.
@@ -142,15 +166,22 @@ func (c *ageClient) CreateGraph(ctx context.Context, tenant string) error {
 	if tenant == "" {
 		return ErrTenantRequired
 	}
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.CreateGraph")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
 	gn := graphName(tenant)
 
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx, `SET search_path = ag_catalog, "$user", public`); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("set search_path: %w", err)
 	}
 
@@ -158,16 +189,32 @@ func (c *ageClient) CreateGraph(ctx context.Context, tenant string) error {
 	err = tx.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1)", gn).Scan(&exists)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("check graph existence: %w", err)
 	}
 	if exists {
+		if c.queryCounter != nil {
+			c.queryCounter.Add(ctx, 1)
+		}
+		if c.queryLatency != nil {
+			c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+		}
+		span.SetStatus(codes.Ok, "")
 		return tx.Commit()
 	}
 
 	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf("SELECT ag_catalog.create_graph('%s')", escapeCypher(gn))); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("create graph %q: %w", gn, err)
 	}
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return tx.Commit()
 }
 
@@ -182,8 +229,14 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) er
 	if node.ValidFrom.IsZero() {
 		return fmt.Errorf("create node: valid_from is required")
 	}
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.CreateNode")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -197,8 +250,16 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) er
 	)
 
 	if _, err := tx.ExecContext(ctx, query); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("create node: %w", err)
 	}
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return tx.Commit()
 }
 
@@ -213,8 +274,14 @@ func (c *ageClient) CreateEdge(ctx context.Context, tenant string, edge Edge) er
 	if edge.ValidFrom.IsZero() {
 		return fmt.Errorf("create edge: valid_from is required")
 	}
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.CreateEdge")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -234,19 +301,61 @@ func (c *ageClient) CreateEdge(ctx context.Context, tenant string, edge Edge) er
 	)
 
 	if _, err := tx.ExecContext(ctx, query); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("create edge: %w", err)
 	}
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return tx.Commit()
 }
 
 // QueryRelationships finds currently-valid relationships matching the query filters.
 func (c *ageClient) QueryRelationships(ctx context.Context, tenant string, query RelationshipQuery) ([]Relationship, error) {
-	return c.queryRelationshipsInternal(ctx, tenant, query, nil)
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.QueryRelationships")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
+	results, err := c.queryRelationshipsInternal(ctx, tenant, query, nil)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
+	return results, nil
 }
 
 // QueryAsOf finds relationships that were valid at the given point in time.
 func (c *ageClient) QueryAsOf(ctx context.Context, tenant string, query RelationshipQuery, asOf time.Time) ([]Relationship, error) {
-	return c.queryRelationshipsInternal(ctx, tenant, query, &asOf)
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.QueryAsOf")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
+	results, err := c.queryRelationshipsInternal(ctx, tenant, query, &asOf)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
+	return results, nil
 }
 
 // queryRelationshipsInternal implements relationship queries with optional
@@ -343,8 +452,14 @@ func (c *ageClient) queryRelationshipsInternal(
 
 // Traverse performs a variable-length path traversal starting from a given node.
 func (c *ageClient) Traverse(ctx context.Context, tenant string, query TraversalQuery) ([]Path, error) {
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.Traverse")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
@@ -395,6 +510,7 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 
 	rows, err := tx.QueryContext(ctx, sqlQuery)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("traverse: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
@@ -403,16 +519,26 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 	for rows.Next() {
 		var pRaw string
 		if err := rows.Scan(&pRaw); err != nil {
+			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("scan path row: %w", err)
 		}
 		path, err := parseAGPath(pRaw)
 		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("parse path: %w", err)
 		}
 		results = append(results, path)
 	}
 	if err := rows.Err(); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("iterate path rows: %w", err)
 	}
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return results, tx.Commit()
 }

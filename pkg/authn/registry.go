@@ -6,6 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 )
 
 // Registry holds an ordered list of authenticators and dispatches
@@ -14,15 +21,27 @@ import (
 type Registry struct {
 	authenticators []Authenticator
 	emitter        AuditEmitter
+
+	// Telemetry (optional, nil-safe)
+	tracer      trace.Tracer
+	meter       metric.Meter
+	authCounter metric.Int64Counter
+	authLatency metric.Int64Histogram
 }
 
 // NewRegistry creates a Registry with the given audit emitter and authenticators.
 // A nil emitter disables audit emission (no panic, no-op).
-func NewRegistry(emitter AuditEmitter, authenticators ...Authenticator) *Registry {
-	return &Registry{
+func NewRegistry(emitter AuditEmitter, authenticators []Authenticator, opts ...RegistryOption) (*Registry, error) {
+	r := &Registry{
 		authenticators: authenticators,
 		emitter:        emitter,
 	}
+	for _, opt := range opts {
+		if err := opt(r); err != nil {
+			return nil, fmt.Errorf("apply registry option: %w", err)
+		}
+	}
+	return r, nil
 }
 
 // Authenticate tries each registered authenticator in order.
@@ -36,25 +55,65 @@ func NewRegistry(emitter AuditEmitter, authenticators ...Authenticator) *Registr
 //  4. If all authenticators return ErrUnsupportedMethod, emit a failure audit
 //     event and return ErrAuthenticationFailed.
 func (r *Registry) Authenticate(ctx context.Context, req *Request) (*Identity, error) {
+	start := time.Now()
+	var span trace.Span
+	if r.tracer != nil {
+		ctx, span = r.tracer.Start(ctx, "authn.Authenticate")
+		defer span.End()
+		if req.Method != "" {
+			span.SetAttributes(attribute.String("auth.method", string(req.Method)))
+		}
+	}
+
 	for _, auth := range r.authenticators {
 		identity, err := auth.Authenticate(ctx, req)
 		if err != nil {
 			if errors.Is(err, ErrUnsupportedMethod) {
 				continue
 			}
-			// Non-ErrUnsupportedMethod error: stop, emit failure, return
+			r.recordMetrics(ctx, start, false)
+			if span != nil {
+				span.SetAttributes(attribute.Bool("auth.success", false))
+				span.SetStatus(codes.Error, err.Error())
+			}
 			r.emitFailure(ctx, req, err)
 			return nil, err
 		}
-		// Success
+		r.recordMetrics(ctx, start, true)
+		if span != nil {
+			span.SetAttributes(
+				attribute.Bool("auth.success", true),
+				attribute.String("tenant.id", identity.TenantID),
+			)
+			span.SetStatus(codes.Ok, "")
+		}
+		// Populate SessionID from trace context for audit correlation
+		if req.SessionID == "" {
+			req.SessionID = telemetry.TraceIDFromContext(ctx)
+		}
 		r.emitSuccess(ctx, req, identity)
 		return identity, nil
 	}
 
 	// All authenticators returned ErrUnsupportedMethod
 	err := fmt.Errorf("no authenticator accepted the request: %w", ErrAuthenticationFailed)
+	r.recordMetrics(ctx, start, false)
+	if span != nil {
+		span.SetAttributes(attribute.Bool("auth.success", false))
+		span.SetStatus(codes.Error, err.Error())
+	}
 	r.emitFailure(ctx, req, err)
 	return nil, err
+}
+
+func (r *Registry) recordMetrics(ctx context.Context, start time.Time, success bool) {
+	if r.authCounter != nil {
+		r.authCounter.Add(ctx, 1,
+			metric.WithAttributes(attribute.Bool("success", success)))
+	}
+	if r.authLatency != nil {
+		r.authLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
 }
 
 func (r *Registry) emitSuccess(ctx context.Context, req *Request, identity *Identity) {

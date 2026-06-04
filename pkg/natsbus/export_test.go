@@ -2,6 +2,7 @@ package natsbus
 
 import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Export unexported functions for BDD tests in the natsbus_test package.
@@ -61,4 +62,36 @@ func (o clientOptions) TLSConfig() interface{}      { return o.tlsConfig }
 // ContentHash exposes contentHash for external tests.
 func ContentHash(data []byte) string {
 	return contentHash(data)
+}
+
+// ReconstructSpanContext exposes reconstructSpanContext for external tests.
+func ReconstructSpanContext(headers map[string][]string) (trace.SpanContext, error) {
+	return reconstructSpanContext(headers)
+}
+
+// TelemetryFields exposes telemetry instrument state for test assertions.
+type TelemetryFields struct {
+	HasTracer         bool
+	HasMeter          bool
+	HasPublishCounter bool
+	HasPublishLatency bool
+	HasProcessCounter bool
+	HasProcessLatency bool
+}
+
+// ExportTelemetryFields extracts telemetry state from a client for tests.
+// Returns zero TelemetryFields if the Client is not a *client.
+func ExportTelemetryFields(c Client) TelemetryFields {
+	cc, ok := c.(*client)
+	if !ok {
+		return TelemetryFields{}
+	}
+	return TelemetryFields{
+		HasTracer:         cc.tracer != nil,
+		HasMeter:          cc.meter != nil,
+		HasPublishCounter: cc.publishCounter != nil,
+		HasPublishLatency: cc.publishLatency != nil,
+		HasProcessCounter: cc.processCounter != nil,
+		HasProcessLatency: cc.processLatency != nil,
+	}
 }

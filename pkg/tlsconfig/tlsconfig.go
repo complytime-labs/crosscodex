@@ -1,10 +1,17 @@
 package tlsconfig
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"os"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
@@ -21,23 +28,63 @@ type resolvedConfig struct {
 // An empty target uses global config only. A non-empty target deep-merges
 // Targets[target] over global settings. Returns (nil, nil) when the resolved
 // mode is "off" or empty.
-func BuildTLSConfig(cfg config.TLSConfig, target string) (*tls.Config, error) {
+func BuildTLSConfig(ctx context.Context, cfg config.TLSConfig, target string) (*tls.Config, error) {
 	var r Resolver
-	return r.BuildTLSConfig(cfg, target)
+	return r.BuildTLSConfig(ctx, cfg, target)
 }
 
 // BuildTLSConfig is the method form of the package-level function.
-func (r Resolver) BuildTLSConfig(cfg config.TLSConfig, target string) (*tls.Config, error) {
+func (r Resolver) BuildTLSConfig(ctx context.Context, cfg config.TLSConfig, target string) (*tls.Config, error) {
+	start := time.Now()
 	resolved := mergeConfig(cfg, target)
+
+	// Start build span if tracer is available.
+	var span trace.Span
+	if r.Tracer != nil {
+		ctx, span = r.Tracer.Start(ctx, "tlsconfig.BuildTLSConfig",
+			trace.WithAttributes(
+				attribute.String("tls.target", target),
+				attribute.String("tls.mode", resolved.mode),
+				attribute.Bool("tls.fips.enabled", cfg.FIPS.Enabled),
+			),
+		)
+		defer span.End()
+	}
+
+	var result *tls.Config
+	var err error
 
 	switch resolved.mode {
 	case "", "off":
-		return nil, nil
+		result, err = nil, nil
 	case "server-only", "mutual":
-		return buildTLSConfigFromResolved(cfg, resolved, target)
+		result, err = buildTLSConfigFromResolved(ctx, r, cfg, resolved, target)
 	default:
-		return nil, fmt.Errorf("target %q: %w: %q", target, ErrInvalidMode, resolved.mode)
+		err = fmt.Errorf("target %q: %w: %q", target, ErrInvalidMode, resolved.mode)
 	}
+
+	// Record build metrics.
+	if r.Meter != nil {
+		successAttr := attribute.String("result", "success")
+		if err != nil {
+			successAttr = attribute.String("result", "failure")
+		}
+		if counter, cErr := r.Meter.Int64Counter("tlsconfig.build.total",
+			metric.WithDescription("Total TLS config builds")); cErr == nil {
+			counter.Add(ctx, 1, metric.WithAttributes(successAttr))
+		}
+		if hist, hErr := r.Meter.Int64Histogram("tlsconfig.build.duration_ms",
+			metric.WithDescription("TLS config build duration in milliseconds")); hErr == nil {
+			hist.Record(ctx, time.Since(start).Milliseconds(), metric.WithAttributes(successAttr))
+		}
+	}
+
+	if err != nil && span != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+
+	return result, err
 }
 
 // mergeConfig applies target overrides to the global TLS config.
@@ -77,7 +124,7 @@ func mergeConfig(cfg config.TLSConfig, target string) resolvedConfig {
 }
 
 // buildTLSConfigFromResolved constructs a *tls.Config from merged settings.
-func buildTLSConfigFromResolved(cfg config.TLSConfig, rc resolvedConfig, target string) (*tls.Config, error) {
+func buildTLSConfigFromResolved(ctx context.Context, r Resolver, cfg config.TLSConfig, rc resolvedConfig, target string) (*tls.Config, error) {
 	tlsCfg := &tls.Config{
 		MinVersion: tls.VersionTLS12, // DevSkim: ignore DS440001,DS112852 - TLS 1.2 minimum enforced
 	}
@@ -119,14 +166,33 @@ func buildTLSConfigFromResolved(cfg config.TLSConfig, rc resolvedConfig, target 
 	// We load what's provided and leave the rest nil.
 	if rc.cert != "" && rc.key != "" {
 		// Load static certificate for initial validation
+		var certSpan trace.Span
+		if r.Tracer != nil {
+			_, certSpan = r.Tracer.Start(ctx, "tls.LoadCertificate",
+				trace.WithAttributes(attribute.String("cert.path", rc.cert)),
+			)
+		}
 		cert, err := tls.LoadX509KeyPair(rc.cert, rc.key)
 		if err != nil {
+			if certSpan != nil {
+				certSpan.RecordError(err)
+				certSpan.SetStatus(codes.Error, err.Error())
+				certSpan.End()
+			}
 			return nil, fmt.Errorf("target %q: %w: %s: %w", target, ErrCertificateLoadFailed, rc.cert, err)
+		}
+		if certSpan != nil {
+			certSpan.SetStatus(codes.Ok, "")
+			certSpan.End()
 		}
 		tlsCfg.Certificates = []tls.Certificate{cert}
 
 		// Set reload callback for server-side dynamic reloading
-		tlsCfg.GetCertificate = makeGetCertificate(rc.cert, rc.key)
+		if r.Meter != nil {
+			tlsCfg.GetCertificate = makeGetCertificateWithMeter(rc.cert, rc.key, r.Meter)
+		} else {
+			tlsCfg.GetCertificate = makeGetCertificate(rc.cert, rc.key)
+		}
 	} else if rc.cert != "" && rc.key == "" {
 		return nil, fmt.Errorf("target %q: cert specified without key: %w", target, ErrMissingKey)
 	} else if rc.cert == "" && rc.key != "" {
@@ -136,14 +202,35 @@ func buildTLSConfigFromResolved(cfg config.TLSConfig, rc resolvedConfig, target 
 
 	// --- CA loading ---
 	if rc.ca != "" {
+		var caSpan trace.Span
+		if r.Tracer != nil {
+			_, caSpan = r.Tracer.Start(ctx, "tls.LoadCA",
+				trace.WithAttributes(attribute.String("ca.path", rc.ca)),
+			)
+		}
 		caPEM, err := os.ReadFile(rc.ca)
 		if err != nil {
+			if caSpan != nil {
+				caSpan.RecordError(err)
+				caSpan.SetStatus(codes.Error, err.Error())
+				caSpan.End()
+			}
 			return nil, fmt.Errorf("target %q: failed to read CA file %s: %w", target, rc.ca, err)
 		}
 
 		caPool := x509.NewCertPool()
 		if !caPool.AppendCertsFromPEM(caPEM) {
-			return nil, fmt.Errorf("target %q: %w: no valid certificates found in %s", target, ErrInvalidCertificate, rc.ca)
+			caErr := fmt.Errorf("target %q: %w: no valid certificates found in %s", target, ErrInvalidCertificate, rc.ca)
+			if caSpan != nil {
+				caSpan.RecordError(caErr)
+				caSpan.SetStatus(codes.Error, caErr.Error())
+				caSpan.End()
+			}
+			return nil, caErr
+		}
+		if caSpan != nil {
+			caSpan.SetStatus(codes.Ok, "")
+			caSpan.End()
 		}
 
 		tlsCfg.RootCAs = caPool
@@ -163,7 +250,11 @@ func buildTLSConfigFromResolved(cfg config.TLSConfig, rc resolvedConfig, target 
 
 		// Set client cert reload callback
 		if rc.cert != "" && rc.key != "" {
-			tlsCfg.GetClientCertificate = makeGetClientCertificate(rc.cert, rc.key)
+			if r.Meter != nil {
+				tlsCfg.GetClientCertificate = makeGetClientCertificateWithMeter(rc.cert, rc.key, r.Meter)
+			} else {
+				tlsCfg.GetClientCertificate = makeGetClientCertificate(rc.cert, rc.key)
+			}
 		}
 	}
 

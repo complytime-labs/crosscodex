@@ -3,6 +3,7 @@
 package natsbus
 
 import (
+	"context"
 	"log/slog"
 	"path/filepath"
 	"sync/atomic"
@@ -48,7 +49,7 @@ func subscribeRejectingProvenance(t *testing.T, rawConn *nats.Conn, subject stri
 		conn: rawConn,
 		opts: defaultClientOptions(),
 	}
-	wrappedHandler := c.wrapHandler(func(msg *Message) error {
+	wrappedHandler := c.wrapHandler(func(_ context.Context, msg *Message) error {
 		handlerCalled.Store(true)
 		return nil
 	})
@@ -108,5 +109,101 @@ func TestRawPublishWithPartialProvenanceRejected(t *testing.T) {
 
 	if handlerCalled.Load() {
 		t.Fatal("handler was called for a message with partial provenance headers; expected rejection")
+	}
+}
+
+// TestContentHashMismatchRejected proves that a message with valid
+// provenance headers but a tampered content hash is rejected by
+// wrapHandler. The handler is never called.
+func TestContentHashMismatchRejected(t *testing.T) {
+	rawConn := startRawNATSConn(t, "nats-hash-mismatch-test")
+	subject := "crosscodex.work.test-tenant.classify.job-hash"
+
+	var handlerCalled atomic.Bool
+	c := &client{
+		conn: rawConn,
+		opts: defaultClientOptions(),
+	}
+	wrappedHandler := c.wrapHandler(func(_ context.Context, _ *Message) error {
+		handlerCalled.Store(true)
+		return nil
+	})
+
+	sub, err := rawConn.Subscribe(subject, wrappedHandler)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	t.Cleanup(func() { sub.Unsubscribe() })
+
+	// Build a message with all 5 provenance headers but a wrong content hash.
+	payload := []byte("legitimate payload")
+	wrongHash := contentHash([]byte("different payload"))
+	msg := &nats.Msg{
+		Subject: subject,
+		Data:    payload,
+		Header: nats.Header{
+			HeaderTraceID:       []string{"0af7651916cd43dd8448eb211c80319c"}, // DevSkim: ignore DS173237 - OTel trace ID test fixture, not a credential
+			HeaderSpanID:        []string{"b7ad6b7169203331"},
+			HeaderTenantID:      []string{"test-tenant"},
+			HeaderTimestamp:     []string{time.Now().UTC().Format(time.RFC3339Nano)},
+			HeaderContentSHA256: []string{wrongHash},
+		},
+	}
+	if err := rawConn.PublishMsg(msg); err != nil {
+		t.Fatalf("raw publish: %v", err)
+	}
+	rawConn.Flush()
+
+	time.Sleep(500 * time.Millisecond)
+
+	if handlerCalled.Load() {
+		t.Fatal("handler was called for a message with mismatched content hash; expected rejection")
+	}
+}
+
+// TestContentHashMatchAccepted proves that a message with valid
+// provenance headers and a correct content hash is accepted.
+func TestContentHashMatchAccepted(t *testing.T) {
+	rawConn := startRawNATSConn(t, "nats-hash-match-test")
+	subject := "crosscodex.work.test-tenant.classify.job-hash-ok"
+
+	var handlerCalled atomic.Bool
+	c := &client{
+		conn: rawConn,
+		opts: defaultClientOptions(),
+	}
+	wrappedHandler := c.wrapHandler(func(_ context.Context, _ *Message) error {
+		handlerCalled.Store(true)
+		return nil
+	})
+
+	sub, err := rawConn.Subscribe(subject, wrappedHandler)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	t.Cleanup(func() { sub.Unsubscribe() })
+
+	payload := []byte("legitimate payload")
+	correctHash := contentHash(payload)
+	msg := &nats.Msg{
+		Subject: subject,
+		Data:    payload,
+		Header: nats.Header{
+			HeaderTraceID:       []string{"0af7651916cd43dd8448eb211c80319c"}, // DevSkim: ignore DS173237 - OTel trace ID test fixture, not a credential
+			HeaderSpanID:        []string{"b7ad6b7169203331"},
+			HeaderTenantID:      []string{"test-tenant"},
+			HeaderTimestamp:     []string{time.Now().UTC().Format(time.RFC3339Nano)},
+			HeaderContentSHA256: []string{correctHash},
+		},
+	}
+	if err := rawConn.PublishMsg(msg); err != nil {
+		t.Fatalf("raw publish: %v", err)
+	}
+	rawConn.Flush()
+
+	time.Sleep(500 * time.Millisecond)
+
+	if !handlerCalled.Load() {
+		t.Fatal("handler was NOT called for a message with correct content hash; expected acceptance")
 	}
 }

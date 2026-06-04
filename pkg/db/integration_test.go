@@ -13,8 +13,10 @@ import (
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.opentelemetry.io/otel"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -1798,5 +1800,184 @@ func TestIntegration_GraphUser_CannotAlterRelational(t *testing.T) {
 	errMsg := err.Error()
 	if !strings.Contains(errMsg, "permission denied") && !strings.Contains(errMsg, "must be owner") {
 		t.Errorf("expected 'permission denied' or 'must be owner', got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry
+// ---------------------------------------------------------------------------
+
+// TestIntegration_Telemetry_PoolOperations verifies that a pool created with
+// WithTelemetry emits the expected spans and metrics for Query, Exec,
+// Begin+Commit, and Health operations.
+func TestIntegration_Telemetry_PoolOperations(t *testing.T) {
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("NewTestProvider: %v", err)
+	}
+	defer tp.Shutdown(context.Background())
+
+	tracer := tp.TracerProvider().Tracer("crosscodex/pkg/db/test")
+	meter := tp.MeterProvider().Meter("crosscodex/pkg/db/test")
+
+	pool, err := db.NewPool(db.PoolConfig{
+		DSN:          appUserDSN(),
+		MaxOpenConns: 2,
+	}, db.WithTelemetry(tracer, meter))
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	defer pool.Close()
+
+	ctx := context.Background()
+
+	// Exercise Query
+	rows, err := pool.Query(ctx, "SELECT 1")
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	rows.Close()
+
+	// Exercise QueryRow
+	row := pool.QueryRow(ctx, "SELECT 1")
+	var dummy int
+	_ = row.Scan(&dummy)
+
+	// Exercise Exec
+	err = pool.Exec(ctx, "SELECT 1")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	// Exercise Begin + Commit
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Exercise Health
+	if _, err := pool.Health(ctx); err != nil {
+		t.Fatalf("Health: %v", err)
+	}
+
+	// Assert spans
+	spans := tp.GetSpans()
+	for _, name := range []string{"db.Query", "db.QueryRow", "db.Exec", "db.Begin", "db.Health"} {
+		if s := telemetrytest.FindSpan(spans, name); s == nil {
+			t.Errorf("expected span %q not found", name)
+		}
+	}
+
+	// Assert metrics
+	rm := tp.GetMetrics()
+
+	qm := telemetrytest.FindMetric(rm, "db.queries.total")
+	if qm == nil {
+		t.Fatal("metric db.queries.total not found")
+	}
+	qv, err := telemetrytest.CounterValue(qm)
+	if err != nil {
+		t.Fatalf("CounterValue(db.queries.total): %v", err)
+	}
+	if qv < 3 {
+		t.Errorf("db.queries.total = %d, want >= 3", qv)
+	}
+
+	tm := telemetrytest.FindMetric(rm, "db.transactions.total")
+	if tm == nil {
+		t.Fatal("metric db.transactions.total not found")
+	}
+	tv, err := telemetrytest.CounterValue(tm)
+	if err != nil {
+		t.Fatalf("CounterValue(db.transactions.total): %v", err)
+	}
+	if tv < 1 {
+		t.Errorf("db.transactions.total = %d, want >= 1", tv)
+	}
+
+	lm := telemetrytest.FindMetric(rm, "db.query.duration_ms")
+	if lm == nil {
+		t.Fatal("metric db.query.duration_ms not found")
+	}
+	lc, err := telemetrytest.HistogramCount(lm)
+	if err != nil {
+		t.Fatalf("HistogramCount(db.query.duration_ms): %v", err)
+	}
+	if lc < 2 {
+		t.Errorf("db.query.duration_ms count = %d, want >= 2", lc)
+	}
+
+	gm := telemetrytest.FindMetric(rm, "db.pool.open_connections")
+	if gm == nil {
+		t.Fatal("metric db.pool.open_connections not found")
+	}
+	gv, err := telemetrytest.GaugeValue(gm)
+	if err != nil {
+		t.Fatalf("GaugeValue(db.pool.open_connections): %v", err)
+	}
+	if gv < 0 {
+		t.Errorf("db.pool.open_connections = %d, want >= 0", gv)
+	}
+}
+
+// TestIntegration_Telemetry_TenantPool verifies that TenantPool.Begin emits
+// a db.TenantBegin span with the tenant.id attribute set correctly.
+// Because tenant_pool.go uses otel.GetTracerProvider() directly (not
+// the pool's tracer), we must set the global TracerProvider to capture spans.
+func TestIntegration_Telemetry_TenantPool(t *testing.T) {
+	setupTenant(t, "telemetry-tenant", "Telemetry Tenant")
+
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("NewTestProvider: %v", err)
+	}
+	defer tp.Shutdown(context.Background())
+
+	// WARNING: mutates global TracerProvider. This test must NOT run with t.Parallel().
+	// tenant_pool.go uses otel.GetTracerProvider() directly instead of a passed-in tracer.
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp.TracerProvider())
+	defer otel.SetTracerProvider(prev)
+
+	pool, err := db.NewPool(db.PoolConfig{
+		DSN:          appUserDSN(),
+		MaxOpenConns: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewPool: %v", err)
+	}
+	defer pool.Close()
+
+	tenantPool := db.NewTenantPool(pool)
+
+	ctx := context.Background()
+	tenantCtx, err := tenant.WithTenant(ctx, "telemetry-tenant")
+	if err != nil {
+		t.Fatalf("WithTenant: %v", err)
+	}
+
+	tx, err := tenantPool.Begin(tenantCtx)
+	if err != nil {
+		t.Fatalf("TenantPool.Begin: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	spans := tp.GetSpans()
+	s := telemetrytest.FindSpan(spans, "db.TenantBegin")
+	if s == nil {
+		t.Fatal("expected span db.TenantBegin not found")
+	}
+
+	val, ok := telemetrytest.SpanAttribute(s, "tenant.id")
+	if !ok {
+		t.Fatal("span db.TenantBegin missing tenant.id attribute")
+	}
+	if got := val.AsString(); got != "telemetry-tenant" {
+		t.Errorf("tenant.id = %q, want %q", got, "telemetry-tenant")
 	}
 }

@@ -1,6 +1,7 @@
 package tlsconfig_test
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -11,8 +12,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"go.opentelemetry.io/otel/metric"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 )
@@ -153,7 +160,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 	Describe("BuildTLSConfig", func() {
 		Context("when mode is off", func() {
 			It("returns nil, nil", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "off",
 				}, "")
 				Expect(err).NotTo(HaveOccurred())
@@ -163,7 +170,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when mode is empty", func() {
 			It("returns nil, nil", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{}, "")
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{}, "")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(tlsCfg).To(BeNil())
 			})
@@ -171,7 +178,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when mode is server-only with valid certs", func() {
 			It("returns a tls.Config with certificates and reload callback", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					CA:   caPath(),
 					Cert: certPath(),
@@ -202,7 +209,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when mode is mutual with valid certs", func() {
 			It("returns a tls.Config with mTLS settings", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "mutual",
 					CA:   caPath(),
 					Cert: certPath(),
@@ -227,7 +234,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when mode is invalid", func() {
 			It("returns ErrInvalidMode", func() {
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "invalid",
 					Cert: certPath(),
 					Key:  keyPath(),
@@ -239,7 +246,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when target overrides mode to off", func() {
 			It("returns nil, nil for that target", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "mutual",
 					CA:   caPath(),
 					Cert: certPath(),
@@ -261,7 +268,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 	Describe("Error Handling", func() {
 		Context("when key is specified without cert", func() {
 			It("returns ErrMissingCert", func() {
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					Key:  keyPath(),
 				}, "")
@@ -272,7 +279,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when cert is specified without key", func() {
 			It("returns ErrMissingKey", func() {
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					Cert: certPath(),
 				}, "")
@@ -283,7 +290,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when neither cert nor key is specified", func() {
 			It("succeeds with an empty tls.Config (client-side usage)", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					CA:   caPath(),
 				}, "")
@@ -296,7 +303,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when CA is missing for mutual mode", func() {
 			It("returns ErrMissingCA", func() {
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "mutual",
 					Cert: certPath(),
 					Key:  keyPath(),
@@ -308,7 +315,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when cert file does not exist", func() {
 			It("returns ErrCertificateLoadFailed with file path", func() {
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					Cert: "/nonexistent/cert.pem",
 					Key:  keyPath(),
@@ -322,7 +329,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when CA file does not exist", func() {
 			It("returns an error with the file path", func() {
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					CA:   "/nonexistent/ca.pem",
 					Cert: certPath(),
@@ -339,7 +346,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 				badCA := filepath.Join(GinkgoT().TempDir(), "bad-ca.pem")
 				Expect(os.WriteFile(badCA, []byte("not a cert"), 0644)).To(Succeed())
 
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					CA:   badCA,
 					Cert: certPath(),
@@ -352,7 +359,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("when target override cert path does not exist", func() {
 			It("fails without falling back to global cert", func() {
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					Cert: certPath(),
 					Key:  keyPath(),
@@ -371,7 +378,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 		Context("when error messages include target name", func() {
 			DescribeTable("target name appears in error",
 				func(target string, cfg config.TLSConfig) {
-					_, err := tlsconfig.BuildTLSConfig(cfg, target)
+					_, err := tlsconfig.BuildTLSConfig(context.Background(), cfg, target)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring(target))
 				},
@@ -495,7 +502,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		Context("cipher filters applied via BuildTLSConfig", func() {
 			It("sets CipherSuites when cipher_allow is specified", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode:        "server-only",
 					Cert:        certPath(),
 					Key:         keyPath(),
@@ -506,7 +513,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 			})
 
 			It("sets CipherSuites when cipher_deny is specified", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode:       "server-only",
 					Cert:       certPath(),
 					Key:        keyPath(),
@@ -527,7 +534,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 			})
 
 			It("leaves CipherSuites nil when no filters are applied", func() {
-				tlsCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					Cert: certPath(),
 					Key:  keyPath(),
@@ -652,7 +659,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 					Skip("BoringCrypto is available — skip non-FIPS test")
 				}
 
-				_, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
 					Cert: certPath(),
 					Key:  keyPath(),
@@ -671,7 +678,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 	Describe("End-to-End TLS Handshake", func() {
 		It("completes a mutual TLS handshake using BuildTLSConfig", func() {
 			By("building server TLS config")
-			serverTLS, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+			serverTLS, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 				Mode: "mutual",
 				CA:   caPath(),
 				Cert: certPath(),
@@ -701,7 +708,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 			}()
 
 			By("building client TLS config")
-			clientTLS, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+			clientTLS, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 				Mode: "mutual",
 				CA:   caPath(),
 				Cert: clientCert(),
@@ -726,7 +733,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		It("completes a server-only TLS handshake", func() {
 			By("building server TLS config")
-			serverTLS, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+			serverTLS, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 				Mode: "server-only",
 				Cert: certPath(),
 				Key:  keyPath(),
@@ -754,7 +761,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 			}()
 
 			By("building client TLS config with CA trust")
-			clientTLS, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+			clientTLS, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 				Mode: "server-only",
 				CA:   caPath(),
 			}, "")
@@ -770,7 +777,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 		It("rejects a client without a trusted certificate in mutual TLS", func() {
 			By("building server TLS config requiring client certs")
-			serverTLS, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+			serverTLS, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 				Mode: "mutual",
 				CA:   caPath(),
 				Cert: certPath(),
@@ -811,7 +818,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 			// Use the server's CA for trust (so we trust the server), but present
 			// an untrusted client cert (signed by a different CA)
-			clientTLS, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+			clientTLS, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 				Mode: "mutual",
 				CA:   caPath(),
 				Cert: filepath.Join(untrustedDir, "client.pem"),
@@ -848,8 +855,8 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 				Key:  keyPath(),
 			}
 
-			pkgResult, pkgErr := tlsconfig.BuildTLSConfig(cfg, "")
-			resolverResult, resolverErr := r.BuildTLSConfig(cfg, "")
+			pkgResult, pkgErr := tlsconfig.BuildTLSConfig(context.Background(), cfg, "")
+			resolverResult, resolverErr := r.BuildTLSConfig(context.Background(), cfg, "")
 
 			Expect(pkgErr).NotTo(HaveOccurred())
 			Expect(resolverErr).NotTo(HaveOccurred())
@@ -859,6 +866,260 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 			// Both should have the same structure
 			Expect(pkgResult.MinVersion).To(Equal(resolverResult.MinVersion))
 			Expect(len(pkgResult.Certificates)).To(Equal(len(resolverResult.Certificates)))
+		})
+	})
+
+	// ─── Level 9: Telemetry Wiring ────────────────────────────────
+	Describe("Telemetry Wiring", func() {
+		Context("when a Resolver is created without telemetry", func() {
+			It("has nil telemetry fields", func() {
+				var r tlsconfig.Resolver
+				tf := tlsconfig.ExportTelemetryFields(r)
+				Expect(tf.HasTracer).To(BeFalse(), "tracer should be nil on zero-value Resolver")
+				Expect(tf.HasMeter).To(BeFalse(), "meter should be nil on zero-value Resolver")
+			})
+		})
+
+		Context("when a Resolver is created with telemetry", func() {
+			It("populates both telemetry fields", func() {
+				tp := tracenoop.NewTracerProvider()
+				tracer := tp.Tracer("tlsconfig-test")
+				mp := metricnoop.NewMeterProvider()
+				meter := mp.Meter("tlsconfig-test")
+
+				r := tlsconfig.Resolver{
+					Tracer: tracer,
+					Meter:  meter,
+				}
+				tf := tlsconfig.ExportTelemetryFields(r)
+				Expect(tf.HasTracer).To(BeTrue(), "tracer should be set when provided")
+				Expect(tf.HasMeter).To(BeTrue(), "meter should be set when provided")
+			})
+		})
+
+		Context("when a Resolver with telemetry builds a TLS config", func() {
+			It("does not error with telemetry populated", func() {
+				tp := tracenoop.NewTracerProvider()
+				tracer := tp.Tracer("tlsconfig-test")
+				mp := metricnoop.NewMeterProvider()
+				meter := mp.Meter("tlsconfig-test")
+
+				r := tlsconfig.Resolver{
+					Tracer: tracer,
+					Meter:  meter,
+				}
+
+				// Use mode "off" so we don't need real cert files
+				cfg := config.TLSConfig{Mode: "off"}
+				result, err := r.BuildTLSConfig(context.Background(), cfg, "")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(BeNil(), "mode=off returns nil TLS config")
+			})
+		})
+	})
+
+	// ─── Level 10: Telemetry Integration ─────────────────────────
+	Describe("Telemetry Integration", func() {
+		Context("when building TLS config with telemetry", Ordered, func() {
+			var (
+				testTP     *telemetrytest.TestProvider
+				testTracer trace.Tracer
+				testMeter  metric.Meter
+			)
+
+			BeforeAll(func() {
+				var err error
+				testTP, err = telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				testTracer = testTP.TracerProvider().Tracer("tlsconfig-test")
+				testMeter = testTP.MeterProvider().Meter("tlsconfig-test")
+			})
+
+			AfterAll(func() {
+				Expect(testTP.Shutdown(context.Background())).To(Succeed())
+			})
+
+			It("emits tlsconfig.BuildTLSConfig span with attributes", func() {
+				testTP.Reset()
+				r := tlsconfig.Resolver{Tracer: testTracer, Meter: testMeter}
+				cfg := config.TLSConfig{
+					Mode: "server-only",
+					Cert: certPath(),
+					Key:  keyPath(),
+					CA:   caPath(),
+				}
+				tlsCfg, err := r.BuildTLSConfig(context.Background(), cfg, "test-target")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tlsCfg).NotTo(BeNil())
+
+				spans := testTP.GetSpans()
+				buildSpan := telemetrytest.FindSpan(spans, "tlsconfig.BuildTLSConfig")
+				Expect(buildSpan).NotTo(BeNil(), "expected tlsconfig.BuildTLSConfig span")
+
+				targetAttr, ok := telemetrytest.SpanAttribute(buildSpan, "tls.target")
+				Expect(ok).To(BeTrue())
+				Expect(targetAttr.AsString()).To(Equal("test-target"))
+
+				modeAttr, ok := telemetrytest.SpanAttribute(buildSpan, "tls.mode")
+				Expect(ok).To(BeTrue())
+				Expect(modeAttr.AsString()).To(Equal("server-only"))
+
+				fipsAttr, ok := telemetrytest.SpanAttribute(buildSpan, "tls.fips.enabled")
+				Expect(ok).To(BeTrue())
+				Expect(fipsAttr.AsBool()).To(BeFalse())
+			})
+
+			It("emits tls.LoadCertificate child span", func() {
+				testTP.Reset()
+				r := tlsconfig.Resolver{Tracer: testTracer, Meter: testMeter}
+				cfg := config.TLSConfig{
+					Mode: "server-only",
+					Cert: certPath(),
+					Key:  keyPath(),
+					CA:   caPath(),
+				}
+				_, err := r.BuildTLSConfig(context.Background(), cfg, "")
+				Expect(err).NotTo(HaveOccurred())
+
+				spans := testTP.GetSpans()
+				certSpan := telemetrytest.FindSpan(spans, "tls.LoadCertificate")
+				Expect(certSpan).NotTo(BeNil(), "expected tls.LoadCertificate span")
+
+				certPathAttr, ok := telemetrytest.SpanAttribute(certSpan, "cert.path")
+				Expect(ok).To(BeTrue())
+				Expect(certPathAttr.AsString()).To(Equal(certPath()))
+			})
+
+			It("emits tls.LoadCA child span when CA configured", func() {
+				testTP.Reset()
+				r := tlsconfig.Resolver{Tracer: testTracer, Meter: testMeter}
+				cfg := config.TLSConfig{
+					Mode: "mutual",
+					Cert: certPath(),
+					Key:  keyPath(),
+					CA:   caPath(),
+				}
+				_, err := r.BuildTLSConfig(context.Background(), cfg, "")
+				Expect(err).NotTo(HaveOccurred())
+
+				spans := testTP.GetSpans()
+				caSpan := telemetrytest.FindSpan(spans, "tls.LoadCA")
+				Expect(caSpan).NotTo(BeNil(), "expected tls.LoadCA span")
+
+				caPathAttr, ok := telemetrytest.SpanAttribute(caSpan, "ca.path")
+				Expect(ok).To(BeTrue())
+				Expect(caPathAttr.AsString()).To(Equal(caPath()))
+			})
+
+			It("records tlsconfig.build.total counter", func() {
+				testTP.Reset()
+				r := tlsconfig.Resolver{Tracer: testTracer, Meter: testMeter}
+				cfg := config.TLSConfig{
+					Mode: "server-only",
+					Cert: certPath(),
+					Key:  keyPath(),
+					CA:   caPath(),
+				}
+				_, err := r.BuildTLSConfig(context.Background(), cfg, "")
+				Expect(err).NotTo(HaveOccurred())
+
+				rm := testTP.GetMetrics()
+				buildCounter := telemetrytest.FindMetric(rm, "tlsconfig.build.total")
+				Expect(buildCounter).NotTo(BeNil(), "expected tlsconfig.build.total metric")
+				val, err := telemetrytest.CounterValue(buildCounter)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(val).To(BeNumerically(">=", 1))
+			})
+
+			It("records tlsconfig.build.duration_ms histogram", func() {
+				testTP.Reset()
+				r := tlsconfig.Resolver{Tracer: testTracer, Meter: testMeter}
+				cfg := config.TLSConfig{
+					Mode: "server-only",
+					Cert: certPath(),
+					Key:  keyPath(),
+					CA:   caPath(),
+				}
+				_, err := r.BuildTLSConfig(context.Background(), cfg, "")
+				Expect(err).NotTo(HaveOccurred())
+
+				rm := testTP.GetMetrics()
+				buildHist := telemetrytest.FindMetric(rm, "tlsconfig.build.duration_ms")
+				Expect(buildHist).NotTo(BeNil(), "expected tlsconfig.build.duration_ms metric")
+				count, err := telemetrytest.HistogramCount(buildHist)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(BeNumerically(">=", 1))
+			})
+		})
+
+		Context("when certificate reload callback fires", Ordered, func() {
+			var (
+				reloadTP    *telemetrytest.TestProvider
+				reloadMeter metric.Meter
+			)
+
+			BeforeAll(func() {
+				var err error
+				reloadTP, err = telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				reloadMeter = reloadTP.MeterProvider().Meter("tlsconfig-reload-test")
+			})
+
+			AfterAll(func() {
+				Expect(reloadTP.Shutdown(context.Background())).To(Succeed())
+			})
+
+			It("emits tlsconfig.cert.reload.total counter on success", func() {
+				reloadTP.Reset()
+				getCert := tlsconfig.MakeGetCertificateWithMeter(
+					certPath(),
+					keyPath(),
+					reloadMeter,
+				)
+				_, err := getCert(nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				rm := reloadTP.GetMetrics()
+				reloadCounter := telemetrytest.FindMetric(rm, "tlsconfig.cert.reload.total")
+				Expect(reloadCounter).NotTo(BeNil(), "expected tlsconfig.cert.reload.total metric")
+				val, err := telemetrytest.CounterValue(reloadCounter)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(val).To(Equal(int64(1)))
+			})
+
+			It("emits tlsconfig.cert.expiry_days gauge", func() {
+				reloadTP.Reset()
+				getCert := tlsconfig.MakeGetCertificateWithMeter(
+					certPath(),
+					keyPath(),
+					reloadMeter,
+				)
+				_, err := getCert(nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				rm := reloadTP.GetMetrics()
+				expiryGauge := telemetrytest.FindMetric(rm, "tlsconfig.cert.expiry_days")
+				Expect(expiryGauge).NotTo(BeNil(), "expected tlsconfig.cert.expiry_days metric")
+				val, err := telemetrytest.GaugeValue(expiryGauge)
+				Expect(err).NotTo(HaveOccurred())
+				// Dev certs are typically valid for 365 days; assert positive.
+				Expect(val).To(BeNumerically(">", 0))
+			})
+
+			It("emits counter with result=failure on bad cert path", func() {
+				reloadTP.Reset()
+				getCert := tlsconfig.MakeGetCertificateWithMeter(
+					"/nonexistent/cert.pem",
+					"/nonexistent/key.pem",
+					reloadMeter,
+				)
+				_, err := getCert(nil)
+				Expect(err).To(HaveOccurred())
+
+				rm := reloadTP.GetMetrics()
+				reloadCounter := telemetrytest.FindMetric(rm, "tlsconfig.cert.reload.total")
+				Expect(reloadCounter).NotTo(BeNil(), "expected tlsconfig.cert.reload.total metric on failure")
+			})
 		})
 	})
 })

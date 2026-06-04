@@ -17,7 +17,11 @@
 //	    log.Fatal(err)
 //	}
 //
-//	registry := authn.NewRegistry(auditEmitter, x509Auth)
+//	registry, err := authn.NewRegistry(auditEmitter, []authn.Authenticator{x509Auth})
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
 //	identity, err := registry.Authenticate(ctx, &authn.Request{
 //	    TLSState: conn.ConnectionState(),
 //	    ClientIP: remoteAddr,

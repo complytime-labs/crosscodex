@@ -17,8 +17,11 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
 var (
@@ -352,4 +355,121 @@ func TestIntegrationS3_TenantIsolation(t *testing.T) {
 
 	// Beta listing does not show alpha's objects.
 	listAndCompareKeys(t, pB, "isolation/", []string{key})
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry
+// ---------------------------------------------------------------------------
+
+// newIntegrationProviderWithTelemetry creates a Provider connected to the
+// RustFS container with OpenTelemetry tracing and metrics enabled.
+func newIntegrationProviderWithTelemetry(t *testing.T, tenantID string, tracer trace.Tracer, meter metric.Meter) storage.Provider {
+	t.Helper()
+	p, err := storage.NewS3(testBucket, tenantID,
+		storage.WithEndpoint(testEndpoint),
+		storage.WithRegion("us-east-1"),
+		storage.WithCredentials(testAccessKey, testSecretKey),
+		storage.WithS3Telemetry(tracer, meter),
+	)
+	if err != nil {
+		t.Fatalf("NewS3: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+func TestTelemetrySpansOnS3Operations(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("NewTestProvider: %v", err)
+	}
+	t.Cleanup(func() { _ = tp.Shutdown(ctx) })
+
+	tracer := tp.TracerProvider().Tracer("storage-integration-test")
+	meter := tp.MeterProvider().Meter("storage-integration-test")
+
+	p := newIntegrationProviderWithTelemetry(t, "integ-telemetry", tracer, meter)
+
+	key := "telemetry-crud.json"
+	data := []byte(`{"telemetry":"test"}`)
+	t.Cleanup(func() { cleanupKeys(t, p, key) })
+
+	// Put
+	if err := p.Put(ctx, key, bytes.NewReader(data)); err != nil {
+		t.Fatalf("Put() error: %v", err)
+	}
+
+	// Get
+	getAndCompare(t, p, key, data)
+
+	// List
+	listAndCompareKeys(t, p, "telemetry-", []string{key})
+
+	// Exists
+	ok, err := p.Exists(ctx, key)
+	if err != nil {
+		t.Fatalf("Exists() error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("Exists() = false, want true")
+	}
+
+	// Stat
+	meta, err := p.Stat(ctx, key)
+	if err != nil {
+		t.Fatalf("Stat() error: %v", err)
+	}
+	if meta.Key != key {
+		t.Errorf("Stat().Key = %q, want %q", meta.Key, key)
+	}
+
+	// Delete
+	if err := p.Delete(ctx, key); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+
+	// --- Assert spans ---
+	spans := tp.GetSpans()
+	wantSpans := []string{
+		"storage.Put",
+		"storage.Get",
+		"storage.List",
+		"storage.Exists",
+		"storage.Stat",
+		"storage.Delete",
+	}
+	for _, name := range wantSpans {
+		if telemetrytest.FindSpan(spans, name) == nil {
+			t.Errorf("missing span %q", name)
+		}
+	}
+
+	// Assert storage.key attribute on Put span.
+	putSpan := telemetrytest.FindSpan(spans, "storage.Put")
+	if putSpan != nil {
+		val, found := telemetrytest.SpanAttribute(putSpan, "storage.key")
+		if !found {
+			t.Error("Put span missing storage.key attribute")
+		} else if val.AsString() != key {
+			t.Errorf("Put span storage.key = %q, want %q", val.AsString(), key)
+		}
+	}
+
+	// --- Assert metrics ---
+	rm := tp.GetMetrics()
+	opMetric := telemetrytest.FindMetric(rm, "storage.operations.total")
+	if opMetric == nil {
+		t.Fatal("missing metric storage.operations.total")
+	}
+
+	count, err := telemetrytest.CounterValue(opMetric)
+	if err != nil {
+		t.Fatalf("CounterValue: %v", err)
+	}
+	if count < 6 {
+		t.Errorf("storage.operations.total = %d, want >= 6", count)
+	}
 }

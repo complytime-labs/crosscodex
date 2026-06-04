@@ -52,7 +52,7 @@ tasks:
       - task: all
 
   all:
-    desc: Run all integration tests (db, storage, NATS, and authn)
+    desc: Run all integration tests (db, storage, NATS, authn, grpc, telemetry, and attestation)
     env:
       TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
       TEST_S3_ENDPOINT: "http://localhost:19000"
@@ -71,6 +71,9 @@ tasks:
       TEST_GRPC_CA: "{{.TEST_DIR}}/certs/ca.pem"
       TEST_GRPC_CERT: "{{.TEST_DIR}}/certs/client.pem"
       TEST_GRPC_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+      TEST_OTLP_GRPC_ENDPOINT: "localhost:14317"
+      TEST_OTLP_HTTP_ENDPOINT: "localhost:14318"
+      TEST_JAEGER_QUERY_URL: "http://localhost:16686"
     cmds:
       - task: ensure-deps
       - task: compose-up
@@ -88,6 +91,10 @@ tasks:
       - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
       - go test -v -tags integration_authn -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-authn-coverage.out {{.ROOT_DIR}}/pkg/authn/... 2>&1 | tee {{.TEST_DIR}}/integration-authn.log
       - go test -v -tags integration_grpc -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-grpc-coverage.out {{.ROOT_DIR}}/internal/testgrpc/... 2>&1 | tee {{.TEST_DIR}}/integration-grpc.log
+      - go test -v -tags integration_telemetry -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-telemetry-coverage.out {{.ROOT_DIR}}/pkg/telemetry/... 2>&1 | tee {{.TEST_DIR}}/integration-telemetry.log
+      - go test -v -tags integration_telemetry -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-jaeger-smoke-coverage.out {{.ROOT_DIR}}/test/integration/... 2>&1 | tee {{.TEST_DIR}}/integration-jaeger-smoke.log
+      - go test -v -tags integration -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-trace-propagation-coverage.out {{.ROOT_DIR}}/test/integration/... 2>&1 | tee {{.TEST_DIR}}/integration-trace-propagation.log
+      - go test -v -tags integration -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-attestation-coverage.out {{.ROOT_DIR}}/pkg/attestation/... 2>&1 | tee {{.TEST_DIR}}/integration-attestation.log
 
   db:
     desc: Run database integration tests (db, graphdb, vectordb)
@@ -177,6 +184,37 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       - go test -v -tags integration_grpc -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-grpc-coverage.out {{.ROOT_DIR}}/internal/testgrpc/... 2>&1 | tee {{.TEST_DIR}}/integration-grpc.log
 
+  telemetry:
+    desc: Run telemetry integration tests (Jaeger OTLP)
+    deps: [ensure-deps]
+    env:
+      TEST_OTLP_GRPC_ENDPOINT: "localhost:14317"
+      TEST_OTLP_HTTP_ENDPOINT: "localhost:14318"
+      TEST_JAEGER_QUERY_URL: "http://localhost:16686"
+    cmds:
+      - task: compose-up
+        vars: { PROFILE: telemetry }
+      - defer:
+          task: compose-down
+          vars: { PROFILE: telemetry }
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration_telemetry -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-telemetry-coverage.out {{.ROOT_DIR}}/pkg/telemetry/... 2>&1 | tee {{.TEST_DIR}}/integration-telemetry.log
+      - go test -v -tags integration_telemetry -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-jaeger-smoke-coverage.out {{.ROOT_DIR}}/test/integration/... 2>&1 | tee {{.TEST_DIR}}/integration-jaeger-smoke.log
+
+  trace-propagation:
+    desc: Run cross-service trace propagation integration tests (embedded NATS)
+    deps: [ensure-deps]
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-trace-propagation-coverage.out {{.ROOT_DIR}}/test/integration/... 2>&1 | tee {{.TEST_DIR}}/integration-trace-propagation.log
+
+  attestation:
+    desc: Run attestation integration tests (embedded NATS, no containers needed)
+    deps: [ensure-deps]
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go test -v -tags integration -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-attestation-coverage.out {{.ROOT_DIR}}/pkg/attestation/... 2>&1 | tee {{.TEST_DIR}}/integration-attestation.log
+
   clean:
     desc: Remove all integration test containers and their volumes
     cmds:
@@ -240,12 +278,16 @@ tasks:
             wait_for "nats" {{.CONTAINER_ENGINE}} exec crosscodex-test-nats nats-server --help || exit 1
             wait_for "grpc" bash -c "echo > /dev/tcp/localhost/19090"
             ;;
+          telemetry)
+            wait_for "jaeger" wget -qO- http://localhost:16686/ 2>/dev/null
+            ;;
           all)
             wait_for "postgres" {{.CONTAINER_ENGINE}} exec crosscodex-test-db pg_isready -U postgres || exit 1
             wait_for "rustfs" curl -so /dev/null http://localhost:19000/ || exit 1
             wait_for "nats" {{.CONTAINER_ENGINE}} exec crosscodex-test-nats nats-server --help || exit 1
             wait_for "authn-proxy" {{.CONTAINER_ENGINE}} exec crosscodex-test-authn nginx -t || exit 1
             wait_for "grpc" bash -c "echo > /dev/tcp/localhost/19090"
+            wait_for "jaeger" wget -qO- http://localhost:16686/ 2>/dev/null
             ;;
         esac
 

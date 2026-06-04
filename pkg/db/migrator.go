@@ -8,6 +8,8 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/complytime-labs/crosscodex/pkg/db/migrations"
 )
@@ -33,26 +35,38 @@ func NewMigrator(dsn string) (Migrator, error) {
 	return &pgMigrator{m: m}, nil
 }
 
-func (mg *pgMigrator) Up(_ context.Context) error {
+func (mg *pgMigrator) Up(ctx context.Context) error {
+	_, span := otel.GetTracerProvider().Tracer("crosscodex/pkg/db").Start(ctx, "db.MigrateUp")
+	defer span.End()
+
 	err := mg.m.Up()
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		if _, dirty, vErr := mg.m.Version(); vErr == nil && dirty {
+			span.SetStatus(codes.Error, "dirty migration")
 			return fmt.Errorf("%w: version is dirty, manual intervention required: %s",
 				ErrMigrationDirty, err)
 		}
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("migration failed: %w", err)
 	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
-func (mg *pgMigrator) Version(_ context.Context) (uint, bool, error) {
+func (mg *pgMigrator) Version(ctx context.Context) (uint, bool, error) {
+	_, span := otel.GetTracerProvider().Tracer("crosscodex/pkg/db").Start(ctx, "db.MigrateVersion")
+	defer span.End()
+
 	version, dirty, err := mg.m.Version()
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
+			span.SetStatus(codes.Ok, "")
 			return 0, false, nil
 		}
+		span.SetStatus(codes.Error, err.Error())
 		return 0, false, fmt.Errorf("failed to get migration version: %w", err)
 	}
+	span.SetStatus(codes.Ok, "")
 	return version, dirty, nil
 }
 

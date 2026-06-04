@@ -247,6 +247,8 @@ Pipeline outputs include in-toto attestation for audit trails:
 - **Links**: Per-stage attestations with input/output hashes, model versions, environment
 - **Verification**: Independent validation via in-toto CLI (CrossCodex verify command planned)
 
+See [Cryptographic Attestation Guide](docs/dev/attestation.md) for the attestation model, trace correlation, and implementation roadmap.
+
 ## Storage Architecture
 
 PostgreSQL with extensions handles all data:
@@ -274,6 +276,8 @@ Built-in observability with OTLP export:
 - **Metrics**: Job duration, LLM latency, worker utilization, queue depth
 - **Logs**: Structured logging correlated to trace IDs
 
+See [Telemetry Guide](docs/dev/telemetry.md) for configuration, Jaeger setup, metrics reference, and instrumentation status.
+
 ### Audit Trails
 
 JetStream provides persistent audit streams:
@@ -283,6 +287,8 @@ JetStream provides persistent audit streams:
 | **Decisions** | Indefinite | Final compliance determinations         |
 | **LLM Calls** | 90 days    | Full prompts, responses, model versions |
 | **Events**    | 30 days    | Pipeline lifecycle, debugging           |
+
+See [Audit Streams Guide](docs/dev/audit-streams.md) for provenance headers, message inspection, and trace correlation.
 
 - **Issues**: [github.com/complytime-labs/crosscodex/issues](https://github.com/complytime-labs/crosscodex/issues)
 - **Discussions**: [github.com/complytime-labs/crosscodex/discussions](https://github.com/complytime-labs/crosscodex/discussions)

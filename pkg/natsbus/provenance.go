@@ -96,3 +96,27 @@ func firstValue(headers map[string][]string, key string) string {
 	}
 	return ""
 }
+
+// reconstructSpanContext builds a remote trace.SpanContext from provenance
+// headers. Returns an invalid SpanContext if trace/span IDs cannot be parsed.
+func reconstructSpanContext(headers map[string][]string) (trace.SpanContext, error) {
+	traceIDHex := firstValue(headers, HeaderTraceID)
+	spanIDHex := firstValue(headers, HeaderSpanID)
+
+	traceID, err := trace.TraceIDFromHex(traceIDHex)
+	if err != nil {
+		return trace.SpanContext{}, fmt.Errorf("parse trace ID %q: %w", traceIDHex, err)
+	}
+	spanID, err := trace.SpanIDFromHex(spanIDHex)
+	if err != nil {
+		return trace.SpanContext{}, fmt.Errorf("parse span ID %q: %w", spanIDHex, err)
+	}
+
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	})
+	return sc, nil
+}

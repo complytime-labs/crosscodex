@@ -21,3 +21,21 @@ var MatchAny = matchAny
 func MatchAnyURI(pattern string, cert *x509.Certificate) bool {
 	return matchAnyURI(pattern, cert)
 }
+
+// TelemetryFields exposes telemetry state for test assertions.
+type TelemetryFields struct {
+	HasTracer      bool
+	HasMeter       bool
+	HasAuthCounter bool
+	HasAuthLatency bool
+}
+
+// ExportTelemetryFields returns the telemetry configuration state of a Registry.
+func ExportTelemetryFields(r *Registry) TelemetryFields {
+	return TelemetryFields{
+		HasTracer:      r.tracer != nil,
+		HasMeter:       r.meter != nil,
+		HasAuthCounter: r.authCounter != nil,
+		HasAuthLatency: r.authLatency != nil,
+	}
+}

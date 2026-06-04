@@ -11,9 +11,12 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 )
 
@@ -60,6 +63,24 @@ func (f *failingEmitter) EmitAuthEvent(_ context.Context, _ *authn.AuthEvent) er
 // tlsStateWith creates a ConnectionState with the given peer certificates.
 func tlsStateWith(certs ...*x509.Certificate) *tls.ConnectionState {
 	return &tls.ConnectionState{PeerCertificates: certs}
+}
+
+// telemetryStubAuth is a minimal Authenticator for telemetry span tests.
+// It avoids TLS handshake setup by returning a canned identity or error.
+type telemetryStubAuth struct {
+	identity *authn.Identity
+	err      error
+}
+
+func (s *telemetryStubAuth) Authenticate(_ context.Context, _ *authn.Request) (*authn.Identity, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.identity, nil
+}
+
+func (s *telemetryStubAuth) SupportedMethods() []authn.AuthMethod {
+	return []authn.AuthMethod{authn.AuthMethodMTLS}
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +462,207 @@ var _ = Describe("Authn Package", Ordered, func() {
 	})
 
 	// =================================================================
+	// LEVEL 2.5: TELEMETRY INTEGRATION
+	// =================================================================
+
+	Describe("Telemetry Integration", func() {
+		Context("when creating a registry without telemetry", func() {
+			It("has nil telemetry fields", func() {
+				emitter := &recordingEmitter{}
+				registry, err := authn.NewRegistry(emitter, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				tf := authn.ExportTelemetryFields(registry)
+				Expect(tf.HasTracer).To(BeFalse(), "tracer should be nil without telemetry")
+				Expect(tf.HasMeter).To(BeFalse(), "meter should be nil without telemetry")
+				Expect(tf.HasAuthCounter).To(BeFalse(), "authCounter should be nil without telemetry")
+				Expect(tf.HasAuthLatency).To(BeFalse(), "authLatency should be nil without telemetry")
+			})
+		})
+
+		Context("when creating a registry with telemetry", func() {
+			It("initializes all telemetry instruments", func() {
+				tp := tracenoop.NewTracerProvider()
+				tracer := tp.Tracer("authn-test")
+				mp := metricnoop.NewMeterProvider()
+				meter := mp.Meter("authn-test")
+
+				emitter := &recordingEmitter{}
+				registry, err := authn.NewRegistry(emitter, nil, authn.WithTelemetry(tracer, meter))
+				Expect(err).NotTo(HaveOccurred())
+
+				tf := authn.ExportTelemetryFields(registry)
+				Expect(tf.HasTracer).To(BeTrue(), "tracer should be set with telemetry")
+				Expect(tf.HasMeter).To(BeTrue(), "meter should be set with telemetry")
+				Expect(tf.HasAuthCounter).To(BeTrue(), "authCounter should be set with telemetry")
+				Expect(tf.HasAuthLatency).To(BeTrue(), "authLatency should be set with telemetry")
+			})
+		})
+
+		Context("when Authenticate produces spans", func() {
+			var (
+				tp       *telemetrytest.TestProvider
+				recorder *recordingEmitter
+			)
+
+			BeforeEach(func() {
+				var err error
+				tp, err = telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				recorder = &recordingEmitter{}
+			})
+
+			AfterEach(func() {
+				Expect(tp.Shutdown(context.Background())).To(Succeed())
+			})
+
+			It("emits authn.Authenticate span with auth.success=true on success", func() {
+				tracer := tp.TracerProvider().Tracer("authn-test")
+				meter := tp.MeterProvider().Meter("authn-test")
+
+				successAuth := &telemetryStubAuth{
+					identity: &authn.Identity{
+						TenantID: "span-tenant",
+						Subject:  "test-user",
+						Method:   authn.AuthMethodMTLS,
+					},
+				}
+				registry, err := authn.NewRegistry(recorder, []authn.Authenticator{successAuth},
+					authn.WithTelemetry(tracer, meter))
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = registry.Authenticate(context.Background(), &authn.Request{
+					Method: authn.AuthMethodMTLS,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				spans := tp.GetSpans()
+				span := telemetrytest.FindSpan(spans, "authn.Authenticate")
+				Expect(span).NotTo(BeNil(), "expected authn.Authenticate span")
+				Expect(span.Status().Code.String()).To(Equal("Ok"))
+
+				successVal, ok := telemetrytest.SpanAttribute(span, "auth.success")
+				Expect(ok).To(BeTrue())
+				Expect(successVal.AsBool()).To(BeTrue())
+
+				tenantVal, ok := telemetrytest.SpanAttribute(span, "tenant.id")
+				Expect(ok).To(BeTrue())
+				Expect(tenantVal.AsString()).To(Equal("span-tenant"))
+			})
+
+			It("emits authn.Authenticate span with Error status on failure and records metrics", func() {
+				tracer := tp.TracerProvider().Tracer("authn-test")
+				meter := tp.MeterProvider().Meter("authn-test")
+
+				failAuth := &telemetryStubAuth{
+					err: authn.ErrAuthenticationFailed,
+				}
+				registry, err := authn.NewRegistry(recorder, []authn.Authenticator{failAuth},
+					authn.WithTelemetry(tracer, meter))
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = registry.Authenticate(context.Background(), &authn.Request{
+					Method: authn.AuthMethodMTLS,
+				})
+				Expect(err).To(HaveOccurred())
+
+				spans := tp.GetSpans()
+				span := telemetrytest.FindSpan(spans, "authn.Authenticate")
+				Expect(span).NotTo(BeNil(), "expected authn.Authenticate span")
+				Expect(span.Status().Code.String()).To(Equal("Error"))
+
+				successVal, ok := telemetrytest.SpanAttribute(span, "auth.success")
+				Expect(ok).To(BeTrue())
+				Expect(successVal.AsBool()).To(BeFalse())
+
+				// Metrics are recorded on failure paths too.
+				rm := tp.GetMetrics()
+				counter := telemetrytest.FindMetric(rm, "authn.attempts.total")
+				Expect(counter).NotTo(BeNil(), "expected authn.attempts.total on failure path")
+				val, counterErr := telemetrytest.CounterValue(counter)
+				Expect(counterErr).NotTo(HaveOccurred())
+				Expect(val).To(BeNumerically(">=", 1))
+
+				hist := telemetrytest.FindMetric(rm, "authn.duration_ms")
+				Expect(hist).NotTo(BeNil(), "expected authn.duration_ms on failure path")
+				hc, histErr := telemetrytest.HistogramCount(hist)
+				Expect(histErr).NotTo(HaveOccurred())
+				Expect(hc).To(BeNumerically(">=", 1))
+			})
+
+			It("records authn.attempts.total and authn.duration_ms", func() {
+				tracer := tp.TracerProvider().Tracer("authn-test")
+				meter := tp.MeterProvider().Meter("authn-test")
+
+				successAuth := &telemetryStubAuth{
+					identity: &authn.Identity{
+						TenantID: "metrics-tenant",
+						Subject:  "m-user",
+						Method:   authn.AuthMethodMTLS,
+					},
+				}
+				registry, err := authn.NewRegistry(recorder, []authn.Authenticator{successAuth},
+					authn.WithTelemetry(tracer, meter))
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = registry.Authenticate(context.Background(), &authn.Request{
+					Method: authn.AuthMethodMTLS,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				rm := tp.GetMetrics()
+
+				counter := telemetrytest.FindMetric(rm, "authn.attempts.total")
+				Expect(counter).NotTo(BeNil())
+				val, err := telemetrytest.CounterValue(counter)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(val).To(BeNumerically(">=", 1))
+
+				hist := telemetrytest.FindMetric(rm, "authn.duration_ms")
+				Expect(hist).NotTo(BeNil())
+				hc, histErr := telemetrytest.HistogramCount(hist)
+				Expect(histErr).NotTo(HaveOccurred())
+				Expect(hc).To(BeNumerically(">=", 1))
+			})
+
+			// Attestation audit path: SessionID is populated from trace context.
+			// When pkg/attestation is implemented (Phase 5), it will read
+			// AuditEvent.SessionID to link attestation predicates to traces.
+			It("populates SessionID from trace context for attestation correlation", func() {
+				tracer := tp.TracerProvider().Tracer("authn-test")
+				meter := tp.MeterProvider().Meter("authn-test")
+
+				successAuth := &telemetryStubAuth{
+					identity: &authn.Identity{
+						TenantID: "attest-tenant",
+						Subject:  "attest-user",
+						Method:   authn.AuthMethodMTLS,
+					},
+				}
+				registry, err := authn.NewRegistry(recorder, []authn.Authenticator{successAuth},
+					authn.WithTelemetry(tracer, meter))
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create an active span so TraceIDFromContext returns a real ID.
+				ctx, parentSpan := tracer.Start(context.Background(), "test.parent")
+				defer parentSpan.End()
+
+				_, err = registry.Authenticate(ctx, &authn.Request{
+					Method: authn.AuthMethodMTLS,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				// The audit event SessionID should be the trace ID hex string.
+				event := recorder.lastEvent()
+				Expect(event).NotTo(BeNil())
+				Expect(event.SessionID).NotTo(BeEmpty())
+				Expect(event.SessionID).To(Equal(
+					parentSpan.SpanContext().TraceID().String()))
+			})
+		})
+	})
+
+	// =================================================================
 	// LEVEL 3: X509Authenticator
 	// =================================================================
 
@@ -656,10 +878,11 @@ var _ = Describe("Authn Package", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// GSSAPI returns ErrUnsupportedMethod, X509 should handle it
-			registry := authn.NewRegistry(recorder,
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{
 				authn.NewGSSAPIAuthenticator(),
 				x509Auth,
-			)
+			})
+			Expect(err).NotTo(HaveOccurred())
 
 			identity, err := registry.Authenticate(context.Background(), &authn.Request{
 				TLSState: tlsStateWith(acmeCert),
@@ -677,11 +900,12 @@ var _ = Describe("Authn Package", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Two stubs then the real one
-			registry := authn.NewRegistry(recorder,
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{
 				authn.NewGSSAPIAuthenticator(),
 				authn.NewSAMLAuthenticator(),
 				x509Auth,
-			)
+			})
+			Expect(err).NotTo(HaveOccurred())
 
 			identity, err := registry.Authenticate(context.Background(), &authn.Request{
 				TLSState: tlsStateWith(acmeCert),
@@ -705,10 +929,11 @@ var _ = Describe("Authn Package", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			registry := authn.NewRegistry(recorder,
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{
 				x509Auth,
 				x509AuthGood,
-			)
+			})
+			Expect(err).NotTo(HaveOccurred())
 
 			// Request has TLS state but no peer certs — triggers ErrAuthenticationFailed
 			_, err = registry.Authenticate(context.Background(), &authn.Request{
@@ -719,12 +944,13 @@ var _ = Describe("Authn Package", Ordered, func() {
 		})
 
 		It("returns ErrAuthenticationFailed when all return ErrUnsupportedMethod", func() {
-			registry := authn.NewRegistry(recorder,
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{
 				authn.NewGSSAPIAuthenticator(),
 				authn.NewSAMLAuthenticator(),
-			)
+			})
+			Expect(err).NotTo(HaveOccurred())
 
-			_, err := registry.Authenticate(context.Background(), &authn.Request{
+			_, err = registry.Authenticate(context.Background(), &authn.Request{
 				TLSState: tlsStateWith(acmeCert),
 			})
 			Expect(err).To(HaveOccurred())
@@ -751,7 +977,8 @@ var _ = Describe("Authn Package", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			registry := authn.NewRegistry(recorder, x509Auth)
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{x509Auth})
+			Expect(err).NotTo(HaveOccurred())
 			_, err = registry.Authenticate(context.Background(), &authn.Request{
 				TLSState:  tlsStateWith(acmeCert),
 				ClientIP:  "10.0.0.1",
@@ -780,7 +1007,8 @@ var _ = Describe("Authn Package", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			registry := authn.NewRegistry(recorder, x509Auth)
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{x509Auth})
+			Expect(err).NotTo(HaveOccurred())
 			_, err = registry.Authenticate(context.Background(), &authn.Request{
 				TLSState:  tlsStateWith(acmeCert),
 				ClientIP:  "10.0.0.2",
@@ -798,12 +1026,13 @@ var _ = Describe("Authn Package", Ordered, func() {
 		})
 
 		It("emits a failure event when all authenticators are unsupported", func() {
-			registry := authn.NewRegistry(recorder,
+			registry, err := authn.NewRegistry(recorder, []authn.Authenticator{
 				authn.NewGSSAPIAuthenticator(),
 				authn.NewSAMLAuthenticator(),
-			)
+			})
+			Expect(err).NotTo(HaveOccurred())
 
-			_, err := registry.Authenticate(context.Background(), &authn.Request{
+			_, err = registry.Authenticate(context.Background(), &authn.Request{
 				TLSState:  tlsStateWith(acmeCert),
 				ClientIP:  "10.0.0.3",
 				SessionID: "session-unsupported",
@@ -823,7 +1052,8 @@ var _ = Describe("Authn Package", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			registry := authn.NewRegistry(nil, x509Auth)
+			registry, err := authn.NewRegistry(nil, []authn.Authenticator{x509Auth})
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(func() {
 				identity, authErr := registry.Authenticate(context.Background(), &authn.Request{
@@ -841,7 +1071,8 @@ var _ = Describe("Authn Package", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			registry := authn.NewRegistry(&failingEmitter{}, x509Auth)
+			registry, err := authn.NewRegistry(&failingEmitter{}, []authn.Authenticator{x509Auth})
+			Expect(err).NotTo(HaveOccurred())
 
 			identity, err := registry.Authenticate(context.Background(), &authn.Request{
 				TLSState: tlsStateWith(acmeCert),

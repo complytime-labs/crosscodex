@@ -3,6 +3,8 @@ package tlsconfig
 import (
 	"crypto/tls"
 
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
@@ -30,8 +32,32 @@ func MakeGetCertificate(certFile, keyFile string) func(*tls.ClientHelloInfo) (*t
 	return makeGetCertificate(certFile, keyFile)
 }
 
+// MakeGetCertificateWithMeter exposes makeGetCertificateWithMeter for external tests.
+func MakeGetCertificateWithMeter(certFile, keyFile string, m metric.Meter) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	return makeGetCertificateWithMeter(certFile, keyFile, m)
+}
+
 // MakeGetClientCertificate exposes makeGetClientCertificate for external tests.
 // Returns the concrete callback type for compile-time safety.
 func MakeGetClientCertificate(certFile, keyFile string) func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 	return makeGetClientCertificate(certFile, keyFile)
+}
+
+// MakeGetClientCertificateWithMeter exposes makeGetClientCertificateWithMeter for external tests.
+func MakeGetClientCertificateWithMeter(certFile, keyFile string, m metric.Meter) func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	return makeGetClientCertificateWithMeter(certFile, keyFile, m)
+}
+
+// TelemetryFields exposes telemetry wiring state for BDD assertions.
+type TelemetryFields struct {
+	HasTracer bool
+	HasMeter  bool
+}
+
+// ExportTelemetryFields returns the telemetry wiring state of a Resolver.
+func ExportTelemetryFields(r Resolver) TelemetryFields {
+	return TelemetryFields{
+		HasTracer: r.Tracer != nil,
+		HasMeter:  r.Meter != nil,
+	}
 }

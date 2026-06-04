@@ -4,6 +4,9 @@ import (
 	"crypto/tls"
 	"log/slog"
 	"time"
+
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Option configures a Client.
@@ -15,6 +18,8 @@ type clientOptions struct {
 	reconnectWait  time.Duration
 	maxReconnects  int
 	tlsConfig      *tls.Config
+	tracer         trace.Tracer
+	meter          metric.Meter
 }
 
 func defaultClientOptions() clientOptions {
@@ -60,5 +65,13 @@ func WithMaxReconnects(n int) Option {
 func WithTLSConfig(cfg *tls.Config) Option {
 	return func(o *clientOptions) {
 		o.tlsConfig = cfg
+	}
+}
+
+// WithTelemetry configures OpenTelemetry tracing and metrics for the client.
+func WithTelemetry(tracer trace.Tracer, meter metric.Meter) Option {
+	return func(o *clientOptions) {
+		o.tracer = tracer
+		o.meter = meter
 	}
 }

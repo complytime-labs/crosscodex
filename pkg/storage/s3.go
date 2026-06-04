@@ -7,12 +7,17 @@ import (
 	"io"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	smithy "github.com/aws/smithy-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type s3API interface {
@@ -29,6 +34,12 @@ type s3Provider struct {
 	tenantPrefix string
 	tenantID     string
 	closed       atomic.Bool
+
+	// Telemetry (optional, nil-safe)
+	tracer    trace.Tracer
+	meter     metric.Meter
+	opCounter metric.Int64Counter
+	opLatency metric.Int64Histogram
 }
 
 type S3Option func(*s3Options)
@@ -37,6 +48,8 @@ type s3Options struct {
 	region   string
 	endpoint string
 	creds    aws.CredentialsProvider
+	tracer   trace.Tracer
+	meter    metric.Meter
 }
 
 func WithRegion(region string) S3Option {
@@ -50,6 +63,14 @@ func WithEndpoint(endpoint string) S3Option {
 func WithCredentials(key, secret string) S3Option {
 	return func(o *s3Options) {
 		o.creds = credentials.NewStaticCredentialsProvider(key, secret, "")
+	}
+}
+
+// WithS3Telemetry configures OpenTelemetry for the S3 provider.
+func WithS3Telemetry(tracer trace.Tracer, meter metric.Meter) S3Option {
+	return func(o *s3Options) {
+		o.tracer = tracer
+		o.meter = meter
 	}
 }
 
@@ -89,12 +110,30 @@ func NewS3(bucket, tenantID string, opts ...S3Option) (Provider, error) {
 
 	client := s3.NewFromConfig(cfg, s3Opts...)
 
-	return &s3Provider{
+	p := &s3Provider{
 		client:       client,
 		bucket:       bucket,
 		tenantPrefix: tenantID + "/",
 		tenantID:     tenantID,
-	}, nil
+	}
+	if options.tracer != nil {
+		p.tracer = options.tracer
+	}
+	if options.meter != nil {
+		p.meter = options.meter
+		var mErr error
+		p.opCounter, mErr = options.meter.Int64Counter("storage.operations.total",
+			metric.WithDescription("Total storage operations"))
+		if mErr != nil {
+			return nil, fmt.Errorf("create operation counter: %w", mErr)
+		}
+		p.opLatency, mErr = options.meter.Int64Histogram("storage.operation.duration_ms",
+			metric.WithDescription("Storage operation duration in milliseconds"))
+		if mErr != nil {
+			return nil, fmt.Errorf("create operation latency histogram: %w", mErr)
+		}
+	}
+	return p, nil
 }
 
 func newS3WithClient(client s3API, bucket, tenantID string) *s3Provider {
@@ -104,6 +143,13 @@ func newS3WithClient(client s3API, bucket, tenantID string) *s3Provider {
 		tenantPrefix: tenantID + "/",
 		tenantID:     tenantID,
 	}
+}
+
+func (p *s3Provider) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
+	if p.tracer != nil {
+		return p.tracer.Start(ctx, name)
+	}
+	return trace.SpanFromContext(ctx).TracerProvider().Tracer("storage").Start(ctx, name)
 }
 
 func (p *s3Provider) fullKey(key string) string {
@@ -132,7 +178,14 @@ func (p *s3Provider) Get(ctx context.Context, key string) (io.ReadCloser, error)
 	if p.closed.Load() {
 		return nil, ErrProviderClosed
 	}
+
+	start := time.Now()
+	ctx, span := p.startSpan(ctx, "storage.Get")
+	defer span.End()
+	span.SetAttributes(attribute.String("storage.key", key))
+
 	if err := validateKey(key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
@@ -141,8 +194,18 @@ func (p *s3Provider) Get(ctx context.Context, key string) (io.ReadCloser, error)
 		Key:    aws.String(p.fullKey(key)),
 	})
 	if err != nil {
-		return nil, wrapS3Error(err, "get")
+		wrappedErr := wrapS3Error(err, "get")
+		span.SetStatus(codes.Error, wrappedErr.Error())
+		return nil, wrappedErr
 	}
+
+	if p.opCounter != nil {
+		p.opCounter.Add(ctx, 1)
+	}
+	if p.opLatency != nil {
+		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return output.Body, nil
 }
 
@@ -150,7 +213,14 @@ func (p *s3Provider) Put(ctx context.Context, key string, data io.Reader) error 
 	if p.closed.Load() {
 		return ErrProviderClosed
 	}
+
+	start := time.Now()
+	ctx, span := p.startSpan(ctx, "storage.Put")
+	defer span.End()
+	span.SetAttributes(attribute.String("storage.key", key))
+
 	if err := validateKey(key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
@@ -160,8 +230,17 @@ func (p *s3Provider) Put(ctx context.Context, key string, data io.Reader) error 
 		Body:   data,
 	})
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("s3 put: %w", err)
 	}
+
+	if p.opCounter != nil {
+		p.opCounter.Add(ctx, 1)
+	}
+	if p.opLatency != nil {
+		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
@@ -169,7 +248,14 @@ func (p *s3Provider) Delete(ctx context.Context, key string) error {
 	if p.closed.Load() {
 		return ErrProviderClosed
 	}
+
+	start := time.Now()
+	ctx, span := p.startSpan(ctx, "storage.Delete")
+	defer span.End()
+	span.SetAttributes(attribute.String("storage.key", key))
+
 	if err := validateKey(key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
@@ -178,8 +264,17 @@ func (p *s3Provider) Delete(ctx context.Context, key string) error {
 		Key:    aws.String(p.fullKey(key)),
 	})
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("s3 delete: %w", err)
 	}
+
+	if p.opCounter != nil {
+		p.opCounter.Add(ctx, 1)
+	}
+	if p.opLatency != nil {
+		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
@@ -187,8 +282,15 @@ func (p *s3Provider) List(ctx context.Context, prefix string) ([]ObjectMetadata,
 	if p.closed.Load() {
 		return nil, ErrProviderClosed
 	}
+
+	start := time.Now()
+	ctx, span := p.startSpan(ctx, "storage.List")
+	defer span.End()
+	span.SetAttributes(attribute.String("storage.prefix", prefix))
+
 	if prefix != "" {
 		if err := validateKey(prefix); err != nil {
+			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
 	}
@@ -204,6 +306,7 @@ func (p *s3Provider) List(ctx context.Context, prefix string) ([]ObjectMetadata,
 	for {
 		output, err := p.client.ListObjectsV2(ctx, input)
 		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("s3 list: %w", err)
 		}
 
@@ -228,6 +331,13 @@ func (p *s3Provider) List(ctx context.Context, prefix string) ([]ObjectMetadata,
 		input.ContinuationToken = output.NextContinuationToken
 	}
 
+	if p.opCounter != nil {
+		p.opCounter.Add(ctx, 1)
+	}
+	if p.opLatency != nil {
+		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return result, nil
 }
 
@@ -248,17 +358,40 @@ func (p *s3Provider) Exists(ctx context.Context, key string) (bool, error) {
 	if p.closed.Load() {
 		return false, ErrProviderClosed
 	}
+
+	start := time.Now()
+	ctx, span := p.startSpan(ctx, "storage.Exists")
+	defer span.End()
+	span.SetAttributes(attribute.String("storage.key", key))
+
 	if err := validateKey(key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return false, err
 	}
 
 	_, err := p.headObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
+			if p.opCounter != nil {
+				p.opCounter.Add(ctx, 1)
+			}
+			if p.opLatency != nil {
+				p.opLatency.Record(ctx, time.Since(start).Milliseconds())
+			}
+			span.SetStatus(codes.Ok, "")
 			return false, nil
 		}
+		span.SetStatus(codes.Error, err.Error())
 		return false, err
 	}
+
+	if p.opCounter != nil {
+		p.opCounter.Add(ctx, 1)
+	}
+	if p.opLatency != nil {
+		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return true, nil
 }
 
@@ -266,12 +399,20 @@ func (p *s3Provider) Stat(ctx context.Context, key string) (*ObjectMetadata, err
 	if p.closed.Load() {
 		return nil, ErrProviderClosed
 	}
+
+	start := time.Now()
+	ctx, span := p.startSpan(ctx, "storage.Stat")
+	defer span.End()
+	span.SetAttributes(attribute.String("storage.key", key))
+
 	if err := validateKey(key); err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
 	output, err := p.headObject(ctx, key)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 
@@ -288,6 +429,14 @@ func (p *s3Provider) Stat(ctx context.Context, key string) (*ObjectMetadata, err
 	if output.ETag != nil {
 		meta.ETag = *output.ETag
 	}
+
+	if p.opCounter != nil {
+		p.opCounter.Add(ctx, 1)
+	}
+	if p.opLatency != nil {
+		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
 	return meta, nil
 }
 

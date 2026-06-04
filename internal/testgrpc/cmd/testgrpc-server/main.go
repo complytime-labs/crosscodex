@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/url"
@@ -53,7 +54,7 @@ func main() {
 
 	var natsClient natsbus.Client
 	if *natsURL != "" {
-		natsTLSCfg, err := tlsconfig.BuildTLSConfig(config.TLSConfig{
+		natsTLSCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 			Mode: "mutual",
 			CA:   *natsCA,
 			Cert: *natsCert,

@@ -16,6 +16,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
 var (
@@ -108,7 +109,10 @@ func TestIntegration_CreateGraph_Idempotent(t *testing.T) {
 	tenantID := "graphdb-idempotent"
 	setupTenant(t, tenantID)
 
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 
 	// Graph already exists via the tenant-insert trigger.
@@ -126,7 +130,10 @@ func TestIntegration_CreateNode(t *testing.T) {
 	tenantID := "graphdb-create-node"
 	setupTenant(t, tenantID)
 
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -158,7 +165,10 @@ func TestIntegration_CreateEdge(t *testing.T) {
 	tenantID := "graphdb-create-edge"
 	setupTenant(t, tenantID)
 
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -280,7 +290,10 @@ func TestIntegration_QueryAsOf(t *testing.T) {
 	tenantID := "graphdb-query-asof"
 	setupTenant(t, tenantID)
 
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 
 	baseTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -379,7 +392,10 @@ func TestIntegration_TemporalCurrentState(t *testing.T) {
 	tenantID := "graphdb-temporal-current"
 	setupTenant(t, tenantID)
 
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -451,7 +467,10 @@ func TestIntegration_EdgeVersioning(t *testing.T) {
 	tenantID := "graphdb-edge-version"
 	setupTenant(t, tenantID)
 
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 
 	baseTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -545,7 +564,10 @@ func TestIntegration_TenantIsolation(t *testing.T) {
 	setupTenant(t, tenantA)
 	setupTenant(t, tenantB)
 
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -604,7 +626,10 @@ func TestIntegration_Traverse(t *testing.T) {
 	tenantID := "graphdb-traverse"
 	setupTenant(t, tenantID)
 
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -671,11 +696,14 @@ func TestIntegration_Traverse(t *testing.T) {
 }
 
 func TestIntegration_TenantRequired(t *testing.T) {
-	client := graphdb.New(testDB)
+	client, err := graphdb.New(testDB)
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
 	ctx := context.Background()
 
 	// CreateGraph("") must return ErrTenantRequired.
-	err := client.CreateGraph(ctx, "")
+	err = client.CreateGraph(ctx, "")
 	if !errors.Is(err, graphdb.ErrTenantRequired) {
 		t.Errorf("CreateGraph empty tenant: got %v, want ErrTenantRequired", err)
 	}
@@ -688,5 +716,124 @@ func TestIntegration_TenantRequired(t *testing.T) {
 	})
 	if !errors.Is(err, graphdb.ErrTenantRequired) {
 		t.Errorf("CreateNode empty tenant: got %v, want ErrTenantRequired", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry
+// ---------------------------------------------------------------------------
+
+func TestIntegration_Telemetry_GraphOperations(t *testing.T) {
+	tenantID := "graphdb-telemetry"
+	setupTenant(t, tenantID)
+
+	tp, err := telemetrytest.NewTestProvider()
+	if err != nil {
+		t.Fatalf("NewTestProvider: %v", err)
+	}
+	defer tp.Shutdown(context.Background())
+
+	tracer := tp.TracerProvider().Tracer("test")
+	meter := tp.MeterProvider().Meter("test")
+
+	client, err := graphdb.New(testDB, graphdb.WithTelemetry(tracer, meter))
+	if err != nil {
+		t.Fatalf("graphdb.New: %v", err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	// CreateGraph
+	if err := client.CreateGraph(ctx, tenantID); err != nil {
+		t.Fatalf("CreateGraph: %v", err)
+	}
+
+	// CreateNode x2
+	if err := client.CreateNode(ctx, tenantID, graphdb.Node{
+		ID:        "tel-src",
+		Label:     "Requirement",
+		ValidFrom: now,
+	}); err != nil {
+		t.Fatalf("CreateNode source: %v", err)
+	}
+	if err := client.CreateNode(ctx, tenantID, graphdb.Node{
+		ID:        "tel-tgt",
+		Label:     "Document",
+		ValidFrom: now,
+	}); err != nil {
+		t.Fatalf("CreateNode target: %v", err)
+	}
+
+	// CreateEdge
+	if err := client.CreateEdge(ctx, tenantID, graphdb.Edge{
+		ID:        "tel-edge",
+		Label:     "DEFINED_IN",
+		Source:    "tel-src",
+		Target:    "tel-tgt",
+		ValidFrom: now,
+	}); err != nil {
+		t.Fatalf("CreateEdge: %v", err)
+	}
+
+	// QueryRelationships
+	if _, err := client.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{
+		EdgeLabel: "DEFINED_IN",
+	}); err != nil {
+		t.Fatalf("QueryRelationships: %v", err)
+	}
+
+	// Collect telemetry data.
+	spans := tp.GetSpans()
+	rm := tp.GetMetrics()
+
+	// Assert spans exist for each operation.
+	for _, name := range []string{
+		"graphdb.CreateGraph",
+		"graphdb.CreateNode",
+		"graphdb.CreateEdge",
+		"graphdb.QueryRelationships",
+	} {
+		if s := telemetrytest.FindSpan(spans, name); s == nil {
+			t.Errorf("expected span %q, not found", name)
+		}
+	}
+
+	// Assert all spans carry tenant.id attribute.
+	for _, s := range spans {
+		if _, found := telemetrytest.SpanAttribute(s, "tenant.id"); !found {
+			t.Errorf("span %q missing tenant.id attribute", s.Name())
+		}
+	}
+
+	// Assert exactly 2 CreateNode spans.
+	createNodeSpans := telemetrytest.FindSpans(spans, "graphdb.CreateNode")
+	if len(createNodeSpans) != 2 {
+		t.Errorf("expected 2 graphdb.CreateNode spans, got %d", len(createNodeSpans))
+	}
+
+	// Assert metric graphdb.queries.total >= 5.
+	m := telemetrytest.FindMetric(rm, "graphdb.queries.total")
+	if m == nil {
+		t.Fatal("metric graphdb.queries.total not found")
+	}
+	count, err := telemetrytest.CounterValue(m)
+	if err != nil {
+		t.Fatalf("CounterValue: %v", err)
+	}
+	if count < 5 {
+		t.Errorf("graphdb.queries.total = %d, want >= 5", count)
+	}
+
+	// Assert metric graphdb.query.duration_ms has been recorded.
+	hm := telemetrytest.FindMetric(rm, "graphdb.query.duration_ms")
+	if hm == nil {
+		t.Fatal("metric graphdb.query.duration_ms not found")
+	}
+	hc, err := telemetrytest.HistogramCount(hm)
+	if err != nil {
+		t.Fatalf("HistogramCount: %v", err)
+	}
+	if hc < 5 {
+		t.Errorf("graphdb.query.duration_ms count = %d, want >= 5", hc)
 	}
 }
