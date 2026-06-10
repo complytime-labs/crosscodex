@@ -157,7 +157,7 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | **pkg/authn** | `[implemented]` | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed | pkg/tlsconfig, pkg/tenant |
 | **pkg/tenant** | `[scaffold]` | Multi-tenant context propagation, isolation enforcement | None (foundational) |
 | **pkg/telemetry** | `[implemented]` | OpenTelemetry traces, metrics, structured logging with trace correlation | pkg/config |
-| **pkg/llmclient** | `[scaffold]` | LLM gateway client, completion & embedding requests | pkg/config, pkg/telemetry |
+| **pkg/llmclient** | `[implemented]` | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit emission, gateway mode (skip client-side retry when upstream gateway handles retries) | pkg/config, pkg/telemetry |
 | **pkg/oscal** | `[scaffold]` | OSCAL catalog parsing, validation | None (domain logic) |
 | **pkg/attestation** | `[implemented]` | in-toto layout/link generation, signature verification, trace correlation | pkg/tlsconfig, in-toto-golang |
 | **pkg/analyzer** | `[scaffold]` | Plugin interface for analysis capabilities | None (interface only) |
@@ -415,6 +415,7 @@ func (s *ComplianceService) GenerateMapping(ctx context.Context, req MappingRequ
 
 **Already instrumented:**
 - **pkg/vectordb** — spans and metrics on all VectorDB operations (StoreEmbedding, FindSimilar, etc.)
+- **pkg/llmclient** — spans on Complete/Embed operations with tenant/model/token attributes, Int64Counter for completions/embeddings/errors, Int64Histogram for completion/embedding latency, trace ID correlation in audit events via telemetry.TraceIDFromContext
 
 **Must be retrofitted (telemetry was built after these packages):**
 - **pkg/db** — spans on connection acquisition, query execution, migration, health checks, tenant context setup
@@ -424,7 +425,6 @@ func (s *ComplianceService) GenerateMapping(ctx context.Context, req MappingRequ
 - **pkg/storage** — spans on object get/put/delete/list, metrics for operation latency
 
 **Future packages (must include telemetry from the start):**
-- **pkg/llmclient** — spans on LLM calls, metrics for latency/token usage/error rate, attestations for AI-generated content
 - **pkg/oscal** — spans on catalog parsing and validation
 - **All internal/ services** — must call `telemetry.Init()` at startup and propagate trace context via NATS message headers and gRPC metadata
 
@@ -553,6 +553,8 @@ When a batch operation (UPDATE, DELETE) touches rows with mixed protection state
 - **pkg/tlsconfig implementation** — Added shared TLS configuration builder with global + per-target config merging (deep-merge overrides), three TLS modes (off, server-only, mutual), FIPS cipher enforcement via BoringCrypto with auto-discovered GCM-only filtering, general cipher allow/deny lists, certificate reload callbacks for zero-downtime rotation, and a `pki` sub-package for ECDSA P-256 dev certificate generation. Refactored `internal/testcerts` to delegate crypto generation to `pkg/tlsconfig/pki`.
 - **pkg/authn implementation** — Added multi-method authentication with registry-based dispatch. X.509 mTLS authenticator maps client certificates to tenant identities via glob-pattern matching on CN, Organization, OrgUnit, SAN Email, SAN DNS, and SAN URI fields. Registry dispatches to ordered authenticators (`ErrUnsupportedMethod` = try next, any other error = stop). Audit emission via `AuditEmitter` interface (natsbus-backed in production). GSSAPI (Kerberos) and SAML authenticators stubbed with `ErrUnsupportedMethod`. New `auth` config section added to `pkg/config`. Extended `pkg/tlsconfig/pki` with `WithOrgUnit`, `WithEmailAddresses`, and `WithURIs` options. Container integration tests validate cross-stack mTLS interop with nginx/OpenSSL.
 - **pkg/telemetry implementation** — Added OpenTelemetry package with `Init(ctx, cfg, ...Option)` returning shutdown function, OTLP exporters (gRPC and HTTP), TracerProvider and MeterProvider with global registration, slog handler wrapping for automatic `trace_id`/`span_id` injection in structured logs, `TraceIDFromContext()`/`SpanIDFromContext()` correlation helpers for attestation bridge, thin instrument factories (`NewCounter`, `NewHistogram`, `NewGauge`, `NewIntCounter`) enforcing `crosscodex` meter namespace, `telemetrytest.NewTestProvider()` subpackage with in-memory exporters for unit test assertions, `ObservabilityConfig` added to `pkg/config` with shared endpoint + per-signal override pattern matching `pkg/tlsconfig`. Empty endpoint = disabled (no-op, no error). Integration test infrastructure added with Jaeger all-in-one container in `test/compose.yaml` under `telemetry` profile.
+- **pkg/llmclient implementation** — Added OpenAI-compatible chat completion and embedding client with credential resolution via URI schemes (env:/file:/vault:), exponential backoff retry with jitter on 429/5xx with Retry-After header support, tenant ID validation via `pkg/tenant`, model allow-list enforcement, OTel tracing and metrics via `WithTelemetry` option, audit event emission via `AuditEmitter` interface. `LLMConfig` added to `pkg/config` with `APIKeyRef` (credential URI reference), `AllowedModels`, `MaxRetries`, defaults and validation. Integration tests against Ollama with `integration_llm` build tag.
+- **Gateway-agnostic LLM architecture** — Added `GatewayMode` boolean to `LLMConfig`. When true, `pkg/llmclient` makes a single attempt per request, deferring retry/failover to an upstream proxy (LiteLLM, Kong, Portkey, etc.). All other client behavior (tenant validation, audit emission, OTel, model allow-list) is unchanged. Full-stack integration tests added with LiteLLM Proxy + Ollama + Jaeger compose services under `llm` profile.
 
 **TODO:** NATS account-level tenant authorization is not yet integrated with `pkg/authn`. While `pkg/authn` is now implemented (X.509 mTLS), NATS account-level isolation requires a separate integration layer. Currently, tenant isolation is enforced at the subject level via `pkg/tenant.ValidateTenantID()`. When the NATS-authn integration is built, add per-tenant NATS accounts for server-level isolation.
 

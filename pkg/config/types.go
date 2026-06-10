@@ -19,11 +19,14 @@ type Config struct {
 
 // LLMConfig configures the LLM gateway client.
 type LLMConfig struct {
-	GatewayURL     string `yaml:"gateway_url"`
-	DefaultModel   string `yaml:"default_model"`
-	EmbeddingModel string `yaml:"embedding_model"`
-	APIKey         string `yaml:"api_key"`
-	Timeout        int    `yaml:"timeout"`
+	GatewayURL     string   `yaml:"gateway_url"`
+	GatewayMode    bool     `yaml:"gateway_mode"`
+	DefaultModel   string   `yaml:"default_model"`
+	EmbeddingModel string   `yaml:"embedding_model"`
+	APIKeyRef      string   `yaml:"api_key_ref"`
+	AllowedModels  []string `yaml:"allowed_models"`
+	MaxRetries     int      `yaml:"max_retries"`
+	Timeout        int      `yaml:"timeout"`
 }
 
 // StorageConfig configures storage backends.

@@ -12,13 +12,16 @@ vars:
 tasks:
   default:
     silent: true
-    cmd: task test --list
+    cmd: |
+      task --list 2>/dev/null
 
   unit:
     desc: Run unit tests with spec tree output
     deps:
       - :dev:deps
       - :dev:generate
+    env:
+      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
     cmds:
       - mkdir -p {{.TEST_DIR}}
       - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/...
