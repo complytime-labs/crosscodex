@@ -7,7 +7,8 @@ vars:
 tasks:
   default:
     silent: true
-    cmd: task dev --list
+    cmd: |
+      task --list 2>/dev/null
 
   generate:
     desc: Generate all protobuf code
@@ -64,10 +65,15 @@ tasks:
   lint:
     desc: Run linters
     deps: [deps, generate]
+    dir: "{{.ROOT_DIR}}"
     cmds:
-      - go vet {{.ROOT_DIR}}/...
-      - go fmt {{.ROOT_DIR}}/...
-      - go tool golangci-lint run {{.ROOT_DIR}}/...
+      # Fence off megalinter-reports so ./... stops at its boundary.
+      # The directory is gitignored and ephemeral; a sentinel go.mod
+      # makes Go treat it as a separate module without deleting anything.
+      - test -d megalinter-reports && test ! -f megalinter-reports/go.mod && echo 'module megalinter-reports' > megalinter-reports/go.mod || true
+      - go vet ./...
+      - go fmt ./...
+      - go tool golangci-lint run ./...
 
   deps:
     desc: Download dependencies

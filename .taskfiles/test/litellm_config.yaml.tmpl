@@ -1,0 +1,58 @@
+# LiteLLM Proxy configuration for CrossCodex integration tests.
+#
+# This file is a template — do not edit it directly for local overrides.
+# It is rendered at compose-up time by 'task test:integration:compose-up',
+# substituting OLLAMA_API_BASE with the value of OLLAMA_HOST (default:
+# http://ollama:11434/v1 for the local compose network).
+#
+# Defines model aliases backed by an Ollama instance. All chat aliases
+# route to the same small model (test resource constraint) but prove
+# alias resolution works end-to-end.
+#
+# Uses the openai/ provider prefix instead of ollama/ so LiteLLM routes
+# through the standard httpx-based OpenAI client. The native ollama/
+# prefix uses an aiohttp transport that attaches an SSL context even on
+# plain HTTP endpoints, breaking tunnels and non-TLS remote targets.
+# Ollama's /v1 endpoint is OpenAI-compatible, so this works identically.
+#
+# A dummy api_key is required by the openai client; Ollama ignores it.
+
+model_list:
+  - model_name: small
+    litellm_params:
+      model: openai/OLLAMA_CHAT_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+
+  - model_name: medium
+    litellm_params:
+      model: openai/OLLAMA_CHAT_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+
+  - model_name: large
+    litellm_params:
+      model: openai/OLLAMA_CHAT_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+
+  - model_name: judge
+    litellm_params:
+      model: openai/OLLAMA_CHAT_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+
+  - model_name: embed
+    litellm_params:
+      model: openai/OLLAMA_EMBED_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  allowed_fails: 3
+  cooldown_time: 10
+
+general_settings:
+  telemetry: false

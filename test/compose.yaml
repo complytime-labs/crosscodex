@@ -126,8 +126,39 @@ services:
       timeout: 5s
       retries: 15
 
+  ollama:
+    profiles: [llm, all]
+    # Ollama doesn't publish semver tags on Docker Hub beyond 0.11.x;
+    # latest tracks the current stable release (verified as 0.30.6).
+    image: docker.io/ollama/ollama:latest
+    container_name: crosscodex-test-ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  litellm:
+    profiles: [llm, all]
+    image: docker.io/litellm/litellm:1.87.1
+    container_name: crosscodex-test-litellm
+    ports:
+      - "14000:4000"
+    volumes:
+      - ../.test-output/litellm_config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health')\""]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 15s
+
   jaeger:
-    profiles: [telemetry, all]
+    profiles: [telemetry, llm, all]
     image: docker.io/jaegertracing/all-in-one:1.76.0
     container_name: crosscodex-test-jaeger
     ports:

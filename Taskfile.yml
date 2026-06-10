@@ -9,6 +9,11 @@ set: [pipefail]
 silent: true
 
 env:
+  # Let go.mod's `toolchain` directive auto-download the pinned Go
+  # version. Red Hat's RPM-packaged Go defaults to GOTOOLCHAIN=local,
+  # which blocks this.
+  GOTOOLCHAIN: auto
+
   # When FIPS=1 (e.g., `task build FIPS=1`), all Go commands use
   # GOEXPERIMENT=boringcrypto for FIPS-validated cryptography.
   GOEXPERIMENT: '{{if eq .FIPS "1"}}boringcrypto{{end}}'
@@ -22,13 +27,15 @@ includes:
     taskfile: .taskfiles/dev.yml
   test:
     taskfile: .taskfiles/test.yml
-    dir: "{{.ROOT_DIR}}"
 
 vars:
   MODULE: github.com/complytime-labs/crosscodex
   BUILD_DIR: "{{.ROOT_DIR}}/.build"
   TEST_DIR: "{{.ROOT_DIR}}/.test-output"
   FIPS: '{{.FIPS | default ""}}'
+  OLLAMA_HOST: '{{.OLLAMA_HOST | default "http://localhost:11434"}}'
+  OLLAMA_CHAT_MODEL: '{{.OLLAMA_CHAT_MODEL | default "llama3.2:1b"}}'
+  OLLAMA_EMBED_MODEL: '{{.OLLAMA_EMBED_MODEL | default "granite-embedding:30m"}}'
 
 tasks:
   default:
@@ -36,7 +43,10 @@ tasks:
     cmds:
       - |
         echo "Global variables (pass to any task):"
-        echo "  FIPS=1    Enable FIPS mode (GOEXPERIMENT=boringcrypto)"
+        echo "  FIPS=1                              Enable FIPS mode (GOEXPERIMENT=boringcrypto)"
+        echo "  OLLAMA_HOST=http://host:port         Override Ollama base URL (default: http://localhost:11434)"
+        echo "  OLLAMA_CHAT_MODEL=name              Override Ollama chat model (default: llama3.2:1b)"
+        echo "  OLLAMA_EMBED_MODEL=name             Override Ollama embedding model (default: granite-embedding:30m)"
         echo ""
       - task --list 2>/dev/null
 

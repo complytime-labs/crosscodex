@@ -1,0 +1,59 @@
+# LiteLLM Proxy Reference Configuration for CrossCodex
+#
+# This is a starting point for production deployments. Copy and customize
+# for your environment. CrossCodex does not manage this file — it is
+# operator-owned infrastructure.
+#
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+#
+# Usage:
+#   litellm --config litellm_config.yaml --port 4000
+#
+# CrossCodex config (crosscodex.yaml):
+#   llm:
+#     gateway_url: http://litellm:4000
+#     gateway_mode: true
+#     default_model: compliance-judge
+#     embedding_model: embedding-engine
+#     api_key_ref: env:LITELLM_MASTER_KEY
+#     allowed_models:
+#       - compliance-judge
+#       - embedding-engine
+
+model_list:
+  # Primary: GPT-4o via OpenAI
+  - model_name: compliance-judge
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      order: 1
+
+  # Fallback: Claude via Anthropic
+  - model_name: compliance-judge
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+      order: 2
+
+  # Backup: local Ollama (no API key needed)
+  - model_name: compliance-judge
+    litellm_params:
+      model: ollama/mistral
+      api_base: http://ollama:11434
+      order: 3
+
+  # Embedding model
+  - model_name: embedding-engine
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 3
+  allowed_fails: 3
+  cooldown_time: 30
+
+general_settings:
+  telemetry: false
+  master_key: os.environ/LITELLM_MASTER_KEY

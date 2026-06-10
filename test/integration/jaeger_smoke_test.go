@@ -62,8 +62,10 @@ func TestJaegerExportSmokeTest(t *testing.T) {
 	span.End()
 
 	// Flush by calling shutdown — this forces the span exporter to drain.
+	// Metrics flush may fail because Jaeger only implements the trace
+	// collector, not the metrics collector. That's expected and not fatal.
 	if err := shutdown(ctx); err != nil {
-		t.Fatalf("telemetry shutdown: %v", err)
+		t.Logf("telemetry shutdown (non-fatal): %v", err)
 	}
 
 	// Query Jaeger for the service with retry loop.

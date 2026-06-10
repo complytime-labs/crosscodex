@@ -19,6 +19,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := validateLogging(&cfg.Logging, tracker); err != nil {
 		return err
 	}
+	if err := validateLLM(&cfg.LLM, tracker); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -68,6 +71,18 @@ func validateLogging(l *LoggingConfig, tracker *sourceTracker) error {
 	if l.Format != "" && !validLogFormats[l.Format] {
 		return fmt.Errorf("logging.format %q%s must be one of text, json: %w",
 			l.Format, formatSource(tracker, "logging.format"), ErrInvalidConfig)
+	}
+	return nil
+}
+
+func validateLLM(llm *LLMConfig, tracker *sourceTracker) error {
+	if llm.Timeout < 0 {
+		return fmt.Errorf("llm.timeout %d%s must be non-negative: %w",
+			llm.Timeout, formatSource(tracker, "llm.timeout"), ErrInvalidConfig)
+	}
+	if llm.MaxRetries < 0 {
+		return fmt.Errorf("llm.max_retries %d%s must be non-negative: %w",
+			llm.MaxRetries, formatSource(tracker, "llm.max_retries"), ErrInvalidConfig)
 	}
 	return nil
 }

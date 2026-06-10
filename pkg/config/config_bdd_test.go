@@ -1532,6 +1532,43 @@ logging:
 			Expect(cfg.LLM.GatewayURL).To(Equal("https://flag:1111"))
 		})
 
+		It("defaults gateway_mode to false", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayMode).To(BeFalse())
+		})
+
+		It("parses gateway_mode from YAML", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+				"llm:\n  gateway_mode: true\n")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayMode).To(BeTrue())
+		})
+
+		It("overrides gateway_mode via environment variable", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+			GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_MODE", "true")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.LLM.GatewayMode).To(BeTrue())
+		})
+
 		It("profile loads correctly", func() {
 			tmpHome := GinkgoT().TempDir()
 			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)

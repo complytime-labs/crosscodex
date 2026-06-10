@@ -23,13 +23,14 @@ CrossCodex is in early development. Six foundational packages are implemented an
 | **pkg/tlsconfig** | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI        |
 | **pkg/authn**     | Implemented | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed          |
 | **pkg/tenant**    | Partial     | Tenant ID validation implemented; context propagation interface scaffolded                   |
+| **pkg/llmclient** | Implemented | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit |
 | All others        | Scaffolded  | Interfaces and types defined; implementation pending                                         |
 
 Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, `pkg/natsbus`, and `pkg/authn` run against containerized services (`task test:integration:all`).
 
 ## Architecture
 
-The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`) and scaffolded domain packages (`pkg/oscal`, `pkg/analyzer`, `pkg/llmclient`, `pkg/graphdb`); full service implementations are not yet built.
+The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`, `pkg/llmclient`) and scaffolded domain packages (`pkg/oscal`, `pkg/analyzer`, `pkg/graphdb`); full service implementations are not yet built.
 
 ```mermaid
 flowchart TD
@@ -194,7 +195,7 @@ Run `task --list` for all available commands including integration tests and dev
 | Test Type       | Framework               | Status                                                                                      |
 |-----------------|-------------------------|---------------------------------------------------------------------------------------------|
 | **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                                |
-| **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, pkg/natsbus, and pkg/authn (`task test:integration:all`) |
+| **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, pkg/natsbus, pkg/authn, and pkg/llmclient (`task test:integration:all`) |
 | **E2E**         | Venom                   | Planned                                                                                     |
 
 ### Contributing

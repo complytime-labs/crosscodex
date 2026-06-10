@@ -9,9 +9,12 @@ import (
 const defaultConfigYAML = `
 llm:
   gateway_url: ""
+  gateway_mode: false
   default_model: ""
   embedding_model: ""
-  api_key: ""
+  api_key_ref: ""
+  allowed_models: []
+  max_retries: 3
   timeout: 30
 storage:
   objects:
