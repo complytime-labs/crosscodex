@@ -23,7 +23,7 @@ runs:
       run: go install tool github.com/go-task/task/v3/cmd/task
 
     - name: Install Buf
-      uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1
+      uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
       with:
         github_token: ${{ inputs.github-token }}
 

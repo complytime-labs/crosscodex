@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -37,7 +37,7 @@ jobs:
       - name: MegaLinter
         id: ml
         # zizmor:ignore ref-version-mismatch - No version tags available
-        uses: trevor-vaughan/megalint-config@5112c06b07bedb0505eb63c707dda651a44d2a27
+        uses: trevor-vaughan/megalint-config@846de2ea97d5d14158687de9f7c3d6eb352012c0
         with:
           validate-all-codebase: ${{ github.event_name == 'schedule' }}
 
@@ -52,6 +52,6 @@ jobs:
 
       - name: Upload SARIF to GitHub Code Scanning
         if: success() || failure()
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: ${{ steps.ml.outputs.sarif-file }}
