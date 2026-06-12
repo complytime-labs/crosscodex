@@ -87,11 +87,11 @@ tasks:
           task: compose-down
           vars: { PROFILE: all }
       - mkdir -p {{.TEST_DIR}}
-      # -p 1: pkg/db and pkg/graphdb both run migrations and ALTER ROLE in
-      # TestMain. Without -p 1, go test runs packages in parallel and both
-      # TestMain functions race on the pg_authid catalog row, causing
+      # -p 1: pkg/db, pkg/graphdb, and internal/catalog all run migrations and
+      # ALTER ROLE in TestMain. Without -p 1, go test runs packages in parallel
+      # and TestMain functions race on the pg_authid catalog row, causing
       # "tuple concurrently updated" errors.
-      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... 2>&1 | tee {{.TEST_DIR}}/integration.log
       - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out {{.ROOT_DIR}}/pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
       - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
       - go test -v -tags integration_authn -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-authn-coverage.out {{.ROOT_DIR}}/pkg/authn/... 2>&1 | tee {{.TEST_DIR}}/integration-authn.log
@@ -103,7 +103,7 @@ tasks:
       - go test -v -tags integration_llm -race -count=1 -timeout 600s -coverprofile={{.TEST_DIR}}/integration-llm-coverage.out {{.ROOT_DIR}}/pkg/llmclient/... 2>&1 | tee {{.TEST_DIR}}/integration-llm.log
 
   db:
-    desc: Run database integration tests (db, graphdb, vectordb)
+    desc: Run database integration tests (db, graphdb, vectordb, catalog)
     deps: [ensure-deps]
     env:
       TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
@@ -116,7 +116,7 @@ tasks:
           vars: { PROFILE: db }
       - mkdir -p {{.TEST_DIR}}
       # -p 1: see comment in 'all' task
-      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... 2>&1 | tee {{.TEST_DIR}}/integration.log
 
   storage:
     desc: Run S3 storage integration tests
@@ -267,19 +267,40 @@ tasks:
     vars:
       NEEDS_CERTS: '{{if or (eq .PROFILE "db") (eq .PROFILE "nats") (eq .PROFILE "authn") (eq .PROFILE "grpc") (eq .PROFILE "all")}}true{{else}}false{{end}}'
     cmds:
+      # Kill stale containers from interrupted runs (Ctrl+C skips the defer
+      # in compose-down). Without this, port conflicts and stale state cause
+      # flaky failures on the next run.
+      - |
+        stale=$({{.CONTAINER_ENGINE}} ps -a --filter "name=crosscodex-test-" --format "{{`{{.Names}}`}}" 2>/dev/null || true)
+        if [ -n "$stale" ]; then
+          echo "Cleaning up stale containers: $stale"
+          for c in $stale; do
+            {{.CONTAINER_ENGINE}} stop "$c" 2>/dev/null || true
+            {{.CONTAINER_ENGINE}} rm -f "$c" 2>/dev/null || true
+          done
+        fi
       - task: '{{if eq .NEEDS_CERTS "true"}}prepare-cert-volume{{else}}ensure-deps{{end}}'
       - task: generate-litellm-config
         vars:
           PROFILE: "{{.PROFILE}}"
+      # Pre-build the Ollama image (with baked-in models) for local runs.
+      # Skipped when OLLAMA_HOST points to an external server or when the
+      # profile doesn't include LLM services.
+      - task: build-ollama-image
+        vars:
+          PROFILE: "{{.PROFILE}}"
       - |
-        # Skip the local Ollama container when an external host is provided.
         _scale=""
+        _extra_compose=""
         if [ "{{.OLLAMA_HOST}}" != "http://localhost:11434" ]; then
           case "{{.PROFILE}}" in
-            llm|all) _scale="--scale ollama=0" ;;
+            llm|all)
+              _scale="--scale ollama=0"
+              _extra_compose="-f {{.ROOT_DIR}}/test/compose.host-network.yaml"
+              ;;
           esac
         fi
-        {{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} up -d --build ${_scale}
+        {{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} ${_extra_compose} --profile {{.PROFILE}} up -d --build ${_scale}
       - task: compose-health
         vars:
           PROFILE: "{{.PROFILE}}"
@@ -302,7 +323,18 @@ tasks:
       - sh: '[ "{{.COMPOSE_CMD}}" != "MISSING" ]'
         msg: "Neither 'docker compose' nor 'podman-compose' found."
     cmds:
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile {{.PROFILE}} down"
+      # podman-compose --profile <p> down iterates ALL services in the
+      # compose file and tries to stop/rm each by container_name, even
+      # those belonging to other profiles that were never started.
+      #
+      # Workaround: discover running crosscodex-test-* containers and
+      # stop only those, avoiding "no container with name or ID" noise.
+      - |
+        running=$({{.CONTAINER_ENGINE}} ps -a --filter "name=crosscodex-test-" --format "{{`{{.Names}}`}}" 2>/dev/null || true)
+        for c in $running; do
+          {{.CONTAINER_ENGINE}} stop "$c" 2>/dev/null || true
+          {{.CONTAINER_ENGINE}} rm -f "$c" 2>/dev/null || true
+        done
 
   generate-litellm-config:
     internal: true
@@ -336,15 +368,38 @@ tasks:
     sources:
       - "{{.ROOT_DIR}}/internal/testcerts/*.go"
 
+  build-db-image:
+    desc: Build the integration test database image (PostgreSQL + AGE + pgvector)
+    internal: true
+    vars:
+      CONTAINER_IMAGE: crosscodex-test-db:latest
+    sources:
+      - "{{.ROOT_DIR}}/pkg/db/testdata/Containerfile"
+      - "{{.ROOT_DIR}}/pkg/db/testdata/pg_hba.conf"
+    status:
+      - "{{.CONTAINER_ENGINE}} image inspect crosscodex-test-db:latest >/dev/null 2>&1"
+    cmds:
+      - "{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/pkg/db/testdata/Containerfile {{.ROOT_DIR}}/pkg/db/testdata"
+
+  build-ollama-image:
+    desc: Build the Ollama test image with pre-baked models (llama3.2:1b + granite-embedding:30m)
+    internal: true
+    vars:
+      CONTAINER_IMAGE: crosscodex-test-ollama:latest
+    sources:
+      - "{{.ROOT_DIR}}/test/ollama/Containerfile"
+    status:
+      - "{{.CONTAINER_ENGINE}} image inspect crosscodex-test-ollama:latest >/dev/null 2>&1"
+    cmds:
+      - "{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/test/ollama/Containerfile {{.ROOT_DIR}}/test/ollama"
+
   prepare-cert-volume:
     desc: Populate a named container volume with TLS certs (correct ownership)
-    deps: [generate-certs]
+    deps: [generate-certs, build-db-image]
     vars:
       VOLUME_NAME: crosscodex-test-certs
       CONTAINER_IMAGE: crosscodex-test-db:latest
     cmds:
-      # Build the DB image so we can reference its postgres user for chown
-      - "{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/pkg/db/testdata/Containerfile {{.ROOT_DIR}}/pkg/db/testdata"
       - "{{.CONTAINER_ENGINE}} volume create {{.VOLUME_NAME}} 2>/dev/null || true"
       # Copy certs into the volume and chown to postgres (for PostgreSQL's
       # strict ssl_key_file permission check). NATS runs as root and can

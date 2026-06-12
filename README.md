@@ -192,11 +192,11 @@ Run `task --list` for all available commands including integration tests and dev
 
 ### Testing Strategy
 
-| Test Type       | Framework               | Status                                                                                      |
-|-----------------|-------------------------|---------------------------------------------------------------------------------------------|
-| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                                |
+| Test Type       | Framework               | Status                                                                                                     |
+|-----------------|-------------------------|------------------------------------------------------------------------------------------------------------|
+| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                                               |
 | **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, pkg/natsbus, pkg/authn, and pkg/llmclient (`task test:integration:all`) |
-| **E2E**         | Venom                   | Planned                                                                                     |
+| **E2E**         | Venom                   | Planned                                                                                                    |
 
 ### Contributing
 

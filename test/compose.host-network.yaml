@@ -1,0 +1,8 @@
+# Compose override: host networking for LiteLLM.
+# Applied automatically when OLLAMA_HOST points to an external (non-localhost)
+# host. Gives the LiteLLM container access to the host's network so it can
+# reach LAN/remote Ollama instances that container bridge networking can't route to.
+# The ports directive in the base file is ignored when network_mode is host.
+services:
+  litellm:
+    network_mode: host

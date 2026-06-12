@@ -89,6 +89,7 @@ services:
 
   grpc:
     profiles: [grpc, all]
+    image: crosscodex-test-grpc:latest
     build:
       context: ../
       dockerfile: test/grpc/Containerfile
@@ -128,9 +129,7 @@ services:
 
   ollama:
     profiles: [llm, all]
-    # Ollama doesn't publish semver tags on Docker Hub beyond 0.11.x;
-    # latest tracks the current stable release (verified as 0.30.6).
-    image: docker.io/ollama/ollama:latest
+    image: crosscodex-test-ollama:latest
     container_name: crosscodex-test-ollama
     ports:
       - "11434:11434"
@@ -146,12 +145,16 @@ services:
     image: docker.io/litellm/litellm:1.87.1
     container_name: crosscodex-test-litellm
     ports:
-      - "14000:4000"
+      - "14000:14000"
     volumes:
       - ../.test-output/litellm_config.yaml:/app/config.yaml:ro
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    command: ["--config", "/app/config.yaml", "--port", "14000"]
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health')\""]
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:14000/health'')"',
+        ]
       interval: 5s
       timeout: 10s
       retries: 30
