@@ -1,0 +1,50 @@
+[
+  {
+    "id": "ac-2",
+    "title": "Account Management",
+    "text": "The organization manages information system accounts:",
+    "class": "compliance-section",
+    "parent_id": "",
+    "group_id": "ac"
+  },
+  {
+    "id": "ac-2.a",
+    "title": "",
+    "text": "Identifies and selects the following types of accounts to support organizational missions.",
+    "class": "compliance-requirement",
+    "parent_id": "ac-2",
+    "group_id": "ac"
+  },
+  {
+    "id": "ac-2.b",
+    "title": "",
+    "text": "Assigns account managers for information system accounts.",
+    "class": "compliance-requirement",
+    "parent_id": "ac-2",
+    "group_id": "ac"
+  },
+  {
+    "id": "ac-2.c",
+    "title": "",
+    "text": "Establishes conditions for group and role membership.",
+    "class": "compliance-section",
+    "parent_id": "ac-2",
+    "group_id": "ac"
+  },
+  {
+    "id": "ac-2.c.1",
+    "title": "",
+    "text": "Requires justification for access.",
+    "class": "compliance-requirement",
+    "parent_id": "ac-2.c",
+    "group_id": "ac"
+  },
+  {
+    "id": "ac-2.c.2",
+    "title": "",
+    "text": "Reviews access annually.",
+    "class": "compliance-requirement",
+    "parent_id": "ac-2.c",
+    "group_id": "ac"
+  }
+]

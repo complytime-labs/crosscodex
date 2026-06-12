@@ -4,6 +4,7 @@ package db_test
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -185,6 +186,60 @@ func execAsTenantUser(t *testing.T, conn *sql.DB, tenantID, userID string, fn fu
 	}
 }
 
+// testID returns a unique ID like "prefix-a1b2c3d4" for test isolation.
+func testID(t *testing.T, prefix string) string {
+	t.Helper()
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("testID: %v", err)
+	}
+	return fmt.Sprintf("%s-%x", prefix, b)
+}
+
+// cleanupJobs deletes test jobs via the superuser pool. Intended for
+// t.Cleanup — logs errors instead of failing so cleanup doesn't mask
+// the actual test result. Temporarily disables immutability triggers
+// so completed jobs can be removed.
+func cleanupJobs(t *testing.T, jobIDs ...string) {
+	t.Helper()
+	if len(jobIDs) == 0 {
+		return
+	}
+	ctx := context.Background()
+	tx, err := suPool.Begin(ctx)
+	if err != nil {
+		t.Logf("cleanupJobs begin: %v", err)
+		return
+	}
+	defer tx.Rollback()
+
+	if err := tx.Exec(ctx, "ALTER TABLE jobs DISABLE TRIGGER jobs_immutable_update"); err != nil {
+		t.Logf("cleanupJobs disable update trigger: %v", err)
+		return
+	}
+	if err := tx.Exec(ctx, "ALTER TABLE jobs DISABLE TRIGGER jobs_immutable_delete"); err != nil {
+		t.Logf("cleanupJobs disable delete trigger: %v", err)
+		return
+	}
+	for _, id := range jobIDs {
+		if err := tx.Exec(ctx, "DELETE FROM jobs WHERE job_id = $1", id); err != nil {
+			t.Logf("cleanupJobs delete %q: %v", id, err)
+			return
+		}
+	}
+	if err := tx.Exec(ctx, "ALTER TABLE jobs ENABLE TRIGGER jobs_immutable_update"); err != nil {
+		t.Logf("cleanupJobs enable update trigger: %v", err)
+		return
+	}
+	if err := tx.Exec(ctx, "ALTER TABLE jobs ENABLE TRIGGER jobs_immutable_delete"); err != nil {
+		t.Logf("cleanupJobs enable delete trigger: %v", err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		t.Logf("cleanupJobs commit: %v", err)
+	}
+}
+
 // expectErrorAsTenant runs fn inside a transaction with app.current_tenant
 // set, then rolls back. Use this instead of execAsTenant when the operation
 // inside fn is expected to fail (trigger, RLS). PostgreSQL aborts the
@@ -337,8 +392,8 @@ func TestIntegration_MigratorVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if version != 9 {
-		t.Errorf("version = %d, want 9", version)
+	if version != 10 {
+		t.Errorf("version = %d, want 10", version)
 	}
 	if dirty {
 		t.Error("dirty = true, want false")
@@ -784,12 +839,14 @@ func TestIntegration_Immutability_PendingJobUpdate(t *testing.T) {
 
 func TestIntegration_Immutability_TransitionToCompleted(t *testing.T) {
 	setupTenant(t, "imm-trans", "Imm Transition Corp")
+	jobID := testID(t, "job-imm-trans")
+	t.Cleanup(func() { cleanupJobs(t, jobID) })
 	conn := appUserConn(t)
 
 	execAsTenant(t, conn, "imm-trans", func(tx *sql.Tx) {
 		_, err := tx.ExecContext(context.Background(),
-			"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'pending', 'setup') ON CONFLICT DO NOTHING",
-			"job-imm-trans-1", "imm-trans")
+			"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'pending', 'setup')",
+			jobID, "imm-trans")
 		if err != nil {
 			t.Fatalf("insert: %v", err)
 		}
@@ -798,7 +855,7 @@ func TestIntegration_Immutability_TransitionToCompleted(t *testing.T) {
 	// Transitioning from pending to completed should succeed.
 	execAsTenant(t, conn, "imm-trans", func(tx *sql.Tx) {
 		_, err := tx.ExecContext(context.Background(),
-			"UPDATE jobs SET status = 'completed' WHERE job_id = $1", "job-imm-trans-1")
+			"UPDATE jobs SET status = 'completed' WHERE job_id = $1", jobID)
 		if err != nil {
 			t.Errorf("transition to completed should succeed: %v", err)
 		}
@@ -1382,6 +1439,10 @@ func TestIntegration_TenantPool_ContextPropagation(t *testing.T) {
 	setupTenant(t, tenantA, "Context Prop Alpha")
 	setupTenant(t, tenantB, "Context Prop Bravo")
 
+	jobA := testID(t, "ctx-prop-a")
+	jobB := testID(t, "ctx-prop-b")
+	t.Cleanup(func() { cleanupJobs(t, jobA, jobB) })
+
 	pool, err := db.NewPool(db.PoolConfig{
 		DSN:          appUserDSN(),
 		MaxOpenConns: 2,
@@ -1406,7 +1467,7 @@ func TestIntegration_TenantPool_ContextPropagation(t *testing.T) {
 
 	err = txA.Exec(context.Background(),
 		"INSERT INTO jobs (tenant_id, job_id, created_by, status) VALUES ($1, $2, $3, $4)",
-		tenantA, "ctx-prop-job-a", "test-user", "pending")
+		tenantA, jobA, "test-user", "pending")
 	if err != nil {
 		txA.Rollback()
 		t.Fatalf("INSERT job A: %v", err)
@@ -1428,7 +1489,7 @@ func TestIntegration_TenantPool_ContextPropagation(t *testing.T) {
 
 	err = txB.Exec(context.Background(),
 		"INSERT INTO jobs (tenant_id, job_id, created_by, status) VALUES ($1, $2, $3, $4)",
-		tenantB, "ctx-prop-job-b", "test-user", "pending")
+		tenantB, jobB, "test-user", "pending")
 	if err != nil {
 		txB.Rollback()
 		t.Fatalf("INSERT job B: %v", err)
@@ -1446,7 +1507,7 @@ func TestIntegration_TenantPool_ContextPropagation(t *testing.T) {
 
 	rows, err := txA2.Query(context.Background(),
 		"SELECT job_id, tenant_id FROM jobs WHERE job_id IN ($1, $2)",
-		"ctx-prop-job-a", "ctx-prop-job-b")
+		jobA, jobB)
 	if err != nil {
 		t.Fatalf("Query as tenantA: %v", err)
 	}
@@ -1454,21 +1515,21 @@ func TestIntegration_TenantPool_ContextPropagation(t *testing.T) {
 
 	var found []string
 	for rows.Next() {
-		var jobID, tid string
-		if err := rows.Scan(&jobID, &tid); err != nil {
+		var id, tid string
+		if err := rows.Scan(&id, &tid); err != nil {
 			t.Fatalf("Scan: %v", err)
 		}
 		if tid != tenantA {
 			t.Errorf("RLS leaked: got tenant_id=%q in tenant A's query", tid)
 		}
-		found = append(found, jobID)
+		found = append(found, id)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows iteration: %v", err)
 	}
 
-	if len(found) != 1 || found[0] != "ctx-prop-job-a" {
-		t.Errorf("expected exactly [ctx-prop-job-a], got %v", found)
+	if len(found) != 1 || found[0] != jobA {
+		t.Errorf("expected exactly [%s], got %v", jobA, found)
 	}
 }
 

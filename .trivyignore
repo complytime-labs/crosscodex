@@ -12,3 +12,7 @@ CVE-2026-41567  # Docker v28.5.2+incompatible - HIGH severity - placeholder CVE
 CVE-2026-42306  # Docker v28.5.2+incompatible - HIGH severity - placeholder CVE
 CVE-2026-33997  # Docker v28.5.2+incompatible - MEDIUM severity - placeholder CVE
 CVE-2026-41568  # Docker v28.5.2+incompatible - MEDIUM severity - placeholder CVE
+
+# Dockerfile misconfiguration suppressions
+# Inline trivy:ignore does not work for "missing resource" checks (trivy bug #9463).
+AVD-DS-0002  # test/ollama/Containerfile — ollama base image requires root for GPU device access and model storage

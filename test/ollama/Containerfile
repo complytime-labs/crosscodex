@@ -1,0 +1,21 @@
+# Integration test image: Ollama with pre-baked models.
+#
+# Models are pulled during the build so containers start instantly with
+# no runtime downloads. Rebuild when changing models:
+#   podman build -t crosscodex-test-ollama:latest -f test/ollama/Containerfile test/ollama
+#
+# Models (chosen for smallest viable size):
+#   llama3.2:1b          (~1.3 GB) — chat/completion
+#   granite-embedding:30m (~30 MB) — embeddings
+
+FROM docker.io/ollama/ollama:0.30.8
+
+# hadolint ignore=DL3001
+RUN ollama serve & \
+    for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done && \
+    ollama pull llama3.2:1b && \
+    ollama pull granite-embedding:30m && \
+    (kill %1 2>/dev/null; wait 2>/dev/null; true)
+
+HEALTHCHECK --interval=5s --timeout=5s --retries=30 --start-period=10s \
+    CMD bash -c 'echo > /dev/tcp/localhost/11434'

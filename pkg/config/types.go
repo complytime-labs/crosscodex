@@ -15,6 +15,7 @@ type Config struct {
 	Logging       LoggingConfig       `yaml:"logging"`
 	Auth          AuthConfig          `yaml:"auth"`
 	Observability ObservabilityConfig `yaml:"observability"`
+	Catalog       CatalogConfig       `yaml:"catalog"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -178,6 +179,24 @@ type ObservabilityMetricsConfig struct {
 	Interval string `yaml:"interval"`
 }
 
+// CatalogConfig configures the catalog parsing and structuring pipeline.
+type CatalogConfig struct {
+	Structuring StructuringConfig `yaml:"structuring"`
+}
+
+// StructuringConfig configures document-to-OSCAL structuring behavior.
+type StructuringConfig struct {
+	SectionPattern     string   `yaml:"section_pattern"`
+	Decompose          bool     `yaml:"decompose"`
+	MinDecomposeWords  int      `yaml:"min_decompose_words"`
+	FilterByKeywords   bool     `yaml:"filter_by_keywords"`
+	Keywords           []string `yaml:"keywords"`
+	ChunkChars         int      `yaml:"chunk_chars"`
+	MaxValidationChars int      `yaml:"max_validation_chars"`
+	AllowedFormats     []string `yaml:"allowed_formats"`
+	MaxHeadingRepeats  int      `yaml:"max_heading_repeats"`
+}
+
 // DaemonConfig is the derived view for crosscodexd.
 type DaemonConfig struct {
 	GRPCAddr      string
@@ -192,6 +211,7 @@ type DaemonConfig struct {
 	Logging       LoggingConfig
 	Auth          AuthConfig
 	Observability ObservabilityConfig
+	Catalog       CatalogConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -219,6 +239,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Logging:       c.Logging,
 		Auth:          c.Auth,
 		Observability: c.Observability,
+		Catalog:       c.Catalog,
 	}
 }
 

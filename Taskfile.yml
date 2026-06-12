@@ -33,7 +33,10 @@ vars:
   BUILD_DIR: "{{.ROOT_DIR}}/.build"
   TEST_DIR: "{{.ROOT_DIR}}/.test-output"
   FIPS: '{{.FIPS | default ""}}'
-  OLLAMA_HOST: '{{.OLLAMA_HOST | default "http://localhost:11434"}}'
+  OLLAMA_HOST:
+    sh: |
+      host='{{.OLLAMA_HOST | default "http://localhost:11434"}}'
+      case "$host" in http://*|https://*) echo "$host" ;; *) echo "http://$host" ;; esac
   OLLAMA_CHAT_MODEL: '{{.OLLAMA_CHAT_MODEL | default "llama3.2:1b"}}'
   OLLAMA_EMBED_MODEL: '{{.OLLAMA_EMBED_MODEL | default "granite-embedding:30m"}}'
 

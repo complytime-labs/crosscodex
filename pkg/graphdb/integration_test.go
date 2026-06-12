@@ -4,6 +4,7 @@ package graphdb_test
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -101,6 +102,37 @@ func setupTenant(t *testing.T, tenantID string) {
 	}
 }
 
+// testID returns a unique ID like "prefix-a1b2c3d4" for test isolation.
+func testID(t *testing.T, prefix string) string {
+	t.Helper()
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("testID: %v", err)
+	}
+	return fmt.Sprintf("%s-%x", prefix, b)
+}
+
+// cleanupTenant deletes a tenant via superuser, which triggers graph drop
+// (migration 009). Intended for t.Cleanup — logs errors instead of failing.
+func cleanupTenant(t *testing.T, tenantID string) {
+	t.Helper()
+	suDB, err := sql.Open("pgx", suDSN)
+	if err != nil {
+		t.Logf("cleanupTenant open: %v", err)
+		return
+	}
+	defer suDB.Close()
+
+	ctx := context.Background()
+	if _, err := suDB.ExecContext(ctx, "LOAD 'age'"); err != nil {
+		t.Logf("cleanupTenant LOAD age: %v", err)
+	}
+	if _, err := suDB.ExecContext(ctx,
+		"DELETE FROM tenants WHERE tenant_id = $1", tenantID); err != nil {
+		t.Logf("cleanupTenant(%q): %v", tenantID, err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -162,8 +194,9 @@ func TestIntegration_CreateNode(t *testing.T) {
 }
 
 func TestIntegration_CreateEdge(t *testing.T) {
-	tenantID := "graphdb-create-edge"
+	tenantID := testID(t, "graphdb-edge")
 	setupTenant(t, tenantID)
+	t.Cleanup(func() { cleanupTenant(t, tenantID) })
 
 	client, err := graphdb.New(testDB)
 	if err != nil {
@@ -287,8 +320,9 @@ func TestIntegration_CreateEdge(t *testing.T) {
 }
 
 func TestIntegration_QueryAsOf(t *testing.T) {
-	tenantID := "graphdb-query-asof"
+	tenantID := testID(t, "graphdb-asof")
 	setupTenant(t, tenantID)
+	t.Cleanup(func() { cleanupTenant(t, tenantID) })
 
 	client, err := graphdb.New(testDB)
 	if err != nil {
@@ -389,8 +423,9 @@ func TestIntegration_QueryAsOf(t *testing.T) {
 }
 
 func TestIntegration_TemporalCurrentState(t *testing.T) {
-	tenantID := "graphdb-temporal-current"
+	tenantID := testID(t, "graphdb-temporal")
 	setupTenant(t, tenantID)
+	t.Cleanup(func() { cleanupTenant(t, tenantID) })
 
 	client, err := graphdb.New(testDB)
 	if err != nil {
@@ -464,8 +499,9 @@ func TestIntegration_TemporalCurrentState(t *testing.T) {
 }
 
 func TestIntegration_EdgeVersioning(t *testing.T) {
-	tenantID := "graphdb-edge-version"
+	tenantID := testID(t, "graphdb-edgever")
 	setupTenant(t, tenantID)
+	t.Cleanup(func() { cleanupTenant(t, tenantID) })
 
 	client, err := graphdb.New(testDB)
 	if err != nil {
@@ -559,10 +595,14 @@ func TestIntegration_EdgeVersioning(t *testing.T) {
 }
 
 func TestIntegration_TenantIsolation(t *testing.T) {
-	tenantA := "graphdb-iso-a"
-	tenantB := "graphdb-iso-b"
+	tenantA := testID(t, "graphdb-iso-a")
+	tenantB := testID(t, "graphdb-iso-b")
 	setupTenant(t, tenantA)
 	setupTenant(t, tenantB)
+	t.Cleanup(func() {
+		cleanupTenant(t, tenantA)
+		cleanupTenant(t, tenantB)
+	})
 
 	client, err := graphdb.New(testDB)
 	if err != nil {

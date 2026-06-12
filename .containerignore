@@ -1,0 +1,53 @@
+# Build context exclusions for container image builds.
+# Podman reads .containerignore; Docker reads .dockerignore (symlinked).
+
+# VCS & agent state — largest offenders (~85 MB combined)
+.git/
+.opencode/
+.claude/
+
+# Build artifacts & test output
+.build/
+.test-output/
+megalinter-reports/
+*.test
+*.out
+
+# Generated code (regenerated inside the build)
+api/gen/
+internal/testgrpc/gen/
+
+# Schemas (fetched separately, not needed in images)
+schemas/
+
+# Documentation & CI (not needed in images)
+docs/
+.github/
+
+# Task runner state
+.task/
+.taskfiles/
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Credentials & local config
+*.key
+*.crt
+*.pem
+credentials/
+.env
+.env.local
+
+# Go vendor (deps fetched via go mod download)
+vendor/
+
+# Planning & worktrees
+docs/superpowers/
+.worktrees/

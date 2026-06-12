@@ -7,7 +7,7 @@
 -- LOAD is safe here because migrations run as the postgres superuser.
 -- Application code must NOT use LOAD — see pkg/graphdb/client.go for why.
 LOAD 'age';
-SET search_path = ag_catalog, "$user", public;
+SET LOCAL search_path = ag_catalog, "$user", public;
 
 -- ---------------------------------------------------------------------------
 -- graph_user: dedicated role for graph operations

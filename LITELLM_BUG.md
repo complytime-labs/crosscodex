@@ -26,11 +26,11 @@ code paths:
 
 ## Affected code paths
 
-| Path | Used by | Status |
-|------|---------|--------|
-| `AsyncHTTPHandler.__init__` → first `create_client()` | chat completions via `BaseLLMHTTPHandler` | correct |
-| `AsyncHTTPHandler.post()` retry → second `create_client()` | any retry after `ConnectError` | **BUG: drops `ssl_verify`** |
-| `BaseLLMAIOHTTPHandler._get_or_create_transport()` | `ollama/` embeddings, other aiohttp providers | **BUG: never receives `ssl_verify`** |
+| Path                                                       | Used by                                       | Status                               |
+|------------------------------------------------------------|-----------------------------------------------|--------------------------------------|
+| `AsyncHTTPHandler.__init__` → first `create_client()`      | chat completions via `BaseLLMHTTPHandler`     | correct                              |
+| `AsyncHTTPHandler.post()` retry → second `create_client()` | any retry after `ConnectError`                | **BUG: drops `ssl_verify`**          |
+| `BaseLLMAIOHTTPHandler._get_or_create_transport()`         | `ollama/` embeddings, other aiohttp providers | **BUG: never receives `ssl_verify`** |
 
 ## Root cause trace
 
