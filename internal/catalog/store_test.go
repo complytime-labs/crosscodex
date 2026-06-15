@@ -119,10 +119,10 @@ func (m *mockRow) Scan(dest ...any) error { return m.scanFn(dest...) }
 
 type emptyRows struct{}
 
-func (e *emptyRows) Next() bool            { return false }
-func (e *emptyRows) Scan(_ ...any) error   { return nil }
-func (e *emptyRows) Close() error          { return nil }
-func (e *emptyRows) Err() error            { return nil }
+func (e *emptyRows) Next() bool          { return false }
+func (e *emptyRows) Scan(_ ...any) error { return nil }
+func (e *emptyRows) Close() error        { return nil }
+func (e *emptyRows) Err() error          { return nil }
 
 // ---------------------------------------------------------------------------
 // PGStore unit tests
