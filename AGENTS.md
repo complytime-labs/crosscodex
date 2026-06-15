@@ -544,6 +544,18 @@ Application code runs under a restricted database role, not the table owner. The
 
 When a batch operation (UPDATE, DELETE) touches rows with mixed protection states (some completed, some not), the entire statement must fail — not silently succeed for the unprotected rows. PostgreSQL's per-row BEFORE triggers provide this guarantee, but tests must verify it explicitly because it's the kind of behavior that breaks silently if someone refactors triggers into rules or policies.
 
+### Prefer Discovery Over Hard Coding
+
+When practical, code should discover what to load and how to load it instead of hard coding it. If a value is likely to vary across deployments, document types, or user preferences, expose it as configuration with a sensible default — do not bury it in source code where only a developer can change it.
+
+This applies to thresholds, keyword lists, regex patterns, format allowlists, chunk sizes, retry counts, and any other tuning parameter. The test: would a user deploying CrossCodex against a different compliance framework need to change this value? If yes, it must be configuration, not code.
+
+### Upsert Over Reject When Data Is Sound
+
+When receiving valid data that conflicts with an existing record by identity (same ID, same tenant), prefer upsert (insert-or-update) over rejection. Failing with "already exists" forces the caller to implement delete-then-insert or check-then-branch logic that is both fragile and race-prone. If the incoming data passes validation, the caller's intent is clear: this is the current truth, store it.
+
+This applies to controls, catalogs, embeddings, graph nodes, configuration records, and any other entity where re-import or incremental update is a reasonable operation. Reserve "already exists" errors for cases where duplication genuinely indicates a bug (e.g., two controls with the same derived ID within a single import batch).
+
 ## Recent Changes
 
 - **pkg/db implementation** — Added PostgreSQL connection pool with tenant-scoped Row-Level Security, schema migrations via golang-migrate, extension verification, immutability triggers, and comprehensive integration tests including tenant isolation, immutability, and tired-admin threat model scenarios.

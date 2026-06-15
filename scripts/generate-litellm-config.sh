@@ -19,13 +19,13 @@ EMBED_MODEL="${6:?Usage: generate-litellm-config.sh <profile> <template> <dest> 
 
 # No-op for profiles that don't include LiteLLM.
 case "${PROFILE}" in
-  llm|all) ;;
-  *) exit 0 ;;
+llm | all) ;;
+*) exit 0 ;;
 esac
 
 if [[ ! -f "${TEMPLATE}" ]]; then
-  echo "ERROR: LiteLLM config template not found: ${TEMPLATE}"
-  exit 1
+	echo "ERROR: LiteLLM config template not found: ${TEMPLATE}"
+	exit 1
 fi
 
 mkdir -p "$(dirname "${DEST}")"
@@ -37,17 +37,19 @@ mkdir -p "$(dirname "${DEST}")"
 # the compose network service name. When OLLAMA_HOST is overridden
 # to a remote, we use that URL directly.
 if [[ "${OLLAMA_HOST}" = "http://localhost:11434" ]]; then
-  # Default: use the compose-internal service name so LiteLLM
-  # (a container) can reach the Ollama container on the same network.
-  api_base="http://ollama:11434/v1"
+	# Default: use the compose-internal service name so LiteLLM
+	# (a container) can reach the Ollama container on the same network.
+	api_base="http://ollama:11434/v1"
 else
-  api_base="${OLLAMA_HOST%/}/v1"
+	# Non-default: LiteLLM runs with host networking (compose.host-network.yaml),
+	# so it can reach both localhost and LAN/remote hosts directly.
+	api_base="${OLLAMA_HOST%/}/v1"
 fi
 
 sed \
-  -e "s|OLLAMA_API_BASE|${api_base}|g" \
-  -e "s|OLLAMA_CHAT_MODEL|${CHAT_MODEL}|g" \
-  -e "s|OLLAMA_EMBED_MODEL|${EMBED_MODEL}|g" \
-  "${TEMPLATE}" > "${DEST}"
+	-e "s|OLLAMA_API_BASE|${api_base}|g" \
+	-e "s|OLLAMA_CHAT_MODEL|${CHAT_MODEL}|g" \
+	-e "s|OLLAMA_EMBED_MODEL|${EMBED_MODEL}|g" \
+	"${TEMPLATE}" >"${DEST}"
 
 echo "LiteLLM config written: api_base=${api_base}, chat=${CHAT_MODEL}, embed=${EMBED_MODEL}"

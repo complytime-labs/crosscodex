@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 var (
 	validTLSModes        = map[string]bool{"off": true, "server-only": true, "mutual": true}
@@ -20,6 +23,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 		return err
 	}
 	if err := validateLLM(&cfg.LLM, tracker); err != nil {
+		return err
+	}
+	if err := validateCatalog(&cfg.Catalog, tracker); err != nil {
 		return err
 	}
 	return nil
@@ -83,6 +89,33 @@ func validateLLM(llm *LLMConfig, tracker *sourceTracker) error {
 	if llm.MaxRetries < 0 {
 		return fmt.Errorf("llm.max_retries %d%s must be non-negative: %w",
 			llm.MaxRetries, formatSource(tracker, "llm.max_retries"), ErrInvalidConfig)
+	}
+	return nil
+}
+
+func validateCatalog(cat *CatalogConfig, tracker *sourceTracker) error {
+	s := &cat.Structuring
+	if s.MinDecomposeWords < 0 {
+		return fmt.Errorf("catalog.structuring.min_decompose_words %d%s must be non-negative: %w",
+			s.MinDecomposeWords, formatSource(tracker, "catalog.structuring.min_decompose_words"), ErrInvalidConfig)
+	}
+	if s.ChunkChars < 0 {
+		return fmt.Errorf("catalog.structuring.chunk_chars %d%s must be non-negative: %w",
+			s.ChunkChars, formatSource(tracker, "catalog.structuring.chunk_chars"), ErrInvalidConfig)
+	}
+	if s.MaxValidationChars < 0 {
+		return fmt.Errorf("catalog.structuring.max_validation_chars %d%s must be non-negative: %w",
+			s.MaxValidationChars, formatSource(tracker, "catalog.structuring.max_validation_chars"), ErrInvalidConfig)
+	}
+	if s.MaxHeadingRepeats < 0 {
+		return fmt.Errorf("catalog.structuring.max_heading_repeats %d%s must be non-negative: %w",
+			s.MaxHeadingRepeats, formatSource(tracker, "catalog.structuring.max_heading_repeats"), ErrInvalidConfig)
+	}
+	if s.SectionPattern != "" {
+		if _, err := regexp.Compile(s.SectionPattern); err != nil {
+			return fmt.Errorf("catalog.structuring.section_pattern %q%s is not valid regex: %w",
+				s.SectionPattern, formatSource(tracker, "catalog.structuring.section_pattern"), ErrInvalidConfig)
+		}
 	}
 	return nil
 }

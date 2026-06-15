@@ -1,0 +1,17 @@
+package catalog_test
+
+import (
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
+)
+
+func TestCatalogBDD(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Catalog BDD Suite")
+}
+
+var _ = BeforeSuite(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })

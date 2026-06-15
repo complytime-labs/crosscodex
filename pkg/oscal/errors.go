@@ -3,15 +3,11 @@ package oscal
 import "errors"
 
 var (
-	// ErrInvalidFormat indicates the OSCAL document format is invalid.
-	ErrInvalidFormat = errors.New("invalid OSCAL format")
-
-	// ErrValidationFailed indicates OSCAL schema validation failed.
+	ErrInvalidFormat    = errors.New("invalid OSCAL format")
 	ErrValidationFailed = errors.New("OSCAL validation failed")
-
-	// ErrControlNotFound indicates the specified control does not exist.
-	ErrControlNotFound = errors.New("control not found")
-
-	// ErrParseFailed indicates parsing the OSCAL document failed.
-	ErrParseFailed = errors.New("failed to parse OSCAL catalog")
+	ErrControlNotFound  = errors.New("control not found")
+	ErrParseFailed      = errors.New("failed to parse OSCAL catalog")
+	ErrSchemaLoad       = errors.New("failed to load OSCAL schema")
+	ErrNoControls       = errors.New("catalog contains no controls")
+	ErrStructureFailed  = errors.New("all structuring tiers failed")
 )

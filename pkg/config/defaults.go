@@ -75,6 +75,17 @@ observability:
     endpoint: ""
     protocol: ""
     interval: 30s
+catalog:
+  structuring:
+    section_pattern: ""
+    decompose: true
+    min_decompose_words: 40
+    filter_by_keywords: false
+    keywords: []
+    chunk_chars: 3000
+    max_validation_chars: 800
+    allowed_formats: []
+    max_heading_repeats: 3
 `
 
 func defaultNode() (*yaml.Node, error) {

@@ -57,6 +57,36 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           generate-test-certs: "true"
 
+      - name: Restore Taskfile checksum cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .task/
+          key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
+          restore-keys: |
+            taskfile-${{ runner.os }}-
+
+      - name: Restore DB image cache
+        id: db-image-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/crosscodex-test-db.tar
+          key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+
+      - name: Load cached DB image
+        if: steps.db-image-cache.outputs.cache-hit == 'true'
+        run: podman load -i /tmp/crosscodex-test-db.tar
+
+      - name: Restore Ollama image cache
+        id: ollama-image-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/crosscodex-test-ollama.tar
+          key: ollama-image-${{ runner.os }}-${{ hashFiles('test/ollama/Containerfile') }}
+
+      - name: Load cached Ollama image
+        if: steps.ollama-image-cache.outputs.cache-hit == 'true'
+        run: podman load -i /tmp/crosscodex-test-ollama.tar
+
       - name: Install podman-compose
         run: pip install podman-compose
 
@@ -65,6 +95,20 @@ jobs:
 
       - name: Run storage integration tests
         run: task test:integration:storage
+
+      - name: Save DB image for cache
+        if: steps.db-image-cache.outputs.cache-hit != 'true'
+        run: |
+          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
+          fi
+
+      - name: Save Ollama image for cache
+        if: steps.ollama-image-cache.outputs.cache-hit != 'true'
+        run: |
+          if podman image inspect crosscodex-test-ollama:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-ollama.tar crosscodex-test-ollama:latest
+          fi
 
   integration-nats:
     needs: [build]
@@ -86,11 +130,37 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           generate-test-certs: "true"
 
+      - name: Restore Taskfile checksum cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .task/
+          key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
+          restore-keys: |
+            taskfile-${{ runner.os }}-
+
+      - name: Restore DB image cache
+        id: db-image-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/crosscodex-test-db.tar
+          key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+
+      - name: Load cached DB image
+        if: steps.db-image-cache.outputs.cache-hit == 'true'
+        run: podman load -i /tmp/crosscodex-test-db.tar
+
       - name: Install podman-compose
         run: pip install podman-compose
 
       - name: Run NATS integration tests
         run: task test:integration:nats
+
+      - name: Save DB image for cache
+        if: steps.db-image-cache.outputs.cache-hit != 'true'
+        run: |
+          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
+          fi
 
   integration-authn:
     needs: [build]
@@ -112,8 +182,34 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           generate-test-certs: "true"
 
+      - name: Restore Taskfile checksum cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .task/
+          key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
+          restore-keys: |
+            taskfile-${{ runner.os }}-
+
+      - name: Restore DB image cache
+        id: db-image-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/crosscodex-test-db.tar
+          key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+
+      - name: Load cached DB image
+        if: steps.db-image-cache.outputs.cache-hit == 'true'
+        run: podman load -i /tmp/crosscodex-test-db.tar
+
       - name: Install podman-compose
         run: pip install podman-compose
 
       - name: Run authn container integration tests
         run: task test:integration:authn
+
+      - name: Save DB image for cache
+        if: steps.db-image-cache.outputs.cache-hit != 'true'
+        run: |
+          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
+          fi
