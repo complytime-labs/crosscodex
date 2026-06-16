@@ -1309,7 +1309,8 @@ logging:
 					DSN:     "postgres://localhost:5432/crosscodex", // DevSkim: ignore DS162092 -- test fixture
 					SSLMode: "prefer",
 				},
-				Logging: config.LoggingConfig{Level: "info", Format: "text"},
+				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
+				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1323,8 +1324,9 @@ logging:
 					Cert: "/etc/server.crt",
 					Key:  "/etc/server.key",
 				},
-				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-				Logging: config.LoggingConfig{Level: "info", Format: "text"},
+				Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
+				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1333,9 +1335,10 @@ logging:
 		DescribeTable("rejects invalid configurations",
 			func(modify func(*config.Config)) {
 				cfg := &config.Config{
-					TLS:     config.TLSConfig{Mode: "off"},
-					Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-					Logging: config.LoggingConfig{Level: "info", Format: "text"},
+					TLS:         config.TLSConfig{Mode: "off"},
+					Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+					Logging:     config.LoggingConfig{Level: "info", Format: "text"},
+					Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
 				}
 				modify(cfg)
 
@@ -1699,6 +1702,231 @@ logging:
 
 		It("NewLoader returns non-nil", func() {
 			Expect(config.NewLoader()).NotTo(BeNil())
+		})
+	})
+
+	Describe("Attestation Validation", func() {
+		// validBase returns a Config with all sections valid, including
+		// a known-good AttestationConfig so tests can mutate just the
+		// attestation fields and reach attestation validation.
+		validBase := func() *config.Config {
+			return &config.Config{
+				TLS:     config.TLSConfig{Mode: "off"},
+				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+				Logging: config.LoggingConfig{Level: "info", Format: "text"},
+				Attestation: config.AttestationConfig{
+					Enabled:           true,
+					ExpiryDuration:    8760 * time.Hour,
+					IncludeByProducts: true,
+				},
+			}
+		}
+
+		It("rejects non-positive expiry duration", func() {
+			cfg := validBase()
+			cfg.Attestation.ExpiryDuration = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("attestation.expiry_duration"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative expiry duration", func() {
+			cfg := validBase()
+			cfg.Attestation.ExpiryDuration = -1 * time.Hour
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("attestation.expiry_duration"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects private_key_path without public_key_path", func() {
+			cfg := validBase()
+			cfg.Attestation.PrivateKeyPath = "/path/to/key.pem"
+			cfg.Attestation.PublicKeyPath = ""
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("attestation.private_key_path"))
+			Expect(err.Error()).To(ContainSubstring("both be set or both empty"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects public_key_path without private_key_path", func() {
+			cfg := validBase()
+			cfg.Attestation.PublicKeyPath = "/path/to/pub.pem"
+			cfg.Attestation.PrivateKeyPath = ""
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("both be set or both empty"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("passes when both paths empty (ephemeral mode)", func() {
+			cfg := validBase()
+			cfg.Attestation.PrivateKeyPath = ""
+			cfg.Attestation.PublicKeyPath = ""
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("passes when both paths set", func() {
+			cfg := validBase()
+			cfg.Attestation.PrivateKeyPath = "/path/to/key.pem"
+			cfg.Attestation.PublicKeyPath = "/path/to/pub.pem"
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("rejects per-tenant non-positive expiry duration", func() {
+			cfg := validBase()
+			badExpiry := -1 * time.Hour
+			cfg.Attestation.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-x": {ExpiryDuration: &badExpiry},
+			}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tenant-x"))
+			Expect(err.Error()).To(ContainSubstring("expiry_duration"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects per-tenant private_key_path without public_key_path", func() {
+			cfg := validBase()
+			privPath := "/path/to/tenant-key.pem"
+			cfg.Attestation.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-y": {PrivateKeyPath: &privPath},
+			}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tenant-y"))
+			Expect(err.Error()).To(ContainSubstring("both be set or both empty"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts per-tenant overrides with both key paths set", func() {
+			cfg := validBase()
+			privPath := "/path/to/tenant-key.pem"
+			pubPath := "/path/to/tenant-pub.pem"
+			cfg.Attestation.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-z": {PrivateKeyPath: &privPath, PublicKeyPath: &pubPath},
+			}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Describe("AttestationConfig.ForTenant", func() {
+		var cfg config.AttestationConfig
+
+		BeforeEach(func() {
+			cfg = config.AttestationConfig{
+				Enabled:           true,
+				PrivateKeyPath:    "/global/key.pem",
+				PublicKeyPath:     "/global/pub.pem",
+				ExpiryDuration:    8760 * time.Hour,
+				IncludeByProducts: true,
+			}
+		})
+
+		It("returns global values when no override exists", func() {
+			tc := cfg.ForTenant("unknown-tenant")
+			Expect(tc.Enabled).To(BeTrue())
+			Expect(tc.PrivateKeyPath).To(Equal("/global/key.pem"))
+			Expect(tc.PublicKeyPath).To(Equal("/global/pub.pem"))
+			Expect(tc.ExpiryDuration).To(Equal(8760 * time.Hour))
+			Expect(tc.IncludeByProducts).To(BeTrue())
+		})
+
+		It("returns overridden enabled value", func() {
+			f := false
+			cfg.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-a": {Enabled: &f},
+			}
+			tc := cfg.ForTenant("tenant-a")
+			Expect(tc.Enabled).To(BeFalse())
+			Expect(tc.IncludeByProducts).To(BeTrue())
+			Expect(tc.PrivateKeyPath).To(Equal("/global/key.pem")) // inherited
+		})
+
+		It("returns overridden includeByProducts value", func() {
+			f := false
+			cfg.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-b": {IncludeByProducts: &f},
+			}
+			tc := cfg.ForTenant("tenant-b")
+			Expect(tc.Enabled).To(BeTrue())
+			Expect(tc.IncludeByProducts).To(BeFalse())
+		})
+
+		It("returns both overridden values", func() {
+			f := false
+			cfg.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-c": {Enabled: &f, IncludeByProducts: &f},
+			}
+			tc := cfg.ForTenant("tenant-c")
+			Expect(tc.Enabled).To(BeFalse())
+			Expect(tc.IncludeByProducts).To(BeFalse())
+		})
+
+		It("inherits nil-pointer fields from global", func() {
+			f := false
+			cfg.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-d": {Enabled: &f}, // IncludeByProducts is nil -> inherit
+			}
+			tc := cfg.ForTenant("tenant-d")
+			Expect(tc.Enabled).To(BeFalse())
+			Expect(tc.IncludeByProducts).To(BeTrue()) // inherited from global
+		})
+
+		It("overrides per-tenant key paths", func() {
+			privPath := "/tenant/key.pem"
+			pubPath := "/tenant/pub.pem"
+			cfg.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-e": {PrivateKeyPath: &privPath, PublicKeyPath: &pubPath},
+			}
+			tc := cfg.ForTenant("tenant-e")
+			Expect(tc.PrivateKeyPath).To(Equal("/tenant/key.pem"))
+			Expect(tc.PublicKeyPath).To(Equal("/tenant/pub.pem"))
+			Expect(tc.ExpiryDuration).To(Equal(8760 * time.Hour)) // inherited
+		})
+
+		It("overrides per-tenant expiry duration", func() {
+			customExpiry := 720 * time.Hour
+			cfg.TenantOverrides = map[string]config.AttestationOverride{
+				"tenant-f": {ExpiryDuration: &customExpiry},
+			}
+			tc := cfg.ForTenant("tenant-f")
+			Expect(tc.ExpiryDuration).To(Equal(720 * time.Hour))
+			Expect(tc.PrivateKeyPath).To(Equal("/global/key.pem")) // inherited
+		})
+	})
+
+	Describe("Attestation Defaults", func() {
+		It("has correct default values from compiled defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.Attestation.Enabled).To(BeTrue())
+			Expect(cfg.Attestation.PrivateKeyPath).To(BeEmpty())
+			Expect(cfg.Attestation.PublicKeyPath).To(BeEmpty())
+			Expect(cfg.Attestation.ExpiryDuration).To(Equal(8760 * time.Hour))
+			Expect(cfg.Attestation.IncludeByProducts).To(BeTrue())
+			Expect(cfg.Attestation.TenantOverrides).To(BeNil())
+		})
+
+		It("includes attestation in DaemonConfig", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			daemon := cfg.ServiceConfig()
+			Expect(daemon.Attestation.Enabled).To(BeTrue())
+			Expect(daemon.Attestation.ExpiryDuration).To(Equal(8760 * time.Hour))
 		})
 	})
 })

@@ -46,10 +46,33 @@ type SignedLink struct {
 	Products  []Artifact // Output artifacts
 }
 
+// VerifiedLayout is the result of verifying a signed layout envelope.
+type VerifiedLayout struct {
+	Steps       []Step
+	Inspections []Inspection
+	Expires     time.Time
+	KeyIDs      []string // Key IDs that signed this layout
+}
+
 // VerifiedLink is the result of verifying a signed link envelope.
 type VerifiedLink struct {
 	Step       string         // Step name
 	Materials  []Artifact     // Input artifacts
 	Products   []Artifact     // Output artifacts
 	ByProducts map[string]any // Additional metadata including trace_id
+}
+
+// LinkOption configures individual CreateLink calls.
+type LinkOption func(*linkOptions)
+
+type linkOptions struct {
+	extraByProducts map[string]any
+}
+
+// WithByProducts adds extra key-value pairs to the link's ByProducts map.
+// The "trace_id" and "span_id" keys are reserved and will not be overwritten.
+func WithByProducts(extra map[string]any) LinkOption {
+	return func(o *linkOptions) {
+		o.extraByProducts = extra
+	}
 }

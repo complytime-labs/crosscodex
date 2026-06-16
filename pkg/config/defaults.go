@@ -86,6 +86,12 @@ catalog:
     max_validation_chars: 800
     allowed_formats: []
     max_heading_repeats: 3
+attestation:
+  enabled: true
+  private_key_path: ""
+  public_key_path: ""
+  expiry_duration: 8760h
+  include_byproducts: true
 `
 
 func defaultNode() (*yaml.Node, error) {

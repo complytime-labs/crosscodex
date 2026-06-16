@@ -28,6 +28,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := validateCatalog(&cfg.Catalog, tracker); err != nil {
 		return err
 	}
+	if err := validateAttestation(&cfg.Attestation, tracker); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -89,6 +92,30 @@ func validateLLM(llm *LLMConfig, tracker *sourceTracker) error {
 	if llm.MaxRetries < 0 {
 		return fmt.Errorf("llm.max_retries %d%s must be non-negative: %w",
 			llm.MaxRetries, formatSource(tracker, "llm.max_retries"), ErrInvalidConfig)
+	}
+	return nil
+}
+
+func validateAttestation(a *AttestationConfig, tracker *sourceTracker) error {
+	if a.ExpiryDuration <= 0 {
+		return fmt.Errorf("attestation.expiry_duration %s%s must be positive: %w",
+			a.ExpiryDuration, formatSource(tracker, "attestation.expiry_duration"), ErrInvalidConfig)
+	}
+	if (a.PrivateKeyPath == "") != (a.PublicKeyPath == "") {
+		return fmt.Errorf("attestation.private_key_path and attestation.public_key_path%s must both be set or both empty: %w",
+			formatSource(tracker, "attestation.private_key_path"), ErrInvalidConfig)
+	}
+	for tenantID, override := range a.TenantOverrides {
+		if override.ExpiryDuration != nil && *override.ExpiryDuration <= 0 {
+			return fmt.Errorf("attestation.tenant_overrides.%s.expiry_duration %s must be positive: %w",
+				tenantID, *override.ExpiryDuration, ErrInvalidConfig)
+		}
+		privSet := override.PrivateKeyPath != nil && *override.PrivateKeyPath != ""
+		pubSet := override.PublicKeyPath != nil && *override.PublicKeyPath != ""
+		if privSet != pubSet {
+			return fmt.Errorf("attestation.tenant_overrides.%s.private_key_path and public_key_path must both be set or both empty: %w",
+				tenantID, ErrInvalidConfig)
+		}
 	}
 	return nil
 }

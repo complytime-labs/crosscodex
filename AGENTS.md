@@ -159,7 +159,7 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | **pkg/telemetry** | `[implemented]` | OpenTelemetry traces, metrics, structured logging with trace correlation | pkg/config |
 | **pkg/llmclient** | `[implemented]` | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit emission, gateway mode (skip client-side retry when upstream gateway handles retries) | pkg/config, pkg/telemetry |
 | **pkg/oscal** | `[scaffold]` | OSCAL catalog parsing, validation | None (domain logic) |
-| **pkg/attestation** | `[implemented]` | in-toto layout/link generation, signature verification, trace correlation | pkg/tlsconfig, in-toto-golang |
+| **pkg/attestation** | `[implemented]` | in-toto layout/link generation and verification, hash chain verification, FIPS enforcement, enriched byproducts, manifest generation, ephemeral key provider, trace correlation | pkg/telemetry, in-toto-golang |
 | **pkg/analyzer** | `[implemented]` | Generic analyzer plugin interface, type-safe registry, DAG builder with Kahn's algorithm for level-based parallel execution | pkg/telemetry (optional) |
 
 **Dependency Flow:**
@@ -551,6 +551,18 @@ When practical, code should discover what to load and how to load it instead of 
 
 This applies to thresholds, keyword lists, regex patterns, format allowlists, chunk sizes, retry counts, and any other tuning parameter. The test: would a user deploying CrossCodex against a different compliance framework need to change this value? If yes, it must be configuration, not code.
 
+### Configuration Surface Discipline
+
+Every runtime-configurable knob in a package MUST have a corresponding config field in `pkg/config` OR a documented wiring contract explaining how it gets its value. No silent knobs — if a functional option exists but has no config field, the gap must be caught during review.
+
+Rules:
+- **No orphan options:** If a package exposes `WithX(val)`, there must be a config field that feeds it, or a doc comment on the option explaining the wiring contract (e.g., FIPS mode derived from `tls.fips.enabled`).
+- **Naming fidelity:** Config field names must match the semantic meaning of the value they configure. If the package expects a public key PEM file, the config field is `public_key_path`, not `cert_path`.
+- **Per-tenant completeness:** If a config section supports `tenant_overrides`, every field that could reasonably differ between tenants must be overridable. If a field is intentionally global-only, document why.
+- **Deduplication:** Do not create a second config knob for a value that already has a canonical source. Example: FIPS mode is `tls.fips.enabled` — attestation, storage, and future packages derive it from there rather than adding their own `fips_mode` field.
+- **Validation coverage:** Per-tenant overrides must undergo the same validation rules as their global counterparts (e.g., key path pairing, positive durations).
+- **Test coverage:** Every config field must have tests covering: default value, valid override, and invalid value rejection with actionable error message.
+
 ### Upsert Over Reject When Data Is Sound
 
 When receiving valid data that conflicts with an existing record by identity (same ID, same tenant), prefer upsert (insert-or-update) over rejection. Failing with "already exists" forces the caller to implement delete-then-insert or check-then-branch logic that is both fragile and race-prone. If the incoming data passes validation, the caller's intent is clear: this is the current truth, store it.
@@ -569,6 +581,8 @@ This applies to controls, catalogs, embeddings, graph nodes, configuration recor
 - **pkg/llmclient implementation** — Added OpenAI-compatible chat completion and embedding client with credential resolution via URI schemes (env:/file:/vault:), exponential backoff retry with jitter on 429/5xx with Retry-After header support, tenant ID validation via `pkg/tenant`, model allow-list enforcement, OTel tracing and metrics via `WithTelemetry` option, audit event emission via `AuditEmitter` interface. `LLMConfig` added to `pkg/config` with `APIKeyRef` (credential URI reference), `AllowedModels`, `MaxRetries`, defaults and validation. Integration tests against Ollama with `integration_llm` build tag.
 - **Gateway-agnostic LLM architecture** — Added `GatewayMode` boolean to `LLMConfig`. When true, `pkg/llmclient` makes a single attempt per request, deferring retry/failover to an upstream proxy (LiteLLM, Kong, Portkey, etc.). All other client behavior (tenant validation, audit emission, OTel, model allow-list) is unchanged. Full-stack integration tests added with LiteLLM Proxy + Ollama + Jaeger compose services under `llm` profile.
 - **pkg/analyzer implementation** — Replaced scaffold with generic `Analyzer[T]` interface parameterized on `proto.Message`, type-erased `RegisteredAnalyzer` wrapper via `registeredWrapper[T]`, concurrency-safe `Registry` with `Register[T]` generic function, `DAG` builder using Kahn's algorithm with level-based parallel execution grouping, `Subset` for partial DAG construction with transitive dependency closure, cycle detection with formatted cycle path reporting, and OTel tracing on `BuildDAG` via `WithTelemetry(trace.TracerProvider)` option. Callers are responsible for propagating tenant context via `context.Context`; the package does not perform I/O or enforce tenant isolation directly. Comprehensive BDD test suite covers behavioral specs, edge cases (cycles, missing deps, type mismatches, empty registry), copy safety, telemetry integration, and concurrent registry access.
+- **pkg/attestation completion** — Added EphemeralKeyProvider (in-memory ECDSA P-256), VerifyLayout with expiry checking (ErrExpired), VerifyChain for hash chain verification between consecutive pipeline steps (ErrChainBroken), FIPS algorithm enforcement via WithFIPSMode (ErrNonFIPSAlgorithm), enriched ByProducts (span_id, timestamp, hostname) via WithIncludeByProducts, GenerateManifest for GNU coreutils format SHA-256 manifests, LinkOption with WithByProducts for per-call byproduct injection. AttestationConfig added to pkg/config with per-tenant overrides via ForTenant(). JobAttestationKey added to pkg/storage for job-structured attestation paths. DAG-to-Layout bridge adapter added in internal/pipeline/attestation.
+- **Attestation config surface fix** — Renamed `KeyPath`/`CertPath` to `PrivateKeyPath`/`PublicKeyPath` for naming fidelity (FileKeyProvider expects SPKI PEM, not X.509 certificate). Expanded `AttestationOverride` to cover all five fields (`Enabled`, `PrivateKeyPath`, `PublicKeyPath`, `ExpiryDuration`, `IncludeByProducts`). `ForTenant()` now returns `AttestationTenantConfig` struct instead of two bools. Added per-tenant validation (key path pairing, positive expiry). FIPS mode documented as derived from `tls.fips.enabled` (no duplicate knob). Added "Configuration Surface Discipline" to Defensive Design Principles.
 
 **TODO:** NATS account-level tenant authorization is not yet integrated with `pkg/authn`. While `pkg/authn` is now implemented (X.509 mTLS), NATS account-level isolation requires a separate integration layer. Currently, tenant isolation is enforced at the subject level via `pkg/tenant.ValidateTenantID()`. When the NATS-authn integration is built, add per-tenant NATS accounts for server-level isolation.
 

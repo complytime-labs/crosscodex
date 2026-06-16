@@ -402,6 +402,23 @@ var _ = Describe("Storage System", Ordered, func() {
 		})
 	})
 
+	Describe("JobAttestationKey", func() {
+		It("produces correct path for layout", func() {
+			key := storage.JobAttestationKey("job-123", "layout.json")
+			Expect(key).To(Equal("jobs/job-123/attestation/layout.json"))
+		})
+
+		It("produces correct path for link", func() {
+			key := storage.JobAttestationKey("job-123", "ingestion.link.json")
+			Expect(key).To(Equal("jobs/job-123/attestation/ingestion.link.json"))
+		})
+
+		It("produces correct path for manifest", func() {
+			key := storage.JobAttestationKey("job-456", "input_manifest.sha256")
+			Expect(key).To(Equal("jobs/job-456/attestation/input_manifest.sha256"))
+		})
+	})
+
 	Describe("Sentinel Error Behaviors", func() {
 		Context("when distinguishing storage failure modes", func() {
 			It("defines non-nil sentinel errors for all failure categories", func() {

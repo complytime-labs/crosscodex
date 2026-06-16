@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Generator creates and verifies in-toto attestations.
+// Generator creates and verifies in-toto attestations for supply chain integrity.
 type Generator interface {
 	// CreateLayout creates a signed supply chain layout.
 	CreateLayout(ctx context.Context, opts LayoutOptions) (*SignedLayout, error)
@@ -18,11 +18,22 @@ type Generator interface {
 	// CreateLink creates a signed execution record for a pipeline step.
 	// The link's ByProducts["trace_id"] is automatically populated from
 	// telemetry.TraceIDFromContext(ctx) if a span is active.
-	CreateLink(ctx context.Context, step string, materials, products []Artifact) (*SignedLink, error)
+	// Additional byproducts can be injected via WithByProducts option.
+	CreateLink(ctx context.Context, step string, materials, products []Artifact, opts ...LinkOption) (*SignedLink, error)
 
-	// Verify deserializes and verifies a signed envelope.
-	// Returns the verified link payload on success.
+	// Verify deserializes and verifies a signed link envelope.
 	Verify(ctx context.Context, data []byte) (*VerifiedLink, error)
+
+	// VerifyLayout deserializes and verifies a signed layout envelope.
+	// Returns ErrExpired if the layout has expired.
+	VerifyLayout(ctx context.Context, data []byte) (*VerifiedLayout, error)
+
+	// VerifyChain validates artifact integrity across consecutive pipeline steps.
+	// For each consecutive pair (step N, step N+1), any artifact URI that appears
+	// in both step N's products and step N+1's materials must have identical
+	// SHA-256 digests. Step N+1 may have additional materials not from step N.
+	// If layout is non-nil, links are sorted to match layout step ordering.
+	VerifyChain(ctx context.Context, layout *SignedLayout, links []*SignedLink) error
 }
 
 // KeyProvider abstracts signing/verification key retrieval.
@@ -55,6 +66,32 @@ func WithTelemetry(tracer trace.Tracer, meter metric.Meter) Option {
 		if err != nil {
 			slog.Warn("attestation: failed to create operation latency histogram", "error", err)
 		}
+		return nil
+	}
+}
+
+// WithFIPSMode enables FIPS algorithm enforcement on signing operations.
+// When enabled, CreateLayout and CreateLink verify that the signing key
+// uses a FIPS-approved algorithm (ECDSA P-256, P-384, P-521).
+// Rejects RSA, Ed25519, and non-approved curves with ErrNonFIPSAlgorithm.
+//
+// FIPS mode is NOT configured via AttestationConfig. It is a deployment-wide
+// posture derived from tls.fips.enabled. The service layer must read
+// TLSConfig.FIPS.Enabled and pass WithFIPSMode(cfg.TLS.FIPS.Enabled) when
+// constructing the Generator. This avoids duplicating the FIPS toggle.
+func WithFIPSMode(enabled bool) Option {
+	return func(g *generator) error {
+		g.fipsMode = enabled
+		return nil
+	}
+}
+
+// WithIncludeByProducts enables automatic byproduct enrichment.
+// When true, CreateLink adds span_id, timestamp, and hostname to ByProducts
+// in addition to the always-present trace_id.
+func WithIncludeByProducts(enabled bool) Option {
+	return func(g *generator) error {
+		g.includeByProducts = enabled
 		return nil
 	}
 }
