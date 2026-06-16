@@ -16,6 +16,7 @@ type Config struct {
 	Auth          AuthConfig          `yaml:"auth"`
 	Observability ObservabilityConfig `yaml:"observability"`
 	Catalog       CatalogConfig       `yaml:"catalog"`
+	Attestation   AttestationConfig   `yaml:"attestation"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -197,6 +198,70 @@ type StructuringConfig struct {
 	MaxHeadingRepeats  int      `yaml:"max_heading_repeats"`
 }
 
+// AttestationConfig configures in-toto attestation generation and verification.
+//
+// FIPS mode is not configured here. Attestation FIPS enforcement is derived
+// from tls.fips.enabled -- a single deployment-wide posture. The service layer
+// reads TLSConfig.FIPS.Enabled and passes attestation.WithFIPSMode() accordingly.
+type AttestationConfig struct {
+	Enabled           bool                           `yaml:"enabled"`
+	PrivateKeyPath    string                         `yaml:"private_key_path"`
+	PublicKeyPath     string                         `yaml:"public_key_path"`
+	ExpiryDuration    time.Duration                  `yaml:"expiry_duration"`
+	IncludeByProducts bool                           `yaml:"include_byproducts"`
+	TenantOverrides   map[string]AttestationOverride `yaml:"tenant_overrides"`
+}
+
+// AttestationOverride allows per-tenant attestation settings.
+// Nil pointer fields inherit the global AttestationConfig value.
+type AttestationOverride struct {
+	Enabled           *bool          `yaml:"enabled"`
+	PrivateKeyPath    *string        `yaml:"private_key_path"`
+	PublicKeyPath     *string        `yaml:"public_key_path"`
+	ExpiryDuration    *time.Duration `yaml:"expiry_duration"`
+	IncludeByProducts *bool          `yaml:"include_byproducts"`
+}
+
+// AttestationTenantConfig holds the fully resolved attestation settings for a tenant.
+// Returned by ForTenant after applying per-tenant overrides to global defaults.
+type AttestationTenantConfig struct {
+	Enabled           bool
+	PrivateKeyPath    string
+	PublicKeyPath     string
+	ExpiryDuration    time.Duration
+	IncludeByProducts bool
+}
+
+// ForTenant returns the effective attestation settings for a tenant.
+// Fields set in TenantOverrides take precedence; nil fields inherit global values.
+func (a *AttestationConfig) ForTenant(tenantID string) AttestationTenantConfig {
+	tc := AttestationTenantConfig{
+		Enabled:           a.Enabled,
+		PrivateKeyPath:    a.PrivateKeyPath,
+		PublicKeyPath:     a.PublicKeyPath,
+		ExpiryDuration:    a.ExpiryDuration,
+		IncludeByProducts: a.IncludeByProducts,
+	}
+	if override, ok := a.TenantOverrides[tenantID]; ok {
+		if override.Enabled != nil {
+			tc.Enabled = *override.Enabled
+		}
+		if override.PrivateKeyPath != nil {
+			tc.PrivateKeyPath = *override.PrivateKeyPath
+		}
+		if override.PublicKeyPath != nil {
+			tc.PublicKeyPath = *override.PublicKeyPath
+		}
+		if override.ExpiryDuration != nil {
+			tc.ExpiryDuration = *override.ExpiryDuration
+		}
+		if override.IncludeByProducts != nil {
+			tc.IncludeByProducts = *override.IncludeByProducts
+		}
+	}
+	return tc
+}
+
 // DaemonConfig is the derived view for crosscodexd.
 type DaemonConfig struct {
 	GRPCAddr      string
@@ -212,6 +277,7 @@ type DaemonConfig struct {
 	Auth          AuthConfig
 	Observability ObservabilityConfig
 	Catalog       CatalogConfig
+	Attestation   AttestationConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -240,6 +306,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Auth:          c.Auth,
 		Observability: c.Observability,
 		Catalog:       c.Catalog,
+		Attestation:   c.Attestation,
 	}
 }
 

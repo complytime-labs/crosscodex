@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
+	"sort"
 	"time"
 
 	in_toto "github.com/in-toto/in-toto-golang/in_toto"
@@ -17,28 +17,26 @@ import (
 )
 
 type generator struct {
-	keyProvider KeyProvider
-	tracer      trace.Tracer
-	meter       metric.Meter
-	opCounter   metric.Int64Counter
-	opLatency   metric.Int64Histogram
+	keyProvider       KeyProvider
+	tracer            trace.Tracer
+	meter             metric.Meter
+	opCounter         metric.Int64Counter
+	opLatency         metric.Int64Histogram
+	fipsMode          bool
+	includeByProducts bool
 }
 
 // CreateLayout creates a signed in-toto layout envelope.
 func (g *generator) CreateLayout(ctx context.Context, opts LayoutOptions) (*SignedLayout, error) {
 	start := time.Now()
 	operation := "CreateLayout"
-
-	if g.tracer != nil {
-		var span trace.Span
-		ctx, span = g.tracer.Start(ctx, "attestation.CreateLayout",
-			trace.WithAttributes(
-				attribute.Int("attestation.step_count", len(opts.Steps)),
-				attribute.String("attestation.expires_in", opts.ExpiresIn.String()),
-			),
-		)
-		defer span.End()
-	}
+	ctx, span := g.startSpan(ctx, "attestation.CreateLayout",
+		trace.WithAttributes(
+			attribute.Int("attestation.step_count", len(opts.Steps)),
+			attribute.String("attestation.expires_in", opts.ExpiresIn.String()),
+		),
+	)
+	defer span.End()
 
 	if len(opts.Steps) == 0 {
 		err := fmt.Errorf("layout requires at least one step: %w", ErrInvalidLayout)
@@ -50,6 +48,15 @@ func (g *generator) CreateLayout(ctx context.Context, opts LayoutOptions) (*Sign
 	if err != nil {
 		g.recordMetrics(ctx, operation, "failure", start)
 		return nil, fmt.Errorf("load signing key: %w", err)
+	}
+
+	if g.fipsMode {
+		if fipsErr := validateFIPSKey(signer); fipsErr != nil {
+			span.RecordError(fipsErr)
+			span.SetStatus(codes.Error, fipsErr.Error())
+			g.recordMetrics(ctx, operation, "error", start)
+			return nil, fipsErr
+		}
 	}
 
 	keyID, err := g.keyProvider.KeyID(ctx)
@@ -103,22 +110,32 @@ func (g *generator) CreateLayout(ctx context.Context, opts LayoutOptions) (*Sign
 }
 
 // CreateLink creates a signed in-toto link envelope with trace correlation.
-func (g *generator) CreateLink(ctx context.Context, step string, materials, products []Artifact) (*SignedLink, error) {
+func (g *generator) CreateLink(ctx context.Context, step string, materials, products []Artifact, opts ...LinkOption) (*SignedLink, error) {
 	start := time.Now()
 	operation := "CreateLink"
+	ctx, span := g.startSpan(ctx, "attestation.CreateLink",
+		trace.WithAttributes(attribute.String("attestation.step", step)),
+	)
+	defer span.End()
 
-	if g.tracer != nil {
-		var span trace.Span
-		ctx, span = g.tracer.Start(ctx, "attestation.CreateLink",
-			trace.WithAttributes(attribute.String("attestation.step", step)),
-		)
-		defer span.End()
+	var lo linkOptions
+	for _, opt := range opts {
+		opt(&lo)
 	}
 
 	signer, err := g.keyProvider.SigningKey(ctx)
 	if err != nil {
 		g.recordMetrics(ctx, operation, "failure", start)
 		return nil, fmt.Errorf("load signing key: %w: %w", ErrKeyLoadFailed, err)
+	}
+
+	if g.fipsMode {
+		if fipsErr := validateFIPSKey(signer); fipsErr != nil {
+			span.RecordError(fipsErr)
+			span.SetStatus(codes.Error, fipsErr.Error())
+			g.recordMetrics(ctx, operation, "error", start)
+			return nil, fipsErr
+		}
 	}
 
 	keyID, err := g.keyProvider.KeyID(ctx)
@@ -135,12 +152,34 @@ func (g *generator) CreateLink(ctx context.Context, step string, materials, prod
 
 	traceID := telemetry.TraceIDFromContext(ctx)
 
+	// Build byproducts map — trace_id is always present.
+	byProducts := map[string]any{
+		"trace_id": traceID,
+	}
+
+	if g.includeByProducts {
+		byProducts["span_id"] = telemetry.SpanIDFromContext(ctx)
+		byProducts["timestamp"] = time.Now().UTC().Format(time.RFC3339)
+		hostname, _ := os.Hostname()
+		byProducts["hostname"] = hostname
+	}
+
+	// Merge caller-supplied byproducts, but protect reserved keys.
+	if lo.extraByProducts != nil {
+		for k, v := range lo.extraByProducts {
+			if k == "trace_id" || k == "span_id" {
+				continue // reserved
+			}
+			byProducts[k] = v
+		}
+	}
+
 	link := in_toto.Link{
 		Type:       "link",
 		Name:       step,
 		Materials:  artifactsToHashObj(materials),
 		Products:   artifactsToHashObj(products),
-		ByProducts: map[string]any{"trace_id": traceID},
+		ByProducts: byProducts,
 		Command:    []string{},
 	}
 
@@ -174,12 +213,8 @@ func (g *generator) CreateLink(ctx context.Context, step string, materials, prod
 func (g *generator) Verify(ctx context.Context, data []byte) (*VerifiedLink, error) {
 	start := time.Now()
 	operation := "Verify"
-
-	var span trace.Span
-	if g.tracer != nil {
-		ctx, span = g.tracer.Start(ctx, "attestation.Verify")
-		defer span.End()
-	}
+	ctx, span := g.startSpan(ctx, "attestation.Verify")
+	defer span.End()
 
 	pubKey, err := g.keyProvider.VerificationKey(ctx)
 	if err != nil {
@@ -207,10 +242,8 @@ func (g *generator) Verify(ctx context.Context, data []byte) (*VerifiedLink, err
 
 	if err := env.VerifySignature(verKey); err != nil {
 		g.recordMetrics(ctx, operation, "failure", start)
-		if span != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("verify signature: %w: %w", ErrVerificationFailed, err)
 	}
 
@@ -236,64 +269,187 @@ func (g *generator) Verify(ctx context.Context, data []byte) (*VerifiedLink, err
 	}, nil
 }
 
-// recordMetrics records operation counter and latency. Nil-guarded.
-func (g *generator) recordMetrics(ctx context.Context, operation, result string, start time.Time) {
-	if g.opCounter != nil {
-		g.opCounter.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("operation", operation),
-				attribute.String("result", result),
-			),
-		)
+// VerifyLayout deserializes and verifies a signed layout envelope.
+// Returns ErrExpired if the layout has expired.
+//
+// Layout verification operates at the DSSE level rather than using
+// in_toto.LoadMetadata, because canonical JSON (cjson.EncodeCanonical)
+// may produce raw newlines in PEM-encoded key values, which the in-toto
+// library's LoadMetadata cannot parse back.
+func (g *generator) VerifyLayout(ctx context.Context, data []byte) (*VerifiedLayout, error) {
+	operation := "VerifyLayout"
+	start := time.Now()
+	ctx, span := g.startSpan(ctx, "attestation.VerifyLayout")
+	defer span.End()
+
+	// Parse as DSSE envelope (does not decode the payload).
+	dsseEnv, err := parseDSSEEnvelope(data)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, fmt.Errorf("unmarshal layout envelope: %w: %w", ErrVerificationFailed, err)
 	}
-	if g.opLatency != nil {
-		g.opLatency.Record(ctx, time.Since(start).Milliseconds(),
-			metric.WithAttributes(
-				attribute.String("operation", operation),
-				attribute.String("result", result),
-			),
-		)
+
+	// Get verification key.
+	pubKey, err := g.keyProvider.VerificationKey(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, fmt.Errorf("get verification key: %w", err)
 	}
+
+	keyID, err := g.keyProvider.KeyID(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, fmt.Errorf("get key ID: %w", err)
+	}
+
+	verKey, err := pubKeyToInTotoKey(pubKey, keyID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, fmt.Errorf("convert verification key: %w: %w", ErrVerificationFailed, err)
+	}
+
+	// Verify signature at the DSSE level.
+	if err := verifyDSSESignature(ctx, dsseEnv, verKey); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, fmt.Errorf("verify layout signature: %w: %w", ErrVerificationFailed, err)
+	}
+
+	// Parse the layout from the DSSE payload (handles canonical JSON newlines).
+	layout, err := parseLayoutFromDSSE(dsseEnv)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, fmt.Errorf("parse layout payload: %w: %w", ErrVerificationFailed, err)
+	}
+
+	// Check expiry.
+	expires, err := time.Parse(in_toto.ISO8601DateSchema, layout.Expires)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, fmt.Errorf("parse layout expiry: %w: %w", ErrVerificationFailed, err)
+	}
+	if time.Now().After(expires) {
+		err := fmt.Errorf("layout expired at %s: %w", expires.Format(time.RFC3339), ErrExpired)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, err
+	}
+
+	// Extract key IDs from signatures.
+	var keyIDs []string
+	for _, sig := range dsseEnv.Signatures {
+		keyIDs = append(keyIDs, sig.KeyID)
+	}
+
+	result := &VerifiedLayout{
+		Steps:       inTotoStepsToSteps(layout.Steps),
+		Inspections: inTotoInspectionsToInspections(layout.Inspect),
+		Expires:     expires,
+		KeyIDs:      keyIDs,
+	}
+
+	span.SetStatus(codes.Ok, "")
+	g.recordMetrics(ctx, operation, "success", start)
+	return result, nil
 }
 
-// dumpEnvelopeToBytes serializes an Envelope to JSON bytes via temp file.
-func dumpEnvelopeToBytes(env *in_toto.Envelope) ([]byte, error) {
-	tmpDir, err := os.MkdirTemp("", "attestation-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
+// VerifyChain validates artifact integrity across consecutive pipeline steps.
+func (g *generator) VerifyChain(ctx context.Context, layout *SignedLayout, links []*SignedLink) error {
+	operation := "VerifyChain"
+	start := time.Now()
+	ctx, span := g.startSpan(ctx, "attestation.VerifyChain")
+	defer span.End()
 
-	path := filepath.Join(tmpDir, "envelope.json")
-	if err := env.Dump(path); err != nil {
-		return nil, fmt.Errorf("dump envelope: %w", err)
+	if len(links) <= 1 {
+		span.SetStatus(codes.Ok, "")
+		g.recordMetrics(ctx, operation, "success", start)
+		return nil
 	}
 
-	return os.ReadFile(path)
+	// If layout is provided, sort links by layout step order.
+	if layout != nil {
+		stepOrder, err := g.extractStepOrder(layout)
+		if err == nil && len(stepOrder) > 0 {
+			orderMap := make(map[string]int, len(stepOrder))
+			for i, name := range stepOrder {
+				orderMap[name] = i
+			}
+			sort.Slice(links, func(i, j int) bool {
+				oi, oki := orderMap[links[i].Step]
+				oj, okj := orderMap[links[j].Step]
+				if !oki {
+					oi = len(stepOrder)
+				}
+				if !okj {
+					oj = len(stepOrder)
+				}
+				return oi < oj
+			})
+		}
+	}
+
+	// Verify consecutive pairs.
+	for i := 0; i < len(links)-1; i++ {
+		stepN := links[i]
+		stepN1 := links[i+1]
+
+		// Build product map for step N.
+		productDigests := make(map[string]string, len(stepN.Products))
+		for _, p := range stepN.Products {
+			productDigests[p.URI] = p.Digest
+		}
+
+		// Check shared URIs.
+		for _, m := range stepN1.Materials {
+			if productDigest, shared := productDigests[m.URI]; shared {
+				if productDigest != m.Digest {
+					err := fmt.Errorf("chain broken between step %q and step %q: artifact %q digest mismatch: %w",
+						stepN.Step, stepN1.Step, m.URI, ErrChainBroken)
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
+					g.recordMetrics(ctx, operation, "failure", start)
+					return err
+				}
+			}
+		}
+	}
+
+	span.SetStatus(codes.Ok, "")
+	g.recordMetrics(ctx, operation, "success", start)
+	return nil
 }
 
-// loadEnvelopeFromBytes deserializes an Envelope from JSON bytes via temp file.
-func loadEnvelopeFromBytes(data []byte) (*in_toto.Envelope, error) {
-	tmpDir, err := os.MkdirTemp("", "attestation-*")
+// extractStepOrder extracts step names from a signed layout in order.
+func (g *generator) extractStepOrder(layout *SignedLayout) ([]string, error) {
+	dsseEnv, err := parseDSSEEnvelope(layout.Raw)
 	if err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	path := filepath.Join(tmpDir, "envelope.json")
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return nil, fmt.Errorf("write temp envelope: %w", err)
+		return nil, err
 	}
 
-	metadata, err := in_toto.LoadMetadata(path)
+	l, err := parseLayoutFromDSSE(dsseEnv)
 	if err != nil {
-		return nil, fmt.Errorf("load metadata: %w", err)
+		return nil, err
 	}
 
-	env, ok := metadata.(*in_toto.Envelope)
-	if !ok {
-		return nil, fmt.Errorf("metadata is %T, not *in_toto.Envelope", metadata)
+	names := make([]string, len(l.Steps))
+	for i, s := range l.Steps {
+		names[i] = s.Name
 	}
-
-	return env, nil
+	return names, nil
 }
+
+

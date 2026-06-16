@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -344,6 +347,77 @@ var _ = Describe("FileKeyProvider", Ordered, func() {
 	})
 })
 
+var _ = Describe("EphemeralKeyProvider", func() {
+	var (
+		ctx context.Context
+		ekp *attestation.EphemeralKeyProvider
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		ekp, err = attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("generates a valid ECDSA P-256 signing key", func() {
+		signer, err := ekp.SigningKey(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(signer).NotTo(BeNil())
+
+		ecKey, ok := signer.Public().(*ecdsa.PublicKey)
+		Expect(ok).To(BeTrue())
+		Expect(ecKey.Curve).To(Equal(elliptic.P256()))
+	})
+
+	It("returns a matching verification key", func() {
+		signer, err := ekp.SigningKey(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		verKey, err := ekp.VerificationKey(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		signerPub := signer.Public().(*ecdsa.PublicKey)
+		verPub := verKey.(*ecdsa.PublicKey)
+		Expect(signerPub.Equal(verPub)).To(BeTrue())
+	})
+
+	It("returns a deterministic key ID for the same instance", func() {
+		id1, err := ekp.KeyID(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		id2, err := ekp.KeyID(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(id1).To(Equal(id2))
+		Expect(id1).NotTo(BeEmpty())
+	})
+
+	It("produces different key pairs across instances", func() {
+		ekp2, err := attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+
+		id1, err := ekp.KeyID(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		id2, err := ekp2.KeyID(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(id1).NotTo(Equal(id2))
+	})
+
+	It("works with Generator for sign/verify round-trip", func() {
+		gen, err := attestation.NewGenerator(ekp)
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "input.txt", Digest: "abc123"}}
+		products := []attestation.Artifact{{URI: "output.txt", Digest: "def456"}}
+
+		link, err := gen.CreateLink(ctx, "test-step", materials, products)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.Verify(ctx, link.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified.Step).To(Equal("test-step"))
+	})
+})
+
 var _ = Describe("CreateLink", Ordered, func() {
 	var (
 		gen attestation.Generator
@@ -646,5 +720,542 @@ var _ = Describe("Telemetry Integration", Ordered, func() {
 		verified, err := noTelGen.Verify(ctx, link.Raw)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(verified.Step).To(Equal("no-tel"))
+	})
+
+	It("emits attestation.VerifyLayout span", func() {
+		localTP, err := telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = localTP.Shutdown(context.Background()) }()
+
+		localKP := newMockKeyProvider()
+		localGen, err := attestation.NewGenerator(localKP,
+			attestation.WithTelemetry(localTP.TracerProvider().Tracer("test"), localTP.MeterProvider().Meter("test")),
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		layout, err := localGen.CreateLayout(context.Background(), attestation.LayoutOptions{
+			Steps:     []attestation.Step{{Name: "s1", Threshold: 1}},
+			ExpiresIn: 24 * time.Hour,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		localTP.Reset()
+		_, err = localGen.VerifyLayout(context.Background(), layout.Raw)
+		Expect(err).NotTo(HaveOccurred())
+
+		spans := localTP.GetSpans()
+		span := telemetrytest.FindSpan(spans, "attestation.VerifyLayout")
+		Expect(span).NotTo(BeNil(), "expected attestation.VerifyLayout span")
+	})
+
+	It("emits attestation.VerifyChain span", func() {
+		localTP, err := telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = localTP.Shutdown(context.Background()) }()
+
+		localKP := newMockKeyProvider()
+		localGen, err := attestation.NewGenerator(localKP,
+			attestation.WithTelemetry(localTP.TracerProvider().Tracer("test"), localTP.MeterProvider().Meter("test")),
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		link1, err := localGen.CreateLink(context.Background(), "step-a",
+			[]attestation.Artifact{{URI: "in.txt", Digest: "aaa"}},
+			[]attestation.Artifact{{URI: "mid.json", Digest: "bbb"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		link2, err := localGen.CreateLink(context.Background(), "step-b",
+			[]attestation.Artifact{{URI: "mid.json", Digest: "bbb"}},
+			[]attestation.Artifact{{URI: "out.txt", Digest: "ccc"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		localTP.Reset()
+		err = localGen.VerifyChain(context.Background(), nil, []*attestation.SignedLink{link1, link2})
+		Expect(err).NotTo(HaveOccurred())
+
+		spans := localTP.GetSpans()
+		span := telemetrytest.FindSpan(spans, "attestation.VerifyChain")
+		Expect(span).NotTo(BeNil(), "expected attestation.VerifyChain span")
+	})
+})
+
+// ed25519Signer is a test double that implements crypto.Signer with a non-ECDSA key.
+// The key is generated once at construction to ensure deterministic Public() calls.
+type ed25519Signer struct {
+	pub ed25519.PublicKey
+}
+
+func newEd25519Signer() ed25519Signer {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	return ed25519Signer{pub: pub}
+}
+
+func (e ed25519Signer) Public() crypto.PublicKey {
+	return e.pub
+}
+
+func (e ed25519Signer) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
+	return nil, errors.New("not implemented")
+}
+
+var _ = Describe("FIPS Enforcement", func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	It("allows ECDSA P-256 key when FIPS mode enabled", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithFIPSMode(true))
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		_, err = gen.CreateLink(ctx, "step", materials, products)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("rejects non-ECDSA key with ErrNonFIPSAlgorithm", func() {
+		err := attestation.ValidateFIPSKey(newEd25519Signer())
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, attestation.ErrNonFIPSAlgorithm)).To(BeTrue())
+	})
+
+	It("skips FIPS check when FIPS mode disabled", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithFIPSMode(false))
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		_, err = gen.CreateLink(ctx, "step", materials, products)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("sets FIPSMode field via option", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithFIPSMode(true))
+		Expect(err).NotTo(HaveOccurred())
+
+		fields := attestation.ExportTelemetryFields(gen)
+		Expect(fields.FIPSMode).To(BeTrue())
+	})
+
+	It("sets IncludeByProducts field via option", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(true))
+		Expect(err).NotTo(HaveOccurred())
+
+		fields := attestation.ExportTelemetryFields(gen)
+		Expect(fields.IncludeByProducts).To(BeTrue())
+	})
+})
+
+var _ = Describe("Enriched ByProducts", func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	It("always includes trace_id regardless of includeByProducts flag", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(false))
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		link, err := gen.CreateLink(ctx, "step", materials, products)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.Verify(ctx, link.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified.ByProducts).To(HaveKey("trace_id"))
+	})
+
+	It("includes span_id when includeByProducts is true", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(true))
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		link, err := gen.CreateLink(ctx, "step", materials, products)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.Verify(ctx, link.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified.ByProducts).To(HaveKey("span_id"))
+	})
+
+	It("includes timestamp in RFC3339 format when includeByProducts is true", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(true))
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		link, err := gen.CreateLink(ctx, "step", materials, products)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.Verify(ctx, link.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		ts, ok := verified.ByProducts["timestamp"].(string)
+		Expect(ok).To(BeTrue())
+		_, parseErr := time.Parse(time.RFC3339, ts)
+		Expect(parseErr).NotTo(HaveOccurred())
+	})
+
+	It("includes hostname when includeByProducts is true", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(true))
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		link, err := gen.CreateLink(ctx, "step", materials, products)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.Verify(ctx, link.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified.ByProducts).To(HaveKey("hostname"))
+	})
+
+	It("does not include span_id when includeByProducts is false", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(false))
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		link, err := gen.CreateLink(ctx, "step", materials, products)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.Verify(ctx, link.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified.ByProducts).NotTo(HaveKey("span_id"))
+		Expect(verified.ByProducts).NotTo(HaveKey("timestamp"))
+		Expect(verified.ByProducts).NotTo(HaveKey("hostname"))
+	})
+
+	It("merges caller-supplied byproducts via WithByProducts", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		extra := map[string]any{"model_id": "gpt-4", "prompt_version": "v2"}
+		link, err := gen.CreateLink(ctx, "step", materials, products, attestation.WithByProducts(extra))
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.Verify(ctx, link.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified.ByProducts["model_id"]).To(Equal("gpt-4"))
+		Expect(verified.ByProducts["prompt_version"]).To(Equal("v2"))
+	})
+
+	It("does not allow WithByProducts to overwrite trace_id", func() {
+		kp := newMockKeyProvider()
+		gen, err := attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+
+		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+		extra := map[string]any{"trace_id": "evil-override"}
+		link, err := gen.CreateLink(ctx, "step", materials, products, attestation.WithByProducts(extra))
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.Verify(ctx, link.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		// trace_id should be from context, not "evil-override"
+		Expect(verified.ByProducts["trace_id"]).NotTo(Equal("evil-override"))
+	})
+})
+
+var _ = Describe("VerifyLayout", func() {
+	var (
+		kp  *attestation.EphemeralKeyProvider
+		gen attestation.Generator
+		ctx context.Context
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		kp, err = attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		gen, err = attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("verifies a valid signed layout envelope", func() {
+		opts := attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "build", ExpectedMaterials: []string{"src"}, ExpectedProducts: []string{"bin"}, Threshold: 1},
+			},
+			ExpiresIn: 24 * time.Hour,
+		}
+		layout, err := gen.CreateLayout(ctx, opts)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.VerifyLayout(ctx, layout.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified).NotTo(BeNil())
+		Expect(verified.Steps).To(HaveLen(1))
+		Expect(verified.Steps[0].Name).To(Equal("build"))
+		Expect(verified.Expires).NotTo(BeZero())
+		Expect(verified.KeyIDs).NotTo(BeEmpty())
+	})
+
+	It("returns ErrVerificationFailed on tampered envelope", func() {
+		opts := attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "build", Threshold: 1},
+			},
+			ExpiresIn: 24 * time.Hour,
+		}
+		layout, err := gen.CreateLayout(ctx, opts)
+		Expect(err).NotTo(HaveOccurred())
+
+		tampered := make([]byte, len(layout.Raw))
+		copy(tampered, layout.Raw)
+		tampered[len(tampered)/2] ^= 0xFF
+
+		_, err = gen.VerifyLayout(ctx, tampered)
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, attestation.ErrVerificationFailed)).To(BeTrue())
+	})
+
+	It("returns ErrVerificationFailed on wrong key", func() {
+		opts := attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "build", Threshold: 1},
+			},
+			ExpiresIn: 24 * time.Hour,
+		}
+		layout, err := gen.CreateLayout(ctx, opts)
+		Expect(err).NotTo(HaveOccurred())
+
+		kp2, err := attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		gen2, err := attestation.NewGenerator(kp2)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = gen2.VerifyLayout(ctx, layout.Raw)
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, attestation.ErrVerificationFailed)).To(BeTrue())
+	})
+
+	It("returns ErrExpired for expired layout", func() {
+		opts := attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "build", Threshold: 1},
+			},
+			ExpiresIn: -1 * time.Hour,
+		}
+		layout, err := gen.CreateLayout(ctx, opts)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = gen.VerifyLayout(ctx, layout.Raw)
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, attestation.ErrExpired)).To(BeTrue())
+	})
+
+	It("returns correct VerifiedLayout fields", func() {
+		opts := attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "step-a", ExpectedMaterials: []string{"m1"}, ExpectedProducts: []string{"p1"}, Threshold: 1},
+				{Name: "step-b", ExpectedMaterials: []string{"p1"}, ExpectedProducts: []string{"p2"}, Threshold: 1},
+			},
+			Inspections: []attestation.Inspection{
+				{Name: "check", Run: []string{"sha256sum"}, Passes: []string{"p2"}},
+			},
+			ExpiresIn: 48 * time.Hour,
+		}
+		layout, err := gen.CreateLayout(ctx, opts)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := gen.VerifyLayout(ctx, layout.Raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified.Steps).To(HaveLen(2))
+		Expect(verified.Steps[0].Name).To(Equal("step-a"))
+		Expect(verified.Steps[1].Name).To(Equal("step-b"))
+		Expect(verified.Inspections).To(HaveLen(1))
+		Expect(verified.Inspections[0].Name).To(Equal("check"))
+		Expect(verified.Expires).To(BeTemporally("~", time.Now().Add(48*time.Hour), 5*time.Second))
+		Expect(verified.KeyIDs).To(HaveLen(1))
+	})
+})
+
+var _ = Describe("VerifyChain", func() {
+	var (
+		kp  *attestation.EphemeralKeyProvider
+		gen attestation.Generator
+		ctx context.Context
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		var err error
+		kp, err = attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		gen, err = attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("validates matching products-to-materials chain across 3 steps", func() {
+		link1, err := gen.CreateLink(ctx, "ingestion",
+			[]attestation.Artifact{{URI: "catalog.oscal", Digest: "aaa111"}},
+			[]attestation.Artifact{{URI: "data.json", Digest: "bbb222"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		link2, err := gen.CreateLink(ctx, "analysis",
+			[]attestation.Artifact{{URI: "data.json", Digest: "bbb222"}},
+			[]attestation.Artifact{{URI: "analysis.json", Digest: "ccc333"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		link3, err := gen.CreateLink(ctx, "synthesis",
+			[]attestation.Artifact{{URI: "analysis.json", Digest: "ccc333"}},
+			[]attestation.Artifact{{URI: "report.json", Digest: "ddd444"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = gen.VerifyChain(ctx, nil, []*attestation.SignedLink{link1, link2, link3})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("returns ErrChainBroken on digest mismatch", func() {
+		link1, err := gen.CreateLink(ctx, "ingestion",
+			[]attestation.Artifact{{URI: "input.txt", Digest: "aaa"}},
+			[]attestation.Artifact{{URI: "data.json", Digest: "bbb222"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		link2, err := gen.CreateLink(ctx, "analysis",
+			[]attestation.Artifact{{URI: "data.json", Digest: "WRONG"}},
+			[]attestation.Artifact{{URI: "out.json", Digest: "ccc"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = gen.VerifyChain(ctx, nil, []*attestation.SignedLink{link1, link2})
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, attestation.ErrChainBroken)).To(BeTrue())
+		Expect(err.Error()).To(ContainSubstring("data.json"))
+		Expect(err.Error()).To(ContainSubstring("ingestion"))
+		Expect(err.Error()).To(ContainSubstring("analysis"))
+	})
+
+	It("accepts steps where step N+1 has additional materials beyond step N products", func() {
+		link1, err := gen.CreateLink(ctx, "step-a",
+			[]attestation.Artifact{{URI: "in.txt", Digest: "aaa"}},
+			[]attestation.Artifact{{URI: "shared.json", Digest: "bbb"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		link2, err := gen.CreateLink(ctx, "step-b",
+			[]attestation.Artifact{
+				{URI: "shared.json", Digest: "bbb"},
+				{URI: "external.txt", Digest: "zzz"},
+			},
+			[]attestation.Artifact{{URI: "out.json", Digest: "ccc"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = gen.VerifyChain(ctx, nil, []*attestation.SignedLink{link1, link2})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("returns nil for single-link chain", func() {
+		link1, err := gen.CreateLink(ctx, "only-step",
+			[]attestation.Artifact{{URI: "in.txt", Digest: "aaa"}},
+			[]attestation.Artifact{{URI: "out.txt", Digest: "bbb"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = gen.VerifyChain(ctx, nil, []*attestation.SignedLink{link1})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("returns nil for empty link slice", func() {
+		err := gen.VerifyChain(ctx, nil, []*attestation.SignedLink{})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("sorts links by layout step order when layout is provided", func() {
+		// Create links OUT of order
+		link2, err := gen.CreateLink(ctx, "step-b",
+			[]attestation.Artifact{{URI: "mid.json", Digest: "bbb"}},
+			[]attestation.Artifact{{URI: "out.json", Digest: "ccc"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		link1, err := gen.CreateLink(ctx, "step-a",
+			[]attestation.Artifact{{URI: "in.txt", Digest: "aaa"}},
+			[]attestation.Artifact{{URI: "mid.json", Digest: "bbb"}},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Create layout with step-a before step-b
+		opts := attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "step-a", Threshold: 1},
+				{Name: "step-b", Threshold: 1},
+			},
+			ExpiresIn: 24 * time.Hour,
+		}
+		layout, err := gen.CreateLayout(ctx, opts)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Pass links in wrong order — VerifyChain should sort by layout
+		err = gen.VerifyChain(ctx, layout, []*attestation.SignedLink{link2, link1})
+		Expect(err).NotTo(HaveOccurred())
+	})
+})
+
+var _ = Describe("GenerateManifest", func() {
+	It("produces correct GNU coreutils format", func() {
+		artifacts := []attestation.Artifact{
+			{URI: "file-a.txt", Digest: "aaa111"},
+			{URI: "file-b.txt", Digest: "bbb222"},
+		}
+		manifest := attestation.GenerateManifest(artifacts)
+		lines := strings.Split(strings.TrimRight(string(manifest), "\n"), "\n")
+		Expect(lines).To(HaveLen(2))
+		Expect(lines[0]).To(Equal("aaa111  file-a.txt"))
+		Expect(lines[1]).To(Equal("bbb222  file-b.txt"))
+	})
+
+	It("sorts output by URI", func() {
+		artifacts := []attestation.Artifact{
+			{URI: "zebra.txt", Digest: "zzz"},
+			{URI: "alpha.txt", Digest: "aaa"},
+			{URI: "middle.txt", Digest: "mmm"},
+		}
+		manifest := attestation.GenerateManifest(artifacts)
+		lines := strings.Split(strings.TrimRight(string(manifest), "\n"), "\n")
+		Expect(lines).To(HaveLen(3))
+		Expect(lines[0]).To(Equal("aaa  alpha.txt"))
+		Expect(lines[1]).To(Equal("mmm  middle.txt"))
+		Expect(lines[2]).To(Equal("zzz  zebra.txt"))
+	})
+
+	It("returns empty bytes for empty artifact list", func() {
+		manifest := attestation.GenerateManifest(nil)
+		Expect(manifest).To(BeEmpty())
+	})
+
+	It("produces deterministic output for same input", func() {
+		artifacts := []attestation.Artifact{
+			{URI: "b.txt", Digest: "222"},
+			{URI: "a.txt", Digest: "111"},
+		}
+		m1 := attestation.GenerateManifest(artifacts)
+		m2 := attestation.GenerateManifest(artifacts)
+		Expect(m1).To(Equal(m2))
 	})
 })

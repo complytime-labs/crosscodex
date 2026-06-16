@@ -20,4 +20,10 @@ var (
 
 	// ErrKeyLoadFailed indicates key material exists but could not be parsed.
 	ErrKeyLoadFailed = errors.New("attestation key load failed")
+
+	// ErrNonFIPSAlgorithm indicates the signing key uses a non-FIPS-approved algorithm.
+	ErrNonFIPSAlgorithm = errors.New("non-FIPS signing algorithm")
+
+	// ErrChainBroken indicates hash chain verification failed between pipeline steps.
+	ErrChainBroken = errors.New("attestation hash chain broken")
 )

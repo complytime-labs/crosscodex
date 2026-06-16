@@ -3,6 +3,9 @@ package attestation
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -79,4 +82,44 @@ func (f *FileKeyProvider) KeyID(ctx context.Context) (string, error) {
 
 	hash := sha256.Sum256(der)
 	return hex.EncodeToString(hash[:]), nil
+}
+
+// EphemeralKeyProvider generates an ECDSA P-256 key pair in memory.
+// Used when no key paths are configured (embedded/dev mode).
+// The key pair exists only for the lifetime of the provider instance.
+type EphemeralKeyProvider struct {
+	key   *ecdsa.PrivateKey
+	keyID string
+}
+
+// NewEphemeralKeyProvider generates a new ECDSA P-256 key pair in memory.
+func NewEphemeralKeyProvider() (*EphemeralKeyProvider, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate ephemeral key: %w", err)
+	}
+
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("marshal ephemeral public key: %w", err)
+	}
+	hash := sha256.Sum256(der)
+	keyID := hex.EncodeToString(hash[:])
+
+	return &EphemeralKeyProvider{key: key, keyID: keyID}, nil
+}
+
+// SigningKey returns the ephemeral private key.
+func (e *EphemeralKeyProvider) SigningKey(_ context.Context) (crypto.Signer, error) {
+	return e.key, nil
+}
+
+// VerificationKey returns the ephemeral public key.
+func (e *EphemeralKeyProvider) VerificationKey(_ context.Context) (crypto.PublicKey, error) {
+	return &e.key.PublicKey, nil
+}
+
+// KeyID returns the SHA-256 fingerprint of the ephemeral public key.
+func (e *EphemeralKeyProvider) KeyID(_ context.Context) (string, error) {
+	return e.keyID, nil
 }
