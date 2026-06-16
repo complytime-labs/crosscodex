@@ -6,18 +6,21 @@ import "gopkg.in/yaml.v3"
 
 // Functions
 var (
-	ExportDefaultNode      = defaultNode
-	ExportLoadDropIns      = loadDropIns
-	ExportApplyEnvVars     = applyEnvVars
-	ExportInferTag         = inferTag
-	ExportDeepMerge        = deepMerge
-	ExportValidate         = validate
-	ExportFormatSource     = formatSource
-	ExportXDGConfigHome    = xdgConfigHome
-	ExportUserConfigDir    = userConfigDir
-	ExportConfigPaths      = configPaths
-	ExportProfilePath      = profilePath
-	ExportNewSourceTracker = newSourceTracker
+	ExportDefaultNode       = defaultNode
+	ExportLoadDropIns       = loadDropIns
+	ExportApplyEnvVars      = applyEnvVars
+	ExportInferTag          = inferTag
+	ExportDeepMerge         = deepMerge
+	ExportValidate          = validate
+	ExportFormatSource      = formatSource
+	ExportXDGConfigHome     = xdgConfigHome
+	ExportUserConfigDir     = userConfigDir
+	ExportConfigPaths       = configPaths
+	ExportProfilePath       = profilePath
+	ExportNewSourceTracker  = newSourceTracker
+	ExportCloneNode         = cloneNode
+	ExportBuildNodeFromPath = buildNodeFromPath
+	ExportBuildNodeSimple   = buildNodeSimple
 )
 
 // ExportLoaderOptions mirrors the unexported loaderOptions struct for

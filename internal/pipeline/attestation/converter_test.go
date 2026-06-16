@@ -18,7 +18,7 @@ type stubAnalyzer struct {
 	deps []string
 }
 
-func (s *stubAnalyzer) Name() string       { return s.name }
+func (s *stubAnalyzer) Name() string        { return s.name }
 func (s *stubAnalyzer) DependsOn() []string { return s.deps }
 func (s *stubAnalyzer) GenerateWork(_ context.Context, _ proto.Message, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 	return nil, nil

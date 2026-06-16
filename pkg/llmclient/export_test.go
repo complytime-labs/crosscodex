@@ -19,6 +19,16 @@ type TelemetryFields struct {
 	HasAuditEmitter      bool
 }
 
+// ExportIsModelAllowed exposes client.isModelAllowed for property testing.
+// Accepts a Client interface and a model name, returns whether the model is allowed.
+func ExportIsModelAllowed(c Client, model string) bool {
+	impl, ok := c.(*client)
+	if !ok {
+		return false
+	}
+	return impl.isModelAllowed(model)
+}
+
 // ExportTelemetryFields returns the telemetry state of a client for testing.
 func ExportTelemetryFields(c Client) TelemetryFields {
 	impl, ok := c.(*client)

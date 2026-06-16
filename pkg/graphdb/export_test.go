@@ -14,6 +14,7 @@ var EscapeCypher = escapeCypher
 var CypherValue = cypherValue
 var NodeToAGProperties = nodeToAGProperties
 var EdgeToAGProperties = edgeToAGProperties
+var GraphName = graphName
 
 // TelemetryFields exposes telemetry instrument state for test assertions.
 type TelemetryFields struct {

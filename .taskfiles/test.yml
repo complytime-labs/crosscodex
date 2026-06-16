@@ -26,3 +26,31 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/...
       - go run ./internal/tools/treeformat {{.TEST_DIR}}/ginkgo-report.json
+
+  fuzz:
+    desc: Run fuzz tests across all packages
+    vars:
+      FUZZ_TIME: '{{.FUZZ_TIME | default "10s"}}'
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - |
+        failed=0
+        for pkg in $(go list ./pkg/...); do
+          fuzz_funcs=$(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
+          for func in $fuzz_funcs; do
+            echo "==> Fuzzing $func in $pkg ({{.FUZZ_TIME}})"
+            if ! go test "$pkg" -run '^$' -fuzz "^${func}$" -fuzztime={{.FUZZ_TIME}}; then
+              failed=1
+            fi
+          done
+        done
+        exit $failed
+
+  property:
+    desc: Run property-based tests only
+    deps:
+      - :dev:deps
+      - :dev:generate
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --focus "Property Specifications" --json-report={{.TEST_DIR}}/property-report.json ./pkg/... ./internal/...
