@@ -79,7 +79,7 @@ func (g *generator) CreateLayout(ctx context.Context, opts LayoutOptions) (*Sign
 		return nil, fmt.Errorf("convert signing key for envelope: %w", err)
 	}
 
-	expiresTime := time.Now().Add(opts.ExpiresIn)
+	expiresTime := time.Now().UTC().Add(opts.ExpiresIn)
 
 	layout := in_toto.Layout{
 		Type:    "layout",
@@ -451,5 +451,3 @@ func (g *generator) extractStepOrder(layout *SignedLayout) ([]string, error) {
 	}
 	return names, nil
 }
-
-

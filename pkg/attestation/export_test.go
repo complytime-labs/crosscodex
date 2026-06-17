@@ -22,6 +22,18 @@ func HashObjToArtifacts(hashObjs map[string]map[string]string) []Artifact {
 	return hashObjToArtifacts(itoHashObjs)
 }
 
+// FixCanonicalJSONNewlines exposes fixCanonicalJSONNewlines for fuzz testing.
+var FixCanonicalJSONNewlines = fixCanonicalJSONNewlines
+
+// StepsToInToto exposes stepsToInToto for property testing.
+var StepsToInToto = stepsToInToto
+
+// InTotoStepsToSteps exposes inTotoStepsToSteps for property testing.
+var InTotoStepsToSteps = inTotoStepsToSteps
+
+// ParseDSSEEnvelope exposes parseDSSEEnvelope for fuzz testing.
+var ParseDSSEEnvelope = parseDSSEEnvelope
+
 // TelemetryFields exposes generator configuration for testing.
 type TelemetryFields struct {
 	HasTracer         bool

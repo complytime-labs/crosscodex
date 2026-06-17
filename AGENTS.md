@@ -145,22 +145,22 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 
 ## Package Ownership & Responsibility
 
-| Package | Status | Purpose | Key Dependencies |
-| ------- | ------ | ------- | ---------------- |
-| **pkg/config** | `[implemented]` | Configuration loading, XDG compliance, precedence resolution | None (foundational) |
-| **pkg/db** | `[implemented]` | PostgreSQL connection pooling, tenant RLS isolation, migrations | pkg/config |
-| **pkg/graphdb** | `[scaffold]` | Apache AGE openCypher queries, relationship traversal | pkg/db |
-| **pkg/vectordb** | `[scaffold]` | pgvector similarity search for embeddings | pkg/db, pkg/tenant, pkg/telemetry |
-| **pkg/natsbus** | `[implemented]` | NATS JetStream publish/subscribe, stream management, embedded/external dual mode, provenance headers | pkg/config, pkg/tenant |
-| **pkg/storage** | `[implemented]` | Object storage abstraction (local FS / S3) | pkg/config |
-| **pkg/tlsconfig** | `[implemented]` | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI generation | pkg/config |
-| **pkg/authn** | `[implemented]` | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed | pkg/tlsconfig, pkg/tenant |
-| **pkg/tenant** | `[scaffold]` | Multi-tenant context propagation, isolation enforcement | None (foundational) |
-| **pkg/telemetry** | `[implemented]` | OpenTelemetry traces, metrics, structured logging with trace correlation | pkg/config |
-| **pkg/llmclient** | `[implemented]` | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit emission, gateway mode (skip client-side retry when upstream gateway handles retries) | pkg/config, pkg/telemetry |
-| **pkg/oscal** | `[scaffold]` | OSCAL catalog parsing, validation | None (domain logic) |
-| **pkg/attestation** | `[implemented]` | in-toto layout/link generation and verification, hash chain verification, FIPS enforcement, enriched byproducts, manifest generation, ephemeral key provider, trace correlation | pkg/telemetry, in-toto-golang |
-| **pkg/analyzer** | `[implemented]` | Generic analyzer plugin interface, type-safe registry, DAG builder with Kahn's algorithm for level-based parallel execution | pkg/telemetry (optional) |
+| Package             | Status          | Purpose                                                                                                                                                                            | Key Dependencies                  |
+| -------             | ------          | -------                                                                                                                                                                            | ----------------                  |
+| **pkg/config**      | `[implemented]` | Configuration loading, XDG compliance, precedence resolution                                                                                                                       | None (foundational)               |
+| **pkg/db**          | `[implemented]` | PostgreSQL connection pooling, tenant RLS isolation, migrations                                                                                                                    | pkg/config                        |
+| **pkg/graphdb**     | `[scaffold]`    | Apache AGE openCypher queries, relationship traversal                                                                                                                              | pkg/db                            |
+| **pkg/vectordb**    | `[scaffold]`    | pgvector similarity search for embeddings                                                                                                                                          | pkg/db, pkg/tenant, pkg/telemetry |
+| **pkg/natsbus**     | `[implemented]` | NATS JetStream publish/subscribe, stream management, embedded/external dual mode, provenance headers                                                                               | pkg/config, pkg/tenant            |
+| **pkg/storage**     | `[implemented]` | Object storage abstraction (local FS / S3)                                                                                                                                         | pkg/config                        |
+| **pkg/tlsconfig**   | `[implemented]` | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI generation                                                                                   | pkg/config                        |
+| **pkg/authn**       | `[implemented]` | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed                                                                                                | pkg/tlsconfig, pkg/tenant         |
+| **pkg/tenant**      | `[scaffold]`    | Multi-tenant context propagation, isolation enforcement                                                                                                                            | None (foundational)               |
+| **pkg/telemetry**   | `[implemented]` | OpenTelemetry traces, metrics, structured logging with trace correlation                                                                                                           | pkg/config                        |
+| **pkg/llmclient**   | `[implemented]` | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit emission, gateway mode (skip client-side retry when upstream gateway handles retries) | pkg/config, pkg/telemetry         |
+| **pkg/oscal**       | `[scaffold]`    | OSCAL catalog parsing, validation                                                                                                                                                  | None (domain logic)               |
+| **pkg/attestation** | `[implemented]` | in-toto layout/link generation and verification, hash chain verification, FIPS enforcement, enriched byproducts, manifest generation, ephemeral key provider, trace correlation    | pkg/telemetry, in-toto-golang     |
+| **pkg/analyzer**    | `[implemented]` | Generic analyzer plugin interface, type-safe registry, DAG builder with Kahn's algorithm for level-based parallel execution                                                        | pkg/telemetry (optional)          |
 
 **Dependency Flow:**
 
@@ -203,39 +203,120 @@ feature/<issue-number>-<short-description>
 
 3. **Run tests:**
    ```bash
+   task lint
    task test:unit
    ```
 
-4. **Commit with conventional commits:**
-   ```bash
-   git commit -m "feat(analyzer): add terraform analyzer plugin"
-   ```
-
-5. **Push and create PR:**
-   ```bash
-   git push -u origin feature/123-analyzer-plugins
-   gh pr create
-   ```
-
-6. **Cleanup after merge:**
+4. **Cleanup:**
    ```bash
    git worktree remove .worktrees/feature-123
    ```
 
 ## Testing Requirements
 
+**Framework: Ginkgo BDD + Gomega**
+
+All tests MUST use [Ginkgo v2](https://onsi.github.io/ginkgo/) with [Gomega](https://onsi.github.io/gomega/) matchers.
+
+NEVER write stdlib `testing.T` tests (except suite bootstraps, `export_test.go` bridge files, and `*_fuzz_test.go` files).
+
+**File naming:**
+- `*_bdd_test.go` — Ginkgo specs (Describe/Context/It blocks with Gomega Expect assertions)
+- `*_property_test.go` — Property-based tests using `pgregory.net/rapid` inside Ginkgo `It` blocks
+- `*_fuzz_test.go` — Go native fuzz tests using stdlib `testing.F` (the one stdlib exception)
+- `*_suite_test.go` or suite bootstrap in `*_bdd_test.go` — `func TestSuite(t *testing.T) { RegisterFailHandler(Fail); RunSpecs(t, "...") }`
+- `export_test.go` — Go test-package bridge files exposing unexported symbols (no test functions, stays as stdlib)
+
+**Structure:**
+```go
+var _ = Describe("ComponentName", func() {
+    Context("when condition", func() {
+        It("should behave", func() {
+            Expect(result).To(Equal(expected))
+        })
+    })
+})
+```
+
+**Shared behaviors:** Use `internal/testspecs` for cross-package behavioral specs (e.g., `TenantIsolationBehavior`, `ProviderContractBehavior`).
+
 **Unit Tests:**
 - Required for all `pkg/` packages
-- Use table-driven tests for multiple cases
+- Use Ginkgo `DescribeTable`/`Entry` for parameterized cases (replaces stdlib table-driven tests)
 - Mock external dependencies (database, NATS, HTTP clients)
+
+**Property Tests (required for all `pkg/` packages):**
+
+Every package MUST have a `<pkg>_property_test.go` file with property-based tests using [`pgregory.net/rapid`](https://github.com/flyingmutant/rapid). Property tests verify invariants that must hold for all inputs, not just hand-picked examples.
+
+- Use `rapid.Check(GinkgoT(), func(t *rapid.T) {...})` inside Ginkgo `It` blocks — NOT `rapid.MakeCheck`
+- Do NOT add a duplicate `RunSpecs` — the existing suite bootstrap in `*_bdd_test.go` collects property specs automatically
+- Wrap all property specs under `Describe("Property Specifications", Ordered, func() { ... })` for `--focus` filtering
+- Property tests run as part of `task test:unit` and can be isolated via `task test:property`
+- Use `rapid.StringMatching(regex)` for regex-constrained inputs, `rapid.SampledFrom()` for enums
+- Invariant categories to cover: roundtrip (encode/decode), idempotency, determinism, security (fail-closed), format compliance
+
+```go
+// Example: property test inside Ginkgo
+var _ = Describe("Property Specifications", Ordered, func() {
+    Context("validateKey — path traversal prevention", func() {
+        It("rejects all keys containing path traversal sequences", func() {
+            rapid.Check(GinkgoT(), func(t *rapid.T) {
+                prefix := rapid.String().Draw(t, "prefix")
+                suffix := rapid.String().Draw(t, "suffix")
+                key := prefix + ".." + suffix
+                err := storage.ExportValidateKey(key)
+                if err == nil {
+                    t.Fatalf("validateKey accepted traversal key: %q", key)
+                }
+            })
+        })
+    })
+})
+```
+
+**When to write property tests:**
+- Validation functions (tenant IDs, names, keys, tokens) — invariant: regex match implies acceptance
+- Roundtrip conversions (serialize/deserialize, encode/decode) — invariant: roundtrip preserves data
+- Security boundaries (path traversal, injection, credential leakage) — invariant: fail-closed
+- Merge/combine operations (config merge, header merge) — invariant: associativity, overlay wins
+- Sorting/ordering algorithms — invariant: topological correctness, determinism
+
+**Fuzz Tests (required for security-sensitive packages):**
+
+Packages that accept untrusted input or perform security-critical parsing MUST have a `<pkg>_fuzz_test.go` file with Go native fuzz tests (`testing.F`). Fuzz tests find crashes, panics, and hangs that property tests miss.
+
+- Use stdlib `testing.F` — this is the one permitted exception to the Ginkgo-only rule
+- Provide 3-10 seed corpus entries per target (valid, invalid, boundary, attack vectors)
+- Assert invariants on accepted inputs (no assertions on error paths — fuzz tests find crashes, not logic bugs)
+- Fuzz tests run via `task test:fuzz` (default 10s per target, CI uses 30s)
+- Crash inputs are committed to `testdata/fuzz/<FuncName>/` as regression tests
+
+```go
+// Example: fuzz test for security-critical parser
+func FuzzParseAGVertex(f *testing.F) {
+    f.Add(`{"id": 1, "label": "control", "properties": {}}::vertex`)
+    f.Add("")
+    f.Add("not a vertex")
+    f.Add(`{"id": -1}::vertex`)
+
+    f.Fuzz(func(t *testing.T, raw string) {
+        _, _ = graphdb.ParseAGVertex(raw)
+    })
+}
+```
+
+**When to write fuzz tests:**
+- Any function that parses untrusted strings/bytes (YAML, JSON, Cypher, AGType, DSSE, vectors)
+- Credential handling (URI resolution, DSN redaction)
+- Validation functions at system boundaries (tenant IDs, storage keys, NATS tokens)
+- Functions that construct queries from user input (Cypher escaping, subject building)
 
 **Integration Tests:**
 - Colocated with the packages they test (e.g., `pkg/db/integration_test.go`)
-- Use Docker Compose or Podman Compose for dependencies
+- Use Docker Compose or Podman Compose (default) for dependencies
 - Run via `task test:integration:<name>` tasks
-
-**E2E Tests:**
-- Use Venom (YAML-based test suites) for full pipeline validation (planned)
+- Integration tests use the same Ginkgo framework — no stdlib exceptions
 
 **All tests must pass before merge.**
 
@@ -588,7 +669,7 @@ This applies to controls, catalogs, embeddings, graph nodes, configuration recor
 
 **Attestation Testing Requirement:** Every package that produces provenance data (natsbus, llmclient, future services) must test: (1) content hashes are computed correctly and deterministically, (2) trace context propagates through publish/subscribe round-trips, (3) all mandatory provenance headers are present on every published message, (4) content hash in metadata matches recomputed hash of received payload, (5) missing or corrupt provenance headers produce actionable errors.
 
-## Next Steps
+## Next Steps - Keep This Up to Date
 
 After scaffolding is complete, the next implementation phases are:
 

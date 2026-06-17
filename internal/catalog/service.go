@@ -689,16 +689,15 @@ func generateCatalogID(contentHash, tenantID string) string {
 // Full-text results take precedence; semantic-only results are appended
 // as partial records (ControlID + Identifier populated from the similarity result).
 func mergeResults(ftRecords []ControlRecord, semanticResults []vectordb.SimilarityResult) []ControlRecord {
-	if len(semanticResults) == 0 {
-		return ftRecords
-	}
-
 	seen := make(map[string]bool, len(ftRecords))
 	merged := make([]ControlRecord, 0, len(ftRecords)+len(semanticResults))
 
 	for _, rec := range ftRecords {
-		merged = append(merged, rec)
+		if seen[rec.ControlID] {
+			continue
+		}
 		seen[rec.ControlID] = true
+		merged = append(merged, rec)
 	}
 
 	for _, sr := range semanticResults {

@@ -54,9 +54,15 @@ func parseRetryAfter(header string) time.Duration {
 		return 0
 	}
 
-	// Try integer-seconds first.
+	// Try integer-seconds first. Cap before multiplication to prevent
+	// int64 overflow when converting large values to time.Duration.
 	if secs, err := strconv.Atoi(header); err == nil && secs >= 0 {
-		return time.Duration(secs) * time.Second
+		d := time.Duration(secs) * time.Second
+		if d < 0 {
+			// Overflow: value too large for time.Duration. Return the cap.
+			return maxRetryAfter
+		}
+		return d
 	}
 
 	// Try HTTP-date format (RFC 7231 / RFC 9110).

@@ -35,6 +35,9 @@ credentials/
 .env
 .env.local
 
+# Property test failure artifacts (rapid regression captures)
+**/testdata/rapid/
+
 # Task runner
 .task/
 

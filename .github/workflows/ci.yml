@@ -42,6 +42,10 @@ jobs:
       - name: Test
         run: task test
 
+      - name: Fuzz tests
+        if: matrix.fips == ''
+        run: task test:fuzz FUZZ_TIME=30s
+
   integration-tests:
     needs: [build]
     runs-on: ubuntu-latest

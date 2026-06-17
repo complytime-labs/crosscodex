@@ -6,6 +6,10 @@ package vectordb
 // unexported symbols solely for testing.
 var ParseVectorString = parseVectorString
 
+// VectorToString exports vectorToString for property-test roundtrip
+// assertions in the external test package.
+var VectorToString = vectorToString
+
 // TelemetryFields holds the telemetry state of a PgVectorStore,
 // exported solely for assertions in the external test package.
 type TelemetryFields struct {

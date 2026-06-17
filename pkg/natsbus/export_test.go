@@ -69,6 +69,9 @@ func ReconstructSpanContext(headers map[string][]string) (trace.SpanContext, err
 	return reconstructSpanContext(headers)
 }
 
+// ValidateToken exposes validateToken for property testing.
+var ValidateToken = validateToken
+
 // TelemetryFields exposes telemetry instrument state for test assertions.
 type TelemetryFields struct {
 	HasTracer         bool
