@@ -24,8 +24,8 @@ tasks:
       TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/...
-      - go run ./internal/tools/treeformat {{.TEST_DIR}}/ginkgo-report.json
+      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --skip-package testgrpc --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/...
+      - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/ginkgo-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
 
   fuzz:
     desc: Run fuzz tests across all packages
@@ -53,4 +53,5 @@ tasks:
       - :dev:generate
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --focus "Property Specifications" --json-report={{.TEST_DIR}}/property-report.json ./pkg/... ./internal/...
+      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --focus "Property Specifications" --skip-package testgrpc --json-report={{.TEST_DIR}}/property-report.json ./pkg/... ./internal/...
+      - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/property-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code

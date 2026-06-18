@@ -198,6 +198,7 @@ These return empty strings when no valid trace context is present.
 import "github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 
 tp, err := telemetrytest.NewTestProvider()
+Expect(err).NotTo(HaveOccurred())
 // Use tp.TracerProvider() and tp.MeterProvider() in your test setup
 
 // After exercising the code under test:
@@ -220,15 +221,15 @@ This starts the Jaeger container on port 14317, runs the integration test suite,
 
 ## Instrumentation Status
 
-| Package       | Traces  | Metrics      | Status                                                                                       |
-|---------------|---------|--------------|----------------------------------------------------------------------------------------------|
-| pkg/vectordb  | Full    | Full         | Reference implementation                                                                     |
-| pkg/storage   | Full    | Full         | Complete                                                                                     |
-| pkg/graphdb   | Full    | Full         | Complete                                                                                     |
-| pkg/authn     | Full    | Full         | Complete                                                                                     |
-| pkg/db        | Partial | Full         | Transaction wrapper (`pgTx`) has no spans                                                    |
-| pkg/natsbus   | Partial | Publish only | Subscribe/QueueSubscribe setup has spans; no per-message handler spans or subscriber metrics |
-| pkg/llmclient | None    | None         | Scaffold only                                                                                |
-| pkg/oscal     | None    | None         | Scaffold only                                                                                |
+| Package       | Traces  | Metrics | Status                                                                                                                     |
+|---------------|---------|---------|----------------------------------------------------------------------------------------------------------------------------|
+| pkg/vectordb  | Full    | Full    | Reference implementation                                                                                                   |
+| pkg/storage   | Full    | Full    | Complete                                                                                                                   |
+| pkg/graphdb   | Full    | Full    | Complete                                                                                                                   |
+| pkg/authn     | Full    | Full    | Complete                                                                                                                   |
+| pkg/db        | Partial | Full    | Transaction wrapper (`pgTx`) has no spans                                                                                  |
+| pkg/natsbus   | Full    | Full    | Per-message consumer spans (natsbus.process), subscriber metrics (process counter, duration histogram)                     |
+| pkg/llmclient | Full    | Full    | Spans on Complete/Embed; 5 instruments (completions, embeddings, errors counters; completion/embedding latency histograms) |
+| pkg/oscal     | None    | None    | Scaffold only                                                                                                              |
 
 When implementing new packages or extending existing ones, follow `pkg/vectordb` as the reference for span structure, attribute naming, and metric registration.

@@ -3,7 +3,6 @@ package oscal
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 )
 
@@ -183,19 +182,4 @@ func ChunkText(text string, maxChars int) []string {
 	}
 
 	return chunks
-}
-
-// mockPromptLoader is a simple implementation for testing
-type mockPromptLoader struct {
-	prompts map[string]string
-}
-
-func (m *mockPromptLoader) LoadPrompt(name string) (string, error) {
-	if m.prompts == nil {
-		return "", fmt.Errorf("prompt not found: %s", name)
-	}
-	if p, ok := m.prompts[name]; ok {
-		return p, nil
-	}
-	return "", fmt.Errorf("prompt not found: %s", name)
 }

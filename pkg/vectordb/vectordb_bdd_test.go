@@ -1,3 +1,5 @@
+//go:build !integration
+
 package vectordb_test
 
 import (

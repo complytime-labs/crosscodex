@@ -108,21 +108,67 @@ The `AttestationConfig` in `pkg/config` controls attestation behavior:
 ```yaml
 attestation:
   enabled: true                    # Master enable/disable
-  key_path: ""                     # Path to ECDSA signing key PEM (empty = ephemeral)
-  cert_path: ""                    # Path to verification cert PEM (empty = ephemeral)
+  private_key_path: ""             # Path to ECDSA signing key PEM (empty = ephemeral)
+  public_key_path: ""              # Path to SPKI verification key PEM (empty = ephemeral)
   expiry_duration: 8760h           # Layout expiry (default: 1 year)
   include_byproducts: true         # Add span_id, timestamp, hostname to links
   tenant_overrides:                # Per-tenant overrides
     sensitive-tenant:
       enabled: true
+      private_key_path: ""         # Override signing key (empty = use global)
+      public_key_path: ""          # Override verification key (empty = use global)
+      expiry_duration: 4380h       # Shorter expiry for this tenant
       include_byproducts: false    # Strip environment metadata
 ```
 
-The `ForTenant(tenantID)` method resolves per-tenant overrides with nil-pointer inheritance (nil = use global default).
+The `ForTenant(tenantID)` method resolves per-tenant overrides with nil-pointer inheritance (nil = use global default) and returns an `AttestationTenantConfig` struct containing the resolved `Enabled`, `PrivateKeyPath`, `PublicKeyPath`, `ExpiryDuration`, and `IncludeByProducts` values.
 
-When both `key_path` and `cert_path` are empty, the system uses `EphemeralKeyProvider` to generate in-memory keys. When both are set, `FileKeyProvider` loads from disk. Having one set but not the other is a validation error.
+When both `private_key_path` and `public_key_path` are empty, the system uses `EphemeralKeyProvider` to generate in-memory keys. When both are set, `FileKeyProvider` loads from disk. Having one set but not the other is a validation error. Per-tenant overrides follow the same pairing rule.
 
 ## Attestation-Trace Bridge
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#2f6dab',
+  'primaryTextColor': '#1e1e1e',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#eef2f8',
+  'tertiaryColor': 'transparent',
+  'tertiaryTextColor': '#7c8ba1',
+  'tertiaryBorderColor': '#7c8ba1',
+  'clusterBkg': 'transparent',
+  'clusterBorder': '#7c8ba1',
+  'titleColor': '#7c8ba1',
+  'noteBkgColor': '#eef2f8',
+  'noteTextColor': '#1e1e1e',
+  'fontFamily': 'system-ui, sans-serif'
+}, 'themeCSS': '.node .nodeLabel{color:#ffffff!important;fill:#ffffff!important;}'}}%%
+flowchart LR
+  subgraph otel ["OpenTelemetry"]
+    traces["Distributed Traces"]
+  end
+  subgraph nats ["NATS Audit Streams"]
+    audit["Audit Messages"]
+  end
+  subgraph intoto ["in-toto Attestations"]
+    links["Signed Links"]
+  end
+
+  traces -->|trace_id in X-Trace-Id header| audit
+  audit -->|extract X-Trace-Id| traces
+  traces -->|trace_id in ByProducts| links
+  links -->|read ByProducts trace_id| traces
+  audit -->|find attestation by trace_id| links
+  links -->|match trace_id to audit msg| audit
+
+  classDef sysA fill:#2f6dab,color:#ffffff,stroke:#7c8ba1
+  classDef sysB fill:#1d7848,color:#ffffff,stroke:#7c8ba1
+  classDef sysC fill:#7457b8,color:#ffffff,stroke:#7c8ba1
+  class traces sysA
+  class audit sysB
+  class links sysC
+```
 
 Every attestation embeds the OTel trace ID from the active span context. The `CreateLink` method automatically injects `ByProducts["trace_id"]` via `telemetry.TraceIDFromContext(ctx)`. When `WithIncludeByProducts(true)` is set, additional metadata is included:
 
@@ -143,6 +189,50 @@ Deserializes a signed layout envelope, verifies the signature against the provid
 Deserializes a signed link envelope, verifies the signature, and returns a `VerifiedLink` with the step name, materials, products, and byproducts map (including trace_id).
 
 ### Chain Verification (`VerifyChain`)
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#2f6dab',
+  'primaryTextColor': '#1e1e1e',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#eef2f8',
+  'tertiaryColor': 'transparent',
+  'tertiaryTextColor': '#7c8ba1',
+  'tertiaryBorderColor': '#7c8ba1',
+  'clusterBkg': 'transparent',
+  'clusterBorder': '#7c8ba1',
+  'titleColor': '#7c8ba1',
+  'noteBkgColor': '#eef2f8',
+  'noteTextColor': '#1e1e1e',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+sequenceDiagram
+  participant C as Caller
+  participant V as VerifyChain
+  participant L as Layout
+  participant S1 as Step N Link
+  participant S2 as Step N+1 Link
+
+  C->>V: layout + signed links
+  V->>L: extract step order
+  L-->>V: ordered step names
+  V->>V: sort links by layout order
+
+  loop each consecutive pair
+    V->>S1: get products
+    S1-->>V: product URIs + SHA-256
+    V->>S2: get materials
+    S2-->>V: material URIs + SHA-256
+    V->>V: find shared URIs
+    alt digests match
+      V->>V: continue to next pair
+    else digest mismatch
+      V-->>C: ErrChainBroken
+    end
+  end
+  V-->>C: nil (chain intact)
+```
 
 Given a layout and a set of signed links, verifies that the hash chain between consecutive steps is unbroken. For each consecutive pair of steps, shared URI artifacts (where step N's product URI matches step N+1's material URI) must have identical SHA-256 digests. If a layout is provided, links are sorted by layout step order before verification. Returns `ErrChainBroken` with the step names and mismatched artifact URI on failure.
 

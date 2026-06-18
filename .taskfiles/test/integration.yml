@@ -45,6 +45,36 @@ vars:
       esac
   COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.yaml"
 
+# Global env: block — visible to all tasks including subtask calls.
+# Task-level env: does NOT propagate to tasks invoked via "- task:" calls,
+# so all integration test env vars must live here at the Taskfile level.
+env:
+  TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
+  TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
+  TEST_S3_ENDPOINT: "http://localhost:19000"
+  TEST_S3_ACCESS_KEY: "{{.RUSTFS_ACCESS_KEY}}"
+  TEST_S3_SECRET_KEY: "{{.RUSTFS_SECRET_KEY}}"
+  TEST_S3_BUCKET: "{{.RUSTFS_BUCKET}}"
+  TEST_NATS_URL: "tls://localhost:14222"
+  TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
+  TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
+  TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+  TEST_AUTHN_URL: "https://localhost:18443"
+  TEST_AUTHN_CA: "{{.TEST_DIR}}/certs/ca.pem"
+  TEST_AUTHN_CERT: "{{.TEST_DIR}}/certs/client.pem"
+  TEST_AUTHN_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+  TEST_GRPC_ADDR: "localhost:19090"
+  TEST_GRPC_CA: "{{.TEST_DIR}}/certs/ca.pem"
+  TEST_GRPC_CERT: "{{.TEST_DIR}}/certs/client.pem"
+  TEST_GRPC_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
+  TEST_OTLP_GRPC_ENDPOINT: "localhost:14317"
+  TEST_OTLP_HTTP_ENDPOINT: "localhost:14318"
+  TEST_JAEGER_QUERY_URL: "http://localhost:16686"
+  TEST_LITELLM_URL: "http://localhost:14000"
+  TEST_OLLAMA_HOST: "{{.OLLAMA_HOST}}"
+  TEST_LLM_CHAT_MODEL: "small"
+  TEST_LLM_EMBED_MODEL: "embed"
+
 tasks:
   default:
     silent: true
@@ -53,32 +83,6 @@ tasks:
 
   all:
     desc: Run all integration tests (db, storage, NATS, authn, grpc, telemetry, llm, and attestation)
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
-      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
-      TEST_S3_ENDPOINT: "http://localhost:19000"
-      TEST_S3_ACCESS_KEY: "{{.RUSTFS_ACCESS_KEY}}"
-      TEST_S3_SECRET_KEY: "{{.RUSTFS_SECRET_KEY}}"
-      TEST_S3_BUCKET: "{{.RUSTFS_BUCKET}}"
-      TEST_NATS_URL: "tls://localhost:14222"
-      TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
-      TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
-      TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
-      TEST_AUTHN_URL: "https://localhost:18443"
-      TEST_AUTHN_CA: "{{.TEST_DIR}}/certs/ca.pem"
-      TEST_AUTHN_CERT: "{{.TEST_DIR}}/certs/client.pem"
-      TEST_AUTHN_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
-      TEST_GRPC_ADDR: "localhost:19090"
-      TEST_GRPC_CA: "{{.TEST_DIR}}/certs/ca.pem"
-      TEST_GRPC_CERT: "{{.TEST_DIR}}/certs/client.pem"
-      TEST_GRPC_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
-      TEST_OTLP_GRPC_ENDPOINT: "localhost:14317"
-      TEST_OTLP_HTTP_ENDPOINT: "localhost:14318"
-      TEST_JAEGER_QUERY_URL: "http://localhost:16686"
-      TEST_LITELLM_URL: "http://localhost:14000"
-      TEST_OLLAMA_HOST: "{{.OLLAMA_HOST}}"
-      TEST_LLM_CHAT_MODEL: "small"
-      TEST_LLM_EMBED_MODEL: "embed"
     cmds:
       - task: ensure-deps
       - task: compose-up
@@ -87,27 +91,84 @@ tasks:
           task: compose-down
           vars: { PROFILE: all }
       - mkdir -p {{.TEST_DIR}}
-      # -p 1: pkg/db, pkg/graphdb, and internal/catalog all run migrations and
-      # ALTER ROLE in TestMain. Without -p 1, go test runs packages in parallel
-      # and TestMain functions race on the pg_authid catalog row, causing
-      # "tuple concurrently updated" errors.
-      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... 2>&1 | tee {{.TEST_DIR}}/integration.log
-      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out {{.ROOT_DIR}}/pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
-      - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
-      - go test -v -tags integration_authn -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-authn-coverage.out {{.ROOT_DIR}}/pkg/authn/... 2>&1 | tee {{.TEST_DIR}}/integration-authn.log
-      - go test -v -tags integration_grpc -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-grpc-coverage.out {{.ROOT_DIR}}/internal/testgrpc/... 2>&1 | tee {{.TEST_DIR}}/integration-grpc.log
-      - go test -v -tags integration_telemetry -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-telemetry-coverage.out {{.ROOT_DIR}}/pkg/telemetry/... 2>&1 | tee {{.TEST_DIR}}/integration-telemetry.log
-      - go test -v -tags integration_telemetry -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-jaeger-smoke-coverage.out {{.ROOT_DIR}}/test/integration/... 2>&1 | tee {{.TEST_DIR}}/integration-jaeger-smoke.log
-      - go test -v -tags integration -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-trace-propagation-coverage.out {{.ROOT_DIR}}/test/integration/... 2>&1 | tee {{.TEST_DIR}}/integration-trace-propagation.log
-      - go test -v -tags integration -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-attestation-coverage.out {{.ROOT_DIR}}/pkg/attestation/... 2>&1 | tee {{.TEST_DIR}}/integration-attestation.log
-      - go test -v -tags integration_llm -race -count=1 -timeout 600s -coverprofile={{.TEST_DIR}}/integration-llm-coverage.out {{.ROOT_DIR}}/pkg/llmclient/... 2>&1 | tee {{.TEST_DIR}}/integration-llm.log
+      # Ginkgo runs packages sequentially by default (no -p 1 needed).
+      # pkg/db, pkg/graphdb, and internal/catalog all run migrations and
+      # ALTER ROLE in SynchronizedBeforeSuite. Sequential execution avoids
+      # "tuple concurrently updated" races on the pg_authid catalog row.
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 300s
+          REPORT: integration-db
+          COVERAGE: integration-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 300s
+          REPORT: integration-storage
+          COVERAGE: integration-storage-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/storage/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_nats
+          TIMEOUT: 120s
+          REPORT: integration-nats
+          COVERAGE: integration-nats-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_authn
+          TIMEOUT: 120s
+          REPORT: integration-authn
+          COVERAGE: integration-authn-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/authn/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_grpc
+          TIMEOUT: 120s
+          REPORT: integration-grpc
+          COVERAGE: integration-grpc-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/internal/testgrpc/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_telemetry
+          TIMEOUT: 120s
+          REPORT: integration-telemetry
+          COVERAGE: integration-telemetry-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/telemetry/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_telemetry
+          TIMEOUT: 120s
+          REPORT: integration-jaeger-smoke
+          COVERAGE: integration-jaeger-smoke-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-trace-propagation
+          COVERAGE: integration-trace-propagation-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-attestation
+          COVERAGE: integration-attestation-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_llm
+          TIMEOUT: 600s
+          REPORT: integration-llm
+          COVERAGE: integration-llm-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/llmclient/..."
 
   db:
     desc: Run database integration tests (db, graphdb, vectordb, catalog)
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
-      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
     cmds:
       - task: compose-up
         vars: { PROFILE: db }
@@ -115,18 +176,17 @@ tasks:
           task: compose-down
           vars: { PROFILE: db }
       - mkdir -p {{.TEST_DIR}}
-      # -p 1: see comment in 'all' task
-      - go test -v -tags integration -race -count=1 -p 1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-coverage.out {{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... 2>&1 | tee {{.TEST_DIR}}/integration.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 300s
+          REPORT: integration-db
+          COVERAGE: integration-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/..."
 
   storage:
     desc: Run S3 storage integration tests
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
-      TEST_S3_ENDPOINT: "http://localhost:19000"
-      TEST_S3_ACCESS_KEY: "{{.RUSTFS_ACCESS_KEY}}"
-      TEST_S3_SECRET_KEY: "{{.RUSTFS_SECRET_KEY}}"
-      TEST_S3_BUCKET: "{{.RUSTFS_BUCKET}}"
     cmds:
       - task: compose-up
         vars: { PROFILE: storage }
@@ -134,17 +194,17 @@ tasks:
           task: compose-down
           vars: { PROFILE: storage }
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration -race -count=1 -timeout 300s -coverprofile={{.TEST_DIR}}/integration-storage-coverage.out {{.ROOT_DIR}}/pkg/storage/... 2>&1 | tee {{.TEST_DIR}}/integration-storage.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 300s
+          REPORT: integration-storage
+          COVERAGE: integration-storage-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/storage/..."
 
   nats:
     desc: Run external NATS integration tests
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
-      TEST_NATS_URL: "tls://localhost:14222"
-      TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
-      TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
-      TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
     cmds:
       - task: compose-up
         vars: { PROFILE: nats }
@@ -152,17 +212,17 @@ tasks:
           task: compose-down
           vars: { PROFILE: nats }
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration_nats -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-nats-coverage.out {{.ROOT_DIR}}/pkg/natsbus/... 2>&1 | tee {{.TEST_DIR}}/integration-nats.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_nats
+          TIMEOUT: 120s
+          REPORT: integration-nats
+          COVERAGE: integration-nats-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
 
   authn:
     desc: Run authn container integration tests (nginx mTLS proxy)
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
-      TEST_AUTHN_URL: "https://localhost:18443"
-      TEST_AUTHN_CA: "{{.TEST_DIR}}/certs/ca.pem"
-      TEST_AUTHN_CERT: "{{.TEST_DIR}}/certs/client.pem"
-      TEST_AUTHN_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
     cmds:
       - task: compose-up
         vars: { PROFILE: authn }
@@ -170,22 +230,17 @@ tasks:
           task: compose-down
           vars: { PROFILE: authn }
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration_authn -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-authn-coverage.out {{.ROOT_DIR}}/pkg/authn/... 2>&1 | tee {{.TEST_DIR}}/integration-authn.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_authn
+          TIMEOUT: 120s
+          REPORT: integration-authn
+          COVERAGE: integration-authn-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/authn/..."
 
   grpc:
     desc: Run gRPC tenant integration tests
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
-      TEST_GRPC_ADDR: "localhost:19090"
-      TEST_GRPC_CA: "{{.TEST_DIR}}/certs/ca.pem"
-      TEST_GRPC_CERT: "{{.TEST_DIR}}/certs/client.pem"
-      TEST_GRPC_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
-      TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
-      TEST_NATS_URL: "tls://localhost:14222"
-      TEST_NATS_CA: "{{.TEST_DIR}}/certs/ca.pem"
-      TEST_NATS_CERT: "{{.TEST_DIR}}/certs/client.pem"
-      TEST_NATS_KEY: "{{.TEST_DIR}}/certs/client-key.pem"
     cmds:
       - task: compose-up
         vars: { PROFILE: grpc }
@@ -193,16 +248,17 @@ tasks:
           task: compose-down
           vars: { PROFILE: grpc }
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration_grpc -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-grpc-coverage.out {{.ROOT_DIR}}/internal/testgrpc/... 2>&1 | tee {{.TEST_DIR}}/integration-grpc.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_grpc
+          TIMEOUT: 120s
+          REPORT: integration-grpc
+          COVERAGE: integration-grpc-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/internal/testgrpc/..."
 
   telemetry:
     desc: Run telemetry integration tests (Jaeger OTLP)
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
-      TEST_OTLP_GRPC_ENDPOINT: "localhost:14317"
-      TEST_OTLP_HTTP_ENDPOINT: "localhost:14318"
-      TEST_JAEGER_QUERY_URL: "http://localhost:16686"
     cmds:
       - task: compose-up
         vars: { PROFILE: telemetry }
@@ -210,20 +266,24 @@ tasks:
           task: compose-down
           vars: { PROFILE: telemetry }
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration_telemetry -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-telemetry-coverage.out {{.ROOT_DIR}}/pkg/telemetry/... 2>&1 | tee {{.TEST_DIR}}/integration-telemetry.log
-      - go test -v -tags integration_telemetry -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-jaeger-smoke-coverage.out {{.ROOT_DIR}}/test/integration/... 2>&1 | tee {{.TEST_DIR}}/integration-jaeger-smoke.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_telemetry
+          TIMEOUT: 120s
+          REPORT: integration-telemetry
+          COVERAGE: integration-telemetry-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/telemetry/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_telemetry
+          TIMEOUT: 120s
+          REPORT: integration-jaeger-smoke
+          COVERAGE: integration-jaeger-smoke-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
 
   llm:
     desc: Run LLM integration tests (LiteLLM + Ollama + Jaeger full stack)
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
-      TEST_LITELLM_URL: "http://localhost:14000"
-      TEST_OLLAMA_HOST: "{{.OLLAMA_HOST}}"
-      TEST_LLM_CHAT_MODEL: "small"
-      TEST_LLM_EMBED_MODEL: "embed"
-      TEST_OTLP_GRPC_ENDPOINT: "localhost:14317"
-      TEST_JAEGER_QUERY_URL: "http://localhost:16686"
     cmds:
       - task: compose-up
         vars: { PROFILE: llm }
@@ -231,25 +291,39 @@ tasks:
           task: compose-down
           vars: { PROFILE: llm }
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration_llm -race -count=1 -timeout 600s -coverprofile={{.TEST_DIR}}/integration-llm-coverage.out {{.ROOT_DIR}}/pkg/llmclient/... 2>&1 | tee {{.TEST_DIR}}/integration-llm.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_llm
+          TIMEOUT: 600s
+          REPORT: integration-llm
+          COVERAGE: integration-llm-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/llmclient/..."
 
   trace-propagation:
     desc: Run cross-service trace propagation integration tests (embedded NATS)
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-trace-propagation-coverage.out {{.ROOT_DIR}}/test/integration/... 2>&1 | tee {{.TEST_DIR}}/integration-trace-propagation.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-trace-propagation
+          COVERAGE: integration-trace-propagation-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
 
   attestation:
     desc: Run attestation integration tests (embedded NATS, no containers needed)
     deps: [ensure-deps]
-    env:
-      TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - go test -v -tags integration -race -count=1 -timeout 120s -coverprofile={{.TEST_DIR}}/integration-attestation-coverage.out {{.ROOT_DIR}}/pkg/attestation/... 2>&1 | tee {{.TEST_DIR}}/integration-attestation.log
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-attestation
+          COVERAGE: integration-attestation-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
 
   clean:
     desc: Remove all integration test containers and their volumes
@@ -347,6 +421,14 @@ tasks:
       - bash "{{.ROOT_DIR}}/scripts/ensure-ollama-models.sh" "{{.PROFILE}}" "{{.OLLAMA_HOST}}" "{{.OLLAMA_CHAT_MODEL}}" "{{.OLLAMA_EMBED_MODEL}}"
 
   # --- Internal helpers ---
+
+  run-ginkgo:
+    internal: true
+    requires:
+      vars: [TAGS, TIMEOUT, REPORT, COVERAGE, PACKAGES]
+    cmds:
+      - go run github.com/onsi/ginkgo/v2/ginkgo run -v --race --tags {{.TAGS}} --timeout {{.TIMEOUT}} --coverprofile {{.COVERAGE}} --output-dir {{.TEST_DIR}} --json-report={{.REPORT}}.json {{.PACKAGES}}
+      - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/{{.REPORT}}.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
 
   ensure-deps:
     internal: true

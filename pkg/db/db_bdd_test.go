@@ -1,3 +1,5 @@
+//go:build !integration
+
 package db_test
 
 import (
@@ -21,7 +23,10 @@ func TestDBBDD(t *testing.T) {
 }
 
 // Redirect slog output to GinkgoWriter so log noise only appears on failure.
-var _ = BeforeSuite(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
+// NOTE: Uses BeforeEach (not BeforeSuite) to avoid conflicts with
+// SynchronizedBeforeSuite in the integration BDD file when building
+// with -tags integration.
+var _ = BeforeEach(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 
 var _ = Describe("Database Package", Ordered, func() {
 
