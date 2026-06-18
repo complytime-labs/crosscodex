@@ -1,7 +1,11 @@
 package natsbus
 
 import (
+	"context"
+	"log/slog"
+
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -97,4 +101,33 @@ func ExportTelemetryFields(c Client) TelemetryFields {
 		HasProcessCounter: cc.processCounter != nil,
 		HasProcessLatency: cc.processLatency != nil,
 	}
+}
+
+// ExportEmbeddedServer wraps embeddedServer for external test access.
+type ExportEmbeddedServer struct{ es *embeddedServer }
+
+// ClientURL returns the URL to connect to the embedded server.
+func (e *ExportEmbeddedServer) ClientURL() string { return e.es.clientURL() }
+
+// Shutdown stops the embedded server and waits for shutdown.
+func (e *ExportEmbeddedServer) Shutdown() { e.es.shutdown() }
+
+// ExportStartEmbedded starts an embedded NATS server for integration tests.
+func ExportStartEmbedded(cfg config.NATSEmbeddedConfig, logger *slog.Logger) (*ExportEmbeddedServer, error) {
+	es, err := startEmbedded(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+	return &ExportEmbeddedServer{es: es}, nil
+}
+
+// ExportWrapHandler wraps a MessageHandler with provenance enforcement
+// using a minimal client backed by the given raw NATS connection.
+// This allows external tests to verify fail-closed provenance behavior.
+func ExportWrapHandler(rawConn *nats.Conn, handler func(ctx context.Context, msg *Message) error) func(*nats.Msg) {
+	c := &client{
+		conn: rawConn,
+		opts: defaultClientOptions(),
+	}
+	return c.wrapHandler(handler)
 }

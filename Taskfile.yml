@@ -33,6 +33,7 @@ vars:
   BUILD_DIR: "{{.ROOT_DIR}}/.build"
   TEST_DIR: "{{.ROOT_DIR}}/.test-output"
   FIPS: '{{.FIPS | default ""}}'
+  GINKGOLEAF_FORMAT: '{{.GINKGOLEAF_FORMAT | default "jest"}}'
   OLLAMA_HOST:
     sh: |
       host='{{.OLLAMA_HOST | default "http://localhost:11434"}}'
@@ -50,6 +51,7 @@ tasks:
         echo "  OLLAMA_HOST=http://host:port         Override Ollama base URL (default: http://localhost:11434)"
         echo "  OLLAMA_CHAT_MODEL=name              Override Ollama chat model (default: llama3.2:1b)"
         echo "  OLLAMA_EMBED_MODEL=name             Override Ollama embedding model (default: granite-embedding:30m)"
+        echo "  GINKGOLEAF_FORMAT=format            Test output format: jest, tree, github, markdown, etc. (default: jest)"
         echo ""
       - task --list 2>/dev/null
 

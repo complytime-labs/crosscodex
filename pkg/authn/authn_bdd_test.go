@@ -1135,3 +1135,55 @@ var _ = Describe("Authn Package", Ordered, func() {
 		})
 	})
 })
+
+// ---------------------------------------------------------------------------
+// RBAC — RequireRole & IsAdmin
+// ---------------------------------------------------------------------------
+
+var _ = Describe("RBAC", func() {
+	Describe("RequireRole", func() {
+		DescribeTable("role matching",
+			func(roles []string, required []string, wantErr bool) {
+				id := authn.Identity{Roles: roles}
+				err := authn.RequireRole(id, required...)
+				if wantErr {
+					Expect(err).To(HaveOccurred())
+					Expect(errors.Is(err, authn.ErrInsufficientRole)).To(BeTrue())
+				} else {
+					Expect(err).NotTo(HaveOccurred())
+				}
+			},
+			Entry("exact single match", []string{"admin"}, []string{"admin"}, false),
+			Entry("any-match from multiple required", []string{"reader"}, []string{"admin", "reader"}, false),
+			Entry("any-match from multiple identity roles", []string{"writer", "admin"}, []string{"admin"}, false),
+			Entry("no match", []string{"reader"}, []string{"admin"}, true),
+			Entry("empty identity roles", []string{}, []string{"admin"}, true),
+			Entry("nil identity roles", nil, []string{"admin"}, true),
+			Entry("zero required roles is caller bug", []string{"admin"}, []string{}, true),
+			Entry("case sensitive Admin vs admin", []string{"Admin"}, []string{"admin"}, true),
+			Entry("whitespace stripped from identity role", []string{" admin "}, []string{"admin"}, false),
+			Entry("whitespace stripped from required role", []string{"admin"}, []string{" admin "}, false),
+			Entry("whitespace-only identity role matches nothing", []string{"  "}, []string{"admin"}, true),
+			Entry("whitespace-only required role matches nothing", []string{"admin"}, []string{"  "}, true),
+			Entry("duplicates are harmless", []string{"admin", "admin"}, []string{"admin", "admin"}, false),
+			Entry("long role string", []string{"super-long-role-name-that-is-still-valid"}, []string{"super-long-role-name-that-is-still-valid"}, false),
+		)
+	})
+
+	Describe("IsAdmin", func() {
+		DescribeTable("admin detection",
+			func(roles []string, want bool) {
+				id := authn.Identity{Roles: roles}
+				Expect(authn.IsAdmin(id)).To(Equal(want))
+			},
+			Entry("admin present", []string{"admin"}, true),
+			Entry("admin absent", []string{"reader", "writer"}, false),
+			Entry("empty roles", []string{}, false),
+			Entry("nil roles", nil, false),
+			Entry("case sensitive Admin", []string{"Admin"}, false),
+			Entry("whitespace stripped", []string{" admin "}, true),
+			Entry("admin among many", []string{"reader", "writer", "admin", "operator"}, true),
+			Entry("administrator is not admin", []string{"administrator"}, false),
+		)
+	})
+})

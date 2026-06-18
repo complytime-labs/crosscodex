@@ -18,6 +18,8 @@ pkg/db/migrations/
   ...
   009_tenant_graph_lifecycle.up.sql
   009_tenant_graph_lifecycle.down.sql
+  010_create_controls.up.sql
+  010_create_controls.down.sql
 ```
 
 Each migration is a pair of SQL files:
@@ -34,8 +36,8 @@ The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequenti
 2. Create both files:
 
    ```bash
-   touch pkg/db/migrations/010_your_description.up.sql
-   touch pkg/db/migrations/010_your_description.down.sql
+   touch pkg/db/migrations/011_your_description.up.sql
+   touch pkg/db/migrations/011_your_description.down.sql
    ```
 
 3. Write the SQL. The up migration should be idempotent where possible (`CREATE TABLE IF NOT EXISTS`, `DO $$ ... $$`). The down migration should cleanly reverse the up migration.
@@ -46,9 +48,9 @@ The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequenti
 
 ### Naming Conventions
 
-- Use lowercase with underscores: `010_add_audit_log.up.sql`
+- Use lowercase with underscores: `011_add_audit_log.up.sql`
 - Start with a verb describing the action: `create_`, `add_`, `enable_`, `drop_`
-- Be specific: `011_add_retry_count_to_jobs` not `011_update_jobs`
+- Be specific: `012_add_retry_count_to_jobs` not `012_update_jobs`
 
 ### Writing Down Migrations
 
@@ -79,7 +81,7 @@ pool, err := db.NewPool(db.PoolConfig{
     DSN:          appUserDSN,
     MaxOpenConns: 20,
     Extensions:   []string{"age", "vector"},
-})
+}) // signature: NewPool(cfg PoolConfig, opts ...Option)
 if err != nil {
     return fmt.Errorf("create pool: %w", err)
 }

@@ -12,28 +12,48 @@ ______________________________________________________________________
 
 ## Status
 
-CrossCodex is in early development. Six foundational packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
+CrossCodex is in early development. Foundational and domain packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
 
-| Package           | Status      | Summary                                                                                      |
-|-------------------|-------------|----------------------------------------------------------------------------------------------|
-| **pkg/config**    | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking               |
-| **pkg/storage**   | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes                  |
-| **pkg/db**        | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
-| **pkg/natsbus**   | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
-| **pkg/tlsconfig** | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI        |
-| **pkg/authn**     | Implemented | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed          |
-| **pkg/tenant**    | Partial     | Tenant ID validation implemented; context propagation interface scaffolded                   |
-| **pkg/llmclient** | Implemented | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit |
-| **pkg/analyzer**  | Implemented | Generic plugin interface, type-safe registry, DAG builder with Kahn's algorithm              |
-| All others        | Scaffolded  | Interfaces and types defined; implementation pending                                         |
+| Package             | Status      | Summary                                                                                      |
+|---------------------|-------------|----------------------------------------------------------------------------------------------|
+| **pkg/config**      | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking               |
+| **pkg/storage**     | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes                  |
+| **pkg/db**          | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
+| **pkg/natsbus**     | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
+| **pkg/tlsconfig**   | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI        |
+| **pkg/authn**       | Implemented | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed          |
+| **pkg/tenant**      | Implemented | Tenant ID validation, error sentinels, context propagation interface, gRPC interceptors      |
+| **pkg/llmclient**   | Implemented | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit |
+| **pkg/analyzer**    | Implemented | Generic plugin interface, type-safe registry, DAG builder with Kahn's algorithm              |
+| **pkg/telemetry**   | Implemented | OpenTelemetry traces, metrics, structured log correlation, in-memory test provider           |
+| **pkg/attestation** | Implemented | in-toto layout/link generation, verification, hash chains, FIPS enforcement, manifests       |
+| **pkg/oscal**       | Implemented | OSCAL catalog parsing, validation, decomposition, structuring, provenance tracking           |
+| **pkg/graphdb**     | Scaffolded  | Apache AGE openCypher queries, relationship traversal                                        |
+| **pkg/vectordb**    | Scaffolded  | pgvector similarity search for embeddings                                                    |
 
-Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, `pkg/natsbus`, and `pkg/authn` run against containerized services (`task test:integration:all`).
+Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/authn`, `pkg/llmclient`, `pkg/telemetry`, and `pkg/vectordb` run against containerized services (`task test:integration:all`).
 
 ## Architecture
 
-The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`, `pkg/llmclient`) and implemented domain packages (`pkg/analyzer`, `pkg/attestation`) and scaffolded domain packages (`pkg/oscal`, `pkg/graphdb`); full service implementations are not yet built.
+The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`, `pkg/tenant`, `pkg/telemetry`, `pkg/llmclient`) and implemented domain packages (`pkg/analyzer`, `pkg/attestation`, `pkg/oscal`) and scaffolded domain packages (`pkg/graphdb`, `pkg/vectordb`). The first service implementation (`internal/catalog`) is underway with service logic, data store, and adapters.
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#2f6dab',
+  'primaryTextColor': '#1e1e1e',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#eef2f8',
+  'tertiaryColor': 'transparent',
+  'tertiaryTextColor': '#7c8ba1',
+  'tertiaryBorderColor': '#7c8ba1',
+  'clusterBkg': 'transparent',
+  'clusterBorder': '#7c8ba1',
+  'titleColor': '#7c8ba1',
+  'noteBkgColor': '#eef2f8',
+  'noteTextColor': '#1e1e1e',
+  'fontFamily': 'system-ui, sans-serif'
+}, 'themeCSS': '.node .nodeLabel{color:#ffffff!important;fill:#ffffff!important;}'}}%%
 flowchart TD
     subgraph external ["External Sources"]
         docs["Documents<br/>PDF, DOCX, HTML"]
@@ -44,15 +64,41 @@ flowchart TD
         analysis["Analysis Engine<br/>Go + Plugins"]
         llm["LLM Workers<br/>Go + AI Models"]
     end
-    subgraph datalayer ["Data Layer"]
+    subgraph orchestration ["Orchestration"]
         synthesis["Synthesis<br/>Quality Ranking"]
-        graphdb["Graph Store<br/>PostgreSQL + AGE"]
         pipeline["Pipeline<br/>Go + NATS"]
+    end
+    subgraph datalayer ["Data Layer"]
+        graphdb["Graph Store<br/>PostgreSQL + AGE"]
+        vectordb["Vector Store<br/>pgvector"]
+    end
+    subgraph infra ["Infrastructure"]
+        tenant["Tenant Isolation"]
+        tls["TLS / mTLS"]
+        authn["Authentication"]
+        telemetry["Telemetry<br/>OpenTelemetry"]
+        attestation["Attestation<br/>in-toto"]
     end
     docs --> ingestion --> catalog --> analysis --> llm
     llm --> synthesis --> graphdb
-    pipeline --> analysis & synthesis
+    pipeline --> analysis
+    pipeline --> synthesis
     graphdb --> pipeline
+    analysis --> vectordb
+    infra -.-> processing
+    infra -.-> orchestration
+    infra -.-> datalayer
+
+    classDef sysA fill:#2f6dab,color:#ffffff,stroke:#7c8ba1
+    classDef sysB fill:#1d7848,color:#ffffff,stroke:#7c8ba1
+    classDef sysC fill:#7457b8,color:#ffffff,stroke:#7c8ba1
+    classDef sysD fill:#2d747e,color:#ffffff,stroke:#7c8ba1
+    classDef sysF fill:#5c6a82,color:#ffffff,stroke:#7c8ba1
+    class ingestion,catalog,analysis,llm sysA
+    class synthesis,pipeline sysB
+    class graphdb,vectordb sysC
+    class tenant,tls,authn,telemetry,attestation sysD
+    class docs sysF
 ```
 
 ### Service Responsibilities
@@ -193,11 +239,11 @@ Run `task --list` for all available commands including integration tests and dev
 
 ### Testing Strategy
 
-| Test Type       | Framework               | Status                                                                                                     |
-|-----------------|-------------------------|------------------------------------------------------------------------------------------------------------|
-| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                                               |
-| **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, pkg/natsbus, pkg/authn, and pkg/llmclient (`task test:integration:all`) |
-| **E2E**         | Venom                   | Planned                                                                                                    |
+| Test Type       | Framework               | Status                                                                                                                                  |
+|-----------------|-------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)                                                                                                            |
+| **Integration** | Go testing + containers | Available for pkg/db, pkg/storage, pkg/natsbus, pkg/authn, pkg/llmclient, pkg/telemetry, and pkg/vectordb (`task test:integration:all`) |
+| **E2E**         | Venom                   | Planned                                                                                                                                 |
 
 ### Contributing
 

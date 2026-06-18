@@ -80,7 +80,7 @@ These CUE schemas provide strongly-typed validation and constraint checking for 
 
 ## Usage in CrossCodex
 
-The Catalog Service uses these schemas to:
+The `pkg/oscal` package uses these schemas to:
 - Validate imported OSCAL documents
 - Ensure compliance framework documents conform to OSCAL specifications
 - Support multiple OSCAL versions for backward compatibility
@@ -92,7 +92,7 @@ Schemas are organized by version to support:
 - Upgrading OSCAL support without breaking existing functionality
 - Version-specific validation rules
 
-To fetch a specific OSCAL version instead of the latest, pass the version as a variable override: `task dev:fetch-schemas OSCAL_VERSION=v1.2.2`.
+To fetch a specific version instead of the latest, pass the version as a variable override: `task dev:fetch-schemas OSCAL_VERSION=1.2.2`. The `GEMARA_VERSION` variable is also supported: `task dev:fetch-schemas GEMARA_VERSION=0.3.0`.
 
 ## References
 
