@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
 )
 
 // testCompleter implements oscal.Completer for testing.
@@ -19,23 +23,66 @@ type testCompleter struct {
 	err      error
 }
 
+// failingRegistry implements prompt.Registry but always fails on Render.
+// Used to test the fallback path when registry.Render returns an error.
+type failingRegistry struct{}
+
+func (f *failingRegistry) Resolve(_ context.Context, _ string) (*prompt.PromptSpec, error) {
+	return nil, errors.New("intentional test failure")
+}
+
+func (f *failingRegistry) Render(_ context.Context, _ string, _ map[string]string) (*prompt.ResolvedPrompt, error) {
+	return nil, errors.New("intentional test failure")
+}
+
+func (f *failingRegistry) List(_ context.Context) ([]string, error) {
+	return nil, errors.New("intentional test failure")
+}
+
+func (f *failingRegistry) Layers(_ context.Context, _ string) ([]prompt.LayerInfo, error) {
+	return nil, errors.New("intentional test failure")
+}
+
 func (tc *testCompleter) Complete(_ context.Context, _ []oscal.Message) (string, error) {
 	return tc.response, tc.err
 }
 
-// testPromptLoader implements oscal.PromptLoader for testing.
-type testPromptLoader struct {
-	prompts map[string]string
-}
+// testRegistry creates a minimal prompt.Registry for testing with optional system prompt override.
+func testRegistry(overrides map[string]string) prompt.Registry {
+	cfg := config.PromptConfig{
+		Layers: config.PromptLayerConfig{Enabled: true},
+	}
 
-func (tp *testPromptLoader) LoadPrompt(name string) (string, error) {
-	if tp.prompts == nil {
-		return "", fmt.Errorf("prompt not found: %s", name)
+	if len(overrides) == 0 {
+		reg, err := prompt.NewRegistry(cfg)
+		if err != nil {
+			panic(err)
+		}
+		return reg
 	}
-	if p, ok := tp.prompts[name]; ok {
-		return p, nil
+
+	// Create a temp directory with overlay prompts
+	tmpDir, err := os.MkdirTemp("", "oscal-test-*")
+	if err != nil {
+		panic(err)
 	}
-	return "", fmt.Errorf("prompt not found: %s", name)
+	promptDir := filepath.Join(tmpDir, ".crosscodex", "prompts")
+	if err := os.MkdirAll(promptDir, 0o755); err != nil {
+		panic(err)
+	}
+
+	for name, systemPrompt := range overrides {
+		yamlContent := fmt.Sprintf("name: %s\nversion: 1.0.0\ntemplates:\n  system: %q\n  user: \"${document_chunk}\"\n", name, systemPrompt)
+		if err := os.WriteFile(filepath.Join(promptDir, name+".yaml"), []byte(yamlContent), 0o644); err != nil {
+			panic(err)
+		}
+	}
+
+	reg, err := prompt.NewRegistry(cfg, prompt.WithProjectDir(tmpDir))
+	if err != nil {
+		panic(err)
+	}
+	return reg
 }
 
 var _ = Describe("TierPattern", func() {
@@ -430,21 +477,33 @@ var _ = Describe("TierLLMDetect", func() {
 		})
 	})
 
-	Context("with a custom prompt loader", func() {
-		It("uses the loaded prompt and detects items", func() {
+	Context("with a custom prompt registry", func() {
+		It("uses the registry prompt and detects items", func() {
 			doc := oscal.StructuredDoc{
 				RawText: "Section A.1: First\nSection A.2: Second",
 			}
 			opts := oscal.StructureOptions{}
 			completer := &testCompleter{response: `Section ([A-Z]\.\d+):\s+(.+)`}
-			prompts := &testPromptLoader{
-				prompts: map[string]string{
-					"section_detect": "Custom prompt for section detection",
-				},
-			}
-			items, ok := oscal.TierLLMDetect(doc, opts, completer, prompts)
+			reg := testRegistry(map[string]string{
+				"section-detect": "Custom prompt for section detection",
+			})
+			items, ok := oscal.TierLLMDetect(doc, opts, completer, reg)
 			Expect(ok).To(BeTrue())
 			Expect(items).To(HaveLen(2))
+		})
+	})
+
+	Context("with a failing registry (render returns error)", func() {
+		It("falls back to hardcoded prompt and still works", func() {
+			doc := oscal.StructuredDoc{
+				RawText: "1. First\n2. Second\n3. Third",
+			}
+			opts := oscal.StructureOptions{ChunkChars: 1000}
+			completer := &testCompleter{response: `(\d+)\.\s+(.+)`}
+			failReg := &failingRegistry{}
+			items, ok := oscal.TierLLMDetect(doc, opts, completer, failReg)
+			Expect(ok).To(BeTrue())
+			Expect(items).To(HaveLen(3))
 		})
 	})
 })
@@ -553,21 +612,34 @@ var _ = Describe("TierLLMExtract", func() {
 		})
 	})
 
-	Context("with a custom prompt loader", func() {
-		It("uses the loaded prompt and extracts items", func() {
+	Context("with a custom prompt registry", func() {
+		It("uses the registry prompt and extracts items", func() {
 			doc := oscal.StructuredDoc{RawText: "Text"}
 			opts := oscal.StructureOptions{}
 			completer := &testCompleter{
 				response: `[{"id": "c-1", "title": "Custom", "text": "Custom req"}]`,
 			}
-			prompts := &testPromptLoader{
-				prompts: map[string]string{
-					"structured_extract": "Custom extraction prompt",
-				},
-			}
-			items, ok := oscal.TierLLMExtract(doc, opts, completer, prompts)
+			reg := testRegistry(map[string]string{
+				"structured-extract": "Custom extraction prompt",
+			})
+			items, ok := oscal.TierLLMExtract(doc, opts, completer, reg)
 			Expect(ok).To(BeTrue())
 			Expect(items).To(HaveLen(1))
+		})
+	})
+
+	Context("with a failing registry (render returns error)", func() {
+		It("falls back to hardcoded prompt and still extracts", func() {
+			doc := oscal.StructuredDoc{RawText: "Text with requirements"}
+			opts := oscal.StructureOptions{ChunkChars: 1000}
+			completer := &testCompleter{
+				response: `[{"id": "r-1", "title": "Fallback", "text": "Fallback req"}]`,
+			}
+			failReg := &failingRegistry{}
+			items, ok := oscal.TierLLMExtract(doc, opts, completer, failReg)
+			Expect(ok).To(BeTrue())
+			Expect(items).To(HaveLen(1))
+			Expect(items[0].ID).To(Equal("r-1"))
 		})
 	})
 })

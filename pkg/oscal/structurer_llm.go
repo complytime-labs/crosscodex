@@ -4,48 +4,54 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-)
 
-// PromptLoader loads prompt templates by name.
-type PromptLoader interface {
-	LoadPrompt(name string) (string, error)
-}
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
+)
 
 const maxItemsPerChunk = 500
 
-const defaultSectionDetectPrompt = `You are a document structure analyst. Given a document, identify the repeating structural pattern used for section numbering or labeling. Return ONLY the regex pattern that matches section headers, or "none" if no pattern is found.`
-
-const defaultStructuredExtractPrompt = `You are a compliance requirements extractor. Given a text, extract individual requirements as a JSON array. Each element should have "id" (identifier), "title" (short title), and "text" (full requirement text). Return ONLY valid JSON.`
-
 // TierLLMDetect (Tier 4) uses an LLM to detect the section pattern, then delegates to TierRegex.
 // Returns (nil, false) when completer is nil or opts.SkipLLM is true.
-func TierLLMDetect(doc StructuredDoc, opts StructureOptions, completer Completer, prompts PromptLoader) ([]ControlItem, bool) {
+func TierLLMDetect(doc StructuredDoc, opts StructureOptions, completer Completer, registry prompt.Registry) ([]ControlItem, bool) {
 	if completer == nil || opts.SkipLLM {
 		return nil, false
 	}
 
-	// Load prompt template
-	systemPrompt := defaultSectionDetectPrompt
-	if prompts != nil {
-		if p, err := prompts.LoadPrompt("section_detect"); err == nil && p != "" {
-			systemPrompt = p
+	// Build messages from prompt registry or fall back to a minimal prompt
+	var messages []Message
+
+	if registry != nil {
+		// Truncate document text to ChunkChars
+		chunkSize := opts.ChunkChars
+		if chunkSize <= 0 {
+			chunkSize = 3000
+		}
+		text := doc.RawText
+		if len(text) > chunkSize {
+			text = text[:chunkSize]
+		}
+
+		resolved, err := registry.Render(context.Background(), "section-detect",
+			map[string]string{"document_chunk": text})
+		if err == nil {
+			messages = promptToOscalMessages(resolved.Messages)
 		}
 	}
 
-	// Truncate document text to ChunkChars
-	chunkSize := opts.ChunkChars
-	if chunkSize <= 0 {
-		chunkSize = 3000
-	}
-	text := doc.RawText
-	if len(text) > chunkSize {
-		text = text[:chunkSize]
-	}
-
-	// Ask LLM to detect pattern
-	messages := []Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: text},
+	if len(messages) == 0 {
+		// Fallback: no registry or render failed
+		chunkSize := opts.ChunkChars
+		if chunkSize <= 0 {
+			chunkSize = 3000
+		}
+		text := doc.RawText
+		if len(text) > chunkSize {
+			text = text[:chunkSize]
+		}
+		messages = []Message{
+			{Role: "system", Content: "You are a document structure analyst. Given a document, identify the repeating structural pattern used for section numbering or labeling. Return ONLY the regex pattern that matches section headers, or \"none\" if no pattern is found."},
+			{Role: "user", Content: text},
+		}
 	}
 
 	ctx := context.Background()
@@ -59,7 +65,6 @@ func TierLLMDetect(doc StructuredDoc, opts StructureOptions, completer Completer
 		return nil, false
 	}
 
-	// Try using the detected pattern with TierRegex
 	optsWithPattern := opts
 	optsWithPattern.SectionPattern = response
 	return TierRegex(doc, optsWithPattern)
@@ -67,43 +72,44 @@ func TierLLMDetect(doc StructuredDoc, opts StructureOptions, completer Completer
 
 // TierLLMExtract (Tier 5) uses an LLM to extract structured requirements from text.
 // Returns (nil, false) when completer is nil or opts.SkipLLM is true.
-func TierLLMExtract(doc StructuredDoc, opts StructureOptions, completer Completer, prompts PromptLoader) ([]ControlItem, bool) {
+func TierLLMExtract(doc StructuredDoc, opts StructureOptions, completer Completer, registry prompt.Registry) ([]ControlItem, bool) {
 	if completer == nil || opts.SkipLLM {
 		return nil, false
 	}
 
-	// Load prompt template
-	systemPrompt := defaultStructuredExtractPrompt
-	if prompts != nil {
-		if p, err := prompts.LoadPrompt("structured_extract"); err == nil && p != "" {
-			systemPrompt = p
-		}
-	}
-
-	// Determine chunk size
 	chunkSize := opts.ChunkChars
 	if chunkSize <= 0 {
 		chunkSize = 3000
 	}
 
-	// Chunk the text
 	chunks := ChunkText(doc.RawText, chunkSize)
 
 	var allItems []ControlItem
 	ctx := context.Background()
 
 	for _, chunk := range chunks {
-		messages := []Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: chunk},
+		var messages []Message
+
+		if registry != nil {
+			resolved, err := registry.Render(ctx, "structured-extract",
+				map[string]string{"document_chunk": chunk})
+			if err == nil {
+				messages = promptToOscalMessages(resolved.Messages)
+			}
+		}
+
+		if len(messages) == 0 {
+			messages = []Message{
+				{Role: "system", Content: "You are a compliance requirements extractor. Given a text, extract individual requirements as a JSON array. Each element should have \"id\" (identifier), \"title\" (short title), and \"text\" (full requirement text). Return ONLY valid JSON."},
+				{Role: "user", Content: chunk},
+			}
 		}
 
 		response, err := completer.Complete(ctx, messages)
 		if err != nil {
-			continue // Skip failed chunks
+			continue
 		}
 
-		// Parse JSON response
 		var extracted []struct {
 			ID    string `json:"id"`
 			Title string `json:"title"`
@@ -111,14 +117,13 @@ func TierLLMExtract(doc StructuredDoc, opts StructureOptions, completer Complete
 		}
 
 		if err := json.Unmarshal([]byte(response), &extracted); err != nil {
-			continue // Skip invalid JSON
+			continue
 		}
 
 		if len(extracted) > maxItemsPerChunk {
 			extracted = extracted[:maxItemsPerChunk]
 		}
 
-		// Convert to ControlItems
 		for _, item := range extracted {
 			allItems = append(allItems, ControlItem{
 				ID:    item.ID,
@@ -134,6 +139,15 @@ func TierLLMExtract(doc StructuredDoc, opts StructureOptions, completer Complete
 	}
 
 	return allItems, true
+}
+
+// promptToOscalMessages converts prompt.Message to oscal.Message.
+func promptToOscalMessages(msgs []prompt.Message) []Message {
+	result := make([]Message, len(msgs))
+	for i, m := range msgs {
+		result[i] = Message{Role: m.Role, Content: m.Content}
+	}
+	return result
 }
 
 // ChunkText splits text into chunks of approximately maxChars characters.

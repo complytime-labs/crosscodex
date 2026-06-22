@@ -3,6 +3,7 @@ module github.com/complytime-labs/crosscodex
 go 1.26.4
 
 require (
+	dario.cat/mergo v1.0.2
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.25
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.24

@@ -41,8 +41,10 @@ type CompletionRequest struct {
 	Temperature *float64      `json:"temperature,omitempty"` // Sampling temperature (0.0-2.0); nil = provider default
 	TopP        *float64      `json:"top_p,omitempty"`       // Nucleus sampling; nil = provider default
 	Stop        []string      `json:"stop,omitempty"`        // Stop sequences
-	TenantID    string        `json:"-"`                     // Tenant context (not serialized to API)
-	JobID       string        `json:"-"`                     // Job identifier for audit correlation (not serialized)
+	TenantID      string        `json:"-"`                     // Tenant context (not serialized to API)
+	JobID         string        `json:"-"`                     // Job identifier for audit correlation (not serialized)
+	PromptName    string        `json:"-"`                     // Prompt template name for audit trail (not serialized)
+	PromptVersion string        `json:"-"`                     // Prompt template version for audit trail (not serialized)
 }
 
 // EmbeddingRequest represents a request for text embeddings.
@@ -118,17 +120,19 @@ func (e *APIError) Error() string {
 
 // AuditEvent captures a completed LLM operation for audit trail emission.
 type AuditEvent struct {
-	Timestamp    time.Time `json:"timestamp"`
-	TenantID     string    `json:"tenant_id"`
-	JobID        string    `json:"job_id"`
-	Model        string    `json:"model"`
-	Operation    string    `json:"operation"`   // "complete" or "embed"
-	PromptHash   string    `json:"prompt_hash"` // SHA-256 of serialized prompt
-	TokensUsed   int       `json:"tokens_used"`
-	DurationMS   int64     `json:"duration_ms"`
-	Success      bool      `json:"success"`
-	ErrorMessage string    `json:"error_message,omitempty"`
-	TraceID      string    `json:"trace_id"`
+	Timestamp     time.Time `json:"timestamp"`
+	TenantID      string    `json:"tenant_id"`
+	JobID         string    `json:"job_id"`
+	Model         string    `json:"model"`
+	Operation     string    `json:"operation"`   // "complete" or "embed"
+	PromptHash    string    `json:"prompt_hash"` // SHA-256 of serialized prompt
+	TokensUsed    int       `json:"tokens_used"`
+	DurationMS    int64     `json:"duration_ms"`
+	Success       bool      `json:"success"`
+	ErrorMessage  string    `json:"error_message,omitempty"`
+	TraceID       string    `json:"trace_id"`
+	PromptName    string    `json:"prompt_name,omitempty"`
+	PromptVersion string    `json:"prompt_version,omitempty"`
 }
 
 // ContentHash computes the SHA-256 hash of the serialized request for provenance.

@@ -822,6 +822,88 @@ var _ = Describe("Telemetry Integration", func() {
 		Expect(tokensAttr.AsInt64()).To(Equal(int64(15)))
 	})
 
+	It("includes prompt name and version as span attributes when set", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{
+				"id": "chatcmpl-pspan",
+				"model": "gpt-4",
+				"choices": [{"index": 0, "message": {"role": "assistant", "content": "span-prov"}, "finish_reason": "stop"}],
+				"usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}
+			}`)
+		}))
+
+		tp, err := telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		ctx := testspecs.SetupTenantContext("test-tenant")
+		_, err = client.Complete(ctx, &llmclient.CompletionRequest{
+			Model:         "gpt-4",
+			Messages:      []llmclient.ChatMessage{{Role: "user", Content: "prompt span test"}},
+			TenantID:      "test-tenant",
+			PromptName:    "structured-extract",
+			PromptVersion: "2.0.0",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		spans := tp.GetSpans()
+		span := telemetrytest.FindSpan(spans, "llmclient.Complete")
+		Expect(span).NotTo(BeNil())
+
+		nameAttr, ok := telemetrytest.SpanAttribute(span, "llm.prompt.name")
+		Expect(ok).To(BeTrue())
+		Expect(nameAttr.AsString()).To(Equal("structured-extract"))
+
+		versionAttr, ok := telemetrytest.SpanAttribute(span, "llm.prompt.version")
+		Expect(ok).To(BeTrue())
+		Expect(versionAttr.AsString()).To(Equal("2.0.0"))
+	})
+
+	It("omits prompt span attributes when not set on request", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{
+				"id": "chatcmpl-nospan",
+				"model": "gpt-4",
+				"choices": [{"index": 0, "message": {"role": "assistant", "content": "no span prov"}, "finish_reason": "stop"}],
+				"usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+			}`)
+		}))
+
+		tp, err := telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		ctx := testspecs.SetupTenantContext("test-tenant")
+		_, err = client.Complete(ctx, &llmclient.CompletionRequest{
+			Model:    "gpt-4",
+			Messages: []llmclient.ChatMessage{{Role: "user", Content: "no prompt metadata"}},
+			TenantID: "test-tenant",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		spans := tp.GetSpans()
+		span := telemetrytest.FindSpan(spans, "llmclient.Complete")
+		Expect(span).NotTo(BeNil())
+
+		_, hasName := telemetrytest.SpanAttribute(span, "llm.prompt.name")
+		Expect(hasName).To(BeFalse())
+
+		_, hasVersion := telemetrytest.SpanAttribute(span, "llm.prompt.version")
+		Expect(hasVersion).To(BeFalse())
+	})
+
 	It("creates spans with correct attributes on Embed", func() {
 		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -1038,6 +1120,104 @@ var _ = Describe("Audit Emission", func() {
 		Expect(evt.Operation).To(Equal("embed"))
 		Expect(evt.Success).To(BeTrue())
 		Expect(evt.TokensUsed).To(Equal(3))
+	})
+
+	It("includes prompt name and version in audit event when set on request", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{
+				"id": "chatcmpl-prov",
+				"model": "gpt-4",
+				"choices": [{"index": 0, "message": {"role": "assistant", "content": "provenance"}, "finish_reason": "stop"}],
+				"usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}
+			}`)
+		}))
+
+		emitter := &mockAuditEmitter{}
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(emitter))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		ctx := testspecs.SetupTenantContext("test-tenant")
+		_, err = client.Complete(ctx, &llmclient.CompletionRequest{
+			Model:         "gpt-4",
+			Messages:      []llmclient.ChatMessage{{Role: "user", Content: "provenance test"}},
+			TenantID:      "test-tenant",
+			PromptName:    "section-detect",
+			PromptVersion: "1.0.0",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying prompt metadata in audit event")
+		Expect(emitter.events).To(HaveLen(1))
+		evt := emitter.events[0]
+		Expect(evt.PromptName).To(Equal("section-detect"))
+		Expect(evt.PromptVersion).To(Equal("1.0.0"))
+		Expect(evt.PromptHash).NotTo(BeEmpty())
+	})
+
+	It("leaves prompt fields empty in audit event when not set on request", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{
+				"id": "chatcmpl-noprov",
+				"model": "gpt-4",
+				"choices": [{"index": 0, "message": {"role": "assistant", "content": "no prov"}, "finish_reason": "stop"}],
+				"usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+			}`)
+		}))
+
+		emitter := &mockAuditEmitter{}
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(emitter))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		ctx := testspecs.SetupTenantContext("test-tenant")
+		_, err = client.Complete(ctx, &llmclient.CompletionRequest{
+			Model:    "gpt-4",
+			Messages: []llmclient.ChatMessage{{Role: "user", Content: "no prompt metadata"}},
+			TenantID: "test-tenant",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying prompt fields are empty")
+		Expect(emitter.events).To(HaveLen(1))
+		evt := emitter.events[0]
+		Expect(evt.PromptName).To(BeEmpty())
+		Expect(evt.PromptVersion).To(BeEmpty())
+	})
+
+	It("produces empty prompt fields in audit event for embedding operations", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{
+				"data": [{"index": 0, "embedding": [0.1, 0.2]}],
+				"model": "text-embedding-ada-002",
+				"usage": {"prompt_tokens": 3, "total_tokens": 3}
+			}`)
+		}))
+
+		emitter := &mockAuditEmitter{}
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(emitter))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		ctx := testspecs.SetupTenantContext("test-tenant")
+		_, err = client.Embed(ctx, &llmclient.EmbeddingRequest{
+			Model:    "text-embedding-ada-002",
+			Input:    []string{"embed no prompt"},
+			TenantID: "test-tenant",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying embed audit has empty prompt fields")
+		Expect(emitter.events).To(HaveLen(1))
+		evt := emitter.events[0]
+		Expect(evt.PromptName).To(BeEmpty())
+		Expect(evt.PromptVersion).To(BeEmpty())
 	})
 
 	It("does not fail the primary operation when audit emission fails", func() {
