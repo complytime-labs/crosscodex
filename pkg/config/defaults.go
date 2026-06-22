@@ -92,6 +92,13 @@ attestation:
   public_key_path: ""
   expiry_duration: 8760h
   include_byproducts: true
+prompt:
+  capture_content: true
+  allow_commands: false
+  layer_paths: []
+  layers:
+    enabled: true
+    order: []
 `
 
 func defaultNode() (*yaml.Node, error) {

@@ -31,6 +31,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := validateAttestation(&cfg.Attestation, tracker); err != nil {
 		return err
 	}
+	if err := validatePrompt(&cfg.Prompt, tracker); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -144,5 +147,66 @@ func validateCatalog(cat *CatalogConfig, tracker *sourceTracker) error {
 				s.SectionPattern, formatSource(tracker, "catalog.structuring.section_pattern"), ErrInvalidConfig)
 		}
 	}
+	return nil
+}
+
+var validMergeModes = map[string]bool{
+	"":        true, // empty defaults to "merge"
+	"merge":   true,
+	"replace": true,
+}
+
+var validSliceStrategies = map[string]bool{
+	"":          true, // empty defaults to "replace"
+	"replace":   true,
+	"append":    true,
+	"deep_copy": true,
+}
+
+var validLayerIDs = map[string]bool{
+	"embedded": true,
+	"user":     true,
+	"project":  true,
+	"cli":      true,
+}
+
+func validatePrompt(prompt *PromptConfig, tracker *sourceTracker) error {
+	seen := make(map[string]bool)
+	for i, entry := range prompt.Layers.Order {
+		// Validate layer ID is a known built-in or a layer_paths entry
+		if !validLayerIDs[entry.ID] {
+			found := false
+			for _, lp := range prompt.LayerPaths {
+				if lp == entry.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("prompt.layers.order[%d].id %q%s must be one of embedded, user, project, cli or a path from layer_paths: %w",
+					i, entry.ID, formatSource(tracker, "prompt.layers.order"), ErrInvalidConfig)
+			}
+		}
+
+		// Check for duplicates
+		if seen[entry.ID] {
+			return fmt.Errorf("prompt.layers.order[%d].id %q%s is a duplicate layer ID: %w",
+				i, entry.ID, formatSource(tracker, "prompt.layers.order"), ErrInvalidConfig)
+		}
+		seen[entry.ID] = true
+
+		// Validate merge mode
+		if !validMergeModes[entry.Merge] {
+			return fmt.Errorf("prompt.layers.order[%d].merge %q%s must be one of merge, replace: %w",
+				i, entry.Merge, formatSource(tracker, "prompt.layers.order"), ErrInvalidConfig)
+		}
+
+		// Validate slice strategy
+		if !validSliceStrategies[entry.SliceStrategy] {
+			return fmt.Errorf("prompt.layers.order[%d].slice_strategy %q%s must be one of replace, append, deep_copy: %w",
+				i, entry.SliceStrategy, formatSource(tracker, "prompt.layers.order"), ErrInvalidConfig)
+		}
+	}
+
 	return nil
 }

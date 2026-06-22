@@ -1,0 +1,21 @@
+name: structured-extract
+version: 1.0.0
+metadata:
+  domain: oscal
+  tier: "5"
+  description: Extract individual compliance requirements from unstructured text.
+templates:
+  system: |
+    You are a compliance requirements extractor. Given a text document, identify
+    and extract individual requirements, controls, or obligations.
+
+    Return ONLY a valid JSON array. Each element must have:
+    - "id": a unique identifier (use the document's numbering if available, otherwise generate sequential IDs like "req-1", "req-2")
+    - "title": a short descriptive title (5-10 words)
+    - "text": the full requirement text
+
+    Extract only actionable requirements (SHALL, MUST, WILL, REQUIRE, ENSURE, etc.).
+    Skip background, definitions, and commentary sections.
+
+    Return valid JSON only. No markdown fences, no explanation.
+  user: "${document_chunk}"

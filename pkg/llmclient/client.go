@@ -105,6 +105,12 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 	if req.JobID != "" {
 		span.SetAttributes(attribute.String("llm.job_id", req.JobID))
 	}
+	if req.PromptName != "" {
+		span.SetAttributes(attribute.String("llm.prompt.name", req.PromptName))
+	}
+	if req.PromptVersion != "" {
+		span.SetAttributes(attribute.String("llm.prompt.version", req.PromptVersion))
+	}
 
 	promptHash := ContentHash(req.Messages)
 
@@ -123,7 +129,8 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 		c.recordErrorMetric(ctx)
 		c.recordCompletionMetrics(ctx, start, false, req.Model, req.TenantID)
 		c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
-			promptHash, 0, time.Since(start), false, err.Error())
+			promptHash, req.PromptName, req.PromptVersion,
+			0, time.Since(start), false, err.Error())
 		return nil, err
 	}
 
@@ -135,7 +142,8 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 	span.SetStatus(codes.Ok, "")
 	c.recordCompletionMetrics(ctx, start, true, req.Model, req.TenantID)
 	c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
-		promptHash, resp.Usage.TotalTokens, time.Since(start), true, "")
+		promptHash, req.PromptName, req.PromptVersion,
+		resp.Usage.TotalTokens, time.Since(start), true, "")
 
 	return &resp, nil
 }
@@ -177,7 +185,8 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 		c.recordErrorMetric(ctx)
 		c.recordEmbedMetrics(ctx, start, false, req.Model, req.TenantID)
 		c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
-			promptHash, 0, time.Since(start), false, err.Error())
+			promptHash, "", "",
+			0, time.Since(start), false, err.Error())
 		return nil, err
 	}
 
@@ -188,7 +197,8 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 	span.SetStatus(codes.Ok, "")
 	c.recordEmbedMetrics(ctx, start, true, req.Model, req.TenantID)
 	c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
-		promptHash, resp.Usage.TotalTokens, time.Since(start), true, "")
+		promptHash, "", "",
+		resp.Usage.TotalTokens, time.Since(start), true, "")
 
 	return &resp, nil
 }
@@ -445,22 +455,24 @@ func (c *client) recordErrorMetric(ctx context.Context) {
 
 // emitAudit sends an audit event via the configured emitter. Best-effort:
 // logs a warning on failure but never returns an error to the caller.
-func (c *client) emitAudit(ctx context.Context, tenantID, jobID, model, operation, promptHash string, tokensUsed int, duration time.Duration, success bool, errMsg string) {
+func (c *client) emitAudit(ctx context.Context, tenantID, jobID, model, operation, promptHash, promptName, promptVersion string, tokensUsed int, duration time.Duration, success bool, errMsg string) {
 	if c.emitter == nil {
 		return
 	}
 	event := &AuditEvent{
-		Timestamp:    time.Now(),
-		TenantID:     tenantID,
-		JobID:        jobID,
-		Model:        model,
-		Operation:    operation,
-		PromptHash:   promptHash,
-		TokensUsed:   tokensUsed,
-		DurationMS:   duration.Milliseconds(),
-		Success:      success,
-		ErrorMessage: errMsg,
-		TraceID:      telemetry.TraceIDFromContext(ctx),
+		Timestamp:     time.Now(),
+		TenantID:      tenantID,
+		JobID:         jobID,
+		Model:         model,
+		Operation:     operation,
+		PromptHash:    promptHash,
+		TokensUsed:    tokensUsed,
+		DurationMS:    duration.Milliseconds(),
+		Success:       success,
+		ErrorMessage:  errMsg,
+		TraceID:       telemetry.TraceIDFromContext(ctx),
+		PromptName:    promptName,
+		PromptVersion: promptVersion,
 	}
 	if err := c.emitter.EmitLLMAudit(ctx, event); err != nil {
 		slog.WarnContext(ctx, "failed to emit LLM audit event",

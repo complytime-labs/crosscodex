@@ -17,6 +17,7 @@ type Config struct {
 	Observability ObservabilityConfig `yaml:"observability"`
 	Catalog       CatalogConfig       `yaml:"catalog"`
 	Attestation   AttestationConfig   `yaml:"attestation"`
+	Prompt        PromptConfig        `yaml:"prompt"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -262,6 +263,59 @@ func (a *AttestationConfig) ForTenant(tenantID string) AttestationTenantConfig {
 	return tc
 }
 
+// PromptConfig configures prompt template resolution and rendering.
+type PromptConfig struct {
+	CaptureContent  bool                      `yaml:"capture_content"`
+	AllowCommands   bool                      `yaml:"allow_commands"`
+	LayerPaths      []string                  `yaml:"layer_paths"`
+	Layers          PromptLayerConfig         `yaml:"layers"`
+	TenantOverrides map[string]PromptOverride `yaml:"tenant_overrides"`
+}
+
+// PromptLayerConfig controls the prompt layer stack.
+type PromptLayerConfig struct {
+	Enabled bool               `yaml:"enabled"`
+	Order   []PromptLayerEntry `yaml:"order"`
+}
+
+// PromptLayerEntry configures a single layer in the prompt resolution stack.
+type PromptLayerEntry struct {
+	ID            string `yaml:"id"`
+	Merge         string `yaml:"merge"`
+	SliceStrategy string `yaml:"slice_strategy"`
+}
+
+// PromptOverride allows per-tenant prompt settings.
+// Nil pointer fields inherit the global PromptConfig value.
+type PromptOverride struct {
+	CaptureContent *bool `yaml:"capture_content"`
+	AllowCommands  *bool `yaml:"allow_commands"`
+}
+
+// PromptTenantConfig holds the fully resolved prompt settings for a tenant.
+type PromptTenantConfig struct {
+	CaptureContent bool
+	AllowCommands  bool
+}
+
+// ForTenant returns the effective prompt settings for a tenant.
+// Fields set in TenantOverrides take precedence; nil fields inherit global values.
+func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
+	tc := PromptTenantConfig{
+		CaptureContent: p.CaptureContent,
+		AllowCommands:  p.AllowCommands,
+	}
+	if override, ok := p.TenantOverrides[tenantID]; ok {
+		if override.CaptureContent != nil {
+			tc.CaptureContent = *override.CaptureContent
+		}
+		if override.AllowCommands != nil {
+			tc.AllowCommands = *override.AllowCommands
+		}
+	}
+	return tc
+}
+
 // DaemonConfig is the derived view for crosscodexd.
 type DaemonConfig struct {
 	GRPCAddr      string
@@ -278,6 +332,7 @@ type DaemonConfig struct {
 	Observability ObservabilityConfig
 	Catalog       CatalogConfig
 	Attestation   AttestationConfig
+	Prompt        PromptConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -288,6 +343,7 @@ type ClientConfig struct {
 	LLM      LLMConfig
 	TLS      TLSConfig
 	Logging  LoggingConfig
+	Prompt   PromptConfig
 }
 
 // ServiceConfig returns the daemon-oriented view of this configuration.
@@ -307,6 +363,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Observability: c.Observability,
 		Catalog:       c.Catalog,
 		Attestation:   c.Attestation,
+		Prompt:        c.Prompt,
 	}
 }
 
@@ -319,5 +376,6 @@ func (c *Config) CLIConfig() ClientConfig {
 		LLM:      c.LLM,
 		TLS:      c.TLS,
 		Logging:  c.Logging,
+		Prompt:   c.Prompt,
 	}
 }

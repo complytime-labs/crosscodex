@@ -4,13 +4,14 @@ import (
 	"context"
 	"strings"
 
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // defaultStructurer orchestrates the 6-tier cascade with keyword filtering and decomposition.
 type defaultStructurer struct {
 	completer Completer
-	prompts   PromptLoader
+	registry  prompt.Registry
 	tracer    trace.Tracer
 }
 
@@ -26,10 +27,10 @@ func WithStructurerTracer(t trace.Tracer) StructurerOption {
 
 // NewStructurer creates a new Structurer.
 // Pass nil completer to skip LLM tiers (TierLLMDetect and TierLLMExtract).
-func NewStructurer(completer Completer, prompts PromptLoader, opts ...StructurerOption) Structurer {
+func NewStructurer(completer Completer, registry prompt.Registry, opts ...StructurerOption) Structurer {
 	s := &defaultStructurer{
 		completer: completer,
-		prompts:   prompts,
+		registry:  registry,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -87,13 +88,13 @@ func (s *defaultStructurer) Structure(ctx context.Context, doc StructuredDoc, op
 	}
 
 	// Tier 4: LLM Detect
-	items, found = TierLLMDetect(doc, opts, s.completer, s.prompts)
+	items, found = TierLLMDetect(doc, opts, s.completer, s.registry)
 	if found {
 		return s.postProcess(items, opts), nil
 	}
 
 	// Tier 5: LLM Extract
-	items, found = TierLLMExtract(doc, opts, s.completer, s.prompts)
+	items, found = TierLLMExtract(doc, opts, s.completer, s.registry)
 	if found {
 		return s.postProcess(items, opts), nil
 	}
