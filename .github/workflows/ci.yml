@@ -62,7 +62,7 @@ jobs:
           generate-test-certs: "true"
 
       - name: Restore Taskfile checksum cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .task/
           key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
@@ -71,7 +71,7 @@ jobs:
 
       - name: Restore DB image cache
         id: db-image-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /tmp/crosscodex-test-db.tar
           key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
@@ -82,7 +82,7 @@ jobs:
 
       - name: Restore Ollama image cache
         id: ollama-image-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /tmp/crosscodex-test-ollama.tar
           key: ollama-image-${{ runner.os }}-${{ hashFiles('test/ollama/Containerfile') }}
@@ -135,7 +135,7 @@ jobs:
           generate-test-certs: "true"
 
       - name: Restore Taskfile checksum cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .task/
           key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
@@ -144,7 +144,7 @@ jobs:
 
       - name: Restore DB image cache
         id: db-image-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /tmp/crosscodex-test-db.tar
           key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
@@ -187,7 +187,7 @@ jobs:
           generate-test-certs: "true"
 
       - name: Restore Taskfile checksum cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .task/
           key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
@@ -196,7 +196,7 @@ jobs:
 
       - name: Restore DB image cache
         id: db-image-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: /tmp/crosscodex-test-db.tar
           key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
