@@ -39,6 +39,18 @@ func main() {
 
 	var dbPool db.TenantConnection
 	if *dbDSN != "" {
+		migrator, err := db.NewMigrator(*dbDSN)
+		if err != nil {
+			log.Fatalf("migrator: %v", err)
+		}
+		if err := migrator.Up(context.Background()); err != nil {
+			log.Fatalf("migrate: %v", err)
+		}
+		if err := migrator.Close(); err != nil {
+			log.Printf("migrator close: %v", err)
+		}
+		log.Println("migrations applied")
+
 		pool, err := db.NewPool(db.PoolConfig{
 			DSN:          *dbDSN,
 			MaxOpenConns: 5,

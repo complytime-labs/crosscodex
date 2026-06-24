@@ -9,7 +9,7 @@
 
 services:
   db:
-    profiles: [db, all]
+    profiles: [db, grpc, all]
     image: crosscodex-test-db:latest
     container_name: crosscodex-test-db
     ports:
@@ -52,7 +52,7 @@ services:
       retries: 15
 
   nats:
-    profiles: [nats, all]
+    profiles: [nats, grpc, all]
     image: docker.io/nats:2.11-alpine
     container_name: crosscodex-test-nats
     ports:

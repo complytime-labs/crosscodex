@@ -36,7 +36,7 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       - |
         failed=0
-        for pkg in $(go list ./pkg/...); do
+        for pkg in $(go list ./pkg/... ./internal/...); do
           fuzz_funcs=$(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
           for func in $fuzz_funcs; do
             echo "==> Fuzzing $func in $pkg ({{.FUZZ_TIME}})"

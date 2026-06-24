@@ -201,6 +201,13 @@ analysis:
     max_text_length: 2000
     temperature: 0.0
     max_tokens: 20
+  embedding:
+    enabled: true
+    models: ["snowflake-arctic-embed2"]  # Embedding model names
+    max_chars: 1500                      # Max runes before truncation
+    batch_size: 50                       # Controls per batch call
+  relationship:
+    top_k: 20                            # Most-similar pairs to retain
 ```
 
 ## Development

@@ -232,5 +232,22 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		return fmt.Errorf("analysis.classification.temperature %g%s must not exceed 2.0: %w",
 			c.Temperature, formatSource(tracker, "analysis.classification.temperature"), ErrInvalidConfig)
 	}
+	e := &a.Embedding
+	if e.MaxChars < 0 {
+		return fmt.Errorf("analysis.embedding.max_chars %d%s must be non-negative: %w",
+			e.MaxChars, formatSource(tracker, "analysis.embedding.max_chars"), ErrInvalidConfig)
+	}
+	if e.BatchSize <= 0 {
+		return fmt.Errorf("analysis.embedding.batch_size %d%s must be positive: %w",
+			e.BatchSize, formatSource(tracker, "analysis.embedding.batch_size"), ErrInvalidConfig)
+	}
+	if e.Enabled && len(e.Models) == 0 {
+		return fmt.Errorf("analysis.embedding.models%s must not be empty when enabled: %w",
+			formatSource(tracker, "analysis.embedding.models"), ErrInvalidConfig)
+	}
+	if a.Relationship.TopK <= 0 {
+		return fmt.Errorf("analysis.relationship.top_k %d%s must be positive: %w",
+			a.Relationship.TopK, formatSource(tracker, "analysis.relationship.top_k"), ErrInvalidConfig)
+	}
 	return nil
 }
