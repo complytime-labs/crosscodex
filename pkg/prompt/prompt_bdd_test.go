@@ -220,15 +220,17 @@ var _ = Describe("AssembleMessages", func() {
 })
 
 var _ = Describe("Embedded Defaults", func() {
-	It("loads all three default prompts", func() {
+	It("loads all four default prompts", func() {
 		specs, err := prompt.ExportLoadEmbeddedDefaults()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(specs).To(HaveKey("section-detect"))
 		Expect(specs).To(HaveKey("structured-extract"))
 		Expect(specs).To(HaveKey("enrichment"))
+		Expect(specs).To(HaveKey("classify"))
 		Expect(specs["section-detect"].Version).To(Equal("1.0.0"))
 		Expect(specs["section-detect"].Templates.System).NotTo(BeEmpty())
 		Expect(specs["section-detect"].Templates.User).To(Equal("${document_chunk}"))
+		Expect(specs["classify"].Version).To(Equal("1.0.0"))
 	})
 })
 
@@ -331,6 +333,7 @@ var _ = Describe("Registry", func() {
 			Expect(names).To(ContainElement("section-detect"))
 			Expect(names).To(ContainElement("structured-extract"))
 			Expect(names).To(ContainElement("enrichment"))
+			Expect(names).To(ContainElement("classify"))
 		})
 
 		It("resolves an embedded prompt", func() {
@@ -1251,10 +1254,10 @@ var _ = Describe("SubstitutePlaceholders (extended)", func() {
 })
 
 var _ = Describe("Embedded Defaults (extended)", func() {
-	It("loads exactly three defaults", func() {
+	It("loads exactly four defaults", func() {
 		specs, err := prompt.ExportLoadEmbeddedDefaults()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(specs).To(HaveLen(3))
+		Expect(specs).To(HaveLen(4))
 	})
 })
 

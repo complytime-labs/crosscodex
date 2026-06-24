@@ -31,6 +31,7 @@ tasks:
     desc: Run fuzz tests across all packages
     vars:
       FUZZ_TIME: '{{.FUZZ_TIME | default "10s"}}'
+      FUZZ_TIMEOUT: '{{.FUZZ_TIMEOUT | default "2m"}}'
     cmds:
       - mkdir -p {{.TEST_DIR}}
       - |
@@ -39,7 +40,7 @@ tasks:
           fuzz_funcs=$(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
           for func in $fuzz_funcs; do
             echo "==> Fuzzing $func in $pkg ({{.FUZZ_TIME}})"
-            if ! go test "$pkg" -run '^$' -fuzz "^${func}$" -fuzztime={{.FUZZ_TIME}}; then
+            if ! go test "$pkg" -run '^$' -fuzz "^${func}$" -fuzztime={{.FUZZ_TIME}} -timeout={{.FUZZ_TIMEOUT}}; then
               failed=1
             fi
           done

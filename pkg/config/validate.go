@@ -34,6 +34,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := validatePrompt(&cfg.Prompt, tracker); err != nil {
 		return err
 	}
+	if err := validateAnalysis(&cfg.Analysis, tracker); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -208,5 +211,26 @@ func validatePrompt(prompt *PromptConfig, tracker *sourceTracker) error {
 		}
 	}
 
+	return nil
+}
+
+func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
+	c := &a.Classification
+	if c.MaxTextLength <= 0 {
+		return fmt.Errorf("analysis.classification.max_text_length %d%s must be positive: %w",
+			c.MaxTextLength, formatSource(tracker, "analysis.classification.max_text_length"), ErrInvalidConfig)
+	}
+	if c.MaxTokens <= 0 {
+		return fmt.Errorf("analysis.classification.max_tokens %d%s must be positive: %w",
+			c.MaxTokens, formatSource(tracker, "analysis.classification.max_tokens"), ErrInvalidConfig)
+	}
+	if c.Temperature < 0 {
+		return fmt.Errorf("analysis.classification.temperature %g%s must be non-negative: %w",
+			c.Temperature, formatSource(tracker, "analysis.classification.temperature"), ErrInvalidConfig)
+	}
+	if c.Temperature > 2.0 {
+		return fmt.Errorf("analysis.classification.temperature %g%s must not exceed 2.0: %w",
+			c.Temperature, formatSource(tracker, "analysis.classification.temperature"), ErrInvalidConfig)
+	}
 	return nil
 }

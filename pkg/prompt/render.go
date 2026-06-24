@@ -9,11 +9,11 @@ import (
 // placeholderRe matches ${name} where name is [a-zA-Z_][a-zA-Z0-9_]*.
 var placeholderRe = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
-// substitutePlaceholders replaces all ${name} patterns in template with
+// SubstitutePlaceholders replaces all ${name} patterns in template with
 // values from vars. Returns ErrMissingPlaceholder if any placeholder has
 // no corresponding entry in vars. Extra vars are silently ignored.
 // No recursive expansion -- if a var value contains ${x}, it stays literal.
-func substitutePlaceholders(template string, vars map[string]string) (string, error) {
+func SubstitutePlaceholders(template string, vars map[string]string) (string, error) {
 	var missing []string
 
 	// First pass: find all placeholders and check for missing vars.
