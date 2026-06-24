@@ -276,12 +276,12 @@ func (r *registry) Render(ctx context.Context, name string, vars map[string]stri
 		return nil, err
 	}
 
-	system, err := substitutePlaceholders(spec.Templates.System, vars)
+	system, err := SubstitutePlaceholders(spec.Templates.System, vars)
 	if err != nil {
 		return nil, fmt.Errorf("system template for %q: %w", name, err)
 	}
 
-	user, err := substitutePlaceholders(spec.Templates.User, vars)
+	user, err := SubstitutePlaceholders(spec.Templates.User, vars)
 	if err != nil {
 		return nil, fmt.Errorf("user template for %q: %w", name, err)
 	}

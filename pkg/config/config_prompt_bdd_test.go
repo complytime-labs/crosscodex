@@ -39,6 +39,7 @@ var _ = Describe("PromptConfig", func() {
 				Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+				Analysis:    config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
 			}
 		}
 

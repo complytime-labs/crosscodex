@@ -35,12 +35,12 @@ type ChatMessage struct {
 
 // CompletionRequest represents a chat completion request.
 type CompletionRequest struct {
-	Model       string        `json:"model"`                 // Model identifier
-	Messages    []ChatMessage `json:"messages"`              // Conversation messages
-	MaxTokens   int           `json:"max_tokens,omitempty"`  // Maximum tokens to generate
-	Temperature *float64      `json:"temperature,omitempty"` // Sampling temperature (0.0-2.0); nil = provider default
-	TopP        *float64      `json:"top_p,omitempty"`       // Nucleus sampling; nil = provider default
-	Stop        []string      `json:"stop,omitempty"`        // Stop sequences
+	Model         string        `json:"model"`                 // Model identifier
+	Messages      []ChatMessage `json:"messages"`              // Conversation messages
+	MaxTokens     int           `json:"max_tokens,omitempty"`  // Maximum tokens to generate
+	Temperature   *float64      `json:"temperature,omitempty"` // Sampling temperature (0.0-2.0); nil = provider default
+	TopP          *float64      `json:"top_p,omitempty"`       // Nucleus sampling; nil = provider default
+	Stop          []string      `json:"stop,omitempty"`        // Stop sequences
 	TenantID      string        `json:"-"`                     // Tenant context (not serialized to API)
 	JobID         string        `json:"-"`                     // Job identifier for audit correlation (not serialized)
 	PromptName    string        `json:"-"`                     // Prompt template name for audit trail (not serialized)

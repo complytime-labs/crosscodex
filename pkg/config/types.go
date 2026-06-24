@@ -18,6 +18,7 @@ type Config struct {
 	Catalog       CatalogConfig       `yaml:"catalog"`
 	Attestation   AttestationConfig   `yaml:"attestation"`
 	Prompt        PromptConfig        `yaml:"prompt"`
+	Analysis      AnalysisConfig      `yaml:"analysis"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -316,6 +317,22 @@ func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
 	return tc
 }
 
+// AnalysisConfig configures the analysis service.
+type AnalysisConfig struct {
+	Classification ClassificationConfig `yaml:"classification"`
+}
+
+// ClassificationConfig configures the classification analyzer.
+type ClassificationConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Model is the LLM model to use for classification. Empty string inherits
+	// from LLMConfig.DefaultModel at the service layer.
+	Model         string  `yaml:"model"`
+	MaxTextLength int     `yaml:"max_text_length"`
+	Temperature   float64 `yaml:"temperature"`
+	MaxTokens     int     `yaml:"max_tokens"`
+}
+
 // DaemonConfig is the derived view for crosscodexd.
 type DaemonConfig struct {
 	GRPCAddr      string
@@ -333,6 +350,7 @@ type DaemonConfig struct {
 	Catalog       CatalogConfig
 	Attestation   AttestationConfig
 	Prompt        PromptConfig
+	Analysis      AnalysisConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -364,6 +382,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Catalog:       c.Catalog,
 		Attestation:   c.Attestation,
 		Prompt:        c.Prompt,
+		Analysis:      c.Analysis,
 	}
 }
 

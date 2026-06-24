@@ -192,6 +192,15 @@ auth:
         san_email: "*@partner.com"
       tenant: partner-org
       roles: [reader]
+
+# Analysis
+analysis:
+  classification:
+    enabled: true
+    model: ""                     # Inherits from llm.default_model
+    max_text_length: 2000
+    temperature: 0.0
+    max_tokens: 20
 ```
 
 ## Development

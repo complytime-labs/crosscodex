@@ -1311,6 +1311,7 @@ logging:
 				},
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+				Analysis:    config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1327,6 +1328,7 @@ logging:
 				Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+				Analysis:    config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1339,6 +1341,7 @@ logging:
 					Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 					Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 					Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+					Analysis:    config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
 				}
 				modify(cfg)
 
@@ -1719,6 +1722,7 @@ logging:
 					ExpiryDuration:    8760 * time.Hour,
 					IncludeByProducts: true,
 				},
+				Analysis: config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
 			}
 		}
 
@@ -1927,6 +1931,129 @@ logging:
 			daemon := cfg.ServiceConfig()
 			Expect(daemon.Attestation.Enabled).To(BeTrue())
 			Expect(daemon.Attestation.ExpiryDuration).To(Equal(8760 * time.Hour))
+		})
+	})
+
+	Describe("AnalysisConfig validation", func() {
+		// analysisBase returns a Config with all sections valid so tests
+		// can mutate just the analysis fields and reach analysis validation.
+		analysisBase := func() *config.Config {
+			return &config.Config{
+				TLS:     config.TLSConfig{Mode: "off"},
+				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+				Logging: config.LoggingConfig{Level: "info", Format: "text"},
+				Attestation: config.AttestationConfig{
+					Enabled:        true,
+					ExpiryDuration: 8760 * time.Hour,
+				},
+				Analysis: config.AnalysisConfig{
+					Classification: config.ClassificationConfig{
+						Enabled:       true,
+						MaxTextLength: 2000,
+						Temperature:   0.0,
+						MaxTokens:     20,
+					},
+				},
+			}
+		}
+
+		It("has correct default values from compiled defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.Analysis.Classification.Enabled).To(BeTrue())
+			Expect(cfg.Analysis.Classification.Model).To(BeEmpty())
+			Expect(cfg.Analysis.Classification.MaxTextLength).To(Equal(2000))
+			Expect(cfg.Analysis.Classification.Temperature).To(Equal(0.0))
+			Expect(cfg.Analysis.Classification.MaxTokens).To(Equal(20))
+		})
+
+		It("includes analysis in DaemonConfig", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			daemon := cfg.ServiceConfig()
+			Expect(daemon.Analysis.Classification.Enabled).To(BeTrue())
+			Expect(daemon.Analysis.Classification.MaxTextLength).To(Equal(2000))
+			Expect(daemon.Analysis.Classification.MaxTokens).To(Equal(20))
+		})
+
+		It("rejects max_text_length of zero", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Classification.MaxTextLength = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.classification.max_text_length"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative max_text_length", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Classification.MaxTextLength = -1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.classification.max_text_length"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects max_tokens of zero", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Classification.MaxTokens = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.classification.max_tokens"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative temperature", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Classification.Temperature = -0.1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.classification.temperature"))
+			Expect(err.Error()).To(ContainSubstring("must be non-negative"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts zero temperature", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Classification.Temperature = 0.0
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("rejects temperature above 2.0", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Classification.Temperature = 2.1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.classification.temperature"))
+			Expect(err.Error()).To(ContainSubstring("must not exceed 2.0"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts temperature of 2.0", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Classification.Temperature = 2.0
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("accepts temperature of 1.0", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Classification.Temperature = 1.0
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("accepts valid analysis config", func() {
+			cfg := analysisBase()
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
 		})
 	})
 })

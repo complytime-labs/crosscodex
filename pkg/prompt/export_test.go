@@ -9,8 +9,8 @@ var ExportLoadFewShotFile = loadFewShotFile
 // ExportMergeSpecs exposes mergeSpecs for testing.
 var ExportMergeSpecs = mergeSpecs
 
-// ExportSubstitutePlaceholders exposes substitutePlaceholders for testing.
-var ExportSubstitutePlaceholders = substitutePlaceholders
+// ExportSubstitutePlaceholders exposes SubstitutePlaceholders for testing.
+var ExportSubstitutePlaceholders = SubstitutePlaceholders
 
 // ExportAssembleMessages exposes assembleMessages for testing.
 var ExportAssembleMessages = assembleMessages

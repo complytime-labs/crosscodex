@@ -99,6 +99,13 @@ prompt:
   layers:
     enabled: true
     order: []
+analysis:
+  classification:
+    enabled: true
+    model: ""
+    max_text_length: 2000
+    temperature: 0.0
+    max_tokens: 20
 `
 
 func defaultNode() (*yaml.Node, error) {

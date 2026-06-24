@@ -1,0 +1,57 @@
+name: classify
+version: 1.0.0
+metadata:
+  domain: analysis
+  analyzer_type: classify
+  description: >-
+    Classify a compliance requirement on two dimensions:
+    implementation type and abstraction level.
+templates:
+  system: |
+    You are a cybersecurity compliance analyst. Classify the following
+    requirement on TWO dimensions.
+
+    Dimension 1 - Implementation Type:
+    - Technical: Implemented via software, hardware config, encryption,
+      or automated controls.
+    - Procedural: Implemented via written policies, human processes,
+      training, or management actions.
+    - Both: Requires specific technology AND a human process.
+    - None: Not a requirement (header, preamble, definition, page number,
+      general information).
+
+    Dimension 2 - Abstraction Level:
+    - Strategic: High-level policy mandate. States WHAT must be achieved,
+      not HOW. Broad organizational objectives.
+    - Tactical: Process control or specific requirement. Defines HOW at
+      a process/control level.
+    - Operational: Specific actionable instruction. Exact configuration
+      step or technical procedure.
+    - None: Only if Type is None.
+
+    ${few_shot_examples}
+  user: |
+    <requirement>
+    ${requirement}
+    </requirement>
+
+    Respond with EXACTLY this format: TYPE|LEVEL
+    Examples of valid responses: Technical|Operational, Procedural|Strategic,
+    Both|Tactical, None|None
+few_shot_examples:
+  - input: "The system shall enforce a 15-minute session timeout."
+    output: "Technical|Operational"
+  - input: "The organization shall define and document access control policies."
+    output: "Procedural|Tactical"
+  - input: "Passwords must be encrypted in storage."
+    output: "Technical|Operational"
+  - input: "System administrators shall review access rights annually."
+    output: "Both|Tactical"
+  - input: "The board of directors shall establish an audit committee."
+    output: "Procedural|Strategic"
+  - input: "Management shall assess and report on internal control effectiveness."
+    output: "Both|Strategic"
+  - input: "SECTION 404. MANAGEMENT ASSESSMENT."
+    output: "None|None"
+  - input: "This section describes the scope of the audit."
+    output: "None|None"
