@@ -1311,7 +1311,11 @@ logging:
 				},
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
-				Analysis:    config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
+				Analysis: config.AnalysisConfig{
+					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
+					Relationship:   config.RelationshipConfig{TopK: 20},
+				},
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1328,7 +1332,11 @@ logging:
 				Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
-				Analysis:    config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
+				Analysis: config.AnalysisConfig{
+					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
+					Relationship:   config.RelationshipConfig{TopK: 20},
+				},
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1341,7 +1349,11 @@ logging:
 					Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 					Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 					Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
-					Analysis:    config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
+					Analysis: config.AnalysisConfig{
+						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
+						Relationship:   config.RelationshipConfig{TopK: 20},
+					},
 				}
 				modify(cfg)
 
@@ -1722,7 +1734,11 @@ logging:
 					ExpiryDuration:    8760 * time.Hour,
 					IncludeByProducts: true,
 				},
-				Analysis: config.AnalysisConfig{Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20}},
+				Analysis: config.AnalysisConfig{
+					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
+					Relationship:   config.RelationshipConfig{TopK: 20},
+				},
 			}
 		}
 
@@ -1953,6 +1969,15 @@ logging:
 						Temperature:   0.0,
 						MaxTokens:     20,
 					},
+					Embedding: config.EmbeddingConfig{
+						Enabled:   true,
+						Models:    []string{"snowflake-arctic-embed2"},
+						MaxChars:  1500,
+						BatchSize: 50,
+					},
+					Relationship: config.RelationshipConfig{
+						TopK: 20,
+					},
 				},
 			}
 		}
@@ -2053,6 +2078,154 @@ logging:
 
 		It("accepts valid analysis config", func() {
 			cfg := analysisBase()
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("has correct embedding default values from compiled defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.Analysis.Embedding.Enabled).To(BeTrue())
+			Expect(cfg.Analysis.Embedding.Models).To(Equal([]string{"snowflake-arctic-embed2"}))
+			Expect(cfg.Analysis.Embedding.MaxChars).To(Equal(1500))
+			Expect(cfg.Analysis.Embedding.BatchSize).To(Equal(50))
+		})
+
+		It("has correct relationship default values from compiled defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.Analysis.Relationship.TopK).To(Equal(20))
+		})
+
+		It("includes embedding in DaemonConfig", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			daemon := cfg.ServiceConfig()
+			Expect(daemon.Analysis.Embedding.Enabled).To(BeTrue())
+			Expect(daemon.Analysis.Embedding.MaxChars).To(Equal(1500))
+			Expect(daemon.Analysis.Relationship.TopK).To(Equal(20))
+		})
+
+		It("rejects negative max_chars", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{"model-a"}
+			cfg.Analysis.Embedding.MaxChars = -1
+			cfg.Analysis.Embedding.BatchSize = 50
+			cfg.Analysis.Relationship.TopK = 20
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.embedding.max_chars"))
+			Expect(err.Error()).To(ContainSubstring("must be non-negative"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts max_chars of zero (no truncation)", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{"model-a"}
+			cfg.Analysis.Embedding.MaxChars = 0
+			cfg.Analysis.Embedding.BatchSize = 50
+			cfg.Analysis.Relationship.TopK = 20
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("rejects batch_size of zero", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{"model-a"}
+			cfg.Analysis.Embedding.MaxChars = 1500
+			cfg.Analysis.Embedding.BatchSize = 0
+			cfg.Analysis.Relationship.TopK = 20
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.embedding.batch_size"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative batch_size", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{"model-a"}
+			cfg.Analysis.Embedding.MaxChars = 1500
+			cfg.Analysis.Embedding.BatchSize = -1
+			cfg.Analysis.Relationship.TopK = 20
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.embedding.batch_size"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects empty models when enabled", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{}
+			cfg.Analysis.Embedding.MaxChars = 1500
+			cfg.Analysis.Embedding.BatchSize = 50
+			cfg.Analysis.Relationship.TopK = 20
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.embedding.models"))
+			Expect(err.Error()).To(ContainSubstring("must not be empty when enabled"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts empty models when disabled", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = false
+			cfg.Analysis.Embedding.Models = []string{}
+			cfg.Analysis.Embedding.MaxChars = 1500
+			cfg.Analysis.Embedding.BatchSize = 50
+			cfg.Analysis.Relationship.TopK = 20
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("rejects top_k of zero", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{"model-a"}
+			cfg.Analysis.Embedding.MaxChars = 1500
+			cfg.Analysis.Embedding.BatchSize = 50
+			cfg.Analysis.Relationship.TopK = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.top_k"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative top_k", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{"model-a"}
+			cfg.Analysis.Embedding.MaxChars = 1500
+			cfg.Analysis.Embedding.BatchSize = 50
+			cfg.Analysis.Relationship.TopK = -5
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.top_k"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts valid embedding and relationship config", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{"snowflake-arctic-embed2"}
+			cfg.Analysis.Embedding.MaxChars = 1500
+			cfg.Analysis.Embedding.BatchSize = 50
+			cfg.Analysis.Relationship.TopK = 20
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
 		})
 	})

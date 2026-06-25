@@ -52,6 +52,30 @@ jobs:
     env:
       CONTAINER_ENGINE: podman
     steps:
+      - name: Coverage summary
+        run: |
+          echo "::group::Integration coverage map (task test:integration:all)"
+          echo "This job covers:"
+          echo "  db, graphdb, vectordb, catalog ... integration-tests (this job)"
+          echo "  storage .......................... integration-tests (this job)"
+          echo "  trace-propagation ................ integration-tests (this job)"
+          echo "  attestation ...................... integration-tests (this job)"
+          echo ""
+          echo "Covered by other jobs:"
+          echo "  grpc ............................. integration-grpc"
+          echo "  telemetry + jaeger-smoke ......... integration-telemetry"
+          echo "  nats (FIPS matrix) ............... integration-nats"
+          echo "  authn (FIPS matrix) .............. integration-authn"
+          echo "  llm (Ollama + LiteLLM + Jaeger) .. integration-llm"
+          echo "::endgroup::"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -62,7 +86,7 @@ jobs:
           generate-test-certs: "true"
 
       - name: Restore Taskfile checksum cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: .task/
           key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
@@ -71,7 +95,7 @@ jobs:
 
       - name: Restore DB image cache
         id: db-image-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: /tmp/crosscodex-test-db.tar
           key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
@@ -79,17 +103,6 @@ jobs:
       - name: Load cached DB image
         if: steps.db-image-cache.outputs.cache-hit == 'true'
         run: podman load -i /tmp/crosscodex-test-db.tar
-
-      - name: Restore Ollama image cache
-        id: ollama-image-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: /tmp/crosscodex-test-ollama.tar
-          key: ollama-image-${{ runner.os }}-${{ hashFiles('test/ollama/Containerfile') }}
-
-      - name: Load cached Ollama image
-        if: steps.ollama-image-cache.outputs.cache-hit == 'true'
-        run: podman load -i /tmp/crosscodex-test-ollama.tar
 
       - name: Install podman-compose
         run: pip install podman-compose
@@ -100,18 +113,17 @@ jobs:
       - name: Run storage integration tests
         run: task test:integration:storage
 
+      - name: Run trace-propagation integration tests
+        run: task test:integration:trace-propagation
+
+      - name: Run attestation integration tests
+        run: task test:integration:attestation
+
       - name: Save DB image for cache
         if: steps.db-image-cache.outputs.cache-hit != 'true'
         run: |
           if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
             podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
-          fi
-
-      - name: Save Ollama image for cache
-        if: steps.ollama-image-cache.outputs.cache-hit != 'true'
-        run: |
-          if podman image inspect crosscodex-test-ollama:latest >/dev/null 2>&1; then
-            podman save -o /tmp/crosscodex-test-ollama.tar crosscodex-test-ollama:latest
           fi
 
   integration-nats:
@@ -135,7 +147,7 @@ jobs:
           generate-test-certs: "true"
 
       - name: Restore Taskfile checksum cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: .task/
           key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
@@ -144,7 +156,7 @@ jobs:
 
       - name: Restore DB image cache
         id: db-image-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: /tmp/crosscodex-test-db.tar
           key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
@@ -164,6 +176,134 @@ jobs:
         run: |
           if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
             podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
+          fi
+
+  integration-grpc:
+    needs: [build]
+    runs-on: ubuntu-latest
+    env:
+      CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          generate-test-certs: "true"
+
+      - name: Restore Taskfile checksum cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: .task/
+          key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
+          restore-keys: |
+            taskfile-${{ runner.os }}-
+
+      - name: Restore DB image cache
+        id: db-image-cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: /tmp/crosscodex-test-db.tar
+          key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+
+      - name: Load cached DB image
+        if: steps.db-image-cache.outputs.cache-hit == 'true'
+        run: podman load -i /tmp/crosscodex-test-db.tar
+
+      - name: Install podman-compose
+        run: pip install podman-compose
+
+      - name: Run gRPC integration tests
+        run: task test:integration:grpc
+
+      - name: Save DB image for cache
+        if: steps.db-image-cache.outputs.cache-hit != 'true'
+        run: |
+          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
+          fi
+
+  integration-telemetry:
+    needs: [build]
+    runs-on: ubuntu-latest
+    env:
+      CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore Taskfile checksum cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: .task/
+          key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
+          restore-keys: |
+            taskfile-${{ runner.os }}-
+
+      - name: Install podman-compose
+        run: pip install podman-compose
+
+      - name: Run telemetry integration tests
+        run: task test:integration:telemetry
+
+  integration-llm:
+    needs: [build]
+    runs-on: ubuntu-latest
+    env:
+      CONTAINER_ENGINE: podman
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore Taskfile checksum cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: .task/
+          key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
+          restore-keys: |
+            taskfile-${{ runner.os }}-
+
+      - name: Restore Ollama image cache
+        id: ollama-image-cache
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: /tmp/crosscodex-test-ollama.tar
+          key: ollama-image-${{ runner.os }}-${{ hashFiles('test/ollama/Containerfile') }}
+
+      - name: Load cached Ollama image
+        if: steps.ollama-image-cache.outputs.cache-hit == 'true'
+        run: podman load -i /tmp/crosscodex-test-ollama.tar
+
+      - name: Install podman-compose
+        run: pip install podman-compose
+
+      - name: Run LLM integration tests
+        run: task test:integration:llm
+
+      - name: Save Ollama image for cache
+        if: steps.ollama-image-cache.outputs.cache-hit != 'true'
+        run: |
+          if podman image inspect crosscodex-test-ollama:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-ollama.tar crosscodex-test-ollama:latest
           fi
 
   integration-authn:
@@ -187,7 +327,7 @@ jobs:
           generate-test-certs: "true"
 
       - name: Restore Taskfile checksum cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: .task/
           key: taskfile-${{ runner.os }}-${{ hashFiles('.taskfiles/**/*.yml', 'Taskfile.yml') }}
@@ -196,7 +336,7 @@ jobs:
 
       - name: Restore DB image cache
         id: db-image-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: /tmp/crosscodex-test-db.tar
           key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}

@@ -320,6 +320,8 @@ func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
 // AnalysisConfig configures the analysis service.
 type AnalysisConfig struct {
 	Classification ClassificationConfig `yaml:"classification"`
+	Embedding      EmbeddingConfig      `yaml:"embedding"`
+	Relationship   RelationshipConfig   `yaml:"relationship"`
 }
 
 // ClassificationConfig configures the classification analyzer.
@@ -331,6 +333,19 @@ type ClassificationConfig struct {
 	MaxTextLength int     `yaml:"max_text_length"`
 	Temperature   float64 `yaml:"temperature"`
 	MaxTokens     int     `yaml:"max_tokens"`
+}
+
+// EmbeddingConfig configures the embedding analyzer.
+type EmbeddingConfig struct {
+	Enabled   bool     `yaml:"enabled"`
+	Models    []string `yaml:"models"`      // Embedding model names; must be non-empty when enabled
+	MaxChars  int      `yaml:"max_chars"`   // Max runes per control text before truncation; 0 = no limit
+	BatchSize int      `yaml:"batch_size"`  // Controls per LLM embedding batch call; must be positive
+}
+
+// RelationshipConfig configures relationship analysis parameters.
+type RelationshipConfig struct {
+	TopK int `yaml:"top_k"` // Number of most-similar control pairs to retain; must be positive
 }
 
 // DaemonConfig is the derived view for crosscodexd.

@@ -106,6 +106,14 @@ analysis:
     max_text_length: 2000
     temperature: 0.0
     max_tokens: 20
+  embedding:
+    enabled: true
+    models:
+      - snowflake-arctic-embed2
+    max_chars: 1500
+    batch_size: 50
+  relationship:
+    top_k: 20
 `
 
 func defaultNode() (*yaml.Node, error) {
