@@ -13,10 +13,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -79,7 +81,7 @@ func (a *ClassifyAnalyzer) ResultSchema() proto.Message {
 // as None|None without an LLM call. Requirements produce a task with the
 // rendered prompt and LLM parameters packed into a structpb.Struct payload.
 func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-	ctx, span := a.startSpan(ctx, "classify.GenerateWork")
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "classify.GenerateWork")
 	defer span.End()
 
 	tenantID, err := tenant.FromContext(ctx)
@@ -203,31 +205,10 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 
 // Aggregate combines completed task results into a single output with metadata.
 func (a *ClassifyAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-	ctx, span := a.startSpan(ctx, "classify.Aggregate")
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "classify.Aggregate")
 	defer span.End()
 
-	var (
-		classifiedCount int
-		skippedCount    int
-		errorCount      int
-	)
-
-	for _, r := range results {
-		if r.Error != nil {
-			errorCount++
-			continue
-		}
-		ar, ok := r.Result.(*pb.AnalysisResult)
-		if !ok {
-			errorCount++
-			continue
-		}
-		if ar.Attributes["skipped"] == "true" {
-			skippedCount++
-		} else {
-			classifiedCount++
-		}
-	}
+	classifiedCount, skippedCount, errorCount := intanalyzer.CountResults(results)
 
 	total := len(results)
 
@@ -299,13 +280,4 @@ func formatFewShotExamples(examples []prompt.FewShotExample) string {
 		fmt.Fprintf(&b, "Example: \"%s\" -> %s\n", ex.Input, ex.Output)
 	}
 	return b.String()
-}
-
-// startSpan creates a tracing span if a tracer is configured, otherwise
-// returns the context and a no-op span.
-func (a *ClassifyAnalyzer) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
-	if a.tracer == nil {
-		return ctx, trace.SpanFromContext(ctx)
-	}
-	return a.tracer.Start(ctx, name)
 }

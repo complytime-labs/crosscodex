@@ -221,6 +221,98 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
+	Context("validate — gateway_mode=true always requires gateway_url", func() {
+		It("rejects every config where gateway_mode is true and gateway_url is empty", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				cfg := &config.Config{
+					TLS:     config.TLSConfig{Mode: "off"},
+					Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+					Logging: config.LoggingConfig{Level: "info", Format: "text"},
+					Attestation: config.AttestationConfig{
+						Enabled:        true,
+						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
+					},
+					Analysis: config.AnalysisConfig{
+						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
+						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					},
+					LLM: config.LLMConfig{
+						GatewayMode: true,
+						GatewayURL:  "",
+						Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
+						MaxRetries:  rapid.IntRange(0, 10).Draw(t, "maxRetries"),
+					},
+				}
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(HaveOccurred(),
+					"validate should reject gateway_mode=true with empty gateway_url")
+				Expect(err.Error()).To(ContainSubstring("gateway_url"))
+			})
+		})
+
+		It("accepts every config where gateway_mode is true and gateway_url is non-empty", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				url := rapid.StringMatching(`https?://[a-z]{3,10}:\d{4}`).Draw(t, "url")
+				cfg := &config.Config{
+					TLS:     config.TLSConfig{Mode: "off"},
+					Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+					Logging: config.LoggingConfig{Level: "info", Format: "text"},
+					Attestation: config.AttestationConfig{
+						Enabled:        true,
+						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
+					},
+					Analysis: config.AnalysisConfig{
+						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
+						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					},
+					LLM: config.LLMConfig{
+						GatewayMode: true,
+						GatewayURL:  url,
+						Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
+						MaxRetries:  rapid.IntRange(0, 10).Draw(t, "maxRetries"),
+					},
+				}
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).NotTo(HaveOccurred(),
+					"validate should accept gateway_mode=true with gateway_url=%q", url)
+			})
+		})
+	})
+
+	Context("validate — gateway_mode=true always zeros max_retries", func() {
+		It("sets max_retries to 0 after validation when gateway_mode is true", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				retries := rapid.IntRange(1, 100).Draw(t, "retries")
+				cfg := &config.Config{
+					TLS:     config.TLSConfig{Mode: "off"},
+					Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+					Logging: config.LoggingConfig{Level: "info", Format: "text"},
+					Attestation: config.AttestationConfig{
+						Enabled:        true,
+						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
+					},
+					Analysis: config.AnalysisConfig{
+						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
+						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					},
+					LLM: config.LLMConfig{
+						GatewayMode: true,
+						GatewayURL:  "http://litellm:4000",
+						Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
+						MaxRetries:  retries,
+					},
+				}
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cfg.LLM.MaxRetries).To(Equal(0),
+					"max_retries should be zeroed when gateway_mode=true, was %d", retries)
+			})
+		})
+	})
+
 	Context("deepMerge — nil base returns overlay", func() {
 		It("deepMerge(nil, b) equals cloneNode(b)", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {

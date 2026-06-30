@@ -24,11 +24,7 @@ type localProvider struct {
 	tenantID string
 	closed   atomic.Bool
 
-	// Telemetry (optional, nil-safe)
-	tracer    trace.Tracer
-	meter     metric.Meter
-	opCounter metric.Int64Counter
-	opLatency metric.Int64Histogram
+	telemetryInstr // embedded OTel instruments
 }
 
 // LocalOption configures a local storage provider.
@@ -38,19 +34,7 @@ type LocalOption func(*localProvider) error
 func WithLocalTelemetry(tracer trace.Tracer, meter metric.Meter) LocalOption {
 	return func(p *localProvider) error {
 		p.tracer = tracer
-		p.meter = meter
-		var err error
-		p.opCounter, err = meter.Int64Counter("storage.operations.total",
-			metric.WithDescription("Total storage operations"))
-		if err != nil {
-			return fmt.Errorf("create operation counter: %w", err)
-		}
-		p.opLatency, err = meter.Int64Histogram("storage.operation.duration_ms",
-			metric.WithDescription("Storage operation duration in milliseconds"))
-		if err != nil {
-			return fmt.Errorf("create operation latency histogram: %w", err)
-		}
-		return nil
+		return p.initMetrics(meter)
 	}
 }
 
@@ -87,13 +71,6 @@ func NewLocal(root, tenantID string, opts ...LocalOption) (Provider, error) {
 		}
 	}
 	return p, nil
-}
-
-func (p *localProvider) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
-	if p.tracer != nil {
-		return p.tracer.Start(ctx, name)
-	}
-	return trace.SpanFromContext(ctx).TracerProvider().Tracer("storage").Start(ctx, name)
 }
 
 func (p *localProvider) resolveAndVerify(key string) (string, error) {
@@ -167,13 +144,7 @@ func (p *localProvider) Get(ctx context.Context, key string) (io.ReadCloser, err
 		return nil, fmt.Errorf("opening file: %w", err)
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return f, nil
 }
 
@@ -239,13 +210,7 @@ func (p *localProvider) Put(ctx context.Context, key string, data io.Reader) err
 	}
 
 	success = true
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return nil
 }
 
@@ -270,13 +235,7 @@ func (p *localProvider) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("removing file: %w", err)
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return nil
 }
 
@@ -333,13 +292,7 @@ func (p *localProvider) List(ctx context.Context, prefix string) ([]ObjectMetada
 		return nil, fmt.Errorf("walking directory: %w", err)
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return result, nil
 }
 
@@ -362,26 +315,14 @@ func (p *localProvider) Exists(ctx context.Context, key string) (bool, error) {
 	_, err = os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if p.opCounter != nil {
-				p.opCounter.Add(ctx, 1)
-			}
-			if p.opLatency != nil {
-				p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-			}
-			span.SetStatus(codes.Ok, "")
+			p.recordSuccess(ctx, span, start)
 			return false, nil
 		}
 		span.SetStatus(codes.Error, err.Error())
 		return false, fmt.Errorf("stat: %w", err)
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return true, nil
 }
 
@@ -411,13 +352,7 @@ func (p *localProvider) Stat(ctx context.Context, key string) (*ObjectMetadata, 
 		return nil, fmt.Errorf("stat: %w", err)
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return &ObjectMetadata{
 		Key:          key,
 		Size:         info.Size(),

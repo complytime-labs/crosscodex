@@ -7,9 +7,6 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
-	"github.com/complytime-labs/crosscodex/pkg/telemetry"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -21,16 +18,8 @@ func (s *Service) SubmitDocument(ctx context.Context, req *pb.SubmitDocumentRequ
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.SubmitDocument",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "SubmitDocument"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "SubmitDocument", identity)
+	defer endSpan()
 
 	if req.Source == nil {
 		return nil, status.Error(codes.InvalidArgument, "source is required (content or source_uri)")
@@ -111,37 +100,21 @@ func (s *Service) SubmitDocument(ctx context.Context, req *pb.SubmitDocumentRequ
 	}
 
 	// Attestation: emit link for the 3-backend chain
-	if s.attestor != nil {
-		materials := []attestation.Artifact{
-			{URI: fmt.Sprintf("document://%s/%s", identity.TenantID, docID), Digest: ""},
-		}
-		products := []attestation.Artifact{
-			{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, catalogID), Digest: ""},
-			{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.GetJobId()), Digest: ""},
-		}
-
-		traceID := telemetry.TraceIDFromContext(ctx)
-		byProducts := map[string]any{
-			"catalog_format": req.GetCatalogFormat().String(),
-			"catalog_name":   req.GetCatalogName(),
-		}
-		if req.GetTargetCatalogId() != "" {
-			byProducts["target_catalog_id"] = req.GetTargetCatalogId()
-		}
-
-		link, err := s.attestor.CreateLink(ctx, "gateway.SubmitDocument", materials, products, attestation.WithByProducts(byProducts))
-		if err != nil {
-			// Log but don't fail the request
-			if s.tracer != nil {
-				trace.SpanFromContext(ctx).RecordError(err, trace.WithAttributes(
-					attribute.String("error.type", "attestation_failed"),
-					attribute.String("trace_id", traceID),
-				))
-			}
-		} else {
-			_ = link // Successfully created, stored by attestor
-		}
+	materials := []attestation.Artifact{
+		{URI: fmt.Sprintf("document://%s/%s", identity.TenantID, docID), Digest: ""},
 	}
+	products := []attestation.Artifact{
+		{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, catalogID), Digest: ""},
+		{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.GetJobId()), Digest: ""},
+	}
+	byProducts := map[string]any{
+		"catalog_format": req.GetCatalogFormat().String(),
+		"catalog_name":   req.GetCatalogName(),
+	}
+	if req.GetTargetCatalogId() != "" {
+		byProducts["target_catalog_id"] = req.GetTargetCatalogId()
+	}
+	s.emitAttestation(ctx, "gateway.SubmitDocument", materials, products, byProducts)
 
 	s.recordMetrics(ctx, "SubmitDocument", start, codes.OK)
 

@@ -7,7 +7,6 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -19,17 +18,9 @@ func (s *Service) GetJob(ctx context.Context, req *pb.GetJobRequest) (*pb.GetJob
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.GetJob",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "GetJob"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-				attribute.String("job.id", req.GetJobId()),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "GetJob", identity,
+		attribute.String("job.id", req.GetJobId()))
+	defer endSpan()
 
 	if req.GetJobId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
@@ -68,16 +59,8 @@ func (s *Service) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.Li
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.ListJobs",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "ListJobs"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "ListJobs", identity)
+	defer endSpan()
 
 	if s.pipeline == nil {
 		return nil, status.Error(codes.Unavailable, "pipeline backend not configured")
@@ -113,17 +96,9 @@ func (s *Service) CancelJob(ctx context.Context, req *pb.CancelJobRequest) (*pb.
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.CancelJob",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "CancelJob"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-				attribute.String("job.id", req.GetJobId()),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "CancelJob", identity,
+		attribute.String("job.id", req.GetJobId()))
+	defer endSpan()
 
 	if req.GetJobId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")

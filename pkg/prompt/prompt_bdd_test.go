@@ -1254,10 +1254,10 @@ var _ = Describe("SubstitutePlaceholders (extended)", func() {
 })
 
 var _ = Describe("Embedded Defaults (extended)", func() {
-	It("loads exactly four defaults", func() {
+	It("loads exactly five defaults", func() {
 		specs, err := prompt.ExportLoadEmbeddedDefaults()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(specs).To(HaveLen(4))
+		Expect(specs).To(HaveLen(5))
 	})
 })
 

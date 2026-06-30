@@ -101,7 +101,7 @@ tasks:
           TIMEOUT: 300s
           REPORT: integration-db
           COVERAGE: integration-coverage.out
-          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/..."
+          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/..."
       - task: run-ginkgo
         vars:
           TAGS: integration
@@ -164,10 +164,10 @@ tasks:
           TIMEOUT: 600s
           REPORT: integration-llm
           COVERAGE: integration-llm-coverage.out
-          PACKAGES: "{{.ROOT_DIR}}/pkg/llmclient/..."
+          PACKAGES: "{{.ROOT_DIR}}/pkg/llmclient/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/..."
 
   db:
-    desc: Run database integration tests (db, graphdb, vectordb, catalog)
+    desc: Run database integration tests (db, graphdb, vectordb, catalog, analyzers)
     deps: [ensure-deps]
     cmds:
       - task: compose-up
@@ -182,7 +182,7 @@ tasks:
           TIMEOUT: 300s
           REPORT: integration-db
           COVERAGE: integration-coverage.out
-          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/..."
+          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/..."
 
   storage:
     desc: Run S3 storage integration tests
@@ -282,7 +282,7 @@ tasks:
           PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
 
   llm:
-    desc: Run LLM integration tests (LiteLLM + Ollama + Jaeger full stack)
+    desc: Run LLM integration tests (LiteLLM + Ollama + Jaeger full stack, analyzers)
     deps: [ensure-deps]
     cmds:
       - task: compose-up
@@ -297,7 +297,7 @@ tasks:
           TIMEOUT: 600s
           REPORT: integration-llm
           COVERAGE: integration-llm-coverage.out
-          PACKAGES: "{{.ROOT_DIR}}/pkg/llmclient/..."
+          PACKAGES: "{{.ROOT_DIR}}/pkg/llmclient/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/..."
 
   trace-propagation:
     desc: Run cross-service trace propagation integration tests (embedded NATS)

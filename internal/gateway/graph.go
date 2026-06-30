@@ -7,7 +7,6 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -19,17 +18,9 @@ func (s *Service) GetControlMappings(ctx context.Context, req *pb.GetControlMapp
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.GetControlMappings",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "GetControlMappings"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-				attribute.String("control.id", req.GetControlId()),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "GetControlMappings", identity,
+		attribute.String("control.id", req.GetControlId()))
+	defer endSpan()
 
 	if req.GetControlId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "control_id is required")
@@ -109,16 +100,8 @@ func (s *Service) QueryGraph(ctx context.Context, req *pb.QueryGraphRequest) (*p
 		return nil, status.Error(codes.PermissionDenied, "admin access required")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.QueryGraph",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "QueryGraph"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "QueryGraph", identity)
+	defer endSpan()
 
 	if req.GetCypher() == "" {
 		return nil, status.Error(codes.InvalidArgument, "cypher is required")
@@ -158,17 +141,9 @@ func (s *Service) FindSimilar(ctx context.Context, req *pb.FindSimilarRequest) (
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.FindSimilar",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "FindSimilar"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-				attribute.String("control.id", req.GetControlId()),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "FindSimilar", identity,
+		attribute.String("control.id", req.GetControlId()))
+	defer endSpan()
 
 	if req.GetControlId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "control_id is required")

@@ -113,7 +113,21 @@ analysis:
     max_chars: 1500
     batch_size: 50
   relationship:
+    enabled: false
+    models: []
     top_k: 20
+    max_source_chars: 1500
+    max_target_chars: 800
+    max_tokens: 300
+    samples_per_model: 1
+    sampling_temperature: 0.3
+    actionable_types:
+      - EQUIVALENT
+      - SUPERSET_OF
+      - SUBSET_OF
+      - CONTRIBUTES_TO
+      - COMPLEMENTS
+      - CONFLICTS_WITH
 `
 
 func defaultNode() (*yaml.Node, error) {

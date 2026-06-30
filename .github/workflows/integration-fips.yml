@@ -1,0 +1,59 @@
+name: Integration FIPS Matrix
+
+on:
+  workflow_call:
+    inputs:
+      test-task:
+        description: Task command to run (e.g. "task test:integration:nats")
+        required: true
+        type: string
+      generate-test-certs:
+        description: Whether to generate test TLS certificates
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      GITHUB_TOKEN:
+        description: GitHub token for authenticated package pulls
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        fips: ["", "1"]
+    name: ${{ matrix.fips == '1' && 'FIPS' || 'standard' }}
+    env:
+      FIPS: ${{ matrix.fips }}
+      CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          generate-test-certs: ${{ inputs.generate-test-certs && 'true' || 'false' }}
+
+      - uses: ./.github/actions/integration-setup
+        with:
+          image-tar-path: /tmp/crosscodex-test-db.tar
+          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+
+      - name: Run tests
+        env:
+          TEST_TASK: ${{ inputs.test-task }}
+        run: $TEST_TASK
+
+      - name: Save DB image for cache
+        if: always()
+        shell: bash
+        run: |
+          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
+          fi

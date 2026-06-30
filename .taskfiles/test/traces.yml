@@ -1,0 +1,80 @@
+version: "3"
+
+vars:
+  TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
+  TRACE_DIR: "{{.TEST_DIR}}/traces"
+  CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+  COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.yaml"
+  COMPOSE_CMD:
+    sh: |
+      engine="{{.CONTAINER_ENGINE}}"
+      case "$engine" in
+        podman)
+          if command -v podman-compose >/dev/null 2>&1; then
+            echo "podman-compose"
+          elif podman compose version >/dev/null 2>&1; then
+            echo "podman compose"
+          else
+            echo "MISSING"
+          fi
+          ;;
+        docker)
+          if docker compose version >/dev/null 2>&1; then
+            echo "docker compose"
+          else
+            echo "MISSING"
+          fi
+          ;;
+        *)
+          echo "MISSING"
+          ;;
+      esac
+  # podman-compose (Python standalone) does not support --wait;
+  # docker compose and podman compose (plugin) do.
+  COMPOSE_WAIT:
+    sh: |
+      engine="{{.CONTAINER_ENGINE}}"
+      case "$engine" in
+        podman)
+          if command -v podman-compose >/dev/null 2>&1; then
+            echo ""
+          else
+            echo "--wait"
+          fi
+          ;;
+        *)
+          echo "--wait"
+          ;;
+      esac
+
+tasks:
+  default:
+    silent: true
+    cmd: task --list 2>/dev/null
+
+  view:
+    desc: Start Jaeger and load test traces for browsing
+    preconditions:
+      - sh: '[ "{{.COMPOSE_CMD}}" != "MISSING" ]'
+        msg: "Neither 'docker compose' nor 'podman-compose' found."
+      - sh: "ls {{.TRACE_DIR}}/*.jsonl >/dev/null 2>&1"
+        msg: "No trace files found in {{.TRACE_DIR}}. Run tests first (e.g. task test:unit)."
+    cmds:
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile telemetry up -d {{.COMPOSE_WAIT}}"
+      - go run {{.ROOT_DIR}}/test/traceload --dir {{.TRACE_DIR}} --endpoint http://localhost:14318/v1/traces
+      - cmd: 'echo ""'
+      - cmd: 'echo "Jaeger UI: http://localhost:16686"'
+      - cmd: 'echo "Run ''task test:traces:down'' to stop Jaeger."'
+
+  down:
+    desc: Stop the Jaeger trace viewer
+    preconditions:
+      - sh: '[ "{{.COMPOSE_CMD}}" != "MISSING" ]'
+        msg: "Neither 'docker compose' nor 'podman-compose' found."
+    cmds:
+      - |
+        running=$({{.CONTAINER_ENGINE}} ps -a --filter "name=crosscodex-test-jaeger" --format "{{`{{.Names}}`}}" 2>/dev/null || true)
+        for c in $running; do
+          {{.CONTAINER_ENGINE}} stop "$c" 2>/dev/null || true
+          {{.CONTAINER_ENGINE}} rm -f "$c" 2>/dev/null || true
+        done

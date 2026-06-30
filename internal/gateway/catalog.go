@@ -6,7 +6,6 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -18,16 +17,8 @@ func (s *Service) ListCatalogs(ctx context.Context, req *pb.ListCatalogsRequest)
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.ListCatalogs",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "ListCatalogs"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "ListCatalogs", identity)
+	defer endSpan()
 
 	if s.catalog == nil {
 		return nil, status.Error(codes.Unavailable, "catalog backend not configured")
@@ -53,17 +44,9 @@ func (s *Service) GetCatalog(ctx context.Context, req *pb.GetCatalogRequest) (*p
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.GetCatalog",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "GetCatalog"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-				attribute.String("catalog.id", req.GetCatalogId()),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "GetCatalog", identity,
+		attribute.String("catalog.id", req.GetCatalogId()))
+	defer endSpan()
 
 	if req.GetCatalogId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "catalog_id is required")
@@ -93,16 +76,8 @@ func (s *Service) SearchControls(ctx context.Context, req *pb.SearchControlsRequ
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.SearchControls",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "SearchControls"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "SearchControls", identity)
+	defer endSpan()
 
 	if req.GetQuery() == "" {
 		return nil, status.Error(codes.InvalidArgument, "query is required")
@@ -132,17 +107,9 @@ func (s *Service) GetControl(ctx context.Context, req *pb.GetControlRequest) (*p
 		return nil, status.Error(codes.Unauthenticated, "not authenticated")
 	}
 
-	if s.tracer != nil {
-		var span trace.Span
-		ctx, span = s.tracer.Start(ctx, "gateway.GetControl",
-			trace.WithAttributes(
-				attribute.String("rpc.method", "GetControl"),
-				attribute.String("tenant.id", identity.TenantID),
-				attribute.String("user.id", identity.Subject),
-				attribute.String("control.id", req.GetControlId()),
-			))
-		defer span.End()
-	}
+	ctx, endSpan := s.startHandlerSpan(ctx, "GetControl", identity,
+		attribute.String("control.id", req.GetControlId()))
+	defer endSpan()
 
 	if req.GetControlId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "control_id is required")

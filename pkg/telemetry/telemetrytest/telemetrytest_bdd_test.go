@@ -210,6 +210,46 @@ var _ = Describe("Telemetry Test Assertions", Ordered, func() {
 		})
 	})
 
+	Describe("Resource service.name", func() {
+		It("defaults to crosscodex-test when no WithServiceName is given", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(tp.Shutdown, context.Background())
+
+			tracer := tp.TracerProvider().Tracer("test")
+			_, span := tracer.Start(context.Background(), "svc-name-check")
+			span.End()
+
+			spans := tp.GetSpans()
+			Expect(spans).To(HaveLen(1))
+
+			res := spans[0].Resource()
+			val, ok := res.Set().Value("service.name")
+			Expect(ok).To(BeTrue(), "resource should have service.name attribute")
+			Expect(val.AsString()).To(Equal("crosscodex-test"))
+		})
+
+		It("uses the name from WithServiceName", func() {
+			tp, err := telemetrytest.NewTestProvider(
+				telemetrytest.WithServiceName("my-catalog-service"),
+			)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(tp.Shutdown, context.Background())
+
+			tracer := tp.TracerProvider().Tracer("test")
+			_, span := tracer.Start(context.Background(), "svc-name-check")
+			span.End()
+
+			spans := tp.GetSpans()
+			Expect(spans).To(HaveLen(1))
+
+			res := spans[0].Resource()
+			val, ok := res.Set().Value("service.name")
+			Expect(ok).To(BeTrue(), "resource should have service.name attribute")
+			Expect(val.AsString()).To(Equal("my-catalog-service"))
+		})
+	})
+
 	Describe("GaugeValue", func() {
 		var tp *telemetrytest.TestProvider
 
