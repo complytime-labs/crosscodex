@@ -1603,7 +1603,7 @@ var _ = Describe("Gateway Mode", func() {
 		Expect(evt.Success).To(BeTrue())
 	})
 
-	It("logs a warning when gateway_mode=true and max_retries > 0", func() {
+	It("does not log warnings when gateway_mode=true with normalized max_retries", func() {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -1621,14 +1621,13 @@ var _ = Describe("Gateway Mode", func() {
 			GatewayURL:  srv.URL,
 			GatewayMode: true,
 			Timeout:     10,
-			MaxRetries:  3,
+			MaxRetries:  0,
 		}
-		_, err := llmclient.NewClient(cfg)
+		c, err := llmclient.NewClient(cfg)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(c).NotTo(BeNil())
 
-		output := buf.String()
-		Expect(output).To(ContainSubstring("gateway_mode"))
-		Expect(output).To(ContainSubstring("max_retries"))
+		Expect(buf.String()).To(BeEmpty())
 	})
 
 	It("does not retry gateway_mode=false (baseline)", func() {

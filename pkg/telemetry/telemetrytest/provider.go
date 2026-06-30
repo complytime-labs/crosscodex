@@ -7,16 +7,30 @@ import (
 	"io"
 	"os"
 	"sync"
-	"time"
 
-	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// buildTestResource constructs the OTel Resource for test providers,
+// matching the production buildResource pattern: service.name, host,
+// process, and telemetry SDK metadata.
+func buildTestResource(serviceName string) (*resource.Resource, error) {
+	return resource.New(context.Background(),
+		resource.WithAttributes(
+			semconv.ServiceName(serviceName),
+		),
+		resource.WithHost(),
+		resource.WithProcess(),
+		resource.WithTelemetrySDK(),
+	)
+}
 
 // TestProvider is an in-memory OpenTelemetry provider for test assertions.
 // When the TEST_TRACE_DIR environment variable is set, spans are also
@@ -32,14 +46,39 @@ type TestProvider struct {
 	mu           sync.Mutex
 }
 
+// TestProviderOption configures NewTestProvider behavior.
+type TestProviderOption func(*testProviderOptions)
+
+type testProviderOptions struct {
+	serviceName string
+}
+
+// WithServiceName sets the service.name resource attribute on the
+// TracerProvider. This controls how spans appear in backends like
+// Jaeger. Defaults to "crosscodex-test" if not specified.
+func WithServiceName(name string) TestProviderOption {
+	return func(o *testProviderOptions) { o.serviceName = name }
+}
+
 // NewTestProvider creates a TestProvider with in-memory exporters.
 // If TEST_TRACE_DIR is set, spans are additionally written to a JSON
 // file in that directory for offline inspection.
-func NewTestProvider() (*TestProvider, error) {
+func NewTestProvider(opts ...TestProviderOption) (*TestProvider, error) {
+	o := &testProviderOptions{serviceName: "crosscodex-test"}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	res, err := buildTestResource(o.serviceName)
+	if err != nil {
+		return nil, fmt.Errorf("build test resource: %w", err)
+	}
+
 	spanExporter := tracetest.NewInMemoryExporter()
 
 	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithSyncer(spanExporter),
+		sdktrace.WithResource(res),
 	}
 
 	var traceFile io.Closer
@@ -68,26 +107,15 @@ func NewTestProvider() (*TestProvider, error) {
 	}, nil
 }
 
-// newFileExporter creates a file-backed stdouttrace exporter.
-// Returns the file (for closing) and the exporter.
-func newFileExporter(dir string) (*os.File, sdktrace.SpanExporter, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, nil, fmt.Errorf("create trace dir %q: %w", dir, err)
-	}
-	path := fmt.Sprintf("%s/otlp-traces-%d-%d.jsonl", dir, os.Getpid(), time.Now().UnixMilli())
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// newFileExporter creates a file-backed OTLP JSON exporter.
+// Returns the exporter (implements io.Closer for Shutdown) and the
+// SpanExporter interface.
+func newFileExporter(dir string) (io.Closer, sdktrace.SpanExporter, error) {
+	exp, err := NewOTLPFileExporter(dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create trace file %q: %w", path, err)
+		return nil, nil, err
 	}
-	exp, err := stdouttrace.New(
-		stdouttrace.WithWriter(f),
-		stdouttrace.WithPrettyPrint(),
-	)
-	if err != nil {
-		f.Close()
-		return nil, nil, fmt.Errorf("create stdout trace exporter: %w", err)
-	}
-	return f, exp, nil
+	return exp, exp, nil
 }
 
 // TracerProvider returns the test TracerProvider.
@@ -105,6 +133,9 @@ func (p *TestProvider) MeterProvider() metric.MeterProvider {
 func (p *TestProvider) Shutdown(ctx context.Context) error {
 	errs := errors.Join(p.tp.Shutdown(ctx), p.mp.Shutdown(ctx))
 	if p.traceFile != nil {
+		// Safe: OTLPFileExporter.Shutdown is idempotent — tp.Shutdown
+		// already called it via the registered exporter, and Close
+		// delegates to Shutdown with a done-flag guard.
 		errs = errors.Join(errs, p.traceFile.Close())
 	}
 	return errs

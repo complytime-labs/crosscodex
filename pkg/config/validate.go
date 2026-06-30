@@ -10,6 +10,15 @@ var (
 	validStorageBackends = map[string]bool{"local": true, "s3": true}
 	validLogLevels       = map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	validLogFormats      = map[string]bool{"text": true, "json": true}
+
+	// validRelationshipTypes is the single source of truth for NIST IR 8477
+	// relationship type names accepted in config. Mirrors the 8 enum values
+	// in synthesis.proto and internal/analyzer/relationship/types.go.
+	validRelationshipTypes = map[string]bool{
+		"EQUIVALENT": true, "SUPERSET_OF": true, "SUBSET_OF": true,
+		"CONTRIBUTES_TO": true, "COMPLEMENTS": true, "PARTIAL": true,
+		"CONFLICTS_WITH": true, "NO_RELATIONSHIP": true,
+	}
 )
 
 func validate(cfg *Config, tracker *sourceTracker) error {
@@ -98,6 +107,17 @@ func validateLLM(llm *LLMConfig, tracker *sourceTracker) error {
 	if llm.MaxRetries < 0 {
 		return fmt.Errorf("llm.max_retries %d%s must be non-negative: %w",
 			llm.MaxRetries, formatSource(tracker, "llm.max_retries"), ErrInvalidConfig)
+	}
+	if llm.GatewayMode && llm.GatewayURL == "" {
+		return fmt.Errorf(
+			"llm.gateway_url%s must be set when llm.gateway_mode is true; "+
+				"set gateway_url to your LLM proxy address (e.g. http://litellm:4000): %w",
+			formatSource(tracker, "llm.gateway_url"), ErrInvalidConfig)
+	}
+	// When a gateway handles retries, client-side retries are redundant.
+	// Normalize to zero so llmclient does not need its own check.
+	if llm.GatewayMode && llm.MaxRetries > 0 {
+		llm.MaxRetries = 0
 	}
 	return nil
 }
@@ -245,9 +265,44 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		return fmt.Errorf("analysis.embedding.models%s must not be empty when enabled: %w",
 			formatSource(tracker, "analysis.embedding.models"), ErrInvalidConfig)
 	}
-	if a.Relationship.TopK <= 0 {
+	r := &a.Relationship
+	if r.TopK <= 0 {
 		return fmt.Errorf("analysis.relationship.top_k %d%s must be positive: %w",
-			a.Relationship.TopK, formatSource(tracker, "analysis.relationship.top_k"), ErrInvalidConfig)
+			r.TopK, formatSource(tracker, "analysis.relationship.top_k"), ErrInvalidConfig)
+	}
+	if r.MaxSourceChars <= 0 {
+		return fmt.Errorf("analysis.relationship.max_source_chars %d%s must be positive: %w",
+			r.MaxSourceChars, formatSource(tracker, "analysis.relationship.max_source_chars"), ErrInvalidConfig)
+	}
+	if r.MaxTargetChars <= 0 {
+		return fmt.Errorf("analysis.relationship.max_target_chars %d%s must be positive: %w",
+			r.MaxTargetChars, formatSource(tracker, "analysis.relationship.max_target_chars"), ErrInvalidConfig)
+	}
+	if r.MaxTokens <= 0 {
+		return fmt.Errorf("analysis.relationship.max_tokens %d%s must be positive: %w",
+			r.MaxTokens, formatSource(tracker, "analysis.relationship.max_tokens"), ErrInvalidConfig)
+	}
+	if r.SamplesPerModel <= 0 {
+		return fmt.Errorf("analysis.relationship.samples_per_model %d%s must be positive: %w",
+			r.SamplesPerModel, formatSource(tracker, "analysis.relationship.samples_per_model"), ErrInvalidConfig)
+	}
+	if r.SamplingTemperature < 0 {
+		return fmt.Errorf("analysis.relationship.sampling_temperature %g%s must be non-negative: %w",
+			r.SamplingTemperature, formatSource(tracker, "analysis.relationship.sampling_temperature"), ErrInvalidConfig)
+	}
+	if r.SamplingTemperature > 2.0 {
+		return fmt.Errorf("analysis.relationship.sampling_temperature %g%s must not exceed 2.0: %w",
+			r.SamplingTemperature, formatSource(tracker, "analysis.relationship.sampling_temperature"), ErrInvalidConfig)
+	}
+	if r.Enabled && len(r.Models) == 0 {
+		return fmt.Errorf("analysis.relationship.models%s must not be empty when enabled: %w",
+			formatSource(tracker, "analysis.relationship.models"), ErrInvalidConfig)
+	}
+	for _, at := range r.ActionableTypes {
+		if !validRelationshipTypes[at] {
+			return fmt.Errorf("analysis.relationship.actionable_types: invalid type %q%s: %w",
+				at, formatSource(tracker, "analysis.relationship.actionable_types"), ErrInvalidConfig)
+		}
 	}
 	return nil
 }
