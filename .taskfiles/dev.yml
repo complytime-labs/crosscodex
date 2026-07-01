@@ -21,7 +21,7 @@ tasks:
     desc: Generate API protobuf code using buf
     dir: "{{.ROOT_DIR}}/api/proto"
     cmds:
-      - buf generate
+      - go tool buf generate
     sources:
       - "**/*.proto"
       - buf.gen.yaml
@@ -32,7 +32,7 @@ tasks:
     desc: Generate testgrpc protobuf code using buf
     dir: "{{.ROOT_DIR}}/internal/testgrpc/proto"
     cmds:
-      - buf generate
+      - go tool buf generate
     sources:
       - "**/*.proto"
       - buf.gen.yaml

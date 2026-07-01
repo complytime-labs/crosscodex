@@ -1314,7 +1314,7 @@ logging:
 				Analysis: config.AnalysisConfig{
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:   config.RelationshipConfig{TopK: 20},
+					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 				},
 			}
 
@@ -1335,7 +1335,7 @@ logging:
 				Analysis: config.AnalysisConfig{
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:   config.RelationshipConfig{TopK: 20},
+					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 				},
 			}
 
@@ -1352,7 +1352,7 @@ logging:
 					Analysis: config.AnalysisConfig{
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-						Relationship:   config.RelationshipConfig{TopK: 20},
+						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 					},
 				}
 				modify(cfg)
@@ -1566,7 +1566,7 @@ logging:
 			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
-				"llm:\n  gateway_mode: true\n")
+				"llm:\n  gateway_mode: true\n  gateway_url: \"http://litellm:4000\"\n")
 
 			loader := config.NewLoader()
 			cfg, err := loader.Load(context.Background())
@@ -1579,6 +1579,7 @@ logging:
 			tmpHome := GinkgoT().TempDir()
 			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 			GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_MODE", "true")
+			GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "http://litellm:4000")
 
 			loader := config.NewLoader()
 			cfg, err := loader.Load(context.Background())
@@ -1720,6 +1721,93 @@ logging:
 		})
 	})
 
+	Describe("LLM Gateway Validation", func() {
+		// validBase returns a Config with all sections valid so tests
+		// can mutate just the LLM fields and reach LLM validation.
+		validBase := func() *config.Config {
+			return &config.Config{
+				TLS:     config.TLSConfig{Mode: "off"},
+				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+				Logging: config.LoggingConfig{Level: "info", Format: "text"},
+				Attestation: config.AttestationConfig{
+					Enabled:        true,
+					ExpiryDuration: 8760 * time.Hour,
+				},
+				Analysis: config.AnalysisConfig{
+					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
+					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+				},
+				LLM: config.LLMConfig{
+					Timeout:    30,
+					MaxRetries: 3,
+				},
+			}
+		}
+
+		It("rejects gateway_mode=true without gateway_url", func() {
+			cfg := validBase()
+			cfg.LLM.GatewayMode = true
+			cfg.LLM.GatewayURL = ""
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("gateway_url"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts gateway_mode=true with gateway_url set", func() {
+			cfg := validBase()
+			cfg.LLM.GatewayMode = true
+			cfg.LLM.GatewayURL = "http://litellm:4000"
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("auto-zeros max_retries when gateway_mode=true", func() {
+			cfg := validBase()
+			cfg.LLM.GatewayMode = true
+			cfg.LLM.GatewayURL = "http://litellm:4000"
+			cfg.LLM.MaxRetries = 3
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.LLM.MaxRetries).To(Equal(0))
+		})
+
+		It("preserves max_retries=0 when gateway_mode=true", func() {
+			cfg := validBase()
+			cfg.LLM.GatewayMode = true
+			cfg.LLM.GatewayURL = "http://litellm:4000"
+			cfg.LLM.MaxRetries = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.LLM.MaxRetries).To(Equal(0))
+		})
+
+		It("preserves max_retries when gateway_mode=false", func() {
+			cfg := validBase()
+			cfg.LLM.GatewayMode = false
+			cfg.LLM.MaxRetries = 3
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.LLM.MaxRetries).To(Equal(3))
+		})
+
+		It("auto-zeros max_retries through full Load() round-trip", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+				"llm:\n  gateway_mode: true\n  gateway_url: \"http://litellm:4000\"\n  max_retries: 5\n")
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.LLM.GatewayMode).To(BeTrue())
+			Expect(cfg.LLM.GatewayURL).To(Equal("http://litellm:4000"))
+			Expect(cfg.LLM.MaxRetries).To(Equal(0))
+		})
+	})
+
 	Describe("Attestation Validation", func() {
 		// validBase returns a Config with all sections valid, including
 		// a known-good AttestationConfig so tests can mutate just the
@@ -1737,7 +1825,7 @@ logging:
 				Analysis: config.AnalysisConfig{
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:   config.RelationshipConfig{TopK: 20},
+					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 				},
 			}
 		}
@@ -1976,7 +2064,12 @@ logging:
 						BatchSize: 50,
 					},
 					Relationship: config.RelationshipConfig{
-						TopK: 20,
+						TopK:                20,
+						MaxSourceChars:      1500,
+						MaxTargetChars:      800,
+						MaxTokens:           300,
+						SamplesPerModel:     1,
+						SamplingTemperature: 0.3,
 					},
 				},
 			}
@@ -2101,7 +2194,18 @@ logging:
 			cfg, err := loader.Load(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 
+			Expect(cfg.Analysis.Relationship.Enabled).To(BeFalse())
+			Expect(cfg.Analysis.Relationship.Models).To(BeEmpty())
 			Expect(cfg.Analysis.Relationship.TopK).To(Equal(20))
+			Expect(cfg.Analysis.Relationship.MaxSourceChars).To(Equal(1500))
+			Expect(cfg.Analysis.Relationship.MaxTargetChars).To(Equal(800))
+			Expect(cfg.Analysis.Relationship.MaxTokens).To(Equal(300))
+			Expect(cfg.Analysis.Relationship.SamplesPerModel).To(Equal(1))
+			Expect(cfg.Analysis.Relationship.SamplingTemperature).To(Equal(0.3))
+			Expect(cfg.Analysis.Relationship.ActionableTypes).To(Equal([]string{
+				"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF",
+				"CONTRIBUTES_TO", "COMPLEMENTS", "CONFLICTS_WITH",
+			}))
 		})
 
 		It("includes embedding in DaemonConfig", func() {
@@ -2115,6 +2219,10 @@ logging:
 			Expect(daemon.Analysis.Embedding.Enabled).To(BeTrue())
 			Expect(daemon.Analysis.Embedding.MaxChars).To(Equal(1500))
 			Expect(daemon.Analysis.Relationship.TopK).To(Equal(20))
+			Expect(daemon.Analysis.Relationship.MaxSourceChars).To(Equal(1500))
+			Expect(daemon.Analysis.Relationship.MaxTargetChars).To(Equal(800))
+			Expect(daemon.Analysis.Relationship.MaxTokens).To(Equal(300))
+			Expect(daemon.Analysis.Relationship.SamplesPerModel).To(Equal(1))
 		})
 
 		It("rejects negative max_chars", func() {
@@ -2226,6 +2334,158 @@ logging:
 			cfg.Analysis.Embedding.MaxChars = 1500
 			cfg.Analysis.Embedding.BatchSize = 50
 			cfg.Analysis.Relationship.TopK = 20
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("rejects max_source_chars of zero", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.MaxSourceChars = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_source_chars"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative max_source_chars", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.MaxSourceChars = -1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_source_chars"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects max_target_chars of zero", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.MaxTargetChars = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_target_chars"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative max_target_chars", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.MaxTargetChars = -1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_target_chars"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects max_tokens of zero for relationship", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.MaxTokens = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_tokens"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative max_tokens for relationship", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.MaxTokens = -1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_tokens"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects samples_per_model of zero", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.SamplesPerModel = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.samples_per_model"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative samples_per_model", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.SamplesPerModel = -1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.samples_per_model"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects negative sampling_temperature", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.SamplingTemperature = -0.1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.sampling_temperature"))
+			Expect(err.Error()).To(ContainSubstring("must be non-negative"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts zero sampling_temperature", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.SamplingTemperature = 0.0
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("rejects sampling_temperature above 2.0", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.SamplingTemperature = 2.1
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.sampling_temperature"))
+			Expect(err.Error()).To(ContainSubstring("must not exceed 2.0"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts sampling_temperature of 2.0", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.SamplingTemperature = 2.0
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("rejects empty models when relationship enabled", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.Enabled = true
+			cfg.Analysis.Relationship.Models = []string{}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.models"))
+			Expect(err.Error()).To(ContainSubstring("must not be empty when enabled"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts empty models when relationship disabled", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.Enabled = false
+			cfg.Analysis.Relationship.Models = []string{}
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("rejects invalid actionable_types", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.ActionableTypes = []string{"EQUIVALENT", "BOGUS"}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.actionable_types"))
+			Expect(err.Error()).To(ContainSubstring("BOGUS"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("accepts all valid actionable_types", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.ActionableTypes = []string{
+				"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF",
+				"CONTRIBUTES_TO", "COMPLEMENTS", "PARTIAL",
+				"CONFLICTS_WITH", "NO_RELATIONSHIP",
+			}
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("accepts empty actionable_types", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Relationship.ActionableTypes = []string{}
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
 		})
 	})

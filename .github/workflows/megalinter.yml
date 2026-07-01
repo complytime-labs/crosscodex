@@ -37,18 +37,17 @@ jobs:
       - name: MegaLinter
         id: ml
         # zizmor:ignore ref-version-mismatch - No version tags available
-        uses: trevor-vaughan/megalint-config@44a7228ea233a95379c4d041f9d1d94149187960
+        uses: trevor-vaughan/megalint-config@d603d1cff51217dc6e5c878ef5b2e204f97781f7 # v0.2.0
         with:
           validate-all-codebase: ${{ github.event_name == 'schedule' }}
+          github-comment: "true"
 
       - name: Archive reports
         if: success() || failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: megalinter-reports
-          path: |
-            ${{ steps.ml.outputs.reports-dir }}
-            mega-linter.log
+          path: ${{ steps.ml.outputs.reports-dir }}
 
       - name: Upload SARIF to GitHub Code Scanning
         if: success() || failure()

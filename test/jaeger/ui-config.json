@@ -1,0 +1,10 @@
+{
+  "themes": {
+    "enabled": true
+  },
+  "dependencies": {
+    "menuEnabled": true
+  },
+  "criticalPathEnabled": true,
+  "topTagPrefixes": ["tenant.", "operation."]
+}

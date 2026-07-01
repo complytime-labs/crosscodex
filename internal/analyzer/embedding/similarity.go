@@ -87,11 +87,11 @@ func buildSimilarityMatrix(embeddings map[string][]float32, ids []string) *Simil
 // pairHeap implements heap.Interface for SimilarityPair (min-heap by Similarity).
 type pairHeap []SimilarityPair
 
-func (h pairHeap) Len() int            { return len(h) }
-func (h pairHeap) Less(i, j int) bool  { return h[i].Similarity < h[j].Similarity }
-func (h pairHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *pairHeap) Push(x any)         { *h = append(*h, x.(SimilarityPair)) }
-func (h *pairHeap) Pop() any           { old := *h; n := len(old); x := old[n-1]; *h = old[:n-1]; return x }
+func (h pairHeap) Len() int           { return len(h) }
+func (h pairHeap) Less(i, j int) bool { return h[i].Similarity < h[j].Similarity }
+func (h pairHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *pairHeap) Push(x any)        { *h = append(*h, x.(SimilarityPair)) }
+func (h *pairHeap) Pop() any          { old := *h; n := len(old); x := old[n-1]; *h = old[:n-1]; return x }
 
 // topKPairs extracts the top-K most similar pairs from the matrix, excluding
 // self-similarity (diagonal) and deduplicating symmetric pairs (only the

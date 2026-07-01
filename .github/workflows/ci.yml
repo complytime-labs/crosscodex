@@ -137,6 +137,13 @@ jobs:
       FIPS: ${{ matrix.fips }}
       CONTAINER_ENGINE: podman
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -184,6 +191,13 @@ jobs:
     env:
       CONTAINER_ENGINE: podman
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -231,6 +245,13 @@ jobs:
     env:
       CONTAINER_ENGINE: podman
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -317,6 +338,13 @@ jobs:
       FIPS: ${{ matrix.fips }}
       CONTAINER_ENGINE: podman
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false

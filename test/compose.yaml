@@ -162,14 +162,20 @@ services:
 
   jaeger:
     profiles: [telemetry, llm, all]
-    image: docker.io/jaegertracing/all-in-one:1.76.0
+    image: docker.io/jaegertracing/jaeger:2.19.0
     container_name: crosscodex-test-jaeger
     ports:
       - "14317:4317" # OTLP gRPC
       - "14318:4318" # OTLP HTTP
-      - "16686:16686" # Query API
+      - "16686:16686" # Query API / UI
     environment:
-      COLLECTOR_OTLP_ENABLED: "true"
+      JAEGER_LISTEN_HOST: "0.0.0.0"
+    volumes:
+      - ./jaeger/ui-config.json:/etc/jaeger/ui-config.json:ro
+    command:
+      [
+        "--set=extensions.jaeger_query.ui.config_file=/etc/jaeger/ui-config.json",
+      ]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ || exit 1"]
       interval: 2s
