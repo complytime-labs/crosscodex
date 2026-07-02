@@ -1,0 +1,38 @@
+# Local overrides for MegaLinter configuration from megalint-config.
+# Extends the shared config staged by megalint-config v0.2.0.
+# EXTENDS replaces YAML keys wholesale -- lists are not merged.
+EXTENDS: .mega-linter.shared.yml
+
+# REPOSITORY_CHECKOV and REPOSITORY_TRUFFLEHOG are disabled.
+# Both hang indefinitely inside the MegaLinter container on GitHub
+# Actions runners. Bisected over 6 CI rounds (Jun-Jul 2026).
+# Checkov completes locally but hangs in the container environment.
+# TruffleHog hangs even with --no-verification --no-update.
+# Equivalent coverage from: zizmor, actionlint (GHA), trivy, grype,
+# betterleaks, secretlint, devskim (secrets/vulns).
+# REPOSITORY_KICS is force-disabled by MegaLinter v9.6.0 upstream
+# (supply chain compromise) so it is omitted here as well.
+ENABLE_LINTERS:
+  - BASH_SHELLCHECK
+  - BASH_SHFMT
+  - PYTHON_RUFF
+  - PYTHON_ISORT
+  - JSON_JSONLINT
+  - YAML_YAMLLINT
+  - YAML_PRETTIER
+  - MARKDOWN_MARKDOWNLINT
+  - MARKDOWN_MARKDOWN_LINK_CHECK
+  - MARKDOWN_MARKDOWN_TABLE_FORMATTER
+  - EDITORCONFIG_EDITORCONFIG_CHECKER
+  - ACTION_ZIZMOR
+  - ACTION_ACTIONLINT
+  - DOCKERFILE_HADOLINT
+  - KUBERNETES_KUBECONFORM
+  - TERRAFORM_TFLINT
+  - CLOUDFORMATION_CFN_LINT
+  - COPYPASTE_JSCPD
+  - REPOSITORY_DEVSKIM
+  - REPOSITORY_GRYPE
+  - REPOSITORY_BETTERLEAKS
+  - REPOSITORY_SECRETLINT
+  - REPOSITORY_TRIVY

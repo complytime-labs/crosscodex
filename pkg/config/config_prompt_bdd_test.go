@@ -42,7 +42,7 @@ var _ = Describe("PromptConfig", func() {
 				Analysis: config.AnalysisConfig{
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:   config.RelationshipConfig{TopK: 20},
+					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 				},
 			}
 		}

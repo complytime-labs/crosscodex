@@ -1,0 +1,18 @@
+{
+  "ignore": [
+    "**/*_test.go",
+    "**/*_bdd_test.go",
+    "**/*_property_test.go",
+    "**/*_fuzz_test.go",
+    "**/*_suite_test.go",
+    "**/export_test.go",
+    "AGENTS.md",
+    "README.md",
+    "docs/**/*.md",
+    ".taskfiles/**/*.yml",
+    "api/gen/**",
+    "megalinter-reports/**",
+    ".build/**",
+    ".test-output/**"
+  ]
+}

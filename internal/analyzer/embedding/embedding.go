@@ -11,11 +11,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
-	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 	"google.golang.org/protobuf/proto"
@@ -80,7 +82,7 @@ func (a *EmbeddingAnalyzer) ResultSchema() proto.Message {
 // GenerateWork produces one task per control per model. Section controls
 // are skipped with a pre-built result (no embedding for non-leaf controls).
 func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-	ctx, span := a.startSpan(ctx, "embedding.GenerateWork")
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "embedding.GenerateWork")
 	defer span.End()
 
 	tenantID, err := tenant.FromContext(ctx)
@@ -166,31 +168,10 @@ func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 // metadata counts (total, embedded, skipped, error). Task-level errors are
 // counted in metadata rather than returned as an aggregate error.
 func (a *EmbeddingAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-	ctx, span := a.startSpan(ctx, "embedding.Aggregate")
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "embedding.Aggregate")
 	defer span.End()
 
-	var (
-		embeddedCount int
-		skippedCount  int
-		errorCount    int
-	)
-
-	for _, r := range results {
-		if r.Error != nil {
-			errorCount++
-			continue
-		}
-		ar, ok := r.Result.(*pb.AnalysisResult)
-		if !ok {
-			errorCount++
-			continue
-		}
-		if ar.Attributes["skipped"] == "true" {
-			skippedCount++
-		} else {
-			embeddedCount++
-		}
-	}
+	embeddedCount, skippedCount, errorCount := intanalyzer.CountResults(results)
 
 	total := len(results)
 
@@ -227,13 +208,4 @@ func (a *EmbeddingAnalyzer) Aggregate(ctx context.Context, results []analyzer.Ta
 		Data:         nil,
 		Metadata:     metadata,
 	}, nil
-}
-
-// startSpan creates a tracing span if a tracer is configured, otherwise
-// returns the context and a no-op span.
-func (a *EmbeddingAnalyzer) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
-	if a.tracer == nil {
-		return ctx, trace.SpanFromContext(ctx)
-	}
-	return a.tracer.Start(ctx, name)
 }

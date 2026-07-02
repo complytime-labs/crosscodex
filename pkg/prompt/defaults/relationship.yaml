@@ -1,0 +1,107 @@
+name: relationship
+version: "1.0.0"
+metadata:
+  domain: analysis
+  analyzer_type: relationship
+  description: >-
+    NIST IR 8477 relationship classification between compliance controls
+    using multi-sample LLM panel voting.
+  source: "Ported from OllamaCrosswalker prompts/base.yaml"
+templates:
+  system: |
+    You are a compliance analyst classifying the relationship between two
+    requirements from different frameworks.
+
+    ${classification_guidance}
+
+    ${relationship_definitions}
+
+    Respond ONLY in this exact format:
+    RELATIONSHIP: <EQUIVALENT|SUPERSET_OF|SUBSET_OF|CONTRIBUTES_TO|COMPLEMENTS|PARTIAL|CONFLICTS_WITH|NO_RELATIONSHIP>
+    CONTRIBUTION_TYPE: <INTEGRAL_TO|EXAMPLE_OF|N/A>  (only when RELATIONSHIP is CONTRIBUTES_TO; otherwise N/A)
+    JUSTIFICATION: <one to two sentences explaining your reasoning, including subject domains identified>
+    CONFIDENCE: <HIGH|MEDIUM|LOW>
+  user: |
+    SOURCE FRAMEWORK: ${source_framework}
+    TARGET FRAMEWORK: ${target_framework}
+
+    ${few_shot_examples}
+
+    SOURCE REQUIREMENT:
+    ID: ${source_id} | Framework: ${source_framework} | Type: ${source_type} | Level: ${source_level} | Control Domain: "${source_ancestor}"
+    <requirement>
+    ${source_text}
+    </requirement>
+
+    TARGET REQUIREMENT:
+    ID: ${target_id} | Framework: ${target_framework} | Type: ${target_type} | Level: ${target_level} | Control Domain: "${target_ancestor}"
+    <requirement>
+    ${target_text}
+    </requirement>
+
+    Classify the NIST IR 8477 relationship FROM the source TO the target.
+few_shot_examples:
+  - input: |
+      Source (Level: Tactical): "The organisation shall implement multi-factor authentication for all remote access sessions to organisational systems and networks."
+      Target (Level: Tactical): "Users accessing the system remotely must authenticate using at least two independent authentication factors before a session is established."
+    output: |
+      RELATIONSHIP: EQUIVALENT
+      CONTRIBUTION_TYPE: N/A
+      JUSTIFICATION: Both requirements mandate multi-factor authentication for remote access with identical scope and obligation — satisfying either fully satisfies the other.
+      CONFIDENCE: HIGH
+  - input: |
+      Source (Level: Strategic): "Senior management shall periodically assess the design and operating effectiveness of internal controls and report findings and remediation plans to the governing body."
+      Target (Level: Tactical): "The organisation shall conduct periodic assessments of information security controls to verify they are operating as intended and to identify control deficiencies."
+    output: |
+      RELATIONSHIP: SUPERSET_OF
+      CONTRIBUTION_TYPE: N/A
+      JUSTIFICATION: Broad internal control assessment mandated by the source directly encompasses IT security control assessment as a specific instance within its scope.
+      CONFIDENCE: HIGH
+  - input: |
+      Source (Level: Strategic): "Responsible officers shall certify that controls ensure material information is accurately captured and communicated to decision-makers on a timely basis."
+      Target (Level: Tactical): "Implement access controls and record integrity mechanisms to ensure information cannot be modified or deleted by unauthorised users."
+    output: |
+      RELATIONSHIP: CONTRIBUTES_TO
+      CONTRIBUTION_TYPE: EXAMPLE_OF
+      JUSTIFICATION: Both target the same subject — data integrity — but source addresses broader information-flow obligations beyond what access controls alone satisfy. Access controls are one mechanism among several that could support the certification obligation.
+      CONFIDENCE: MEDIUM
+  - input: |
+      Source (Level: Tactical): "The organisation shall monitor system activity to detect unauthorised access attempts, policy violations, and anomalous behaviour indicative of a security incident."
+      Target (Level: Tactical): "The organisation shall generate and maintain audit records of system events sufficient to support after-the-fact investigation of security incidents."
+    output: |
+      RELATIONSHIP: CONTRIBUTES_TO
+      CONTRIBUTION_TYPE: INTEGRAL_TO
+      JUSTIFICATION: Monitoring for unauthorised access fundamentally requires audit records to exist; without event logging, there is nothing to monitor or detect against.
+      CONFIDENCE: HIGH
+  - input: |
+      Source (Level: Tactical): "The organisation shall develop and maintain a security programme management plan defining security roles, responsibilities, and programme priorities."
+      Target (Level: Tactical): "The organisation shall implement access control policies defining which users may access which systems based on job function and least privilege."
+    output: |
+      RELATIONSHIP: PARTIAL
+      CONTRIBUTION_TYPE: N/A
+      JUSTIFICATION: Both use policy and management language but target different subjects: programme governance vs. system access decisions — no meaningful coverage overlap.
+      CONFIDENCE: HIGH
+  - input: |
+      Source (Level: Tactical): "The organisation shall restrict network communications at managed interfaces using deny-all, permit-by-exception policies enforced at both ingress and egress boundary points."
+      Target (Level: Strategic): "The organisation shall control the flow of information between interconnected systems and across organisational boundaries in accordance with security policy."
+    output: |
+      RELATIONSHIP: SUBSET_OF
+      CONTRIBUTION_TYPE: N/A
+      JUSTIFICATION: Source specifies a particular mechanism (deny-all at boundary firewalls) that falls entirely within the broader scope of the target's information-flow control obligation, which encompasses additional mechanisms beyond network boundaries.
+      CONFIDENCE: HIGH
+  - input: |
+      Source (Level: Tactical): "User account credentials shall never expire; passwords must remain valid indefinitely to avoid operational disruption."
+      Target (Level: Tactical): "User account passwords shall be changed at intervals not exceeding ninety days; accounts with expired passwords shall be locked until reset."
+    output: |
+      RELATIONSHIP: CONFLICTS_WITH
+      CONTRIBUTION_TYPE: N/A
+      JUSTIFICATION: Source prohibits password expiration while target mandates mandatory rotation — satisfying one directly violates the other.
+      CONFIDENCE: HIGH
+  - input: |
+      Source (Level: Tactical): "The organisation shall implement physical access controls at all facilities processing regulated data, including badge readers, turnstiles, and security personnel at entry points."
+      Target (Level: Tactical): "The organisation shall implement logical access controls requiring multi-factor authentication for all users accessing regulated systems and data repositories."
+    output: |
+      RELATIONSHIP: COMPLEMENTS
+      CONTRIBUTION_TYPE: N/A
+      JUSTIFICATION: Physical and logical access controls address the same access-control risk through entirely different mechanisms; neither implementation contributes to satisfying the other.
+      CONFIDENCE: HIGH

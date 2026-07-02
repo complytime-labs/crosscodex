@@ -338,14 +338,22 @@ type ClassificationConfig struct {
 // EmbeddingConfig configures the embedding analyzer.
 type EmbeddingConfig struct {
 	Enabled   bool     `yaml:"enabled"`
-	Models    []string `yaml:"models"`      // Embedding model names; must be non-empty when enabled
-	MaxChars  int      `yaml:"max_chars"`   // Max runes per control text before truncation; 0 = no limit
-	BatchSize int      `yaml:"batch_size"`  // Controls per LLM embedding batch call; must be positive
+	Models    []string `yaml:"models"`     // Embedding model names; must be non-empty when enabled
+	MaxChars  int      `yaml:"max_chars"`  // Max runes per control text before truncation; 0 = no limit
+	BatchSize int      `yaml:"batch_size"` // Controls per LLM embedding batch call; must be positive
 }
 
 // RelationshipConfig configures relationship analysis parameters.
 type RelationshipConfig struct {
-	TopK int `yaml:"top_k"` // Number of most-similar control pairs to retain; must be positive
+	Enabled             bool     `yaml:"enabled"`
+	Models              []string `yaml:"models"`               // LLM models for panel voting; must be non-empty when enabled
+	TopK                int      `yaml:"top_k"`                // Number of most-similar control pairs to retain; must be positive
+	MaxSourceChars      int      `yaml:"max_source_chars"`     // Max runes for source control text; must be positive
+	MaxTargetChars      int      `yaml:"max_target_chars"`     // Max runes for target control text; must be positive
+	MaxTokens           int      `yaml:"max_tokens"`           // Max tokens for LLM response; must be positive
+	SamplesPerModel     int      `yaml:"samples_per_model"`    // Votes per model per pair; must be positive
+	SamplingTemperature float64  `yaml:"sampling_temperature"` // Temperature for multi-sample; [0.0, 2.0]
+	ActionableTypes     []string `yaml:"actionable_types"`     // Relationship types counted for coverage
 }
 
 // DaemonConfig is the derived view for crosscodexd.

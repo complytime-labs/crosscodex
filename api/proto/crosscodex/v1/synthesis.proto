@@ -104,10 +104,29 @@ message GetMappingsResponse {
 
 enum RelationshipType {
   RELATIONSHIP_TYPE_UNSPECIFIED = 0;
-  RELATIONSHIP_TYPE_EQUAL = 1;       // NIST IR 8477
-  RELATIONSHIP_TYPE_SUBSET = 2;
-  RELATIONSHIP_TYPE_INTERSECTS = 3;
-  RELATIONSHIP_TYPE_NOT_RELATED = 4;
+  RELATIONSHIP_TYPE_EQUIVALENT = 1;      // NIST IR 8477: same scope and intent
+  RELATIONSHIP_TYPE_SUPERSET_OF = 2;     // NIST IR 8477: source is broader
+  RELATIONSHIP_TYPE_SUBSET_OF = 3;       // NIST IR 8477: source is narrower
+  RELATIONSHIP_TYPE_CONTRIBUTES_TO = 4;  // NIST IR 8477: target advances source
+  RELATIONSHIP_TYPE_COMPLEMENTS = 5;     // NIST IR 8477: same risk, different mechanism
+  RELATIONSHIP_TYPE_PARTIAL = 6;         // NIST IR 8477: tangential connection
+  RELATIONSHIP_TYPE_CONFLICTS_WITH = 7;  // NIST IR 8477: direct contradiction
+  RELATIONSHIP_TYPE_NO_RELATIONSHIP = 8; // NIST IR 8477: no genuine relationship
+}
+
+// ContributionType sub-classifies CONTRIBUTES_TO relationships.
+enum ContributionType {
+  CONTRIBUTION_TYPE_UNSPECIFIED = 0;
+  CONTRIBUTION_TYPE_INTEGRAL_TO = 1;  // Source cannot be satisfied without target
+  CONTRIBUTION_TYPE_EXAMPLE_OF = 2;   // Target is one way among alternatives
+}
+
+// ConfidenceLevel categorizes LLM-reported confidence.
+enum ConfidenceLevel {
+  CONFIDENCE_LEVEL_UNSPECIFIED = 0;
+  CONFIDENCE_LEVEL_HIGH = 1;
+  CONFIDENCE_LEVEL_MEDIUM = 2;
+  CONFIDENCE_LEVEL_LOW = 3;
 }
 
 message ControlMapping {

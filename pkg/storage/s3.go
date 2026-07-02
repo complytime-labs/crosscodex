@@ -35,11 +35,7 @@ type s3Provider struct {
 	tenantID     string
 	closed       atomic.Bool
 
-	// Telemetry (optional, nil-safe)
-	tracer    trace.Tracer
-	meter     metric.Meter
-	opCounter metric.Int64Counter
-	opLatency metric.Int64Histogram
+	telemetryInstr // embedded OTel instruments
 }
 
 type S3Option func(*s3Options)
@@ -120,17 +116,8 @@ func NewS3(bucket, tenantID string, opts ...S3Option) (Provider, error) {
 		p.tracer = options.tracer
 	}
 	if options.meter != nil {
-		p.meter = options.meter
-		var mErr error
-		p.opCounter, mErr = options.meter.Int64Counter("storage.operations.total",
-			metric.WithDescription("Total storage operations"))
-		if mErr != nil {
-			return nil, fmt.Errorf("create operation counter: %w", mErr)
-		}
-		p.opLatency, mErr = options.meter.Int64Histogram("storage.operation.duration_ms",
-			metric.WithDescription("Storage operation duration in milliseconds"))
-		if mErr != nil {
-			return nil, fmt.Errorf("create operation latency histogram: %w", mErr)
+		if err := p.initMetrics(options.meter); err != nil {
+			return nil, err
 		}
 	}
 	return p, nil
@@ -143,13 +130,6 @@ func newS3WithClient(client s3API, bucket, tenantID string) *s3Provider {
 		tenantPrefix: tenantID + "/",
 		tenantID:     tenantID,
 	}
-}
-
-func (p *s3Provider) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
-	if p.tracer != nil {
-		return p.tracer.Start(ctx, name)
-	}
-	return trace.SpanFromContext(ctx).TracerProvider().Tracer("storage").Start(ctx, name)
 }
 
 func (p *s3Provider) fullKey(key string) string {
@@ -199,13 +179,7 @@ func (p *s3Provider) Get(ctx context.Context, key string) (io.ReadCloser, error)
 		return nil, wrappedErr
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return output.Body, nil
 }
 
@@ -234,13 +208,7 @@ func (p *s3Provider) Put(ctx context.Context, key string, data io.Reader) error 
 		return fmt.Errorf("s3 put: %w", err)
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return nil
 }
 
@@ -268,13 +236,7 @@ func (p *s3Provider) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("s3 delete: %w", err)
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return nil
 }
 
@@ -331,13 +293,7 @@ func (p *s3Provider) List(ctx context.Context, prefix string) ([]ObjectMetadata,
 		input.ContinuationToken = output.NextContinuationToken
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return result, nil
 }
 
@@ -372,26 +328,14 @@ func (p *s3Provider) Exists(ctx context.Context, key string) (bool, error) {
 	_, err := p.headObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			if p.opCounter != nil {
-				p.opCounter.Add(ctx, 1)
-			}
-			if p.opLatency != nil {
-				p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-			}
-			span.SetStatus(codes.Ok, "")
+			p.recordSuccess(ctx, span, start)
 			return false, nil
 		}
 		span.SetStatus(codes.Error, err.Error())
 		return false, err
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return true, nil
 }
 
@@ -430,13 +374,7 @@ func (p *s3Provider) Stat(ctx context.Context, key string) (*ObjectMetadata, err
 		meta.ETag = *output.ETag
 	}
 
-	if p.opCounter != nil {
-		p.opCounter.Add(ctx, 1)
-	}
-	if p.opLatency != nil {
-		p.opLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
+	p.recordSuccess(ctx, span, start)
 	return meta, nil
 }
 

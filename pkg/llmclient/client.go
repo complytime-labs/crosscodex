@@ -73,11 +73,6 @@ func NewClient(cfg config.LLMConfig, opts ...Option) (Client, error) {
 		c.apiKey = key
 	}
 
-	if cfg.GatewayMode && cfg.MaxRetries > 0 {
-		slog.Warn("gateway_mode is enabled; max_retries is ignored — retries are handled by the gateway",
-			"max_retries", cfg.MaxRetries)
-	}
-
 	for _, opt := range opts {
 		if err := opt(c); err != nil {
 			return nil, fmt.Errorf("applying option: %w", err)
