@@ -37,7 +37,7 @@ jobs:
       - name: MegaLinter
         id: ml
         # zizmor:ignore ref-version-mismatch - No version tags available
-        uses: trevor-vaughan/megalint-config@d603d1cff51217dc6e5c878ef5b2e204f97781f7 # v0.2.0
+        uses: trevor-vaughan/megalint-config@a7b04964e23526629dd8cba75abc86b1829158a7 # v0.3.0
         with:
           validate-all-codebase: ${{ github.event_name == 'schedule' }}
           github-comment: "true"
