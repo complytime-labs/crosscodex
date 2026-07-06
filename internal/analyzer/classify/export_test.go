@@ -6,9 +6,7 @@ import "github.com/complytime-labs/crosscodex/pkg/prompt"
 var ExportSanitizeText = sanitizeText
 
 // ExportFormatFewShotExamples exposes formatFewShotExamples for testing.
-var ExportFormatFewShotExamples = func(examples []prompt.FewShotExample) string {
-	return formatFewShotExamples(examples)
-}
+var ExportFormatFewShotExamples = formatFewShotExamples
 
 // ExportSubstitutePlaceholders delegates to the canonical prompt.SubstitutePlaceholders.
 var ExportSubstitutePlaceholders = prompt.SubstitutePlaceholders

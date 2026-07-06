@@ -206,7 +206,7 @@ func GenerateDevPKI(opts ...Option) (*PKIBundle, error) {
 
 // writeBundle writes all PEM files to dir. Cert files get 0644; key files get 0600.
 func writeBundle(bundle *PKIBundle, dir string) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create PKI output dir: %w", err)
 	}
 
@@ -215,12 +215,12 @@ func writeBundle(bundle *PKIBundle, dir string) error {
 		data []byte
 		perm os.FileMode
 	}{
-		{"ca.pem", bundle.CA.CertPEM, 0644},
-		{"ca-key.pem", bundle.CA.KeyPEM, 0600},
-		{"server.pem", bundle.Server.CertPEM, 0644},
-		{"server-key.pem", bundle.Server.KeyPEM, 0600},
-		{"client.pem", bundle.Client.CertPEM, 0644},
-		{"client-key.pem", bundle.Client.KeyPEM, 0600},
+		{"ca.pem", bundle.CA.CertPEM, 0o644},
+		{"ca-key.pem", bundle.CA.KeyPEM, 0o600},
+		{"server.pem", bundle.Server.CertPEM, 0o644},
+		{"server-key.pem", bundle.Server.KeyPEM, 0o600},
+		{"client.pem", bundle.Client.CertPEM, 0o644},
+		{"client-key.pem", bundle.Client.KeyPEM, 0o600},
 	}
 
 	for _, f := range files {

@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Config is the unified merge target for all configuration layers.
 type Config struct {
@@ -322,6 +325,8 @@ type AnalysisConfig struct {
 	Classification ClassificationConfig `yaml:"classification"`
 	Embedding      EmbeddingConfig      `yaml:"embedding"`
 	Relationship   RelationshipConfig   `yaml:"relationship"`
+	Candidates     CandidateConfig      `yaml:"candidates"`
+	Requires       RequiresConfig       `yaml:"requires"`
 }
 
 // ClassificationConfig configures the classification analyzer.
@@ -354,6 +359,87 @@ type RelationshipConfig struct {
 	SamplesPerModel     int      `yaml:"samples_per_model"`    // Votes per model per pair; must be positive
 	SamplingTemperature float64  `yaml:"sampling_temperature"` // Temperature for multi-sample; [0.0, 2.0]
 	ActionableTypes     []string `yaml:"actionable_types"`     // Relationship types counted for coverage
+}
+
+// CandidateConfig configures candidate generation for prerequisite detection.
+type CandidateConfig struct {
+	Generators []CandidateGeneratorEntry `yaml:"generators"` // Ordered list of candidate generators
+}
+
+// CandidateGeneratorEntry configures a single candidate generator.
+type CandidateGeneratorEntry struct {
+	Name    string                 `yaml:"name"`    // Generator name (e.g., "semantic", "keyword", "level")
+	Enabled bool                   `yaml:"enabled"` // Enable this generator
+	Weight  float64                `yaml:"weight"`  // Weight for aggregation; default 1.0 if 0
+	Config  map[string]interface{} `yaml:"config"`  // Generator-specific configuration
+}
+
+// RequiresConfig configures the requires analyzer for prerequisite detection.
+type RequiresConfig struct {
+	Enabled             bool     `yaml:"enabled"`
+	Models              []string `yaml:"models"`               // LLM models for panel voting; must be non-empty when enabled
+	SamplesPerModel     int      `yaml:"samples_per_model"`    // Votes per model per pair; must be positive and odd unless allow_even_samples=true
+	AllowEvenSamples    bool     `yaml:"allow_even_samples"`   // Allow even samples_per_model (default: false, requires odd for tie-breaking)
+	SamplingTemperature float64  `yaml:"sampling_temperature"` // Temperature for multi-sample; [0.0, 2.0]
+	MaxTokens           int      `yaml:"max_tokens"`           // Max tokens for LLM response; must be positive
+	ConsensusThreshold  float64  `yaml:"consensus_threshold"`  // Minimum confidence fraction [0.5, 1.0]
+	MaxErrorRate        float64  `yaml:"max_error_rate"`       // Maximum fraction of votes that can fail [0.0, 1.0]
+	MaxSourceChars      int      `yaml:"max_source_chars"`     // Max runes for source control text; must be positive
+	MaxTargetChars      int      `yaml:"max_target_chars"`     // Max runes for target control text; must be positive
+}
+
+// Validate checks RequiresConfig for consistency and required fields.
+// Returns ErrInvalidConfig on validation failure.
+func (c *RequiresConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+
+	if len(c.Models) == 0 {
+		return fmt.Errorf("analysis.requires.models must not be empty when enabled: %w", ErrInvalidConfig)
+	}
+
+	if c.SamplesPerModel <= 0 {
+		return fmt.Errorf("analysis.requires.samples_per_model %d must be positive: %w",
+			c.SamplesPerModel, ErrInvalidConfig)
+	}
+
+	if !c.AllowEvenSamples && c.SamplesPerModel%2 == 0 {
+		return fmt.Errorf("analysis.requires.samples_per_model %d must be odd unless allow_even_samples=true: %w",
+			c.SamplesPerModel, ErrInvalidConfig)
+	}
+
+	if c.ConsensusThreshold < 0.5 || c.ConsensusThreshold > 1.0 {
+		return fmt.Errorf("analysis.requires.consensus_threshold %g must be in range [0.5, 1.0]: %w",
+			c.ConsensusThreshold, ErrInvalidConfig)
+	}
+
+	if c.MaxErrorRate < 0.0 || c.MaxErrorRate > 1.0 {
+		return fmt.Errorf("analysis.requires.max_error_rate %g must be in range [0.0, 1.0]: %w",
+			c.MaxErrorRate, ErrInvalidConfig)
+	}
+
+	if c.MaxSourceChars <= 0 {
+		return fmt.Errorf("analysis.requires.max_source_chars %d must be positive: %w",
+			c.MaxSourceChars, ErrInvalidConfig)
+	}
+
+	if c.MaxTargetChars <= 0 {
+		return fmt.Errorf("analysis.requires.max_target_chars %d must be positive: %w",
+			c.MaxTargetChars, ErrInvalidConfig)
+	}
+
+	if c.MaxTokens <= 0 {
+		return fmt.Errorf("analysis.requires.max_tokens %d must be positive: %w",
+			c.MaxTokens, ErrInvalidConfig)
+	}
+
+	if c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
+		return fmt.Errorf("analysis.requires.sampling_temperature %g must be in range [0.0, 2.0]: %w",
+			c.SamplingTemperature, ErrInvalidConfig)
+	}
+
+	return nil
 }
 
 // DaemonConfig is the derived view for crosscodexd.

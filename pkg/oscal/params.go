@@ -4,7 +4,7 @@ import "regexp"
 
 var (
 	templatePattern = regexp.MustCompile(`\{\{.*?\}\}`)
-	paramRefPattern = regexp.MustCompile(`insert:\s*param,\s*([\w\-\.]+)`)
+	paramRefPattern = regexp.MustCompile(`insert:\s*param,\s*([\w\-.]+)`)
 )
 
 // CleanProse substitutes OSCAL parameter references in prose text.

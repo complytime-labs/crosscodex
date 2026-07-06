@@ -165,7 +165,7 @@ func DecomposeStatements(ctrl oscalTypes.Control, groupID string, params map[str
 //   - minWords check: if text has fewer than minWords words, return single item (no decomposition)
 //   - Decomposition is recursive: matched sub-clauses are passed through the cascade again
 //   - Containers (items with sub-matches) get ClassSection; leaves get ClassRequirement
-func DecomposeText(baseID string, text string, minWords int) []ControlItem {
+func DecomposeText(baseID, text string, minWords int) []ControlItem {
 	// Check minimum word count
 	if wordCount(text) < minWords {
 		return []ControlItem{{

@@ -26,7 +26,7 @@ jobs:
 
       - uses: ./.github/actions/go-setup
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
 
       - name: Build
         run: task build
@@ -75,7 +75,7 @@ jobs:
 
       - uses: ./.github/actions/go-setup
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           generate-test-certs: "true"
 
       - uses: ./.github/actions/integration-setup
@@ -108,7 +108,7 @@ jobs:
     with:
       test-task: task test:integration:nats
     secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
 
   integration-grpc:
     needs: [build]
@@ -122,7 +122,7 @@ jobs:
 
       - uses: ./.github/actions/go-setup
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           generate-test-certs: "true"
 
       - uses: ./.github/actions/integration-setup
@@ -152,7 +152,7 @@ jobs:
 
       - uses: ./.github/actions/go-setup
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
 
       - uses: ./.github/actions/integration-setup
 
@@ -171,7 +171,7 @@ jobs:
 
       - uses: ./.github/actions/go-setup
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
 
       - uses: ./.github/actions/integration-setup
         with:
@@ -194,4 +194,4 @@ jobs:
     with:
       test-task: task test:integration:authn
     secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}

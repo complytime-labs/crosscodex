@@ -428,7 +428,7 @@ var _ = Describe("ValidateSchema", func() {
 		It("returns ErrSchemaLoad for a malformed schema file", func() {
 			tmpDir := GinkgoT().TempDir()
 			badSchemaPath := filepath.Join(tmpDir, "bad_schema.json")
-			Expect(os.WriteFile(badSchemaPath, []byte(`{not valid json`), 0600)).To(Succeed())
+			Expect(os.WriteFile(badSchemaPath, []byte(`{not valid json`), 0o600)).To(Succeed())
 
 			err := oscal.ValidateSchema(
 				[]byte(`{"catalog": {"uuid": "test"}}`),

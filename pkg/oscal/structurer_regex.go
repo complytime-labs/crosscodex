@@ -42,16 +42,14 @@ func TierRegex(doc StructuredDoc, opts StructureOptions) ([]ControlItem, bool) {
 		var id, text string
 
 		// match[0] is the full match, match[1:] are capture groups
-		if len(match) >= 3 {
-			// 2+ capture groups: group 1 = ID, group 2 = text
+		switch {
+		case len(match) >= 3:
 			id = match[1]
 			text = match[2]
-		} else if len(match) == 2 {
-			// 1 capture group: that's the text, auto-generate ID
+		case len(match) == 2:
 			id = fmt.Sprintf("sec-%d", i+1)
 			text = match[1]
-		} else {
-			// No capture groups (shouldn't happen with proper regex), use full match as text
+		default:
 			id = fmt.Sprintf("sec-%d", i+1)
 			text = match[0]
 		}

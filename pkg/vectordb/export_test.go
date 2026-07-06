@@ -24,13 +24,13 @@ type TelemetryFields struct {
 // GetTelemetryFields returns the telemetry initialisation state of
 // a PgVectorStore so the external test package can verify that
 // WithTelemetry populates (or omits) every instrument.
-func (s *PgVectorStore) GetTelemetryFields() TelemetryFields {
+func (db *PgVectorStore) GetTelemetryFields() TelemetryFields {
 	return TelemetryFields{
-		HasTracer:        s.tracer != nil,
-		HasMeter:         s.meter != nil,
-		HasSearchCounter: s.searchCounter != nil,
-		HasSearchLatency: s.searchLatency != nil,
-		HasStoreCounter:  s.storeCounter != nil,
-		HasStoreLatency:  s.storeLatency != nil,
+		HasTracer:        db.tracer != nil,
+		HasMeter:         db.meter != nil,
+		HasSearchCounter: db.searchCounter != nil,
+		HasSearchLatency: db.searchLatency != nil,
+		HasStoreCounter:  db.storeCounter != nil,
+		HasStoreLatency:  db.storeLatency != nil,
 	}
 }

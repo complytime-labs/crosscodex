@@ -81,16 +81,16 @@ func BeSecureError() types.GomegaMatcher {
 type secureErrorMatcher struct{}
 
 var sensitivePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)password\s*[=:]\s*[^\s]+`),
-	regexp.MustCompile(`(?i)secret\s*[=:]\s*[^\s]+`),
-	regexp.MustCompile(`(?i)token\s*[=:]\s*[^\s]+`),
-	regexp.MustCompile(`(?i)key\s*[=:]\s*[^\s]+`),
+	regexp.MustCompile(`(?i)password\s*[=:]\s*\S+`),
+	regexp.MustCompile(`(?i)secret\s*[=:]\s*\S+`),
+	regexp.MustCompile(`(?i)token\s*[=:]\s*\S+`),
+	regexp.MustCompile(`(?i)key\s*[=:]\s*\S+`),
 	regexp.MustCompile(`(?i)sql\s+(error|query).*`),
 	regexp.MustCompile(`(?i)(insert|update|delete|select)\s+.*password.*`),
 	regexp.MustCompile(`(?i)(insert|update|delete|select)\s+.*admin.*`),
 	regexp.MustCompile(`/[a-zA-Z0-9_\-./]*\.ssh/`),
 	regexp.MustCompile(`/home/[a-zA-Z0-9_\-./]*/`),
-	regexp.MustCompile(`(?i)(admin|root|user)\s*[=:]\s*[^\s]+`),
+	regexp.MustCompile(`(?i)(admin|root|user)\s*[=:]\s*\S+`),
 }
 
 func (m *secureErrorMatcher) Match(actual interface{}) (bool, error) {
@@ -443,7 +443,7 @@ func (m *dbConnectionMatcher) Match(actual interface{}) (bool, error) {
 
 	// Check reflection for standard database connection types
 	v := reflect.ValueOf(actual)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 

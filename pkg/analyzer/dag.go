@@ -283,20 +283,21 @@ func findCycle(nodes map[string]RegisteredAnalyzer, edges map[string][]string, v
 		sort.Strings(deps) // Deterministic cycle reporting.
 		found := false
 		for _, dep := range deps {
-			if !visitedSet[dep] {
-				if idx, ok := seen[dep]; ok {
-					// Found the cycle.
-					cycle := make([]string, len(path[idx:])+1)
-					copy(cycle, path[idx:])
-					cycle[len(cycle)-1] = dep
-					return formatCycle(cycle)
-				}
-				seen[dep] = len(path)
-				path = append(path, dep)
-				current = dep
-				found = true
-				break
+			if visitedSet[dep] {
+				continue
 			}
+			if idx, ok := seen[dep]; ok {
+				// Found the cycle.
+				cycle := make([]string, len(path[idx:])+1)
+				copy(cycle, path[idx:])
+				cycle[len(cycle)-1] = dep
+				return formatCycle(cycle)
+			}
+			seen[dep] = len(path)
+			path = append(path, dep)
+			current = dep
+			found = true
+			break
 		}
 		if !found {
 			// Dead end in remaining nodes — shouldn't happen in a cycle,

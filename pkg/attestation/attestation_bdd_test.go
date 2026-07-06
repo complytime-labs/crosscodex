@@ -273,13 +273,13 @@ var _ = Describe("FileKeyProvider", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		privPath = filepath.Join(tmpDir, "signing.pem")
-		Expect(os.WriteFile(privPath, ca.KeyPEM, 0600)).To(Succeed())
+		Expect(os.WriteFile(privPath, ca.KeyPEM, 0o600)).To(Succeed())
 
 		pubDER, err := x509.MarshalPKIXPublicKey(ca.Cert.PublicKey)
 		Expect(err).NotTo(HaveOccurred())
 		pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
 		pubPath = filepath.Join(tmpDir, "verification.pem")
-		Expect(os.WriteFile(pubPath, pubPEM, 0644)).To(Succeed())
+		Expect(os.WriteFile(pubPath, pubPEM, 0o644)).To(Succeed())
 	})
 
 	It("loads a valid ECDSA P-256 private key", func() {
@@ -324,7 +324,7 @@ var _ = Describe("FileKeyProvider", Ordered, func() {
 
 	It("returns ErrKeyLoadFailed for invalid PEM", func() {
 		badPath := filepath.Join(tmpDir, "bad.pem")
-		Expect(os.WriteFile(badPath, []byte("not a pem file"), 0600)).To(Succeed())
+		Expect(os.WriteFile(badPath, []byte("not a pem file"), 0o600)).To(Succeed())
 
 		kp := &attestation.FileKeyProvider{
 			PrivateKeyPath: badPath,

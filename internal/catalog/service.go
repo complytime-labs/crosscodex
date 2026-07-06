@@ -371,7 +371,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *crosscodexv1.ParseCatal
 
 	// Emit audit event if bus configured
 	if s.bus != nil {
-		auditEvent := []byte(fmt.Sprintf(`{"event":"catalog_parsed","catalog_id":"%s","tenant_id":"%s","control_count":%d,"timestamp":"%s"}`,
+		auditEvent := []byte(fmt.Sprintf(`{"event":"catalog_parsed","catalog_id":%q,"tenant_id":%q,"control_count":%d,"timestamp":%q}`,
 			catalogID, tenantID, len(items), time.Now().UTC().Format(time.RFC3339)))
 
 		if err := s.bus.Publish(ctx, "audit.catalog.parsed", auditEvent); err != nil {

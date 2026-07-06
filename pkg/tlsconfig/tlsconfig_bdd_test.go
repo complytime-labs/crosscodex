@@ -344,7 +344,7 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 		Context("when CA file contains no valid certs", func() {
 			It("returns ErrInvalidCertificate", func() {
 				badCA := filepath.Join(GinkgoT().TempDir(), "bad-ca.pem")
-				Expect(os.WriteFile(badCA, []byte("not a cert"), 0644)).To(Succeed())
+				Expect(os.WriteFile(badCA, []byte("not a cert"), 0o644)).To(Succeed())
 
 				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
 					Mode: "server-only",
@@ -604,8 +604,8 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 				By("replacing the cert with a new one")
 				newBundle, err := pki.GenerateDevPKI()
 				Expect(err).NotTo(HaveOccurred())
-				Expect(os.WriteFile(serverCertPath, newBundle.Server.CertPEM, 0644)).To(Succeed())
-				Expect(os.WriteFile(serverKeyPath, newBundle.Server.KeyPEM, 0600)).To(Succeed())
+				Expect(os.WriteFile(serverCertPath, newBundle.Server.CertPEM, 0o644)).To(Succeed())
+				Expect(os.WriteFile(serverKeyPath, newBundle.Server.KeyPEM, 0o600)).To(Succeed())
 
 				cert2, err := fn(nil)
 				Expect(err).NotTo(HaveOccurred())
@@ -811,9 +811,9 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 
 			By("building client config with untrusted cert")
 			untrustedDir := GinkgoT().TempDir()
-			err = os.WriteFile(filepath.Join(untrustedDir, "client.pem"), untrustedBundle.Client.CertPEM, 0644)
+			err = os.WriteFile(filepath.Join(untrustedDir, "client.pem"), untrustedBundle.Client.CertPEM, 0o644)
 			Expect(err).NotTo(HaveOccurred())
-			err = os.WriteFile(filepath.Join(untrustedDir, "client-key.pem"), untrustedBundle.Client.KeyPEM, 0600)
+			err = os.WriteFile(filepath.Join(untrustedDir, "client-key.pem"), untrustedBundle.Client.KeyPEM, 0o600)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Use the server's CA for trust (so we trust the server), but present

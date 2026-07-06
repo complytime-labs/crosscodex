@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/url"
 	"os"
@@ -20,6 +21,12 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	addr := flag.String("addr", envOrDefault("ADDR", ":9090"), "bind address")
 	tlsCA := flag.String("tls-ca", envOrDefault("TLS_CA", "/certs/ca.pem"), "CA certificate")
 	tlsCert := flag.String("tls-cert", envOrDefault("TLS_CERT", "/certs/server.pem"), "server certificate")
@@ -41,10 +48,10 @@ func main() {
 	if *dbDSN != "" {
 		migrator, err := db.NewMigrator(*dbDSN)
 		if err != nil {
-			log.Fatalf("migrator: %v", err)
+			return fmt.Errorf("migrator: %w", err)
 		}
 		if err := migrator.Up(context.Background()); err != nil {
-			log.Fatalf("migrate: %v", err)
+			return fmt.Errorf("migrate: %w", err)
 		}
 		if err := migrator.Close(); err != nil {
 			log.Printf("migrator close: %v", err)
@@ -56,7 +63,7 @@ func main() {
 			MaxOpenConns: 5,
 		})
 		if err != nil {
-			log.Fatalf("db pool: %v", err)
+			return fmt.Errorf("db pool: %w", err)
 		}
 		defer pool.Close()
 		dbPool = db.NewTenantPool(pool)
@@ -73,7 +80,7 @@ func main() {
 			Key:  *natsKey,
 		}, "nats")
 		if err != nil {
-			log.Fatalf("nats TLS: %v", err)
+			return fmt.Errorf("nats TLS: %w", err)
 		}
 
 		natsCfg := config.NATSConfig{
@@ -86,7 +93,7 @@ func main() {
 		}
 		client, err := natsbus.New(natsCfg, natsbus.WithTLSConfig(natsTLSCfg))
 		if err != nil {
-			log.Fatalf("nats: %v", err)
+			return fmt.Errorf("nats: %w", err)
 		}
 		defer client.Close()
 		natsClient = client
@@ -96,14 +103,14 @@ func main() {
 
 	h, err := testgrpc.NewHarness(harnessOpts...)
 	if err != nil {
-		log.Fatalf("harness: %v", err)
+		return fmt.Errorf("harness: %w", err)
 	}
 
 	echoSvc := testgrpc.NewEchoService(dbPool, natsClient)
 	h.RegisterService(&echopb.TenantEchoService_ServiceDesc, echoSvc)
 
 	if err := h.Start(); err != nil {
-		log.Fatalf("start: %v", err)
+		return fmt.Errorf("start: %w", err)
 	}
 	log.Printf("serving on %s", h.Addr())
 
@@ -113,6 +120,7 @@ func main() {
 
 	log.Println("shutting down...")
 	h.Stop()
+	return nil
 }
 
 func envOrDefault(key, fallback string) string {

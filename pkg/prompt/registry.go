@@ -101,8 +101,8 @@ type layerDef struct {
 func (r *registry) buildLayers(cfg config.PromptConfig, ropts *registryOpts) error {
 	var order []layerDef
 
-	if !cfg.Layers.Enabled {
-		// Only layers explicitly listed in Order are active.
+	switch {
+	case !cfg.Layers.Enabled:
 		for _, entry := range cfg.Layers.Order {
 			order = append(order, layerDef{
 				id:            entry.ID,
@@ -110,8 +110,7 @@ func (r *registry) buildLayers(cfg config.PromptConfig, ropts *registryOpts) err
 				sliceStrategy: entry.SliceStrategy,
 			})
 		}
-	} else if len(cfg.Layers.Order) > 0 {
-		// Custom order specified by config.
+	case len(cfg.Layers.Order) > 0:
 		for _, entry := range cfg.Layers.Order {
 			order = append(order, layerDef{
 				id:            entry.ID,
@@ -119,7 +118,6 @@ func (r *registry) buildLayers(cfg config.PromptConfig, ropts *registryOpts) err
 				sliceStrategy: entry.SliceStrategy,
 			})
 		}
-		// Append cli if not explicitly listed but CLI paths are provided.
 		hasExplicitCLI := false
 		for _, entry := range order {
 			if entry.id == "cli" {
@@ -130,8 +128,7 @@ func (r *registry) buildLayers(cfg config.PromptConfig, ropts *registryOpts) err
 		if !hasExplicitCLI && len(ropts.cliLayers) > 0 {
 			order = append(order, layerDef{id: "cli"})
 		}
-	} else {
-		// Default order: embedded, user, project, (custom layer_paths), cli.
+	default:
 		order = []layerDef{
 			{id: "embedded"},
 			{id: "user"},

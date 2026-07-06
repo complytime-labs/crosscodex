@@ -218,7 +218,7 @@ func (c *client) Subscribe(ctx context.Context, subject string, handler MessageH
 }
 
 // QueueSubscribe creates a queue group subscription for work distribution.
-func (c *client) QueueSubscribe(ctx context.Context, subject string, queue string, handler MessageHandler) (Subscription, error) {
+func (c *client) QueueSubscribe(ctx context.Context, subject, queue string, handler MessageHandler) (Subscription, error) {
 	_, span := c.startSpan(ctx, "natsbus.QueueSubscribe")
 	defer span.End()
 	span.SetAttributes(

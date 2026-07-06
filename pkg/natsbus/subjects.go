@@ -13,7 +13,7 @@ const subjectPrefix = "crosscodex"
 // buildSubject validates the tenant ID and a single additional token,
 // then joins all parts with dots under the subjectPrefix.
 // parts should include the category, tenantID, and any trailing segments.
-func buildSubject(tenantID string, tokenValue, tokenLabel string, parts ...string) (string, error) {
+func buildSubject(tenantID, tokenValue, tokenLabel string, parts ...string) (string, error) {
 	if err := validateTenant(tenantID); err != nil {
 		return "", err
 	}

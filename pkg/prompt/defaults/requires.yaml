@@ -1,0 +1,78 @@
+name: requires
+version: "1.0.0"
+metadata:
+  domain: analysis
+  analyzer_type: requires
+  description: >-
+    Detects structural prerequisite dependencies (REQUIRES edges) between
+    compliance controls using multi-sample LLM panel voting.
+  source: "Ported from OllamaCrosswalker prompts/requires_base.yaml"
+templates:
+  system: |
+    You are a compliance analyst determining structural prerequisite dependencies
+    between requirements from different frameworks.
+
+    SOURCE FRAMEWORK: ${source_framework}
+    TARGET FRAMEWORK: ${target_framework}
+
+    ${requires_guidance}
+
+    ${dependency_definitions}
+  user: |
+    ${few_shot_examples}
+
+    SOURCE REQUIREMENT:
+    ID: ${source_id} | Framework: ${source_framework} | Type: ${source_type} | Level: ${source_level}${source_ancestor}
+    <requirement>
+    ${source_text}
+    </requirement>
+
+    TARGET REQUIREMENT:
+    ID: ${target_id} | Framework: ${target_framework} | Type: ${target_type} | Level: ${target_level}${target_ancestor}
+    <requirement>
+    ${target_text}
+    </requirement>
+
+    Does implementing the SOURCE structurally REQUIRE the TARGET to be in place as a prerequisite?
+
+    Respond ONLY in this exact format:
+    REQUIRES: YES or NO
+    JUSTIFICATION: <one to two sentences explaining the structural dependency or independence>
+    CONFIDENCE: HIGH, MEDIUM, or LOW
+
+few_shot_examples:
+  - input: |
+      Source: "Management shall conduct annual assessments of the effectiveness of internal controls over financial reporting and report findings to the audit committee."
+      Target: "The organisation shall define and document the scope of its internal control assessment programme, including applicable frameworks, control objectives, and assessment methodologies to be applied."
+    output: |
+      REQUIRES: YES
+      JUSTIFICATION: An effective assessment requires a defined scope and methodology to be established first; without it, assessment cannot be conducted systematically.
+      CONFIDENCE: HIGH
+  - input: |
+      Source: "The organisation shall implement and maintain an incident response capability to detect, contain, eradicate, and recover from security incidents."
+      Target: "The organisation shall classify all information assets according to sensitivity, criticality, and regulatory requirements, and maintain an up-to-date asset register."
+    output: |
+      REQUIRES: YES
+      JUSTIFICATION: Effective incident response requires knowing what assets exist and their sensitivity; without an asset register, containment scope cannot be determined.
+      CONFIDENCE: HIGH
+  - input: |
+      Source: "All data at rest on portable storage devices shall be encrypted using an approved encryption algorithm with a minimum key length of 256 bits."
+      Target: "The organisation shall implement physical security controls at all facilities, including perimeter fencing, access barriers, and surveillance systems."
+    output: |
+      REQUIRES: NO
+      JUSTIFICATION: Data-at-rest encryption is a technical control implemented independently of physical facility security; the two controls address different threat vectors.
+      CONFIDENCE: HIGH
+  - input: |
+      Source: "The organisation shall implement multi-factor authentication for all privileged user accounts accessing production systems."
+      Target: "System administrators shall review and recertify user access rights on a quarterly basis, revoking privileges no longer required."
+    output: |
+      REQUIRES: NO
+      JUSTIFICATION: MFA implementation does not require periodic access reviews to be in place first; they are independent controls serving different purposes.
+      CONFIDENCE: HIGH
+  - input: |
+      Source: "The organisation shall monitor system logs for indicators of compromise and generate alerts when suspicious activity exceeds defined thresholds."
+      Target: "The organisation shall define baseline normal behaviour profiles for each system and network segment, documenting expected traffic patterns and activity ranges."
+    output: |
+      REQUIRES: YES
+      JUSTIFICATION: Effective anomaly detection requires established baselines to compare against; without defined thresholds, alert conditions cannot be meaningfully configured.
+      CONFIDENCE: MEDIUM

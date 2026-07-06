@@ -190,12 +190,12 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 				Expect(pki.WriteToDir(dir)).To(Succeed())
 
 				wantPerms := map[string]os.FileMode{
-					"ca.pem":         0644,
-					"ca-key.pem":     0600,
-					"server.pem":     0644,
-					"server-key.pem": 0600,
-					"client.pem":     0644,
-					"client-key.pem": 0600,
+					"ca.pem":         0o644,
+					"ca-key.pem":     0o600,
+					"server.pem":     0o644,
+					"server-key.pem": 0o600,
+					"client.pem":     0o644,
+					"client-key.pem": 0o600,
 				}
 
 				for name, wantPerm := range wantPerms {
@@ -264,7 +264,7 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 				Expect(pki.WriteToDir(dir)).To(Succeed())
 
 				By("corrupting server.pem")
-				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), []byte("not a cert"), 0644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), []byte("not a cert"), 0o644)).To(Succeed())
 
 				err = testcerts.VerifyDir(dir)
 				Expect(err).To(HaveOccurred())
@@ -284,7 +284,7 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 				Expect(pki1.WriteToDir(dir)).To(Succeed())
 
 				By("replacing server cert with one from a different CA")
-				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), pki2.ServerCert, 0644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), pki2.ServerCert, 0o644)).To(Succeed())
 
 				err = testcerts.VerifyDir(dir)
 				Expect(err).To(HaveOccurred())
@@ -301,7 +301,7 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 				Expect(pki.WriteToDir(dir)).To(Succeed())
 
 				By("corrupting client-key.pem")
-				Expect(os.WriteFile(filepath.Join(dir, "client-key.pem"), []byte("not a key"), 0600)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(dir, "client-key.pem"), []byte("not a key"), 0o600)).To(Succeed())
 
 				err = testcerts.VerifyDir(dir)
 				Expect(err).To(HaveOccurred())

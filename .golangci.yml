@@ -1,0 +1,35 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gocritic
+
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-ST1000" # package comments — low value relative to noise
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+      disabled-checks:
+        - unnamedResult # naming return values is a style choice
+        - whyNoLint # existing nolint directives predate this check
+
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - os.Remove
+        - os.RemoveAll
+        - os.Setenv
+        - os.Unsetenv
+
+  exclusions:
+    rules:
+      - text: "Close.* is not checked"
+        linters: [errcheck]
