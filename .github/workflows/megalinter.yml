@@ -36,8 +36,7 @@ jobs:
 
       - name: MegaLinter
         id: ml
-        # zizmor:ignore ref-version-mismatch - No version tags available
-        uses: trevor-vaughan/megalint-config@d603d1cff51217dc6e5c878ef5b2e204f97781f7 # v0.2.0
+        uses: trevor-vaughan/megalint-config@a7b04964e23526629dd8cba75abc86b1829158a7 # v0.3.0
         with:
           validate-all-codebase: ${{ github.event_name == 'schedule' }}
           github-comment: "true"
@@ -50,7 +49,11 @@ jobs:
           path: ${{ steps.ml.outputs.reports-dir }}
 
       - name: Upload SARIF to GitHub Code Scanning
-        if: success() || failure()
+        # Gate on sarif-has-results: a changed-files PR run whose diff touches
+        # nothing a SARIF-emitting linter processes yields an empty `runs`
+        # array, which upload-sarif rejects ("1 item required; only 0 were
+        # supplied"). Skip the upload in that case.
+        if: ${{ (success() || failure()) && steps.ml.outputs.sarif-has-results == 'true' }}
         uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
         with:
           sarif_file: ${{ steps.ml.outputs.sarif-file }}
