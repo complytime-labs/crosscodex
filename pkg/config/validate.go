@@ -304,5 +304,11 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 				at, formatSource(tracker, "analysis.relationship.actionable_types"), ErrInvalidConfig)
 		}
 	}
+
+	// Validate requires config
+	if err := a.Requires.Validate(); err != nil {
+		return err
+	}
+
 	return nil
 }

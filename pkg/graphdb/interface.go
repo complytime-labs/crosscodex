@@ -14,6 +14,7 @@ type GraphDB interface {
 	CreateGraph(ctx context.Context, tenant string) error
 	CreateNode(ctx context.Context, tenant string, node Node) error
 	CreateEdge(ctx context.Context, tenant string, edge Edge) error
+	CreateRequiresEdge(ctx context.Context, tenant string, reqEdge RequiresEdge) error
 	QueryRelationships(ctx context.Context, tenant string, query RelationshipQuery) ([]Relationship, error)
 	Traverse(ctx context.Context, tenant string, query TraversalQuery) ([]Path, error)
 	QueryAsOf(ctx context.Context, tenant string, query RelationshipQuery, asOf time.Time) ([]Relationship, error)
