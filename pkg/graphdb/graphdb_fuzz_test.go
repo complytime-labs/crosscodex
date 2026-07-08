@@ -1,6 +1,7 @@
 package graphdb_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
@@ -14,6 +15,8 @@ func FuzzEscapeCypher(f *testing.F) {
 	f.Add("'; DROP TABLE users; --")
 	f.Add(`\'\\'`)
 	f.Add("unicode: \u0000\uffff")
+	f.Add("inject" + graphdb.ExportCypherDollarTag + "payload")
+	f.Add("$$")
 
 	f.Fuzz(func(t *testing.T, input string) {
 		result := graphdb.EscapeCypher(input)
@@ -25,6 +28,12 @@ func FuzzEscapeCypher(f *testing.F) {
 					t.Errorf("unescaped single quote at position %d in %q (input: %q)", i, result, input)
 				}
 			}
+		}
+
+		// The dollar-quote tag must never appear in escaped output.
+		if strings.Contains(result, graphdb.ExportCypherDollarTag) {
+			t.Errorf("dollar-quote tag %q found in output %q (input: %q)",
+				graphdb.ExportCypherDollarTag, result, input)
 		}
 	})
 }

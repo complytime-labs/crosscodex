@@ -1,12 +1,7 @@
 package requires
 
 // Bridge file: exports unexported symbols for external test packages.
-
-// ExportTruncateText exposes truncateText for testing.
-var ExportTruncateText = truncateText
-
-// ExportFormatFewShotExamples exposes formatFewShotExamples for testing.
-var ExportFormatFewShotExamples = formatFewShotExamples
+// TruncateText and FormatFewShotExamples are now public in internal/analyzer.
 
 // ExportRequiresGuidance exposes the static guidance text.
 var ExportRequiresGuidance = requiresGuidance

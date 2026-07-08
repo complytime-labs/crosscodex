@@ -16,3 +16,10 @@ CVE-2026-41568  # Docker v28.5.2+incompatible - MEDIUM severity - placeholder CV
 # Dockerfile misconfiguration suppressions
 # Inline trivy:ignore does not work for "missing resource" checks (trivy bug #9463).
 AVD-DS-0002  # test/ollama/Containerfile — ollama base image requires root for GPU device access and model storage
+
+# golang.org/x/crypto/openpgp deprecated as unsafe by design (no fix will ever ship)
+# This codebase does not import or use any openpgp subpackages. The x/crypto module is
+# pulled in transitively by 79 dependencies for non-openpgp functionality (ssh, bcrypt, etc.).
+# If openpgp is ever needed directly, migrate to github.com/ProtonMail/go-crypto/openpgp.
+# See: https://github.com/golang/go/issues/44226
+GO-2026-5932

@@ -1,0 +1,86 @@
+name: artifacts
+version: 1.0.0
+metadata:
+  domain: analysis
+  analyzer_type: artifacts
+  description: >-
+    Extract observable artifacts from compliance requirements.
+templates:
+  system: |
+    You are a cybersecurity compliance analyst. Extract the concrete,
+    observable artifacts that a compliance requirement demands or clearly
+    implies. An artifact is something that must EXIST (a document,
+    configuration, role, process) for the requirement to be satisfied.
+
+    ${extraction_guidance}
+
+    ARTIFACT TYPES:
+    ${artifact_type_definitions}
+
+    ${few_shot_examples}
+  user: |
+    ID: ${control_id} | Framework: ${framework} | Control Domain: "${ancestor_title}"
+    <requirement>
+    ${requirement_text}
+    </requirement>
+
+    Extract the concrete artifacts this requirement demands.
+
+    Respond ONLY in this exact format:
+    ${output_format}
+few_shot_examples:
+  - input: >
+      The organisation shall develop, document, and disseminate an access
+      control policy that addresses purpose, scope, roles, responsibilities,
+      and compliance; and review and update the policy at least annually.
+    output: |
+      ARTIFACT_NAME: access control policy
+      ARTIFACT_TYPE: POLICY
+      FREQUENCY: annual review
+      OWNER_ROLE: CISO
+      DESCRIPTION: Formal document defining access control purpose, scope, roles, and compliance requirements
+      ---
+      ARTIFACT_NAME: access control policy review process
+      ARTIFACT_TYPE: PROCESS
+      FREQUENCY: annual
+      OWNER_ROLE: CISO
+      DESCRIPTION: Recurring review and update cycle for the access control policy
+      ---
+      ARTIFACT_NAME: access control policy dissemination record
+      ARTIFACT_TYPE: RECORD
+      FREQUENCY: upon update
+      OWNER_ROLE: NONE
+      DESCRIPTION: Evidence that the policy was distributed to relevant personnel
+  - input: >
+      The information system shall terminate a user session after 15 minutes
+      of inactivity and require re-authentication to resume.
+    output: |
+      ARTIFACT_NAME: session inactivity timeout configuration
+      ARTIFACT_TYPE: CONFIGURATION
+      FREQUENCY: NONE
+      OWNER_ROLE: system administrator
+      DESCRIPTION: System setting enforcing 15-minute inactivity timeout
+      ---
+      ARTIFACT_NAME: session re-authentication mechanism
+      ARTIFACT_TYPE: MECHANISM
+      FREQUENCY: NONE
+      OWNER_ROLE: NONE
+      DESCRIPTION: Technical capability requiring users to re-authenticate after session timeout
+  - input: >
+      The organisation shall designate a senior information security official
+      to coordinate security across the enterprise and report quarterly to
+      the board on the state of the security programme.
+    output: |
+      ARTIFACT_NAME: senior information security official
+      ARTIFACT_TYPE: ROLE
+      FREQUENCY: NONE
+      OWNER_ROLE: executive management
+      DESCRIPTION: Designated position responsible for coordinating enterprise security
+      ---
+      ARTIFACT_NAME: quarterly security programme report
+      ARTIFACT_TYPE: REPORT
+      FREQUENCY: quarterly
+      OWNER_ROLE: senior information security official
+      DESCRIPTION: Board-level report on the state of the security programme
+  - input: "SECTION 4. SCOPE AND APPLICABILITY."
+    output: "ARTIFACTS: NONE"

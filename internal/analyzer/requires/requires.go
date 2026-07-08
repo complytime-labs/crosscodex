@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -13,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
@@ -166,7 +165,7 @@ func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 	}
 
 	// Format few-shot examples inline in the user template.
-	fewShotStr := formatFewShotExamples(spec.FewShot)
+	fewShotStr := intanalyzer.FormatFewShotExamples(spec.FewShot)
 
 	// Determine temperature.
 	temperature := a.cfg.SamplingTemperature
@@ -177,8 +176,8 @@ func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 	// Build tasks.
 	var tasks []analyzer.Task
 	for _, pair := range pairs {
-		sourceText := truncateText(input.GetStatement(), a.cfg.MaxSourceChars)
-		targetText := truncateText(cfg.Parameters["target_text_"+pair.TargetControlID], a.cfg.MaxTargetChars)
+		sourceText := intanalyzer.TruncateText(input.GetStatement(), a.cfg.MaxSourceChars)
+		targetText := intanalyzer.TruncateText(cfg.Parameters["target_text_"+pair.TargetControlID], a.cfg.MaxTargetChars)
 
 		vars := map[string]string{
 			"requires_guidance":      requiresGuidance,
@@ -311,28 +310,3 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, results []analyzer.Tas
 	}, nil
 }
 
-// formatFewShotExamples formats few-shot examples into inline text for
-// the user template.
-func formatFewShotExamples(examples []prompt.FewShotExample) string {
-	if len(examples) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("EXAMPLES:\n\n")
-	for i, ex := range examples {
-		fmt.Fprintf(&b, "Example %d:\n%s\nExpected output:\n%s\n", i+1, ex.Input, ex.Output)
-	}
-	return b.String()
-}
-
-// truncateText truncates text to maxChars runes, operating on rune boundaries
-// to avoid producing invalid UTF-8.
-func truncateText(text string, maxChars int) string {
-	text = strings.ReplaceAll(text, "\n", " ")
-	text = strings.ReplaceAll(text, "\r", " ")
-	if maxChars > 0 && utf8.RuneCountInString(text) > maxChars {
-		runes := []rune(text)
-		text = string(runes[:maxChars])
-	}
-	return text
-}

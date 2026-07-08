@@ -2,12 +2,7 @@ package relationship
 
 // Bridge file: exports unexported symbols for external test packages.
 // ParseResponse and ComputeConsensus are already exported — no bridge needed.
-
-// ExportTruncateText exposes truncateText for testing.
-var ExportTruncateText = truncateText
-
-// ExportFormatFewShotExamples exposes formatFewShotExamples for testing.
-var ExportFormatFewShotExamples = formatFewShotExamples
+// TruncateText and FormatFewShotExamples are now public in internal/analyzer.
 
 // ExportClassificationGuidance exposes the static guidance text.
 var ExportClassificationGuidance = classificationGuidance
