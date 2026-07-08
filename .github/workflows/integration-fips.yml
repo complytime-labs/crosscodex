@@ -37,7 +37,7 @@ jobs:
 
       - uses: ./.github/actions/go-setup
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           generate-test-certs: ${{ inputs.generate-test-certs && 'true' || 'false' }}
 
       - uses: ./.github/actions/integration-setup

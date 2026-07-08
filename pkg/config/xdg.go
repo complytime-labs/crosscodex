@@ -40,8 +40,8 @@ func profilePath(name string) string {
 func configPaths() resolvedPaths {
 	userDir := userConfigDir()
 	return resolvedPaths{
-		systemConfig:    filepath.Join("/etc", appName, "config.yaml"),
-		systemDropInDir: filepath.Join("/etc", appName, "conf.d"),
+		systemConfig:    filepath.Join("/etc", appName, "config.yaml"), //nolint:gocritic // absolute system path is intentional
+		systemDropInDir: filepath.Join("/etc", appName, "conf.d"),      //nolint:gocritic // absolute system path is intentional
 		userConfig:      filepath.Join(userDir, "config.yaml"),
 		userDropInDir:   filepath.Join(userDir, "conf.d"),
 	}

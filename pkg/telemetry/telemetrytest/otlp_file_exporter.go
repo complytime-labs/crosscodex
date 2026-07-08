@@ -76,7 +76,7 @@ func fixIDEncoding(data []byte) ([]byte, error) {
 			convErr = err
 			return match
 		}
-		return []byte(fmt.Sprintf(`"%s":"%s"`, sub[1], hexVal))
+		return []byte(fmt.Sprintf(`%q:%q`, sub[1], hexVal))
 	})
 	return result, convErr
 }
@@ -84,11 +84,11 @@ func fixIDEncoding(data []byte) ([]byte, error) {
 // NewOTLPFileExporter creates an exporter that writes OTLP JSON to a
 // file in dir. The directory is created if it does not exist.
 func NewOTLPFileExporter(dir string) (*OTLPFileExporter, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create trace dir %q: %w", dir, err)
 	}
 	path := fmt.Sprintf("%s/otlp-traces-%d-%d.jsonl", dir, os.Getpid(), time.Now().UnixMilli())
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("create trace file %q: %w", path, err)
 	}

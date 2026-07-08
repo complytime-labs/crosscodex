@@ -201,7 +201,7 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 // Health checks LLM gateway availability by querying the models endpoint.
 func (c *client) Health(ctx context.Context) error {
 	url := strings.TrimRight(c.cfg.GatewayURL, "/") + "/v1/models"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("creating health request: %w", err)
 	}

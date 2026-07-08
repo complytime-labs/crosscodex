@@ -33,6 +33,9 @@ func (m *mockGraphDB) CreateEdge(_ context.Context, _ string, edge graphdb.Edge)
 	m.edges = append(m.edges, edge)
 	return nil
 }
+func (m *mockGraphDB) CreateRequiresEdge(_ context.Context, _ string, _ graphdb.RequiresEdge) error {
+	return nil
+}
 func (m *mockGraphDB) QueryRelationships(_ context.Context, _ string, _ graphdb.RelationshipQuery) ([]graphdb.Relationship, error) {
 	return nil, nil
 }

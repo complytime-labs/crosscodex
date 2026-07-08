@@ -68,7 +68,7 @@ func Generate() (*PKI, error) {
 // Creates the directory (including parents) if it does not exist.
 // Cert files get 0644 permissions; key files get 0600.
 func (p *PKI) WriteToDir(dir string) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create cert dir: %w", err)
 	}
 
@@ -77,12 +77,12 @@ func (p *PKI) WriteToDir(dir string) error {
 		data []byte
 		perm os.FileMode
 	}{
-		{"ca.pem", p.CACert, 0644},
-		{"ca-key.pem", p.CAKey, 0600},
-		{"server.pem", p.ServerCert, 0644},
-		{"server-key.pem", p.ServerKey, 0600},
-		{"client.pem", p.ClientCert, 0644},
-		{"client-key.pem", p.ClientKey, 0600},
+		{"ca.pem", p.CACert, 0o644},
+		{"ca-key.pem", p.CAKey, 0o600},
+		{"server.pem", p.ServerCert, 0o644},
+		{"server-key.pem", p.ServerKey, 0o600},
+		{"client.pem", p.ClientCert, 0o644},
+		{"client-key.pem", p.ClientKey, 0o600},
 	}
 
 	for _, f := range files {
@@ -205,7 +205,7 @@ func WriteFingerprint(dir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, fingerprintFile), []byte(fp+"\n"), 0644)
+	return os.WriteFile(filepath.Join(dir, fingerprintFile), []byte(fp+"\n"), 0o644)
 }
 
 // ComputeFingerprint returns a SHA-256 hex digest computed over the

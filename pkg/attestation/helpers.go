@@ -89,7 +89,7 @@ func loadEnvelopeFromBytes(data []byte) (*in_toto.Envelope, error) {
 	defer os.RemoveAll(tmpDir)
 
 	path := filepath.Join(tmpDir, "envelope.json")
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return nil, fmt.Errorf("write temp envelope: %w", err)
 	}
 

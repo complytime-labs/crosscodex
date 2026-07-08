@@ -196,11 +196,12 @@ func (m *behaviorTestSecureComponent) SanitizeOutput(output interface{}) interfa
 		sanitized := make(map[string]interface{})
 		for key, value := range data {
 			// Sanitize sensitive keys by renaming them
-			if key == "password" {
+			switch key {
+			case "password":
 				sanitized["credentials"] = "***"
-			} else if key == "secret" {
+			case "secret":
 				sanitized["private"] = "***"
-			} else {
+			default:
 				sanitized[key] = value
 			}
 		}

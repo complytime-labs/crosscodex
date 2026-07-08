@@ -51,7 +51,7 @@ func NewLocal(root, tenantID string, opts ...LocalOption) (Provider, error) {
 	}
 
 	tenantRoot := filepath.Join(absRoot, tenantID)
-	if err := os.MkdirAll(tenantRoot, 0700); err != nil {
+	if err := os.MkdirAll(tenantRoot, 0o700); err != nil {
 		return nil, fmt.Errorf("creating tenant directory: %w", err)
 	}
 
@@ -165,7 +165,7 @@ func (p *localProvider) Put(ctx context.Context, key string, data io.Reader) err
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("creating directories: %w", err)
 	}
@@ -195,7 +195,7 @@ func (p *localProvider) Put(ctx context.Context, key string, data io.Reader) err
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("writing data: %w", err)
 	}
-	if err := tmp.Chmod(0600); err != nil {
+	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("setting permissions: %w", err)

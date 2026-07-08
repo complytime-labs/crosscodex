@@ -1,13 +1,11 @@
 package attestation
 
 import (
-	"crypto"
-
 	in_toto "github.com/in-toto/in-toto-golang/in_toto"
 )
 
 // ValidateFIPSKey exports the FIPS key validation function for testing.
-var ValidateFIPSKey = func(signer crypto.Signer) error { return validateFIPSKey(signer) }
+var ValidateFIPSKey = validateFIPSKey
 
 // ArtifactsToHashObj exports the unexported artifactsToHashObj for BDD tests.
 var ArtifactsToHashObj = artifactsToHashObj

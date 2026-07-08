@@ -461,7 +461,7 @@ var _ = Describe("Storage System", Ordered, func() {
 
 				By("planting a file in tenant-b's directory")
 				secretPath := filepath.Join(root, "tenant-b", "secret.json")
-				Expect(os.WriteFile(secretPath, []byte("tenant-b-secret"), 0600)).To(Succeed())
+				Expect(os.WriteFile(secretPath, []byte("tenant-b-secret"), 0o600)).To(Succeed())
 
 				By("attempting cross-tenant access from tenant-a")
 				_, err = pA.Get(context.Background(), "../tenant-b/secret.json")
@@ -777,7 +777,7 @@ var _ = Describe("Storage System", Ordered, func() {
 				info, err := os.Stat(filepath.Join(root, "acme"))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(info.IsDir()).To(BeTrue())
-				Expect(info.Mode().Perm()).To(Equal(os.FileMode(0700)))
+				Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o700)))
 			})
 
 			It("writes files with restricted permissions (0600)", func() {
@@ -790,7 +790,7 @@ var _ = Describe("Storage System", Ordered, func() {
 
 				info, err := os.Stat(filepath.Join(root, "test-tenant", "secure.json"))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(info.Mode().Perm()).To(Equal(os.FileMode(0600)))
+				Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
 			})
 
 			It("rejects invalid keys for Delete, Stat, and Exists", func() {
@@ -829,7 +829,7 @@ var _ = Describe("Storage System", Ordered, func() {
 				outsideDir := GinkgoT().TempDir()
 
 				By("planting a secret outside the tenant root")
-				Expect(os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("stolen"), 0600)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("stolen"), 0o600)).To(Succeed())
 
 				By("creating a symlink inside the tenant dir pointing outside")
 				Expect(os.Symlink(outsideDir, filepath.Join(tenantDir, "escape"))).To(Succeed())

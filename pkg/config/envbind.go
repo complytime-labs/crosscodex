@@ -116,10 +116,10 @@ func inferTag(schemaVal *yaml.Node, value string) string {
 		}
 	case "!!int":
 		digits := value
-		if len(digits) > 0 && (digits[0] == '-' || digits[0] == '+') {
+		if digits != "" && (digits[0] == '-' || digits[0] == '+') {
 			digits = digits[1:]
 		}
-		if len(digits) == 0 {
+		if digits == "" {
 			return "!!str"
 		}
 		for _, c := range digits {

@@ -120,7 +120,7 @@ var _ = Describe("Database Package", Ordered, func() {
 			It("satisfies the Connection interface through NewTenantPool", func() {
 				// NewTenantPool returns TenantConnection which embeds Connection.
 				// Verify the returned value implements Connection at compile time.
-				var conn db.TenantConnection = db.NewTenantPool(nil)
+				conn := db.NewTenantPool(nil)
 				Expect(conn).NotTo(BeNil())
 
 				// Also verify it is usable as a Connection

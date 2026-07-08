@@ -79,7 +79,7 @@ var _ = Describe("Credential Resolution", func() {
 			By("creating a temp file with mode 0600")
 			dir := GinkgoT().TempDir()
 			path := filepath.Join(dir, "api-key")
-			err := os.WriteFile(path, []byte("sk-file-secret-456\n"), 0600)
+			err := os.WriteFile(path, []byte("sk-file-secret-456\n"), 0o600)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("resolving the credential")
@@ -91,7 +91,7 @@ var _ = Describe("Credential Resolution", func() {
 		It("rejects a file with overly permissive mode", func() {
 			dir := GinkgoT().TempDir()
 			path := filepath.Join(dir, "api-key-open")
-			err := os.WriteFile(path, []byte("sk-loose-789"), 0644)
+			err := os.WriteFile(path, []byte("sk-loose-789"), 0o644)
 			Expect(err).NotTo(HaveOccurred())
 
 			_, err = llmclient.ResolveCredential("file:" + path)

@@ -250,12 +250,12 @@ var _ = Describe("PKI Certificate Generation", Ordered, func() {
 				Expect(bundle.Dir).To(Equal(dir))
 
 				wantPerms := map[string]os.FileMode{
-					"ca.pem":         0644,
-					"ca-key.pem":     0600,
-					"server.pem":     0644,
-					"server-key.pem": 0600,
-					"client.pem":     0644,
-					"client-key.pem": 0600,
+					"ca.pem":         0o644,
+					"ca-key.pem":     0o600,
+					"server.pem":     0o644,
+					"server-key.pem": 0o600,
+					"client.pem":     0o644,
+					"client-key.pem": 0o600,
 				}
 
 				for name, wantPerm := range wantPerms {

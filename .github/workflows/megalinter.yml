@@ -34,12 +34,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Materialize generated protobuf code (api/gen, internal/testgrpc/gen)
+      # so golangci-lint's typecheck can resolve the generated packages.
+      - name: Set up Go and generate code
+        uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ github.token }}
+
       - name: MegaLinter
         id: ml
-        uses: trevor-vaughan/megalint-config@a7b04964e23526629dd8cba75abc86b1829158a7 # v0.3.0
+        uses: trevor-vaughan/megalint-config@2da93ca6173ca20edcde4be599de20f5a79197c6 # v0.4.0
         with:
           validate-all-codebase: ${{ github.event_name == 'schedule' }}
           github-comment: "true"
+          extra-env-var: "GOTOOLCHAIN"
+        env:
+          # Allow Go toolchain auto-upgrade when go.mod requires newer version
+          # MegaLinter ships with Go 1.26.3; go.mod requires 1.26.4 for security patches
+          GOTOOLCHAIN: auto
 
       - name: Archive reports
         if: success() || failure()

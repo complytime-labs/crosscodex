@@ -1,7 +1,13 @@
 # Local overrides for MegaLinter configuration from megalint-config.
-# Extends the shared config staged by megalint-config v0.2.0.
+# Extends the shared config staged by megalint-config v0.4.0.
 # EXTENDS replaces YAML keys wholesale -- lists are not merged.
 EXTENDS: .mega-linter.shared.yml
+
+# Allow go to load the correct version
+GOTOOLCHAIN: auto
+
+# Use project-level golangci-lint config so local and CI lint agree.
+GO_GOLANGCI_LINT_CONFIG_FILE: .golangci.yml
 
 # REPOSITORY_CHECKOV and REPOSITORY_TRUFFLEHOG are disabled.
 # Both hang indefinitely inside the MegaLinter container on GitHub
@@ -13,6 +19,7 @@ EXTENDS: .mega-linter.shared.yml
 # REPOSITORY_KICS is force-disabled by MegaLinter v9.6.0 upstream
 # (supply chain compromise) so it is omitted here as well.
 ENABLE_LINTERS:
+  - GO_GOLANGCI_LINT
   - BASH_SHELLCHECK
   - BASH_SHFMT
   - PYTHON_RUFF

@@ -164,7 +164,8 @@ func buildTLSConfigFromResolved(ctx context.Context, r Resolver, cfg config.TLSC
 	// Cert+key are optional: a server needs them, a client typically doesn't.
 	// BuildTLSConfig produces one *tls.Config; the caller decides server vs client.
 	// We load what's provided and leave the rest nil.
-	if rc.cert != "" && rc.key != "" {
+	switch {
+	case rc.cert != "" && rc.key != "":
 		// Load static certificate for initial validation
 		var certSpan trace.Span
 		if r.Tracer != nil {
@@ -193,9 +194,9 @@ func buildTLSConfigFromResolved(ctx context.Context, r Resolver, cfg config.TLSC
 		} else {
 			tlsCfg.GetCertificate = makeGetCertificate(rc.cert, rc.key)
 		}
-	} else if rc.cert != "" && rc.key == "" {
+	case rc.cert != "" && rc.key == "":
 		return nil, fmt.Errorf("target %q: cert specified without key: %w", target, ErrMissingKey)
-	} else if rc.cert == "" && rc.key != "" {
+	case rc.cert == "" && rc.key != "":
 		return nil, fmt.Errorf("target %q: key specified without cert: %w", target, ErrMissingCert)
 	}
 	// If both are empty, no certificates are loaded (valid for client-side usage)

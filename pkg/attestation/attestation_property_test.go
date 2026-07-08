@@ -31,7 +31,7 @@ func (r *rsaSigner) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, er
 }
 
 // gnuCoreutilsLine matches the GNU coreutils sha256sum output format.
-var gnuCoreutilsLine = regexp.MustCompile(`^[0-9a-f]{64}  .+$`)
+var gnuCoreutilsLine = regexp.MustCompile(`^[0-9a-f]{64} {2}.+$`)
 
 var _ = Describe("Property Specifications", Ordered, func() {
 	Context("validateFIPSKey — algorithm enforcement", func() {

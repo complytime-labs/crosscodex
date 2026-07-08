@@ -9,8 +9,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
@@ -82,7 +82,7 @@ func SetupTestNATS() (natsbus.Client, TestCleanup) {
 
 	// Create NATS client
 	client, err := natsbus.New(cfg)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
 	cleanup := func() {
 		if client != nil {
@@ -97,13 +97,13 @@ func SetupTestNATS() (natsbus.Client, TestCleanup) {
 func SetupTestStorage() (storage.Provider, TestCleanup) {
 	// Create temporary directory for test storage
 	tempDir, err := os.MkdirTemp("", "crosscodex_test_storage_*")
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
 	// Create local storage provider pointing to temp directory
 	// Use a test tenant ID
 	testTenantID := "test-tenant"
 	provider, err := storage.NewLocal(tempDir, testTenantID)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
 	cleanup := func() {
 		if provider != nil {
@@ -120,16 +120,16 @@ func SetupTestStorage() (storage.Provider, TestCleanup) {
 func SetupTestConfig(configData []byte) (string, TestCleanup) {
 	// Create temporary file for config
 	tempFile, err := os.CreateTemp("", "crosscodex_test_config_*.yml")
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
 	configPath := tempFile.Name()
 
 	// Write config data to file
 	_, err = tempFile.Write(configData)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
 	err = tempFile.Close()
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
 	cleanup := func() {
 		os.Remove(configPath)
@@ -159,7 +159,7 @@ func WaitForCondition(condition func() bool, timeout time.Duration, description 
 			return
 		}
 		if time.Since(start) >= timeout {
-			ExpectWithOffset(1, true).To(BeFalse(), fmt.Sprintf("Timeout waiting for condition: %s", description))
+			gomega.ExpectWithOffset(1, true).To(gomega.BeFalse(), fmt.Sprintf("Timeout waiting for condition: %s", description))
 			return
 		}
 	}
@@ -167,13 +167,13 @@ func WaitForCondition(condition func() bool, timeout time.Duration, description 
 
 // AssertNoError asserts that the error is nil using proper offset
 func AssertNoError(err error) {
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 }
 
 // AssertErrorContains asserts that the error contains the expected text
 func AssertErrorContains(err error, expectedText string) {
-	ExpectWithOffset(1, err).To(HaveOccurred())
-	ExpectWithOffset(1, err.Error()).To(ContainSubstring(expectedText))
+	gomega.ExpectWithOffset(1, err).To(gomega.HaveOccurred())
+	gomega.ExpectWithOffset(1, err.Error()).To(gomega.ContainSubstring(expectedText))
 }
 
 // IgnoreOutput suppresses output to stdout/stderr and returns a restore function
@@ -207,10 +207,10 @@ func IgnoreOutput() (restore func()) {
 // LogTestProgress logs test progress messages using Ginkgo's logging
 func LogTestProgress(message string, args ...interface{}) {
 	formattedMessage := fmt.Sprintf(message, args...)
-	GinkgoWriter.Printf("[TEST PROGRESS] %s\n", formattedMessage)
+	ginkgo.GinkgoWriter.Printf("[TEST PROGRESS] %s\n", formattedMessage)
 }
 
-// RedirectLogsToGinkgo sets slog's default logger to write to GinkgoWriter.
+// RedirectLogsToGinkgo sets slog's default logger to write to ginkgo.GinkgoWriter.
 // Ginkgo captures this output and only displays it when a spec fails,
 // keeping the normal test output clean. Returns a restore function that
 // reinstates the previous default logger.
@@ -222,13 +222,13 @@ func LogTestProgress(message string, args ...interface{}) {
 //	AfterSuite(func() { restoreLogs() })
 func RedirectLogsToGinkgo() (restore func()) {
 	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(GinkgoWriter, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(ginkgo.GinkgoWriter, nil)))
 	return func() { slog.SetDefault(prev) }
 }
 
-// GinkgoLogger returns an *slog.Logger that writes to GinkgoWriter.
+// GinkgoLogger returns an *slog.Logger that writes to ginkgo.GinkgoWriter.
 // Use this when injecting a logger into a component under test so its
 // output is captured by Ginkgo and only shown on failure.
 func GinkgoLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(GinkgoWriter, nil))
+	return slog.New(slog.NewTextHandler(ginkgo.GinkgoWriter, nil))
 }

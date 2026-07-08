@@ -55,15 +55,15 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 				GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0o755))
 				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
 				userConfigPath := filepath.Join(tmpHome, "crosscodex", "config.yaml")
-				testspecs.AssertNoError(os.WriteFile(userConfigPath, userConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(userConfigPath, userConfigData, 0o644))
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0o755))
 				projectConfigData := []byte("llm:\n  gateway_url: \"https://project:7000\"\n")
 				projectConfigPath := filepath.Join(projectDir, ".crosscodex", "config.yaml")
-				testspecs.AssertNoError(os.WriteFile(projectConfigPath, projectConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(projectConfigPath, projectConfigData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background(),
@@ -83,15 +83,15 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 				GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0o755))
 				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
 				userConfigPath := filepath.Join(tmpHome, "crosscodex", "config.yaml")
-				testspecs.AssertNoError(os.WriteFile(userConfigPath, userConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(userConfigPath, userConfigData, 0o644))
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0o755))
 				projectConfigData := []byte("llm:\n  gateway_url: \"https://project:7000\"\n  timeout: 45\n")
 				projectConfigPath := filepath.Join(projectDir, ".crosscodex", "config.yaml")
-				testspecs.AssertNoError(os.WriteFile(projectConfigPath, projectConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(projectConfigPath, projectConfigData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background(),
@@ -108,13 +108,13 @@ var _ = Describe("Configuration System", Ordered, func() {
 				projectDir := GinkgoT().TempDir()
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0o755))
 				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0o644))
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0o755))
 				projectConfigData := []byte("llm:\n  gateway_url: \"https://project:7000\"\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(projectDir, ".crosscodex", "config.yaml"), projectConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(projectDir, ".crosscodex", "config.yaml"), projectConfigData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background(), config.WithProjectDir(projectDir))
@@ -128,9 +128,9 @@ var _ = Describe("Configuration System", Ordered, func() {
 				tmpHome := GinkgoT().TempDir()
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0o755))
 				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background())
@@ -163,9 +163,9 @@ var _ = Describe("Configuration System", Ordered, func() {
 				tmpHome := GinkgoT().TempDir()
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex", "profiles"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex", "profiles"), 0o755))
 				profileData := []byte("server:\n  workers: 2\nllm:\n  gateway_url: \"https://local:4000\"\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "profiles", "local.yaml"), profileData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "profiles", "local.yaml"), profileData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background(), config.WithProfile("local"))
@@ -180,13 +180,13 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), userConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), userConfigData, 0o644))
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0o755))
 				dropinData := []byte("llm:\n  gateway_url: \"https://dropin:5000\"\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-override.yaml"), dropinData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-override.yaml"), dropinData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background())
@@ -201,10 +201,10 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 
 				configData := []byte("tls:\n  mode: server-only\n  ca: /etc/ca.crt\n  cert: /etc/server.crt\n  key: /etc/server.key\n  targets:\n    ingestion:\n      mode: mutual\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), configData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), configData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background())
@@ -224,14 +224,14 @@ var _ = Describe("Configuration System", Ordered, func() {
 				tmpHome := GinkgoT().TempDir()
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0o755))
 				userConfigData := []byte("llm:\n  gateway_url: \"https://user-should-be-skipped:4000\"\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"), userConfigData, 0o644))
 
 				singleDir := GinkgoT().TempDir()
 				singleFile := filepath.Join(singleDir, "custom.yaml")
 				singleConfigData := []byte("llm:\n  gateway_url: \"https://custom:8000\"\n")
-				testspecs.AssertNoError(os.WriteFile(singleFile, singleConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(singleFile, singleConfigData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background(), config.WithConfigPath(singleFile))
@@ -258,8 +258,8 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				badFile := filepath.Join(tmpHome, "crosscodex", "conf.d", "99-bad.yaml")
-				testspecs.AssertNoError(os.MkdirAll(filepath.Dir(badFile), 0755))
-				testspecs.AssertNoError(os.WriteFile(badFile, []byte("tls:\n  mode: \"invalid-mode\"\n"), 0644))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Dir(badFile), 0o755))
+				testspecs.AssertNoError(os.WriteFile(badFile, []byte("tls:\n  mode: \"invalid-mode\"\n"), 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -272,10 +272,10 @@ var _ = Describe("Configuration System", Ordered, func() {
 				tmpHome := GinkgoT().TempDir()
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0o755))
 				testspecs.AssertNoError(os.WriteFile(
 					filepath.Join(tmpHome, "crosscodex", "config.yaml"),
-					[]byte("tls:\n  mode: \"bogus\"\n"), 0644))
+					[]byte("tls:\n  mode: \"bogus\"\n"), 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -287,10 +287,10 @@ var _ = Describe("Configuration System", Ordered, func() {
 				tmpHome := GinkgoT().TempDir()
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(tmpHome, "crosscodex"), 0o755))
 				testspecs.AssertNoError(os.WriteFile(
 					filepath.Join(tmpHome, "crosscodex", "config.yaml"),
-					[]byte(":\n  - :\n  broken: [yaml\n"), 0644))
+					[]byte(":\n  - :\n  broken: [yaml\n"), 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -307,10 +307,10 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 
 				badConfig := []byte("tls:\n  mode: mutual\n  ca: /etc/ca.crt\nstorage:\n  objects:\n    backend: local\nlogging:\n  level: info\n  format: text\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfig, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfig, 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -318,7 +318,7 @@ var _ = Describe("Configuration System", Ordered, func() {
 				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 
 				goodConfig := []byte("tls:\n  mode: mutual\n  ca: /etc/ca.crt\n  cert: /etc/server.crt\n  key: /etc/server.key\nstorage:\n  objects:\n    backend: local\nlogging:\n  level: info\n  format: text\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), goodConfig, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), goodConfig, 0o644))
 
 				loader = config.NewLoader()
 				_, err = loader.Load(context.Background())
@@ -330,10 +330,10 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 
 				badConfig := []byte("storage:\n  objects:\n    backend: azure\ntls:\n  mode: \"off\"\nlogging:\n  level: info\n  format: text\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfig, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfig, 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -341,7 +341,7 @@ var _ = Describe("Configuration System", Ordered, func() {
 				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 
 				goodConfig := []byte("storage:\n  objects:\n    backend: local\ntls:\n  mode: \"off\"\nlogging:\n  level: info\n  format: text\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), goodConfig, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), goodConfig, 0o644))
 
 				loader = config.NewLoader()
 				_, err = loader.Load(context.Background())
@@ -353,10 +353,10 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 
 				badLevelConfig := []byte("logging:\n  level: verbose\n  format: text\ntls:\n  mode: \"off\"\nstorage:\n  objects:\n    backend: local\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badLevelConfig, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badLevelConfig, 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -364,7 +364,7 @@ var _ = Describe("Configuration System", Ordered, func() {
 				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 
 				badFormatConfig := []byte("logging:\n  level: info\n  format: yaml\ntls:\n  mode: \"off\"\nstorage:\n  objects:\n    backend: local\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badFormatConfig, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badFormatConfig, 0o644))
 
 				loader = config.NewLoader()
 				_, err = loader.Load(context.Background())
@@ -408,21 +408,21 @@ var _ = Describe("Configuration System", Ordered, func() {
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
 
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 				userConfigData := []byte("llm:\n  gateway_url: \"https://user:4000\"\n  timeout: 60\nlogging:\n  level: warn\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), userConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), userConfigData, 0o644))
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0o755))
 				dropinData := []byte("llm:\n  timeout: 45\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-team.yaml"), dropinData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-team.yaml"), dropinData, 0o644))
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "profiles"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "profiles"), 0o755))
 				profileData := []byte("server:\n  workers: 1\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "profiles", "local.yaml"), profileData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "profiles", "local.yaml"), profileData, 0o644))
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(projectDir, ".crosscodex"), 0o755))
 				projectConfigData := []byte("llm:\n  gateway_url: \"https://project:7000\"\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(projectDir, ".crosscodex", "config.yaml"), projectConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(projectDir, ".crosscodex", "config.yaml"), projectConfigData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background(),
@@ -448,11 +448,11 @@ var _ = Describe("Configuration System", Ordered, func() {
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
 				goodPath := filepath.Join(userDir, "conf.d", "10-good.yaml")
-				testspecs.AssertNoError(os.MkdirAll(filepath.Dir(goodPath), 0755))
-				testspecs.AssertNoError(os.WriteFile(goodPath, []byte("llm:\n  timeout: 60\n"), 0644))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Dir(goodPath), 0o755))
+				testspecs.AssertNoError(os.WriteFile(goodPath, []byte("llm:\n  timeout: 60\n"), 0o644))
 
 				badPath := filepath.Join(userDir, "conf.d", "20-bad.yaml")
-				testspecs.AssertNoError(os.WriteFile(badPath, []byte("not: [valid: yaml\n"), 0644))
+				testspecs.AssertNoError(os.WriteFile(badPath, []byte("not: [valid: yaml\n"), 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -465,7 +465,7 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 
 				baseConfigData := []byte(`tls:
   mode: server-only
@@ -476,9 +476,9 @@ var _ = Describe("Configuration System", Ordered, func() {
     ingestion:
       mode: mutual
 `)
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), baseConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), baseConfigData, 0o644))
 
-				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0755))
+				testspecs.AssertNoError(os.MkdirAll(filepath.Join(userDir, "conf.d"), 0o755))
 				dropinConfigData := []byte(`tls:
   targets:
     ingestion:
@@ -489,7 +489,7 @@ var _ = Describe("Configuration System", Ordered, func() {
       cert: /etc/catalog.crt
       key: /etc/catalog.key
 `)
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-tls.yaml"), dropinConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "conf.d", "10-tls.yaml"), dropinConfigData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background())
@@ -516,7 +516,7 @@ var _ = Describe("Configuration System", Ordered, func() {
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 
 				badConfigData := []byte(`tls:
   mode: "bogus"
@@ -527,7 +527,7 @@ logging:
   level: "verbose"
   format: "yaml"
 `)
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfigData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), badConfigData, 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -547,9 +547,9 @@ logging:
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 				mutualNoCertKey := []byte("tls:\n  mode: mutual\n  ca: /etc/ca.crt\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), mutualNoCertKey, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), mutualNoCertKey, 0o644))
 
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
@@ -561,9 +561,9 @@ logging:
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome2)
 
 				userDir2 := filepath.Join(tmpHome2, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir2, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir2, 0o755))
 				serverNoCert := []byte("tls:\n  mode: server-only\n  key: /etc/server.key\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir2, "config.yaml"), serverNoCert, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir2, "config.yaml"), serverNoCert, 0o644))
 
 				loader = config.NewLoader()
 				_, err = loader.Load(context.Background())
@@ -575,9 +575,9 @@ logging:
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome3)
 
 				userDir3 := filepath.Join(tmpHome3, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir3, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir3, 0o755))
 				serverNoKey := []byte("tls:\n  mode: server-only\n  cert: /etc/server.crt\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir3, "config.yaml"), serverNoKey, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir3, "config.yaml"), serverNoKey, 0o644))
 
 				loader = config.NewLoader()
 				_, err = loader.Load(context.Background())
@@ -589,9 +589,9 @@ logging:
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome4)
 
 				userDir4 := filepath.Join(tmpHome4, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir4, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir4, 0o755))
 				mutualNoCA := []byte("tls:\n  mode: mutual\n  cert: /etc/server.crt\n  key: /etc/server.key\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir4, "config.yaml"), mutualNoCA, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir4, "config.yaml"), mutualNoCA, 0o644))
 
 				loader = config.NewLoader()
 				_, err = loader.Load(context.Background())
@@ -606,9 +606,9 @@ logging:
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 				configData := []byte("llm:\n  gateway_url: \"https://xdg-custom:9000\"\n  timeout: 99\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), configData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), configData, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background())
@@ -622,9 +622,9 @@ logging:
 				GinkgoT().Setenv("HOME", tmpHome2)
 
 				fallbackDir := filepath.Join(tmpHome2, ".config", "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(fallbackDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(fallbackDir, 0o755))
 				fallbackData := []byte("llm:\n  gateway_url: \"https://home-fallback:8000\"\n  timeout: 77\n")
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(fallbackDir, "config.yaml"), fallbackData, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(fallbackDir, "config.yaml"), fallbackData, 0o644))
 
 				loader = config.NewLoader()
 				cfg, err = loader.Load(context.Background())
@@ -712,7 +712,7 @@ logging:
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
-				testspecs.AssertNoError(os.MkdirAll(userDir, 0755))
+				testspecs.AssertNoError(os.MkdirAll(userDir, 0o755))
 
 				natsConfig := []byte(`nats:
   url: "nats://nats.example.com:4222"
@@ -724,7 +724,7 @@ logging:
     audit_llm_retention: 4320h
     audit_events_retention: 168h
 `)
-				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), natsConfig, 0644))
+				testspecs.AssertNoError(os.WriteFile(filepath.Join(userDir, "config.yaml"), natsConfig, 0o644))
 
 				loader := config.NewLoader()
 				cfg, err := loader.Load(context.Background())
@@ -1418,7 +1418,7 @@ logging:
 			GinkgoT().Setenv("XDG_CONFIG_HOME", "")
 			GinkgoT().Setenv("HOME", "/home/testuser")
 
-			Expect(config.ExportUserConfigDir()).To(Equal(filepath.Join("/home/testuser/.config", "crosscodex")))
+			Expect(config.ExportUserConfigDir()).To(Equal(filepath.Join("/home/testuser/.config", "crosscodex"))) //nolint:gocritic // test fixture path is intentional
 		})
 
 		It("configPaths returns correct system paths", func() {

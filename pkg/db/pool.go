@@ -98,7 +98,7 @@ func NewPool(cfg PoolConfig, opts ...Option) (Pool, error) {
 	return p, nil
 }
 
-func NewPoolConfigFrom(dsn string, graphDSN string, maxConns int, sslMode string, extensions []string) PoolConfig {
+func NewPoolConfigFrom(dsn, graphDSN string, maxConns int, sslMode string, extensions []string) PoolConfig {
 	return PoolConfig{
 		DSN:          dsn,
 		GraphDSN:     graphDSN,

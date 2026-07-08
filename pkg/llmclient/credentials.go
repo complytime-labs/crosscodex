@@ -67,7 +67,7 @@ func resolveFile(path string) (string, error) {
 	}
 
 	mode := info.Mode().Perm()
-	if mode&0077 != 0 {
+	if mode&0o077 != 0 {
 		return "", fmt.Errorf("credential file %q has permissions %04o, must be 0600 or stricter (no group/other access): %w",
 			path, mode, ErrCredentialResolution)
 	}

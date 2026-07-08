@@ -50,7 +50,7 @@ func hexToBase64InJSON(data []byte) ([]byte, error) {
 			return match
 		}
 		b64 := base64.StdEncoding.EncodeToString(raw)
-		return []byte(fmt.Sprintf(`"%s":"%s"`, sub[1], b64))
+		return []byte(fmt.Sprintf(`%q:%q`, sub[1], b64))
 	})
 	return result, convErr
 }
