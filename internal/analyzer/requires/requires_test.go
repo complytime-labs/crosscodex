@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
@@ -361,38 +362,38 @@ var _ = Describe("RequiresAnalyzer", func() {
 
 	Context("helper functions", func() {
 		It("truncateText replaces newlines and truncates at rune boundary", func() {
-			truncate := requires.ExportTruncateText
+			truncate := intanalyzer.TruncateText
 			result := truncate("hello\nworld\r!", 8)
 			Expect(result).To(Equal("hello wo"))
 		})
 
 		It("truncateText handles multibyte runes", func() {
-			truncate := requires.ExportTruncateText
+			truncate := intanalyzer.TruncateText
 			// 4 runes, each 3 bytes in UTF-8
 			result := truncate("世界你好", 2)
 			Expect(result).To(Equal("世界"))
 		})
 
 		It("truncateText returns full text when under limit", func() {
-			truncate := requires.ExportTruncateText
+			truncate := intanalyzer.TruncateText
 			result := truncate("short", 100)
 			Expect(result).To(Equal("short"))
 		})
 
 		It("truncateText handles zero maxChars (no truncation)", func() {
-			truncate := requires.ExportTruncateText
+			truncate := intanalyzer.TruncateText
 			result := truncate("hello world", 0)
 			Expect(result).To(Equal("hello world"))
 		})
 
 		It("formatFewShotExamples returns empty string for no examples", func() {
-			format := requires.ExportFormatFewShotExamples
+			format := intanalyzer.FormatFewShotExamples
 			result := format(nil)
 			Expect(result).To(BeEmpty())
 		})
 
 		It("formatFewShotExamples formats examples with numbered headers", func() {
-			format := requires.ExportFormatFewShotExamples
+			format := intanalyzer.FormatFewShotExamples
 			examples := []prompt.FewShotExample{
 				{Input: "source: AC-1, target: IA-2", Output: "REQUIRES"},
 				{Input: "source: AC-1, target: MP-3", Output: "NO_DEPENDENCY"},

@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
@@ -132,7 +133,7 @@ var _ = Describe("Relationship LLM Integration", func() {
 				"target_type":       "Technical",
 				"target_level":      "Tactical",
 				"target_ancestor":   "IT General Controls",
-				"few_shot_examples": relationship.ExportFormatFewShotExamples(spec.FewShot),
+				"few_shot_examples": intanalyzer.FormatFewShotExamples(spec.FewShot),
 			}
 			userMsg, substErr := prompt.SubstitutePlaceholders(spec.Templates.User, userVars)
 			Expect(substErr).NotTo(HaveOccurred())

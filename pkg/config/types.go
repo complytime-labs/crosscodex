@@ -327,6 +327,7 @@ type AnalysisConfig struct {
 	Relationship   RelationshipConfig   `yaml:"relationship"`
 	Candidates     CandidateConfig      `yaml:"candidates"`
 	Requires       RequiresConfig       `yaml:"requires"`
+	Artifacts      ArtifactsConfig      `yaml:"artifacts"`
 }
 
 // ClassificationConfig configures the classification analyzer.
@@ -437,6 +438,55 @@ func (c *RequiresConfig) Validate() error {
 	if c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
 		return fmt.Errorf("analysis.requires.sampling_temperature %g must be in range [0.0, 2.0]: %w",
 			c.SamplingTemperature, ErrInvalidConfig)
+	}
+
+	return nil
+}
+
+// ArtifactsConfig configures the artifacts analyzer for observable artifact extraction.
+type ArtifactsConfig struct {
+	Enabled             bool     `yaml:"enabled"`
+	Models              []string `yaml:"models"`               // LLM models for panel voting; must be non-empty when enabled
+	SamplesPerModel     int      `yaml:"samples_per_model"`    // Votes per model per control; must be positive
+	SamplingTemperature float64  `yaml:"sampling_temperature"` // Temperature for multi-sample; [0.0, 2.0]
+	MaxTokens           int      `yaml:"max_tokens"`           // Max tokens for LLM response; must be positive
+	MaxTextChars        int      `yaml:"max_text_chars"`       // Max runes for requirement text; must be positive
+	FuzzyThreshold      float64  `yaml:"fuzzy_threshold"`      // Token-set overlap threshold (0.0, 1.0]; default 0.6
+}
+
+// Validate checks ArtifactsConfig for consistency and required fields.
+func (c *ArtifactsConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+
+	if len(c.Models) == 0 {
+		return fmt.Errorf("analysis.artifacts.models must not be empty when enabled: %w", ErrInvalidConfig)
+	}
+
+	if c.SamplesPerModel <= 0 {
+		return fmt.Errorf("analysis.artifacts.samples_per_model %d must be positive: %w",
+			c.SamplesPerModel, ErrInvalidConfig)
+	}
+
+	if c.MaxTokens <= 0 {
+		return fmt.Errorf("analysis.artifacts.max_tokens %d must be positive: %w",
+			c.MaxTokens, ErrInvalidConfig)
+	}
+
+	if c.MaxTextChars <= 0 {
+		return fmt.Errorf("analysis.artifacts.max_text_chars %d must be positive: %w",
+			c.MaxTextChars, ErrInvalidConfig)
+	}
+
+	if c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
+		return fmt.Errorf("analysis.artifacts.sampling_temperature %g must be in range [0.0, 2.0]: %w",
+			c.SamplingTemperature, ErrInvalidConfig)
+	}
+
+	if c.FuzzyThreshold <= 0.0 || c.FuzzyThreshold > 1.0 {
+		return fmt.Errorf("analysis.artifacts.fuzzy_threshold %g must be in range (0.0, 1.0]: %w",
+			c.FuzzyThreshold, ErrInvalidConfig)
 	}
 
 	return nil

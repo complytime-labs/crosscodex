@@ -81,10 +81,19 @@ func (c *ageClient) beginTx(ctx context.Context, tenant string) (*sql.Tx, error)
 	return tx, nil
 }
 
-// escapeCypher escapes backslashes and single quotes for Cypher string literals.
+// cypherDollarTag is the PostgreSQL dollar-quote tag wrapping Cypher queries
+// in ag_catalog.cypher() calls. A tagged dollar-quote prevents content
+// containing bare $$ from escaping the SQL string boundary. escapeCypher
+// strips this tag from any content as a defense-in-depth measure.
+const cypherDollarTag = "$cypher$"
+
+// escapeCypher escapes backslashes and single quotes for Cypher string literals
+// and strips the dollar-quote tag to prevent SQL injection via AGE's
+// dollar-quoted Cypher embedding.
 func escapeCypher(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `'`, `\'`)
+	s = strings.ReplaceAll(s, cypherDollarTag, "")
 	return s
 }
 
@@ -219,6 +228,9 @@ func (c *ageClient) CreateGraph(ctx context.Context, tenant string) error {
 }
 
 // CreateNode creates a vertex in the tenant's graph.
+// Returns ErrNodeExists if a node with the same label and id already exists.
+// Apache AGE does not enforce unique constraints on node properties, so this
+// method performs an explicit MATCH check within the same transaction.
 func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) error {
 	if node.ID == "" {
 		return fmt.Errorf("create node: id is required")
@@ -242,10 +254,32 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) er
 	defer func() { _ = tx.Rollback() }()
 
 	gn := graphName(tenant)
+
+	matchCypher := fmt.Sprintf("MATCH (n:%s {id: '%s'}) RETURN n",
+		escapeCypher(node.Label), escapeCypher(node.ID))
+	matchQuery := fmt.Sprintf(
+		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (v agtype)",
+		escapeCypher(gn), matchCypher,
+	)
+	rows, err := tx.QueryContext(ctx, matchQuery)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("create node: check existing: %w", err)
+	}
+	exists := rows.Next()
+	if closeErr := rows.Close(); closeErr != nil {
+		span.SetStatus(codes.Error, closeErr.Error())
+		return fmt.Errorf("create node: close check: %w", closeErr)
+	}
+	if exists {
+		span.SetStatus(codes.Ok, "node exists")
+		return fmt.Errorf("create node %s/%s: %w", node.Label, node.ID, ErrNodeExists)
+	}
+
 	props := nodeToAGProperties(node)
 	cypher := fmt.Sprintf("CREATE (n:%s %s)", escapeCypher(node.Label), props)
 	query := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (v agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (v agtype)",
 		escapeCypher(gn), cypher,
 	)
 
@@ -296,7 +330,7 @@ func (c *ageClient) CreateEdge(ctx context.Context, tenant string, edge Edge) er
 		props,
 	)
 	query := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (v agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (v agtype)",
 		escapeCypher(gn), cypher,
 	)
 
@@ -383,7 +417,7 @@ func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEd
 		props,
 	)
 	query := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (v agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (v agtype)",
 		escapeCypher(gn), cypher,
 	)
 
@@ -497,7 +531,7 @@ func (c *ageClient) queryRelationshipsInternal(
 	cypher := fmt.Sprintf("MATCH (%s)-[%s]->(%s)%s RETURN s, e, t",
 		sourcePattern, edgePattern, targetPattern, whereClause)
 	sqlQuery := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (s agtype, e agtype, t agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (s agtype, e agtype, t agtype)",
 		escapeCypher(gn), cypher,
 	)
 
@@ -591,7 +625,7 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 
 	cypher := matchPattern + " RETURN p"
 	sqlQuery := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', $$ %s $$) AS (p agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (p agtype)",
 		escapeCypher(gn), cypher,
 	)
 

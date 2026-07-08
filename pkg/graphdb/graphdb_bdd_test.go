@@ -260,6 +260,11 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				Entry("both backslash and quote", `it's a\b`, `it\'s a\\b`),
 				Entry("empty string", "", ""),
 				Entry("multiple backslashes", `a\\b`, `a\\\\b`),
+				Entry("dollar-quote tag stripped",
+					"prefix"+graphdb.ExportCypherDollarTag+"suffix",
+					"prefixsuffix"),
+				Entry("bare dollar signs preserved", "cost is $100", "cost is $100"),
+				Entry("bare $$ preserved", "foo $$ bar", "foo $$ bar"),
 			)
 
 			DescribeTable("cypherValue formats Go values as Cypher literals",

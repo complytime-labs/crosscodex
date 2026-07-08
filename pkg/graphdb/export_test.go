@@ -11,6 +11,7 @@ var ParseAGPath = parseAGPath
 var SplitAGPathElements = splitAGPathElements
 var StripSuffix = stripSuffix
 var EscapeCypher = escapeCypher
+var ExportCypherDollarTag = cypherDollarTag
 var CypherValue = cypherValue
 var NodeToAGProperties = nodeToAGProperties
 var EdgeToAGProperties = edgeToAGProperties

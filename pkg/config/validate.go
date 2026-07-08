@@ -310,5 +310,9 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		return err
 	}
 
+	if err := a.Artifacts.Validate(); err != nil {
+		return err
+	}
+
 	return nil
 }
