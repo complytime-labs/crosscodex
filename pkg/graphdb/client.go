@@ -258,7 +258,7 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) er
 	matchCypher := fmt.Sprintf("MATCH (n:%s {id: '%s'}) RETURN n",
 		escapeCypher(node.Label), escapeCypher(node.ID))
 	matchQuery := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (v agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (v agtype)",
 		escapeCypher(gn), matchCypher,
 	)
 	rows, err := tx.QueryContext(ctx, matchQuery)
@@ -279,7 +279,7 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) er
 	props := nodeToAGProperties(node)
 	cypher := fmt.Sprintf("CREATE (n:%s %s)", escapeCypher(node.Label), props)
 	query := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (v agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (v agtype)",
 		escapeCypher(gn), cypher,
 	)
 
@@ -330,7 +330,7 @@ func (c *ageClient) CreateEdge(ctx context.Context, tenant string, edge Edge) er
 		props,
 	)
 	query := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (v agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (v agtype)",
 		escapeCypher(gn), cypher,
 	)
 
@@ -417,7 +417,7 @@ func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEd
 		props,
 	)
 	query := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (v agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (v agtype)",
 		escapeCypher(gn), cypher,
 	)
 
@@ -531,7 +531,7 @@ func (c *ageClient) queryRelationshipsInternal(
 	cypher := fmt.Sprintf("MATCH (%s)-[%s]->(%s)%s RETURN s, e, t",
 		sourcePattern, edgePattern, targetPattern, whereClause)
 	sqlQuery := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (s agtype, e agtype, t agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (s agtype, e agtype, t agtype)",
 		escapeCypher(gn), cypher,
 	)
 
@@ -625,7 +625,7 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 
 	cypher := matchPattern + " RETURN p"
 	sqlQuery := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', " + cypherDollarTag + " %s " + cypherDollarTag + ") AS (p agtype)",
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (p agtype)",
 		escapeCypher(gn), cypher,
 	)
 

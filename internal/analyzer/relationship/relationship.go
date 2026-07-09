@@ -328,4 +328,3 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, results []analyzer
 		Metadata:     metadata,
 	}, nil
 }
-

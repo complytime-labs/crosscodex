@@ -322,12 +322,38 @@ func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
 
 // AnalysisConfig configures the analysis service.
 type AnalysisConfig struct {
+	Engine         EngineConfig         `yaml:"engine"`
 	Classification ClassificationConfig `yaml:"classification"`
 	Embedding      EmbeddingConfig      `yaml:"embedding"`
 	Relationship   RelationshipConfig   `yaml:"relationship"`
 	Candidates     CandidateConfig      `yaml:"candidates"`
 	Requires       RequiresConfig       `yaml:"requires"`
 	Artifacts      ArtifactsConfig      `yaml:"artifacts"`
+}
+
+// EngineConfig configures the analysis engine orchestrator.
+type EngineConfig struct {
+	TaskTimeout  time.Duration `yaml:"task_timeout"`
+	MaxRetries   int           `yaml:"max_retries"`
+	RetryBackoff time.Duration `yaml:"retry_backoff"`
+}
+
+// Validate checks EngineConfig for consistency and required fields.
+// Returns ErrInvalidConfig on validation failure.
+func (c *EngineConfig) Validate() error {
+	if c.TaskTimeout <= 0 || c.TaskTimeout > 30*time.Minute {
+		return fmt.Errorf("analysis.engine.task_timeout %s must be in range (0, 30m]: %w",
+			c.TaskTimeout, ErrInvalidConfig)
+	}
+	if c.MaxRetries < 0 || c.MaxRetries > 10 {
+		return fmt.Errorf("analysis.engine.max_retries %d must be in range [0, 10]: %w",
+			c.MaxRetries, ErrInvalidConfig)
+	}
+	if c.RetryBackoff < 0 || c.RetryBackoff > 5*time.Minute {
+		return fmt.Errorf("analysis.engine.retry_backoff %s must be in range [0, 5m]: %w",
+			c.RetryBackoff, ErrInvalidConfig)
+	}
+	return nil
 }
 
 // ClassificationConfig configures the classification analyzer.

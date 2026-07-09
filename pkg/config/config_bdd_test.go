@@ -1312,6 +1312,7 @@ logging:
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
 				Analysis: config.AnalysisConfig{
+					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
@@ -1333,6 +1334,7 @@ logging:
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
 				Analysis: config.AnalysisConfig{
+					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
@@ -1350,6 +1352,7 @@ logging:
 					Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 					Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
 					Analysis: config.AnalysisConfig{
+						Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
@@ -1734,6 +1737,7 @@ logging:
 					ExpiryDuration: 8760 * time.Hour,
 				},
 				Analysis: config.AnalysisConfig{
+					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
@@ -1823,6 +1827,7 @@ logging:
 					IncludeByProducts: true,
 				},
 				Analysis: config.AnalysisConfig{
+					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
@@ -2051,6 +2056,7 @@ logging:
 					ExpiryDuration: 8760 * time.Hour,
 				},
 				Analysis: config.AnalysisConfig{
+					Engine: config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{
 						Enabled:       true,
 						MaxTextLength: 2000,
@@ -2569,3 +2575,49 @@ func (a *ConfigAdapter) GetConfigValue(key string) (interface{}, error) {
 		return nil, fmt.Errorf("configuration key '%s' not implemented in test adapter", key)
 	}
 }
+
+var _ = Describe("EngineConfig", func() {
+	var cfg config.EngineConfig
+
+	BeforeEach(func() {
+		cfg = config.EngineConfig{
+			TaskTimeout:  5 * time.Minute,
+			MaxRetries:   3,
+			RetryBackoff: time.Second,
+		}
+	})
+
+	Context("Validate", func() {
+		It("accepts valid config", func() {
+			Expect(cfg.Validate()).To(Succeed())
+		})
+
+		DescribeTable("rejects invalid values",
+			func(mutate func(*config.EngineConfig), substr string) {
+				mutate(&cfg)
+				err := cfg.Validate()
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(MatchError(config.ErrInvalidConfig))
+				Expect(err.Error()).To(ContainSubstring(substr))
+			},
+			Entry("zero timeout", func(c *config.EngineConfig) { c.TaskTimeout = 0 }, "task_timeout"),
+			Entry("negative timeout", func(c *config.EngineConfig) { c.TaskTimeout = -1 }, "task_timeout"),
+			Entry("timeout over 30m", func(c *config.EngineConfig) { c.TaskTimeout = 31 * time.Minute }, "task_timeout"),
+			Entry("negative retries", func(c *config.EngineConfig) { c.MaxRetries = -1 }, "max_retries"),
+			Entry("retries over 10", func(c *config.EngineConfig) { c.MaxRetries = 11 }, "max_retries"),
+			Entry("negative backoff", func(c *config.EngineConfig) { c.RetryBackoff = -1 }, "retry_backoff"),
+			Entry("backoff over 5m", func(c *config.EngineConfig) { c.RetryBackoff = 6 * time.Minute }, "retry_backoff"),
+		)
+
+		It("accepts boundary values", func() {
+			cfg.TaskTimeout = 30 * time.Minute
+			cfg.MaxRetries = 0
+			cfg.RetryBackoff = 0
+			Expect(cfg.Validate()).To(Succeed())
+
+			cfg.MaxRetries = 10
+			cfg.RetryBackoff = 5 * time.Minute
+			Expect(cfg.Validate()).To(Succeed())
+		})
+	})
+})

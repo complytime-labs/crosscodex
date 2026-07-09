@@ -40,6 +40,7 @@ var _ = Describe("PromptConfig", func() {
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
 				Analysis: config.AnalysisConfig{
+					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},

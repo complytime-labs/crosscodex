@@ -309,4 +309,3 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, results []analyzer.Tas
 		Metadata:     metadata,
 	}, nil
 }
-
