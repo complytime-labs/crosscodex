@@ -135,7 +135,7 @@ type ConsensusArtifact struct {
 
 // ControlResult holds all votes and the consensus for a single control.
 type ControlResult struct {
-	ControlID string               `json:"control_id"`
-	Votes     map[string]*Vote     `json:"votes"`
-	Artifacts []ConsensusArtifact  `json:"artifacts"`
+	ControlID string              `json:"control_id"`
+	Votes     map[string]*Vote    `json:"votes"`
+	Artifacts []ConsensusArtifact `json:"artifacts"`
 }

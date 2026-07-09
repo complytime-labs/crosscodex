@@ -100,6 +100,10 @@ prompt:
     enabled: true
     order: []
 analysis:
+  engine:
+    task_timeout: 5m
+    max_retries: 3
+    retry_backoff: 1s
   classification:
     enabled: true
     model: ""

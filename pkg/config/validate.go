@@ -305,6 +305,11 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		}
 	}
 
+	// Validate engine config
+	if err := a.Engine.Validate(); err != nil {
+		return err
+	}
+
 	// Validate requires config
 	if err := a.Requires.Validate(); err != nil {
 		return err

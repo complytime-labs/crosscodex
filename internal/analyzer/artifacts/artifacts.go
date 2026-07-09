@@ -96,7 +96,7 @@ func New(llm llmclient.Client, prompts prompt.Registry, cfg config.ArtifactsConf
 	return a
 }
 
-func (a *ArtifactsAnalyzer) Name() string      { return analyzerName }
+func (a *ArtifactsAnalyzer) Name() string        { return analyzerName }
 func (a *ArtifactsAnalyzer) DependsOn() []string { return []string{} }
 func (a *ArtifactsAnalyzer) ResultSchema() proto.Message {
 	return &pb.AnalysisResult{}
@@ -142,14 +142,14 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 	reqText := intanalyzer.TruncateText(input.GetStatement(), a.cfg.MaxTextChars)
 
 	vars := map[string]string{
-		"extraction_guidance":      extractionGuidance,
+		"extraction_guidance":       extractionGuidance,
 		"artifact_type_definitions": artifactTypeDefinitions,
-		"few_shot_examples":        fewShotStr,
-		"output_format":            outputFormat,
-		"control_id":               input.GetIdentifier(),
-		"framework":                cfg.Parameters["framework"],
-		"ancestor_title":           cfg.Parameters["ancestor_title_" + input.GetIdentifier()],
-		"requirement_text":         reqText,
+		"few_shot_examples":         fewShotStr,
+		"output_format":             outputFormat,
+		"control_id":                input.GetIdentifier(),
+		"framework":                 cfg.Parameters["framework"],
+		"ancestor_title":            cfg.Parameters["ancestor_title_"+input.GetIdentifier()],
+		"requirement_text":          reqText,
 	}
 
 	systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)
@@ -186,14 +186,14 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 				analyzerName, input.GetIdentifier(), model, s)
 
 			payload, err := structpb.NewStruct(map[string]interface{}{
-				"control_id":    input.GetIdentifier(),
-				"model":         model,
-				"sample_index":  float64(s),
-				"temperature":   temperature,
-				"max_tokens":    float64(a.cfg.MaxTokens),
-				"prompt_name":   spec.Name,
+				"control_id":     input.GetIdentifier(),
+				"model":          model,
+				"sample_index":   float64(s),
+				"temperature":    temperature,
+				"max_tokens":     float64(a.cfg.MaxTokens),
+				"prompt_name":    spec.Name,
 				"prompt_version": spec.Version,
-				"content_hash":  contentHash,
+				"content_hash":   contentHash,
 			})
 			if err != nil {
 				span.RecordError(err)
