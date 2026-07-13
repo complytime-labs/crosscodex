@@ -165,6 +165,26 @@ tasks:
           REPORT: integration-llm
           COVERAGE: integration-llm-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/llmclient/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_worker
+          TIMEOUT: 120s
+          REPORT: integration-worker
+          COVERAGE: integration-worker-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/internal/worker/..."
+
+  worker:
+    desc: Run worker integration tests (embedded NATS, no containers needed)
+    deps: [ensure-deps]
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_worker
+          TIMEOUT: 120s
+          REPORT: integration-worker
+          COVERAGE: integration-worker-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/internal/worker/..."
 
   db:
     desc: Run database integration tests (db, graphdb, vectordb, catalog, analyzers)

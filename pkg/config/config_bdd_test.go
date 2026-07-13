@@ -2497,6 +2497,95 @@ logging:
 	})
 })
 
+var _ = Describe("LLMConfig.ForTenant", func() {
+	var baseCfg config.LLMConfig
+
+	BeforeEach(func() {
+		baseCfg = config.LLMConfig{
+			GatewayURL:     "https://global.example.com/v1",
+			GatewayMode:    true,
+			DefaultModel:   "gpt-4",
+			EmbeddingModel: "text-embedding-3-small",
+			APIKeyRef:      "env:GLOBAL_KEY",
+			AllowedModels:  []string{"gpt-4", "gpt-3.5-turbo"},
+			MaxRetries:     3,
+			Timeout:        30,
+		}
+	})
+
+	Context("without tenant overrides", func() {
+		It("returns global values", func() {
+			tc := baseCfg.ForTenant("tenant-abc")
+			Expect(tc.GatewayURL).To(Equal("https://global.example.com/v1"))
+			Expect(tc.GatewayMode).To(BeTrue())
+			Expect(tc.DefaultModel).To(Equal("gpt-4"))
+			Expect(tc.EmbeddingModel).To(Equal("text-embedding-3-small"))
+			Expect(tc.APIKeyRef).To(Equal("env:GLOBAL_KEY"))
+			Expect(tc.AllowedModels).To(Equal([]string{"gpt-4", "gpt-3.5-turbo"}))
+			Expect(tc.MaxRetries).To(Equal(3))
+			Expect(tc.Timeout).To(Equal(30))
+		})
+	})
+
+	Context("with tenant overrides", func() {
+		BeforeEach(func() {
+			gatewayURL := "https://tenant.example.com/v1"
+			model := "claude-3-opus"
+			apiKey := "vault:tenant/key"
+			baseCfg.TenantOverrides = map[string]config.LLMOverride{
+				"tenant-abc": {
+					GatewayURL:    &gatewayURL,
+					DefaultModel:  &model,
+					APIKeyRef:     &apiKey,
+					AllowedModels: []string{"claude-3-opus", "claude-3-sonnet"},
+				},
+			}
+		})
+
+		It("overrides specified fields", func() {
+			tc := baseCfg.ForTenant("tenant-abc")
+			Expect(tc.GatewayURL).To(Equal("https://tenant.example.com/v1"))
+			Expect(tc.DefaultModel).To(Equal("claude-3-opus"))
+			Expect(tc.APIKeyRef).To(Equal("vault:tenant/key"))
+			Expect(tc.AllowedModels).To(Equal([]string{"claude-3-opus", "claude-3-sonnet"}))
+		})
+
+		It("inherits non-overridden fields from global", func() {
+			tc := baseCfg.ForTenant("tenant-abc")
+			Expect(tc.GatewayMode).To(BeTrue())
+			Expect(tc.EmbeddingModel).To(Equal("text-embedding-3-small"))
+			Expect(tc.MaxRetries).To(Equal(3))
+			Expect(tc.Timeout).To(Equal(30))
+		})
+
+		It("returns global values for unknown tenants", func() {
+			tc := baseCfg.ForTenant("tenant-unknown")
+			Expect(tc.GatewayURL).To(Equal("https://global.example.com/v1"))
+			Expect(tc.DefaultModel).To(Equal("gpt-4"))
+		})
+	})
+
+	Context("with partial overrides", func() {
+		BeforeEach(func() {
+			embModel := "text-embedding-ada-002"
+			baseCfg.TenantOverrides = map[string]config.LLMOverride{
+				"tenant-abc": {
+					EmbeddingModel: &embModel,
+				},
+			}
+		})
+
+		It("overrides only the specified field", func() {
+			tc := baseCfg.ForTenant("tenant-abc")
+			Expect(tc.EmbeddingModel).To(Equal("text-embedding-ada-002"))
+			Expect(tc.GatewayURL).To(Equal("https://global.example.com/v1"))
+			Expect(tc.DefaultModel).To(Equal("gpt-4"))
+			Expect(tc.APIKeyRef).To(Equal("env:GLOBAL_KEY"))
+			Expect(tc.AllowedModels).To(Equal([]string{"gpt-4", "gpt-3.5-turbo"}))
+		})
+	})
+})
+
 // ConfigAdapter implements testspecs.ConfigurableComponent to test the configuration system
 // against the shared behavioral specifications
 type ConfigAdapter struct {
@@ -2619,5 +2708,44 @@ var _ = Describe("EngineConfig", func() {
 			cfg.RetryBackoff = 5 * time.Minute
 			Expect(cfg.Validate()).To(Succeed())
 		})
+	})
+})
+
+var _ = Describe("WorkerConfig", func() {
+	It("has a default queue_group of llm-workers", func() {
+		tmpHome := GinkgoT().TempDir()
+		GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+		loader := config.NewLoader()
+		cfg, err := loader.Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Worker.QueueGroup).To(Equal("llm-workers"))
+	})
+
+	It("preserves explicit queue_group override", func() {
+		tmpHome := GinkgoT().TempDir()
+		GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+		cfgFile := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		writeTestFile(cfgFile, "worker:\n  queue_group: \"my-custom-workers\"\n")
+
+		loader := config.NewLoader()
+		cfg, err := loader.Load(context.Background(), config.WithConfigPath(cfgFile))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Worker.QueueGroup).To(Equal("my-custom-workers"))
+	})
+
+	It("rejects whitespace-only queue_group with actionable error", func() {
+		tmpHome := GinkgoT().TempDir()
+		GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+		cfgFile := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		writeTestFile(cfgFile, "worker:\n  queue_group: \"   \"\n")
+
+		loader := config.NewLoader()
+		_, err := loader.Load(context.Background(), config.WithConfigPath(cfgFile))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("whitespace"))
+		Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 	})
 })

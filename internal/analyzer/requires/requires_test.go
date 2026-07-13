@@ -214,6 +214,12 @@ var _ = Describe("RequiresAnalyzer", func() {
 			payload, ok := tasks[0].Payload.(*structpb.Struct)
 			Expect(ok).To(BeTrue())
 			Expect(payload.Fields["temperature"].GetNumberValue()).To(Equal(0.0))
+			Expect(payload.Fields).To(HaveKey("messages"))
+			msgsList := payload.Fields["messages"].GetListValue()
+			Expect(msgsList).NotTo(BeNil())
+			Expect(msgsList.Values).To(HaveLen(2))
+			Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
+			Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
 		})
 
 		It("uses SamplingTemperature when SamplesPerModel > 1", func() {
@@ -248,6 +254,12 @@ var _ = Describe("RequiresAnalyzer", func() {
 			payload, ok := tasks[0].Payload.(*structpb.Struct)
 			Expect(ok).To(BeTrue())
 			Expect(payload.Fields["aggregate_score"].GetNumberValue()).To(Equal(0.92))
+			Expect(payload.Fields).To(HaveKey("messages"))
+			msgsList := payload.Fields["messages"].GetListValue()
+			Expect(msgsList).NotTo(BeNil())
+			Expect(msgsList.Values).To(HaveLen(2))
+			Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
+			Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
 		})
 
 		It("includes prompt metadata in payload", func() {

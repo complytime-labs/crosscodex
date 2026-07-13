@@ -60,6 +60,7 @@ jobs:
           echo "  storage .......................... integration-tests (this job)"
           echo "  trace-propagation ................ integration-tests (this job)"
           echo "  attestation ...................... integration-tests (this job)"
+          echo "  worker ........................... integration-tests (this job)"
           echo ""
           echo "Covered by other jobs:"
           echo "  grpc ............................. integration-grpc"
@@ -94,6 +95,9 @@ jobs:
 
       - name: Run attestation integration tests
         run: task test:integration:attestation
+
+      - name: Run worker integration tests
+        run: task test:integration:worker
 
       - name: Save DB image for cache
         if: always()

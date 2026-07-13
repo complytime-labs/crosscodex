@@ -235,6 +235,7 @@ func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 					"prompt_version":    spec.Version,
 					"content_hash":      contentHash,
 					"aggregate_score":   pair.AggregateScore,
+					"messages":          intanalyzer.MessagesForPayload(messages),
 				})
 				if err != nil {
 					span.RecordError(err)
