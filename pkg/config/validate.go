@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"regexp"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 var (
@@ -44,6 +46,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 		return err
 	}
 	if err := validateAnalysis(&cfg.Analysis, tracker); err != nil {
+		return err
+	}
+	if err := cfg.Worker.Validate(); err != nil {
 		return err
 	}
 	return nil
@@ -118,6 +123,20 @@ func validateLLM(llm *LLMConfig, tracker *sourceTracker) error {
 	// Normalize to zero so llmclient does not need its own check.
 	if llm.GatewayMode && llm.MaxRetries > 0 {
 		llm.MaxRetries = 0
+	}
+	for key, override := range llm.TenantOverrides {
+		if err := tenant.ValidateTenantID(key); err != nil {
+			return fmt.Errorf("llm.tenant_overrides key %q is not a valid tenant ID: %w",
+				key, ErrInvalidConfig)
+		}
+		if override.MaxRetries != nil && *override.MaxRetries < 0 {
+			return fmt.Errorf("llm.tenant_overrides.%s.max_retries %d must be non-negative: %w",
+				key, *override.MaxRetries, ErrInvalidConfig)
+		}
+		if override.Timeout != nil && *override.Timeout < 0 {
+			return fmt.Errorf("llm.tenant_overrides.%s.timeout %d must be non-negative: %w",
+				key, *override.Timeout, ErrInvalidConfig)
+		}
 	}
 	return nil
 }

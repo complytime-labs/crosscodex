@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,7 @@ type Config struct {
 	Attestation   AttestationConfig   `yaml:"attestation"`
 	Prompt        PromptConfig        `yaml:"prompt"`
 	Analysis      AnalysisConfig      `yaml:"analysis"`
+	Worker        WorkerConfig        `yaml:"worker"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -34,6 +36,78 @@ type LLMConfig struct {
 	AllowedModels  []string `yaml:"allowed_models"`
 	MaxRetries     int      `yaml:"max_retries"`
 	Timeout        int      `yaml:"timeout"`
+	// TenantOverrides maps tenant IDs (must satisfy pkg/tenant.ValidateTenantID)
+	// to per-tenant LLM config overrides. Nil pointer fields inherit the global
+	// value. AllowedModels replaces (not merges with) the global list when
+	// set.
+	TenantOverrides map[string]LLMOverride `yaml:"tenant_overrides"`
+}
+
+// LLMOverride allows per-tenant LLM settings.
+// Nil pointer fields inherit the global LLMConfig value.
+// AllowedModels replaces (not merges with) the global list when non-nil.
+type LLMOverride struct {
+	GatewayURL     *string  `yaml:"gateway_url"`
+	DefaultModel   *string  `yaml:"default_model"`
+	EmbeddingModel *string  `yaml:"embedding_model"`
+	APIKeyRef      *string  `yaml:"api_key_ref"`
+	AllowedModels  []string `yaml:"allowed_models"`
+	MaxRetries     *int     `yaml:"max_retries"`
+	Timeout        *int     `yaml:"timeout"`
+}
+
+// LLMTenantConfig holds the fully resolved LLM settings for a tenant.
+// Returned by ForTenant after applying per-tenant overrides to global defaults.
+type LLMTenantConfig struct {
+	GatewayURL string
+	// GatewayMode is always inherited from the global LLMConfig and cannot be
+	// overridden per-tenant. When true, client-side retry is disabled.
+	GatewayMode    bool
+	DefaultModel   string
+	EmbeddingModel string
+	APIKeyRef      string
+	AllowedModels  []string
+	MaxRetries     int
+	Timeout        int
+}
+
+// ForTenant returns the effective LLM settings for a tenant.
+// Fields set in TenantOverrides take precedence; nil fields inherit global values.
+func (c *LLMConfig) ForTenant(tenantID string) LLMTenantConfig {
+	tc := LLMTenantConfig{
+		GatewayURL:     c.GatewayURL,
+		GatewayMode:    c.GatewayMode,
+		DefaultModel:   c.DefaultModel,
+		EmbeddingModel: c.EmbeddingModel,
+		APIKeyRef:      c.APIKeyRef,
+		AllowedModels:  c.AllowedModels,
+		MaxRetries:     c.MaxRetries,
+		Timeout:        c.Timeout,
+	}
+	if override, ok := c.TenantOverrides[tenantID]; ok {
+		if override.GatewayURL != nil {
+			tc.GatewayURL = *override.GatewayURL
+		}
+		if override.DefaultModel != nil {
+			tc.DefaultModel = *override.DefaultModel
+		}
+		if override.EmbeddingModel != nil {
+			tc.EmbeddingModel = *override.EmbeddingModel
+		}
+		if override.APIKeyRef != nil {
+			tc.APIKeyRef = *override.APIKeyRef
+		}
+		if override.AllowedModels != nil {
+			tc.AllowedModels = override.AllowedModels
+		}
+		if override.MaxRetries != nil {
+			tc.MaxRetries = *override.MaxRetries
+		}
+		if override.Timeout != nil {
+			tc.Timeout = *override.Timeout
+		}
+	}
+	return tc
 }
 
 // StorageConfig configures storage backends.
@@ -518,6 +592,33 @@ func (c *ArtifactsConfig) Validate() error {
 	return nil
 }
 
+// WorkerConfig configures the LLM worker service.
+//
+// Drain timeout: To bound Stop() duration, set a NATS drain timeout on the
+// underlying connection using natsbus.ClientConfig.DrainTimeout before
+// creating the worker. The worker itself does not expose a separate timeout
+// because the NATS client-level setting applies to all drain operations.
+type WorkerConfig struct {
+	// QueueGroup is the NATS queue group name. All workers in the same group
+	// receive round-robin task distribution. Defaults to "llm-workers".
+	QueueGroup string `yaml:"queue_group"`
+
+	// LLM holds the global LLM configuration with optional per-tenant overrides.
+	// Wired from the top-level LLMConfig at the service layer; not duplicated here.
+	// Set by the service binary via ServiceConfig().Worker.LLM = cfg.LLM.
+	LLM LLMConfig `yaml:"-"`
+}
+
+// Validate checks WorkerConfig for consistency and required fields.
+// Returns ErrInvalidConfig on validation failure.
+func (c *WorkerConfig) Validate() error {
+	if strings.TrimSpace(c.QueueGroup) == "" && c.QueueGroup != "" {
+		return fmt.Errorf("worker.queue_group %q contains only whitespace: use a non-empty group name or leave empty to use the default %q: %w",
+			c.QueueGroup, "llm-workers", ErrInvalidConfig)
+	}
+	return nil
+}
+
 // DaemonConfig is the derived view for crosscodexd.
 type DaemonConfig struct {
 	GRPCAddr      string
@@ -536,6 +637,7 @@ type DaemonConfig struct {
 	Attestation   AttestationConfig
 	Prompt        PromptConfig
 	Analysis      AnalysisConfig
+	Worker        WorkerConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -568,6 +670,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Attestation:   c.Attestation,
 		Prompt:        c.Prompt,
 		Analysis:      c.Analysis,
+		Worker:        WorkerConfig{QueueGroup: c.Worker.QueueGroup, LLM: c.LLM},
 	}
 }
 

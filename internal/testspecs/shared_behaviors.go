@@ -73,7 +73,7 @@ func TenantIsolationBehavior(subject TenantIsolatedComponent) func() {
 			ginkgo.Context("when working with tenant contexts", func() {
 				ginkgo.It("extracts valid tenant IDs from context", func() {
 					validTenant := StandardTenantContexts["valid-tenant"]
-					ctx := CreateTenantContext(validTenant.TenantID)
+					ctx := SetupTenantContext(validTenant.TenantID)
 
 					tenantID, err := subject.GetTenantID(ctx)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -82,7 +82,7 @@ func TenantIsolationBehavior(subject TenantIsolatedComponent) func() {
 
 				ginkgo.It("returns tenant-scoped component instances", func() {
 					validTenant := StandardTenantContexts["valid-tenant"]
-					ctx := CreateTenantContext(validTenant.TenantID)
+					ctx := SetupTenantContext(validTenant.TenantID)
 
 					scopedComponent := subject.WithTenantContext(ctx)
 					gomega.Expect(scopedComponent).NotTo(gomega.BeNil())
@@ -95,8 +95,8 @@ func TenantIsolationBehavior(subject TenantIsolatedComponent) func() {
 					tenant1 := StandardTenantContexts["valid-tenant"]
 					tenant2 := StandardTenantContexts["min-length"]
 
-					ctx1 := CreateTenantContext(tenant1.TenantID)
-					ctx2 := CreateTenantContext(tenant2.TenantID)
+					ctx1 := SetupTenantContext(tenant1.TenantID)
+					ctx2 := SetupTenantContext(tenant2.TenantID)
 
 					component1 := subject.WithTenantContext(ctx1)
 					component2 := subject.WithTenantContext(ctx2)

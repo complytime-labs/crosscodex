@@ -67,7 +67,7 @@ var _ = Describe("Tenant System", Ordered, func() {
 
 				By("maintaining tenant boundaries across context operations")
 				// Simulate passing through multiple service calls
-				servicCtx := testspecs.CreateTenantContext(validTenant.TenantID)
+				servicCtx := testspecs.SetupTenantContext(validTenant.TenantID)
 				returnedTenantID, err := tenant.FromContext(servicCtx)
 				testspecs.AssertNoError(err)
 				Expect(returnedTenantID).To(Equal(validTenant.TenantID))

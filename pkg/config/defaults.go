@@ -132,6 +132,8 @@ analysis:
       - CONTRIBUTES_TO
       - COMPLEMENTS
       - CONFLICTS_WITH
+worker:
+  queue_group: "llm-workers"
 `
 
 func defaultNode() (*yaml.Node, error) {

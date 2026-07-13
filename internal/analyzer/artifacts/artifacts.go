@@ -194,6 +194,7 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 				"prompt_name":    spec.Name,
 				"prompt_version": spec.Version,
 				"content_hash":   contentHash,
+				"messages":       intanalyzer.MessagesForPayload(messages),
 			})
 			if err != nil {
 				span.RecordError(err)

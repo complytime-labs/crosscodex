@@ -66,8 +66,8 @@ var _ = Describe("Standard Fixtures", func() {
 	})
 
 	Context("Context Creation", func() {
-		It("CreateTenantContext produces a context with the correct tenant ID", func() {
-			ctx := testspecs.CreateTenantContext("acme-corp")
+		It("SetupTenantContext produces a context with the correct tenant ID", func() {
+			ctx := testspecs.SetupTenantContext("acme-corp")
 			id, err := tenant.FromContext(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(id).To(Equal("acme-corp"))

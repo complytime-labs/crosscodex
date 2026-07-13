@@ -221,6 +221,97 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
+	Context("LLMConfig.ForTenant — returns global config when no override", func() {
+		It("all fields match global values for unknown tenant", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				tenantID := rapid.StringMatching(`[a-z]{3,12}`).Draw(t, "tenantID")
+				gatewayURL := rapid.StringMatching(`https?://[a-z]{3,8}:\d{4}`).Draw(t, "gatewayURL")
+				gatewayMode := rapid.Bool().Draw(t, "gatewayMode")
+				defaultModel := rapid.StringMatching(`[a-z]{3,10}`).Draw(t, "defaultModel")
+				embeddingModel := rapid.StringMatching(`[a-z]{3,10}`).Draw(t, "embeddingModel")
+				apiKeyRef := rapid.StringMatching(`env://[A-Z_]{3,10}`).Draw(t, "apiKeyRef")
+				maxRetries := rapid.IntRange(0, 10).Draw(t, "maxRetries")
+				timeout := rapid.IntRange(0, 300).Draw(t, "timeout")
+
+				lc := config.LLMConfig{
+					GatewayURL:     gatewayURL,
+					GatewayMode:    gatewayMode,
+					DefaultModel:   defaultModel,
+					EmbeddingModel: embeddingModel,
+					APIKeyRef:      apiKeyRef,
+					AllowedModels:  []string{"model-a", "model-b"},
+					MaxRetries:     maxRetries,
+					Timeout:        timeout,
+				}
+
+				tc := lc.ForTenant(tenantID)
+				Expect(tc.GatewayURL).To(Equal(gatewayURL))
+				Expect(tc.GatewayMode).To(Equal(gatewayMode))
+				Expect(tc.DefaultModel).To(Equal(defaultModel))
+				Expect(tc.EmbeddingModel).To(Equal(embeddingModel))
+				Expect(tc.APIKeyRef).To(Equal(apiKeyRef))
+				Expect(tc.AllowedModels).To(Equal([]string{"model-a", "model-b"}))
+				Expect(tc.MaxRetries).To(Equal(maxRetries))
+				Expect(tc.Timeout).To(Equal(timeout))
+			})
+		})
+	})
+
+	Context("LLMConfig.ForTenant — override wins", func() {
+		It("override values take precedence over global", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				tenantID := rapid.StringMatching(`[a-z]{3,12}`).Draw(t, "tenantID")
+
+				// Global values
+				globalURL := rapid.StringMatching(`https?://global[a-z]{1,4}:\d{4}`).Draw(t, "globalURL")
+				globalModel := rapid.StringMatching(`global-[a-z]{3,6}`).Draw(t, "globalModel")
+				globalEmbModel := rapid.StringMatching(`global-emb-[a-z]{3,6}`).Draw(t, "globalEmbModel")
+				globalKeyRef := rapid.StringMatching(`env://GLOBAL_[A-Z]{3,6}`).Draw(t, "globalKeyRef")
+				globalRetries := rapid.IntRange(0, 10).Draw(t, "globalRetries")
+				globalTimeout := rapid.IntRange(0, 300).Draw(t, "globalTimeout")
+
+				// Override values
+				overrideURL := rapid.StringMatching(`https?://override[a-z]{1,4}:\d{4}`).Draw(t, "overrideURL")
+				overrideModel := rapid.StringMatching(`override-[a-z]{3,6}`).Draw(t, "overrideModel")
+				overrideEmbModel := rapid.StringMatching(`override-emb-[a-z]{3,6}`).Draw(t, "overrideEmbModel")
+				overrideKeyRef := rapid.StringMatching(`env://OVER_[A-Z]{3,6}`).Draw(t, "overrideKeyRef")
+				overrideRetries := rapid.IntRange(0, 10).Draw(t, "overrideRetries")
+				overrideTimeout := rapid.IntRange(0, 300).Draw(t, "overrideTimeout")
+				overrideModels := []string{"override-model-x"}
+
+				lc := config.LLMConfig{
+					GatewayURL:     globalURL,
+					DefaultModel:   globalModel,
+					EmbeddingModel: globalEmbModel,
+					APIKeyRef:      globalKeyRef,
+					AllowedModels:  []string{"global-model-a"},
+					MaxRetries:     globalRetries,
+					Timeout:        globalTimeout,
+					TenantOverrides: map[string]config.LLMOverride{
+						tenantID: {
+							GatewayURL:     &overrideURL,
+							DefaultModel:   &overrideModel,
+							EmbeddingModel: &overrideEmbModel,
+							APIKeyRef:      &overrideKeyRef,
+							AllowedModels:  overrideModels,
+							MaxRetries:     &overrideRetries,
+							Timeout:        &overrideTimeout,
+						},
+					},
+				}
+
+				tc := lc.ForTenant(tenantID)
+				Expect(tc.GatewayURL).To(Equal(overrideURL))
+				Expect(tc.DefaultModel).To(Equal(overrideModel))
+				Expect(tc.EmbeddingModel).To(Equal(overrideEmbModel))
+				Expect(tc.APIKeyRef).To(Equal(overrideKeyRef))
+				Expect(tc.AllowedModels).To(Equal(overrideModels))
+				Expect(tc.MaxRetries).To(Equal(overrideRetries))
+				Expect(tc.Timeout).To(Equal(overrideTimeout))
+			})
+		})
+	})
+
 	Context("validate — gateway_mode=true always requires gateway_url", func() {
 		It("rejects every config where gateway_mode is true and gateway_url is empty", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {

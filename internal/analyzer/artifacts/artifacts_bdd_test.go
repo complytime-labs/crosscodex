@@ -195,6 +195,12 @@ var _ = Describe("ArtifactsAnalyzer", func() {
 				Expect(ok).To(BeTrue())
 				payload := payloadStruct.AsMap()
 				Expect(payload["temperature"]).To(Equal(0.0))
+				Expect(payloadStruct.Fields).To(HaveKey("messages"))
+				msgsList := payloadStruct.Fields["messages"].GetListValue()
+				Expect(msgsList).NotTo(BeNil())
+				Expect(msgsList.Values).To(HaveLen(2))
+				Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
+				Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
 			})
 
 			It("uses configured temperature when SamplesPerModel > 1", func() {
@@ -212,6 +218,12 @@ var _ = Describe("ArtifactsAnalyzer", func() {
 					Expect(ok).To(BeTrue())
 					payload := payloadStruct.AsMap()
 					Expect(payload["temperature"]).To(Equal(0.7))
+					Expect(payloadStruct.Fields).To(HaveKey("messages"))
+					msgsList := payloadStruct.Fields["messages"].GetListValue()
+					Expect(msgsList).NotTo(BeNil())
+					Expect(msgsList.Values).To(HaveLen(2))
+					Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
+					Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
 				}
 			})
 		})

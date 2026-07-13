@@ -252,6 +252,7 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 					"prompt_version":    spec.Version,
 					"content_hash":      contentHash,
 					"similarity_score":  float64(pair.SimilarityScore),
+					"messages":          intanalyzer.MessagesForPayload(messages),
 				})
 				if err != nil {
 					span.RecordError(err)
