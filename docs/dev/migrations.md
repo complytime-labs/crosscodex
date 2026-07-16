@@ -20,6 +20,8 @@ pkg/db/migrations/
   009_tenant_graph_lifecycle.down.sql
   010_create_controls.up.sql
   010_create_controls.down.sql
+  011_create_requires_tables.up.sql
+  011_create_requires_tables.down.sql
 ```
 
 Each migration is a pair of SQL files:
@@ -36,8 +38,8 @@ The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequenti
 2. Create both files:
 
    ```bash
-   touch pkg/db/migrations/011_your_description.up.sql
-   touch pkg/db/migrations/011_your_description.down.sql
+   touch pkg/db/migrations/012_your_description.up.sql
+   touch pkg/db/migrations/012_your_description.down.sql
    ```
 
 3. Write the SQL. The up migration should be idempotent where possible (`CREATE TABLE IF NOT EXISTS`, `DO $$ ... $$`). The down migration should cleanly reverse the up migration.
@@ -48,9 +50,9 @@ The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequenti
 
 ### Naming Conventions
 
-- Use lowercase with underscores: `011_add_audit_log.up.sql`
+- Use lowercase with underscores: `012_add_audit_log.up.sql`
 - Start with a verb describing the action: `create_`, `add_`, `enable_`, `drop_`
-- Be specific: `012_add_retry_count_to_jobs` not `012_update_jobs`
+- Be specific: `013_add_retry_count_to_jobs` not `013_update_jobs`
 
 ### Writing Down Migrations
 
@@ -103,26 +105,26 @@ version, dirty, err := migrator.Version(ctx)
 
 Integration tests run against a containerized PostgreSQL instance with AGE and pgvector extensions.
 
-### Starting the Test Database
+### Running Database Integration Tests
 
 ```bash
-task test:integration:db-up
+task test:integration:db
 ```
 
-This builds a custom PostgreSQL container image from `pkg/db/testdata/Containerfile` (which includes the AGE and pgvector extensions) and starts it on port 15432.
+This builds a custom PostgreSQL container image from `pkg/db/testdata/Containerfile` (which includes the AGE and pgvector extensions), starts it on port 15432, runs the database integration tests, and tears down the container on completion.
 
-### Running Integration Tests
+### Running All Integration Tests
 
 ```bash
 task test:integration:all
 ```
 
-This starts the database container (if not already running), sets `TEST_DATABASE_DSN`, and runs tests tagged with `//go:build integration`.
+This starts the required containers, sets `TEST_DATABASE_DSN`, and runs tests tagged with `//go:build integration`.
 
-### Stopping the Test Database
+### Cleaning Up Test Containers
 
 ```bash
-task test:integration:db-down
+task test:integration:clean
 ```
 
 ### Manual Connection
@@ -130,7 +132,7 @@ task test:integration:db-down
 To inspect the test database manually:
 
 ```bash
-psql "postgres://username:password@localhost:15432/dbname?sslmode=disable"
+psql "postgres://username:password@localhost:15432/dbname?sslmode=verify-full&sslrootcert=test/certs/ca.pem&sslcert=test/certs/client.pem&sslkey=test/certs/client-key.pem"
 ```
 
 ## Rollback Procedures

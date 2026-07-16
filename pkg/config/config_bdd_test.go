@@ -1317,6 +1317,12 @@ logging:
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 				},
+				Synthesis: config.SynthesisConfig{
+					ConfidenceThreshold:   0.5,
+					MaxMappingsPerControl: 10,
+					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+				},
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1338,6 +1344,12 @@ logging:
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+				},
+				Synthesis: config.SynthesisConfig{
+					ConfidenceThreshold:   0.5,
+					MaxMappingsPerControl: 10,
+					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
 				},
 			}
 
@@ -1742,6 +1754,12 @@ logging:
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 				},
+				Synthesis: config.SynthesisConfig{
+					ConfidenceThreshold:   0.5,
+					MaxMappingsPerControl: 10,
+					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+				},
 				LLM: config.LLMConfig{
 					Timeout:    30,
 					MaxRetries: 3,
@@ -1831,6 +1849,12 @@ logging:
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+				},
+				Synthesis: config.SynthesisConfig{
+					ConfidenceThreshold:   0.5,
+					MaxMappingsPerControl: 10,
+					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
 				},
 			}
 		}
@@ -2077,6 +2101,12 @@ logging:
 						SamplesPerModel:     1,
 						SamplingTemperature: 0.3,
 					},
+				},
+				Synthesis: config.SynthesisConfig{
+					ConfidenceThreshold:   0.5,
+					MaxMappingsPerControl: 10,
+					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
 				},
 			}
 		}
@@ -2747,5 +2777,266 @@ var _ = Describe("WorkerConfig", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("whitespace"))
 		Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+	})
+})
+
+var _ = Describe("SynthesisConfig validation", func() {
+	// synthesisBase returns a Config with all sections valid so tests
+	// can mutate just the synthesis fields and reach synthesis validation.
+	synthesisBase := func() *config.Config {
+		return &config.Config{
+			TLS:         config.TLSConfig{Mode: "off"},
+			Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+			Logging:     config.LoggingConfig{Level: "info", Format: "text"},
+			Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+			Analysis: config.AnalysisConfig{
+				Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
+				Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
+				Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
+				Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+			},
+			Synthesis: config.SynthesisConfig{
+				Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+				Assessment:            config.AssessmentConfig{IQRGood: 20.0, IQRPoor: 10.0, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+				ConfidenceThreshold:   0.5,
+				MaxMappingsPerControl: 10,
+			},
+		}
+	}
+
+	float64Ptr := func(v float64) *float64 { return &v }
+	intPtr := func(v int) *int { return &v }
+
+	It("default SynthesisConfig values pass validation", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+		loader := config.NewLoader()
+		cfg, err := loader.Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(cfg.Synthesis.Viability.TypeMismatchFactor).To(Equal(0.8))
+		Expect(cfg.Synthesis.Viability.SkipLevelFactor).To(Equal(0.7))
+		Expect(cfg.Synthesis.Viability.IntegralToFactor).To(Equal(1.1))
+		Expect(cfg.Synthesis.Assessment.IQRGood).To(Equal(20.0))
+		Expect(cfg.Synthesis.Assessment.IQRPoor).To(Equal(10.0))
+		Expect(cfg.Synthesis.Assessment.NoRelHigh).To(Equal(0.97))
+		Expect(cfg.Synthesis.Assessment.NoRelLow).To(Equal(0.80))
+		Expect(cfg.Synthesis.Assessment.ContestedWarn).To(Equal(0.20))
+		Expect(cfg.Synthesis.Assessment.ActionableWarn).To(Equal(0.30))
+		Expect(cfg.Synthesis.ConfidenceThreshold).To(Equal(0.5))
+		Expect(cfg.Synthesis.MaxMappingsPerControl).To(Equal(10))
+	})
+
+	It("synthesisBase passes validation", func() {
+		Expect(config.ExportValidateConfig(synthesisBase())).To(Succeed())
+	})
+
+	It("valid per-tenant override passes validation", func() {
+		cfg := synthesisBase()
+		cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+			"acme-corp": {
+				ConfidenceThreshold:   float64Ptr(0.7),
+				MaxMappingsPerControl: intPtr(5),
+				Viability:             &config.ViabilityConfig{TypeMismatchFactor: 0.9, SkipLevelFactor: 0.6, IntegralToFactor: 1.2},
+				Assessment:            &config.AssessmentConfig{IQRGood: 25.0, IQRPoor: 12.0, NoRelHigh: 0.95, NoRelLow: 0.75, ContestedWarn: 0.15, ActionableWarn: 0.25},
+			},
+		}
+		Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+	})
+
+	Describe("global viability factor rejection", func() {
+		DescribeTable("rejects factors outside (0, 2]",
+			func(mutate func(*config.Config), substr string) {
+				cfg := synthesisBase()
+				mutate(cfg)
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(substr))
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			},
+			Entry("zero TypeMismatchFactor",
+				func(c *config.Config) { c.Synthesis.Viability.TypeMismatchFactor = 0 },
+				"synthesis.viability.type_mismatch_factor"),
+			Entry("negative SkipLevelFactor",
+				func(c *config.Config) { c.Synthesis.Viability.SkipLevelFactor = -0.1 },
+				"synthesis.viability.skip_level_factor"),
+			Entry("IntegralToFactor > 2",
+				func(c *config.Config) { c.Synthesis.Viability.IntegralToFactor = 2.1 },
+				"synthesis.viability.integral_to_factor"),
+		)
+	})
+
+	Describe("assessment rejection", func() {
+		DescribeTable("rejects invalid assessment values",
+			func(mutate func(*config.Config), substrs ...string) {
+				cfg := synthesisBase()
+				mutate(cfg)
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(HaveOccurred())
+				for _, s := range substrs {
+					Expect(err.Error()).To(ContainSubstring(s))
+				}
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			},
+			Entry("IQRGood = 0",
+				func(c *config.Config) { c.Synthesis.Assessment.IQRGood = 0 },
+				"synthesis.assessment.iqr_good", "must be positive"),
+			Entry("IQRPoor = -1",
+				func(c *config.Config) { c.Synthesis.Assessment.IQRPoor = -1 },
+				"synthesis.assessment.iqr_poor", "must be positive"),
+			Entry("IQRGood <= IQRPoor",
+				func(c *config.Config) { c.Synthesis.Assessment.IQRGood = 10.0; c.Synthesis.Assessment.IQRPoor = 10.0 },
+				"must be greater than iqr_poor"),
+			Entry("NoRelHigh out of range",
+				func(c *config.Config) { c.Synthesis.Assessment.NoRelHigh = 1.5 },
+				"synthesis.assessment.no_rel_high", "must be in range [0, 1]"),
+			Entry("NoRelLow out of range",
+				func(c *config.Config) { c.Synthesis.Assessment.NoRelLow = -0.1 },
+				"synthesis.assessment.no_rel_low"),
+			Entry("NoRelHigh <= NoRelLow",
+				func(c *config.Config) { c.Synthesis.Assessment.NoRelHigh = 0.5; c.Synthesis.Assessment.NoRelLow = 0.5 },
+				"must be greater than no_rel_low"),
+			Entry("ContestedWarn out of range",
+				func(c *config.Config) { c.Synthesis.Assessment.ContestedWarn = 2.0 },
+				"synthesis.assessment.contested_warn"),
+			Entry("ActionableWarn out of range",
+				func(c *config.Config) { c.Synthesis.Assessment.ActionableWarn = -0.5 },
+				"synthesis.assessment.actionable_warn"),
+		)
+	})
+
+	Describe("global scalar rejection", func() {
+		It("rejects ConfidenceThreshold out of [0, 1]", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.ConfidenceThreshold = 1.5
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("synthesis.confidence_threshold"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects MaxMappingsPerControl of zero", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.MaxMappingsPerControl = 0
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("synthesis.max_mappings_per_control"))
+			Expect(err.Error()).To(ContainSubstring("must be positive"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+	})
+
+	Describe("tenant override rejection", func() {
+		It("rejects invalid tenant ID key", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+				"INVALID": {},
+			}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("synthesis.tenant_overrides key"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects per-tenant ConfidenceThreshold out of range", func() {
+			cfg := synthesisBase()
+			bad := -1.0
+			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+				"acme-corp": {ConfidenceThreshold: &bad},
+			}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tenant_overrides.acme-corp.confidence_threshold"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects per-tenant MaxMappingsPerControl of zero", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+				"acme-corp": {MaxMappingsPerControl: intPtr(0)},
+			}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tenant_overrides.acme-corp.max_mappings_per_control"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects per-tenant Viability with zero TypeMismatchFactor", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+				"acme-corp": {
+					Viability: &config.ViabilityConfig{TypeMismatchFactor: 0, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+				},
+			}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tenant_overrides.acme-corp.viability.type_mismatch_factor"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+
+		It("rejects per-tenant Assessment with IQRGood <= IQRPoor", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+				"acme-corp": {
+					Assessment: &config.AssessmentConfig{IQRGood: 10.0, IQRPoor: 10.0, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+				},
+			}
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tenant_overrides.acme-corp.assessment.iqr_good"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		})
+	})
+
+	Describe("ForTenant resolution", func() {
+		It("returns global values when no overrides exist", func() {
+			cfg := synthesisBase()
+			tc := cfg.Synthesis.ForTenant("some-tenant")
+			Expect(tc.ConfidenceThreshold).To(Equal(0.5))
+			Expect(tc.MaxMappingsPerControl).To(Equal(10))
+			Expect(tc.Viability.TypeMismatchFactor).To(Equal(0.8))
+			Expect(tc.Assessment.IQRGood).To(Equal(20.0))
+		})
+
+		It("returns global values for missing tenant ID", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+				"other-tenant": {ConfidenceThreshold: float64Ptr(0.9)},
+			}
+			tc := cfg.Synthesis.ForTenant("nonexistent-tenant")
+			Expect(tc.ConfidenceThreshold).To(Equal(0.5))
+			Expect(tc.MaxMappingsPerControl).To(Equal(10))
+		})
+
+		It("overrides specific scalar fields", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+				"acme-corp": {
+					ConfidenceThreshold:   float64Ptr(0.8),
+					MaxMappingsPerControl: intPtr(20),
+				},
+			}
+			tc := cfg.Synthesis.ForTenant("acme-corp")
+			Expect(tc.ConfidenceThreshold).To(Equal(0.8))
+			Expect(tc.MaxMappingsPerControl).To(Equal(20))
+			// Non-overridden fields remain global
+			Expect(tc.Viability.TypeMismatchFactor).To(Equal(0.8))
+			Expect(tc.Assessment.IQRGood).To(Equal(20.0))
+		})
+
+		It("replaces entire Viability struct when overridden", func() {
+			cfg := synthesisBase()
+			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+				"acme-corp": {
+					Viability: &config.ViabilityConfig{TypeMismatchFactor: 0.5, SkipLevelFactor: 0.4, IntegralToFactor: 1.5},
+				},
+			}
+			tc := cfg.Synthesis.ForTenant("acme-corp")
+			Expect(tc.Viability.TypeMismatchFactor).To(Equal(0.5))
+			Expect(tc.Viability.SkipLevelFactor).To(Equal(0.4))
+			Expect(tc.Viability.IntegralToFactor).To(Equal(1.5))
+			// Assessment unchanged
+			Expect(tc.Assessment.IQRGood).To(Equal(20.0))
+		})
 	})
 })

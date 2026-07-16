@@ -2,9 +2,10 @@ syntax = "proto3";
 
 package crosscodex.v1;
 
-option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
-
 import "crosscodex/v1/common.proto";
+
+// protolint:disable:next MAX_LINE_LENGTH
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
 
 // SynthesisService aggregates analysis results and computes rankings.
 //
@@ -24,7 +25,8 @@ service SynthesisService {
   rpc GetMappings(GetMappingsRequest) returns (GetMappingsResponse);
 
   // Get quality metrics
-  rpc GetQualityMetrics(GetQualityMetricsRequest) returns (GetQualityMetricsResponse);
+  rpc GetQualityMetrics(GetQualityMetricsRequest)
+      returns (GetQualityMetricsResponse);
 }
 
 message CreateSynthesisRequest {
@@ -36,10 +38,8 @@ message CreateSynthesisRequest {
 }
 
 message SynthesisConfig {
-  float confidence_threshold = 1;      // Min for viable mapping (default 0.7)
+  float confidence_threshold = 1;      // Min for viable mapping (default 0.5)
   int32 max_mappings_per_control = 2;  // Top N to keep (default 10)
-  bool enable_multi_pass = 3;
-  map<string, float> analyzer_weights = 4;
 }
 
 message CreateSynthesisResponse {
@@ -108,16 +108,16 @@ enum RelationshipType {
   RELATIONSHIP_TYPE_SUPERSET_OF = 2;     // NIST IR 8477: source is broader
   RELATIONSHIP_TYPE_SUBSET_OF = 3;       // NIST IR 8477: source is narrower
   RELATIONSHIP_TYPE_CONTRIBUTES_TO = 4;  // NIST IR 8477: target advances source
-  RELATIONSHIP_TYPE_COMPLEMENTS = 5;     // NIST IR 8477: same risk, different mechanism
+  RELATIONSHIP_TYPE_COMPLEMENTS = 5;     // NIST IR 8477: different mechanism
   RELATIONSHIP_TYPE_PARTIAL = 6;         // NIST IR 8477: tangential connection
   RELATIONSHIP_TYPE_CONFLICTS_WITH = 7;  // NIST IR 8477: direct contradiction
-  RELATIONSHIP_TYPE_NO_RELATIONSHIP = 8; // NIST IR 8477: no genuine relationship
+  RELATIONSHIP_TYPE_NO_RELATIONSHIP = 8; // NIST IR 8477: no relationship
 }
 
 // ContributionType sub-classifies CONTRIBUTES_TO relationships.
 enum ContributionType {
   CONTRIBUTION_TYPE_UNSPECIFIED = 0;
-  CONTRIBUTION_TYPE_INTEGRAL_TO = 1;  // Source cannot be satisfied without target
+  CONTRIBUTION_TYPE_INTEGRAL_TO = 1;  // Source requires target
   CONTRIBUTION_TYPE_EXAMPLE_OF = 2;   // Target is one way among alternatives
 }
 
@@ -156,8 +156,9 @@ message QualityMetrics {
   float avg_confidence = 3;
   float avg_viability = 4;
   map<string, int32> relationship_type_counts = 5;
-  map<string, float> analyzer_agreement_scores = 6;
+  // field 6 reserved for future analyzer_agreement_scores
   AuditMetadata computed_at = 7;
+  repeated DiagnosticEntry diagnostics = 8;
 }
 
 message GetQualityMetricsRequest {
@@ -167,4 +168,21 @@ message GetQualityMetricsRequest {
 
 message GetQualityMetricsResponse {
   QualityMetrics metrics = 1;
+}
+
+// DiagnosticSeverity indicates the severity of a quality diagnostic finding.
+enum DiagnosticSeverity {
+  DIAGNOSTIC_SEVERITY_UNSPECIFIED = 0;
+  DIAGNOSTIC_SEVERITY_GOOD = 1;
+  DIAGNOSTIC_SEVERITY_WARN = 2;
+  DIAGNOSTIC_SEVERITY_POOR = 3;
+  DIAGNOSTIC_SEVERITY_CRITICAL = 4;
+}
+
+// DiagnosticEntry represents a single quality diagnostic finding.
+message DiagnosticEntry {
+  string category = 1;
+  DiagnosticSeverity severity = 2;
+  string message = 3;
+  double value = 4;
 }

@@ -71,10 +71,8 @@ var _ = Describe("Property Specifications", func() {
 		It("always produces output enclosed in curly braces", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				edge := graphdb.Edge{
-					ID:     rapid.StringMatching(`[a-zA-Z0-9_-]+`).Draw(t, "id"),
-					Label:  rapid.StringMatching(`[A-Z][a-zA-Z_]*`).Draw(t, "label"),
-					Source: rapid.StringMatching(`[a-zA-Z0-9_-]+`).Draw(t, "source"),
-					Target: rapid.StringMatching(`[a-zA-Z0-9_-]+`).Draw(t, "target"),
+					ID:    rapid.StringMatching(`[a-zA-Z0-9_-]+`).Draw(t, "id"),
+					Label: rapid.StringMatching(`[A-Z][a-zA-Z_]*`).Draw(t, "label"),
 					ValidFrom: time.Date(
 						rapid.IntRange(2000, 2030).Draw(t, "year"),
 						time.Month(rapid.IntRange(1, 12).Draw(t, "month")),

@@ -21,6 +21,54 @@ This guide provides LLM-specific development guidance for working with the Cross
 - **Unified PostgreSQL storage** with AGE (graph) and pgvector (embeddings) extensions
 - **NATS JetStream** for inter-service messaging
 
+## Graph Data Model
+
+CrossCodex is a property-graph-first system. The compliance knowledge graph is the central data representation — every analyzer builds toward it, every query consumes from it, and every compliance report is derived from it. Understanding the graph model is a prerequisite for working on any service.
+
+**Property graph semantics:**
+
+CrossCodex uses a labeled property graph where nodes represent entities (controls, catalogs, artifacts, artifact types), edges represent relationships between them (REQUIRES, SEMANTIC_MATCH, DEMANDS, IS_TYPE, PARENT_OF), and key-value properties carry data about those entities and relationships (confidence scores, classification labels, temporal validity windows). Structure and data are distinct concerns:
+
+- **Structure** is expressed by the graph topology itself — which nodes exist, which edges connect them, and in what direction. The graph engine (currently Apache AGE) manages this natively.
+- **Data** is expressed by properties on nodes and edges — metadata that describes the entity or relationship, not the connection itself.
+
+Never conflate the two. Edge endpoints are structure. Confidence scores are data. Tenant isolation is a partition key. See "Never Store Structural Topology as Data Properties" under Defensive Design Principles for the enforcement rules.
+
+**What lives where:**
+
+| Store | What | Why |
+|-------|------|-----|
+| **Property graph** (AGE) | Controls, relationships, artifacts, artifact types, compliance topology | Traversal queries, path finding, transitive closure, compliance mapping visualization |
+| **Relational tables** (PostgreSQL) | Jobs, vote summaries, catalog metadata, tenant records, migrations | ACID transactions, aggregation, batch updates, operational state |
+| **Object storage** (local FS / S3) | OSCAL documents, analysis results, attestations, prompt specs, CSV exports | Immutable artifacts, large blobs, reconstruction source |
+| **Vector store** (pgvector) | Control embeddings, similarity matrices | Approximate nearest neighbor search, candidate pair selection |
+| **Event stream** (NATS JetStream) | Audit events, work dispatch, stage notifications | Async communication, provenance, decoupled services |
+
+The relational database and object storage are authoritative. The graph is a **materialized view** — it can be destroyed and rebuilt from the authoritative stores without data loss. Analyzers produce facts (stored as analysis results in object storage and vote summaries in relational tables), and materializers project those facts into the graph as nodes and edges. This means:
+
+- Graph writes are idempotent. Re-materializing the same facts produces the same graph.
+- Graph loss is recoverable. Re-running materializers against stored results reconstructs the graph.
+- Graph queries are read-heavy. Services query the graph for compliance topology; they do not treat it as the source of truth for raw analysis data.
+
+**Graph partitioning:**
+
+Each tenant gets its own graph instance named `crosscodex_{tenant_id}`. Tenant isolation at the graph level is structural — queries execute within a single graph, and cross-tenant traversal is impossible by construction. This is enforced by `pkg/graphdb`, which prepends the tenant-scoped graph name to every Cypher query.
+
+**Node and edge types currently in use:**
+
+| Type | Kind | Created by | Properties |
+|------|------|------------|------------|
+| `control` | Node | Catalog materializer | `id`, `title`, `text`, `catalog_id` |
+| `artifact_type` | Node | Artifacts materializer | `id`, `name` |
+| `artifact` | Node | Artifacts materializer | `id`, `name`, `description` |
+| `REQUIRES` | Edge | Relationship materializer | `relationship_type`, `contribution_type`, `confidence`, `determined_by`, `determination_type`, temporal fields |
+| `SEMANTIC_MATCH` | Edge | Relationship materializer | `relationship_type`, `contribution_type`, `confidence`, temporal fields |
+| `DEMANDS` | Edge | Artifacts materializer | (data properties as needed) |
+| `IS_TYPE` | Edge | Artifacts materializer | (data properties as needed) |
+| `PARENT_OF` | Edge | Catalog service | (structural only) |
+
+This table will grow as new analyzers and materializers are added. When adding a new node or edge type, update this table.
+
 ## Import Patterns
 
 Follow these import patterns strictly:
@@ -155,10 +203,10 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | **pkg/storage**     | `[implemented]` | Object storage abstraction (local FS / S3)                                                                                                                                         | pkg/config                        |
 | **pkg/tlsconfig**   | `[implemented]` | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI generation                                                                                   | pkg/config                        |
 | **pkg/authn**       | `[implemented]` | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed                                                                                                | pkg/tlsconfig, pkg/tenant         |
-| **pkg/tenant**      | `[scaffold]`    | Multi-tenant context propagation, isolation enforcement                                                                                                                            | None (foundational)               |
+| **pkg/tenant**      | `[implemented]` | Multi-tenant context propagation, isolation enforcement                                                                                                                            | None (foundational)               |
 | **pkg/telemetry**   | `[implemented]` | OpenTelemetry traces, metrics, structured logging with trace correlation                                                                                                           | pkg/config                        |
 | **pkg/llmclient**   | `[implemented]` | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit emission, gateway mode (skip client-side retry when upstream gateway handles retries) | pkg/config, pkg/telemetry         |
-| **pkg/oscal**       | `[scaffold]`    | OSCAL catalog parsing, validation                                                                                                                                                  | None (domain logic)               |
+| **pkg/oscal**       | `[implemented]` | OSCAL catalog parsing, validation                                                                                                                                                  | None (domain logic)               |
 | **pkg/attestation** | `[implemented]` | in-toto layout/link generation and verification, hash chain verification, FIPS enforcement, enriched byproducts, manifest generation, ephemeral key provider, trace correlation    | pkg/telemetry, in-toto-golang     |
 | **pkg/analyzer**    | `[implemented]` | Generic analyzer plugin interface, type-safe registry, DAG builder with Kahn's algorithm for level-based parallel execution                                                        | pkg/telemetry (optional)          |
 | **pkg/prompt**      | `[implemented]` | Prompt versioning and management: YAML prompt specs, 4-layer resolution (embedded/user/project/CLI), deep merge via mergo, placeholder substitution, few-shot assembly, SHA-256 content hashing, slog.LogValuer debug output | pkg/config, pkg/storage           |
@@ -167,6 +215,7 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | **internal/analyzer/relationship** | `[implemented]` | Relationship analyzer: NIST IR 8477 multi-sample LLM panel voting, regex parser, plurality consensus with priority tiebreak, GraphMaterializer for edge creation, OTel tracing and metrics | pkg/analyzer, pkg/llmclient, pkg/prompt, pkg/storage, pkg/graphdb, pkg/natsbus, pkg/config, pkg/tenant, pkg/telemetry |
 | **internal/analysis** | `[implemented]` | Analysis Engine: DAG-based analyzer orchestration, NATS work dispatch, result collection with retry | pkg/analyzer, pkg/natsbus, pkg/config, pkg/tenant, pkg/telemetry |
 | **internal/worker** | `[implemented]` | LLM Worker service: NATS message handler for completion/embedding tasks, tenant-scoped config resolution, fail-closed validation, OTel tracing and metrics, audit emission | pkg/llmclient, pkg/natsbus, pkg/config, pkg/tenant, pkg/telemetry |
+| **internal/synthesis** | `[implemented]` | Synthesis Service: viability ranking with Python-parity two-round rounding, quality assessment with 4 diagnostic categories (IQR, NO_RELATIONSHIP rate, contested pairs, actionable coverage), DB persistence via single-transaction UNNEST batch UPDATE (O(1) round-trips), OTel tracing and metrics | pkg/db, pkg/tenant, pkg/storage, pkg/config, pkg/telemetry |
 
 **Dependency Flow:**
 
@@ -658,7 +707,38 @@ This applies to controls, catalogs, embeddings, graph nodes, configuration recor
 
 ### Graph Backend Portability
 
-The graph database (currently Apache AGE) is accessed exclusively through the `pkg/graphdb.GraphDB` interface. No package outside `pkg/graphdb` may import AGE-specific types, use AGE SQL functions directly, or assume the graph shares a PostgreSQL transaction with relational queries. The graph is a materialized view — reconstructible from authoritative stores (object storage, event streams). Design every graph consumer so that swapping AGE for Neo4j, Neptune, or any openCypher/Gremlin backend requires changes only inside `pkg/graphdb`.
+The graph database (currently Apache AGE) is accessed exclusively through the `pkg/graphdb.GraphDB` interface. No package outside `pkg/graphdb` may import AGE-specific types, use AGE SQL functions directly, or assume the graph shares a PostgreSQL transaction with relational queries. The graph is a materialized view — reconstructible from authoritative stores (see "Graph Data Model" above). Design every graph consumer so that swapping AGE for Neo4j, Neptune, or any openCypher/Gremlin backend requires changes only inside `pkg/graphdb`.
+
+### Never Store Structural Topology as Data Properties
+
+In a property graph, edges ARE the structural connection between nodes. The endpoints of an edge (which nodes it connects) are topology, not data. Never duplicate this structural information as key-value properties on the edge.
+
+**Anti-pattern (do not do this):**
+```go
+// WRONG: source/target stored as data properties on the edge
+edge := graphdb.Edge{
+    Label:      "REQUIRES",
+    Properties: map[string]any{"source": "AC-1", "target": "AC-2"},
+}
+client.CreateEdge(ctx, tenant, edge)
+```
+
+**Correct pattern:**
+```go
+// RIGHT: source/target are parameters that define which nodes the edge connects
+edge := graphdb.Edge{
+    Label:      "REQUIRES",
+    Properties: map[string]any{"confidence": 0.95},
+}
+client.CreateEdge(ctx, tenant, "AC-1", "AC-2", edge)
+```
+
+This principle extends to any value that is already expressed by the graph structure:
+- **Edge endpoints** — encoded structurally by `(source)-[edge]->(target)`, never as edge properties
+- **Tenant ID on edges** — already the graph partition key (graph name `crosscodex_{tenant_id}`), never redundant as an edge property
+- **Node identity** — the `id` property on a vertex is its lookup key, not duplicated elsewhere
+
+On the read side, edge endpoint identity comes from the `Relationship` struct's `Source` and `Target` `Node` fields (populated by the MATCH pattern's `s` and `t` columns), not from edge properties.
 
 ## Recent Changes
 
@@ -680,6 +760,8 @@ The graph database (currently Apache AGE) is accessed exclusively through the `p
 - **internal/analyzer/relationship implementation** — Third `Analyzer[T]` plugin: classifies NIST IR 8477 relationships between control pairs using multi-sample LLM panel voting. Implements `pkg/analyzer.Analyzer[*pb.Control]` with `DependsOn: ["embedding"]` for DAG ordering. Regex-based response parser ports Python `_parse_response()` with fail-closed defaults. Deterministic consensus algorithm ports Python `_compute_consensus()` with one documented divergence: contribution type tiebreaks favor INTEGRAL_TO (Python's `max()` is non-deterministic on ties). CandidateProvider interface decouples from embedding similarity. GraphMaterializer creates SEMANTIC_MATCH edges from stored pair results (graph as materialized view). Proto expanded: 8 NIST IR 8477 relationship types replacing 4 coarse types, ContributionType and ConfidenceLevel enums added. RelationshipConfig expanded from 1 field (TopK) to 9 fields. `relationship.yaml` prompt spec with 8 few-shot examples ported from OllamaCrosswalker. OTel tracing (5 spans) and metrics (4 instruments: vote counter, consensus latency histogram, pair counter, edge materialization counter). Comprehensive test suite: BDD unit tests (parser + consensus Python parity vectors + analyzer struct + materializer), 8 rapid property tests, 2 fuzz tests.
 - **internal/analysis implementation** — Analysis Engine service: DAG-based orchestration of registered analyzers via Dispatcher/Collector pattern. Engine builds execution DAGs from analyzer registry, executes levels in parallel (errgroup collect-all semantics), dispatches tasks to NATS work subjects via Dispatcher, collects results with per-task retry (exponential backoff + jitter) via Collector, aggregates partial results, and reports stage events to Pipeline via StageReporter interface. EngineConfig added to pkg/config with task_timeout, max_retries, retry_backoff fields and bounded validation. Error sanitization prevents information disclosure in NATS-published error strings. Context cancellation returns partial ExecutionResult. NATSStageReporter publishes stage events to pipeline subjects. Comprehensive test suite: BDD unit tests (dispatcher, collector, engine), property tests (backoff bounds), fuzz tests (proto serialization).
 - **internal/worker implementation** — LLM Worker service: NATS message handler dispatching completion and embedding tasks to `pkg/llmclient`, tenant-scoped config resolution via `LLMConfig.ForTenant()`, fail-closed tenant validation (empty and malformed IDs rejected at handler entry), default model fallback from tenant config, error categorization with sanitized span attributes, nil-return NATS handler contract (prevents redelivery loops), OTel tracing and metrics via `WithTelemetry` option (tracer, 4 meter instruments with WARN-logged creation errors), audit emission via `NATSAuditEmitter`. `WorkerConfig` added to `pkg/config` with `QueueGroup` field (whitespace rejection, default `"llm-workers"` via `defaultQueueGroup` constant in `types.go`) and validation via `Validate()`. `NATSAuditEmitter` constructed via `NewNATSAuditEmitterWithMetrics` (registers `crosscodex.worker.audit.failures.total` Int64Counter; falls back to `NewNATSAuditEmitter` when metrics are unavailable). `LLMConfig` extended with `TenantOverrides map[string]LLMOverride` field (keys must satisfy `pkg/tenant.ValidateTenantID`); `LLMOverride` holds pointer-typed per-tenant overrides; `LLMTenantConfig` is the fully resolved view returned by `LLMConfig.ForTenant(tenantID)`. `GatewayMode` in `LLMTenantConfig` is always inherited from the global config and cannot be overridden per-tenant. Comprehensive test suite: BDD unit tests (completion/embedding routing, model resolution, error categories, tenant validation, telemetry integration, queue group distribution, default queue group fallback), property tests (payload roundtrip, embedding result float32 roundtrip precision, completion field preservation, error wrapping), fuzz tests via payload fuzzing.
+- **internal/synthesis implementation** — Synthesis Service: viability ranking with Python-parity two-round rounding, quality assessment with 4 diagnostic categories (IQR, NO_RELATIONSHIP rate, contested pairs, actionable coverage), DB persistence via single-transaction UNNEST batch UPDATE (O(1) round-trips), OTel tracing and metrics. Ranker transforms `[]SynthesisInput` + classifications into `[]SynthesisRow` with viability weights. Assessor evaluates `[]SynthesisRow` into `*QualityReport` with diagnostics (embedding spread IQR via linear interpolation, NO_RELATIONSHIP rate, contested pairs fraction, actionable coverage). Service orchestrates Ranker, Assessor, DB persistence (single transaction, `UPDATE vote_summaries AS vs SET viability = u.viability FROM UNNEST($1::float8[], $2::text[], $3::text[]) AS u(viability, source_id, target_id) WHERE ...` with count-mismatch detection), and content hash via proto deterministic marshaling + `storage.ContentHash()`. `SynthesisConfig` added to `pkg/config` with `Viability` (TypeMismatchFactor=0.8, SkipLevelFactor=0.7, IntegralToFactor=1.1), `Assessment` (IQRGood=20, IQRPoor=10, NoRelHigh=0.97, NoRelLow=0.80, ContestedWarn=0.20, ActionableWarn=0.30), `ConfidenceThreshold=0.5`, `MaxMappingsPerControl=10`, per-tenant overrides via `ForTenant()`. `DiagnosticSeverity` enum and `DiagnosticEntry` message added to synthesis.proto. Comprehensive test suite: 66 BDD unit tests, 10 rapid property tests, 4 fuzz tests, 25 config validation tests.
+- **Graph topology anti-pattern fix** — Removed `Source`/`Target` fields from `pkg/graphdb.Edge` struct. Edge endpoints are now passed as explicit `sourceID, targetID string` parameters to `CreateEdge(ctx, tenant, sourceID, targetID, edge)` instead of being stored as Cypher properties. Removed redundant `tenant_id` edge property from `CreateRequiresEdge` (already the graph partition key via graph name). Changed `extractString`/`extractFloat` in agtype.go to copy-not-delete (properties remain in Properties map; typed fields are convenience accessors). Removed `start_id`/`end_id` numeric fallback from `ageEdgeToEdge` — edge endpoint identity now comes exclusively from `Relationship.Source`/`Relationship.Target` Node fields populated by MATCH pattern columns. Updated materializers (relationship, artifacts, catalog) and all tests. Added "Never Store Structural Topology as Data Properties" to Defensive Design Principles.
 
 **TODO:** NATS account-level tenant authorization is not yet integrated with `pkg/authn`. While `pkg/authn` is now implemented (X.509 mTLS), NATS account-level isolation requires a separate integration layer. Currently, tenant isolation is enforced at the subject level via `pkg/tenant.ValidateTenantID()`. When the NATS-authn integration is built, add per-tenant NATS accounts for server-level isolation.
 
@@ -694,6 +776,6 @@ After scaffolding is complete, the next implementation phases are:
 3. **Phase 3: Implement extended packages** (`graphdb`, `vectordb`, `tlsconfig`, `telemetry`) ✓ Done
 4. **Phase 4: Implement security packages** (`authn`) ✓ Done
 5. **Phase 5: Implement domain packages** (`oscal`, `attestation`, `analyzer`, `llmclient`) ✓ Done
-6. **Phase 6: Implement services** (`internal/worker` ✓ Done; `internal/ingestion` — next)
+6. **Phase 6: Implement services** (`internal/worker` ✓ Done; `internal/synthesis` ✓ Done; `internal/ingestion` — next)
 
 Refer to the issue tracker for detailed implementation plans for each phase.

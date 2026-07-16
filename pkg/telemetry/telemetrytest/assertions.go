@@ -81,6 +81,21 @@ func HistogramCount(m *metricdata.Metrics) (uint64, error) {
 	return total, nil
 }
 
+// Float64HistogramCount returns the total count across all data points of a
+// Float64Histogram metric. Returns an error if the metric data is not a
+// Histogram[float64] type.
+func Float64HistogramCount(m *metricdata.Metrics) (uint64, error) {
+	hist, ok := m.Data.(metricdata.Histogram[float64])
+	if !ok {
+		return 0, fmt.Errorf("metric %q data is %T, not Histogram[float64]", m.Name, m.Data)
+	}
+	var total uint64
+	for _, dp := range hist.DataPoints {
+		total += dp.Count
+	}
+	return total, nil
+}
+
 // GaugeValue returns the last recorded int64 value from a Gauge metric.
 // If multiple data points exist, returns the value from the last one.
 // Returns an error if the metric data is not a Gauge type or has no data points.

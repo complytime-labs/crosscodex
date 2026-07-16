@@ -138,24 +138,36 @@ All instruments are created under the `crosscodex` meter name, so they group tog
 
 ### Registered Metrics
 
-| Metric                             | Type           | Package      | Description                |
-|------------------------------------|----------------|--------------|----------------------------|
-| `natsbus.publish.total`            | Int64Counter   | pkg/natsbus  | Total messages published   |
-| `natsbus.publish.duration_ms`      | Int64Histogram | pkg/natsbus  | Publish latency in ms      |
-| `db.queries.total`                 | Int64Counter   | pkg/db       | Total queries executed     |
-| `db.query.duration_ms`             | Int64Histogram | pkg/db       | Query latency in ms        |
-| `db.transactions.total`            | Int64Counter   | pkg/db       | Total transactions started |
-| `db.pool.open_connections`         | Int64Gauge     | pkg/db       | Current open connections   |
-| `authn.attempts.total`             | Int64Counter   | pkg/authn    | Authentication attempts    |
-| `authn.duration_ms`                | Int64Histogram | pkg/authn    | Authentication latency     |
-| `graphdb.queries.total`            | Int64Counter   | pkg/graphdb  | Graph queries executed     |
-| `graphdb.query.duration_ms`        | Int64Histogram | pkg/graphdb  | Graph query latency        |
-| `storage.operations.total`         | Int64Counter   | pkg/storage  | Storage operations         |
-| `storage.operation.duration_ms`    | Int64Histogram | pkg/storage  | Storage operation latency  |
-| `vectordb.searches.total`          | Int64Counter   | pkg/vectordb | Vector similarity searches |
-| `vectordb.search.duration_ms`      | Int64Histogram | pkg/vectordb | Search latency             |
-| `vectordb.embeddings.stored.total` | Int64Counter   | pkg/vectordb | Embeddings stored          |
-| `vectordb.store.duration_ms`       | Int64Histogram | pkg/vectordb | Store latency              |
+| Metric                              | Type             | Package            | Description                               |
+|-------------------------------------|------------------|--------------------|-------------------------------------------|
+| `natsbus.publish.total`             | Int64Counter     | pkg/natsbus        | Total messages published                  |
+| `natsbus.publish.duration_ms`       | Int64Histogram   | pkg/natsbus        | Publish latency in ms                     |
+| `natsbus.process.total`             | Int64Counter     | pkg/natsbus        | Messages processed by subscriber handlers |
+| `natsbus.process.duration_ms`       | Int64Histogram   | pkg/natsbus        | Subscriber handler execution duration     |
+| `db.queries.total`                  | Int64Counter     | pkg/db             | Total queries executed                    |
+| `db.query.duration_ms`              | Int64Histogram   | pkg/db             | Query latency in ms                       |
+| `db.transactions.total`             | Int64Counter     | pkg/db             | Total transactions started                |
+| `db.pool.open_connections`          | Int64Gauge       | pkg/db             | Current open connections                  |
+| `authn.attempts.total`              | Int64Counter     | pkg/authn          | Authentication attempts                   |
+| `authn.duration_ms`                 | Int64Histogram   | pkg/authn          | Authentication latency                    |
+| `graphdb.queries.total`             | Int64Counter     | pkg/graphdb        | Graph queries executed                    |
+| `graphdb.query.duration_ms`         | Int64Histogram   | pkg/graphdb        | Graph query latency                       |
+| `storage.operations.total`          | Int64Counter     | pkg/storage        | Storage operations                        |
+| `storage.operation.duration_ms`     | Int64Histogram   | pkg/storage        | Storage operation latency                 |
+| `vectordb.searches.total`           | Int64Counter     | pkg/vectordb       | Vector similarity searches                |
+| `vectordb.search.duration_ms`       | Int64Histogram   | pkg/vectordb       | Search latency                            |
+| `vectordb.embeddings.stored.total`  | Int64Counter     | pkg/vectordb       | Embeddings stored                         |
+| `vectordb.store.duration_ms`        | Int64Histogram   | pkg/vectordb       | Store latency                             |
+| `llmclient.completions.total`       | Int64Counter     | pkg/llmclient      | Completion requests                       |
+| `llmclient.completion.duration_ms`  | Int64Histogram   | pkg/llmclient      | Completion request duration               |
+| `llmclient.embeddings.total`        | Int64Counter     | pkg/llmclient      | Embedding requests                        |
+| `llmclient.embedding.duration_ms`   | Int64Histogram   | pkg/llmclient      | Embedding request duration                |
+| `llmclient.errors.total`            | Int64Counter     | pkg/llmclient      | LLM client errors                         |
+| `synthesis.executions.total`        | Int64Counter     | internal/synthesis | Synthesis executions                      |
+| `synthesis.errors.total`            | Int64Counter     | internal/synthesis | Synthesis errors by category              |
+| `synthesis.duration_ms`             | Float64Histogram | internal/synthesis | Synthesis execution duration              |
+| `synthesis.pairs.ranked.total`      | Int64Counter     | internal/synthesis | Pairs ranked                              |
+| `synthesis.viability.updates.total` | Int64Counter     | internal/synthesis | Viability database updates                |
 
 ## Logs
 
@@ -221,15 +233,16 @@ This starts the Jaeger container on port 14317, runs the integration test suite,
 
 ## Instrumentation Status
 
-| Package       | Traces  | Metrics | Status                                                                                                                     |
-|---------------|---------|---------|----------------------------------------------------------------------------------------------------------------------------|
-| pkg/vectordb  | Full    | Full    | Reference implementation                                                                                                   |
-| pkg/storage   | Full    | Full    | Complete                                                                                                                   |
-| pkg/graphdb   | Full    | Full    | Complete                                                                                                                   |
-| pkg/authn     | Full    | Full    | Complete                                                                                                                   |
-| pkg/db        | Partial | Full    | Transaction wrapper (`pgTx`) has no spans                                                                                  |
-| pkg/natsbus   | Full    | Full    | Per-message consumer spans (natsbus.process), subscriber metrics (process counter, duration histogram)                     |
-| pkg/llmclient | Full    | Full    | Spans on Complete/Embed; 5 instruments (completions, embeddings, errors counters; completion/embedding latency histograms) |
-| pkg/oscal     | None    | None    | Scaffold only                                                                                                              |
+| Package            | Traces  | Metrics | Status                                                                                                                     |
+|--------------------|---------|---------|----------------------------------------------------------------------------------------------------------------------------|
+| pkg/vectordb       | Full    | Full    | Reference implementation                                                                                                   |
+| pkg/storage        | Full    | Full    | Complete                                                                                                                   |
+| pkg/graphdb        | Full    | Full    | Complete                                                                                                                   |
+| pkg/authn          | Full    | Full    | Complete                                                                                                                   |
+| pkg/db             | Partial | Full    | Transaction wrapper (`pgTx`) has no spans                                                                                  |
+| pkg/natsbus        | Full    | Full    | Per-message consumer spans (natsbus.process), subscriber metrics (process counter, duration histogram)                     |
+| pkg/llmclient      | Full    | Full    | Spans on Complete/Embed; 5 instruments (completions, embeddings, errors counters; completion/embedding latency histograms) |
+| pkg/oscal          | None    | None    | Scaffold only                                                                                                              |
+| internal/synthesis | Full    | Full    | Span on Service.Execute; 5 instruments (executions/errors/pairs/updates counters; duration histogram)                      |
 
 When implementing new packages or extending existing ones, follow `pkg/vectordb` as the reference for span structure, attribute naming, and metric registration.

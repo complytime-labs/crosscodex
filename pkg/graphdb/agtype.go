@@ -111,8 +111,6 @@ func ageEdgeToEdge(e ageEdge) Edge {
 	edge := Edge{
 		ID:                extractString(props, "id"),
 		Label:             e.Label,
-		Source:            extractString(props, "source"),
-		Target:            extractString(props, "target"),
 		ValidFrom:         extractTime(props, "valid_from"),
 		ValidTo:           extractTimePtr(props, "valid_to"),
 		DeterminedBy:      extractString(props, "determined_by"),
@@ -122,12 +120,6 @@ func ageEdgeToEdge(e ageEdge) Edge {
 	}
 	if edge.ID == "" {
 		edge.ID = fmt.Sprintf("%d", e.ID)
-	}
-	if edge.Source == "" {
-		edge.Source = fmt.Sprintf("%d", e.StartID)
-	}
-	if edge.Target == "" {
-		edge.Target = fmt.Sprintf("%d", e.EndID)
 	}
 	edge.Properties = props
 	return edge
@@ -149,7 +141,6 @@ func extractString(props map[string]any, key string) string {
 	if !ok {
 		return ""
 	}
-	delete(props, key)
 	s, _ := v.(string)
 	return s
 }
@@ -159,7 +150,6 @@ func extractFloat(props map[string]any, key string) float64 {
 	if !ok {
 		return 0
 	}
-	delete(props, key)
 	switch f := v.(type) {
 	case float64:
 		return f

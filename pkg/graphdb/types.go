@@ -15,8 +15,6 @@ type Node struct {
 type Edge struct {
 	ID                string
 	Label             string
-	Source            string
-	Target            string
 	Properties        map[string]any
 	ValidFrom         time.Time
 	ValidTo           *time.Time

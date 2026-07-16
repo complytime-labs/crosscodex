@@ -253,17 +253,17 @@ Classify the NIST IR 8477 relationship FROM the source TO the target.
 		Expect(err).NotTo(HaveOccurred())
 
 		// Step 9: Assert graph edges.
-		Expect(graph.edges).To(HaveLen(2))
-		for _, edge := range graph.edges {
-			Expect(edge.Label).To(Equal("SEMANTIC_MATCH"))
-			Expect(edge.DeterminationType).To(Equal("llm_panel"))
-			Expect(edge.Properties["relationship_type"]).To(Equal("SUPERSET_OF"))
+		Expect(graph.captured).To(HaveLen(2))
+		for _, c := range graph.captured {
+			Expect(c.Edge.Label).To(Equal("SEMANTIC_MATCH"))
+			Expect(c.Edge.DeterminationType).To(Equal("llm_panel"))
+			Expect(c.Edge.Properties["relationship_type"]).To(Equal("SUPERSET_OF"))
 		}
 
 		// Verify both pairs are represented.
 		edgePairs := make(map[string]bool)
-		for _, edge := range graph.edges {
-			edgePairs[edge.Source+"--"+edge.Target] = true
+		for _, c := range graph.captured {
+			edgePairs[c.SourceID+"--"+c.TargetID] = true
 		}
 		Expect(edgePairs).To(HaveKey("AC-1--IT-3.2"))
 		Expect(edgePairs).To(HaveKey("AC-2--IT-4.1"))

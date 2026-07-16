@@ -122,8 +122,6 @@ func nodeToAGProperties(n Node) string {
 func edgeToAGProperties(e Edge) string {
 	var pairs []string
 	pairs = append(pairs, fmt.Sprintf("id: '%s'", escapeCypher(e.ID)))
-	pairs = append(pairs, fmt.Sprintf("source: '%s'", escapeCypher(e.Source)))
-	pairs = append(pairs, fmt.Sprintf("target: '%s'", escapeCypher(e.Target)))
 	pairs = append(pairs, fmt.Sprintf("valid_from: '%s'", escapeCypher(e.ValidFrom.Format(time.RFC3339Nano))))
 	if e.ValidTo != nil {
 		pairs = append(pairs, fmt.Sprintf("valid_to: '%s'", escapeCypher(e.ValidTo.Format(time.RFC3339Nano))))
@@ -298,11 +296,14 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) er
 }
 
 // CreateEdge creates a directed edge between two existing nodes in the tenant's graph.
-func (c *ageClient) CreateEdge(ctx context.Context, tenant string, edge Edge) error {
+// Source and target node IDs are explicit parameters — they identify the structural
+// endpoints of the edge and are NOT stored as edge properties. Edge properties carry
+// only domain-level metadata (confidence, determination_type, etc.).
+func (c *ageClient) CreateEdge(ctx context.Context, tenant, sourceID, targetID string, edge Edge) error {
 	if edge.Label == "" {
 		return fmt.Errorf("create edge: label is required")
 	}
-	if edge.Source == "" || edge.Target == "" {
+	if sourceID == "" || targetID == "" {
 		return fmt.Errorf("create edge: source and target are required")
 	}
 	if edge.ValidFrom.IsZero() {
@@ -324,8 +325,8 @@ func (c *ageClient) CreateEdge(ctx context.Context, tenant string, edge Edge) er
 	props := edgeToAGProperties(edge)
 	cypher := fmt.Sprintf(
 		"MATCH (s {id: '%s'}), (t {id: '%s'}) CREATE (s)-[e:%s %s]->(t)",
-		escapeCypher(edge.Source),
-		escapeCypher(edge.Target),
+		escapeCypher(sourceID),
+		escapeCypher(targetID),
 		escapeCypher(edge.Label),
 		props,
 	)
@@ -380,7 +381,9 @@ func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEd
 
 	gn := graphName(tenant)
 
-	// Build properties map for REQUIRES edge, matching the design spec.
+	// Build properties map for REQUIRES edge. Source/target node IDs are
+	// structural topology (the MATCH clause endpoints), not data properties.
+	// Tenant ID is the graph partition key (graph name), not an edge property.
 	var pairs []string
 	pairs = append(pairs, fmt.Sprintf("confidence: %g", reqEdge.Confidence))
 	pairs = append(pairs, fmt.Sprintf("unanimous: %v", reqEdge.Unanimous))
@@ -405,7 +408,6 @@ func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEd
 		pairs = append(pairs, fmt.Sprintf("prompt_version: '%s'", escapeCypher(reqEdge.PromptVersion)))
 	}
 	pairs = append(pairs, fmt.Sprintf("analyzed_at: '%s'", escapeCypher(reqEdge.AnalyzedAt.Format(time.RFC3339Nano))))
-	pairs = append(pairs, fmt.Sprintf("tenant_id: '%s'", escapeCypher(reqEdge.TenantID)))
 	pairs = append(pairs, fmt.Sprintf("job_id: '%s'", escapeCypher(reqEdge.JobID)))
 
 	props := "{" + strings.Join(pairs, ", ") + "}"
