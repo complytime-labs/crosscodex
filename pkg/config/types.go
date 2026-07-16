@@ -24,6 +24,7 @@ type Config struct {
 	Prompt        PromptConfig        `yaml:"prompt"`
 	Analysis      AnalysisConfig      `yaml:"analysis"`
 	Worker        WorkerConfig        `yaml:"worker"`
+	Synthesis     SynthesisConfig     `yaml:"synthesis"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -619,6 +620,74 @@ func (c *WorkerConfig) Validate() error {
 	return nil
 }
 
+// SynthesisConfig configures the synthesis service.
+type SynthesisConfig struct {
+	Viability             ViabilityConfig              `yaml:"viability"`
+	Assessment            AssessmentConfig             `yaml:"assessment"`
+	ConfidenceThreshold   float64                      `yaml:"confidence_threshold"`
+	MaxMappingsPerControl int                          `yaml:"max_mappings_per_control"`
+	TenantOverrides       map[string]SynthesisOverride `yaml:"tenant_overrides"`
+}
+
+// ViabilityConfig configures viability computation factors.
+type ViabilityConfig struct {
+	TypeMismatchFactor float64 `yaml:"type_mismatch_factor"` // default 0.8
+	SkipLevelFactor    float64 `yaml:"skip_level_factor"`    // default 0.7
+	IntegralToFactor   float64 `yaml:"integral_to_factor"`   // default 1.1
+}
+
+// AssessmentConfig configures quality assessment thresholds.
+type AssessmentConfig struct {
+	IQRGood        float64 `yaml:"iqr_good"`        // default 20.0
+	IQRPoor        float64 `yaml:"iqr_poor"`        // default 10.0
+	NoRelHigh      float64 `yaml:"no_rel_high"`     // default 0.97
+	NoRelLow       float64 `yaml:"no_rel_low"`      // default 0.80
+	ContestedWarn  float64 `yaml:"contested_warn"`  // default 0.20
+	ActionableWarn float64 `yaml:"actionable_warn"` // default 0.30
+}
+
+// SynthesisOverride allows per-tenant synthesis settings.
+// Nil pointer fields inherit the global SynthesisConfig value.
+type SynthesisOverride struct {
+	ConfidenceThreshold   *float64          `yaml:"confidence_threshold"`
+	MaxMappingsPerControl *int              `yaml:"max_mappings_per_control"`
+	Viability             *ViabilityConfig  `yaml:"viability"`
+	Assessment            *AssessmentConfig `yaml:"assessment"`
+}
+
+// SynthesisTenantConfig is the fully-resolved view for a specific tenant.
+type SynthesisTenantConfig struct {
+	Viability             ViabilityConfig
+	Assessment            AssessmentConfig
+	ConfidenceThreshold   float64
+	MaxMappingsPerControl int
+}
+
+// ForTenant resolves the fully-typed view for a specific tenant.
+func (c *SynthesisConfig) ForTenant(tenantID string) SynthesisTenantConfig {
+	tc := SynthesisTenantConfig{
+		Viability:             c.Viability,
+		Assessment:            c.Assessment,
+		ConfidenceThreshold:   c.ConfidenceThreshold,
+		MaxMappingsPerControl: c.MaxMappingsPerControl,
+	}
+	if override, ok := c.TenantOverrides[tenantID]; ok {
+		if override.ConfidenceThreshold != nil {
+			tc.ConfidenceThreshold = *override.ConfidenceThreshold
+		}
+		if override.MaxMappingsPerControl != nil {
+			tc.MaxMappingsPerControl = *override.MaxMappingsPerControl
+		}
+		if override.Viability != nil {
+			tc.Viability = *override.Viability
+		}
+		if override.Assessment != nil {
+			tc.Assessment = *override.Assessment
+		}
+	}
+	return tc
+}
+
 // DaemonConfig is the derived view for crosscodexd.
 type DaemonConfig struct {
 	GRPCAddr      string
@@ -638,6 +707,7 @@ type DaemonConfig struct {
 	Prompt        PromptConfig
 	Analysis      AnalysisConfig
 	Worker        WorkerConfig
+	Synthesis     SynthesisConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -671,6 +741,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Prompt:        c.Prompt,
 		Analysis:      c.Analysis,
 		Worker:        WorkerConfig{QueueGroup: c.Worker.QueueGroup, LLM: c.LLM},
+		Synthesis:     c.Synthesis,
 	}
 }
 

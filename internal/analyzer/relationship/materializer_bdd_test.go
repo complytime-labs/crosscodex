@@ -18,19 +18,26 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 )
 
+// capturedEdge records a CreateEdge call with its structural endpoint IDs.
+type capturedEdge struct {
+	SourceID string
+	TargetID string
+	Edge     graphdb.Edge
+}
+
 // mockGraphDB captures CreateEdge calls.
 type mockGraphDB struct {
-	edges []graphdb.Edge
-	err   error
+	captured []capturedEdge
+	err      error
 }
 
 func (m *mockGraphDB) CreateGraph(_ context.Context, _ string) error                { return nil }
 func (m *mockGraphDB) CreateNode(_ context.Context, _ string, _ graphdb.Node) error { return nil }
-func (m *mockGraphDB) CreateEdge(_ context.Context, _ string, edge graphdb.Edge) error {
+func (m *mockGraphDB) CreateEdge(_ context.Context, _, sourceID, targetID string, edge graphdb.Edge) error {
 	if m.err != nil {
 		return m.err
 	}
-	m.edges = append(m.edges, edge)
+	m.captured = append(m.captured, capturedEdge{SourceID: sourceID, TargetID: targetID, Edge: edge})
 	return nil
 }
 func (m *mockGraphDB) CreateRequiresEdge(_ context.Context, _ string, _ graphdb.RequiresEdge) error {
@@ -138,17 +145,17 @@ var _ = Describe("GraphMaterializer", func() {
 
 			err = mat.Materialize(ctx, "test-tenant", "job-1")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(graph.edges).To(HaveLen(1))
+			Expect(graph.captured).To(HaveLen(1))
 
-			edge := graph.edges[0]
-			Expect(edge.Label).To(Equal("SEMANTIC_MATCH"))
-			Expect(edge.Source).To(Equal("AC-1"))
-			Expect(edge.Target).To(Equal("IT-3.2"))
-			Expect(edge.DeterminationType).To(Equal("llm_panel"))
-			Expect(edge.DeterminedBy).To(Equal("job-1"))
-			Expect(edge.Confidence).To(Equal(1.0))
-			Expect(edge.Properties["relationship_type"]).To(Equal("SUPERSET_OF"))
-			Expect(edge.Properties["unanimous"]).To(Equal(true))
+			c := graph.captured[0]
+			Expect(c.SourceID).To(Equal("AC-1"))
+			Expect(c.TargetID).To(Equal("IT-3.2"))
+			Expect(c.Edge.Label).To(Equal("SEMANTIC_MATCH"))
+			Expect(c.Edge.DeterminationType).To(Equal("llm_panel"))
+			Expect(c.Edge.DeterminedBy).To(Equal("job-1"))
+			Expect(c.Edge.Confidence).To(Equal(1.0))
+			Expect(c.Edge.Properties["relationship_type"]).To(Equal("SUPERSET_OF"))
+			Expect(c.Edge.Properties["unanimous"]).To(Equal(true))
 		})
 
 		It("creates edges for multiple pair results", func() {
@@ -165,13 +172,13 @@ var _ = Describe("GraphMaterializer", func() {
 
 			err := mat.Materialize(ctx, "test-tenant", "job-2")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(graph.edges).To(HaveLen(2))
+			Expect(graph.captured).To(HaveLen(2))
 		})
 
 		It("returns zero edges for empty prefix listing", func() {
 			err := mat.Materialize(ctx, "test-tenant", "job-empty")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(graph.edges).To(BeEmpty())
+			Expect(graph.captured).To(BeEmpty())
 		})
 
 		It("fails on corrupt JSON", func() {

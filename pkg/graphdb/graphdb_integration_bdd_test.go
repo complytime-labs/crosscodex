@@ -215,11 +215,9 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			})).To(Succeed())
 
 			// Create edge.
-			Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
+			Expect(client.CreateEdge(ctx, tenantID, "src-001", "tgt-001", graphdb.Edge{
 				ID:                "edge-001",
 				Label:             "DEFINED_IN",
-				Source:            "src-001",
-				Target:            "tgt-001",
 				ValidFrom:         now,
 				DeterminedBy:      "job-1",
 				DeterminationType: "llm_initial",
@@ -243,8 +241,6 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			Expect(rel.Edge.Confidence).To(Equal(0.85))
 			Expect(rel.Edge.ValidFrom.IsZero()).To(BeFalse())
 			Expect(rel.Edge.ValidTo).To(BeNil())
-			Expect(rel.Edge.Source).To(Equal("src-001"))
-			Expect(rel.Edge.Target).To(Equal("tgt-001"))
 
 			// Source node assertions.
 			Expect(rel.Source.Label).To(Equal("Requirement"))
@@ -289,9 +285,8 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 
 				// Old edge: valid 2025-01-01 to 2025-06-01.
 				oldValidTo := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-				Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
+				Expect(client.CreateEdge(ctx, tenantID, "asof-src", "asof-tgt", graphdb.Edge{
 					ID: "asof-edge-old", Label: "MAPS_TO",
-					Source: "asof-src", Target: "asof-tgt",
 					ValidFrom: baseTime, ValidTo: &oldValidTo,
 					DeterminedBy: "job-old", DeterminationType: "llm_initial",
 					Confidence: 0.7,
@@ -299,9 +294,8 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 
 				// New edge: valid from 2025-06-01.
 				newValidFrom := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-				Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
+				Expect(client.CreateEdge(ctx, tenantID, "asof-src", "asof-tgt", graphdb.Edge{
 					ID: "asof-edge-new", Label: "MAPS_TO",
-					Source: "asof-src", Target: "asof-tgt",
 					ValidFrom:    newValidFrom,
 					DeterminedBy: "job-new", DeterminationType: "human_feedback",
 					Confidence: 0.95, Supersedes: "asof-edge-old",
@@ -354,18 +348,16 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 				// Closed edge (valid_to set).
 				closedEnd := now.Add(-1 * time.Hour)
 				closedStart := closedEnd.Add(-24 * time.Hour)
-				Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
+				Expect(client.CreateEdge(ctx, tenantID, "tc-src", "tc-tgt", graphdb.Edge{
 					ID: "tc-edge-closed", Label: "REFERENCES",
-					Source: "tc-src", Target: "tc-tgt",
 					ValidFrom: closedStart, ValidTo: &closedEnd,
 					DeterminedBy: "job-old", DeterminationType: "llm_initial",
 					Confidence: 0.6,
 				})).To(Succeed())
 
 				// Current edge (valid_to nil).
-				Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
+				Expect(client.CreateEdge(ctx, tenantID, "tc-src", "tc-tgt", graphdb.Edge{
 					ID: "tc-edge-current", Label: "REFERENCES",
-					Source: "tc-src", Target: "tc-tgt",
 					ValidFrom:    now,
 					DeterminedBy: "job-new", DeterminationType: "human_feedback",
 					Confidence: 0.95, Supersedes: "tc-edge-closed",
@@ -406,18 +398,16 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 
 			// Initial LLM edge (will be closed).
 			closedEnd := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-			Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
+			Expect(client.CreateEdge(ctx, tenantID, "ev-src", "ev-tgt", graphdb.Edge{
 				ID: "ev-edge-v1", Label: "SATISFIED_BY",
-				Source: "ev-src", Target: "ev-tgt",
 				ValidFrom: baseTime, ValidTo: &closedEnd,
 				DeterminedBy: "llm-job", DeterminationType: "llm_initial",
 				Confidence: 0.7,
 			})).To(Succeed())
 
 			// Superseding human_feedback edge.
-			Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
+			Expect(client.CreateEdge(ctx, tenantID, "ev-src", "ev-tgt", graphdb.Edge{
 				ID: "ev-edge-v2", Label: "SATISFIED_BY",
-				Source: "ev-src", Target: "ev-tgt",
 				ValidFrom:    closedEnd,
 				DeterminedBy: "human-reviewer", DeterminationType: "human_feedback",
 				Confidence: 0.99, Supersedes: "ev-edge-v1",
@@ -471,9 +461,8 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			Expect(client.CreateNode(ctx, tenantA, graphdb.Node{
 				ID: "iso-tgt", Label: "Document", ValidFrom: now,
 			})).To(Succeed())
-			Expect(client.CreateEdge(ctx, tenantA, graphdb.Edge{
+			Expect(client.CreateEdge(ctx, tenantA, "iso-src", "iso-tgt", graphdb.Edge{
 				ID: "iso-edge", Label: "DEFINED_IN",
-				Source: "iso-src", Target: "iso-tgt",
 				ValidFrom:    now,
 				DeterminedBy: "job-a", DeterminationType: "llm_initial",
 				Confidence: 0.8,
@@ -518,13 +507,11 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 				Expect(client.CreateNode(ctx, tenantID, n)).To(Succeed())
 			}
 
-			Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
-				ID: "trav-ab", Label: "PARENT_OF",
-				Source: "trav-a", Target: "trav-b", ValidFrom: now,
+			Expect(client.CreateEdge(ctx, tenantID, "trav-a", "trav-b", graphdb.Edge{
+				ID: "trav-ab", Label: "PARENT_OF", ValidFrom: now,
 			})).To(Succeed())
-			Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
-				ID: "trav-bc", Label: "PARENT_OF",
-				Source: "trav-b", Target: "trav-c", ValidFrom: now,
+			Expect(client.CreateEdge(ctx, tenantID, "trav-b", "trav-c", graphdb.Edge{
+				ID: "trav-bc", Label: "PARENT_OF", ValidFrom: now,
 			})).To(Succeed())
 
 			// Traverse outbound from A with MaxDepth=2.
@@ -608,9 +595,8 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			})).To(Succeed())
 
 			// CreateEdge
-			Expect(client.CreateEdge(ctx, tenantID, graphdb.Edge{
-				ID: "tel-edge", Label: "DEFINED_IN",
-				Source: "tel-src", Target: "tel-tgt", ValidFrom: now,
+			Expect(client.CreateEdge(ctx, tenantID, "tel-src", "tel-tgt", graphdb.Edge{
+				ID: "tel-edge", Label: "DEFINED_IN", ValidFrom: now,
 			})).To(Succeed())
 
 			// QueryRelationships

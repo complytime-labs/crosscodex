@@ -310,7 +310,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 			version, dirty, err := migrator.Version(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(uint(10)))
+			Expect(version).To(Equal(uint(11)))
 			Expect(dirty).To(BeFalse())
 		})
 

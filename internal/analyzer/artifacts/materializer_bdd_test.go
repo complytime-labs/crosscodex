@@ -16,12 +16,19 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 )
 
+// capturedEdge records a CreateEdge call with its structural endpoint IDs.
+type capturedEdge struct {
+	SourceID string
+	TargetID string
+	Edge     graphdb.Edge
+}
+
 // fakeGraphDB records all created nodes and edges for assertion.
 type fakeGraphDB struct {
 	graphdb.GraphDB
-	nodes   []graphdb.Node
-	edges   []graphdb.Edge
-	nodeIDs map[string]bool
+	nodes    []graphdb.Node
+	captured []capturedEdge
+	nodeIDs  map[string]bool
 }
 
 func (f *fakeGraphDB) CreateNode(_ context.Context, _ string, n graphdb.Node) error {
@@ -37,8 +44,8 @@ func (f *fakeGraphDB) CreateNode(_ context.Context, _ string, n graphdb.Node) er
 	return nil
 }
 
-func (f *fakeGraphDB) CreateEdge(_ context.Context, _ string, e graphdb.Edge) error {
-	f.edges = append(f.edges, e)
+func (f *fakeGraphDB) CreateEdge(_ context.Context, _, sourceID, targetID string, e graphdb.Edge) error {
+	f.captured = append(f.captured, capturedEdge{SourceID: sourceID, TargetID: targetID, Edge: e})
 	return nil
 }
 
@@ -141,14 +148,14 @@ var _ = Describe("GraphMaterializer", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		var demandsCount, isTypeCount int
-		for _, e := range graph.edges {
-			switch e.Label {
+		for _, c := range graph.captured {
+			switch c.Edge.Label {
 			case "DEMANDS":
 				demandsCount++
-				Expect(e.Source).To(Equal("ac-1"))
+				Expect(c.SourceID).To(Equal("ac-1"))
 			case "IS_TYPE":
 				isTypeCount++
-				Expect(e.Target).To(Equal("policy"))
+				Expect(c.TargetID).To(Equal("policy"))
 			}
 		}
 		Expect(demandsCount).To(Equal(1))

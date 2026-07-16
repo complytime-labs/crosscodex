@@ -134,6 +134,20 @@ analysis:
       - CONFLICTS_WITH
 worker:
   queue_group: "llm-workers"
+synthesis:
+  confidence_threshold: 0.5
+  max_mappings_per_control: 10
+  viability:
+    type_mismatch_factor: 0.8
+    skip_level_factor: 0.7
+    integral_to_factor: 1.1
+  assessment:
+    iqr_good: 20.0
+    iqr_poor: 10.0
+    no_rel_high: 0.97
+    no_rel_low: 0.80
+    contested_warn: 0.20
+    actionable_warn: 0.30
 `
 
 func defaultNode() (*yaml.Node, error) {

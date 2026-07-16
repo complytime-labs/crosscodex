@@ -65,17 +65,13 @@ var _ = Describe("GraphDB System", Ordered, func() {
 
 			It("deserializes a compliance edge with confidence scoring", func() {
 				By("parsing a SATISFIES relationship from AGE format")
-				raw := `{"id": 789, "label": "SATISFIES", "start_id": 100, "end_id": 200, "properties": {"id": "edge-1", "source": "req-1", "target": "ctrl-1", "valid_from": "2025-01-01T00:00:00Z", "confidence": 0.95}}::edge`
+				raw := `{"id": 789, "label": "SATISFIES", "start_id": 100, "end_id": 200, "properties": {"id": "edge-1", "valid_from": "2025-01-01T00:00:00Z", "confidence": 0.95}}::edge`
 				edge, err := graphdb.ParseAGEdge(raw)
 				Expect(err).NotTo(HaveOccurred())
 
 				By("extracting edge identity and compliance relationship type")
 				Expect(edge.ID).To(Equal("edge-1"))
 				Expect(edge.Label).To(Equal("SATISFIES"))
-
-				By("preserving source and target for graph traversal")
-				Expect(edge.Source).To(Equal("req-1"))
-				Expect(edge.Target).To(Equal("ctrl-1"))
 
 				By("retaining AI-generated confidence scores for mapping quality")
 				Expect(edge.Confidence).To(Equal(0.95))
@@ -84,7 +80,7 @@ var _ = Describe("GraphDB System", Ordered, func() {
 			It("reconstructs a compliance path traversal from AGE path format", func() {
 				By("building a vertex-edge-vertex path as AGE would return it")
 				vertex1 := `{"id": 1, "label": "Requirement", "properties": {"id": "req-1", "valid_from": "2025-01-01T00:00:00Z"}}::vertex`
-				edge := `{"id": 10, "label": "SATISFIES", "start_id": 1, "end_id": 2, "properties": {"id": "e-1", "source": "req-1", "target": "ctrl-1", "valid_from": "2025-01-01T00:00:00Z"}}::edge`
+				edge := `{"id": 10, "label": "SATISFIES", "start_id": 1, "end_id": 2, "properties": {"id": "e-1", "valid_from": "2025-01-01T00:00:00Z"}}::edge`
 				vertex2 := `{"id": 2, "label": "Control", "properties": {"id": "ctrl-1", "valid_from": "2025-01-01T00:00:00Z"}}::vertex`
 				raw := "[" + vertex1 + ", " + edge + ", " + vertex2 + "]::path"
 
@@ -136,22 +132,22 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
 
 				By("rejecting an edge with empty label")
-				err := client.CreateEdge(nil, "test-tenant", graphdb.Edge{Source: "a", Target: "b", ValidFrom: validFrom}) //nolint:staticcheck
+				err := client.CreateEdge(nil, "test-tenant", "a", "b", graphdb.Edge{ValidFrom: validFrom}) //nolint:staticcheck
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create edge: label is required"))
 
 				By("rejecting an edge with empty source")
-				err = client.CreateEdge(nil, "test-tenant", graphdb.Edge{Label: "R", Target: "b", ValidFrom: validFrom}) //nolint:staticcheck
+				err = client.CreateEdge(nil, "test-tenant", "", "b", graphdb.Edge{Label: "R", ValidFrom: validFrom}) //nolint:staticcheck
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create edge: source and target are required"))
 
 				By("rejecting an edge with empty target")
-				err = client.CreateEdge(nil, "test-tenant", graphdb.Edge{Label: "R", Source: "a", ValidFrom: validFrom}) //nolint:staticcheck
+				err = client.CreateEdge(nil, "test-tenant", "a", "", graphdb.Edge{Label: "R", ValidFrom: validFrom}) //nolint:staticcheck
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create edge: source and target are required"))
 
 				By("rejecting an edge missing temporal validity")
-				err = client.CreateEdge(nil, "test-tenant", graphdb.Edge{Label: "R", Source: "a", Target: "b"}) //nolint:staticcheck
+				err = client.CreateEdge(nil, "test-tenant", "a", "b", graphdb.Edge{Label: "R"}) //nolint:staticcheck
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create edge: valid_from is required"))
 			})
@@ -213,15 +209,13 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
 				e := graphdb.Edge{
 					ID:        "e-1",
-					Source:    "a",
-					Target:    "b",
 					ValidFrom: validFrom,
 				}
 				got := graphdb.EdgeToAGProperties(e)
 
 				Expect(got).To(ContainSubstring("id: 'e-1'"))
-				Expect(got).To(ContainSubstring("source: 'a'"))
-				Expect(got).To(ContainSubstring("target: 'b'"))
+				Expect(got).NotTo(ContainSubstring("source:"))
+				Expect(got).NotTo(ContainSubstring("target:"))
 				Expect(got).To(HavePrefix("{"))
 				Expect(got).To(HaveSuffix("}"))
 			})
@@ -231,8 +225,6 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				validTo, _ := time.Parse(time.RFC3339, "2025-12-31T23:59:59Z")
 				e := graphdb.Edge{
 					ID:                "e-2",
-					Source:            "src",
-					Target:            "tgt",
 					ValidFrom:         validFrom,
 					ValidTo:           &validTo,
 					DeterminedBy:      "scanner",
@@ -357,10 +349,8 @@ var _ = Describe("GraphDB System", Ordered, func() {
 
 			It("emits a graphdb.CreateEdge span with Error status on empty tenant", func() {
 				By("calling CreateEdge with valid fields but empty tenant")
-				err := client.CreateEdge(context.Background(), "", graphdb.Edge{
+				err := client.CreateEdge(context.Background(), "", "req-1", "ctrl-1", graphdb.Edge{
 					Label:     "SATISFIES",
-					Source:    "req-1",
-					Target:    "ctrl-1",
 					ValidFrom: time.Now(),
 				})
 				Expect(err).To(HaveOccurred())
@@ -445,23 +435,20 @@ var _ = Describe("GraphDB System", Ordered, func() {
 
 	Describe("AGType Edge Parsing Edge Cases", func() {
 		Context("when parsing valid edge representations", func() {
-			It("extracts full edge properties including source, target, and confidence", func() {
-				raw := `{"id": 789, "label": "SATISFIES", "start_id": 100, "end_id": 200, "properties": {"id": "edge-1", "source": "req-1", "target": "ctrl-1", "valid_from": "2025-01-01T00:00:00Z", "confidence": 0.95}}::edge`
+			It("extracts edge identity, label, and confidence from properties", func() {
+				raw := `{"id": 789, "label": "SATISFIES", "start_id": 100, "end_id": 200, "properties": {"id": "edge-1", "valid_from": "2025-01-01T00:00:00Z", "confidence": 0.95}}::edge`
 				edge, err := graphdb.ParseAGEdge(raw)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(edge.ID).To(Equal("edge-1"))
 				Expect(edge.Label).To(Equal("SATISFIES"))
-				Expect(edge.Source).To(Equal("req-1"))
-				Expect(edge.Target).To(Equal("ctrl-1"))
 				Expect(edge.Confidence).To(Equal(0.95))
 			})
 
-			It("falls back to start_id/end_id when property source/target are absent", func() {
+			It("parses an edge with no custom properties", func() {
 				raw := `{"id": 50, "label": "RELATES", "start_id": 10, "end_id": 20, "properties": {"valid_from": "2025-01-01T00:00:00Z"}}::edge`
 				edge, err := graphdb.ParseAGEdge(raw)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(edge.Source).To(Equal("10"))
-				Expect(edge.Target).To(Equal("20"))
+				Expect(edge.Label).To(Equal("RELATES"))
 			})
 		})
 
@@ -601,27 +588,27 @@ var _ = Describe("GraphDB System", Ordered, func() {
 		Context("when validating edge creation inputs", func() {
 			It("rejects an edge with empty label", func() {
 				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
-				err := client.CreateEdge(nil, "test-tenant", graphdb.Edge{Source: "a", Target: "b", ValidFrom: validFrom}) //nolint:staticcheck
+				err := client.CreateEdge(nil, "test-tenant", "a", "b", graphdb.Edge{ValidFrom: validFrom}) //nolint:staticcheck
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create edge: label is required"))
 			})
 
 			It("rejects an edge with empty source", func() {
 				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
-				err := client.CreateEdge(nil, "test-tenant", graphdb.Edge{Label: "R", Target: "b", ValidFrom: validFrom}) //nolint:staticcheck
+				err := client.CreateEdge(nil, "test-tenant", "", "b", graphdb.Edge{Label: "R", ValidFrom: validFrom}) //nolint:staticcheck
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create edge: source and target are required"))
 			})
 
 			It("rejects an edge with empty target", func() {
 				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
-				err := client.CreateEdge(nil, "test-tenant", graphdb.Edge{Label: "R", Source: "a", ValidFrom: validFrom}) //nolint:staticcheck
+				err := client.CreateEdge(nil, "test-tenant", "a", "", graphdb.Edge{Label: "R", ValidFrom: validFrom}) //nolint:staticcheck
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create edge: source and target are required"))
 			})
 
 			It("rejects an edge with zero valid_from", func() {
-				err := client.CreateEdge(nil, "test-tenant", graphdb.Edge{Label: "R", Source: "a", Target: "b"}) //nolint:staticcheck
+				err := client.CreateEdge(nil, "test-tenant", "a", "b", graphdb.Edge{Label: "R"}) //nolint:staticcheck
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create edge: valid_from is required"))
 			})
@@ -646,8 +633,6 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				validTo, _ := time.Parse(time.RFC3339, "2025-12-31T23:59:59Z")
 				e := graphdb.Edge{
 					ID:        "e-1",
-					Source:    "a",
-					Target:    "b",
 					ValidFrom: validFrom,
 					ValidTo:   &validTo,
 				}

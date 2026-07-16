@@ -130,8 +130,6 @@ func (m *GraphMaterializer) Materialize(ctx context.Context, tenantID, jobID str
 
 		edge := graphdb.Edge{
 			Label:             edgeLabel,
-			Source:            pair.SourceControlID,
-			Target:            pair.TargetControlID,
 			DeterminedBy:      jobID,
 			DeterminationType: determinationType,
 			Confidence:        pair.Consensus.ConfidenceFraction,
@@ -145,7 +143,7 @@ func (m *GraphMaterializer) Materialize(ctx context.Context, tenantID, jobID str
 			},
 		}
 
-		if err := m.graph.CreateEdge(ctx, tenantID, edge); err != nil {
+		if err := m.graph.CreateEdge(ctx, tenantID, pair.SourceControlID, pair.TargetControlID, edge); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return fmt.Errorf("materializer.Materialize: creating edge %s--%s: %w",

@@ -123,20 +123,25 @@ func (w *Worker) handleMessage(ctx context.Context, msg *natsbus.Message) error 
 		return nil
 	}
 
+	// Record telemetry before publishing the result. The task processing
+	// is complete at this point; publishing is delivery, not work. Ending
+	// the span before publish ensures consumers that observe the result
+	// also observe a completed span and recorded metrics (the deferred
+	// span.End above becomes a safe no-op).
+	duration := float64(time.Since(start).Milliseconds())
+	span.SetStatus(codes.Ok, "")
+	w.recordSuccess(ctx, taskType, duration)
+	span.End()
+
 	if err := w.publishResult(ctx, tenantID, natsbus.TaskType(taskType), jobID, taskID, resultPayload); err != nil {
 		w.logger.Error("failed to publish result",
 			"task_id", taskID,
 			"error", err,
 		)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "result publish failed")
 		w.recordError(ctx, taskType, "publish_error")
 		return nil
 	}
 
-	duration := float64(time.Since(start).Milliseconds())
-	span.SetStatus(codes.Ok, "")
-	w.recordSuccess(ctx, taskType, duration)
 	return nil
 }
 

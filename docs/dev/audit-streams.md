@@ -39,17 +39,19 @@ Streams are created or updated automatically when the NATS client starts (`natsb
 
 Every message published through `pkg/natsbus` carries five mandatory provenance headers. These are injected automatically by `injectProvenance` on the publish path and validated by `extractProvenance` on the subscribe path.
 
-| Header             | Value                             | Source                             |
-|--------------------|-----------------------------------|------------------------------------|
-| `X-Trace-Id`       | 32-character hex OTel trace ID    | Active span in `context.Context`   |
-| `X-Span-Id`        | 16-character hex OTel span ID     | Active span in `context.Context`   |
-| `X-Tenant-Id`      | Tenant identifier                 | `tenant.FromContext(ctx)`          |
-| `X-Timestamp`      | RFC3339Nano UTC timestamp         | `time.Now().UTC()` at publish time |
-| `X-Content-SHA256` | SHA-256 hex digest of the payload | `sha256.Sum256(data)`              |
+| Header             | Value                             | Source                           |
+|--------------------|-----------------------------------|----------------------------------|
+| `X-Trace-Id`       | 32-character hex OTel trace ID    | Active span in `context.Context` |
+| `X-Span-Id`        | 16-character hex OTel span ID     | Active span in `context.Context` |
+| `X-Tenant-Id`      | Tenant identifier                 | `tenant.FromContext(ctx)`        |
+| `X-Timestamp`      | RFC3339Nano UTC timestamp         | `time.Now().UTC()` at publish    |
+| `X-Content-SHA256` | SHA-256 hex digest of the payload | `sha256.Sum256(data)`            |
+
+> **Note**: `msg.Metadata.Timestamp` on the subscriber side is the subscriber's local `time.Now()`, not the published value. Access the original publish time via `msg.Headers["X-Timestamp"]`.
 
 ### Content Hash Verification
 
-The content hash provides tamper detection. When a subscriber receives a message, it can recompute `sha256.Sum256(msg.Data)` and compare it against `msg.Metadata.ContentHash`. A mismatch indicates the payload was corrupted in transit.
+The content hash provides tamper detection. When a subscriber receives a message, `wrapHandler` automatically recomputes `sha256.Sum256(msg.Data)` and compares it against the `X-Content-SHA256` header before the application handler runs. A mismatch causes the message to be rejected with a logged error; the application handler never sees it.
 
 The hash is computed deterministically: identical payloads always produce identical hashes. This is tested explicitly in the BDD test suite.
 

@@ -326,14 +326,14 @@ func (s *Service) ParseCatalog(ctx context.Context, req *crosscodexv1.ParseCatal
 
 			// Create PARENT_OF edge if parent exists
 			if item.ParentID != "" {
+				sourceID := fmt.Sprintf("%s/%s", catalogID, item.ParentID)
+				targetID := fmt.Sprintf("%s/%s", catalogID, item.ID)
 				edge := graphdb.Edge{
-					ID:     fmt.Sprintf("%s/%s::parent_of::%s/%s", catalogID, item.ParentID, catalogID, item.ID),
-					Label:  "PARENT_OF",
-					Source: fmt.Sprintf("%s/%s", catalogID, item.ParentID),
-					Target: fmt.Sprintf("%s/%s", catalogID, item.ID),
+					ID:    fmt.Sprintf("%s::parent_of::%s", sourceID, targetID),
+					Label: "PARENT_OF",
 				}
 
-				if err := s.graph.CreateEdge(ctx, tenantID, edge); err != nil {
+				if err := s.graph.CreateEdge(ctx, tenantID, sourceID, targetID, edge); err != nil {
 					s.logger.Warn("create graph edge failed", "from", item.ParentID, "to", item.ID, "error", err)
 				}
 			}

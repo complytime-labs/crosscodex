@@ -236,14 +236,12 @@ func (m *GraphMaterializer) materializeArtifact(ctx context.Context, tenantID, j
 	// Create DEMANDS edge: (Control) -> (Artifact).
 	demandsEdge := graphdb.Edge{
 		Label:             demandsLabel,
-		Source:            controlID,
-		Target:            artID,
 		DeterminedBy:      jobID,
 		DeterminationType: determinationType,
 		Confidence:        art.Confidence,
 		ValidFrom:         now,
 	}
-	if err := m.graph.CreateEdge(ctx, tenantID, demandsEdge); err != nil {
+	if err := m.graph.CreateEdge(ctx, tenantID, controlID, artID, demandsEdge); err != nil {
 		return fmt.Errorf("materializer: creating DEMANDS edge %s->%s: %w", controlID, artID, err)
 	}
 
@@ -251,14 +249,12 @@ func (m *GraphMaterializer) materializeArtifact(ctx context.Context, tenantID, j
 	typeID := strings.ToLower(art.Type.String())
 	isTypeEdge := graphdb.Edge{
 		Label:             isTypeLabel,
-		Source:            artID,
-		Target:            typeID,
 		DeterminedBy:      jobID,
 		DeterminationType: determinationType,
 		Confidence:        1.0,
 		ValidFrom:         now,
 	}
-	if err := m.graph.CreateEdge(ctx, tenantID, isTypeEdge); err != nil {
+	if err := m.graph.CreateEdge(ctx, tenantID, artID, typeID, isTypeEdge); err != nil {
 		return fmt.Errorf("materializer: creating IS_TYPE edge %s->%s: %w", artID, typeID, err)
 	}
 

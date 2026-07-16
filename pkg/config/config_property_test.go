@@ -360,6 +360,12 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
 						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 					},
+					Synthesis: config.SynthesisConfig{
+						ConfidenceThreshold:   0.5,
+						MaxMappingsPerControl: 10,
+						Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+						Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+					},
 					LLM: config.LLMConfig{
 						GatewayMode: true,
 						GatewayURL:  url,
@@ -391,6 +397,12 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
 						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					},
+					Synthesis: config.SynthesisConfig{
+						ConfidenceThreshold:   0.5,
+						MaxMappingsPerControl: 10,
+						Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+						Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
 					},
 					LLM: config.LLMConfig{
 						GatewayMode: true,

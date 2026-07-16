@@ -51,6 +51,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := cfg.Worker.Validate(); err != nil {
 		return err
 	}
+	if err := validateSynthesis(&cfg.Synthesis, tracker); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -151,6 +154,9 @@ func validateAttestation(a *AttestationConfig, tracker *sourceTracker) error {
 			formatSource(tracker, "attestation.private_key_path"), ErrInvalidConfig)
 	}
 	for tenantID, override := range a.TenantOverrides {
+		if err := tenant.ValidateTenantID(tenantID); err != nil {
+			return fmt.Errorf("attestation.tenant_overrides: invalid tenant ID %q: %w", tenantID, ErrInvalidConfig)
+		}
 		if override.ExpiryDuration != nil && *override.ExpiryDuration <= 0 {
 			return fmt.Errorf("attestation.tenant_overrides.%s.expiry_duration %s must be positive: %w",
 				tenantID, *override.ExpiryDuration, ErrInvalidConfig)
@@ -336,6 +342,140 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 
 	if err := a.Artifacts.Validate(); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func validateSynthesis(s *SynthesisConfig, tracker *sourceTracker) error {
+	// Viability factors: must be > 0 and <= 2
+	if s.Viability.TypeMismatchFactor <= 0 || s.Viability.TypeMismatchFactor > 2 {
+		return fmt.Errorf("synthesis.viability.type_mismatch_factor %g%s must be in range (0, 2]: %w",
+			s.Viability.TypeMismatchFactor, formatSource(tracker, "synthesis.viability.type_mismatch_factor"), ErrInvalidConfig)
+	}
+	if s.Viability.SkipLevelFactor <= 0 || s.Viability.SkipLevelFactor > 2 {
+		return fmt.Errorf("synthesis.viability.skip_level_factor %g%s must be in range (0, 2]: %w",
+			s.Viability.SkipLevelFactor, formatSource(tracker, "synthesis.viability.skip_level_factor"), ErrInvalidConfig)
+	}
+	if s.Viability.IntegralToFactor <= 0 || s.Viability.IntegralToFactor > 2 {
+		return fmt.Errorf("synthesis.viability.integral_to_factor %g%s must be in range (0, 2]: %w",
+			s.Viability.IntegralToFactor, formatSource(tracker, "synthesis.viability.integral_to_factor"), ErrInvalidConfig)
+	}
+
+	// Assessment: IQRGood > IQRPoor, both > 0
+	if s.Assessment.IQRGood <= 0 {
+		return fmt.Errorf("synthesis.assessment.iqr_good %g%s must be positive: %w",
+			s.Assessment.IQRGood, formatSource(tracker, "synthesis.assessment.iqr_good"), ErrInvalidConfig)
+	}
+	if s.Assessment.IQRPoor <= 0 {
+		return fmt.Errorf("synthesis.assessment.iqr_poor %g%s must be positive: %w",
+			s.Assessment.IQRPoor, formatSource(tracker, "synthesis.assessment.iqr_poor"), ErrInvalidConfig)
+	}
+	if s.Assessment.IQRGood <= s.Assessment.IQRPoor {
+		return fmt.Errorf("synthesis.assessment.iqr_good %g%s must be greater than iqr_poor %g: %w",
+			s.Assessment.IQRGood, formatSource(tracker, "synthesis.assessment.iqr_good"), s.Assessment.IQRPoor, ErrInvalidConfig)
+	}
+
+	// Fraction thresholds: must be in [0, 1]
+	if s.Assessment.NoRelHigh < 0 || s.Assessment.NoRelHigh > 1 {
+		return fmt.Errorf("synthesis.assessment.no_rel_high %g%s must be in range [0, 1]: %w",
+			s.Assessment.NoRelHigh, formatSource(tracker, "synthesis.assessment.no_rel_high"), ErrInvalidConfig)
+	}
+	if s.Assessment.NoRelLow < 0 || s.Assessment.NoRelLow > 1 {
+		return fmt.Errorf("synthesis.assessment.no_rel_low %g%s must be in range [0, 1]: %w",
+			s.Assessment.NoRelLow, formatSource(tracker, "synthesis.assessment.no_rel_low"), ErrInvalidConfig)
+	}
+	if s.Assessment.NoRelHigh <= s.Assessment.NoRelLow {
+		return fmt.Errorf("synthesis.assessment.no_rel_high %g%s must be greater than no_rel_low %g: %w",
+			s.Assessment.NoRelHigh, formatSource(tracker, "synthesis.assessment.no_rel_high"), s.Assessment.NoRelLow, ErrInvalidConfig)
+	}
+	if s.Assessment.ContestedWarn < 0 || s.Assessment.ContestedWarn > 1 {
+		return fmt.Errorf("synthesis.assessment.contested_warn %g%s must be in range [0, 1]: %w",
+			s.Assessment.ContestedWarn, formatSource(tracker, "synthesis.assessment.contested_warn"), ErrInvalidConfig)
+	}
+	if s.Assessment.ActionableWarn < 0 || s.Assessment.ActionableWarn > 1 {
+		return fmt.Errorf("synthesis.assessment.actionable_warn %g%s must be in range [0, 1]: %w",
+			s.Assessment.ActionableWarn, formatSource(tracker, "synthesis.assessment.actionable_warn"), ErrInvalidConfig)
+	}
+
+	// Global confidence threshold and max mappings
+	if s.ConfidenceThreshold < 0 || s.ConfidenceThreshold > 1 {
+		return fmt.Errorf("synthesis.confidence_threshold %g%s must be in range [0, 1]: %w",
+			s.ConfidenceThreshold, formatSource(tracker, "synthesis.confidence_threshold"), ErrInvalidConfig)
+	}
+	if s.MaxMappingsPerControl <= 0 {
+		return fmt.Errorf("synthesis.max_mappings_per_control %d%s must be positive: %w",
+			s.MaxMappingsPerControl, formatSource(tracker, "synthesis.max_mappings_per_control"), ErrInvalidConfig)
+	}
+
+	// Validate tenant overrides
+	for key, override := range s.TenantOverrides {
+		if err := tenant.ValidateTenantID(key); err != nil {
+			return fmt.Errorf("synthesis.tenant_overrides key %q is not a valid tenant ID: %w",
+				key, ErrInvalidConfig)
+		}
+		if override.ConfidenceThreshold != nil {
+			if *override.ConfidenceThreshold < 0 || *override.ConfidenceThreshold > 1 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.confidence_threshold %g must be in range [0, 1]: %w",
+					key, *override.ConfidenceThreshold, ErrInvalidConfig)
+			}
+		}
+		if override.MaxMappingsPerControl != nil {
+			if *override.MaxMappingsPerControl <= 0 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.max_mappings_per_control %d must be positive: %w",
+					key, *override.MaxMappingsPerControl, ErrInvalidConfig)
+			}
+		}
+		if override.Viability != nil {
+			v := override.Viability
+			if v.TypeMismatchFactor <= 0 || v.TypeMismatchFactor > 2 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.viability.type_mismatch_factor %g must be in range (0, 2]: %w",
+					key, v.TypeMismatchFactor, ErrInvalidConfig)
+			}
+			if v.SkipLevelFactor <= 0 || v.SkipLevelFactor > 2 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.viability.skip_level_factor %g must be in range (0, 2]: %w",
+					key, v.SkipLevelFactor, ErrInvalidConfig)
+			}
+			if v.IntegralToFactor <= 0 || v.IntegralToFactor > 2 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.viability.integral_to_factor %g must be in range (0, 2]: %w",
+					key, v.IntegralToFactor, ErrInvalidConfig)
+			}
+		}
+		if override.Assessment != nil {
+			a := override.Assessment
+			if a.IQRGood <= 0 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.assessment.iqr_good %g must be positive: %w",
+					key, a.IQRGood, ErrInvalidConfig)
+			}
+			if a.IQRPoor <= 0 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.assessment.iqr_poor %g must be positive: %w",
+					key, a.IQRPoor, ErrInvalidConfig)
+			}
+			if a.IQRGood <= a.IQRPoor {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.assessment.iqr_good %g must be greater than iqr_poor %g: %w",
+					key, a.IQRGood, a.IQRPoor, ErrInvalidConfig)
+			}
+			if a.NoRelHigh < 0 || a.NoRelHigh > 1 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.assessment.no_rel_high %g must be in range [0, 1]: %w",
+					key, a.NoRelHigh, ErrInvalidConfig)
+			}
+			if a.NoRelLow < 0 || a.NoRelLow > 1 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.assessment.no_rel_low %g must be in range [0, 1]: %w",
+					key, a.NoRelLow, ErrInvalidConfig)
+			}
+			if a.NoRelHigh <= a.NoRelLow {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.assessment.no_rel_high %g must be greater than no_rel_low %g: %w",
+					key, a.NoRelHigh, a.NoRelLow, ErrInvalidConfig)
+			}
+			if a.ContestedWarn < 0 || a.ContestedWarn > 1 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.assessment.contested_warn %g must be in range [0, 1]: %w",
+					key, a.ContestedWarn, ErrInvalidConfig)
+			}
+			if a.ActionableWarn < 0 || a.ActionableWarn > 1 {
+				return fmt.Errorf("synthesis.tenant_overrides.%s.assessment.actionable_warn %g must be in range [0, 1]: %w",
+					key, a.ActionableWarn, ErrInvalidConfig)
+			}
+		}
 	}
 
 	return nil
