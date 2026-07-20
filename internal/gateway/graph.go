@@ -118,7 +118,6 @@ func (s *Service) QueryGraph(ctx context.Context, req *pb.QueryGraphRequest) (*p
 		TenantContext: tc,
 		Cypher:        req.GetCypher(),
 		Parameters:    req.GetParameters(),
-		AsOf:          req.GetAsOf(),
 	}
 
 	queryResp, err := s.graph.Query(ctx, queryReq)

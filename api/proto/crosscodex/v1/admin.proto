@@ -2,10 +2,11 @@ syntax = "proto3";
 
 package crosscodex.v1;
 
-option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+import "google/protobuf/timestamp.proto";
 
 import "crosscodex/v1/common.proto";
-import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
 
 // AdminService provides system administration.
 //
@@ -20,16 +21,28 @@ service AdminService {
 
   // Health checks
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
-  rpc GetServiceStatus(GetServiceStatusRequest) returns (GetServiceStatusResponse);
+  // Get service status
+  rpc GetServiceStatus(GetServiceStatusRequest)
+      returns (GetServiceStatusResponse);
 
   // PKI management (for mTLS)
-  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
-  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse);
-  rpc ListCertificates(ListCertificatesRequest) returns (ListCertificatesResponse);
+  // Issue certificate
+  rpc IssueCertificate(IssueCertificateRequest)
+      returns (IssueCertificateResponse);
+  // Revoke certificate
+  rpc RevokeCertificate(RevokeCertificateRequest)
+      returns (RevokeCertificateResponse);
+  // List certificates
+  rpc ListCertificates(ListCertificatesRequest)
+      returns (ListCertificatesResponse);
 
   // Data retention
-  rpc ApplyRetentionPolicy(ApplyRetentionPolicyRequest) returns (ApplyRetentionPolicyResponse);
-  rpc GetRetentionStats(GetRetentionStatsRequest) returns (GetRetentionStatsResponse);
+  // Apply retention policy
+  rpc ApplyRetentionPolicy(ApplyRetentionPolicyRequest)
+      returns (ApplyRetentionPolicyResponse);
+  // Get retention stats
+  rpc GetRetentionStats(GetRetentionStatsRequest)
+      returns (GetRetentionStatsResponse);
 }
 
 message CreateTenantRequest {
@@ -115,7 +128,9 @@ message ServiceHealth {
   google.protobuf.Timestamp last_check = 4;
 }
 
-message GetServiceStatusRequest {}
+message GetServiceStatusRequest {
+}
+
 
 message GetServiceStatusResponse {
   repeated ServiceInfo services = 1;

@@ -101,7 +101,7 @@ tasks:
           TIMEOUT: 300s
           REPORT: integration-db
           COVERAGE: integration-coverage.out
-          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/..."
+          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/... {{.ROOT_DIR}}/internal/graph/..."
       - task: run-ginkgo
         vars:
           TAGS: integration
@@ -202,7 +202,7 @@ tasks:
           TIMEOUT: 300s
           REPORT: integration-db
           COVERAGE: integration-coverage.out
-          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/..."
+          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/... {{.ROOT_DIR}}/internal/graph/..."
 
   synthesis:
     desc: Run synthesis service integration tests (persistViability, RLS, immutability trigger)

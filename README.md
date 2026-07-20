@@ -21,23 +21,24 @@ CrossCodex is in early development. Foundational and domain packages are impleme
 | **pkg/db**             | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
 | **pkg/natsbus**        | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
 | **pkg/tlsconfig**      | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI        |
-| **pkg/authn**          | Implemented | X.509 mTLS authentication, registry dispatch, audit emission; Kerberos/SAML stubbed          |
+| **pkg/authn**          | Implemented | X.509 mTLS authentication, registry dispatch, audit emission, identity context propagation; Kerberos/SAML stubbed |
 | **pkg/tenant**         | Implemented | Tenant ID validation, error sentinels, context propagation interface, gRPC interceptors      |
 | **pkg/llmclient**      | Implemented | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit |
 | **pkg/analyzer**       | Implemented | Generic plugin interface, type-safe registry, DAG builder with Kahn's algorithm              |
 | **pkg/telemetry**      | Implemented | OpenTelemetry traces, metrics, structured log correlation, in-memory test provider           |
 | **pkg/attestation**    | Implemented | in-toto layout/link generation, verification, hash chains, FIPS enforcement, manifests       |
 | **pkg/oscal**          | Implemented | OSCAL catalog parsing, validation, decomposition, structuring, provenance tracking           |
-| **pkg/graphdb**        | Implemented | Apache AGE openCypher queries, relationship traversal, property tests                        |
+| **pkg/graphdb**        | Implemented | Apache AGE openCypher queries, entity retrieval, bulk operations, Cypher execution, temporal supersession |
 | **pkg/vectordb**       | Implemented | pgvector similarity search for embeddings, property tests                                    |
 | **pkg/prompt**         | Implemented | Prompt template loading, registry, renderer, merge logic                                     |
 | **internal/synthesis** | Implemented | Viability ranking, quality assessment, DB persistence, OTel tracing                          |
+| **internal/graph**     | Implemented | Graph Service: gRPC RPCs, NATS event materialization, resource resolution, OTel tracing      |
 
 Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/authn`, `pkg/llmclient`, `pkg/telemetry`, `pkg/vectordb`, and `pkg/graphdb` run against containerized services (`task test:integration:all`).
 
 ## Architecture
 
-The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`, `pkg/tenant`, `pkg/telemetry`, `pkg/llmclient`) and implemented domain packages (`pkg/analyzer`, `pkg/attestation`, `pkg/oscal`, `pkg/graphdb`, `pkg/vectordb`, `pkg/prompt`). Implemented services include `internal/worker` (LLM task execution), `internal/synthesis` (viability ranking and quality diagnostics), `internal/analysis` (analysis engine), `internal/catalog` (OSCAL catalog management), `internal/gateway` (API gateway), `internal/pipeline` (job orchestration), and the analyzer plugins (`internal/analyzer/classify`, `internal/analyzer/embedding`, `internal/analyzer/relationship`).
+The target architecture consists of seven core services that can run embedded in a single process or distributed across multiple hosts. Today the monorepo provides implemented infrastructure (`pkg/config`, `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/tlsconfig`, `pkg/authn`, `pkg/tenant`, `pkg/telemetry`, `pkg/llmclient`) and implemented domain packages (`pkg/analyzer`, `pkg/attestation`, `pkg/oscal`, `pkg/graphdb`, `pkg/vectordb`, `pkg/prompt`). Implemented services include `internal/worker` (LLM task execution), `internal/synthesis` (viability ranking and quality diagnostics), `internal/graph` (compliance relationship graph), `internal/analysis` (analysis engine), `internal/catalog` (OSCAL catalog management), `internal/gateway` (API gateway), `internal/pipeline` (job orchestration), and the analyzer plugins (`internal/analyzer/classify`, `internal/analyzer/embedding`, `internal/analyzer/relationship`).
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {

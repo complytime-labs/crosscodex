@@ -656,6 +656,15 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("iterate path rows: %w", err)
 	}
+	if query.AsOf != nil {
+		filtered := results[:0]
+		for _, p := range results {
+			if p.ValidAt(*query.AsOf) {
+				filtered = append(filtered, p)
+			}
+		}
+		results = filtered
+	}
 	if c.queryCounter != nil {
 		c.queryCounter.Add(ctx, 1)
 	}
@@ -664,4 +673,397 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 	}
 	span.SetStatus(codes.Ok, "")
 	return results, tx.Commit()
+}
+
+// GetNode retrieves a single node by ID from the tenant's graph.
+func (c *ageClient) GetNode(ctx context.Context, tenant, nodeID string) (*Node, error) {
+	if nodeID == "" {
+		return nil, fmt.Errorf("get node: node_id is required")
+	}
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.GetNode")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
+	tx, err := c.beginTx(ctx, tenant)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	gn := graphName(tenant)
+	cypher := fmt.Sprintf("MATCH (n {id: '%s'}) RETURN n", escapeCypher(nodeID))
+	query := fmt.Sprintf(
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (v agtype)",
+		escapeCypher(gn), cypher,
+	)
+
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("get node: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("get node: %w", err)
+		}
+		span.SetStatus(codes.Error, ErrNodeNotFound.Error())
+		return nil, fmt.Errorf("get node %s: %w", nodeID, ErrNodeNotFound)
+	}
+
+	var raw string
+	if err := rows.Scan(&raw); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("get node: scan: %w", err)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		span.SetStatus(codes.Error, closeErr.Error())
+		return nil, fmt.Errorf("get node: close: %w", closeErr)
+	}
+
+	node, err := parseAGVertex(raw)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("get node: parse: %w", err)
+	}
+
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
+	return &node, tx.Commit()
+}
+
+// GetEdge retrieves a single edge by ID, including source/target node IDs.
+func (c *ageClient) GetEdge(ctx context.Context, tenant, edgeID string) (*EdgeWithEndpoints, error) {
+	if edgeID == "" {
+		return nil, fmt.Errorf("get edge: edge_id is required")
+	}
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.GetEdge")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
+	tx, err := c.beginTx(ctx, tenant)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	gn := graphName(tenant)
+	cypher := fmt.Sprintf("MATCH (s)-[e {id: '%s'}]->(t) RETURN s, e, t", escapeCypher(edgeID))
+	query := fmt.Sprintf(
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (s agtype, e agtype, t agtype)",
+		escapeCypher(gn), cypher,
+	)
+
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("get edge: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("get edge: %w", err)
+		}
+		span.SetStatus(codes.Error, ErrEdgeNotFound.Error())
+		return nil, fmt.Errorf("get edge %s: %w", edgeID, ErrEdgeNotFound)
+	}
+
+	var sRaw, eRaw, tRaw string
+	if err := rows.Scan(&sRaw, &eRaw, &tRaw); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("get edge: scan: %w", err)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		span.SetStatus(codes.Error, closeErr.Error())
+		return nil, fmt.Errorf("get edge: close: %w", closeErr)
+	}
+
+	source, err := parseAGVertex(sRaw)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("get edge: parse source: %w", err)
+	}
+	edge, err := parseAGEdge(eRaw)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("get edge: parse edge: %w", err)
+	}
+	target, err := parseAGVertex(tRaw)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("get edge: parse target: %w", err)
+	}
+
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
+	return &EdgeWithEndpoints{
+		Edge:     edge,
+		SourceID: source.ID,
+		TargetID: target.ID,
+	}, tx.Commit()
+}
+
+// BulkCreateEdges creates multiple edges in a single transaction.
+func (c *ageClient) BulkCreateEdges(ctx context.Context, tenant string, edges []BulkEdge) ([]string, error) {
+	if len(edges) == 0 {
+		return nil, nil
+	}
+
+	// Validate all edges before starting transaction.
+	for i, be := range edges {
+		if be.Edge.Label == "" {
+			return nil, fmt.Errorf("bulk create edges [%d]: label is required", i)
+		}
+		if be.SourceID == "" || be.TargetID == "" {
+			return nil, fmt.Errorf("bulk create edges [%d]: source and target are required", i)
+		}
+		if be.Edge.ValidFrom.IsZero() {
+			return nil, fmt.Errorf("bulk create edges [%d]: valid_from is required", i)
+		}
+	}
+
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.BulkCreateEdges")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("tenant.id", tenant),
+		attribute.Int("edge.count", len(edges)),
+	)
+
+	tx, err := c.beginTx(ctx, tenant)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	gn := graphName(tenant)
+	ids := make([]string, 0, len(edges))
+
+	for i, be := range edges {
+
+		props := edgeToAGProperties(be.Edge)
+		cypher := fmt.Sprintf(
+			"MATCH (s {id: '%s'}), (t {id: '%s'}) CREATE (s)-[e:%s %s]->(t) RETURN e",
+			escapeCypher(be.SourceID),
+			escapeCypher(be.TargetID),
+			escapeCypher(be.Edge.Label),
+			props,
+		)
+		query := fmt.Sprintf(
+			"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (e agtype)",
+			escapeCypher(gn), cypher,
+		)
+
+		if _, err := tx.ExecContext(ctx, query); err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			return ids, fmt.Errorf("bulk create edges [%d]: %w", i, err)
+		}
+		ids = append(ids, be.Edge.ID)
+	}
+
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
+	return ids, tx.Commit()
+}
+
+// parseQueryValue inspects AGE type suffixes and returns a tagged QueryValue.
+func parseQueryValue(raw string) QueryValue {
+	switch {
+	case strings.HasSuffix(raw, "::vertex"):
+		node, err := parseAGVertex(raw)
+		if err != nil {
+			return QueryValue{Type: QueryValueScalar, ScalarVal: raw}
+		}
+		return QueryValue{Type: QueryValueNode, NodeVal: &node}
+	case strings.HasSuffix(raw, "::edge"):
+		edge, err := parseAGEdge(raw)
+		if err != nil {
+			return QueryValue{Type: QueryValueScalar, ScalarVal: raw}
+		}
+		return QueryValue{Type: QueryValueEdge, EdgeVal: &EdgeWithEndpoints{Edge: edge}}
+	default:
+		return QueryValue{Type: QueryValueScalar, ScalarVal: raw}
+	}
+}
+
+// ExecuteQuery runs a read-only openCypher query against the tenant's graph.
+func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, params map[string]string) ([]QueryRow, error) {
+	if cypher == "" {
+		return nil, fmt.Errorf("execute query: cypher is required")
+	}
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.ExecuteQuery")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
+	tx, err := c.beginTx(ctx, tenant)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Force read-only transaction at the SQL level.
+	if _, err := tx.ExecContext(ctx, "SET TRANSACTION READ ONLY"); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("execute query: set read-only: %w", err)
+	}
+
+	// Substitute parameters via escapeCypher.
+	resolved := cypher
+	for k, v := range params {
+		resolved = strings.ReplaceAll(resolved, "$"+k, "'"+escapeCypher(v)+"'")
+	}
+	resolved = strings.ReplaceAll(resolved, cypherDollarTag, "")
+
+	gn := graphName(tenant)
+	sqlQuery := fmt.Sprintf(
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (v agtype)",
+		escapeCypher(gn), resolved,
+	)
+
+	rows, err := tx.QueryContext(ctx, sqlQuery)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		if strings.Contains(err.Error(), "cannot execute") && strings.Contains(err.Error(), "read-only") {
+			return nil, fmt.Errorf("execute query: %w: %w", ErrReadOnlyViolation, err)
+		}
+		return nil, fmt.Errorf("execute query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var result []QueryRow
+	cols, err := rows.Columns()
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("execute query: columns: %w", err)
+	}
+
+	for rows.Next() {
+		values := make([]string, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("execute query: scan: %w", err)
+		}
+
+		row := QueryRow{Values: make([]QueryValue, len(cols))}
+		for i, raw := range values {
+			row.Values[i] = parseQueryValue(raw)
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("execute query: iterate: %w", err)
+	}
+
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
+	return result, tx.Commit()
+}
+
+// SupersedeFact sets valid_to on a node or edge, marking it as superseded.
+func (c *ageClient) SupersedeFact(ctx context.Context, tenant string, req SupersedeRequest) (bool, error) {
+	if req.NodeID == "" && req.EdgeID == "" {
+		return false, fmt.Errorf("supersede fact: node_id or edge_id is required")
+	}
+	if req.NodeID != "" && req.EdgeID != "" {
+		return false, fmt.Errorf("supersede fact: set node_id or edge_id, not both")
+	}
+	if req.SupersededAt.IsZero() {
+		return false, fmt.Errorf("supersede fact: superseded_at is required")
+	}
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "graphdb.SupersedeFact")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenant))
+
+	tx, err := c.beginTx(ctx, tenant)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	gn := graphName(tenant)
+	ts := escapeCypher(req.SupersededAt.Format(time.RFC3339Nano))
+
+	var cypher string
+	if req.NodeID != "" {
+		setClauses := fmt.Sprintf("n.valid_to = '%s'", ts)
+		if req.SupersededByJobID != "" {
+			setClauses += fmt.Sprintf(", n.superseded_by = '%s'", escapeCypher(req.SupersededByJobID))
+		}
+		cypher = fmt.Sprintf("MATCH (n {id: '%s'}) SET %s RETURN n",
+			escapeCypher(req.NodeID), setClauses)
+	} else {
+		setClauses := fmt.Sprintf("e.valid_to = '%s'", ts)
+		if req.SupersededByJobID != "" {
+			setClauses += fmt.Sprintf(", e.superseded_by = '%s'", escapeCypher(req.SupersededByJobID))
+		}
+		cypher = fmt.Sprintf("MATCH ()-[e {id: '%s'}]->() SET %s RETURN e",
+			escapeCypher(req.EdgeID), setClauses)
+	}
+
+	query := fmt.Sprintf(
+		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (v agtype)",
+		escapeCypher(gn), cypher,
+	)
+
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return false, fmt.Errorf("supersede fact: %w", err)
+	}
+	updated := rows.Next()
+	if closeErr := rows.Close(); closeErr != nil {
+		span.SetStatus(codes.Error, closeErr.Error())
+		return false, fmt.Errorf("supersede fact: close: %w", closeErr)
+	}
+	if err := rows.Err(); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return false, fmt.Errorf("supersede fact: %w", err)
+	}
+
+	if c.queryCounter != nil {
+		c.queryCounter.Add(ctx, 1)
+	}
+	if c.queryLatency != nil {
+		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
+	return updated, tx.Commit()
 }

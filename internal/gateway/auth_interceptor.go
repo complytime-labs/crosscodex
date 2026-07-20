@@ -15,11 +15,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type identityKey struct{}
-
 func identityFromContext(ctx context.Context) *authn.Identity {
-	id, _ := ctx.Value(identityKey{}).(*authn.Identity)
-	return id
+	return authn.IdentityFromContext(ctx)
 }
 
 func (s *Service) authInterceptor() grpc.UnaryServerInterceptor {
@@ -62,7 +59,7 @@ func (s *Service) authInterceptor() grpc.UnaryServerInterceptor {
 			return nil, status.Error(codes.Unauthenticated, "authentication failed")
 		}
 
-		ctx = context.WithValue(ctx, identityKey{}, identity)
+		ctx = authn.WithIdentity(ctx, identity)
 
 		ctx, err = tenant.WithTenant(ctx, identity.TenantID)
 		if err != nil {

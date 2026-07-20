@@ -2,17 +2,17 @@ syntax = "proto3";
 
 package crosscodex.v1;
 
-option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
-
 import "crosscodex/v1/common.proto";
 import "crosscodex/v1/synthesis.proto";
 import "google/protobuf/timestamp.proto";
 
-// GraphService manages compliance relationship graph with temporal support.
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+// GraphService manages compliance relationship graph.
 //
-// COUPLING: Consumes synthesis.ControlMapping, provides traversal for gateway
+// COUPLING: Consumes synthesis.ControlMapping, provides traversal
 // STORAGE: PostgreSQL + Apache AGE (openCypher) + pgvector
-// TEMPORAL: All edges/nodes track valid_from, valid_to for point-in-time queries
+// TEMPORAL: All edges/nodes track valid_from, valid_to
 service GraphService {
   // Create node (typically a catalog control)
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
@@ -36,7 +36,8 @@ service GraphService {
   rpc Query(QueryRequest) returns (QueryResponse);
 
   // Vector similarity search
-  rpc SimilaritySearch(SimilaritySearchRequest) returns (SimilaritySearchResponse);
+  rpc SimilaritySearch(SimilaritySearchRequest)
+      returns (SimilaritySearchResponse);
 
   // Temporal query: graph state at specific time
   rpc TemporalQuery(TemporalQueryRequest) returns (QueryResponse);
@@ -59,7 +60,7 @@ message Node {
   string label = 4;  // "Control", "Catalog", "Artifact"
   ResourceRef resource_ref = 5;
   map<string, string> properties = 6;
-  repeated float embedding = 7;  // Vector embedding
+  repeated float embeddings = 7;  // Vector embedding
   TemporalAttributes temporal = 8;
   AuditMetadata audit = 9;
   ProvenanceMetadata provenance = 10;
@@ -84,7 +85,7 @@ message CreateNodeRequest {
   string label = 3;
   ResourceRef resource_ref = 4;
   map<string, string> properties = 5;
-  repeated float embedding = 6;
+  repeated float embeddings = 6;
   TemporalAttributes temporal = 7;
   ProvenanceMetadata provenance = 8;
 }
@@ -164,10 +165,11 @@ message TraverseResponse {
 // QueryRequest executes raw openCypher queries.
 //
 // SECURITY: Always use parameterized queries to prevent Cypher injection.
-// Pass user input via the 'parameters' map, not by interpolating into 'cypher'.
+// Pass user input via 'parameters' map, not by interpolating into 'cypher'.
 //
 // Example (SECURE):
-//   cypher: "MATCH (n:Control {tenant_id: $tenant}) WHERE n.id = $control_id RETURN n"
+//   cypher: "MATCH (n:Control {tenant_id: $tenant})
+//            WHERE n.id = $control_id RETURN n"
 //   parameters: {"tenant": "acme", "control_id": "AC-1"}
 //
 // Example (INSECURE - DO NOT DO THIS):
@@ -175,9 +177,11 @@ message TraverseResponse {
 //
 message QueryRequest {
   TenantContext tenant_context = 1;
-  string cypher = 2;  // openCypher query with $param placeholders
-  map<string, string> parameters = 3;  // Parameter values for $param placeholders
-  google.protobuf.Timestamp as_of = 4;
+  // openCypher query with $param placeholders
+  string cypher = 2;
+  // Parameter values for $param placeholders
+  map<string, string> parameters = 3;
+  reserved 4;
 }
 
 message QueryResponse {
@@ -201,7 +205,7 @@ message GraphValue {
 }
 
 message EmbeddingQuery {
-  repeated float embedding = 1;
+  repeated float embeddings = 1;
 }
 
 message SimilaritySearchRequest {
@@ -212,7 +216,7 @@ message SimilaritySearchRequest {
   }
   int32 limit = 4;
   NodeType node_type = 5;
-  google.protobuf.Timestamp as_of = 6;
+  reserved 6;
 }
 
 message SimilaritySearchResponse {
