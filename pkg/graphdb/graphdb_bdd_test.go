@@ -649,4 +649,383 @@ var _ = Describe("GraphDB System", Ordered, func() {
 			testspecs.LogTestProgress("testspecs integration confirmed")
 		})
 	})
+
+	// =================================================================
+	// NEW METHODS: GetNode, GetEdge, BulkCreateEdges, ExecuteQuery, SupersedeFact
+	// =================================================================
+
+	Describe("GetNode", func() {
+		var client graphdb.GraphDB
+
+		BeforeEach(func() {
+			var err error
+			client, err = graphdb.New(nil)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		Context("when validating input parameters", func() {
+			It("rejects empty tenant", func() {
+				_, err := client.GetNode(context.Background(), "", "node-1")
+				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
+			})
+
+			It("rejects empty nodeID", func() {
+				_, err := client.GetNode(context.Background(), "tenant-a", "")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("node_id is required"))
+			})
+		})
+	})
+
+	Describe("GetEdge", func() {
+		var client graphdb.GraphDB
+
+		BeforeEach(func() {
+			var err error
+			client, err = graphdb.New(nil)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		Context("when validating input parameters", func() {
+			It("rejects empty tenant", func() {
+				_, err := client.GetEdge(context.Background(), "", "edge-1")
+				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
+			})
+
+			It("rejects empty edgeID", func() {
+				_, err := client.GetEdge(context.Background(), "tenant-a", "")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("edge_id is required"))
+			})
+		})
+	})
+
+	Describe("BulkCreateEdges", func() {
+		var client graphdb.GraphDB
+
+		BeforeEach(func() {
+			var err error
+			client, err = graphdb.New(nil)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		Context("when handling empty input", func() {
+			It("returns nil for empty edge list", func() {
+				ids, err := client.BulkCreateEdges(context.Background(), "tenant-a", nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ids).To(BeNil())
+			})
+		})
+
+		Context("when validating edge fields", func() {
+			It("rejects edges with empty label", func() {
+				validFrom := time.Now()
+				edges := []graphdb.BulkEdge{
+					{
+						SourceID: "src-1",
+						TargetID: "tgt-1",
+						Edge: graphdb.Edge{
+							ID:        "edge-1",
+							ValidFrom: validFrom,
+						},
+					},
+				}
+				_, err := client.BulkCreateEdges(context.Background(), "tenant-a", edges)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("label is required"))
+			})
+
+			It("rejects edges with empty source", func() {
+				validFrom := time.Now()
+				edges := []graphdb.BulkEdge{
+					{
+						TargetID: "tgt-1",
+						Edge: graphdb.Edge{
+							ID:        "edge-1",
+							Label:     "REL",
+							ValidFrom: validFrom,
+						},
+					},
+				}
+				_, err := client.BulkCreateEdges(context.Background(), "tenant-a", edges)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("source and target are required"))
+			})
+
+			It("rejects edges with zero valid_from", func() {
+				edges := []graphdb.BulkEdge{
+					{
+						SourceID: "src-1",
+						TargetID: "tgt-1",
+						Edge: graphdb.Edge{
+							ID:    "edge-1",
+							Label: "REL",
+						},
+					},
+				}
+				_, err := client.BulkCreateEdges(context.Background(), "tenant-a", edges)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("valid_from is required"))
+			})
+		})
+	})
+
+	Describe("ExecuteQuery", func() {
+		var client graphdb.GraphDB
+
+		BeforeEach(func() {
+			var err error
+			client, err = graphdb.New(nil)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		Context("when validating input parameters", func() {
+			It("rejects empty cypher", func() {
+				_, err := client.ExecuteQuery(context.Background(), "tenant-a", "", nil)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("cypher is required"))
+			})
+
+			It("rejects empty tenant", func() {
+				_, err := client.ExecuteQuery(context.Background(), "", "MATCH (n) RETURN n", nil)
+				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
+			})
+		})
+	})
+
+	Describe("SupersedeFact", func() {
+		var client graphdb.GraphDB
+
+		BeforeEach(func() {
+			var err error
+			client, err = graphdb.New(nil)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		Context("when validating input parameters", func() {
+			It("rejects request with both NodeID and EdgeID empty", func() {
+				req := graphdb.SupersedeRequest{
+					SupersededAt: time.Now(),
+				}
+				_, err := client.SupersedeFact(context.Background(), "tenant-a", req)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("node_id or edge_id is required"))
+			})
+
+			It("rejects request with both NodeID and EdgeID set", func() {
+				req := graphdb.SupersedeRequest{
+					NodeID:       "node-1",
+					EdgeID:       "edge-1",
+					SupersededAt: time.Now(),
+				}
+				_, err := client.SupersedeFact(context.Background(), "tenant-a", req)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("set node_id or edge_id, not both"))
+			})
+
+			It("rejects request with zero SupersededAt", func() {
+				req := graphdb.SupersedeRequest{
+					NodeID: "node-1",
+				}
+				_, err := client.SupersedeFact(context.Background(), "tenant-a", req)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("superseded_at is required"))
+			})
+
+			It("rejects empty tenant", func() {
+				req := graphdb.SupersedeRequest{
+					NodeID:       "node-1",
+					SupersededAt: time.Now(),
+				}
+				_, err := client.SupersedeFact(context.Background(), "", req)
+				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
+			})
+		})
+	})
+
+	Describe("parseQueryValue", func() {
+		Context("when parsing AGE typed values", func() {
+			It("parses vertex type", func() {
+				raw := `{"id": 1, "label": "Node", "properties": {"id": "n-1", "valid_from": "2025-01-01T00:00:00Z"}}::vertex`
+				val := graphdb.ParseQueryValue(raw)
+				Expect(val.Type).To(Equal(graphdb.QueryValueNode))
+				Expect(val.NodeVal).NotTo(BeNil())
+				Expect(val.NodeVal.ID).To(Equal("n-1"))
+			})
+
+			It("parses edge type", func() {
+				raw := `{"id": 10, "label": "REL", "start_id": 1, "end_id": 2, "properties": {"id": "e-1", "valid_from": "2025-01-01T00:00:00Z"}}::edge`
+				val := graphdb.ParseQueryValue(raw)
+				Expect(val.Type).To(Equal(graphdb.QueryValueEdge))
+				Expect(val.EdgeVal).NotTo(BeNil())
+				Expect(val.EdgeVal.Edge.ID).To(Equal("e-1"))
+			})
+
+			It("parses scalar as fallback", func() {
+				raw := `"some string"`
+				val := graphdb.ParseQueryValue(raw)
+				Expect(val.Type).To(Equal(graphdb.QueryValueScalar))
+				Expect(val.ScalarVal).To(Equal(`"some string"`))
+			})
+		})
+	})
+
+	Describe("Path.ValidAt", func() {
+		Context("when checking temporal validity of paths", func() {
+			It("returns true when all nodes and edges are valid at the given time", func() {
+				queryTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+				path := graphdb.Path{
+					Nodes: []graphdb.Node{
+						{
+							ID:        "n1",
+							Label:     "Control",
+							ValidFrom: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+						},
+						{
+							ID:        "n2",
+							Label:     "Requirement",
+							ValidFrom: time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
+						},
+					},
+					Edges: []graphdb.Edge{
+						{
+							ID:        "e1",
+							Label:     "SATISFIES",
+							ValidFrom: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
+						},
+					},
+				}
+				Expect(path.ValidAt(queryTime)).To(BeTrue())
+			})
+
+			It("returns false when a node was created after the query time", func() {
+				queryTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+				path := graphdb.Path{
+					Nodes: []graphdb.Node{
+						{
+							ID:        "n1",
+							Label:     "Control",
+							ValidFrom: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+						},
+						{
+							ID:        "n2",
+							Label:     "Requirement",
+							ValidFrom: time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC),
+						},
+					},
+					Edges: []graphdb.Edge{},
+				}
+				Expect(path.ValidAt(queryTime)).To(BeFalse())
+			})
+
+			It("returns false when a node was superseded before the query time", func() {
+				queryTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+				validTo := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
+				path := graphdb.Path{
+					Nodes: []graphdb.Node{
+						{
+							ID:        "n1",
+							Label:     "Control",
+							ValidFrom: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+							ValidTo:   &validTo,
+						},
+					},
+					Edges: []graphdb.Edge{},
+				}
+				Expect(path.ValidAt(queryTime)).To(BeFalse())
+			})
+
+			It("returns false when an edge was created after the query time", func() {
+				queryTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+				path := graphdb.Path{
+					Nodes: []graphdb.Node{
+						{
+							ID:        "n1",
+							Label:     "Control",
+							ValidFrom: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+						},
+					},
+					Edges: []graphdb.Edge{
+						{
+							ID:        "e1",
+							Label:     "SATISFIES",
+							ValidFrom: time.Date(2025, 8, 1, 0, 0, 0, 0, time.UTC),
+						},
+					},
+				}
+				Expect(path.ValidAt(queryTime)).To(BeFalse())
+			})
+
+			It("returns false when an edge was superseded before the query time", func() {
+				queryTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+				validTo := time.Date(2025, 4, 1, 0, 0, 0, 0, time.UTC)
+				path := graphdb.Path{
+					Nodes: []graphdb.Node{
+						{
+							ID:        "n1",
+							Label:     "Control",
+							ValidFrom: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+						},
+					},
+					Edges: []graphdb.Edge{
+						{
+							ID:        "e1",
+							Label:     "SATISFIES",
+							ValidFrom: time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
+							ValidTo:   &validTo,
+						},
+					},
+				}
+				Expect(path.ValidAt(queryTime)).To(BeFalse())
+			})
+
+			It("returns true when ValidTo is nil (current facts)", func() {
+				queryTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+				path := graphdb.Path{
+					Nodes: []graphdb.Node{
+						{
+							ID:        "n1",
+							Label:     "Control",
+							ValidFrom: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+							ValidTo:   nil,
+						},
+					},
+					Edges: []graphdb.Edge{
+						{
+							ID:        "e1",
+							Label:     "SATISFIES",
+							ValidFrom: time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
+							ValidTo:   nil,
+						},
+					},
+				}
+				Expect(path.ValidAt(queryTime)).To(BeTrue())
+			})
+
+			It("returns true for empty path", func() {
+				queryTime := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+				path := graphdb.Path{
+					Nodes: []graphdb.Node{},
+					Edges: []graphdb.Edge{},
+				}
+				Expect(path.ValidAt(queryTime)).To(BeTrue())
+			})
+
+			It("returns false when query time equals ValidTo boundary", func() {
+				validTo := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+				queryTime := validTo
+				path := graphdb.Path{
+					Nodes: []graphdb.Node{
+						{
+							ID:        "n1",
+							Label:     "Control",
+							ValidFrom: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+							ValidTo:   &validTo,
+						},
+					},
+				}
+				Expect(path.ValidAt(queryTime)).To(BeFalse())
+			})
+		})
+	})
 })

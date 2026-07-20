@@ -6,8 +6,9 @@ EXTENDS: .mega-linter.shared.yml
 # Allow go to load the correct version
 GOTOOLCHAIN: auto
 
-# Use project-level golangci-lint config so local and CI lint agree.
+# Use project-level configs so local and CI lint agree.
 GO_GOLANGCI_LINT_CONFIG_FILE: .golangci.yml
+PROTOBUF_PROTOLINT_CONFIG_FILE: .protolint.yaml
 
 # REPOSITORY_CHECKOV and REPOSITORY_TRUFFLEHOG are disabled.
 # Both hang indefinitely inside the MegaLinter container on GitHub
@@ -30,6 +31,7 @@ ENABLE_LINTERS:
   - MARKDOWN_MARKDOWNLINT
   - MARKDOWN_MARKDOWN_LINK_CHECK
   - MARKDOWN_MARKDOWN_TABLE_FORMATTER
+  - PROTOBUF_PROTOLINT
   - EDITORCONFIG_EDITORCONFIG_CHECKER
   - ACTION_ZIZMOR
   - ACTION_ACTIONLINT

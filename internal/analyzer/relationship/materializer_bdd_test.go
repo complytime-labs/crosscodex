@@ -52,6 +52,21 @@ func (m *mockGraphDB) Traverse(_ context.Context, _ string, _ graphdb.TraversalQ
 func (m *mockGraphDB) QueryAsOf(_ context.Context, _ string, _ graphdb.RelationshipQuery, _ time.Time) ([]graphdb.Relationship, error) {
 	return nil, nil
 }
+func (m *mockGraphDB) GetNode(_ context.Context, _, _ string) (*graphdb.Node, error) {
+	return nil, nil
+}
+func (m *mockGraphDB) GetEdge(_ context.Context, _, _ string) (*graphdb.EdgeWithEndpoints, error) {
+	return nil, nil
+}
+func (m *mockGraphDB) BulkCreateEdges(_ context.Context, _ string, _ []graphdb.BulkEdge) ([]string, error) {
+	return nil, nil
+}
+func (m *mockGraphDB) ExecuteQuery(_ context.Context, _, _ string, _ map[string]string) ([]graphdb.QueryRow, error) {
+	return nil, nil
+}
+func (m *mockGraphDB) SupersedeFact(_ context.Context, _ string, _ graphdb.SupersedeRequest) (bool, error) {
+	return false, nil
+}
 
 // mockStorage stores data in memory keyed by path.
 type mockStorage struct {

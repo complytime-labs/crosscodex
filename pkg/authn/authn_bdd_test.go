@@ -1187,3 +1187,24 @@ var _ = Describe("RBAC", func() {
 		)
 	})
 })
+
+var _ = Describe("Identity Context", func() {
+	It("round-trips identity through context", func() {
+		original := &authn.Identity{
+			Subject:  "user@example.com",
+			TenantID: "test-tenant",
+			Roles:    []string{"admin"},
+		}
+		ctx := authn.WithIdentity(context.Background(), original)
+		retrieved := authn.IdentityFromContext(ctx)
+		Expect(retrieved).NotTo(BeNil())
+		Expect(retrieved.Subject).To(Equal("user@example.com"))
+		Expect(retrieved.TenantID).To(Equal("test-tenant"))
+		Expect(retrieved.Roles).To(Equal([]string{"admin"}))
+	})
+
+	It("returns nil from bare context", func() {
+		retrieved := authn.IdentityFromContext(context.Background())
+		Expect(retrieved).To(BeNil())
+	})
+})

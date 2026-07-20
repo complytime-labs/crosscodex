@@ -2,14 +2,14 @@ syntax = "proto3";
 
 package crosscodex.v1;
 
-option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
-
 import "crosscodex/v1/common.proto";
 import "crosscodex/v1/synthesis.proto";
 
-// FeedbackService handles human-in-the-loop voting on synthesis determinations.
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+// FeedbackService handles human-in-the-loop voting.
 //
-// COUPLING: Operates on synthesis.ControlMapping, updates graph temporal attributes
+// COUPLING: Operates on synthesis.ControlMapping, updates graph temporal
 // PROCESS: User votes → aggregation → high-agreement becomes determination
 service FeedbackService {
   // Submit vote on a mapping
@@ -28,7 +28,8 @@ service FeedbackService {
   rpc EscalateMapping(EscalateMappingRequest) returns (EscalateMappingResponse);
 
   // Record determination (final human decision)
-  rpc RecordDetermination(RecordDeterminationRequest) returns (RecordDeterminationResponse);
+  rpc RecordDetermination(RecordDeterminationRequest)
+      returns (RecordDeterminationResponse);
 }
 
 enum VoteType {

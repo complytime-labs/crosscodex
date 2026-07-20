@@ -2,9 +2,9 @@ syntax = "proto3";
 
 package crosscodex.v1;
 
-option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
-
 import "crosscodex/v1/common.proto";
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
 
 // AnalysisService coordinates analyzer plugins and work items.
 //
@@ -12,10 +12,12 @@ import "crosscodex/v1/common.proto";
 // ANALYZER PLUGINS: classify, embedding, relationship, requires, artifacts
 service AnalysisService {
   // Register analyzer plugin (called by analyzer at startup)
-  rpc RegisterAnalyzer(RegisterAnalyzerRequest) returns (RegisterAnalyzerResponse);
+  rpc RegisterAnalyzer(RegisterAnalyzerRequest)
+      returns (RegisterAnalyzerResponse);
 
   // Unregister analyzer (graceful shutdown)
-  rpc UnregisterAnalyzer(UnregisterAnalyzerRequest) returns (UnregisterAnalyzerResponse);
+  rpc UnregisterAnalyzer(UnregisterAnalyzerRequest)
+      returns (UnregisterAnalyzerResponse);
 
   // List registered analyzers
   rpc ListAnalyzers(ListAnalyzersRequest) returns (ListAnalyzersResponse);
@@ -60,7 +62,9 @@ message UnregisterAnalyzerRequest {
   string analyzer_id = 2;
 }
 
-message UnregisterAnalyzerResponse {}
+message UnregisterAnalyzerResponse {
+}
+
 
 message ListAnalyzersRequest {
   TenantContext tenant_context = 1;

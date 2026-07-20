@@ -2,17 +2,18 @@ syntax = "proto3";
 
 package crosscodex.v1;
 
-option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
-
-import "crosscodex/v1/common.proto";
 import "crosscodex/v1/catalog.proto";
+import "crosscodex/v1/common.proto";
 import "crosscodex/v1/synthesis.proto";
 import "google/protobuf/timestamp.proto";
 
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
 // PipelineService orchestrates end-to-end job workflows.
 //
-// COUPLING: Orchestrates all services (ingestion → catalog → analysis → synthesis → graph)
-// RETRY LOGIC: Exponential backoff with jitter, configurable max attempts
+// COUPLING: Orchestrates all services
+// (ingestion → catalog → analysis → synthesis → graph)
+// RETRY LOGIC: Exponential backoff with jitter, max attempts
 service PipelineService {
   // Create full analysis pipeline job
   rpc CreateJob(CreateJobRequest) returns (CreateJobResponse);
@@ -35,10 +36,14 @@ service PipelineService {
 
 enum JobType {
   JOB_TYPE_UNSPECIFIED = 0;
-  JOB_TYPE_FULL_ANALYSIS = 1;     // Document → catalog → analysis → synthesis → graph
-  JOB_TYPE_INCREMENTAL_SYNC = 2;  // Re-analyze changed controls only
-  JOB_TYPE_CATALOG_IMPORT = 3;    // Document → catalog only
-  JOB_TYPE_SYNTHESIS_ONLY = 4;    // Re-run synthesis on existing analyses
+  // Document → catalog → analysis → synthesis → graph
+  JOB_TYPE_FULL_ANALYSIS = 1;
+  // Re-analyze changed controls only
+  JOB_TYPE_INCREMENTAL_SYNC = 2;
+  // Document → catalog only
+  JOB_TYPE_CATALOG_IMPORT = 3;
+  // Re-run synthesis on existing analyses
+  JOB_TYPE_SYNTHESIS_ONLY = 4;
 }
 
 message CreateJobRequest {
@@ -88,7 +93,8 @@ message JobProgress {
 
 message JobStage {
   string stage_id = 1;
-  string stage_name = 2;  // "ingestion", "catalog_parse", "analysis", etc.
+  // ingestion, catalog_parse, analysis, synthesis, graph
+  string stage_name = 2;
   JobStatus status = 3;
   google.protobuf.Timestamp started_at = 4;
   google.protobuf.Timestamp completed_at = 5;

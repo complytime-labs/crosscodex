@@ -16,6 +16,7 @@ var CypherValue = cypherValue
 var NodeToAGProperties = nodeToAGProperties
 var EdgeToAGProperties = edgeToAGProperties
 var GraphName = graphName
+var ParseQueryValue = parseQueryValue
 
 // TelemetryFields exposes telemetry instrument state for test assertions.
 type TelemetryFields struct {

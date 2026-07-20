@@ -2,17 +2,17 @@ syntax = "proto3";
 
 package crosscodex.v1;
 
-option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
-
-import "crosscodex/v1/common.proto";
-import "crosscodex/v1/catalog.proto";
-import "crosscodex/v1/pipeline.proto";
-import "crosscodex/v1/graph.proto";
-import "crosscodex/v1/feedback.proto";
-import "crosscodex/v1/synthesis.proto";
 import "crosscodex/v1/admin.proto";
+import "crosscodex/v1/catalog.proto";
+import "crosscodex/v1/common.proto";
+import "crosscodex/v1/feedback.proto";
+import "crosscodex/v1/graph.proto";
+import "crosscodex/v1/pipeline.proto";
+import "crosscodex/v1/synthesis.proto";
 import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
 
 // GatewayService is the public REST API.
 //
@@ -20,7 +20,8 @@ import "google/protobuf/timestamp.proto";
 // TRACEABILITY: Each RPC documents internal service call chains
 service GatewayService {
   // Submit document for full analysis
-  // INTERNAL: ingestion.ConvertDocument → catalog.ParseCatalog → pipeline.CreateJob(FULL_ANALYSIS)
+  // INTERNAL: ingestion.ConvertDocument → catalog.ParseCatalog
+  // → pipeline.CreateJob(FULL_ANALYSIS)
   rpc SubmitDocument(SubmitDocumentRequest) returns (SubmitDocumentResponse) {
     option (google.api.http) = {
       post: "/v1/documents"
@@ -87,7 +88,8 @@ service GatewayService {
 
   // Get control mappings
   // INTERNAL: graph.Traverse (outbound from control node)
-  rpc GetControlMappings(GetControlMappingsRequest) returns (GetControlMappingsResponse) {
+  rpc GetControlMappings(GetControlMappingsRequest)
+      returns (GetControlMappingsResponse) {
     option (google.api.http) = {
       get: "/v1/controls/{control_id}/mappings"
     };
@@ -178,7 +180,7 @@ message QueryGraphRequest {
   // TenantContext from auth
   string cypher = 1;  // Restricted subset validated at gateway
   map<string, string> parameters = 2;
-  google.protobuf.Timestamp as_of = 3;
+  reserved 3;
 }
 
 message QueryGraphResponse {

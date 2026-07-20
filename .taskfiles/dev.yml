@@ -67,7 +67,7 @@ tasks:
 
   lint:
     desc: Run linters
-    deps: [deps, generate]
+    deps: [deps, generate, lint:proto]
     dir: "{{.ROOT_DIR}}"
     cmds:
       # Fence off megalinter-reports so ./... stops at its boundary.
@@ -77,6 +77,15 @@ tasks:
       - go vet ./...
       - go fmt ./...
       - go tool golangci-lint run ./...
+
+  lint:proto:
+    desc: Run protolint on proto files
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - go run github.com/yoheimuta/protolint/cmd/protolint@v0.56.4 lint --config_path={{.ROOT_DIR}}/.protolint.yaml api/proto/
+    sources:
+      - api/proto/**/*.proto
+      - .protolint.yaml
 
   deps:
     desc: Download dependencies
