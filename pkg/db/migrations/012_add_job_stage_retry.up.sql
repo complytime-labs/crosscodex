@@ -1,0 +1,2 @@
+ALTER TABLE job_stages ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE job_stages ADD COLUMN error_message TEXT NOT NULL DEFAULT '';

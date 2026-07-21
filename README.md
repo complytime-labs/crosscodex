@@ -14,25 +14,26 @@ ______________________________________________________________________
 
 CrossCodex is in early development. Foundational and domain packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI binary builds but does not yet implement user-facing commands. See [Development](#development) below to build from source and run tests.
 
-| Package                | Status      | Summary                                                                                      |
-|------------------------|-------------|----------------------------------------------------------------------------------------------|
-| **pkg/config**         | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking               |
-| **pkg/storage**        | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes                  |
-| **pkg/db**             | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification        |
-| **pkg/natsbus**        | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams |
-| **pkg/tlsconfig**      | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI        |
+| Package                | Status      | Summary                                                                                                           |
+|------------------------|-------------|-------------------------------------------------------------------------------------------------------------------|
+| **pkg/config**         | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking                                    |
+| **pkg/storage**        | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes                                       |
+| **pkg/db**             | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification                             |
+| **pkg/natsbus**        | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams                      |
+| **pkg/tlsconfig**      | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI                             |
 | **pkg/authn**          | Implemented | X.509 mTLS authentication, registry dispatch, audit emission, identity context propagation; Kerberos/SAML stubbed |
-| **pkg/tenant**         | Implemented | Tenant ID validation, error sentinels, context propagation interface, gRPC interceptors      |
-| **pkg/llmclient**      | Implemented | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit |
-| **pkg/analyzer**       | Implemented | Generic plugin interface, type-safe registry, DAG builder with Kahn's algorithm              |
-| **pkg/telemetry**      | Implemented | OpenTelemetry traces, metrics, structured log correlation, in-memory test provider           |
-| **pkg/attestation**    | Implemented | in-toto layout/link generation, verification, hash chains, FIPS enforcement, manifests       |
-| **pkg/oscal**          | Implemented | OSCAL catalog parsing, validation, decomposition, structuring, provenance tracking           |
-| **pkg/graphdb**        | Implemented | Apache AGE openCypher queries, entity retrieval, bulk operations, Cypher execution, temporal supersession |
-| **pkg/vectordb**       | Implemented | pgvector similarity search for embeddings, property tests                                    |
-| **pkg/prompt**         | Implemented | Prompt template loading, registry, renderer, merge logic                                     |
-| **internal/synthesis** | Implemented | Viability ranking, quality assessment, DB persistence, OTel tracing                          |
-| **internal/graph**     | Implemented | Graph Service: gRPC RPCs, NATS event materialization, resource resolution, OTel tracing      |
+| **pkg/tenant**         | Implemented | Tenant ID validation, error sentinels, context propagation interface, gRPC interceptors                           |
+| **pkg/llmclient**      | Implemented | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit                      |
+| **pkg/analyzer**       | Implemented | Generic plugin interface, type-safe registry, DAG builder with Kahn's algorithm                                   |
+| **pkg/telemetry**      | Implemented | OpenTelemetry traces, metrics, structured log correlation, in-memory test provider                                |
+| **pkg/attestation**    | Implemented | in-toto layout/link generation, verification, hash chains, FIPS enforcement, manifests                            |
+| **pkg/oscal**          | Implemented | OSCAL catalog parsing, validation, decomposition, structuring, provenance tracking                                |
+| **pkg/graphdb**        | Implemented | Apache AGE openCypher queries, entity retrieval, bulk operations, Cypher execution, temporal supersession         |
+| **pkg/vectordb**       | Implemented | pgvector similarity search for embeddings, property tests                                                         |
+| **pkg/prompt**         | Implemented | Prompt template loading, registry, renderer, merge logic                                                          |
+| **internal/synthesis** | Implemented | Viability ranking, quality assessment, DB persistence, OTel tracing                                               |
+| **internal/graph**     | Implemented | Graph Service: gRPC RPCs, NATS event materialization, resource resolution, OTel tracing                           |
+| **internal/pipeline**  | Implemented | Pipeline Service: job orchestration, DAG execution, stage tracking, retry, in-toto attestation                    |
 
 Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/authn`, `pkg/llmclient`, `pkg/telemetry`, `pkg/vectordb`, and `pkg/graphdb` run against containerized services (`task test:integration:all`).
 
@@ -273,11 +274,11 @@ Run `task --list` for all available commands including integration tests and dev
 
 ### Testing Strategy
 
-| Test Type       | Framework               | Status                                    |
-|-----------------|-------------------------|-------------------------------------------|
-| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)              |
-| **Integration** | Go testing + containers | Available (`task test:integration:all`)   |
-| **E2E**         | Venom                   | Planned                                   |
+| Test Type       | Framework               | Status                                  |
+|-----------------|-------------------------|-----------------------------------------|
+| **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)            |
+| **Integration** | Go testing + containers | Available (`task test:integration:all`) |
+| **E2E**         | Venom                   | Planned                                 |
 
 ### Contributing
 

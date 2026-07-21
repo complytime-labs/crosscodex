@@ -148,6 +148,9 @@ synthesis:
     no_rel_low: 0.80
     contested_warn: 0.20
     actionable_warn: 0.30
+pipeline:
+  max_concurrent_jobs: 10
+  stage_timeout: 30m
 `
 
 func defaultNode() (*yaml.Node, error) {

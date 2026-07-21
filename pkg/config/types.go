@@ -24,6 +24,7 @@ type Config struct {
 	Prompt        PromptConfig        `yaml:"prompt"`
 	Analysis      AnalysisConfig      `yaml:"analysis"`
 	Worker        WorkerConfig        `yaml:"worker"`
+	Pipeline      PipelineConfig      `yaml:"pipeline"`
 	Synthesis     SynthesisConfig     `yaml:"synthesis"`
 }
 
@@ -620,6 +621,25 @@ func (c *WorkerConfig) Validate() error {
 	return nil
 }
 
+// PipelineConfig configures the pipeline orchestration service.
+type PipelineConfig struct {
+	MaxConcurrentJobs int           `yaml:"max_concurrent_jobs"`
+	StageTimeout      time.Duration `yaml:"stage_timeout"`
+}
+
+// Validate checks PipelineConfig for consistency.
+func (c *PipelineConfig) Validate() error {
+	if c.MaxConcurrentJobs < 0 || c.MaxConcurrentJobs > 100 {
+		return fmt.Errorf("pipeline.max_concurrent_jobs %d must be in range [0, 100]: %w",
+			c.MaxConcurrentJobs, ErrInvalidConfig)
+	}
+	if c.StageTimeout < 0 || c.StageTimeout > 2*time.Hour {
+		return fmt.Errorf("pipeline.stage_timeout %s must be in range [0, 2h]: %w",
+			c.StageTimeout, ErrInvalidConfig)
+	}
+	return nil
+}
+
 // SynthesisConfig configures the synthesis service.
 type SynthesisConfig struct {
 	Viability             ViabilityConfig              `yaml:"viability"`
@@ -708,6 +728,7 @@ type DaemonConfig struct {
 	Analysis      AnalysisConfig
 	Worker        WorkerConfig
 	Synthesis     SynthesisConfig
+	Pipeline      PipelineConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -742,6 +763,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Analysis:      c.Analysis,
 		Worker:        WorkerConfig{QueueGroup: c.Worker.QueueGroup, LLM: c.LLM},
 		Synthesis:     c.Synthesis,
+		Pipeline:      c.Pipeline,
 	}
 }
 

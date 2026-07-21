@@ -1,12 +1,29 @@
 // Package pipeline implements the analysis pipeline orchestration layer.
 //
-// The pipeline coordinates multiple analysis phases:
-//   - classify: Framework-specific control classification
-//   - embedding: Semantic similarity via vector embeddings
-//   - candidates: Generate prerequisite candidate pairs
-//   - requires: LLM panel voting on prerequisite relationships
-//   - relationship: LLM panel voting on semantic relationships
-//   - graph: Materialization to graph database
+// The Service type is the primary entry point. It implements
+// PipelineServiceServer (gRPC) and gateway.PipelineBackend (REST),
+// managing job lifecycle through analysis, synthesis, graph
+// materialization, and attestation phases.
+//
+// # Job Lifecycle
+//
+// CreateJob persists a job and its stages to PostgreSQL, then spawns
+// a goroutine that executes the full lifecycle synchronously:
+//
+//  1. Analysis: Build DAG from analyzer.Registry, execute via analysis.Engine
+//  2. Synthesis: Rank and assess analysis outputs
+//  3. Graph: Publish events for graph materialization
+//  4. Attestation: Generate in-toto layout, collect links, verify chain
+//
+// Analysis stages are discovered dynamically from the DAG. The pipeline
+// adds "synthesis" and "graph" as meta-stages. No analyzer knowledge
+// is hardcoded.
+//
+// # Resume and Retry
+//
+// On startup, Start() queries for jobs with status "running" and resumes
+// from the last incomplete stage. RetryJob resets failed stages and
+// re-enters executeJob.
 //
 // # CandidateProvider Pattern
 //

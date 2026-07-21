@@ -51,6 +51,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := cfg.Worker.Validate(); err != nil {
 		return err
 	}
+	if err := cfg.Pipeline.Validate(); err != nil {
+		return err
+	}
 	if err := validateSynthesis(&cfg.Synthesis, tracker); err != nil {
 		return err
 	}
