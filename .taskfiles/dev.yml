@@ -82,10 +82,10 @@ tasks:
     desc: Run protolint on proto files
     dir: "{{.ROOT_DIR}}"
     cmds:
-      - go run github.com/yoheimuta/protolint/cmd/protolint@v0.56.4 lint --config_path={{.ROOT_DIR}}/.protolint.yaml api/proto/
+      - go run github.com/yoheimuta/protolint/cmd/protolint@v0.56.4 lint --config_path={{.ROOT_DIR}}/.protolintrc.yml api/proto/
     sources:
       - api/proto/**/*.proto
-      - .protolint.yaml
+      - .protolintrc.yml
 
   deps:
     desc: Download dependencies
