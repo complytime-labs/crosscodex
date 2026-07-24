@@ -4,43 +4,102 @@ import (
 	"fmt"
 	"os"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/version"
+	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 )
 
-func printUsage() {
-	fmt.Print(`CrossCodex CLI
-
-Usage:
-  crosscodex <command>
-
-Available Commands:
-  version     Print version information
-
-Use "crosscodex help" for more information.
-`)
+type cliState struct {
+	cfg    *config.ClientConfig
+	conn   *grpc.ClientConn
+	client pb.GatewayServiceClient
+	daemon *embeddedDaemon
 }
 
-func printVersion() {
-	info := version.GetInfo()
-	fmt.Printf("crosscodex %s (commit: %s, built: %s, go: %s, %s/%s)\n",
-		info.Version, info.GitCommit, info.BuildDate,
-		info.GoVersion, info.OS, info.Arch)
+func newRootCmd() *cobra.Command {
+	cobra.EnableCommandSorting = false
+
+	state := &cliState{}
+
+	root := &cobra.Command{
+		Use:   "crosscodex",
+		Short: "CrossCodex — compliance mapping with AI-assisted analysis",
+		Long: `CrossCodex maps relationships between compliance standards using
+AI-assisted analysis. Import catalogs, run analysis jobs, and
+explore the results.
+
+Get started:
+  crosscodex project init          Initialize a new project
+  crosscodex catalog import        Import a compliance catalog
+  crosscodex run start             Start an analysis job
+  crosscodex results summary       View analysis results`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			profile, _ := cmd.Flags().GetString("profile")
+			if err := loadConfig(state, profile); err != nil {
+				return err
+			}
+
+			if needsConnection(cmd.CommandPath()) {
+				endpoint, _ := cmd.Flags().GetString("endpoint")
+				if err := connect(cmd.Context(), state, endpoint); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		PersistentPostRun: func(cmd *cobra.Command, args []string) {
+			disconnect(state)
+		},
+	}
+
+	root.Version = version.Version
+	root.SetVersionTemplate("crosscodex {{.Version}}\n")
+	root.CompletionOptions.DisableDefaultCmd = true
+
+	root.PersistentFlags().String("endpoint", "", "crosscodexd gRPC address (default: localhost:50051)")
+	root.PersistentFlags().Bool("json", false, "output as JSON")
+	root.PersistentFlags().Bool("plain", false, "output without formatting or color")
+	root.PersistentFlags().Bool("no-color", false, "disable color output")
+	root.PersistentFlags().String("profile", "", "configuration profile name")
+
+	root.MarkFlagsMutuallyExclusive("json", "plain")
+
+	root.AddGroup(
+		&cobra.Group{ID: "project", Title: "Project Commands:"},
+		&cobra.Group{ID: "analysis", Title: "Analysis Commands:"},
+		&cobra.Group{ID: "prompt", Title: "Prompt Commands:"},
+		&cobra.Group{ID: "connection", Title: "Connection Commands:"},
+		&cobra.Group{ID: "additional", Title: "Additional Commands:"},
+	)
+
+	addTo := func(group string, c *cobra.Command) {
+		c.GroupID = group
+		root.AddCommand(c)
+	}
+
+	addTo("project", newProjectCmd(state))
+	addTo("project", newConfigCmd(state))
+	addTo("analysis", newCatalogCmd(state))
+	addTo("analysis", newRunCmd(state))
+	addTo("analysis", newResultsCmd(state))
+	addTo("prompt", newPromptCmd(state))
+	addTo("connection", newVersionCmd(state))
+	addTo("additional", newCompletionCmd())
+
+	root.SetHelpCommandGroupID("additional")
+
+	return root
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		return
-	}
-
-	switch os.Args[1] {
-	case "version", "--version":
-		printVersion()
-	case "help", "--help", "-h":
-		printUsage()
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
-		fmt.Fprintln(os.Stderr, `Run "crosscodex help" for usage.`)
+	root := newRootCmd()
+	if err := root.Execute(); err != nil {
+		isJSON := jsonMode(root)
+		fmt.Fprintln(os.Stderr, formatCLIError(err, isJSON))
 		os.Exit(1)
 	}
 }

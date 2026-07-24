@@ -2,7 +2,7 @@ version: "3"
 
 vars:
   MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
-  BUILD_DIR: '{{.BUILD_DIR | default (printf "%s/.build" .ROOT_DIR)}}'
+  BUILD_DIR: '{{.BUILD_DIR | default (printf "%s/bin" .ROOT_DIR)}}'
   # Minimum Go version -- pinned to address GO-2026-5037 (crypto/x509).
   # Bump this when upgrading Go; deps:update re-applies it after go get -u.
   GO_VERSION: "1.26.4"
@@ -19,6 +19,7 @@ tasks:
 
   generate:api:
     desc: Generate API protobuf code using buf
+    deps: [deps]
     dir: "{{.ROOT_DIR}}/api/proto"
     cmds:
       - go tool buf generate
@@ -30,6 +31,7 @@ tasks:
 
   generate:testgrpc:
     desc: Generate testgrpc protobuf code using buf
+    deps: [deps]
     dir: "{{.ROOT_DIR}}/internal/testgrpc/proto"
     cmds:
       - go tool buf generate
@@ -54,7 +56,7 @@ tasks:
         -X {{.MODULE}}/internal/version.GitCommit={{.GIT_COMMIT}}
         -X {{.MODULE}}/internal/version.BuildDate={{.BUILD_DATE}}
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
+      - mkdir -p {{.BUILD_DIR}} {{.ROOT_DIR}}/.go-tmp
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex {{.ROOT_DIR}}/cmd/crosscodex
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodexd {{.ROOT_DIR}}/cmd/crosscodexd
     sources:
@@ -90,6 +92,7 @@ tasks:
   deps:
     desc: Download dependencies
     cmds:
+      - mkdir -p {{.ROOT_DIR}}/.go-tmp
       - go mod download
 
   deps:update:
