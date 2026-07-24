@@ -1,0 +1,214 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+)
+
+func newConfigCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "View and modify CLI and project settings",
+		RunE:  func(cmd *cobra.Command, args []string) error { return cmd.Help() },
+	}
+
+	cmd.AddCommand(newConfigShowCmd(state))
+	cmd.AddCommand(newConfigSetCmd(state))
+	cmd.AddCommand(newConfigProfilesCmd(state))
+
+	return cmd
+}
+
+func newConfigShowCmd(state *cliState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Show resolved configuration",
+		Long:  `Show the resolved configuration from all layers (system, user, project, environment).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return emit(cmd, func(w io.Writer, color bool) {
+				data, err := yaml.Marshal(state.cfg)
+				if err != nil {
+					fmt.Fprintf(w, "Error marshaling config: %v\n", err)
+					return
+				}
+				if _, err = w.Write(data); err != nil {
+					fmt.Fprintf(w, "Error writing config: %v\n", err)
+				}
+			}, state.cfg)
+		},
+	}
+}
+
+func newConfigSetCmd(_ *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Set a configuration value",
+		Long: `Set a configuration value in the user config file.
+
+Key format uses dot-notation (e.g., cli.output, cli.endpoint).
+The value is written to $XDG_CONFIG_HOME/crosscodex/config.yaml.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				return fmt.Errorf("requires both key and value")
+			}
+
+			key := args[0]
+			value := args[1]
+
+			if err := setConfigValue(key, value); err != nil {
+				return fmt.Errorf("set config: %w", err)
+			}
+
+			return emit(cmd, func(w io.Writer, color bool) {
+				fmt.Fprintf(w, "Set %s = %s\n", key, value)
+			}, map[string]string{"key": key, "value": value})
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(2), argGuide{
+		noun:  "a key and value",
+		find:  "config set",
+		usage: "crosscodex config set <key> <value>",
+		examples: []string{
+			"crosscodex config set cli.output json",
+			"crosscodex config set cli.endpoint localhost:50051",
+		},
+	})
+
+	return cmd
+}
+
+func newConfigProfilesCmd(_ *cliState) *cobra.Command {
+	return &cobra.Command{
+		Use:   "profiles",
+		Short: "List available configuration profiles",
+		Long:  `List configuration profiles in $XDG_CONFIG_HOME/crosscodex/profiles/.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			profilesDir := filepath.Join(xdgConfigHomeLocal(), "crosscodex", "profiles")
+
+			entries, err := os.ReadDir(profilesDir)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return emit(cmd, func(w io.Writer, color bool) {
+						fmt.Fprintf(w, "No profiles found in %s\n", profilesDir)
+					}, []string{})
+				}
+				return fmt.Errorf("read profiles directory: %w", err)
+			}
+
+			var profiles []string
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".yaml") {
+					profiles = append(profiles, strings.TrimSuffix(entry.Name(), ".yaml"))
+				}
+			}
+
+			if len(profiles) == 0 {
+				return emit(cmd, func(w io.Writer, color bool) {
+					fmt.Fprintf(w, "No profiles found in %s\n", profilesDir)
+				}, []string{})
+			}
+
+			return emit(cmd, func(w io.Writer, color bool) {
+				fmt.Fprintf(w, "Available profiles:\n")
+				for _, p := range profiles {
+					fmt.Fprintf(w, "  - %s\n", p)
+				}
+			}, profiles)
+		},
+	}
+}
+
+func setConfigValue(key, value string) error {
+	userConfigPath := filepath.Join(xdgConfigHomeLocal(), "crosscodex", "config.yaml")
+	userConfigDir := filepath.Dir(userConfigPath)
+
+	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+
+	var root yaml.Node
+	data, err := os.ReadFile(userConfigPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("read user config: %w", err)
+		}
+		root = yaml.Node{Kind: yaml.DocumentNode}
+		root.Content = []*yaml.Node{{Kind: yaml.MappingNode}}
+	} else {
+		if err := yaml.Unmarshal(data, &root); err != nil {
+			return fmt.Errorf("parse user config: %w", err)
+		}
+	}
+
+	if len(root.Content) == 0 {
+		root.Content = []*yaml.Node{{Kind: yaml.MappingNode}}
+	}
+
+	parts := strings.Split(key, ".")
+	if err := setYAMLPath(root.Content[0], parts, value); err != nil {
+		return err
+	}
+
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(userConfigPath, out, 0o600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	return nil
+}
+
+func setYAMLPath(node *yaml.Node, path []string, value string) error {
+	if len(path) == 0 {
+		return fmt.Errorf("empty path")
+	}
+
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected mapping node")
+	}
+
+	key := path[0]
+	remaining := path[1:]
+
+	for i := 0; i < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			if len(remaining) == 0 {
+				node.Content[i+1].Value = value
+				return nil
+			}
+			if node.Content[i+1].Kind != yaml.MappingNode {
+				node.Content[i+1] = &yaml.Node{Kind: yaml.MappingNode}
+			}
+			return setYAMLPath(node.Content[i+1], remaining, value)
+		}
+	}
+
+	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
+	if len(remaining) == 0 {
+		valueNode := &yaml.Node{Kind: yaml.ScalarNode, Value: value}
+		node.Content = append(node.Content, keyNode, valueNode)
+		return nil
+	}
+
+	valueNode := &yaml.Node{Kind: yaml.MappingNode}
+	node.Content = append(node.Content, keyNode, valueNode)
+	return setYAMLPath(valueNode, remaining, value)
+}
+
+func xdgConfigHomeLocal() string {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config")
+}

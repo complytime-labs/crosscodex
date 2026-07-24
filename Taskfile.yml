@@ -14,6 +14,11 @@ env:
   # which blocks this.
   GOTOOLCHAIN: auto
 
+  # Keep Go's build temp inside the workspace so the bind-mount's SELinux
+  # context (container_file_t) applies instead of usr_tmp_t from /tmp,
+  # which breaks cross-container file sharing.
+  GOTMPDIR: "{{.ROOT_DIR}}/.go-tmp"
+
   # When FIPS=1 (e.g., `task build FIPS=1`), all Go commands use
   # GOEXPERIMENT=boringcrypto for FIPS-validated cryptography.
   GOEXPERIMENT: '{{if eq .FIPS "1"}}boringcrypto{{end}}'
@@ -30,7 +35,7 @@ includes:
 
 vars:
   MODULE: github.com/complytime-labs/crosscodex
-  BUILD_DIR: "{{.ROOT_DIR}}/.build"
+  BUILD_DIR: "{{.ROOT_DIR}}/bin"
   TEST_DIR: "{{.ROOT_DIR}}/.test-output"
   FIPS: '{{.FIPS | default ""}}'
   GINKGOLEAF_FORMAT: '{{.GINKGOLEAF_FORMAT | default "jest"}}'

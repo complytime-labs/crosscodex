@@ -19,7 +19,8 @@ func xdgConfigHome() string {
 	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
 		return dir
 	}
-	return filepath.Join(os.Getenv("HOME"), ".config")
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config")
 }
 
 func userConfigDir() string {

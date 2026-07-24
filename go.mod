@@ -21,6 +21,7 @@ require (
 	github.com/onsi/gomega v1.42.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/secure-systems-lab/go-securesystemslib v0.11.0
+	github.com/spf13/cobra v1.10.2
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.44.0
@@ -33,6 +34,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0
 	go.opentelemetry.io/proto/otlp v1.10.0
 	golang.org/x/sync v0.22.0
+	golang.org/x/term v0.45.0
 	gonum.org/v1/gonum v0.17.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260713194154-142c488ef3d3
 	google.golang.org/grpc v1.82.0
@@ -328,7 +330,6 @@ require (
 	github.com/sourcegraph/go-diff v0.8.0 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.5.0 // indirect
-	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.12.0 // indirect
@@ -382,7 +383,6 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260708182218-49f421fb7959 // indirect
-	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect

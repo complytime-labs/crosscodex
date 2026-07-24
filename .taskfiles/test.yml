@@ -29,7 +29,7 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       # testgrpc contains only integration_grpc-tagged tests requiring a live
       # gRPC server — skip it during unit runs; use task test:integration:grpc.
-      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --skip-package testgrpc --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/...
+      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --skip-package testgrpc --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/... ./cmd/...
       - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/ginkgo-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
 
   fuzz:
