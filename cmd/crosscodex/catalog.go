@@ -84,12 +84,10 @@ Supported formats:
 		examples: []string{
 			"crosscodex catalog import nist-800-53.json",
 			"crosscodex catalog import --raw custom-controls.txt",
-			"crosscodex catalog import --tenant acme oscal-catalog.json",
 		},
 	})
 
 	cmd.Flags().Bool("raw", false, "Import as raw document (no OSCAL parsing)")
-	cmd.Flags().String("tenant", "", "Tenant context for the document")
 
 	return cmd
 }

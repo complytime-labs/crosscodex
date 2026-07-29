@@ -64,10 +64,9 @@ func newPromptListCmd(state *cliState) *cobra.Command {
 }
 
 func newPromptShowCmd(state *cliState) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Show a prompt template spec",
-		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if state.cfg == nil {
 				return fmt.Errorf("configuration not loaded")
@@ -97,6 +96,18 @@ func newPromptShowCmd(state *cliState) *cobra.Command {
 			)
 		},
 	}
+
+	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
+		noun:  "a prompt name",
+		find:  "crosscodex prompt list",
+		usage: "crosscodex prompt show <name>",
+		examples: []string{
+			"crosscodex prompt show classify",
+			"crosscodex prompt show relationship",
+		},
+	})
+
+	return cmd
 }
 
 func newPromptLayerCmd(state *cliState) *cobra.Command {

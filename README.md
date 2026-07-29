@@ -12,46 +12,37 @@ ______________________________________________________________________
 
 ## Status
 
-CrossCodex is in early development. Foundational, domain, and service packages are implemented and tested, protobuf service contracts define the inter-service API, and the CLI implements approximately 30 user-facing commands across project, config, catalog, run, results, prompt, version, and completion command groups with gRPC daemon connectivity and embedded single-node mode. See [Development](#development) below to build from source and run tests.
-
-| Package                | Status      | Summary                                                                                                                |
-|------------------------|-------------|------------------------------------------------------------------------------------------------------------------------|
-| **pkg/config**         | Implemented | XDG 9-layer configuration merge, YAML loading, validation with source tracking                                         |
-| **pkg/storage**        | Implemented | Local filesystem and S3 object storage with tenant isolation, atomic writes                                            |
-| **pkg/db**             | Implemented | PostgreSQL connection pool with tenant RLS, schema migrations, extension verification                                  |
-| **pkg/natsbus**        | Implemented | Dual-mode NATS client (embedded + external), tenant-scoped subjects, JetStream audit streams                           |
-| **pkg/tlsconfig**      | Implemented | Shared TLS config builder with FIPS enforcement, config merging, cert reload, dev PKI                                  |
-| **pkg/authn**          | Implemented | X.509 mTLS authentication, registry dispatch, audit emission, identity context propagation; Kerberos/SAML stubbed      |
-| **pkg/tenant**         | Implemented | Tenant ID validation, error sentinels, context propagation interface, gRPC interceptors                                |
-| **pkg/llmclient**      | Implemented | OpenAI-compatible LLM gateway client with credential resolution, retry, telemetry, and audit                           |
-| **pkg/analyzer**       | Implemented | Generic plugin interface, type-safe registry, DAG builder with Kahn's algorithm                                        |
-| **pkg/telemetry**      | Implemented | OpenTelemetry traces, metrics, structured log correlation, in-memory test provider                                     |
-| **pkg/attestation**    | Implemented | in-toto layout/link generation, verification, hash chains, FIPS enforcement, manifests                                 |
-| **pkg/oscal**          | Implemented | OSCAL catalog parsing, validation, decomposition, structuring, provenance tracking                                     |
-| **pkg/graphdb**        | Implemented | Apache AGE openCypher queries, entity retrieval, bulk operations, Cypher execution, temporal supersession              |
-| **pkg/vectordb**       | Implemented | pgvector similarity search for embeddings, property tests                                                              |
-| **pkg/prompt**         | Implemented | Prompt template loading, registry, renderer, merge logic                                                               |
-| **internal/synthesis** | Implemented | Viability ranking, quality assessment, DB persistence, OTel tracing                                                    |
-| **internal/graph**     | Implemented | Graph Service: gRPC RPCs, NATS event materialization, resource resolution, OTel tracing                                |
-| **internal/pipeline**  | Implemented | Pipeline Service: job orchestration, DAG execution, stage tracking, retry, in-toto attestation                         |
-| **cmd/crosscodex**     | Implemented | Cobra CLI with gRPC daemon connectivity, embedded single-node mode, project/catalog/run/results/prompt/config commands |
-
-Unit tests cover the implemented packages. Integration tests for `pkg/db`, `pkg/storage`, `pkg/natsbus`, `pkg/authn`, `pkg/llmclient`, `pkg/telemetry`, `pkg/vectordb`, and `pkg/graphdb` run against containerized services (`task test:integration:all`).
+CrossCodex is in early development. All foundational, domain, and service packages are implemented and tested. The CLI provides approximately 30 commands across project, catalog, run, results, prompt, version, and completion groups with gRPC daemon connectivity and embedded single-node mode. See [Development](#development) below to build from source and run tests.
 
 ## Quick Start
 
 ```sh
+# Prerequisites: Go >= 1.26, Task (taskfile.dev), container engine (podman or docker)
+
+# Build from source
+task build
+
+# Start the development database (PostgreSQL + AGE + pgvector)
+task dev:up
+
+# Configure the database connection (use the DSN printed by dev:up)
+<!-- secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- documentation example with dev-only credentials (user: postgres, password: integration, host: localhost) -->
+crosscodex config set database.dsn "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=disable"
+
+# Download official NIST OSCAL catalogs
+task fetch:oscal-docs
+
 # Initialize a project
 crosscodex project init
 
 # Import a compliance catalog
-crosscodex catalog import nist-800-53.json
+crosscodex catalog import catalogs/NIST_SP-800-53_rev5_catalog.json
 
-# Start an analysis job
-crosscodex run start oscal-catalog.json
+# List imported catalogs
+crosscodex catalog list
 
-# View analysis results
-crosscodex results summary <job-id>
+# Inspect a catalog
+crosscodex catalog inspect <catalog-id>
 ```
 
 Run `crosscodex --help` to see all available commands, or `crosscodex <command> --help` for command-specific usage.
@@ -138,7 +129,7 @@ flowchart TD
 
 ### Deployment Modes
 
-- **Embedded** -- All services in one process, PostgreSQL in container, local filesystem storage. Zero external dependencies beyond an LLM endpoint.
+- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. Analysis pipeline execution requires additional service backends (see issue #31).
 - **Quadlet** -- Systemd-managed containers with shared PostgreSQL, NATS, and MinIO. Deployment manifests planned under `deploy/`.
 - **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage.
 
@@ -159,6 +150,13 @@ Project directory:
   .crosscodex/
     config.yaml                  # Project-specific overrides
     prompts/                     # Custom prompt templates
+
+Additional XDG directories:
+  $XDG_DATA_HOME/crosscodex/
+    prompts/                     # User prompt template layers
+  $XDG_STATE_HOME/crosscodex/
+    pki/                         # Embedded daemon auto-generated TLS certificates
+    daemon.pid                   # Embedded daemon PID and port
 ```
 
 ### Configuration Resolution Order
@@ -247,6 +245,16 @@ synthesis:
     contested_warn: 0.20                  # Contested pairs warning threshold
     actionable_warn: 0.30                 # Actionable coverage warning threshold
 ```
+
+### Environment Variables
+
+The CLI recognizes these environment variables:
+
+| Variable              | Purpose                                    | Default              |
+|-----------------------|--------------------------------------------|----------------------|
+| `CROSSCODEX_ENDPOINT` | gRPC daemon address                        | `localhost:50051`    |
+| `CROSSCODEX_COLOR`    | Force color output (`1`) or disable (`0`)  | Auto-detect (isatty) |
+| `NO_COLOR`            | Disable color output (standard convention) | —                    |
 
 ## Development
 
@@ -337,8 +345,8 @@ Every layer enforces tenant isolation independently:
 
 CrossCodex supports dual builds (standard and FIPS) from the same source:
 
-- **FIPS build**: Red Hat UBI base images, BoringCrypto, approved cipher suites only
-- **Standard build**: Distroless images, Go stdlib crypto
+- **FIPS build**: BoringCrypto, approved cipher suites only (container image planned — Red Hat UBI base)
+- **Standard build**: Go stdlib crypto (container image planned — distroless base)
 - **Runtime enforcement**: `tls.fips.enabled: true` validates FIPS compliance
 
 ### Cryptographic Attestation
@@ -391,6 +399,30 @@ JetStream provides persistent audit streams:
 | **Events**    | 30 days    | Pipeline lifecycle, debugging           |
 
 See [Audit Streams Guide](docs/dev/audit-streams.md) for provenance headers, message inspection, and trace correlation.
+
+## Uninstall
+
+To fully remove CrossCodex, delete the binary and all data directories:
+
+```sh
+# Remove the binary (location depends on your install method)
+rm $(which crosscodex)
+
+# Remove configuration
+rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/crosscodex"
+
+# Remove data (prompt layers)
+rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/crosscodex"
+
+# Remove state (daemon PID, embedded TLS certificates)
+rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/crosscodex"
+
+# Remove project-level configuration (per project)
+rm -rf .crosscodex/
+
+# Remove shell completions (if installed)
+rm -f ~/.bash_completion.d/crosscodex
+```
 
 - **Issues**: [github.com/complytime-labs/crosscodex/issues](https://github.com/complytime-labs/crosscodex/issues)
 - **Discussions**: [github.com/complytime-labs/crosscodex/discussions](https://github.com/complytime-labs/crosscodex/discussions)

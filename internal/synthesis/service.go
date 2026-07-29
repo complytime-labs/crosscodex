@@ -2,7 +2,6 @@ package synthesis
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -334,8 +333,8 @@ func (s *Service) persistViability(ctx context.Context, span trace.Span, rows []
 		if rbErr := tx.Rollback(); rbErr != nil {
 			s.opts.logger.WarnContext(ctx, "transaction rollback failed", "error", rbErr)
 		}
-		// Check for PostgreSQL immutability trigger (check_violation).
-		if isPgErrorCode(queryErr, "23514") {
+		// Check for PostgreSQL immutability trigger (restrict_violation).
+		if db.IsPgErrorCode(queryErr, "23001") {
 			s.opts.logger.DebugContext(ctx, "immutability violation", "error", queryErr)
 			wrapped := fmt.Errorf("viability update blocked by immutability constraint — transaction rolled back, no rows updated: %w", ErrImmutabilityViolation)
 			s.recordError(ctx, "db")
@@ -367,7 +366,7 @@ func (s *Service) persistViability(ctx context.Context, span trace.Span, rows []
 		if rbErr := tx.Rollback(); rbErr != nil {
 			s.opts.logger.WarnContext(ctx, "transaction rollback failed", "error", rbErr)
 		}
-		if isPgErrorCode(rowsErr, "23514") {
+		if db.IsPgErrorCode(rowsErr, "23001") {
 			s.opts.logger.DebugContext(ctx, "immutability violation", "error", rowsErr)
 			wrapped := fmt.Errorf("viability update blocked by immutability constraint — transaction rolled back, no rows updated: %w", ErrImmutabilityViolation)
 			s.recordError(ctx, "db")
@@ -398,20 +397,6 @@ func (s *Service) persistViability(ctx context.Context, span trace.Span, rows []
 	}
 
 	return updated, nil
-}
-
-// isPgErrorCode checks whether err (or any wrapped error) carries a
-// PostgreSQL error with the given SQLSTATE code. Uses the same interface-based
-// approach as pkg/db/errors.go to avoid importing pgconn directly.
-func isPgErrorCode(err error, code string) bool {
-	type pgErr interface {
-		SQLState() string
-	}
-	var pe pgErr
-	if errors.As(err, &pe) {
-		return pe.SQLState() == code
-	}
-	return false
 }
 
 // goSeverityToProto converts a Go DiagnosticSeverity (0-based iota) to the

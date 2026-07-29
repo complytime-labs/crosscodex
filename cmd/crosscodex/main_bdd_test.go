@@ -155,7 +155,6 @@ var _ = Describe("Root Command", func() {
 
 					Expect(filepath.Join(tmpDir, ".crosscodex", "config.yaml")).To(BeAnExistingFile())
 					Expect(filepath.Join(tmpDir, ".crosscodex", "prompts")).To(BeADirectory())
-					Expect(filepath.Join(tmpDir, ".crosscodex", "reviews")).To(BeADirectory())
 				})
 
 				It("errors when .crosscodex already exists", func() {
@@ -256,8 +255,8 @@ var _ = Describe("Root Command", func() {
 					Expect(err).NotTo(HaveOccurred())
 					var result map[string]any
 					Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
-					Expect(result).To(HaveKey("Output"))
-					Expect(result).To(HaveKey("Endpoint"))
+					Expect(result).To(HaveKey("output"))
+					Expect(result).To(HaveKey("endpoint"))
 				})
 			})
 
@@ -528,6 +527,7 @@ var _ = Describe("Root Command", func() {
 					ContainSubstring("read file"),
 					ContainSubstring("cannot reach"),
 					ContainSubstring("failed"),
+					ContainSubstring("database not configured"),
 				))
 			})
 		})

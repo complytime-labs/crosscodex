@@ -5,9 +5,11 @@ package db_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
@@ -346,6 +348,7 @@ var _ = Describe("Database Package", Ordered, func() {
 				db.ErrMigrationDirty,
 				db.ErrPoolNotReady,
 				db.ErrImmutableRecord,
+				db.ErrTenantGraphViolation,
 			}
 
 			By("checking all sentinels are non-nil")
@@ -558,6 +561,58 @@ var _ = Describe("Database Package", Ordered, func() {
 			row := db.ExportNewErrRow(db.ErrTenantRequired)
 			err := row.Scan()
 			Expect(errors.Is(err, db.ErrTenantRequired)).To(BeTrue())
+		})
+	})
+
+	Describe("IsPgErrorCode", func() {
+		It("returns true when the error carries the given SQLSTATE", func() {
+			pgErr := &pgconn.PgError{Code: "23001"}
+			Expect(db.IsPgErrorCode(pgErr, "23001")).To(BeTrue())
+		})
+
+		It("returns false for a different SQLSTATE", func() {
+			pgErr := &pgconn.PgError{Code: "23505"}
+			Expect(db.IsPgErrorCode(pgErr, "23001")).To(BeFalse())
+		})
+
+		It("returns true when the PgError is wrapped", func() {
+			pgErr := &pgconn.PgError{Code: "42501"}
+			wrapped := fmt.Errorf("outer: %w", pgErr)
+			Expect(db.IsPgErrorCode(wrapped, "42501")).To(BeTrue())
+		})
+
+		It("returns false for a nil error", func() {
+			Expect(db.IsPgErrorCode(nil, "23001")).To(BeFalse())
+		})
+
+		It("returns false for a non-PgError", func() {
+			Expect(db.IsPgErrorCode(errors.New("plain"), "23001")).To(BeFalse())
+		})
+	})
+
+	Describe("ClassifyPgError", func() {
+		It("classifies 23001 as ErrImmutableRecord", func() {
+			pgErr := &pgconn.PgError{Code: "23001", Message: "immutable"}
+			classified := db.ClassifyPgError(pgErr)
+			Expect(errors.Is(classified, db.ErrImmutableRecord)).To(BeTrue())
+		})
+
+		It("classifies 42501 as ErrTenantGraphViolation", func() {
+			pgErr := &pgconn.PgError{Code: "42501", Message: "graph mismatch"}
+			classified := db.ClassifyPgError(pgErr)
+			Expect(errors.Is(classified, db.ErrTenantGraphViolation)).To(BeTrue())
+		})
+
+		It("returns the original error for unrecognized codes", func() {
+			pgErr := &pgconn.PgError{Code: "23505", Message: "unique"}
+			classified := db.ClassifyPgError(pgErr)
+			Expect(classified).To(Equal(pgErr))
+		})
+
+		It("returns the original error for non-PgError", func() {
+			plain := errors.New("plain error")
+			classified := db.ClassifyPgError(plain)
+			Expect(classified).To(Equal(plain))
 		})
 	})
 

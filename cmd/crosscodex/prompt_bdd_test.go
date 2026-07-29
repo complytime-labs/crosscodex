@@ -50,7 +50,7 @@ var _ = Describe("Prompt Commands", func() {
 			cmd.SetArgs([]string{"prompt", "show"})
 			err := cmd.Execute()
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("arg"))
+			Expect(err.Error()).To(ContainSubstring("requires"))
 		})
 
 		It("accepts a prompt name and fails with resolution error, not arg error", func() {

@@ -27,3 +27,11 @@ ignore:
     package:
       name: github.com/docker/docker
       type: go-module
+  # GO-2026-5932 affects only the deprecated golang.org/x/crypto/openpgp
+  # subpackage, which this project does not import. No fixed version exists
+  # (openpgp is permanently deprecated). govulncheck confirms no reachable
+  # call path.
+  - vulnerability: GO-2026-5932
+    package:
+      name: golang.org/x/crypto
+      type: go-module

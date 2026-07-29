@@ -37,7 +37,7 @@ require (
 	golang.org/x/term v0.45.0
 	gonum.org/v1/gonum v0.17.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260713194154-142c488ef3d3
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.3.0
@@ -167,9 +167,7 @@ require (
 	github.com/dominikbraun/graph v0.23.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
-	github.com/envoyproxy/go-control-plane v0.14.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
-	github.com/envoyproxy/go-control-plane/ratelimit v0.1.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
@@ -211,7 +209,7 @@ require (
 	github.com/golangci/rowserrcheck v0.0.0-20260419091836-c5f79b8a11ba // indirect
 	github.com/golangci/swaggoswag v0.0.0-20250504205917-77f2aca3143e // indirect
 	github.com/golangci/unconvert v0.0.0-20250410112200-a129a6e6413e // indirect
-	github.com/google/cel-go v0.28.1 // indirect
+	github.com/google/cel-go v0.29.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry v0.21.6 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect

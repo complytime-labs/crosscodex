@@ -58,14 +58,12 @@ tasks:
     cmds:
       - mkdir -p {{.BUILD_DIR}} {{.ROOT_DIR}}/.go-tmp
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex {{.ROOT_DIR}}/cmd/crosscodex
-      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodexd {{.ROOT_DIR}}/cmd/crosscodexd
     sources:
       - "{{.ROOT_DIR}}/**/*.go"
       - "{{.ROOT_DIR}}/go.mod"
       - "{{.ROOT_DIR}}/go.sum"
     generates:
       - "{{.BUILD_DIR}}/crosscodex"
-      - "{{.BUILD_DIR}}/crosscodexd"
 
   lint:
     desc: Run linters
@@ -118,7 +116,7 @@ tasks:
     cmds:
       - go tool govulncheck {{.ROOT_DIR}}/...
 
-  fetch-schemas:
+  fetch:schemas:
     desc: Fetch OSCAL and gemara schemas
     vars:
       OSCAL_VERSION:
@@ -128,3 +126,80 @@ tasks:
       SCHEMAS_DIR: "{{.ROOT_DIR}}/schemas"
     cmds:
       - bash "{{.ROOT_DIR}}/scripts/fetch-schemas.sh" "{{.OSCAL_VERSION}}" "{{.GEMARA_VERSION}}" "{{.SCHEMAS_DIR}}"
+
+  fetch:oscal-docs:
+    desc: Download pinned OSCAL catalog documents for development
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/fetch-oscal-docs.sh" "{{.ROOT_DIR}}/catalogs/oscal-sources.yaml"
+
+  up:
+    desc: Start the development database (PostgreSQL + AGE + pgvector)
+    vars:
+      CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+      COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.yaml"
+      COMPOSE_CMD:
+        sh: |
+          engine="{{.CONTAINER_ENGINE}}"
+          case "$engine" in
+            podman)
+              if command -v podman-compose >/dev/null 2>&1; then
+                echo "podman-compose"
+              elif podman compose version >/dev/null 2>&1; then
+                echo "podman compose"
+              else
+                echo "MISSING"
+              fi
+              ;;
+            docker)
+              if docker compose version >/dev/null 2>&1; then
+                echo "docker compose"
+              else
+                echo "MISSING"
+              fi
+              ;;
+            *) echo "MISSING" ;;
+          esac
+    preconditions:
+      - sh: '[ "{{.COMPOSE_CMD}}" != "MISSING" ]'
+        msg: "Neither 'docker compose' nor 'podman-compose' found."
+    cmds:
+      - task: :test:integration:build-db-image
+      - task: :test:integration:generate-certs
+      - task: :test:integration:prepare-cert-volume
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile db up -d"
+      - bash "{{.ROOT_DIR}}/scripts/integration-health.sh" "db" "{{.CONTAINER_ENGINE}}" ""
+      - echo ""
+      - echo "Development database is running on localhost:15432"
+      - echo ""
+      - echo "Configure CrossCodex to use it:"
+      # secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- dev-only example DSN for local container (user: postgres, password: integration)
+      - echo "  crosscodex config set database.dsn \"postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.ROOT_DIR}}/.test-output/certs/ca.pem&sslcert={{.ROOT_DIR}}/.test-output/certs/client.pem&sslkey={{.ROOT_DIR}}/.test-output/certs/client-key.pem\""
+
+  down:
+    desc: Stop the development database
+    vars:
+      CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+    cmds:
+      - |
+        running=$({{.CONTAINER_ENGINE}} ps -a --filter "name=crosscodex-test-db" --format "{{`{{.Names}}`}}" 2>/dev/null || true)
+        for c in $running; do
+          {{.CONTAINER_ENGINE}} stop "$c" 2>/dev/null || true
+          {{.CONTAINER_ENGINE}} rm -f "$c" 2>/dev/null || true
+        done
+
+  status:
+    desc: Check development database status
+    vars:
+      CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+    cmds:
+      - |
+        state=$({{.CONTAINER_ENGINE}} inspect --format '{{`{{.State.Status}}`}}' crosscodex-test-db 2>/dev/null || echo "not found")
+        if [ "$state" = "running" ]; then
+          health=$({{.CONTAINER_ENGINE}} inspect --format '{{`{{.State.Health.Status}}`}}' crosscodex-test-db 2>/dev/null || echo "unknown")
+          echo "Database: running (health: $health)"
+          echo "Endpoint: localhost:15432"
+        else
+          echo "Database: $state"
+          echo ""
+          echo "Start it with: task dev:up"
+        fi
