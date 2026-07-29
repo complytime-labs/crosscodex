@@ -990,10 +990,10 @@ var _ = Describe("Service", func() {
 			Expect(inputs).To(Equal(inputsBefore))
 		})
 
-		It("returns ErrImmutabilityViolation for PG error code 23514", func() {
+		It("returns ErrImmutabilityViolation for PG error code 23001", func() {
 			pgErr := &pgconn.PgError{
-				Code:    "23514",
-				Message: "violates check constraint",
+				Code:    "23001",
+				Message: "restrict_violation",
 			}
 			mockDB = newErrorMockDB(pgErr)
 			svc = synthesis.New(mockDB, cfg, actionableTypes,
@@ -1010,6 +1010,11 @@ var _ = Describe("Service", func() {
 			Expect(mockDB.tx.rollbackCount).To(Equal(1))
 			// Part 3: data unchanged after failure
 			Expect(inputs).To(Equal(inputsBefore))
+		})
+
+		It("ErrImmutabilityViolation wraps db.ErrImmutableRecord", func() {
+			Expect(errors.Is(synthesis.ErrImmutabilityViolation, db.ErrImmutableRecord)).To(BeTrue(),
+				"domain sentinel must wrap the base db sentinel")
 		})
 
 		It("returns ErrDBUpdate when tx.Commit() fails", func() {

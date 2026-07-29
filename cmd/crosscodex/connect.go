@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,9 +25,10 @@ const (
 )
 
 type embeddedDaemon struct {
-	server  *gateway.Server
-	port    int
-	pidFile string
+	server    *gateway.Server
+	port      int
+	pidFile   string
+	resources *embeddedResources
 }
 
 func (d *embeddedDaemon) stop() {
@@ -39,6 +41,9 @@ func (d *embeddedDaemon) stop() {
 		if err := d.server.Shutdown(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon shutdown error: %v\n", err)
 		}
+	}
+	if d.resources != nil {
+		d.resources.close()
 	}
 	if d.pidFile != "" {
 		os.Remove(d.pidFile)
@@ -92,59 +97,99 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 		return fmt.Errorf("create state directory: %w", err)
 	}
 
-	svc := gateway.NewService()
+	if state.fullCfg == nil {
+		return fmt.Errorf("configuration not loaded")
+	}
+
+	// Bootstrap PKI
+	pkiDir := filepath.Join(stateDir, "pki")
+	if err := ensurePKI(pkiDir); err != nil {
+		return fmt.Errorf("bootstrap PKI: %w", err)
+	}
+	paths := pkiPaths(pkiDir)
+
+	// Create WARN-level logger to suppress INFO noise
+	embeddedLogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	}))
+
+	// Build service with real backends
+	svc, resources, err := buildEmbeddedService(ctx, state.fullCfg, embeddedLogger)
+	if err != nil {
+		return err
+	}
+
+	// Configure TLS for the server
+	tlsCfg := config.TLSConfig{
+		Mode: "mutual",
+		CA:   paths.CACert,
+		Cert: paths.ServerCert,
+		Key:  paths.ServerKey,
+	}
+
 	srv, err := gateway.NewServer(ctx, gateway.ServerConfig{
 		GRPCAddr: "localhost:0",
 		HTTPAddr: "localhost:0",
+		TLS:      tlsCfg,
 		Service:  svc,
+		Logger:   embeddedLogger,
 	})
 	if err != nil {
+		resources.close()
 		return fmt.Errorf("create embedded daemon: %w", err)
 	}
 
 	if err := srv.Start(); err != nil {
+		resources.close()
 		return fmt.Errorf("start embedded daemon: %w", err)
 	}
 
 	grpcAddr := srv.GRPCAddr()
 	_, portStr, err := splitHostPort(grpcAddr)
 	if err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		resources.close()
 		return fmt.Errorf("parse gRPC address: %w", err)
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		resources.close()
 		return fmt.Errorf("parse port: %w", err)
 	}
 
 	if err := writePIDFile(pidPath, port); err != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		if shutErr := srv.Shutdown(ctx); shutErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon shutdown error: %v\n", shutErr)
-		}
+		_ = srv.Shutdown(shutdownCtx)
+		resources.close()
 		return fmt.Errorf("write PID file: %w", err)
 	}
 
+	// Connect with mTLS
 	var conn *grpc.ClientConn
 	for i := range healthRetries {
 		time.Sleep(healthBaseBackoff * time.Duration(1<<i))
-		conn, err = dialGRPC(ctx, grpcAddr)
+		conn, err = dialGRPCWithTLS(grpcAddr, paths)
 		if err == nil {
 			state.conn = conn
 			state.client = pb.NewGatewayServiceClient(conn)
 			if healthCheck(ctx, state.client) {
-				state.daemon = &embeddedDaemon{server: srv, port: port, pidFile: pidPath}
+				state.daemon = &embeddedDaemon{server: srv, port: port, pidFile: pidPath, resources: resources}
 				return nil
 			}
 			conn.Close()
 		}
 	}
 
-	ctx2, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if shutErr := srv.Shutdown(ctx2); shutErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon shutdown error: %v\n", shutErr)
-	}
+	_ = srv.Shutdown(shutdownCtx)
+	resources.close()
 	os.Remove(pidPath)
 	return fmt.Errorf("embedded daemon started but failed health check after %d retries", healthRetries)
 }
@@ -236,6 +281,7 @@ func loadConfig(state *cliState, profile string) error {
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	state.fullCfg = cfg
 	clientCfg := cfg.CLIConfig()
 	state.cfg = &clientCfg
 	return nil

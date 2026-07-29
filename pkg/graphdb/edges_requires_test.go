@@ -1,10 +1,11 @@
 //go:build integration
 
+// Suite bootstrap lives in graphdb_integration_bdd_test.go — do NOT add RunSpecs here.
+
 package graphdb_test
 
 import (
 	"context"
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -12,11 +13,6 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 )
-
-func TestRequiresEdge(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Requires Edge Suite")
-}
 
 var _ = Describe("RequiresEdge", func() {
 	Describe("CreateRequiresEdge", func() {

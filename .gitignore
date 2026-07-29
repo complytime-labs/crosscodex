@@ -45,9 +45,12 @@ credentials/
 # Worktrees
 .worktrees/
 
-# Downloaded schemas (fetch with: task fetch-schemas)
+# Downloaded schemas (fetch with: task fetch:schemas)
 schemas/*
 !schemas/README.md
+
+# Downloaded OSCAL catalogs (fetch with: task fetch:oscal-docs)
+catalogs/*.json
 
 # Agent tool directories (local only)
 .claude

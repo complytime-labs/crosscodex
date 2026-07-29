@@ -12,10 +12,11 @@ import (
 )
 
 type cliState struct {
-	cfg    *config.ClientConfig
-	conn   *grpc.ClientConn
-	client pb.GatewayServiceClient
-	daemon *embeddedDaemon
+	cfg     *config.ClientConfig
+	fullCfg *config.Config
+	conn    *grpc.ClientConn
+	client  pb.GatewayServiceClient
+	daemon  *embeddedDaemon
 }
 
 func newRootCmd() *cobra.Command {
@@ -87,7 +88,7 @@ Get started:
 	addTo("analysis", newRunCmd(state))
 	addTo("analysis", newResultsCmd(state))
 	addTo("prompt", newPromptCmd(state))
-	addTo("connection", newVersionCmd(state))
+	addTo("additional", newVersionCmd(state))
 	addTo("additional", newCompletionCmd())
 
 	root.SetHelpCommandGroupID("additional")

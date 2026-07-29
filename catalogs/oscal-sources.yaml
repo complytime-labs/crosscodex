@@ -1,0 +1,14 @@
+# Pinned OSCAL catalog documents from usnistgov/oscal-content.
+# The fetch script downloads each document idempotently — existing
+# files with valid OSCAL structure are skipped.
+base_url: https://raw.githubusercontent.com/usnistgov/oscal-content/main
+
+documents:
+  - path: nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json
+    local: NIST_SP-800-53_rev5_catalog.json
+
+  - path: nist.gov/SP800-171/rev3/json/NIST_SP800-171_rev3_catalog.json
+    local: NIST_SP800-171_rev3_catalog.json
+
+  - path: nist.gov/CSF/v2.0/json/NIST_CSF_v2.0_catalog.json
+    local: NIST_CSF_v2.0_catalog.json

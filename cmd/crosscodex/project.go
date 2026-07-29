@@ -32,7 +32,7 @@ func newProjectInitCmd(_ *cliState) *cobra.Command {
 		Use:   "init",
 		Short: "Initialize a new CrossCodex project",
 		Long: `Create a new .crosscodex directory with configuration template
-and required subdirectories (prompts/, reviews/).`,
+and required subdirectories (prompts/).`,
 		RunE: runProjectInit,
 	}
 
@@ -71,10 +71,6 @@ func runProjectInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create prompts directory: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Join(ccxDir, "reviews"), 0o755); err != nil {
-		return fmt.Errorf("create reviews directory: %w", err)
-	}
-
 	configPath := filepath.Join(ccxDir, "config.yaml")
 	configTemplate := `# CrossCodex project configuration
 #
@@ -107,7 +103,6 @@ func runProjectInit(cmd *cobra.Command, args []string) error {
 		"path":       absDir,
 		"config":     configPath,
 		"prompt_dir": filepath.Join(ccxDir, "prompts"),
-		"review_dir": filepath.Join(ccxDir, "reviews"),
 	})
 }
 

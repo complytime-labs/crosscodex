@@ -30,32 +30,32 @@ type Config struct {
 
 // LLMConfig configures the LLM gateway client.
 type LLMConfig struct {
-	GatewayURL     string   `yaml:"gateway_url"`
-	GatewayMode    bool     `yaml:"gateway_mode"`
-	DefaultModel   string   `yaml:"default_model"`
-	EmbeddingModel string   `yaml:"embedding_model"`
-	APIKeyRef      string   `yaml:"api_key_ref"`
-	AllowedModels  []string `yaml:"allowed_models"`
-	MaxRetries     int      `yaml:"max_retries"`
-	Timeout        int      `yaml:"timeout"`
+	GatewayURL     string   `yaml:"gateway_url" json:"gateway_url"`
+	GatewayMode    bool     `yaml:"gateway_mode" json:"gateway_mode"`
+	DefaultModel   string   `yaml:"default_model" json:"default_model"`
+	EmbeddingModel string   `yaml:"embedding_model" json:"embedding_model"`
+	APIKeyRef      string   `yaml:"api_key_ref" json:"api_key_ref"`
+	AllowedModels  []string `yaml:"allowed_models" json:"allowed_models"`
+	MaxRetries     int      `yaml:"max_retries" json:"max_retries"`
+	Timeout        int      `yaml:"timeout" json:"timeout"`
 	// TenantOverrides maps tenant IDs (must satisfy pkg/tenant.ValidateTenantID)
 	// to per-tenant LLM config overrides. Nil pointer fields inherit the global
 	// value. AllowedModels replaces (not merges with) the global list when
 	// set.
-	TenantOverrides map[string]LLMOverride `yaml:"tenant_overrides"`
+	TenantOverrides map[string]LLMOverride `yaml:"tenant_overrides" json:"tenant_overrides"`
 }
 
 // LLMOverride allows per-tenant LLM settings.
 // Nil pointer fields inherit the global LLMConfig value.
 // AllowedModels replaces (not merges with) the global list when non-nil.
 type LLMOverride struct {
-	GatewayURL     *string  `yaml:"gateway_url"`
-	DefaultModel   *string  `yaml:"default_model"`
-	EmbeddingModel *string  `yaml:"embedding_model"`
-	APIKeyRef      *string  `yaml:"api_key_ref"`
-	AllowedModels  []string `yaml:"allowed_models"`
-	MaxRetries     *int     `yaml:"max_retries"`
-	Timeout        *int     `yaml:"timeout"`
+	GatewayURL     *string  `yaml:"gateway_url" json:"gateway_url"`
+	DefaultModel   *string  `yaml:"default_model" json:"default_model"`
+	EmbeddingModel *string  `yaml:"embedding_model" json:"embedding_model"`
+	APIKeyRef      *string  `yaml:"api_key_ref" json:"api_key_ref"`
+	AllowedModels  []string `yaml:"allowed_models" json:"allowed_models"`
+	MaxRetries     *int     `yaml:"max_retries" json:"max_retries"`
+	Timeout        *int     `yaml:"timeout" json:"timeout"`
 }
 
 // LLMTenantConfig holds the fully resolved LLM settings for a tenant.
@@ -128,27 +128,27 @@ type ObjectStorageConfig struct {
 
 // TLSConfig configures TLS certificates and mode.
 type TLSConfig struct {
-	Mode        string                 `yaml:"mode"`
-	CA          string                 `yaml:"ca"`
-	Cert        string                 `yaml:"cert"`
-	Key         string                 `yaml:"key"`
-	FIPS        FIPSConfig             `yaml:"fips"`
-	CipherAllow []string               `yaml:"cipher_allow"` // Substring-match cipher allowlist
-	CipherDeny  []string               `yaml:"cipher_deny"`  // Substring-match cipher denylist
-	Targets     map[string]TLSOverride `yaml:"targets"`
+	Mode        string                 `yaml:"mode" json:"mode"`
+	CA          string                 `yaml:"ca" json:"ca"`
+	Cert        string                 `yaml:"cert" json:"cert"`
+	Key         string                 `yaml:"key" json:"key"`
+	FIPS        FIPSConfig             `yaml:"fips" json:"fips"`
+	CipherAllow []string               `yaml:"cipher_allow" json:"cipher_allow"` // Substring-match cipher allowlist
+	CipherDeny  []string               `yaml:"cipher_deny" json:"cipher_deny"`   // Substring-match cipher denylist
+	Targets     map[string]TLSOverride `yaml:"targets" json:"targets"`
 }
 
 // FIPSConfig controls FIPS 140 enforcement.
 type FIPSConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 // TLSOverride holds per-target TLS overrides that merge with global TLS defaults.
 type TLSOverride struct {
-	Mode string `yaml:"mode"`
-	CA   string `yaml:"ca"`
-	Cert string `yaml:"cert"`
-	Key  string `yaml:"key"`
+	Mode string `yaml:"mode" json:"mode"`
+	CA   string `yaml:"ca" json:"ca"`
+	Cert string `yaml:"cert" json:"cert"`
+	Key  string `yaml:"key" json:"key"`
 }
 
 // TenantsConfig configures multi-tenant behavior.
@@ -231,8 +231,8 @@ type CLISettings struct {
 
 // LoggingConfig configures structured logging.
 type LoggingConfig struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
+	Level  string `yaml:"level" json:"level"`
+	Format string `yaml:"format" json:"format"`
 }
 
 // ObservabilityConfig configures OpenTelemetry tracing and metrics export.
@@ -345,31 +345,31 @@ func (a *AttestationConfig) ForTenant(tenantID string) AttestationTenantConfig {
 
 // PromptConfig configures prompt template resolution and rendering.
 type PromptConfig struct {
-	CaptureContent  bool                      `yaml:"capture_content"`
-	AllowCommands   bool                      `yaml:"allow_commands"`
-	LayerPaths      []string                  `yaml:"layer_paths"`
-	Layers          PromptLayerConfig         `yaml:"layers"`
-	TenantOverrides map[string]PromptOverride `yaml:"tenant_overrides"`
+	CaptureContent  bool                      `yaml:"capture_content" json:"capture_content"`
+	AllowCommands   bool                      `yaml:"allow_commands" json:"allow_commands"`
+	LayerPaths      []string                  `yaml:"layer_paths" json:"layer_paths"`
+	Layers          PromptLayerConfig         `yaml:"layers" json:"layers"`
+	TenantOverrides map[string]PromptOverride `yaml:"tenant_overrides" json:"tenant_overrides"`
 }
 
 // PromptLayerConfig controls the prompt layer stack.
 type PromptLayerConfig struct {
-	Enabled bool               `yaml:"enabled"`
-	Order   []PromptLayerEntry `yaml:"order"`
+	Enabled bool               `yaml:"enabled" json:"enabled"`
+	Order   []PromptLayerEntry `yaml:"order" json:"order"`
 }
 
 // PromptLayerEntry configures a single layer in the prompt resolution stack.
 type PromptLayerEntry struct {
-	ID            string `yaml:"id"`
-	Merge         string `yaml:"merge"`
-	SliceStrategy string `yaml:"slice_strategy"`
+	ID            string `yaml:"id" json:"id"`
+	Merge         string `yaml:"merge" json:"merge"`
+	SliceStrategy string `yaml:"slice_strategy" json:"slice_strategy"`
 }
 
 // PromptOverride allows per-tenant prompt settings.
 // Nil pointer fields inherit the global PromptConfig value.
 type PromptOverride struct {
-	CaptureContent *bool `yaml:"capture_content"`
-	AllowCommands  *bool `yaml:"allow_commands"`
+	CaptureContent *bool `yaml:"capture_content" json:"capture_content"`
+	AllowCommands  *bool `yaml:"allow_commands" json:"allow_commands"`
 }
 
 // PromptTenantConfig holds the fully resolved prompt settings for a tenant.
@@ -733,13 +733,13 @@ type DaemonConfig struct {
 
 // ClientConfig is the derived view for the crosscodex CLI.
 type ClientConfig struct {
-	Output   string
-	NoColor  bool
-	Endpoint string
-	LLM      LLMConfig
-	TLS      TLSConfig
-	Logging  LoggingConfig
-	Prompt   PromptConfig
+	Output   string        `json:"output"`
+	NoColor  bool          `json:"nocolor"`
+	Endpoint string        `json:"endpoint"`
+	LLM      LLMConfig     `json:"llm"`
+	TLS      TLSConfig     `json:"tls"`
+	Logging  LoggingConfig `json:"logging"`
+	Prompt   PromptConfig  `json:"prompt"`
 }
 
 // ServiceConfig returns the daemon-oriented view of this configuration.

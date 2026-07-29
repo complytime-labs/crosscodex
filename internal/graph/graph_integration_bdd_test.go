@@ -2,9 +2,10 @@
 
 package graph_test
 
+// Suite bootstrap lives in resolver_bdd_test.go — do NOT add RunSpecs here.
+
 import (
 	"context"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -17,11 +18,6 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 )
-
-func TestGraphIntegrationBDD(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Graph Service Integration BDD Suite")
-}
 
 var _ = Describe("Graph Service Integration", Ordered, func() {
 	const (

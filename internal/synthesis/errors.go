@@ -1,6 +1,11 @@
 package synthesis
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/complytime-labs/crosscodex/pkg/db"
+)
 
 // ErrInvalidInput indicates a SynthesisInput failed validation.
 var ErrInvalidInput = errors.New("synthesis: invalid input")
@@ -16,4 +21,4 @@ var ErrDBNoRowsAffected = errors.New("synthesis: no rows affected by viability u
 
 // ErrImmutabilityViolation indicates the database immutability trigger
 // rejected the update (parent job is completed).
-var ErrImmutabilityViolation = errors.New("synthesis: immutability violation — parent job is completed; to update viability, create a new job instead of modifying a completed one")
+var ErrImmutabilityViolation = fmt.Errorf("synthesis: immutability violation — parent job is completed; to update viability, create a new job instead of modifying a completed one: %w", db.ErrImmutableRecord)
