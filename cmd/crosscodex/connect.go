@@ -293,6 +293,7 @@ var localCommands = map[string]bool{
 	"project config":        true,
 	"project status":        true,
 	"config show":           true,
+	"config get":            true,
 	"config set":            true,
 	"config profiles":       true,
 	"catalog validate":      true,

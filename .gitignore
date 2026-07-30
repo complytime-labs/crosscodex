@@ -61,3 +61,6 @@ megalinter-reports/
 
 # Planning Cruft
 docs/superpowers/
+
+# Crosscodex Project Material
+.crosscodex/

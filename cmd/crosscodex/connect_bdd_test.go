@@ -99,6 +99,7 @@ var _ = Describe("Connection Management", func() {
 
 			// Multi-word local commands (as returned by cmd.CommandPath())
 			Entry("crosscodex config show", "crosscodex config show", false),
+			Entry("crosscodex config get", "crosscodex config get", false),
 			Entry("crosscodex catalog validate", "crosscodex catalog validate", false),
 			Entry("crosscodex prompt list", "crosscodex prompt list", false),
 			Entry("crosscodex completion bash", "crosscodex completion bash", false),

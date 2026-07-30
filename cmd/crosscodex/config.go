@@ -21,6 +21,7 @@ func newConfigCmd(state *cliState) *cobra.Command {
 	}
 
 	cmd.AddCommand(newConfigShowCmd(state))
+	cmd.AddCommand(newConfigGetCmd(state))
 	cmd.AddCommand(newConfigSetCmd(state))
 	cmd.AddCommand(newConfigProfilesCmd(state))
 
@@ -60,6 +61,96 @@ func newConfigShowCmd(state *cliState) *cobra.Command {
 	cmd.Flags().String("section", "", "filter output to a specific top-level key (e.g., database, server, tls)")
 
 	return cmd
+}
+
+func newConfigGetCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "get <key>",
+		Short: "Get a configuration value by key",
+		Long: `Get a configuration value from the resolved config using dot-notation.
+
+Returns the scalar value directly for leaf keys, or a YAML subtree for
+struct/map keys. Use --json for machine-readable output.
+
+Key format uses dot-notation matching yaml tags (e.g., database.dsn, cli.output).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := args[0]
+
+			val, err := getConfigValue(state.fullCfg, key)
+			if err != nil {
+				return err
+			}
+
+			if isScalar(val) {
+				return emit(cmd, func(w io.Writer, color bool) {
+					fmt.Fprintf(w, "%v\n", val)
+				}, val)
+			}
+
+			return emit(cmd, func(w io.Writer, color bool) {
+				data, err := yaml.Marshal(val)
+				if err != nil {
+					fmt.Fprintf(w, "Error marshaling config: %v\n", err)
+					return
+				}
+				if _, err = w.Write(data); err != nil {
+					fmt.Fprintf(w, "Error writing config: %v\n", err)
+				}
+			}, val)
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
+		noun:  "a configuration key",
+		find:  "crosscodex config show",
+		usage: "crosscodex config get <key>",
+		examples: []string{
+			"crosscodex config get database.dsn",
+			"crosscodex config get database",
+			"crosscodex config get cli.output",
+		},
+	})
+
+	return cmd
+}
+
+func getConfigValue(cfg *config.Config, key string) (any, error) {
+	parts := strings.Split(key, ".")
+	current := reflect.ValueOf(cfg)
+
+	for _, part := range parts {
+		if current.Kind() == reflect.Pointer {
+			current = current.Elem()
+		}
+		if current.Kind() != reflect.Struct {
+			return nil, fmt.Errorf("key %q not found in resolved configuration", key)
+		}
+
+		t := current.Type()
+		found := false
+		for fi := range t.NumField() {
+			tag, _, _ := strings.Cut(t.Field(fi).Tag.Get("yaml"), ",")
+			if tag == part {
+				current = current.Field(fi)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("key %q not found in resolved configuration", key)
+		}
+	}
+
+	return current.Interface(), nil
+}
+
+func isScalar(v any) bool {
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Struct, reflect.Map, reflect.Slice, reflect.Array:
+		return false
+	default:
+		return true
+	}
 }
 
 func newConfigSetCmd(_ *cliState) *cobra.Command {
