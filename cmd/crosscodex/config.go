@@ -5,8 +5,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -26,13 +28,24 @@ func newConfigCmd(state *cliState) *cobra.Command {
 }
 
 func newConfigShowCmd(state *cliState) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show resolved configuration",
 		Long:  `Show the resolved configuration from all layers (system, user, project, environment).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			section, _ := cmd.Flags().GetString("section")
+
+			var target any = state.fullCfg
+			if section != "" {
+				extracted, err := extractSection(state.fullCfg, section)
+				if err != nil {
+					return err
+				}
+				target = extracted
+			}
+
 			return emit(cmd, func(w io.Writer, color bool) {
-				data, err := yaml.Marshal(state.cfg)
+				data, err := yaml.Marshal(target)
 				if err != nil {
 					fmt.Fprintf(w, "Error marshaling config: %v\n", err)
 					return
@@ -40,9 +53,13 @@ func newConfigShowCmd(state *cliState) *cobra.Command {
 				if _, err = w.Write(data); err != nil {
 					fmt.Fprintf(w, "Error writing config: %v\n", err)
 				}
-			}, state.cfg)
+			}, target)
 		},
 	}
+
+	cmd.Flags().String("section", "", "filter output to a specific top-level key (e.g., database, server, tls)")
+
+	return cmd
 }
 
 func newConfigSetCmd(_ *cliState) *cobra.Command {
@@ -123,6 +140,22 @@ func newConfigProfilesCmd(_ *cliState) *cobra.Command {
 			}, profiles)
 		},
 	}
+}
+
+func extractSection(cfg *config.Config, section string) (any, error) {
+	v := reflect.ValueOf(cfg).Elem()
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("yaml")
+		if tag == section {
+			return v.Field(i).Interface(), nil
+		}
+	}
+	var names []string
+	for i := 0; i < t.NumField(); i++ {
+		names = append(names, t.Field(i).Tag.Get("yaml"))
+	}
+	return nil, fmt.Errorf("unknown section %q (available: %s)", section, strings.Join(names, ", "))
 }
 
 func setConfigValue(key, value string) error {
