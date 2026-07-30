@@ -234,7 +234,7 @@ var _ = Describe("Root Command", func() {
 			})
 
 			Describe("config show", func() {
-				It("outputs resolved config in human format", func() {
+				It("outputs full resolved config in human format", func() {
 					cmd := newRootCmd()
 					cmd.SetOut(&stdout)
 					cmd.SetErr(&stderr)
@@ -242,11 +242,17 @@ var _ = Describe("Root Command", func() {
 					err := cmd.Execute()
 					Expect(err).NotTo(HaveOccurred())
 					output := stdout.String()
-					Expect(output).To(ContainSubstring("output:"))
-					Expect(output).To(ContainSubstring("endpoint:"))
+					for _, section := range []string{
+						"llm:", "storage:", "tls:", "tenants:", "database:",
+						"nats:", "server:", "cli:", "logging:", "auth:",
+						"observability:", "catalog:", "attestation:", "prompt:",
+						"analysis:", "worker:", "pipeline:", "synthesis:",
+					} {
+						Expect(output).To(ContainSubstring(section), "missing section: "+section)
+					}
 				})
 
-				It("outputs resolved config in JSON format", func() {
+				It("outputs full resolved config in JSON format", func() {
 					cmd := newRootCmd()
 					cmd.SetOut(&stdout)
 					cmd.SetErr(&stderr)
@@ -255,8 +261,45 @@ var _ = Describe("Root Command", func() {
 					Expect(err).NotTo(HaveOccurred())
 					var result map[string]any
 					Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
-					Expect(result).To(HaveKey("output"))
-					Expect(result).To(HaveKey("endpoint"))
+					Expect(result).To(HaveKey("LLM"))
+					Expect(result).To(HaveKey("Database"))
+					Expect(result).To(HaveKey("Server"))
+					Expect(result).To(HaveKey("CLI"))
+				})
+
+				It("filters output with --section flag", func() {
+					cmd := newRootCmd()
+					cmd.SetOut(&stdout)
+					cmd.SetErr(&stderr)
+					cmd.SetArgs([]string{"config", "show", "--section", "database"})
+					err := cmd.Execute()
+					Expect(err).NotTo(HaveOccurred())
+					output := stdout.String()
+					Expect(output).To(ContainSubstring("dsn:"))
+					Expect(output).NotTo(ContainSubstring("nats:"))
+				})
+
+				It("filters output with --section flag in JSON format", func() {
+					cmd := newRootCmd()
+					cmd.SetOut(&stdout)
+					cmd.SetErr(&stderr)
+					cmd.SetArgs([]string{"config", "show", "--section", "database", "--json"})
+					err := cmd.Execute()
+					Expect(err).NotTo(HaveOccurred())
+					var result map[string]any
+					Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+					Expect(result).To(HaveKey("DSN"))
+					Expect(result).NotTo(HaveKey("LLM"))
+				})
+
+				It("errors on unknown section", func() {
+					cmd := newRootCmd()
+					cmd.SetOut(&stdout)
+					cmd.SetErr(&stderr)
+					cmd.SetArgs([]string{"config", "show", "--section", "nonexistent"})
+					err := cmd.Execute()
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("unknown section"))
 				})
 			})
 
