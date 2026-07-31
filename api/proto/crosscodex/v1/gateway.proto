@@ -137,6 +137,13 @@ service GatewayService {
       get: "/health"
     };
   }
+
+  // Stream a large document for analysis using chunked upload.
+  // First message must contain StreamDocumentMetadata; subsequent messages
+  // carry raw bytes. Server reassembles and delegates to SubmitDocument logic.
+  // INTERNAL: ingestion.ConvertDocument → catalog.ParseCatalog
+  // → pipeline.CreateJob(FULL_ANALYSIS)
+  rpc StreamDocument(stream StreamDocumentChunk) returns (SubmitDocumentResponse) {}
 }
 
 // Gateway-specific request types
@@ -196,4 +203,19 @@ message FindSimilarRequest {
 
 message FindSimilarResponse {
   SimilaritySearchResponse response = 1;
+}
+
+message StreamDocumentChunk {
+  oneof payload {
+    StreamDocumentMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+message StreamDocumentMetadata {
+  CatalogFormat catalog_format = 1;
+  string catalog_name = 2;
+  string target_catalog_id = 3;
+  SynthesisConfig synthesis_config = 4;
+  ContentMetadata content_metadata = 5;
 }
