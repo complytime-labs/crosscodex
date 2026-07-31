@@ -10,17 +10,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
@@ -94,7 +94,7 @@ func ensurePKI(pkiDir string) error {
 	return nil
 }
 
-func dialGRPCWithTLS(endpoint string, paths embeddedTLSPaths) (*grpc.ClientConn, error) {
+func connectClientWithTLS(endpoint string, paths embeddedTLSPaths) (crosscodexv1connect.GatewayServiceClient, error) {
 	caCert, err := os.ReadFile(paths.CACert)
 	if err != nil {
 		return nil, fmt.Errorf("read CA cert: %w", err)
@@ -116,9 +116,16 @@ func dialGRPCWithTLS(endpoint string, paths embeddedTLSPaths) (*grpc.ClientConn,
 		MinVersion:   tls.VersionTLS12, // DevSkim: ignore DS112852 - TLS 1.2 minimum floor is intentional; Go negotiates highest available
 	}
 
-	return grpc.NewClient(endpoint,
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
-	)
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: tlsCfg,
+		},
+	}
+
+	return crosscodexv1connect.NewGatewayServiceClient(
+		httpClient,
+		"https://"+endpoint,
+	), nil
 }
 
 type noopAuditEmitter struct{}
