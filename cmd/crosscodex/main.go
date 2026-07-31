@@ -4,18 +4,16 @@ import (
 	"fmt"
 	"os"
 
-	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/version"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
 )
 
 type cliState struct {
 	cfg     *config.ClientConfig
 	fullCfg *config.Config
-	conn    *grpc.ClientConn
-	client  pb.GatewayServiceClient
+	client  crosscodexv1connect.GatewayServiceClient
 	daemon  *embeddedDaemon
 }
 

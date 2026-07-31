@@ -8,6 +8,7 @@ import (
 	"os"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	connectrpc "connectrpc.com/connect"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/spf13/cobra"
 )
@@ -44,13 +45,13 @@ proto supports it.`,
 
 			req := &pb.GetControlMappingsRequest{}
 
-			resp, err := state.client.GetControlMappings(cmd.Context(), req)
+			resp, err := state.client.GetControlMappings(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to get control mappings: %w", err)
 			}
 
 			counts := make(map[string]int)
-			for _, m := range resp.GetMappings() {
+			for _, m := range resp.Msg.GetMappings() {
 				relType := m.GetRelationshipType().String()
 				counts[relType]++
 			}
@@ -58,7 +59,7 @@ proto supports it.`,
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Summary for job %s\n\n", jobID)
-					fmt.Fprintf(w, "Total mappings: %d\n\n", len(resp.GetMappings()))
+					fmt.Fprintf(w, "Total mappings: %d\n\n", len(resp.Msg.GetMappings()))
 					fmt.Fprintf(w, "By relationship type:\n")
 					for relType, count := range counts {
 						fmt.Fprintf(w, "  %-20s %d\n", relType, count)
@@ -66,9 +67,9 @@ proto supports it.`,
 				},
 				map[string]any{
 					"job_id":        jobID,
-					"total":         len(resp.GetMappings()),
+					"total":         len(resp.Msg.GetMappings()),
 					"by_type":       counts,
-					"mapping_count": len(resp.GetMappings()),
+					"mapping_count": len(resp.Msg.GetMappings()),
 				},
 			)
 		},
@@ -104,7 +105,7 @@ proto supports it.`,
 
 			req := &pb.GetControlMappingsRequest{}
 
-			resp, err := state.client.GetControlMappings(cmd.Context(), req)
+			resp, err := state.client.GetControlMappings(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to get control mappings: %w", err)
 			}
@@ -127,7 +128,7 @@ proto supports it.`,
 				enc.SetIndent("", "  ")
 				return enc.Encode(map[string]any{
 					"job_id":   jobID,
-					"mappings": resp.GetMappings(),
+					"mappings": resp.Msg.GetMappings(),
 				})
 			case "csv":
 				w := csv.NewWriter(out)
@@ -136,7 +137,7 @@ proto supports it.`,
 				if err := w.Write([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}); err != nil {
 					return fmt.Errorf("write CSV header: %w", err)
 				}
-				for _, m := range resp.GetMappings() {
+				for _, m := range resp.Msg.GetMappings() {
 					if err := w.Write([]string{
 						m.GetMappingId(),
 						m.GetSourceControlId(),
@@ -188,21 +189,21 @@ func newResultsQueryCmd(state *cliState) *cobra.Command {
 				Cypher: cypher,
 			}
 
-			resp, err := state.client.QueryGraph(cmd.Context(), req)
+			resp, err := state.client.QueryGraph(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to query graph: %w", err)
 			}
 
 			return emit(cmd,
 				func(w io.Writer, color bool) {
-					if resp.GetResponse() != nil {
+					if resp.Msg.GetResponse() != nil {
 						fmt.Fprintln(w, "Query results:")
-						fmt.Fprintln(w, resp.GetResponse())
+						fmt.Fprintln(w, resp.Msg.GetResponse())
 					}
 				},
 				map[string]any{
 					"cypher":  cypher,
-					"results": resp.GetResponse(),
+					"results": resp.Msg.GetResponse(),
 				},
 			)
 		},
@@ -234,7 +235,7 @@ func newResultsDebugCmd(state *cliState) *cobra.Command {
 				ControlId: controlID,
 			}
 
-			resp, err := state.client.GetControlMappings(cmd.Context(), req)
+			resp, err := state.client.GetControlMappings(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to get control mappings: %w", err)
 			}
@@ -242,8 +243,8 @@ func newResultsDebugCmd(state *cliState) *cobra.Command {
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Debug for job %s, control %s\n\n", jobID, controlID)
-					fmt.Fprintf(w, "Found %d mapping(s)\n\n", len(resp.GetMappings()))
-					for _, m := range resp.GetMappings() {
+					fmt.Fprintf(w, "Found %d mapping(s)\n\n", len(resp.Msg.GetMappings()))
+					for _, m := range resp.Msg.GetMappings() {
 						fmt.Fprintf(w, "Mapping: %s -> %s (%s)\n", m.GetSourceControlId(), m.GetTargetControlId(), m.GetRelationshipType())
 						fmt.Fprintf(w, "  Confidence: %.3f, Viability: %.3f, Viable: %t\n", m.GetConfidence(), m.GetViabilityScore(), m.GetIsViable())
 						if len(m.GetContributions()) > 0 {
@@ -258,7 +259,7 @@ func newResultsDebugCmd(state *cliState) *cobra.Command {
 				map[string]any{
 					"job_id":     jobID,
 					"control_id": controlID,
-					"mappings":   resp.GetMappings(),
+					"mappings":   resp.Msg.GetMappings(),
 				},
 			)
 		},
@@ -290,7 +291,7 @@ proto supports it.`,
 
 			req := &pb.GetReviewQueueRequest{}
 
-			resp, err := state.client.GetReviewQueue(cmd.Context(), req)
+			resp, err := state.client.GetReviewQueue(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to get review queue: %w", err)
 			}
@@ -298,14 +299,14 @@ proto supports it.`,
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Review queue for job %s\n\n", jobID)
-					fmt.Fprintf(w, "Items in queue: %d\n\n", len(resp.GetItems()))
-					for i, item := range resp.GetItems() {
+					fmt.Fprintf(w, "Items in queue: %d\n\n", len(resp.Msg.GetItems()))
+					for i, item := range resp.Msg.GetItems() {
 						fmt.Fprintf(w, "%d. %s\n", i+1, item)
 					}
 				},
 				map[string]any{
 					"job_id": jobID,
-					"items":  resp.GetItems(),
+					"items":  resp.Msg.GetItems(),
 				},
 			)
 		},
