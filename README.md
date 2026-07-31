@@ -12,7 +12,7 @@ ______________________________________________________________________
 
 ## Status
 
-CrossCodex is in early development. All foundational, domain, and service packages are implemented and tested. The CLI provides approximately 30 commands across project, catalog, run, results, prompt, version, and completion groups with gRPC daemon connectivity and embedded single-node mode. See [Development](#development) below to build from source and run tests.
+CrossCodex is in early development. All foundational, domain, and service packages are implemented and tested. The CLI provides approximately 30 commands across project, catalog, run, results, prompt, version, and completion groups with daemon connectivity and embedded single-node mode. See [Development](#development) below to build from source and run tests.
 
 ## Quick Start
 
@@ -252,7 +252,7 @@ The CLI recognizes these environment variables:
 
 | Variable              | Purpose                                    | Default              |
 |-----------------------|--------------------------------------------|----------------------|
-| `CROSSCODEX_ENDPOINT` | gRPC daemon address                        | `localhost:50051`    |
+| `CROSSCODEX_ENDPOINT` | daemon address                        | `localhost:50051`    |
 | `CROSSCODEX_COLOR`    | Force color output (`1`) or disable (`0`)  | Auto-detect (isatty) |
 | `NO_COLOR`            | Disable color output (standard convention) | —                    |
 
@@ -327,7 +327,7 @@ Every layer enforces tenant isolation independently:
 | Layer            | Mechanism                                    | Purpose               |
 |------------------|----------------------------------------------|-----------------------|
 | **Gateway**      | mTLS client certificates, JWT sessions, RBAC | Identity verification |
-| **Services**     | gRPC metadata validation                     | Context propagation   |
+| **Services**     | Request metadata validation                     | Context propagation   |
 | **NATS**         | Tenant-scoped subjects and ACLs              | Message isolation     |
 | **PostgreSQL**   | Row-Level Security policies                  | Data isolation        |
 | **Object Store** | Tenant-prefixed paths, bucket policies       | Artifact isolation    |

@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	connectrpc "connectrpc.com/connect"
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/spf13/cobra"
 )

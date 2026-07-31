@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/pkg/config"
-	connectrpc "connectrpc.com/connect"
 )
 
 const (

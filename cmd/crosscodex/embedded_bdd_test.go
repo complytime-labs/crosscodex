@@ -86,7 +86,60 @@ var _ = Describe("ensurePKI", func() {
 	})
 })
 
-// dialGRPCWithTLS tests removed - no longer relevant after Connect migration
+var _ = Describe("connectClientWithTLS", func() {
+	It("returns an error when cert files do not exist", func() {
+		paths := embeddedTLSPaths{
+			CACert:     "/nonexistent/ca.pem",
+			ClientCert: "/nonexistent/client.pem",
+			ClientKey:  "/nonexistent/client-key.pem",
+			ServerCert: "/nonexistent/server.pem",
+			ServerKey:  "/nonexistent/server-key.pem",
+		}
+		client, err := connectClientWithTLS("localhost:0", paths)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("read CA cert"))
+		Expect(client).To(BeNil())
+	})
+
+	It("returns an error when CA cert is invalid PEM", func() {
+		dir := GinkgoT().TempDir()
+		pkiDir := filepath.Join(dir, "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
+		paths := pkiPaths(pkiDir)
+		Expect(os.WriteFile(paths.CACert, []byte("not-valid-pem"), 0o644)).To(Succeed())
+
+		client, err := connectClientWithTLS("localhost:0", paths)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("failed to parse CA cert"))
+		Expect(client).To(BeNil())
+	})
+
+	It("returns an error when client cert/key pair is invalid", func() {
+		dir := GinkgoT().TempDir()
+		pkiDir := filepath.Join(dir, "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
+		paths := pkiPaths(pkiDir)
+		Expect(os.WriteFile(paths.ClientCert, []byte("not-a-cert"), 0o644)).To(Succeed())
+
+		client, err := connectClientWithTLS("localhost:0", paths)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("load client cert"))
+		Expect(client).To(BeNil())
+	})
+
+	It("creates a non-nil client with valid certs", func() {
+		dir := GinkgoT().TempDir()
+		pkiDir := filepath.Join(dir, "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
+		paths := pkiPaths(pkiDir)
+		client, err := connectClientWithTLS("localhost:0", paths)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client).NotTo(BeNil())
+	})
+})
 
 var _ = Describe("embeddedAuthRegistry", func() {
 	It("creates a registry that authenticates with embedded client certs", func() {

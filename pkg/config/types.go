@@ -217,8 +217,9 @@ type NATSStreamsConfig struct {
 
 // ServerConfig holds daemon-specific settings.
 type ServerConfig struct {
-	Addr    string `yaml:"addr"`
-	Workers int    `yaml:"workers"`
+	Addr          string `yaml:"addr"`
+	Workers       int    `yaml:"workers"`
+	MaxUploadSize int    `yaml:"max_upload_size"`
 }
 
 // CLISettings holds CLI-specific settings.
