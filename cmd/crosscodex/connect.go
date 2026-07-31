@@ -128,11 +128,10 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	}
 
 	srv, err := gateway.NewServer(ctx, gateway.ServerConfig{
-		GRPCAddr: "localhost:0",
-		HTTPAddr: "localhost:0",
-		TLS:      tlsCfg,
-		Service:  svc,
-		Logger:   embeddedLogger,
+		Addr:    "localhost:0",
+		TLS:     tlsCfg,
+		Service: svc,
+		Logger:  embeddedLogger,
 	})
 	if err != nil {
 		resources.close()
@@ -144,7 +143,7 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 		return fmt.Errorf("start embedded daemon: %w", err)
 	}
 
-	grpcAddr := srv.GRPCAddr()
+	grpcAddr := srv.Addr()
 	_, portStr, err := splitHostPort(grpcAddr)
 	if err != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
