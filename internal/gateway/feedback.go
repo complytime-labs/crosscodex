@@ -37,7 +37,7 @@ func (s *Service) SubmitVote(ctx context.Context, req *connect.Request[pb.Submit
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
-	resp, err := s.feedback.SubmitVote(ctx, req.Msg)
+	resp, err := s.feedback.SubmitVote(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "SubmitVote", start, connect.CodeOf(err))
 		return nil, err
@@ -48,7 +48,7 @@ func (s *Service) SubmitVote(ctx context.Context, req *connect.Request[pb.Submit
 		{URI: fmt.Sprintf("mapping://%s/%s", identity.TenantID, req.Msg.GetMappingId()), Digest: ""},
 	}
 	products := []attestation.Artifact{
-		{URI: fmt.Sprintf("vote://%s/%s", identity.TenantID, resp.GetVoteId()), Digest: ""},
+		{URI: fmt.Sprintf("vote://%s/%s", identity.TenantID, resp.Msg.GetVoteId()), Digest: ""},
 	}
 	byProducts := map[string]any{
 		"vote_type": req.Msg.GetVoteType().String(),
@@ -63,7 +63,7 @@ func (s *Service) SubmitVote(ctx context.Context, req *connect.Request[pb.Submit
 	s.emitAttestation(ctx, "gateway.SubmitVote", materials, products, byProducts)
 
 	s.recordMetrics(ctx, "SubmitVote", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }
 
 func (s *Service) GetReviewQueue(ctx context.Context, req *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
@@ -89,12 +89,12 @@ func (s *Service) GetReviewQueue(ctx context.Context, req *connect.Request[pb.Ge
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
-	resp, err := s.feedback.GetReviewQueue(ctx, req.Msg)
+	resp, err := s.feedback.GetReviewQueue(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "GetReviewQueue", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	s.recordMetrics(ctx, "GetReviewQueue", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }

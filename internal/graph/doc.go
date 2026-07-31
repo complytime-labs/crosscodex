@@ -34,10 +34,10 @@
 package graph
 
 import (
-	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	pbconnect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 )
 
 // Compile-time interface assertions.
-var _ pb.GraphServiceServer = (*Service)(nil)
+var _ pbconnect.GraphServiceHandler = (*Service)(nil)
 var _ gateway.GraphBackend = (*Service)(nil)

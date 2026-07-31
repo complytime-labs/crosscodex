@@ -15,10 +15,8 @@ import (
 	"path/filepath"
 	"time"
 
+	connectrpc "connectrpc.com/connect"
 	"github.com/google/uuid"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
@@ -151,21 +149,21 @@ type dbAdminBackend struct {
 	pool dbpkg.Pool
 }
 
-func (b *dbAdminBackend) HealthCheck(ctx context.Context, _ *pb.HealthCheckRequest) (*pb.HealthCheckResponse, error) {
+func (b *dbAdminBackend) HealthCheck(ctx context.Context, _ *connectrpc.Request[pb.HealthCheckRequest]) (*connectrpc.Response[pb.HealthCheckResponse], error) {
 	healthStatus, err := b.pool.Health(ctx)
 	if err != nil {
-		return &pb.HealthCheckResponse{
+		return connectrpc.NewResponse(&pb.HealthCheckResponse{
 			Status: pb.HealthStatus_HEALTH_STATUS_UNHEALTHY,
-		}, nil
+		}), nil
 	}
 	if !healthStatus.Connected {
-		return &pb.HealthCheckResponse{
+		return connectrpc.NewResponse(&pb.HealthCheckResponse{
 			Status: pb.HealthStatus_HEALTH_STATUS_UNHEALTHY,
-		}, nil
+		}), nil
 	}
-	return &pb.HealthCheckResponse{
+	return connectrpc.NewResponse(&pb.HealthCheckResponse{
 		Status: pb.HealthStatus_HEALTH_STATUS_HEALTHY,
-	}, nil
+	}), nil
 }
 
 // localIngestionBackend stores raw document content to local storage.
@@ -173,22 +171,22 @@ type localIngestionBackend struct {
 	storage storage.Provider
 }
 
-func (b *localIngestionBackend) ConvertDocument(ctx context.Context, req *pb.ConvertDocumentRequest) (*pb.ConvertDocumentResponse, error) {
-	src, ok := req.Source.(*pb.ConvertDocumentRequest_Content)
+func (b *localIngestionBackend) ConvertDocument(ctx context.Context, req *connectrpc.Request[pb.ConvertDocumentRequest]) (*connectrpc.Response[pb.ConvertDocumentResponse], error) {
+	src, ok := req.Msg.Source.(*pb.ConvertDocumentRequest_Content)
 	if !ok {
-		return nil, status.Error(codes.Unimplemented, "only inline content is supported; source_uri is not implemented")
+		return nil, connectrpc.NewError(connectrpc.CodeUnimplemented, errors.New("only inline content is supported; source_uri is not implemented"))
 	}
 	content := src.Content
 
 	key := fmt.Sprintf("documents/%s.json", uuid.New().String())
 	if err := b.storage.Put(ctx, key, bytes.NewReader(content)); err != nil {
-		return nil, status.Errorf(codes.Internal, "store document: %v", err)
+		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("store document: %w", err))
 	}
 
-	return &pb.ConvertDocumentResponse{
+	return connectrpc.NewResponse(&pb.ConvertDocumentResponse{
 		DocumentId: key,
 		Status:     pb.JobStatus_JOB_STATUS_COMPLETED,
-	}, nil
+	}), nil
 }
 
 // localPipelineBackend records pipeline jobs via the pipeline store but does
@@ -198,19 +196,19 @@ type localPipelineBackend struct {
 	store pipeline.Store
 }
 
-func (b *localPipelineBackend) CreateJob(ctx context.Context, req *pb.CreateJobRequest) (*pb.CreateJobResponse, error) {
+func (b *localPipelineBackend) CreateJob(ctx context.Context, req *connectrpc.Request[pb.CreateJobRequest]) (*connectrpc.Response[pb.CreateJobResponse], error) {
 	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
-	if req.Config == nil {
-		return nil, status.Error(codes.InvalidArgument, "config is required")
+	if req.Msg.Config == nil {
+		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, errors.New("config is required"))
 	}
 
-	configBytes, err := json.Marshal(req.Config)
+	configBytes, err := json.Marshal(req.Msg.Config)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "marshal config: %v", err)
+		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, fmt.Errorf("marshal config: %w", err))
 	}
 
 	jobID := uuid.New().String()
@@ -226,54 +224,54 @@ func (b *localPipelineBackend) CreateJob(ctx context.Context, req *pb.CreateJobR
 	}
 
 	if err := b.store.CreateJob(ctx, job); err != nil {
-		return nil, status.Errorf(codes.Internal, "create job: %v", err)
+		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("create job: %w", err))
 	}
 
-	return &pb.CreateJobResponse{
+	return connectrpc.NewResponse(&pb.CreateJobResponse{
 		JobId:  jobID,
 		Status: pb.JobStatus_JOB_STATUS_PENDING,
-	}, nil
+	}), nil
 }
 
-func (b *localPipelineBackend) GetJob(ctx context.Context, req *pb.GetJobRequest) (*pb.GetJobResponse, error) {
+func (b *localPipelineBackend) GetJob(ctx context.Context, req *connectrpc.Request[pb.GetJobRequest]) (*connectrpc.Response[pb.GetJobResponse], error) {
 	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
-	job, err := b.store.GetJob(ctx, req.GetJobId())
+	job, err := b.store.GetJob(ctx, req.Msg.GetJobId())
 	if err != nil {
 		if errors.Is(err, pipeline.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "job not found")
+			return nil, connectrpc.NewError(connectrpc.CodeNotFound, errors.New("job not found"))
 		}
-		return nil, status.Errorf(codes.Internal, "get job: %v", err)
+		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("get job: %w", err))
 	}
 
 	if job.TenantID != tenantID {
-		return nil, status.Error(codes.NotFound, "job not found")
+		return nil, connectrpc.NewError(connectrpc.CodeNotFound, errors.New("job not found"))
 	}
 
-	stages, err := b.store.GetStages(ctx, req.GetJobId())
+	stages, err := b.store.GetStages(ctx, req.Msg.GetJobId())
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "get stages: %v", err)
+		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("get stages: %w", err))
 	}
 
-	return &pb.GetJobResponse{Job: localJobToProto(job, stages)}, nil
+	return connectrpc.NewResponse(&pb.GetJobResponse{Job: localJobToProto(job, stages)}), nil
 }
 
-func (b *localPipelineBackend) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
+func (b *localPipelineBackend) ListJobs(ctx context.Context, req *connectrpc.Request[pb.ListJobsRequest]) (*connectrpc.Response[pb.ListJobsResponse], error) {
 	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
 	var pageSize int32 = 50
 	var pageToken string
-	if req.Options != nil && req.Options.Pagination != nil {
-		if req.Options.Pagination.PageSize > 0 {
-			pageSize = req.Options.Pagination.PageSize
+	if req.Msg.Options != nil && req.Msg.Options.Pagination != nil {
+		if req.Msg.Options.Pagination.PageSize > 0 {
+			pageSize = req.Msg.Options.Pagination.PageSize
 		}
-		pageToken = req.Options.Pagination.PageToken
+		pageToken = req.Msg.Options.Pagination.PageToken
 	}
 
 	offset := 0
@@ -287,13 +285,13 @@ func (b *localPipelineBackend) ListJobs(ctx context.Context, req *pb.ListJobsReq
 		Limit:  int(pageSize),
 		Offset: offset,
 	}
-	if req.Status != pb.JobStatus_JOB_STATUS_UNSPECIFIED {
-		filter.Status = localJobStatusFromProto(req.Status)
+	if req.Msg.Status != pb.JobStatus_JOB_STATUS_UNSPECIFIED {
+		filter.Status = localJobStatusFromProto(req.Msg.Status)
 	}
 
 	jobs, total, err := b.store.ListJobs(ctx, tenantID, filter)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list jobs: %v", err)
+		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("list jobs: %w", err))
 	}
 
 	pbJobs := make([]*pb.PipelineJob, len(jobs))
@@ -310,38 +308,38 @@ func (b *localPipelineBackend) ListJobs(ctx context.Context, req *pb.ListJobsReq
 		nextPageToken = fmt.Sprintf("%d", filter.Offset+filter.Limit)
 	}
 
-	return &pb.ListJobsResponse{
+	return connectrpc.NewResponse(&pb.ListJobsResponse{
 		Jobs: pbJobs,
 		PageInfo: &pb.PageInfo{
 			NextPageToken: nextPageToken,
 			TotalCount:    total,
 		},
-	}, nil
+	}), nil
 }
 
-func (b *localPipelineBackend) CancelJob(ctx context.Context, req *pb.CancelJobRequest) (*pb.CancelJobResponse, error) {
+func (b *localPipelineBackend) CancelJob(ctx context.Context, req *connectrpc.Request[pb.CancelJobRequest]) (*connectrpc.Response[pb.CancelJobResponse], error) {
 	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
-	job, err := b.store.GetJob(ctx, req.GetJobId())
+	job, err := b.store.GetJob(ctx, req.Msg.GetJobId())
 	if err != nil {
 		if errors.Is(err, pipeline.ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "job not found")
+			return nil, connectrpc.NewError(connectrpc.CodeNotFound, errors.New("job not found"))
 		}
-		return nil, status.Errorf(codes.Internal, "get job: %v", err)
+		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("get job: %w", err))
 	}
 
 	if job.TenantID != tenantID {
-		return nil, status.Error(codes.NotFound, "job not found")
+		return nil, connectrpc.NewError(connectrpc.CodeNotFound, errors.New("job not found"))
 	}
 
-	if err := b.store.UpdateJobStatus(ctx, req.GetJobId(), pipeline.JobStatusCancelled, nil); err != nil {
-		return nil, status.Errorf(codes.Internal, "cancel job: %v", err)
+	if err := b.store.UpdateJobStatus(ctx, req.Msg.GetJobId(), pipeline.JobStatusCancelled, nil); err != nil {
+		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("cancel job: %w", err))
 	}
 
-	return &pb.CancelJobResponse{Cancelled: true}, nil
+	return connectrpc.NewResponse(&pb.CancelJobResponse{Cancelled: true}), nil
 }
 
 // localJobToProto converts a pipeline.Job and its stages to the proto PipelineJob

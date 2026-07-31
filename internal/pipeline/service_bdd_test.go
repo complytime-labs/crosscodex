@@ -7,8 +7,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"connectrpc.com/connect"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
@@ -109,17 +108,17 @@ var _ = Describe("Service", func() {
 				},
 			}
 
-			resp, err := svc.CreateJob(ctx, req)
+			resp, err := svc.CreateJob(ctx, connect.NewRequest(req))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.JobId).NotTo(BeEmpty())
-			Expect(resp.Status).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
+			Expect(resp.Msg.JobId).NotTo(BeEmpty())
+			Expect(resp.Msg.Status).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
 
-			job, err := store.GetJob(ctx, resp.JobId)
+			job, err := store.GetJob(ctx, resp.Msg.JobId)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(job.TenantID).To(Equal("test-tenant"))
 			Expect(job.Status).To(Equal(pipeline.JobStatusPending))
 
-			stages, err := store.GetStages(ctx, resp.JobId)
+			stages, err := store.GetStages(ctx, resp.Msg.JobId)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(stages).NotTo(BeEmpty())
 			// Empty registry = no analyzers, only synthesis + graph
@@ -131,17 +130,17 @@ var _ = Describe("Service", func() {
 				Config: &pb.JobConfig{},
 			}
 
-			_, err := svc.CreateJob(context.Background(), req)
+			_, err := svc.CreateJob(context.Background(), connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("returns InvalidArgument when config is nil", func() {
 			req := &pb.CreateJobRequest{}
 
-			_, err := svc.CreateJob(ctx, req)
+			_, err := svc.CreateJob(ctx, connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 
@@ -162,17 +161,17 @@ var _ = Describe("Service", func() {
 
 			req := &pb.GetJobRequest{JobId: "job-1"}
 
-			resp, err := svc.GetJob(ctx, req)
+			resp, err := svc.GetJob(ctx, connect.NewRequest(req))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.Job.JobId).To(Equal("job-1"))
-			Expect(resp.Job.Status).To(Equal(pb.JobStatus_JOB_STATUS_RUNNING))
-			Expect(resp.Job.Stages).To(HaveLen(2))
+			Expect(resp.Msg.Job.JobId).To(Equal("job-1"))
+			Expect(resp.Msg.Job.Status).To(Equal(pb.JobStatus_JOB_STATUS_RUNNING))
+			Expect(resp.Msg.Job.Stages).To(HaveLen(2))
 		})
 
 		It("returns NotFound for missing job", func() {
 			req := &pb.GetJobRequest{JobId: "missing"}
 
-			_, err := svc.GetJob(ctx, req)
+			_, err := svc.GetJob(ctx, connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
 		})
 	})
@@ -197,9 +196,9 @@ var _ = Describe("Service", func() {
 		It("returns all jobs for the tenant", func() {
 			req := &pb.ListJobsRequest{}
 
-			resp, err := svc.ListJobs(ctx, req)
+			resp, err := svc.ListJobs(ctx, connect.NewRequest(req))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.Jobs).To(HaveLen(5))
+			Expect(resp.Msg.Jobs).To(HaveLen(5))
 		})
 
 		It("filters by status", func() {
@@ -219,10 +218,10 @@ var _ = Describe("Service", func() {
 				Status: pb.JobStatus_JOB_STATUS_FAILED,
 			}
 
-			resp, err := svc.ListJobs(ctx, req)
+			resp, err := svc.ListJobs(ctx, connect.NewRequest(req))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.Jobs).To(HaveLen(1))
-			Expect(resp.Jobs[0].JobId).To(Equal("job-failed"))
+			Expect(resp.Msg.Jobs).To(HaveLen(1))
+			Expect(resp.Msg.Jobs[0].JobId).To(Equal("job-failed"))
 		})
 	})
 
@@ -230,7 +229,7 @@ var _ = Describe("Service", func() {
 		It("returns NotFound if job is not running", func() {
 			req := &pb.CancelJobRequest{JobId: "not-running"}
 
-			_, err := svc.CancelJob(ctx, req)
+			_, err := svc.CancelJob(ctx, connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
 		})
 
@@ -264,10 +263,10 @@ var _ = Describe("Service", func() {
 				},
 			}
 
-			createResp, err := blockingSvc.CreateJob(ctx, createReq)
+			createResp, err := blockingSvc.CreateJob(ctx, connect.NewRequest(createReq))
 			Expect(err).NotTo(HaveOccurred())
 
-			jobID := createResp.JobId
+			jobID := createResp.Msg.JobId
 
 			// Wait until the job appears in the store as running.
 			Eventually(func() pipeline.JobStatus {
@@ -278,9 +277,9 @@ var _ = Describe("Service", func() {
 				return j.Status
 			}, "2s", "50ms").Should(Equal(pipeline.JobStatusRunning))
 
-			cancelResp, err := blockingSvc.CancelJob(ctx, &pb.CancelJobRequest{JobId: jobID})
+			cancelResp, err := blockingSvc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: jobID}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cancelResp.Cancelled).To(BeTrue())
+			Expect(cancelResp.Msg.Cancelled).To(BeTrue())
 		})
 	})
 
@@ -310,9 +309,9 @@ var _ = Describe("Service", func() {
 				RetryFromFailure: true,
 			}
 
-			resp, err := svc.RetryJob(ctx, req)
+			resp, err := svc.RetryJob(ctx, connect.NewRequest(req))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.NewJobId).To(Equal("job-retry"))
+			Expect(resp.Msg.NewJobId).To(Equal("job-retry"))
 
 			updatedJob, err := store.GetJob(ctx, "job-retry")
 			Expect(err).NotTo(HaveOccurred())
@@ -344,9 +343,9 @@ var _ = Describe("Service", func() {
 				RetryFromFailure: true,
 			}
 
-			_, err := svc.RetryJob(ctx, req)
+			_, err := svc.RetryJob(ctx, connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.FailedPrecondition))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
 		})
 
 		It("creates a new job when retry_from_failure is false", func() {
@@ -372,12 +371,12 @@ var _ = Describe("Service", func() {
 				RetryFromFailure: false,
 			}
 
-			resp, err := svc.RetryJob(ctx, req)
+			resp, err := svc.RetryJob(ctx, connect.NewRequest(req))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.NewJobId).NotTo(Equal("job-retry-new"))
-			Expect(resp.NewJobId).NotTo(BeEmpty())
+			Expect(resp.Msg.NewJobId).NotTo(Equal("job-retry-new"))
+			Expect(resp.Msg.NewJobId).NotTo(BeEmpty())
 
-			newJob, err := store.GetJob(ctx, resp.NewJobId)
+			newJob, err := store.GetJob(ctx, resp.Msg.NewJobId)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(newJob.Status).To(Equal(pipeline.JobStatusPending))
 		})
@@ -415,7 +414,7 @@ var _ = Describe("Service", func() {
 			}
 
 			// Create a job so it starts running (blocked in synthesis).
-			_, err := stoppableSvc.CreateJob(ctx, createReq)
+			_, err := stoppableSvc.CreateJob(ctx, connect.NewRequest(createReq))
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for the job to reach running status.
@@ -453,7 +452,7 @@ var _ = Describe("Service", func() {
 				config.AttestationConfig{Enabled: false},
 			)
 
-			_, err = postStopSvc.CreateJob(ctx, createReq)
+			_, err = postStopSvc.CreateJob(ctx, connect.NewRequest(createReq))
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
@@ -490,13 +489,13 @@ var _ = Describe("Service", func() {
 			}
 
 			// First job should succeed.
-			_, err := limitedSvc.CreateJob(ctx, createReq)
+			_, err := limitedSvc.CreateJob(ctx, connect.NewRequest(createReq))
 			Expect(err).NotTo(HaveOccurred())
 
 			// Second job should be rejected — the first is still running (blocked in synthesis).
-			_, err = limitedSvc.CreateJob(ctx, createReq)
+			_, err = limitedSvc.CreateJob(ctx, connect.NewRequest(createReq))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.ResourceExhausted))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeResourceExhausted))
 		})
 	})
 })

@@ -6,8 +6,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -31,19 +30,19 @@ var _ = Describe("Write RPCs", func() {
 
 	Describe("CreateNode", func() {
 		It("rejects missing tenant context", func() {
-			resp, err := svc.CreateNode(context.Background(), &pb.CreateNodeRequest{})
+			resp, err := svc.CreateNode(context.Background(), connect.NewRequest(&pb.CreateNodeRequest{}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 			Expect(err.Error()).To(ContainSubstring("tenant_context is required"))
 		})
 
 		It("rejects missing label", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.CreateNode(ctx, &pb.CreateNodeRequest{
+			resp, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			})
+			}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 			Expect(err.Error()).To(ContainSubstring("label is required"))
 		})
 
@@ -56,15 +55,15 @@ var _ = Describe("Write RPCs", func() {
 				return nil
 			}
 
-			resp, err := svc.CreateNode(ctx, &pb.CreateNodeRequest{
+			resp, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Label:         "Control",
 				Properties:    map[string]string{"title": "AC-1"},
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(resp.NodeId).NotTo(BeEmpty())
-			Expect(capturedNode.ID).To(Equal(resp.NodeId))
+			Expect(resp.Msg.NodeId).NotTo(BeEmpty())
+			Expect(capturedNode.ID).To(Equal(resp.Msg.NodeId))
 			Expect(capturedNode.Label).To(Equal("Control"))
 			Expect(capturedNode.Properties["title"]).To(Equal("AC-1"))
 		})
@@ -75,12 +74,12 @@ var _ = Describe("Write RPCs", func() {
 				return graphdb.ErrTenantRequired
 			}
 
-			resp, err := svc.CreateNode(ctx, &pb.CreateNodeRequest{
+			resp, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Label:         "Control",
-			})
+			}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("preserves temporal attributes", func() {
@@ -93,13 +92,13 @@ var _ = Describe("Write RPCs", func() {
 				return nil
 			}
 
-			resp, err := svc.CreateNode(ctx, &pb.CreateNodeRequest{
+			resp, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Label:         "Control",
 				Temporal: &pb.TemporalAttributes{
 					ValidFrom: timestamppb.New(now),
 				},
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(capturedNode.ValidFrom).To(BeTemporally("~", now, time.Second))
@@ -108,43 +107,43 @@ var _ = Describe("Write RPCs", func() {
 
 	Describe("CreateEdge", func() {
 		It("rejects missing tenant context", func() {
-			resp, err := svc.CreateEdge(context.Background(), &pb.CreateEdgeRequest{})
+			resp, err := svc.CreateEdge(context.Background(), connect.NewRequest(&pb.CreateEdgeRequest{}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("rejects missing source_node_id", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.CreateEdge(ctx, &pb.CreateEdgeRequest{
+			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				TargetNodeId:  "node-2",
 				Label:         "maps_to",
-			})
+			}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 			Expect(err.Error()).To(ContainSubstring("source_node_id and target_node_id are required"))
 		})
 
 		It("rejects missing target_node_id", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.CreateEdge(ctx, &pb.CreateEdgeRequest{
+			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				SourceNodeId:  "node-1",
 				Label:         "maps_to",
-			})
+			}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("rejects missing label", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.CreateEdge(ctx, &pb.CreateEdgeRequest{
+			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				SourceNodeId:  "node-1",
 				TargetNodeId:  "node-2",
-			})
+			}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 			Expect(err.Error()).To(ContainSubstring("label is required"))
 		})
 
@@ -160,17 +159,17 @@ var _ = Describe("Write RPCs", func() {
 				return nil
 			}
 
-			resp, err := svc.CreateEdge(ctx, &pb.CreateEdgeRequest{
+			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				SourceNodeId:  "node-1",
 				TargetNodeId:  "node-2",
 				Label:         "maps_to",
 				Properties:    map[string]string{"confidence": "0.95"},
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(resp.EdgeId).NotTo(BeEmpty())
-			Expect(capturedEdge.ID).To(Equal(resp.EdgeId))
+			Expect(resp.Msg.EdgeId).NotTo(BeEmpty())
+			Expect(capturedEdge.ID).To(Equal(resp.Msg.EdgeId))
 			Expect(capturedEdge.Label).To(Equal("maps_to"))
 			Expect(capturedSourceID).To(Equal("node-1"))
 			Expect(capturedTargetID).To(Equal("node-2"))
@@ -182,33 +181,33 @@ var _ = Describe("Write RPCs", func() {
 				return graphdb.ErrNodeNotFound
 			}
 
-			resp, err := svc.CreateEdge(ctx, &pb.CreateEdgeRequest{
+			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				SourceNodeId:  "node-1",
 				TargetNodeId:  "node-2",
 				Label:         "maps_to",
-			})
+			}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.NotFound))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
 		})
 	})
 
 	Describe("BulkCreateEdges", func() {
 		It("rejects missing tenant context", func() {
-			resp, err := svc.BulkCreateEdges(context.Background(), &pb.BulkCreateEdgesRequest{})
+			resp, err := svc.BulkCreateEdges(context.Background(), connect.NewRequest(&pb.BulkCreateEdgesRequest{}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("handles empty edge list", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.BulkCreateEdges(ctx, &pb.BulkCreateEdgesRequest{
+			resp, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Edges:         []*pb.CreateEdgeRequest{},
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(resp.CreatedCount).To(Equal(int32(0)))
+			Expect(resp.Msg.CreatedCount).To(Equal(int32(0)))
 		})
 
 		It("creates multiple edges in bulk", func() {
@@ -224,7 +223,7 @@ var _ = Describe("Write RPCs", func() {
 				return ids, nil
 			}
 
-			resp, err := svc.BulkCreateEdges(ctx, &pb.BulkCreateEdgesRequest{
+			resp, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Edges: []*pb.CreateEdgeRequest{
 					{
@@ -238,11 +237,11 @@ var _ = Describe("Write RPCs", func() {
 						Label:        "depends_on",
 					},
 				},
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(resp.CreatedCount).To(Equal(int32(2)))
-			Expect(resp.EdgeIds).To(HaveLen(2))
+			Expect(resp.Msg.CreatedCount).To(Equal(int32(2)))
+			Expect(resp.Msg.EdgeIds).To(HaveLen(2))
 			Expect(capturedEdges).To(HaveLen(2))
 			Expect(capturedEdges[0].SourceID).To(Equal("node-1"))
 			Expect(capturedEdges[0].TargetID).To(Equal("node-2"))
@@ -258,37 +257,37 @@ var _ = Describe("Write RPCs", func() {
 				return []string{"edge-1"}, graphdb.ErrNodeNotFound
 			}
 
-			resp, err := svc.BulkCreateEdges(ctx, &pb.BulkCreateEdgesRequest{
+			resp, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Edges: []*pb.CreateEdgeRequest{
 					{SourceNodeId: "node-1", TargetNodeId: "node-2", Label: "maps_to"},
 					{SourceNodeId: "node-3", TargetNodeId: "node-4", Label: "maps_to"},
 				},
-			})
+			}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.NotFound))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
 			Expect(resp).NotTo(BeNil())
-			Expect(resp.CreatedCount).To(Equal(int32(1)))
-			Expect(resp.EdgeIds).To(HaveLen(1))
-			Expect(resp.Errors).To(HaveLen(1))
-			Expect(resp.Errors[0].Code).To(Equal(pb.ErrorCode_ERROR_CODE_INTERNAL))
+			Expect(resp.Msg.CreatedCount).To(Equal(int32(1)))
+			Expect(resp.Msg.EdgeIds).To(HaveLen(1))
+			Expect(resp.Msg.Errors).To(HaveLen(1))
+			Expect(resp.Msg.Errors[0].Code).To(Equal(pb.ErrorCode_ERROR_CODE_INTERNAL))
 		})
 	})
 
 	Describe("SupersedeFact", func() {
 		It("rejects missing tenant context", func() {
-			resp, err := svc.SupersedeFact(context.Background(), &pb.SupersedeFactRequest{})
+			resp, err := svc.SupersedeFact(context.Background(), connect.NewRequest(&pb.SupersedeFactRequest{}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("rejects missing target", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.SupersedeFact(ctx, &pb.SupersedeFactRequest{
+			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			})
+			}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 			Expect(err.Error()).To(ContainSubstring("node_id or edge_id is required"))
 		})
 
@@ -301,14 +300,14 @@ var _ = Describe("Write RPCs", func() {
 				return true, nil
 			}
 
-			resp, err := svc.SupersedeFact(ctx, &pb.SupersedeFactRequest{
+			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext:     &pb.TenantContext{TenantId: "test-tenant"},
 				Target:            &pb.SupersedeFactRequest_NodeId{NodeId: "node-1"},
 				SupersededByJobId: "job-123",
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(resp.Updated).To(BeTrue())
+			Expect(resp.Msg.Updated).To(BeTrue())
 			Expect(capturedReq.NodeID).To(Equal("node-1"))
 			Expect(capturedReq.EdgeID).To(BeEmpty())
 			Expect(capturedReq.SupersededByJobID).To(Equal("job-123"))
@@ -323,13 +322,13 @@ var _ = Describe("Write RPCs", func() {
 				return true, nil
 			}
 
-			resp, err := svc.SupersedeFact(ctx, &pb.SupersedeFactRequest{
+			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Target:        &pb.SupersedeFactRequest_EdgeId{EdgeId: "edge-1"},
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(resp.Updated).To(BeTrue())
+			Expect(resp.Msg.Updated).To(BeTrue())
 			Expect(capturedReq.EdgeID).To(Equal("edge-1"))
 			Expect(capturedReq.NodeID).To(BeEmpty())
 		})
@@ -344,11 +343,11 @@ var _ = Describe("Write RPCs", func() {
 				return true, nil
 			}
 
-			resp, err := svc.SupersedeFact(ctx, &pb.SupersedeFactRequest{
+			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Target:        &pb.SupersedeFactRequest_NodeId{NodeId: "node-1"},
 				SupersededAt:  timestamppb.New(specificTime),
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(capturedReq.SupersededAt).To(BeTemporally("~", specificTime, time.Second))
@@ -364,10 +363,10 @@ var _ = Describe("Write RPCs", func() {
 				return true, nil
 			}
 
-			resp, err := svc.SupersedeFact(ctx, &pb.SupersedeFactRequest{
+			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Target:        &pb.SupersedeFactRequest_NodeId{NodeId: "node-1"},
-			})
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(capturedReq.SupersededAt).To(BeTemporally("~", now, 2*time.Second))
@@ -379,12 +378,12 @@ var _ = Describe("Write RPCs", func() {
 				return false, graphdb.ErrNodeNotFound
 			}
 
-			resp, err := svc.SupersedeFact(ctx, &pb.SupersedeFactRequest{
+			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Target:        &pb.SupersedeFactRequest_NodeId{NodeId: "nonexistent"},
-			})
+			}))
 			Expect(resp).To(BeNil())
-			Expect(status.Code(err)).To(Equal(codes.NotFound))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
 		})
 	})
 })

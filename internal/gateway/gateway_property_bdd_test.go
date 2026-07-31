@@ -26,9 +26,9 @@ var _ = Describe("Gateway Property Tests", func() {
 
 			var captured *pb.TenantContext
 			cat := &mockCatalog{
-				listCatalogsFn: func(_ context.Context, req *pb.ListCatalogsRequest) (*pb.ListCatalogsResponse, error) {
-					captured = req.GetTenantContext()
-					return &pb.ListCatalogsResponse{}, nil
+				listCatalogsFn: func(_ context.Context, req *connect.Request[pb.ListCatalogsRequest]) (*connect.Response[pb.ListCatalogsResponse], error) {
+					captured = req.Msg.GetTenantContext()
+					return connect.NewResponse(&pb.ListCatalogsResponse{}), nil
 				},
 			}
 
@@ -87,8 +87,8 @@ var _ = Describe("Gateway Property Tests", func() {
 			}
 
 			pipeline := &mockPipeline{
-				listJobsFn: func(_ context.Context, _ *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
-					return &pb.ListJobsResponse{Jobs: allJobs}, nil
+				listJobsFn: func(_ context.Context, _ *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {
+					return connect.NewResponse(&pb.ListJobsResponse{Jobs: allJobs}), nil
 				},
 			}
 

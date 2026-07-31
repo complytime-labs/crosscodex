@@ -7,11 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -26,12 +25,12 @@ func (s *Service) checkConcurrencyLimit() error {
 
 	runningCount := len(s.running)
 	if s.cfg.MaxConcurrentJobs > 0 && runningCount >= s.cfg.MaxConcurrentJobs {
-		return status.Errorf(codes.ResourceExhausted, "max concurrent jobs reached (%d)", s.cfg.MaxConcurrentJobs)
+		return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("max concurrent jobs reached (%d)", s.cfg.MaxConcurrentJobs))
 	}
 	return nil
 }
 
-func (s *Service) CreateJob(ctx context.Context, req *pb.CreateJobRequest) (*pb.CreateJobResponse, error) {
+func (s *Service) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.CreateJob")
 	defer span.End()
 
@@ -39,29 +38,29 @@ func (s *Service) CreateJob(ctx context.Context, req *pb.CreateJobRequest) (*pb.
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
 	span.SetAttributes(attribute.String("tenant.id", tenantID))
 
-	if req.Config == nil {
-		return nil, status.Error(codes.InvalidArgument, "config is required")
+	if req.Msg.Config == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("config is required"))
 	}
 
 	dag, err := s.registry.BuildDAG(ctx)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.Internal, "build DAG: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("build DAG: %v", err))
 	}
 
 	jobID := uuid.New().String()
 
-	configBytes, err := json.Marshal(req.Config)
+	configBytes, err := json.Marshal(req.Msg.Config)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.InvalidArgument, "marshal config: %v", err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("marshal config: %v", err))
 	}
 
 	// Check concurrency limit BEFORE creating job in DB.
@@ -83,7 +82,7 @@ func (s *Service) CreateJob(ctx context.Context, req *pb.CreateJobRequest) (*pb.
 	if err := s.store.CreateJob(ctx, job); err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.Internal, "create job: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create job: %v", err))
 	}
 
 	dagOrder := dag.Order()
@@ -94,7 +93,7 @@ func (s *Service) CreateJob(ctx context.Context, req *pb.CreateJobRequest) (*pb.
 	if err := s.store.CreateStages(ctx, jobID, stageNames); err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.Internal, "create stages: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create stages: %v", err))
 	}
 
 	// Register cancel func after successful DB creation.
@@ -111,13 +110,13 @@ func (s *Service) CreateJob(ctx context.Context, req *pb.CreateJobRequest) (*pb.
 	}
 
 	span.SetStatus(otelcodes.Ok, "")
-	return &pb.CreateJobResponse{
+	return connect.NewResponse(&pb.CreateJobResponse{
 		JobId:  jobID,
 		Status: jobStatusToProto(JobStatusPending),
-	}, nil
+	}), nil
 }
 
-func (s *Service) GetJob(ctx context.Context, req *pb.GetJobRequest) (*pb.GetJobResponse, error) {
+func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.GetJob")
 	defer span.End()
 
@@ -125,38 +124,38 @@ func (s *Service) GetJob(ctx context.Context, req *pb.GetJobRequest) (*pb.GetJob
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
 	span.SetAttributes(
 		attribute.String("tenant.id", tenantID),
-		attribute.String("job.id", req.JobId),
+		attribute.String("job.id", req.Msg.JobId),
 	)
 
-	job, err := s.store.GetJob(ctx, req.JobId)
+	job, err := s.store.GetJob(ctx, req.Msg.JobId)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "job not found")
+			return nil, connect.NewError(connect.CodeNotFound, errors.New("job not found"))
 		}
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.Internal, "get job: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get job: %v", err))
 	}
 
-	stages, err := s.store.GetStages(ctx, req.JobId)
+	stages, err := s.store.GetStages(ctx, req.Msg.JobId)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.Internal, "get stages: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get stages: %v", err))
 	}
 
 	pbJob := jobToProto(job, stages)
 
 	span.SetStatus(otelcodes.Ok, "")
-	return &pb.GetJobResponse{Job: pbJob}, nil
+	return connect.NewResponse(&pb.GetJobResponse{Job: pbJob}), nil
 }
 
-func (s *Service) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
+func (s *Service) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.ListJobs")
 	defer span.End()
 
@@ -164,18 +163,18 @@ func (s *Service) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.Li
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
 	span.SetAttributes(attribute.String("tenant.id", tenantID))
 
 	var pageSize int32 = 50
 	var pageToken string
-	if req.Options != nil && req.Options.Pagination != nil {
-		if req.Options.Pagination.PageSize > 0 {
-			pageSize = req.Options.Pagination.PageSize
+	if req.Msg.Options != nil && req.Msg.Options.Pagination != nil {
+		if req.Msg.Options.Pagination.PageSize > 0 {
+			pageSize = req.Msg.Options.Pagination.PageSize
 		}
-		pageToken = req.Options.Pagination.PageToken
+		pageToken = req.Msg.Options.Pagination.PageToken
 	}
 
 	offset := 0
@@ -190,15 +189,15 @@ func (s *Service) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.Li
 		Limit:  int(pageSize),
 		Offset: offset,
 	}
-	if req.Status != pb.JobStatus_JOB_STATUS_UNSPECIFIED {
-		filter.Status = jobStatusFromProto(req.Status)
+	if req.Msg.Status != pb.JobStatus_JOB_STATUS_UNSPECIFIED {
+		filter.Status = jobStatusFromProto(req.Msg.Status)
 	}
 
 	jobs, total, err := s.store.ListJobs(ctx, tenantID, filter)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.Internal, "list jobs: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list jobs: %v", err))
 	}
 
 	pbJobs := make([]*pb.PipelineJob, len(jobs))
@@ -217,16 +216,16 @@ func (s *Service) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.Li
 	}
 
 	span.SetStatus(otelcodes.Ok, "")
-	return &pb.ListJobsResponse{
+	return connect.NewResponse(&pb.ListJobsResponse{
 		Jobs: pbJobs,
 		PageInfo: &pb.PageInfo{
 			NextPageToken: nextPageToken,
 			TotalCount:    total,
 		},
-	}, nil
+	}), nil
 }
 
-func (s *Service) CancelJob(ctx context.Context, req *pb.CancelJobRequest) (*pb.CancelJobResponse, error) {
+func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.CancelJob")
 	defer span.End()
 
@@ -234,42 +233,42 @@ func (s *Service) CancelJob(ctx context.Context, req *pb.CancelJobRequest) (*pb.
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
 	span.SetAttributes(
 		attribute.String("tenant.id", tenantID),
-		attribute.String("job.id", req.JobId),
+		attribute.String("job.id", req.Msg.JobId),
 	)
 
-	if _, err := s.store.GetJob(ctx, req.JobId); err != nil {
+	if _, err := s.store.GetJob(ctx, req.Msg.JobId); err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "job not found")
+			return nil, connect.NewError(connect.CodeNotFound, errors.New("job not found"))
 		}
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.Internal, "get job: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get job: %v", err))
 	}
 
 	s.mu.Lock()
-	cancel, ok := s.running[req.JobId]
+	cancel, ok := s.running[req.Msg.JobId]
 	if !ok {
 		s.mu.Unlock()
-		return nil, status.Error(codes.NotFound, "job is not running")
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("job is not running"))
 	}
 	cancel()
-	delete(s.running, req.JobId)
+	delete(s.running, req.Msg.JobId)
 	s.mu.Unlock()
 
 	// Status update and NATS event handled by executeJob's ctx.Err() path.
 
 	span.SetStatus(otelcodes.Ok, "")
-	return &pb.CancelJobResponse{
+	return connect.NewResponse(&pb.CancelJobResponse{
 		Cancelled: true,
-	}, nil
+	}), nil
 }
 
-func (s *Service) RetryJob(ctx context.Context, req *pb.RetryJobRequest) (*pb.RetryJobResponse, error) {
+func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.RetryJob")
 	defer span.End()
 
@@ -277,22 +276,22 @@ func (s *Service) RetryJob(ctx context.Context, req *pb.RetryJobRequest) (*pb.Re
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
 	span.SetAttributes(
 		attribute.String("tenant.id", tenantID),
-		attribute.String("job.id", req.JobId),
+		attribute.String("job.id", req.Msg.JobId),
 	)
 
-	job, err := s.store.GetJob(ctx, req.JobId)
+	job, err := s.store.GetJob(ctx, req.Msg.JobId)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return nil, status.Error(codes.NotFound, "job not found")
+			return nil, connect.NewError(connect.CodeNotFound, errors.New("job not found"))
 		}
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Errorf(codes.Internal, "get job: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get job: %v", err))
 	}
 
 	// Check concurrency limit before spawning retry job.
@@ -302,12 +301,12 @@ func (s *Service) RetryJob(ctx context.Context, req *pb.RetryJobRequest) (*pb.Re
 
 	var newJobID string
 
-	if req.RetryFromFailure {
-		stages, err := s.store.GetStages(ctx, req.JobId)
+	if req.Msg.RetryFromFailure {
+		stages, err := s.store.GetStages(ctx, req.Msg.JobId)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(otelcodes.Error, err.Error())
-			return nil, status.Errorf(codes.Internal, "get stages: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get stages: %v", err))
 		}
 
 		var firstFailed string
@@ -320,30 +319,30 @@ func (s *Service) RetryJob(ctx context.Context, req *pb.RetryJobRequest) (*pb.Re
 		}
 
 		if firstFailed == "" {
-			return nil, status.Error(codes.FailedPrecondition, "no failed stage to retry from")
+			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("no failed stage to retry from"))
 		}
 
-		if err := s.store.ResetStagesFrom(ctx, req.JobId, firstFailed, stageNames); err != nil {
+		if err := s.store.ResetStagesFrom(ctx, req.Msg.JobId, firstFailed, stageNames); err != nil {
 			span.RecordError(err)
 			span.SetStatus(otelcodes.Error, err.Error())
-			return nil, status.Errorf(codes.Internal, "reset stages: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("reset stages: %v", err))
 		}
 
-		if err := s.store.UpdateJobStatus(ctx, req.JobId, JobStatusRunning, nil); err != nil {
+		if err := s.store.UpdateJobStatus(ctx, req.Msg.JobId, JobStatusRunning, nil); err != nil {
 			span.RecordError(err)
 			span.SetStatus(otelcodes.Error, err.Error())
-			return nil, status.Errorf(codes.Internal, "update job status: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("update job status: %v", err))
 		}
 
 		s.mu.Lock()
 		jobCtx, cancel := context.WithCancel(context.Background())
-		s.running[req.JobId] = cancel
+		s.running[req.Msg.JobId] = cancel
 		s.mu.Unlock()
 
 		s.wg.Add(1)
-		go s.executeJob(jobCtx, tenantID, req.JobId)
+		go s.executeJob(jobCtx, tenantID, req.Msg.JobId)
 
-		newJobID = req.JobId
+		newJobID = req.Msg.JobId
 	} else {
 		newJobID = uuid.New().String()
 
@@ -361,14 +360,14 @@ func (s *Service) RetryJob(ctx context.Context, req *pb.RetryJobRequest) (*pb.Re
 		if err := s.store.CreateJob(ctx, newJob); err != nil {
 			span.RecordError(err)
 			span.SetStatus(otelcodes.Error, err.Error())
-			return nil, status.Errorf(codes.Internal, "create job: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create job: %v", err))
 		}
 
 		dag, err := s.registry.BuildDAG(ctx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(otelcodes.Error, err.Error())
-			return nil, status.Errorf(codes.Internal, "build DAG: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("build DAG: %v", err))
 		}
 
 		dagOrder := dag.Order()
@@ -379,7 +378,7 @@ func (s *Service) RetryJob(ctx context.Context, req *pb.RetryJobRequest) (*pb.Re
 		if err := s.store.CreateStages(ctx, newJobID, stageNames); err != nil {
 			span.RecordError(err)
 			span.SetStatus(otelcodes.Error, err.Error())
-			return nil, status.Errorf(codes.Internal, "create stages: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create stages: %v", err))
 		}
 
 		s.mu.Lock()
@@ -396,12 +395,12 @@ func (s *Service) RetryJob(ctx context.Context, req *pb.RetryJobRequest) (*pb.Re
 	}
 
 	span.SetStatus(otelcodes.Ok, "")
-	return &pb.RetryJobResponse{
+	return connect.NewResponse(&pb.RetryJobResponse{
 		NewJobId: newJobID,
-	}, nil
+	}), nil
 }
 
-func (s *Service) GetJobTrace(ctx context.Context, req *pb.GetJobTraceRequest) (*pb.GetJobTraceResponse, error) {
+func (s *Service) GetJobTrace(ctx context.Context, req *connect.Request[pb.GetJobTraceRequest]) (*connect.Response[pb.GetJobTraceResponse], error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.GetJobTrace")
 	defer span.End()
 
@@ -409,16 +408,16 @@ func (s *Service) GetJobTrace(ctx context.Context, req *pb.GetJobTraceRequest) (
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
-		return nil, status.Error(codes.InvalidArgument, "missing tenant context")
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing tenant context"))
 	}
 
 	span.SetAttributes(
 		attribute.String("tenant.id", tenantID),
-		attribute.String("job.id", req.JobId),
+		attribute.String("job.id", req.Msg.JobId),
 	)
 
 	span.SetStatus(otelcodes.Ok, "")
-	return nil, status.Error(codes.Unimplemented, "GetJobTrace is not yet implemented")
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("GetJobTrace is not yet implemented"))
 }
 
 func (s *Service) Start(ctx context.Context) error {

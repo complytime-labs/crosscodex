@@ -4,25 +4,25 @@ import (
 	"errors"
 	"testing"
 
+	"connectrpc.com/connect"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
-	"google.golang.org/grpc/codes"
 )
 
 func TestMapGraphError(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
-		expected codes.Code
+		expected connect.Code
 	}{
-		{"nil", nil, codes.OK},
-		{"NodeNotFound", graphdb.ErrNodeNotFound, codes.NotFound},
-		{"EdgeNotFound", graphdb.ErrEdgeNotFound, codes.NotFound},
-		{"GraphNotFound", graphdb.ErrGraphNotFound, codes.NotFound},
-		{"InvalidCypher", graphdb.ErrInvalidCypher, codes.InvalidArgument},
-		{"TenantRequired", graphdb.ErrTenantRequired, codes.InvalidArgument},
-		{"ReadOnlyViolation", graphdb.ErrReadOnlyViolation, codes.PermissionDenied},
-		{"unknown", errors.New("unknown"), codes.Internal},
+		{"nil", nil, connect.Code(0)},
+		{"NodeNotFound", graphdb.ErrNodeNotFound, connect.CodeNotFound},
+		{"EdgeNotFound", graphdb.ErrEdgeNotFound, connect.CodeNotFound},
+		{"GraphNotFound", graphdb.ErrGraphNotFound, connect.CodeNotFound},
+		{"InvalidCypher", graphdb.ErrInvalidCypher, connect.CodeInvalidArgument},
+		{"TenantRequired", graphdb.ErrTenantRequired, connect.CodeInvalidArgument},
+		{"ReadOnlyViolation", graphdb.ErrReadOnlyViolation, connect.CodePermissionDenied},
+		{"unknown", errors.New("unknown"), connect.CodeInternal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -37,13 +37,13 @@ func TestMapVectorError(t *testing.T) {
 	tests := []struct {
 		name     string
 		err      error
-		expected codes.Code
+		expected connect.Code
 	}{
-		{"nil", nil, codes.OK},
-		{"NotFound", vectordb.ErrNotFound, codes.NotFound},
-		{"ModelNotFound", vectordb.ErrModelNotFound, codes.NotFound},
-		{"InvalidDimension", vectordb.ErrInvalidDimension, codes.InvalidArgument},
-		{"unknown", errors.New("unknown"), codes.Internal},
+		{"nil", nil, connect.Code(0)},
+		{"NotFound", vectordb.ErrNotFound, connect.CodeNotFound},
+		{"ModelNotFound", vectordb.ErrModelNotFound, connect.CodeNotFound},
+		{"InvalidDimension", vectordb.ErrInvalidDimension, connect.CodeInvalidArgument},
+		{"unknown", errors.New("unknown"), connect.CodeInternal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

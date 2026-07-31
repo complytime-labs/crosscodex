@@ -6,13 +6,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	crosscodexv1 "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
@@ -22,15 +25,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// Service implements the CatalogService gRPC interface.
+// Service implements the CatalogService Connect interface.
 // It orchestrates parsing, persistence, graph construction, embeddings, and search.
 type Service struct {
-	crosscodexv1.UnimplementedCatalogServiceServer
 	parser            oscal.Parser
 	structurer        oscal.Structurer
 	assembler         oscal.Assembler
@@ -175,56 +175,56 @@ func WithLogger(l *slog.Logger) ServiceOption {
 }
 
 // ParseCatalog parses a catalog document from object storage, persists controls, builds graph, generates embeddings.
-func (s *Service) ParseCatalog(ctx context.Context, req *crosscodexv1.ParseCatalogRequest) (*crosscodexv1.ParseCatalogResponse, error) {
+func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crosscodexv1.ParseCatalogRequest]) (*connect.Response[crosscodexv1.ParseCatalogResponse], error) {
 	start := time.Now()
 
 	if s.tracer != nil {
 		var span trace.Span
 		ctx, span = s.tracer.Start(ctx, "catalog.ParseCatalog",
-			trace.WithAttributes(attribute.String("document.id", req.GetDocumentId())))
+			trace.WithAttributes(attribute.String("document.id", req.Msg.GetDocumentId())))
 		defer span.End()
 	}
 
 	// Validate tenant context
-	if req.GetTenantContext() == nil || req.GetTenantContext().GetTenantId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_context.tenant_id is required")
+	if req.Msg.GetTenantContext() == nil || req.Msg.GetTenantContext().GetTenantId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("tenant_context.tenant_id is required"))
 	}
 
 	// Validate document_id
-	if req.GetDocumentId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "document_id is required")
+	if req.Msg.GetDocumentId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("document_id is required"))
 	}
 
-	tenantID := req.GetTenantContext().GetTenantId()
+	tenantID := req.Msg.GetTenantContext().GetTenantId()
 
 	// Set tenant context
 	var err error
 	ctx, err = tenant.WithTenant(ctx, tenantID)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid tenant_id: %v", err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid tenant_id: %v", err))
 	}
 
 	// Get document from storage
 	if s.storage == nil {
-		return nil, status.Error(codes.FailedPrecondition, "storage provider not configured")
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("storage provider not configured"))
 	}
 
-	reader, err := s.storage.Get(ctx, req.GetDocumentId())
+	reader, err := s.storage.Get(ctx, req.Msg.GetDocumentId())
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "document not found: %v", err)
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("document not found: %v", err))
 	}
 	defer reader.Close()
 
 	// Create provenance tracker with tee reader
 	prov, teeReader, err := oscal.NewProvenance(reader)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "create provenance: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create provenance: %v", err))
 	}
 
 	// Read all data
 	data, err := io.ReadAll(teeReader)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "read document: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("read document: %v", err))
 	}
 
 	// Detect if OSCAL JSON
@@ -234,25 +234,25 @@ func (s *Service) ParseCatalog(ctx context.Context, req *crosscodexv1.ParseCatal
 	if isOSCAL {
 		// Parse via Parser
 		if s.parser == nil {
-			return nil, status.Error(codes.FailedPrecondition, "parser not configured")
+			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("parser not configured"))
 		}
 		items, err = s.parser.Parse(ctx, bytes.NewReader(data))
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "parse OSCAL: %v", err)
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("parse OSCAL: %v", err))
 		}
 	} else {
 		// Structure via Structurer
 		if s.structurer == nil {
-			return nil, status.Error(codes.FailedPrecondition, "structurer not configured")
+			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("structurer not configured"))
 		}
 		// For structurer, we need a StructuredDoc - for now, just fail gracefully
 		// In a real implementation, we'd parse the document into sections first
-		return nil, status.Error(codes.Unimplemented, "non-OSCAL structuring not yet implemented in service layer")
+		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("non-OSCAL structuring not yet implemented in service layer"))
 	}
 
 	// Validate items
 	if err := validateItems(items); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "validation failed: %v", err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("validation failed: %v", err))
 	}
 
 	// Generate catalog_id from content hash
@@ -263,10 +263,10 @@ func (s *Service) ParseCatalog(ctx context.Context, req *crosscodexv1.ParseCatal
 		catalogRecord := CatalogRecord{
 			CatalogID:        catalogID,
 			TenantID:         tenantID,
-			Name:             req.GetCatalogName(),
+			Name:             req.Msg.GetCatalogName(),
 			Version:          "",
 			SourceType:       "document",
-			ObjectPath:       req.GetDocumentId(),
+			ObjectPath:       req.Msg.GetDocumentId(),
 			CreatedAt:        time.Now().UTC(),
 			SourceURI:        prov.SourceURI,
 			ContentHash:      prov.ContentHash,
@@ -278,7 +278,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *crosscodexv1.ParseCatal
 		}
 
 		if err := s.store.UpsertCatalog(ctx, catalogRecord); err != nil {
-			return nil, status.Errorf(codes.Internal, "store catalog: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("store catalog: %v", err))
 		}
 
 		// Persist controls
@@ -300,7 +300,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *crosscodexv1.ParseCatal
 		}
 
 		if err := s.store.UpsertControls(ctx, controlRecords); err != nil {
-			return nil, status.Errorf(codes.Internal, "store controls: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("store controls: %v", err))
 		}
 	}
 
@@ -391,54 +391,54 @@ func (s *Service) ParseCatalog(ctx context.Context, req *crosscodexv1.ParseCatal
 		s.controlsExtracted.Add(ctx, int64(len(items)))
 	}
 
-	return &crosscodexv1.ParseCatalogResponse{
+	return connect.NewResponse(&crosscodexv1.ParseCatalogResponse{
 		CatalogId: catalogID,
 		Status:    crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
-	}, nil
+	}), nil
 }
 
 // GetCatalog retrieves catalog metadata by ID.
-func (s *Service) GetCatalog(ctx context.Context, req *crosscodexv1.GetCatalogRequest) (*crosscodexv1.GetCatalogResponse, error) {
+func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[crosscodexv1.GetCatalogRequest]) (*connect.Response[crosscodexv1.GetCatalogResponse], error) {
 	if s.tracer != nil {
 		var span trace.Span
 		ctx, span = s.tracer.Start(ctx, "catalog.GetCatalog",
-			trace.WithAttributes(attribute.String("catalog.id", req.GetCatalogId())))
+			trace.WithAttributes(attribute.String("catalog.id", req.Msg.GetCatalogId())))
 		defer span.End()
 	}
 
 	// Validate tenant context
-	if req.GetTenantContext() == nil || req.GetTenantContext().GetTenantId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_context.tenant_id is required")
+	if req.Msg.GetTenantContext() == nil || req.Msg.GetTenantContext().GetTenantId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("tenant_context.tenant_id is required"))
 	}
 
-	tenantID := req.GetTenantContext().GetTenantId()
+	tenantID := req.Msg.GetTenantContext().GetTenantId()
 
 	// Set tenant context
 	var err error
 	ctx, err = tenant.WithTenant(ctx, tenantID)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid tenant_id: %v", err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid tenant_id: %v", err))
 	}
 
 	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "store not configured")
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("store not configured"))
 	}
 
-	record, err := s.store.GetCatalog(ctx, req.GetCatalogId())
+	record, err := s.store.GetCatalog(ctx, req.Msg.GetCatalogId())
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Error(codes.NotFound, err.Error())
+			return nil, connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
 		}
-		return nil, status.Errorf(codes.Internal, "get catalog: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get catalog: %v", err))
 	}
 
-	return &crosscodexv1.GetCatalogResponse{
+	return connect.NewResponse(&crosscodexv1.GetCatalogResponse{
 		Catalog: catalogRecordToProto(record),
-	}, nil
+	}), nil
 }
 
 // ListCatalogs lists catalogs with pagination.
-func (s *Service) ListCatalogs(ctx context.Context, req *crosscodexv1.ListCatalogsRequest) (*crosscodexv1.ListCatalogsResponse, error) {
+func (s *Service) ListCatalogs(ctx context.Context, req *connect.Request[crosscodexv1.ListCatalogsRequest]) (*connect.Response[crosscodexv1.ListCatalogsResponse], error) {
 	if s.tracer != nil {
 		var span trace.Span
 		ctx, span = s.tracer.Start(ctx, "catalog.ListCatalogs")
@@ -446,34 +446,34 @@ func (s *Service) ListCatalogs(ctx context.Context, req *crosscodexv1.ListCatalo
 	}
 
 	// Validate tenant context
-	if req.GetTenantContext() == nil || req.GetTenantContext().GetTenantId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_context.tenant_id is required")
+	if req.Msg.GetTenantContext() == nil || req.Msg.GetTenantContext().GetTenantId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("tenant_context.tenant_id is required"))
 	}
 
-	tenantID := req.GetTenantContext().GetTenantId()
+	tenantID := req.Msg.GetTenantContext().GetTenantId()
 
 	// Set tenant context
 	var err error
 	ctx, err = tenant.WithTenant(ctx, tenantID)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid tenant_id: %v", err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid tenant_id: %v", err))
 	}
 
 	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "store not configured")
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("store not configured"))
 	}
 
 	var pageSize int32
 	var pageToken string
-	if req.GetOptions() != nil && req.GetOptions().GetPagination() != nil {
-		pageSize = req.GetOptions().GetPagination().GetPageSize()
-		pageToken = req.GetOptions().GetPagination().GetPageToken()
+	if req.Msg.GetOptions() != nil && req.Msg.GetOptions().GetPagination() != nil {
+		pageSize = req.Msg.GetOptions().GetPagination().GetPageSize()
+		pageToken = req.Msg.GetOptions().GetPagination().GetPageToken()
 	}
 
 	offset := 0
 	if pageToken != "" {
 		if n, err := fmt.Sscanf(pageToken, "%d", &offset); err != nil || n != 1 {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid page_token: %q", pageToken)
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token: %q", pageToken))
 		}
 	}
 
@@ -484,7 +484,7 @@ func (s *Service) ListCatalogs(ctx context.Context, req *crosscodexv1.ListCatalo
 
 	records, pageInfo, err := s.store.ListCatalogs(ctx, opts)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list catalogs: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list catalogs: %v", err))
 	}
 
 	catalogs := make([]*crosscodexv1.Catalog, len(records))
@@ -492,101 +492,101 @@ func (s *Service) ListCatalogs(ctx context.Context, req *crosscodexv1.ListCatalo
 		catalogs[i] = catalogRecordToProto(&rec)
 	}
 
-	return &crosscodexv1.ListCatalogsResponse{
+	return connect.NewResponse(&crosscodexv1.ListCatalogsResponse{
 		Catalogs: catalogs,
 		PageInfo: &crosscodexv1.PageInfo{
 			NextPageToken: fmt.Sprintf("%d", pageInfo.NextOffset),
 			TotalCount:    pageInfo.TotalCount,
 		},
-	}, nil
+	}), nil
 }
 
 // GetControl retrieves a single control by ID.
-func (s *Service) GetControl(ctx context.Context, req *crosscodexv1.GetControlRequest) (*crosscodexv1.GetControlResponse, error) {
+func (s *Service) GetControl(ctx context.Context, req *connect.Request[crosscodexv1.GetControlRequest]) (*connect.Response[crosscodexv1.GetControlResponse], error) {
 	if s.tracer != nil {
 		var span trace.Span
 		ctx, span = s.tracer.Start(ctx, "catalog.GetControl",
-			trace.WithAttributes(attribute.String("control.id", req.GetControlId())))
+			trace.WithAttributes(attribute.String("control.id", req.Msg.GetControlId())))
 		defer span.End()
 	}
 
 	// Validate tenant context
-	if req.GetTenantContext() == nil || req.GetTenantContext().GetTenantId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_context.tenant_id is required")
+	if req.Msg.GetTenantContext() == nil || req.Msg.GetTenantContext().GetTenantId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("tenant_context.tenant_id is required"))
 	}
 
-	tenantID := req.GetTenantContext().GetTenantId()
+	tenantID := req.Msg.GetTenantContext().GetTenantId()
 
 	// Set tenant context
 	var err error
 	ctx, err = tenant.WithTenant(ctx, tenantID)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid tenant_id: %v", err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid tenant_id: %v", err))
 	}
 
 	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "store not configured")
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("store not configured"))
 	}
 
-	record, err := s.store.GetControl(ctx, req.GetControlId())
+	record, err := s.store.GetControl(ctx, req.Msg.GetControlId())
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Error(codes.NotFound, err.Error())
+			return nil, connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
 		}
-		return nil, status.Errorf(codes.Internal, "get control: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get control: %v", err))
 	}
 
-	return &crosscodexv1.GetControlResponse{
+	return connect.NewResponse(&crosscodexv1.GetControlResponse{
 		Control: controlRecordToProto(record),
-	}, nil
+	}), nil
 }
 
 // SearchControls performs full-text and semantic search on controls.
-func (s *Service) SearchControls(ctx context.Context, req *crosscodexv1.SearchControlsRequest) (*crosscodexv1.SearchControlsResponse, error) {
+func (s *Service) SearchControls(ctx context.Context, req *connect.Request[crosscodexv1.SearchControlsRequest]) (*connect.Response[crosscodexv1.SearchControlsResponse], error) {
 	searchStart := time.Now()
 
 	if s.tracer != nil {
 		var span trace.Span
 		ctx, span = s.tracer.Start(ctx, "catalog.SearchControls",
-			trace.WithAttributes(attribute.String("query", req.GetQuery())))
+			trace.WithAttributes(attribute.String("query", req.Msg.GetQuery())))
 		defer span.End()
 	}
 
 	// Validate tenant context
-	if req.GetTenantContext() == nil || req.GetTenantContext().GetTenantId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "tenant_context.tenant_id is required")
+	if req.Msg.GetTenantContext() == nil || req.Msg.GetTenantContext().GetTenantId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("tenant_context.tenant_id is required"))
 	}
 
-	tenantID := req.GetTenantContext().GetTenantId()
+	tenantID := req.Msg.GetTenantContext().GetTenantId()
 
 	// Set tenant context
 	var err error
 	ctx, err = tenant.WithTenant(ctx, tenantID)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid tenant_id: %v", err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid tenant_id: %v", err))
 	}
 
 	if s.store == nil {
-		return nil, status.Error(codes.FailedPrecondition, "store not configured")
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("store not configured"))
 	}
 
 	var pageSize int32
 	var pageToken string
-	if req.GetOptions() != nil && req.GetOptions().GetPagination() != nil {
-		pageSize = req.GetOptions().GetPagination().GetPageSize()
-		pageToken = req.GetOptions().GetPagination().GetPageToken()
+	if req.Msg.GetOptions() != nil && req.Msg.GetOptions().GetPagination() != nil {
+		pageSize = req.Msg.GetOptions().GetPagination().GetPageSize()
+		pageToken = req.Msg.GetOptions().GetPagination().GetPageToken()
 	}
 
 	offset := 0
 	if pageToken != "" {
 		if n, err := fmt.Sscanf(pageToken, "%d", &offset); err != nil || n != 1 {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid page_token: %q", pageToken)
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid page_token: %q", pageToken))
 		}
 	}
 
 	query := SearchQuery{
-		Query:      req.GetQuery(),
-		CatalogIDs: req.GetCatalogIds(),
+		Query:      req.Msg.GetQuery(),
+		CatalogIDs: req.Msg.GetCatalogIds(),
 		Limit:      int(pageSize),
 		Offset:     offset,
 	}
@@ -594,17 +594,17 @@ func (s *Service) SearchControls(ctx context.Context, req *crosscodexv1.SearchCo
 	// Full-text search via Store
 	ftRecords, pageInfo, err := s.store.SearchControls(ctx, query)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "search controls: %v", err)
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("search controls: %v", err))
 	}
 
 	// Semantic search via VectorDB if available
 	var semanticResults []vectordb.SimilarityResult
-	if s.vectors != nil && s.embedder != nil && req.GetQuery() != "" {
+	if s.vectors != nil && s.embedder != nil && req.Msg.GetQuery() != "" {
 		// Generate query embedding
-		embeddings, err := s.embedder.Embed(ctx, []string{oscal.CleanForEmbedding(req.GetQuery())})
+		embeddings, err := s.embedder.Embed(ctx, []string{oscal.CleanForEmbedding(req.Msg.GetQuery())})
 		if err == nil && len(embeddings) > 0 {
 			// For each catalog ID, perform semantic search
-			for _, catID := range req.GetCatalogIds() {
+			for _, catID := range req.Msg.GetCatalogIds() {
 				findQuery := vectordb.FindSimilarQuery{
 					CatalogID: catID,
 					Model:     "default",
@@ -640,13 +640,13 @@ func (s *Service) SearchControls(ctx context.Context, req *crosscodexv1.SearchCo
 			metric.WithAttributes(attribute.String("search.mode", mode)))
 	}
 
-	return &crosscodexv1.SearchControlsResponse{
+	return connect.NewResponse(&crosscodexv1.SearchControlsResponse{
 		Controls: controls,
 		PageInfo: &crosscodexv1.PageInfo{
 			NextPageToken: fmt.Sprintf("%d", pageInfo.NextOffset),
 			TotalCount:    pageInfo.TotalCount,
 		},
-	}, nil
+	}), nil
 }
 
 // Helper functions
@@ -764,4 +764,4 @@ func controlRecordToProto(rec *ControlRecord) *crosscodexv1.Control {
 }
 
 // Compile-time interface check.
-var _ crosscodexv1.CatalogServiceServer = (*Service)(nil)
+var _ crosscodexv1connect.CatalogServiceHandler = (*Service)(nil)
