@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -566,6 +567,58 @@ var _ = Describe("Graph handlers", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
+	})
+})
+
+var _ = Describe("StreamDocument", func() {
+	// Note: These tests exercise handleStreamedDocument (the business logic)
+	// rather than StreamDocument (the stream handler) because connect.ClientStream
+	// is a concrete struct that requires a real server. Stream ordering enforcement
+	// (metadata must be first, reject chunks before metadata) is validated in
+	// integration tests.
+
+	It("reassembles content and delegates to backend chain", func() {
+		svc := newTestService()
+		ctx := userCtx("user-a")
+
+		meta := &pb.StreamDocumentMetadata{
+			CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+			CatalogName:   "test-catalog",
+		}
+		content := []byte("test document content for streaming")
+
+		resp, err := gateway.ExportHandleStreamedDocument(svc, ctx, time.Now(), meta, content)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetDocumentId()).To(Equal("doc-1"))
+		Expect(resp.Msg.GetJobId()).To(Equal("job-1"))
+	})
+
+	It("returns error when metadata is nil", func() {
+		svc := newTestService()
+		ctx := userCtx("user-a")
+
+		_, err := gateway.ExportHandleStreamedDocument(svc, ctx, time.Now(), nil, []byte("data"))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+	})
+
+	It("returns Unauthenticated when no identity in context", func() {
+		svc := newTestService()
+
+		meta := &pb.StreamDocumentMetadata{}
+		_, err := gateway.ExportHandleStreamedDocument(svc, context.Background(), time.Now(), meta, []byte("data"))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+	})
+
+	It("returns Unavailable when backends are nil", func() {
+		svc := gateway.NewService()
+		ctx := userCtx("user-a")
+
+		meta := &pb.StreamDocumentMetadata{}
+		_, err := gateway.ExportHandleStreamedDocument(svc, ctx, time.Now(), meta, []byte("data"))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
 	})
 })
 
