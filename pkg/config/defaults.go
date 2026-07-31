@@ -50,6 +50,7 @@ nats:
 server:
   addr: ":50051"
   workers: 4
+  max_upload_size: 134217728
 cli:
   output: table
   no_color: false

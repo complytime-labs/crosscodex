@@ -321,4 +321,3 @@ func mapVectorError(err error) connect.Code {
 		return connect.CodeInternal
 	}
 }
-

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	connectrpc "connectrpc.com/connect"
-	"github.com/google/uuid"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
@@ -31,6 +30,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	pkigen "github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -555,6 +555,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		gateway.WithIngestionBackend(localIngestion),
 		gateway.WithPipelineBackend(localPipeline),
 		gateway.WithAdminBackend(&dbAdminBackend{pool: pool}),
+		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(logger),
 	)
 

@@ -681,6 +681,7 @@ logging:
 
 				cc := cfg.CLIConfig()
 				Expect(cc.Output).To(Equal("table"))
+				Expect(cc.UploadChunkSize).To(Equal(1048576))
 			})
 		})
 	})
