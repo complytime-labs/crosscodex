@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"go.opentelemetry.io/otel/attribute"
@@ -15,18 +16,21 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+var _ crosscodexv1connect.GatewayServiceHandler = (*Service)(nil)
+
 type Service struct {
-	authn     *authn.Registry
-	ingestion IngestionBackend
-	catalog   CatalogBackend
-	pipeline  PipelineBackend
-	graph     GraphBackend
-	feedback  FeedbackBackend
-	admin     AdminBackend
-	attestor  attestation.Generator
-	tracer    trace.Tracer
-	meter     metric.Meter
-	logger    *slog.Logger
+	authn         *authn.Registry
+	ingestion     IngestionBackend
+	catalog       CatalogBackend
+	pipeline      PipelineBackend
+	graph         GraphBackend
+	feedback      FeedbackBackend
+	admin         AdminBackend
+	attestor      attestation.Generator
+	tracer        trace.Tracer
+	meter         metric.Meter
+	logger        *slog.Logger
+	maxUploadSize int
 
 	requestsTotal   metric.Int64Counter
 	requestDuration metric.Int64Histogram
@@ -61,7 +65,15 @@ func NewService(opts ...ServiceOption) *Service {
 		}
 	}
 
+	if s.maxUploadSize == 0 {
+		s.maxUploadSize = 128 * 1024 * 1024 // 128MB default
+	}
+
 	return s
+}
+
+func WithMaxUploadSize(size int) ServiceOption {
+	return func(s *Service) { s.maxUploadSize = size }
 }
 
 func WithAuthn(r *authn.Registry) ServiceOption {

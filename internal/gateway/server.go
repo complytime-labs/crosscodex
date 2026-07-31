@@ -84,7 +84,8 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 			lis.Close()
 			return nil, fmt.Errorf("build TLS config: %w", err)
 		}
-		tlsCfg.ClientAuth = tls.RequestClientCert
+		// Allow unauthenticated health probes; the Connect auth interceptor enforces mTLS on all other RPCs.
+		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
 		httpSrv.TLSConfig = tlsCfg
 	} else {
 		p := new(http.Protocols)

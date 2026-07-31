@@ -21,7 +21,6 @@ import (
 
 // Service implements pbconnect.PipelineServiceHandler and gateway.PipelineBackend.
 type Service struct {
-
 	store        Store
 	engine       *analysis.Engine
 	registry     *analyzer.Registry

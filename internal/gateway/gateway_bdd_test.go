@@ -297,11 +297,10 @@ var _ = Describe("Catalog handlers", func() {
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
 	})
 
-	It("propagates backend errors", func() {
-		backendErr := errors.New("db connection lost")
+	It("propagates backend errors with Connect error codes", func() {
 		cat := &mockCatalog{
 			listCatalogsFn: func(context.Context, *connect.Request[pb.ListCatalogsRequest]) (*connect.Response[pb.ListCatalogsResponse], error) {
-				return nil, backendErr
+				return nil, connect.NewError(connect.CodeInternal, errors.New("db connection lost"))
 			},
 		}
 		svc := newTestService(gateway.WithCatalogBackend(cat))
@@ -309,6 +308,7 @@ var _ = Describe("Catalog handlers", func() {
 		ctx := userCtx("user-1")
 		_, err := svc.ListCatalogs(ctx, connect.NewRequest(&pb.ListCatalogsRequest{}))
 		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
 	})
 })
 
@@ -511,6 +511,38 @@ var _ = Describe("SubmitDocument", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
+	It("returns error when catalog backend fails", func() {
+		cat := &mockCatalog{
+			parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				return nil, connect.NewError(connect.CodeInternal, errors.New("catalog unavailable"))
+			},
+		}
+		svc := newTestService(gateway.WithCatalogBackend(cat))
+
+		ctx := userCtx("user-a")
+		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
+		}))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+	})
+
+	It("returns error when pipeline backend fails", func() {
+		pipeline := &mockPipeline{
+			createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
+				return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline unavailable"))
+			},
+		}
+		svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+		ctx := userCtx("user-a")
+		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
+		}))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+	})
+
 	It("returns error when no source provided", func() {
 		svc := newTestService()
 		ctx := userCtx("user-a")
@@ -548,6 +580,74 @@ var _ = Describe("Graph handlers", func() {
 			_, err := svc.QueryGraph(adminCtx(), connect.NewRequest(&pb.QueryGraphRequest{Cypher: ""}))
 			Expect(err).To(HaveOccurred())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		})
+	})
+
+	Context("GetControlMappings", func() {
+		It("returns InvalidArgument for empty control_id", func() {
+			svc := newTestService()
+			ctx := userCtx("user-a")
+			_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: ""}))
+			Expect(err).To(HaveOccurred())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		})
+
+		It("returns mappings from traverse results", func() {
+			graph := &mockGraph{
+				traverseFn: func(_ context.Context, _ *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error) {
+					return connect.NewResponse(&pb.TraverseResponse{
+						Edges: []*pb.Edge{
+							{
+								EdgeId:           "edge-1",
+								SourceNodeId:     "ctrl-source",
+								TargetNodeId:     "ctrl-target",
+								Label:            "maps_to",
+								RelationshipType: pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT,
+							},
+						},
+					}), nil
+				},
+			}
+			svc := newTestService(gateway.WithGraphBackend(graph))
+
+			ctx := userCtx("user-a")
+			resp, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-source"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetMappings()).To(HaveLen(1))
+
+			m := resp.Msg.GetMappings()[0]
+			Expect(m.GetMappingId()).To(Equal("edge-1"))
+			Expect(m.GetSourceControlId()).To(Equal("ctrl-source"))
+			Expect(m.GetTargetControlId()).To(Equal("ctrl-target"))
+		})
+
+		It("propagates pagination limit to traverse request", func() {
+			var capturedReq *pb.TraverseRequest
+			graph := &mockGraph{
+				traverseFn: func(_ context.Context, req *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error) {
+					capturedReq = req.Msg
+					return connect.NewResponse(&pb.TraverseResponse{}), nil
+				},
+			}
+			svc := newTestService(gateway.WithGraphBackend(graph))
+
+			ctx := userCtx("user-a")
+			_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{
+				ControlId: "ctrl-1",
+				Limit:     5,
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(capturedReq).NotTo(BeNil())
+			Expect(capturedReq.GetOptions()).NotTo(BeNil())
+			Expect(capturedReq.GetOptions().GetPagination().GetPageSize()).To(Equal(int32(5)))
+		})
+
+		It("returns Unavailable when graph backend is nil", func() {
+			svc := newTestService(gateway.WithGraphBackend(nil))
+			ctx := userCtx("user-a")
+			_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
+			Expect(err).To(HaveOccurred())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
 		})
 	})
 
@@ -609,6 +709,44 @@ var _ = Describe("StreamDocument", func() {
 		_, err := gateway.ExportHandleStreamedDocument(svc, context.Background(), time.Now(), meta, []byte("data"))
 		Expect(err).To(HaveOccurred())
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+	})
+
+	It("propagates metadata to catalog and pipeline backends", func() {
+		var capturedParseReq *pb.ParseCatalogRequest
+		var capturedJobReq *pb.CreateJobRequest
+		cat := &mockCatalog{
+			parseFn: func(_ context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				capturedParseReq = req.Msg
+				return connect.NewResponse(&pb.ParseCatalogResponse{CatalogId: "cat-1", Status: pb.JobStatus_JOB_STATUS_COMPLETED}), nil
+			},
+		}
+		pipeline := &mockPipeline{
+			createJobFn: func(_ context.Context, req *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
+				capturedJobReq = req.Msg
+				return connect.NewResponse(&pb.CreateJobResponse{JobId: "job-1", Status: pb.JobStatus_JOB_STATUS_PENDING}), nil
+			},
+		}
+		svc := newTestService(gateway.WithCatalogBackend(cat), gateway.WithPipelineBackend(pipeline))
+		ctx := userCtx("user-a")
+
+		meta := &pb.StreamDocumentMetadata{
+			CatalogFormat:   pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+			CatalogName:     "test-catalog",
+			TargetCatalogId: "target-cat-1",
+		}
+
+		resp, err := gateway.ExportHandleStreamedDocument(svc, ctx, time.Now(), meta, []byte("doc content"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetDocumentId()).To(Equal("doc-1"))
+
+		Expect(capturedParseReq).NotTo(BeNil())
+		Expect(capturedParseReq.GetFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
+		Expect(capturedParseReq.GetCatalogName()).To(Equal("test-catalog"))
+
+		Expect(capturedJobReq).NotTo(BeNil())
+		Expect(capturedJobReq.GetConfig().GetCatalogFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
+		Expect(capturedJobReq.GetConfig().GetCatalogName()).To(Equal("test-catalog"))
+		Expect(capturedJobReq.GetConfig().GetTargetCatalogId()).To(Equal("target-cat-1"))
 	})
 
 	It("returns Unavailable when backends are nil", func() {

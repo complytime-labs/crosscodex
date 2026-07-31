@@ -14,7 +14,7 @@ var ExportHandleStreamedDocument = (*Service).handleStreamedDocument
 
 // ExportContextWithIdentity injects an authn.Identity into a context
 // using authn.WithIdentity, allowing external _test packages
-// to set up authenticated contexts without the gRPC interceptor.
+// to set up authenticated contexts without the Connect auth interceptor.
 func ExportContextWithIdentity(ctx context.Context, id *authn.Identity) context.Context {
 	return authn.WithIdentity(ctx, id)
 }

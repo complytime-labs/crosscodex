@@ -10,10 +10,7 @@ import (
 	"connectrpc.com/connect"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
-	"github.com/complytime-labs/crosscodex/pkg/attestation"
 )
-
-const maxUploadSize = 128 * 1024 * 1024 // 128MB
 
 func (s *Service) StreamDocument(ctx context.Context, stream *connect.ClientStream[pb.StreamDocumentChunk]) (*connect.Response[pb.SubmitDocumentResponse], error) {
 	start := time.Now()
@@ -41,8 +38,8 @@ func (s *Service) StreamDocument(ctx context.Context, stream *connect.ClientStre
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("first message must contain metadata"))
 			}
 			buf.Write(p.Chunk)
-			if buf.Len() > maxUploadSize {
-				return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("upload exceeds maximum size of %d bytes", maxUploadSize))
+			if buf.Len() > s.maxUploadSize {
+				return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("upload exceeds maximum size of %d bytes", s.maxUploadSize))
 			}
 		}
 	}
@@ -69,90 +66,15 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("metadata is required"))
 	}
 
-	if s.ingestion == nil || s.catalog == nil || s.pipeline == nil {
-		return nil, connect.NewError(connect.CodeUnavailable, errors.New("required backends not configured"))
-	}
-
-	tc := buildTenantContext(identity)
-
-	convertReq := &pb.ConvertDocumentRequest{
-		TenantContext: tc,
-		Source:        &pb.ConvertDocumentRequest_Content{Content: content},
-		Metadata:      meta.GetContentMetadata(),
-	}
-
-	convertResp, err := s.ingestion.ConvertDocument(ctx, connect.NewRequest(convertReq))
-	if err != nil {
-		s.recordMetrics(ctx, "StreamDocument", start, connect.CodeOf(err))
-		return nil, err
-	}
-
-	docID := convertResp.Msg.GetDocumentId()
-	if docID == "" {
-		return nil, connect.NewError(connect.CodeInternal, errors.New("ingestion backend returned empty document_id"))
-	}
-
-	parseReq := &pb.ParseCatalogRequest{
-		TenantContext: tc,
-		DocumentId:    docID,
-		Format:        meta.GetCatalogFormat(),
-		CatalogName:   meta.GetCatalogName(),
-	}
-
-	parseResp, err := s.catalog.ParseCatalog(ctx, connect.NewRequest(parseReq))
-	if err != nil {
-		s.recordMetrics(ctx, "StreamDocument", start, connect.CodeOf(err))
-		return nil, err
-	}
-
-	catalogID := parseResp.Msg.GetCatalogId()
-	if catalogID == "" {
-		return nil, connect.NewError(connect.CodeInternal, errors.New("catalog backend returned empty catalog_id"))
-	}
-
-	jobReq := &pb.CreateJobRequest{
-		TenantContext: tc,
-		JobType:       pb.JobType_JOB_TYPE_FULL_ANALYSIS,
-		Config: &pb.JobConfig{
-			Source:          &pb.JobConfig_CatalogId{CatalogId: catalogID},
-			CatalogFormat:   meta.GetCatalogFormat(),
-			CatalogName:     meta.GetCatalogName(),
-			TargetCatalogId: meta.GetTargetCatalogId(),
-			SynthesisConfig: meta.GetSynthesisConfig(),
+	return s.processDocument(ctx, start, processDocumentInput{
+		convertReq: &pb.ConvertDocumentRequest{
+			Source:   &pb.ConvertDocumentRequest_Content{Content: content},
+			Metadata: meta.GetContentMetadata(),
 		},
-	}
-
-	jobResp, err := s.pipeline.CreateJob(ctx, connect.NewRequest(jobReq))
-	if err != nil {
-		s.recordMetrics(ctx, "StreamDocument", start, connect.CodeOf(err))
-		return nil, err
-	}
-
-	if jobResp.Msg.GetJobId() == "" {
-		return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline backend returned empty job_id"))
-	}
-
-	materials := []attestation.Artifact{
-		{URI: fmt.Sprintf("document://%s/%s", identity.TenantID, docID), Digest: ""},
-	}
-	products := []attestation.Artifact{
-		{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, catalogID), Digest: ""},
-		{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.Msg.GetJobId()), Digest: ""},
-	}
-	byProducts := map[string]any{
-		"catalog_format": meta.GetCatalogFormat().String(),
-		"catalog_name":   meta.GetCatalogName(),
-	}
-	if meta.GetTargetCatalogId() != "" {
-		byProducts["target_catalog_id"] = meta.GetTargetCatalogId()
-	}
-	s.emitAttestation(ctx, "gateway.StreamDocument", materials, products, byProducts)
-
-	s.recordMetrics(ctx, "StreamDocument", start, connect.Code(0))
-
-	return connect.NewResponse(&pb.SubmitDocumentResponse{
-		JobId:      jobResp.Msg.GetJobId(),
-		DocumentId: docID,
-		Status:     jobResp.Msg.GetStatus(),
-	}), nil
+		catalogFormat:   meta.GetCatalogFormat(),
+		catalogName:     meta.GetCatalogName(),
+		targetCatalogID: meta.GetTargetCatalogId(),
+		synthesisConfig: meta.GetSynthesisConfig(),
+		rpcName:         "StreamDocument",
+	})
 }
