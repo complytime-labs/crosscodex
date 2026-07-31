@@ -668,7 +668,7 @@ logging:
 				testspecs.AssertNoError(err)
 
 				sc := cfg.ServiceConfig()
-				Expect(sc.GRPCAddr).To(Equal(":50051"))
+				Expect(sc.Addr).To(Equal(":50051"))
 			})
 
 			It("provides correctly configured CLIConfig", func() {
@@ -783,9 +783,8 @@ logging:
 					SSLMode  string `yaml:"ssl_mode"`
 				} `yaml:"database"`
 				Server struct {
-					GRPCAddr string `yaml:"grpc_addr"`
-					HTTPAddr string `yaml:"http_addr"`
-					Workers  int    `yaml:"workers"`
+					Addr    string `yaml:"addr"`
+					Workers int    `yaml:"workers"`
 				} `yaml:"server"`
 				CLI struct {
 					Output string `yaml:"output"`
@@ -802,8 +801,7 @@ logging:
 			Expect(cfg.TLS.Mode).To(Equal("off"))
 			Expect(cfg.Database.MaxConns).To(Equal(10))
 			Expect(cfg.Database.SSLMode).To(Equal("prefer"))
-			Expect(cfg.Server.GRPCAddr).To(Equal(":50051"))
-			Expect(cfg.Server.HTTPAddr).To(Equal(":8080"))
+			Expect(cfg.Server.Addr).To(Equal(":50051"))
 			Expect(cfg.Server.Workers).To(Equal(4))
 			Expect(cfg.CLI.Output).To(Equal("table"))
 			Expect(cfg.Logging.Level).To(Equal("info"))
@@ -1246,9 +1244,8 @@ logging:
 					Timeout:        30,
 				},
 				Server: config.ServerConfig{
-					GRPCAddr: ":50051",
-					HTTPAddr: ":8080",
-					Workers:  4,
+					Addr:    ":50051",
+					Workers: 4,
 				},
 				Storage: config.StorageConfig{
 					Objects: config.ObjectStorageConfig{
@@ -1264,8 +1261,7 @@ logging:
 
 			sc := cfg.ServiceConfig()
 
-			Expect(sc.GRPCAddr).To(Equal(":50051"))
-			Expect(sc.HTTPAddr).To(Equal(":8080"))
+			Expect(sc.Addr).To(Equal(":50051"))
 			Expect(sc.Workers).To(Equal(4))
 			Expect(sc.LLM.GatewayURL).To(Equal("http://localhost:4000"))              // DevSkim: ignore DS162092 -- test fixture
 			Expect(sc.Database.DSN).To(Equal("postgres://localhost:5432/crosscodex")) // DevSkim: ignore DS162092 -- test fixture

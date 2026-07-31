@@ -34,23 +34,23 @@ func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequ
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
-	resp, err := s.pipeline.GetJob(ctx, req.Msg)
+	resp, err := s.pipeline.GetJob(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "GetJob", start, connect.CodeOf(err))
 		return nil, err
 	}
 
-	if resp.GetJob() == nil {
+	if resp.Msg.GetJob() == nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("backend returned nil job"))
 	}
 
-	if !authn.IsAdmin(*identity) && resp.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
+	if !authn.IsAdmin(*identity) && resp.Msg.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
 		s.recordMetrics(ctx, "GetJob", start, connect.CodePermissionDenied)
 		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("not the job owner"))
 	}
 
 	s.recordMetrics(ctx, "GetJob", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }
 
 func (s *Service) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {
@@ -70,24 +70,24 @@ func (s *Service) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobs
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
-	resp, err := s.pipeline.ListJobs(ctx, req.Msg)
+	resp, err := s.pipeline.ListJobs(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "ListJobs", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	if !authn.IsAdmin(*identity) {
-		filtered := make([]*pb.PipelineJob, 0, len(resp.GetJobs()))
-		for _, job := range resp.GetJobs() {
+		filtered := make([]*pb.PipelineJob, 0, len(resp.Msg.GetJobs()))
+		for _, job := range resp.Msg.GetJobs() {
 			if job.GetAudit().GetCreatedBy() == identity.Subject {
 				filtered = append(filtered, job)
 			}
 		}
-		resp.Jobs = filtered
+		resp.Msg.Jobs = filtered
 	}
 
 	s.recordMetrics(ctx, "ListJobs", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }
 
 func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error) {
@@ -112,18 +112,18 @@ func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJ
 	tc := buildTenantContext(identity)
 
 	if !authn.IsAdmin(*identity) {
-		getResp, err := s.pipeline.GetJob(ctx, &pb.GetJobRequest{
+		getResp, err := s.pipeline.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{
 			TenantContext: tc,
 			JobId:         req.Msg.GetJobId(),
-		})
+		}))
 		if err != nil {
 			s.recordMetrics(ctx, "CancelJob", start, connect.CodeOf(err))
 			return nil, err
 		}
-		if getResp.GetJob() == nil {
+		if getResp.Msg.GetJob() == nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.New("backend returned nil job"))
 		}
-		if getResp.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
+		if getResp.Msg.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
 			s.recordMetrics(ctx, "CancelJob", start, connect.CodePermissionDenied)
 			return nil, connect.NewError(connect.CodePermissionDenied, errors.New("not the job owner"))
 		}
@@ -131,12 +131,12 @@ func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJ
 
 	req.Msg.TenantContext = tc
 
-	resp, err := s.pipeline.CancelJob(ctx, req.Msg)
+	resp, err := s.pipeline.CancelJob(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "CancelJob", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	s.recordMetrics(ctx, "CancelJob", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }

@@ -8,7 +8,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	pbconnect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
@@ -19,9 +19,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 )
 
-// Service implements pb.PipelineServiceServer and gateway.PipelineBackend.
+// Service implements pbconnect.PipelineServiceHandler and gateway.PipelineBackend.
 type Service struct {
-	pb.UnimplementedPipelineServiceServer
 
 	store        Store
 	engine       *analysis.Engine
@@ -80,5 +79,5 @@ func New(
 	return s
 }
 
-var _ pb.PipelineServiceServer = (*Service)(nil)
+var _ pbconnect.PipelineServiceHandler = (*Service)(nil)
 var _ gateway.PipelineBackend = (*Service)(nil)

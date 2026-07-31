@@ -86,29 +86,7 @@ var _ = Describe("ensurePKI", func() {
 	})
 })
 
-var _ = Describe("dialGRPCWithTLS", func() {
-	It("returns an error when cert files do not exist", func() {
-		paths := embeddedTLSPaths{
-			CACert:     "/nonexistent/ca.pem",
-			ClientCert: "/nonexistent/client.pem",
-			ClientKey:  "/nonexistent/client-key.pem",
-		}
-		_, err := dialGRPCWithTLS("localhost:0", paths)
-		Expect(err).To(HaveOccurred())
-	})
-
-	It("creates a connection with valid certs", func() {
-		dir := GinkgoT().TempDir()
-		pkiDir := filepath.Join(dir, "pki")
-		Expect(ensurePKI(pkiDir)).To(Succeed())
-
-		paths := pkiPaths(pkiDir)
-		conn, err := dialGRPCWithTLS("localhost:0", paths)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(conn).NotTo(BeNil())
-		conn.Close()
-	})
-})
+// dialGRPCWithTLS tests removed - no longer relevant after Connect migration
 
 var _ = Describe("embeddedAuthRegistry", func() {
 	It("creates a registry that authenticates with embedded client certs", func() {

@@ -13,6 +13,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 )
 
+const maxUploadSize = 128 * 1024 * 1024 // 128MB
+
 func (s *Service) StreamDocument(ctx context.Context, stream *connect.ClientStream[pb.StreamDocumentChunk]) (*connect.Response[pb.SubmitDocumentResponse], error) {
 	start := time.Now()
 	identity := identityFromContext(ctx)
@@ -39,6 +41,9 @@ func (s *Service) StreamDocument(ctx context.Context, stream *connect.ClientStre
 				return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("first message must contain metadata"))
 			}
 			buf.Write(p.Chunk)
+			if buf.Len() > maxUploadSize {
+				return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("upload exceeds maximum size of %d bytes", maxUploadSize))
+			}
 		}
 	}
 	if err := stream.Err(); err != nil {
@@ -76,13 +81,13 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 		Metadata:      meta.GetContentMetadata(),
 	}
 
-	convertResp, err := s.ingestion.ConvertDocument(ctx, convertReq)
+	convertResp, err := s.ingestion.ConvertDocument(ctx, connect.NewRequest(convertReq))
 	if err != nil {
 		s.recordMetrics(ctx, "StreamDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
-	docID := convertResp.GetDocumentId()
+	docID := convertResp.Msg.GetDocumentId()
 	if docID == "" {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("ingestion backend returned empty document_id"))
 	}
@@ -94,13 +99,13 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 		CatalogName:   meta.GetCatalogName(),
 	}
 
-	parseResp, err := s.catalog.ParseCatalog(ctx, parseReq)
+	parseResp, err := s.catalog.ParseCatalog(ctx, connect.NewRequest(parseReq))
 	if err != nil {
 		s.recordMetrics(ctx, "StreamDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
-	catalogID := parseResp.GetCatalogId()
+	catalogID := parseResp.Msg.GetCatalogId()
 	if catalogID == "" {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("catalog backend returned empty catalog_id"))
 	}
@@ -117,13 +122,13 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 		},
 	}
 
-	jobResp, err := s.pipeline.CreateJob(ctx, jobReq)
+	jobResp, err := s.pipeline.CreateJob(ctx, connect.NewRequest(jobReq))
 	if err != nil {
 		s.recordMetrics(ctx, "StreamDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
-	if jobResp.GetJobId() == "" {
+	if jobResp.Msg.GetJobId() == "" {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline backend returned empty job_id"))
 	}
 
@@ -132,7 +137,7 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 	}
 	products := []attestation.Artifact{
 		{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, catalogID), Digest: ""},
-		{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.GetJobId()), Digest: ""},
+		{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.Msg.GetJobId()), Digest: ""},
 	}
 	byProducts := map[string]any{
 		"catalog_format": meta.GetCatalogFormat().String(),
@@ -146,8 +151,8 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 	s.recordMetrics(ctx, "StreamDocument", start, connect.Code(0))
 
 	return connect.NewResponse(&pb.SubmitDocumentResponse{
-		JobId:      jobResp.GetJobId(),
+		JobId:      jobResp.Msg.GetJobId(),
 		DocumentId: docID,
-		Status:     jobResp.GetStatus(),
+		Status:     jobResp.Msg.GetStatus(),
 	}), nil
 }

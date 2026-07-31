@@ -28,14 +28,14 @@ func (s *Service) ListCatalogs(ctx context.Context, req *connect.Request[pb.List
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
-	resp, err := s.catalog.ListCatalogs(ctx, req.Msg)
+	resp, err := s.catalog.ListCatalogs(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "ListCatalogs", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	s.recordMetrics(ctx, "ListCatalogs", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }
 
 func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error) {
@@ -60,14 +60,14 @@ func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[pb.GetCat
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
-	resp, err := s.catalog.GetCatalog(ctx, req.Msg)
+	resp, err := s.catalog.GetCatalog(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "GetCatalog", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	s.recordMetrics(ctx, "GetCatalog", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }
 
 func (s *Service) SearchControls(ctx context.Context, req *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error) {
@@ -91,14 +91,14 @@ func (s *Service) SearchControls(ctx context.Context, req *connect.Request[pb.Se
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
-	resp, err := s.catalog.SearchControls(ctx, req.Msg)
+	resp, err := s.catalog.SearchControls(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "SearchControls", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	s.recordMetrics(ctx, "SearchControls", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }
 
 func (s *Service) GetControl(ctx context.Context, req *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error) {
@@ -123,12 +123,12 @@ func (s *Service) GetControl(ctx context.Context, req *connect.Request[pb.GetCon
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
-	resp, err := s.catalog.GetControl(ctx, req.Msg)
+	resp, err := s.catalog.GetControl(ctx, req)
 	if err != nil {
 		s.recordMetrics(ctx, "GetControl", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	s.recordMetrics(ctx, "GetControl", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }
