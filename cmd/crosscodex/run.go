@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	connectrpc "connectrpc.com/connect"
 	"github.com/spf13/cobra"
 )
 
@@ -61,7 +62,7 @@ parsed, imported as a catalog, and queued for analysis.`,
 				CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
 			}
 
-			resp, err := state.client.SubmitDocument(cmd.Context(), req)
+			resp, err := state.client.SubmitDocument(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to submit document: %w", err)
 			}
@@ -69,12 +70,12 @@ parsed, imported as a catalog, and queued for analysis.`,
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Job submitted successfully\n")
-					fmt.Fprintf(w, "Job ID: %s\n", resp.GetJobId())
-					fmt.Fprintf(w, "Status: %s\n", formatJobStatus(resp.GetStatus()))
+					fmt.Fprintf(w, "Job ID: %s\n", resp.Msg.GetJobId())
+					fmt.Fprintf(w, "Status: %s\n", formatJobStatus(resp.Msg.GetStatus()))
 				},
 				map[string]string{
-					"job_id": resp.GetJobId(),
-					"status": resp.GetStatus().String(),
+					"job_id": resp.Msg.GetJobId(),
+					"status": resp.Msg.GetStatus().String(),
 				},
 			)
 		},
@@ -103,12 +104,12 @@ func newRunStatusCmd(state *cliState) *cobra.Command {
 				}
 			}
 
-			resp, err := state.client.GetJob(cmd.Context(), req)
+			resp, err := state.client.GetJob(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to get job status: %w", err)
 			}
 
-			job := resp.GetJob()
+			job := resp.Msg.GetJob()
 
 			return emit(cmd,
 				func(w io.Writer, color bool) {
@@ -182,7 +183,7 @@ This command will prompt for confirmation unless the --yes flag is provided.`,
 				}
 			}
 
-			_, err := state.client.CancelJob(cmd.Context(), req)
+			_, err := state.client.CancelJob(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to cancel job: %w", err)
 			}

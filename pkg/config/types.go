@@ -223,9 +223,10 @@ type ServerConfig struct {
 
 // CLISettings holds CLI-specific settings.
 type CLISettings struct {
-	Output   string `yaml:"output"`
-	NoColor  bool   `yaml:"no_color"`
-	Endpoint string `yaml:"endpoint"`
+	Output          string `yaml:"output"`
+	NoColor         bool   `yaml:"no_color"`
+	Endpoint        string `yaml:"endpoint"`
+	UploadChunkSize int    `yaml:"upload_chunk_size"`
 }
 
 // LoggingConfig configures structured logging.
@@ -731,13 +732,14 @@ type DaemonConfig struct {
 
 // ClientConfig is the derived view for the crosscodex CLI.
 type ClientConfig struct {
-	Output   string        `json:"output"`
-	NoColor  bool          `json:"nocolor"`
-	Endpoint string        `json:"endpoint"`
-	LLM      LLMConfig     `json:"llm"`
-	TLS      TLSConfig     `json:"tls"`
-	Logging  LoggingConfig `json:"logging"`
-	Prompt   PromptConfig  `json:"prompt"`
+	Output          string        `json:"output"`
+	NoColor         bool          `json:"nocolor"`
+	Endpoint        string        `json:"endpoint"`
+	UploadChunkSize int           `json:"upload_chunk_size"`
+	LLM             LLMConfig     `json:"llm"`
+	TLS             TLSConfig     `json:"tls"`
+	Logging         LoggingConfig `json:"logging"`
+	Prompt          PromptConfig  `json:"prompt"`
 }
 
 // ServiceConfig returns the daemon-oriented view of this configuration.
@@ -767,12 +769,13 @@ func (c *Config) ServiceConfig() DaemonConfig {
 // CLIConfig returns the CLI-oriented view of this configuration.
 func (c *Config) CLIConfig() ClientConfig {
 	return ClientConfig{
-		Output:   c.CLI.Output,
-		NoColor:  c.CLI.NoColor,
-		Endpoint: c.CLI.Endpoint,
-		LLM:      c.LLM,
-		TLS:      c.TLS,
-		Logging:  c.Logging,
-		Prompt:   c.Prompt,
+		Output:          c.CLI.Output,
+		NoColor:         c.CLI.NoColor,
+		Endpoint:        c.CLI.Endpoint,
+		UploadChunkSize: c.CLI.UploadChunkSize,
+		LLM:             c.LLM,
+		TLS:             c.TLS,
+		Logging:         c.Logging,
+		Prompt:          c.Prompt,
 	}
 }

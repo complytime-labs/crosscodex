@@ -226,7 +226,7 @@ func runProjectStatus(cmd *cobra.Command, state *cliState) error {
 		}
 		if state.daemon != nil {
 			connectedEndpoint = fmt.Sprintf("localhost:%d", state.daemon.port)
-		} else if state.conn != nil {
+		} else {
 			connectedEndpoint = resolveEndpoint(endpoint, os.Getenv("CROSSCODEX_ENDPOINT"), "")
 		}
 	}

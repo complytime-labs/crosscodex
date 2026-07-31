@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,10 +13,10 @@ import (
 	"time"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/pkg/config"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	connectrpc "connectrpc.com/connect"
 )
 
 const (
@@ -60,14 +61,10 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 	endpoint := resolveEndpoint(flagEndpoint, envEndpoint, cfgEndpoint)
 	explicitEndpoint := flagEndpoint != "" || envEndpoint != "" || cfgEndpoint != ""
 
-	conn, err := dialGRPC(ctx, endpoint)
-	if err == nil {
-		state.conn = conn
-		state.client = pb.NewGatewayServiceClient(conn)
-		if healthCheck(ctx, state.client) {
-			return nil
-		}
-		conn.Close()
+	client := connectClient(endpoint)
+	state.client = client
+	if healthCheck(ctx, state.client) {
+		return nil
 	}
 
 	if explicitEndpoint {
@@ -78,14 +75,10 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 	pidPath := filepath.Join(stateDir, "daemon.pid")
 	if port, alive := readPIDFile(pidPath); alive && port > 0 {
 		ep := fmt.Sprintf("localhost:%d", port)
-		conn, err = dialGRPC(ctx, ep)
-		if err == nil {
-			state.conn = conn
-			state.client = pb.NewGatewayServiceClient(conn)
-			if healthCheck(ctx, state.client) {
-				return nil
-			}
-			conn.Close()
+		client = connectClient(ep)
+		state.client = client
+		if healthCheck(ctx, state.client) {
+			return nil
 		}
 	}
 
@@ -170,18 +163,15 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	}
 
 	// Connect with mTLS
-	var conn *grpc.ClientConn
 	for i := range healthRetries {
 		time.Sleep(healthBaseBackoff * time.Duration(1<<i))
-		conn, err = dialGRPCWithTLS(grpcAddr, paths)
+		client, err := connectClientWithTLS(grpcAddr, paths)
 		if err == nil {
-			state.conn = conn
-			state.client = pb.NewGatewayServiceClient(conn)
+			state.client = client
 			if healthCheck(ctx, state.client) {
 				state.daemon = &embeddedDaemon{server: srv, port: port, pidFile: pidPath, resources: resources}
 				return nil
 			}
-			conn.Close()
 		}
 	}
 
@@ -193,25 +183,22 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	return fmt.Errorf("embedded daemon started but failed health check after %d retries", healthRetries)
 }
 
-func dialGRPC(_ context.Context, endpoint string) (*grpc.ClientConn, error) {
-	return grpc.NewClient(endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+func connectClient(endpoint string) crosscodexv1connect.GatewayServiceClient {
+	return crosscodexv1connect.NewGatewayServiceClient(
+		http.DefaultClient,
+		"http://"+endpoint,
 	)
 }
 
-func healthCheck(ctx context.Context, client pb.GatewayServiceClient) bool {
+func healthCheck(ctx context.Context, client crosscodexv1connect.GatewayServiceClient) bool {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_, err := client.Health(ctx, &pb.HealthRequest{})
+	_, err := client.Health(ctx, connectrpc.NewRequest(&pb.HealthRequest{}))
 	return err == nil
 }
 
 func disconnect(state *cliState) {
-	if state.conn != nil {
-		state.conn.Close()
-		state.conn = nil
-		state.client = nil
-	}
+	state.client = nil
 	if state.daemon != nil {
 		state.daemon.stop()
 		state.daemon = nil

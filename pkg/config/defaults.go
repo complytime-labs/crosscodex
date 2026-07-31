@@ -54,6 +54,7 @@ cli:
   output: table
   no_color: false
   endpoint: ""
+  upload_chunk_size: 1048576
 logging:
   level: info
   format: text

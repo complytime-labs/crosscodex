@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	connectrpc "connectrpc.com/connect"
 	"github.com/spf13/cobra"
 )
 
@@ -39,24 +40,57 @@ Supported formats:
   - Raw documents (with --raw flag)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				return fmt.Errorf("failed to read file: %w", err)
-			}
-
 			raw, _ := cmd.Flags().GetBool("raw")
 
-			req := &pb.SubmitDocumentRequest{
-				Source: &pb.SubmitDocumentRequest_Content{
-					Content: content,
+			chunkSize := 1048576 // 1MB default
+			if state.cfg != nil && state.cfg.UploadChunkSize > 0 {
+				chunkSize = state.cfg.UploadChunkSize
+			}
+
+			file, err := os.Open(filePath)
+			if err != nil {
+				return fmt.Errorf("failed to open file: %w", err)
+			}
+			defer file.Close()
+
+			stream := state.client.StreamDocument(cmd.Context())
+
+			catalogFormat := pb.CatalogFormat_CATALOG_FORMAT_OSCAL
+			if raw {
+				catalogFormat = pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED
+			}
+
+			if err := stream.Send(&pb.StreamDocumentChunk{
+				Payload: &pb.StreamDocumentChunk_Metadata{
+					Metadata: &pb.StreamDocumentMetadata{
+						CatalogFormat: catalogFormat,
+					},
 				},
+			}); err != nil {
+				return fmt.Errorf("failed to send metadata: %w", err)
 			}
 
-			if !raw {
-				req.CatalogFormat = pb.CatalogFormat_CATALOG_FORMAT_OSCAL
+			buf := make([]byte, chunkSize)
+			for {
+				n, readErr := file.Read(buf)
+				if n > 0 {
+					if err := stream.Send(&pb.StreamDocumentChunk{
+						Payload: &pb.StreamDocumentChunk_Chunk{
+							Chunk: buf[:n],
+						},
+					}); err != nil {
+						return fmt.Errorf("failed to send chunk: %w", err)
+					}
+				}
+				if readErr == io.EOF {
+					break
+				}
+				if readErr != nil {
+					return fmt.Errorf("failed to read file: %w", readErr)
+				}
 			}
 
-			resp, err := state.client.SubmitDocument(cmd.Context(), req)
+			resp, err := stream.CloseAndReceive()
 			if err != nil {
 				return fmt.Errorf("failed to submit document: %w", err)
 			}
@@ -64,14 +98,14 @@ Supported formats:
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Document submitted successfully\n")
-					fmt.Fprintf(w, "Job ID: %s\n", resp.GetJobId())
-					fmt.Fprintf(w, "Document ID: %s\n", resp.GetDocumentId())
-					fmt.Fprintf(w, "Status: %s\n", resp.GetStatus().String())
+					fmt.Fprintf(w, "Job ID: %s\n", resp.Msg.GetJobId())
+					fmt.Fprintf(w, "Document ID: %s\n", resp.Msg.GetDocumentId())
+					fmt.Fprintf(w, "Status: %s\n", resp.Msg.GetStatus().String())
 				},
 				map[string]string{
-					"job_id":      resp.GetJobId(),
-					"document_id": resp.GetDocumentId(),
-					"status":      resp.GetStatus().String(),
+					"job_id":      resp.Msg.GetJobId(),
+					"document_id": resp.Msg.GetDocumentId(),
+					"status":      resp.Msg.GetStatus().String(),
 				},
 			)
 		},
@@ -108,12 +142,12 @@ func newCatalogListCmd(state *cliState) *cobra.Command {
 				}
 			}
 
-			resp, err := state.client.ListCatalogs(cmd.Context(), req)
+			resp, err := state.client.ListCatalogs(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to list catalogs: %w", err)
 			}
 
-			catalogs := resp.GetCatalogs()
+			catalogs := resp.Msg.GetCatalogs()
 			if len(catalogs) == 0 {
 				return emit(cmd,
 					func(w io.Writer, color bool) {
@@ -175,12 +209,12 @@ func newCatalogInspectCmd(state *cliState) *cobra.Command {
 				}
 			}
 
-			resp, err := state.client.GetCatalog(cmd.Context(), req)
+			resp, err := state.client.GetCatalog(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
 				return fmt.Errorf("failed to get catalog: %w", err)
 			}
 
-			cat := resp.GetCatalog()
+			cat := resp.Msg.GetCatalog()
 
 			return emit(cmd,
 				func(w io.Writer, color bool) {
