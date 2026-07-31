@@ -194,13 +194,19 @@ var _ = Describe("Root Command", func() {
 			})
 
 			Describe("project list", func() {
+				// os.Chdir is process-wide — unsafe if specs run with in-process parallelism.
 				It("lists current directory when no .crosscodex found", func() {
+					tmp := GinkgoT().TempDir()
+					origDir, err := os.Getwd()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(os.Chdir(tmp)).To(Succeed())
+					DeferCleanup(func() { Expect(os.Chdir(origDir)).To(Succeed()) })
+
 					cmd := newRootCmd()
 					cmd.SetOut(&stdout)
 					cmd.SetErr(&stderr)
 					cmd.SetArgs([]string{"project", "list"})
-					err := cmd.Execute()
-					Expect(err).NotTo(HaveOccurred())
+					Expect(cmd.Execute()).To(Succeed())
 					Expect(stdout.String()).To(ContainSubstring("No CrossCodex projects"))
 				})
 			})
