@@ -2,31 +2,32 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"connectrpc.com/connect"
+
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
-func (s *Service) SubmitDocument(ctx context.Context, req *pb.SubmitDocumentRequest) (*pb.SubmitDocumentResponse, error) {
+func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.SubmitDocumentRequest]) (*connect.Response[pb.SubmitDocumentResponse], error) {
 	start := time.Now()
 	identity := identityFromContext(ctx)
 	if identity == nil {
-		return nil, status.Error(codes.Unauthenticated, "not authenticated")
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("not authenticated"))
 	}
 
 	ctx, endSpan := s.startHandlerSpan(ctx, "SubmitDocument", identity)
 	defer endSpan()
 
-	if req.Source == nil {
-		return nil, status.Error(codes.InvalidArgument, "source is required (content or source_uri)")
+	if req.Msg.Source == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("source is required (content or source_uri)"))
 	}
 
 	if s.ingestion == nil || s.catalog == nil || s.pipeline == nil {
-		return nil, status.Error(codes.Unavailable, "required backends not configured")
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("required backends not configured"))
 	}
 
 	tc := buildTenantContext(identity)
@@ -34,46 +35,46 @@ func (s *Service) SubmitDocument(ctx context.Context, req *pb.SubmitDocumentRequ
 	// Step 1: Convert document to markdown
 	convertReq := &pb.ConvertDocumentRequest{
 		TenantContext: tc,
-		Metadata:      req.GetMetadata(),
+		Metadata:      req.Msg.GetMetadata(),
 	}
 
-	switch src := req.Source.(type) {
+	switch src := req.Msg.Source.(type) {
 	case *pb.SubmitDocumentRequest_Content:
 		convertReq.Source = &pb.ConvertDocumentRequest_Content{Content: src.Content}
 	case *pb.SubmitDocumentRequest_SourceUri:
 		convertReq.Source = &pb.ConvertDocumentRequest_SourceUri{SourceUri: src.SourceUri}
 	default:
-		return nil, status.Error(codes.InvalidArgument, "unknown source type")
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("unknown source type"))
 	}
 
 	convertResp, err := s.ingestion.ConvertDocument(ctx, convertReq)
 	if err != nil {
-		s.recordMetrics(ctx, "SubmitDocument", start, status.Code(err))
+		s.recordMetrics(ctx, "SubmitDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	docID := convertResp.GetDocumentId()
 	if docID == "" {
-		return nil, status.Error(codes.Internal, "ingestion backend returned empty document_id")
+		return nil, connect.NewError(connect.CodeInternal, errors.New("ingestion backend returned empty document_id"))
 	}
 
 	// Step 2: Parse catalog from converted markdown
 	parseReq := &pb.ParseCatalogRequest{
 		TenantContext: tc,
 		DocumentId:    docID,
-		Format:        req.GetCatalogFormat(),
-		CatalogName:   req.GetCatalogName(),
+		Format:        req.Msg.GetCatalogFormat(),
+		CatalogName:   req.Msg.GetCatalogName(),
 	}
 
 	parseResp, err := s.catalog.ParseCatalog(ctx, parseReq)
 	if err != nil {
-		s.recordMetrics(ctx, "SubmitDocument", start, status.Code(err))
+		s.recordMetrics(ctx, "SubmitDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	catalogID := parseResp.GetCatalogId()
 	if catalogID == "" {
-		return nil, status.Error(codes.Internal, "catalog backend returned empty catalog_id")
+		return nil, connect.NewError(connect.CodeInternal, errors.New("catalog backend returned empty catalog_id"))
 	}
 
 	// Step 3: Create full-analysis job
@@ -82,21 +83,21 @@ func (s *Service) SubmitDocument(ctx context.Context, req *pb.SubmitDocumentRequ
 		JobType:       pb.JobType_JOB_TYPE_FULL_ANALYSIS,
 		Config: &pb.JobConfig{
 			Source:          &pb.JobConfig_CatalogId{CatalogId: catalogID},
-			CatalogFormat:   req.GetCatalogFormat(),
-			CatalogName:     req.GetCatalogName(),
-			TargetCatalogId: req.GetTargetCatalogId(),
-			SynthesisConfig: req.GetSynthesisConfig(),
+			CatalogFormat:   req.Msg.GetCatalogFormat(),
+			CatalogName:     req.Msg.GetCatalogName(),
+			TargetCatalogId: req.Msg.GetTargetCatalogId(),
+			SynthesisConfig: req.Msg.GetSynthesisConfig(),
 		},
 	}
 
 	jobResp, err := s.pipeline.CreateJob(ctx, jobReq)
 	if err != nil {
-		s.recordMetrics(ctx, "SubmitDocument", start, status.Code(err))
+		s.recordMetrics(ctx, "SubmitDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	if jobResp.GetJobId() == "" {
-		return nil, status.Error(codes.Internal, "pipeline backend returned empty job_id")
+		return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline backend returned empty job_id"))
 	}
 
 	// Attestation: emit link for the 3-backend chain
@@ -108,19 +109,19 @@ func (s *Service) SubmitDocument(ctx context.Context, req *pb.SubmitDocumentRequ
 		{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.GetJobId()), Digest: ""},
 	}
 	byProducts := map[string]any{
-		"catalog_format": req.GetCatalogFormat().String(),
-		"catalog_name":   req.GetCatalogName(),
+		"catalog_format": req.Msg.GetCatalogFormat().String(),
+		"catalog_name":   req.Msg.GetCatalogName(),
 	}
-	if req.GetTargetCatalogId() != "" {
-		byProducts["target_catalog_id"] = req.GetTargetCatalogId()
+	if req.Msg.GetTargetCatalogId() != "" {
+		byProducts["target_catalog_id"] = req.Msg.GetTargetCatalogId()
 	}
 	s.emitAttestation(ctx, "gateway.SubmitDocument", materials, products, byProducts)
 
-	s.recordMetrics(ctx, "SubmitDocument", start, codes.OK)
+	s.recordMetrics(ctx, "SubmitDocument", start, connect.Code(0))
 
-	return &pb.SubmitDocumentResponse{
+	return connect.NewResponse(&pb.SubmitDocumentResponse{
 		JobId:      jobResp.GetJobId(),
 		DocumentId: docID,
 		Status:     jobResp.GetStatus(),
-	}, nil
+	}), nil
 }

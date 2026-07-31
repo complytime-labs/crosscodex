@@ -5,19 +5,19 @@ import (
 	"log/slog"
 	"time"
 
+	"connectrpc.com/connect"
+
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/grpc/codes"
 )
 
-var _ pb.GatewayServiceServer = (*Service)(nil)
-
 type Service struct {
-	pb.UnimplementedGatewayServiceServer
+	crosscodexv1connect.UnimplementedGatewayServiceHandler
 
 	authn     *authn.Registry
 	ingestion IngestionBackend
@@ -116,7 +116,7 @@ func buildTenantContext(identity *authn.Identity) *pb.TenantContext {
 	}
 }
 
-func (s *Service) recordMetrics(ctx context.Context, method string, start time.Time, code codes.Code) {
+func (s *Service) recordMetrics(ctx context.Context, method string, start time.Time, code connect.Code) {
 	if s.requestsTotal != nil {
 		s.requestsTotal.Add(ctx, 1,
 			metric.WithAttributes(

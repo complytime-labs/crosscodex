@@ -217,9 +217,8 @@ type NATSStreamsConfig struct {
 
 // ServerConfig holds daemon-specific settings.
 type ServerConfig struct {
-	GRPCAddr string `yaml:"grpc_addr"`
-	HTTPAddr string `yaml:"http_addr"`
-	Workers  int    `yaml:"workers"`
+	Addr    string `yaml:"addr"`
+	Workers int    `yaml:"workers"`
 }
 
 // CLISettings holds CLI-specific settings.
@@ -710,8 +709,7 @@ func (c *SynthesisConfig) ForTenant(tenantID string) SynthesisTenantConfig {
 
 // DaemonConfig is the derived view for crosscodexd.
 type DaemonConfig struct {
-	GRPCAddr      string
-	HTTPAddr      string
+	Addr          string
 	Workers       int
 	LLM           LLMConfig
 	Storage       StorageConfig
@@ -745,8 +743,7 @@ type ClientConfig struct {
 // ServiceConfig returns the daemon-oriented view of this configuration.
 func (c *Config) ServiceConfig() DaemonConfig {
 	return DaemonConfig{
-		GRPCAddr:      c.Server.GRPCAddr,
-		HTTPAddr:      c.Server.HTTPAddr,
+		Addr:          c.Server.Addr,
 		Workers:       c.Server.Workers,
 		LLM:           c.LLM,
 		Storage:       c.Storage,

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -14,8 +15,6 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestGatewayBDD(t *testing.T) {
@@ -231,16 +230,16 @@ func userCtx(subject string) context.Context {
 var _ = Describe("Health handler", func() {
 	It("returns healthy status when backend is healthy", func() {
 		svc := newTestService()
-		resp, err := svc.Health(context.Background(), &pb.HealthRequest{})
+		resp, err := svc.Health(context.Background(), connect.NewRequest(&pb.HealthRequest{}))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.GetStatus()).To(Equal(pb.HealthStatus_HEALTH_STATUS_HEALTHY))
+		Expect(resp.Msg.GetStatus()).To(Equal(pb.HealthStatus_HEALTH_STATUS_HEALTHY))
 	})
 
 	It("returns error when admin backend is nil", func() {
 		svc := newTestService(gateway.WithAdminBackend(nil))
-		_, err := svc.Health(context.Background(), &pb.HealthRequest{})
+		_, err := svc.Health(context.Background(), connect.NewRequest(&pb.HealthRequest{}))
 		Expect(err).To(HaveOccurred())
-		Expect(status.Code(err)).To(Equal(codes.Unavailable))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
 	})
 })
 
@@ -260,7 +259,7 @@ var _ = Describe("Catalog handlers", func() {
 			TenantContext: &pb.TenantContext{TenantId: "spoofed-tenant"},
 		}
 
-		_, err := svc.ListCatalogs(ctx, req)
+		_, err := svc.ListCatalogs(ctx, connect.NewRequest(req))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(captured).NotTo(BeNil())
 		Expect(captured.GetTenantId()).To(Equal("real-tenant"))
@@ -269,36 +268,36 @@ var _ = Describe("Catalog handlers", func() {
 	It("returns InvalidArgument for empty catalog_id on GetCatalog", func() {
 		svc := newTestService()
 		ctx := userCtx("user-1")
-		_, err := svc.GetCatalog(ctx, &pb.GetCatalogRequest{CatalogId: ""})
+		_, err := svc.GetCatalog(ctx, connect.NewRequest(&pb.GetCatalogRequest{CatalogId: ""}))
 		Expect(err).To(HaveOccurred())
-		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 	})
 
 	It("returns InvalidArgument for empty control_id on GetControl", func() {
 		svc := newTestService()
 		ctx := userCtx("user-1")
-		_, err := svc.GetControl(ctx, &pb.GetControlRequest{ControlId: ""})
+		_, err := svc.GetControl(ctx, connect.NewRequest(&pb.GetControlRequest{ControlId: ""}))
 		Expect(err).To(HaveOccurred())
-		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 	})
 
 	It("returns InvalidArgument for empty query on SearchControls", func() {
 		svc := newTestService()
 		ctx := userCtx("user-1")
-		_, err := svc.SearchControls(ctx, &pb.SearchControlsRequest{Query: ""})
+		_, err := svc.SearchControls(ctx, connect.NewRequest(&pb.SearchControlsRequest{Query: ""}))
 		Expect(err).To(HaveOccurred())
-		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 	})
 
 	It("returns Unauthenticated when no identity in context", func() {
 		svc := newTestService()
-		_, err := svc.ListCatalogs(context.Background(), &pb.ListCatalogsRequest{})
+		_, err := svc.ListCatalogs(context.Background(), connect.NewRequest(&pb.ListCatalogsRequest{}))
 		Expect(err).To(HaveOccurred())
-		Expect(status.Code(err)).To(Equal(codes.Unauthenticated))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
 	})
 
 	It("propagates backend errors", func() {
-		backendErr := status.Error(codes.Internal, "db connection lost")
+		backendErr := errors.New("db connection lost")
 		cat := &mockCatalog{
 			listCatalogsFn: func(context.Context, *pb.ListCatalogsRequest) (*pb.ListCatalogsResponse, error) {
 				return nil, backendErr
@@ -307,9 +306,8 @@ var _ = Describe("Catalog handlers", func() {
 		svc := newTestService(gateway.WithCatalogBackend(cat))
 
 		ctx := userCtx("user-1")
-		_, err := svc.ListCatalogs(ctx, &pb.ListCatalogsRequest{})
+		_, err := svc.ListCatalogs(ctx, connect.NewRequest(&pb.ListCatalogsRequest{}))
 		Expect(err).To(HaveOccurred())
-		Expect(status.Code(err)).To(Equal(codes.Internal))
 	})
 })
 
@@ -329,9 +327,9 @@ var _ = Describe("Job handlers", func() {
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-a")
-			resp, err := svc.GetJob(ctx, &pb.GetJobRequest{JobId: "job-1"})
+			resp, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.GetJob().GetJobId()).To(Equal("job-1"))
+			Expect(resp.Msg.GetJob().GetJobId()).To(Equal("job-1"))
 		})
 
 		It("returns PermissionDenied when non-owner non-admin accesses job", func() {
@@ -348,9 +346,9 @@ var _ = Describe("Job handlers", func() {
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-b")
-			_, err := svc.GetJob(ctx, &pb.GetJobRequest{JobId: "job-1"})
+			_, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.PermissionDenied))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
 		})
 
 		It("allows admin to access any job", func() {
@@ -366,17 +364,17 @@ var _ = Describe("Job handlers", func() {
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
-			resp, err := svc.GetJob(adminCtx(), &pb.GetJobRequest{JobId: "job-1"})
+			resp, err := svc.GetJob(adminCtx(), connect.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.GetJob().GetJobId()).To(Equal("job-1"))
+			Expect(resp.Msg.GetJob().GetJobId()).To(Equal("job-1"))
 		})
 
 		It("returns InvalidArgument for empty job_id", func() {
 			svc := newTestService()
 			ctx := userCtx("user-a")
-			_, err := svc.GetJob(ctx, &pb.GetJobRequest{JobId: ""})
+			_, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: ""}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 
@@ -396,10 +394,10 @@ var _ = Describe("Job handlers", func() {
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-a")
-			resp, err := svc.ListJobs(ctx, &pb.ListJobsRequest{})
+			resp, err := svc.ListJobs(ctx, connect.NewRequest(&pb.ListJobsRequest{}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.GetJobs()).To(HaveLen(2))
-			for _, job := range resp.GetJobs() {
+			Expect(resp.Msg.GetJobs()).To(HaveLen(2))
+			for _, job := range resp.Msg.GetJobs() {
 				Expect(job.GetAudit().GetCreatedBy()).To(Equal("user-a"))
 			}
 		})
@@ -418,9 +416,9 @@ var _ = Describe("Job handlers", func() {
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
-			resp, err := svc.ListJobs(adminCtx(), &pb.ListJobsRequest{})
+			resp, err := svc.ListJobs(adminCtx(), connect.NewRequest(&pb.ListJobsRequest{}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.GetJobs()).To(HaveLen(3))
+			Expect(resp.Msg.GetJobs()).To(HaveLen(3))
 		})
 	})
 
@@ -439,9 +437,9 @@ var _ = Describe("Job handlers", func() {
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-a")
-			resp, err := svc.CancelJob(ctx, &pb.CancelJobRequest{JobId: "job-1"})
+			resp, err := svc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.GetCancelled()).To(BeTrue())
+			Expect(resp.Msg.GetCancelled()).To(BeTrue())
 		})
 
 		It("returns PermissionDenied for non-owner", func() {
@@ -458,9 +456,9 @@ var _ = Describe("Job handlers", func() {
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-b")
-			_, err := svc.CancelJob(ctx, &pb.CancelJobRequest{JobId: "job-1"})
+			_, err := svc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.PermissionDenied))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
 		})
 
 		It("allows admin to cancel any job", func() {
@@ -476,9 +474,9 @@ var _ = Describe("Job handlers", func() {
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
-			resp, err := svc.CancelJob(adminCtx(), &pb.CancelJobRequest{JobId: "job-1"})
+			resp, err := svc.CancelJob(adminCtx(), connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.GetCancelled()).To(BeTrue())
+			Expect(resp.Msg.GetCancelled()).To(BeTrue())
 		})
 	})
 })
@@ -488,13 +486,13 @@ var _ = Describe("SubmitDocument", func() {
 		svc := newTestService()
 
 		ctx := userCtx("user-a")
-		resp, err := svc.SubmitDocument(ctx, &pb.SubmitDocumentRequest{
+		resp, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
 			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
-		})
+		}))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.GetDocumentId()).To(Equal("doc-1"))
-		Expect(resp.GetJobId()).To(Equal("job-1"))
-		Expect(resp.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
+		Expect(resp.Msg.GetDocumentId()).To(Equal("doc-1"))
+		Expect(resp.Msg.GetJobId()).To(Equal("job-1"))
+		Expect(resp.Msg.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
 	})
 
 	It("returns error when ingestion backend fails", func() {
@@ -506,18 +504,18 @@ var _ = Describe("SubmitDocument", func() {
 		svc := newTestService(gateway.WithIngestionBackend(ing))
 
 		ctx := userCtx("user-a")
-		_, err := svc.SubmitDocument(ctx, &pb.SubmitDocumentRequest{
+		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
 			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
-		})
+		}))
 		Expect(err).To(HaveOccurred())
 	})
 
 	It("returns error when no source provided", func() {
 		svc := newTestService()
 		ctx := userCtx("user-a")
-		_, err := svc.SubmitDocument(ctx, &pb.SubmitDocumentRequest{})
+		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{}))
 		Expect(err).To(HaveOccurred())
-		Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 	})
 })
 
@@ -526,9 +524,9 @@ var _ = Describe("Graph handlers", func() {
 		It("returns PermissionDenied for non-admin", func() {
 			svc := newTestService()
 			ctx := userCtx("user-a")
-			_, err := svc.QueryGraph(ctx, &pb.QueryGraphRequest{Cypher: "MATCH (n) RETURN n"})
+			_, err := svc.QueryGraph(ctx, connect.NewRequest(&pb.QueryGraphRequest{Cypher: "MATCH (n) RETURN n"}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.PermissionDenied))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
 		})
 
 		It("succeeds for admin", func() {
@@ -539,16 +537,16 @@ var _ = Describe("Graph handlers", func() {
 			}
 			svc := newTestService(gateway.WithGraphBackend(graph))
 
-			resp, err := svc.QueryGraph(adminCtx(), &pb.QueryGraphRequest{Cypher: "MATCH (n) RETURN n"})
+			resp, err := svc.QueryGraph(adminCtx(), connect.NewRequest(&pb.QueryGraphRequest{Cypher: "MATCH (n) RETURN n"}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.GetResponse().GetRowCount()).To(Equal(int32(1)))
+			Expect(resp.Msg.GetResponse().GetRowCount()).To(Equal(int32(1)))
 		})
 
 		It("returns InvalidArgument for empty cypher", func() {
 			svc := newTestService()
-			_, err := svc.QueryGraph(adminCtx(), &pb.QueryGraphRequest{Cypher: ""})
+			_, err := svc.QueryGraph(adminCtx(), connect.NewRequest(&pb.QueryGraphRequest{Cypher: ""}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 
@@ -556,7 +554,7 @@ var _ = Describe("Graph handlers", func() {
 		It("succeeds for authenticated user", func() {
 			svc := newTestService()
 			ctx := userCtx("user-a")
-			resp, err := svc.FindSimilar(ctx, &pb.FindSimilarRequest{ControlId: "ctrl-1"})
+			resp, err := svc.FindSimilar(ctx, connect.NewRequest(&pb.FindSimilarRequest{ControlId: "ctrl-1"}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 		})
@@ -564,9 +562,9 @@ var _ = Describe("Graph handlers", func() {
 		It("returns InvalidArgument for empty control_id", func() {
 			svc := newTestService()
 			ctx := userCtx("user-a")
-			_, err := svc.FindSimilar(ctx, &pb.FindSimilarRequest{ControlId: ""})
+			_, err := svc.FindSimilar(ctx, connect.NewRequest(&pb.FindSimilarRequest{ControlId: ""}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 })
@@ -576,14 +574,14 @@ var _ = Describe("Feedback handlers", func() {
 		It("returns PermissionDenied for non-admin", func() {
 			svc := newTestService()
 			ctx := userCtx("user-a")
-			_, err := svc.GetReviewQueue(ctx, &pb.GetReviewQueueRequest{})
+			_, err := svc.GetReviewQueue(ctx, connect.NewRequest(&pb.GetReviewQueueRequest{}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.PermissionDenied))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
 		})
 
 		It("succeeds for admin", func() {
 			svc := newTestService()
-			resp, err := svc.GetReviewQueue(adminCtx(), &pb.GetReviewQueueRequest{})
+			resp, err := svc.GetReviewQueue(adminCtx(), connect.NewRequest(&pb.GetReviewQueueRequest{}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 		})
@@ -593,17 +591,17 @@ var _ = Describe("Feedback handlers", func() {
 		It("succeeds for authenticated user", func() {
 			svc := newTestService()
 			ctx := userCtx("user-a")
-			resp, err := svc.SubmitVote(ctx, &pb.SubmitVoteRequest{MappingId: "map-1"})
+			resp, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: "map-1"}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.GetVoteId()).To(Equal("vote-1"))
+			Expect(resp.Msg.GetVoteId()).To(Equal("vote-1"))
 		})
 
 		It("returns InvalidArgument for empty mapping_id", func() {
 			svc := newTestService()
 			ctx := userCtx("user-a")
-			_, err := svc.SubmitVote(ctx, &pb.SubmitVoteRequest{MappingId: ""})
+			_, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: ""}))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Code(err)).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 })

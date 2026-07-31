@@ -2,72 +2,136 @@ package gateway
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"net/http"
 
-	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"connectrpc.com/connect"
+	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/status"
 )
+
+type ctxKey int
+
+const (
+	ctxKeyTLSState ctxKey = iota
+	ctxKeyClientIP
+)
+
+func tlsStateFromContext(ctx context.Context) *tls.ConnectionState {
+	state, _ := ctx.Value(ctxKeyTLSState).(*tls.ConnectionState)
+	return state
+}
+
+func clientIPFromContext(ctx context.Context) string {
+	ip, _ := ctx.Value(ctxKeyClientIP).(string)
+	return ip
+}
+
+func tlsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if r.TLS != nil {
+			ctx = context.WithValue(ctx, ctxKeyTLSState, r.TLS)
+		}
+		ctx = context.WithValue(ctx, ctxKeyClientIP, r.RemoteAddr)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func isHealthProc(procedure string) bool {
+	return procedure == crosscodexv1connect.GatewayServiceHealthProcedure
+}
 
 func identityFromContext(ctx context.Context) *authn.Identity {
 	return authn.IdentityFromContext(ctx)
 }
 
-func (s *Service) authInterceptor() grpc.UnaryServerInterceptor {
-	return func(
-		ctx context.Context,
-		req any,
-		info *grpc.UnaryServerInfo,
-		handler grpc.UnaryHandler,
-	) (any, error) {
-		if info.FullMethod == pb.GatewayService_Health_FullMethodName {
-			return handler(ctx, req)
+type connectAuthInterceptor struct {
+	service *Service
+}
+
+func (s *Service) connectAuthInterceptor() connect.Interceptor {
+	return &connectAuthInterceptor{service: s}
+}
+
+func (i *connectAuthInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		if !req.Spec().IsClient && isHealthProc(req.Spec().Procedure) {
+			return next(ctx, req)
 		}
 
-		p, ok := peer.FromContext(ctx)
-		if !ok {
-			s.recordAuthFailure(ctx, "no_peer")
-			return nil, status.Error(codes.Unauthenticated, "TLS required")
-		}
-
-		tlsAuth, ok := p.AuthInfo.(credentials.TLSInfo)
-		if !ok {
-			s.recordAuthFailure(ctx, "no_tls")
-			return nil, status.Error(codes.Unauthenticated, "TLS required")
-		}
-
-		peerAddr := ""
-		if p.Addr != nil {
-			peerAddr = p.Addr.String()
+		tlsState := tlsStateFromContext(ctx)
+		if tlsState == nil {
+			i.service.recordAuthFailure(ctx, "no_tls")
+			return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("TLS required"))
 		}
 
 		authReq := &authn.Request{
 			Method:   authn.AuthMethodMTLS,
-			TLSState: &tlsAuth.State,
-			ClientIP: peerAddr,
+			TLSState: tlsState,
+			ClientIP: clientIPFromContext(ctx),
 		}
 
-		identity, err := s.authn.Authenticate(ctx, authReq)
+		identity, err := i.service.authn.Authenticate(ctx, authReq)
 		if err != nil {
-			s.recordAuthFailure(ctx, "auth_failed")
-			return nil, status.Error(codes.Unauthenticated, "authentication failed")
+			i.service.recordAuthFailure(ctx, "auth_failed")
+			return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("authentication failed"))
 		}
 
 		ctx = authn.WithIdentity(ctx, identity)
 
 		ctx, err = tenant.WithTenant(ctx, identity.TenantID)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "invalid tenant: %v", err)
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("invalid tenant: %w", err))
 		}
 		ctx = tenant.WithUser(ctx, identity.Subject)
 
-		return handler(ctx, req)
+		return next(ctx, req)
+	}
+}
+
+func (i *connectAuthInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+func (i *connectAuthInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
+		if !conn.Spec().IsClient && isHealthProc(conn.Spec().Procedure) {
+			return next(ctx, conn)
+		}
+
+		tlsState := tlsStateFromContext(ctx)
+		if tlsState == nil {
+			i.service.recordAuthFailure(ctx, "no_tls")
+			return connect.NewError(connect.CodeUnauthenticated, errors.New("TLS required"))
+		}
+
+		authReq := &authn.Request{
+			Method:   authn.AuthMethodMTLS,
+			TLSState: tlsState,
+			ClientIP: clientIPFromContext(ctx),
+		}
+
+		identity, err := i.service.authn.Authenticate(ctx, authReq)
+		if err != nil {
+			i.service.recordAuthFailure(ctx, "auth_failed")
+			return connect.NewError(connect.CodeUnauthenticated, errors.New("authentication failed"))
+		}
+
+		ctx = authn.WithIdentity(ctx, identity)
+
+		ctx, err = tenant.WithTenant(ctx, identity.TenantID)
+		if err != nil {
+			return connect.NewError(connect.CodeInternal, fmt.Errorf("invalid tenant: %w", err))
+		}
+		ctx = tenant.WithUser(ctx, identity.Subject)
+
+		return next(ctx, conn)
 	}
 }
 
