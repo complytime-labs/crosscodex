@@ -10,6 +10,7 @@ import (
 
 var ExportIdentityFromContext = identityFromContext
 var ExportBuildTenantContext = buildTenantContext
+var ExportHandleStreamedDocument = (*Service).handleStreamedDocument
 
 // ExportContextWithIdentity injects an authn.Identity into a context
 // using authn.WithIdentity, allowing external _test packages

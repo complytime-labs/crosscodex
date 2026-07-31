@@ -8,7 +8,6 @@ import (
 	"connectrpc.com/connect"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
-	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"go.opentelemetry.io/otel/attribute"
@@ -17,8 +16,6 @@ import (
 )
 
 type Service struct {
-	crosscodexv1connect.UnimplementedGatewayServiceHandler
-
 	authn     *authn.Registry
 	ingestion IngestionBackend
 	catalog   CatalogBackend
