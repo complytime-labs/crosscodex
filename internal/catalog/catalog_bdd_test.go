@@ -12,6 +12,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"connectrpc.com/connect"
 
 	crosscodexv1 "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
@@ -20,8 +21,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestCatalogBDD(t *testing.T) {
@@ -405,10 +404,10 @@ var _ = Describe("Service", func() {
 					DocumentId:    "",
 				}
 
-				_, err := svc.ParseCatalog(context.Background(), req)
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(req))
 				Expect(err).To(HaveOccurred())
-				st := status.Convert(err)
-				Expect(st.Code()).To(Equal(codes.InvalidArgument))
+				connectErr := err.(*connect.Error)
+				Expect(connectErr.Code()).To(Equal(connect.CodeInvalidArgument))
 			})
 
 			It("rejects missing tenant context", func() {
@@ -417,10 +416,10 @@ var _ = Describe("Service", func() {
 					DocumentId:    "doc-1",
 				}
 
-				_, err := svc.ParseCatalog(context.Background(), req)
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(req))
 				Expect(err).To(HaveOccurred())
-				st := status.Convert(err)
-				Expect(st.Code()).To(Equal(codes.InvalidArgument))
+				connectErr := err.(*connect.Error)
+				Expect(connectErr.Code()).To(Equal(connect.CodeInvalidArgument))
 			})
 		})
 
@@ -452,12 +451,12 @@ var _ = Describe("Service", func() {
 					CatalogName:   "Test Catalog",
 				}
 
-				resp, err := svc.ParseCatalog(context.Background(), req)
+				resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(req))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resp.CatalogId).NotTo(BeEmpty())
-				Expect(resp.Status).To(Equal(crosscodexv1.JobStatus_JOB_STATUS_COMPLETED))
+				Expect(resp.Msg.CatalogId).NotTo(BeEmpty())
+				Expect(resp.Msg.Status).To(Equal(crosscodexv1.JobStatus_JOB_STATUS_COMPLETED))
 
-				cat, err := ms.GetCatalog(context.Background(), resp.CatalogId)
+				cat, err := ms.GetCatalog(context.Background(), resp.Msg.CatalogId)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(cat.TenantID).To(Equal("tenant-1"))
 				Expect(cat.Name).To(Equal("Test Catalog"))
@@ -485,10 +484,10 @@ var _ = Describe("Service", func() {
 					CatalogName:   "Non-OSCAL Catalog",
 				}
 
-				_, err := svc.ParseCatalog(context.Background(), req)
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(req))
 				Expect(err).To(HaveOccurred())
-				st := status.Convert(err)
-				Expect(st.Code()).To(Equal(codes.Unimplemented))
+				connectErr := err.(*connect.Error)
+				Expect(connectErr.Code()).To(Equal(connect.CodeUnimplemented))
 			})
 		})
 	})
@@ -501,9 +500,9 @@ var _ = Describe("Service", func() {
 				CatalogId:     "cat-1",
 			}
 
-			_, err := svc.GetCatalog(context.Background(), req)
+			_, err := svc.GetCatalog(context.Background(), connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Convert(err).Code()).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 
@@ -517,25 +516,25 @@ var _ = Describe("Service", func() {
 		It("rejects missing tenant context", func() {
 			req := &crosscodexv1.ListCatalogsRequest{TenantContext: nil}
 
-			_, err := svc.ListCatalogs(context.Background(), req)
+			_, err := svc.ListCatalogs(context.Background(), connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Convert(err).Code()).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("rejects invalid page token", func() {
-			resp, err := svc.ListCatalogs(context.Background(), &crosscodexv1.ListCatalogsRequest{
+			resp, err := svc.ListCatalogs(context.Background(), connect.NewRequest(&crosscodexv1.ListCatalogsRequest{
 				TenantContext: &crosscodexv1.TenantContext{TenantId: "test-tenant"},
 				Options: &crosscodexv1.ListOptions{
 					Pagination: &crosscodexv1.Pagination{
 						PageToken: "not-a-number",
 					},
 				},
-			})
+			}))
 			Expect(resp).To(BeNil())
 			Expect(err).To(HaveOccurred())
-			st, ok := status.FromError(err)
+			connectErr, ok := err.(*connect.Error)
 			Expect(ok).To(BeTrue())
-			Expect(st.Code()).To(Equal(codes.InvalidArgument))
+			Expect(connectErr.Code()).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 
@@ -547,9 +546,9 @@ var _ = Describe("Service", func() {
 				ControlId:     "ctrl-1",
 			}
 
-			_, err := svc.GetControl(context.Background(), req)
+			_, err := svc.GetControl(context.Background(), connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Convert(err).Code()).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 
@@ -566,13 +565,13 @@ var _ = Describe("Service", func() {
 				Query:         "test",
 			}
 
-			_, err := svc.SearchControls(context.Background(), req)
+			_, err := svc.SearchControls(context.Background(), connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
-			Expect(status.Convert(err).Code()).To(Equal(codes.InvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("rejects invalid page token", func() {
-			resp, err := svc.SearchControls(context.Background(), &crosscodexv1.SearchControlsRequest{
+			resp, err := svc.SearchControls(context.Background(), connect.NewRequest(&crosscodexv1.SearchControlsRequest{
 				TenantContext: &crosscodexv1.TenantContext{TenantId: "test-tenant"},
 				Query:         "access control",
 				Options: &crosscodexv1.ListOptions{
@@ -580,12 +579,12 @@ var _ = Describe("Service", func() {
 						PageToken: "abc",
 					},
 				},
-			})
+			}))
 			Expect(resp).To(BeNil())
 			Expect(err).To(HaveOccurred())
-			st, ok := status.FromError(err)
+			connectErr, ok := err.(*connect.Error)
 			Expect(ok).To(BeTrue())
-			Expect(st.Code()).To(Equal(codes.InvalidArgument))
+			Expect(connectErr.Code()).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 })

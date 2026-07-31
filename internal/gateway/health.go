@@ -24,13 +24,13 @@ func (s *Service) Health(ctx context.Context, req *connect.Request[pb.HealthRequ
 		return nil, connect.NewError(connect.CodeUnavailable, errors.New("health backend not configured"))
 	}
 
-	resp, err := s.admin.HealthCheck(ctx, &pb.HealthCheckRequest{
+	resp, err := s.admin.HealthCheck(ctx, connect.NewRequest(&pb.HealthCheckRequest{
 		Service: req.Msg.GetService(),
-	})
+	}))
 	if err != nil {
 		return nil, err
 	}
 
 	s.recordMetrics(ctx, "Health", start, connect.Code(0))
-	return connect.NewResponse(resp), nil
+	return resp, nil
 }

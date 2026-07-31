@@ -50,15 +50,15 @@ func (s *Service) GetControlMappings(ctx context.Context, req *connect.Request[p
 		}
 	}
 
-	traverseResp, err := s.graph.Traverse(ctx, traverseReq)
+	traverseResp, err := s.graph.Traverse(ctx, connect.NewRequest(traverseReq))
 	if err != nil {
 		s.recordMetrics(ctx, "GetControlMappings", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	// Convert edges to ControlMappings
-	mappings := make([]*pb.ControlMapping, 0, len(traverseResp.GetEdges()))
-	for _, edge := range traverseResp.GetEdges() {
+	mappings := make([]*pb.ControlMapping, 0, len(traverseResp.Msg.GetEdges()))
+	for _, edge := range traverseResp.Msg.GetEdges() {
 		if edge.GetLabel() != "maps_to" {
 			continue
 		}
@@ -84,7 +84,7 @@ func (s *Service) GetControlMappings(ctx context.Context, req *connect.Request[p
 
 	return connect.NewResponse(&pb.GetControlMappingsResponse{
 		Mappings: mappings,
-		PageInfo: traverseResp.GetPageInfo(),
+		PageInfo: traverseResp.Msg.GetPageInfo(),
 	}), nil
 }
 
@@ -121,7 +121,7 @@ func (s *Service) QueryGraph(ctx context.Context, req *connect.Request[pb.QueryG
 		Parameters:    req.Msg.GetParameters(),
 	}
 
-	queryResp, err := s.graph.Query(ctx, queryReq)
+	queryResp, err := s.graph.Query(ctx, connect.NewRequest(queryReq))
 	if err != nil {
 		s.recordMetrics(ctx, "QueryGraph", start, connect.CodeOf(err))
 		return nil, err
@@ -130,7 +130,7 @@ func (s *Service) QueryGraph(ctx context.Context, req *connect.Request[pb.QueryG
 	s.recordMetrics(ctx, "QueryGraph", start, connect.Code(0))
 
 	return connect.NewResponse(&pb.QueryGraphResponse{
-		Response: queryResp,
+		Response: queryResp.Msg,
 	}), nil
 }
 
@@ -163,7 +163,7 @@ func (s *Service) FindSimilar(ctx context.Context, req *connect.Request[pb.FindS
 		NodeType:      pb.NodeType_NODE_TYPE_CONTROL,
 	}
 
-	searchResp, err := s.graph.SimilaritySearch(ctx, searchReq)
+	searchResp, err := s.graph.SimilaritySearch(ctx, connect.NewRequest(searchReq))
 	if err != nil {
 		s.recordMetrics(ctx, "FindSimilar", start, connect.CodeOf(err))
 		return nil, err
@@ -172,6 +172,6 @@ func (s *Service) FindSimilar(ctx context.Context, req *connect.Request[pb.FindS
 	s.recordMetrics(ctx, "FindSimilar", start, connect.Code(0))
 
 	return connect.NewResponse(&pb.FindSimilarResponse{
-		Response: searchResp,
+		Response: searchResp.Msg,
 	}), nil
 }

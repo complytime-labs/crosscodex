@@ -2,10 +2,12 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
+	"connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
@@ -15,14 +17,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
-// Service implements GraphServiceServer and gateway.GraphBackend.
+// Service implements GraphServiceHandler and gateway.GraphBackend.
 type Service struct {
-	pb.UnimplementedGraphServiceServer
-
 	graph     graphdb.GraphDB
 	vectors   vectordb.VectorDB
 	bus       natsbus.Client
@@ -64,7 +62,7 @@ func (s *Service) startSpan(ctx context.Context, name string) (context.Context, 
 
 // recordRPC records RPC metrics, nil-safe.
 // Used in Tasks 3-7 for RPC observability.
-func (s *Service) recordRPC(ctx context.Context, method string, start time.Time, code codes.Code) {
+func (s *Service) recordRPC(ctx context.Context, method string, start time.Time, code connect.Code) {
 	if s.rpcCounter != nil {
 		s.rpcCounter.Add(ctx, 1,
 			metric.WithAttributes(
@@ -79,18 +77,18 @@ func (s *Service) recordRPC(ctx context.Context, method string, start time.Time,
 }
 
 // extractTenant validates the request's tenant context against the
-// context-propagated tenant. Returns the validated tenant ID or a gRPC error.
+// context-propagated tenant. Returns the validated tenant ID or a Connect error.
 // Used in Tasks 3-7 for tenant validation in RPC handlers.
 func (s *Service) extractTenant(ctx context.Context, tc *pb.TenantContext) (string, error) {
 	if tc == nil || tc.GetTenantId() == "" {
-		return "", status.Error(codes.InvalidArgument, "tenant_context is required")
+		return "", connect.NewError(connect.CodeInvalidArgument, errors.New("tenant_context is required"))
 	}
 	ctxTenant, err := tenant.FromContext(ctx)
 	if err != nil {
-		return "", status.Error(codes.Unauthenticated, "no tenant in context")
+		return "", connect.NewError(connect.CodeUnauthenticated, errors.New("no tenant in context"))
 	}
 	if ctxTenant != tc.GetTenantId() {
-		return "", status.Error(codes.PermissionDenied, "tenant mismatch")
+		return "", connect.NewError(connect.CodePermissionDenied, errors.New("tenant mismatch"))
 	}
 	return ctxTenant, nil
 }

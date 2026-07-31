@@ -136,8 +136,8 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 		return fmt.Errorf("start embedded daemon: %w", err)
 	}
 
-	grpcAddr := srv.Addr()
-	_, portStr, err := splitHostPort(grpcAddr)
+	srvAddr := srv.Addr()
+	_, portStr, err := splitHostPort(srvAddr)
 	if err != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -165,7 +165,7 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	// Connect with mTLS
 	for i := range healthRetries {
 		time.Sleep(healthBaseBackoff * time.Duration(1<<i))
-		client, err := connectClientWithTLS(grpcAddr, paths)
+		client, err := connectClientWithTLS(srvAddr, paths)
 		if err == nil {
 			state.client = client
 			if healthCheck(ctx, state.client) {

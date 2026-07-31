@@ -41,154 +41,154 @@ var _ gateway.AdminBackend = (*mockAdmin)(nil)
 // ---------------------------------------------------------------------------
 
 type mockIngestion struct {
-	convertFn func(context.Context, *pb.ConvertDocumentRequest) (*pb.ConvertDocumentResponse, error)
+	convertFn func(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error)
 }
 
-func (m *mockIngestion) ConvertDocument(ctx context.Context, req *pb.ConvertDocumentRequest) (*pb.ConvertDocumentResponse, error) {
+func (m *mockIngestion) ConvertDocument(ctx context.Context, req *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
 	if m.convertFn != nil {
 		return m.convertFn(ctx, req)
 	}
-	return &pb.ConvertDocumentResponse{DocumentId: "doc-1"}, nil
+	return connect.NewResponse(&pb.ConvertDocumentResponse{DocumentId: "doc-1"}), nil
 }
 
 type mockCatalog struct {
-	parseFn          func(context.Context, *pb.ParseCatalogRequest) (*pb.ParseCatalogResponse, error)
-	listCatalogsFn   func(context.Context, *pb.ListCatalogsRequest) (*pb.ListCatalogsResponse, error)
-	getCatalogFn     func(context.Context, *pb.GetCatalogRequest) (*pb.GetCatalogResponse, error)
-	searchControlsFn func(context.Context, *pb.SearchControlsRequest) (*pb.SearchControlsResponse, error)
-	getControlFn     func(context.Context, *pb.GetControlRequest) (*pb.GetControlResponse, error)
+	parseFn          func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error)
+	listCatalogsFn   func(context.Context, *connect.Request[pb.ListCatalogsRequest]) (*connect.Response[pb.ListCatalogsResponse], error)
+	getCatalogFn     func(context.Context, *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error)
+	searchControlsFn func(context.Context, *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error)
+	getControlFn     func(context.Context, *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error)
 }
 
-func (m *mockCatalog) ParseCatalog(ctx context.Context, req *pb.ParseCatalogRequest) (*pb.ParseCatalogResponse, error) {
+func (m *mockCatalog) ParseCatalog(ctx context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
 	if m.parseFn != nil {
 		return m.parseFn(ctx, req)
 	}
-	return &pb.ParseCatalogResponse{CatalogId: "cat-1", Status: pb.JobStatus_JOB_STATUS_COMPLETED}, nil
+	return connect.NewResponse(&pb.ParseCatalogResponse{CatalogId: "cat-1", Status: pb.JobStatus_JOB_STATUS_COMPLETED}), nil
 }
 
-func (m *mockCatalog) ListCatalogs(ctx context.Context, req *pb.ListCatalogsRequest) (*pb.ListCatalogsResponse, error) {
+func (m *mockCatalog) ListCatalogs(ctx context.Context, req *connect.Request[pb.ListCatalogsRequest]) (*connect.Response[pb.ListCatalogsResponse], error) {
 	if m.listCatalogsFn != nil {
 		return m.listCatalogsFn(ctx, req)
 	}
-	return &pb.ListCatalogsResponse{}, nil
+	return connect.NewResponse(&pb.ListCatalogsResponse{}), nil
 }
 
-func (m *mockCatalog) GetCatalog(ctx context.Context, req *pb.GetCatalogRequest) (*pb.GetCatalogResponse, error) {
+func (m *mockCatalog) GetCatalog(ctx context.Context, req *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error) {
 	if m.getCatalogFn != nil {
 		return m.getCatalogFn(ctx, req)
 	}
-	return &pb.GetCatalogResponse{}, nil
+	return connect.NewResponse(&pb.GetCatalogResponse{}), nil
 }
 
-func (m *mockCatalog) SearchControls(ctx context.Context, req *pb.SearchControlsRequest) (*pb.SearchControlsResponse, error) {
+func (m *mockCatalog) SearchControls(ctx context.Context, req *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error) {
 	if m.searchControlsFn != nil {
 		return m.searchControlsFn(ctx, req)
 	}
-	return &pb.SearchControlsResponse{}, nil
+	return connect.NewResponse(&pb.SearchControlsResponse{}), nil
 }
 
-func (m *mockCatalog) GetControl(ctx context.Context, req *pb.GetControlRequest) (*pb.GetControlResponse, error) {
+func (m *mockCatalog) GetControl(ctx context.Context, req *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error) {
 	if m.getControlFn != nil {
 		return m.getControlFn(ctx, req)
 	}
-	return &pb.GetControlResponse{}, nil
+	return connect.NewResponse(&pb.GetControlResponse{}), nil
 }
 
 type mockPipeline struct {
-	createJobFn func(context.Context, *pb.CreateJobRequest) (*pb.CreateJobResponse, error)
-	getJobFn    func(context.Context, *pb.GetJobRequest) (*pb.GetJobResponse, error)
-	listJobsFn  func(context.Context, *pb.ListJobsRequest) (*pb.ListJobsResponse, error)
-	cancelJobFn func(context.Context, *pb.CancelJobRequest) (*pb.CancelJobResponse, error)
+	createJobFn func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error)
+	getJobFn    func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error)
+	listJobsFn  func(context.Context, *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error)
+	cancelJobFn func(context.Context, *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error)
 }
 
-func (m *mockPipeline) CreateJob(ctx context.Context, req *pb.CreateJobRequest) (*pb.CreateJobResponse, error) {
+func (m *mockPipeline) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
 	if m.createJobFn != nil {
 		return m.createJobFn(ctx, req)
 	}
-	return &pb.CreateJobResponse{JobId: "job-1", Status: pb.JobStatus_JOB_STATUS_PENDING}, nil
+	return connect.NewResponse(&pb.CreateJobResponse{JobId: "job-1", Status: pb.JobStatus_JOB_STATUS_PENDING}), nil
 }
 
-func (m *mockPipeline) GetJob(ctx context.Context, req *pb.GetJobRequest) (*pb.GetJobResponse, error) {
+func (m *mockPipeline) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
 	if m.getJobFn != nil {
 		return m.getJobFn(ctx, req)
 	}
-	return &pb.GetJobResponse{
+	return connect.NewResponse(&pb.GetJobResponse{
 		Job: &pb.PipelineJob{
 			JobId: "job-1",
 			Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
 		},
-	}, nil
+	}), nil
 }
 
-func (m *mockPipeline) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
+func (m *mockPipeline) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {
 	if m.listJobsFn != nil {
 		return m.listJobsFn(ctx, req)
 	}
-	return &pb.ListJobsResponse{}, nil
+	return connect.NewResponse(&pb.ListJobsResponse{}), nil
 }
 
-func (m *mockPipeline) CancelJob(ctx context.Context, req *pb.CancelJobRequest) (*pb.CancelJobResponse, error) {
+func (m *mockPipeline) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error) {
 	if m.cancelJobFn != nil {
 		return m.cancelJobFn(ctx, req)
 	}
-	return &pb.CancelJobResponse{Cancelled: true}, nil
+	return connect.NewResponse(&pb.CancelJobResponse{Cancelled: true}), nil
 }
 
 type mockGraph struct {
-	traverseFn         func(context.Context, *pb.TraverseRequest) (*pb.TraverseResponse, error)
-	queryFn            func(context.Context, *pb.QueryRequest) (*pb.QueryResponse, error)
-	similaritySearchFn func(context.Context, *pb.SimilaritySearchRequest) (*pb.SimilaritySearchResponse, error)
+	traverseFn         func(context.Context, *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error)
+	queryFn            func(context.Context, *connect.Request[pb.QueryRequest]) (*connect.Response[pb.QueryResponse], error)
+	similaritySearchFn func(context.Context, *connect.Request[pb.SimilaritySearchRequest]) (*connect.Response[pb.SimilaritySearchResponse], error)
 }
 
-func (m *mockGraph) Traverse(ctx context.Context, req *pb.TraverseRequest) (*pb.TraverseResponse, error) {
+func (m *mockGraph) Traverse(ctx context.Context, req *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error) {
 	if m.traverseFn != nil {
 		return m.traverseFn(ctx, req)
 	}
-	return &pb.TraverseResponse{}, nil
+	return connect.NewResponse(&pb.TraverseResponse{}), nil
 }
 
-func (m *mockGraph) Query(ctx context.Context, req *pb.QueryRequest) (*pb.QueryResponse, error) {
+func (m *mockGraph) Query(ctx context.Context, req *connect.Request[pb.QueryRequest]) (*connect.Response[pb.QueryResponse], error) {
 	if m.queryFn != nil {
 		return m.queryFn(ctx, req)
 	}
-	return &pb.QueryResponse{}, nil
+	return connect.NewResponse(&pb.QueryResponse{}), nil
 }
 
-func (m *mockGraph) SimilaritySearch(ctx context.Context, req *pb.SimilaritySearchRequest) (*pb.SimilaritySearchResponse, error) {
+func (m *mockGraph) SimilaritySearch(ctx context.Context, req *connect.Request[pb.SimilaritySearchRequest]) (*connect.Response[pb.SimilaritySearchResponse], error) {
 	if m.similaritySearchFn != nil {
 		return m.similaritySearchFn(ctx, req)
 	}
-	return &pb.SimilaritySearchResponse{}, nil
+	return connect.NewResponse(&pb.SimilaritySearchResponse{}), nil
 }
 
 type mockFeedback struct {
-	submitVoteFn     func(context.Context, *pb.SubmitVoteRequest) (*pb.SubmitVoteResponse, error)
-	getReviewQueueFn func(context.Context, *pb.GetReviewQueueRequest) (*pb.GetReviewQueueResponse, error)
+	submitVoteFn     func(context.Context, *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error)
+	getReviewQueueFn func(context.Context, *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error)
 }
 
-func (m *mockFeedback) SubmitVote(ctx context.Context, req *pb.SubmitVoteRequest) (*pb.SubmitVoteResponse, error) {
+func (m *mockFeedback) SubmitVote(ctx context.Context, req *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error) {
 	if m.submitVoteFn != nil {
 		return m.submitVoteFn(ctx, req)
 	}
-	return &pb.SubmitVoteResponse{VoteId: "vote-1"}, nil
+	return connect.NewResponse(&pb.SubmitVoteResponse{VoteId: "vote-1"}), nil
 }
 
-func (m *mockFeedback) GetReviewQueue(ctx context.Context, req *pb.GetReviewQueueRequest) (*pb.GetReviewQueueResponse, error) {
+func (m *mockFeedback) GetReviewQueue(ctx context.Context, req *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
 	if m.getReviewQueueFn != nil {
 		return m.getReviewQueueFn(ctx, req)
 	}
-	return &pb.GetReviewQueueResponse{}, nil
+	return connect.NewResponse(&pb.GetReviewQueueResponse{}), nil
 }
 
 type mockAdmin struct {
-	healthCheckFn func(context.Context, *pb.HealthCheckRequest) (*pb.HealthCheckResponse, error)
+	healthCheckFn func(context.Context, *connect.Request[pb.HealthCheckRequest]) (*connect.Response[pb.HealthCheckResponse], error)
 }
 
-func (m *mockAdmin) HealthCheck(ctx context.Context, req *pb.HealthCheckRequest) (*pb.HealthCheckResponse, error) {
+func (m *mockAdmin) HealthCheck(ctx context.Context, req *connect.Request[pb.HealthCheckRequest]) (*connect.Response[pb.HealthCheckResponse], error) {
 	if m.healthCheckFn != nil {
 		return m.healthCheckFn(ctx, req)
 	}
-	return &pb.HealthCheckResponse{Status: pb.HealthStatus_HEALTH_STATUS_HEALTHY}, nil
+	return connect.NewResponse(&pb.HealthCheckResponse{Status: pb.HealthStatus_HEALTH_STATUS_HEALTHY}), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -248,9 +248,9 @@ var _ = Describe("Catalog handlers", func() {
 	It("injects auth-derived TenantContext, ignoring client-supplied value", func() {
 		var captured *pb.TenantContext
 		cat := &mockCatalog{
-			listCatalogsFn: func(_ context.Context, req *pb.ListCatalogsRequest) (*pb.ListCatalogsResponse, error) {
-				captured = req.GetTenantContext()
-				return &pb.ListCatalogsResponse{}, nil
+			listCatalogsFn: func(_ context.Context, req *connect.Request[pb.ListCatalogsRequest]) (*connect.Response[pb.ListCatalogsResponse], error) {
+				captured = req.Msg.GetTenantContext()
+				return connect.NewResponse(&pb.ListCatalogsResponse{}), nil
 			},
 		}
 		svc := newTestService(gateway.WithCatalogBackend(cat))
@@ -300,7 +300,7 @@ var _ = Describe("Catalog handlers", func() {
 	It("propagates backend errors", func() {
 		backendErr := errors.New("db connection lost")
 		cat := &mockCatalog{
-			listCatalogsFn: func(context.Context, *pb.ListCatalogsRequest) (*pb.ListCatalogsResponse, error) {
+			listCatalogsFn: func(context.Context, *connect.Request[pb.ListCatalogsRequest]) (*connect.Response[pb.ListCatalogsResponse], error) {
 				return nil, backendErr
 			},
 		}
@@ -316,13 +316,13 @@ var _ = Describe("Job handlers", func() {
 	Context("GetJob", func() {
 		It("returns job to its owner", func() {
 			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *pb.GetJobRequest) (*pb.GetJobResponse, error) {
-					return &pb.GetJobResponse{
+				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+					return connect.NewResponse(&pb.GetJobResponse{
 						Job: &pb.PipelineJob{
 							JobId: "job-1",
 							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
 						},
-					}, nil
+					}), nil
 				},
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -335,13 +335,13 @@ var _ = Describe("Job handlers", func() {
 
 		It("returns PermissionDenied when non-owner non-admin accesses job", func() {
 			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *pb.GetJobRequest) (*pb.GetJobResponse, error) {
-					return &pb.GetJobResponse{
+				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+					return connect.NewResponse(&pb.GetJobResponse{
 						Job: &pb.PipelineJob{
 							JobId: "job-1",
 							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
 						},
-					}, nil
+					}), nil
 				},
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -354,13 +354,13 @@ var _ = Describe("Job handlers", func() {
 
 		It("allows admin to access any job", func() {
 			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *pb.GetJobRequest) (*pb.GetJobResponse, error) {
-					return &pb.GetJobResponse{
+				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+					return connect.NewResponse(&pb.GetJobResponse{
 						Job: &pb.PipelineJob{
 							JobId: "job-1",
 							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
 						},
-					}, nil
+					}), nil
 				},
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -382,14 +382,14 @@ var _ = Describe("Job handlers", func() {
 	Context("ListJobs", func() {
 		It("filters jobs for non-admin users", func() {
 			pipeline := &mockPipeline{
-				listJobsFn: func(_ context.Context, _ *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
-					return &pb.ListJobsResponse{
+				listJobsFn: func(_ context.Context, _ *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {
+					return connect.NewResponse(&pb.ListJobsResponse{
 						Jobs: []*pb.PipelineJob{
 							{JobId: "job-1", Audit: &pb.AuditMetadata{CreatedBy: "user-a"}},
 							{JobId: "job-2", Audit: &pb.AuditMetadata{CreatedBy: "user-b"}},
 							{JobId: "job-3", Audit: &pb.AuditMetadata{CreatedBy: "user-a"}},
 						},
-					}, nil
+					}), nil
 				},
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -405,14 +405,14 @@ var _ = Describe("Job handlers", func() {
 
 		It("returns all jobs for admin", func() {
 			pipeline := &mockPipeline{
-				listJobsFn: func(_ context.Context, _ *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
-					return &pb.ListJobsResponse{
+				listJobsFn: func(_ context.Context, _ *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {
+					return connect.NewResponse(&pb.ListJobsResponse{
 						Jobs: []*pb.PipelineJob{
 							{JobId: "job-1", Audit: &pb.AuditMetadata{CreatedBy: "user-a"}},
 							{JobId: "job-2", Audit: &pb.AuditMetadata{CreatedBy: "user-b"}},
 							{JobId: "job-3", Audit: &pb.AuditMetadata{CreatedBy: "user-c"}},
 						},
-					}, nil
+					}), nil
 				},
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -426,13 +426,13 @@ var _ = Describe("Job handlers", func() {
 	Context("CancelJob", func() {
 		It("allows owner to cancel own job", func() {
 			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *pb.GetJobRequest) (*pb.GetJobResponse, error) {
-					return &pb.GetJobResponse{
+				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+					return connect.NewResponse(&pb.GetJobResponse{
 						Job: &pb.PipelineJob{
 							JobId: "job-1",
 							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
 						},
-					}, nil
+					}), nil
 				},
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -445,13 +445,13 @@ var _ = Describe("Job handlers", func() {
 
 		It("returns PermissionDenied for non-owner", func() {
 			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *pb.GetJobRequest) (*pb.GetJobResponse, error) {
-					return &pb.GetJobResponse{
+				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+					return connect.NewResponse(&pb.GetJobResponse{
 						Job: &pb.PipelineJob{
 							JobId: "job-1",
 							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
 						},
-					}, nil
+					}), nil
 				},
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -464,13 +464,13 @@ var _ = Describe("Job handlers", func() {
 
 		It("allows admin to cancel any job", func() {
 			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *pb.GetJobRequest) (*pb.GetJobResponse, error) {
-					return &pb.GetJobResponse{
+				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+					return connect.NewResponse(&pb.GetJobResponse{
 						Job: &pb.PipelineJob{
 							JobId: "job-1",
 							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
 						},
-					}, nil
+					}), nil
 				},
 			}
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -498,7 +498,7 @@ var _ = Describe("SubmitDocument", func() {
 
 	It("returns error when ingestion backend fails", func() {
 		ing := &mockIngestion{
-			convertFn: func(context.Context, *pb.ConvertDocumentRequest) (*pb.ConvertDocumentResponse, error) {
+			convertFn: func(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
 				return nil, errors.New("ingestion failure")
 			},
 		}
@@ -532,8 +532,8 @@ var _ = Describe("Graph handlers", func() {
 
 		It("succeeds for admin", func() {
 			graph := &mockGraph{
-				queryFn: func(_ context.Context, _ *pb.QueryRequest) (*pb.QueryResponse, error) {
-					return &pb.QueryResponse{RowCount: 1}, nil
+				queryFn: func(_ context.Context, _ *connect.Request[pb.QueryRequest]) (*connect.Response[pb.QueryResponse], error) {
+					return connect.NewResponse(&pb.QueryResponse{RowCount: 1}), nil
 				},
 			}
 			svc := newTestService(gateway.WithGraphBackend(graph))

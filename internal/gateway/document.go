@@ -47,13 +47,13 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("unknown source type"))
 	}
 
-	convertResp, err := s.ingestion.ConvertDocument(ctx, convertReq)
+	convertResp, err := s.ingestion.ConvertDocument(ctx, connect.NewRequest(convertReq))
 	if err != nil {
 		s.recordMetrics(ctx, "SubmitDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
-	docID := convertResp.GetDocumentId()
+	docID := convertResp.Msg.GetDocumentId()
 	if docID == "" {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("ingestion backend returned empty document_id"))
 	}
@@ -66,13 +66,13 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 		CatalogName:   req.Msg.GetCatalogName(),
 	}
 
-	parseResp, err := s.catalog.ParseCatalog(ctx, parseReq)
+	parseResp, err := s.catalog.ParseCatalog(ctx, connect.NewRequest(parseReq))
 	if err != nil {
 		s.recordMetrics(ctx, "SubmitDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
-	catalogID := parseResp.GetCatalogId()
+	catalogID := parseResp.Msg.GetCatalogId()
 	if catalogID == "" {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("catalog backend returned empty catalog_id"))
 	}
@@ -90,13 +90,13 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 		},
 	}
 
-	jobResp, err := s.pipeline.CreateJob(ctx, jobReq)
+	jobResp, err := s.pipeline.CreateJob(ctx, connect.NewRequest(jobReq))
 	if err != nil {
 		s.recordMetrics(ctx, "SubmitDocument", start, connect.CodeOf(err))
 		return nil, err
 	}
 
-	if jobResp.GetJobId() == "" {
+	if jobResp.Msg.GetJobId() == "" {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline backend returned empty job_id"))
 	}
 
@@ -106,7 +106,7 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 	}
 	products := []attestation.Artifact{
 		{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, catalogID), Digest: ""},
-		{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.GetJobId()), Digest: ""},
+		{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.Msg.GetJobId()), Digest: ""},
 	}
 	byProducts := map[string]any{
 		"catalog_format": req.Msg.GetCatalogFormat().String(),
@@ -120,8 +120,8 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 	s.recordMetrics(ctx, "SubmitDocument", start, connect.Code(0))
 
 	return connect.NewResponse(&pb.SubmitDocumentResponse{
-		JobId:      jobResp.GetJobId(),
+		JobId:      jobResp.Msg.GetJobId(),
 		DocumentId: docID,
-		Status:     jobResp.GetStatus(),
+		Status:     jobResp.Msg.GetStatus(),
 	}), nil
 }
