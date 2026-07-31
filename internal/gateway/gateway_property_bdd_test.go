@@ -5,13 +5,12 @@ package gateway_test
 import (
 	"context"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"pgregory.net/rapid"
 )
 
@@ -53,7 +52,7 @@ var _ = Describe("Gateway Property Tests", func() {
 				TenantContext: &pb.TenantContext{TenantId: spoofedTenant},
 			}
 
-			_, err := svc.ListCatalogs(ctx, req)
+			_, err := svc.ListCatalogs(ctx, connect.NewRequest(req))
 			if err != nil {
 				rt.Fatalf("ListCatalogs returned unexpected error: %v", err)
 			}
@@ -109,16 +108,16 @@ var _ = Describe("Gateway Property Tests", func() {
 				Method:   authn.AuthMethodMTLS,
 			})
 
-			resp, err := svc.ListJobs(ctx, &pb.ListJobsRequest{})
+			resp, err := svc.ListJobs(ctx, connect.NewRequest(&pb.ListJobsRequest{}))
 			if err != nil {
 				rt.Fatalf("ListJobs returned unexpected error: %v", err)
 			}
 
-			if len(resp.GetJobs()) != expectedCount {
-				rt.Fatalf("expected %d jobs for %q, got %d", expectedCount, callerSubject, len(resp.GetJobs()))
+			if len(resp.Msg.GetJobs()) != expectedCount {
+				rt.Fatalf("expected %d jobs for %q, got %d", expectedCount, callerSubject, len(resp.Msg.GetJobs()))
 			}
 
-			for _, job := range resp.GetJobs() {
+			for _, job := range resp.Msg.GetJobs() {
 				if job.GetAudit().GetCreatedBy() != callerSubject {
 					rt.Fatalf("non-admin %q received job owned by %q", callerSubject, job.GetAudit().GetCreatedBy())
 				}
@@ -152,57 +151,57 @@ var _ = Describe("Gateway Property Tests", func() {
 
 			rpcs := []rpcCall{
 				{"ListCatalogs", func() error {
-					_, err := svc.ListCatalogs(ctx, &pb.ListCatalogsRequest{})
+					_, err := svc.ListCatalogs(ctx, connect.NewRequest(&pb.ListCatalogsRequest{}))
 					return err
 				}},
 				{"GetCatalog", func() error {
-					_, err := svc.GetCatalog(ctx, &pb.GetCatalogRequest{CatalogId: "cat-1"})
+					_, err := svc.GetCatalog(ctx, connect.NewRequest(&pb.GetCatalogRequest{CatalogId: "cat-1"}))
 					return err
 				}},
 				{"GetControl", func() error {
-					_, err := svc.GetControl(ctx, &pb.GetControlRequest{ControlId: "ctrl-1"})
+					_, err := svc.GetControl(ctx, connect.NewRequest(&pb.GetControlRequest{ControlId: "ctrl-1"}))
 					return err
 				}},
 				{"SearchControls", func() error {
-					_, err := svc.SearchControls(ctx, &pb.SearchControlsRequest{Query: "test"})
+					_, err := svc.SearchControls(ctx, connect.NewRequest(&pb.SearchControlsRequest{Query: "test"}))
 					return err
 				}},
 				{"GetJob", func() error {
-					_, err := svc.GetJob(ctx, &pb.GetJobRequest{JobId: "job-1"})
+					_, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
 					return err
 				}},
 				{"ListJobs", func() error {
-					_, err := svc.ListJobs(ctx, &pb.ListJobsRequest{})
+					_, err := svc.ListJobs(ctx, connect.NewRequest(&pb.ListJobsRequest{}))
 					return err
 				}},
 				{"CancelJob", func() error {
-					_, err := svc.CancelJob(ctx, &pb.CancelJobRequest{JobId: "job-1"})
+					_, err := svc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
 					return err
 				}},
 				{"SubmitDocument", func() error {
-					_, err := svc.SubmitDocument(ctx, &pb.SubmitDocumentRequest{
+					_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
 						Source: &pb.SubmitDocumentRequest_Content{Content: []byte("x")},
-					})
+					}))
 					return err
 				}},
 				{"QueryGraph", func() error {
-					_, err := svc.QueryGraph(ctx, &pb.QueryGraphRequest{Cypher: "MATCH (n) RETURN n"})
+					_, err := svc.QueryGraph(ctx, connect.NewRequest(&pb.QueryGraphRequest{Cypher: "MATCH (n) RETURN n"}))
 					return err
 				}},
 				{"FindSimilar", func() error {
-					_, err := svc.FindSimilar(ctx, &pb.FindSimilarRequest{ControlId: "ctrl-1"})
+					_, err := svc.FindSimilar(ctx, connect.NewRequest(&pb.FindSimilarRequest{ControlId: "ctrl-1"}))
 					return err
 				}},
 				{"GetControlMappings", func() error {
-					_, err := svc.GetControlMappings(ctx, &pb.GetControlMappingsRequest{ControlId: "ctrl-1"})
+					_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
 					return err
 				}},
 				{"SubmitVote", func() error {
-					_, err := svc.SubmitVote(ctx, &pb.SubmitVoteRequest{MappingId: "map-1"})
+					_, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: "map-1"}))
 					return err
 				}},
 				{"GetReviewQueue", func() error {
-					_, err := svc.GetReviewQueue(ctx, &pb.GetReviewQueueRequest{})
+					_, err := svc.GetReviewQueue(ctx, connect.NewRequest(&pb.GetReviewQueueRequest{}))
 					return err
 				}},
 			}
@@ -214,8 +213,8 @@ var _ = Describe("Gateway Property Tests", func() {
 			if err == nil {
 				rt.Fatalf("%s did not return error for unauthenticated context", chosen.name)
 			}
-			if status.Code(err) != codes.Unauthenticated {
-				rt.Fatalf("%s returned %v, expected Unauthenticated", chosen.name, status.Code(err))
+			if connect.CodeOf(err) != connect.CodeUnauthenticated {
+				rt.Fatalf("%s returned %v, expected Unauthenticated", chosen.name, connect.CodeOf(err))
 			}
 		})
 	})

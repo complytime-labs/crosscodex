@@ -3,6 +3,8 @@ module github.com/complytime-labs/crosscodex
 go 1.26.4
 
 require (
+	connectrpc.com/connect v1.20.0
+	connectrpc.com/otelconnect v0.9.0
 	dario.cat/mergo v1.0.2
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.30
@@ -73,8 +75,6 @@ require (
 	cloud.google.com/go/storage v1.63.0 // indirect
 	codeberg.org/chavacava/garif v0.2.0 // indirect
 	codeberg.org/polyfloyd/go-errorlint v1.9.0 // indirect
-	connectrpc.com/connect v1.20.0 // indirect
-	connectrpc.com/otelconnect v0.9.0 // indirect
 	dev.gaijin.team/go/exhaustruct/v4 v4.0.0 // indirect
 	dev.gaijin.team/go/golib v0.6.0 // indirect
 	github.com/4meepo/tagalign v1.4.3 // indirect

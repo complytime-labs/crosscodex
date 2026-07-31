@@ -2,76 +2,77 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"connectrpc.com/connect"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"go.opentelemetry.io/otel/attribute"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
-func (s *Service) GetJob(ctx context.Context, req *pb.GetJobRequest) (*pb.GetJobResponse, error) {
+func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
 	start := time.Now()
 	identity := identityFromContext(ctx)
 	if identity == nil {
-		return nil, status.Error(codes.Unauthenticated, "not authenticated")
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("not authenticated"))
 	}
 
 	ctx, endSpan := s.startHandlerSpan(ctx, "GetJob", identity,
-		attribute.String("job.id", req.GetJobId()))
+		attribute.String("job.id", req.Msg.GetJobId()))
 	defer endSpan()
 
-	if req.GetJobId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "job_id is required")
+	if req.Msg.GetJobId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("job_id is required"))
 	}
 
 	if s.pipeline == nil {
-		return nil, status.Error(codes.Unavailable, "pipeline backend not configured")
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("pipeline backend not configured"))
 	}
 
 	tc := buildTenantContext(identity)
-	req.TenantContext = tc
+	req.Msg.TenantContext = tc
 
-	resp, err := s.pipeline.GetJob(ctx, req)
+	resp, err := s.pipeline.GetJob(ctx, req.Msg)
 	if err != nil {
-		s.recordMetrics(ctx, "GetJob", start, status.Code(err))
+		s.recordMetrics(ctx, "GetJob", start, connect.CodeOf(err))
 		return nil, err
 	}
 
 	if resp.GetJob() == nil {
-		return nil, status.Error(codes.Internal, "backend returned nil job")
+		return nil, connect.NewError(connect.CodeInternal, errors.New("backend returned nil job"))
 	}
 
 	if !authn.IsAdmin(*identity) && resp.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
-		s.recordMetrics(ctx, "GetJob", start, codes.PermissionDenied)
-		return nil, status.Error(codes.PermissionDenied, "not the job owner")
+		s.recordMetrics(ctx, "GetJob", start, connect.CodePermissionDenied)
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("not the job owner"))
 	}
 
-	s.recordMetrics(ctx, "GetJob", start, codes.OK)
-	return resp, nil
+	s.recordMetrics(ctx, "GetJob", start, connect.Code(0))
+	return connect.NewResponse(resp), nil
 }
 
-func (s *Service) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
+func (s *Service) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {
 	start := time.Now()
 	identity := identityFromContext(ctx)
 	if identity == nil {
-		return nil, status.Error(codes.Unauthenticated, "not authenticated")
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("not authenticated"))
 	}
 
 	ctx, endSpan := s.startHandlerSpan(ctx, "ListJobs", identity)
 	defer endSpan()
 
 	if s.pipeline == nil {
-		return nil, status.Error(codes.Unavailable, "pipeline backend not configured")
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("pipeline backend not configured"))
 	}
 
 	tc := buildTenantContext(identity)
-	req.TenantContext = tc
+	req.Msg.TenantContext = tc
 
-	resp, err := s.pipeline.ListJobs(ctx, req)
+	resp, err := s.pipeline.ListJobs(ctx, req.Msg)
 	if err != nil {
-		s.recordMetrics(ctx, "ListJobs", start, status.Code(err))
+		s.recordMetrics(ctx, "ListJobs", start, connect.CodeOf(err))
 		return nil, err
 	}
 
@@ -85,27 +86,27 @@ func (s *Service) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.Li
 		resp.Jobs = filtered
 	}
 
-	s.recordMetrics(ctx, "ListJobs", start, codes.OK)
-	return resp, nil
+	s.recordMetrics(ctx, "ListJobs", start, connect.Code(0))
+	return connect.NewResponse(resp), nil
 }
 
-func (s *Service) CancelJob(ctx context.Context, req *pb.CancelJobRequest) (*pb.CancelJobResponse, error) {
+func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error) {
 	start := time.Now()
 	identity := identityFromContext(ctx)
 	if identity == nil {
-		return nil, status.Error(codes.Unauthenticated, "not authenticated")
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("not authenticated"))
 	}
 
 	ctx, endSpan := s.startHandlerSpan(ctx, "CancelJob", identity,
-		attribute.String("job.id", req.GetJobId()))
+		attribute.String("job.id", req.Msg.GetJobId()))
 	defer endSpan()
 
-	if req.GetJobId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "job_id is required")
+	if req.Msg.GetJobId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("job_id is required"))
 	}
 
 	if s.pipeline == nil {
-		return nil, status.Error(codes.Unavailable, "pipeline backend not configured")
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("pipeline backend not configured"))
 	}
 
 	tc := buildTenantContext(identity)
@@ -113,29 +114,29 @@ func (s *Service) CancelJob(ctx context.Context, req *pb.CancelJobRequest) (*pb.
 	if !authn.IsAdmin(*identity) {
 		getResp, err := s.pipeline.GetJob(ctx, &pb.GetJobRequest{
 			TenantContext: tc,
-			JobId:         req.GetJobId(),
+			JobId:         req.Msg.GetJobId(),
 		})
 		if err != nil {
-			s.recordMetrics(ctx, "CancelJob", start, status.Code(err))
+			s.recordMetrics(ctx, "CancelJob", start, connect.CodeOf(err))
 			return nil, err
 		}
 		if getResp.GetJob() == nil {
-			return nil, status.Error(codes.Internal, "backend returned nil job")
+			return nil, connect.NewError(connect.CodeInternal, errors.New("backend returned nil job"))
 		}
 		if getResp.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
-			s.recordMetrics(ctx, "CancelJob", start, codes.PermissionDenied)
-			return nil, status.Error(codes.PermissionDenied, "not the job owner")
+			s.recordMetrics(ctx, "CancelJob", start, connect.CodePermissionDenied)
+			return nil, connect.NewError(connect.CodePermissionDenied, errors.New("not the job owner"))
 		}
 	}
 
-	req.TenantContext = tc
+	req.Msg.TenantContext = tc
 
-	resp, err := s.pipeline.CancelJob(ctx, req)
+	resp, err := s.pipeline.CancelJob(ctx, req.Msg)
 	if err != nil {
-		s.recordMetrics(ctx, "CancelJob", start, status.Code(err))
+		s.recordMetrics(ctx, "CancelJob", start, connect.CodeOf(err))
 		return nil, err
 	}
 
-	s.recordMetrics(ctx, "CancelJob", start, codes.OK)
-	return resp, nil
+	s.recordMetrics(ctx, "CancelJob", start, connect.Code(0))
+	return connect.NewResponse(resp), nil
 }
