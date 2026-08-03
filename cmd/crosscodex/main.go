@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
@@ -11,10 +12,11 @@ import (
 )
 
 type cliState struct {
-	cfg     *config.ClientConfig
-	fullCfg *config.Config
-	client  crosscodexv1connect.GatewayServiceClient
-	daemon  *embeddedDaemon
+	cfg      *config.ClientConfig
+	fullCfg  *config.Config
+	client   crosscodexv1connect.GatewayServiceClient
+	daemon   *embeddedDaemon
+	logLevel slog.Level
 }
 
 func newRootCmd() *cobra.Command {
@@ -42,6 +44,13 @@ Get started:
 				return err
 			}
 
+			verbose, _ := cmd.Flags().GetCount("verbose")
+			debug, _ := cmd.Flags().GetBool("debug")
+			state.logLevel = resolveLogLevel(verbose, debug, state.cfg.Logging.Level)
+			slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+				Level: state.logLevel,
+			})))
+
 			if needsConnection(cmd.CommandPath()) {
 				endpoint, _ := cmd.Flags().GetString("endpoint")
 				if err := connect(cmd.Context(), state, endpoint); err != nil {
@@ -64,6 +73,8 @@ Get started:
 	root.PersistentFlags().Bool("plain", false, "output without formatting or color")
 	root.PersistentFlags().Bool("no-color", false, "disable color output")
 	root.PersistentFlags().String("profile", "", "configuration profile name")
+	root.PersistentFlags().CountP("verbose", "v", "increase log verbosity (-v info, -vv debug)")
+	root.PersistentFlags().Bool("debug", false, "enable debug logging (implies --verbose)")
 
 	root.MarkFlagsMutuallyExclusive("json", "plain")
 
