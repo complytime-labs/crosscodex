@@ -153,7 +153,7 @@ var _ = Describe("Configuration System", Ordered, func() {
 				Expect(cfg.Storage.Objects.Backend).To(Equal("local"))
 				Expect(cfg.TLS.Mode).To(Equal("off"))
 				Expect(cfg.Database.SSLMode).To(Equal("prefer"))
-				Expect(cfg.Logging.Level).To(Equal("info"))
+				Expect(cfg.Logging.Level).To(Equal("warn"))
 				Expect(cfg.Logging.Format).To(Equal("text"))
 			})
 		})
@@ -404,7 +404,7 @@ var _ = Describe("Configuration System", Ordered, func() {
 				tmpHome := GinkgoT().TempDir()
 				projectDir := GinkgoT().TempDir()
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
-				GinkgoT().Setenv("CROSSCODEX_LOGGING_LEVEL", "debug")
+				GinkgoT().Setenv("CROSSCODEX_LOGLEVEL", "debug")
 
 				userDir := filepath.Join(tmpHome, "crosscodex")
 
@@ -440,6 +440,31 @@ var _ = Describe("Configuration System", Ordered, func() {
 				Expect(cfg.Logging.Level).To(Equal("debug"))
 				Expect(cfg.NATS.URL).To(Equal("nats://flag:4222"))
 				Expect(cfg.TLS.Mode).To(Equal("off"))
+			})
+
+			It("maps CROSSCODEX_LOGLEVEL to logging.level", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+				GinkgoT().Setenv("CROSSCODEX_LOGLEVEL", "debug")
+
+				loader := config.NewLoader()
+				cfg, err := loader.Load(context.Background())
+				testspecs.AssertNoError(err)
+
+				Expect(cfg.Logging.Level).To(Equal("debug"))
+			})
+
+			It("rejects an invalid CROSSCODEX_LOGLEVEL value", func() {
+				tmpHome := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+				GinkgoT().Setenv("CROSSCODEX_LOGLEVEL", "verbose")
+
+				loader := config.NewLoader()
+				_, err := loader.Load(context.Background())
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("CROSSCODEX_LOGLEVEL"))
+				Expect(err.Error()).To(ContainSubstring("logging.level"))
+				Expect(err.Error()).To(ContainSubstring("verbose"))
 			})
 
 			It("handles malformed YAML in drop-in files", func() {
@@ -805,7 +830,7 @@ logging:
 			Expect(cfg.Server.Addr).To(Equal(":50051"))
 			Expect(cfg.Server.Workers).To(Equal(4))
 			Expect(cfg.CLI.Output).To(Equal("table"))
-			Expect(cfg.Logging.Level).To(Equal("info"))
+			Expect(cfg.Logging.Level).To(Equal("warn"))
 			Expect(cfg.Logging.Format).To(Equal("text"))
 		})
 	})
