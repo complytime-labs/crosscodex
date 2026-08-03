@@ -10,7 +10,7 @@
 //  5. User drop-ins ($XDG_CONFIG_HOME/crosscodex/conf.d/*.yaml)
 //  6. Profile selection (--profile <name>)
 //  7. Project config (.crosscodex/config.yaml)
-//  8. Environment variables (CROSSCODEX_* prefix)
+//  8. Environment variables (CROSSCODEX_* prefix; CROSSCODEX_LOGLEVEL aliases logging.level)
 //  9. CLI flags (highest)
 //
 // Each layer deep-merges over the previous: maps merge recursively, scalars

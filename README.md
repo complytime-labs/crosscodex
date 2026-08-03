@@ -254,7 +254,19 @@ The CLI recognizes these environment variables:
 |-----------------------|--------------------------------------------|----------------------|
 | `CROSSCODEX_ENDPOINT` | daemon address                        | `localhost:50051`    |
 | `CROSSCODEX_COLOR`    | Force color output (`1`) or disable (`0`)  | Auto-detect (isatty) |
+| `CROSSCODEX_LOGLEVEL` | Log level (`debug`/`info`/`warn`/`error`)  | `warn`               |
 | `NO_COLOR`            | Disable color output (standard convention) | —                    |
+
+### Verbosity
+
+Persistent flags override the configured log level for a single invocation:
+
+- `-v`, `--verbose` — set log level to `info` (repeat `-vv` for `debug`)
+- `--debug` — set log level to `debug` (implies `--verbose`; wins if combined)
+
+Precedence (highest first): `--debug`/`-vv` → `-v` → `logging.level`
+(config file or `CROSSCODEX_LOGLEVEL`) → default `warn`. The resolved level
+applies to both the CLI and the auto-started embedded daemon.
 
 ## Development
 

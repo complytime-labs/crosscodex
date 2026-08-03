@@ -101,9 +101,10 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	}
 	paths := pkiPaths(pkiDir)
 
-	// Create WARN-level logger to suppress INFO noise
+	// Logger level derives from the CLI verbosity flags / config baseline
+	// (see resolveLogLevel); defaults to WARN when no flags or config apply.
 	embeddedLogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
+		Level: state.logLevel,
 	}))
 
 	// Build service with real backends

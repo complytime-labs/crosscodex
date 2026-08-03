@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +45,42 @@ var _ = Describe("Root Command", func() {
 			Expect(cmd.PersistentFlags().Lookup("no-color")).NotTo(BeNil())
 			Expect(cmd.PersistentFlags().Lookup("endpoint")).NotTo(BeNil())
 			Expect(cmd.PersistentFlags().Lookup("profile")).NotTo(BeNil())
+			Expect(cmd.PersistentFlags().Lookup("verbose")).NotTo(BeNil())
+			Expect(cmd.PersistentFlags().Lookup("debug")).NotTo(BeNil())
+		})
+
+		It("lowers the default log level when --debug is set", func() {
+			prev := slog.Default()
+			DeferCleanup(func() { slog.SetDefault(prev) })
+
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			cmd := newRootCmd()
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+			cmd.SetArgs([]string{"--debug", "config", "show"})
+
+			Expect(cmd.Execute()).To(Succeed())
+			Expect(slog.Default().Enabled(context.Background(), slog.LevelDebug)).To(BeTrue())
+		})
+
+		It("keeps the default log level at warn without verbosity flags", func() {
+			prev := slog.Default()
+			DeferCleanup(func() { slog.SetDefault(prev) })
+
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+
+			cmd := newRootCmd()
+			cmd.SetOut(&stdout)
+			cmd.SetErr(&stderr)
+			cmd.SetArgs([]string{"config", "show"})
+
+			Expect(cmd.Execute()).To(Succeed())
+			Expect(slog.Default().Enabled(context.Background(), slog.LevelDebug)).To(BeFalse())
+			Expect(slog.Default().Enabled(context.Background(), slog.LevelWarn)).To(BeTrue())
+			Expect(slog.Default().Enabled(context.Background(), slog.LevelInfo)).To(BeFalse())
 		})
 
 		It("has command groups defined", func() {

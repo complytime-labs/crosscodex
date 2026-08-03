@@ -57,7 +57,7 @@ cli:
   endpoint: ""
   upload_chunk_size: 1048576
 logging:
-  level: info
+  level: warn
   format: text
 tenants:
   enabled: false

@@ -7,6 +7,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// envAliases maps ergonomic environment-variable suffixes (the part after the
+// CROSSCODEX_ prefix) to explicit config path segments. Without an alias, a
+// suffix is lowercased and split on "_" to derive the config path, which yields
+// the awkward CROSSCODEX_LOGGING_LEVEL for logging.level. The alias lets callers
+// use the shorter, canonical CROSSCODEX_LOGLEVEL instead.
+var envAliases = map[string][]string{
+	"LOGLEVEL": {"logging", "level"},
+}
+
 // buildEnvOverlay scans the process environment for variables matching the
 // given prefix and returns a yaml.Node overlay. When tracker is non-nil,
 // each matched variable is recorded individually (e.g., "environment variable
@@ -27,8 +36,11 @@ func buildEnvOverlay(prefix string, tracker *sourceTracker) (*yaml.Node, error) 
 			continue
 		}
 
-		path := strings.ToLower(strings.TrimPrefix(key, envPrefix))
-		segments := strings.Split(path, "_")
+		suffix := strings.TrimPrefix(key, envPrefix)
+		segments, ok := envAliases[suffix]
+		if !ok {
+			segments = strings.Split(strings.ToLower(suffix), "_")
+		}
 		node := buildNodeFromPath(segments, val)
 
 		if tracker != nil {
