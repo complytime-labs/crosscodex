@@ -122,10 +122,7 @@ func graphUserConn() *sql.DB {
 }
 
 func setupTenant(tenantID, displayName string) {
-	ctx := context.Background()
-	err := suPool.Exec(ctx,
-		"INSERT INTO tenants (tenant_id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-		tenantID, displayName)
+	err := db.EnsureTenant(context.Background(), suPool, tenantID, displayName)
 	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("setupTenant(%q)", tenantID))
 }
 
@@ -532,6 +529,123 @@ var _ = Describe("Database Integration", Ordered, func() {
 				Expect(tx2.QueryRowContext(ctx, "SELECT current_setting('app.current_tenant', true)").Scan(&tenantAfter)).To(Succeed())
 				Expect(tenantAfter).NotTo(Equal("iso-rollback"), "SET LOCAL tenant persisted after rollback")
 			})
+		})
+	})
+
+	var _ = Describe("Tenant Provisioning (EnsureTenant)", func() {
+		var ctx context.Context
+
+		BeforeEach(func() {
+			if suPool == nil {
+				Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+			}
+			ctx = context.Background()
+		})
+
+		countTenant := func(id string) int {
+			var n int
+			Expect(suPool.QueryRow(ctx,
+				"SELECT count(*) FROM tenants WHERE tenant_id = $1", id).Scan(&n)).To(Succeed())
+			return n
+		}
+
+		AfterEach(func() {
+			// Best-effort cleanup of tenants this suite may have created.
+			for _, id := range []string{"provision-test", "provision-a", "provision-b", "rogue"} {
+				_ = suPool.Exec(ctx, "DELETE FROM catalogs WHERE tenant_id = $1", id)
+				_ = suPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", id)
+			}
+		})
+
+		It("creates exactly one tenant row (positive)", func() {
+			Expect(db.EnsureTenant(ctx, suPool, "provision-test", "Provision Test")).To(Succeed())
+			Expect(countTenant("provision-test")).To(Equal(1))
+		})
+
+		It("is idempotent and does not overwrite display_name", func() {
+			Expect(db.EnsureTenant(ctx, suPool, "provision-test", "First Name")).To(Succeed())
+			Expect(db.EnsureTenant(ctx, suPool, "provision-test", "Second Name")).To(Succeed())
+			Expect(countTenant("provision-test")).To(Equal(1))
+			var name string
+			Expect(suPool.QueryRow(ctx,
+				"SELECT display_name FROM tenants WHERE tenant_id = $1", "provision-test").Scan(&name)).To(Succeed())
+			Expect(name).To(Equal("First Name"))
+		})
+
+		It("fires the tenant_graph_create trigger (per-tenant graph schema exists)", func() {
+			Expect(db.EnsureTenant(ctx, suPool, "provision-test", "Provision Test")).To(Succeed())
+			var n int
+			Expect(suPool.QueryRow(ctx,
+				"SELECT count(*) FROM information_schema.schemata WHERE schema_name = $1",
+				"crosscodex_provision-test").Scan(&n)).To(Succeed())
+			Expect(n).To(Equal(1), "expected per-tenant graph schema created by AFTER INSERT trigger")
+		})
+
+		It("fixes #113: a tenant-scoped catalogs insert succeeds after provisioning", func() {
+			Expect(db.EnsureTenant(ctx, suPool, "provision-test", "Provision Test")).To(Succeed())
+
+			appPool, err := db.NewPool(db.PoolConfig{DSN: appUserDSN()})
+			Expect(err).NotTo(HaveOccurred())
+			defer appPool.Close()
+
+			tc := db.NewTenantPool(appPool)
+			tctx, err := tenant.WithTenant(ctx, "provision-test")
+			Expect(err).NotTo(HaveOccurred())
+
+			tx, err := tc.Begin(tctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = tx.Rollback() }()
+
+			err = tx.Exec(tctx,
+				`INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
+				 VALUES ($1, $2, $3, $4, $5, $6)`,
+				"cat-113", "provision-test", "FK Repro", "1.0", "oscal", "test-fixture")
+			Expect(err).NotTo(HaveOccurred(), "catalogs FK insert should succeed once tenant is provisioned")
+			Expect(tx.Commit()).To(Succeed())
+		})
+
+		It("blocks provisioning on the app_user role and creates no row (negative: privilege boundary)", func() {
+			appPool, err := db.NewPool(db.PoolConfig{DSN: appUserDSN()})
+			Expect(err).NotTo(HaveOccurred())
+			defer appPool.Close()
+
+			err = db.EnsureTenant(ctx, appPool, "rogue", "Rogue Corp")
+			Expect(err).To(HaveOccurred(), "app_user must not be able to provision tenants")
+			Expect(countTenant("rogue")).To(Equal(0), "no rogue tenant row must exist")
+		})
+
+		It("provisioning a new tenant does not expose an existing tenant's rows (negative: isolation preserved)", func() {
+			Expect(db.EnsureTenant(ctx, suPool, "provision-a", "Tenant A")).To(Succeed())
+
+			appPool, err := db.NewPool(db.PoolConfig{DSN: appUserDSN()})
+			Expect(err).NotTo(HaveOccurred())
+			defer appPool.Close()
+			tc := db.NewTenantPool(appPool)
+
+			// Tenant A inserts a catalog.
+			actx, err := tenant.WithTenant(ctx, "provision-a")
+			Expect(err).NotTo(HaveOccurred())
+			txA, err := tc.Begin(actx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(txA.Exec(actx,
+				`INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
+				 VALUES ($1, $2, $3, $4, $5, $6)`,
+				"cat-a", "provision-a", "A", "1.0", "oscal", "fixture")).To(Succeed())
+			Expect(txA.Commit()).To(Succeed())
+
+			// Now provision tenant B.
+			Expect(db.EnsureTenant(ctx, suPool, "provision-b", "Tenant B")).To(Succeed())
+
+			// Tenant B must see zero catalogs (A's row is not exposed).
+			bctx, err := tenant.WithTenant(ctx, "provision-b")
+			Expect(err).NotTo(HaveOccurred())
+			txB, err := tc.Begin(bctx)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = txB.Rollback() }()
+			row := txB.QueryRow(bctx, "SELECT count(*) FROM catalogs")
+			var n int
+			Expect(row.Scan(&n)).To(Succeed())
+			Expect(n).To(Equal(0), "tenant B must not see tenant A's catalog after provisioning")
 		})
 	})
 

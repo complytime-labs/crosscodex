@@ -123,10 +123,7 @@ func tenantConn() db.Connection {
 }
 
 func setupTenant(tenantID, displayName string) {
-	ctx := context.Background()
-	err := suPool.Exec(ctx,
-		"INSERT INTO tenants (tenant_id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-		tenantID, displayName)
+	err := db.EnsureTenant(context.Background(), suPool, tenantID, displayName)
 	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("setupTenant(%q)", tenantID))
 }
 

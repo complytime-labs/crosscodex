@@ -130,10 +130,18 @@ type noopAuditEmitter struct{}
 
 func (noopAuditEmitter) EmitAuthEvent(_ context.Context, _ *authn.AuthEvent) error { return nil }
 
+const (
+	// embeddedTenantID is the single tenant used in embedded mode. It is the
+	// auth default tenant (see embeddedAuthRegistry) and is provisioned at
+	// startup so tenant-scoped writes satisfy the tenants foreign key.
+	embeddedTenantID          = "embedded"
+	embeddedTenantDisplayName = "Embedded Single-Node"
+)
+
 func embeddedAuthRegistry() (*authn.Registry, error) {
 	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 		SingleTenant:  true,
-		DefaultTenant: "embedded",
+		DefaultTenant: embeddedTenantID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
@@ -512,6 +520,14 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 	if err := pool.VerifyExtensions(ctx); err != nil {
 		resources.close()
 		return nil, nil, fmt.Errorf("verify database extensions: %w", err)
+	}
+
+	// Provision the embedded tenant so tenant-scoped writes (catalogs, jobs, …)
+	// satisfy the tenants foreign key. Runs on the owner pool, which bypasses
+	// the tenants RLS policy (see pkg/db.EnsureTenant). Idempotent across restarts.
+	if err := dbpkg.EnsureTenant(ctx, pool, embeddedTenantID, embeddedTenantDisplayName); err != nil {
+		resources.close()
+		return nil, nil, fmt.Errorf("provision embedded tenant: %w", err)
 	}
 
 	// Create local storage

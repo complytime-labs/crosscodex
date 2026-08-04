@@ -112,9 +112,7 @@ func integrationTestPool() db.Pool {
 }
 
 func integrationSetupTenantViaDB(pool db.Pool, tenantID, displayName string) {
-	err := pool.Exec(context.Background(),
-		"INSERT INTO tenants (tenant_id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-		tenantID, displayName)
+	err := db.EnsureTenant(context.Background(), pool, tenantID, displayName)
 	Expect(err).NotTo(HaveOccurred(), "setup tenant %q", tenantID)
 }
 

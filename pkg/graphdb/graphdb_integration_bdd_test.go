@@ -87,13 +87,11 @@ var _ = AfterSuite(func() {
 // ---------------------------------------------------------------------------
 
 func setupTenant(tenantID string) {
-	suDB, err := sql.Open("pgx", suDSN)
-	Expect(err).NotTo(HaveOccurred(), "open superuser conn")
+	suDB, err := db.NewPool(db.PoolConfig{DSN: suDSN})
+	Expect(err).NotTo(HaveOccurred(), "open superuser pool")
 	DeferCleanup(func() { suDB.Close() })
 
-	_, err = suDB.ExecContext(context.Background(),
-		"INSERT INTO tenants (tenant_id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-		tenantID, "Test Tenant "+tenantID)
+	err = db.EnsureTenant(context.Background(), suDB, tenantID, "Test Tenant "+tenantID)
 	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("setupTenant(%q)", tenantID))
 }
 

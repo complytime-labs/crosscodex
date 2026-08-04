@@ -49,16 +49,14 @@ var _ = Describe("Embedding Infrastructure Integration", Ordered, func() {
 		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
 
 		// Insert FK parent rows required by the embeddings table.
-		adminDB, err := sql.Open("pgx", dsn)
-		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		defer adminDB.Close()
+		adminPool, err := db.NewPool(db.PoolConfig{DSN: dsn})
+		Expect(err).NotTo(HaveOccurred(), "failed to open admin pool")
+		defer adminPool.Close()
 
-		_, err = adminDB.ExecContext(ctx,
-			`INSERT INTO tenants (tenant_id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			"test-tenant", "Integration Test Tenant")
-		Expect(err).NotTo(HaveOccurred(), "failed to insert tenant")
+		Expect(db.EnsureTenant(ctx, adminPool, "test-tenant", "Integration Test Tenant")).
+			To(Succeed(), "failed to insert tenant")
 
-		_, err = adminDB.ExecContext(ctx,
+		err = adminPool.Exec(ctx,
 			`INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
 			 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
 			"nist-800-53", "test-tenant", "NIST 800-53", "rev5", "oscal", "test-fixture")
