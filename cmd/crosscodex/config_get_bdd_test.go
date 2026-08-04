@@ -133,8 +133,8 @@ var _ = Describe("config get", func() {
 			Expect(err).NotTo(HaveOccurred())
 			var result map[string]any
 			Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
-			Expect(result).To(HaveKey("DSN"))
-			Expect(result).To(HaveKey("MaxConns"))
+			Expect(result).To(HaveKey("dsn"))
+			Expect(result).To(HaveKey("max_conns"))
 		})
 
 		It("errors on a non-existent key", func() {
