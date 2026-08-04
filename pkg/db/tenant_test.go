@@ -23,10 +23,12 @@ func (f *fakeConn) Exec(_ context.Context, query string, args ...any) error {
 	f.lastArgs = args
 	return f.execErr
 }
-func (f *fakeConn) Begin(context.Context) (Transaction, error)      { panic("fakeConn.Begin unused") }
-func (f *fakeConn) Query(context.Context, string, ...any) (Rows, error) { panic("fakeConn.Query unused") }
-func (f *fakeConn) QueryRow(context.Context, string, ...any) Row    { panic("fakeConn.QueryRow unused") }
-func (f *fakeConn) Close() error                                    { return nil }
+func (f *fakeConn) Begin(context.Context) (Transaction, error) { panic("fakeConn.Begin unused") }
+func (f *fakeConn) Query(context.Context, string, ...any) (Rows, error) {
+	panic("fakeConn.Query unused")
+}
+func (f *fakeConn) QueryRow(context.Context, string, ...any) Row { panic("fakeConn.QueryRow unused") }
+func (f *fakeConn) Close() error                                 { return nil }
 
 func TestEnsureTenant_IssuesInsertWithArgs(t *testing.T) {
 	f := &fakeConn{}
