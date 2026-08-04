@@ -102,10 +102,7 @@ func synthAppUserDSN() string {
 
 // setupSynthTenant creates a tenant row via superuser (bypasses RLS).
 func setupSynthTenant(tenantID, displayName string) {
-	ctx := context.Background()
-	err := intSuPool.Exec(ctx,
-		"INSERT INTO tenants (tenant_id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-		tenantID, displayName)
+	err := db.EnsureTenant(context.Background(), intSuPool, tenantID, displayName)
 	Expect(err).NotTo(HaveOccurred(), "setupSynthTenant: "+tenantID)
 }
 

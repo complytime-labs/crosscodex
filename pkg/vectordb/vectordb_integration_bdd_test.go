@@ -55,23 +55,21 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
 
 	// Insert FK parent rows required by the embeddings table.
-	adminDB, err := sql.Open("pgx", testDSN)
-	Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-	defer adminDB.Close()
+	adminPool, err := db.NewPool(db.PoolConfig{DSN: testDSN})
+	Expect(err).NotTo(HaveOccurred(), "failed to open admin pool")
+	defer adminPool.Close()
 
 	for _, t := range []struct{ id, name string }{
 		{"test-tenant", "Test Tenant"},
 		{"tenant-1", "Tenant One"},
 		{"tenant-2", "Tenant Two"},
 	} {
-		_, err := adminDB.ExecContext(ctx,
-			`INSERT INTO tenants (tenant_id, display_name) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			t.id, t.name)
-		Expect(err).NotTo(HaveOccurred(), "failed to insert tenant %s", t.id)
+		Expect(db.EnsureTenant(ctx, adminPool, t.id, t.name)).
+			To(Succeed(), "failed to insert tenant %s", t.id)
 	}
 
 	for _, cid := range []string{"nist-800-53", "iso-27001"} {
-		_, err := adminDB.ExecContext(ctx,
+		err := adminPool.Exec(ctx,
 			`INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
 			 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
 			cid, "test-tenant", cid, "1.0", "oscal", "test-fixture")
