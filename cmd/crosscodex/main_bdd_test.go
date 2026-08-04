@@ -305,10 +305,10 @@ var _ = Describe("Root Command", func() {
 					Expect(err).NotTo(HaveOccurred())
 					var result map[string]any
 					Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
-					Expect(result).To(HaveKey("LLM"))
-					Expect(result).To(HaveKey("Database"))
-					Expect(result).To(HaveKey("Server"))
-					Expect(result).To(HaveKey("CLI"))
+					Expect(result).To(HaveKey("llm"))
+					Expect(result).To(HaveKey("database"))
+					Expect(result).To(HaveKey("server"))
+					Expect(result).To(HaveKey("cli"))
 				})
 
 				It("filters output with --section flag", func() {
@@ -332,8 +332,8 @@ var _ = Describe("Root Command", func() {
 					Expect(err).NotTo(HaveOccurred())
 					var result map[string]any
 					Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
-					Expect(result).To(HaveKey("DSN"))
-					Expect(result).NotTo(HaveKey("LLM"))
+					Expect(result).To(HaveKey("dsn"))
+					Expect(result).NotTo(HaveKey("llm"))
 				})
 
 				It("errors on unknown section", func() {
