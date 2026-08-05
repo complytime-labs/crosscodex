@@ -1,0 +1,61 @@
+version: "3"
+
+vars:
+  MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
+  TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task: unit
+
+  unit:
+    desc: "Run in-process gateway stress tests (issue #112)"
+    dir: "{{.ROOT_DIR}}"
+    deps:
+      - ::dev:deps
+      - ::dev:generate
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go test -tags stress -run TestStress ./internal/gateway/ -v -timeout 5m
+
+  bench:
+    desc: "Run gateway upload throughput benchmark"
+    dir: "{{.ROOT_DIR}}"
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - go test -tags stress -run '^$' -bench BenchmarkStreamDocument -benchmem ./internal/gateway/ | tee {{.TEST_DIR}}/stress-bench.txt
+
+  e2e:
+    desc: "Run full-stack round-trip Venom integration tests (issue #112)"
+    dir: "{{.ROOT_DIR}}"
+    deps:
+      - ::test:integration:generate-certs
+      - ::test:integration:build-db-image
+      - ::build
+    vars:
+      COMPOSE_CMD:
+        sh: command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose"
+      CERTS_SRC: "{{.TEST_DIR}}/certs"
+      COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.yaml"
+    # NOTE: XDG_DATA_HOME is intentionally NOT set here. It controls both the
+    # embedded CLI's object-storage root AND rootless podman's storage root.
+    # Setting it at task scope splits podman storage between the deps (which
+    # build the image/volume without this env block) and the compose cmds
+    # (which would run with it), so compose cannot find the image. The venom
+    # suite sets XDG_DATA_HOME itself for the CLI exec steps, where it belongs.
+    env:
+      TMPDIR: "{{.TEST_DIR}}/buildtmp"
+      CROSSCODEX_DATABASE_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
+    cmds:
+      - mkdir -p {{.TEST_DIR}}/buildtmp
+      - mkdir -p {{.TEST_DIR}}/xdg
+      - mkdir -p {{.CERTS_SRC}}
+      - task: ::test:integration:prepare-cert-volume
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile db --profile storage up -d"
+      - defer: "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile db --profile storage down"
+      # up -d returns before Postgres accepts connections; block until healthy so
+      # the first CLI import (and the DB-truth psql steps) do not race startup.
+      - timeout 120 sh -c 'until podman exec crosscodex-test-db pg_isready -h 127.0.0.1 -U postgres -q; do sleep 2; done'
+      - venom run {{.ROOT_DIR}}/test/stress/stress.venom.yml --output-dir {{.TEST_DIR}} --var root={{.ROOT_DIR}}

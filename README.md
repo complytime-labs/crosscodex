@@ -319,6 +319,26 @@ Run `task --list` for all available commands including integration tests and dev
 | **Integration** | Go testing + containers | Available (`task test:integration:all`) |
 | **E2E**         | Venom                   | Planned                                 |
 
+#### Stress Tests (#112)
+
+Gateway stress tests verify concurrent upload handling, resource limits, data integrity, and throughput under load.
+
+```bash
+# Run in-process stress tests
+task test:stress        # alias for test:stress:unit
+task test:stress:unit
+
+# Run throughput benchmark
+task test:stress:bench
+
+# Run full-stack round-trip integration suite
+task test:stress:e2e
+```
+
+**Build tag:** Stress tests compile only under `-tags stress` and are excluded from the default `task test` / `go build ./...` path.
+
+**E2E requirements:** `task test:stress:e2e` requires a podman runtime (rootless mode). The taskfile sets `TMPDIR=/workspace/.test-output/buildtmp` for build scratch. The container storage driver is taken from your podman configuration (`storage.conf`), matching the rest of the integration suite; if your environment has no overlay support, select vfs via `storage.conf` or `STORAGE_DRIVER=vfs` rather than relying on the taskfile.
+
 ### Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development workflow, PR process, and coding standards.

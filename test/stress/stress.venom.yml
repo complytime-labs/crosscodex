@@ -1,0 +1,142 @@
+name: Gateway stress tests - full-stack round-trip integrity
+
+# Full-stack Layer-2 suite for issue #112. Exercises the real CLI -> gateway ->
+# catalog service -> Postgres path against the compose stack (db + storage).
+#
+# Paths are built inline from {{.root}} on purpose: venom resolves derived vars
+# (e.g. `bin: "{{.root}}/bin/..."`) against the file default at parse time, so a
+# `--var root=` override never reaches them. Only direct {{.root}} uses honour
+# the override the task passes (`--var root={{.ROOT_DIR}}`).
+#
+# Storage isolation: XDG_DATA_HOME is set INLINE on the crosscodex CLI steps
+# only, so the embedded CLI's object store lands under .test-output. The
+# `podman exec` steps intentionally run WITHOUT that override so they use the
+# default rootless podman storage where the compose stack created the DB
+# container; TMPDIR and CROSSCODEX_DATABASE_DSN are inherited from the task env.
+# This repo's integration harness is podman-first (see .taskfiles/test), so the
+# DB-truth steps shell in via `podman exec crosscodex-test-db`.
+#
+# Control-count round-trip is asserted against the DB (ground truth) rather than
+# the CLI control_count field: the persisted control rows are the honest
+# round-trip signal, independent of any reporting-layer mapping.
+
+vars:
+  root: "."
+  control_count: "10"
+  reimport_count: "5"
+
+testcases:
+  - name: Round-trip integrity - control count preserved
+    steps:
+      - name: Build generator binary
+        type: exec
+        script: |
+          go build -o {{.root}}/.test-output/stress-gen {{.root}}/test/stress/gen/main.go
+        assertions:
+          - result.code ShouldEqual 0
+
+      - name: Generate test catalog
+        type: exec
+        script: |
+          {{.root}}/.test-output/stress-gen -controls {{.control_count}} -out {{.root}}/.test-output/stress_catalog.json
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "{{.control_count}}"
+
+      - name: Import catalog
+        type: exec
+        script: |
+          XDG_DATA_HOME={{.root}}/.test-output/xdg {{.root}}/bin/crosscodex --json catalog import {{.root}}/.test-output/stress_catalog.json
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemoutjson.document_id ShouldNotBeEmpty
+
+      - name: Read back catalog id from CLI
+        type: exec
+        script: |
+          XDG_DATA_HOME={{.root}}/.test-output/xdg {{.root}}/bin/crosscodex --json catalog list | jq -r '.[0].catalog_id'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotBeEmpty
+        vars:
+          catalog_id:
+            from: result.systemout
+
+      - name: Verify persisted control count equals generated (DB ground truth)
+        type: exec
+        script: |
+          podman exec crosscodex-test-db psql -U postgres -d crosscodex_test -tAc "SELECT COUNT(*) FROM controls WHERE catalog_id = '{{.catalog_id}}';"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "{{.control_count}}"
+
+  - name: Re-import behavior - idempotency check
+    steps:
+      - name: Build generator binary
+        type: exec
+        script: |
+          go build -o {{.root}}/.test-output/stress-gen {{.root}}/test/stress/gen/main.go
+        assertions:
+          - result.code ShouldEqual 0
+
+      - name: Generate test catalog for re-import
+        type: exec
+        script: |
+          {{.root}}/.test-output/stress-gen -controls {{.reimport_count}} -out {{.root}}/.test-output/stress_catalog.json
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "{{.reimport_count}}"
+
+      - name: First import
+        type: exec
+        script: |
+          XDG_DATA_HOME={{.root}}/.test-output/xdg {{.root}}/bin/crosscodex --json catalog import {{.root}}/.test-output/stress_catalog.json
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemoutjson.document_id ShouldNotBeEmpty
+
+      - name: Capture catalog count after first import
+        type: exec
+        script: |
+          XDG_DATA_HOME={{.root}}/.test-output/xdg {{.root}}/bin/crosscodex --json catalog list | jq 'length'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotBeEmpty
+        vars:
+          first_catalog_count:
+            from: result.systemout
+
+      - name: Capture total control count after first import
+        type: exec
+        script: |
+          podman exec crosscodex-test-db psql -U postgres -d crosscodex_test -tAc "SELECT COUNT(*) FROM controls;"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotBeEmpty
+        vars:
+          first_control_count:
+            from: result.systemout
+
+      - name: Second import (same file)
+        type: exec
+        script: |
+          XDG_DATA_HOME={{.root}}/.test-output/xdg {{.root}}/bin/crosscodex --json catalog import {{.root}}/.test-output/stress_catalog.json
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemoutjson.document_id ShouldNotBeEmpty
+
+      - name: Verify catalog count unchanged (no duplicate catalog)
+        type: exec
+        script: |
+          XDG_DATA_HOME={{.root}}/.test-output/xdg {{.root}}/bin/crosscodex --json catalog list | jq 'length'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "{{.first_catalog_count}}"
+
+      - name: Verify total control count unchanged (no duplicate controls)
+        type: exec
+        script: |
+          podman exec crosscodex-test-db psql -U postgres -d crosscodex_test -tAc "SELECT COUNT(*) FROM controls;"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "{{.first_control_count}}"

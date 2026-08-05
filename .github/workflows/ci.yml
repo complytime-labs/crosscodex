@@ -199,3 +199,39 @@ jobs:
       test-task: task test:integration:authn
     secrets:
       GITHUB_TOKEN: ${{ github.token }}
+
+  stress-tests:
+    needs: [build]
+    runs-on: ubuntu-latest
+    env:
+      CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ github.token }}
+          generate-test-certs: "true"
+
+      - uses: ./.github/actions/integration-setup
+        with:
+          image-tar-path: /tmp/crosscodex-test-db.tar
+          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+
+      - name: Run in-process gateway stress tests (Layer 1, #112)
+        run: task test:stress:unit
+
+      - name: Run gateway upload throughput benchmark
+        run: task test:stress:bench
+
+      - name: Run full-stack Venom round-trip stress tests (Layer 2, #112)
+        run: task test:stress:e2e
+
+      - name: Save DB image for cache
+        if: always()
+        run: |
+          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
+          fi

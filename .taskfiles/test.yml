@@ -7,6 +7,9 @@ includes:
   traces:
     taskfile: test/traces.yml
     dir: "{{.ROOT_DIR}}"
+  stress:
+    taskfile: test/stress.yml
+    dir: "{{.ROOT_DIR}}"
 
 vars:
   MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'

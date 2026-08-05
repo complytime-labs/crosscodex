@@ -37,6 +37,7 @@ type CatalogRecord struct {
 	OutputHash       string
 	ExtractorName    string
 	ExtractorVersion string
+	ControlCount     int64
 }
 
 // ControlRecord represents a control row in the controls table.
@@ -165,7 +166,8 @@ func (s *PGStore) GetCatalog(ctx context.Context, catalogID string) (*CatalogRec
 			COALESCE(format, '') as format,
 			COALESCE(output_hash, '') as output_hash,
 			COALESCE(extractor_name, '') as extractor_name,
-			COALESCE(extractor_version, '') as extractor_version
+			COALESCE(extractor_version, '') as extractor_version,
+			(SELECT COUNT(*) FROM controls c WHERE c.catalog_id = catalogs.catalog_id) as control_count
 		FROM catalogs
 		WHERE catalog_id = $1
 	`
@@ -186,6 +188,7 @@ func (s *PGStore) GetCatalog(ctx context.Context, catalogID string) (*CatalogRec
 		&rec.OutputHash,
 		&rec.ExtractorName,
 		&rec.ExtractorVersion,
+		&rec.ControlCount,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("catalog not found: %s", catalogID)
@@ -226,7 +229,8 @@ func (s *PGStore) ListCatalogs(ctx context.Context, opts ListOptions) ([]Catalog
 			COALESCE(format, '') as format,
 			COALESCE(output_hash, '') as output_hash,
 			COALESCE(extractor_name, '') as extractor_name,
-			COALESCE(extractor_version, '') as extractor_version
+			COALESCE(extractor_version, '') as extractor_version,
+			(SELECT COUNT(*) FROM controls c WHERE c.catalog_id = catalogs.catalog_id) as control_count
 		FROM catalogs
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -256,6 +260,7 @@ func (s *PGStore) ListCatalogs(ctx context.Context, opts ListOptions) ([]Catalog
 			&rec.OutputHash,
 			&rec.ExtractorName,
 			&rec.ExtractorVersion,
+			&rec.ControlCount,
 		)
 		if err != nil {
 			return nil, PageInfo{}, err
