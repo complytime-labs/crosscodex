@@ -107,7 +107,7 @@ func (p *RequiresCandidateProvider) Candidates(ctx context.Context, tenantID, jo
 	}()
 
 	// Set tenant context for RLS.
-	if err := tx.Exec(ctx, "SET LOCAL app.current_tenant = $1", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("RequiresCandidateProvider.Candidates: setting tenant: %w", err)

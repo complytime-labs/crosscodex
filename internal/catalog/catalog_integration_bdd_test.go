@@ -673,6 +673,53 @@ var _ = Describe("PGStore Integration", func() {
 		})
 	})
 
+	Describe("ControlCount", func() {
+		It("reports the number of controls persisted for a catalog", func() {
+			tenantID := "store-controlcount"
+			catalogID := fmt.Sprintf("cc-cat-%d", time.Now().UnixNano())
+			setupTenant(tenantID, "Control Count")
+			rawConn := appUserConn()
+			setupCatalog(rawConn, tenantID, catalogID, "Control Count Catalog")
+
+			conn := tenantConn()
+			store := catalog.NewPGStore(conn)
+			ctx, err := tenant.WithTenant(context.Background(), tenantID)
+			Expect(err).NotTo(HaveOccurred())
+
+			controls := []catalog.ControlRecord{
+				{
+					TenantID: tenantID, ControlID: fmt.Sprintf("%s/ac-1", catalogID),
+					CatalogID: catalogID, Identifier: "ac-1", Title: "One",
+					Statement: "First control.", Class: "compliance-requirement",
+					GroupID: "ac", Props: map[string]string{}, CreatedAt: time.Now().UTC(),
+				},
+				{
+					TenantID: tenantID, ControlID: fmt.Sprintf("%s/ac-2", catalogID),
+					CatalogID: catalogID, Identifier: "ac-2", Title: "Two",
+					Statement: "Second control.", Class: "compliance-requirement",
+					GroupID: "ac", Props: map[string]string{}, CreatedAt: time.Now().UTC(),
+				},
+			}
+			Expect(store.UpsertControls(ctx, controls)).To(Succeed())
+
+			got, err := store.GetCatalog(ctx, catalogID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.ControlCount).To(Equal(int64(2)), "GetCatalog must report control count")
+
+			records, _, err := store.ListCatalogs(ctx, catalog.ListOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			var found *catalog.CatalogRecord
+			for i := range records {
+				if records[i].CatalogID == catalogID {
+					found = &records[i]
+					break
+				}
+			}
+			Expect(found).NotTo(BeNil(), "catalog must appear in ListCatalogs")
+			Expect(found.ControlCount).To(Equal(int64(2)), "ListCatalogs must report control count")
+		})
+	})
+
 	Describe("GetControlViaStore", func() {
 		It("retrieves control details including props", func() {
 			tenantID := "store-getctrl"

@@ -725,8 +725,9 @@ func catalogRecordToProto(rec *CatalogRecord) *crosscodexv1.Catalog {
 		TenantContext: &crosscodexv1.TenantContext{
 			TenantId: rec.TenantID,
 		},
-		Name:    rec.Name,
-		Version: rec.Version,
+		Name:         rec.Name,
+		Version:      rec.Version,
+		ControlCount: int32(rec.ControlCount),
 		Audit: &crosscodexv1.AuditMetadata{
 			CreatedAt: timestamppb.New(rec.CreatedAt),
 		},
