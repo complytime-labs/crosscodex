@@ -57,6 +57,7 @@ jobs:
           echo "::group::Integration coverage map (task test:integration:all)"
           echo "This job covers:"
           echo "  db, graphdb, vectordb, catalog ... integration-tests (this job)"
+          echo "  embedded (daemon e2e) ............ integration-tests (this job)"
           echo "  storage .......................... integration-tests (this job)"
           echo "  trace-propagation ................ integration-tests (this job)"
           echo "  attestation ...................... integration-tests (this job)"
@@ -86,6 +87,9 @@ jobs:
 
       - name: Run database integration tests (db, graphdb, vectordb)
         run: task test:integration:db
+
+      - name: Run embedded daemon e2e tests
+        run: task test:integration:embedded
 
       - name: Run storage integration tests
         run: task test:integration:storage

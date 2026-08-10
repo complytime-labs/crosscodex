@@ -339,6 +339,17 @@ task test:stress:e2e
 
 **E2E requirements:** `task test:stress:e2e` requires a podman runtime (rootless mode). The taskfile sets `TMPDIR=/workspace/.test-output/buildtmp` for build scratch. The container storage driver is taken from your podman configuration (`storage.conf`), matching the rest of the integration suite; if your environment has no overlay support, select vfs via `storage.conf` or `STORAGE_DRIVER=vfs` rather than relying on the taskfile.
 
+#### Embedded E2E Tests (#114)
+
+Embedded daemon end-to-end tests exercise startup (PKI, migrations, tenant provisioning, mTLS server), a full catalog round-trip over the mTLS gateway, graceful shutdown, and error paths.
+
+```bash
+# Run the embedded daemon e2e suite (starts a PostgreSQL container)
+task test:integration:embedded
+```
+
+**Build tag:** Embedded e2e tests compile only under `-tags integration` and require `TEST_DATABASE_DSN`; the suite skips cleanly when it is unset. The podman `TMPDIR` / storage-driver notes under **Stress Tests** apply here too (environment-only, not baked into the Taskfile).
+
 ### Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development workflow, PR process, and coding standards.
