@@ -9,6 +9,12 @@ GOTOOLCHAIN: auto
 # Use project-level golangci-lint config so local and CI lint agree.
 GO_GOLANGCI_LINT_CONFIG_FILE: .golangci.yml
 
+# Go testdata/ fixtures include intentionally-malformed inputs (e.g.
+# cmd/crosscodex/testdata/oscal/invalid.json) that exercise parser error
+# paths. Linting them for syntax produces false failures, so exclude
+# testdata JSON from JSONLINT. Real project JSON is still linted.
+JSON_JSONLINT_FILTER_REGEX_EXCLUDE: (testdata/.*\.json)
+
 # REPOSITORY_CHECKOV and REPOSITORY_TRUFFLEHOG are disabled.
 # Both hang indefinitely inside the MegaLinter container on GitHub
 # Actions runners. Bisected over 6 CI rounds (Jun-Jul 2026).
