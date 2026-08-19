@@ -2,8 +2,11 @@ package embedding
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -13,6 +16,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
@@ -116,9 +120,10 @@ func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 			Confidence: 1.0,
 		}
 		return []analyzer.Task{{
-			TaskID:   fmt.Sprintf("%s-%s", analyzerName, controlID),
-			TaskType: analyzerName,
-			Payload:  result,
+			TaskID:         fmt.Sprintf("%s-%s", analyzerName, controlID),
+			TaskType:       analyzerName,
+			Payload:        result,
+			PreBuiltResult: true,
 		}}, nil
 	}
 
@@ -165,15 +170,27 @@ func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 }
 
 // Aggregate combines completed embedding results and produces aggregate
-// metadata counts (total, embedded, skipped, error). Task-level errors are
-// counted in metadata rather than returned as an aggregate error.
-func (a *EmbeddingAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+// metadata counts (total, embedded, skipped, error), and separately
+// JSON-encodes one results.EmbedResult per distinct embedded control into
+// Output.ResultData. Per design, graph materialization for embeddings is a
+// documented no-op (vectors live in vectordb, not the graph), so this blob
+// records only which control IDs were embedded, for readback consistency
+// with the other analyzers. GenerateWork emits one TaskID per
+// (control, model) as "embedding-<controlID>-<model>", or one per control
+// with no model suffix for the section auto-skip path
+// ("embedding-<controlID>"); both are stripped via
+// intanalyzer.StripTaskIDPrefix and, for the model-suffixed form, a
+// configured model name trimmed off the remainder. A control processed
+// under multiple models is deduplicated to a single entry. Results with a
+// task-level error are omitted from ResultData rather than failing the
+// whole stage.
+func (a *EmbeddingAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer.TaskResult) (*analyzer.Output, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "embedding.Aggregate")
 	defer span.End()
 
-	embeddedCount, skippedCount, errorCount := intanalyzer.CountResults(results)
+	embeddedCount, skippedCount, errorCount := intanalyzer.CountResults(taskResults)
 
-	total := len(results)
+	total := len(taskResults)
 
 	metadata := map[string]string{
 		"total_count":    strconv.Itoa(total),
@@ -203,9 +220,90 @@ func (a *EmbeddingAnalyzer) Aggregate(ctx context.Context, results []analyzer.Ta
 	)
 	span.SetStatus(codes.Ok, "")
 
+	catalogID, hasCatalog := analyzer.CatalogIDFromContext(ctx)
+
+	seen := make(map[string]bool)
+	var order []string
+	var batch []vectordb.Embedding
+	for _, r := range taskResults {
+		if r.Error != nil {
+			continue
+		}
+		rest, ok := intanalyzer.StripTaskIDPrefix(r.TaskID, analyzerName)
+		if !ok {
+			continue
+		}
+		controlID := rest
+		var model string
+		for _, m := range a.cfg.Models {
+			if trimmed, found := strings.CutSuffix(rest, "-"+m); found {
+				controlID = trimmed
+				model = m
+				break
+			}
+		}
+		if !seen[controlID] {
+			seen[controlID] = true
+			order = append(order, controlID)
+		}
+
+		// Section auto-skip results have no model suffix and no vector
+		// payload (r.Result is *pb.AnalysisResult, not *structpb.Struct) —
+		// model == "" for them, so this branch naturally excludes them.
+		if model == "" || a.vectors == nil {
+			continue
+		}
+		payload, ok := r.Result.(*structpb.Struct)
+		if !ok {
+			continue
+		}
+		fields := payload.GetFields()
+		embeddingsList := fields["embeddings"].GetListValue().GetValues()
+		if len(embeddingsList) == 0 {
+			continue
+		}
+		// GenerateWork sends one text per task, so resp.Data has exactly one row.
+		row := embeddingsList[0].GetListValue().GetValues()
+		vector := make([]float32, len(row))
+		for i, v := range row {
+			vector[i] = float32(v.GetNumberValue())
+		}
+		batch = append(batch, vectordb.Embedding{
+			CatalogID: catalogID,
+			ControlID: controlID,
+			Model:     model,
+			Vector:    vector,
+		})
+	}
+
+	if a.vectors != nil && len(batch) > 0 {
+		if !hasCatalog || catalogID == "" {
+			return nil, fmt.Errorf("embedding.Aggregate: catalog ID required in context to persist embeddings")
+		}
+		tenantID, err := tenant.FromContext(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("embedding.Aggregate: %w", err)
+		}
+		if err := a.vectors.StoreBatch(ctx, tenantID, batch); err != nil {
+			return nil, fmt.Errorf("embedding.Aggregate: storing embeddings: %w", err)
+		}
+	}
+
+	sort.Strings(order)
+	embedResults := make([]results.EmbedResult, len(order))
+	for i, controlID := range order {
+		embedResults[i] = results.EmbedResult{ControlID: controlID}
+	}
+
+	resultData, err := json.Marshal(embedResults)
+	if err != nil {
+		return nil, fmt.Errorf("embedding.Aggregate: marshaling result data: %w", err)
+	}
+
 	return &analyzer.Output{
 		AnalyzerName: analyzerName,
 		Data:         nil,
 		Metadata:     metadata,
+		ResultData:   resultData,
 	}, nil
 }

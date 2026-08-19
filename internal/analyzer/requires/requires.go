@@ -2,7 +2,11 @@ package requires
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strconv"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -13,6 +17,8 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/consensus"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
@@ -77,6 +83,8 @@ type RequiresAnalyzer struct {
 	prompts    prompt.Registry
 	candidates CandidateProvider
 	cfg        config.RequiresConfig
+	consensus  *consensus.Computer
+	logger     *slog.Logger
 	tracer     trace.Tracer
 
 	// Metrics (optional, nil-safe)
@@ -95,6 +103,11 @@ func New(llm llmclient.Client, prompts prompt.Registry, candidates CandidateProv
 		prompts:    prompts,
 		candidates: candidates,
 		cfg:        cfg,
+		consensus: consensus.New(
+			consensus.WithThreshold(cfg.ConsensusThreshold),
+			consensus.WithMaxErrorRate(cfg.MaxErrorRate),
+		),
+		logger: slog.Default(),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -257,12 +270,13 @@ func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 	return tasks, nil
 }
 
-// Aggregate groups completed task results by pair and produces a summary
-// output with metadata. The consensus computation, per-pair JSON writes,
-// and NATS event publishing are pipeline-layer concerns handled by the
-// orchestrator after calling Aggregate -- matching the relationship pattern
-// where Aggregate stays lightweight.
-func (a *RequiresAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+// Aggregate groups completed task results by source/target pair, computes
+// consensus for each pair via a.consensus (skipping pairs that don't clear
+// the configured vote/error thresholds), and JSON-encodes the surviving
+// "requires" pairs into Output.ResultData. Persisting ResultData to Postgres
+// and publishing the resulting NATS events remain pipeline-layer concerns
+// handled by the orchestrator after calling Aggregate.
+func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer.TaskResult) (*analyzer.Output, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "requires.Aggregate")
 	defer span.End()
 
@@ -271,18 +285,21 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, results []analyzer.Tas
 		errorCount int
 	)
 
-	for _, r := range results {
+	for _, r := range taskResults {
 		totalCount++
 		if r.Error != nil {
 			errorCount++
 		}
 	}
 
-	// Resolve prompt version for metadata.
+	// Resolve prompt version for metadata. Tolerate a nil prompts registry
+	// (e.g. in unit tests exercising Aggregate in isolation) the same way a
+	// resolution error is tolerated below.
 	promptVersion := ""
-	spec, err := a.prompts.Resolve(ctx, promptName)
-	if err == nil {
-		promptVersion = spec.Version
+	if a.prompts != nil {
+		if spec, err := a.prompts.Resolve(ctx, promptName); err == nil {
+			promptVersion = spec.Version
+		}
 	}
 
 	metadata := map[string]string{
@@ -302,11 +319,87 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, results []analyzer.Tas
 		attribute.Int("requires.total", totalCount),
 		attribute.Int("requires.errors", errorCount),
 	)
+
+	// Group per-pair votes and compute consensus. A pair with too few valid
+	// votes (consensus.ErrInsufficientVotes) is skipped rather than failing
+	// the whole aggregation -- one noisy pair shouldn't sink every other
+	// pair's result. Any other error from Compute is unexpected and fails
+	// Aggregate outright.
+	type pairGroup struct {
+		source, target string
+		votes          []consensus.Vote
+		models         map[string]bool
+	}
+	groups := make(map[string]*pairGroup)
+	var order []string
+
+	for _, r := range taskResults {
+		if r.Error != nil {
+			continue
+		}
+		source, target, model, _, ok := intanalyzer.ParsePairTaskID(r.TaskID, analyzerName, a.cfg.Models)
+		if !ok {
+			continue
+		}
+		raw, ok := intanalyzer.ExtractResponseText(r.Result)
+		if !ok {
+			continue
+		}
+		key := source + "--" + target
+		g, exists := groups[key]
+		if !exists {
+			g = &pairGroup{source: source, target: target, models: map[string]bool{}}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.votes = append(g.votes, ParseResponse(r.TaskID, raw))
+		g.models[model] = true
+	}
+
+	sort.Strings(order)
+	var pairResults []results.RequiresResult
+	for _, key := range order {
+		g := groups[key]
+		res, err := a.consensus.Compute(g.votes)
+		if err != nil {
+			var insufficient *consensus.ErrInsufficientVotes
+			if errors.As(err, &insufficient) {
+				a.logger.WarnContext(ctx, "requires: skipping pair with insufficient votes",
+					"source_id", g.source, "target_id", g.target, "error", err)
+				continue
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("requires.Aggregate: computing consensus for %s--%s: %w", g.source, g.target, err)
+		}
+		if !res.Decision || !a.consensus.MeetsThreshold(res) {
+			continue // consensus says no prerequisite relationship, or confidence doesn't clear the configured threshold: nothing to persist for this pair
+		}
+		models := make([]string, 0, len(g.models))
+		for m := range g.models {
+			models = append(models, m)
+		}
+		sort.Strings(models)
+		pairResults = append(pairResults, results.RequiresResult{
+			SourceID: g.source, TargetID: g.target,
+			Confidence: res.ConfidenceFraction, Unanimous: res.Unanimous,
+			ValidVotes: res.ValidVoteCount, TotalVotes: res.TotalVoteCount, Models: models,
+		})
+	}
+
+	resultData, err := json.Marshal(pairResults)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("requires.Aggregate: marshaling result data: %w", err)
+	}
+
 	span.SetStatus(codes.Ok, "")
 
 	return &analyzer.Output{
 		AnalyzerName: analyzerName,
 		Data:         nil, // Individual results are in the TaskResult slice
 		Metadata:     metadata,
+		ResultData:   resultData,
 	}, nil
 }

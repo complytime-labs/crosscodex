@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -15,9 +17,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
-	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -41,6 +44,23 @@ func (s *Service) executeJob(ctx context.Context, tenantID, jobID string) {
 		attribute.String("job.id", jobID),
 		attribute.String("tenant.id", tenantID),
 	)
+
+	defer func() {
+		if r := recover(); r != nil {
+			// A panic in this detached goroutine would otherwise crash the
+			// whole daemon and leave the job in 'running', crash-looping on
+			// every resume. Recover, mark the job failed, and stay up.
+			failCtx := ctx
+			if tctx, terr := tenant.WithTenant(context.Background(), tenantID); terr == nil {
+				failCtx = tctx
+			}
+			s.logger.ErrorContext(failCtx, "recovered from panic during job execution",
+				"job_id", jobID, "panic", r, "stack", string(debug.Stack()))
+			span.RecordError(fmt.Errorf("panic during job execution: %v", r))
+			span.SetStatus(codes.Error, "panic during job execution")
+			s.failJob(failCtx, tenantID, jobID, fmt.Errorf("panic during job execution: %v", r))
+		}
+	}()
 
 	defer func() {
 		s.mu.Lock()
@@ -96,7 +116,7 @@ func (s *Service) executeJob(ctx context.Context, tenantID, jobID string) {
 
 	// Phase 3: Synthesis.
 	if !completed["synthesis"] {
-		if err := s.runSynthesis(ctx, tenantID, jobID, exec); err != nil {
+		if err := s.runSynthesis(ctx, tenantID, jobID, job, exec); err != nil {
 			if ctx.Err() != nil {
 				s.cancelJob(ctx, tenantID, jobID)
 				return
@@ -163,11 +183,14 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 		exec.layout = layout
 	}
 
-	// Determine incomplete analyzer names (not in completed set).
+	// Determine incomplete analyzer names (not in completed set) and
+	// completed ones (for pre-seeding CompletedOutputs on resume, below).
 	dagOrder := dag.Order()
-	var incompleteAnalyzers []string
+	var incompleteAnalyzers, completedAnalyzers []string
 	for _, name := range dagOrder {
-		if !completed[name] {
+		if completed[name] {
+			completedAnalyzers = append(completedAnalyzers, name)
+		} else {
 			incompleteAnalyzers = append(incompleteAnalyzers, name)
 		}
 	}
@@ -188,37 +211,192 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 		return fmt.Errorf("unmarshaling job config: %w", err)
 	}
 
-	// Build ExecutionRequest.
-	req := analysis.ExecutionRequest{
-		JobID:         job.JobID,
-		AnalyzerNames: incompleteAnalyzers,
-		Input:         &emptypb.Empty{},
+	// Partition analyzers into two passes. Candidate-dependent analyzers
+	// (requires/relationship) need candidate data (requires_candidates /
+	// relationship_candidates) materialized before their GenerateWork runs, so
+	// they run in a second pass after candidate generation. Everything else
+	// runs first.
+	var prePass, postPass []string
+	for _, name := range incompleteAnalyzers {
+		if candidateDependentAnalyzers[name] {
+			postPass = append(postPass, name)
+		} else {
+			prePass = append(prePass, name)
+		}
 	}
 
-	// Execute via engine.
-	result, err := s.engine.Execute(ctx, req)
+	// AnalyzerConfig is shared across both passes: every real analyzer's
+	// GenerateWork needs job_id (requires/relationship read it from
+	// cfg.Parameters["job_id"] and fail fast if absent; the others ignore it).
+	analyzerConfig := make(map[string]analyzer.AnalyzerConfig, len(dagOrder))
+	for _, name := range dagOrder {
+		analyzerConfig[name] = analyzer.AnalyzerConfig{Parameters: map[string]string{"job_id": job.JobID}}
+	}
+
+	// Catalog-backed jobs get their full control list fanned out per-control;
+	// document-backed jobs (ExtractCatalogID ok=false) leave Controls empty,
+	// mirroring how candidate generation already treats a missing catalog_id
+	// as a legitimate no-op rather than a failure. controls starts as a
+	// non-nil empty slice (rather than a nil slice) so that req.Controls in
+	// runPass's perControl branch is always non-nil, signaling "per-control
+	// mode, zero controls" to the engine instead of falling back to its
+	// single-Input path (which expects a *pb.Control, not the
+	// *emptypb.Empty passed as req.Input here).
+	var catalogID string
+	controls := []*pb.Control{}
+	if id, ok := ExtractCatalogID(job.Config); ok && s.catalogControls != nil {
+		tenantID, terr := tenant.FromContext(ctx)
+		if terr != nil {
+			return fmt.Errorf("runAnalysis: %w", terr)
+		}
+		fetched, err := s.catalogControls.Controls(ctx, tenantID, id)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return fmt.Errorf("runAnalysis: fetching catalog controls: %w", err)
+		}
+		catalogID = id
+		controls = fetched
+	}
+
+	// allOutputs accumulates analyzer outputs across both passes for the
+	// attestation link materials/products below. Seeded from any analyzers
+	// already durably completed by a prior process invocation of this job
+	// (crash/restart resume) — without this, a later pass's DAG subset that
+	// transitively depends on them would re-dispatch and re-execute them,
+	// even though they are marked completed, because the engine's dependency
+	// gate is seeded solely from CompletedOutputs.
+	allOutputs, err := s.store.GetCompletedAnalysisResults(ctx, job.JobID, completedAnalyzers)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("engine.Execute: %w", err)
+		return fmt.Errorf("loading completed analysis results for resume: %w", err)
 	}
 
-	// Check result.Failed for errors.
-	if len(result.Failed) > 0 {
-		err := fmt.Errorf("analysis failed: %d analyzers failed: %v", len(result.Failed), result.Failed)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+	// runPass executes one engine pass and merges its outputs, failing the
+	// analysis stage if any analyzer in the pass errored. perControl selects
+	// between the two per-analyzer input shapes: pre-candidate analyzers
+	// (classify/embedding/artifacts) need one *pb.Control per task; the
+	// candidate-dependent analyzers (requires/relationship) ignore their
+	// GenerateWork input entirely and instead read all candidate pairs for
+	// the job — so they run with Controls empty and a placeholder *pb.Control
+	// Input (any real analyzer registered here is Analyzer[*pb.Control], so
+	// Input must type-assert to that, unlike the emptypb.Empty stub tests use).
+	runPass := func(names []string, perControl bool, label string) error {
+		if len(names) == 0 {
+			return nil
+		}
+		req := analysis.ExecutionRequest{
+			JobID:            job.JobID,
+			AnalyzerNames:    names,
+			Input:            &emptypb.Empty{},
+			AnalyzerConfig:   analyzerConfig,
+			CompletedOutputs: allOutputs,
+		}
+		if perControl {
+			req.Controls = controls
+			req.CatalogID = catalogID
+		} else {
+			req.Input = &pb.Control{}
+		}
+		result, err := s.engine.Execute(ctx, req)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return fmt.Errorf("engine.Execute (%s): %w", label, err)
+		}
+		if len(result.Failed) > 0 {
+			failErr := fmt.Errorf("analysis failed: %d analyzers failed: %v", len(result.Failed), result.Failed)
+			span.RecordError(failErr)
+			span.SetStatus(codes.Error, failErr.Error())
+			return failErr
+		}
+		for k, v := range result.Outputs {
+			allOutputs[k] = v
+		}
+		return nil
+	}
+
+	// Pre-candidate pass.
+	if err := runPass(prePass, true, "pre-candidate pass"); err != nil {
 		return err
 	}
 
+	// Candidate generation runs only when candidate-dependent analyzers will
+	// follow and a generator is wired. A nil generator (tests / not-yet-wired
+	// production) means the post-pass runs against whatever candidates already
+	// exist.
+	if len(postPass) > 0 && !completed["candidate_generation"] && s.candidateGen != nil {
+		if err := s.store.UpdateStageStatus(ctx, job.JobID, "candidate_generation", StageStatusRunning); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return fmt.Errorf("updating candidate_generation stage to running: %w", err)
+		}
+
+		tenantID, terr := tenant.FromContext(ctx)
+		if terr != nil {
+			return fmt.Errorf("candidate generation: %w", terr)
+		}
+
+		genErr := s.candidateGen.Generate(ctx, tenantID, job.JobID, job.Config)
+		switch {
+		case genErr == nil || errors.Is(genErr, ErrNotACatalogJob):
+			// A nil error is a real success; ErrNotACatalogJob is a legitimate
+			// no-op for document-backed jobs (zero candidates). Both are a
+			// successfully terminal stage, and the candidate-dependent pass
+			// proceeds either way.
+			if err := s.store.UpdateStageStatus(ctx, job.JobID, "candidate_generation", StageStatusCompleted); err != nil {
+				s.logger.WarnContext(ctx, "failed to update candidate_generation stage to completed",
+					"job_id", job.JobID, "error", err)
+			}
+		default:
+			if err := s.store.UpdateStageError(ctx, job.JobID, "candidate_generation", genErr); err != nil {
+				s.logger.WarnContext(ctx, "failed to update candidate_generation stage to failed",
+					"job_id", job.JobID, "error", err)
+			}
+			span.RecordError(genErr)
+			span.SetStatus(codes.Error, genErr.Error())
+			return fmt.Errorf("candidate generation failed: %w", genErr)
+		}
+	}
+
+	// Candidate-dependent pass.
+	if err := runPass(postPass, false, "candidate-dependent pass"); err != nil {
+		return err
+	}
+
+	// Populate vote_summaries from requires/relationship results in
+	// allOutputs, so synthesis (runSynthesis, below) has rows to rank and
+	// update. Always attempted (not gated on postPass having just run):
+	// buildVoteSummaryPairs returns an empty pairs slice when neither
+	// analyzer's output is present, and WriteVoteSummaries uses
+	// INSERT ... ON CONFLICT DO NOTHING, so this is a safe no-op both when
+	// no candidate-dependent analyzers exist for this job and when a prior
+	// process invocation already durably wrote these rows (resume case).
+	tenantID, terr := tenant.FromContext(ctx)
+	if terr != nil {
+		return fmt.Errorf("runAnalysis: %w", terr)
+	}
+	pairs, err := buildVoteSummaryPairs(allOutputs)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("runAnalysis: building vote summary pairs: %w", err)
+	}
+	if err := s.store.WriteVoteSummaries(ctx, tenantID, job.JobID, pairs); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("runAnalysis: writing vote summaries: %w", err)
+	}
+
 	// Create link for each completed analyzer.
-	for analyzerName, output := range result.Outputs {
+	for analyzerName, output := range allOutputs {
 		// Materials: outputs from dependencies.
 		var materials []attestation.Artifact
 		for _, dep := range dag.Analyzers() {
 			if dep.Name() == analyzerName {
 				for _, depName := range dep.DependsOn() {
-					if depOutput, ok := result.Outputs[depName]; ok {
+					if depOutput, ok := allOutputs[depName]; ok {
 						digest := computeDigest(depOutput)
 						materials = append(materials, attestation.Artifact{
 							URI:    depName + ".output",
@@ -251,7 +429,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 }
 
 // runSynthesis updates stage status and calls the synthesis executor.
-func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, exec *jobExecution) error {
+func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job *Job, exec *jobExecution) error {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.RunSynthesis")
 	defer span.End()
 	span.SetAttributes(attribute.String("job.id", jobID))
@@ -263,8 +441,51 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, exec
 	}
 	s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageStarted)
 
-	var inputs []synthesis.SynthesisInput
-	classifications := make(map[string]synthesis.Classification)
+	classifyOut, err := s.store.GetCompletedAnalysisResults(ctx, jobID, []string{"classify", "requires", "relationship"})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("runSynthesis: loading analysis results: %w", err)
+	}
+
+	var classifyResults []results.ClassifyResult
+	if out, ok := classifyOut["classify"]; ok && len(out.ResultData) > 0 {
+		if err := json.Unmarshal(out.ResultData, &classifyResults); err != nil {
+			return fmt.Errorf("runSynthesis: unmarshaling classify results: %w", err)
+		}
+	}
+	var requiresResults []results.RequiresResult
+	if out, ok := classifyOut["requires"]; ok && len(out.ResultData) > 0 {
+		if err := json.Unmarshal(out.ResultData, &requiresResults); err != nil {
+			return fmt.Errorf("runSynthesis: unmarshaling requires results: %w", err)
+		}
+	}
+	var relResults []results.SemanticMatchResult
+	if out, ok := classifyOut["relationship"]; ok && len(out.ResultData) > 0 {
+		if err := json.Unmarshal(out.ResultData, &relResults); err != nil {
+			return fmt.Errorf("runSynthesis: unmarshaling relationship results: %w", err)
+		}
+	}
+
+	// Similarity matrices: one per configured embedding model, read from the
+	// same pgEmbeddingsReader candidate generation already uses. Only
+	// meaningful for catalog-backed jobs; a document-backed job (no
+	// catalog_id) has no embeddings and synthesis proceeds with zero
+	// similarity stats (SimilarityCount=0 per pair).
+	similarityByModel := make(map[string]similarityMatrix)
+	if catalogID, ok := ExtractCatalogID(job.Config); ok && s.embeddingsReader != nil {
+		for _, model := range s.embeddingConfig.Models {
+			ids, values, err := s.embeddingsReader.SimilarityMatrix(ctx, tenantID, catalogID, model)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return fmt.Errorf("runSynthesis: reading similarity matrix for model %q: %w", model, err)
+			}
+			similarityByModel[model] = similarityMatrix{IDs: ids, Values: values}
+		}
+	}
+
+	inputs, classifications := buildSynthesisInputs(classifyResults, requiresResults, relResults, similarityByModel)
 
 	synthResult, err := s.synthesis.Execute(ctx, jobID, inputs, classifications)
 	if err != nil {
@@ -297,7 +518,6 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, exec
 		})
 	}
 
-	job := &Job{TenantID: tenantID, JobID: jobID}
 	link, err := s.createLink(ctx, job, "synthesis", materials, products)
 	if err != nil {
 		s.logger.WarnContext(ctx, "failed to create synthesis link",

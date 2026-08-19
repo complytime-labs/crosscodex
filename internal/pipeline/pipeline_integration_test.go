@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
@@ -57,30 +58,34 @@ var _ = Describe("Pipeline Integration", func() {
 		storage = newExecutorFakeStorage()
 
 		// Register stub analyzers with dependencies: alpha -> beta -> gamma.
-		alpha := &stubAnalyzer{
+		// Registered as Analyzer[*pb.Control] (matching production analyzer
+		// registration) and exercised against a catalog-backed job below, so
+		// GenerateWork actually runs once per catalog control instead of being
+		// skipped as a zero-task, document-backed job.
+		alpha := &stubControlAnalyzer{
 			name: "alpha",
-			genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 				return []analyzer.Task{{TaskID: "alpha-task-1", Payload: &emptypb.Empty{}}}, nil
 			},
 		}
-		beta := &stubAnalyzer{
+		beta := &stubControlAnalyzer{
 			name: "beta",
 			deps: []string{"alpha"},
-			genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 				return []analyzer.Task{{TaskID: "beta-task-1", Payload: &emptypb.Empty{}}}, nil
 			},
 		}
-		gamma := &stubAnalyzer{
+		gamma := &stubControlAnalyzer{
 			name: "gamma",
 			deps: []string{"beta"},
-			genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 				return []analyzer.Task{{TaskID: "gamma-task-1", Payload: &emptypb.Empty{}}}, nil
 			},
 		}
 
-		Expect(analyzer.Register[*emptypb.Empty](registry, alpha)).To(Succeed())
-		Expect(analyzer.Register[*emptypb.Empty](registry, beta)).To(Succeed())
-		Expect(analyzer.Register[*emptypb.Empty](registry, gamma)).To(Succeed())
+		Expect(analyzer.Register[*pb.Control](registry, alpha)).To(Succeed())
+		Expect(analyzer.Register[*pb.Control](registry, beta)).To(Succeed())
+		Expect(analyzer.Register[*pb.Control](registry, gamma)).To(Succeed())
 
 		// Build analysis engine with fake dispatcher/collector.
 		dispatcher = &executorTestDispatcher{}
@@ -110,7 +115,11 @@ var _ = Describe("Pipeline Integration", func() {
 		attCfg := config.AttestationConfig{
 			ExpiryDuration: 168 * time.Hour,
 		}
-		svc = pipeline.New(store, engine, registry, synth, attestor, converter, bus, storage, pipelineCfg, attCfg)
+		catalogReader := &fakeCatalogControlsReader{controls: []*pb.Control{
+			{ControlId: "ctrl-1", CatalogId: "integration-cat-1"},
+		}}
+		svc = pipeline.New(store, engine, registry, synth, attestor, converter, bus, storage, pipelineCfg, attCfg, nil,
+			pipeline.WithCatalogControlsReader(catalogReader))
 	})
 
 	AfterEach(func() {
@@ -120,7 +129,7 @@ var _ = Describe("Pipeline Integration", func() {
 	Describe("full pipeline run with multiple analyzers", func() {
 		It("executes all stages in DAG order and completes", func() {
 			// Create job via CreateJob (triggers executeJob in background).
-			jobConfig := map[string]interface{}{"test": "config"}
+			jobConfig := map[string]interface{}{"Source": map[string]interface{}{"CatalogId": "integration-cat-1"}}
 			configBytes, err := json.Marshal(jobConfig)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -188,7 +197,7 @@ var _ = Describe("Pipeline Integration", func() {
 		It("resumes from last incomplete stage", func() {
 			var stages []*pipeline.Stage
 			// Pre-populate store with a running job.
-			jobConfig := map[string]interface{}{"test": "config"}
+			jobConfig := map[string]interface{}{"Source": map[string]interface{}{"CatalogId": "integration-cat-1"}}
 			configBytes, err := json.Marshal(jobConfig)
 			Expect(err).NotTo(HaveOccurred())
 

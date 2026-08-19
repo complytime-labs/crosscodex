@@ -2,7 +2,9 @@ package relationship
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -13,6 +15,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
@@ -274,14 +277,17 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 	return tasks, nil
 }
 
-// Aggregate groups completed task results by pair and produces a summary
-// output with metadata. The consensus computation, per-pair JSON writes,
-// and NATS event publishing described in the spec are pipeline-layer
-// concerns handled by the orchestrator after calling Aggregate — matching
-// the classify/embedding pattern where Aggregate stays lightweight.
-// The consensus algorithm is exposed as the exported ComputeConsensus
-// function for the pipeline to use directly.
-func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+// Aggregate groups completed task results by source/target pair, computes
+// consensus for each pair via the pure ComputeConsensus function (every pair
+// with at least one parseable vote gets a result — there is no vote-count
+// gate here, unlike requires.Aggregate), and JSON-encodes the surviving
+// pairs into Output.ResultData. Pairs whose consensus is RelNoRelationship
+// are omitted: the graph subscriber materializes a graph edge for every
+// entry in ResultData unconditionally, so a "no relationship" pair must
+// never reach it. Persisting ResultData to Postgres and publishing the
+// resulting NATS events remain pipeline-layer concerns handled by the
+// orchestrator after calling Aggregate.
+func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer.TaskResult) (*analyzer.Output, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "relationship.Aggregate")
 	defer span.End()
 
@@ -290,18 +296,21 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, results []analyzer
 		errorCount int
 	)
 
-	for _, r := range results {
+	for _, r := range taskResults {
 		totalCount++
 		if r.Error != nil {
 			errorCount++
 		}
 	}
 
-	// Resolve prompt version for metadata.
+	// Resolve prompt version for metadata. Tolerate a nil prompts registry
+	// (e.g. in unit tests exercising Aggregate in isolation) the same way a
+	// resolution error is tolerated below.
 	promptVersion := ""
-	spec, err := a.prompts.Resolve(ctx, promptName)
-	if err == nil {
-		promptVersion = spec.Version
+	if a.prompts != nil {
+		if spec, err := a.prompts.Resolve(ctx, promptName); err == nil {
+			promptVersion = spec.Version
+		}
 	}
 
 	metadata := map[string]string{
@@ -321,11 +330,70 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, results []analyzer
 		attribute.Int("relationship.total", totalCount),
 		attribute.Int("relationship.errors", errorCount),
 	)
+
+	groups := make(map[string]map[string]*Vote) // pairKey -> voteKey -> Vote
+	pairIDs := make(map[string][2]string)       // pairKey -> [source, target]
+	var order []string
+
+	for _, r := range taskResults {
+		if r.Error != nil {
+			continue
+		}
+		source, target, model, sample, ok := intanalyzer.ParsePairTaskID(r.TaskID, analyzerName, a.cfg.Models)
+		if !ok {
+			continue
+		}
+		raw, ok := intanalyzer.ExtractResponseText(r.Result)
+		if !ok {
+			continue
+		}
+		vote := ParseResponse(raw)
+		vote.VoteKey = r.TaskID
+		vote.Model = model
+		vote.SampleIndex = sample
+
+		key := source + "--" + target
+		if _, exists := groups[key]; !exists {
+			groups[key] = make(map[string]*Vote)
+			pairIDs[key] = [2]string{source, target}
+			order = append(order, key)
+		}
+		groups[key][r.TaskID] = vote
+	}
+
+	sort.Strings(order)
+	var pairResults []results.SemanticMatchResult
+	for _, key := range order {
+		ids := pairIDs[key]
+		c := ComputeConsensus(groups[key])
+		if c.Relationship == RelNoRelationship {
+			continue // no relationship found: nothing to persist for this pair
+		}
+		pairResults = append(pairResults, results.SemanticMatchResult{
+			SourceID: ids[0], TargetID: ids[1],
+			RelationshipType: c.Relationship.String(),
+			Confidence:       c.ConfidenceFraction,
+			Properties: map[string]string{
+				"contribution_type": c.ContributionType.String(),
+				"unanimous":         strconv.FormatBool(c.Unanimous),
+				"valid_vote_count":  strconv.Itoa(c.ValidVoteCount),
+			},
+		})
+	}
+
+	resultData, err := json.Marshal(pairResults)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("relationship.Aggregate: marshaling result data: %w", err)
+	}
+
 	span.SetStatus(codes.Ok, "")
 
 	return &analyzer.Output{
 		AnalyzerName: analyzerName,
 		Data:         nil, // Individual results are in the TaskResult slice
 		Metadata:     metadata,
+		ResultData:   resultData,
 	}, nil
 }

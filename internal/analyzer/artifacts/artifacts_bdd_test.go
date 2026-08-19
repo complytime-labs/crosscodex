@@ -2,6 +2,7 @@ package artifacts_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -376,4 +378,69 @@ func (m *mockPromptRegistry) List(_ context.Context) ([]string, error) {
 
 func (m *mockPromptRegistry) Layers(_ context.Context, _ string) ([]prompt.LayerInfo, error) {
 	return nil, nil
+}
+
+// TestAggregate_ProducesResultData verifies that Aggregate computes
+// consensus per control and JSON-encodes the surviving controls into
+// Output.ResultData, in the shape the graph subscriber expects
+// (results.ArtifactResult).
+func TestAggregate_ProducesResultData(t *testing.T) {
+	cfg := config.ArtifactsConfig{Models: []string{"llama3.2:3b"}, SamplesPerModel: 1, FuzzyThreshold: 0.6}
+	a := artifacts.New(nil, nil, cfg)
+
+	resp := "ARTIFACT_NAME: Access Control Policy\nARTIFACT_TYPE: POLICY\n"
+	s, _ := structpb.NewStruct(map[string]interface{}{"response": resp})
+
+	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
+		{TaskID: "artifacts-AC-1-llama3.2:3b-s0", TaskType: "artifacts", Result: s},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate error: %v", err)
+	}
+
+	var parsed []results.ArtifactResult
+	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
+		t.Fatalf("unmarshal ResultData: %v", err)
+	}
+	if len(parsed) != 1 || parsed[0].ControlID != "AC-1" {
+		t.Fatalf("unexpected result: %+v", parsed)
+	}
+	if len(parsed[0].Artifacts) != 1 || parsed[0].Artifacts[0].Name != "Access Control Policy" {
+		t.Fatalf("unexpected artifacts: %+v", parsed[0].Artifacts)
+	}
+}
+
+func TestAggregate_OmitsZeroArtifactControls(t *testing.T) {
+	cfg := config.ArtifactsConfig{Models: []string{"llama3.2:3b"}, SamplesPerModel: 1, FuzzyThreshold: 0.6}
+	a := artifacts.New(nil, nil, cfg)
+
+	// One control with a real artifact, one whose vote parses to zero artifacts.
+	withArtifact := "ARTIFACT_NAME: Access Control Policy\nARTIFACT_TYPE: POLICY\n"
+	noArtifacts := "ARTIFACTS: NONE"
+	sWith, _ := structpb.NewStruct(map[string]interface{}{"response": withArtifact})
+	sNone, _ := structpb.NewStruct(map[string]interface{}{"response": noArtifacts})
+
+	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
+		{TaskID: "artifacts-AC-1-llama3.2:3b-s0", TaskType: "artifacts", Result: sWith},
+		{TaskID: "artifacts-AC-2-llama3.2:3b-s0", TaskType: "artifacts", Result: sNone},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate error: %v", err)
+	}
+
+	var parsed []results.ArtifactResult
+	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
+		t.Fatalf("unmarshal ResultData: %v", err)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("expected exactly 1 control in ResultData (AC-2 must be omitted), got %d: %+v", len(parsed), parsed)
+	}
+	if parsed[0].ControlID != "AC-1" {
+		t.Fatalf("expected AC-1, got %q", parsed[0].ControlID)
+	}
+	for _, r := range parsed {
+		if r.ControlID == "AC-2" {
+			t.Fatalf("AC-2 (zero consensus artifacts) must not appear in ResultData")
+		}
+	}
 }

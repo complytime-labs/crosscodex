@@ -13,6 +13,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	pkganalyzer "github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -63,5 +64,36 @@ var _ = Describe("CountResults", func() {
 			}, 0, 0, 1),
 	)
 })
+
+var _ = Describe("ExtractResponseText", func() {
+	DescribeTable("extracting raw response text",
+		func(result *structpb.Struct, wantRaw string, wantOK bool) {
+			var msg proto.Message
+			if result != nil {
+				msg = result
+			}
+			raw, ok := analyzer.ExtractResponseText(msg)
+			Expect(ok).To(Equal(wantOK))
+			Expect(raw).To(Equal(wantRaw))
+		},
+		Entry("struct with response field", mustStruct(map[string]interface{}{"response": "hello"}), "hello", true),
+		Entry("struct missing response field", mustStruct(map[string]interface{}{"other": "value"}), "", false),
+		Entry("nil result", nil, "", false),
+	)
+
+	It("returns ok=false for a non-struct proto.Message", func() {
+		raw, ok := analyzer.ExtractResponseText(&pb.AnalysisResult{})
+		Expect(ok).To(BeFalse())
+		Expect(raw).To(Equal(""))
+	})
+})
+
+func mustStruct(fields map[string]interface{}) *structpb.Struct {
+	s, err := structpb.NewStruct(fields)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
 
 var errTest = errors.New("test error")

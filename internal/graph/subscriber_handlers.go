@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 )
@@ -53,22 +54,13 @@ func (s *Service) materialize(ctx context.Context, tenantID, analyzer, jobID str
 	return err
 }
 
-// semanticMatchResult represents a single relationship analysis result.
-type semanticMatchResult struct {
-	SourceID         string            `json:"source_id"`
-	TargetID         string            `json:"target_id"`
-	RelationshipType string            `json:"relationship_type"`
-	Confidence       float64           `json:"confidence"`
-	Properties       map[string]string `json:"properties"`
-}
-
 func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID string, data []byte) error {
-	var results []semanticMatchResult
-	if err := json.Unmarshal(data, &results); err != nil {
+	var matches []results.SemanticMatchResult
+	if err := json.Unmarshal(data, &matches); err != nil {
 		return fmt.Errorf("unmarshal relationship results: %w", err)
 	}
 
-	for _, r := range results {
+	for _, r := range matches {
 		edge := graphdb.Edge{
 			ID:        fmt.Sprintf("%s_%s_%s", jobID, r.SourceID, r.TargetID),
 			Label:     "SEMANTIC_MATCH",
@@ -91,24 +83,13 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 	return nil
 }
 
-// requiresResult represents a single requires analysis result.
-type requiresResult struct {
-	SourceID   string   `json:"source_id"`
-	TargetID   string   `json:"target_id"`
-	Confidence float64  `json:"confidence"`
-	Unanimous  bool     `json:"unanimous"`
-	ValidVotes int      `json:"valid_votes"`
-	TotalVotes int      `json:"total_votes"`
-	Models     []string `json:"models"`
-}
-
 func (s *Service) materializeRequires(ctx context.Context, tenantID, jobID string, data []byte) error {
-	var results []requiresResult
-	if err := json.Unmarshal(data, &results); err != nil {
+	var reqResults []results.RequiresResult
+	if err := json.Unmarshal(data, &reqResults); err != nil {
 		return fmt.Errorf("unmarshal requires results: %w", err)
 	}
 
-	for _, r := range results {
+	for _, r := range reqResults {
 		reqEdge := graphdb.RequiresEdge{
 			SourceID:   r.SourceID,
 			TargetID:   r.TargetID,
@@ -129,28 +110,14 @@ func (s *Service) materializeRequires(ctx context.Context, tenantID, jobID strin
 	return nil
 }
 
-// artifactResult represents artifact analysis output.
-type artifactResult struct {
-	ControlID string     `json:"control_id"`
-	Artifacts []artifact `json:"artifacts"`
-}
-
-type artifact struct {
-	Name       string  `json:"name"`
-	Type       string  `json:"type"`
-	Frequency  string  `json:"frequency"`
-	OwnerRole  string  `json:"owner_role"`
-	Confidence float64 `json:"confidence"`
-}
-
 func (s *Service) materializeArtifacts(ctx context.Context, tenantID, jobID string, data []byte) error {
-	var results []artifactResult
-	if err := json.Unmarshal(data, &results); err != nil {
+	var artifactResults []results.ArtifactResult
+	if err := json.Unmarshal(data, &artifactResults); err != nil {
 		return fmt.Errorf("unmarshal artifact results: %w", err)
 	}
 
 	now := time.Now().UTC()
-	for _, r := range results {
+	for _, r := range artifactResults {
 		for i, a := range r.Artifacts {
 			artID := fmt.Sprintf("%s__art_%d", r.ControlID, i)
 

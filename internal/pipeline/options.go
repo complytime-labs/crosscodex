@@ -5,6 +5,8 @@ import (
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
 // Option configures a Service.
@@ -34,5 +36,33 @@ func WithLogger(logger *slog.Logger) Option {
 		if logger != nil {
 			s.logger = logger
 		}
+	}
+}
+
+// WithCatalogControlsReader wires a CatalogControlsReader so runAnalysis can
+// fan out per-control ExecutionRequests for catalog-backed jobs. A nil (or
+// unset) reader leaves Controls/CatalogID empty, matching document-backed
+// job behavior.
+func WithCatalogControlsReader(r CatalogControlsReader) Option {
+	return func(s *Service) {
+		s.catalogControls = r
+	}
+}
+
+// WithEmbeddingsReader wires an EmbeddingsReader so runSynthesis can read
+// per-model similarity matrices for catalog-backed jobs. A nil (or unset)
+// reader leaves the similarity-matrix step a no-op, matching document-backed
+// job behavior (synthesis proceeds with SimilarityCount=0 per pair).
+func WithEmbeddingsReader(r EmbeddingsReader) Option {
+	return func(s *Service) {
+		s.embeddingsReader = r
+	}
+}
+
+// WithEmbeddingConfig sets the embedding configuration runSynthesis uses to
+// determine which models' similarity matrices to read.
+func WithEmbeddingConfig(cfg config.EmbeddingConfig) Option {
+	return func(s *Service) {
+		s.embeddingConfig = cfg
 	}
 }

@@ -347,6 +347,24 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		return err
 	}
 
+	if err := a.Candidates.Validate(); err != nil {
+		return err
+	}
+
+	if e.Enabled {
+		found := false
+		for _, m := range e.Models {
+			if m == a.Candidates.EmbedModel {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("analysis.candidates.embed_model %q%s must be one of analysis.embedding.models %v: %w",
+				a.Candidates.EmbedModel, formatSource(tracker, "analysis.candidates.embed_model"), e.Models, ErrInvalidConfig)
+		}
+	}
+
 	return nil
 }
 

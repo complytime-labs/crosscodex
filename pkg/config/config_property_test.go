@@ -328,6 +328,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
 						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+						Candidates:     config.CandidateConfig{EmbedModel: "m"},
 					},
 					LLM: config.LLMConfig{
 						GatewayMode: true,
@@ -359,6 +360,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
 						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+						Candidates:     config.CandidateConfig{EmbedModel: "m"},
 					},
 					Synthesis: config.SynthesisConfig{
 						ConfidenceThreshold:   0.5,
@@ -397,6 +399,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
 						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+						Candidates:     config.CandidateConfig{EmbedModel: "m"},
 					},
 					Synthesis: config.SynthesisConfig{
 						ConfidenceThreshold:   0.5,

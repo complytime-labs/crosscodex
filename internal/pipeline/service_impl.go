@@ -85,10 +85,7 @@ func (s *Service) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJ
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create job: %v", err))
 	}
 
-	dagOrder := dag.Order()
-	stageNames := make([]string, 0, len(dagOrder)+2)
-	stageNames = append(stageNames, dagOrder...)
-	stageNames = append(stageNames, "synthesis", "graph")
+	stageNames := buildStageNames(dag.Order())
 
 	if err := s.store.CreateStages(ctx, jobID, stageNames); err != nil {
 		span.RecordError(err)
@@ -370,10 +367,7 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("build DAG: %v", err))
 		}
 
-		dagOrder := dag.Order()
-		stageNames := make([]string, 0, len(dagOrder)+2)
-		stageNames = append(stageNames, dagOrder...)
-		stageNames = append(stageNames, "synthesis", "graph")
+		stageNames := buildStageNames(dag.Order())
 
 		if err := s.store.CreateStages(ctx, newJobID, stageNames); err != nil {
 			span.RecordError(err)
@@ -433,28 +427,72 @@ func (s *Service) Start(ctx context.Context) error {
 
 	s.logger.InfoContext(ctx, "resuming interrupted jobs", "count", len(jobs))
 
-	for _, job := range jobs {
-		s.mu.Lock()
-		if _, exists := s.running[job.JobID]; exists {
-			s.mu.Unlock()
-			continue
-		}
-
-		jobCtx, cancel := context.WithCancel(context.Background())
-		s.running[job.JobID] = cancel
-		s.mu.Unlock()
-
-		s.wg.Add(1)
-		go s.executeJob(jobCtx, job.TenantID, job.JobID)
+	// Bound concurrent resumed executions to MaxConcurrentJobs so a crash that
+	// left many jobs 'running' does not launch them all at once on restart. A
+	// non-positive limit means unbounded, mirroring checkConcurrencyLimit.
+	var sem chan struct{}
+	if s.cfg.MaxConcurrentJobs > 0 {
+		sem = make(chan struct{}, s.cfg.MaxConcurrentJobs)
 	}
+
+	s.wg.Add(1)
+	go s.dispatchResumableJobs(jobs, sem)
 
 	span.SetStatus(otelcodes.Ok, "")
 	return nil
 }
 
+// dispatchResumableJobs launches resumed jobs, capping concurrency at the
+// semaphore's size (nil sem = unbounded). It stops early if the service is
+// shutting down so it neither leaks while blocked on a full semaphore nor
+// starts new work during shutdown.
+func (s *Service) dispatchResumableJobs(jobs []*Job, sem chan struct{}) {
+	defer s.wg.Done()
+
+	for _, job := range jobs {
+		select {
+		case <-s.stopped:
+			return
+		default:
+		}
+
+		if sem != nil {
+			select {
+			case sem <- struct{}{}:
+			case <-s.stopped:
+				return
+			}
+		}
+
+		s.mu.Lock()
+		if _, exists := s.running[job.JobID]; exists {
+			s.mu.Unlock()
+			if sem != nil {
+				<-sem
+			}
+			continue
+		}
+		jobCtx, cancel := context.WithCancel(context.Background())
+		s.running[job.JobID] = cancel
+		s.mu.Unlock()
+
+		s.wg.Add(1)
+		go func(tenantID, jobID string) {
+			defer func() {
+				if sem != nil {
+					<-sem
+				}
+			}()
+			s.executeJob(jobCtx, tenantID, jobID)
+		}(job.TenantID, job.JobID)
+	}
+}
+
 func (s *Service) Stop(ctx context.Context) error {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.Stop")
 	defer span.End()
+
+	s.stopOnce.Do(func() { close(s.stopped) })
 
 	s.mu.Lock()
 	runningJobs := make([]string, 0, len(s.running))

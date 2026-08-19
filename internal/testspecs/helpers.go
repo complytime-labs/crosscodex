@@ -68,11 +68,18 @@ func SetupTestDatabase() (*sql.DB, TestCleanup) {
 // SetupTestNATS creates a test NATS client with proper cleanup
 // Returns the client itself for testing, not the underlying connection
 func SetupTestNATS() (natsbus.Client, TestCleanup) {
-	// Use embedded NATS for testing
+	// Each call gets its own JetStream store directory. Leaving StoreDir
+	// empty falls back to the fixed XDG state directory, which every
+	// embedded server on the machine shares — under ginkgo's --procs
+	// parallelism, concurrent processes racing to create the same
+	// on-disk stream fails with "error creating store for stream".
+	storeDir, err := os.MkdirTemp("", "crosscodex_test_nats_*")
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
+
 	cfg := config.NATSConfig{
 		URL: "", // Empty URL means embedded mode
 		Embedded: config.NATSEmbeddedConfig{
-			StoreDir: "", // Will use temp directory
+			StoreDir: storeDir,
 		},
 		Streams: config.NATSStreamsConfig{
 			AuditLLMRetention:    90 * 24 * time.Hour, // 90 days
@@ -88,6 +95,7 @@ func SetupTestNATS() (natsbus.Client, TestCleanup) {
 		if client != nil {
 			client.Close()
 		}
+		os.RemoveAll(storeDir)
 	}
 
 	return client, cleanup

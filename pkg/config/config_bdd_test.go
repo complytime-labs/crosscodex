@@ -1338,6 +1338,7 @@ logging:
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					Candidates:     config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 				},
 				Synthesis: config.SynthesisConfig{
 					ConfidenceThreshold:   0.5,
@@ -1366,6 +1367,7 @@ logging:
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					Candidates:     config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 				},
 				Synthesis: config.SynthesisConfig{
 					ConfidenceThreshold:   0.5,
@@ -1390,6 +1392,7 @@ logging:
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 						Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 						Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+						Candidates:     config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 					},
 				}
 				modify(cfg)
@@ -1775,6 +1778,7 @@ logging:
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					Candidates:     config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 				},
 				Synthesis: config.SynthesisConfig{
 					ConfidenceThreshold:   0.5,
@@ -1871,6 +1875,7 @@ logging:
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					Candidates:     config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 				},
 				Synthesis: config.SynthesisConfig{
 					ConfidenceThreshold:   0.5,
@@ -1997,6 +2002,7 @@ logging:
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 					Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 					Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+					Candidates:     config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 				},
 				Synthesis: config.SynthesisConfig{
 					ConfidenceThreshold:   0.5,
@@ -2236,6 +2242,7 @@ logging:
 						SamplesPerModel:     1,
 						SamplingTemperature: 0.3,
 					},
+					Candidates: config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 				},
 				Synthesis: config.SynthesisConfig{
 					ConfidenceThreshold:   0.5,
@@ -2258,6 +2265,16 @@ logging:
 			Expect(cfg.Analysis.Classification.MaxTextLength).To(Equal(2000))
 			Expect(cfg.Analysis.Classification.Temperature).To(Equal(0.0))
 			Expect(cfg.Analysis.Classification.MaxTokens).To(Equal(20))
+		})
+
+		It("has correct candidates default values from compiled defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			loader := config.NewLoader()
+			cfg, err := loader.Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.Analysis.Candidates.MinEmbeddingCoverage).To(Equal(0.8))
 		})
 
 		It("includes analysis in DaemonConfig", func() {
@@ -2417,6 +2434,7 @@ logging:
 			cfg.Analysis.Embedding.MaxChars = 0
 			cfg.Analysis.Embedding.BatchSize = 50
 			cfg.Analysis.Relationship.TopK = 20
+			cfg.Analysis.Candidates.EmbedModel = "model-a"
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
 		})
 
@@ -2506,6 +2524,19 @@ logging:
 			cfg.Analysis.Embedding.BatchSize = 50
 			cfg.Analysis.Relationship.TopK = 20
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		It("rejects candidates.embed_model not present in embedding.models", func() {
+			cfg := analysisBase()
+			cfg.Analysis.Embedding.Enabled = true
+			cfg.Analysis.Embedding.Models = []string{"model-a"}
+			cfg.Analysis.Candidates.EmbedModel = "model-b"
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("analysis.candidates.embed_model"))
+			Expect(err.Error()).To(ContainSubstring("model-b"))
+			Expect(err.Error()).To(ContainSubstring("analysis.embedding.models"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 		})
 
 		It("rejects max_source_chars of zero", func() {
@@ -2929,6 +2960,7 @@ var _ = Describe("SynthesisConfig validation", func() {
 				Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
 				Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 				Relationship:   config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+				Candidates:     config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 			},
 			Synthesis: config.SynthesisConfig{
 				Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},

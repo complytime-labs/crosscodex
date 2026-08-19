@@ -76,6 +76,20 @@ var _ = Describe("NATSDispatcher", func() {
 			Expect(fake.published[1].headers[analysis.ExportHeaderTaskID]).To(Equal([]string{"t-2"}))
 		})
 
+		It("writes the routing task type into the header, not the task's own analyzer name", func() {
+			// The task's TaskType field carries the analyzer name ("embedding"),
+			// but the worker switches on the natsbus routing constant. The header
+			// must carry the routing type ("embed"), or the worker rejects it as
+			// unsupported_task_type.
+			payload, _ := structpb.NewStruct(map[string]interface{}{"key": "val"})
+			tasks := []analyzer.Task{{TaskID: "t-1", TaskType: "embedding", Payload: payload}}
+
+			err := dispatcher.Dispatch(ctx, tasks, natsbus.TaskEmbed, "job-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.published).To(HaveLen(1))
+			Expect(fake.published[0].headers[analysis.ExportHeaderTaskType]).To(Equal([]string{string(natsbus.TaskEmbed)}))
+		})
+
 		It("returns error when tenant context is missing", func() {
 			err := dispatcher.Dispatch(context.Background(), []analyzer.Task{{TaskID: "t-1"}}, natsbus.TaskClassify, "job-1")
 			Expect(err).To(HaveOccurred())

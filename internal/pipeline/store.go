@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -27,6 +28,26 @@ type Store interface {
 	GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 	ResetStagesFrom(ctx context.Context, jobID, fromStage string, allStages []string) error
 	GetResumableJobs(ctx context.Context) ([]*Job, error)
+
+	// CompleteAnalysisStage persists an analyzer's final result and marks its
+	// job_stages row completed in a single transaction — an analyzer must
+	// never be marked completed without its result already durably committed,
+	// or a resumed job would skip it forever.
+	CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte) error
+
+	// GetCompletedAnalysisResults loads persisted analyzer outputs for the
+	// given job and analyzer names. Used to pre-seed a resumed execution's
+	// CompletedOutputs so already-durably-completed analyzers are not
+	// re-dispatched after a process restart. Only AnalyzerName and
+	// ResultData are populated on each returned Output — Data and Metadata
+	// are never persisted (see analyzer.Output's doc comment).
+	GetCompletedAnalysisResults(ctx context.Context, jobID string, analyzerNames []string) (map[string]*analyzer.Output, error)
+
+	// WriteVoteSummaries upserts vote_summaries rows for the given job's
+	// requires/relationship pairs, with viability=0 pending synthesis's
+	// update. Idempotent: a pair already present (e.g. from a prior process
+	// invocation before a restart) is left untouched.
+	WriteVoteSummaries(ctx context.Context, tenantID, jobID string, pairs []VoteSummaryPair) error
 }
 
 type PGStore struct {
@@ -763,6 +784,193 @@ func (s *PGStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, 
 
 	span.SetStatus(codes.Ok, "")
 	return nil
+}
+
+func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte) error {
+	if jobID == "" {
+		return fmt.Errorf("PGStore.CompleteAnalysisStage: %w", ErrInvalidJobID)
+	}
+
+	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.store.complete_analysis_stage")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("job.id", jobID),
+		attribute.String("analyzer.name", analyzerName),
+	)
+
+	start := time.Now()
+
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.CompleteAnalysisStage: %w", err)
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.CompleteAnalysisStage: beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.CompleteAnalysisStage: setting tenant: %w", err)
+	}
+
+	upsertQuery := `
+		INSERT INTO analysis_results (tenant_id, job_id, analyzer_name, result_data)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (tenant_id, job_id, analyzer_name)
+		DO UPDATE SET result_data = EXCLUDED.result_data, created_at = NOW()
+	`
+	if err := tx.Exec(ctx, upsertQuery, tenantID, jobID, analyzerName, resultData); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.CompleteAnalysisStage: upserting result: %w", err)
+	}
+
+	stageQuery := `
+		UPDATE job_stages
+		SET status = $1, completed_at = $2
+		WHERE job_id = $3 AND stage_name = $4 AND tenant_id = $5
+	`
+	if err := tx.Exec(ctx, stageQuery, StageStatusCompleted, time.Now(), jobID, analyzerName, tenantID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.CompleteAnalysisStage: updating stage status: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.CompleteAnalysisStage: commit failed: %w", err)
+	}
+
+	elapsed := time.Since(start).Seconds() * 1000
+	if s.queryCounter != nil {
+		s.queryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("operation", "complete_analysis_stage")))
+	}
+	if s.queryLatency != nil {
+		s.queryLatency.Record(ctx, elapsed, metric.WithAttributes(attribute.String("operation", "complete_analysis_stage")))
+	}
+
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
+// GetCompletedAnalysisResults loads persisted analyzer outputs for the given
+// job and analyzer names, for pre-seeding a resumed execution's dependency
+// gating. Only ResultData survives a restart (Data/Metadata are not
+// persisted — see analyzer.Output's doc comment) — callers must tolerate a
+// partially-populated Output.
+func (s *PGStore) GetCompletedAnalysisResults(ctx context.Context, jobID string, analyzerNames []string) (map[string]*analyzer.Output, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: %w", ErrInvalidJobID)
+	}
+	if len(analyzerNames) == 0 {
+		return map[string]*analyzer.Output{}, nil
+	}
+
+	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.store.get_completed_analysis_results")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("job.id", jobID),
+		attribute.Int("analyzer.count", len(analyzerNames)),
+	)
+
+	start := time.Now()
+
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: %w", err)
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: setting tenant: %w", err)
+	}
+
+	// Build a dynamic IN (...) clause, mirroring internal/catalog/store.go's
+	// SearchControls pattern. analyzerNames is bounded by the analyzer DAG's
+	// size (a handful of names), never user-controlled length.
+	placeholders := ""
+	args := []interface{}{jobID, tenantID}
+	argIndex := 3
+	for i, name := range analyzerNames {
+		if i > 0 {
+			placeholders += ", "
+		}
+		placeholders += fmt.Sprintf("$%d", argIndex)
+		args = append(args, name)
+		argIndex++
+	}
+
+	query := fmt.Sprintf(`
+		SELECT analyzer_name, result_data
+		FROM analysis_results
+		WHERE job_id = $1 AND tenant_id = $2 AND analyzer_name IN (%s)
+	`, placeholders)
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: query failed: %w", err)
+	}
+	defer rows.Close()
+
+	outputs := make(map[string]*analyzer.Output, len(analyzerNames))
+	for rows.Next() {
+		var name string
+		var resultData []byte
+		if err := rows.Scan(&name, &resultData); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: scan failed: %w", err)
+		}
+		outputs[name] = &analyzer.Output{AnalyzerName: name, ResultData: resultData}
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: rows error: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: commit failed: %w", err)
+	}
+
+	elapsed := time.Since(start).Seconds() * 1000
+	if s.queryCounter != nil {
+		s.queryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("operation", "get_completed_analysis_results")))
+	}
+	if s.queryLatency != nil {
+		s.queryLatency.Record(ctx, elapsed, metric.WithAttributes(attribute.String("operation", "get_completed_analysis_results")))
+	}
+
+	span.SetStatus(codes.Ok, "")
+	return outputs, nil
+}
+
+func (s *PGStore) WriteVoteSummaries(ctx context.Context, tenantID, jobID string, pairs []VoteSummaryPair) error {
+	return writeVoteSummaries(ctx, s.db, tenantID, jobID, pairs)
 }
 
 func (s *PGStore) GetResumableJobs(ctx context.Context) ([]*Job, error) {

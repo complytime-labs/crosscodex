@@ -20,6 +20,12 @@ type Task struct {
 
 	// Payload is the work item payload, specific to the analyzer.
 	Payload proto.Message
+
+	// PreBuiltResult marks a task that already carries its final result in
+	// Payload (e.g. section auto-skip, computed without dispatching to a
+	// worker). The engine must not send it over NATS; instead it converts
+	// Payload directly into this task's TaskResult before Aggregate.
+	PreBuiltResult bool
 }
 
 // TaskResult contains the outcome of a completed task.
@@ -56,4 +62,12 @@ type Output struct {
 
 	// Metadata holds execution metadata (timing, counts, model versions, etc.).
 	Metadata map[string]string
+
+	// ResultData is the analyzer's final result set, JSON-encoded using the
+	// shapes in pkg/analyzer/results. Empty when the analyzer has nothing to
+	// persist (e.g. zero tasks). Persisted to analysis_results.result_data by
+	// Store.CompleteAnalysisStage; an empty value is stored as a JSON null
+	// literal rather than verbatim (see
+	// pipeline.DBStageReporter.ReportStageCompleted).
+	ResultData []byte
 }

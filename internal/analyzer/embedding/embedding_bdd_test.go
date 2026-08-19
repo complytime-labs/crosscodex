@@ -2,6 +2,7 @@ package embedding_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -15,10 +16,12 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/embedding"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -67,14 +70,16 @@ func (m *mockLLMClient) Close() error                   { return nil }
 // --- Mock VectorDB for embedding tests ---
 type mockVectorDB struct {
 	storedBatches [][]vectordb.Embedding
+	storedTenants []string
 }
 
 func (m *mockVectorDB) StoreEmbedding(_ context.Context, _ string, _ vectordb.Embedding) error {
 	return nil
 }
 
-func (m *mockVectorDB) StoreBatch(_ context.Context, _ string, batch []vectordb.Embedding) error {
+func (m *mockVectorDB) StoreBatch(_ context.Context, tenantID string, batch []vectordb.Embedding) error {
 	m.storedBatches = append(m.storedBatches, batch)
+	m.storedTenants = append(m.storedTenants, tenantID)
 	return nil
 }
 
@@ -734,6 +739,130 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				Expect(output.Metadata["error_count"]).To(Equal("1"))
 			})
 		})
+
+		Context("persisting embedding vectors", func() {
+			var embedCfg config.EmbeddingConfig
+
+			BeforeEach(func() {
+				embedCfg = config.EmbeddingConfig{Models: []string{"modelA"}}
+			})
+
+			buildEmbeddingPayload := func(vector []float32) *structpb.Struct {
+				values := make([]interface{}, len(vector))
+				for i, v := range vector {
+					values[i] = float64(v)
+				}
+				payload, err := structpb.NewStruct(map[string]interface{}{
+					"embeddings": []interface{}{values},
+					"model":      "modelA",
+					"dimensions": float64(len(vector)),
+				})
+				Expect(err).NotTo(HaveOccurred())
+				return payload
+			}
+
+			It("stores a batch of embeddings extracted from successful TaskResults", func() {
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg, relCfg)
+
+				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
+				Expect(err).NotTo(HaveOccurred())
+				aggCtx = analyzer.WithCatalogID(aggCtx, "cat-1")
+
+				results := []analyzer.TaskResult{
+					{
+						TaskID:   "embedding-AC-1-modelA",
+						TaskType: "embedding",
+						Result:   buildEmbeddingPayload([]float32{0.1, 0.2, 0.3}),
+					},
+					{
+						TaskID:   "embedding-AC-2-modelA",
+						TaskType: "embedding",
+						Result:   buildEmbeddingPayload([]float32{0.4, 0.5, 0.6}),
+					},
+				}
+
+				_, err = a.Aggregate(aggCtx, results)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(mockVec.storedBatches).To(HaveLen(1))
+				Expect(mockVec.storedTenants).To(Equal([]string{"tenant-a"}))
+				Expect(mockVec.storedBatches[0]).To(ConsistOf(
+					vectordb.Embedding{CatalogID: "cat-1", ControlID: "AC-1", Model: "modelA", Vector: []float32{0.1, 0.2, 0.3}},
+					vectordb.Embedding{CatalogID: "cat-1", ControlID: "AC-2", Model: "modelA", Vector: []float32{0.4, 0.5, 0.6}},
+				))
+			})
+
+			It("skips a TaskResult with a task-level error", func() {
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg, relCfg)
+
+				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
+				Expect(err).NotTo(HaveOccurred())
+				aggCtx = analyzer.WithCatalogID(aggCtx, "cat-1")
+
+				results := []analyzer.TaskResult{
+					{
+						TaskID:   "embedding-AC-1-modelA",
+						TaskType: "embedding",
+						Result:   buildEmbeddingPayload([]float32{0.1, 0.2, 0.3}),
+					},
+					{
+						TaskID:   "embedding-AC-2-modelA",
+						TaskType: "embedding",
+						Error:    errors.New("llm timeout"),
+					},
+				}
+
+				_, err = a.Aggregate(aggCtx, results)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(mockVec.storedBatches).To(HaveLen(1))
+				Expect(mockVec.storedBatches[0]).To(ConsistOf(
+					vectordb.Embedding{CatalogID: "cat-1", ControlID: "AC-1", Model: "modelA", Vector: []float32{0.1, 0.2, 0.3}},
+				))
+			})
+
+			It("skips persistence without error when there is no vector store", func() {
+				a = embedding.New(mockClient, nil /* vectors */, mockStore, embedCfg, relCfg)
+
+				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
+				Expect(err).NotTo(HaveOccurred())
+				aggCtx = analyzer.WithCatalogID(aggCtx, "cat-1")
+
+				results := []analyzer.TaskResult{
+					{
+						TaskID:   "embedding-AC-1-modelA",
+						TaskType: "embedding",
+						Result:   buildEmbeddingPayload([]float32{0.1, 0.2, 0.3}),
+					},
+				}
+
+				Expect(func() {
+					_, err = a.Aggregate(aggCtx, results)
+				}).NotTo(Panic())
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("errors if CatalogID is missing from context and there are embeddings to store", func() {
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg, relCfg)
+
+				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
+				Expect(err).NotTo(HaveOccurred())
+				// No analyzer.WithCatalogID call — catalog ID is absent from context.
+
+				results := []analyzer.TaskResult{
+					{
+						TaskID:   "embedding-AC-1-modelA",
+						TaskType: "embedding",
+						Result:   buildEmbeddingPayload([]float32{0.1, 0.2, 0.3}),
+					},
+				}
+
+				_, err = a.Aggregate(aggCtx, results)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("catalog ID required"))
+				Expect(mockVec.storedBatches).To(BeEmpty())
+			})
+		})
 	})
 
 	Describe("telemetry integration", func() {
@@ -922,3 +1051,69 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 		})
 	})
 })
+
+// TestAggregate_ProducesResultData verifies that Aggregate builds
+// ResultData from both TaskID shapes GenerateWork emits: the per-model
+// path ("embedding-<controlID>-<model>") and the section auto-skip path
+// ("embedding-<controlID>", no model suffix). A control embedded by
+// multiple configured models must appear exactly once (deduplicated), and
+// the output must be sorted by control ID rather than reflecting
+// map-iteration or input order.
+func TestAggregate_ProducesResultData(t *testing.T) {
+	cfg := config.EmbeddingConfig{Models: []string{"nomic-embed-text", "mxbai-embed-large"}}
+	a := embedding.New(nil, nil, nil, cfg, config.RelationshipConfig{})
+
+	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
+		{TaskID: "embedding-AC-2-nomic-embed-text", TaskType: "embedding"},
+		{TaskID: "embedding-AC-2-mxbai-embed-large", TaskType: "embedding"},
+		{TaskID: "embedding-AC-1-nomic-embed-text", TaskType: "embedding"},
+		{TaskID: "embedding-AC-3", TaskType: "embedding"}, // section auto-skip, no model suffix
+	})
+	if err != nil {
+		t.Fatalf("Aggregate error: %v", err)
+	}
+
+	var parsed []results.EmbedResult
+	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
+		t.Fatalf("unmarshal ResultData: %v", err)
+	}
+
+	want := []results.EmbedResult{
+		{ControlID: "AC-1"},
+		{ControlID: "AC-2"},
+		{ControlID: "AC-3"},
+	}
+	if len(parsed) != len(want) {
+		t.Fatalf("expected %d controls, got %d: %+v", len(want), len(parsed), parsed)
+	}
+	for i, w := range want {
+		if parsed[i] != w {
+			t.Fatalf("ResultData[%d] = %+v, want %+v (full: %+v)", i, parsed[i], w, parsed)
+		}
+	}
+}
+
+// TestAggregate_ResultDataOmitsErrorsAndForeignTaskIDs verifies that
+// TaskResults with a non-nil Error, and TaskIDs that don't carry this
+// analyzer's prefix, are excluded from ResultData rather than producing a
+// garbage entry or crashing Aggregate.
+func TestAggregate_ResultDataOmitsErrorsAndForeignTaskIDs(t *testing.T) {
+	cfg := config.EmbeddingConfig{Models: []string{"nomic-embed-text"}}
+	a := embedding.New(nil, nil, nil, cfg, config.RelationshipConfig{})
+
+	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
+		{TaskID: "embedding-AC-4-nomic-embed-text", TaskType: "embedding", Error: errors.New("llm timeout")},
+		{TaskID: "classify-AC-5", TaskType: "classify"},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate error: %v", err)
+	}
+
+	var parsed []results.EmbedResult
+	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
+		t.Fatalf("unmarshal ResultData: %v", err)
+	}
+	if len(parsed) != 0 {
+		t.Fatalf("expected no controls in ResultData, got %+v", parsed)
+	}
+}

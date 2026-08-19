@@ -10,6 +10,14 @@ DROP FUNCTION IF EXISTS public.create_tenant_graph();
 DROP FUNCTION IF EXISTS public.assert_tenant_graph(TEXT);
 DROP FUNCTION IF EXISTS public.tenant_graph_name();
 
+-- Revoke the ag_catalog-wide grants from the up migration. These target
+-- pre-existing objects owned by the age extension (not dropped by this
+-- migration), so DROP ROLE fails with "cannot be dropped because some
+-- objects depend on it" unless they are revoked first.
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ag_catalog FROM graph_user;
+REVOKE SELECT ON ALL TABLES IN SCHEMA ag_catalog FROM graph_user;
+REVOKE USAGE ON SCHEMA ag_catalog FROM graph_user;
+
 DROP ROLE IF EXISTS graph_user;
 
 -- Immutability triggers

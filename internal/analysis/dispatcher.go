@@ -120,7 +120,7 @@ func (d *NATSDispatcher) publishTask(ctx context.Context, task analyzer.Task, ta
 
 	headers := map[string][]string{
 		headerTaskID:     {task.TaskID},
-		headerTaskType:   {task.TaskType},
+		headerTaskType:   {string(taskType)},
 		headerJobID:      {jobID},
 		headerRetryCount: {strconv.Itoa(retryCount)},
 	}
