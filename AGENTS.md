@@ -69,6 +69,10 @@ Each tenant gets its own graph instance named `crosscodex_{tenant_id}`. Tenant i
 
 This table will grow as new analyzers and materializers are added. When adding a new node or edge type, update this table.
 
+**The relationship-type taxonomy is a starting point, not a closed standard:** `pkg/config/validate.go`'s `validRelationshipTypes` and `internal/analyzer/relationship/types.go` currently enumerate the 8 NIST IR 8477 relationship types (EQUIVALENT, SUPERSET_OF, SUBSET_OF, CONTRIBUTES_TO, COMPLEMENTS, PARTIAL, CONFLICTS_WITH, NO_RELATIONSHIP). These are CrossCodex's current set, not an immutable external constraint — expand the enum when a real relationship concept doesn't cleanly fit the existing 8 values. Weigh that against keeping the new concept outside the enum entirely (see `internal/synthesis.ConsensusRequires`, which treats the `requires` analyzer's consensus label as a distinct, always-actionable signal rather than folding it into this taxonomy) based on whether it's genuinely a peer of the existing relationship types or a structurally different kind of signal.
+
+The long-term direction is broader than NIST IR 8477: CrossCodex is expected to eventually support the relationship and attribute surface of **ReqIF** (Requirements Interchange Format) and **SysML v2 Requirements** structures, not just compliance-control relationships. Don't design the relationship/attribute model as if the current 8-value enum or today's control-oriented properties are the final shape — keep node/edge property schemas (see the table above) and the relationship-type enum easy to extend rather than hard-coding assumptions that only fit compliance catalogs.
+
 ## Import Patterns
 
 Follow these import patterns strictly:

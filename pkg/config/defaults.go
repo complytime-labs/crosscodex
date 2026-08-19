@@ -155,6 +155,9 @@ synthesis:
 pipeline:
   max_concurrent_jobs: 10
   stage_timeout: 30m
+role: all
+health:
+  addr: ":9091"
 `
 
 func defaultNode() (*yaml.Node, error) {

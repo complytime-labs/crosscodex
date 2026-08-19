@@ -26,6 +26,8 @@ type Config struct {
 	Worker        WorkerConfig        `yaml:"worker"        json:"worker"`
 	Pipeline      PipelineConfig      `yaml:"pipeline"      json:"pipeline"`
 	Synthesis     SynthesisConfig     `yaml:"synthesis"     json:"synthesis"`
+	Role          string              `yaml:"role"          json:"role"`
+	Health        HealthConfig        `yaml:"health"        json:"health"`
 }
 
 // LLMConfig configures the LLM gateway client.
@@ -220,6 +222,13 @@ type ServerConfig struct {
 	Addr          string `yaml:"addr" json:"addr"`
 	Workers       int    `yaml:"workers" json:"workers"`
 	MaxUploadSize int    `yaml:"max_upload_size" json:"max_upload_size"`
+}
+
+// HealthConfig configures the dedicated health-check listener used by the
+// worker and graph roles (the gateway and all roles already serve /healthz
+// via internal/gateway.Server).
+type HealthConfig struct {
+	Addr string `yaml:"addr" json:"addr"`
 }
 
 // CLISettings holds CLI-specific settings.
@@ -752,6 +761,8 @@ type DaemonConfig struct {
 	Worker        WorkerConfig
 	Synthesis     SynthesisConfig
 	Pipeline      PipelineConfig
+	Role          string
+	Health        HealthConfig
 }
 
 // ClientConfig is the derived view for the crosscodex CLI.
@@ -787,6 +798,8 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Worker:        WorkerConfig{QueueGroup: c.Worker.QueueGroup, LLM: c.LLM},
 		Synthesis:     c.Synthesis,
 		Pipeline:      c.Pipeline,
+		Role:          c.Role,
+		Health:        c.Health,
 	}
 }
 

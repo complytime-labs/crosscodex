@@ -4,12 +4,17 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -25,6 +30,46 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db"
 )
 
+// testAttestationPrivateKeyPath and testAttestationPublicKeyPath point at a
+// throwaway ECDSA P-256 keypair generated once per suite run (see the
+// BeforeSuite below) and written out as PEM files, matching the on-disk
+// format pkg/attestation.FileKeyProvider expects. Gateway-role tests that
+// need a valid attestation configuration reference these paths instead of
+// each generating their own key.
+var (
+	testAttestationPrivateKeyPath string
+	testAttestationPublicKeyPath  string
+)
+
+// BeforeSuite generates the shared test attestation keypair once, mirroring
+// the key-generation code in
+// internal/pipeline/pipeline_e2e_integration_test.go's e2eKeyProvider, but
+// writing the key material to disk (PEM-encoded) since
+// attestation.FileKeyProvider reads keys from files rather than accepting
+// them in-memory.
+var _ = BeforeSuite(func() {
+	dir := GinkgoT().TempDir()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	Expect(err).NotTo(HaveOccurred(), "generate test attestation key")
+
+	privDER, err := x509.MarshalECPrivateKey(key)
+	Expect(err).NotTo(HaveOccurred(), "marshal test attestation private key")
+	privPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER})
+
+	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	Expect(err).NotTo(HaveOccurred(), "marshal test attestation public key")
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+
+	testAttestationPrivateKeyPath = filepath.Join(dir, "attestation-private.pem")
+	testAttestationPublicKeyPath = filepath.Join(dir, "attestation-public.pem")
+
+	Expect(os.WriteFile(testAttestationPrivateKeyPath, privPEM, 0o600)).
+		To(Succeed(), "write test attestation private key")
+	Expect(os.WriteFile(testAttestationPublicKeyPath, pubPEM, 0o644)).
+		To(Succeed(), "write test attestation public key")
+})
+
 func TestCrosscodexdIntegrationBDD(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Crosscodexd Integration Suite")
@@ -35,14 +80,41 @@ func TestCrosscodexdIntegrationBDD(t *testing.T) {
 // so without this its output would bypass Ginkgo's buffering.
 var _ = BeforeEach(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 
-// testConfig builds a minimal *config.Config pointing Database/NATS at the
-// test compose stack. Database.DSN connects as the role from
-// TEST_DATABASE_DSN (app_user in production, the compose superuser here, per
-// the convention used by other integration suites in this repo — see
-// pkg/vectordb/vectordb_integration_bdd_test.go). Database.GraphDSN is
-// rewritten to authenticate as graph_user, mirroring
-// pkg/graphdb/graphdb_integration_bdd_test.go, since graphdb.New requires a
-// connection with graph_user's schema-ownership privileges.
+// baseTestConfig builds a minimal *config.Config pointing Database/NATS at
+// the test compose stack, with no Role set — callers set cfg.Role to the
+// role under test. Database.DSN connects as the role from TEST_DATABASE_DSN
+// (app_user in production, the compose superuser here, per the convention
+// used by other integration suites in this repo — see
+// pkg/vectordb/vectordb_integration_bdd_test.go). Database.Extensions
+// mirrors the production default (see config.defaults) so buildSharedResources'
+// VerifyExtensions call has something to check.
+//
+// This helper does not set Database.GraphDSN — the graph_user credential it
+// requires is only needed by roles that request the graph resource, so
+// graph-role tests derive their own GraphDSN via testConfig below rather
+// than paying that setup cost unconditionally.
+func baseTestConfig(dsn string) *config.Config {
+	return &config.Config{
+		Database: config.DatabaseConfig{
+			DSN:        dsn,
+			GraphDSN:   dsn,
+			Extensions: []string{"age", "vector"},
+		},
+		NATS: config.NATSConfig{
+			URL: "", // empty = embedded mode
+			Embedded: config.NATSEmbeddedConfig{
+				StoreDir: GinkgoT().TempDir(),
+			},
+		},
+	}
+}
+
+// testConfig builds on baseTestConfig for the graph role: it runs migrations
+// up front (graph_user must exist, created by migration 001, before we can
+// set its password below) and rewrites Database.GraphDSN to authenticate as
+// graph_user, mirroring pkg/graphdb/graphdb_integration_bdd_test.go, since
+// graphdb.New requires a connection with graph_user's schema-ownership
+// privileges.
 func testConfig(dsn string) *config.Config {
 	ctx := context.Background()
 
@@ -84,18 +156,10 @@ func testConfig(dsn string) *config.Config {
 	u.User = url.UserPassword("graph_user", testPassword)
 	graphDSN := u.String()
 
-	return &config.Config{
-		Database: config.DatabaseConfig{
-			DSN:      dsn,
-			GraphDSN: graphDSN,
-		},
-		NATS: config.NATSConfig{
-			URL: "", // empty = embedded mode
-			Embedded: config.NATSEmbeddedConfig{
-				StoreDir: GinkgoT().TempDir(),
-			},
-		},
-	}
+	cfg := baseTestConfig(dsn)
+	cfg.Database.GraphDSN = graphDSN
+	cfg.Role = config.RoleGraph
+	return cfg
 }
 
 var _ = Describe("bootstrap", func() {
@@ -142,5 +206,161 @@ var _ = Describe("bootstrap", func() {
 		_, err = bootstrap(ctx, cfg)
 		Expect(err).To(HaveOccurred(), "expected bootstrap to fail on an unreachable graph_user DSN")
 		Expect(err.Error()).To(ContainSubstring("ping graph_user sql.DB"))
+	})
+})
+
+var _ = Describe("bootstrap with role=worker", func() {
+	It("builds a worker service and no database resources", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RoleWorker
+		// GatewayURL only needs to be non-empty: llmclient.NewClient stores it
+		// without dialing out, so no live LLM gateway is required here.
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		rt, err := bootstrap(ctx, cfg)
+		Expect(err).NotTo(HaveOccurred(), "bootstrap failed")
+		defer rt.close()
+
+		Expect(rt.workerService).NotTo(BeNil(), "bootstrap did not construct a worker service")
+		Expect(rt.graphService).To(BeNil(), "worker role must not construct a graph service")
+		Expect(rt.shared.appPool).To(BeNil(), "worker role must never open a database pool")
+	})
+})
+
+var _ = Describe("bootstrap with role=gateway", func() {
+	It("builds a pipeline service and gateway server", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RoleGateway
+		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Server.Addr = "127.0.0.1:0"
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		rt, err := bootstrap(ctx, cfg)
+		Expect(err).NotTo(HaveOccurred(), "bootstrap failed")
+		defer rt.close()
+
+		Expect(rt.pipelineService).NotTo(BeNil(), "bootstrap did not construct a pipeline service")
+		Expect(rt.gatewayServer).NotTo(BeNil(), "bootstrap did not construct a gateway server")
+	})
+
+	It("fails closed when attestation key paths are not configured", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RoleGateway
+		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Attestation.PrivateKeyPath = ""
+		cfg.Attestation.PublicKeyPath = ""
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := bootstrap(ctx, cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("attestation"))
+	})
+
+	It("fails closed when no default tenant is configured", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RoleGateway
+		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+		cfg.Tenants.DefaultTenant = ""
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := bootstrap(ctx, cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("tenants.default_tenant"))
+	})
+
+	It("fails closed when no storage base path is configured", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RoleGateway
+		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+		cfg.Storage.Objects.BasePath = ""
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := bootstrap(ctx, cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("storage.objects.base_path"))
+	})
+})
+
+var _ = Describe("bootstrap with role=all", func() {
+	It("builds every service sharing one set of resources", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RoleAll
+		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Server.Addr = "127.0.0.1:0"
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		rt, err := bootstrap(ctx, cfg)
+		Expect(err).NotTo(HaveOccurred(), "bootstrap failed")
+		defer rt.close()
+
+		Expect(rt.graphService).NotTo(BeNil(), "bootstrap did not construct a graph service")
+		Expect(rt.workerService).NotTo(BeNil(), "bootstrap did not construct a worker service")
+		Expect(rt.pipelineService).NotTo(BeNil(), "bootstrap did not construct a pipeline service")
+		Expect(rt.gatewayServer).NotTo(BeNil(), "bootstrap did not construct a gateway server")
+		// "all" relies on the gateway's own /healthz; no separate
+		// dedicated health listener is started for co-located services.
+		Expect(rt.healthServer).To(BeNil(), "all role must not leave a dedicated health listener up")
 	})
 })

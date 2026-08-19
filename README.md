@@ -129,9 +129,11 @@ flowchart TD
 
 ### Deployment Modes
 
-- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. `crosscodexd` bootstraps a DB pool, NATS client, and a live, tenant-aware Graph Service (graph-materialization role only); analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`). A full job-level run of the analysis pipeline is not yet possible: `crosscodexd` does not run the gateway/pipeline/worker roles, and the analysis engine does not yet fan out per control (see issue #128).
+- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
 - **Quadlet** -- Systemd-managed containers with shared PostgreSQL, NATS, and MinIO. Deployment manifests planned under `deploy/`.
 - **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage.
+
+See [Service Runtime Guide](docs/dev/service-runtime.md) for the `--role` flag, role precedence, health-check wiring, and gateway startup preconditions.
 
 ## Configuration
 

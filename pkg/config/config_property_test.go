@@ -433,6 +433,28 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 	})
+
+	Context("ResolveRole — fail-closed validation", func() {
+		It("every canonical role and alias resolves without error, everything else fails", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				valid := map[string]bool{
+					config.RoleAll: true, config.RoleGateway: true,
+					config.RoleWorker: true, config.RoleGraph: true,
+					"pipeline": true, "analysis": true, "synthesis": true,
+				}
+				candidate := rapid.StringMatching(`[a-z]{1,12}`).Draw(t, "candidate")
+
+				_, err := config.ResolveRole(candidate)
+				if valid[candidate] {
+					if err != nil {
+						t.Fatalf("expected %q to resolve, got error: %v", candidate, err)
+					}
+				} else if err == nil {
+					t.Fatalf("expected %q to be rejected, got no error", candidate)
+				}
+			})
+		})
+	})
 })
 
 // Ensure imports are used.

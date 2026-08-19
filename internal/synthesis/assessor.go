@@ -11,6 +11,15 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
+// ConsensusRequires is the ConsensusRelationship value requires-derived
+// SynthesisRows carry (see internal/pipeline/synthesis_inputs.go). It can
+// never appear in the configured actionableTypes list: pkg/config validates
+// that list against the 8-value NIST IR 8477 relationship-type enum, which
+// has no "requires" entry. A requires relationship is always actionable, so
+// NewAssessor treats it as such unconditionally rather than requiring
+// callers to smuggle it into a config field it can't legally occupy.
+const ConsensusRequires = "requires"
+
 // Assessor evaluates []SynthesisRow and produces a *QualityReport with
 // structured diagnostics across four categories: embedding spread (IQR),
 // NO_RELATIONSHIP rate, contested pairs, and actionable coverage.
@@ -22,12 +31,14 @@ type Assessor struct {
 
 // NewAssessor creates an Assessor. actionableTypes is the set of relationship
 // types considered actionable (sourced from analysis.relationship config, not
-// duplicated in SynthesisConfig).
+// duplicated in SynthesisConfig). ConsensusRequires is always actionable in
+// addition to whatever this list contains.
 func NewAssessor(cfg config.AssessmentConfig, actionableTypes []string) *Assessor {
-	m := make(map[string]bool, len(actionableTypes))
+	m := make(map[string]bool, len(actionableTypes)+1)
 	for _, t := range actionableTypes {
 		m[t] = true
 	}
+	m[ConsensusRequires] = true
 	return &Assessor{cfg: cfg, actionableTypes: m}
 }
 

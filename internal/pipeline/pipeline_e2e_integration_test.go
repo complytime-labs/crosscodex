@@ -351,7 +351,10 @@ func TestPipelineE2E(t *testing.T) {
 		e2eModel,
 	)
 
-	synth := synthesis.New(tenantConn, config.SynthesisConfig{}, []string{"requires"})
+	// actionableTypes is the configured NIST IR 8477 relationship-type set;
+	// requires-derived rows are always actionable regardless of this list
+	// (see internal/synthesis.ConsensusRequires), so it's left empty here.
+	synth := synthesis.New(tenantConn, config.SynthesisConfig{}, []string{})
 
 	attestor, err := attestation.NewGenerator(newE2EKeyProvider(t))
 	if err != nil {
