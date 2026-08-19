@@ -28,6 +28,7 @@ type Pool interface {
 // Migrator manages database schema migrations.
 type Migrator interface {
 	Up(ctx context.Context) error
+	Down(ctx context.Context) error
 	Version(ctx context.Context) (version uint, dirty bool, err error)
 	Close() error
 }

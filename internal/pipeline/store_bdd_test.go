@@ -3,12 +3,16 @@ package pipeline_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // fakeStore is an in-memory implementation of Store for testing.
@@ -19,6 +23,11 @@ type fakeStore struct {
 	jobs   map[string]*pipeline.Job
 	stages map[string][]*pipeline.Stage // keyed by jobID
 
+	// getJobHook, if set, is called as the first statement of GetJob, before
+	// the lock is acquired, so tests can observe or block concurrent GetJob
+	// calls without holding up other fakeStore operations.
+	getJobHook func()
+
 	createJobErr       error
 	getJobErr          error
 	listJobsErr        error
@@ -27,14 +36,22 @@ type fakeStore struct {
 	updateStageErr     error
 	updateStageErrErr  error
 	getStagesErr       error
+	getStagesPanics    bool
 	resetStagesErr     error
 	getResumableJobErr error
+	completeStageErr   error
+	writeVoteSummErr   error
+
+	analysisResults map[string]map[string][]byte                      // jobID -> analyzerName -> resultData
+	voteSummaries   map[string]map[[2]string]pipeline.VoteSummaryPair // jobID -> (sourceID, targetID) -> pair
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		jobs:   make(map[string]*pipeline.Job),
-		stages: make(map[string][]*pipeline.Stage),
+		jobs:            make(map[string]*pipeline.Job),
+		stages:          make(map[string][]*pipeline.Stage),
+		analysisResults: make(map[string]map[string][]byte),
+		voteSummaries:   make(map[string]map[[2]string]pipeline.VoteSummaryPair),
 	}
 }
 
@@ -57,6 +74,10 @@ func (f *fakeStore) CreateJob(ctx context.Context, job *pipeline.Job) error {
 }
 
 func (f *fakeStore) GetJob(ctx context.Context, jobID string) (*pipeline.Job, error) {
+	if f.getJobHook != nil {
+		f.getJobHook()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -69,7 +90,11 @@ func (f *fakeStore) GetJob(ctx context.Context, jobID string) (*pipeline.Job, er
 		return nil, pipeline.ErrNotFound
 	}
 
-	return job, nil
+	// Return a snapshot, not the shared pointer. A real SQL store scans a fresh
+	// row each read; handing out the map's live *Job lets callers read fields
+	// (e.g. Status) outside the lock while executeJob mutates them under it.
+	jobCopy := *job
+	return &jobCopy, nil
 }
 
 func (f *fakeStore) ListJobs(ctx context.Context, tenantID string, filter pipeline.JobFilter) ([]*pipeline.Job, int64, error) {
@@ -88,7 +113,8 @@ func (f *fakeStore) ListJobs(ctx context.Context, tenantID string, filter pipeli
 		if filter.Status != "" && job.Status != filter.Status {
 			continue
 		}
-		filtered = append(filtered, job)
+		jobCopy := *job
+		filtered = append(filtered, &jobCopy)
 	}
 
 	total := int64(len(filtered))
@@ -198,6 +224,10 @@ func (f *fakeStore) UpdateStageError(ctx context.Context, jobID, stageName strin
 }
 
 func (f *fakeStore) GetStages(ctx context.Context, jobID string) ([]*pipeline.Stage, error) {
+	if f.getStagesPanics {
+		panic("simulated panic in GetStages")
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -210,7 +240,14 @@ func (f *fakeStore) GetStages(ctx context.Context, jobID string) ([]*pipeline.St
 		return []*pipeline.Stage{}, nil
 	}
 
-	return stages, nil
+	// Snapshot each stage: executeJob mutates stored stages under the lock,
+	// so callers must not receive live pointers into the map.
+	stagesCopy := make([]*pipeline.Stage, len(stages))
+	for i, stage := range stages {
+		s := *stage
+		stagesCopy[i] = &s
+	}
+	return stagesCopy, nil
 }
 
 func (f *fakeStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, allStages []string) error {
@@ -256,6 +293,53 @@ func (f *fakeStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string
 	return nil
 }
 
+func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.completeStageErr != nil {
+		return f.completeStageErr
+	}
+
+	stages, exists := f.stages[jobID]
+	if !exists {
+		return pipeline.ErrNotFound
+	}
+
+	found := false
+	for _, stage := range stages {
+		if stage.StageName == analyzerName {
+			stage.Status = pipeline.StageStatusCompleted
+			found = true
+			break
+		}
+	}
+	if !found {
+		return pipeline.ErrNotFound
+	}
+
+	if f.analysisResults[jobID] == nil {
+		f.analysisResults[jobID] = make(map[string][]byte)
+	}
+	f.analysisResults[jobID][analyzerName] = resultData
+
+	return nil
+}
+
+func (f *fakeStore) GetCompletedAnalysisResults(ctx context.Context, jobID string, analyzerNames []string) (map[string]*analyzer.Output, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	outputs := make(map[string]*analyzer.Output, len(analyzerNames))
+	byAnalyzer := f.analysisResults[jobID]
+	for _, name := range analyzerNames {
+		if resultData, ok := byAnalyzer[name]; ok {
+			outputs[name] = &analyzer.Output{AnalyzerName: name, ResultData: resultData}
+		}
+	}
+	return outputs, nil
+}
+
 func (f *fakeStore) GetResumableJobs(ctx context.Context) ([]*pipeline.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -267,11 +351,37 @@ func (f *fakeStore) GetResumableJobs(ctx context.Context) ([]*pipeline.Job, erro
 	var resumable []*pipeline.Job
 	for _, job := range f.jobs {
 		if job.Status == pipeline.JobStatusRunning {
-			resumable = append(resumable, job)
+			jobCopy := *job
+			resumable = append(resumable, &jobCopy)
 		}
 	}
 
 	return resumable, nil
+}
+
+func (f *fakeStore) WriteVoteSummaries(ctx context.Context, tenantID, jobID string, pairs []pipeline.VoteSummaryPair) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.writeVoteSummErr != nil {
+		return f.writeVoteSummErr
+	}
+	if err := tenant.ValidateTenantID(tenantID); err != nil {
+		return err
+	}
+
+	if f.voteSummaries[jobID] == nil {
+		f.voteSummaries[jobID] = make(map[[2]string]pipeline.VoteSummaryPair)
+	}
+	for _, p := range pairs {
+		key := [2]string{p.SourceID, p.TargetID}
+		if _, exists := f.voteSummaries[jobID][key]; exists {
+			continue // ON CONFLICT DO NOTHING: leave the existing row untouched.
+		}
+		f.voteSummaries[jobID][key] = p
+	}
+
+	return nil
 }
 
 var _ = Describe("fakeStore", func() {
@@ -461,5 +571,120 @@ var _ = Describe("fakeStore", func() {
 var _ = Describe("PGStore compile-time check", func() {
 	It("verifies PGStore implements Store interface", func() {
 		var _ pipeline.Store = (*pipeline.PGStore)(nil)
+	})
+})
+
+var _ = Describe("CompleteAnalysisStage", func() {
+	var (
+		mockDB *mockTenantConnection
+		store  *pipeline.PGStore
+		ctx    context.Context
+	)
+
+	BeforeEach(func() {
+		mockDB = &mockTenantConnection{}
+		store = pipeline.NewPGStore(mockDB, nil)
+
+		var err error
+		ctx, err = tenant.WithTenant(context.Background(), "tenant-1")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("upserts analysis_results and marks the stage completed in one transaction", func() {
+		var queries []string
+		mockTx := &mockTransaction{
+			execFunc: func(ctx context.Context, query string, args ...any) error {
+				queries = append(queries, query)
+				return nil
+			},
+			commitFunc: func() error { return nil },
+		}
+		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		Expect(err).NotTo(HaveOccurred())
+
+		// SET tenant + upsert + stage update, all in the same transaction.
+		Expect(queries).To(HaveLen(3))
+		Expect(queries[1]).To(ContainSubstring("analysis_results"))
+		Expect(queries[1]).To(ContainSubstring("ON CONFLICT (tenant_id, job_id, analyzer_name)"))
+		Expect(queries[2]).To(ContainSubstring("job_stages"))
+	})
+
+	It("rolls back and returns an error when the upsert fails", func() {
+		rolledBack := false
+		mockTx := &mockTransaction{
+			execFunc: func(ctx context.Context, query string, args ...any) error {
+				if strings.Contains(query, "analysis_results") {
+					return errors.New("insert failed")
+				}
+				return nil
+			},
+			rollbackFunc: func() error {
+				rolledBack = true
+				return nil
+			},
+		}
+		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("upserting result"))
+		Expect(rolledBack).To(BeTrue())
+	})
+
+	It("does not update job_stages when the upsert fails", func() {
+		var stageUpdated bool
+		mockTx := &mockTransaction{
+			execFunc: func(ctx context.Context, query string, args ...any) error {
+				if strings.Contains(query, "analysis_results") {
+					return errors.New("insert failed")
+				}
+				if strings.Contains(query, "job_stages") {
+					stageUpdated = true
+				}
+				return nil
+			},
+		}
+		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		Expect(err).To(HaveOccurred())
+		Expect(stageUpdated).To(BeFalse())
+	})
+
+	It("returns an error when the job_stages update fails", func() {
+		mockTx := &mockTransaction{
+			execFunc: func(ctx context.Context, query string, args ...any) error {
+				if strings.Contains(query, "job_stages") {
+					return errors.New("update failed")
+				}
+				return nil
+			},
+		}
+		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("updating stage status"))
+	})
+
+	It("returns an error when jobID is empty", func() {
+		err := store.CompleteAnalysisStage(ctx, "", "requires", []byte(`[]`))
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("returns an error when commit fails", func() {
+		mockTx := &mockTransaction{
+			execFunc: func(ctx context.Context, query string, args ...any) error { return nil },
+			commitFunc: func() error {
+				return errors.New("commit failed")
+			},
+		}
+		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("commit failed"))
 	})
 })

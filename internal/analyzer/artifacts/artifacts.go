@@ -2,7 +2,9 @@ package artifacts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -13,6 +15,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
@@ -124,9 +127,10 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 		})
 		span.SetStatus(codes.Ok, "")
 		return []analyzer.Task{{
-			TaskID:   taskID,
-			TaskType: analyzerName,
-			Payload:  payload,
+			TaskID:         taskID,
+			TaskType:       analyzerName,
+			Payload:        payload,
+			PreBuiltResult: true,
 		}}, nil
 	}
 
@@ -219,14 +223,20 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 	return tasks, nil
 }
 
-// Aggregate groups completed task results and produces a summary output.
-// Consensus computation and graph materialization are pipeline-layer concerns.
-func (a *ArtifactsAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+// Aggregate groups completed task results by control ID, computes fuzzy
+// consensus over the extracted artifacts for each control, and JSON-encodes
+// the surviving controls (those with at least one consensus artifact) into
+// Output.ResultData as []results.ArtifactResult. Controls whose consensus
+// yields zero artifacts are omitted entirely, so the graph subscriber never
+// materializes a false "control has artifacts" edge for them. Auto-skipped
+// sections (TaskID suffix "-skip") contribute no votes and never appear in
+// the output.
+func (a *ArtifactsAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer.TaskResult) (*analyzer.Output, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.Aggregate")
 	defer span.End()
 
 	var totalCount, errorCount int
-	for _, r := range results {
+	for _, r := range taskResults {
 		totalCount++
 		if r.Error != nil {
 			errorCount++
@@ -260,9 +270,62 @@ func (a *ArtifactsAnalyzer) Aggregate(ctx context.Context, results []analyzer.Ta
 	)
 	span.SetStatus(codes.Ok, "")
 
+	groups := make(map[string]map[string]*Vote) // controlID -> voteKey -> Vote
+	var order []string
+
+	for _, r := range taskResults {
+		if r.Error != nil {
+			continue
+		}
+		controlID, model, sample, skipped, ok := intanalyzer.ParseControlTaskID(r.TaskID, analyzerName, a.cfg.Models)
+		if !ok {
+			continue
+		}
+		if skipped {
+			continue // section: no artifacts to extract
+		}
+		raw, ok := intanalyzer.ExtractResponseText(r.Result)
+		if !ok {
+			continue
+		}
+		extracted, status := ParseResponse(raw)
+		if _, exists := groups[controlID]; !exists {
+			groups[controlID] = make(map[string]*Vote)
+			order = append(order, controlID)
+		}
+		groups[controlID][r.TaskID] = &Vote{
+			VoteKey: r.TaskID, Model: model, SampleIndex: sample,
+			Artifacts: extracted, RawResponse: raw, ParseStatus: status,
+		}
+	}
+
+	sort.Strings(order)
+	totalVoters := len(a.cfg.Models) * a.cfg.SamplesPerModel
+	var controlResults []results.ArtifactResult
+	for _, controlID := range order {
+		consensusArtifacts := ComputeConsensus(groups[controlID], totalVoters, a.cfg.FuzzyThreshold)
+		if len(consensusArtifacts) == 0 {
+			continue
+		}
+		out := make([]results.Artifact, len(consensusArtifacts))
+		for i, ca := range consensusArtifacts {
+			out[i] = results.Artifact{
+				Name: ca.Name, Type: ca.Type.String(), Frequency: ca.Frequency,
+				OwnerRole: ca.OwnerRole, Confidence: ca.Confidence,
+			}
+		}
+		controlResults = append(controlResults, results.ArtifactResult{ControlID: controlID, Artifacts: out})
+	}
+
+	resultData, err := json.Marshal(controlResults)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts.Aggregate: marshaling result data: %w", err)
+	}
+
 	return &analyzer.Output{
 		AnalyzerName: analyzerName,
 		Data:         nil,
 		Metadata:     metadata,
+		ResultData:   resultData,
 	}, nil
 }

@@ -86,6 +86,14 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 		return nil
 	}
 
+	ctx, err = tenant.WithTenant(ctx, tenantID)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to propagate tenant context", "tenant", tenantID, "error", err)
+		s.recordEvent(ctx, "unknown", "error")
+		span.SetStatus(codes.Error, err.Error())
+		return nil
+	}
+
 	span.SetAttributes(attribute.String("tenant.id", tenantID))
 
 	var event pipelineEvent

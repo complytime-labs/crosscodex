@@ -129,7 +129,7 @@ flowchart TD
 
 ### Deployment Modes
 
-- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. Analysis pipeline execution requires additional service backends (see issue #31).
+- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. `crosscodexd` bootstraps a DB pool, NATS client, and a live, tenant-aware Graph Service (graph-materialization role only); analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`). A full job-level run of the analysis pipeline is not yet possible: `crosscodexd` does not run the gateway/pipeline/worker roles, and the analysis engine does not yet fan out per control (see issue #128).
 - **Quadlet** -- Systemd-managed containers with shared PostgreSQL, NATS, and MinIO. Deployment manifests planned under `deploy/`.
 - **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage.
 
@@ -229,6 +229,9 @@ analysis:
     batch_size: 50                       # Controls per batch call
   relationship:
     top_k: 20                            # Most-similar pairs to retain
+  candidates:
+    min_embedding_coverage: 0.8          # Minimum fraction of a job's controls that must have an embedding before candidate generation runs; below this, the candidate_generation stage fails the job (fail-closed)
+    embed_model: "snowflake-arctic-embed2"  # Embedding model candidate generation reads; must be one of analysis.embedding.models
 
 synthesis:
   confidence_threshold: 0.5               # Minimum confidence for viable mappings

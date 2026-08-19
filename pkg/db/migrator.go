@@ -53,6 +53,24 @@ func (mg *pgMigrator) Up(ctx context.Context) error {
 	return nil
 }
 
+func (mg *pgMigrator) Down(ctx context.Context) error {
+	_, span := otel.GetTracerProvider().Tracer("crosscodex/pkg/db").Start(ctx, "db.MigrateDown")
+	defer span.End()
+
+	err := mg.m.Down()
+	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		if _, dirty, vErr := mg.m.Version(); vErr == nil && dirty {
+			span.SetStatus(codes.Error, "dirty migration")
+			return fmt.Errorf("%w: version is dirty, manual intervention required: %s",
+				ErrMigrationDirty, err)
+		}
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("migration failed: %w", err)
+	}
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
 func (mg *pgMigrator) Version(ctx context.Context) (uint, bool, error) {
 	_, span := otel.GetTracerProvider().Tracer("crosscodex/pkg/db").Start(ctx, "db.MigrateVersion")
 	defer span.End()

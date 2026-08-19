@@ -2,8 +2,10 @@ package requires_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -13,6 +15,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -540,3 +543,77 @@ var _ = Describe("RequiresAnalyzer", func() {
 		})
 	})
 })
+
+// TestAggregate_ProducesResultDataAndSkipsInsufficientPairs is a plain Go
+// test (rather than a Ginkgo spec) because it asserts on the raw JSON shape
+// of Output.ResultData -- a table-driven-style check that reads more
+// naturally with t.Fatalf than with Gomega matchers here.
+func TestAggregate_ProducesResultDataAndSkipsInsufficientPairs(t *testing.T) {
+	cfg := config.RequiresConfig{
+		Models: []string{"llama3.2:3b"}, ConsensusThreshold: 0.5, MaxErrorRate: 0.5,
+	}
+	a := requires.New(nil, nil, nil, cfg)
+
+	mkResult := func(taskID, response string, taskErr error) analyzer.TaskResult {
+		s, _ := structpb.NewStruct(map[string]interface{}{"response": response})
+		return analyzer.TaskResult{TaskID: taskID, TaskType: "requires", Result: s, Error: taskErr}
+	}
+
+	taskResults := []analyzer.TaskResult{
+		mkResult("requires-AC-1--AC-2-llama3.2:3b-s0", "REQUIRES: YES\nCONFIDENCE: HIGH", nil),
+		// AC-1--AC-3 has zero valid votes (single sample, unparseable) and
+		// MaxErrorRate=0.5 rejects it -> must be skipped, not fail Aggregate.
+		mkResult("requires-AC-1--AC-3-llama3.2:3b-s0", "garbage", nil),
+	}
+
+	out, err := a.Aggregate(context.Background(), taskResults)
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	var parsed []results.RequiresResult
+	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
+		t.Fatalf("unmarshal ResultData: %v", err)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("expected 1 surviving pair, got %d: %+v", len(parsed), parsed)
+	}
+	if parsed[0].SourceID != "AC-1" || parsed[0].TargetID != "AC-2" {
+		t.Errorf("unexpected pair: %+v", parsed[0])
+	}
+}
+
+func TestAggregate_ExcludesPairsBelowConsensusThreshold(t *testing.T) {
+	cfg := config.RequiresConfig{
+		Models: []string{"m1", "m2", "m3", "m4", "m5"}, ConsensusThreshold: 0.9, MaxErrorRate: 0.5,
+	}
+	a := requires.New(nil, nil, nil, cfg)
+
+	mkResult := func(taskID, response string) analyzer.TaskResult {
+		s, _ := structpb.NewStruct(map[string]interface{}{"response": response})
+		return analyzer.TaskResult{TaskID: taskID, TaskType: "requires", Result: s}
+	}
+
+	// AC-1--AC-2: 3 YES / 2 NO -> Decision=true, confidence=0.6, which clears
+	// the bare-majority gate but not the configured 0.9 threshold.
+	taskResults := []analyzer.TaskResult{
+		mkResult("requires-AC-1--AC-2-m1-s0", "REQUIRES: YES\nCONFIDENCE: HIGH"),
+		mkResult("requires-AC-1--AC-2-m2-s0", "REQUIRES: YES\nCONFIDENCE: HIGH"),
+		mkResult("requires-AC-1--AC-2-m3-s0", "REQUIRES: YES\nCONFIDENCE: HIGH"),
+		mkResult("requires-AC-1--AC-2-m4-s0", "REQUIRES: NO\nCONFIDENCE: HIGH"),
+		mkResult("requires-AC-1--AC-2-m5-s0", "REQUIRES: NO\nCONFIDENCE: HIGH"),
+	}
+
+	out, err := a.Aggregate(context.Background(), taskResults)
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+
+	var parsed []results.RequiresResult
+	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
+		t.Fatalf("unmarshal ResultData: %v", err)
+	}
+	if len(parsed) != 0 {
+		t.Fatalf("expected 0 pairs (0.6 confidence below 0.9 threshold), got %d: %+v", len(parsed), parsed)
+	}
+}

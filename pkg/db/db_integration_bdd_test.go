@@ -307,7 +307,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 			version, dirty, err := migrator.Version(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(uint(1)))
+			Expect(version).To(Equal(uint(2)))
 			Expect(dirty).To(BeFalse())
 		})
 
@@ -317,6 +317,98 @@ var _ = Describe("Database Integration", Ordered, func() {
 			DeferCleanup(migrator.Close)
 
 			Expect(migrator.Up(context.Background())).To(Succeed())
+		})
+
+		// This spec must run before any tenant is provisioned (i.e. before
+		// the "Tenant Isolation (RLS)" describe below, and nowhere else in
+		// this file). 001_initial_schema.down.sql drops the app_user and
+		// graph_user roles outright; if any tenant has been created by
+		// then, its per-tenant graph schema (owned by graph_user via the
+		// tenant_graph_create trigger) still exists and Postgres refuses
+		// to drop a role that owns objects — DROP ROLE graph_user fails
+		// with "cannot be dropped because some objects depend on it".
+		// Placing this spec first, right after "runs Up idempotently" and
+		// before any setupTenant() call in the file, keeps Down() clean.
+		//
+		// Down()+Up() also recreates app_user/graph_user via
+		// `CREATE ROLE ... LOGIN` with no password, wiping the passwords
+		// SynchronizedBeforeSuite set once at suite start. Every other
+		// spec in this file authenticates as those roles via
+		// appUserConn()/graphUserConn(), so this spec re-applies the same
+		// ALTER ROLE statements before returning to leave the suite in the
+		// state downstream specs expect.
+		It("runs Up, Down, and Up again without error, ending at the latest version", func() {
+			migrator, err := db.NewMigrator(suDSN)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(migrator.Close)
+
+			Expect(migrator.Down(context.Background())).To(Succeed())
+
+			version, dirty, err := migrator.Version(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dirty).To(BeFalse())
+			Expect(version).To(Equal(uint(0)), "expected no migrations applied after Down")
+
+			Expect(migrator.Up(context.Background())).To(Succeed())
+
+			version, dirty, err = migrator.Version(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(version).To(Equal(uint(2)))
+			Expect(dirty).To(BeFalse())
+
+			// Restore role passwords wiped by the Down/Up round trip so
+			// later specs' appUserConn()/graphUserConn() can still
+			// authenticate (mirrors SynchronizedBeforeSuite).
+			ctx := context.Background()
+			adminDB, err := sql.Open("pgx", suDSN)
+			Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
+			defer adminDB.Close()
+			_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+			Expect(err).NotTo(HaveOccurred(), "failed to restore app_user password")
+			_, err = adminDB.ExecContext(ctx, "ALTER ROLE graph_user WITH PASSWORD 'graphpass'")
+			Expect(err).NotTo(HaveOccurred(), "failed to restore graph_user password")
+		})
+
+		It("returns a wrapped ErrMigrationDirty from Down() when the version is marked dirty", func() {
+			migrator, err := db.NewMigrator(suDSN)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(migrator.Close)
+
+			Expect(migrator.Up(context.Background())).To(Succeed())
+
+			// Force a dirty version row directly -- golang-migrate's own
+			// Down()/Up() check this flag before doing anything and abort
+			// immediately if set, so this is the only way to reach the
+			// dirty-migration branch without a real mid-migration crash.
+			suDB, err := sql.Open("pgx", suDSN)
+			Expect(err).NotTo(HaveOccurred())
+			// Registered via DeferCleanup (not a plain `defer`) so it runs as
+			// part of Ginkgo's cleanup phase, after -- not before -- the
+			// dirty-flag reset registered below. A plain `defer` would close
+			// suDB the instant this closure unwinds (including on a failed
+			// Expect, since Fail() panics), which happens before Ginkgo's
+			// DeferCleanup queue runs; the reset would then fail against an
+			// already-closed connection.
+			DeferCleanup(func() { suDB.Close() })
+			_, err = suDB.ExecContext(context.Background(), "UPDATE schema_migrations SET dirty = true")
+			Expect(err).NotTo(HaveOccurred())
+
+			// Registered before the assertions below so the dirty flag is
+			// always cleared -- even if Down() unexpectedly succeeds or the
+			// error doesn't wrap ErrMigrationDirty as expected. Ginkgo's fail
+			// handler unwinds this goroutine on a failed Expect, so a plain
+			// sequential reset after the assertions would never run in that
+			// case, leaving dirty = true in the shared database. DeferCleanup
+			// callbacks run LIFO, so this reset (registered after the suDB.Close
+			// cleanup above) executes first, while suDB is still open.
+			DeferCleanup(func() {
+				_, err := suDB.ExecContext(context.Background(), "UPDATE schema_migrations SET dirty = false")
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			err = migrator.Down(context.Background())
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, db.ErrMigrationDirty)).To(BeTrue(), "expected error to wrap db.ErrMigrationDirty, got: %v", err)
 		})
 	})
 
@@ -528,6 +620,118 @@ var _ = Describe("Database Integration", Ordered, func() {
 				var tenantAfter string
 				Expect(tx2.QueryRowContext(ctx, "SELECT current_setting('app.current_tenant', true)").Scan(&tenantAfter)).To(Succeed())
 				Expect(tenantAfter).NotTo(Equal("iso-rollback"), "SET LOCAL tenant persisted after rollback")
+			})
+		})
+
+		Context("analysis_results and relationship_candidates tables", func() {
+			seedJob := func(conn *sql.DB, tenantID, jobID string) {
+				execAsTenant(conn, tenantID, func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'pending', 'setup') ON CONFLICT DO NOTHING",
+						jobID, tenantID)
+					Expect(err).NotTo(HaveOccurred())
+				})
+			}
+
+			It("blocks cross-tenant INSERT into analysis_results via RLS WITH CHECK", func() {
+				setupTenant("iso-ar-src", "AR Source Corp")
+				setupTenant("iso-ar-dst", "AR Dest Corp")
+				conn := appUserConn()
+				seedJob(conn, "iso-ar-dst", "job-ar-1")
+
+				expectErrorAsTenant(conn, "iso-ar-src", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO analysis_results (tenant_id, job_id, analyzer_name, result_data) VALUES ($1, $2, 'classify', '[]')",
+						"iso-ar-dst", "job-ar-1")
+					Expect(err).To(HaveOccurred(), "cross-tenant write should be blocked by RLS WITH CHECK")
+				})
+
+				execAsTenant(conn, "iso-ar-dst", func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT count(*) FROM analysis_results WHERE job_id = $1", "job-ar-1").Scan(&count)).To(Succeed())
+					Expect(count).To(Equal(0), "cross-tenant write leaked data")
+				})
+			})
+
+			It("fails closed on analysis_results when no tenant context is set", func() {
+				setupTenant("iso-ar-nocontext", "AR NoCtx Corp")
+				conn := appUserConn()
+				seedJob(conn, "iso-ar-nocontext", "job-ar-2")
+				execAsTenant(conn, "iso-ar-nocontext", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO analysis_results (tenant_id, job_id, analyzer_name, result_data) VALUES ($1, $2, 'classify', '[]')",
+						"iso-ar-nocontext", "job-ar-2")
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				ctx := context.Background()
+				tx, err := conn.BeginTx(ctx, nil)
+				Expect(err).NotTo(HaveOccurred())
+				defer tx.Rollback() //nolint:errcheck
+
+				var count int
+				Expect(tx.QueryRowContext(ctx, "SELECT count(*) FROM analysis_results").Scan(&count)).To(Succeed())
+				Expect(count).To(Equal(0))
+			})
+
+			It("treats SQL injection via set_config as a literal tenant string for relationship_candidates", func() {
+				setupTenant("iso-rc-sqli", "RC SQLI Corp")
+				conn := appUserConn()
+				seedJob(conn, "iso-rc-sqli", "job-rc-1")
+				execAsTenant(conn, "iso-rc-sqli", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO relationship_candidates (tenant_id, job_id, source_id, target_id, similarity_score) VALUES ($1, $2, 'AC-1', 'AC-2', 80.0)",
+						"iso-rc-sqli", "job-rc-1")
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				malicious := "' OR '1'='1"
+				execAsTenant(conn, malicious, func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(), "SELECT count(*) FROM relationship_candidates").Scan(&count)).To(Succeed())
+					Expect(count).To(Equal(0))
+				})
+
+				execAsTenant(conn, "iso-rc-sqli", func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(), "SELECT count(*) FROM relationship_candidates").Scan(&count)).To(Succeed())
+					Expect(count).To(BeNumerically(">=", 1))
+				})
+			})
+
+			It("blocks cross-tenant UPDATE of relationship_candidates tenant_id via RLS WITH CHECK", func() {
+				setupTenant("iso-rc-reassign-src", "RC Reassign Src")
+				setupTenant("iso-rc-reassign-dst", "RC Reassign Dst")
+				conn := appUserConn()
+				seedJob(conn, "iso-rc-reassign-src", "job-rc-2")
+				execAsTenant(conn, "iso-rc-reassign-src", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO relationship_candidates (tenant_id, job_id, source_id, target_id, similarity_score) VALUES ($1, $2, 'AC-1', 'AC-2', 80.0)",
+						"iso-rc-reassign-src", "job-rc-2")
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				ctx := context.Background()
+				tx, err := conn.BeginTx(ctx, nil)
+				Expect(err).NotTo(HaveOccurred())
+				defer tx.Rollback() //nolint:errcheck
+
+				_, err = tx.ExecContext(ctx, "SELECT set_config('app.current_tenant', $1, true)", "iso-rc-reassign-src")
+				Expect(err).NotTo(HaveOccurred())
+				_, err = tx.ExecContext(ctx,
+					"UPDATE relationship_candidates SET tenant_id = $1 WHERE job_id = $2 AND source_id = 'AC-1' AND target_id = 'AC-2'",
+					"iso-rc-reassign-dst", "job-rc-2")
+				Expect(err).To(HaveOccurred(), "UPDATE tenant_id should be blocked by RLS WITH CHECK")
+
+				// Verify the row still belongs to the source tenant, unaltered.
+				execAsTenant(conn, "iso-rc-reassign-src", func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT count(*) FROM relationship_candidates WHERE job_id = $1 AND source_id = 'AC-1' AND target_id = 'AC-2'",
+						"job-rc-2").Scan(&count)).To(Succeed())
+					Expect(count).To(Equal(1), "blocked UPDATE must not have altered the row's tenant_id")
+				})
 			})
 		})
 	})

@@ -2,7 +2,9 @@ package relationship_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -11,6 +13,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -219,3 +222,62 @@ var _ = Describe("RelationshipAnalyzer", func() {
 		})
 	})
 })
+
+// TestAggregate_ProducesResultData verifies that Aggregate computes
+// consensus per pair and JSON-encodes the surviving pairs into
+// Output.ResultData, in the shape the graph subscriber expects
+// (results.SemanticMatchResult).
+func TestAggregate_ProducesResultData(t *testing.T) {
+	cfg := config.RelationshipConfig{Models: []string{"llama3.2:3b"}}
+	a := relationship.New(nil, nil, nil, cfg)
+
+	mkResult := func(taskID, response string) analyzer.TaskResult {
+		s, _ := structpb.NewStruct(map[string]interface{}{"response": response})
+		return analyzer.TaskResult{TaskID: taskID, TaskType: "relationship", Result: s}
+	}
+
+	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
+		mkResult("relationship-AC-1--AC-2-llama3.2:3b-s0",
+			"RELATIONSHIP: EQUIVALENT\nCONFIDENCE: HIGH\nJUSTIFICATION: same control"),
+	})
+	if err != nil {
+		t.Fatalf("Aggregate error: %v", err)
+	}
+
+	var parsed []results.SemanticMatchResult
+	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
+		t.Fatalf("unmarshal ResultData: %v", err)
+	}
+	if len(parsed) != 1 || parsed[0].SourceID != "AC-1" || parsed[0].TargetID != "AC-2" {
+		t.Fatalf("unexpected result: %+v", parsed)
+	}
+	if parsed[0].RelationshipType != "EQUIVALENT" {
+		t.Errorf("RelationshipType: got %q", parsed[0].RelationshipType)
+	}
+}
+
+func TestAggregate_OmitsNoRelationshipPairs(t *testing.T) {
+	cfg := config.RelationshipConfig{Models: []string{"llama3.2:3b"}}
+	a := relationship.New(nil, nil, nil, cfg)
+
+	mkResult := func(taskID, response string) analyzer.TaskResult {
+		s, _ := structpb.NewStruct(map[string]interface{}{"response": response})
+		return analyzer.TaskResult{TaskID: taskID, TaskType: "relationship", Result: s}
+	}
+
+	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
+		mkResult("relationship-AC-1--AC-2-llama3.2:3b-s0",
+			"RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH\nJUSTIFICATION: unrelated controls"),
+	})
+	if err != nil {
+		t.Fatalf("Aggregate error: %v", err)
+	}
+
+	var parsed []results.SemanticMatchResult
+	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
+		t.Fatalf("unmarshal ResultData: %v", err)
+	}
+	if len(parsed) != 0 {
+		t.Fatalf("expected 0 pairs (NO_RELATIONSHIP must be omitted), got %d: %+v", len(parsed), parsed)
+	}
+}

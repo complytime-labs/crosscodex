@@ -2,9 +2,11 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/internal/analysis"
@@ -73,7 +75,17 @@ func (r *DBStageReporter) ReportStageStarted(ctx context.Context, analyzerName, 
 	return r.nats.ReportStageStarted(ctx, analyzerName, jobID)
 }
 
-// ReportStageCompleted updates DB to completed, then publishes to NATS.
+// ReportStageCompleted persists the analyzer's result and marks the stage
+// completed, then publishes to NATS.
+//
+// Persistence is unconditional for every completed analyzer regardless of
+// result size, including zero-task analyzers (a JSON null literal is
+// substituted for an empty result). Unlike its siblings, any failure to
+// persist is NOT swallowed: durable results are the point of the job, so the
+// error propagates to the caller (failing the analysis stage) instead of
+// being logged and ignored. An analyzer must never be marked completed
+// without its result already durably committed, or resume logic would skip
+// it forever.
 func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName, jobID string, output *analyzer.Output) error {
 	ctx, span := telemetry.StartSpan(r.tracer, ctx, "pipeline.ReportStageCompleted")
 	defer span.End()
@@ -82,9 +94,25 @@ func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName
 		attribute.String("job.id", jobID),
 	)
 
-	if err := r.store.UpdateStageStatus(ctx, jobID, analyzerName, StageStatusCompleted); err != nil {
-		r.logger.WarnContext(ctx, "failed to update stage status in DB",
+	// analysis_results.result_data is JSONB NOT NULL, and completion must
+	// always be durably persisted (see doc comment above) -- including for a
+	// zero-task analyzer, whose ResultData is nil. Substitute the JSON null
+	// literal in that case: it is the same on-disk representation
+	// classify/artifacts/relationship/requires already produce when
+	// json.Marshal encodes a nil result slice, so this introduces no new
+	// convention. Always persisting (never falling back to a bare
+	// UpdateStageStatus) is what lets GetCompletedAnalysisResults find every
+	// completed analyzer on resume, regardless of whether it produced output.
+	resultData := output.ResultData
+	if len(resultData) == 0 {
+		resultData = []byte("null")
+	}
+	if err := r.store.CompleteAnalysisStage(ctx, jobID, analyzerName, resultData); err != nil {
+		r.logger.ErrorContext(ctx, "failed to persist analysis result",
 			"analyzer", analyzerName, "job_id", jobID, "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("pipeline.ReportStageCompleted: persisting result: %w", err)
 	}
 
 	return r.nats.ReportStageCompleted(ctx, analyzerName, jobID, output)

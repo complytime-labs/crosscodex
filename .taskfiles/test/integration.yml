@@ -101,7 +101,7 @@ tasks:
           TIMEOUT: 300s
           REPORT: integration-db
           COVERAGE: integration-coverage.out
-          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/pipeline/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/... {{.ROOT_DIR}}/internal/graph/..."
+          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/pipeline/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/... {{.ROOT_DIR}}/internal/graph/... {{.ROOT_DIR}}/cmd/crosscodexd/..."
       # Embedded daemon e2e specs report under their own artifacts, mirroring
       # the standalone `embedded` task so an embedded failure never masquerades
       # as a db-suite failure in the aggregate run.
@@ -212,7 +212,7 @@ tasks:
           TIMEOUT: 300s
           REPORT: integration-db
           COVERAGE: integration-coverage.out
-          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/pipeline/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/... {{.ROOT_DIR}}/internal/graph/..."
+          PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/pipeline/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/... {{.ROOT_DIR}}/internal/graph/... {{.ROOT_DIR}}/cmd/crosscodexd/..."
 
   embedded:
     desc: Run embedded daemon e2e integration tests (startup, catalog round-trip, shutdown)
@@ -249,6 +249,24 @@ tasks:
           REPORT: integration-synthesis
           COVERAGE: integration-synthesis-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/internal/synthesis/..."
+
+  pipeline-e2e:
+    desc: Run the durable pipeline end-to-end test (real analyzers, real Postgres, fake LLM client)
+    deps: [ensure-deps]
+    cmds:
+      - task: compose-up
+        vars: { PROFILE: db }
+      - defer:
+          task: compose-down
+          vars: { PROFILE: db }
+      - mkdir -p {{.TEST_DIR}}
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-pipeline-e2e
+          COVERAGE: integration-pipeline-e2e-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/internal/pipeline/..."
 
   storage:
     desc: Run S3 storage integration tests

@@ -146,23 +146,80 @@ var _ = Describe("DBStageReporter", func() {
 			Expect(natsReporter.completed[0].output).To(Equal(output))
 		})
 
-		It("logs DB failure but does not return error", func() {
-			store.updateStageErr = errors.New("db write failed")
-
-			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", nil)
+		It("persists a JSON null and marks the stage completed when ResultData is empty", func() {
+			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", &analyzer.Output{})
 			Expect(err).ToNot(HaveOccurred())
 
-			// NATS reporter should still be called
+			// A zero-task analyzer still gets a durable analysis_results row
+			// (as JSON null), so a resumed job can find it via
+			// GetCompletedAnalysisResults instead of redundantly re-running it.
+			store.mu.Lock()
+			Expect(store.analysisResults["job-1"]["analyzer-1"]).To(Equal([]byte("null")))
+			store.mu.Unlock()
+
+			stages, _ := store.GetStages(ctx, "job-1")
+			Expect(stages[0].Status).To(Equal(pipeline.StageStatusCompleted))
+
 			natsReporter.mu.Lock()
 			defer natsReporter.mu.Unlock()
 			Expect(natsReporter.completed).To(HaveLen(1))
 		})
 
+		It("returns an error and does not call NATS when persisting a zero-ResultData stage fails", func() {
+			store.completeStageErr = errors.New("db write failed")
+
+			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", &analyzer.Output{})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("db write failed"))
+
+			natsReporter.mu.Lock()
+			defer natsReporter.mu.Unlock()
+			Expect(natsReporter.completed).To(BeEmpty())
+		})
+
 		It("returns NATS error to caller", func() {
 			natsReporter.completeErr = errors.New("nats publish failed")
 
-			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", nil)
+			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", &analyzer.Output{})
 			Expect(err).To(MatchError("nats publish failed"))
+		})
+
+		It("persists the result and calls NATS reporter when ResultData is present", func() {
+			output := &analyzer.Output{
+				ResultData: []byte(`[{"source_id":"AC-1","target_id":"AC-2"}]`),
+			}
+
+			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", output)
+			Expect(err).ToNot(HaveOccurred())
+
+			// CompleteAnalysisStage persisted the result and marked the stage completed.
+			store.mu.Lock()
+			Expect(store.analysisResults["job-1"]["analyzer-1"]).To(Equal(output.ResultData))
+			store.mu.Unlock()
+
+			stages, _ := store.GetStages(ctx, "job-1")
+			Expect(stages[0].Status).To(Equal(pipeline.StageStatusCompleted))
+
+			// NATS reporter should still be called.
+			natsReporter.mu.Lock()
+			defer natsReporter.mu.Unlock()
+			Expect(natsReporter.completed).To(HaveLen(1))
+		})
+
+		It("returns an error and does not call NATS when persisting the result fails", func() {
+			store.completeStageErr = errors.New("db write failed")
+			output := &analyzer.Output{
+				ResultData: []byte(`[{"source_id":"AC-1","target_id":"AC-2"}]`),
+			}
+
+			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", output)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("db write failed"))
+
+			// NATS reporter must NOT be called: persistence failure blocks publishing.
+			natsReporter.mu.Lock()
+			defer natsReporter.mu.Unlock()
+			Expect(natsReporter.completed).To(BeEmpty())
 		})
 	})
 
@@ -220,7 +277,7 @@ var _ = Describe("DBStageReporter", func() {
 			err := reporter.ReportStageStarted(ctx, "analyzer-1", "job-1")
 			Expect(err).ToNot(HaveOccurred())
 
-			err = reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", nil)
+			err = reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", &analyzer.Output{})
 			Expect(err).ToNot(HaveOccurred())
 
 			err = reporter.ReportStageFailed(ctx, "analyzer-1", "job-1", errors.New("test"))

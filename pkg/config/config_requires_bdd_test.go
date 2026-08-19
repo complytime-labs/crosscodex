@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"errors"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -28,6 +30,35 @@ var _ = Describe("Candidate Configuration", func() {
 			Expect(entry.Enabled).To(BeTrue())
 			Expect(entry.Weight).To(Equal(1.5))
 			Expect(entry.Config["top_k"]).To(Equal(10))
+		})
+	})
+
+	Describe("validation", func() {
+		DescribeTable("min_embedding_coverage validation",
+			func(coverage float64, shouldErr bool) {
+				cfg := config.CandidateConfig{MinEmbeddingCoverage: coverage, EmbedModel: "m"}
+
+				err := cfg.Validate()
+				if shouldErr {
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("min_embedding_coverage"))
+				} else {
+					Expect(err).NotTo(HaveOccurred())
+				}
+			},
+			Entry("below range", -0.1, true),
+			Entry("min valid", 0.0, false),
+			Entry("mid valid", 0.8, false),
+			Entry("max valid", 1.0, false),
+			Entry("above range", 1.5, true),
+		)
+
+		It("requires a non-empty embed_model", func() {
+			cfg := config.CandidateConfig{MinEmbeddingCoverage: 0.5, EmbedModel: ""}
+			err := cfg.Validate()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("embed_model"))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 		})
 	})
 })

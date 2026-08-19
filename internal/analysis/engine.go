@@ -128,7 +128,9 @@ func (e *Engine) Execute(ctx context.Context, req ExecutionRequest) (*ExecutionR
 		return nil, fmt.Errorf("analysis: execute: %w", ErrEmptyJobID)
 	}
 
-	if req.Input == nil {
+	// Input is required unless Controls is supplied: per-control fan-out
+	// (executeAnalyzer) drives GenerateWork from Controls instead of Input.
+	if req.Input == nil && len(req.Controls) == 0 {
 		span.RecordError(ErrNilInput)
 		span.SetStatus(codes.Error, ErrNilInput.Error())
 		return nil, fmt.Errorf("analysis: execute: %w", ErrNilInput)
@@ -158,6 +160,14 @@ func (e *Engine) Execute(ctx context.Context, req ExecutionRequest) (*ExecutionR
 		Errors:  make(map[string]error),
 	}
 	state := &executionState{result: result}
+
+	// Pre-seed analyzers already completed by a prior Execute call for this job
+	// (two-pass execution). They satisfy dependency gating for the requested
+	// analyzers without being re-dispatched, and executeAnalyzer short-circuits
+	// on them so no stage transitions are re-reported.
+	for name, output := range req.CompletedOutputs {
+		state.complete(name, output)
+	}
 
 	span.SetAttributes(
 		attribute.String("job.id", req.JobID),
@@ -228,6 +238,14 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		attribute.String("job.id", req.JobID),
 	)
 
+	// Already completed by a prior pass (pre-seeded via CompletedOutputs). Skip
+	// re-execution entirely so its work is not re-dispatched and its stage
+	// transitions are not re-reported.
+	if state.isCompleted(name) {
+		span.SetStatus(codes.Ok, "already completed")
+		return
+	}
+
 	ra, err := e.registry.Get(name)
 	if err != nil {
 		analyzerErr := fmt.Errorf("analysis: analyzer %q: registry lookup failed: %w: %w",
@@ -255,68 +273,132 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			"analyzer", name, "error", err)
 	}
 
-	// Generate work items.
-	cfg := req.AnalyzerConfig[name]
-	tasks, err := ra.GenerateWorkFromProto(ctx, req.Input, cfg)
-	if err != nil {
-		analyzerErr := fmt.Errorf("analysis: analyzer %q GenerateWork failed for job %q: %w: %w",
-			name, req.JobID, ErrAnalyzerFailed, err)
-		state.fail(name, analyzerErr)
-		_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
-		span.RecordError(analyzerErr)
-		span.SetStatus(codes.Error, analyzerErr.Error())
-		return
+	// Catalog ID is set once, before GenerateWork/Aggregate. Only
+	// embedding.Aggregate reads it; every other analyzer ignores it.
+	if req.CatalogID != "" {
+		ctx = analyzer.WithCatalogID(ctx, req.CatalogID)
 	}
 
-	// Zero tasks: skip dispatch/collect, record empty output.
-	if len(tasks) == 0 {
+	// Generate work items. When Controls is non-nil (per-control mode
+	// requested), call GenerateWork once per control and concatenate the
+	// resulting task slices — Dispatch, Collect, and Aggregate are still
+	// each called exactly once, over the combined set, exactly as the
+	// single-Input path below. A non-nil but empty Controls (e.g. a
+	// document-backed job, or a catalog with zero controls) naturally
+	// produces zero tasks via the loop below, rather than falling through to
+	// the single-Input path with a mismatched Input type. A per-control error
+	// fails the whole analyzer for this job, matching existing all-or-nothing
+	// semantics for task-level failures.
+	cfg := req.AnalyzerConfig[name]
+	var tasks []analyzer.Task
+	if req.Controls != nil {
+		for _, control := range req.Controls {
+			controlTasks, err := ra.GenerateWorkFromProto(ctx, control, cfg)
+			if err != nil {
+				analyzerErr := fmt.Errorf("analysis: analyzer %q GenerateWork failed for job %q control %q: %w: %w",
+					name, req.JobID, control.GetControlId(), ErrAnalyzerFailed, err)
+				state.fail(name, analyzerErr)
+				_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
+				span.RecordError(analyzerErr)
+				span.SetStatus(codes.Error, analyzerErr.Error())
+				return
+			}
+			tasks = append(tasks, controlTasks...)
+		}
+	} else {
+		var err error
+		tasks, err = ra.GenerateWorkFromProto(ctx, req.Input, cfg)
+		if err != nil {
+			analyzerErr := fmt.Errorf("analysis: analyzer %q GenerateWork failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err)
+			state.fail(name, analyzerErr)
+			_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
+			span.RecordError(analyzerErr)
+			span.SetStatus(codes.Error, analyzerErr.Error())
+			return
+		}
+	}
+
+	// Partition into tasks that need dispatch and pre-built results (e.g.
+	// section auto-skip) that already carry their final result — the worker
+	// only understands structpb.Struct payloads, not arbitrary result types
+	// like *pb.AnalysisResult, so these must never be sent over NATS.
+	var dispatchTasks []analyzer.Task
+	var preBuiltResults []analyzer.TaskResult
+	for _, t := range tasks {
+		if t.PreBuiltResult {
+			preBuiltResults = append(preBuiltResults, analyzer.TaskResult{
+				TaskID:   t.TaskID,
+				TaskType: t.TaskType,
+				Result:   t.Payload,
+			})
+			continue
+		}
+		dispatchTasks = append(dispatchTasks, t)
+	}
+
+	// Zero dispatchable tasks and no pre-built results: skip straight to an
+	// empty output, exactly as before.
+	if len(dispatchTasks) == 0 && len(preBuiltResults) == 0 {
 		output := &analyzer.Output{
 			AnalyzerName: name,
 			Metadata:     map[string]string{"tasks": "0"},
 		}
+		if err := e.reporter.ReportStageCompleted(ctx, name, req.JobID, output); err != nil {
+			analyzerErr := fmt.Errorf("analysis: analyzer %q persist completion failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err)
+			state.fail(name, analyzerErr)
+			span.RecordError(analyzerErr)
+			span.SetStatus(codes.Error, analyzerErr.Error())
+			return
+		}
 		state.complete(name, output)
-		_ = e.reporter.ReportStageCompleted(ctx, name, req.JobID, output)
 		span.SetStatus(codes.Ok, "zero tasks")
 		return
 	}
 
-	// Dispatch tasks.
-	taskType := e.taskTypes[name]
-	if err := e.dispatcher.Dispatch(ctx, tasks, taskType, req.JobID); err != nil {
-		analyzerErr := fmt.Errorf("analysis: analyzer %q dispatch failed for job %q: %w: %w",
-			name, req.JobID, ErrAnalyzerFailed, err)
-		state.fail(name, analyzerErr)
-		_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
-		span.RecordError(analyzerErr)
-		span.SetStatus(codes.Error, analyzerErr.Error())
-		return
-	}
+	var results []analyzer.TaskResult
+	if len(dispatchTasks) > 0 {
+		// Dispatch tasks.
+		taskType := e.taskTypes[name]
+		if err := e.dispatcher.Dispatch(ctx, dispatchTasks, taskType, req.JobID); err != nil {
+			analyzerErr := fmt.Errorf("analysis: analyzer %q dispatch failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err)
+			state.fail(name, analyzerErr)
+			_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
+			span.RecordError(analyzerErr)
+			span.SetStatus(codes.Error, analyzerErr.Error())
+			return
+		}
 
-	// Collect results.
-	expectedIDs := make([]string, len(tasks))
-	for i, t := range tasks {
-		expectedIDs[i] = t.TaskID
-	}
+		// Collect results.
+		expectedIDs := make([]string, len(dispatchTasks))
+		for i, t := range dispatchTasks {
+			expectedIDs[i] = t.TaskID
+		}
 
-	results, err := e.collector.Collect(ctx, CollectRequest{
-		TaskType:    taskType,
-		JobID:       req.JobID,
-		ExpectedIDs: expectedIDs,
-		Tasks:       tasks,
-		Timeout:     e.cfg.TaskTimeout,
-		MaxRetries:  e.cfg.MaxRetries,
-		Backoff:     e.cfg.RetryBackoff,
-		Dispatcher:  e.dispatcher,
-	})
-	if err != nil {
-		analyzerErr := fmt.Errorf("analysis: analyzer %q collect failed for job %q: %w: %w",
-			name, req.JobID, ErrAnalyzerFailed, err)
-		state.fail(name, analyzerErr)
-		_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
-		span.RecordError(analyzerErr)
-		span.SetStatus(codes.Error, analyzerErr.Error())
-		return
+		collected, err := e.collector.Collect(ctx, CollectRequest{
+			TaskType:    taskType,
+			JobID:       req.JobID,
+			ExpectedIDs: expectedIDs,
+			Tasks:       dispatchTasks,
+			Timeout:     e.cfg.TaskTimeout,
+			MaxRetries:  e.cfg.MaxRetries,
+			Backoff:     e.cfg.RetryBackoff,
+			Dispatcher:  e.dispatcher,
+		})
+		if err != nil {
+			analyzerErr := fmt.Errorf("analysis: analyzer %q collect failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err)
+			state.fail(name, analyzerErr)
+			_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
+			span.RecordError(analyzerErr)
+			span.SetStatus(codes.Error, analyzerErr.Error())
+			return
+		}
+		results = collected
 	}
+	results = append(results, preBuiltResults...)
 
 	// Separate successful and failed results.
 	var successes []analyzer.TaskResult
@@ -366,9 +448,19 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		output.Metadata["failed_tasks"] = fmt.Sprintf("%d", failures)
 	}
 
-	// Success (possibly partial).
+	// Success (possibly partial). Persist the result before marking the
+	// analyzer completed: a persistence failure must fail the analyzer, or
+	// downstream logic (resume, candidate generation) would proceed against
+	// data that was never durably committed.
+	if err := e.reporter.ReportStageCompleted(ctx, name, req.JobID, output); err != nil {
+		analyzerErr := fmt.Errorf("analysis: analyzer %q persist completion failed for job %q: %w: %w",
+			name, req.JobID, ErrAnalyzerFailed, err)
+		state.fail(name, analyzerErr)
+		span.RecordError(analyzerErr)
+		span.SetStatus(codes.Error, analyzerErr.Error())
+		return
+	}
 	state.complete(name, output)
-	_ = e.reporter.ReportStageCompleted(ctx, name, req.JobID, output)
 	span.SetStatus(codes.Ok, "")
 }
 

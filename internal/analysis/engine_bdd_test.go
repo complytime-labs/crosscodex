@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
@@ -83,6 +84,48 @@ func newStubWithTasks(name string, tasks []analyzer.Task, deps ...string) *stubA
 	}
 }
 
+// controlMockAnalyzer implements analyzer.Analyzer[*pb.Control] for
+// per-control fan-out tests. It records every control it was called with
+// and every catalog ID its Aggregate observed via context.
+type controlMockAnalyzer struct {
+	name        string
+	genWorkFn   func(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error)
+	aggregateFn func(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error)
+
+	mu           sync.Mutex
+	genWorkCalls []*pb.Control
+}
+
+func (m *controlMockAnalyzer) Name() string        { return m.name }
+func (m *controlMockAnalyzer) DependsOn() []string { return nil }
+
+func (m *controlMockAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+	m.mu.Lock()
+	m.genWorkCalls = append(m.genWorkCalls, input)
+	m.mu.Unlock()
+	if m.genWorkFn != nil {
+		return m.genWorkFn(ctx, input, cfg)
+	}
+	return nil, nil
+}
+
+func (m *controlMockAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+	if m.aggregateFn != nil {
+		return m.aggregateFn(ctx, results)
+	}
+	return &analyzer.Output{AnalyzerName: m.name, Metadata: map[string]string{}}, nil
+}
+
+func (m *controlMockAnalyzer) ResultSchema() proto.Message { return &pb.Control{} }
+
+func (m *controlMockAnalyzer) calls() []*pb.Control {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*pb.Control, len(m.genWorkCalls))
+	copy(out, m.genWorkCalls)
+	return out
+}
+
 // engineTestDispatcher records Dispatch calls for engine test assertions.
 type engineTestDispatcher struct {
 	mu          sync.Mutex
@@ -142,6 +185,23 @@ func (c *engineTestCollector) collectCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.collects)
+}
+
+// engineTestReporter is a StageReporter whose ReportStageCompleted can be
+// forced to fail, simulating a durable-persistence failure. Started/Failed
+// reports always succeed.
+type engineTestReporter struct {
+	completedErr error
+}
+
+func (r *engineTestReporter) ReportStageStarted(context.Context, string, string) error { return nil }
+
+func (r *engineTestReporter) ReportStageCompleted(context.Context, string, string, *analyzer.Output) error {
+	return r.completedErr
+}
+
+func (r *engineTestReporter) ReportStageFailed(context.Context, string, string, error) error {
+	return nil
 }
 
 // validCfg returns a valid EngineConfig for tests.
@@ -699,6 +759,42 @@ var _ = Describe("Engine", func() {
 	})
 
 	// =================================================================
+	// TWO-PASS COMPLETEDOUTPUTS PRE-SEEDING
+	// =================================================================
+
+	Describe("Two-pass CompletedOutputs pre-seeding", func() {
+
+		It("does not re-dispatch a pre-seeded analyzer and lets its dependent proceed", func() {
+			Expect(analyzer.Register[*emptypb.Empty](registry,
+				newStubWithTasks("embedding", makeTasks("embedding", 1)))).To(Succeed())
+			Expect(analyzer.Register[*emptypb.Empty](registry,
+				newStubWithTasks("relationship", makeTasks("relationship", 1), "embedding"))).To(Succeed())
+
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes())
+
+			preSeeded := &analyzer.Output{AnalyzerName: "embedding", ResultData: []byte(`[]`)}
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID:            "job-preseed",
+				AnalyzerNames:    []string{"relationship"},
+				Input:            &emptypb.Empty{},
+				CompletedOutputs: map[string]*analyzer.Output{"embedding": preSeeded},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			// embedding must not be dispatched/collected again -- only
+			// relationship should appear in the dispatch log.
+			Expect(dispatcher.dispatches).To(HaveLen(1))
+			Expect(dispatcher.dispatches[0].taskType).To(Equal(natsbus.TaskRelate))
+			// relationship (which depends on embedding) must proceed, not be skipped.
+			Expect(result.Completed).To(ContainElement("relationship"))
+			Expect(result.Skipped).To(BeEmpty())
+			Expect(result.Outputs["embedding"]).To(Equal(preSeeded))
+		})
+	})
+
+	// =================================================================
 	// ANALYZER CONFIG FORWARDING
 	// =================================================================
 
@@ -729,6 +825,299 @@ var _ = Describe("Engine", func() {
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(receivedCfg.Parameters["model"]).To(Equal("qwen3:8b"))
+		})
+	})
+
+	// =================================================================
+	// PERSISTENCE-FAILURE PROPAGATION
+	// =================================================================
+	//
+	// ReportStageCompleted returns an error when a non-empty result fails to
+	// durably persist. An analyzer must NOT be marked completed in that case,
+	// or resume/candidate-generation logic would proceed against data that was
+	// never committed. Both executeAnalyzer completion paths (normal success
+	// and the zero-tasks early return) must fail the analyzer instead.
+
+	Describe("Persistence-failure propagation", func() {
+
+		It("fails the analyzer when ReportStageCompleted errors on the normal-success path", func() {
+			Expect(analyzer.Register[*emptypb.Empty](registry,
+				newStubWithTasks("classify", makeTasks("classify", 1)))).To(Succeed())
+
+			reporter := &engineTestReporter{completedErr: errors.New("db persist failed")}
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes(), analysis.WithStageReporter(reporter))
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-persist-fail",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Failed).To(ConsistOf("classify"))
+			Expect(result.Completed).NotTo(ContainElement("classify"))
+			Expect(result.Outputs).NotTo(HaveKey("classify"))
+			Expect(result.Errors).To(HaveKey("classify"))
+		})
+
+		It("fails the analyzer when ReportStageCompleted errors on the zero-tasks path", func() {
+			// GenerateWork returns no tasks, exercising the zero-tasks early return.
+			Expect(analyzer.Register[*emptypb.Empty](registry, newStub("classify"))).To(Succeed())
+
+			reporter := &engineTestReporter{completedErr: errors.New("db persist failed")}
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes(), analysis.WithStageReporter(reporter))
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-persist-fail-zero",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Failed).To(ConsistOf("classify"))
+			Expect(result.Completed).NotTo(ContainElement("classify"))
+			Expect(result.Outputs).NotTo(HaveKey("classify"))
+			Expect(result.Errors).To(HaveKey("classify"))
+		})
+
+		It("completes the analyzer normally when ReportStageCompleted succeeds", func() {
+			Expect(analyzer.Register[*emptypb.Empty](registry,
+				newStubWithTasks("classify", makeTasks("classify", 1)))).To(Succeed())
+
+			reporter := &engineTestReporter{completedErr: nil}
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes(), analysis.WithStageReporter(reporter))
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-persist-ok",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Completed).To(ConsistOf("classify"))
+			Expect(result.Failed).To(BeEmpty())
+			Expect(result.Outputs).To(HaveKey("classify"))
+		})
+	})
+
+	// =================================================================
+	// PER-CONTROL FAN-OUT
+	// =================================================================
+	//
+	// Every real analyzer is registered as Analyzer[*pb.Control]. When
+	// ExecutionRequest.Controls is set, executeAnalyzer must call
+	// GenerateWork once per control and concatenate the resulting task
+	// slices into a single Dispatch/Collect/Aggregate cycle.
+
+	Describe("Per-control fan-out", func() {
+
+		It("calls GenerateWork once per control and concatenates tasks into a single dispatch/collect", func() {
+			mock := &controlMockAnalyzer{
+				name: "classify",
+				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					payload, _ := structpb.NewStruct(map[string]interface{}{"control": input.GetControlId()})
+					return []analyzer.Task{{
+						TaskID:   "mock-" + input.GetControlId(),
+						TaskType: "classify",
+						Payload:  payload,
+					}}, nil
+				},
+			}
+			Expect(analyzer.Register[*pb.Control](registry, mock)).To(Succeed())
+
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes())
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-fanout",
+				Controls: []*pb.Control{
+					{ControlId: "AC-1"},
+					{ControlId: "AC-2"},
+				},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Completed).To(ConsistOf("classify"))
+			Expect(result.Failed).To(BeEmpty())
+
+			calls := mock.calls()
+			Expect(calls).To(HaveLen(2))
+			Expect([]string{calls[0].GetControlId(), calls[1].GetControlId()}).To(ConsistOf("AC-1", "AC-2"))
+
+			// Dispatch and Collect are each called exactly once, over the
+			// combined two-task set -- not once per control.
+			Expect(dispatcher.dispatchCount()).To(Equal(1))
+			Expect(dispatcher.dispatches[0].tasks).To(HaveLen(2))
+			Expect(collector.collectCount()).To(Equal(1))
+		})
+
+		It("fails the analyzer without dispatching when a per-control GenerateWork call errors", func() {
+			mock := &controlMockAnalyzer{
+				name: "classify",
+				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					if input.GetControlId() == "AC-2" {
+						return nil, fmt.Errorf("model unavailable for AC-2")
+					}
+					return []analyzer.Task{{TaskID: "mock-" + input.GetControlId(), TaskType: "classify"}}, nil
+				},
+			}
+			Expect(analyzer.Register[*pb.Control](registry, mock)).To(Succeed())
+
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes())
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-fanout-err",
+				Controls: []*pb.Control{
+					{ControlId: "AC-1"},
+					{ControlId: "AC-2"},
+				},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Failed).To(ConsistOf("classify"))
+			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("model unavailable for AC-2")))
+			Expect(dispatcher.dispatchCount()).To(Equal(0))
+		})
+
+		It("makes CatalogID available to Aggregate via context", func() {
+			var observedCatalogID string
+			var observedOK bool
+
+			mock := &controlMockAnalyzer{
+				name: "classify",
+				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return []analyzer.Task{{TaskID: "mock-" + input.GetControlId(), TaskType: "classify"}}, nil
+				},
+				aggregateFn: func(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+					observedCatalogID, observedOK = analyzer.CatalogIDFromContext(ctx)
+					return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
+				},
+			}
+			Expect(analyzer.Register[*pb.Control](registry, mock)).To(Succeed())
+
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes())
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID:     "job-fanout-catalog",
+				Controls:  []*pb.Control{{ControlId: "AC-1"}},
+				CatalogID: "cat-42",
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Completed).To(ConsistOf("classify"))
+			Expect(observedOK).To(BeTrue())
+			Expect(observedCatalogID).To(Equal("cat-42"))
+		})
+	})
+
+	// =================================================================
+	// PRE-BUILT RESULTS (SECTION AUTO-SKIP)
+	// =================================================================
+	//
+	// A task with PreBuiltResult=true already carries its final result in
+	// Payload (e.g. section auto-skip, which never runs on a worker). The
+	// engine must not dispatch it over NATS; it must convert Payload into a
+	// TaskResult and feed it to Aggregate alongside collected results.
+
+	Describe("Pre-built results", func() {
+
+		It("does not dispatch pre-built tasks and merges them into Aggregate's input", func() {
+			normalPayload, _ := structpb.NewStruct(map[string]interface{}{"work": "yes"})
+			preBuilt := &pb.AnalysisResult{
+				ResultId:   "pre-built",
+				Attributes: map[string]string{"k": "v"},
+			}
+
+			var aggregated []analyzer.TaskResult
+			stub := &stubAnalyzer{
+				name: "classify",
+				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return []analyzer.Task{
+						{TaskID: "normal-1", TaskType: "classify", Payload: normalPayload},
+						{TaskID: "skip-1", TaskType: "classify", Payload: preBuilt, PreBuiltResult: true},
+					}, nil
+				},
+				aggregateFn: func(_ context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+					aggregated = results
+					return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
+				},
+			}
+			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes())
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-prebuilt-mixed",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Completed).To(ConsistOf("classify"))
+
+			// Only the normal task is dispatched/collected.
+			Expect(dispatcher.dispatchCount()).To(Equal(1))
+			Expect(dispatcher.dispatches[0].tasks).To(HaveLen(1))
+			Expect(dispatcher.dispatches[0].tasks[0].TaskID).To(Equal("normal-1"))
+			Expect(collector.collectCount()).To(Equal(1))
+			Expect(collector.collects[0].ExpectedIDs).To(ConsistOf("normal-1"))
+
+			// Aggregate sees both results: the collected one and the pre-built one.
+			Expect(aggregated).To(HaveLen(2))
+			var preBuiltResult *analyzer.TaskResult
+			for i := range aggregated {
+				if aggregated[i].TaskID == "skip-1" {
+					preBuiltResult = &aggregated[i]
+				}
+			}
+			Expect(preBuiltResult).NotTo(BeNil())
+			Expect(preBuiltResult.TaskType).To(Equal("classify"))
+			Expect(preBuiltResult.Error).NotTo(HaveOccurred())
+			gotResult, ok := preBuiltResult.Result.(*pb.AnalysisResult)
+			Expect(ok).To(BeTrue())
+			Expect(gotResult.GetResultId()).To(Equal("pre-built"))
+			Expect(gotResult.GetAttributes()).To(HaveKeyWithValue("k", "v"))
+		})
+
+		It("never dispatches or collects when all tasks are pre-built", func() {
+			preBuilt := &pb.AnalysisResult{ResultId: "only-prebuilt"}
+
+			var aggregated []analyzer.TaskResult
+			stub := &stubAnalyzer{
+				name: "classify",
+				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return []analyzer.Task{
+						{TaskID: "skip-only", TaskType: "classify", Payload: preBuilt, PreBuiltResult: true},
+					}, nil
+				},
+				aggregateFn: func(_ context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+					aggregated = results
+					return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
+				},
+			}
+			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes())
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-prebuilt-only",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Completed).To(ConsistOf("classify"))
+			Expect(dispatcher.dispatchCount()).To(Equal(0))
+			Expect(collector.collectCount()).To(Equal(0))
+
+			Expect(aggregated).To(HaveLen(1))
+			Expect(aggregated[0].TaskID).To(Equal("skip-only"))
+			Expect(aggregated[0].Error).NotTo(HaveOccurred())
+			gotResult, ok := aggregated[0].Result.(*pb.AnalysisResult)
+			Expect(ok).To(BeTrue())
+			Expect(gotResult.GetResultId()).To(Equal("only-prebuilt"))
 		})
 	})
 })

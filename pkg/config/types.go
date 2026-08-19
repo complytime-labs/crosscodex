@@ -468,6 +468,29 @@ type RelationshipConfig struct {
 // CandidateConfig configures candidate generation for prerequisite detection.
 type CandidateConfig struct {
 	Generators []CandidateGeneratorEntry `yaml:"generators" json:"generators"` // Ordered list of candidate generators
+	// MinEmbeddingCoverage is the minimum fraction [0.0, 1.0] of a job's
+	// controls that must have a corresponding embeddings row before candidate
+	// generation proceeds. Below this, candidate generation fails the stage
+	// loudly instead of silently producing near-empty candidates. Default: 0.8.
+	MinEmbeddingCoverage float64 `yaml:"min_embedding_coverage" json:"min_embedding_coverage"`
+	// EmbedModel is the embeddings model CandidateGenerator.Generate reads the
+	// similarity matrix for. Must be one of EmbeddingConfig.Models (validated
+	// in validateAnalysis) — a mismatch would silently read an empty
+	// similarity matrix instead of failing loudly.
+	EmbedModel string `yaml:"embed_model" json:"embed_model"`
+}
+
+// Validate checks CandidateConfig for consistency and required fields.
+// Returns ErrInvalidConfig on validation failure.
+func (c *CandidateConfig) Validate() error {
+	if c.MinEmbeddingCoverage < 0.0 || c.MinEmbeddingCoverage > 1.0 {
+		return fmt.Errorf("analysis.candidates.min_embedding_coverage %g must be in range [0.0, 1.0]: %w",
+			c.MinEmbeddingCoverage, ErrInvalidConfig)
+	}
+	if c.EmbedModel == "" {
+		return fmt.Errorf("analysis.candidates.embed_model must not be empty: %w", ErrInvalidConfig)
+	}
+	return nil
 }
 
 // CandidateGeneratorEntry configures a single candidate generator.

@@ -133,6 +133,9 @@ analysis:
       - CONTRIBUTES_TO
       - COMPLEMENTS
       - CONFLICTS_WITH
+  candidates:
+    min_embedding_coverage: 0.8
+    embed_model: snowflake-arctic-embed2
 worker:
   queue_group: "llm-workers"
 synthesis:

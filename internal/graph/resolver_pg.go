@@ -2,7 +2,6 @@ package graph
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -11,12 +10,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // PGResolver resolves resources from PostgreSQL.
 type PGResolver struct {
-	db     *sql.DB
+	conn   db.TenantConnection
 	tracer trace.Tracer
 
 	resolveCounter metric.Int64Counter
@@ -43,8 +44,8 @@ func WithPGResolverTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) P
 }
 
 // NewPGResolver creates a PostgreSQL resource resolver.
-func NewPGResolver(db *sql.DB, opts ...PGResolverOption) *PGResolver {
-	r := &PGResolver{db: db}
+func NewPGResolver(conn db.TenantConnection, opts ...PGResolverOption) *PGResolver {
+	r := &PGResolver{conn: conn}
 	for _, opt := range opts {
 		opt(r)
 	}
@@ -75,12 +76,33 @@ func (r *PGResolver) Resolve(ctx context.Context, ref ResourceRef) ([]byte, erro
 		return nil, fmt.Errorf("pg resolve: %w", err)
 	}
 
-	query := `SELECT result_data FROM analysis_results WHERE job_id = $1 AND analyzer_name = $2`
-	var data []byte
-	if err := r.db.QueryRowContext(ctx, query, jobID, analyzerName).Scan(&data); err != nil {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
 		r.recordResolve(ctx, start, 0, "error")
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("pg resolve job %s analyzer %s: %w", jobID, analyzerName, err)
+	}
+
+	tx, err := r.conn.Begin(ctx)
+	if err != nil {
+		r.recordResolve(ctx, start, 0, "error")
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("pg resolve job %s analyzer %s: %w", jobID, analyzerName, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	query := `SELECT result_data FROM analysis_results WHERE job_id = $1 AND analyzer_name = $2 AND tenant_id = $3`
+	var data []byte
+	if err := tx.QueryRow(ctx, query, jobID, analyzerName, tenantID).Scan(&data); err != nil {
+		r.recordResolve(ctx, start, 0, "error")
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("pg resolve job %s analyzer %s: %w", jobID, analyzerName, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		r.recordResolve(ctx, start, 0, "error")
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("pg resolve job %s analyzer %s: committing: %w", jobID, analyzerName, err)
 	}
 
 	r.recordResolve(ctx, start, int64(len(data)), "ok")

@@ -2,6 +2,7 @@ package classify
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
@@ -119,9 +121,10 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 			Confidence: 1.0,
 		}
 		return []analyzer.Task{{
-			TaskID:   taskID,
-			TaskType: analyzerName,
-			Payload:  result,
+			TaskID:         taskID,
+			TaskType:       analyzerName,
+			Payload:        result,
+			PreBuiltResult: true,
 		}}, nil
 	}
 
@@ -204,14 +207,23 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 	}}, nil
 }
 
-// Aggregate combines completed task results into a single output with metadata.
-func (a *ClassifyAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+// Aggregate combines completed task results into a single output with
+// metadata, and separately JSON-encodes one results.ClassifyResult per
+// successfully classified control into Output.ResultData. Classification
+// has no consensus step (one task per control, not one per model/sample):
+// each TaskResult maps directly to a control via
+// intanalyzer.StripTaskIDPrefix, using either the section auto-skip
+// *pb.AnalysisResult built by GenerateWork or the LLM path's
+// *structpb.Struct{"response": ...} parsed via ParseClassification.
+// Results that error or fail to parse are omitted from ResultData rather
+// than failing the whole stage.
+func (a *ClassifyAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer.TaskResult) (*analyzer.Output, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "classify.Aggregate")
 	defer span.End()
 
-	classifiedCount, skippedCount, errorCount := intanalyzer.CountResults(results)
+	classifiedCount, skippedCount, errorCount := intanalyzer.CountResults(taskResults)
 
-	total := len(results)
+	total := len(taskResults)
 
 	// Resolve prompt version for metadata.
 	promptVersion := ""
@@ -250,10 +262,51 @@ func (a *ClassifyAnalyzer) Aggregate(ctx context.Context, results []analyzer.Tas
 	)
 	span.SetStatus(codes.Ok, "")
 
+	// Build ResultData independently of the counting/metadata block above:
+	// one entry per successfully classified control, covering both
+	// GenerateWork producer shapes (section auto-skip and LLM-classified).
+	var classifyResults []results.ClassifyResult
+	for _, r := range taskResults {
+		if r.Error != nil {
+			continue
+		}
+		controlID, ok := intanalyzer.StripTaskIDPrefix(r.TaskID, analyzerName)
+		if !ok {
+			continue
+		}
+		if ar, isAnalysisResult := r.Result.(*pb.AnalysisResult); isAnalysisResult {
+			classifyResults = append(classifyResults, results.ClassifyResult{
+				ControlID: controlID,
+				Type:      ar.Attributes["type"],
+				Level:     ar.Attributes["level"],
+			})
+			continue
+		}
+		raw, ok := intanalyzer.ExtractResponseText(r.Result)
+		if !ok {
+			continue
+		}
+		parsed, err := ParseClassification(raw)
+		if err != nil {
+			continue // unparseable: omit rather than fail the whole stage
+		}
+		classifyResults = append(classifyResults, results.ClassifyResult{
+			ControlID: controlID,
+			Type:      parsed.Type.String(),
+			Level:     parsed.Level.String(),
+		})
+	}
+
+	resultData, err := json.Marshal(classifyResults)
+	if err != nil {
+		return nil, fmt.Errorf("classify.Aggregate: marshaling result data: %w", err)
+	}
+
 	return &analyzer.Output{
 		AnalyzerName: analyzerName,
 		Data:         nil, // Individual results are in the TaskResult slice
 		Metadata:     metadata,
+		ResultData:   resultData,
 	}, nil
 }
 

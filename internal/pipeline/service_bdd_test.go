@@ -9,13 +9,17 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"google.golang.org/protobuf/types/known/emptypb"
+
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -90,6 +94,7 @@ var _ = Describe("Service", func() {
 			newExecutorFakeStorage(),
 			cfg,
 			attCfg,
+			nil,
 		)
 
 		ctx = context.Background()
@@ -116,13 +121,105 @@ var _ = Describe("Service", func() {
 			job, err := store.GetJob(ctx, resp.Msg.JobId)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(job.TenantID).To(Equal("test-tenant"))
-			Expect(job.Status).To(Equal(pipeline.JobStatusPending))
+			// Job status is not asserted here: CreateJob spawns executeJob
+			// asynchronously, which transitions pending -> running immediately.
+			// The pending-at-creation guarantee is covered by resp.Msg.Status above.
 
 			stages, err := store.GetStages(ctx, resp.Msg.JobId)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(stages).NotTo(BeEmpty())
-			// Empty registry = no analyzers, only synthesis + graph
-			Expect(stages).To(HaveLen(2))
+			// Empty registry = no analyzers: candidate_generation + synthesis + graph.
+			Expect(stages).To(HaveLen(3))
+		})
+
+		It("inserts candidate_generation between pre-candidate and candidate-dependent stages", func() {
+			// Register a DAG whose topological order places the candidate-dependent
+			// analyzers (requires/relationship) after the pre-candidate ones.
+			orderingRegistry := analyzer.NewRegistry()
+			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, &stubAnalyzer{name: "classify"})).To(Succeed())
+			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, &stubAnalyzer{name: "embedding", deps: []string{"classify"}})).To(Succeed())
+			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, &stubAnalyzer{name: "artifacts", deps: []string{"classify"}})).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](orderingRegistry, &stubControlAnalyzer{name: "requires", deps: []string{"embedding"}})).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](orderingRegistry, &stubControlAnalyzer{name: "relationship", deps: []string{"embedding"}})).To(Succeed())
+
+			// A real engine avoids a nil-engine panic in the async executeJob;
+			// the stub analyzers generate no work, so the job completes quickly.
+			dispatcher := &executorTestDispatcher{}
+			collector := &executorTestCollector{}
+			taskTypes := map[string]natsbus.TaskType{
+				"classify":     "classify",
+				"embedding":    "embedding",
+				"artifacts":    "artifacts",
+				"requires":     "requires",
+				"relationship": "relate",
+			}
+			eng := analysis.New(orderingRegistry, dispatcher, collector, config.EngineConfig{
+				TaskTimeout:  time.Minute,
+				MaxRetries:   1,
+				RetryBackoff: time.Millisecond,
+			}, taskTypes)
+
+			orderingSvc := pipeline.New(
+				store,
+				eng,
+				orderingRegistry,
+				&fakeSynthesis{},
+				&fakeAttestor{},
+				pipelineattestation.NewConverter(),
+				&fakeNATSClient{},
+				newExecutorFakeStorage(),
+				config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour},
+				config.AttestationConfig{Enabled: false},
+				nil,
+			)
+
+			req := &pb.CreateJobRequest{
+				Config: &pb.JobConfig{
+					Source: &pb.JobConfig_DocumentContent{
+						DocumentContent: []byte("test"),
+					},
+					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+					CatalogName:   "test-catalog",
+				},
+			}
+
+			resp, err := orderingSvc.CreateJob(ctx, connect.NewRequest(req))
+			Expect(err).NotTo(HaveOccurred())
+
+			stages, err := store.GetStages(ctx, resp.Msg.JobId)
+			Expect(err).NotTo(HaveOccurred())
+
+			names := make([]string, len(stages))
+			for i, stage := range stages {
+				names[i] = stage.StageName
+			}
+
+			indexOf := func(name string) int {
+				for i, n := range names {
+					if n == name {
+						return i
+					}
+				}
+				return -1
+			}
+
+			Expect(indexOf("candidate_generation")).To(BeNumerically(">", indexOf("embedding")))
+			Expect(indexOf("candidate_generation")).To(BeNumerically(">", indexOf("artifacts")))
+			Expect(indexOf("candidate_generation")).To(BeNumerically("<", indexOf("requires")))
+			Expect(indexOf("candidate_generation")).To(BeNumerically("<", indexOf("relationship")))
+
+			// synthesis/graph remain the final two stages.
+			Expect(names[len(names)-2]).To(Equal("synthesis"))
+			Expect(names[len(names)-1]).To(Equal("graph"))
+
+			// Let the async job finish so it does not race teardown.
+			Eventually(func() pipeline.JobStatus {
+				j, err := store.GetJob(ctx, resp.Msg.JobId)
+				if err != nil {
+					return ""
+				}
+				return j.Status
+			}, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
 		})
 
 		It("returns InvalidArgument when tenant context is missing", func() {
@@ -251,6 +348,7 @@ var _ = Describe("Service", func() {
 					StageTimeout:      time.Hour,
 				},
 				config.AttestationConfig{Enabled: false},
+				nil,
 			)
 
 			createReq := &pb.CreateJobRequest{
@@ -376,9 +474,11 @@ var _ = Describe("Service", func() {
 			Expect(resp.Msg.NewJobId).NotTo(Equal("job-retry-new"))
 			Expect(resp.Msg.NewJobId).NotTo(BeEmpty())
 
-			newJob, err := store.GetJob(ctx, resp.Msg.NewJobId)
+			// A distinct new job exists in the store. Its status is not asserted:
+			// RetryJob spawns executeJob asynchronously, which transitions the new
+			// job away from pending immediately after creation.
+			_, err = store.GetJob(ctx, resp.Msg.NewJobId)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(newJob.Status).To(Equal(pipeline.JobStatusPending))
 		})
 	})
 
@@ -401,6 +501,7 @@ var _ = Describe("Service", func() {
 					StageTimeout:      time.Hour,
 				},
 				config.AttestationConfig{Enabled: false},
+				nil,
 			)
 
 			createReq := &pb.CreateJobRequest{
@@ -450,6 +551,7 @@ var _ = Describe("Service", func() {
 					StageTimeout:      time.Hour,
 				},
 				config.AttestationConfig{Enabled: false},
+				nil,
 			)
 
 			_, err = postStopSvc.CreateJob(ctx, connect.NewRequest(createReq))
@@ -476,6 +578,7 @@ var _ = Describe("Service", func() {
 					StageTimeout:      time.Hour,
 				},
 				config.AttestationConfig{Enabled: false},
+				nil,
 			)
 
 			createReq := &pb.CreateJobRequest{
