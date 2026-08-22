@@ -155,6 +155,8 @@ synthesis:
 pipeline:
   max_concurrent_jobs: 10
   stage_timeout: 30m
+  addr: ""
+  endpoint: ""
 role: all
 health:
   addr: ":9091"

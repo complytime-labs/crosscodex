@@ -658,6 +658,16 @@ func (c *WorkerConfig) Validate() error {
 type PipelineConfig struct {
 	MaxConcurrentJobs int           `yaml:"max_concurrent_jobs" json:"max_concurrent_jobs"`
 	StageTimeout      time.Duration `yaml:"stage_timeout" json:"stage_timeout"`
+	// Addr is the bind address for the standalone "pipeline" role's own
+	// Connect RPC listener (see internal/pipeline.Server). Empty by
+	// default -- only required when running --role pipeline.
+	Addr string `yaml:"addr" json:"addr"`
+	// Endpoint is where the standalone "gateway" role's Connect client
+	// dials to reach a separately-deployed pipeline role (see
+	// internal/gateway.NewConnectPipelineBackend). Empty by default --
+	// only required when running --role gateway with pipeline split into
+	// its own role. RoleAll ignores this and wires pipeline in-process.
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
 }
 
 // Validate checks PipelineConfig for consistency.

@@ -18,17 +18,17 @@ var _ = Describe("ResolveRole", func() {
 		},
 		Entry("all", config.RoleAll),
 		Entry("gateway", config.RoleGateway),
+		Entry("pipeline", config.RolePipeline),
 		Entry("worker", config.RoleWorker),
 		Entry("graph", config.RoleGraph),
 	)
 
-	DescribeTable("deployment-facing aliases resolve to gateway",
+	DescribeTable("deployment-facing aliases resolve to pipeline",
 		func(alias string) {
 			resolved, err := config.ResolveRole(alias)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(resolved).To(Equal(config.RoleGateway))
+			Expect(resolved).To(Equal(config.RolePipeline))
 		},
-		Entry("pipeline", "pipeline"),
 		Entry("analysis", "analysis"),
 		Entry("synthesis", "synthesis"),
 	)
@@ -37,7 +37,7 @@ var _ = Describe("ResolveRole", func() {
 		_, err := config.ResolveRole("nonexistent")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("nonexistent"))
-		Expect(err.Error()).To(ContainSubstring("all, gateway, worker, graph"))
+		Expect(err.Error()).To(ContainSubstring("all, gateway, pipeline, worker, graph"))
 		Expect(err).To(MatchError(config.ErrInvalidConfig))
 	})
 
@@ -56,10 +56,10 @@ var _ = Describe("Config.Role and Config.Health defaults", func() {
 	})
 
 	It("normalizes an alias supplied via CROSSCODEX_ROLE to its canonical role", func() {
-		GinkgoT().Setenv("CROSSCODEX_ROLE", "pipeline")
+		GinkgoT().Setenv("CROSSCODEX_ROLE", "analysis")
 		cfg, err := config.NewLoader().Load(context.Background())
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cfg.Role).To(Equal(config.RoleGateway))
+		Expect(cfg.Role).To(Equal(config.RolePipeline))
 	})
 
 	It("rejects an invalid role from CROSSCODEX_ROLE with an actionable, chain-matchable error", func() {
@@ -79,9 +79,9 @@ var _ = Describe("Config.Role and Config.Health defaults", func() {
 		},
 		Entry("all", config.RoleAll),
 		Entry("gateway", config.RoleGateway),
+		Entry("pipeline", config.RolePipeline),
 		Entry("worker", config.RoleWorker),
 		Entry("graph", config.RoleGraph),
-		Entry("pipeline alias", "pipeline"),
 		Entry("analysis alias", "analysis"),
 		Entry("synthesis alias", "synthesis"),
 	)

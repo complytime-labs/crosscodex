@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
@@ -40,6 +41,43 @@ var (
 	testAttestationPrivateKeyPath string
 	testAttestationPublicKeyPath  string
 )
+
+// testTLS* point at a single throwaway mTLS PKI bundle generated once per
+// suite run (see BeforeSuite) via internal/testcerts. The standalone
+// pipeline role now fails closed unless it resolves a mutual-TLS config with
+// a CA (attachPipeline in bootstrap.go), so every role=pipeline test that is
+// expected to get past that check references these paths. testServerTLS and
+// testClientTLS assemble the server-side and client-side config.TLSConfig
+// from them.
+var (
+	testTLSCAPath         string
+	testTLSServerCertPath string
+	testTLSServerKeyPath  string
+	testTLSClientCertPath string
+	testTLSClientKeyPath  string
+)
+
+// testServerTLS returns a mutual-TLS server config (CA + server cert/key)
+// for role=pipeline tests that bootstrap a real pipeline listener.
+func testServerTLS() config.TLSConfig {
+	return config.TLSConfig{
+		Mode: "mutual",
+		CA:   testTLSCAPath,
+		Cert: testTLSServerCertPath,
+		Key:  testTLSServerKeyPath,
+	}
+}
+
+// testClientTLS returns a mutual-TLS client config (CA + client cert/key)
+// for tests that dial a real pipeline listener with a client identity.
+func testClientTLS() config.TLSConfig {
+	return config.TLSConfig{
+		Mode: "mutual",
+		CA:   testTLSCAPath,
+		Cert: testTLSClientCertPath,
+		Key:  testTLSClientKeyPath,
+	}
+}
 
 // BeforeSuite generates the shared test attestation keypair once, mirroring
 // the key-generation code in
@@ -68,6 +106,19 @@ var _ = BeforeSuite(func() {
 		To(Succeed(), "write test attestation private key")
 	Expect(os.WriteFile(testAttestationPublicKeyPath, pubPEM, 0o644)).
 		To(Succeed(), "write test attestation public key")
+
+	// Generate one mTLS PKI bundle for the whole suite, mirroring the
+	// once-per-suite attestation keypair above. internal/testcerts wraps
+	// pkg/tlsconfig/pki and is the repo's standard test-cert tooling.
+	certDir := GinkgoT().TempDir()
+	pki, err := testcerts.Generate()
+	Expect(err).NotTo(HaveOccurred(), "generate test PKI")
+	Expect(pki.WriteToDir(certDir)).To(Succeed(), "write test PKI")
+	testTLSCAPath = filepath.Join(certDir, "ca.pem")
+	testTLSServerCertPath = filepath.Join(certDir, "server.pem")
+	testTLSServerKeyPath = filepath.Join(certDir, "server-key.pem")
+	testTLSClientCertPath = filepath.Join(certDir, "client.pem")
+	testTLSClientKeyPath = filepath.Join(certDir, "client-key.pem")
 })
 
 func TestCrosscodexdIntegrationBDD(t *testing.T) {
@@ -236,7 +287,7 @@ var _ = Describe("bootstrap with role=worker", func() {
 })
 
 var _ = Describe("bootstrap with role=gateway", func() {
-	It("builds a pipeline service and gateway server", func() {
+	It("builds a gateway server whose pipeline backend is a network client, not an in-process service", func() {
 		dsn := os.Getenv("TEST_DATABASE_DSN")
 		if dsn == "" {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
@@ -244,13 +295,85 @@ var _ = Describe("bootstrap with role=gateway", func() {
 
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RoleGateway
+		cfg.Server.Addr = "127.0.0.1:0"
+		cfg.Pipeline.Endpoint = "127.0.0.1:0" // construction only -- no call is made in this test
+		// attachGateway now requires a mutual-TLS pipeline-client identity to
+		// reach a standalone pipeline role; without it, construction fails closed.
+		cfg.TLS = testClientTLS()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		rt, err := bootstrap(ctx, cfg)
+		Expect(err).NotTo(HaveOccurred(), "bootstrap failed")
+		defer rt.close()
+
+		Expect(rt.gatewayServer).NotTo(BeNil(), "bootstrap did not construct a gateway server")
+		Expect(rt.pipelineService).To(BeNil(), "a standalone gateway role must not build an in-process pipeline.Service")
+		Expect(rt.pipelineServer).To(BeNil(), "a standalone gateway role must not own a pipeline listener")
+	})
+
+	It("fails closed when pipeline.endpoint is not configured", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RoleGateway
+		cfg.Server.Addr = "127.0.0.1:0"
+		cfg.Pipeline.Endpoint = ""
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := bootstrap(ctx, cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("pipeline.endpoint"))
+	})
+
+	It("fails closed when pipeline.endpoint is set but TLS is not mutual", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RoleGateway
+		cfg.Server.Addr = "127.0.0.1:0"
+		cfg.Pipeline.Endpoint = "127.0.0.1:0"
+		// No cfg.TLS: the standalone pipeline listener enforces mTLS with no
+		// plaintext fallback, so a gateway that can't present a client cert must
+		// fail closed at construction rather than only at the first RPC. This is
+		// the client-side mirror of attachPipeline's server-side precondition.
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := bootstrap(ctx, cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("mutual TLS"))
+	})
+})
+
+var _ = Describe("bootstrap with role=pipeline", func() {
+	It("builds a pipeline service and a standalone pipeline server", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
 		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
-		cfg.Server.Addr = "127.0.0.1:0"
+		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+		// attachPipeline now fails closed unless mutual TLS is configured.
+		cfg.TLS = testServerTLS()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -260,7 +383,32 @@ var _ = Describe("bootstrap with role=gateway", func() {
 		defer rt.close()
 
 		Expect(rt.pipelineService).NotTo(BeNil(), "bootstrap did not construct a pipeline service")
-		Expect(rt.gatewayServer).NotTo(BeNil(), "bootstrap did not construct a gateway server")
+		Expect(rt.pipelineServer).NotTo(BeNil(), "bootstrap did not construct a pipeline server")
+		Expect(rt.gatewayServer).To(BeNil(), "pipeline role must not construct a gateway server")
+	})
+
+	It("fails closed when pipeline.addr is not configured", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		cfg := baseTestConfig(dsn)
+		cfg.Role = config.RolePipeline
+		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Pipeline.Addr = ""
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := bootstrap(ctx, cfg)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("pipeline.addr"))
 	})
 
 	It("fails closed when attestation key paths are not configured", func() {
@@ -270,12 +418,16 @@ var _ = Describe("bootstrap with role=gateway", func() {
 		}
 
 		cfg := baseTestConfig(dsn)
-		cfg.Role = config.RoleGateway
+		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
 		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
 		cfg.Attestation.PrivateKeyPath = ""
 		cfg.Attestation.PublicKeyPath = ""
+		// Valid TLS so this test fails on the attestation precondition, not
+		// attachPipeline's new mutual-TLS check.
+		cfg.TLS = testServerTLS()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -292,12 +444,16 @@ var _ = Describe("bootstrap with role=gateway", func() {
 		}
 
 		cfg := baseTestConfig(dsn)
-		cfg.Role = config.RoleGateway
+		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
 		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 		cfg.Tenants.DefaultTenant = ""
+		// Valid TLS so this test fails on the tenant precondition, not
+		// attachPipeline's new mutual-TLS check.
+		cfg.TLS = testServerTLS()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -314,13 +470,17 @@ var _ = Describe("bootstrap with role=gateway", func() {
 		}
 
 		cfg := baseTestConfig(dsn)
-		cfg.Role = config.RoleGateway
+		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
 		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 		cfg.Storage.Objects.BasePath = ""
+		// Valid TLS so this test fails on the storage precondition, not
+		// attachPipeline's new mutual-TLS check.
+		cfg.TLS = testServerTLS()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

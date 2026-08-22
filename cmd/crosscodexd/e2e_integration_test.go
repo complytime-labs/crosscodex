@@ -192,8 +192,8 @@ func e2eAnalysisConfig() config.AnalysisConfig {
 // ("It looks like you are calling RunSpecs more than once" if a second
 // `func TestXxx(t *testing.T) { RunSpecs(...) }` is added here), so this
 // file deliberately has no testing.T entry point of its own.
-var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=gateway + role=worker over real NATS and Postgres", func() {
-	It("completes a job created through the gateway role using a separately-bootstrapped worker role", func() {
+var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + role=worker over real NATS and Postgres", func() {
+	It("completes a job created through the pipeline role using a separately-bootstrapped worker role", func() {
 		dsn := os.Getenv("TEST_DATABASE_DSN")
 		if dsn == "" {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
@@ -239,14 +239,20 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=gateway + rol
 			return cfg
 		}
 
-		gwCfg := configureRole(config.RoleGateway)
+		pipelineCfg := configureRole(config.RolePipeline)
+		pipelineCfg.Pipeline.Addr = "127.0.0.1:0"
+		// attachPipeline fails closed without mutual TLS. This test drives the
+		// pipeline service in-process (no network dial), so only the server
+		// side needs configuring; the worker role never goes through
+		// attachPipeline.
+		pipelineCfg.TLS = testServerTLS()
 		workerCfg := configureRole(config.RoleWorker)
 
-		gwRT, err := bootstrap(ctx, gwCfg, WithLLMClient(fakeLLM))
-		Expect(err).NotTo(HaveOccurred(), "bootstrap gateway role")
-		defer gwRT.close()
-		Expect(gwRT.start(ctx)).To(Succeed(), "start gateway role")
-		defer func() { _ = gwRT.stop(context.Background()) }()
+		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
+		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
+		defer pipelineRT.close()
+		Expect(pipelineRT.start(ctx)).To(Succeed(), "start pipeline role")
+		defer func() { _ = pipelineRT.stop(context.Background()) }()
 
 		workerRT, err := bootstrap(ctx, workerCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap worker role")
@@ -288,14 +294,14 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=gateway + rol
 		ctxTenant, err := tenant.WithTenant(ctx, tenantID)
 		Expect(err).NotTo(HaveOccurred())
 
-		resp, err := gwRT.pipelineService.CreateJob(ctxTenant, connect.NewRequest(&pb.CreateJobRequest{
+		resp, err := pipelineRT.pipelineService.CreateJob(ctxTenant, connect.NewRequest(&pb.CreateJobRequest{
 			Config: &pb.JobConfig{Source: &pb.JobConfig_CatalogId{CatalogId: catalogID}},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		jobID := resp.Msg.JobId
 
 		Eventually(func() pb.JobStatus {
-			getResp, err := gwRT.pipelineService.GetJob(ctxTenant, connect.NewRequest(&pb.GetJobRequest{JobId: jobID}))
+			getResp, err := pipelineRT.pipelineService.GetJob(ctxTenant, connect.NewRequest(&pb.GetJobRequest{JobId: jobID}))
 			if err != nil {
 				return pb.JobStatus_JOB_STATUS_UNSPECIFIED
 			}
@@ -304,7 +310,7 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=gateway + rol
 			Or(Equal(pb.JobStatus_JOB_STATUS_COMPLETED), Equal(pb.JobStatus_JOB_STATUS_FAILED)),
 		)
 
-		getResp, err := gwRT.pipelineService.GetJob(ctxTenant, connect.NewRequest(&pb.GetJobRequest{JobId: jobID}))
+		getResp, err := pipelineRT.pipelineService.GetJob(ctxTenant, connect.NewRequest(&pb.GetJobRequest{JobId: jobID}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(getResp.Msg.GetJob().GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_COMPLETED),
 			fmt.Sprintf("job should complete via the worker role dispatching analyzer work over NATS (error: %s)", getResp.Msg.GetJob().GetError().GetMessage()))

@@ -46,6 +46,8 @@ func WithLLMClient(client llmclient.Client) ResourceOption {
 func resourcesForRole(role string) requiredResources {
 	switch role {
 	case config.RoleGateway:
+		return requiredResources{db: true}
+	case config.RolePipeline:
 		return requiredResources{db: true, nats: true, llm: true}
 	case config.RoleWorker:
 		return requiredResources{nats: true, llm: true}
