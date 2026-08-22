@@ -109,7 +109,7 @@ func buildSynthesisInputs(
 			SimilarityMedian:      median,
 			SimilarityVar:         variance,
 			SimilarityCount:       count,
-			ConsensusRelationship: "requires",
+			ConsensusRelationship: synthesis.ConsensusRequires,
 			ContributionType:      "requires",
 			ConfidenceFraction:    r.Confidence,
 			Unanimous:             r.Unanimous,

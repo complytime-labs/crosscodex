@@ -652,6 +652,27 @@ var _ = Describe("Assessor", func() {
 			Expect(diag.Severity).To(Equal(synthesis.SeverityWarn))
 			Expect(diag.Message).To(ContainSubstring("low actionable coverage"))
 		})
+
+		It("counts requires-derived rows as actionable even when \"requires\" is absent from actionableTypes", func() {
+			// requires-derived rows always carry ConsensusRelationship
+			// synthesis.ConsensusRequires (see internal/pipeline/synthesis_inputs.go),
+			// which can never appear in the configured actionableTypes list --
+			// pkg/config validates that list against the 8-value NIST IR 8477
+			// relationship-type enum, which has no "requires" entry. A requires
+			// relationship is always actionable regardless of what's configured.
+			// 2 distinct sources, 1 has an actionable requires match → 50% >= 30%
+			assessor = synthesis.NewAssessor(cfg, []string{"EQUIVALENT"}) // "requires" deliberately absent
+			rows := []synthesis.SynthesisRow{
+				{SourceID: "s1", TargetID: "t1", SimilarityMean: 80, ConsensusRelationship: synthesis.ConsensusRequires, ViabilityWeight: 50.0, ConfidenceFraction: 0.8, Unanimous: true},
+				{SourceID: "s2", TargetID: "t2", SimilarityMean: 70, ConsensusRelationship: "NO_RELATIONSHIP", ViabilityWeight: 0.0, ConfidenceFraction: 0.5, Unanimous: true},
+			}
+
+			report := assessor.Assess(ctx, rows)
+			diag := findDiagnostic(report, "actionable_coverage")
+			Expect(diag).NotTo(BeNil())
+			Expect(diag.Severity).To(Equal(synthesis.SeverityGood))
+			Expect(diag.Message).NotTo(ContainSubstring("low"))
+		})
 	})
 
 	Context("edge cases", func() {

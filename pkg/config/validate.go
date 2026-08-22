@@ -57,6 +57,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := validateSynthesis(&cfg.Synthesis, tracker); err != nil {
 		return err
 	}
+	if err := validateRole(cfg, tracker); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -365,6 +368,21 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		}
 	}
 
+	return nil
+}
+
+func validateRole(cfg *Config, tracker *sourceTracker) error {
+	if cfg.Role == "" {
+		return nil
+	}
+	canonical, err := ResolveRole(cfg.Role)
+	if err != nil {
+		// %w (not %s) preserves the wrapped ErrInvalidConfig so
+		// errors.Is(result, ErrInvalidConfig) still matches -- every other
+		// validator in this file relies on that same chain.
+		return fmt.Errorf("%w%s", err, formatSource(tracker, "role"))
+	}
+	cfg.Role = canonical
 	return nil
 }
 

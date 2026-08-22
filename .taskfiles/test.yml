@@ -32,9 +32,7 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       # testgrpc contains only integration_grpc-tagged tests requiring a live
       # gRPC server — skip it during unit runs; use task test:integration:grpc.
-      # crosscodexd's only test file is integration-tagged (needs a live DB) —
-      # skip it here too; it's covered by task test:integration.
-      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --skip-package testgrpc,crosscodexd --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/... ./cmd/...
+      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --skip-package testgrpc --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/... ./cmd/...
       - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/ginkgo-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
 
   fuzz:

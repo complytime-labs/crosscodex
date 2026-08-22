@@ -153,27 +153,6 @@ func embeddedAuthRegistry() (*authn.Registry, error) {
 	)
 }
 
-type dbAdminBackend struct {
-	pool dbpkg.Pool
-}
-
-func (b *dbAdminBackend) HealthCheck(ctx context.Context, _ *connectrpc.Request[pb.HealthCheckRequest]) (*connectrpc.Response[pb.HealthCheckResponse], error) {
-	healthStatus, err := b.pool.Health(ctx)
-	if err != nil {
-		return connectrpc.NewResponse(&pb.HealthCheckResponse{
-			Status: pb.HealthStatus_HEALTH_STATUS_UNHEALTHY,
-		}), nil
-	}
-	if !healthStatus.Connected {
-		return connectrpc.NewResponse(&pb.HealthCheckResponse{
-			Status: pb.HealthStatus_HEALTH_STATUS_UNHEALTHY,
-		}), nil
-	}
-	return connectrpc.NewResponse(&pb.HealthCheckResponse{
-		Status: pb.HealthStatus_HEALTH_STATUS_HEALTHY,
-	}), nil
-}
-
 // localIngestionBackend stores raw document content to local storage.
 type localIngestionBackend struct {
 	storage storage.Provider
@@ -570,7 +549,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		gateway.WithCatalogBackend(catalogSvc),
 		gateway.WithIngestionBackend(localIngestion),
 		gateway.WithPipelineBackend(localPipeline),
-		gateway.WithAdminBackend(&dbAdminBackend{pool: pool}),
+		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(pool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(logger),
 	)

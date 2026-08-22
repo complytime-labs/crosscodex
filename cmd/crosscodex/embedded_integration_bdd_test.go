@@ -504,7 +504,7 @@ var _ = Describe("Bug record #4 — startup health vs DB reachability", func() {
 	It("#4 TRIPWIRE: health stays green after the DB pool is closed", func() {
 		// TRIPWIRE for bug #4: when this fails, the health gate touches the DB —
 		// flip the PIt above and delete this. Gate uses the gateway Health RPC,
-		// not dbAdminBackend.HealthCheck: healthCheck (cmd/crosscodex/connect.go).
+		// not gateway.PoolAdminBackend.HealthCheck: healthCheck (cmd/crosscodex/connect.go).
 		ctx := context.Background()
 		state, cleanup := startTestDaemon()
 		defer cleanup()

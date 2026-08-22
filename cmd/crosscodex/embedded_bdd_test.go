@@ -176,9 +176,9 @@ var _ = Describe("embeddedAuthRegistry", func() {
 	})
 })
 
-var _ = Describe("dbAdminBackend", func() {
+var _ = Describe("gateway.PoolAdminBackend", func() {
 	It("implements gateway.AdminBackend", func() {
-		var _ gateway.AdminBackend = (*dbAdminBackend)(nil)
+		var _ gateway.AdminBackend = (*gateway.PoolAdminBackend)(nil)
 	})
 })
 
