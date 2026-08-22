@@ -20,8 +20,8 @@ Usage:
   crosscodexd [--role ROLE] [command]
 
 Flags:
-  --role ROLE   Service role to run: all, gateway, worker, graph
-                (also: pipeline, analysis, synthesis -- aliases for gateway)
+  --role ROLE   Service role to run: all, gateway, pipeline, worker, graph
+                (also: analysis, synthesis -- aliases for pipeline)
                 Overrides the "role" config value / CROSSCODEX_ROLE env var.
                 Defaults to "all".
 
