@@ -77,6 +77,4 @@ type CollectionHandle struct {
 	mu          *sync.Mutex
 	subject     string
 	Req         CollectRequest // Exported for test mocks
-	taskMap     map[string]*analyzer.Task
-	retryCounts map[string]int
 }

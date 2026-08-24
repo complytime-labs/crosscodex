@@ -161,18 +161,10 @@ func (d *engineTestDispatcher) dispatchCount() int {
 
 // engineTestCollector returns configurable results for engine tests.
 type engineTestCollector struct {
-	mu        sync.Mutex
-	collects  []analysis.CollectRequest
-	resultsFn func(req analysis.CollectRequest) ([]analyzer.TaskResult, error)
-}
-
-func (c *engineTestCollector) Collect(ctx context.Context, req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
-	// Backward-compatible single-call interface - delegate to two-phase.
-	handle, err := c.PrepareCollect(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return c.AwaitResults(ctx, handle)
+	mu         sync.Mutex
+	collects   []analysis.CollectRequest
+	resultsFn  func(req analysis.CollectRequest) ([]analyzer.TaskResult, error)
+	prepareErr error
 }
 
 func (c *engineTestCollector) PrepareCollect(ctx context.Context, req analysis.CollectRequest) (*analysis.CollectionHandle, error) {
@@ -180,6 +172,10 @@ func (c *engineTestCollector) PrepareCollect(ctx context.Context, req analysis.C
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.collects = append(c.collects, req)
+
+	if c.prepareErr != nil {
+		return nil, c.prepareErr
+	}
 
 	// Return a handle that carries the request so AwaitResults can generate results.
 	return &analysis.CollectionHandle{
@@ -501,6 +497,32 @@ var _ = Describe("Engine", func() {
 			Expect(result.Failed).To(ConsistOf("classify"))
 			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("dispatch failed")))
 			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("NATS connection lost")))
+		})
+
+		It("marks analyzer as failed on PrepareCollect error without dispatching", func() {
+			tasks := makeTasks("classify", 1)
+			stub := newStubWithTasks("classify", tasks)
+			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+
+			collector.prepareErr = fmt.Errorf("subscribe failed")
+
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes())
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-prepare-err",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Failed).To(ConsistOf("classify"))
+			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("prepare collect failed")))
+			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("subscribe failed")))
+
+			// PrepareCollect must run BEFORE Dispatch: when it fails, no task is
+			// ever dispatched. This locks the ordering the two-phase refactor
+			// exists to guarantee (subscribe before publish).
+			Expect(dispatcher.dispatchCount()).To(Equal(0))
 		})
 
 		It("marks analyzer as failed and skips dependents on Aggregate error", func() {

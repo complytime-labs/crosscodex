@@ -57,7 +57,6 @@ testcases:
       - type: exec
         script: |
           # Poll GetJob to completion (bounded retry for real LLM on CPU)
-          DSN_UNUSED=1
           for i in $(seq 1 120); do
             response=$(curl -sS --fail-with-body \
               --cacert {{.ca_cert}} --cert {{.client_cert}} --key {{.client_key}} \

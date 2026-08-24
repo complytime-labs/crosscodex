@@ -41,6 +41,8 @@ DROP FUNCTION IF EXISTS prevent_completed_job_delete();
 DROP FUNCTION IF EXISTS prevent_completed_job_mutation();
 
 -- RLS policies
+DROP POLICY IF EXISTS tenant_isolation ON relationship_candidates;
+DROP POLICY IF EXISTS tenant_isolation ON analysis_results;
 DROP POLICY IF EXISTS tenant_isolation ON requires_consensus;
 DROP POLICY IF EXISTS tenant_isolation ON requires_votes;
 DROP POLICY IF EXISTS tenant_isolation ON requires_candidates;
@@ -61,11 +63,12 @@ REVOKE SELECT, INSERT, UPDATE, DELETE
 DROP ROLE IF EXISTS app_user;
 
 -- Tables (reverse dependency order)
+DROP TABLE IF EXISTS relationship_candidates;
+DROP TABLE IF EXISTS analysis_results;
 DROP TABLE IF EXISTS requires_consensus;
 DROP TABLE IF EXISTS requires_votes;
 DROP TABLE IF EXISTS requires_candidates;
 DROP TABLE IF EXISTS controls;
-DROP INDEX IF EXISTS idx_embeddings_vector;
 DROP TABLE IF EXISTS embeddings;
 DROP TABLE IF EXISTS vote_summaries;
 DROP TABLE IF EXISTS classifications;

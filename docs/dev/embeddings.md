@@ -13,15 +13,9 @@ Every similarity query is model-scoped via `WHERE model = $model`, so mixed vect
 
 This design decouples schema evolution from model selection. See [ADR 0001](adr/0001-model-agnostic-embedding-storage.md) for the decision context and tradeoffs.
 
-Migration `003` implemented the dimensionless column by dropping the ivfflat index and changing `vector(2000)` to `vector`:
+The initial schema (`001_initial_schema`) creates `embeddings.vector` as a dimensionless `vector` column with no ivfflat index, so a fresh install stores any model's vectors directly with no further migration. A fixed-width column such as `vector(2000)` was rejected precisely because it would reject vectors of any other dimension.
 
-```sql
--- 003_embeddings_dimensionless.up.sql
-DROP INDEX IF EXISTS idx_embeddings_vector;
-ALTER TABLE embeddings ALTER COLUMN vector TYPE vector USING vector::vector;
-```
-
-The migration runs automatically via `MigrateUp` (embedded `*.sql` files are auto-discovered through `//go:embed`). See [Database Migrations](migrations.md) for migration authoring and runtime behavior.
+Migrations run automatically via `MigrateUp` (embedded `*.sql` files are auto-discovered through `//go:embed`). See [Database Migrations](migrations.md) for migration authoring and runtime behavior.
 
 ## Switching or Adding an Embedding Model
 
@@ -60,13 +54,7 @@ This removes all rows matching the tenant, catalog, and model. See `pkg/vectordb
 
 ## Upgrade Cycle
 
-| Operation                     | Migration Required | Notes                                                                                       |
-|-------------------------------|--------------------|---------------------------------------------------------------------------------------------|
-| Switch embedding models       | No                 | Edit config, re-run analysis. Old and new model rows coexist.                               |
-| Rollback migration `003` down | No (unless data)   | Restores `vector(2000)` with ivfflat. Fails if any row has dimension ≠ 2000.                 |
-| First-time upgrade to `003`   | Auto               | `MigrateUp` applies `003_model_agnostic_embeddings.up.sql` on next startup if not applied.  |
-
-Migration `003` runs automatically when the application starts if the schema version is below `003`. The migration system is covered in [Database Migrations](migrations.md).
+Switching or adding an embedding model requires no schema migration: edit the config, re-run analysis, and old and new model rows coexist in the same table. The dimensionless `vector` column ships in the initial schema, so a fresh install accepts any model's vectors without further migration. The migration system is covered in [Database Migrations](migrations.md).
 
 ## At-Scale Indexing
 

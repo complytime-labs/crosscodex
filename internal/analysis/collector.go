@@ -22,8 +22,11 @@ import (
 )
 
 // Collector subscribes to result subjects and collects task results.
+//
+// Collection is two-phase to avoid a publish-before-subscribe race in embedded
+// NATS: PrepareCollect establishes the subscription and returns a handle, the
+// caller dispatches tasks, then AwaitResults waits on the handle.
 type Collector interface {
-	Collect(ctx context.Context, req CollectRequest) ([]analyzer.TaskResult, error)
 	PrepareCollect(ctx context.Context, req CollectRequest) (*CollectionHandle, error)
 	AwaitResults(ctx context.Context, handle *CollectionHandle) ([]analyzer.TaskResult, error)
 }
@@ -90,16 +93,6 @@ func WithCollectorLogger(logger *slog.Logger) CollectorOption {
 			c.logger = logger
 		}
 	}
-}
-
-func (c *NATSCollector) Collect(ctx context.Context, req CollectRequest) ([]analyzer.TaskResult, error) {
-	// Backward-compatible single-call interface implemented via the two-phase approach.
-	// Direct callers should migrate to PrepareCollect + AwaitResults to avoid races.
-	handle, err := c.PrepareCollect(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return c.AwaitResults(ctx, handle)
 }
 
 // PrepareCollect establishes the result subscription and returns a handle for later awaiting.
@@ -278,8 +271,6 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 		mu:          &mu,
 		subject:     subject,
 		Req:         req,
-		taskMap:     taskMap,
-		retryCounts: retryCounts,
 	}, nil
 }
 

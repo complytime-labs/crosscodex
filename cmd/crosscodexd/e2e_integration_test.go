@@ -28,10 +28,12 @@ import (
 // e2eModel constant.
 const e2eModel = "e2e-test-model"
 
-// e2eEmbeddingDim mirrors the fixed pgvector column width
-// (migrations/001_initial_schema.up.sql: "vector vector(2000)"), reproduced
-// here rather than imported since it's a test-local constant in the
-// internal/pipeline package, not an exported production value.
+// e2eEmbeddingDim is the embedding width this suite generates. The
+// embeddings.vector column is dimensionless (see
+// migrations/001_initial_schema.up.sql), so any consistent width works; this
+// mirrors internal/pipeline/pipeline_e2e_integration_test.go's constant,
+// reproduced here rather than imported since it's a test-local value in that
+// package, not an exported production value.
 const e2eEmbeddingDim = 2000
 
 // deterministicLLMClient is a hermetic fake llmclient.Client, copied

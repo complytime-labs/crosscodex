@@ -8,6 +8,22 @@ E2E_DIR="$TEST_DIR/e2e"
 
 mkdir -p "$E2E_DIR/config/crosscodex" "$E2E_DIR/objects" "$E2E_DIR/nats" "$E2E_DIR/attestation"
 
+# Resolve the daemon's static config (mode-dependent) and parse its bind address
+# once. The port guard and health poll below both key off SERVER_ADDR so they
+# cannot drift from server.addr in the config the daemon actually loads.
+if [ "$MODE" = "llm" ]; then
+  SRC_CONFIG="$ROOT_DIR/test/e2e/crosscodexd.e2e.llm.yaml"
+else
+  SRC_CONFIG="$ROOT_DIR/test/e2e/crosscodexd.e2e.yaml"
+fi
+SERVER_ADDR=$(sed -nE 's/^[[:space:]]+addr:[[:space:]]*"?([^"]+)"?[[:space:]]*$/\1/p' "$SRC_CONFIG")
+if [ -z "$SERVER_ADDR" ]; then
+  echo "ERROR: could not parse server.addr from $SRC_CONFIG" >&2
+  exit 1
+fi
+SERVER_HOST="${SERVER_ADDR%:*}"
+SERVER_PORT="${SERVER_ADDR##*:}"
+
 # Pre-start cleanup: kill any prior daemon tracked by pidfile
 if [ -f "$E2E_DIR/daemon.pid" ]; then
   OLD_PID=$(cat "$E2E_DIR/daemon.pid")
@@ -30,19 +46,15 @@ if [ -f "$E2E_DIR/daemon.pid" ]; then
   rm -f "$E2E_DIR/daemon.pid"
 fi
 
-# Port guard: ensure 18443 is not bound by a foreign process
-if timeout 1 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/18443' 2>/dev/null; then
-  echo "ERROR: Port 18443 is already in use by another process." >&2
+# Port guard: ensure the daemon's bind port is not held by a foreign process
+if timeout 1 bash -c "cat < /dev/null > /dev/tcp/$SERVER_HOST/$SERVER_PORT" 2>/dev/null; then
+  echo "ERROR: Port $SERVER_PORT is already in use by another process." >&2
   echo "Cannot start daemon. Kill the foreign process first." >&2
   exit 1
 fi
 
-# Copy static config to XDG_CONFIG_HOME location (mode-dependent)
-if [ "$MODE" = "llm" ]; then
-  cp "$ROOT_DIR/test/e2e/crosscodexd.e2e.llm.yaml" "$E2E_DIR/config/crosscodex/config.yaml"
-else
-  cp "$ROOT_DIR/test/e2e/crosscodexd.e2e.yaml" "$E2E_DIR/config/crosscodex/config.yaml"
-fi
+# Copy static config to XDG_CONFIG_HOME location (SRC_CONFIG resolved above)
+cp "$SRC_CONFIG" "$E2E_DIR/config/crosscodex/config.yaml"
 
 # Read base DSN from environment (set by taskfile)
 DSN="${CROSSCODEX_DATABASE_DSN:?CROSSCODEX_DATABASE_DSN not set}"
@@ -85,7 +97,7 @@ for i in $(seq 1 60); do
     exit 1
   fi
   # Check if health endpoint responds
-  if curl -sf --cacert "$CERTS_DIR/ca.pem" https://127.0.0.1:18443/healthz >/dev/null 2>&1; then
+  if curl -sf --cacert "$CERTS_DIR/ca.pem" "https://$SERVER_ADDR/healthz" >/dev/null 2>&1; then
     echo "Daemon ready."
     exit 0
   fi

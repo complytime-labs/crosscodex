@@ -69,6 +69,7 @@ jobs:
           echo "  nats (FIPS matrix) ............... integration-nats"
           echo "  authn (FIPS matrix) .............. integration-authn"
           echo "  llm (Ollama + LiteLLM + Jaeger) .. integration-llm"
+          echo "  e2e ingest -> AGE (Venom, no LLM)  e2e-venom"
           echo "::endgroup::"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,6 +103,46 @@ jobs:
 
       - name: Run worker integration tests
         run: task test:integration:worker
+
+      - name: Save DB image for cache
+        if: always()
+        run: |
+          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
+          fi
+
+  e2e-venom:
+    needs: [build]
+    runs-on: ubuntu-latest
+    env:
+      CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ github.token }}
+          generate-test-certs: "true"
+
+      - uses: ./.github/actions/integration-setup
+        with:
+          image-tar-path: /tmp/crosscodex-test-db.tar
+          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+
+      # The hermetic Venom suite runs host pg_isready/psql over TCP mTLS, which
+      # ships with neither the runner image nor the shared actions above.
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Install Venom
+        uses: ./.github/actions/venom-setup
+
+      - name: Run hermetic ingest-to-AGE E2E (Venom, no LLM)
+        run: task test:e2e:venom
 
       - name: Save DB image for cache
         if: always()
@@ -229,6 +270,11 @@ jobs:
 
       - name: Run gateway upload throughput benchmark
         run: task test:stress:bench
+
+      # The Layer 2 stress suite drives the venom binary; the DB-truth checks run
+      # psql via podman exec, so only venom is needed on the host here.
+      - name: Install Venom
+        uses: ./.github/actions/venom-setup
 
       - name: Run full-stack Venom round-trip stress tests (Layer 2, #112)
         run: task test:stress:e2e

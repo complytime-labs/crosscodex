@@ -322,7 +322,7 @@ Run `task --list` for all available commands including integration tests and dev
 |-----------------|-------------------------|-----------------------------------------|
 | **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)            |
 | **Integration** | Go testing + containers | Available (`task test:integration:all`) |
-| **E2E**         | Venom                   | Planned                                 |
+| **E2E**         | Venom                   | Available (`task test:e2e`)             |
 
 #### Stress Tests (#112)
 
@@ -354,6 +354,23 @@ task test:integration:embedded
 ```
 
 **Build tag:** Embedded e2e tests compile only under `-tags integration` and require `TEST_DATABASE_DSN`; the suite skips cleanly when it is unset. The podman `TMPDIR` / storage-driver notes under **Stress Tests** apply here too (environment-only, not baked into the Taskfile).
+
+#### Venom E2E Tests (#18)
+
+Venom E2E suites exercise the `crosscodexd` daemon as a black box: they start the daemon and its PostgreSQL container, drive inline OSCAL through the mTLS gateway, and assert the resulting AGE graph.
+
+```bash
+# Run the hermetic E2E suite (Tier A, no LLM required)
+task test:e2e            # alias for test:e2e:venom
+task test:e2e:venom
+
+# Run the opt-in suite that adds real LLM analysis (Tier B)
+task test:e2e:venom:llm
+```
+
+**Tiers:** `test:e2e:venom` (Tier A) is hermetic and asserts the OSCAL-to-AGE structural surface without an LLM. `test:e2e:venom:llm` (Tier B) is opt-in and additionally spins up Ollama and LiteLLM to exercise real LLM analysis.
+
+**Requirements:** both suites need `venom`, `psql`, and `pg_isready` on the host plus a podman (or docker) runtime; the LLM tier also needs `jq`. The podman `TMPDIR` / storage-driver notes under **Stress Tests** apply here too.
 
 ### Contributing
 
