@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -20,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
+	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
@@ -153,28 +153,6 @@ func embeddedAuthRegistry() (*authn.Registry, error) {
 	)
 }
 
-// localIngestionBackend stores raw document content to local storage.
-type localIngestionBackend struct {
-	storage storage.Provider
-}
-
-func (b *localIngestionBackend) ConvertDocument(ctx context.Context, req *connectrpc.Request[pb.ConvertDocumentRequest]) (*connectrpc.Response[pb.ConvertDocumentResponse], error) {
-	src, ok := req.Msg.Source.(*pb.ConvertDocumentRequest_Content)
-	if !ok {
-		return nil, connectrpc.NewError(connectrpc.CodeUnimplemented, errors.New("only inline content is supported; source_uri is not implemented"))
-	}
-	content := src.Content
-
-	key := fmt.Sprintf("documents/%s.json", uuid.New().String())
-	if err := b.storage.Put(ctx, key, bytes.NewReader(content)); err != nil {
-		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("store document: %w", err))
-	}
-
-	return connectrpc.NewResponse(&pb.ConvertDocumentResponse{
-		DocumentId: key,
-		Status:     pb.JobStatus_JOB_STATUS_COMPLETED,
-	}), nil
-}
 
 // localPipelineBackend records pipeline jobs via the pipeline store but does
 // not execute them. This is the embedded-mode equivalent of pipeline.Service
@@ -529,7 +507,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 	)
 
 	// Create local ingestion backend (stores raw content to local storage)
-	localIngestion := &localIngestionBackend{storage: localStorage}
+	localIngestion := backend.NewPassthroughIngestion(localStorage)
 
 	// Create local pipeline backend (records jobs, no execution)
 	tenantConn := dbpkg.NewTenantPool(pool)

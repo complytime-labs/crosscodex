@@ -226,7 +226,7 @@ analysis:
     max_tokens: 20
   embedding:
     enabled: true
-    models: ["snowflake-arctic-embed2"]  # Embedding model names
+    models: ["snowflake-arctic-embed2"]  # Embedding model names; storage is model-agnostic (see docs/dev/embeddings.md), switching models needs no schema migration
     max_chars: 1500                      # Max runes before truncation
     batch_size: 50                       # Controls per batch call
   relationship:

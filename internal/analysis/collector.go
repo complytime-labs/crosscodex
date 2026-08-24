@@ -24,6 +24,8 @@ import (
 // Collector subscribes to result subjects and collects task results.
 type Collector interface {
 	Collect(ctx context.Context, req CollectRequest) ([]analyzer.TaskResult, error)
+	PrepareCollect(ctx context.Context, req CollectRequest) (*CollectionHandle, error)
+	AwaitResults(ctx context.Context, handle *CollectionHandle) ([]analyzer.TaskResult, error)
 }
 
 // NATSCollector implements Collector using a natsbus.Client.
@@ -91,8 +93,19 @@ func WithCollectorLogger(logger *slog.Logger) CollectorOption {
 }
 
 func (c *NATSCollector) Collect(ctx context.Context, req CollectRequest) ([]analyzer.TaskResult, error) {
-	start := time.Now()
-	ctx, span := telemetry.StartSpan(c.tracer, ctx, "analysis.CollectResults")
+	// Backward-compatible single-call interface implemented via the two-phase approach.
+	// Direct callers should migrate to PrepareCollect + AwaitResults to avoid races.
+	handle, err := c.PrepareCollect(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return c.AwaitResults(ctx, handle)
+}
+
+// PrepareCollect establishes the result subscription and returns a handle for later awaiting.
+// Call this BEFORE dispatching tasks to avoid publish-before-subscribe races in embedded NATS.
+func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) (*CollectionHandle, error) {
+	_, span := telemetry.StartSpan(c.tracer, ctx, "analysis.PrepareCollect")
 	defer span.End()
 
 	span.SetAttributes(
@@ -103,14 +116,14 @@ func (c *NATSCollector) Collect(ctx context.Context, req CollectRequest) ([]anal
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("collect results: %w: %w", ErrNoTenant, err)
+		return nil, fmt.Errorf("prepare collect: %w: %w", ErrNoTenant, err)
 	}
 
 	subject, err := natsbus.ResultSubject(tenantID, req.TaskType, req.JobID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("collect results: building subject: %w", err)
+		return nil, fmt.Errorf("prepare collect: building subject: %w", err)
 	}
 
 	// State tracking
@@ -119,8 +132,7 @@ func (c *NATSCollector) Collect(ctx context.Context, req CollectRequest) ([]anal
 		pending[id] = true
 	}
 	retryCounts := make(map[string]int)
-	results := make([]analyzer.TaskResult, 0, len(req.ExpectedIDs))
-	taskMap := make(map[string]*analyzer.Task) // Store original tasks for retry
+	taskMap := make(map[string]*analyzer.Task)
 	for i := range req.Tasks {
 		taskMap[req.Tasks[i].TaskID] = &req.Tasks[i]
 	}
@@ -129,7 +141,7 @@ func (c *NATSCollector) Collect(ctx context.Context, req CollectRequest) ([]anal
 	resultChan := make(chan analyzer.TaskResult, len(req.ExpectedIDs))
 	doneChan := make(chan struct{})
 
-	// Subscribe to result subject
+	// Subscribe to result subject with handler
 	handler := func(handlerCtx context.Context, msg *natsbus.Message) error {
 		taskID := getHeader(msg.Headers, headerTaskID)
 		if taskID == "" {
@@ -253,31 +265,65 @@ func (c *NATSCollector) Collect(ctx context.Context, req CollectRequest) ([]anal
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("collect results: subscribing to %s: %w", subject, err)
+		return nil, fmt.Errorf("prepare collect: subscribing to %s: %w", subject, err)
 	}
+
+	span.SetStatus(codes.Ok, "subscription established")
+
+	return &CollectionHandle{
+		sub:         sub,
+		resultChan:  resultChan,
+		doneChan:    doneChan,
+		pending:     pending,
+		mu:          &mu,
+		subject:     subject,
+		Req:         req,
+		taskMap:     taskMap,
+		retryCounts: retryCounts,
+	}, nil
+}
+
+// AwaitResults waits for all expected results using a previously prepared collection handle.
+// Call this AFTER dispatching tasks.
+func (c *NATSCollector) AwaitResults(ctx context.Context, handle *CollectionHandle) ([]analyzer.TaskResult, error) {
+	start := time.Now()
+	ctx, span := telemetry.StartSpan(c.tracer, ctx, "analysis.AwaitResults")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.Int("task.count", len(handle.Req.ExpectedIDs)),
+	)
+
 	defer func() {
-		if err := sub.Unsubscribe(); err != nil {
-			c.logger.Warn("failed to unsubscribe", "subject", subject, "error", err)
+		if err := handle.sub.Unsubscribe(); err != nil {
+			c.logger.Warn("failed to unsubscribe", "subject", handle.subject, "error", err)
 		}
 	}()
 
-	// Collection loop
-	timeout := time.After(req.Timeout)
+	results := make([]analyzer.TaskResult, 0, len(handle.Req.ExpectedIDs))
+
+	// Collection loop monitor
+	timeout := time.After(handle.Req.Timeout)
+	stopMonitor := make(chan struct{})
+	defer close(stopMonitor)
+
 	go func() {
 		for {
-			mu.Lock()
-			remaining := len(pending)
-			mu.Unlock()
+			handle.mu.Lock()
+			remaining := len(handle.pending)
+			handle.mu.Unlock()
 
 			if remaining == 0 {
-				close(doneChan)
+				close(handle.doneChan)
 				return
 			}
 
 			select {
 			case <-ctx.Done():
 				return
-			case <-doneChan:
+			case <-handle.doneChan:
+				return
+			case <-stopMonitor:
 				return
 			default:
 				time.Sleep(10 * time.Millisecond)
@@ -290,7 +336,7 @@ func (c *NATSCollector) Collect(ctx context.Context, req CollectRequest) ([]anal
 		case <-ctx.Done():
 			span.RecordError(ctx.Err())
 			span.SetStatus(codes.Error, "context cancelled")
-			return results, fmt.Errorf("collect results: %w", ctx.Err())
+			return results, fmt.Errorf("await results: %w", ctx.Err())
 
 		case <-timeout:
 			span.RecordError(ErrTaskTimeout)
@@ -299,23 +345,23 @@ func (c *NATSCollector) Collect(ctx context.Context, req CollectRequest) ([]anal
 			// Record metrics
 			span.SetAttributes(
 				attribute.Int("completed", len(results)),
-				attribute.Int("failed", len(req.ExpectedIDs)-len(results)),
+				attribute.Int("failed", len(handle.Req.ExpectedIDs)-len(results)),
 			)
 			if c.collectLatency != nil {
 				c.collectLatency.Record(ctx, float64(time.Since(start).Milliseconds()))
 			}
 
-			return results, fmt.Errorf("collect results for job %s: %w", req.JobID, ErrTaskTimeout)
+			return results, fmt.Errorf("await results for job %s: %w", handle.Req.JobID, ErrTaskTimeout)
 
-		case result := <-resultChan:
+		case result := <-handle.resultChan:
 			results = append(results, result)
 
-		case <-doneChan:
+		case <-handle.doneChan:
 			// Drain any remaining results from the channel
 		draining:
 			for {
 				select {
-				case r := <-resultChan:
+				case r := <-handle.resultChan:
 					results = append(results, r)
 				default:
 					break draining

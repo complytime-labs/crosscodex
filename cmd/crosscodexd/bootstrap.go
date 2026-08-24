@@ -4,19 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/complytime-labs/crosscodex/internal/analysis"
+	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
+	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/internal/worker"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
@@ -174,7 +179,7 @@ func bootstrap(ctx context.Context, cfg *config.Config, opts ...ResourceOption) 
 			return nil, err
 		}
 		rt.pipelineService = pipelineSvc
-		if err := attachGatewayServer(ctx, cfg, shared, rt, pipelineSvc); err != nil {
+		if err := attachAllGateway(ctx, cfg, shared, rt, pipelineSvc); err != nil {
 			rt.close()
 			return nil, err
 		}
@@ -189,6 +194,89 @@ func bootstrap(ctx context.Context, cfg *config.Config, opts ...ResourceOption) 
 	}
 
 	return rt, nil
+}
+
+// noopAuditEmitter satisfies authn.AuditEmitter for the all-in-one role.
+type noopAuditEmitter struct{}
+
+func (noopAuditEmitter) EmitAuthEvent(_ context.Context, _ *authn.AuthEvent) error { return nil }
+
+// allTenantAuthRegistry builds a single-tenant X.509 registry that maps any
+// valid client certificate to cfg.Tenants.DefaultTenant. This mirrors the
+// embedded CLI's single-node identity model and is what SubmitDocument needs
+// to resolve a tenant for the "all" role.
+func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
+	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
+		SingleTenant:  true,
+		DefaultTenant: defaultTenant,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
+	}
+	return authn.NewRegistry(noopAuditEmitter{}, []authn.Authenticator{x509Auth})
+}
+
+// attachAllGateway wires a fully-featured gateway for the all-in-one role:
+// authn, pass-through ingestion, catalog (with graph writes), the in-process
+// pipeline, and admin. It also provisions the default tenant and its AGE graph
+// so document submission has a tenant and a graph to write into.
+func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, backendPipeline gateway.PipelineBackend) error {
+	if cfg.Tenants.DefaultTenant == "" {
+		return errors.New("all role: tenants.default_tenant must be set")
+	}
+	if cfg.Storage.Objects.BasePath == "" {
+		return errors.New("all role: storage.objects.base_path must be set")
+	}
+
+	// Provision the default tenant (relational FK) and its AGE graph.
+	if err := dbpkg.EnsureTenant(ctx, shared.appPool, cfg.Tenants.DefaultTenant, cfg.Tenants.DefaultTenant); err != nil {
+		return fmt.Errorf("provision default tenant: %w", err)
+	}
+	if err := shared.graphDB_.CreateGraph(ctx, cfg.Tenants.DefaultTenant); err != nil {
+		return fmt.Errorf("provision tenant graph: %w", err)
+	}
+
+	registry, err := allTenantAuthRegistry(cfg.Tenants.DefaultTenant)
+	if err != nil {
+		return fmt.Errorf("create auth registry: %w", err)
+	}
+
+	storageProvider, err := storage.NewLocal(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant)
+	if err != nil {
+		return fmt.Errorf("create storage provider: %w", err)
+	}
+
+	catalogSvc := catalog.NewService(
+		catalog.WithParser(oscal.NewParser("")),
+		catalog.WithStore(catalog.NewPGStore(shared.appPool)),
+		catalog.WithStorage(storageProvider),
+		catalog.WithGraphDB(shared.graphDB_),
+		catalog.WithVectorDB(shared.vectorDB),
+		catalog.WithBus(shared.natsClient),
+		catalog.WithLogger(slog.Default()),
+	)
+	ingestion := backend.NewPassthroughIngestion(storageProvider)
+
+	gatewaySvc := gateway.NewService(
+		gateway.WithAuthn(registry),
+		gateway.WithIngestionBackend(ingestion),
+		gateway.WithCatalogBackend(catalogSvc),
+		gateway.WithPipelineBackend(backendPipeline),
+		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
+		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
+		gateway.WithLogger(slog.Default()),
+	)
+
+	server, err := gateway.NewServer(ctx, gateway.ServerConfig{
+		Addr:    cfg.Server.Addr,
+		TLS:     cfg.TLS,
+		Service: gatewaySvc,
+	})
+	if err != nil {
+		return fmt.Errorf("create gateway server: %w", err)
+	}
+	rt.gatewayServer = server
+	return nil
 }
 
 // attachWorker wires the LLM worker into rt. No database resources are

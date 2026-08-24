@@ -1,0 +1,101 @@
+# crosscodexd --role all config for black-box E2E testing (Tier B: real LLM).
+# Dynamic values (DSNs, temp dirs, generated keypaths) are overlaid via
+# CROSSCODEX_* env vars in run-daemon.sh (highest precedence).
+
+server:
+  addr: "127.0.0.1:18443"
+  workers: 4
+
+llm:
+  gateway_url: "http://localhost:14000"
+  default_model: "small"
+  embedding_model: "embed"
+
+tls:
+  mode: "mutual"
+  # Paths populated via CROSSCODEX_TLS_* env vars in run-daemon.sh
+
+tenants:
+  enabled: true
+  default_tenant: "e2e"
+
+nats:
+  url: ""
+  embedded:
+    store_dir: ""  # Set via env
+
+storage:
+  objects:
+    backend: "local"
+    base_path: ""  # Set via env
+
+analysis:
+  engine:
+    task_timeout: 2m
+    max_retries: 2
+    retry_backoff: 1s
+  classification:
+    enabled: true
+    model: "small"
+    max_text_length: 10000
+    temperature: 0
+    max_tokens: 512
+  embedding:
+    enabled: true
+    models: ["embed"]
+    max_chars: 10000
+    batch_size: 1
+  relationship:
+    enabled: true
+    models: ["small"]
+    top_k: 10
+    max_source_chars: 10000
+    max_target_chars: 10000
+    max_tokens: 512
+    samples_per_model: 1
+    sampling_temperature: 0
+  candidates:
+    generators:
+      - name: "semantic"
+        enabled: true
+        weight: 1.0
+    min_embedding_coverage: 0.8
+    embed_model: "embed"
+  requires:
+    enabled: true
+    models: ["small"]
+    samples_per_model: 1
+    consensus_threshold: 0.5
+    max_error_rate: 0.5
+    max_source_chars: 10000
+    max_target_chars: 10000
+    max_tokens: 512
+    sampling_temperature: 0
+  artifacts:
+    enabled: true
+    models: ["small"]
+    samples_per_model: 1
+    max_tokens: 512
+    max_text_chars: 10000
+    fuzzy_threshold: 0.6
+    sampling_temperature: 0
+
+catalog:
+  structuring:
+    decompose: false
+
+prompt:
+  layers:
+    enabled: true
+    order:
+      - id: "embedded"
+
+pipeline:
+  max_concurrent_jobs: 10
+  stage_timeout: 30m
+
+attestation:
+  enabled: true
+  # private_key_path and public_key_path set via CROSSCODEX_ATTESTATION_* env vars
+  expiry_duration: 168h
+  include_byproducts: false

@@ -409,10 +409,25 @@ type executorTestCollector struct {
 	resultsFn func(req analysis.CollectRequest) ([]analyzer.TaskResult, error)
 }
 
-func (c *executorTestCollector) Collect(_ context.Context, req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+func (c *executorTestCollector) Collect(ctx context.Context, req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+	handle, err := c.PrepareCollect(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return c.AwaitResults(ctx, handle)
+}
+
+func (c *executorTestCollector) PrepareCollect(ctx context.Context, req analysis.CollectRequest) (*analysis.CollectionHandle, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.collects = append(c.collects, req)
+	return &analysis.CollectionHandle{
+		Req: req,
+	}, nil
+}
+
+func (c *executorTestCollector) AwaitResults(ctx context.Context, handle *analysis.CollectionHandle) ([]analyzer.TaskResult, error) {
+	req := handle.Req
 	if c.resultsFn != nil {
 		return c.resultsFn(req)
 	}

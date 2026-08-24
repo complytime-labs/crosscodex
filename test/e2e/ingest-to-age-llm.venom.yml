@@ -1,0 +1,129 @@
+name: crosscodexd black-box E2E - OSCAL ingest to AGE with real LLM analysis (Tier B)
+
+vars:
+  root: "."
+  fixture: "cmd/crosscodexd/testdata/oscal/e2e-minimal-catalog.json"
+  gateway_url: "https://127.0.0.1:18443/crosscodex.v1.GatewayService"
+  # DB DSN with absolute cert paths (venom runs scripts from a temp dir)
+  ca_cert: ""
+  client_cert: ""
+  client_key: ""
+
+testcases:
+  - name: Preflight - verify required tools
+    steps:
+      - type: exec
+        script: command -v psql >/dev/null 2>&1
+        assertions:
+          - result.code ShouldEqual 0
+        info: "psql required for DB assertions - install postgresql-client"
+      - type: exec
+        script: command -v pg_isready >/dev/null 2>&1
+        assertions:
+          - result.code ShouldEqual 0
+        info: "pg_isready required for DB health - install postgresql-client"
+      - type: exec
+        script: command -v jq >/dev/null 2>&1
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: command -v base64 >/dev/null 2>&1
+        assertions:
+          - result.code ShouldEqual 0
+      - type: exec
+        script: command -v curl >/dev/null 2>&1
+        assertions:
+          - result.code ShouldEqual 0
+
+  - name: Submit, await completion, assert real-LLM subgraph shape
+    steps:
+      - type: exec
+        script: |
+          base64_content=$(base64 -w 0 <{{.root}}/{{.fixture}})
+          curl -sS --fail-with-body \
+            --cacert {{.ca_cert}} \
+            --cert {{.client_cert}} \
+            --key {{.client_key}} \
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"$base64_content\",\"catalogFormat\":\"CATALOG_FORMAT_OSCAL\",\"catalogName\":\"e2e\"}" \
+            {{.gateway_url}}/SubmitDocument
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemoutjson.jobId ShouldNotBeEmpty
+        vars:
+          job_id:
+            from: result.systemoutjson.jobId
+
+      - type: exec
+        script: |
+          # Poll GetJob to completion (bounded retry for real LLM on CPU)
+          DSN_UNUSED=1
+          for i in $(seq 1 120); do
+            response=$(curl -sS --fail-with-body \
+              --cacert {{.ca_cert}} --cert {{.client_cert}} --key {{.client_key}} \
+              -H "Content-Type: application/json" \
+              -d "{\"jobId\":\"{{.job_id}}\"}" \
+              {{.gateway_url}}/GetJob)
+            status=$(echo "$response" | jq -r '.job.status')
+            case "$status" in
+              JOB_STATUS_COMPLETED) echo "$status"; exit 0 ;;
+              JOB_STATUS_FAILED)
+                error_msg=$(echo "$response" | jq -r '.job.error.message // "unknown error"')
+                echo "job failed: $status - $error_msg" >&2
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo "timeout: last status $status" >&2
+          exit 1
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "JOB_STATUS_COMPLETED"
+
+      - type: exec
+        script: |
+          DSN="postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.ca_cert}}&sslcert={{.client_cert}}&sslkey={{.client_key}}"
+          PGOPTIONS='-c search_path=ag_catalog,public' psql "$DSN" -tAc \
+            "SELECT count(*) FROM cypher('crosscodex_e2e', \$\$ MATCH (n:Control) RETURN n \$\$) AS (v agtype);"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "3"
+
+      - type: exec
+        script: |
+          DSN="postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.ca_cert}}&sslcert={{.client_cert}}&sslkey={{.client_key}}"
+          PGOPTIONS='-c search_path=ag_catalog,public' psql "$DSN" -tAc \
+            "SELECT count(*) FROM cypher('crosscodex_e2e', \$\$ MATCH ()-[r:PARENT_OF]->() RETURN r \$\$) AS (v agtype);"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "2"
+
+      - type: exec
+        script: |
+          DSN="postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.ca_cert}}&sslcert={{.client_cert}}&sslkey={{.client_key}}"
+          # Referential integrity: every REQUIRES edge connects two Control nodes
+          # Count labelled pattern (valid edges) and unlabelled pattern (total edges)
+          valid=$(PGOPTIONS='-c search_path=ag_catalog,public' psql "$DSN" -tAc \
+            "SELECT count(*) FROM cypher('crosscodex_e2e', \$\$ MATCH (a:Control)-[r:REQUIRES]->(b:Control) RETURN r \$\$) AS (v agtype);")
+          total=$(PGOPTIONS='-c search_path=ag_catalog,public' psql "$DSN" -tAc \
+            "SELECT count(*) FROM cypher('crosscodex_e2e', \$\$ MATCH ()-[r:REQUIRES]->() RETURN r \$\$) AS (v agtype);")
+          if [ "$valid" = "$total" ]; then
+            echo "$valid"
+            exit 0
+          else
+            echo "referential integrity violation: valid=$valid total=$total" >&2
+            exit 1
+          fi
+        assertions:
+          - result.code ShouldEqual 0
+
+      - type: exec
+        script: |
+          DSN="postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.ca_cert}}&sslcert={{.client_cert}}&sslkey={{.client_key}}"
+          # Property-schema validity: every REQUIRES edge must have non-null confidence
+          PGOPTIONS='-c search_path=ag_catalog,public' psql "$DSN" -tAc \
+            "SELECT count(*) FROM cypher('crosscodex_e2e', \$\$ MATCH ()-[r:REQUIRES]->() WHERE r.confidence IS NULL RETURN r \$\$) AS (v agtype);"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "0"

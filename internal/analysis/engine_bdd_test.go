@@ -166,10 +166,30 @@ type engineTestCollector struct {
 	resultsFn func(req analysis.CollectRequest) ([]analyzer.TaskResult, error)
 }
 
-func (c *engineTestCollector) Collect(_ context.Context, req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+func (c *engineTestCollector) Collect(ctx context.Context, req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+	// Backward-compatible single-call interface - delegate to two-phase.
+	handle, err := c.PrepareCollect(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return c.AwaitResults(ctx, handle)
+}
+
+func (c *engineTestCollector) PrepareCollect(ctx context.Context, req analysis.CollectRequest) (*analysis.CollectionHandle, error) {
+	// Test mock: record the collect request and return a handle that carries the request for AwaitResults.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.collects = append(c.collects, req)
+
+	// Return a handle that carries the request so AwaitResults can generate results.
+	return &analysis.CollectionHandle{
+		Req: req,
+	}, nil
+}
+
+func (c *engineTestCollector) AwaitResults(ctx context.Context, handle *analysis.CollectionHandle) ([]analyzer.TaskResult, error) {
+	// Test mock: generate results based on the request in the handle.
+	req := handle.Req
 	if c.resultsFn != nil {
 		return c.resultsFn(req)
 	}

@@ -359,8 +359,39 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 
 	var results []analyzer.TaskResult
 	if len(dispatchTasks) > 0 {
-		// Dispatch tasks.
 		taskType := e.taskTypes[name]
+		expectedIDs := make([]string, len(dispatchTasks))
+		for i, t := range dispatchTasks {
+			expectedIDs[i] = t.TaskID
+		}
+
+		collectReq := CollectRequest{
+			TaskType:    taskType,
+			JobID:       req.JobID,
+			ExpectedIDs: expectedIDs,
+			Tasks:       dispatchTasks,
+			Timeout:     e.cfg.TaskTimeout,
+			MaxRetries:  e.cfg.MaxRetries,
+			Backoff:     e.cfg.RetryBackoff,
+			Dispatcher:  e.dispatcher,
+		}
+
+		// PrepareCollect: subscribe to result subject BEFORE dispatching tasks.
+		// This prevents publish-before-subscribe races in embedded NATS with
+		// zero-latency workers (e.g., single-process RoleAll with deterministic fake LLM).
+		handle, err := e.collector.PrepareCollect(ctx, collectReq)
+		if err != nil {
+			analyzerErr := fmt.Errorf("analysis: analyzer %q prepare collect failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err)
+			state.fail(name, analyzerErr)
+			_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
+			span.RecordError(analyzerErr)
+			span.SetStatus(codes.Error, analyzerErr.Error())
+			return
+		}
+
+		// Dispatch tasks: publish to work subject. Results will be published to the
+		// already-subscribed result subject, so no message can be lost.
 		if err := e.dispatcher.Dispatch(ctx, dispatchTasks, taskType, req.JobID); err != nil {
 			analyzerErr := fmt.Errorf("analysis: analyzer %q dispatch failed for job %q: %w: %w",
 				name, req.JobID, ErrAnalyzerFailed, err)
@@ -371,22 +402,8 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			return
 		}
 
-		// Collect results.
-		expectedIDs := make([]string, len(dispatchTasks))
-		for i, t := range dispatchTasks {
-			expectedIDs[i] = t.TaskID
-		}
-
-		collected, err := e.collector.Collect(ctx, CollectRequest{
-			TaskType:    taskType,
-			JobID:       req.JobID,
-			ExpectedIDs: expectedIDs,
-			Tasks:       dispatchTasks,
-			Timeout:     e.cfg.TaskTimeout,
-			MaxRetries:  e.cfg.MaxRetries,
-			Backoff:     e.cfg.RetryBackoff,
-			Dispatcher:  e.dispatcher,
-		})
+		// AwaitResults: wait for all results on the subscription established above.
+		collected, err := e.collector.AwaitResults(ctx, handle)
 		if err != nil {
 			analyzerErr := fmt.Errorf("analysis: analyzer %q collect failed for job %q: %w: %w",
 				name, req.JobID, ErrAnalyzerFailed, err)

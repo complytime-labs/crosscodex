@@ -439,10 +439,21 @@ $$ LANGUAGE plpgsql;
 -- superuser, so ag_catalog.create_graph() creates the schema owned by
 -- postgres. graph_user needs to own the schema and all objects inside it
 -- because AGE cypher commands internally perform DDL.
+--
+-- schema_name is typed `name`, not TEXT, on purpose. PostgreSQL truncates
+-- identifiers to 63 bytes (NAMEDATALEN-1); for a tenant_id where
+-- 'crosscodex_' || tenant_id exceeds 63 bytes the schema and its AGE label
+-- tables are created under the truncated name. Declaring schema_name as
+-- `name` applies the same truncation to the variable, so create_graph(), the
+-- ALTER SCHEMA, and both object loops all reference the identical actual
+-- schema name. With TEXT the loops compared pg_tables.schemaname (truncated)
+-- against the untruncated variable, never matched, and left _ag_label_vertex
+-- / _ag_label_edge owned by postgres — graph_user then hit "permission
+-- denied for table _ag_label_vertex" on the first cypher call.
 CREATE OR REPLACE FUNCTION public.create_tenant_graph()
 RETURNS TRIGGER AS $$
 DECLARE
-    schema_name TEXT := 'crosscodex_' || NEW.tenant_id;
+    schema_name name := 'crosscodex_' || NEW.tenant_id;
     tbl RECORD;
     seq RECORD;
 BEGIN

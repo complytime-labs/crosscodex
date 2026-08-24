@@ -245,6 +245,13 @@ func (db *PgVectorStore) Count(ctx context.Context) (int64, error) {
 
 // VectorDB interface implementation - minimal stubs for now
 
+// The embeddings.vector column is model-agnostic (dimensionless): vectors of
+// any width persist, keyed per model by the (catalog_id, control_id, model)
+// primary key. Per-model width safety is enforced by every read path scoping
+// to a single model (FindSimilar's WHERE model = $4; SimilarityMatrix's
+// a.model = b.model). Never introduce a similarity query that spans models —
+// pgvector rejects <=> across differing widths. See migration 003.
+
 // StoreEmbedding adds or updates a single embedding with compliance metadata
 func (db *PgVectorStore) StoreEmbedding(ctx context.Context, tenantID string, embedding Embedding) error {
 	ctx, span := db.startSpan(ctx, "vectordb.store_embedding")
