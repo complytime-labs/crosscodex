@@ -58,12 +58,14 @@ tasks:
     cmds:
       - mkdir -p {{.BUILD_DIR}} {{.ROOT_DIR}}/.go-tmp
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex {{.ROOT_DIR}}/cmd/crosscodex
+      - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodexd {{.ROOT_DIR}}/cmd/crosscodexd
     sources:
       - "{{.ROOT_DIR}}/**/*.go"
       - "{{.ROOT_DIR}}/go.mod"
       - "{{.ROOT_DIR}}/go.sum"
     generates:
       - "{{.BUILD_DIR}}/crosscodex"
+      - "{{.BUILD_DIR}}/crosscodexd"
 
   lint:
     desc: Run linters

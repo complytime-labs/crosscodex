@@ -306,10 +306,12 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 
 	// Build graph if configured
 	if s.graph != nil {
+		now := time.Now().UTC()
 		for _, item := range items {
 			node := graphdb.Node{
-				ID:    fmt.Sprintf("%s/%s", catalogID, item.ID),
-				Label: "Control",
+				ID:        fmt.Sprintf("%s/%s", catalogID, item.ID),
+				Label:     "Control",
+				ValidFrom: now,
 				Properties: map[string]interface{}{
 					"tenant_id":  tenantID,
 					"catalog_id": catalogID,
@@ -329,8 +331,9 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 				sourceID := fmt.Sprintf("%s/%s", catalogID, item.ParentID)
 				targetID := fmt.Sprintf("%s/%s", catalogID, item.ID)
 				edge := graphdb.Edge{
-					ID:    fmt.Sprintf("%s::parent_of::%s", sourceID, targetID),
-					Label: "PARENT_OF",
+					ID:        fmt.Sprintf("%s::parent_of::%s", sourceID, targetID),
+					Label:     "PARENT_OF",
+					ValidFrom: now,
 				}
 
 				if err := s.graph.CreateEdge(ctx, tenantID, sourceID, targetID, edge); err != nil {

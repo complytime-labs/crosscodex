@@ -1,0 +1,132 @@
+version: "3"
+
+vars:
+  MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
+  TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
+  CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task: venom
+
+  venom:
+    desc: "Run black-box crosscodexd E2E Venom suite (Tier A: inline OSCAL -> AGE structural surface)"
+    dir: "{{.ROOT_DIR}}"
+    deps:
+      - ::test:integration:generate-certs
+      - ::test:integration:build-db-image
+      - ::build
+    vars:
+      COMPOSE_CMD:
+        sh: command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose"
+      COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.yaml"
+      DB_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
+    env:
+      TMPDIR: "{{.TEST_DIR}}/buildtmp"
+      CROSSCODEX_DATABASE_DSN: "{{.DB_DSN}}"
+    preconditions:
+      - sh: command -v psql >/dev/null 2>&1
+        msg: "psql not found - install postgresql-client for host DB access"
+      - sh: command -v pg_isready >/dev/null 2>&1
+        msg: "pg_isready not found - install postgresql-client for health checks"
+      - sh: command -v venom >/dev/null 2>&1
+        msg: "venom not found - install from https://github.com/ovh/venom"
+    cmds:
+      - mkdir -p {{.TEST_DIR}}/buildtmp
+      - mkdir -p {{.TEST_DIR}}/e2e
+      - task: ::test:integration:prepare-cert-volume
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile db up -d"
+      - defer: "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile db down"
+      # Host pg_isready over TCP mTLS (not podman exec)
+      - |
+        timeout 120 sh -c 'until PGSSLMODE=verify-full PGSSLROOTCERT={{.TEST_DIR}}/certs/ca.pem PGSSLCERT={{.TEST_DIR}}/certs/client.pem PGSSLKEY={{.TEST_DIR}}/certs/client-key.pem pg_isready -h localhost -p 15432 -U postgres -q; do sleep 2; done'
+      - bash {{.ROOT_DIR}}/test/e2e/run-daemon.sh {{.ROOT_DIR}} {{.TEST_DIR}}
+      - defer: |
+          if [ -f {{.TEST_DIR}}/e2e/daemon.pid ]; then
+            kill "$(cat {{.TEST_DIR}}/e2e/daemon.pid)" 2>/dev/null || true
+          fi
+      - >
+        venom run {{.ROOT_DIR}}/test/e2e/ingest-to-age.venom.yml
+        --output-dir {{.TEST_DIR}}
+        --var root={{.ROOT_DIR}}
+        --var ca_cert={{.TEST_DIR}}/certs/ca.pem
+        --var client_cert={{.TEST_DIR}}/certs/client.pem
+        --var client_key={{.TEST_DIR}}/certs/client-key.pem
+
+  venom:llm:
+    desc: "Run black-box crosscodexd E2E Venom suite (Tier B: inline OSCAL -> AGE with real LLM analysis, opt-in)"
+    dir: "{{.ROOT_DIR}}"
+    deps:
+      - ::test:integration:generate-certs
+      - ::test:integration:build-db-image
+      - task: ::test:integration:build-ollama-image
+        vars:
+          OLLAMA_HOST: "http://localhost:11434"
+      - ::build
+    vars:
+      COMPOSE_CMD:
+        sh: command -v podman-compose >/dev/null 2>&1 && echo "podman-compose" || echo "docker compose"
+      COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.yaml"
+      DB_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
+    env:
+      TMPDIR: "{{.TEST_DIR}}/buildtmp"
+      CROSSCODEX_DATABASE_DSN: "{{.DB_DSN}}"
+    preconditions:
+      - sh: command -v psql >/dev/null 2>&1
+        msg: "psql not found - install postgresql-client for host DB access"
+      - sh: command -v pg_isready >/dev/null 2>&1
+        msg: "pg_isready not found - install postgresql-client for health checks"
+      - sh: command -v jq >/dev/null 2>&1
+        msg: "jq not found - required for JSON parsing in LLM suite"
+      - sh: command -v venom >/dev/null 2>&1
+        msg: "venom not found - install from https://github.com/ovh/venom"
+    cmds:
+      - |
+        stale=$({{.CONTAINER_ENGINE}} ps -a --filter "name=crosscodex-test-" --format "{{`{{.Names}}`}}" 2>/dev/null || true)
+        if [ -n "$stale" ]; then
+          echo "Cleaning up stale containers: $stale"
+          for c in $stale; do
+            {{.CONTAINER_ENGINE}} stop "$c" 2>/dev/null || true
+            {{.CONTAINER_ENGINE}} rm -f "$c" 2>/dev/null || true
+          done
+        fi
+      - mkdir -p {{.TEST_DIR}}/buildtmp
+      - mkdir -p {{.TEST_DIR}}/e2e
+      - task: ::test:integration:generate-litellm-config
+        vars:
+          PROFILE: llm
+          OLLAMA_HOST: "http://localhost:11434"
+      - task: ::test:integration:prepare-cert-volume
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile db --profile llm up -d --build"
+      - defer: "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} --profile db --profile llm down"
+      # Wait for DB health via host pg_isready over TCP mTLS
+      - |
+        timeout 120 sh -c 'until PGSSLMODE=verify-full PGSSLROOTCERT={{.TEST_DIR}}/certs/ca.pem PGSSLCERT={{.TEST_DIR}}/certs/client.pem PGSSLKEY={{.TEST_DIR}}/certs/client-key.pem pg_isready -h localhost -p 15432 -U postgres -q; do sleep 2; done'
+      # Wait for LLM stack health (compose-health probes ollama port + litellm /health)
+      - task: ::test:integration:compose-health
+        vars:
+          PROFILE: llm
+          OLLAMA_HOST: "http://localhost:11434"
+      # Active warm-up probes: block until models are actually loaded
+      - |
+        timeout 180 sh -c 'until curl -sf http://localhost:14000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"small\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" >/dev/null 2>&1; do sleep 3; done'
+      - |
+        timeout 120 sh -c 'until curl -sf http://localhost:14000/v1/embeddings -H "Content-Type: application/json" -d "{\"model\":\"embed\",\"input\":\"ping\"}" >/dev/null 2>&1; do sleep 3; done'
+      - task: ::test:integration:ensure-ollama-models
+        vars:
+          PROFILE: llm
+          OLLAMA_HOST: "http://localhost:11434"
+      - bash {{.ROOT_DIR}}/test/e2e/run-daemon.sh {{.ROOT_DIR}} {{.TEST_DIR}} llm
+      - defer: |
+          if [ -f {{.TEST_DIR}}/e2e/daemon.pid ]; then
+            kill "$(cat {{.TEST_DIR}}/e2e/daemon.pid)" 2>/dev/null || true
+          fi
+      - >
+        venom run {{.ROOT_DIR}}/test/e2e/ingest-to-age-llm.venom.yml
+        --output-dir {{.TEST_DIR}}
+        --var root={{.ROOT_DIR}}
+        --var ca_cert={{.TEST_DIR}}/certs/ca.pem
+        --var client_cert={{.TEST_DIR}}/certs/client.pem
+        --var client_key={{.TEST_DIR}}/certs/client-key.pem

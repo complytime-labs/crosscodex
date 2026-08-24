@@ -10,6 +10,9 @@ includes:
   stress:
     taskfile: test/stress.yml
     dir: "{{.ROOT_DIR}}"
+  e2e:
+    taskfile: test/e2e.yml
+    dir: "{{.ROOT_DIR}}"
 
 vars:
   MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'

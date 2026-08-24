@@ -38,6 +38,15 @@ func testVector(seed ...float32) []float32 {
 	return v
 }
 
+// dimVector returns a dim-dimensional vector with the given seed values in the
+// leading positions and zeros elsewhere. Exercises embeddings of widths other
+// than testVectorDim now that the embeddings column is model-agnostic.
+func dimVector(dim int, seed ...float32) []float32 {
+	v := make([]float32, dim)
+	copy(v, seed)
+	return v
+}
+
 // Redirect slog output to GinkgoWriter so log noise only appears on failure.
 var _ = BeforeEach(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 
@@ -295,6 +304,65 @@ var _ = Describe("VectorDB Integration", func() {
 				}
 			}
 			Expect(found).To(BeTrue(), "tenant-2 cannot see their own control A.6.1")
+		})
+	})
+
+	Context("ModelAgnosticDimensions", func() {
+		It("persists an embedding whose width is not testVectorDim (384)", func() {
+			err := store.StoreEmbedding(ctx, "test-tenant", vectordb.Embedding{
+				CatalogID: "nist-800-53",
+				ControlID: "AC-1",
+				Model:     "granite-embedding:30m",
+				Vector:    dimVector(384, 0.1, 0.2, 0.3),
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("MultiModelCoexistence", func() {
+		const (
+			modelA = "granite-embedding:30m" // 384-dim
+			modelB = "nomic-embed-text"      // 768-dim
+		)
+
+		BeforeEach(func() {
+			Expect(store.StoreEmbedding(ctx, "test-tenant", vectordb.Embedding{
+				CatalogID: "nist-800-53", ControlID: "AC-1", Model: modelA,
+				Vector: dimVector(384, 0.1, 0.2, 0.3),
+			})).To(Succeed())
+			Expect(store.StoreEmbedding(ctx, "test-tenant", vectordb.Embedding{
+				CatalogID: "nist-800-53", ControlID: "AC-1", Model: modelB,
+				Vector: dimVector(768, 0.4, 0.5, 0.6),
+			})).To(Succeed())
+		})
+
+		It("stores different-dimension models under the same catalog+control", func() {
+			results, err := store.FindSimilar(ctx, "test-tenant", vectordb.FindSimilarQuery{
+				CatalogID: "nist-800-53", Model: modelA,
+				Vector: dimVector(384, 0.1, 0.2, 0.3), Limit: 10,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveLen(1))
+			Expect(results[0].ControlID).To(Equal("AC-1"))
+		})
+
+		It("FindSimilar for model B returns only model B rows at its own width", func() {
+			results, err := store.FindSimilar(ctx, "test-tenant", vectordb.FindSimilarQuery{
+				CatalogID: "nist-800-53", Model: modelB,
+				Vector: dimVector(768, 0.4, 0.5, 0.6), Limit: 10,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveLen(1))
+			Expect(results[0].ControlID).To(Equal("AC-1"))
+		})
+
+		It("rejects a query whose width does not match the target model", func() {
+			_, err := store.FindSimilar(ctx, "test-tenant", vectordb.FindSimilarQuery{
+				CatalogID: "nist-800-53", Model: modelA,
+				Vector: dimVector(768, 0.4), Limit: 10,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("dimension"))
 		})
 	})
 })

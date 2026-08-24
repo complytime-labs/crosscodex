@@ -160,15 +160,11 @@ func baseTestConfig(dsn string) *config.Config {
 	}
 }
 
-// testConfig builds on baseTestConfig for the graph role: it runs migrations
-// up front (graph_user must exist, created by migration 001, before we can
-// set its password below) and rewrites Database.GraphDSN to authenticate as
-// graph_user, mirroring pkg/graphdb/graphdb_integration_bdd_test.go, since
-// graphdb.New requires a connection with graph_user's schema-ownership
-// privileges.
-func testConfig(dsn string) *config.Config {
-	ctx := context.Background()
-
+// provisionGraphUser runs migrations and assigns graph_user a fresh random
+// password, returning a DSN authenticated as graph_user. graph_user (created
+// by migration 001) must exist and own the per-tenant graph schemas before
+// graphdb.New can connect; both RoleGraph and RoleAll require this.
+func provisionGraphUser(ctx context.Context, dsn string) string {
 	// bootstrap() also runs migrations, but graph_user must exist (created by
 	// migration 001) before we can set its password below, so migrate here
 	// first; bootstrap's subsequent Up() is a documented no-op re-run.
@@ -205,8 +201,17 @@ func testConfig(dsn string) *config.Config {
 	u, err := url.Parse(dsn)
 	Expect(err).NotTo(HaveOccurred(), "parse TEST_DATABASE_DSN")
 	u.User = url.UserPassword("graph_user", testPassword)
-	graphDSN := u.String()
+	return u.String()
+}
 
+// testConfig builds on baseTestConfig for the graph role: it runs migrations
+// up front (graph_user must exist, created by migration 001, before we can
+// set its password below) and rewrites Database.GraphDSN to authenticate as
+// graph_user, mirroring pkg/graphdb/graphdb_integration_bdd_test.go, since
+// graphdb.New requires a connection with graph_user's schema-ownership
+// privileges.
+func testConfig(dsn string) *config.Config {
+	graphDSN := provisionGraphUser(context.Background(), dsn)
 	cfg := baseTestConfig(dsn)
 	cfg.Database.GraphDSN = graphDSN
 	cfg.Role = config.RoleGraph

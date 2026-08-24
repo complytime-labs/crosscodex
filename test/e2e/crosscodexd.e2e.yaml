@@ -1,0 +1,70 @@
+# crosscodexd --role all config for black-box E2E testing.
+# Dynamic values (DSNs, temp dirs, generated keypaths) are overlaid via
+# CROSSCODEX_* env vars in run-daemon.sh (highest precedence).
+
+server:
+  addr: "127.0.0.1:18443"
+  workers: 4
+
+llm:
+  gateway_url: "http://127.0.0.1:0"
+  default_model: "test-model"
+  embedding_model: "test-model"
+
+tls:
+  mode: "mutual"
+  # Paths populated via CROSSCODEX_TLS_* env vars in run-daemon.sh
+
+tenants:
+  enabled: true
+  default_tenant: "e2e"
+
+nats:
+  url: ""
+  embedded:
+    store_dir: "" # Set via env
+
+storage:
+  objects:
+    backend: "local"
+    base_path: "" # Set via env
+
+analysis:
+  engine:
+    task_timeout: 5m
+    max_retries: 3
+    retry_backoff: 5s
+  classification:
+    enabled: false
+  embedding:
+    enabled: false
+    models: []
+  relationship:
+    enabled: false
+    models: []
+  requires:
+    enabled: false
+    models: []
+  artifacts:
+    enabled: false
+    models: []
+
+catalog:
+  structuring:
+    decompose: false
+
+prompt:
+  layers:
+    enabled: true
+    order:
+      - id: "embedded"
+
+pipeline:
+  max_concurrent_jobs: 10
+  stage_timeout: 30m
+
+attestation:
+  enabled: true
+  # private_key_path and public_key_path set via CROSSCODEX_ATTESTATION_* env vars
+  expiry_duration: 168h
+  include_byproducts: false

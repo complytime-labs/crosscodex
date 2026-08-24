@@ -175,18 +175,22 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON vote_summaries TO app_user;
 
 -- ---------------------------------------------------------------------------
 
+-- The vector column is model-agnostic (dimensionless): a bare `vector` with no
+-- fixed width, so embeddings of any model's dimensionality coexist in one table.
+-- A fixed width (e.g. vector(2000)) was rejected — see
+-- docs/dev/adr/0001-model-agnostic-embedding-storage.md. The ivfflat index
+-- requires a fixed dimension, so it is deliberately omitted; every <=> query is
+-- model-scoped (single width per query), so similarity falls back to an exact
+-- scan, which is correct at current scale. When scale demands ANN, add per-model
+-- partial expression indexes per deployment (see docs/dev/embeddings.md).
 CREATE TABLE IF NOT EXISTS embeddings (
     catalog_id TEXT NOT NULL REFERENCES catalogs(catalog_id),
     control_id TEXT NOT NULL,
     model      TEXT NOT NULL,
-    vector     vector(2000) NOT NULL,
+    vector     vector NOT NULL,
     tenant_id  TEXT NOT NULL REFERENCES tenants(tenant_id),
     PRIMARY KEY (catalog_id, control_id, model)
 );
-
-CREATE INDEX IF NOT EXISTS idx_embeddings_vector
-    ON embeddings USING ivfflat (vector vector_cosine_ops)
-    WITH (lists = 100);
 
 ALTER TABLE embeddings ENABLE ROW LEVEL SECURITY;
 
@@ -303,6 +307,47 @@ CREATE POLICY tenant_isolation ON requires_consensus
     USING (tenant_id = current_setting('app.current_tenant', true));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON requires_consensus TO app_user;
+
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS analysis_results (
+    tenant_id     TEXT        NOT NULL REFERENCES tenants(tenant_id),
+    job_id        TEXT        NOT NULL REFERENCES jobs(job_id),
+    analyzer_name TEXT        NOT NULL,
+    result_data   JSONB       NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, job_id, analyzer_name)
+);
+
+ALTER TABLE analysis_results ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON analysis_results
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON analysis_results TO app_user;
+
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS relationship_candidates (
+    tenant_id        TEXT        NOT NULL REFERENCES tenants(tenant_id),
+    job_id           TEXT        NOT NULL REFERENCES jobs(job_id),
+    source_id        TEXT        NOT NULL,
+    target_id        TEXT        NOT NULL,
+    similarity_score REAL        NOT NULL,             -- [0, 100] from embedding similarity matrix (see relationship.CandidatePair.SimilarityScore) -- NOTE: differs in scale from requires_candidates.aggregate_score, which is [0.0, 1.0]
+    provenance       JSONB       NOT NULL DEFAULT '[]',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, job_id, source_id, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_relationship_candidates_job
+    ON relationship_candidates (tenant_id, job_id);
+
+ALTER TABLE relationship_candidates ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON relationship_candidates
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON relationship_candidates TO app_user;
 
 -- ============================================================================
 -- Immutability triggers
@@ -439,10 +484,21 @@ $$ LANGUAGE plpgsql;
 -- superuser, so ag_catalog.create_graph() creates the schema owned by
 -- postgres. graph_user needs to own the schema and all objects inside it
 -- because AGE cypher commands internally perform DDL.
+--
+-- schema_name is typed `name`, not TEXT, on purpose. PostgreSQL truncates
+-- identifiers to 63 bytes (NAMEDATALEN-1); for a tenant_id where
+-- 'crosscodex_' || tenant_id exceeds 63 bytes the schema and its AGE label
+-- tables are created under the truncated name. Declaring schema_name as
+-- `name` applies the same truncation to the variable, so create_graph(), the
+-- ALTER SCHEMA, and both object loops all reference the identical actual
+-- schema name. With TEXT the loops compared pg_tables.schemaname (truncated)
+-- against the untruncated variable, never matched, and left _ag_label_vertex
+-- / _ag_label_edge owned by postgres — graph_user then hit "permission
+-- denied for table _ag_label_vertex" on the first cypher call.
 CREATE OR REPLACE FUNCTION public.create_tenant_graph()
 RETURNS TRIGGER AS $$
 DECLARE
-    schema_name TEXT := 'crosscodex_' || NEW.tenant_id;
+    schema_name name := 'crosscodex_' || NEW.tenant_id;
     tbl RECORD;
     seq RECORD;
 BEGIN

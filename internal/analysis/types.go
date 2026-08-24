@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -64,4 +65,16 @@ type CollectRequest struct {
 	MaxRetries  int
 	Backoff     time.Duration
 	Dispatcher  Dispatcher
+}
+
+// CollectionHandle holds the subscription and channels for a two-phase collect operation.
+// PrepareCollect establishes the subscription and returns a handle; AwaitResults uses the handle to wait for completion.
+type CollectionHandle struct {
+	sub         natsbus.Subscription
+	resultChan  chan analyzer.TaskResult
+	doneChan    chan struct{}
+	pending     map[string]bool
+	mu          *sync.Mutex
+	subject     string
+	Req         CollectRequest // Exported for test mocks
 }

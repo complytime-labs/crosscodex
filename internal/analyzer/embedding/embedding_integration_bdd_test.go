@@ -98,8 +98,9 @@ var _ = Describe("Embedding Infrastructure Integration", Ordered, func() {
 	It("generates embedding tasks and stores vectors in real pgvector", func() {
 		ctx := testspecs.SetupTenantContext("test-tenant")
 
-		// Vectors must be 2000-dimensional to match the embeddings table schema
-		// (vector(2000)). Seed values occupy leading positions; rest are zeros.
+		// Vectors use pgvectorDim width for consistency within this test; the
+		// embeddings column is dimensionless and accepts any width. Seed values
+		// occupy leading positions; rest are zeros.
 		dim := pgvectorDim
 		mockVectors := map[string][]float32{
 			"nist-800-53/AC-1": normalizeVec(testVec(1, 0, 0, 0, 0, 0, 0, 0)),
@@ -252,7 +253,8 @@ func (c *cannedEmbedClient) Embed(_ context.Context, req *llmclient.EmbeddingReq
 func (c *cannedEmbedClient) Health(_ context.Context) error { return nil }
 func (c *cannedEmbedClient) Close() error                   { return nil }
 
-// pgvectorDim matches the embeddings table column: vector(2000).
+// pgvectorDim is the embedding width this test generates. The embeddings
+// column is dimensionless and accepts any width.
 const pgvectorDim = 2000
 
 // testVec returns a 2000-dimensional vector with the given seed values

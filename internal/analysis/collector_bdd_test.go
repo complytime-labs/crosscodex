@@ -131,7 +131,7 @@ var _ = Describe("NATSCollector", func() {
 		cancelFunc()
 	})
 
-	Describe("Collect", func() {
+	Describe("PrepareCollect + AwaitResults", func() {
 		It("returns all results when every expected ID arrives", func() {
 			tasks := []analyzer.Task{
 				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
@@ -156,7 +156,9 @@ var _ = Describe("NATSCollector", func() {
 				fakeNATS.deliverResult(ctx, "t-2", payload2, "")
 			}()
 
-			results, err := collector.Collect(ctx, req)
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			results, err := collector.AwaitResults(ctx, handle)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(HaveLen(2))
 			Expect(fakeNATS.sub.unsubscribed).To(BeTrue())
@@ -187,7 +189,9 @@ var _ = Describe("NATSCollector", func() {
 				fakeNATS.deliverResult(ctx, "t-1", payload, "")
 			}()
 
-			results, err := collector.Collect(ctx, req)
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			results, err := collector.AwaitResults(ctx, handle)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(HaveLen(1))
 			Expect(results[0].Error).To(BeNil())
@@ -225,7 +229,9 @@ var _ = Describe("NATSCollector", func() {
 				fakeNATS.deliverResult(ctx, "t-1", nil, "worker error")
 			}()
 
-			results, err := collector.Collect(ctx, req)
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			results, err := collector.AwaitResults(ctx, handle)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(HaveLen(1))
 			Expect(results[0].Error).NotTo(BeNil())
@@ -255,7 +261,9 @@ var _ = Describe("NATSCollector", func() {
 				// t-2 never arrives
 			}()
 
-			results, err := collector.Collect(ctx, req)
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			results, err := collector.AwaitResults(ctx, handle)
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, analysis.ErrTaskTimeout)).To(BeTrue())
 			Expect(results).To(HaveLen(1)) // Partial results returned
@@ -282,7 +290,9 @@ var _ = Describe("NATSCollector", func() {
 				cancelFunc()
 			}()
 
-			results, err := collector.Collect(ctx, req)
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			results, err := collector.AwaitResults(ctx, handle)
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, context.Canceled)).To(BeTrue())
 			Expect(results).To(HaveLen(0))
@@ -313,7 +323,9 @@ var _ = Describe("NATSCollector", func() {
 				fakeNATS.deliverResult(ctx, "t-1", payload2, "")
 			}()
 
-			results, err := collector.Collect(ctx, req)
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			results, err := collector.AwaitResults(ctx, handle)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(results).To(HaveLen(1))
 			Expect(results[0].TaskID).To(Equal("t-1"))

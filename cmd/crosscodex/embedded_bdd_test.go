@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/internal/gateway"
+	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
@@ -182,7 +183,7 @@ var _ = Describe("gateway.PoolAdminBackend", func() {
 	})
 })
 
-var _ gateway.IngestionBackend = (*localIngestionBackend)(nil)
+var _ gateway.IngestionBackend = (*backend.PassthroughIngestion)(nil)
 var _ gateway.PipelineBackend = (*localPipelineBackend)(nil)
 
 var _ = Describe("buildEmbeddedService", func() {
