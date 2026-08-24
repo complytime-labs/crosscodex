@@ -18,9 +18,18 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <DSN>\n", os.Args[0])
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// run performs migration and graph_user provisioning, printing the graph_user
+// DSN to stdout on success. It returns errors instead of calling os.Exit so
+// deferred Close calls always run (gocritic exitAfterDefer).
+func run() error {
+	if len(os.Args) != 2 {
+		return fmt.Errorf("usage: %s <DSN>", os.Args[0])
 	}
 
 	dsn := os.Args[1]
@@ -29,28 +38,24 @@ func main() {
 	// Run migrations
 	migrator, err := db.NewMigrator(dsn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create migrator: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("create migrator: %w", err)
 	}
 	defer migrator.Close()
 
 	if err := migrator.Up(ctx); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		fmt.Fprintf(os.Stderr, "Failed to run migrations: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("run migrations: %w", err)
 	}
 
 	// Set graph_user password
 	adminDB, err := sql.Open("pgx", dsn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open admin connection: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("open admin connection: %w", err)
 	}
 	defer adminDB.Close()
 
 	pwBytes := make([]byte, 16)
 	if _, err := rand.Read(pwBytes); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to generate password: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("generate password: %w", err)
 	}
 	password := hex.EncodeToString(pwBytes)
 
@@ -62,16 +67,15 @@ func main() {
 	// quote or any other character requiring escaping.
 	stmt := fmt.Sprintf("ALTER ROLE graph_user WITH PASSWORD '%s'", password)
 	if _, err := adminDB.ExecContext(ctx, stmt); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to set graph_user password: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("set graph_user password: %w", err)
 	}
 
 	// Build and print graph_user DSN
 	u, err := url.Parse(dsn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse DSN: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("parse DSN: %w", err)
 	}
 	u.User = url.UserPassword("graph_user", password)
 	fmt.Println(u.String())
+	return nil
 }

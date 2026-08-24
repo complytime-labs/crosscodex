@@ -454,10 +454,10 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 // attachGatewayServer wires the gateway HTTP server into rt using the
 // given PipelineBackend, which may be an in-process pipeline.Service
 // (RoleAll) or a network Connect client (attachGateway, standalone role).
-func attachGatewayServer(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, backend gateway.PipelineBackend) error {
+func attachGatewayServer(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, pipelineBackend gateway.PipelineBackend) error {
 	gatewaySvc := gateway.NewService(
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
-		gateway.WithPipelineBackend(backend),
+		gateway.WithPipelineBackend(pipelineBackend),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 	)
 
@@ -483,10 +483,10 @@ func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResour
 		return errors.New("gateway role: pipeline.endpoint must be set to reach a standalone pipeline role")
 	}
 
-	backend, err := gateway.NewConnectPipelineBackend(ctx, cfg.Pipeline.Endpoint, cfg.TLS)
+	pipelineBackend, err := gateway.NewConnectPipelineBackend(ctx, cfg.Pipeline.Endpoint, cfg.TLS)
 	if err != nil {
 		return fmt.Errorf("create pipeline backend: %w", err)
 	}
 
-	return attachGatewayServer(ctx, cfg, shared, rt, backend)
+	return attachGatewayServer(ctx, cfg, shared, rt, pipelineBackend)
 }

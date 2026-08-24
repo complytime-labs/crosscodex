@@ -39,12 +39,12 @@ func main() {
 	}
 	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
 
-	if err := os.WriteFile(filepath.Join(dir, "private.pem"), privPEM, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "private.pem"), privPEM, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write private key: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "public.pem"), pubPEM, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "public.pem"), pubPEM, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write public key: %v\n", err)
 		os.Exit(1)
 	}

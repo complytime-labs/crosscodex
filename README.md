@@ -257,7 +257,7 @@ The CLI recognizes these environment variables:
 
 | Variable              | Purpose                                    | Default              |
 |-----------------------|--------------------------------------------|----------------------|
-| `CROSSCODEX_ENDPOINT` | daemon address                        | `localhost:50051`    |
+| `CROSSCODEX_ENDPOINT` | daemon address                             | `localhost:50051`    |
 | `CROSSCODEX_COLOR`    | Force color output (`1`) or disable (`0`)  | Auto-detect (isatty) |
 | `CROSSCODEX_LOGLEVEL` | Log level (`debug`/`info`/`warn`/`error`)  | `warn`               |
 | `NO_COLOR`            | Disable color output (standard convention) | —                    |
@@ -392,7 +392,7 @@ Every layer enforces tenant isolation independently:
 | Layer            | Mechanism                                    | Purpose               |
 |------------------|----------------------------------------------|-----------------------|
 | **Gateway**      | mTLS client certificates, JWT sessions, RBAC | Identity verification |
-| **Services**     | Request metadata validation                     | Context propagation   |
+| **Services**     | Request metadata validation                  | Context propagation   |
 | **NATS**         | Tenant-scoped subjects and ACLs              | Message isolation     |
 | **PostgreSQL**   | Row-Level Security policies                  | Data isolation        |
 | **Object Store** | Tenant-prefixed paths, bucket policies       | Artifact isolation    |

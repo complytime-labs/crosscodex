@@ -22,12 +22,12 @@ tenants:
 nats:
   url: ""
   embedded:
-    store_dir: ""  # Set via env
+    store_dir: "" # Set via env
 
 storage:
   objects:
     backend: "local"
-    base_path: ""  # Set via env
+    base_path: "" # Set via env
 
 analysis:
   engine:
