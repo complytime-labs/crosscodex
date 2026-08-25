@@ -7,11 +7,14 @@ managed:
   disable:
     - module: buf.build/googleapis/googleapis
 plugins:
-  - remote: buf.build/protocolbuffers/go
+  # Local plugins (pinned in the root go.mod tool block) instead of buf.build
+  # remote plugins: remote plugin execution is BSR rate-limited and fails
+  # offline/CI builds ("resource_exhausted: too many requests").
+  - local: ["go", "tool", "protoc-gen-go"]
     out: ../gen/go
     opt:
       - paths=source_relative
-  - remote: buf.build/connectrpc/go
+  - local: ["go", "tool", "protoc-gen-connect-go"]
     out: ../gen/go
     opt:
       - paths=source_relative

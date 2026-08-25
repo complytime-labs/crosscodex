@@ -25,9 +25,11 @@ task build
 # Start the development database (PostgreSQL + AGE + pgvector)
 task dev:up
 
-# Configure the database connection (use the DSN printed by dev:up)
+# Configure the database connection. The dev database requires mutual TLS, so
+# copy the full DSN that `task dev:up` prints (shown here with repo-relative
+# cert paths):
 <!-- secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- documentation example with dev-only credentials (user: postgres, password: integration, host: localhost) -->
-crosscodex config set database.dsn "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=disable"
+crosscodex config set database.dsn "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert=.test-output/certs/ca.pem&sslcert=.test-output/certs/client.pem&sslkey=.test-output/certs/client-key.pem"
 
 # Download official NIST OSCAL catalogs
 task fetch:oscal-docs
@@ -130,8 +132,8 @@ flowchart TD
 ### Deployment Modes
 
 - **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
-- **Quadlet** -- Systemd-managed containers with shared PostgreSQL, NATS, and MinIO. Deployment manifests planned under `deploy/`.
-- **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage.
+- **Production (compose)** -- Single-host production stack with full mutual TLS across all services (PostgreSQL, NATS, LiteLLM, CrossCodex gateway). One-command bring-up via `task deploy:up` after populating `deploy/.env` and generating certificates with `task deploy:certs`. The LiteLLM gateway runs behind a stunnel sidecar to provide end-to-end mTLS. See [deploy/README.md](deploy/README.md) for setup, first-use CLI commands, and operations.
+- **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage. Multi-host deployment and FIPS 140 container images tracked in issue [#17](https://github.com/complytime-labs/crosscodex/issues/17).
 
 See [Service Runtime Guide](docs/dev/service-runtime.md) for the `--role` flag, role precedence, health-check wiring, and gateway startup preconditions.
 

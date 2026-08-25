@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+
+# Fast local build path: copy host-built static binaries into distroless,
+# skipping the in-container Go build. Selected via `task deploy:build LOCAL=1`
+# (or any deploy:* task with LOCAL=1), which first runs `task dev:build` with
+# CGO_ENABLED=0 and GOOS/GOARCH pinned to the target, then builds this file with
+# the bin/ output directory as the context.
+#
+# The binaries MUST be static (CGO_ENABLED=0) and target linux/<image-arch> to
+# run in distroless/static -- the deploy:build:local task enforces this. For
+# reproducible, CI-identical release images use the hermetic multi-stage build in
+# ./Dockerfile instead; this path trades that hermeticity for build speed and
+# depends on the host Go toolchain.
+
+FROM gcr.io/distroless/static-debian12:nonroot AS crosscodexd
+COPY crosscodexd /crosscodexd
+USER nonroot:nonroot
+ENTRYPOINT ["/crosscodexd"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS crosscodex-cli
+COPY crosscodex /crosscodex
+USER nonroot:nonroot
+ENTRYPOINT ["/crosscodex"]

@@ -64,3 +64,8 @@ docs/superpowers/
 
 # Crosscodex Project Material
 .crosscodex/
+
+# Deploy secrets
+deploy/.env
+deploy/certs/*.pem
+deploy/certs/.fingerprint

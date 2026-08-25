@@ -1,0 +1,139 @@
+# Single-host production stack for CrossCodex (role: all) over full mTLS.
+# Populate the cert volume first: task deploy:certs
+#
+# Cert keys in the shared crosscodex-certs volume are owned root:10001, mode
+# 0640 (group-read only). Every service that mounts the volume joins GID 10001
+# via group_add so it can read the keys despite running as a different user
+# (postgres, nats=root, stunnel=nobody, crosscodexd=nonroot). This GID MUST
+# match CERT_GID in .taskfiles/deploy.yml (the deploy:certs task).
+services:
+  db:
+    image: crosscodex-db:${TAG:-latest}
+    group_add: ["10001"]
+    environment:
+      POSTGRES_USER: crosscodex
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      POSTGRES_DB: crosscodex
+    volumes:
+      - crosscodex-certs:/certs
+      - crosscodex-pgdata:/var/lib/postgresql/data
+    command: >
+      postgres
+        -c shared_preload_libraries=age
+        -c hba_file=/etc/postgresql/pg_hba.conf
+        -c ssl=on
+        -c ssl_cert_file=/certs/server.pem
+        -c ssl_key_file=/certs/server-key.pem
+        -c ssl_ca_file=/certs/ca.pem
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U crosscodex -q"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  nats:
+    image: docker.io/nats:2.11-alpine
+    group_add: ["10001"]
+    volumes:
+      - crosscodex-certs:/certs
+      - crosscodex-jetstream:/data
+    command: >
+      --tls
+      --tlscert=/certs/server.pem
+      --tlskey=/certs/server-key.pem
+      --tlscacert=/certs/ca.pem
+      --tlsverify
+      --jetstream
+      --store_dir=/data
+    healthcheck:
+      # Probe the actual client listener, not just binary presence: a bare TCP
+      # connect succeeds before the TLS handshake, so it confirms nats bound
+      # :4222 without needing a client cert. `nats-server --help` would exit 0
+      # whenever the binary exists, masking a server that never came up.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4222 || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  litellm:
+    image: docker.io/litellm/litellm:1.87.1
+    env_file: [.env]
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "127.0.0.1"]
+    healthcheck:
+      # Use /health/liveliness, not /health: /health is auth-gated when a
+      # master_key is set (returns 401 unauthenticated) and makes live calls to
+      # every configured provider. liveliness is unauthenticated, cheap, and
+      # confirms the proxy is serving. Probing /health leaves the container
+      # permanently unhealthy, stalling litellm-tls and crosscodexd.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 15s
+
+  litellm-tls:
+    image: crosscodex-litellm-tls:${TAG:-latest}
+    build:
+      context: ./litellm
+      dockerfile: Containerfile
+    group_add: ["10001"]
+    network_mode: "service:litellm"
+    volumes:
+      - crosscodex-certs:/certs:ro
+    depends_on:
+      litellm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4443 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  crosscodexd:
+    image: crosscodexd:${TAG:-latest}
+    group_add: ["10001"]
+    env_file: [.env]
+    environment:
+      # The db's pg_hba.conf requires md5 password + a valid client cert
+      # (defense in depth). config.yaml's DSN carries only the client cert;
+      # pgx fills the missing password from PGPASSWORD (one value covers both
+      # database.dsn and database.graph_dsn). Reuse the single POSTGRES_PASSWORD
+      # source rather than embedding a secret in the committed config.yaml.
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    ports:
+      # Published host port is overridable so an isolated stack (e.g. the
+      # ephemeral smoke stack) can run alongside a production stack on 50051.
+      # The in-container port stays 50051.
+      - "${CROSSCODEX_GATEWAY_PORT:-50051}:50051"
+    volumes:
+      - crosscodex-certs:/certs:ro
+      - ./config.yaml:/etc/crosscodex/config.yaml:ro
+      - crosscodex-objects:/var/lib/crosscodex/objects
+    depends_on:
+      db:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      # crosscodexd reaches the LLM only through litellm-tls (stunnel on
+      # litellm:4443); litellm-tls being healthy transitively guarantees
+      # litellm is up, so gate the daemon on the TLS front, not the backend.
+      litellm-tls:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/crosscodexd", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  crosscodex-pgdata:
+  crosscodex-objects:
+  crosscodex-jetstream:
+  crosscodex-certs:
+    external: true
+    # Overridable so an isolated stack (e.g. the ephemeral smoke stack) mounts
+    # its own PKI volume instead of the production one.
+    name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}

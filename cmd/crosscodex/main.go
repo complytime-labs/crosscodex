@@ -44,6 +44,11 @@ Get started:
 				return err
 			}
 
+			tlsCA, _ := cmd.Flags().GetString("tls-ca")
+			tlsCert, _ := cmd.Flags().GetString("tls-cert")
+			tlsKey, _ := cmd.Flags().GetString("tls-key")
+			applyClientTLSFlags(tlsCA, tlsCert, tlsKey, state.cfg)
+
 			verbose, _ := cmd.Flags().GetCount("verbose")
 			debug, _ := cmd.Flags().GetBool("debug")
 			state.logLevel = resolveLogLevel(verbose, debug, state.cfg.Logging.Level)
@@ -69,6 +74,9 @@ Get started:
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	root.PersistentFlags().String("endpoint", "", "crosscodexd gRPC address (default: localhost:50051)")
+	root.PersistentFlags().String("tls-ca", "", "CA bundle verifying the crosscodexd server certificate (enables TLS)")
+	root.PersistentFlags().String("tls-cert", "", "client certificate for mutual TLS to crosscodexd")
+	root.PersistentFlags().String("tls-key", "", "client private key for mutual TLS to crosscodexd")
 	root.PersistentFlags().Bool("json", false, "output as JSON")
 	root.PersistentFlags().Bool("plain", false, "output without formatting or color")
 	root.PersistentFlags().Bool("no-color", false, "disable color output")

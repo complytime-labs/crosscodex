@@ -1,0 +1,11 @@
+# stunnel mTLS terminator for the LiteLLM front. No authoritative official
+# stunnel image exists, so we build and pin our own.
+FROM docker.io/library/alpine:3.21
+
+RUN apk add --no-cache stunnel=5.74-r0
+
+COPY stunnel.conf /etc/stunnel/stunnel.conf
+
+# stunnel runs as non-root; certs are mounted read-only at /certs.
+USER nobody
+ENTRYPOINT ["stunnel", "/etc/stunnel/stunnel.conf"]

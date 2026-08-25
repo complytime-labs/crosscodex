@@ -5,15 +5,18 @@ managed:
     - file_option: go_package_prefix
       value: github.com/complytime-labs/crosscodex/api/gen/go
 plugins:
-  - remote: buf.build/protocolbuffers/go
+  # Local plugins (pinned in the root go.mod tool block) instead of buf.build
+  # remote plugins: remote plugin execution is BSR rate-limited and fails
+  # offline/CI builds ("resource_exhausted: too many requests").
+  - local: ["go", "tool", "protoc-gen-go"]
     out: ../../gen/go
     opt:
       - paths=source_relative
-  - remote: buf.build/grpc/go
+  - local: ["go", "tool", "protoc-gen-go-grpc"]
     out: ../../gen/go
     opt:
       - paths=source_relative
-  - remote: buf.build/grpc-ecosystem/gateway
+  - local: ["go", "tool", "protoc-gen-grpc-gateway"]
     out: ../../gen/go
     opt:
       - paths=source_relative

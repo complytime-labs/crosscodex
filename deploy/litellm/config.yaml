@@ -1,0 +1,16 @@
+# LiteLLM proxy config for the CrossCodex production stack. Binds plaintext on
+# loopback :4000; the stunnel sidecar terminates mTLS on :4443. Point the model
+# aliases at any OpenAI-compatible provider via environment substitution.
+model_list:
+  - model_name: default
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: embed
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+general_settings:
+  telemetry: false
+  master_key: os.environ/CROSSCODEX_LLM_API_KEY

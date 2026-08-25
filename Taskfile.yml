@@ -35,6 +35,8 @@ includes:
     taskfile: .taskfiles/dev.yml
   test:
     taskfile: .taskfiles/test.yml
+  deploy:
+    taskfile: .taskfiles/deploy.yml
 
 vars:
   MODULE: github.com/complytime-labs/crosscodex

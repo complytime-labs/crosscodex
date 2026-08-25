@@ -1,0 +1,60 @@
+role: all
+logging:
+  level: info
+  format: json
+# health.addr is inert in the `all` role (gateway serves /healthz on server.addr).
+health:
+  addr: ":9091"
+server:
+  addr: ":50051"
+database:
+  dsn: "postgres://crosscodex@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem"
+  graph_dsn: "postgres://crosscodex@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem"
+  ssl_mode: verify-full
+nats:
+  url: "tls://nats:4222"
+  tls: true
+tls:
+  mode: mutual
+  ca: /certs/ca.pem
+  cert: /certs/client.pem
+  key: /certs/client-key.pem
+  targets:
+    # The gateway HTTPS listener must present the SERVER cert (ServerAuth EKU,
+    # SANs covering localhost/127.0.0.1/service names). The global cert above is
+    # the daemon's CLIENT identity for its outbound mTLS to db/nats/llm; without
+    # this override the listener would serve client.pem (ClientAuth-only, SAN
+    # DNS:client), which every client rejects during verification.
+    gateway-server:
+      cert: /certs/server.pem
+      key: /certs/server-key.pem
+    llm:
+      mode: mutual
+      ca: /certs/ca.pem
+      cert: /certs/client.pem
+      key: /certs/client-key.pem
+    nats:
+      mode: mutual
+      ca: /certs/ca.pem
+      cert: /certs/client.pem
+      key: /certs/client-key.pem
+storage:
+  objects:
+    backend: local
+    base_path: /var/lib/crosscodex/objects
+# in-toto attestation signing keypair (ECDSA P-256), provisioned into the
+# shared cert volume by `task deploy:certs` alongside the TLS PKI. Required by
+# the pipeline, which role `all` builds in-process; `enabled` and
+# `expiry_duration` inherit the config defaults.
+attestation:
+  private_key_path: /certs/attestation-key.pem
+  public_key_path: /certs/attestation-pub.pem
+tenants:
+  enabled: false
+  default_tenant: default
+llm:
+  gateway_url: "https://litellm:4443"
+  gateway_mode: true
+  default_model: "${CROSSCODEX_LLM_DEFAULT_MODEL}"
+  embedding_model: "${CROSSCODEX_LLM_EMBEDDING_MODEL}"
+  api_key_ref: "env:CROSSCODEX_LLM_API_KEY"

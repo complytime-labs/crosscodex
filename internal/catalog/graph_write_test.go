@@ -91,7 +91,7 @@ func (m *memStorage) Put(_ context.Context, _ string, r io.Reader) error {
 func (m *memStorage) Get(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(m.data)), nil
 }
-func (m *memStorage) Delete(context.Context, string) error { return nil }
+func (m *memStorage) Delete(context.Context, string) error         { return nil }
 func (m *memStorage) Exists(context.Context, string) (bool, error) { return true, nil }
 func (m *memStorage) List(context.Context, string) ([]storage.ObjectMetadata, error) {
 	return nil, nil

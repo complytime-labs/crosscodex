@@ -77,3 +77,71 @@ jobs:
             .build/crosscodex-darwin-arm64 \
             .build/crosscodexd-darwin-arm64 \
             .build/checksums.txt
+
+  images:
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
+      - uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
+
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Compute build date
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Build and push crosscodexd
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: crosscodexd
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+            MODULE=github.com/complytime-labs/crosscodex
+          tags: |
+            ghcr.io/complytime-labs/crosscodexd:${{ github.ref_name }}
+            ghcr.io/complytime-labs/crosscodexd:latest
+
+      - name: Build and push crosscodex-cli
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: crosscodex-cli
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+            MODULE=github.com/complytime-labs/crosscodex
+          tags: |
+            ghcr.io/complytime-labs/crosscodex-cli:${{ github.ref_name }}
+            ghcr.io/complytime-labs/crosscodex-cli:latest
+
+      - name: Build and push crosscodex-db
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: deploy/db
+          file: deploy/db/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/complytime-labs/crosscodex-db:${{ github.ref_name }}
+            ghcr.io/complytime-labs/crosscodex-db:latest

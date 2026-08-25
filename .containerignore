@@ -1,10 +1,11 @@
 # Build context exclusions for container image builds.
 # Podman reads .containerignore; Docker reads .dockerignore (symlinked).
 
-# VCS & agent state — largest offenders (~85 MB combined)
+# VCS & agent state — largest offenders (~210 MB combined)
 .git/
 .opencode/
 .claude/
+.codegraph/
 
 # Build artifacts & test output
 .build/
