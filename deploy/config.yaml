@@ -55,6 +55,30 @@ tenants:
 llm:
   gateway_url: "https://litellm:4443"
   gateway_mode: true
-  default_model: "${CROSSCODEX_LLM_DEFAULT_MODEL}"
-  embedding_model: "${CROSSCODEX_LLM_EMBEDDING_MODEL}"
+  # default_model and embedding_model are populated by the CROSSCODEX_LLM_*
+  # env overlay (deploy/.env: CROSSCODEX_LLM_DEFAULT_MODEL /
+  # CROSSCODEX_LLM_EMBEDDING_MODEL). The loader does not interpolate ${...} in
+  # YAML values, so these are set through the environment, not written here.
+  #
+  # llm.embedding_model reaches the worker only as a fallback for tasks with no
+  # model set (internal/worker/handler.go). The embedding analyzer always stamps
+  # each task with a model drawn from analysis.embedding.models below, so that
+  # fallback never fires for embeddings -- the embedding model MUST be set under
+  # analysis, not here. llm.default_model does drive classification (its tasks
+  # carry no model), so CROSSCODEX_LLM_DEFAULT_MODEL still selects the LiteLLM
+  # completion alias.
   api_key_ref: "env:CROSSCODEX_LLM_API_KEY"
+analysis:
+  # The compiled defaults target the Ollama-backed test stack, whose embedding
+  # model is `snowflake-arctic-embed2`. This production stack routes embeddings
+  # through LiteLLM, which only exposes the `embed` alias
+  # (deploy/litellm/config.yaml), so the model the embedding analyzer requests
+  # and the model candidate generation reads embeddings back by must both be
+  # `embed`. Without these overrides every embed task 400s at LiteLLM
+  # ("Invalid model name ... snowflake-arctic-embed2"), embedding coverage stays
+  # at 0%, and candidate generation fails the whole ingest job.
+  embedding:
+    models:
+      - embed
+  candidates:
+    embed_model: embed

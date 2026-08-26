@@ -145,3 +145,14 @@ jobs:
           tags: |
             ghcr.io/complytime-labs/crosscodex-db:${{ github.ref_name }}
             ghcr.io/complytime-labs/crosscodex-db:latest
+
+      - name: Build and push crosscodex-litellm-tls
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: deploy/litellm
+          file: deploy/litellm/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/complytime-labs/crosscodex-litellm-tls:${{ github.ref_name }}
+            ghcr.io/complytime-labs/crosscodex-litellm-tls:latest

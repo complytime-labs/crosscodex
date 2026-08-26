@@ -149,6 +149,19 @@ Container-driven end-to-end smoke test (bring up the stack, catalog import round
 task deploy:smoke
 ```
 
+**Offline by default — no API key required.** Unlike `deploy:up` (which routes LiteLLM to real OpenAI), the smoke test backs the stack with a local Ollama provider so it runs self-contained. It builds a baked-model image (`llama3.2:1b` + `granite-embedding:30m`, reused from the integration stack), renders a smoke-only LiteLLM config that points the `default`/`embed` aliases at Ollama, and layers `deploy/compose.offline.yaml` onto the production `compose.yaml`. Production `deploy/compose.yaml` is untouched and stays OpenAI-backed. Your `deploy/.env` still needs `CROSSCODEX_LLM_DEFAULT_MODEL=default` and `CROSSCODEX_LLM_EMBEDDING_MODEL=embed`, but `OPENAI_API_KEY` / `CROSSCODEX_LLM_API_KEY` may be any non-empty placeholder (Ollama ignores them).
+
+To point the smoke test at an existing Ollama instead of the baked container, pass `OLLAMA_HOST` (and optionally the model names):
+
+```bash
+task deploy:smoke OLLAMA_HOST=http://your-host:11434 \
+  OLLAMA_CHAT_MODEL=llama3.2:1b OLLAMA_EMBED_MODEL=granite-embedding:30m
+```
+
+The host is probed and its models pulled before the stack starts, so an unreachable provider or missing model fails fast. `OLLAMA_HOST` may omit the scheme (`your-host:11434`); `http://` is assumed.
+
+To use an Ollama running on your **host machine**, point at loopback — `OLLAMA_HOST=localhost:11435` (any port other than the baked default `11434`). LiteLLM runs in the compose bridge network, so `smoke_up.sh` rewrites a `localhost`/`127.0.0.1` host to `host.containers.internal` when rendering the LiteLLM config, and the `compose.offline-remote.yaml` overlay maps that name to the host gateway. This needs podman ≥ 4.1 (or a docker-compose that supports `host-gateway`). A `localhost` override is reachable from the host for the pre-flight probe but only reachable from the container via this rewrite — without it, `localhost` inside the container is the container itself.
+
 The smoke test is fully isolated and ephemeral, so it can run alongside a live production stack:
 
 - It runs under its own compose project (`crosscodex-smoke`), with its own data volumes, its own PKI volume (`crosscodex-smoke-certs`) generated from a throwaway host cert dir, and its own published gateway port (`50151`, leaving production's `50051` untouched).

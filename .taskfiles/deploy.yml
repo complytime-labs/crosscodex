@@ -67,6 +67,14 @@ vars:
   # hermetic multi-stage build. Read by the build task and propagated to it as a
   # global var through every deploy:* task that depends on build.
   LOCAL: '{{.LOCAL | default ""}}'
+  # Generic compose-overlay knob so an isolated stack can layer an overlay onto
+  # the production compose.yaml without deploy:up/down knowing anything smoke-
+  # specific. Empty (the default) reproduces the production stack exactly. The
+  # smoke path exports COMPOSE_OVERLAY: compose.offline.yaml for a local baked
+  # Ollama, or compose.offline-remote.yaml for a remote OLLAMA_HOST. go-task
+  # reads exported env vars as vars, so smoke_up.sh's child `task deploy:up`
+  # picks this up.
+  COMPOSE_OVERLAY: '{{.COMPOSE_OVERLAY | default ""}}'
 
 tasks:
   build:
@@ -219,7 +227,7 @@ tasks:
           test -z "${missing}" || { echo "deploy/.env is missing or has empty values for:${missing}" >&2; exit 1; }
         msg: "deploy/.env is missing one or more required keys (see stderr for names)."
     cmds:
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} up -d --build"
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} up -d --build"
       - |
         echo "Waiting for gateway /healthz ..."
         # 150 x 2s = 300s. Covers the worst-case cold start of the full chain:
@@ -244,7 +252,7 @@ tasks:
       CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
     cmds:
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} down {{if eq .VOLUMES \"1\"}}--volumes{{end}}"
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES \"1\"}}--volumes{{end}}"
       # compose's own `down --volumes` does NOT remove `external` volumes, so
       # the cert volume must be dropped explicitly. This keeps VOLUMES=1 a true
       # full teardown and guarantees the next `up` reloads a freshly generated
@@ -279,9 +287,21 @@ tasks:
       CROSSCODEX_CERTS_VOLUME: "{{.SMOKE_CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.SMOKE_GATEWAY_PORT}}"
       CERTS_DIR: "{{.SMOKE_CERTS_DIR}}"
+      # Offline LLM provider identity. Exported so smoke_up.sh renders the
+      # LiteLLM config and (for a remote host) probes/pulls against the same
+      # values. Defaults resolve to the local baked-model Ollama container;
+      # override with `task deploy:smoke:up OLLAMA_HOST=http://host:11434`.
+      OLLAMA_HOST: "{{.OLLAMA_HOST}}"
+      OLLAMA_CHAT_MODEL: "{{.OLLAMA_CHAT_MODEL}}"
+      OLLAMA_EMBED_MODEL: "{{.OLLAMA_EMBED_MODEL}}"
+      # smoke_up.sh builds the baked-model Ollama image directly (the equivalent
+      # integration task is internal / not CLI-callable); it needs the engine.
+      CONTAINER_ENGINE: "{{.CONTAINER_ENGINE}}"
     cmds:
       # Pass LOCAL through the script's environment so its child `task deploy:up`
-      # picks it up as a var (go-task reads env vars as vars).
+      # picks it up as a var (go-task reads env vars as vars). smoke_up.sh
+      # additionally exports COMPOSE_OVERLAY (the offline or offline-remote
+      # overlay, chosen by OLLAMA_HOST) for that child task.
       - LOCAL="{{.LOCAL}}" COMPOSE_CMD="{{.COMPOSE_CMD}}" bash {{.ROOT_DIR}}/test/deploy/smoke_up.sh
 
   smoke:down:
@@ -293,6 +313,9 @@ tasks:
       CROSSCODEX_CERTS_VOLUME: "{{.SMOKE_CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.SMOKE_GATEWAY_PORT}}"
       CERTS_DIR: "{{.SMOKE_CERTS_DIR}}"
+      # Load the offline overlay so `deploy:down` also removes the ollama service
+      # the smoke stack added; the base compose.yaml alone does not know it.
+      COMPOSE_OVERLAY: "{{.ROOT_DIR}}/deploy/compose.offline.yaml"
     cmds:
       - task deploy:down VOLUMES=1
       - rm -rf {{.SMOKE_CERTS_DIR}}

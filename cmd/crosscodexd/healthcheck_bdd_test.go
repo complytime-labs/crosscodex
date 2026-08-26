@@ -41,4 +41,17 @@ var _ = Describe("probeHealthURL", func() {
 		tlsCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // test-only
 		Expect(probeHealthURL(context.Background(), server.URL, tlsCfg)).To(HaveOccurred())
 	})
+
+	It("returns an error when the target is unreachable", func() {
+		// Stand up a throwaway TLS server, capture its URL, then close it so
+		// the dial fails -- exercising the transport-error branch (client.Do
+		// error), the common "daemon not up yet" case a healthcheck reports.
+		closed := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		url := closed.URL
+		closed.Close()
+		tlsCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // test-only
+		Expect(probeHealthURL(context.Background(), url, tlsCfg)).To(HaveOccurred())
+	})
 })

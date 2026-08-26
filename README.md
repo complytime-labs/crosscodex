@@ -287,7 +287,7 @@ crosscodex/                      # Main monorepo
   pkg/                           # Public SDK packages
   cmd/                           # CLI and daemon binaries
   internal/                      # Service implementations
-  deploy/                        # Deployment manifests (planned)
+  deploy/                        # Deployment manifests (compose stack, see deploy/README.md)
 ```
 
 ### Prerequisites

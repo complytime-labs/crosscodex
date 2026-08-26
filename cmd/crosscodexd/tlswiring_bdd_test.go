@@ -66,6 +66,17 @@ var _ = Describe("llmHTTPClient", func() {
 			Expect(c).To(BeNil())
 		})
 	})
+
+	When("the TLS material cannot be loaded", func() {
+		It("returns the wrapped build error", func() {
+			cfg.LLM.GatewayURL = "https://litellm:4443"
+			cfg.TLS.Cert = filepath.Join(filepath.Dir(testTLSWiringClientCertPath), "missing.pem")
+			c, err := llmHTTPClient(context.Background(), cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(c).To(BeNil())
+			Expect(err.Error()).To(ContainSubstring("build LLM TLS config"))
+		})
+	})
 })
 
 var _ = Describe("natsTLSConfig", func() {
@@ -110,6 +121,18 @@ var _ = Describe("natsTLSConfig", func() {
 			c, err := natsTLSConfig(context.Background(), cfg)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(c).To(BeNil())
+		})
+	})
+
+	When("the TLS material cannot be loaded", func() {
+		It("returns the wrapped build error", func() {
+			cfg.NATS.URL = "tls://nats:4222"
+			cfg.NATS.TLS = true
+			cfg.TLS.Cert = filepath.Join(filepath.Dir(testTLSWiringClientCertPath), "missing.pem")
+			c, err := natsTLSConfig(context.Background(), cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(c).To(BeNil())
+			Expect(err.Error()).To(ContainSubstring("build NATS TLS config"))
 		})
 	})
 })
