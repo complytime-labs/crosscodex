@@ -70,11 +70,11 @@ type CollectRequest struct {
 // CollectionHandle holds the subscription and channels for a two-phase collect operation.
 // PrepareCollect establishes the subscription and returns a handle; AwaitResults uses the handle to wait for completion.
 type CollectionHandle struct {
-	sub         natsbus.Subscription
-	resultChan  chan analyzer.TaskResult
-	doneChan    chan struct{}
-	pending     map[string]bool
-	mu          *sync.Mutex
-	subject     string
-	Req         CollectRequest // Exported for test mocks
+	sub        natsbus.Subscription
+	resultChan chan analyzer.TaskResult
+	doneChan   chan struct{}
+	pending    map[string]bool
+	mu         *sync.Mutex
+	subject    string
+	Req        CollectRequest // Exported for test mocks
 }

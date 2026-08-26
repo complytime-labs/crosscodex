@@ -156,7 +156,16 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 	}
 
 	if need.nats {
-		natsClient, err := natsbus.New(cfg.NATS)
+		var natsOpts []natsbus.Option
+		tlsCfg, err := natsTLSConfig(ctx, cfg)
+		if err != nil {
+			res.close()
+			return nil, err
+		}
+		if tlsCfg != nil {
+			natsOpts = append(natsOpts, natsbus.WithTLSConfig(tlsCfg))
+		}
+		natsClient, err := natsbus.New(cfg.NATS, natsOpts...)
 		if err != nil {
 			res.close()
 			return nil, fmt.Errorf("create NATS client: %w", err)
@@ -165,7 +174,16 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 	}
 
 	if need.llm {
-		llmClient, err := llmclient.NewClient(cfg.LLM)
+		var llmOpts []llmclient.Option
+		httpClient, err := llmHTTPClient(ctx, cfg)
+		if err != nil {
+			res.close()
+			return nil, err
+		}
+		if httpClient != nil {
+			llmOpts = append(llmOpts, llmclient.WithHTTPClient(httpClient))
+		}
+		llmClient, err := llmclient.NewClient(cfg.LLM, llmOpts...)
 		if err != nil {
 			res.close()
 			return nil, fmt.Errorf("create LLM client: %w", err)

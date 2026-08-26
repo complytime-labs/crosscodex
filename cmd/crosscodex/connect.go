@@ -61,8 +61,20 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 	endpoint := resolveEndpoint(flagEndpoint, envEndpoint, cfgEndpoint)
 	explicitEndpoint := flagEndpoint != "" || envEndpoint != "" || cfgEndpoint != ""
 
-	client := connectClient(endpoint)
-	state.client = client
+	hostPort, schemeTLS := parseEndpoint(endpoint)
+	var clientCfg config.ClientConfig
+	if state.cfg != nil {
+		clientCfg = *state.cfg
+	}
+	if clientUsesTLS(schemeTLS, clientCfg) {
+		httpClient, err := tlsHTTPClient(ctx, clientCfg.TLS)
+		if err != nil {
+			return fmt.Errorf("configure client TLS: %w", err)
+		}
+		state.client = newTLSGatewayClient(hostPort, httpClient)
+	} else {
+		state.client = connectClient(hostPort)
+	}
 	if healthCheck(ctx, state.client) {
 		return nil
 	}
@@ -75,8 +87,7 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 	pidPath := filepath.Join(stateDir, "daemon.pid")
 	if port, alive := readPIDFile(pidPath); alive && port > 0 {
 		ep := fmt.Sprintf("localhost:%d", port)
-		client = connectClient(ep)
-		state.client = client
+		state.client = connectClient(ep)
 		if healthCheck(ctx, state.client) {
 			return nil
 		}

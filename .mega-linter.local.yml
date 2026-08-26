@@ -6,6 +6,21 @@ EXTENDS: .mega-linter.shared.yml
 # Allow go to load the correct version
 GOTOOLCHAIN: auto
 
+# Global exclusions - prevent linters from scanning build artifacts and caches
+# These directories can contain container layers, cached dependencies, etc.
+EXCLUDED_DIRECTORIES:
+  - .test-output
+  - .buildtmp
+  - .superpowers
+  - .headroom
+  - megalinter-reports
+  - vendor
+  - node_modules
+
+# DevSkim-specific exclusions (in addition to global EXCLUDED_DIRECTORIES)
+REPOSITORY_DEVSKIM_FILTER_REGEX_EXCLUDE: '(\.test-output/|\.buildtmp/|\.superpowers/|\.headroom/|megalinter-reports/|vendor/|node_modules/)'
+REPOSITORY_DEVSKIM_ARGUMENTS: "--ignore-globs .test-output/** --ignore-globs .buildtmp/** --ignore-globs .superpowers/** --ignore-globs .headroom/**"
+
 # Use project-level golangci-lint config so local and CI lint agree.
 GO_GOLANGCI_LINT_CONFIG_FILE: .golangci.yml
 

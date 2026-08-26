@@ -264,13 +264,13 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 	span.SetStatus(codes.Ok, "subscription established")
 
 	return &CollectionHandle{
-		sub:         sub,
-		resultChan:  resultChan,
-		doneChan:    doneChan,
-		pending:     pending,
-		mu:          &mu,
-		subject:     subject,
-		Req:         req,
+		sub:        sub,
+		resultChan: resultChan,
+		doneChan:   doneChan,
+		pending:    pending,
+		mu:         &mu,
+		subject:    subject,
+		Req:        req,
 	}, nil
 }
 

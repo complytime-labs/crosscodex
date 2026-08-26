@@ -540,12 +540,12 @@ tasks:
     vars:
       CONTAINER_IMAGE: crosscodex-test-db:latest
     sources:
-      - "{{.ROOT_DIR}}/pkg/db/testdata/Containerfile"
-      - "{{.ROOT_DIR}}/pkg/db/testdata/pg_hba.conf"
+      - "{{.ROOT_DIR}}/deploy/db/Containerfile"
+      - "{{.ROOT_DIR}}/deploy/db/pg_hba.conf"
     status:
       - "{{.CONTAINER_ENGINE}} image inspect crosscodex-test-db:latest >/dev/null 2>&1"
     cmds:
-      - "{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/pkg/db/testdata/Containerfile {{.ROOT_DIR}}/pkg/db/testdata"
+      - "{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/deploy/db/Containerfile {{.ROOT_DIR}}/deploy/db"
 
   build-ollama-image:
     desc: Build the Ollama test image with pre-baked models (llama3.2:1b + granite-embedding:30m)

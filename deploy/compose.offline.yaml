@@ -1,0 +1,44 @@
+# Offline overlay for the deploy SMOKE stack. Applied on top of compose.yaml
+# only by the smoke path (test/deploy/smoke_up.sh exports COMPOSE_OVERLAY);
+# the production `task deploy:up` never loads it, so production stays OpenAI-backed.
+#
+# It adds a local Ollama provider (baked-model image reused from the integration
+# stack) and repoints the LiteLLM service at it, so the smoke test runs
+# self-contained with no external API key. LiteLLM still terminates mTLS via the
+# unchanged litellm-tls stunnel sidecar; only its upstream target changes.
+services:
+  ollama:
+    # Baked-model image from the integration stack (llama3.2:1b +
+    # granite-embedding:30m), built from test/ollama/Containerfile by
+    # smoke_up.sh for the local (default) path.
+    image: crosscodex-test-ollama:latest
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  litellm:
+    # Gate LiteLLM on Ollama so the first inference call cannot race a
+    # still-loading model. depends_on merges with the base service (which has none).
+    depends_on:
+      ollama:
+        condition: service_healthy
+    # Mount the rendered offline config at a DISTINCT target: overlay volume
+    # lists concatenate, so reusing /app/config.yaml would collide with the base
+    # mount. The command override (replaced, not merged) selects this file.
+    # Path is relative to this compose file's dir (deploy/), matching the
+    # ../.test-output/... pattern used by test/compose.yaml.
+    volumes:
+      - ../.test-output/deploy-smoke/litellm_config.yaml:/app/config.offline.yaml:ro
+    command:
+      [
+        "--config",
+        "/app/config.offline.yaml",
+        "--port",
+        "4000",
+        "--host",
+        "127.0.0.1",
+      ]

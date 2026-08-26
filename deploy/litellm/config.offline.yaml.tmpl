@@ -1,0 +1,33 @@
+# Offline LiteLLM proxy config for the deploy SMOKE stack (template).
+#
+# Do not edit for local overrides. It is rendered at smoke bring-up by
+# scripts/generate-litellm-config.sh (called from test/deploy/smoke_up.sh),
+# which substitutes the Ollama api_base and chat/embed model names below.
+# For the default local run api_base becomes http://ollama:11434/v1 (the
+# overlay's compose-network service name); a remote OLLAMA_HOST is used directly.
+#
+# This mirrors the production deploy/litellm/config.yaml aliases (default +
+# embed) so the daemon requests the same model names, but routes them to a
+# local Ollama instead of OpenAI — the smoke test needs no real API key.
+#
+# Uses the openai/ provider prefix (not ollama/) so LiteLLM routes through the
+# httpx OpenAI client over plain HTTP; Ollama's /v1 endpoint is OpenAI-compatible.
+# The api_key is a required-but-ignored placeholder (Ollama does not check it).
+#
+# master_key is retained from the production config so the daemon -> LiteLLM
+# auth handshake (CROSSCODEX_LLM_API_KEY) stays under test.
+model_list:
+  - model_name: default
+    litellm_params:
+      model: openai/OLLAMA_CHAT_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+  - model_name: embed
+    litellm_params:
+      model: openai/OLLAMA_EMBED_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+
+general_settings:
+  telemetry: false
+  master_key: os.environ/CROSSCODEX_LLM_API_KEY

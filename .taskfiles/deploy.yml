@@ -1,0 +1,321 @@
+version: "3"
+
+vars:
+  MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
+  CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+  REGISTRY: '{{.REGISTRY | default "ghcr.io/complytime-labs"}}'
+  TAG: '{{.TAG | default "latest"}}'
+  VERSION: '{{.VERSION | default "dev"}}'
+  GIT_COMMIT:
+    sh: git rev-parse HEAD 2>/dev/null || echo unknown
+  BUILD_DATE:
+    sh: date -u +%Y-%m-%dT%H:%M:%SZ
+  COMPOSE_CMD:
+    sh: |
+      # Derive compose command from CONTAINER_ENGINE to avoid cross-engine
+      # volume/container mismatches (e.g. podman volumes invisible to docker).
+      engine="{{.CONTAINER_ENGINE}}"
+      case "$engine" in
+        podman)
+          # Prefer standalone podman-compose (pip) over "podman compose" plugin.
+          # On GitHub Actions, "podman compose version" succeeds by discovering
+          # /usr/libexec/docker/cli-plugins/docker-compose, which then fails at
+          # runtime because it needs a Docker daemon socket.  The pip-installed
+          # podman-compose speaks to podman natively and always works.
+          if command -v podman-compose >/dev/null 2>&1; then
+            echo "podman-compose"
+          elif podman compose version >/dev/null 2>&1; then
+            echo "podman compose"
+          else
+            echo "MISSING"
+          fi
+          ;;
+        docker)
+          if docker compose version >/dev/null 2>&1; then
+            echo "docker compose"
+          else
+            echo "MISSING"
+          fi
+          ;;
+        *)
+          echo "MISSING"
+          ;;
+      esac
+  COMPOSE_FILE: "{{.ROOT_DIR}}/deploy/compose.yaml"
+  # Deploy identity knobs. Override via environment for an isolated stack (the
+  # ephemeral smoke stack sets all three plus COMPOSE_PROJECT_NAME); the
+  # defaults reproduce the production stack. CERTS_VOLUME and GATEWAY_PORT are
+  # also read by compose.yaml's ${...} interpolation, so exporting them keeps
+  # the task side and the compose side in agreement.
+  CERTS_DIR: '{{.CERTS_DIR | default (printf "%s/deploy/certs" .ROOT_DIR)}}'
+  CERTS_VOLUME: '{{.CROSSCODEX_CERTS_VOLUME | default "crosscodex-certs"}}'
+  GATEWAY_PORT: '{{.CROSSCODEX_GATEWAY_PORT | default "50051"}}'
+  # Isolation identity for the ephemeral smoke stack. Single source of truth
+  # shared by smoke:up and smoke:down so both act on the same project, volume,
+  # port, and throwaway PKI dir. Exported (via each task's env:) as the
+  # COMPOSE_PROJECT_NAME / CROSSCODEX_* / CERTS_DIR that deploy/compose.yaml and
+  # the deploy:* tasks read. SMOKE_CERTS_DIR is a fixed .test-output path (not an
+  # mktemp) so smoke:down can remove the same dir smoke:up created.
+  SMOKE_PROJECT: '{{.SMOKE_PROJECT | default "crosscodex-smoke"}}'
+  SMOKE_CERTS_VOLUME: '{{.SMOKE_CERTS_VOLUME | default "crosscodex-smoke-certs"}}'
+  SMOKE_GATEWAY_PORT: '{{.SMOKE_GATEWAY_PORT | default "50151"}}'
+  SMOKE_CERTS_DIR: '{{.SMOKE_CERTS_DIR | default (printf "%s/.test-output/deploy-smoke/certs" .ROOT_DIR)}}'
+  # Opt-in fast build path. LOCAL=1 builds the Go binaries on the host and copies
+  # them into thin distroless images (deploy/Dockerfile.local), skipping the
+  # hermetic in-container Go build. Requires a local Go toolchain and trades
+  # CI-identical reproducibility for speed; unset (the default) keeps the
+  # hermetic multi-stage build. Read by the build task and propagated to it as a
+  # global var through every deploy:* task that depends on build.
+  LOCAL: '{{.LOCAL | default ""}}'
+  # Generic compose-overlay knob so an isolated stack can layer an overlay onto
+  # the production compose.yaml without deploy:up/down knowing anything smoke-
+  # specific. Empty (the default) reproduces the production stack exactly. The
+  # smoke path exports COMPOSE_OVERLAY: compose.offline.yaml for a local baked
+  # Ollama, or compose.offline-remote.yaml for a remote OLLAMA_HOST. go-task
+  # reads exported env vars as vars, so smoke_up.sh's child `task deploy:up`
+  # picks this up.
+  COMPOSE_OVERLAY: '{{.COMPOSE_OVERLAY | default ""}}'
+
+tasks:
+  build:
+    desc: Build the crosscodexd, crosscodex-cli, and DB images (LOCAL=1 for the fast host-build path)
+    cmds:
+      # App images: hermetic in-container build (default) or copy host-built
+      # static binaries (LOCAL=1). The DB image is always built the same way.
+      - task: '{{if eq .LOCAL "1"}}build:app:local{{else}}build:app:hermetic{{end}}'
+      - task: build:db
+
+  build:app:hermetic:
+    internal: true
+    desc: Build the app images with the hermetic multi-stage Dockerfile (default)
+    cmds:
+      - >
+        {{.CONTAINER_ENGINE}} build
+        --target crosscodexd
+        --build-arg VERSION={{.VERSION}}
+        --build-arg GIT_COMMIT={{.GIT_COMMIT}}
+        --build-arg BUILD_DATE={{.BUILD_DATE}}
+        --build-arg MODULE={{.MODULE}}
+        -t crosscodexd:{{.TAG}}
+        -f {{.ROOT_DIR}}/deploy/Dockerfile {{.ROOT_DIR}}
+      - >
+        {{.CONTAINER_ENGINE}} build
+        --target crosscodex-cli
+        --build-arg VERSION={{.VERSION}}
+        --build-arg GIT_COMMIT={{.GIT_COMMIT}}
+        --build-arg BUILD_DATE={{.BUILD_DATE}}
+        --build-arg MODULE={{.MODULE}}
+        -t crosscodex-cli:{{.TAG}}
+        -f {{.ROOT_DIR}}/deploy/Dockerfile {{.ROOT_DIR}}
+
+  build:app:local:
+    internal: true
+    desc: Build the app images from host-built static binaries (fast dev path)
+    vars:
+      BUILD_DIR: '{{.BUILD_DIR | default (printf "%s/bin" .ROOT_DIR)}}'
+      # Target the container arch, not necessarily the host's (e.g. building an
+      # amd64 image on an arm64 host). GOOS is fixed to linux below.
+      GOARCH:
+        sh: go env GOHOSTARCH
+    cmds:
+      # Static, linux-targeted binaries so they run in distroless/static.
+      # CGO_ENABLED=0 mirrors the hermetic Dockerfile; dev:build supplies the
+      # version ldflags. Then copy each into its thin runtime image, using bin/
+      # as the (tiny) build context.
+      - CGO_ENABLED=0 GOOS=linux GOARCH={{.GOARCH}} task dev:build
+      - >
+        {{.CONTAINER_ENGINE}} build
+        --target crosscodexd
+        -t crosscodexd:{{.TAG}}
+        -f {{.ROOT_DIR}}/deploy/Dockerfile.local {{.BUILD_DIR}}
+      - >
+        {{.CONTAINER_ENGINE}} build
+        --target crosscodex-cli
+        -t crosscodex-cli:{{.TAG}}
+        -f {{.ROOT_DIR}}/deploy/Dockerfile.local {{.BUILD_DIR}}
+
+  build:db:
+    internal: true
+    desc: Build the PostgreSQL+AGE database image
+    cmds:
+      - >
+        {{.CONTAINER_ENGINE}} build
+        -t crosscodex-db:{{.TAG}}
+        -f {{.ROOT_DIR}}/deploy/db/Containerfile {{.ROOT_DIR}}/deploy/db
+
+  certs:
+    desc: Generate the deploy TLS PKI and load it into the crosscodex-certs volume
+    cmds:
+      - task: certs:generate
+      - task: certs:load
+
+  certs:generate:
+    internal: true
+    desc: Generate the host-side TLS PKI + attestation keys (skipped when the on-disk material is valid)
+    cmds:
+      - mkdir -p {{.CERTS_DIR}}
+      - go run {{.ROOT_DIR}}/deploy/certs/gen.go {{.CERTS_DIR}}
+    status:
+      - test -f {{.CERTS_DIR}}/.fingerprint
+      # Regenerate when the attestation keypair is absent (e.g. a certs dir
+      # predating attestation support). A full regen mints a new CA, changing
+      # the fingerprint and forcing certs:load to reload the whole bundle.
+      - test -f {{.CERTS_DIR}}/attestation-key.pem
+      - test -f {{.CERTS_DIR}}/attestation-pub.pem
+      - go run {{.ROOT_DIR}}/deploy/certs/gen.go --verify {{.CERTS_DIR}}
+
+  certs:load:
+    internal: true
+    desc: Load the host TLS PKI into the certs volume
+    # Depends on the db image (used as the copy helper) and the host certs.
+    deps: [build, certs:generate]
+    vars:
+      # Shared supplementary GID for cert-key access. MUST match the
+      # group_add value on every cert-consuming service in deploy/compose.yaml.
+      CERT_GID: "10001"
+    cmds:
+      - "{{.CONTAINER_ENGINE}} volume create {{.CERTS_VOLUME}} 2>/dev/null || true"
+      # Copy certs into the volume and set a shared-group ownership model so
+      # every consumer can read the keys despite running as different users
+      # (postgres, nats=root, stunnel=nobody, crosscodexd=nonroot). Files are
+      # owned root:CERT_GID; certs 0644, private keys 0640 (group-read only).
+      # PostgreSQL accepts a root-owned 0640 key, and each service is added to
+      # CERT_GID via group_add in compose.yaml so it can read the key group.
+      # Reuse the db image (has a shell) as the copy helper.
+      - |
+        {{.CONTAINER_ENGINE}} run --rm --user root \
+          -v {{.CERTS_VOLUME}}:/certs \
+          -v {{.CERTS_DIR}}:/src:ro,z \
+          --entrypoint sh \
+          crosscodex-db:{{.TAG}} \
+          -c 'cp /src/*.pem /src/.fingerprint /certs/ && chown 0:{{.CERT_GID}} /certs/* && chmod 0644 /certs/*.pem && chmod 0640 /certs/*-key.pem'
+    # Re-load whenever the volume is absent or its fingerprint no longer matches
+    # the host PKI. `deploy:down VOLUMES=1` explicitly removes this volume (the
+    # external volume survives compose's own `down --volumes`), so after a
+    # teardown the fingerprint read below returns empty, the check fails, and
+    # the volume is repopulated on the next `up`.
+    status:
+      - >
+        test "$({{.CONTAINER_ENGINE}} run --rm -v {{.CERTS_VOLUME}}:/certs:ro,z
+        --entrypoint sh crosscodex-db:{{.TAG}} -c 'cat /certs/.fingerprint 2>/dev/null')"
+        = "$(cat {{.CERTS_DIR}}/.fingerprint)"
+
+  up:
+    desc: Bring up the production stack and wait for the gateway to be healthy
+    deps: [build, certs]
+    dir: "{{.ROOT_DIR}}/deploy"
+    # Export the identity knobs so the compose subprocess resolves the same
+    # volume name and published port that the task side uses (compose.yaml reads
+    # these via ${...}). COMPOSE_PROJECT_NAME is inherited from the caller's
+    # environment when set (the smoke stack exports it), otherwise compose
+    # derives the default project from the compose directory.
+    env:
+      CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
+      CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
+    preconditions:
+      - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
+        msg: "deploy/.env missing. Copy deploy/.env.example to deploy/.env and fill it in."
+      # Fail before starting the stack if a required key is absent or empty,
+      # rather than at first DB connect / LLM call. POSTGRES_PASSWORD is also
+      # enforced by compose (${POSTGRES_PASSWORD:?}); checked here too so all
+      # required keys fail the same way, up front.
+      - sh: |
+          missing=""
+          for k in POSTGRES_PASSWORD OPENAI_API_KEY CROSSCODEX_LLM_API_KEY CROSSCODEX_LLM_DEFAULT_MODEL CROSSCODEX_LLM_EMBEDDING_MODEL; do
+            grep -qE "^${k}=.+" {{.ROOT_DIR}}/deploy/.env || missing="${missing} ${k}"
+          done
+          test -z "${missing}" || { echo "deploy/.env is missing or has empty values for:${missing}" >&2; exit 1; }
+        msg: "deploy/.env is missing one or more required keys (see stderr for names)."
+    cmds:
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} up -d --build"
+      - |
+        echo "Waiting for gateway /healthz ..."
+        # 150 x 2s = 300s. Covers the worst-case cold start of the full chain:
+        # litellm (start_period 15s + 30 x 5s = 165s) then crosscodexd
+        # (start_period 20s + 20 x 5s = 100s), with margin.
+        for i in $(seq 1 150); do
+          if curl -sf --cacert {{.CERTS_DIR}}/ca.pem https://localhost:{{.GATEWAY_PORT}}/healthz >/dev/null; then
+            echo "Gateway healthy at https://localhost:{{.GATEWAY_PORT}}"
+            echo "Next: crosscodex config set cli.endpoint https://localhost:{{.GATEWAY_PORT}}"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Gateway did not become healthy in time; recent logs:" >&2
+        {{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} logs --tail=50 crosscodexd >&2
+        exit 1
+
+  down:
+    desc: Stop the stack (pass VOLUMES=1 to also drop data + cert volumes)
+    dir: "{{.ROOT_DIR}}/deploy"
+    env:
+      CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
+      CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
+    cmds:
+      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
+      # compose's own `down --volumes` does NOT remove `external` volumes, so
+      # the cert volume must be dropped explicitly. This keeps VOLUMES=1 a true
+      # full teardown and guarantees the next `up` reloads a freshly generated
+      # PKI rather than stale certs (mirrors test:integration's cert teardown).
+      - '{{if eq .VOLUMES "1"}}{{.CONTAINER_ENGINE}} volume rm -f {{.CERTS_VOLUME}}{{else}}true{{end}}'
+
+  logs:
+    desc: Tail stack logs
+    dir: "{{.ROOT_DIR}}/deploy"
+    cmds:
+      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} logs -f {{.CLI_ARGS}}"
+
+  smoke:
+    desc: Container-driven smoke test (up, catalog round-trip over mTLS, then teardown regardless of outcome; LOCAL=1 for the fast host-build path)
+    cmds:
+      # Deferred so the stack is always torn down, whether smoke:up passes,
+      # fails, or is interrupted. Registered before smoke:up runs; deferred cmds
+      # execute at task exit in reverse order.
+      - defer:
+          task: smoke:down
+      - task: smoke:up
+
+  smoke:up:
+    desc: Bring up the isolated smoke stack and run the catalog round-trip (leaves the stack running for debugging)
+    # Export the smoke isolation identity so the script's child `task deploy:up`
+    # and compose.yaml resolve the smoke project, cert volume, gateway port, and
+    # PKI dir (go-task reads env vars as vars; CROSSCODEX_* feed the CERTS_VOLUME
+    # / GATEWAY_PORT vars, CERTS_DIR is read directly, COMPOSE_PROJECT_NAME is
+    # inherited by the compose subprocess).
+    env:
+      COMPOSE_PROJECT_NAME: "{{.SMOKE_PROJECT}}"
+      CROSSCODEX_CERTS_VOLUME: "{{.SMOKE_CERTS_VOLUME}}"
+      CROSSCODEX_GATEWAY_PORT: "{{.SMOKE_GATEWAY_PORT}}"
+      CERTS_DIR: "{{.SMOKE_CERTS_DIR}}"
+      # Offline LLM provider identity. Exported so smoke_up.sh renders the
+      # LiteLLM config and (for a remote host) probes/pulls against the same
+      # values. Defaults resolve to the local baked-model Ollama container;
+      # override with `task deploy:smoke:up OLLAMA_HOST=http://host:11434`.
+      OLLAMA_HOST: "{{.OLLAMA_HOST}}"
+      OLLAMA_CHAT_MODEL: "{{.OLLAMA_CHAT_MODEL}}"
+      OLLAMA_EMBED_MODEL: "{{.OLLAMA_EMBED_MODEL}}"
+      # smoke_up.sh builds the baked-model Ollama image directly (the equivalent
+      # integration task is internal / not CLI-callable); it needs the engine.
+      CONTAINER_ENGINE: "{{.CONTAINER_ENGINE}}"
+    cmds:
+      # Pass LOCAL through the script's environment so its child `task deploy:up`
+      # picks it up as a var (go-task reads env vars as vars). smoke_up.sh
+      # additionally exports COMPOSE_OVERLAY (the offline or offline-remote
+      # overlay, chosen by OLLAMA_HOST) for that child task.
+      - LOCAL="{{.LOCAL}}" COMPOSE_CMD="{{.COMPOSE_CMD}}" bash {{.ROOT_DIR}}/test/deploy/smoke_up.sh
+
+  smoke:down:
+    desc: Tear down the isolated smoke stack, dropping its data + cert volumes and throwaway PKI
+    # Same isolation identity as smoke:up so deploy:down and the volume removal
+    # act on the smoke stack, not the production one.
+    env:
+      COMPOSE_PROJECT_NAME: "{{.SMOKE_PROJECT}}"
+      CROSSCODEX_CERTS_VOLUME: "{{.SMOKE_CERTS_VOLUME}}"
+      CROSSCODEX_GATEWAY_PORT: "{{.SMOKE_GATEWAY_PORT}}"
+      CERTS_DIR: "{{.SMOKE_CERTS_DIR}}"
+      # Load the offline overlay so `deploy:down` also removes the ollama service
+      # the smoke stack added; the base compose.yaml alone does not know it.
+      COMPOSE_OVERLAY: "{{.ROOT_DIR}}/deploy/compose.offline.yaml"
+    cmds:
+      - task deploy:down VOLUMES=1
+      - rm -rf {{.SMOKE_CERTS_DIR}}

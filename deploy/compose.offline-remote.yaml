@@ -1,0 +1,30 @@
+# Remote-Ollama overlay for the deploy SMOKE stack. Used instead of
+# compose.offline.yaml when OLLAMA_HOST points at an existing Ollama rather than
+# the baked local container (test/deploy/smoke_up.sh selects it). It only
+# repoints LiteLLM at the rendered offline config (whose api_base is the external
+# host); it defines NO local ollama service and NO depends_on, so LiteLLM starts
+# immediately and reaches the external host directly. smoke_up.sh probes that
+# host and pulls its models before bring-up, so an unreachable provider fails
+# fast. Production compose.yaml is untouched.
+services:
+  litellm:
+    # Map host.containers.internal to the host gateway so a loopback OLLAMA_HOST
+    # override (an Ollama on the host) is reachable from this bridge-networked
+    # container. smoke_up.sh translates localhost/127.0.0.1 in OLLAMA_HOST to
+    # host.containers.internal when rendering api_base; for a LAN/remote host the
+    # entry is simply unused. Requires podman >= 4.1 / docker-compose host-gateway.
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
+    # Distinct target avoids a volumes-list merge collision with the base
+    # /app/config.yaml mount; the command override selects this file.
+    volumes:
+      - ../.test-output/deploy-smoke/litellm_config.yaml:/app/config.offline.yaml:ro
+    command:
+      [
+        "--config",
+        "/app/config.offline.yaml",
+        "--port",
+        "4000",
+        "--host",
+        "127.0.0.1",
+      ]

@@ -153,7 +153,6 @@ func embeddedAuthRegistry() (*authn.Registry, error) {
 	)
 }
 
-
 // localPipelineBackend records pipeline jobs via the pipeline store but does
 // not execute them. This is the embedded-mode equivalent of pipeline.Service
 // without DAG execution, NATS, or telemetry.

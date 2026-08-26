@@ -26,6 +26,7 @@ Flags:
                 Defaults to "all".
 
 Available Commands:
+  healthcheck Probe the gateway /healthz endpoint (exit 0 = healthy)
   version     Print version information
 
 Running crosscodexd with no arguments starts the daemon with role "all".
@@ -63,6 +64,8 @@ func main() {
 
 	if flags.NArg() > 0 {
 		switch flags.Arg(0) {
+		case "healthcheck":
+			os.Exit(runHealthcheck())
 		case "version", "--version":
 			printVersion()
 			return
