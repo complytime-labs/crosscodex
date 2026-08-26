@@ -1,0 +1,34 @@
+# Trivy configuration for crosscodex
+# See: https://aquasecurity.github.io/trivy/latest/docs/configuration/
+
+# Timeout configuration
+timeout: 15m
+
+# Skip directories
+scan:
+  skip-dirs:
+    - .git
+    - .test-output
+    - megalinter-reports
+    - .superpowers
+
+  # Skip Java/Maven files entirely to prevent Maven Central rate limits
+  # This is a Go project - any .jar/.pom files are transitive build artifacts
+  skip-files:
+    - "**/*.jar"
+    - "**/*.war"
+    - "**/*.ear"
+    - "**/pom.xml"
+    - "**/pom.properties"
+
+# Scanner configuration
+scanners:
+  - vuln
+  - misconfig
+  - secret
+
+# Vulnerability scanning - focus on Go and container layers only
+vulnerability:
+  type:
+    - os
+    - library

@@ -2,6 +2,7 @@
 bin/
 .go-tmp/
 .test-output/
+.buildtmp/
 *.test
 *.out
 
@@ -55,6 +56,8 @@ catalogs/*.json
 # Agent tool directories (local only)
 .claude
 .opencode/
+.superpowers/
+.headroom/
 
 # Megalinter output
 megalinter-reports/

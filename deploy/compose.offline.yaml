@@ -33,4 +33,12 @@ services:
     # ../.test-output/... pattern used by test/compose.yaml.
     volumes:
       - ../.test-output/deploy-smoke/litellm_config.yaml:/app/config.offline.yaml:ro
-    command: ["--config", "/app/config.offline.yaml", "--port", "4000", "--host", "127.0.0.1"]
+    command:
+      [
+        "--config",
+        "/app/config.offline.yaml",
+        "--port",
+        "4000",
+        "--host",
+        "127.0.0.1",
+      ]

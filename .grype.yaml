@@ -1,6 +1,24 @@
 # Grype vulnerability scanner configuration
 # Reference: https://github.com/anchore/grype#configuration
 
+# Exclude paths from scanning to improve performance and avoid false positives
+exclude:
+  # Version control and CI artifacts
+  - .git/**
+  - megalinter-reports/**
+
+  # Test outputs and build artifacts (can contain container layers, cached deps)
+  - .test-output/**
+  - .buildtmp/**
+
+  # Development tools and historical artifacts
+  - .superpowers/**
+  - .headroom/**
+
+  # Vendor directories (if present)
+  - vendor/**
+  - node_modules/**
+
 # Ignore vulnerabilities that are false positives or acceptable risks
 ignore:
   # Docker dependency vulnerabilities from golang-migrate/migrate/v4

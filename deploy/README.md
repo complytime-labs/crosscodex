@@ -18,14 +18,14 @@ cp deploy/.env.example deploy/.env
 
 Edit `deploy/.env` and fill in these required values:
 
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `POSTGRES_PASSWORD` | PostgreSQL superuser password for the `db` container | `a-strong-random-password` |
-| `OPENAI_API_KEY` | Upstream model provider key (OpenAI, Azure, etc.) that LiteLLM uses to reach the real model API | `sk-proj-...` |
-| `CROSSCODEX_LLM_API_KEY` | The key CrossCodex presents to LiteLLM (must match a virtual key in `deploy/litellm/config.yaml`) | `sk-crosscodex-to-litellm` |
-| `CROSSCODEX_LLM_DEFAULT_MODEL` | Model alias the daemon requests for general inference (must exist in `deploy/litellm/config.yaml`) | `default` |
-| `CROSSCODEX_LLM_EMBEDDING_MODEL` | Model alias the daemon requests for embeddings (must exist in `deploy/litellm/config.yaml`) | `embed` |
-| `TAG` | Container image tag to run (optional) | `latest` |
+| Variable                         | Purpose                                                                                            | Example                    |
+|----------------------------------|----------------------------------------------------------------------------------------------------|----------------------------|
+| `POSTGRES_PASSWORD`              | PostgreSQL superuser password for the `db` container                                               | `a-strong-random-password` |
+| `OPENAI_API_KEY`                 | Upstream model provider key (OpenAI, Azure, etc.) that LiteLLM uses to reach the real model API    | `sk-proj-...`              |
+| `CROSSCODEX_LLM_API_KEY`         | The key CrossCodex presents to LiteLLM (must match a virtual key in `deploy/litellm/config.yaml`)  | `sk-crosscodex-to-litellm` |
+| `CROSSCODEX_LLM_DEFAULT_MODEL`   | Model alias the daemon requests for general inference (must exist in `deploy/litellm/config.yaml`) | `default`                  |
+| `CROSSCODEX_LLM_EMBEDDING_MODEL` | Model alias the daemon requests for embeddings (must exist in `deploy/litellm/config.yaml`)        | `embed`                    |
+| `TAG`                            | Container image tag to run (optional)                                                              | `latest`                   |
 
 **Security note**: Never commit real secrets. The `.env` file is gitignored by default.
 

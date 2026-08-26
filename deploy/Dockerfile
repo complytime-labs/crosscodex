@@ -15,8 +15,11 @@ RUN go mod download
 # Copy proto definitions and generate code.
 COPY api/proto/ ./api/proto/
 COPY internal/testgrpc/proto/ ./internal/testgrpc/proto/
-RUN cd api/proto && go tool buf generate && \
-    cd /src/internal/testgrpc/proto && go tool buf generate
+WORKDIR /src/api/proto
+RUN go tool buf generate
+WORKDIR /src/internal/testgrpc/proto
+RUN go tool buf generate
+WORKDIR /src
 
 COPY . .
 

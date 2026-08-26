@@ -213,7 +213,7 @@ tasks:
       CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
     preconditions:
-      - sh: 'test -f {{.ROOT_DIR}}/deploy/.env'
+      - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
         msg: "deploy/.env missing. Copy deploy/.env.example to deploy/.env and fill it in."
       # Fail before starting the stack if a required key is absent or empty,
       # rather than at first DB connect / LLM call. POSTGRES_PASSWORD is also
@@ -252,7 +252,7 @@ tasks:
       CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
     cmds:
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES \"1\"}}--volumes{{end}}"
+      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
       # compose's own `down --volumes` does NOT remove `external` volumes, so
       # the cert volume must be dropped explicitly. This keeps VOLUMES=1 a true
       # full teardown and guarantees the next `up` reloads a freshly generated

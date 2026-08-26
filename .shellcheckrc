@@ -1,0 +1,8 @@
+# ShellCheck configuration for crosscodex
+# Disable note-level style suggestions that don't affect correctness
+
+# SC2292: Prefer [[ ]] over [ ] - [ ] works fine in POSIX sh
+# SC2310: Function in condition disables set -e - acceptable pattern
+# SC2249: Missing default case in switch - not always necessary
+# SC2312: Command in substitution masks return - acceptable for non-critical commands
+disable=SC2292,SC2310,SC2249,SC2312
