@@ -55,6 +55,11 @@ tasks:
         -X {{.MODULE}}/internal/version.Version={{.VERSION}}
         -X {{.MODULE}}/internal/version.GitCommit={{.GIT_COMMIT}}
         -X {{.MODULE}}/internal/version.BuildDate={{.BUILD_DATE}}
+      # Honor CGO_ENABLED from environment (deploy:build:app:local sets it to 0 for
+      # static binaries); default to empty so go uses its own default (1 on Linux).
+      CGO_ENABLED: '{{.CGO_ENABLED | default ""}}'
+    env:
+      CGO_ENABLED: '{{.CGO_ENABLED}}'
     cmds:
       - mkdir -p {{.BUILD_DIR}} {{.ROOT_DIR}}/.go-tmp
       - go build -ldflags '{{.LDFLAGS}}' -o {{.BUILD_DIR}}/crosscodex {{.ROOT_DIR}}/cmd/crosscodex
