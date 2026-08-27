@@ -232,9 +232,9 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 
 	// Set format in provenance based on detection
 	if isOSCAL {
-		prov.Format = "oscal"
+		prov.Format = FormatOSCAL
 	} else {
-		prov.Format = "gemara"
+		prov.Format = FormatGemara
 	}
 
 	var items []oscal.ControlItem
@@ -278,7 +278,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			TenantID:         tenantID,
 			Name:             catalogName,
 			Version:          "",
-			SourceType:       "document",
+			SourceType:       SourceTypeDocument,
 			ObjectPath:       req.Msg.GetDocumentId(),
 			CreatedAt:        time.Now().UTC(),
 			SourceURI:        prov.SourceURI,
@@ -673,7 +673,7 @@ func isOSCALJSON(data []byte) bool {
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return false
 	}
-	_, ok := obj["catalog"]
+	_, ok := obj[OSCALRootKey]
 	return ok
 }
 
@@ -709,17 +709,17 @@ func extractCatalogName(data []byte) string {
 		return ""
 	}
 
-	catalog, ok := root["catalog"].(map[string]interface{})
+	catalog, ok := root[OSCALRootKey].(map[string]interface{})
 	if !ok {
 		return ""
 	}
 
-	metadata, ok := catalog["metadata"].(map[string]interface{})
+	metadata, ok := catalog[OSCALMetadataKey].(map[string]interface{})
 	if !ok {
 		return ""
 	}
 
-	title, ok := metadata["title"].(string)
+	title, ok := metadata[OSCALTitleKey].(string)
 	if !ok {
 		return ""
 	}
@@ -730,9 +730,9 @@ func extractCatalogName(data []byte) string {
 // formatStringToEnum maps the stored format string to CatalogFormat enum.
 func formatStringToEnum(format string) crosscodexv1.CatalogFormat {
 	switch strings.ToLower(format) {
-	case "oscal":
+	case FormatOSCAL:
 		return crosscodexv1.CatalogFormat_CATALOG_FORMAT_OSCAL
-	case "gemara":
+	case FormatGemara:
 		return crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA
 	default:
 		return crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED

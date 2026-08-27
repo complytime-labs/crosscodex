@@ -1,10 +1,16 @@
 package catalog
 
 import (
+	"strings"
 	"testing"
 
 	crosscodexv1 "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 )
+
+// generateLongString creates a string of repeated characters for boundary testing
+func generateLongString(length int) string {
+	return strings.Repeat("A", length)
+}
 
 func TestExtractCatalogName(t *testing.T) {
 	tests := []struct {
@@ -61,6 +67,143 @@ func TestExtractCatalogName(t *testing.T) {
 			oscalJSON: ``,
 			want:      "",
 		},
+		{
+			name: "title with unicode characters",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": "NIST SP 800-53 Rev. 5 — Security & Privacy Controls 🔒"
+					}
+				}
+			}`,
+			want: "NIST SP 800-53 Rev. 5 — Security & Privacy Controls 🔒",
+		},
+		{
+			name: "title with escaped quotes",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": "The \"Advanced\" Catalog"
+					}
+				}
+			}`,
+			want: `The "Advanced" Catalog`,
+		},
+		{
+			name: "title with newlines and tabs",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": "Multi\nLine\tTitle"
+					}
+				}
+			}`,
+			want: "Multi\nLine\tTitle",
+		},
+		{
+			name: "title with backslashes",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": "Path\\To\\Catalog"
+					}
+				}
+			}`,
+			want: `Path\To\Catalog`,
+		},
+		{
+			name: "title is null",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": null
+					}
+				}
+			}`,
+			want: "",
+		},
+		{
+			name: "title is number",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": 12345
+					}
+				}
+			}`,
+			want: "",
+		},
+		{
+			name: "title is boolean",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": true
+					}
+				}
+			}`,
+			want: "",
+		},
+		{
+			name: "title is array",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": ["Catalog", "Name"]
+					}
+				}
+			}`,
+			want: "",
+		},
+		{
+			name: "title is object",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": {"en": "English Title"}
+					}
+				}
+			}`,
+			want: "",
+		},
+		{
+			name: "very long title",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": "` + generateLongString(5000) + `"
+					}
+				}
+			}`,
+			want: generateLongString(5000),
+		},
+		{
+			name: "empty string title",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": {
+						"title": ""
+					}
+				}
+			}`,
+			want: "",
+		},
+		{
+			name: "metadata is null",
+			oscalJSON: `{
+				"catalog": {
+					"metadata": null
+				}
+			}`,
+			want: "",
+		},
+		{
+			name: "catalog is null",
+			oscalJSON: `{
+				"catalog": null
+			}`,
+			want: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -112,6 +255,71 @@ func TestFormatStringToEnum(t *testing.T) {
 		{
 			name:   "empty string",
 			format: "",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "oscal with leading whitespace",
+			format: " oscal",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "oscal with trailing whitespace",
+			format: "oscal ",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "oscal with surrounding whitespace",
+			format: " oscal ",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "gemara with tabs",
+			format: "\tgemara\t",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "oscal with newline",
+			format: "oscal\n",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "partial oscal",
+			format: "osc",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "partial gemara",
+			format: "gem",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "oscal with suffix",
+			format: "oscal-json",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "oscal with prefix",
+			format: "json-oscal",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "typo osacl",
+			format: "osacl",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "typo gemera",
+			format: "gemera",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "numeric string",
+			format: "123",
+			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+		},
+		{
+			name:   "special characters",
+			format: "!@#$%",
 			want:   crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
 		},
 	}
@@ -179,5 +387,88 @@ func TestCatalogRecordToProto_NilRecord(t *testing.T) {
 	proto := catalogRecordToProto(nil)
 	if proto != nil {
 		t.Errorf("catalogRecordToProto(nil) = %v, want nil", proto)
+	}
+}
+
+func TestIsOSCALJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{
+			name: "valid OSCAL JSON",
+			data: `{"catalog": {"metadata": {"title": "Test"}}}`,
+			want: true,
+		},
+		{
+			name: "OSCAL with empty catalog",
+			data: `{"catalog": {}}`,
+			want: true,
+		},
+		{
+			name: "catalog is null",
+			data: `{"catalog": null}`,
+			want: true,
+		},
+		{
+			name: "not OSCAL - missing catalog key",
+			data: `{"metadata": {"title": "Test"}}`,
+			want: false,
+		},
+		{
+			name: "invalid JSON",
+			data: `not valid json`,
+			want: false,
+		},
+		{
+			name: "empty string",
+			data: ``,
+			want: false,
+		},
+		{
+			name: "JSON array",
+			data: `[{"catalog": {}}]`,
+			want: false,
+		},
+		{
+			name: "JSON string",
+			data: `"catalog"`,
+			want: false,
+		},
+		{
+			name: "JSON number",
+			data: `123`,
+			want: false,
+		},
+		{
+			name: "JSON boolean",
+			data: `true`,
+			want: false,
+		},
+		{
+			name: "JSON null",
+			data: `null`,
+			want: false,
+		},
+		{
+			name: "catalog with wrong case",
+			data: `{"Catalog": {}}`,
+			want: false,
+		},
+		{
+			name: "catalog with extra whitespace",
+			data: `{  "catalog"  :  {}  }`,
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isOSCALJSON([]byte(tt.data))
+			if got != tt.want {
+				t.Errorf("isOSCALJSON() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
