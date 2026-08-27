@@ -1,0 +1,26 @@
+CrossCodex E2E Test Catalog - Unstructured Text Format
+
+Section 1: Access Control
+
+AC-1 Access Control Policy and Procedures
+Organizations shall develop, document, and disseminate access control policies
+that address purpose, scope, roles, responsibilities, and compliance. The policy
+must be reviewed and updated annually.
+
+AC-2 Account Management
+Organizations shall manage system accounts including creation, modification,
+enablement, disablement, and removal. Account types include individual, group,
+system, application, guest, and temporary accounts.
+
+AC-3 Access Enforcement
+The information system enforces approved authorizations for logical access to
+information and system resources in accordance with applicable access control
+policies. This includes role-based, attribute-based, and mandatory access controls.
+
+Section 2: Awareness and Training
+
+AT-1 Security Awareness and Training Policy
+Organizations shall develop security awareness training programs for all personnel
+including contractors. Training must cover security basics, threat awareness, and
+incident reporting procedures. Training shall be provided before granting access
+and annually thereafter.

@@ -20,13 +20,13 @@ The bridge between these systems is the OTel trace ID. Every attestation embeds 
 
 ### Layouts
 
-A layout defines the expected supply chain workflow — which steps should execute, in what order, and who is authorized to perform each step. In CrossCodex, the Pipeline service signs the layout declaring the authorized stages and functionaries for a compliance processing run.
+A layout defines the expected supply chain workflow — which steps should execute, in what order, and who is authorized to perform each step (called "functionaries" in in-toto terminology — the services or actors permitted to execute a given step). In CrossCodex, the Pipeline service signs the layout declaring the authorized stages and functionaries for a compliance processing run.
 
 ### Links
 
 A link is an execution record for a single step. It captures:
 
-- **Materials**: input artifacts with their SHA-256 digests (e.g., the OSCAL catalog being analyzed)
+- **Materials**: input artifacts with their SHA-256 digests (e.g., the OSCAL (Open Security Controls Assessment Language) catalog being analyzed)
 - **Products**: output artifacts with their digests (e.g., the generated compliance mapping)
 - **Command**: what was executed
 - **By-products**: additional metadata, including the OTel trace ID, span ID, timestamp, and hostname

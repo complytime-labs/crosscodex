@@ -230,6 +230,13 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	// Detect if OSCAL JSON
 	isOSCAL := isOSCALJSON(data)
 
+	// Set format in provenance based on detection
+	if isOSCAL {
+		prov.Format = FormatOSCAL
+	} else {
+		prov.Format = FormatGemara
+	}
+
 	var items []oscal.ControlItem
 	if isOSCAL {
 		// Parse via Parser
@@ -258,14 +265,20 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	// Generate catalog_id from content hash
 	catalogID := generateCatalogID(prov.ContentHash, tenantID)
 
+	// Derive catalog name from OSCAL metadata.title if not provided
+	catalogName := req.Msg.GetCatalogName()
+	if catalogName == "" && isOSCAL {
+		catalogName = extractCatalogName(data)
+	}
+
 	// Persist catalog metadata if store configured
 	if s.store != nil {
 		catalogRecord := CatalogRecord{
 			CatalogID:        catalogID,
 			TenantID:         tenantID,
-			Name:             req.Msg.GetCatalogName(),
+			Name:             catalogName,
 			Version:          "",
-			SourceType:       "document",
+			SourceType:       SourceTypeDocument,
 			ObjectPath:       req.Msg.GetDocumentId(),
 			CreatedAt:        time.Now().UTC(),
 			SourceURI:        prov.SourceURI,
@@ -660,7 +673,7 @@ func isOSCALJSON(data []byte) bool {
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return false
 	}
-	_, ok := obj["catalog"]
+	_, ok := obj[OSCALRootKey]
 	return ok
 }
 
@@ -686,6 +699,44 @@ func generateCatalogID(contentHash, tenantID string) string {
 	h.Write([]byte(contentHash))
 	h.Write([]byte(tenantID))
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// extractCatalogName extracts the catalog name from OSCAL JSON metadata.title.
+// Returns empty string if not found or on error.
+func extractCatalogName(data []byte) string {
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return ""
+	}
+
+	catalog, ok := root[OSCALRootKey].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	metadata, ok := catalog[OSCALMetadataKey].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	title, ok := metadata[OSCALTitleKey].(string)
+	if !ok {
+		return ""
+	}
+
+	return title
+}
+
+// formatStringToEnum maps the stored format string to CatalogFormat enum.
+func formatStringToEnum(format string) crosscodexv1.CatalogFormat {
+	switch strings.ToLower(format) {
+	case FormatOSCAL:
+		return crosscodexv1.CatalogFormat_CATALOG_FORMAT_OSCAL
+	case FormatGemara:
+		return crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA
+	default:
+		return crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED
+	}
 }
 
 // mergeResults deduplicates full-text and semantic results by ControlID.
@@ -729,6 +780,7 @@ func catalogRecordToProto(rec *CatalogRecord) *crosscodexv1.Catalog {
 			TenantId: rec.TenantID,
 		},
 		Name:         rec.Name,
+		Format:       formatStringToEnum(rec.Format),
 		Version:      rec.Version,
 		ControlCount: int32(rec.ControlCount),
 		Audit: &crosscodexv1.AuditMetadata{

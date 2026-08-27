@@ -15,7 +15,7 @@ This design decouples schema evolution from model selection. See [ADR 0001](adr/
 
 The initial schema (`001_initial_schema`) creates `embeddings.vector` as a dimensionless `vector` column with no ivfflat index, so a fresh install stores any model's vectors directly with no further migration. A fixed-width column such as `vector(2000)` was rejected precisely because it would reject vectors of any other dimension.
 
-Migrations run automatically via `MigrateUp` (embedded `*.sql` files are auto-discovered through `//go:embed`). See [Database Migrations](migrations.md) for migration authoring and runtime behavior.
+Migrations run automatically via `Up()` (embedded `*.sql` files are auto-discovered through `//go:embed`). See [Database Migrations](migrations.md) for migration authoring and runtime behavior.
 
 ## Switching or Adding an Embedding Model
 

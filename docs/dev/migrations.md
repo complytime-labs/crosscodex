@@ -64,7 +64,7 @@ Migrations run programmatically through the `Migrator` interface. There is no st
 
 ### Application Startup
 
-The standard startup sequence runs migrations with the superuser (schema owner) DSN, then opens the application pool with the restricted `app_user` DSN:
+The standard startup sequence runs migrations with the superuser (schema owner) DSN (Data Source Name — the PostgreSQL connection string), then opens the application pool with the restricted `app_user` DSN:
 
 ```go
 // 1. Run migrations as superuser.
@@ -139,7 +139,7 @@ psql "postgres://username:password@localhost:15432/dbname?sslmode=verify-full&ss
 
 ### Rolling Back the Last Migration
 
-golang-migrate does not expose a single-step rollback through the `Migrator` interface in this codebase. The `Migrator` interface provides `Up` (apply all pending) and `Version` (check state) but not `Down` or `Steps`.
+The `Migrator` interface provides `Up` (apply all pending), `Down` (roll back all migrations), and `Version` (check state) but not a single-step `Steps` operation.
 
 To roll back in an emergency, connect to the database directly and:
 
