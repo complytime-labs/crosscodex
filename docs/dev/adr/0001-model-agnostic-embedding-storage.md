@@ -38,7 +38,7 @@ Chosen option: **Option C (dimensionless `vector` column)**, because it enables 
   - Schema is decoupled from model selection
 
 - **Negative:**
-  - No ANN index support for dimensionless columns, so `FindSimilar` and `SearchControls` perform exact scans using the `<=>` operator
+  - No ANN index support for dimensionless columns, so `FindSimilar` performs exact scans using the `<=>` operator (note: `SearchControls` primarily uses full-text search with `@@plainto_tsquery` and optionally delegates to `FindSimilar` for semantic search)
   - Acceptable now (queries are scoped per tenant/catalog/model, yielding small result sets), but at scale may require per-model partial expression indexes:
     ```sql
     CREATE INDEX idx_embeddings_granite384
@@ -48,7 +48,7 @@ Chosen option: **Option C (dimensionless `vector` column)**, because it enables 
     ```
   - A fixed-width column could carry an ivfflat ANN index; the dimensionless column forgoes that index and relies on exact scans instead
 
-- **Correctness note:** Every similarity query is model-scoped (`FindSimilar` uses `WHERE model = $4`; `SimilarityMatrix` uses `a.model = b.model`), so mixed vector widths never collide in query results.
+- **Correctness note:** Every similarity query is model-scoped (`FindSimilar` uses `WHERE model = $4`; `SimilarityMatrix` is computed in-memory with model filtering), so mixed vector widths never collide in query results.
 
 ## Pros and Cons of the Options
 

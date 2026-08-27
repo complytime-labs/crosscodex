@@ -105,22 +105,30 @@ This means a trace that starts in one service, publishes to NATS, and is process
 
 If you have the `nats` CLI installed, you can inspect messages in the audit streams:
 
-```bash
-# List all streams
-nats stream list
+1. **List all streams**:
+   ```bash
+   nats stream list
+   ```
 
-# View stream info
-nats stream info AUDIT_DECISIONS
+2. **View stream info**:
+   ```bash
+   nats stream info AUDIT_DECISIONS
+   ```
 
-# Read messages from a stream
-nats stream view AUDIT_DECISIONS
+3. **Read messages from a stream**:
+   ```bash
+   nats stream view AUDIT_DECISIONS
+   ```
 
-# Subscribe to live events (for a specific tenant)
-nats sub "crosscodex.audit.acme-corp.events.>"
+4. **Subscribe to live events** (for a specific tenant):
+   ```bash
+   nats sub "crosscodex.audit.acme-corp.events.>"
+   ```
 
-# Get a specific message by sequence number
-nats stream get AUDIT_DECISIONS 42
-```
+5. **Get a specific message by sequence number**:
+   ```bash
+   nats stream get AUDIT_DECISIONS 42
+   ```
 
 ### Reading Provenance from Messages
 

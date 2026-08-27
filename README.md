@@ -12,38 +12,62 @@ ______________________________________________________________________
 
 ## Status
 
-CrossCodex is in early development. All foundational, domain, and service packages are implemented and tested. The CLI provides approximately 30 commands across project, catalog, run, results, prompt, version, and completion groups with daemon connectivity and embedded single-node mode. See [Development](#development) below to build from source and run tests.
+CrossCodex is in early development. All foundational, domain, and service packages are implemented and tested. The CLI provides approximately 22 commands across project, catalog, run, results, prompt, version, and completion groups with daemon connectivity and embedded single-node mode. See [Development](#development) below to build from source and run tests.
 
 ## Quick Start
 
+**Prerequisites**: Go >= 1.23, Task (taskfile.dev), container engine (podman or docker)
+
+### 1. Build from source
+
 ```sh
-# Prerequisites: Go >= 1.26, Task (taskfile.dev), container engine (podman or docker)
-
-# Build from source
 task build
+```
 
-# Start the development database (PostgreSQL + AGE + pgvector)
+### 2. Start the development database
+
+```sh
 task dev:up
+```
 
-# Configure the database connection. The dev database requires mutual TLS, so
-# copy the full DSN that `task dev:up` prints (shown here with repo-relative
-# cert paths):
+This starts PostgreSQL with AGE graph extension and pgvector.
+
+### 3. Configure the database connection
+
+The dev database requires mutual TLS. Copy the full DSN that `task dev:up` prints:
+
+```sh
 <!-- secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- documentation example with dev-only credentials (user: postgres, password: integration, host: localhost) -->
 crosscodex config set database.dsn "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert=.test-output/certs/ca.pem&sslcert=.test-output/certs/client.pem&sslkey=.test-output/certs/client-key.pem"
+```
 
-# Download official NIST OSCAL catalogs
+### 4. Download OSCAL catalogs
+
+```sh
 task fetch:oscal-docs
+```
 
-# Initialize a project
+This downloads official NIST OSCAL catalogs to the `catalogs/` directory.
+
+### 5. Initialize a project
+
+```sh
 crosscodex project init
+```
 
-# Import a compliance catalog
+### 6. Import a compliance catalog
+
+```sh
 crosscodex catalog import catalogs/NIST_SP-800-53_rev5_catalog.json
+```
 
-# List imported catalogs
+### 7. List and inspect catalogs
+
+```sh
+# List all imported catalogs
 crosscodex catalog list
 
-# Inspect a catalog
+# Inspect a specific catalog (use the ID from the list output)
 crosscodex catalog inspect <catalog-id>
 ```
 
@@ -469,27 +493,37 @@ See [Audit Streams Guide](docs/dev/audit-streams.md) for provenance headers, mes
 
 ## Uninstall
 
-To fully remove CrossCodex, delete the binary and all data directories:
+To fully remove CrossCodex:
 
-```sh
-# Remove the binary (location depends on your install method)
-rm $(which crosscodex)
+1. **Remove the binary** (location depends on your install method):
+   ```sh
+   rm $(which crosscodex)
+   ```
 
-# Remove configuration
-rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/crosscodex"
+2. **Remove configuration**:
+   ```sh
+   rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/crosscodex"
+   ```
 
-# Remove data (prompt layers)
-rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/crosscodex"
+3. **Remove data** (prompt layers):
+   ```sh
+   rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/crosscodex"
+   ```
 
-# Remove state (daemon PID, embedded TLS certificates)
-rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/crosscodex"
+4. **Remove state** (daemon PID, embedded TLS certificates):
+   ```sh
+   rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/crosscodex"
+   ```
 
-# Remove project-level configuration (per project)
-rm -rf .crosscodex/
+5. **Remove project-level configuration** (run in each project directory):
+   ```sh
+   rm -rf .crosscodex/
+   ```
 
-# Remove shell completions (if installed)
-rm -f ~/.bash_completion.d/crosscodex
-```
+6. **Remove shell completions** (if installed):
+   ```sh
+   rm -f ~/.bash_completion.d/crosscodex
+   ```
 
 - **Issues**: [github.com/complytime-labs/crosscodex/issues](https://github.com/complytime-labs/crosscodex/issues)
 - **Discussions**: [github.com/complytime-labs/crosscodex/discussions](https://github.com/complytime-labs/crosscodex/discussions)

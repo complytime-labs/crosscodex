@@ -4,7 +4,7 @@ This document covers configuring, reading, and extending OpenTelemetry instrumen
 
 ## Overview
 
-CrossCodex uses [OpenTelemetry](https://opentelemetry.io/) for distributed tracing, metrics, and structured log correlation. The `pkg/telemetry` package provides initialization, instrument factories, and correlation helpers. All signals export via OTLP (gRPC or HTTP) to a collector such as Jaeger, Grafana Tempo, or the OpenTelemetry Collector.
+CrossCodex uses [OpenTelemetry](https://opentelemetry.io/) for distributed tracing, metrics, and structured log correlation. The `pkg/telemetry` package provides initialization, instrument factories, and correlation helpers. All signals export via OTLP (OpenTelemetry Protocol, gRPC or HTTP) to a collector such as Jaeger, Grafana Tempo, or the OpenTelemetry Collector.
 
 An empty endpoint disables the signal entirely (no-op provider, no error). This means a local development setup with no collector configured runs without telemetry overhead.
 
