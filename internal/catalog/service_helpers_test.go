@@ -14,9 +14,9 @@ func generateLongString(length int) string {
 
 func TestExtractCatalogName(t *testing.T) {
 	tests := []struct {
-		name     string
+		name      string
 		oscalJSON string
-		want     string
+		want      string
 	}{
 		{
 			name: "valid OSCAL with metadata title",

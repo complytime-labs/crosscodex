@@ -151,13 +151,7 @@ var _ = Describe("Catalog round-trip (S2)", func() {
 		Expect(after).To(HaveLen(countBefore), "re-import must not add a catalog row")
 	})
 
-	// BUG (surfaced during #114 e2e, not in the original issue enumeration):
-	// GetCatalog never reports the imported format. catalogRecordToProto
-	// (internal/catalog/service.go) omits the Catalog.Format enum field
-	// (it only writes the string into Provenance.LineageMetadata["format"]), and
-	// ParseCatalog never populates prov.Format. Net: GetCatalog().GetFormat()
-	// is always CATALOG_FORMAT_UNSPECIFIED.
-	PIt("reports the imported catalog format (OSCAL) on read-back", func() {
+	It("reports the imported catalog format (OSCAL) on read-back", func() {
 		data := fixture("minimal-catalog.json")
 		_, err := importCatalog(ctx, sharedState.client, data, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "minimal")
 		Expect(err).NotTo(HaveOccurred())
@@ -167,20 +161,6 @@ var _ = Describe("Catalog round-trip (S2)", func() {
 		cat, err := getCatalog(ctx, sharedState.client, catalogs[0].GetCatalogId())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cat.GetFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
-	})
-
-	It("currently returns UNSPECIFIED format on read-back (characterization)", func() {
-		// TRIPWIRE for the format bug above: when this fails, the bug is fixed —
-		// flip the Pending spec above to active and delete this tripwire.
-		data := fixture("minimal-catalog.json")
-		_, err := importCatalog(ctx, sharedState.client, data, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "minimal")
-		Expect(err).NotTo(HaveOccurred())
-		catalogs, err := listCatalogs(ctx, sharedState.client)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(catalogs).To(HaveLen(1))
-		cat, err := getCatalog(ctx, sharedState.client, catalogs[0].GetCatalogId())
-		Expect(err).NotTo(HaveOccurred())
-		Expect(cat.GetFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED))
 	})
 })
 
@@ -220,14 +200,10 @@ var _ = Describe("Error paths", func() {
 		_, err := importCatalog(ctx, sharedState.client, fixture("invalid.json"),
 			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "broken")
 		Expect(err).To(HaveOccurred())
-		// Malformed JSON fails the content-sniff (isOSCALJSON cannot unmarshal
-		// it), so the service routes to the structurer path rather than the
-		// OSCAL parser. Embedded mode wires no structurer, so the observed
-		// rejection is FailedPrecondition "structurer not configured" — not a
-		// parse error. See the isOSCALJSON sniff and the unconfigured-structurer
-		// branch in ParseCatalog (internal/catalog/service.go).
-		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
-		Expect(err.Error()).To(ContainSubstring("structurer not configured"))
+		// Malformed JSON fails content detection (isOSCALJSON cannot unmarshal it),
+		// so format validation rejects the OSCAL hint as a mismatch.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("format=CATALOG_FORMAT_OSCAL specified but content does not appear to be OSCAL JSON"))
 		cats, err := listCatalogs(ctx, sharedState.client)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cats).To(BeEmpty())
@@ -237,13 +213,11 @@ var _ = Describe("Error paths", func() {
 		_, err := importCatalog(ctx, sharedState.client, fixture("no-catalog-key.json"),
 			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "nokey")
 		Expect(err).To(HaveOccurred())
-		// Valid JSON without a top-level "catalog" key also fails the sniff
-		// (isOSCALJSON finds no "catalog" member), so — like malformed JSON —
-		// it routes to the unconfigured structurer. The OSCAL format hint is
-		// ignored; only the content decides. See isOSCALJSON and the
-		// unconfigured-structurer branch in ParseCatalog (internal/catalog/service.go).
-		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
-		Expect(err.Error()).To(ContainSubstring("structurer not configured"))
+		// Valid JSON without a top-level "catalog" key fails content detection
+		// (isOSCALJSON finds no "catalog" member), so format validation rejects
+		// the OSCAL hint as a mismatch.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("format=CATALOG_FORMAT_OSCAL specified but content does not appear to be OSCAL JSON"))
 		cats, err := listCatalogs(ctx, sharedState.client)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cats).To(BeEmpty())
@@ -274,6 +248,39 @@ var _ = Describe("Edge cases (green)", func() {
 		// surfaced as CodeInvalidArgument in ParseCatalog (internal/catalog/service.go).
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
 		Expect(err.Error()).To(ContainSubstring("no controls"))
+		cats, err := listCatalogs(ctx, sharedState.client)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cats).To(BeEmpty())
+	})
+
+	It("rejects format=UNSPECIFIED when content is neither OSCAL nor parseable Gemara", func() {
+		_, err := importCatalog(ctx, sharedState.client, fixture("invalid.json"),
+			pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, "broken")
+		Expect(err).To(HaveOccurred())
+		// Auto-detection fails to identify it as OSCAL, routes to unconfigured structurer.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
+		Expect(err.Error()).To(ContainSubstring("structurer not configured"))
+	})
+
+	It("auto-detects OSCAL format when format=UNSPECIFIED and persists it correctly", func() {
+		data := fixture("minimal-catalog.json")
+		_, err := importCatalog(ctx, sharedState.client, data, pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, "auto")
+		Expect(err).NotTo(HaveOccurred())
+		catalogs, err := listCatalogs(ctx, sharedState.client)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(catalogs).To(HaveLen(1))
+		cat, err := getCatalog(ctx, sharedState.client, catalogs[0].GetCatalogId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cat.GetFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
+	})
+
+	It("rejects format=GEMARA when content is detected as OSCAL", func() {
+		data := fixture("minimal-catalog.json")
+		_, err := importCatalog(ctx, sharedState.client, data, pb.CatalogFormat_CATALOG_FORMAT_GEMARA, "mismatch")
+		Expect(err).To(HaveOccurred())
+		// OSCAL JSON detected, but client claims Gemara → validation rejects.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("format=CATALOG_FORMAT_GEMARA specified but content appears to be OSCAL JSON"))
 		cats, err := listCatalogs(ctx, sharedState.client)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cats).To(BeEmpty())
@@ -409,20 +416,19 @@ var _ = Describe("Bug records (Pending correct + active tripwire)", func() {
 	It("#7 TRIPWIRE: metadata-only upload currently fails without an empty-doc message", func() {
 		// TRIPWIRE for bug #7: when this fails, empty uploads are handled
 		// explicitly — flip the PIt above and delete this. An empty upload is
-		// stored as an empty blob, then fails the OSCAL content-sniff and
-		// routes to the unconfigured structurer — the same generic path as any
-		// non-OSCAL input, with no empty-specific message. See the structurer
-		// branch in ParseCatalog (internal/catalog/service.go).
+		// stored as an empty blob, then fails the OSCAL content-sniff, which now
+		// triggers format validation rejection. The error is clearer than the old
+		// "structurer not configured" leak but still doesn't specifically mention
+		// "empty" content.
 		_, err := importCatalog(ctx, sharedState.client, nil,
 			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "empty-upload")
 		Expect(err).To(HaveOccurred())
 		// Strict inverse of the PIt above: exactly one can pass. The PIt wants a
-		// message naming an "empty" condition; the current message names none —
-		// it is the generic structurer leak. Pinning the concrete text ensures
-		// this tripwire flips (and prompts promotion of the PIt) the moment the
-		// bug is fixed.
-		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
-		Expect(err.Error()).To(ContainSubstring("structurer not configured"))
+		// message naming an "empty" condition; the current message is the format
+		// validation error (clearer than the old structurer leak but still not
+		// empty-specific).
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("format=CATALOG_FORMAT_OSCAL specified but content does not appear to be OSCAL JSON"))
 		Expect(err.Error()).NotTo(MatchRegexp("(?i)empty"))
 	})
 

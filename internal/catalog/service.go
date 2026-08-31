@@ -227,14 +227,34 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("read document: %v", err))
 	}
 
-	// Detect if OSCAL JSON
-	isOSCAL := isOSCALJSON(data)
+	// Detect actual format from content
+	detectedIsOSCAL := isOSCALJSON(data)
 
-	// Set format in provenance based on detection
-	if isOSCAL {
+	// Validate format hint against detected format
+	var isOSCAL bool
+	switch requestFormat := req.Msg.GetFormat(); requestFormat {
+	case crosscodexv1.CatalogFormat_CATALOG_FORMAT_OSCAL:
+		if !detectedIsOSCAL {
+			return nil, connect.NewError(connect.CodeInvalidArgument,
+				errors.New("format=CATALOG_FORMAT_OSCAL specified but content does not appear to be OSCAL JSON"))
+		}
+		isOSCAL = true
 		prov.Format = FormatOSCAL
-	} else {
+	case crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA:
+		if detectedIsOSCAL {
+			return nil, connect.NewError(connect.CodeInvalidArgument,
+				errors.New("format=CATALOG_FORMAT_GEMARA specified but content appears to be OSCAL JSON"))
+		}
+		isOSCAL = false
 		prov.Format = FormatGemara
+	default:
+		// CATALOG_FORMAT_UNSPECIFIED or unknown: auto-detect
+		isOSCAL = detectedIsOSCAL
+		if isOSCAL {
+			prov.Format = FormatOSCAL
+		} else {
+			prov.Format = FormatGemara
+		}
 	}
 
 	var items []oscal.ControlItem
