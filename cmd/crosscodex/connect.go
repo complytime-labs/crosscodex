@@ -71,9 +71,9 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 		if err != nil {
 			return fmt.Errorf("configure client TLS: %w", err)
 		}
-		state.client = newTLSGatewayClient(hostPort, httpClient)
+		state.client, state.adminClient = newTLSGatewayClient(hostPort, httpClient)
 	} else {
-		state.client = connectClient(hostPort)
+		state.client, state.adminClient = connectClient(hostPort)
 	}
 	if healthCheck(ctx, state.client) {
 		return nil
@@ -87,7 +87,7 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 	pidPath := filepath.Join(stateDir, "daemon.pid")
 	if port, alive := readPIDFile(pidPath); alive && port > 0 {
 		ep := fmt.Sprintf("localhost:%d", port)
-		state.client = connectClient(ep)
+		state.client, state.adminClient = connectClient(ep)
 		if healthCheck(ctx, state.client) {
 			return nil
 		}
@@ -177,9 +177,10 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	// Connect with mTLS
 	for i := range healthRetries {
 		time.Sleep(healthBaseBackoff * time.Duration(1<<i))
-		client, err := connectClientWithTLS(srvAddr, paths)
+		client, adminClient, err := connectClientWithTLS(srvAddr, paths)
 		if err == nil {
 			state.client = client
+			state.adminClient = adminClient
 			if healthCheck(ctx, state.client) {
 				state.daemon = &embeddedDaemon{server: srv, port: port, pidFile: pidPath, resources: resources}
 				return nil
@@ -195,11 +196,10 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	return fmt.Errorf("embedded daemon started but failed health check after %d retries", healthRetries)
 }
 
-func connectClient(endpoint string) crosscodexv1connect.GatewayServiceClient {
-	return crosscodexv1connect.NewGatewayServiceClient(
-		http.DefaultClient,
-		"http://"+endpoint,
-	)
+func connectClient(endpoint string) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient) {
+	baseURL := "http://" + endpoint
+	return crosscodexv1connect.NewGatewayServiceClient(http.DefaultClient, baseURL),
+		crosscodexv1connect.NewAdminServiceClient(http.DefaultClient, baseURL)
 }
 
 func healthCheck(ctx context.Context, client crosscodexv1connect.GatewayServiceClient) bool {
@@ -211,6 +211,7 @@ func healthCheck(ctx context.Context, client crosscodexv1connect.GatewayServiceC
 
 func disconnect(state *cliState) {
 	state.client = nil
+	state.adminClient = nil
 	if state.daemon != nil {
 		state.daemon.stop()
 		state.daemon = nil

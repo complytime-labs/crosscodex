@@ -12,11 +12,12 @@ import (
 )
 
 type cliState struct {
-	cfg      *config.ClientConfig
-	fullCfg  *config.Config
-	client   crosscodexv1connect.GatewayServiceClient
-	daemon   *embeddedDaemon
-	logLevel slog.Level
+	cfg         *config.ClientConfig
+	fullCfg     *config.Config
+	client      crosscodexv1connect.GatewayServiceClient
+	adminClient crosscodexv1connect.AdminServiceClient
+	daemon      *embeddedDaemon
+	logLevel    slog.Level
 }
 
 func newRootCmd() *cobra.Command {
@@ -105,6 +106,7 @@ Get started:
 	addTo("analysis", newRunCmd(state))
 	addTo("analysis", newResultsCmd(state))
 	addTo("prompt", newPromptCmd(state))
+	addTo("additional", newAdminCmd(state))
 	addTo("additional", newVersionCmd(state))
 	addTo("additional", newCompletionCmd())
 

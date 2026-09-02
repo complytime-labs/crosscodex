@@ -362,7 +362,7 @@ var _ = Describe("Edge cases — TLS client (green)", func() {
 		// only CACert is exercised before the parse fails.
 		paths := pkiPaths(dir)
 		paths.CACert = badCA
-		_, err := connectClientWithTLS("localhost:1", paths)
+		_, _, err := connectClientWithTLS("localhost:1", paths)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(MatchRegexp("(?i)ca cert|parse|certificate"))
 	})

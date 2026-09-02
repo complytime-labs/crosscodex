@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
+	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/internal/admin"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
@@ -23,6 +26,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
@@ -38,11 +42,23 @@ type runtime struct {
 	pipelineServer  *pipeline.Server
 	gatewayServer   *gateway.Server
 	healthServer    *http.Server
+
+	// retentionPurgePool is a dedicated purge_user pool built from
+	// config.Database.PurgeDSN for the retention Purger. It is nil when
+	// retention is not wired or when PurgeDSN is unset (in which case the
+	// Purger reuses the shared app pool and fails closed at the DB trigger).
+	retentionPurgePool dbpkg.Pool
 }
 
 // close releases every resource bootstrap constructed. Safe to call on a
 // partially-populated runtime; safe to call after stop.
 func (rt *runtime) close() {
+	// The retention purge pool is owned by runtime (not sharedResources) and
+	// is only ever a distinct pool from shared.appPool, so closing it here
+	// never double-closes the app pool.
+	if rt.retentionPurgePool != nil {
+		rt.retentionPurgePool.Close()
+	}
 	if rt.shared != nil {
 		rt.shared.close()
 	}
@@ -267,16 +283,158 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		gateway.WithLogger(slog.Default()),
 	)
 
+	adminSvc, purgePool, err := buildRetentionAdmin(cfg, shared, slog.Default())
+	if err != nil {
+		return fmt.Errorf("build retention admin: %w", err)
+	}
+	rt.retentionPurgePool = purgePool
+
 	server, err := gateway.NewServer(ctx, gateway.ServerConfig{
 		Addr:    cfg.Server.Addr,
 		TLS:     cfg.TLS,
 		Service: gatewaySvc,
+		Admin:   adminSvc,
 	})
 	if err != nil {
 		return fmt.Errorf("create gateway server: %w", err)
 	}
 	rt.gatewayServer = server
 	return nil
+}
+
+// disabledArchive is a storage.Provider used when no archive backend is
+// configured. Reads and writes fail closed with storage.ErrArchiveDisabled so
+// the retention Engine's archive-before-purge invariant holds: a candidate can
+// never be purged when there is nowhere to archive it. Dry-run scans, stats,
+// and legal-hold management remain fully functional; only the archive+purge
+// path is inert until an archive backend is configured.
+type disabledArchive struct{}
+
+func (disabledArchive) Get(context.Context, string) (io.ReadCloser, error) {
+	return nil, storage.ErrArchiveDisabled
+}
+func (disabledArchive) Put(context.Context, string, io.Reader) error {
+	return storage.ErrArchiveDisabled
+}
+func (disabledArchive) Delete(context.Context, string) error { return storage.ErrArchiveDisabled }
+func (disabledArchive) List(context.Context, string) ([]storage.ObjectMetadata, error) {
+	return nil, storage.ErrArchiveDisabled
+}
+func (disabledArchive) Exists(context.Context, string) (bool, error) {
+	return false, storage.ErrArchiveDisabled
+}
+func (disabledArchive) Stat(context.Context, string) (*storage.ObjectMetadata, error) {
+	return nil, storage.ErrArchiveDisabled
+}
+func (disabledArchive) Close() error { return nil }
+
+// buildRetentionAdmin constructs the AdminService handler for the all-in-one
+// role. It returns the handler plus a dedicated purge_user pool (nil when
+// PurgeDSN is unset, in which case the Purger reuses the app pool and fails
+// closed at the DB immutability trigger). The caller owns the returned pool and
+// must close it via runtime.close.
+func buildRetentionAdmin(cfg *config.Config, shared *sharedResources, logger *slog.Logger) (crosscodexv1connect.AdminServiceHandler, dbpkg.Pool, error) {
+	wiring, err := buildRetentionWiring(cfg, shared, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	driftSource := func(ctx context.Context) ([]retention.StreamDrift, error) {
+		configured := natsbus.ConfiguredAuditRetention(cfg.NATS.Streams)
+		live, err := shared.natsClient.AuditStreamRetention(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return retention.VerifyStreamRetention(configured, live), nil
+	}
+	return admin.NewService(wiring.engineFor, wiring.defaultPolicy, wiring.holds, driftSource), wiring.purgePool, nil
+}
+
+// retentionWiring bundles the shared retention resources both the gateway
+// AdminService handler and the on-host `admin retention scan` one-shot build
+// engines from: the configured default policy, the legal-hold store, the
+// per-tenant engine factory, and the dedicated purge_user pool the caller must
+// Close.
+type retentionWiring struct {
+	engineFor     func(tenantID string, policy retention.Policy) (*retention.Engine, error)
+	defaultPolicy retention.Policy
+	holds         retention.HoldStore
+	// purgePool is the dedicated purge_user pool (nil when PurgeDSN is unset, in
+	// which case the Purger reuses the app pool and fails closed at the DB
+	// immutability trigger). The caller owns it and must Close it.
+	purgePool dbpkg.Pool
+}
+
+// buildRetentionWiring assembles the shared retention resources and the
+// per-tenant engine factory used by both buildRetentionAdmin (per-request
+// engines for the gateway admin RPCs) and the on-host one-shot scan, so the
+// tenant-scoping, archive/purge, and audit wiring lives in exactly one place.
+//
+// The engine is built PER TENANT (engineFor): object collectors and storage
+// providers are constructed for that tenant, the DBCollector and hold store run
+// on a tenant-scoped pool (RLS keyed on the request-context tenant), and the
+// archiver/purger self-scope per candidate via c.TenantID. This ensures a caller
+// only ever scans and mutates its own tenant.
+func buildRetentionWiring(cfg *config.Config, shared *sharedResources, logger *slog.Logger) (retentionWiring, error) {
+	defaultPolicy, err := retention.NewPolicy(cfg.Retention)
+	if err != nil {
+		return retentionWiring{}, fmt.Errorf("build retention policy: %w", err)
+	}
+
+	// Purger requires purge_user (member of retention_purge); the DB
+	// immutability triggers reject deletes from any other role. Without a
+	// PurgeDSN we reuse the app pool so scans still run, but purges then fail
+	// closed at the trigger rather than silently succeeding as app_user.
+	var purgeConn dbpkg.Connection = shared.appPool
+	var purgePool dbpkg.Pool
+	if cfg.Database.PurgeDSN != "" {
+		pool, err := dbpkg.NewPool(dbpkg.NewPoolConfigFrom(
+			cfg.Database.PurgeDSN, cfg.Database.GraphDSN, cfg.Database.MaxConns, cfg.Database.SSLMode, cfg.Database.Extensions,
+		))
+		if err != nil {
+			return retentionWiring{}, fmt.Errorf("connect purge_user pool: %w", err)
+		}
+		purgePool = pool
+		purgeConn = pool
+	} else {
+		logger.Warn("database.purge_dsn is unset; retention purges will fail closed at the DB immutability trigger (configure purge_dsn as purge_user to enable purging)")
+	}
+
+	// tenantAppConn scopes the DBCollector and hold store to the tenant carried
+	// in each request's context via RLS. The hold store is shared across
+	// requests because it is stateless and derives its tenant from the context.
+	tenantAppConn := dbpkg.NewTenantPool(shared.appPool)
+	holds := retention.NewPgHoldStore(tenantAppConn)
+	auditPublisher := retention.NewAuditPublisher(shared.natsClient)
+
+	engineFor := func(tenantID string, policy retention.Policy) (*retention.Engine, error) {
+		primary, err := storage.NewFromConfig(cfg.Storage.Objects, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("retention: build primary storage for tenant %q: %w", tenantID, err)
+		}
+		archiveProvider, err := storage.NewArchiveFromConfig(cfg.Retention.Archive, tenantID)
+		if err != nil {
+			if !errors.Is(err, storage.ErrArchiveDisabled) {
+				return nil, fmt.Errorf("retention: build archive storage for tenant %q: %w", tenantID, err)
+			}
+			logger.Warn("retention archive backend disabled; archive+purge will fail closed until retention.archive is configured (dry-run scans, stats, and legal holds remain available)")
+			archiveProvider = disabledArchive{}
+		}
+		collectors := []retention.Collector{
+			retention.NewDBCollector(tenantAppConn),
+			retention.NewCatalogCollector(tenantAppConn),
+			retention.NewObjectCollector(primary, retention.ClassAttestation, tenantID),
+		}
+		archiver := retention.NewArchiver(shared.appPool, primary, archiveProvider)
+		purger := retention.NewPurger(purgeConn, primary)
+		return retention.NewEngine(collectors, holds, archiver, purger, auditPublisher, policy), nil
+	}
+
+	return retentionWiring{
+		engineFor:     engineFor,
+		defaultPolicy: defaultPolicy,
+		holds:         holds,
+		purgePool:     purgePool,
+	}, nil
 }
 
 // attachWorker wires the LLM worker into rt. No database resources are
