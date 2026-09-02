@@ -491,6 +491,130 @@ JetStream provides persistent audit streams:
 
 See [Audit Streams Guide](docs/dev/audit-streams.md) for provenance headers, message inspection, and trace correlation.
 
+## Data Retention & Legal Holds
+
+CrossCodex enforces per-data-class retention policy: expired data is archived to
+a secondary store and then purged from the primary store, unless a **legal hold**
+covers it. Every operation is scoped to a single tenant. Completed jobs and
+catalogs are purged as aggregates with their dependents: an expired catalog is
+archived as `{catalog, classifications, controls}` and then purged together with
+its `classifications`, `controls`, and `embeddings`. The archive deliberately
+omits `embeddings` (derived/regenerable, so purge-only); their lifetime is bound
+to the parent catalog's retention rather than an independent
+`retention.tiers.embeddings` tier. For how the engine works internally, see the
+[Retention Lifecycle](docs/dev/retention.md) guide.
+
+### Client CLI (`crosscodex admin`)
+
+All admin commands take `--tenant`, which must match the tenant the caller is
+authenticated for; the server authorizes every request against the caller's
+tenant.
+
+```sh
+# Scan and enforce the retention lifecycle for a tenant.
+crosscodex admin retention scan --tenant acme
+
+# Preview without mutating any data.
+crosscodex admin retention scan --tenant acme --dry-run
+
+# Show retention-eligible counts and the active-hold total.
+crosscodex admin retention stats --tenant acme
+```
+
+### Legal Hold Lifecycle
+
+A legal hold prevents matching data from being purged for as long as it is
+active. An empty scope field is a wildcard (matches everything), so a hold with
+no `--job`/`--created-before` covers the whole tenant.
+
+```sh
+# Create a hold. --name is required. The server forces the hold's tenant to the
+# caller's tenant, so a hold can never be planted for another tenant.
+crosscodex admin hold create --tenant acme --name "litigation-2026-014"
+
+# Narrow a hold to one job and/or only data created before a cutoff (RFC3339),
+# and optionally auto-release it at a future timestamp.
+crosscodex admin hold create --tenant acme --name "audit-hold" \
+  --job job-abc123 \
+  --created-before 2026-01-01T00:00:00Z \
+  --expires-at 2026-12-31T00:00:00Z
+
+# List active holds (alias: ls).
+crosscodex admin hold list --tenant acme
+
+# Release a hold by name. Released holds remain visible in `list` as an audit
+# trail but no longer block purges.
+crosscodex admin hold release --tenant acme --name "litigation-2026-014"
+```
+
+### Daemon One-Shot (`crosscodexd admin`)
+
+For on-host operation (e.g. an external scheduler running next to the daemon),
+`crosscodexd` exposes an in-process one-shot scan. Like `healthcheck` and
+`version`, it is **unauthenticated by design** — it runs locally against the
+daemon's configured resources and selects its tenant with `--tenant`:
+
+```sh
+crosscodexd admin retention scan --tenant acme
+crosscodexd admin retention scan --tenant acme --dry-run
+```
+
+### Configuration Reference
+
+```yaml
+retention:
+  # Default retention per data class. Each value is "indefinite", "<n>y",
+  # "<n>d", or any Go duration (e.g. "720h"). An empty value means "keep".
+  defaults:
+    attestation: indefinite
+    job_results: 90d
+    catalogs: 2y
+    embeddings: 90d
+    # Audit-class tiers are accepted for config completeness but do NOT drive
+    # engine purges — the retention engine never purges audit data. Audit
+    # retention is enforced by JetStream stream MaxAge via
+    # nats.streams.audit_llm_retention / audit_events_retention
+    # (see docs/dev/audit-streams.md).
+    audit_decisions: indefinite
+    audit_llm: 90d
+    audit_events: 30d
+
+  # Optional cron expression for the in-daemon scheduler. Empty = disabled
+  # (drive scans externally via the one-shot instead; see below).
+  scan_schedule: ""
+
+  # Archive backend for data moved out of the primary store before purge.
+  archive:
+    backend: local          # local | s3 | "" (disabled)
+    local:
+      path: /var/lib/crosscodex/archive
+    s3:
+      bucket: crosscodex-archive
+      storage_class: GLACIER
+
+  # Per-tenant overrides. Non-empty fields replace the matching default;
+  # empty fields fall back to the default.
+  tenants:
+    acme:
+      job_results: 1y
+
+database:
+  # Purge runs under a dedicated, RLS-scoped purge_user role that the
+  # delete-path immutability triggers accept. When purge_dsn is unset, scans
+  # still run but purges fail closed rather than deleting under the wrong role.
+  purge_dsn: "${PURGE_DATABASE_DSN}"   # e.g. postgres://purge_user:...@localhost:5432/crosscodex
+```
+
+### External Cron Example
+
+When `retention.scan_schedule` is left empty, drive scans from an external
+scheduler using the daemon one-shot. Example crontab entry running a nightly
+scan for one tenant at 02:00:
+
+```cron
+0 2 * * *  crosscodexd admin retention scan --tenant acme >> /var/log/crosscodex/retention.log 2>&1
+```
+
 ## Uninstall
 
 To fully remove CrossCodex:
