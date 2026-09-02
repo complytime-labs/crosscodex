@@ -165,7 +165,10 @@ func (m *mockNATSClient) QueueSubscribe(ctx context.Context, subject, queue stri
 }
 func (m *mockNATSClient) CreateStream(_ context.Context, _ natsbus.StreamConfig) error { return nil }
 func (m *mockNATSClient) DeleteStream(_ context.Context, _ string) error               { return nil }
-func (m *mockNATSClient) Close() error                                                 { return nil }
+func (m *mockNATSClient) AuditStreamRetention(_ context.Context) (map[string]time.Duration, error) {
+	return nil, nil
+}
+func (m *mockNATSClient) Close() error { return nil }
 
 // mockSubscription is a test double for natsbus.Subscription.
 type mockSubscription struct {

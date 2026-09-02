@@ -78,6 +78,10 @@ func (f *fakeNATSClient) DeleteStream(_ context.Context, _ string) error {
 	return errors.New("DeleteStream not implemented in fakeNATSClient")
 }
 
+func (f *fakeNATSClient) AuditStreamRetention(_ context.Context) (map[string]time.Duration, error) {
+	return nil, errors.New("AuditStreamRetention not implemented in fakeNATSClient")
+}
+
 func (f *fakeNATSClient) Close() error {
 	return nil
 }
