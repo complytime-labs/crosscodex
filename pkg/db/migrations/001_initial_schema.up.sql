@@ -371,9 +371,11 @@ CREATE OR REPLACE FUNCTION prevent_completed_job_delete()
 RETURNS TRIGGER AS $$
 BEGIN
     IF OLD.status = 'completed' THEN
-        RAISE EXCEPTION 'cannot delete job %: status is "completed". Completed jobs are retained for audit. See retention policy (ticket #34).',
-            OLD.job_id
-            USING ERRCODE = 'restrict_violation';
+        IF NOT pg_has_role(current_user, 'retention_purge', 'MEMBER') THEN
+            RAISE EXCEPTION 'cannot delete job %: status is "completed". Completed jobs are retained for audit. See retention policy (ticket #34).',
+                OLD.job_id
+                USING ERRCODE = 'restrict_violation';
+        END IF;
     END IF;
     RETURN OLD;
 END;
@@ -409,9 +411,11 @@ DECLARE
 BEGIN
     SELECT status INTO parent_status FROM jobs WHERE job_id = OLD.job_id;
     IF parent_status = 'completed' THEN
-        RAISE EXCEPTION 'cannot delete % record: parent job % is "completed". Completed job data is immutable.',
-            TG_TABLE_NAME, OLD.job_id
-            USING ERRCODE = 'restrict_violation';
+        IF NOT pg_has_role(current_user, 'retention_purge', 'MEMBER') THEN
+            RAISE EXCEPTION 'cannot delete % record: parent job % is "completed". Completed job data is immutable.',
+                TG_TABLE_NAME, OLD.job_id
+                USING ERRCODE = 'restrict_violation';
+        END IF;
     END IF;
     RETURN OLD;
 END;
@@ -436,9 +440,12 @@ CREATE TRIGGER vote_summaries_immutable_delete
 CREATE OR REPLACE FUNCTION prevent_classification_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION 'cannot modify classification (catalog_id=%, control_id=%, type=%): classifications are write-once. Insert a new version instead.',
-        OLD.catalog_id, OLD.control_id, OLD.type
-        USING ERRCODE = 'restrict_violation';
+    IF NOT pg_has_role(current_user, 'retention_purge', 'MEMBER') THEN
+        RAISE EXCEPTION 'cannot modify classification (catalog_id=%, control_id=%, type=%): classifications are write-once. Insert a new version instead.',
+            OLD.catalog_id, OLD.control_id, OLD.type
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN OLD;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -536,3 +543,71 @@ GRANT EXECUTE ON FUNCTION public.assert_tenant_graph(TEXT) TO graph_user;
 GRANT USAGE ON SCHEMA ag_catalog TO graph_user;
 GRANT SELECT ON ALL TABLES IN SCHEMA ag_catalog TO graph_user;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ag_catalog TO graph_user;
+
+-- ============================================================================
+-- Retention holds
+-- ============================================================================
+-- Tracks active legal or compliance holds that prevent purge of matching rows.
+-- A hold is active while released_at IS NULL; releasing it sets released_at
+-- and released_by, but keeps the row for audit purposes.
+--
+-- The partial unique index enforces that at most one active hold may carry a
+-- given name at any time, while allowing multiple released holds with the same
+-- name across time.
+
+CREATE TABLE IF NOT EXISTS public.retention_holds (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            TEXT        NOT NULL,
+    tenant_id       TEXT        NULL,
+    created_before  TIMESTAMPTZ NULL,
+    job_id          TEXT        NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by      TEXT        NOT NULL,
+    expires_at      TIMESTAMPTZ NULL,
+    released_at     TIMESTAMPTZ NULL,
+    released_by     TEXT        NULL
+);
+
+-- Only one active hold per name (released_at IS NULL) is permitted.
+CREATE UNIQUE INDEX IF NOT EXISTS retention_holds_name_active_uidx
+    ON public.retention_holds (name)
+    WHERE released_at IS NULL;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.retention_holds TO app_user;
+
+-- ============================================================================
+-- Purge roles
+-- ============================================================================
+-- retention_purge: NOLOGIN group role whose membership authorises the
+-- delete-path trigger carve-out (pg_has_role check). Role membership is
+-- engine-enforced and cannot be self-granted; app_user is NOT a member.
+--
+-- purge_user: LOGIN role for the retention-purge service. Holds only the
+-- minimum grants needed to execute deletes on the delete-path tables (those
+-- guarded by the immutability triggers above). Does NOT inherit app_user's
+-- broader INSERT/UPDATE grants.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'retention_purge') THEN
+        CREATE ROLE retention_purge NOLOGIN;
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'purge_user') THEN
+        CREATE ROLE purge_user LOGIN;
+    END IF;
+END
+$$;
+
+GRANT retention_purge TO purge_user;
+
+GRANT USAGE ON SCHEMA public TO purge_user;
+GRANT SELECT, DELETE ON public.jobs             TO purge_user;
+GRANT SELECT, DELETE ON public.job_stages       TO purge_user;
+GRANT SELECT, DELETE ON public.catalogs         TO purge_user;
+GRANT SELECT, DELETE ON public.classifications  TO purge_user;
+GRANT SELECT, DELETE ON public.embeddings       TO purge_user;
+GRANT SELECT, DELETE ON public.vote_summaries   TO purge_user;

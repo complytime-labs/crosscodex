@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package crosscodex.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 import "crosscodex/v1/common.proto";
@@ -43,6 +44,14 @@ service AdminService {
   // Get retention stats
   rpc GetRetentionStats(GetRetentionStatsRequest)
       returns (GetRetentionStatsResponse);
+  // Scan and enforce retention lifecycle
+  rpc ScanRetention(ScanRetentionRequest) returns (ScanRetentionResponse);
+  // Create a legal hold preventing data deletion
+  rpc CreateHold(CreateHoldRequest) returns (CreateHoldResponse);
+  // Release a legal hold by name
+  rpc ReleaseHold(ReleaseHoldRequest) returns (ReleaseHoldResponse);
+  // List active legal holds
+  rpc ListHolds(ListHoldsRequest) returns (ListHoldsResponse);
 }
 
 message CreateTenantRequest {
@@ -196,28 +205,118 @@ message ApplyRetentionPolicyRequest {
 }
 
 message RetentionPolicy {
-  int32 job_retention_days = 1;
-  int32 audit_retention_days = 2;
-  int32 synthesis_retention_days = 3;
-  bool delete_superseded_edges = 4;
+  string attestation     = 1;
+  string job_results     = 2;
+  string catalogs        = 3;
+  string embeddings      = 4;
+  string audit_decisions = 5;
+  string audit_llm       = 6;
+  string audit_events    = 7;
 }
 
 message ApplyRetentionPolicyResponse {
-  int32 jobs_deleted = 1;
-  int32 audits_deleted = 2;
-  int32 syntheses_deleted = 3;
-  int32 edges_deleted = 4;
+  // Result of applying the supplied policy immediately (respecting dry_run).
+  RetentionReport report = 1;
 }
 
 message GetRetentionStatsRequest {
   TenantContext tenant_context = 1;
 }
 
+// StreamDrift reports whether one audit JetStream's live retention (max age)
+// matches the retention the configuration intends for it. This is an infra
+// config-vs-live check, orthogonal to a data-retention scan.
+message StreamDrift {
+  // Stream name (e.g. "AUDIT_LLM").
+  string stream = 1;
+  // Retention the configuration intends for this stream.
+  google.protobuf.Duration configured = 2;
+  // Retention currently live on the server (zero when the stream is absent).
+  google.protobuf.Duration live = 3;
+  // True only when the stream exists live and its retention matches configured.
+  bool ok = 4;
+}
+
 message GetRetentionStatsResponse {
-  int64 total_jobs = 1;
-  int64 total_audits = 2;
-  int64 total_syntheses = 3;
-  int64 total_edges = 4;
-  int64 superseded_edges = 5;
-  int64 storage_bytes_used = 6;
+  // Per-class counts a dry-run scan would find right now: scanned = expired
+  // and eligible, held = blocked by an active legal hold. archived/purged
+  // are always 0 for a dry run.
+  RetentionReport eligible = 1;
+  // Number of legal holds currently active for the tenant.
+  int64 active_holds = 2;
+  // Per-stream audit-retention drift (configured vs live max age).
+  repeated StreamDrift stream_drifts = 3;
+}
+
+// ClassCount aggregates retention action tallies for a single data class.
+message ClassCount {
+  int64 scanned  = 1;
+  int64 held     = 2;
+  int64 archived = 3;
+  int64 purged   = 4;
+}
+
+// RetentionReport summarises the outcome of a retention scan.
+message RetentionReport {
+  int64 scanned                     = 1;
+  int64 held                        = 2;
+  int64 archived                    = 3;
+  int64 purged                      = 4;
+  map<string, ClassCount> per_class = 5;
+  repeated string errors            = 6;
+}
+
+// HoldScope selects which records a legal hold covers.
+message HoldScope {
+  optional google.protobuf.Timestamp created_before = 1;
+  string tenant_id                                  = 2;
+  string job_id                                     = 3;
+}
+
+// Hold represents a legal hold that prevents data deletion.
+message Hold {
+  string id                                      = 1;
+  string name                                    = 2;
+  HoldScope scope                                = 3;
+  google.protobuf.Timestamp created_at           = 4;
+  string created_by                              = 5;
+  optional google.protobuf.Timestamp expires_at  = 6;
+  optional google.protobuf.Timestamp released_at = 7;
+  string released_by                             = 8;
+}
+
+message ScanRetentionRequest {
+  TenantContext tenant_context = 1;
+  bool dry_run                 = 2;
+}
+
+message ScanRetentionResponse {
+  RetentionReport report = 1;
+}
+
+message CreateHoldRequest {
+  TenantContext tenant_context                   = 1;
+  string name                                    = 2;
+  HoldScope scope                                = 3;
+  optional google.protobuf.Timestamp expires_at  = 4;
+}
+
+message CreateHoldResponse {
+  Hold hold = 1;
+}
+
+message ReleaseHoldRequest {
+  TenantContext tenant_context = 1;
+  string name                  = 2;
+}
+
+message ReleaseHoldResponse {
+}
+
+message ListHoldsRequest {
+  TenantContext tenant_context = 1;
+}
+
+message ListHoldsResponse {
+  repeated Hold holds = 1;
 }

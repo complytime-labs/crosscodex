@@ -13,6 +13,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithy "github.com/aws/smithy-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -33,6 +34,7 @@ type s3Provider struct {
 	bucket       string
 	tenantPrefix string
 	tenantID     string
+	storageClass string
 	closed       atomic.Bool
 
 	telemetryInstr // embedded OTel instruments
@@ -41,11 +43,12 @@ type s3Provider struct {
 type S3Option func(*s3Options)
 
 type s3Options struct {
-	region   string
-	endpoint string
-	creds    aws.CredentialsProvider
-	tracer   trace.Tracer
-	meter    metric.Meter
+	region       string
+	endpoint     string
+	storageClass string
+	creds        aws.CredentialsProvider
+	tracer       trace.Tracer
+	meter        metric.Meter
 }
 
 func WithRegion(region string) S3Option {
@@ -60,6 +63,12 @@ func WithCredentials(key, secret string) S3Option {
 	return func(o *s3Options) {
 		o.creds = credentials.NewStaticCredentialsProvider(key, secret, "")
 	}
+}
+
+// WithStorageClass sets the S3 storage class for Put operations (e.g. "GLACIER_IR").
+// An empty string leaves the field unset, which preserves the bucket default (STANDARD).
+func WithStorageClass(class string) S3Option {
+	return func(o *s3Options) { o.storageClass = class }
 }
 
 // WithS3Telemetry configures OpenTelemetry for the S3 provider.
@@ -111,6 +120,7 @@ func NewS3(bucket, tenantID string, opts ...S3Option) (Provider, error) {
 		bucket:       bucket,
 		tenantPrefix: tenantID + "/",
 		tenantID:     tenantID,
+		storageClass: options.storageClass,
 	}
 	if options.tracer != nil {
 		p.tracer = options.tracer
@@ -198,11 +208,15 @@ func (p *s3Provider) Put(ctx context.Context, key string, data io.Reader) error 
 		return err
 	}
 
-	_, err := p.client.PutObject(ctx, &s3.PutObjectInput{
+	putInput := &s3.PutObjectInput{
 		Bucket: aws.String(p.bucket),
 		Key:    aws.String(p.fullKey(key)),
 		Body:   data,
-	})
+	}
+	if p.storageClass != "" {
+		putInput.StorageClass = s3types.StorageClass(p.storageClass)
+	}
+	_, err := p.client.PutObject(ctx, putInput)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("s3 put: %w", err)

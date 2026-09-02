@@ -55,6 +55,15 @@ DROP POLICY IF EXISTS tenant_isolation ON job_stages;
 DROP POLICY IF EXISTS tenant_isolation ON jobs;
 DROP POLICY IF EXISTS tenant_isolation ON tenants;
 
+-- Revoke and drop purge roles (reverse dependency order; group role cannot be
+-- dropped while a member or grant references it).
+REVOKE ALL ON public.jobs, public.job_stages, public.catalogs,
+    public.classifications, public.embeddings, public.vote_summaries FROM purge_user;
+REVOKE USAGE ON SCHEMA public FROM purge_user;
+REVOKE retention_purge FROM purge_user;
+DROP ROLE IF EXISTS purge_user;
+DROP ROLE IF EXISTS retention_purge;
+
 -- Revoke and drop app_user
 REVOKE SELECT, INSERT, UPDATE, DELETE
     ON ALL TABLES IN SCHEMA public
@@ -63,6 +72,7 @@ REVOKE SELECT, INSERT, UPDATE, DELETE
 DROP ROLE IF EXISTS app_user;
 
 -- Tables (reverse dependency order)
+DROP TABLE IF EXISTS retention_holds;
 DROP TABLE IF EXISTS relationship_candidates;
 DROP TABLE IF EXISTS analysis_results;
 DROP TABLE IF EXISTS requires_consensus;

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,6 +27,7 @@ type Config struct {
 	Worker        WorkerConfig        `yaml:"worker"        json:"worker"`
 	Pipeline      PipelineConfig      `yaml:"pipeline"      json:"pipeline"`
 	Synthesis     SynthesisConfig     `yaml:"synthesis"     json:"synthesis"`
+	Retention     RetentionConfig     `yaml:"retention"     json:"retention"`
 	Role          string              `yaml:"role"          json:"role"`
 	Health        HealthConfig        `yaml:"health"        json:"health"`
 }
@@ -184,13 +186,17 @@ type X509MatchConfig struct {
 
 // DatabaseConfig configures PostgreSQL connections.
 //
-// Two DSNs support the three-role security model (see pkg/db/doc.go):
+// Three DSNs support the four-role security model (see pkg/db/doc.go):
 //   - DSN connects as app_user for relational data behind RLS.
 //   - GraphDSN connects as graph_user for AGE cypher queries.
 //     graph_user owns per-tenant graph schemas but has no relational access.
+//   - PurgeDSN connects as purge_user (member of retention_purge), the only
+//     credential the delete-path immutability triggers accept for the
+//     sanctioned retention purge. Empty disables DB purge.
 type DatabaseConfig struct {
 	DSN        string   `yaml:"dsn" json:"dsn"`
 	GraphDSN   string   `yaml:"graph_dsn" json:"graph_dsn"`
+	PurgeDSN   string   `yaml:"purge_dsn" json:"purge_dsn"`
 	Extensions []string `yaml:"extensions" json:"extensions"`
 	MaxConns   int      `yaml:"max_conns" json:"max_conns"`
 	SSLMode    string   `yaml:"ssl_mode" json:"ssl_mode"`
@@ -825,4 +831,162 @@ func (c *Config) CLIConfig() ClientConfig {
 		Logging:         c.Logging,
 		Prompt:          c.Prompt,
 	}
+}
+
+// RetentionTiers holds per-data-class retention durations expressed as strings.
+// Each value is parsed by ParseRetention: "indefinite", "<n>y", "<n>d", or a
+// Go duration string (e.g. "720h"). An empty string means "use the default".
+type RetentionTiers struct {
+	Attestation    string `yaml:"attestation" json:"attestation"`
+	JobResults     string `yaml:"job_results" json:"job_results"`
+	Catalogs       string `yaml:"catalogs" json:"catalogs"`
+	Embeddings     string `yaml:"embeddings" json:"embeddings"`
+	AuditDecisions string `yaml:"audit_decisions" json:"audit_decisions"`
+	AuditLLM       string `yaml:"audit_llm" json:"audit_llm"`
+	AuditEvents    string `yaml:"audit_events" json:"audit_events"`
+}
+
+// ArchiveConfig configures the archive backend used for tiered data movement.
+type ArchiveConfig struct {
+	Backend string `yaml:"backend" json:"backend"` // "local", "s3", or "" (disabled)
+	S3      struct {
+		Bucket       string `yaml:"bucket" json:"bucket"`
+		StorageClass string `yaml:"storage_class" json:"storage_class"`
+	} `yaml:"s3" json:"s3"`
+	Local struct {
+		Path string `yaml:"path" json:"path"`
+	} `yaml:"local" json:"local"`
+}
+
+// RetentionConfig controls data lifecycle: default tiers, archive backend, and
+// optional per-tenant tier overrides.
+type RetentionConfig struct {
+	Defaults     RetentionTiers            `yaml:"defaults" json:"defaults"`
+	ScanSchedule string                    `yaml:"scan_schedule" json:"scan_schedule"` // cron expression; empty = disabled
+	Archive      ArchiveConfig             `yaml:"archive" json:"archive"`
+	Tenants      map[string]RetentionTiers `yaml:"tenants" json:"tenants"`
+}
+
+// ParseRetention parses a retention duration string.
+//
+// Accepted forms:
+//   - "indefinite" — data is kept forever (returns indefinite=true, duration=0)
+//   - "<n>y"       — n × 365 days
+//   - "<n>d"       — n × 24 hours
+//   - any string accepted by time.ParseDuration (e.g. "720h")
+//
+// A negative non-zero duration is rejected.
+func ParseRetention(s string) (time.Duration, bool, error) {
+	if s == "indefinite" {
+		return 0, true, nil
+	}
+	if rest, ok := strings.CutSuffix(s, "y"); ok {
+		n, err := strconv.Atoi(rest)
+		if err != nil {
+			return 0, false, fmt.Errorf("retention %q: %w", s, ErrInvalidConfig)
+		}
+		d := time.Duration(n) * 365 * 24 * time.Hour
+		if d < 0 {
+			return 0, false, fmt.Errorf("retention %q: negative duration: %w", s, ErrInvalidConfig)
+		}
+		return d, false, nil
+	}
+	if rest, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(rest)
+		if err != nil {
+			return 0, false, fmt.Errorf("retention %q: %w", s, ErrInvalidConfig)
+		}
+		d := time.Duration(n) * 24 * time.Hour
+		if d < 0 {
+			return 0, false, fmt.Errorf("retention %q: negative duration: %w", s, ErrInvalidConfig)
+		}
+		return d, false, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, false, fmt.Errorf("retention %q: %w", s, ErrInvalidConfig)
+	}
+	if d < 0 {
+		return 0, false, fmt.Errorf("retention %q: negative duration: %w", s, ErrInvalidConfig)
+	}
+	return d, false, nil
+}
+
+var validArchiveBackends = map[string]bool{"": true, "local": true, "s3": true}
+
+// validateRetentionTiers parses all non-empty fields of a RetentionTiers and
+// returns the first error.
+func validateRetentionTiers(tiers RetentionTiers, prefix string) error {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"attestation", tiers.Attestation},
+		{"job_results", tiers.JobResults},
+		{"catalogs", tiers.Catalogs},
+		{"embeddings", tiers.Embeddings},
+		{"audit_decisions", tiers.AuditDecisions},
+		{"audit_llm", tiers.AuditLLM},
+		{"audit_events", tiers.AuditEvents},
+	}
+	for _, f := range fields {
+		if f.value == "" {
+			continue
+		}
+		if _, _, err := ParseRetention(f.value); err != nil {
+			return fmt.Errorf("retention.%s.%s: %w", prefix, f.name, err)
+		}
+	}
+	return nil
+}
+
+// Validate checks RetentionConfig for correctness.
+// Returns ErrInvalidConfig on validation failure.
+func (rc *RetentionConfig) Validate() error {
+	if !validArchiveBackends[rc.Archive.Backend] {
+		return fmt.Errorf("retention.archive.backend %q must be one of local, s3, or empty: %w",
+			rc.Archive.Backend, ErrInvalidConfig)
+	}
+	if err := validateRetentionTiers(rc.Defaults, "defaults"); err != nil {
+		return err
+	}
+	for tenantID, tiers := range rc.Tenants {
+		if err := validateRetentionTiers(tiers, "tenants."+tenantID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// For returns the effective RetentionTiers for a tenant. Non-empty fields in
+// the tenant's override replace the corresponding default field; empty fields
+// fall back to the default.
+func (rc *RetentionConfig) For(tenantID string) RetentionTiers {
+	result := rc.Defaults
+	override, ok := rc.Tenants[tenantID]
+	if !ok {
+		return result
+	}
+	if override.Attestation != "" {
+		result.Attestation = override.Attestation
+	}
+	if override.JobResults != "" {
+		result.JobResults = override.JobResults
+	}
+	if override.Catalogs != "" {
+		result.Catalogs = override.Catalogs
+	}
+	if override.Embeddings != "" {
+		result.Embeddings = override.Embeddings
+	}
+	if override.AuditDecisions != "" {
+		result.AuditDecisions = override.AuditDecisions
+	}
+	if override.AuditLLM != "" {
+		result.AuditLLM = override.AuditLLM
+	}
+	if override.AuditEvents != "" {
+		result.AuditEvents = override.AuditEvents
+	}
+	return result
 }

@@ -27,6 +27,7 @@ Flags:
 
 Available Commands:
   healthcheck Probe the gateway /healthz endpoint (exit 0 = healthy)
+  admin       On-host admin operations (retention scan --tenant <id> [--dry-run])
   version     Print version information
 
 Running crosscodexd with no arguments starts the daemon with role "all".
@@ -66,6 +67,8 @@ func main() {
 		switch flags.Arg(0) {
 		case "healthcheck":
 			os.Exit(runHealthcheck())
+		case "admin":
+			os.Exit(runAdmin(flags.Args()[1:]))
 		case "version", "--version":
 			printVersion()
 			return

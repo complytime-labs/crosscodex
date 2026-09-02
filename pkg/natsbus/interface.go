@@ -1,6 +1,9 @@
 package natsbus
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Client wraps NATS messaging operations with tenant-scoped subjects,
 // provenance headers, and JetStream stream management.
@@ -34,6 +37,11 @@ type Client interface {
 
 	// DeleteStream removes a JetStream stream and all its messages.
 	DeleteStream(ctx context.Context, name string) error
+
+	// AuditStreamRetention reads the live MaxAge of each audit stream from the
+	// server, keyed by stream name ("AUDIT_LLM", "AUDIT_DECISIONS",
+	// "AUDIT_EVENTS"). It is used to detect drift from the configured retention.
+	AuditStreamRetention(ctx context.Context) (map[string]time.Duration, error)
 
 	// Close drains the connection, stops the embedded server if applicable,
 	// and releases all resources. Safe to call multiple times.

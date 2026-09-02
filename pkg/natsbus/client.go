@@ -2,6 +2,7 @@ package natsbus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -303,6 +304,50 @@ func (c *client) DeleteStream(ctx context.Context, name string) error {
 	return nil
 }
 
+// AuditStreamRetention reads the live MaxAge of each audit stream from the
+// server, keyed by stream name. The stream set is derived from
+// auditStreamConfigs so the single audit-stream mapping stays authoritative.
+func (c *client) AuditStreamRetention(ctx context.Context) (map[string]time.Duration, error) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("audit stream retention: %w", ErrConnectionClosed)
+	}
+	c.mu.Unlock()
+
+	ctx, span := c.startSpan(ctx, "natsbus.AuditStreamRetention")
+	defer span.End()
+
+	configs := auditStreamConfigs(config.NATSStreamsConfig{})
+	out := make(map[string]time.Duration, len(configs))
+	for _, sc := range configs {
+		// An absent stream IS drift, not a source fault: omit it so the caller
+		// reports Live=0/OK=false. Only genuine failures (transport, timeout)
+		// fail the whole read.
+		stream, err := c.js.Stream(ctx, sc.Name)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrStreamNotFound) {
+				continue
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("get stream %s: %w", sc.Name, err)
+		}
+		info, err := stream.Info(ctx)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrStreamNotFound) {
+				continue
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("stream info %s: %w", sc.Name, err)
+		}
+		out[sc.Name] = info.Config.MaxAge
+	}
+	span.SetStatus(codes.Ok, "")
+	return out, nil
+}
+
 // Close drains the connection, stops the embedded server if applicable,
 // and releases all resources. Safe to call multiple times.
 func (c *client) Close() error {
@@ -342,6 +387,18 @@ func (c *client) ensureStreams(ctx context.Context, streamsCfg config.NATSStream
 		}
 	}
 	return nil
+}
+
+// ConfiguredAuditRetention returns the intended MaxAge for each audit stream,
+// keyed by stream name. It reuses auditStreamConfigs so the config-to-stream
+// mapping lives in exactly one place.
+func ConfiguredAuditRetention(cfg config.NATSStreamsConfig) map[string]time.Duration {
+	configs := auditStreamConfigs(cfg)
+	out := make(map[string]time.Duration, len(configs))
+	for _, sc := range configs {
+		out[sc.Name] = sc.MaxAge
+	}
+	return out
 }
 
 // auditStreamConfigs returns the three audit stream configurations.
