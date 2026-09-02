@@ -203,7 +203,8 @@ buf breaking --against '.git#branch=main'  # Detect breaking changes
 | -------             | ------          | -------                                                                                                                                                                            | ----------------                  |
 | **pkg/config**      | `[implemented]` | Configuration loading, XDG compliance, precedence resolution                                                                                                                       | None (foundational)               |
 | **pkg/db**          | `[implemented]` | PostgreSQL connection pooling, tenant RLS isolation, migrations                                                                                                                    | pkg/config                        |
-| **pkg/graphdb**     | `[implemented]` | Apache AGE openCypher queries, entity retrieval, relationship traversal, bulk operations, Cypher query execution, temporal supersession, tenant-scoped graphs                      | pkg/db                            |
+| **pkg/graphdb**          | `[implemented]` | Vendor-neutral GraphDB interface and domain types (Node, Edge, Relationship, QueryRow) and sentinel errors (ErrNodeNotFound, ErrEdgeNotFound, ErrTenantRequired). No AGE-specific content. | — |
+| **pkg/graphdb/agedriver** | `[implemented]` | Apache AGE implementation of graphdb.GraphDB. Owns agtype encoding, Cypher query building, AGE SQL execution, and temporal supersession. Import only from wiring layer (cmd/crosscodexd/resources.go). | pkg/graphdb, pkg/db |
 | **pkg/vectordb**    | `[implemented]` | pgvector similarity search for embeddings, batch upsert, tenant isolation, model tracking                                                                                          | pkg/db, pkg/tenant, pkg/telemetry |
 | **pkg/natsbus**     | `[implemented]` | NATS JetStream publish/subscribe, stream management, embedded/external dual mode, provenance headers                                                                               | pkg/config, pkg/tenant            |
 | **pkg/storage**     | `[implemented]` | Object storage abstraction (local FS / S3)                                                                                                                                         | pkg/config                        |
@@ -717,7 +718,7 @@ This applies to controls, catalogs, embeddings, graph nodes, configuration recor
 
 ### Graph Backend Portability
 
-The graph database (currently Apache AGE) is accessed exclusively through the `pkg/graphdb.GraphDB` interface. No package outside `pkg/graphdb` may import AGE-specific types, use AGE SQL functions directly, or assume the graph shares a PostgreSQL transaction with relational queries. The graph is a materialized view — reconstructible from authoritative stores (see "Graph Data Model" above). Design every graph consumer so that swapping AGE for Neo4j, Neptune, or any openCypher/Gremlin backend requires changes only inside `pkg/graphdb`.
+The graph database (currently Apache AGE) is accessed exclusively through the `pkg/graphdb.GraphDB` interface. No package outside `pkg/graphdb` may import AGE-specific types, use AGE SQL functions directly, or assume the graph shares a PostgreSQL transaction with relational queries. The graph is a materialized view — reconstructible from authoritative stores (see "Graph Data Model" above). Design every graph consumer so that swapping AGE for Neo4j, Neptune, or any openCypher/Gremlin backend requires changes only inside `pkg/graphdb/agedriver` (or a new sibling sub-package).
 
 ### Never Store Structural Topology as Data Properties
 

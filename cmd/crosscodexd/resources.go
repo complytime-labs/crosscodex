@@ -8,10 +8,12 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.opentelemetry.io/otel"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
@@ -147,7 +149,13 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 			return nil, fmt.Errorf("ping graph_user sql.DB: %w", err)
 		}
 
-		gdb, err := graphdb.New(graphDB)
+		gdb, err := agedriver.New(
+			graphDB,
+			agedriver.WithTelemetry(
+				otel.Tracer("graphdb"),
+				otel.GetMeterProvider().Meter("graphdb"),
+			),
+		)
 		if err != nil {
 			res.close()
 			return nil, fmt.Errorf("create graphdb client: %w", err)

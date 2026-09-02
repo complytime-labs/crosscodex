@@ -16,6 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 )
 
 var _ = Describe("Graph Service Integration", Ordered, func() {
@@ -36,7 +37,7 @@ var _ = Describe("Graph Service Integration", Ordered, func() {
 		cleanup = dbCleanup
 
 		var err error
-		graphDB, err = graphdb.New(db)
+		graphDB, err = agedriver.New(db)
 		Expect(err).NotTo(HaveOccurred(), "failed to create GraphDB")
 
 		// Create tenant graphs via superuser (no RLS).
