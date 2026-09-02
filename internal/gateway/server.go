@@ -28,7 +28,10 @@ type ServerConfig struct {
 	TLS          config.TLSConfig
 	DrainTimeout time.Duration
 	Service      *Service
-	Logger       *slog.Logger
+	// Admin, when non-nil, mounts the AdminService (retention/legal-hold RPCs)
+	// on the same mux with the same interceptors as the GatewayService.
+	Admin  crosscodexv1connect.AdminServiceHandler
+	Logger *slog.Logger
 }
 
 func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
@@ -58,6 +61,13 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
+	if cfg.Admin != nil {
+		adminPath, adminHandler := crosscodexv1connect.NewAdminServiceHandler(
+			cfg.Admin,
+			connect.WithInterceptors(interceptors...),
+		)
+		mux.Handle(adminPath, adminHandler)
+	}
 	mux.HandleFunc("GET /api/version", versionHandler)
 	mux.HandleFunc("GET /healthz", healthzHandler(cfg.Service))
 
