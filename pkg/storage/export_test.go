@@ -34,6 +34,22 @@ func ExportNewS3WithClient(client ExportS3API, bucket, tenantID string) Provider
 	return newS3WithClient(client, bucket, tenantID)
 }
 
+// ExportNewS3WithClientAndStorageClass creates an S3 provider with a pre-injected
+// client and an explicit storage class for testing storage class propagation.
+func ExportNewS3WithClientAndStorageClass(client ExportS3API, bucket, tenantID, storageClass string) Provider {
+	p := newS3WithClient(client, bucket, tenantID)
+	p.storageClass = storageClass
+	return p
+}
+
+// OptionStorageClass applies an S3Option to a zero s3Options and returns the
+// resulting storageClass value. Use this to white-box-test WithStorageClass.
+func OptionStorageClass(opt S3Option) string {
+	var o s3Options
+	opt(&o)
+	return o.storageClass
+}
+
 // TelemetryFields exposes telemetry state for test assertions.
 type TelemetryFields struct {
 	HasTracer    bool

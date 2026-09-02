@@ -1124,4 +1124,101 @@ var _ = Describe("Storage System", Ordered, func() {
 			Expect(got).To(Equal("/home/testuser/.local/share"))
 		})
 	})
+
+	Describe("WithStorageClass / Put storage class", func() {
+		It("sets storageClass on s3Options (white-box via OptionStorageClass accessor)", func() {
+			got := storage.OptionStorageClass(storage.WithStorageClass("GLACIER_IR"))
+			Expect(got).To(Equal("GLACIER_IR"))
+		})
+
+		It("propagates GLACIER_IR to PutObjectInput.StorageClass", func() {
+			mock := &storageclassMockS3{}
+			p := storage.ExportNewS3WithClientAndStorageClass(mock, "archive-bucket", "acme-corp", "GLACIER_IR")
+
+			err := p.Put(context.Background(), "objects/test.json", bytes.NewReader([]byte("payload")))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mock.lastPutInput).NotTo(BeNil())
+			Expect(string(mock.lastPutInput.StorageClass)).To(Equal("GLACIER_IR"))
+		})
+
+		It("omits StorageClass from PutObjectInput when storage class is empty", func() {
+			mock := &storageclassMockS3{}
+			p := storage.ExportNewS3WithClientAndStorageClass(mock, "primary-bucket", "acme-corp", "")
+
+			err := p.Put(context.Background(), "objects/test.json", bytes.NewReader([]byte("payload")))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mock.lastPutInput).NotTo(BeNil())
+			Expect(string(mock.lastPutInput.StorageClass)).To(Equal(""))
+		})
+	})
+
+	Describe("NewArchiveFromConfig", func() {
+		It("returns ErrArchiveDisabled when Backend is empty", func() {
+			cfg := config.ArchiveConfig{Backend: ""}
+			p, err := storage.NewArchiveFromConfig(cfg, "acme-corp")
+			Expect(p).To(BeNil())
+			Expect(errors.Is(err, storage.ErrArchiveDisabled)).To(BeTrue())
+		})
+
+		It("returns an error for an unknown backend", func() {
+			cfg := config.ArchiveConfig{Backend: "gcs"}
+			_, err := storage.NewArchiveFromConfig(cfg, "acme-corp")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("unsupported archive backend"))
+		})
+
+		It("returns a working local Provider for the local backend", func() {
+			dir := GinkgoT().TempDir()
+			cfg := config.ArchiveConfig{Backend: "local"}
+			cfg.Local.Path = dir
+			p, err := storage.NewArchiveFromConfig(cfg, "acme-corp")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p).NotTo(BeNil())
+			DeferCleanup(p.Close)
+
+			// Verify it works end-to-end.
+			putErr := p.Put(context.Background(), "smoke/test.json", bytes.NewReader([]byte("ok")))
+			Expect(putErr).NotTo(HaveOccurred())
+		})
+
+		It("returns a non-nil S3 Provider for the s3 backend (no network required at construction)", func() {
+			cfg := config.ArchiveConfig{Backend: "s3"}
+			cfg.S3.Bucket = "archive-bucket"
+			cfg.S3.StorageClass = "GLACIER_IR"
+			p, err := storage.NewArchiveFromConfig(cfg, "acme-corp")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p).NotTo(BeNil())
+			DeferCleanup(p.Close)
+		})
+	})
 })
+
+// storageclassMockS3 is a minimal s3API implementation that records the last PutObjectInput
+// so tests can assert that storage class is correctly propagated.
+type storageclassMockS3 struct {
+	lastPutInput *s3.PutObjectInput
+}
+
+func (m *storageclassMockS3) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	m.lastPutInput = input
+	// Drain the body so callers don't block.
+	_, _ = io.ReadAll(input.Body)
+	return &s3.PutObjectOutput{}, nil
+}
+
+func (m *storageclassMockS3) GetObject(_ context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	return nil, &bddTestAPIError{code: "NoSuchKey", message: "not found"}
+}
+
+func (m *storageclassMockS3) DeleteObject(_ context.Context, _ *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	return &s3.DeleteObjectOutput{}, nil
+}
+
+func (m *storageclassMockS3) ListObjectsV2(_ context.Context, _ *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	isTruncated := false
+	return &s3.ListObjectsV2Output{IsTruncated: &isTruncated}, nil
+}
+
+func (m *storageclassMockS3) HeadObject(_ context.Context, _ *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	return nil, &bddTestAPIError{code: "NoSuchKey", message: "not found"}
+}
