@@ -1,4 +1,4 @@
-package graphdb
+package agedriver
 
 import (
 	"context"
@@ -11,9 +11,11 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 )
 
-// ageClient implements GraphDB using Apache AGE on PostgreSQL.
+// ageClient implements graphdb.GraphDB using Apache AGE on PostgreSQL.
 type ageClient struct {
 	db           *sql.DB
 	tracer       trace.Tracer
@@ -24,7 +26,7 @@ type ageClient struct {
 
 // New creates a GraphDB client backed by Apache AGE.
 // The caller owns the *sql.DB and is responsible for closing it.
-func New(db *sql.DB, opts ...Option) (GraphDB, error) {
+func New(db *sql.DB, opts ...Option) (graphdb.GraphDB, error) {
 	c := &ageClient{db: db}
 	for _, opt := range opts {
 		if err := opt(c); err != nil {
@@ -63,7 +65,7 @@ func graphName(tenant string) string {
 // sessions without per-session LOAD calls.
 func (c *ageClient) beginTx(ctx context.Context, tenant string) (*sql.Tx, error) {
 	if tenant == "" {
-		return nil, ErrTenantRequired
+		return nil, graphdb.ErrTenantRequired
 	}
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -81,97 +83,11 @@ func (c *ageClient) beginTx(ctx context.Context, tenant string) (*sql.Tx, error)
 	return tx, nil
 }
 
-// cypherDollarTag is the PostgreSQL dollar-quote tag wrapping Cypher queries
-// in ag_catalog.cypher() calls. A tagged dollar-quote prevents content
-// containing bare $$ from escaping the SQL string boundary. escapeCypher
-// strips this tag from any content as a defense-in-depth measure.
-const cypherDollarTag = "$cypher$"
-
-// escapeCypher escapes backslashes and single quotes for Cypher string literals
-// and strips the dollar-quote tag to prevent SQL injection via AGE's
-// dollar-quoted Cypher embedding.
-func escapeCypher(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `'`, `\'`)
-	s = strings.ReplaceAll(s, cypherDollarTag, "")
-	return s
-}
-
-// nodeToAGProperties serializes a Node's fields into a Cypher property map
-// string such as {id: 'x', valid_from: '2024-01-01T00:00:00Z'}.
-func nodeToAGProperties(n Node) string {
-	var pairs []string
-	pairs = append(pairs, fmt.Sprintf("id: '%s'", escapeCypher(n.ID)))
-	pairs = append(pairs, fmt.Sprintf("valid_from: '%s'", escapeCypher(n.ValidFrom.Format(time.RFC3339Nano))))
-	if n.ValidTo != nil {
-		pairs = append(pairs, fmt.Sprintf("valid_to: '%s'", escapeCypher(n.ValidTo.Format(time.RFC3339Nano))))
-	}
-	if n.CreatedBy != "" {
-		pairs = append(pairs, fmt.Sprintf("created_by: '%s'", escapeCypher(n.CreatedBy)))
-	}
-	if n.CreationMethod != "" {
-		pairs = append(pairs, fmt.Sprintf("creation_method: '%s'", escapeCypher(n.CreationMethod)))
-	}
-	for k, v := range n.Properties {
-		pairs = append(pairs, fmt.Sprintf("%s: %s", escapeCypher(k), cypherValue(v)))
-	}
-	return "{" + strings.Join(pairs, ", ") + "}"
-}
-
-// edgeToAGProperties serializes an Edge's fields into a Cypher property map.
-func edgeToAGProperties(e Edge) string {
-	var pairs []string
-	pairs = append(pairs, fmt.Sprintf("id: '%s'", escapeCypher(e.ID)))
-	pairs = append(pairs, fmt.Sprintf("valid_from: '%s'", escapeCypher(e.ValidFrom.Format(time.RFC3339Nano))))
-	if e.ValidTo != nil {
-		pairs = append(pairs, fmt.Sprintf("valid_to: '%s'", escapeCypher(e.ValidTo.Format(time.RFC3339Nano))))
-	}
-	if e.DeterminedBy != "" {
-		pairs = append(pairs, fmt.Sprintf("determined_by: '%s'", escapeCypher(e.DeterminedBy)))
-	}
-	if e.DeterminationType != "" {
-		pairs = append(pairs, fmt.Sprintf("determination_type: '%s'", escapeCypher(e.DeterminationType)))
-	}
-	if e.Confidence != 0 {
-		pairs = append(pairs, fmt.Sprintf("confidence: %g", e.Confidence))
-	}
-	if e.Supersedes != "" {
-		pairs = append(pairs, fmt.Sprintf("supersedes: '%s'", escapeCypher(e.Supersedes)))
-	}
-	for k, v := range e.Properties {
-		pairs = append(pairs, fmt.Sprintf("%s: %s", escapeCypher(k), cypherValue(v)))
-	}
-	return "{" + strings.Join(pairs, ", ") + "}"
-}
-
-// cypherValue formats a Go value as a Cypher literal.
-func cypherValue(v any) string {
-	switch val := v.(type) {
-	case string:
-		return fmt.Sprintf("'%s'", escapeCypher(val))
-	case float64:
-		return fmt.Sprintf("%g", val)
-	case float32:
-		return fmt.Sprintf("%g", val)
-	case int:
-		return fmt.Sprintf("%d", val)
-	case int64:
-		return fmt.Sprintf("%d", val)
-	case bool:
-		if val {
-			return "true"
-		}
-		return "false"
-	default:
-		return fmt.Sprintf("'%s'", escapeCypher(fmt.Sprintf("%v", val)))
-	}
-}
-
 // CreateGraph creates a tenant-scoped graph if it does not already exist.
 // This is idempotent: calling it multiple times for the same tenant is safe.
 func (c *ageClient) CreateGraph(ctx context.Context, tenant string) error {
 	if tenant == "" {
-		return ErrTenantRequired
+		return graphdb.ErrTenantRequired
 	}
 	start := time.Now()
 	ctx, span := c.startSpan(ctx, "graphdb.CreateGraph")
@@ -229,7 +145,7 @@ func (c *ageClient) CreateGraph(ctx context.Context, tenant string) error {
 // Returns ErrNodeExists if a node with the same label and id already exists.
 // Apache AGE does not enforce unique constraints on node properties, so this
 // method performs an explicit MATCH check within the same transaction.
-func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) error {
+func (c *ageClient) CreateNode(ctx context.Context, tenant string, node graphdb.Node) error {
 	if node.ID == "" {
 		return fmt.Errorf("create node: id is required")
 	}
@@ -271,7 +187,7 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) er
 	}
 	if exists {
 		span.SetStatus(codes.Ok, "node exists")
-		return fmt.Errorf("create node %s/%s: %w", node.Label, node.ID, ErrNodeExists)
+		return fmt.Errorf("create node %s/%s: %w", node.Label, node.ID, graphdb.ErrNodeExists)
 	}
 
 	props := nodeToAGProperties(node)
@@ -299,7 +215,7 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node Node) er
 // Source and target node IDs are explicit parameters — they identify the structural
 // endpoints of the edge and are NOT stored as edge properties. Edge properties carry
 // only domain-level metadata (confidence, determination_type, etc.).
-func (c *ageClient) CreateEdge(ctx context.Context, tenant, sourceID, targetID string, edge Edge) error {
+func (c *ageClient) CreateEdge(ctx context.Context, tenant, sourceID, targetID string, edge graphdb.Edge) error {
 	if edge.Label == "" {
 		return fmt.Errorf("create edge: label is required")
 	}
@@ -349,96 +265,8 @@ func (c *ageClient) CreateEdge(ctx context.Context, tenant, sourceID, targetID s
 	return tx.Commit()
 }
 
-// CreateRequiresEdge creates a REQUIRES edge from the tenant's requires_consensus data.
-// The method transforms RequiresEdge consensus metadata into a graph edge with
-// full provenance (models, confidence, vote counts). This is the pipeline entry point
-// for materializing consensus results into the graph.
-func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEdge RequiresEdge) error {
-	if reqEdge.SourceID == "" {
-		return fmt.Errorf("create requires edge: source_id is required")
-	}
-	if reqEdge.TargetID == "" {
-		return fmt.Errorf("create requires edge: target_id is required")
-	}
-	if reqEdge.AnalyzedAt.IsZero() {
-		return fmt.Errorf("create requires edge: analyzed_at is required")
-	}
-	start := time.Now()
-	ctx, span := c.startSpan(ctx, "graphdb.CreateRequiresEdge")
-	defer span.End()
-	span.SetAttributes(
-		attribute.String("tenant.id", tenant),
-		attribute.String("source.id", reqEdge.SourceID),
-		attribute.String("target.id", reqEdge.TargetID),
-	)
-
-	tx, err := c.beginTx(ctx, tenant)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	gn := graphName(tenant)
-
-	// Build properties map for REQUIRES edge. Source/target node IDs are
-	// structural topology (the MATCH clause endpoints), not data properties.
-	// Tenant ID is the graph partition key (graph name), not an edge property.
-	var pairs []string
-	pairs = append(pairs, fmt.Sprintf("confidence: %g", reqEdge.Confidence))
-	pairs = append(pairs, fmt.Sprintf("unanimous: %v", reqEdge.Unanimous))
-	pairs = append(pairs, fmt.Sprintf("valid_votes: %d", reqEdge.ValidVotes))
-	pairs = append(pairs, fmt.Sprintf("total_votes: %d", reqEdge.TotalVotes))
-	pairs = append(pairs, fmt.Sprintf("vote_weight: %g", reqEdge.VoteWeight))
-
-	// Models array: model names joined in Cypher array syntax.
-	if len(reqEdge.Models) > 0 {
-		models := ""
-		for i, m := range reqEdge.Models {
-			if i > 0 {
-				models += ", "
-			}
-			models += "'" + escapeCypher(m) + "'"
-		}
-		pairs = append(pairs, fmt.Sprintf("models: [%s]", models))
-	}
-
-	pairs = append(pairs, fmt.Sprintf("samples_per_model: %d", reqEdge.SamplesPerModel))
-	if reqEdge.PromptVersion != "" {
-		pairs = append(pairs, fmt.Sprintf("prompt_version: '%s'", escapeCypher(reqEdge.PromptVersion)))
-	}
-	pairs = append(pairs, fmt.Sprintf("analyzed_at: '%s'", escapeCypher(reqEdge.AnalyzedAt.Format(time.RFC3339Nano))))
-	pairs = append(pairs, fmt.Sprintf("job_id: '%s'", escapeCypher(reqEdge.JobID)))
-
-	props := "{" + strings.Join(pairs, ", ") + "}"
-
-	cypher := fmt.Sprintf(
-		"MATCH (s {id: '%s'}), (t {id: '%s'}) CREATE (s)-[e:REQUIRES %s]->(t)",
-		escapeCypher(reqEdge.SourceID),
-		escapeCypher(reqEdge.TargetID),
-		props,
-	)
-	query := fmt.Sprintf(
-		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (v agtype)",
-		escapeCypher(gn), cypher,
-	)
-
-	if _, err := tx.ExecContext(ctx, query); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("create requires edge: %w", err)
-	}
-	if c.queryCounter != nil {
-		c.queryCounter.Add(ctx, 1)
-	}
-	if c.queryLatency != nil {
-		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
-	}
-	span.SetStatus(codes.Ok, "")
-	return tx.Commit()
-}
-
 // QueryRelationships finds currently-valid relationships matching the query filters.
-func (c *ageClient) QueryRelationships(ctx context.Context, tenant string, query RelationshipQuery) ([]Relationship, error) {
+func (c *ageClient) QueryRelationships(ctx context.Context, tenant string, query graphdb.RelationshipQuery) ([]graphdb.Relationship, error) {
 	start := time.Now()
 	ctx, span := c.startSpan(ctx, "graphdb.QueryRelationships")
 	defer span.End()
@@ -460,7 +288,7 @@ func (c *ageClient) QueryRelationships(ctx context.Context, tenant string, query
 }
 
 // QueryAsOf finds relationships that were valid at the given point in time.
-func (c *ageClient) QueryAsOf(ctx context.Context, tenant string, query RelationshipQuery, asOf time.Time) ([]Relationship, error) {
+func (c *ageClient) QueryAsOf(ctx context.Context, tenant string, query graphdb.RelationshipQuery, asOf time.Time) ([]graphdb.Relationship, error) {
 	start := time.Now()
 	ctx, span := c.startSpan(ctx, "graphdb.QueryAsOf")
 	defer span.End()
@@ -487,9 +315,9 @@ func (c *ageClient) QueryAsOf(ctx context.Context, tenant string, query Relation
 func (c *ageClient) queryRelationshipsInternal(
 	ctx context.Context,
 	tenant string,
-	q RelationshipQuery,
+	q graphdb.RelationshipQuery,
 	asOf *time.Time,
-) ([]Relationship, error) {
+) ([]graphdb.Relationship, error) {
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -543,7 +371,7 @@ func (c *ageClient) queryRelationshipsInternal(
 	}
 	defer func() { _ = rows.Close() }()
 
-	var results []Relationship
+	var results []graphdb.Relationship
 	for rows.Next() {
 		var sRaw, eRaw, tRaw string
 		if err := rows.Scan(&sRaw, &eRaw, &tRaw); err != nil {
@@ -561,7 +389,7 @@ func (c *ageClient) queryRelationshipsInternal(
 		if err != nil {
 			return nil, fmt.Errorf("parse target vertex: %w", err)
 		}
-		results = append(results, Relationship{
+		results = append(results, graphdb.Relationship{
 			Source: source,
 			Edge:   edge,
 			Target: target,
@@ -574,7 +402,7 @@ func (c *ageClient) queryRelationshipsInternal(
 }
 
 // Traverse performs a variable-length path traversal starting from a given node.
-func (c *ageClient) Traverse(ctx context.Context, tenant string, query TraversalQuery) ([]Path, error) {
+func (c *ageClient) Traverse(ctx context.Context, tenant string, query graphdb.TraversalQuery) ([]graphdb.Path, error) {
 	start := time.Now()
 	ctx, span := c.startSpan(ctx, "graphdb.Traverse")
 	defer span.End()
@@ -589,7 +417,6 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 
 	gn := graphName(tenant)
 
-	// Edge label filter: either a specific set of labels or any edge.
 	edgePattern := "e"
 	if len(query.EdgeLabels) > 0 {
 		escaped := make([]string, len(query.EdgeLabels))
@@ -599,13 +426,11 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 		edgePattern = "e:" + strings.Join(escaped, "|")
 	}
 
-	// Depth bound.
 	depthSuffix := "*1.."
 	if query.MaxDepth > 0 {
 		depthSuffix = fmt.Sprintf("*1..%d", query.MaxDepth)
 	}
 
-	// Direction: outbound ->, inbound <-, both -.
 	var matchPattern string
 	switch query.Direction {
 	case "inbound":
@@ -618,7 +443,7 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 			"MATCH p = (start_node {id: '%s'})-[%s%s]-(end_node)",
 			escapeCypher(query.StartNode), edgePattern, depthSuffix,
 		)
-	default: // "outbound" or unspecified
+	default:
 		matchPattern = fmt.Sprintf(
 			"MATCH p = (start_node {id: '%s'})-[%s%s]->(end_node)",
 			escapeCypher(query.StartNode), edgePattern, depthSuffix,
@@ -638,7 +463,7 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 	}
 	defer func() { _ = rows.Close() }()
 
-	var results []Path
+	var results []graphdb.Path
 	for rows.Next() {
 		var pRaw string
 		if err := rows.Scan(&pRaw); err != nil {
@@ -676,7 +501,7 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query Traversal
 }
 
 // GetNode retrieves a single node by ID from the tenant's graph.
-func (c *ageClient) GetNode(ctx context.Context, tenant, nodeID string) (*Node, error) {
+func (c *ageClient) GetNode(ctx context.Context, tenant, nodeID string) (*graphdb.Node, error) {
 	if nodeID == "" {
 		return nil, fmt.Errorf("get node: node_id is required")
 	}
@@ -711,8 +536,8 @@ func (c *ageClient) GetNode(ctx context.Context, tenant, nodeID string) (*Node, 
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("get node: %w", err)
 		}
-		span.SetStatus(codes.Error, ErrNodeNotFound.Error())
-		return nil, fmt.Errorf("get node %s: %w", nodeID, ErrNodeNotFound)
+		span.SetStatus(codes.Error, graphdb.ErrNodeNotFound.Error())
+		return nil, fmt.Errorf("get node %s: %w", nodeID, graphdb.ErrNodeNotFound)
 	}
 
 	var raw string
@@ -742,7 +567,7 @@ func (c *ageClient) GetNode(ctx context.Context, tenant, nodeID string) (*Node, 
 }
 
 // GetEdge retrieves a single edge by ID, including source/target node IDs.
-func (c *ageClient) GetEdge(ctx context.Context, tenant, edgeID string) (*EdgeWithEndpoints, error) {
+func (c *ageClient) GetEdge(ctx context.Context, tenant, edgeID string) (*graphdb.EdgeWithEndpoints, error) {
 	if edgeID == "" {
 		return nil, fmt.Errorf("get edge: edge_id is required")
 	}
@@ -777,8 +602,8 @@ func (c *ageClient) GetEdge(ctx context.Context, tenant, edgeID string) (*EdgeWi
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("get edge: %w", err)
 		}
-		span.SetStatus(codes.Error, ErrEdgeNotFound.Error())
-		return nil, fmt.Errorf("get edge %s: %w", edgeID, ErrEdgeNotFound)
+		span.SetStatus(codes.Error, graphdb.ErrEdgeNotFound.Error())
+		return nil, fmt.Errorf("get edge %s: %w", edgeID, graphdb.ErrEdgeNotFound)
 	}
 
 	var sRaw, eRaw, tRaw string
@@ -814,7 +639,7 @@ func (c *ageClient) GetEdge(ctx context.Context, tenant, edgeID string) (*EdgeWi
 		c.queryLatency.Record(ctx, time.Since(start).Milliseconds())
 	}
 	span.SetStatus(codes.Ok, "")
-	return &EdgeWithEndpoints{
+	return &graphdb.EdgeWithEndpoints{
 		Edge:     edge,
 		SourceID: source.ID,
 		TargetID: target.ID,
@@ -822,12 +647,11 @@ func (c *ageClient) GetEdge(ctx context.Context, tenant, edgeID string) (*EdgeWi
 }
 
 // BulkCreateEdges creates multiple edges in a single transaction.
-func (c *ageClient) BulkCreateEdges(ctx context.Context, tenant string, edges []BulkEdge) ([]string, error) {
+func (c *ageClient) BulkCreateEdges(ctx context.Context, tenant string, edges []graphdb.BulkEdge) ([]string, error) {
 	if len(edges) == 0 {
 		return nil, nil
 	}
 
-	// Validate all edges before starting transaction.
 	for i, be := range edges {
 		if be.Edge.Label == "" {
 			return nil, fmt.Errorf("bulk create edges [%d]: label is required", i)
@@ -859,7 +683,6 @@ func (c *ageClient) BulkCreateEdges(ctx context.Context, tenant string, edges []
 	ids := make([]string, 0, len(edges))
 
 	for i, be := range edges {
-
 		props := edgeToAGProperties(be.Edge)
 		cypher := fmt.Sprintf(
 			"MATCH (s {id: '%s'}), (t {id: '%s'}) CREATE (s)-[e:%s %s]->(t) RETURN e",
@@ -891,27 +714,27 @@ func (c *ageClient) BulkCreateEdges(ctx context.Context, tenant string, edges []
 }
 
 // parseQueryValue inspects AGE type suffixes and returns a tagged QueryValue.
-func parseQueryValue(raw string) QueryValue {
+func parseQueryValue(raw string) graphdb.QueryValue {
 	switch {
 	case strings.HasSuffix(raw, "::vertex"):
 		node, err := parseAGVertex(raw)
 		if err != nil {
-			return QueryValue{Type: QueryValueScalar, ScalarVal: raw}
+			return graphdb.QueryValue{Type: graphdb.QueryValueScalar, ScalarVal: raw}
 		}
-		return QueryValue{Type: QueryValueNode, NodeVal: &node}
+		return graphdb.QueryValue{Type: graphdb.QueryValueNode, NodeVal: &node}
 	case strings.HasSuffix(raw, "::edge"):
 		edge, err := parseAGEdge(raw)
 		if err != nil {
-			return QueryValue{Type: QueryValueScalar, ScalarVal: raw}
+			return graphdb.QueryValue{Type: graphdb.QueryValueScalar, ScalarVal: raw}
 		}
-		return QueryValue{Type: QueryValueEdge, EdgeVal: &EdgeWithEndpoints{Edge: edge}}
+		return graphdb.QueryValue{Type: graphdb.QueryValueEdge, EdgeVal: &graphdb.EdgeWithEndpoints{Edge: edge}}
 	default:
-		return QueryValue{Type: QueryValueScalar, ScalarVal: raw}
+		return graphdb.QueryValue{Type: graphdb.QueryValueScalar, ScalarVal: raw}
 	}
 }
 
 // ExecuteQuery runs a read-only openCypher query against the tenant's graph.
-func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, params map[string]string) ([]QueryRow, error) {
+func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, params map[string]string) ([]graphdb.QueryRow, error) {
 	if cypher == "" {
 		return nil, fmt.Errorf("execute query: cypher is required")
 	}
@@ -927,13 +750,11 @@ func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, par
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Force read-only transaction at the SQL level.
 	if _, err := tx.ExecContext(ctx, "SET TRANSACTION READ ONLY"); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("execute query: set read-only: %w", err)
 	}
 
-	// Substitute parameters via escapeCypher.
 	resolved := cypher
 	for k, v := range params {
 		resolved = strings.ReplaceAll(resolved, "$"+k, "'"+escapeCypher(v)+"'")
@@ -950,13 +771,13 @@ func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, par
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		if strings.Contains(err.Error(), "cannot execute") && strings.Contains(err.Error(), "read-only") {
-			return nil, fmt.Errorf("execute query: %w: %w", ErrReadOnlyViolation, err)
+			return nil, fmt.Errorf("execute query: %w: %w", graphdb.ErrReadOnlyViolation, err)
 		}
 		return nil, fmt.Errorf("execute query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var result []QueryRow
+	var result []graphdb.QueryRow
 	cols, err := rows.Columns()
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -974,7 +795,7 @@ func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, par
 			return nil, fmt.Errorf("execute query: scan: %w", err)
 		}
 
-		row := QueryRow{Values: make([]QueryValue, len(cols))}
+		row := graphdb.QueryRow{Values: make([]graphdb.QueryValue, len(cols))}
 		for i, raw := range values {
 			row.Values[i] = parseQueryValue(raw)
 		}
@@ -996,7 +817,7 @@ func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, par
 }
 
 // SupersedeFact sets valid_to on a node or edge, marking it as superseded.
-func (c *ageClient) SupersedeFact(ctx context.Context, tenant string, req SupersedeRequest) (bool, error) {
+func (c *ageClient) SupersedeFact(ctx context.Context, tenant string, req graphdb.SupersedeRequest) (bool, error) {
 	if req.NodeID == "" && req.EdgeID == "" {
 		return false, fmt.Errorf("supersede fact: node_id or edge_id is required")
 	}

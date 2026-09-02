@@ -1,6 +1,6 @@
 //go:build integration
 
-package graphdb_test
+package agedriver_test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
@@ -135,7 +136,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			tenantID := "graphdb-idempotent"
 			setupTenant(tenantID)
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Graph already exists via the tenant-insert trigger.
@@ -155,7 +156,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			tenantID := "graphdb-create-node"
 			setupTenant(tenantID)
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -188,7 +189,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -267,7 +268,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 				setupTenant(tenantID)
 				DeferCleanup(func() { cleanupTenant(tenantID) })
 
-				client, err := graphdb.New(testDB)
+				client, err := agedriver.New(testDB)
 				Expect(err).NotTo(HaveOccurred())
 				ctx := context.Background()
 
@@ -330,7 +331,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 				setupTenant(tenantID)
 				DeferCleanup(func() { cleanupTenant(tenantID) })
 
-				client, err := graphdb.New(testDB)
+				client, err := agedriver.New(testDB)
 				Expect(err).NotTo(HaveOccurred())
 				ctx := context.Background()
 				now := time.Now().UTC().Truncate(time.Microsecond)
@@ -381,7 +382,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			baseTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -447,7 +448,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 				cleanupTenant(tenantB)
 			})
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -491,7 +492,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			tenantID := "graphdb-traverse"
 			setupTenant(tenantID)
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -540,12 +541,118 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 	})
 
 	// ===================================================================
+	// ExecuteQuery
+	// ===================================================================
+
+	Describe("ExecuteQuery", func() {
+		var (
+			client   graphdb.GraphDB
+			tenantID string
+			ctx      context.Context
+		)
+
+		BeforeEach(func() {
+			tenantID = testID("graphdb-execq")
+			setupTenant(tenantID)
+			DeferCleanup(func() { cleanupTenant(tenantID) })
+
+			var err error
+			client, err = agedriver.New(testDB)
+			Expect(err).NotTo(HaveOccurred())
+			ctx = context.Background()
+
+			Expect(client.CreateGraph(ctx, tenantID)).To(Succeed())
+		})
+
+		It("returns query rows for a parameterless MATCH", func() {
+			rows, err := client.ExecuteQuery(ctx, tenantID, "MATCH (n) RETURN n", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rows).To(BeEmpty())
+		})
+
+		It("substitutes named parameters without error", func() {
+			rows, err := client.ExecuteQuery(
+				ctx, tenantID,
+				"MATCH (n {id: $id}) RETURN n",
+				map[string]string{"id": "nonexistent-id"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rows).To(BeAssignableToTypeOf([]graphdb.QueryRow{}))
+		})
+	})
+
+	// ===================================================================
+	// GetEdge
+	// ===================================================================
+
+	Describe("GetEdge", func() {
+		var (
+			client   graphdb.GraphDB
+			tenantID string
+			ctx      context.Context
+		)
+
+		BeforeEach(func() {
+			tenantID = testID("graphdb-getedge")
+			setupTenant(tenantID)
+			DeferCleanup(func() { cleanupTenant(tenantID) })
+
+			var err error
+			client, err = agedriver.New(testDB)
+			Expect(err).NotTo(HaveOccurred())
+			ctx = context.Background()
+
+			Expect(client.CreateGraph(ctx, tenantID)).To(Succeed())
+		})
+
+		It("returns the edge with source and target IDs", func() {
+			now := time.Now().UTC().Truncate(time.Microsecond)
+
+			Expect(client.CreateNode(ctx, tenantID, graphdb.Node{
+				ID:             "ge-src",
+				Label:          "Requirement",
+				ValidFrom:      now,
+				CreatedBy:      "test-job",
+				CreationMethod: "import",
+			})).To(Succeed())
+			Expect(client.CreateNode(ctx, tenantID, graphdb.Node{
+				ID:             "ge-tgt",
+				Label:          "Document",
+				ValidFrom:      now,
+				CreatedBy:      "test-job",
+				CreationMethod: "import",
+			})).To(Succeed())
+			Expect(client.CreateEdge(ctx, tenantID, "ge-src", "ge-tgt", graphdb.Edge{
+				ID:                "ge-edge-001",
+				Label:             "DEFINED_IN",
+				ValidFrom:         now,
+				DeterminedBy:      "test-job",
+				DeterminationType: "llm_initial",
+				Confidence:        0.9,
+			})).To(Succeed())
+
+			result, err := client.GetEdge(ctx, tenantID, "ge-edge-001")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+			Expect(result.Edge.ID).To(Equal("ge-edge-001"))
+			Expect(result.Edge.Label).To(Equal("DEFINED_IN"))
+			Expect(result.SourceID).To(Equal("ge-src"))
+			Expect(result.TargetID).To(Equal("ge-tgt"))
+		})
+
+		It("returns ErrEdgeNotFound for a nonexistent edge ID", func() {
+			_, err := client.GetEdge(ctx, tenantID, "nonexistent-edge-id")
+			Expect(errors.Is(err, graphdb.ErrEdgeNotFound)).To(BeTrue())
+		})
+	})
+
+	// ===================================================================
 	// Tenant Validation
 	// ===================================================================
 
 	Describe("Tenant Validation", func() {
 		It("returns ErrTenantRequired for empty tenant ID", func() {
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 
@@ -576,7 +683,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			tracer := tp.TracerProvider().Tracer("test")
 			meter := tp.MeterProvider().Meter("test")
 
-			client, err := graphdb.New(testDB, graphdb.WithTelemetry(tracer, meter))
+			client, err := agedriver.New(testDB, agedriver.WithTelemetry(tracer, meter))
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)

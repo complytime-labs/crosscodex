@@ -1,4 +1,4 @@
-package graphdb
+package agedriver
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Option configures a GraphDB client.
+// Option configures an ageClient.
 type Option func(*ageClient) error
 
 // WithTelemetry configures OpenTelemetry tracing and metrics for the graph client.

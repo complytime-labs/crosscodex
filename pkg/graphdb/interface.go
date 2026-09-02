@@ -5,11 +5,10 @@ import (
 	"time"
 )
 
-// GraphDB executes openCypher queries against Apache AGE.
+// GraphDB executes openCypher graph queries.
 //
 // Implementations scope all queries to a tenant-specific graph
-// (crosscodex_{tenant_id}). The tenant parameter in each method
-// identifies which graph to target.
+// identified by the tenant parameter passed to each method.
 type GraphDB interface {
 	CreateGraph(ctx context.Context, tenant string) error
 	CreateNode(ctx context.Context, tenant string, node Node) error
@@ -32,15 +31,15 @@ type GraphDB interface {
 	BulkCreateEdges(ctx context.Context, tenant string, edges []BulkEdge) ([]string, error)
 
 	// ExecuteQuery runs a read-only openCypher query against the tenant's graph.
-	// Parameters are substituted via escapeCypher — AGE does not support $param binding.
+	// Parameters are substituted by the implementation before query execution.
 	// The transaction is forced read-only at the SQL level.
 	//
-	// The AS clause declares a single output column — queries must RETURN a single
-	// expression. Multi-column returns produce a PostgreSQL error.
+	// Queries must RETURN a single expression; multi-column RETURN clauses
+	// produce a database error.
 	//
 	// The tenant parameter on every GraphDB method is the multi-cluster routing key.
-	// A TenantRouter implementing GraphDB can dispatch to per-tenant ageClient
-	// instances connected to dedicated AGE clusters without changing callers.
+	// A TenantRouter implementing GraphDB can dispatch to per-tenant driver
+	// instances connected to dedicated clusters without changing callers.
 	ExecuteQuery(ctx context.Context, tenant, cypher string, params map[string]string) ([]QueryRow, error)
 
 	// SupersedeFact sets valid_to on a node or edge, marking it as superseded.

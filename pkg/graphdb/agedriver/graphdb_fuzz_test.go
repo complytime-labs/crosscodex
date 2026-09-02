@@ -1,10 +1,10 @@
-package graphdb_test
+package agedriver_test
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 )
 
 func FuzzEscapeCypher(f *testing.F) {
@@ -14,12 +14,12 @@ func FuzzEscapeCypher(f *testing.F) {
 	f.Add(`back\slash`)
 	f.Add("'; DROP TABLE users; --")
 	f.Add(`\'\\'`)
-	f.Add("unicode: \u0000\uffff")
-	f.Add("inject" + graphdb.ExportCypherDollarTag + "payload")
+	f.Add("unicode: ￿")
+	f.Add("inject" + agedriver.ExportCypherDollarTag + "payload")
 	f.Add("$$")
 
 	f.Fuzz(func(t *testing.T, input string) {
-		result := graphdb.EscapeCypher(input)
+		result := agedriver.EscapeCypher(input)
 
 		// Every single quote in the output must be preceded by a backslash.
 		for i := 0; i < len(result); i++ {
@@ -31,9 +31,9 @@ func FuzzEscapeCypher(f *testing.F) {
 		}
 
 		// The dollar-quote tag must never appear in escaped output.
-		if strings.Contains(result, graphdb.ExportCypherDollarTag) {
+		if strings.Contains(result, agedriver.ExportCypherDollarTag) {
 			t.Errorf("dollar-quote tag %q found in output %q (input: %q)",
-				graphdb.ExportCypherDollarTag, result, input)
+				agedriver.ExportCypherDollarTag, result, input)
 		}
 	})
 }
@@ -48,7 +48,7 @@ func FuzzParseAGVertex(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string) {
 		// Must not panic regardless of input.
-		_, _ = graphdb.ParseAGVertex(input)
+		_, _ = agedriver.ParseAGVertex(input)
 	})
 }
 
@@ -62,7 +62,7 @@ func FuzzParseAGEdge(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string) {
 		// Must not panic regardless of input.
-		_, _ = graphdb.ParseAGEdge(input)
+		_, _ = agedriver.ParseAGEdge(input)
 	})
 }
 
@@ -80,7 +80,7 @@ func FuzzParseAGPath(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string) {
 		// Must not panic regardless of input.
-		_, _ = graphdb.ParseAGPath(input)
+		_, _ = agedriver.ParseAGPath(input)
 	})
 }
 
@@ -94,6 +94,6 @@ func FuzzSplitAGPathElements(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string) {
 		// Must not panic regardless of input.
-		_ = graphdb.SplitAGPathElements(input)
+		_ = agedriver.SplitAGPathElements(input)
 	})
 }

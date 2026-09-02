@@ -1,4 +1,4 @@
-package graphdb_test
+package agedriver_test
 
 import (
 	"strings"
@@ -9,6 +9,7 @@ import (
 	"pgregory.net/rapid"
 
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 )
 
 var _ = Describe("Property Specifications", func() {
@@ -17,7 +18,7 @@ var _ = Describe("Property Specifications", func() {
 		It("never produces output with unescaped single quotes", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				input := rapid.String().Draw(t, "input")
-				result := graphdb.EscapeCypher(input)
+				result := agedriver.EscapeCypher(input)
 
 				// Walk the result: every single quote must be preceded by a backslash.
 				for i := 0; i < len(result); i++ {
@@ -47,9 +48,15 @@ var _ = Describe("Property Specifications", func() {
 					Properties: drawStringMap(t),
 				}
 
-				result := graphdb.NodeToAGProperties(node)
+				result := agedriver.NodeToAGProperties(node)
 				Expect(result).To(HavePrefix("{"), "output must start with {")
 				Expect(result).To(HaveSuffix("}"), "output must end with }")
+				if node.ID != "" {
+					Expect(result).To(ContainSubstring(node.ID))
+				}
+				if !node.ValidFrom.IsZero() {
+					Expect(result).To(ContainSubstring(node.ValidFrom.Format(time.RFC3339Nano)))
+				}
 			})
 		})
 	})
@@ -58,7 +65,7 @@ var _ = Describe("Property Specifications", func() {
 		It("always produces crosscodex_ prefix followed by the tenant", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				tenant := rapid.StringMatching(`[a-z0-9-]{3,64}`).Draw(t, "tenant")
-				result := graphdb.GraphName(tenant)
+				result := agedriver.GraphName(tenant)
 
 				Expect(result).To(Equal("crosscodex_" + tenant))
 				Expect(strings.HasPrefix(result, "crosscodex_")).To(BeTrue(),
@@ -82,9 +89,15 @@ var _ = Describe("Property Specifications", func() {
 					Properties: drawStringMap(t),
 				}
 
-				result := graphdb.EdgeToAGProperties(edge)
+				result := agedriver.EdgeToAGProperties(edge)
 				Expect(result).To(HavePrefix("{"), "output must start with {")
 				Expect(result).To(HaveSuffix("}"), "output must end with }")
+				if edge.ID != "" {
+					Expect(result).To(ContainSubstring(edge.ID))
+				}
+				if !edge.ValidFrom.IsZero() {
+					Expect(result).To(ContainSubstring(edge.ValidFrom.Format(time.RFC3339Nano)))
+				}
 			})
 		})
 	})

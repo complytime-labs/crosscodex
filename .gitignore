@@ -72,3 +72,4 @@ docs/superpowers/
 deploy/.env
 deploy/certs/*.pem
 deploy/certs/.fingerprint
+.claude/handoff/

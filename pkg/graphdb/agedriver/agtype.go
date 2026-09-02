@@ -1,10 +1,12 @@
-package graphdb
+package agedriver
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 )
 
 type ageVertex struct {
@@ -21,61 +23,61 @@ type ageEdge struct {
 	Properties map[string]any `json:"properties"`
 }
 
-func parseAGVertex(raw string) (Node, error) {
+func parseAGVertex(raw string) (graphdb.Node, error) {
 	body, err := stripSuffix(raw, "::vertex")
 	if err != nil {
-		return Node{}, err
+		return graphdb.Node{}, err
 	}
 	var v ageVertex
 	if err := json.Unmarshal([]byte(body), &v); err != nil {
-		return Node{}, fmt.Errorf("unmarshal vertex: %w", err)
+		return graphdb.Node{}, fmt.Errorf("unmarshal vertex: %w", err)
 	}
 	return vertexToNode(v), nil
 }
 
-func parseAGEdge(raw string) (Edge, error) {
+func parseAGEdge(raw string) (graphdb.Edge, error) {
 	body, err := stripSuffix(raw, "::edge")
 	if err != nil {
-		return Edge{}, err
+		return graphdb.Edge{}, err
 	}
 	var e ageEdge
 	if err := json.Unmarshal([]byte(body), &e); err != nil {
-		return Edge{}, fmt.Errorf("unmarshal edge: %w", err)
+		return graphdb.Edge{}, fmt.Errorf("unmarshal edge: %w", err)
 	}
 	return ageEdgeToEdge(e), nil
 }
 
-func parseAGPath(raw string) (Path, error) {
+func parseAGPath(raw string) (graphdb.Path, error) {
 	trimmed := strings.TrimSpace(raw)
 	if !strings.HasSuffix(trimmed, "::path") {
-		return Path{}, fmt.Errorf("expected ::path suffix in agtype: %.80s", trimmed)
+		return graphdb.Path{}, fmt.Errorf("expected ::path suffix in agtype: %.80s", trimmed)
 	}
 	inner := trimmed[:len(trimmed)-len("::path")]
 	inner = strings.TrimSpace(inner)
 	if !strings.HasPrefix(inner, "[") || !strings.HasSuffix(inner, "]") {
-		return Path{}, fmt.Errorf("expected path array in agtype: %.80s", inner)
+		return graphdb.Path{}, fmt.Errorf("expected path array in agtype: %.80s", inner)
 	}
 	inner = inner[1 : len(inner)-1]
 
 	elements := splitAGPathElements(inner)
-	var p Path
+	var p graphdb.Path
 	for _, elem := range elements {
 		elem = strings.TrimSpace(elem)
 		switch {
 		case strings.HasSuffix(elem, "::vertex"):
 			node, err := parseAGVertex(elem)
 			if err != nil {
-				return Path{}, fmt.Errorf("parse path vertex: %w", err)
+				return graphdb.Path{}, fmt.Errorf("parse path vertex: %w", err)
 			}
 			p.Nodes = append(p.Nodes, node)
 		case strings.HasSuffix(elem, "::edge"):
 			edge, err := parseAGEdge(elem)
 			if err != nil {
-				return Path{}, fmt.Errorf("parse path edge: %w", err)
+				return graphdb.Path{}, fmt.Errorf("parse path edge: %w", err)
 			}
 			p.Edges = append(p.Edges, edge)
 		default:
-			return Path{}, fmt.Errorf("unknown path element type: %.80s", elem)
+			return graphdb.Path{}, fmt.Errorf("unknown path element type: %.80s", elem)
 		}
 	}
 	return p, nil
@@ -89,9 +91,9 @@ func stripSuffix(raw, suffix string) (string, error) {
 	return trimmed[:len(trimmed)-len(suffix)], nil
 }
 
-func vertexToNode(v ageVertex) Node {
+func vertexToNode(v ageVertex) graphdb.Node {
 	props := cloneProps(v.Properties)
-	n := Node{
+	n := graphdb.Node{
 		ID:             extractString(props, "id"),
 		Label:          v.Label,
 		ValidFrom:      extractTime(props, "valid_from"),
@@ -106,9 +108,9 @@ func vertexToNode(v ageVertex) Node {
 	return n
 }
 
-func ageEdgeToEdge(e ageEdge) Edge {
+func ageEdgeToEdge(e ageEdge) graphdb.Edge {
 	props := cloneProps(e.Properties)
-	edge := Edge{
+	edge := graphdb.Edge{
 		ID:                extractString(props, "id"),
 		Label:             e.Label,
 		ValidFrom:         extractTime(props, "valid_from"),

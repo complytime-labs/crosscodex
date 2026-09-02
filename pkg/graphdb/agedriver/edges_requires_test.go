@@ -2,7 +2,7 @@
 
 // Suite bootstrap lives in graphdb_integration_bdd_test.go — do NOT add RunSpecs here.
 
-package graphdb_test
+package agedriver_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 )
 
 var _ = Describe("RequiresEdge", func() {
@@ -21,7 +22,7 @@ var _ = Describe("RequiresEdge", func() {
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -118,7 +119,7 @@ var _ = Describe("RequiresEdge", func() {
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -163,7 +164,7 @@ var _ = Describe("RequiresEdge", func() {
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -210,7 +211,7 @@ var _ = Describe("RequiresEdge", func() {
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -254,7 +255,8 @@ var _ = Describe("RequiresEdge", func() {
 
 			modelsRaw, ok := results[0].Edge.Properties["models"]
 			Expect(ok).To(BeTrue())
-			modelsAny := modelsRaw.([]any)
+			modelsAny, ok := modelsRaw.([]any)
+			Expect(ok).To(BeTrue(), "models property is not []any, got %T", modelsRaw)
 			Expect(len(modelsAny)).To(Equal(5))
 		})
 
@@ -268,7 +270,7 @@ var _ = Describe("RequiresEdge", func() {
 				cleanupTenant(tenant2)
 			})
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -343,7 +345,7 @@ var _ = Describe("RequiresEdge", func() {
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
-			client, err := graphdb.New(testDB)
+			client, err := agedriver.New(testDB)
 			Expect(err).NotTo(HaveOccurred())
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
