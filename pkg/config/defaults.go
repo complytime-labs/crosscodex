@@ -157,6 +157,24 @@ pipeline:
   stage_timeout: 30m
   addr: ""
   endpoint: ""
+retention:
+  defaults:
+    attestation: "7y"
+    job_results: "90d"
+    catalogs: "indefinite"
+    embeddings: "90d"
+    audit_decisions: "indefinite"
+    audit_llm: "90d"
+    audit_events: "30d"
+  scan_schedule: ""
+  archive:
+    backend: ""
+    s3:
+      bucket: ""
+      storage_class: ""
+    local:
+      path: ""
+  tenants: {}
 role: all
 health:
   addr: ":9091"

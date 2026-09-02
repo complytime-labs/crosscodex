@@ -57,6 +57,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := validateSynthesis(&cfg.Synthesis, tracker); err != nil {
 		return err
 	}
+	if err := cfg.Retention.Validate(); err != nil {
+		return err
+	}
 	if err := validateRole(cfg, tracker); err != nil {
 		return err
 	}
