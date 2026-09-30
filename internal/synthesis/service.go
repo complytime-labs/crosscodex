@@ -260,7 +260,7 @@ func (s *Service) recordError(ctx context.Context, category string) {
 // framework with >10,000 controls should be split across multiple jobs. If the
 // ceilings ever need to change, they are updated here under code review, not
 // via configuration. This satisfies the "documented wiring contract" requirement
-// in AGENTS.md §Configuration Surface Discipline.
+// in docs/dev/design-principles.md §Configuration Surface Discipline.
 func validateInputs(inputs []SynthesisInput) error {
 	const maxInputs = 10000
 	const maxIDLen = 256
@@ -422,7 +422,7 @@ func goSeverityToProto(s DiagnosticSeverity) pb.DiagnosticSeverity {
 // message and computes a deterministic SHA-256 hash via storage.ContentHash.
 // traceID is the OTel trace ID from the active span; it is written into
 // computed_at.correlation_id to link this record to its originating trace,
-// fulfilling the AGENTS.md attestation bridge contract.
+// fulfilling the AGENTS.md §Observability and attestation contract.
 func (s *Service) computeContentHash(report *QualityReport, traceID string) (string, error) {
 	typeCounts := make(map[string]int32, len(report.RelationshipCounts))
 	for k, v := range report.RelationshipCounts {
@@ -448,7 +448,7 @@ func (s *Service) computeContentHash(report *QualityReport, traceID string) (str
 		Diagnostics:            pbDiagnostics,
 		// Populate computed_at.correlation_id with the OTel trace ID so
 		// auditors can navigate from this QualityMetrics record to the
-		// originating distributed trace. See AGENTS.md attestation bridge.
+		// originating distributed trace. See AGENTS.md §Observability and attestation.
 		ComputedAt: &pb.AuditMetadata{
 			CorrelationId: traceID,
 		},
