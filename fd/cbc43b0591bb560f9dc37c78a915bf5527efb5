@@ -1,0 +1,21 @@
+internal/synthesis/service.go
+  s_412005edfad2c1::t_82b4974cb5b503 263,425,451
+internal/analyzer/relationship/materializer.go
+  s_412005edfad2c1::t_82b4974cb5b503 167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fdcbc43b0591bb560f9dc37c78a915bf5527efb5",
+  "prompts": {},
+  "sessions": {
+    "s_412005edfad2c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e3eab24-4131-4b40-9f74-27a1a28d718d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
