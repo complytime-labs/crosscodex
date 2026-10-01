@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"testing"
 
 	connect "connectrpc.com/connect"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -35,29 +36,26 @@ func (m *memStorage) Stat(context.Context, string) (*storage.ObjectMetadata, err
 }
 func (m *memStorage) Close() error { return nil }
 
-func TestPassthroughStoresInlineContent(t *testing.T) {
-	st := &memStorage{}
-	b := NewPassthroughIngestion(st)
-	resp, err := b.ConvertDocument(context.Background(), connect.NewRequest(&pb.ConvertDocumentRequest{
-		Source: &pb.ConvertDocumentRequest_Content{Content: []byte("hello")},
-	}))
-	if err != nil {
-		t.Fatalf("ConvertDocument: %v", err)
-	}
-	if resp.Msg.GetDocumentId() == "" {
-		t.Fatal("empty document id")
-	}
-	if got, ok := st.puts[resp.Msg.GetDocumentId()]; !ok || string(got) != "hello" {
-		t.Fatalf("stored content: got %q ok=%v, want %q", got, ok, "hello")
-	}
-}
+var _ = Describe("PassthroughIngestion", func() {
+	It("stores inline content", func() {
+		st := &memStorage{}
+		b := NewPassthroughIngestion(st)
+		resp, err := b.ConvertDocument(context.Background(), connect.NewRequest(&pb.ConvertDocumentRequest{
+			Source: &pb.ConvertDocumentRequest_Content{Content: []byte("hello")},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetDocumentId()).NotTo(BeEmpty())
 
-func TestPassthroughRejectsSourceURI(t *testing.T) {
-	b := NewPassthroughIngestion(&memStorage{})
-	_, err := b.ConvertDocument(context.Background(), connect.NewRequest(&pb.ConvertDocumentRequest{
-		Source: &pb.ConvertDocumentRequest_SourceUri{SourceUri: "file:///x"},
-	}))
-	if connect.CodeOf(err) != connect.CodeUnimplemented {
-		t.Fatalf("code: got %v, want Unimplemented", connect.CodeOf(err))
-	}
-}
+		got, ok := st.puts[resp.Msg.GetDocumentId()]
+		Expect(ok).To(BeTrue(), "stored content: want key %q present", resp.Msg.GetDocumentId())
+		Expect(string(got)).To(Equal("hello"))
+	})
+
+	It("rejects a source URI", func() {
+		b := NewPassthroughIngestion(&memStorage{})
+		_, err := b.ConvertDocument(context.Background(), connect.NewRequest(&pb.ConvertDocumentRequest{
+			Source: &pb.ConvertDocumentRequest_SourceUri{SourceUri: "file:///x"},
+		}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
+	})
+})
