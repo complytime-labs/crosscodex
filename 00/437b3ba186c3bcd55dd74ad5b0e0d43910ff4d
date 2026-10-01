@@ -1,0 +1,21 @@
+internal/testspecs/graphdb_contract.go
+  s_bb68e1a9cbe605::t_98b9280416feb3 1-25,35-193,195,197-199,201-202,204-206,208-210,212-667
+  s_bb68e1a9cbe605::t_216fc47da8a24b 26-34
+  s_bb68e1a9cbe605::t_c6322a866d57d0 194,196,200,203,207,211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00437b3ba186c3bcd55dd74ad5b0e0d43910ff4d",
+  "prompts": {},
+  "sessions": {
+    "s_bb68e1a9cbe605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6ae96d59-8b45-4a21-aa52-0ce94afb9608",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
