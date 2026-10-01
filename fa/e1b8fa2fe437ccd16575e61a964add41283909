@@ -1,0 +1,33 @@
+pkg/graphdb/agedriver/edges.go
+  s_bb68e1a9cbe605::t_9113b5cdb50f11 72
+pkg/graphdb/agedriver/client.go
+  s_bb68e1a9cbe605::t_08191095c7771f 344
+  s_bb68e1a9cbe605::t_58a337c0a2a251 843
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_bb68e1a9cbe605::t_caf750cffc2ae7 621,625-634
+  s_bb68e1a9cbe605::t_776938ef4196a1 201
+  s_bb68e1a9cbe605::t_6d2f0f83871eb4 650
+  s_bb68e1a9cbe605::t_ac1d94f512fd7d 176
+pkg/graphdb/agedriver/graphdb_property_test.go
+  s_bb68e1a9cbe605::t_87e636522267ad 58
+  s_bb68e1a9cbe605::t_06123bde644c6e 99
+pkg/graphdb/agedriver/cypher.go
+  s_bb68e1a9cbe605::t_fbcb40800e21cf 31,33
+  s_bb68e1a9cbe605::t_439c18108d6f42 51,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fae1b8fa2fe437ccd16575e61a964add41283909",
+  "prompts": {},
+  "sessions": {
+    "s_bb68e1a9cbe605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6ae96d59-8b45-4a21-aa52-0ce94afb9608",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
