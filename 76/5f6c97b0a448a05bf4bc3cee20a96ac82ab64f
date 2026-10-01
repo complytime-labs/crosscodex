@@ -1,0 +1,22 @@
+internal/graph/read_errors_bdd_test.go
+  s_4039b0f4645883::t_ff43eabe78cd05 7-9
+  s_4039b0f4645883::t_0c8205019d9aba 14-28,30-41
+internal/graph/graph_property_test.go
+  s_4039b0f4645883::t_c8cb0f39b75b30 6,15-51,53-98,100-126,128-158,160-208,210-240,242-270,272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "765f6c97b0a448a05bf4bc3cee20a96ac82ab64f",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
