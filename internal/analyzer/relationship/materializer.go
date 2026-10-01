@@ -164,7 +164,7 @@ func (m *GraphMaterializer) Materialize(ctx context.Context, tenantID, jobID str
 
 // AgeOff is intentionally absent. Temporal edge pruning will be added
 // when the graph backend exposes edge deletion by temporal predicate.
-// See: Graph Backend Portability principle in AGENTS.md.
+// See: Graph Backend Portability in docs/dev/design-principles.md.
 
 // startSpan creates a tracing span if a tracer is configured, otherwise
 // returns the context and a no-op span.
