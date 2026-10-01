@@ -1,0 +1,19 @@
+docs/dev/telemetry.md
+  s_4039b0f4645883::t_0edea546a745af 57-75,268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "082f560b5ec223c661a57e5e0faf26749e1669bb",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
