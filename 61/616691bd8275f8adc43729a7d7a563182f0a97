@@ -1,0 +1,31 @@
+pkg/graphdb/errors.go
+  s_bb68e1a9cbe605::t_3526d5716e15ea 14
+pkg/graphdb/edges.go
+  s_bb68e1a9cbe605::t_d762350c1a2468 23-29
+pkg/graphdb/graphdb_bdd_test.go
+  s_bb68e1a9cbe605::t_7e040c56aa4a10 1-44
+pkg/graphdb/interface.go
+  s_bb68e1a9cbe605::t_aac0ce145d20f3 12-43
+  s_bb68e1a9cbe605::t_3f36ad0d6995db 62-63
+  s_bb68e1a9cbe605::t_06a7100b7e6e13 67-68
+pkg/graphdb/graphdb_property_test.go
+  s_bb68e1a9cbe605::t_76fda4e2aa784e 1-42
+pkg/graphdb/timefmt.go
+  s_bb68e1a9cbe605::t_19bec7055935a8 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61616691bd8275f8adc43729a7d7a563182f0a97",
+  "prompts": {},
+  "sessions": {
+    "s_bb68e1a9cbe605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6ae96d59-8b45-4a21-aa52-0ce94afb9608",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
