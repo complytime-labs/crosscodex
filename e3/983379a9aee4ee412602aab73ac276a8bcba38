@@ -1,0 +1,19 @@
+internal/analyzer/taskid_test.go
+  s_4039b0f4645883::t_75de36908b2a65 4-5,10-14,16-19,21-31,33-44,46-55,57-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e3983379a9aee4ee412602aab73ac276a8bcba38",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

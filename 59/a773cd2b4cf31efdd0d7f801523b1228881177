@@ -1,0 +1,19 @@
+internal/analyzer/artifacts/artifacts_bdd_test.go
+  s_4039b0f4645883::t_8de0e0f33a356f 355-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59a773cd2b4cf31efdd0d7f801523b1228881177",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
