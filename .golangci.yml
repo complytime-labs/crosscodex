@@ -3,9 +3,98 @@ version: "2"
 linters:
   default: standard
   enable:
+    - depguard
+    - forbidigo
     - gocritic
 
   settings:
+    # Architectural import boundaries (AGENTS.md import rules). lax mode: an
+    # allow entry longer than the matching deny entry wins, which is how the
+    # per-rule exceptions work.
+    depguard:
+      rules:
+        pkg-public-api:
+          list-mode: lax
+          files:
+            - "${base-path}/pkg/**"
+            - "!$test"
+          deny:
+            - pkg: "github.com/complytime-labs/crosscodex/internal/"
+              desc: "pkg/ is importable by external projects and must not depend on internal/. Move the shared code into pkg/ instead."
+        graph-backend-wiring:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!${base-path}/cmd/crosscodexd/resources.go"
+            - "!${base-path}/pkg/graphdb/agedriver/**"
+            - "!**/*integration*_test.go"
+          deny:
+            - pkg: "github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
+              desc: "the AGE driver is wired only in cmd/crosscodexd/resources.go. Depend on the pkg/graphdb.GraphDB interface instead."
+        internal-isolation:
+          list-mode: lax
+          files:
+            - "${base-path}/internal/**"
+            - "!$test"
+            # Composition root, covered by internal-pipeline below.
+            - "!${base-path}/internal/pipeline/**"
+            # Covered by internal-gateway below, which also permits rpcserver.
+            - "!${base-path}/internal/gateway/**"
+            # Test-only gRPC harness with its own generated code.
+            - "!${base-path}/internal/testgrpc/**"
+          allow:
+            # Services implement backend interfaces defined in internal/gateway.
+            - "github.com/complytime-labs/crosscodex/internal/gateway$"
+            # Shared analyzer helpers; analyzers must not import each other.
+            - "github.com/complytime-labs/crosscodex/internal/analyzer$"
+            - "github.com/complytime-labs/crosscodex/internal/version$"
+            - "github.com/complytime-labs/crosscodex/internal/testcerts$"
+            - "github.com/complytime-labs/crosscodex/internal/testspecs$"
+          deny:
+            - pkg: "github.com/complytime-labs/crosscodex/internal/"
+              desc: "internal/ services must not import each other. Route new cross-service dependencies through a pkg/ interface, or wire them in the internal/pipeline composition root."
+        internal-pipeline:
+          list-mode: lax
+          files:
+            - "${base-path}/internal/pipeline/**"
+            - "!$test"
+          allow:
+            - "github.com/complytime-labs/crosscodex/internal/analysis$"
+            - "github.com/complytime-labs/crosscodex/internal/analyzer"
+            - "github.com/complytime-labs/crosscodex/internal/gateway$"
+            - "github.com/complytime-labs/crosscodex/internal/pipeline/"
+            - "github.com/complytime-labs/crosscodex/internal/rpcserver$"
+            - "github.com/complytime-labs/crosscodex/internal/synthesis$"
+            - "github.com/complytime-labs/crosscodex/internal/version$"
+          deny:
+            - pkg: "github.com/complytime-labs/crosscodex/internal/"
+              desc: "the internal/pipeline composition root wires only analysis, synthesis, the analyzers, gateway and rpcserver. Route other dependencies through a pkg/ interface."
+        internal-gateway:
+          list-mode: lax
+          files:
+            - "${base-path}/internal/gateway/**"
+            - "!$test"
+          allow:
+            - "github.com/complytime-labs/crosscodex/internal/rpcserver$"
+            - "github.com/complytime-labs/crosscodex/internal/version$"
+          deny:
+            - pkg: "github.com/complytime-labs/crosscodex/internal/"
+              desc: "internal/gateway may import only internal/rpcserver and internal/version. Route other dependencies through a pkg/ interface."
+
+    # Test conventions (AGENTS.md "Testing"). Stdlib testing.T is limited to
+    # suite bootstraps (which only hand t to RunSpecs), export_test.go and
+    # *_fuzz_test.go; the latter two are excluded below. Blind spots: a stdlib
+    # test that only passes t along (e.g. rapid.Check(t, ...)) calls no
+    # testing.T method and is not caught, and files behind build tags
+    # (integration, stress) are linted only when run with --build-tags.
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: '^testing\.T\.\w+$'
+          msg: "write Ginkgo specs (Describe/It with Gomega) instead of stdlib testing.T tests. testing.T is allowed only in suite bootstraps, export_test.go and *_fuzz_test.go."
+        - pattern: '^rapid\.MakeCheck$'
+          msg: "use rapid.Check(GinkgoT(), ...) inside a Ginkgo It block."
+
     staticcheck:
       checks:
         - "all"
@@ -33,3 +122,7 @@ linters:
     rules:
       - text: "Close.* is not checked"
         linters: [errcheck]
+      - path: _fuzz_test\.go$
+        linters: [forbidigo]
+      - path: (^|/)export_test\.go$
+        linters: [forbidigo]
