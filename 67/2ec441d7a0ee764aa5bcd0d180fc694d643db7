@@ -1,0 +1,20 @@
+pkg/db/tenant_test.go
+  s_4039b0f4645883::t_d0b8394e8a80be 6-8,34-42,44-49,51-56,58-59
+  s_4039b0f4645883::t_b85a36ec7fcc68 57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "672ec441d7a0ee764aa5bcd0d180fc694d643db7",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
