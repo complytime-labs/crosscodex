@@ -1,0 +1,25 @@
+pkg/graphdb/interface.go
+  s_bb68e1a9cbe605::t_4b8bf9ba09acf1 32-33
+pkg/graphdb/edges.go
+  s_bb68e1a9cbe605::t_a4d1257953c57c 26-32
+pkg/graphdb/timefmt.go
+  s_bb68e1a9cbe605::t_9dec37aa674bec 9-11
+pkg/graphdb/graphdb_bdd_test.go
+  s_bb68e1a9cbe605::t_3ee04b99293382 44-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "deacbe6b8c6d35a835d0aef4c7e508857776ec0a",
+  "prompts": {},
+  "sessions": {
+    "s_bb68e1a9cbe605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6ae96d59-8b45-4a21-aa52-0ce94afb9608",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
