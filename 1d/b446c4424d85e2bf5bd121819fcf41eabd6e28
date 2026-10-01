@@ -1,0 +1,27 @@
+pkg/telemetry/telemetry_property_test.go
+  s_4039b0f4645883::t_e62f7a54046bd2 59-87
+  s_4039b0f4645883::t_2f400a431388fd 4-5,8,11,13
+pkg/telemetry/instruments.go
+  s_4039b0f4645883::t_e6f829b561e160 6
+  s_4039b0f4645883::t_5619ff42e4ee45 34-43
+pkg/telemetry/telemetry_bdd_test.go
+  s_4039b0f4645883::t_4e00a86e084d4a 360-381
+docs/dev/telemetry.md
+  s_4039b0f4645883::t_952d006630854c 141-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1db446c4424d85e2bf5bd121819fcf41eabd6e28",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
