@@ -1,0 +1,27 @@
+.golangci.yml
+  s_4039b0f4645883::t_e4fe224a3dd51f 11-13
+  s_4039b0f4645883::t_d7829b31352092 6-7,14-38,40-55,72-85,90-97
+  s_4039b0f4645883::t_85cf7a0a70f4fc 39,56-71,86-88,127-128
+  s_4039b0f4645883::t_4e208435ca303b 125-126
+  s_4039b0f4645883::t_bc7f3dda51063c 89
+cmd/crosscodex/embedded_telemetry_integration_bdd_test.go
+  s_4039b0f4645883::t_7192589a15f92f 123-124
+internal/pipeline/store_integration_test.go
+  s_4039b0f4645883::t_0b3ced6e99215e 605,634
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e74f0ace86318c6ffa9261a6389b00f72235f912",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
