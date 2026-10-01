@@ -16,6 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
 
@@ -110,9 +111,10 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 		}
 		migrator.Close()
 
+		dbTracer, dbMeter := telemetry.Instrumentation("pkg/db")
 		appPool, err := dbpkg.NewPool(dbpkg.NewPoolConfigFrom(
 			cfg.Database.DSN, cfg.Database.GraphDSN, cfg.Database.MaxConns, cfg.Database.SSLMode, cfg.Database.Extensions,
-		))
+		), dbpkg.WithTelemetry(dbTracer, dbMeter))
 		if err != nil {
 			return nil, fmt.Errorf("connect app_user pool: %w", err)
 		}
@@ -129,7 +131,8 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 		}
 		res.appDB = appDB
 
-		vdb, err := vectordb.NewPgVectorStore(appDB)
+		vdbTracer, vdbMeter := telemetry.Instrumentation("pkg/vectordb")
+		vdb, err := vectordb.NewPgVectorStore(appDB, vectordb.WithTelemetry(vdbTracer, vdbMeter))
 		if err != nil {
 			res.close()
 			return nil, fmt.Errorf("create vectordb store: %w", err)
@@ -149,13 +152,8 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 			return nil, fmt.Errorf("ping graph_user sql.DB: %w", err)
 		}
 
-		gdb, err := agedriver.New(
-			graphDB,
-			agedriver.WithTelemetry(
-				otel.Tracer("graphdb"),
-				otel.GetMeterProvider().Meter("graphdb"),
-			),
-		)
+		graphTracer, graphMeter := telemetry.Instrumentation("pkg/graphdb")
+		gdb, err := agedriver.New(graphDB, agedriver.WithTelemetry(graphTracer, graphMeter))
 		if err != nil {
 			res.close()
 			return nil, fmt.Errorf("create graphdb client: %w", err)
@@ -164,7 +162,8 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 	}
 
 	if need.nats {
-		var natsOpts []natsbus.Option
+		natsTracer, natsMeter := telemetry.Instrumentation("pkg/natsbus")
+		natsOpts := []natsbus.Option{natsbus.WithTelemetry(natsTracer, natsMeter)}
 		tlsCfg, err := natsTLSConfig(ctx, cfg)
 		if err != nil {
 			res.close()
@@ -182,7 +181,7 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 	}
 
 	if need.llm {
-		var llmOpts []llmclient.Option
+		llmOpts := []llmclient.Option{llmclient.WithTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider())}
 		httpClient, err := llmHTTPClient(ctx, cfg)
 		if err != nil {
 			res.close()

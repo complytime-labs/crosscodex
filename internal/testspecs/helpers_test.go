@@ -5,12 +5,19 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"go.opentelemetry.io/otel"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/propagation"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 )
@@ -209,5 +216,75 @@ app:
 				testspecs.LogTestProgress("Starting test phase: %s", "setup")
 			}).NotTo(Panic())
 		})
+	})
+})
+
+var _ = Describe("IsolateTelemetryGlobals", func() {
+	It("starts from an empty propagator and restores every telemetry global", func() {
+		prevTP := otel.GetTracerProvider()
+		prevMP := otel.GetMeterProvider()
+		prevProp := otel.GetTextMapPropagator()
+		prevLogger := slog.Default()
+
+		restore := testspecs.IsolateTelemetryGlobals()
+		Expect(otel.GetTextMapPropagator().Fields()).To(BeEmpty())
+
+		otel.SetTracerProvider(tracenoop.NewTracerProvider())
+		otel.SetMeterProvider(metricnoop.NewMeterProvider())
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}))
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+		restore()
+
+		Expect(otel.GetTracerProvider()).To(BeIdenticalTo(prevTP))
+		Expect(otel.GetMeterProvider()).To(BeIdenticalTo(prevMP))
+		Expect(otel.GetTextMapPropagator().Fields()).To(ConsistOf(prevProp.Fields()))
+		Expect(slog.Default()).To(BeIdenticalTo(prevLogger))
+	})
+})
+
+var _ = Describe("IsolateTelemetryGlobals after an earlier telemetry.Init", func() {
+	It("restores a composite propagator without comparing uncomparable values", func() {
+		DeferCleanup(otel.SetTextMapPropagator, otel.GetTextMapPropagator())
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}))
+
+		restore := testspecs.IsolateTelemetryGlobals()
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.Baggage{}))
+
+		Expect(restore).NotTo(Panic())
+		Expect(otel.GetTextMapPropagator().Fields()).To(ConsistOf("traceparent", "tracestate"))
+	})
+})
+
+// builtinDefaultLogger is slog's original default, captured before the
+// BeforeSuite redirect: only its built-in handler writes through the log
+// package, which is the precondition for the deadlock spec below.
+var builtinDefaultLogger = slog.Default()
+
+// wrappingHandler stands in for telemetry.Init's trace handler: any handler
+// that is not slog's built-in one makes slog.SetDefault redirect the log
+// package's output into it.
+type wrappingHandler struct{ slog.Handler }
+
+var _ = Describe("IsolateTelemetryGlobals around a handler that wraps slog's built-in default", func() {
+	It("restores the log package output so the restored default logger does not deadlock", func() {
+		DeferCleanup(slog.SetDefault, slog.Default())
+		DeferCleanup(log.SetOutput, log.Writer())
+		DeferCleanup(log.SetFlags, log.Flags())
+
+		var out bytes.Buffer
+		log.SetOutput(&out)
+		log.SetFlags(log.LstdFlags)
+		slog.SetDefault(builtinDefaultLogger)
+
+		restore := testspecs.IsolateTelemetryGlobals()
+		slog.SetDefault(slog.New(wrappingHandler{slog.Default().Handler()}))
+		restore()
+
+		Expect(log.Writer()).To(BeIdenticalTo(&out),
+			"log output still points at the wrapping handler, which writes back through log: the next slog.Default() call deadlocks")
+		Expect(log.Flags()).To(Equal(log.LstdFlags))
+		slog.Default().Info("after restore")
+		Expect(out.String()).To(ContainSubstring("after restore"))
 	})
 })

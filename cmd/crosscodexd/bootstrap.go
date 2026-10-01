@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
+
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/admin"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
@@ -28,6 +30,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
 
@@ -229,7 +232,8 @@ func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
 	}
-	return authn.NewRegistry(noopAuditEmitter{}, []authn.Authenticator{x509Auth})
+	tracer, meter := telemetry.Instrumentation("pkg/authn")
+	return authn.NewRegistry(noopAuditEmitter{}, []authn.Authenticator{x509Auth}, authn.WithTelemetry(tracer, meter))
 }
 
 // attachAllGateway wires a fully-featured gateway for the all-in-one role:
@@ -257,22 +261,29 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		return fmt.Errorf("create auth registry: %w", err)
 	}
 
-	storageProvider, err := storage.NewLocal(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant)
+	storageTracer, storageMeter := telemetry.Instrumentation("pkg/storage")
+	storageProvider, err := storage.NewLocal(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant,
+		storage.WithLocalTelemetry(storageTracer, storageMeter))
 	if err != nil {
 		return fmt.Errorf("create storage provider: %w", err)
 	}
 
+	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
+	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
 	catalogSvc := catalog.NewService(
-		catalog.WithParser(oscal.NewParser("")),
+		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer))),
 		catalog.WithStore(catalog.NewPGStore(shared.appPool)),
 		catalog.WithStorage(storageProvider),
 		catalog.WithGraphDB(shared.graphDB_),
 		catalog.WithVectorDB(shared.vectorDB),
 		catalog.WithBus(shared.natsClient),
 		catalog.WithLogger(slog.Default()),
+		catalog.WithTracer(catalogTracer),
+		catalog.WithMeter(catalogMeter),
 	)
 	ingestion := backend.NewPassthroughIngestion(storageProvider)
 
+	gatewayTracer, gatewayMeter := telemetry.Instrumentation("internal/gateway")
 	gatewaySvc := gateway.NewService(
 		gateway.WithAuthn(registry),
 		gateway.WithIngestionBackend(ingestion),
@@ -281,6 +292,7 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(slog.Default()),
+		gateway.WithTelemetry(gatewayTracer, gatewayMeter),
 	)
 
 	adminSvc, purgePool, err := buildRetentionAdmin(cfg, shared, slog.Default())
@@ -387,9 +399,10 @@ func buildRetentionWiring(cfg *config.Config, shared *sharedResources, logger *s
 	var purgeConn dbpkg.Connection = shared.appPool
 	var purgePool dbpkg.Pool
 	if cfg.Database.PurgeDSN != "" {
+		dbTracer, dbMeter := telemetry.Instrumentation("pkg/db")
 		pool, err := dbpkg.NewPool(dbpkg.NewPoolConfigFrom(
 			cfg.Database.PurgeDSN, cfg.Database.GraphDSN, cfg.Database.MaxConns, cfg.Database.SSLMode, cfg.Database.Extensions,
-		))
+		), dbpkg.WithTelemetry(dbTracer, dbMeter))
 		if err != nil {
 			return retentionWiring{}, fmt.Errorf("connect purge_user pool: %w", err)
 		}
@@ -443,7 +456,8 @@ func buildRetentionWiring(cfg *config.Config, shared *sharedResources, logger *s
 func attachWorker(cfg *config.Config, shared *sharedResources, rt *runtime) error {
 	workerCfg := cfg.Worker
 	workerCfg.LLM = cfg.LLM
-	rt.workerService = worker.New(shared.natsClient, shared.llmClient, workerCfg)
+	rt.workerService = worker.New(shared.natsClient, shared.llmClient, workerCfg,
+		worker.WithTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()))
 	rt.healthServer = newHealthServer(cfg.Health.Addr)
 	return nil
 }
@@ -452,9 +466,11 @@ func attachWorker(cfg *config.Config, shared *sharedResources, rt *runtime) erro
 // the same construction the daemon has always performed, now reachable via
 // explicit role selection instead of unconditionally.
 func attachGraph(cfg *config.Config, shared *sharedResources, rt *runtime) error {
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
 	tenantConn := dbpkg.NewTenantPool(shared.appPool)
-	resolver := graph.NewPGResolver(tenantConn)
-	rt.graphService = graph.New(shared.graphDB_, shared.vectorDB, shared.natsClient, graph.WithResolver(resolver))
+	resolver := graph.NewPGResolver(tenantConn, graph.WithPGResolverTelemetry(tp, mp))
+	rt.graphService = graph.New(shared.graphDB_, shared.vectorDB, shared.natsClient,
+		graph.WithResolver(resolver), graph.WithTelemetry(tp, mp))
 	rt.healthServer = newHealthServer(cfg.Health.Addr, dbPingCheck(shared.appPool))
 	return nil
 }
@@ -509,6 +525,7 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		return nil, errors.New("pipeline: storage.objects.base_path must be set")
 	}
 
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
 	tenantConn := dbpkg.NewTenantPool(shared.appPool)
 
 	prompts, err := prompt.NewRegistry(cfg.Prompt)
@@ -516,22 +533,28 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		return nil, fmt.Errorf("create prompt registry: %w", err)
 	}
 
-	storageProvider, err := storage.NewLocal(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant)
+	storageTracer, storageMeter := telemetry.Instrumentation("pkg/storage")
+	storageProvider, err := storage.NewLocal(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant,
+		storage.WithLocalTelemetry(storageTracer, storageMeter))
 	if err != nil {
 		return nil, fmt.Errorf("create storage provider: %w", err)
 	}
 
-	store := pipeline.NewPGStore(tenantConn, shared.appPool)
+	store := pipeline.NewPGStore(tenantConn, shared.appPool, pipeline.WithStoreTelemetry(tp, mp))
 
-	registry, err := pipeline.NewProductionRegistry(shared.llmClient, shared.vectorDB, storageProvider, prompts, tenantConn, cfg.Analysis)
+	registry, err := pipeline.NewProductionRegistry(shared.llmClient, shared.vectorDB, storageProvider, prompts, tenantConn, cfg.Analysis,
+		tp, mp)
 	if err != nil {
 		return nil, fmt.Errorf("build analyzer registry: %w", err)
 	}
 
-	dbReporter := pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(shared.natsClient), store)
-	engine := analysis.NewWithNATS(registry, shared.natsClient, cfg.Analysis.Engine, taskTypesByAnalyzer, analysis.WithStageReporter(dbReporter))
+	dbReporter := pipeline.NewDBStageReporter(
+		analysis.NewNATSStageReporter(shared.natsClient, analysis.WithReporterTelemetry(tp, mp)),
+		store, pipeline.WithReporterTracer(tp))
+	engine := analysis.NewWithNATS(registry, shared.natsClient, cfg.Analysis.Engine, taskTypesByAnalyzer,
+		analysis.WithStageReporter(dbReporter), analysis.WithTelemetry(tp, mp))
 
-	candRegistry, err := pipeline.BuildCandidateRegistry(cfg.Analysis.Candidates)
+	candRegistry, err := pipeline.BuildCandidateRegistry(cfg.Analysis.Candidates, tp, mp)
 	if err != nil {
 		return nil, fmt.Errorf("build candidate registry: %w", err)
 	}
@@ -544,12 +567,13 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		cfg.Analysis.Candidates.EmbedModel,
 	)
 
-	synth := synthesis.New(tenantConn, cfg.Synthesis, cfg.Analysis.Relationship.ActionableTypes)
+	synth := synthesis.New(tenantConn, cfg.Synthesis, cfg.Analysis.Relationship.ActionableTypes, synthesis.WithTelemetry(tp, mp))
 
+	attTracer, attMeter := telemetry.Instrumentation("pkg/attestation")
 	attestor, err := attestation.NewGenerator(&attestation.FileKeyProvider{
 		PrivateKeyPath: cfg.Attestation.PrivateKeyPath,
 		PublicKeyPath:  cfg.Attestation.PublicKeyPath,
-	})
+	}, attestation.WithTelemetry(attTracer, attMeter))
 	if err != nil {
 		return nil, fmt.Errorf("create attestation generator: %w", err)
 	}
@@ -561,6 +585,7 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		pipeline.WithCatalogControlsReader(pipeline.NewPGCatalogControlsReader(tenantConn)),
 		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn)),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
+		pipeline.WithTelemetry(tp, mp),
 	), nil
 }
 
@@ -613,10 +638,12 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 // given PipelineBackend, which may be an in-process pipeline.Service
 // (RoleAll) or a network Connect client (attachGateway, standalone role).
 func attachGatewayServer(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, pipelineBackend gateway.PipelineBackend) error {
+	tracer, meter := telemetry.Instrumentation("internal/gateway")
 	gatewaySvc := gateway.NewService(
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
 		gateway.WithPipelineBackend(pipelineBackend),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
+		gateway.WithTelemetry(tracer, meter),
 	)
 
 	server, err := gateway.NewServer(ctx, gateway.ServerConfig{

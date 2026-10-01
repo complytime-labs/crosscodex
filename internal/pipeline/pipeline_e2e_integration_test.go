@@ -321,7 +321,7 @@ func TestPipelineE2E(t *testing.T) {
 
 	store := NewPGStore(tenantConn, suPool)
 
-	registry, err := NewProductionRegistry(fakeLLM, vectors, storageProvider, prompts, tenantConn, analysisConfig)
+	registry, err := NewProductionRegistry(fakeLLM, vectors, storageProvider, prompts, tenantConn, analysisConfig, nil, nil)
 	if err != nil {
 		t.Fatalf("build production registry: %v", err)
 	}
@@ -338,7 +338,7 @@ func TestPipelineE2E(t *testing.T) {
 	engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, analysis.WithStageReporter(dbReporter))
 
 	// Candidate generator over the real Postgres adapters.
-	candRegistry, err := BuildCandidateRegistry(analysisConfig.Candidates)
+	candRegistry, err := BuildCandidateRegistry(analysisConfig.Candidates, nil, nil)
 	if err != nil {
 		t.Fatalf("build candidate registry: %v", err)
 	}

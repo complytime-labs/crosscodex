@@ -11,6 +11,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -57,6 +59,38 @@ var _ = Describe("Telemetry System", Ordered, func() {
 
 				By("shutdown is safe to call")
 				Expect(shutdown(context.Background())).To(Succeed())
+			})
+		})
+
+		Context("when registering the global propagator", func() {
+			BeforeEach(func() {
+				DeferCleanup(testspecs.IsolateTelemetryGlobals())
+			})
+
+			It("injects W3C traceparent and baggage headers so Connect hops carry trace context", func() {
+				shutdown, err := telemetry.Init(context.Background(), config.ObservabilityConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(shutdown, context.Background())
+
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(tp.Shutdown, context.Background())
+				ctx, span := tp.TracerProvider().Tracer("test").Start(context.Background(), "op")
+				defer span.End()
+
+				carrier := propagation.MapCarrier{}
+				otel.GetTextMapPropagator().Inject(ctx, carrier)
+				Expect(carrier.Get("traceparent")).To(ContainSubstring(span.SpanContext().TraceID().String()))
+				Expect(otel.GetTextMapPropagator().Fields()).To(ContainElement("baggage"))
+			})
+
+			It("leaves the global propagator untouched when the config is rejected", func() {
+				_, err := telemetry.Init(context.Background(), config.ObservabilityConfig{
+					Endpoint: "localhost:4317",
+					Protocol: "carrier-pigeon",
+				})
+				Expect(err).To(MatchError(telemetry.ErrInvalidConfig))
+				Expect(otel.GetTextMapPropagator().Fields()).To(BeEmpty())
 			})
 		})
 
@@ -322,6 +356,28 @@ var _ = Describe("Telemetry System", Ordered, func() {
 				counter, err := telemetry.NewIntCounter("test.int_counter")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(counter).NotTo(BeNil())
+			})
+
+			It("returns a crosscodex/<component> tracer and the crosscodex meter from the global providers", func() {
+				DeferCleanup(testspecs.IsolateTelemetryGlobals())
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(tp.Shutdown, context.Background())
+				otel.SetTracerProvider(tp.TracerProvider())
+				otel.SetMeterProvider(tp.MeterProvider())
+
+				tracer, meter := telemetry.Instrumentation("internal/gateway")
+				_, span := tracer.Start(context.Background(), "op")
+				span.End()
+				counter, err := meter.Int64Counter("instrumentation.probe")
+				Expect(err).NotTo(HaveOccurred())
+				counter.Add(context.Background(), 1)
+
+				spans := tp.GetSpans()
+				Expect(spans).To(HaveLen(1))
+				Expect(spans[0].InstrumentationScope().Name).To(Equal("crosscodex/internal/gateway"))
+				rm := tp.GetMetrics()
+				Expect(rm.ScopeMetrics).To(ContainElement(HaveField("Scope.Name", "crosscodex")))
 			})
 		})
 	})

@@ -184,7 +184,7 @@ func TestCandidateGenerationIntegration(t *testing.T) {
 		Generators:           []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true, Weight: 1.0}},
 		MinEmbeddingCoverage: 0.8,
 	}
-	registry, err := BuildCandidateRegistry(cfg)
+	registry, err := BuildCandidateRegistry(cfg, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildCandidateRegistry: %v", err)
 	}

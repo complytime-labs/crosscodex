@@ -11,8 +11,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
@@ -192,5 +195,40 @@ var _ = Describe("buildEmbeddedService", func() {
 		_, _, err := buildEmbeddedService(context.Background(), cfg, nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("database not configured"))
+	})
+})
+
+var _ = Describe("startEmbeddedDaemon telemetry initialization", func() {
+	var stateDir string
+
+	BeforeEach(func() {
+		stateDir = GinkgoT().TempDir()
+		DeferCleanup(testspecs.IsolateTelemetryGlobals())
+	})
+
+	It("initializes telemetry before building the embedded service", func() {
+		state := &cliState{fullCfg: &config.Config{}}
+
+		err := startEmbeddedDaemon(context.Background(), state, stateDir, filepath.Join(stateDir, "daemon.pid"))
+
+		Expect(err).To(MatchError(ContainSubstring("database not configured")))
+		Expect(otel.GetTextMapPropagator().Fields()).To(ContainElement("traceparent"),
+			"telemetry.Init must run before the embedded gateway is built")
+	})
+
+	It("refuses to start with an actionable error when observability config is invalid", func() {
+		cfg := &config.Config{}
+		cfg.Observability.Endpoint = "localhost:4317"
+		cfg.Observability.Tracing.Protocol = "carrier-pigeon"
+		state := &cliState{fullCfg: cfg}
+
+		err := startEmbeddedDaemon(context.Background(), state, stateDir, filepath.Join(stateDir, "daemon.pid"))
+
+		Expect(err).To(MatchError(ContainSubstring("initialize telemetry")))
+		Expect(err).To(MatchError(ContainSubstring(`unsupported tracing protocol "carrier-pigeon"`)))
+		Expect(state.daemon).To(BeNil())
+		Expect(filepath.Join(stateDir, "pki")).NotTo(BeADirectory(),
+			"an invalid observability config must stop startup before PKI bootstrap")
+		Expect(otel.GetTextMapPropagator().Fields()).To(BeEmpty())
 	})
 })
