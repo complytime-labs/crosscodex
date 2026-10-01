@@ -1,0 +1,21 @@
+pkg/config/config_json_tags_test.go
+  s_4039b0f4645883::t_f30d92a34ed345 19-20
+  s_4039b0f4645883::t_c59c249304028b 8-9,14-18,21,23-33,35-70
+  s_4039b0f4645883::t_cb679bbbe15914 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d64258ddde9541cbfca1a734ffe678821f0b01ca",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
