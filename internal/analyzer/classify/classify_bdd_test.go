@@ -388,6 +388,78 @@ var _ = Describe("ClassifyAnalyzer", func() {
 			Expect(output.Metadata["classified_count"]).To(Equal("0"))
 			Expect(output.Metadata["skipped_count"]).To(Equal("0"))
 		})
+
+		// It verifies that Aggregate builds ResultData from both TaskResult
+		// producer shapes GenerateWork emits: the section auto-skip path
+		// (*pb.AnalysisResult built directly, no LLM round-trip) and the LLM
+		// path (*structpb.Struct{"response": ...}, the shape a real worker
+		// reply takes in production). Both shapes share the same TaskID
+		// format ("classify-<controlID>"), so no model/sample suffix
+		// stripping is needed.
+		//
+		// A real prompt.Registry (not nil) is required here: Aggregate's
+		// existing, untouched metadata block unconditionally calls
+		// a.prompts.Resolve, which panics on a nil Registry interface.
+		It("produces ResultData", func() {
+			aggCfg := config.ClassificationConfig{Model: "llama3.2:3b"}
+			aggPrompts, err := prompt.NewRegistry(config.PromptConfig{Layers: config.PromptLayerConfig{Enabled: true}})
+			Expect(err).NotTo(HaveOccurred())
+			aggAnalyzer := classify.New(nil, aggPrompts, aggCfg)
+
+			skipResult := &pb.AnalysisResult{
+				Attributes: map[string]string{
+					"control_id": "sec-1",
+					"type":       "None",
+					"level":      "None",
+					"skipped":    "true",
+				},
+			}
+			s, err := structpb.NewStruct(map[string]interface{}{"response": "Technical|Operational"})
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				{TaskID: "classify-sec-1", TaskType: "classify", Result: skipResult},
+				{TaskID: "classify-AC-1", TaskType: "classify", Result: s},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed []results.ClassifyResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+			Expect(parsed).To(HaveLen(2))
+
+			want := map[string]results.ClassifyResult{
+				"sec-1": {ControlID: "sec-1", Type: "None", Level: "None"},
+				"AC-1":  {ControlID: "AC-1", Type: "Technical", Level: "Operational"},
+			}
+			for _, got := range parsed {
+				w, ok := want[got.ControlID]
+				Expect(ok).To(BeTrue(), "unexpected control ID in ResultData: %+v", got)
+				Expect(got).To(Equal(w))
+			}
+		})
+
+		// It verifies that a TaskResult whose payload cannot be turned into a
+		// classification (no "response" field, so ExtractResponseText fails)
+		// is silently omitted from ResultData rather than crashing Aggregate
+		// or producing a garbage entry.
+		It("omits unparseable responses from ResultData", func() {
+			aggCfg := config.ClassificationConfig{Model: "llama3.2:3b"}
+			aggPrompts, err := prompt.NewRegistry(config.PromptConfig{Layers: config.PromptLayerConfig{Enabled: true}})
+			Expect(err).NotTo(HaveOccurred())
+			aggAnalyzer := classify.New(nil, aggPrompts, aggCfg)
+
+			unparseable, err := structpb.NewStruct(map[string]interface{}{"not_response": "irrelevant"})
+			Expect(err).NotTo(HaveOccurred())
+
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				{TaskID: "classify-AC-2", TaskType: "classify", Result: unparseable},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed []results.ClassifyResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+			Expect(parsed).To(BeEmpty())
+		})
 	})
 
 	Describe("exported helpers", func() {
@@ -673,98 +745,3 @@ var _ = Describe("ClassifyAnalyzer", func() {
 		})
 	})
 })
-
-// TestAggregate_ProducesResultData verifies that Aggregate builds ResultData
-// from both TaskResult producer shapes GenerateWork emits: the section
-// auto-skip path (*pb.AnalysisResult built directly, no LLM round-trip) and
-// the LLM path (*structpb.Struct{"response": ...}, the shape a real worker
-// reply takes in production). Both shapes share the same TaskID format
-// ("classify-<controlID>"), so no model/sample suffix stripping is needed.
-//
-// A real prompt.Registry (not nil) is required here: Aggregate's existing,
-// untouched metadata block unconditionally calls a.prompts.Resolve, which
-// panics on a nil Registry interface.
-func TestAggregate_ProducesResultData(t *testing.T) {
-	cfg := config.ClassificationConfig{Model: "llama3.2:3b"}
-	prompts, err := prompt.NewRegistry(config.PromptConfig{Layers: config.PromptLayerConfig{Enabled: true}})
-	if err != nil {
-		t.Fatalf("building prompt registry: %v", err)
-	}
-	a := classify.New(nil, prompts, cfg)
-
-	skipResult := &pb.AnalysisResult{
-		Attributes: map[string]string{
-			"control_id": "sec-1",
-			"type":       "None",
-			"level":      "None",
-			"skipped":    "true",
-		},
-	}
-	s, err := structpb.NewStruct(map[string]interface{}{"response": "Technical|Operational"})
-	if err != nil {
-		t.Fatalf("building response struct: %v", err)
-	}
-
-	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
-		{TaskID: "classify-sec-1", TaskType: "classify", Result: skipResult},
-		{TaskID: "classify-AC-1", TaskType: "classify", Result: s},
-	})
-	if err != nil {
-		t.Fatalf("Aggregate error: %v", err)
-	}
-
-	var parsed []results.ClassifyResult
-	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
-		t.Fatalf("unmarshal ResultData: %v", err)
-	}
-	if len(parsed) != 2 {
-		t.Fatalf("expected 2 controls, got %d: %+v", len(parsed), parsed)
-	}
-
-	want := map[string]results.ClassifyResult{
-		"sec-1": {ControlID: "sec-1", Type: "None", Level: "None"},
-		"AC-1":  {ControlID: "AC-1", Type: "Technical", Level: "Operational"},
-	}
-	for _, got := range parsed {
-		w, ok := want[got.ControlID]
-		if !ok {
-			t.Fatalf("unexpected control ID in ResultData: %+v", got)
-		}
-		if got != w {
-			t.Fatalf("ClassifyResult mismatch for %s: got %+v, want %+v", got.ControlID, got, w)
-		}
-	}
-}
-
-// TestAggregate_ResultDataOmitsUnparseableResponses verifies that a
-// TaskResult whose payload cannot be turned into a classification (no
-// "response" field, so ExtractResponseText fails) is silently omitted from
-// ResultData rather than crashing Aggregate or producing a garbage entry.
-func TestAggregate_ResultDataOmitsUnparseableResponses(t *testing.T) {
-	cfg := config.ClassificationConfig{Model: "llama3.2:3b"}
-	prompts, err := prompt.NewRegistry(config.PromptConfig{Layers: config.PromptLayerConfig{Enabled: true}})
-	if err != nil {
-		t.Fatalf("building prompt registry: %v", err)
-	}
-	a := classify.New(nil, prompts, cfg)
-
-	unparseable, err := structpb.NewStruct(map[string]interface{}{"not_response": "irrelevant"})
-	if err != nil {
-		t.Fatalf("building struct: %v", err)
-	}
-
-	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
-		{TaskID: "classify-AC-2", TaskType: "classify", Result: unparseable},
-	})
-	if err != nil {
-		t.Fatalf("Aggregate error: %v", err)
-	}
-
-	var parsed []results.ClassifyResult
-	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
-		t.Fatalf("unmarshal ResultData: %v", err)
-	}
-	if len(parsed) != 0 {
-		t.Fatalf("expected no controls in ResultData, got %+v", parsed)
-	}
-}

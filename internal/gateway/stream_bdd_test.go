@@ -6,9 +6,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 
 	"connectrpc.com/connect"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
@@ -56,9 +57,7 @@ func (e *streamTestEnv) close() {
 // newStreamTestEnv spins up an httptest server backed by a gateway Service
 // with the given options.  A test auth interceptor is installed server-side
 // so calls are treated as authenticated without mTLS.
-func newStreamTestEnv(t *testing.T, identity *authn.Identity, svcOpts ...ServiceOption) *streamTestEnv {
-	t.Helper()
-
+func newStreamTestEnv(identity *authn.Identity, svcOpts ...ServiceOption) *streamTestEnv {
 	svc := NewService(svcOpts...)
 
 	authInterceptor := &testAuthInterceptor{identity: identity}
@@ -188,113 +187,95 @@ func (s *stubAdmin) HealthCheck(_ context.Context, _ *connect.Request[pb.HealthC
 // Tests
 // ---------------------------------------------------------------------------
 
-func TestStreamDocument_RejectsChunkBeforeMetadata(t *testing.T) {
-	env := newStreamTestEnv(t, defaultIdentity(), stubBackends()...)
-	defer env.close()
+var _ = Describe("StreamDocument transport-level validation", func() {
+	It("rejects a chunk sent before metadata", func() {
+		env := newStreamTestEnv(defaultIdentity(), stubBackends()...)
+		defer env.close()
 
-	stream := env.client.StreamDocument(context.Background())
+		stream := env.client.StreamDocument(context.Background())
 
-	// Send a chunk without preceding metadata.
-	if err := stream.Send(&pb.StreamDocumentChunk{
-		Payload: &pb.StreamDocumentChunk_Chunk{Chunk: []byte("premature data")},
-	}); err != nil {
-		t.Fatalf("Send (chunk) failed at transport level: %v", err)
-	}
+		// Send a chunk without preceding metadata.
+		err := stream.Send(&pb.StreamDocumentChunk{
+			Payload: &pb.StreamDocumentChunk_Chunk{Chunk: []byte("premature data")},
+		})
+		Expect(err).NotTo(HaveOccurred(), "Send (chunk) failed at transport level")
 
-	_, err := stream.CloseAndReceive()
-	if err == nil {
-		t.Fatal("expected error for chunk before metadata, got nil")
-	}
-	if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
-		t.Fatalf("expected InvalidArgument, got %v: %v", got, err)
-	}
-}
+		_, err = stream.CloseAndReceive()
+		Expect(err).To(HaveOccurred(), "expected error for chunk before metadata, got nil")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+	})
 
-func TestStreamDocument_RejectsDuplicateMetadata(t *testing.T) {
-	env := newStreamTestEnv(t, defaultIdentity(), stubBackends()...)
-	defer env.close()
+	It("rejects duplicate metadata", func() {
+		env := newStreamTestEnv(defaultIdentity(), stubBackends()...)
+		defer env.close()
 
-	stream := env.client.StreamDocument(context.Background())
+		stream := env.client.StreamDocument(context.Background())
 
-	meta := &pb.StreamDocumentChunk{
-		Payload: &pb.StreamDocumentChunk_Metadata{
-			Metadata: &pb.StreamDocumentMetadata{
-				CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-				CatalogName:   "dup-test",
+		meta := &pb.StreamDocumentChunk{
+			Payload: &pb.StreamDocumentChunk_Metadata{
+				Metadata: &pb.StreamDocumentMetadata{
+					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+					CatalogName:   "dup-test",
+				},
 			},
-		},
-	}
+		}
 
-	// First metadata — should succeed.
-	if err := stream.Send(meta); err != nil {
-		t.Fatalf("Send (first metadata) failed: %v", err)
-	}
+		// First metadata — should succeed.
+		err := stream.Send(meta)
+		Expect(err).NotTo(HaveOccurred(), "Send (first metadata) failed")
 
-	// Second metadata — server should reject.
-	if err := stream.Send(meta); err != nil {
-		t.Fatalf("Send (second metadata) failed at transport level: %v", err)
-	}
+		// Second metadata — server should reject.
+		err = stream.Send(meta)
+		Expect(err).NotTo(HaveOccurred(), "Send (second metadata) failed at transport level")
 
-	_, err := stream.CloseAndReceive()
-	if err == nil {
-		t.Fatal("expected error for duplicate metadata, got nil")
-	}
-	if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
-		t.Fatalf("expected InvalidArgument, got %v: %v", got, err)
-	}
-}
+		_, err = stream.CloseAndReceive()
+		Expect(err).To(HaveOccurred(), "expected error for duplicate metadata, got nil")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+	})
 
-func TestStreamDocument_RejectsUploadExceedingSizeLimit(t *testing.T) {
-	const limit = 1024 // 1 KB — small enough for fast test
-	opts := append(stubBackends(), WithMaxUploadSize(limit))
-	env := newStreamTestEnv(t, defaultIdentity(), opts...)
-	defer env.close()
+	It("rejects an upload exceeding the configured size limit", func() {
+		const limit = 1024 // 1 KB — small enough for fast test
+		opts := append(stubBackends(), WithMaxUploadSize(limit))
+		env := newStreamTestEnv(defaultIdentity(), opts...)
+		defer env.close()
 
-	stream := env.client.StreamDocument(context.Background())
+		stream := env.client.StreamDocument(context.Background())
 
-	// Send metadata first.
-	if err := stream.Send(&pb.StreamDocumentChunk{
-		Payload: &pb.StreamDocumentChunk_Metadata{
-			Metadata: &pb.StreamDocumentMetadata{
-				CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-				CatalogName:   "oversize-test",
+		// Send metadata first.
+		err := stream.Send(&pb.StreamDocumentChunk{
+			Payload: &pb.StreamDocumentChunk_Metadata{
+				Metadata: &pb.StreamDocumentMetadata{
+					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+					CatalogName:   "oversize-test",
+				},
 			},
-		},
-	}); err != nil {
-		t.Fatalf("Send (metadata) failed: %v", err)
-	}
+		})
+		Expect(err).NotTo(HaveOccurred(), "Send (metadata) failed")
 
-	// Send a chunk that exceeds the limit.
-	oversized := make([]byte, limit+1)
-	if err := stream.Send(&pb.StreamDocumentChunk{
-		Payload: &pb.StreamDocumentChunk_Chunk{Chunk: oversized},
-	}); err != nil {
-		// Transport-level failure is acceptable: the server may have
-		// already closed the stream, causing a send error.
-		t.Logf("Send (oversized chunk) returned transport error (expected): %v", err)
-	}
+		// Send a chunk that exceeds the limit.
+		oversized := make([]byte, limit+1)
+		if err := stream.Send(&pb.StreamDocumentChunk{
+			Payload: &pb.StreamDocumentChunk_Chunk{Chunk: oversized},
+		}); err != nil {
+			// Transport-level failure is acceptable: the server may have
+			// already closed the stream, causing a send error.
+			GinkgoWriter.Printf("Send (oversized chunk) returned transport error (expected): %v\n", err)
+		}
 
-	_, err := stream.CloseAndReceive()
-	if err == nil {
-		t.Fatal("expected error for oversized upload, got nil")
-	}
-	if got := connect.CodeOf(err); got != connect.CodeResourceExhausted {
-		t.Fatalf("expected ResourceExhausted, got %v: %v", got, err)
-	}
-}
+		_, err = stream.CloseAndReceive()
+		Expect(err).To(HaveOccurred(), "expected error for oversized upload, got nil")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeResourceExhausted))
+	})
 
-func TestStreamDocument_RejectsEmptyStream(t *testing.T) {
-	env := newStreamTestEnv(t, defaultIdentity(), stubBackends()...)
-	defer env.close()
+	It("rejects an empty stream", func() {
+		env := newStreamTestEnv(defaultIdentity(), stubBackends()...)
+		defer env.close()
 
-	stream := env.client.StreamDocument(context.Background())
+		stream := env.client.StreamDocument(context.Background())
 
-	// Close immediately without sending any messages.
-	_, err := stream.CloseAndReceive()
-	if err == nil {
-		t.Fatal("expected error for empty stream, got nil")
-	}
-	if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
-		t.Fatalf("expected InvalidArgument, got %v: %v", got, err)
-	}
-}
+		// Close immediately without sending any messages.
+		_, err := stream.CloseAndReceive()
+		Expect(err).To(HaveOccurred(), "expected error for empty stream, got nil")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+	})
+})

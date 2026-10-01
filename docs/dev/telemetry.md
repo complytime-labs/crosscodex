@@ -39,7 +39,7 @@ The resolution logic mirrors `pkg/tlsconfig`: per-signal fields override the sha
 
 ## Initialization
 
-Services call `telemetry.Init` at startup. This registers a global `TracerProvider` and `MeterProvider`, wraps the default `slog` handler to inject trace IDs, and returns a shutdown function:
+Services call `telemetry.Init` at startup. This registers a global `TracerProvider`, `MeterProvider` and W3C TraceContext + Baggage propagator, wraps the default `slog` handler to inject trace IDs, and returns a shutdown function. `crosscodexd` calls it (service name `crosscodexd`) before building any resource, refuses to start if it fails, and runs the shutdown last so spans emitted while stopping are flushed. The `crosscodex` CLI does the same (service name `crosscodex`) before starting its embedded gateway, and flushes when the embedded daemon stops or fails to start:
 
 ```go
 shutdown, err := telemetry.Init(ctx, cfg.Observability,
@@ -53,6 +53,25 @@ defer shutdown(ctx)
 ```
 
 After `Init` returns, `otel.GetTracerProvider()` and `otel.GetMeterProvider()` return the configured providers. Package-level tracers created via `otel.GetTracerProvider().Tracer("crosscodex/pkg/mypackage")` produce real spans when an endpoint is configured and no-op spans otherwise.
+
+### Service Instrumentation
+
+Most packages only emit their own spans and metrics when their telemetry option is passed at construction. `crosscodexd`'s bootstrap (`cmd/crosscodexd/bootstrap.go`, `resources.go`) and the CLI's embedded mode (`cmd/crosscodex/embedded.go`) pass one to every service they build:
+
+- Options that take providers (`WithTelemetry(tp, mp)` in `internal/*`, `pkg/analyzer`, `pkg/llmclient`) get `otel.GetTracerProvider()` and `otel.GetMeterProvider()`. Each package names its own tracer `crosscodex/<pkg path>` and uses the `crosscodex` meter.
+- Options that take a `(trace.Tracer, metric.Meter)` pair (gateway, catalog, authn, attestation, db, natsbus, vectordb, graphdb, storage, the OSCAL parser) get `telemetry.Instrumentation("<pkg path>")`, which follows the same naming.
+- `pipeline.NewProductionRegistry` and `pipeline.BuildCandidateRegistry` take providers and forward them to the analyzers, candidate providers and builtin candidate generators they construct.
+
+A span's instrumentation scope therefore tells you which package produced it. Paths that are not instrumented, and why:
+
+| Path | Reason |
+|------|--------|
+| `db.NewMigrator`, `db.NewTenantPool` | No telemetry option; they trace through the global provider directly |
+| `storage.NewFromConfig`, `storage.NewArchiveFromConfig` (retention engine) | No option parameter |
+| `prompt.NewRegistry` | Accepts providers but never uses them |
+| `pipeline.NewCandidateGenerator` and its PG readers | No instrumentation |
+| `pkg/analyzer/consensus` inside the requires analyzer | `Compute` takes no context, so its spans would be disconnected roots |
+| `crosscodexd admin retention scan` | One-shot command that does not call `telemetry.Init` |
 
 ## Traces
 
@@ -117,7 +136,9 @@ func (s *Service) DoWork(ctx context.Context) error {
 
 ### Cross-Service Trace Propagation
 
-Trace context flows across service boundaries through NATS provenance headers. When a service publishes a message, `pkg/natsbus` injects the current trace and span IDs as `X-Trace-Id` and `X-Span-Id` headers. The subscriber reconstructs a remote `SpanContext` from these headers, so new spans created during message processing appear as children of the publishing span.
+Connect RPCs carry trace context in the W3C `traceparent` header. The gateway and pipeline servers install the `otelconnect` interceptor, which reads the global propagator registered by `telemetry.Init`.
+
+NATS messages carry trace context in provenance headers instead. When a service publishes a message, `pkg/natsbus` injects the current trace and span IDs as `X-Trace-Id` and `X-Span-Id` headers. The subscriber reconstructs a remote `SpanContext` from these headers, so new spans created during message processing appear as children of the publishing span.
 
 See [Audit Streams](audit-streams.md) for details on the provenance header system.
 
@@ -135,6 +156,8 @@ intCounter, _ := telemetry.NewIntCounter("mypackage.errors.total")
 ```
 
 All instruments are created under the `crosscodex` meter name, so they group together in metric backends.
+
+For components whose telemetry option takes a `(trace.Tracer, metric.Meter)` pair rather than a provider pair (e.g. `gateway.WithTelemetry`, `db.WithTelemetry`), `telemetry.Instrumentation(component)` returns both: a tracer named `crosscodex/<component>` and the shared `crosscodex` meter, matching the naming convention provider-style packages use for their own tracer.
 
 ### Registered Metrics
 
@@ -242,7 +265,7 @@ This starts the Jaeger container on port 14317, runs the integration test suite,
 | pkg/db             | Partial | Full    | Transaction wrapper (`pgTx`) has no spans                                                                                  |
 | pkg/natsbus        | Full    | Full    | Per-message consumer spans (natsbus.process), subscriber metrics (process counter, duration histogram)                     |
 | pkg/llmclient      | Full    | Full    | Spans on Complete/Embed; 5 instruments (completions, embeddings, errors counters; completion/embedding latency histograms) |
-| pkg/oscal          | None    | None    | Scaffold only                                                                                                              |
+| pkg/oscal          | Partial | None    | `oscal.Parse` / `oscal.Structure` spans with `WithParserTracer` / `WithStructurerTracer`; binaries build only the parser  |
 | internal/synthesis | Full    | Full    | Span on Service.Execute; 5 instruments (executions/errors/pairs/updates counters; duration histogram)                      |
 
 When implementing new packages or extending existing ones, follow `pkg/vectordb` as the reference for span structure, attribute naming, and metric registration.

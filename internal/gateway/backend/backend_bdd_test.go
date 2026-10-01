@@ -1,0 +1,17 @@
+package backend
+
+import (
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
+)
+
+func TestGatewayBackendBDD(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Gateway Backend BDD Suite")
+}
+
+var _ = BeforeSuite(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })

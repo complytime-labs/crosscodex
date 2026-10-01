@@ -11,14 +11,14 @@ tasks:
       - task: unit
 
   unit:
-    desc: "Run in-process gateway stress tests (issue #112)"
+    desc: "Run in-process gateway stress specs (issue #112)"
     dir: "{{.ROOT_DIR}}"
     deps:
       - ::dev:deps
       - ::dev:generate
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      - go test -tags stress -run TestStress ./internal/gateway/ -v -timeout 5m
+      - go run github.com/onsi/ginkgo/v2/ginkgo run --tags stress --label-filter stress --timeout 5m -v ./internal/gateway/
 
   bench:
     desc: "Run gateway upload throughput benchmark"

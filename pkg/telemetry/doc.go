@@ -1,9 +1,10 @@
 // Package telemetry provides OpenTelemetry setup for traces, metrics, and logs.
 //
 // Init creates TracerProvider and MeterProvider with OTLP exporters, registers
-// them globally, wraps the default slog handler with trace ID injection, and
-// returns a shutdown function. An empty resolved endpoint disables the signal
-// (no-op provider, no error).
+// them and the W3C TraceContext + Baggage propagator globally, wraps the
+// default slog handler with trace ID injection, and returns a shutdown
+// function. An empty resolved endpoint disables the signal (no-op provider,
+// no error).
 //
 // Example usage:
 //

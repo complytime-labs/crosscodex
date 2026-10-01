@@ -3,6 +3,7 @@ package telemetry
 import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const meterName = "crosscodex"
@@ -29,4 +30,14 @@ func NewGauge(name string, opts ...metric.Float64GaugeOption) (metric.Float64Gau
 // with the crosscodex meter namespace.
 func NewIntCounter(name string, opts ...metric.Int64CounterOption) (metric.Int64Counter, error) {
 	return otel.GetMeterProvider().Meter(meterName).Int64Counter(name, opts...)
+}
+
+// Instrumentation returns the tracer and meter for components whose
+// telemetry option takes a (trace.Tracer, metric.Meter) pair: a tracer named
+// "crosscodex/<component>" and the shared "crosscodex" meter, both from the
+// global providers registered by Init. component is the package path below
+// the module root, e.g. "internal/gateway" or "pkg/db".
+func Instrumentation(component string) (trace.Tracer, metric.Meter) {
+	return otel.GetTracerProvider().Tracer("crosscodex/" + component),
+		otel.GetMeterProvider().Meter(meterName)
 }

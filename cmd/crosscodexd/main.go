@@ -11,6 +11,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/version"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 )
 
 func printUsage() {
@@ -111,6 +112,25 @@ func run(roleFlag string) int {
 		}
 		cfg.Role = canonical
 	}
+
+	// Init must precede bootstrap: resources capture tracers, meters, and the
+	// propagator from the otel globals at construction time. Its shutdown is
+	// deferred first so it runs last, flushing spans emitted by rt.stop.
+	shutdownTelemetry, err := telemetry.Init(ctx, cfg.Observability,
+		telemetry.WithServiceName("crosscodexd"),
+		telemetry.WithServiceVersion(info.Version),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "initialize telemetry: %v\n", err)
+		return 1
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(flushCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "shutdown telemetry: %v\n", err)
+		}
+	}()
 
 	rt, err := bootstrap(ctx, cfg)
 	if err != nil {

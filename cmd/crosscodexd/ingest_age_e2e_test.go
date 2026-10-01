@@ -13,11 +13,15 @@ import (
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/types"
+	"go.opentelemetry.io/otel"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
 
@@ -31,6 +35,16 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		}
 
 		ctx := context.Background()
+
+		// Install an in-memory provider as the otel globals before bootstrap,
+		// standing in for telemetry.Init in main, so the end of this spec can
+		// assert bootstrap handed the globals to every service it built.
+		DeferCleanup(testspecs.IsolateTelemetryGlobals())
+		tp, err := telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred(), "create test telemetry provider")
+		DeferCleanup(tp.Shutdown, context.Background())
+		otel.SetTracerProvider(tp.TracerProvider())
+		otel.SetMeterProvider(tp.MeterProvider())
 
 		// Unique per-run tenant so the spec is isolated and idempotent across
 		// repeated runs against a persistent DB, mirroring the sibling specs
@@ -168,5 +182,64 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		semantic, err := g.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{EdgeLabel: "SEMANTIC_MATCH"})
 		Expect(err).NotTo(HaveOccurred(), "query SEMANTIC_MATCH")
 		Expect(semantic).To(BeEmpty(), "SEMANTIC_MATCH edges (deterministic fake returns NO_RELATIONSHIP)")
+
+		// --- Telemetry wiring assertions ---
+		// Every scope below is one this flow provably reaches with the
+		// bootstrap-supplied tracer. pkg/llmclient is absent because
+		// WithLLMClient replaces the instrumented client with the fake.
+		//
+		// A scope that other code also emits under the same name is pinned to
+		// span names only the bootstrap-wired tracer produces, so the check
+		// fails if that wiring is dropped: pkg/db's tenant pool and migrator
+		// always trace under "crosscodex/pkg/db" via the global provider, and
+		// the pipeline's candidate providers (wired through
+		// NewProductionRegistry) trace under "crosscodex/internal/pipeline".
+		wantScopes := []string{
+			"crosscodex/internal/gateway",            // SubmitDocument, GetJob
+			"crosscodex/pkg/authn",                   // gateway auth interceptor
+			"crosscodex/internal/catalog",            // catalog.ParseCatalog
+			"crosscodex/pkg/oscal",                   // oscal.Parse
+			"crosscodex/pkg/storage",                 // ingestion + attestation Put
+			"crosscodex/internal/analysis",           // engine dispatch/collect
+			"crosscodex/internal/analyzer/classify",  // classify.GenerateWork
+			"crosscodex/internal/analyzer/embedding", // embedding.GenerateWork
+			"crosscodex/internal/analyzer/requires",  // requires.GenerateWork
+			"crosscodex/pkg/vectordb",                // embedding.Aggregate StoreBatch
+			"crosscodex/internal/worker",             // LLM work tasks
+			"crosscodex/pkg/natsbus",                 // work/result/stage messages
+			"crosscodex/internal/synthesis",          // synthesis.Execute
+			"crosscodex/pkg/attestation",             // layout + links
+			"crosscodex/internal/graph",              // subscriber materialization
+			"crosscodex/pkg/graphdb",                 // AGE writes
+		}
+		// Each listed span name needs its own wiring: pipeline.WithTelemetry,
+		// pipeline.WithStoreTelemetry and pipeline.WithReporterTracer.
+		wantAllPipelineSpans := []string{"pipeline.ExecuteJob", "pipeline.store.create_job", "pipeline.ReportStageCompleted"}
+		// The app pool's own spans (pkg/db/pool.go); any one proves its tracer.
+		wantAnyPoolSpan := []string{"db.Begin", "db.Query", "db.QueryRow", "db.Exec"}
+
+		Eventually(func(g Gomega) {
+			byScope := map[string]map[string]bool{}
+			for _, s := range tp.GetSpans() {
+				scope := s.InstrumentationScope().Name
+				if byScope[scope] == nil {
+					byScope[scope] = map[string]bool{}
+				}
+				byScope[scope][s.Name()] = true
+			}
+			for _, scope := range wantScopes {
+				g.Expect(byScope).To(HaveKey(scope), fmt.Sprintf("spans from %s", scope))
+			}
+			for _, name := range wantAllPipelineSpans {
+				g.Expect(byScope["crosscodex/internal/pipeline"]).To(HaveKey(name),
+					fmt.Sprintf("crosscodex/internal/pipeline span %s", name))
+			}
+			poolSpans := make([]types.GomegaMatcher, 0, len(wantAnyPoolSpan))
+			for _, name := range wantAnyPoolSpan {
+				poolSpans = append(poolSpans, HaveKey(name))
+			}
+			g.Expect(byScope["crosscodex/pkg/db"]).To(Or(poolSpans...),
+				fmt.Sprintf("crosscodex/pkg/db span from the app pool, one of %v", wantAnyPoolSpan))
+		}, 10*time.Second, 200*time.Millisecond).Should(Succeed(), "bootstrap-wired telemetry scopes")
 	})
 })

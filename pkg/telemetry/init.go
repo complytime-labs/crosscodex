@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
@@ -38,8 +39,9 @@ func WithResource(res *resource.Resource) Option {
 }
 
 // Init creates TracerProvider and MeterProvider with OTLP exporters, registers
-// them globally, wraps the default slog handler with trace ID injection, and
-// returns a shutdown function.
+// them and the W3C TraceContext + Baggage propagator globally, wraps the
+// default slog handler with trace ID injection, and returns a shutdown
+// function.
 //
 // An empty resolved endpoint disables the signal (no-op provider, no error).
 // The returned shutdown function is always non-nil and safe to call.
@@ -81,6 +83,9 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, opts ...Option) (
 
 	otel.SetTracerProvider(tp)
 	otel.SetMeterProvider(mp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
 
 	current := slog.Default().Handler()
 	slog.SetDefault(slog.New(newTraceHandler(current)))

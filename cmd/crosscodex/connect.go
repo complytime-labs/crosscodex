@@ -16,7 +16,9 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
+	"github.com/complytime-labs/crosscodex/internal/version"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 )
 
 const (
@@ -26,10 +28,11 @@ const (
 )
 
 type embeddedDaemon struct {
-	server    *gateway.Server
-	port      int
-	pidFile   string
-	resources *embeddedResources
+	server            *gateway.Server
+	port              int
+	pidFile           string
+	resources         *embeddedResources
+	shutdownTelemetry func(context.Context) error
 }
 
 func (d *embeddedDaemon) stop() {
@@ -48,6 +51,14 @@ func (d *embeddedDaemon) stop() {
 	}
 	if d.pidFile != "" {
 		os.Remove(d.pidFile)
+	}
+	// Last, so spans emitted while shutting down the server are flushed.
+	if d.shutdownTelemetry != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := d.shutdownTelemetry(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "telemetry shutdown error: %v\n", err)
+		}
 	}
 }
 
@@ -104,6 +115,22 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	if state.fullCfg == nil {
 		return fmt.Errorf("configuration not loaded")
 	}
+
+	// Init must precede building the embedded gateway, whose otelconnect
+	// interceptor captures the otel globals at construction time.
+	shutdownTelemetry, err := telemetry.Init(ctx, state.fullCfg.Observability,
+		telemetry.WithServiceName("crosscodex"),
+		telemetry.WithServiceVersion(version.GetInfo().Version),
+	)
+	if err != nil {
+		return fmt.Errorf("initialize telemetry: %w", err)
+	}
+	started := false
+	defer func() {
+		if !started {
+			(&embeddedDaemon{shutdownTelemetry: shutdownTelemetry}).stop()
+		}
+	}()
 
 	// Bootstrap PKI
 	pkiDir := filepath.Join(stateDir, "pki")
@@ -182,7 +209,14 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 			state.client = client
 			state.adminClient = adminClient
 			if healthCheck(ctx, state.client) {
-				state.daemon = &embeddedDaemon{server: srv, port: port, pidFile: pidPath, resources: resources}
+				state.daemon = &embeddedDaemon{
+					server:            srv,
+					port:              port,
+					pidFile:           pidPath,
+					resources:         resources,
+					shutdownTelemetry: shutdownTelemetry,
+				}
+				started = true
 				return nil
 			}
 		}

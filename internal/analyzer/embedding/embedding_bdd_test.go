@@ -863,6 +863,55 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				Expect(mockVec.storedBatches).To(BeEmpty())
 			})
 		})
+
+		// It verifies that Aggregate builds ResultData from both TaskID
+		// shapes GenerateWork emits: the per-model path
+		// ("embedding-<controlID>-<model>") and the section auto-skip path
+		// ("embedding-<controlID>", no model suffix). A control embedded by
+		// multiple configured models must appear exactly once
+		// (deduplicated), and the output must be sorted by control ID rather
+		// than reflecting map-iteration or input order.
+		It("produces ResultData", func() {
+			aggCfg := config.EmbeddingConfig{Models: []string{"nomic-embed-text", "mxbai-embed-large"}}
+			aggAnalyzer := embedding.New(nil, nil, nil, aggCfg, config.RelationshipConfig{})
+
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				{TaskID: "embedding-AC-2-nomic-embed-text", TaskType: "embedding"},
+				{TaskID: "embedding-AC-2-mxbai-embed-large", TaskType: "embedding"},
+				{TaskID: "embedding-AC-1-nomic-embed-text", TaskType: "embedding"},
+				{TaskID: "embedding-AC-3", TaskType: "embedding"}, // section auto-skip, no model suffix
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed []results.EmbedResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+
+			want := []results.EmbedResult{
+				{ControlID: "AC-1"},
+				{ControlID: "AC-2"},
+				{ControlID: "AC-3"},
+			}
+			Expect(parsed).To(Equal(want))
+		})
+
+		// It verifies that TaskResults with a non-nil Error, and TaskIDs
+		// that don't carry this analyzer's prefix, are excluded from
+		// ResultData rather than producing a garbage entry or crashing
+		// Aggregate.
+		It("omits errors and foreign task IDs from ResultData", func() {
+			aggCfg := config.EmbeddingConfig{Models: []string{"nomic-embed-text"}}
+			aggAnalyzer := embedding.New(nil, nil, nil, aggCfg, config.RelationshipConfig{})
+
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				{TaskID: "embedding-AC-4-nomic-embed-text", TaskType: "embedding", Error: errors.New("llm timeout")},
+				{TaskID: "classify-AC-5", TaskType: "classify"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed []results.EmbedResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+			Expect(parsed).To(BeEmpty())
+		})
 	})
 
 	Describe("telemetry integration", func() {
@@ -1051,69 +1100,3 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 		})
 	})
 })
-
-// TestAggregate_ProducesResultData verifies that Aggregate builds
-// ResultData from both TaskID shapes GenerateWork emits: the per-model
-// path ("embedding-<controlID>-<model>") and the section auto-skip path
-// ("embedding-<controlID>", no model suffix). A control embedded by
-// multiple configured models must appear exactly once (deduplicated), and
-// the output must be sorted by control ID rather than reflecting
-// map-iteration or input order.
-func TestAggregate_ProducesResultData(t *testing.T) {
-	cfg := config.EmbeddingConfig{Models: []string{"nomic-embed-text", "mxbai-embed-large"}}
-	a := embedding.New(nil, nil, nil, cfg, config.RelationshipConfig{})
-
-	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
-		{TaskID: "embedding-AC-2-nomic-embed-text", TaskType: "embedding"},
-		{TaskID: "embedding-AC-2-mxbai-embed-large", TaskType: "embedding"},
-		{TaskID: "embedding-AC-1-nomic-embed-text", TaskType: "embedding"},
-		{TaskID: "embedding-AC-3", TaskType: "embedding"}, // section auto-skip, no model suffix
-	})
-	if err != nil {
-		t.Fatalf("Aggregate error: %v", err)
-	}
-
-	var parsed []results.EmbedResult
-	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
-		t.Fatalf("unmarshal ResultData: %v", err)
-	}
-
-	want := []results.EmbedResult{
-		{ControlID: "AC-1"},
-		{ControlID: "AC-2"},
-		{ControlID: "AC-3"},
-	}
-	if len(parsed) != len(want) {
-		t.Fatalf("expected %d controls, got %d: %+v", len(want), len(parsed), parsed)
-	}
-	for i, w := range want {
-		if parsed[i] != w {
-			t.Fatalf("ResultData[%d] = %+v, want %+v (full: %+v)", i, parsed[i], w, parsed)
-		}
-	}
-}
-
-// TestAggregate_ResultDataOmitsErrorsAndForeignTaskIDs verifies that
-// TaskResults with a non-nil Error, and TaskIDs that don't carry this
-// analyzer's prefix, are excluded from ResultData rather than producing a
-// garbage entry or crashing Aggregate.
-func TestAggregate_ResultDataOmitsErrorsAndForeignTaskIDs(t *testing.T) {
-	cfg := config.EmbeddingConfig{Models: []string{"nomic-embed-text"}}
-	a := embedding.New(nil, nil, nil, cfg, config.RelationshipConfig{})
-
-	out, err := a.Aggregate(context.Background(), []analyzer.TaskResult{
-		{TaskID: "embedding-AC-4-nomic-embed-text", TaskType: "embedding", Error: errors.New("llm timeout")},
-		{TaskID: "classify-AC-5", TaskType: "classify"},
-	})
-	if err != nil {
-		t.Fatalf("Aggregate error: %v", err)
-	}
-
-	var parsed []results.EmbedResult
-	if err := json.Unmarshal(out.ResultData, &parsed); err != nil {
-		t.Fatalf("unmarshal ResultData: %v", err)
-	}
-	if len(parsed) != 0 {
-		t.Fatalf("expected no controls in ResultData, got %+v", parsed)
-	}
-}

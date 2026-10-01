@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"time"
@@ -11,6 +12,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	ginkgo "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
@@ -232,6 +235,46 @@ func RedirectLogsToGinkgo() (restore func()) {
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(ginkgo.GinkgoWriter, nil)))
 	return func() { slog.SetDefault(prev) }
+}
+
+// IsolateTelemetryGlobals snapshots the process-wide state that
+// telemetry.Init replaces (otel tracer, meter and propagator, slog.Default,
+// and the log package's output and flags), then installs an empty
+// propagator so specs can assert whether Init ran. Returns a restore
+// function for DeferCleanup.
+//
+// The tracer and meter providers are restored only if they changed: otel
+// logs an error when its default delegating provider is set to itself. The
+// propagator is restored unconditionally; it was always replaced, and
+// composite propagators are slices, so comparing them panics.
+//
+// The log package's output and flags are restored after slog.Default because
+// slog.SetDefault with any non-built-in handler (Init's trace handler) points
+// log's output at that handler, and restoring slog's built-in default does not
+// undo it. Left in place, the built-in handler would write through log into
+// the wrapper and back into itself, deadlocking on log's mutex.
+func IsolateTelemetryGlobals() (restore func()) {
+	prevTP := otel.GetTracerProvider()
+	prevMP := otel.GetMeterProvider()
+	prevProp := otel.GetTextMapPropagator()
+	prevLogger := slog.Default()
+	prevLogWriter := log.Writer()
+	prevLogFlags := log.Flags()
+
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
+
+	return func() {
+		if otel.GetTracerProvider() != prevTP {
+			otel.SetTracerProvider(prevTP)
+		}
+		if otel.GetMeterProvider() != prevMP {
+			otel.SetMeterProvider(prevMP)
+		}
+		otel.SetTextMapPropagator(prevProp)
+		slog.SetDefault(prevLogger)
+		log.SetOutput(prevLogWriter)
+		log.SetFlags(prevLogFlags)
+	}
 }
 
 // GinkgoLogger returns an *slog.Logger that writes to ginkgo.GinkgoWriter.

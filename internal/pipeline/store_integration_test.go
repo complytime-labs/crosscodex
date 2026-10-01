@@ -10,9 +10,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"reflect"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -22,652 +23,15 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestPGStore(t *testing.T) {
-	ctx := context.Background()
-
-	// 1. Check TEST_DATABASE_DSN
-	suDSN := os.Getenv("TEST_DATABASE_DSN")
-	if suDSN == "" {
-		t.Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-	}
-
-	// 2. Run migrations (idempotent)
-	migrator, err := db.NewMigrator(suDSN)
-	if err != nil {
-		t.Fatalf("failed to create migrator: %v", err)
-	}
-	if err := migrator.Up(ctx); err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
-	}
-	if err := migrator.Close(); err != nil {
-		t.Fatalf("failed to close migrator: %v", err)
-	}
-
-	// 3. Set app_user password (idempotent)
-	adminDB, err := sql.Open("pgx", suDSN)
-	if err != nil {
-		t.Fatalf("failed to open admin connection: %v", err)
-	}
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
-	if err != nil {
-		t.Fatalf("failed to set app_user password: %v", err)
-	}
-	if err := adminDB.Close(); err != nil {
-		t.Fatalf("failed to close admin connection: %v", err)
-	}
-
-	// 4. Create superuser pool
-	suPool, err := db.NewPool(db.PoolConfig{
-		DSN:          suDSN,
-		MaxOpenConns: 5,
-		Extensions:   []string{"age", "vector"},
-	})
-	if err != nil {
-		t.Fatalf("failed to create superuser pool: %v", err)
-	}
-	defer suPool.Close()
-
-	// 5. Build app_user DSN and create app pool
-	appDSN, err := appUserDSN(suDSN)
-	if err != nil {
-		t.Fatalf("failed to build app_user DSN: %v", err)
-	}
-	appPool, err := db.NewPool(db.PoolConfig{
-		DSN:          appDSN,
-		MaxOpenConns: 2,
-	})
-	if err != nil {
-		t.Fatalf("failed to create app_user pool: %v", err)
-	}
-	defer appPool.Close()
-
-	tenantConn := db.NewTenantPool(appPool)
-
-	// 6. Provision tenant (unique per run)
-	tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-	if err := db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it"); err != nil {
-		t.Fatalf("failed to ensure tenant: %v", err)
-	}
-
-	// 7. Set tenant context
-	ctx, err = tenant.WithTenant(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("failed to set tenant context: %v", err)
-	}
-
-	// 8. Create PGStore
-	store := pipeline.NewPGStore(tenantConn, suPool)
-
-	// 9. Build a valid Job
-	now := time.Now().UTC()
-	job := &pipeline.Job{
-		JobID:     uuid.New().String(),
-		TenantID:  tenantID,
-		Status:    pipeline.JobStatusPending,
-		Config:    []byte(`{}`),
-		CreatedBy: "integration-test",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	// 10. CreateJob — THIS WILL FAIL with SQLSTATE 42601 before the fix
-	if err := store.CreateJob(ctx, job); err != nil {
-		t.Fatalf("CreateJob failed: %v", err)
-	}
-
-	// 11. GetJob — verify round-trip
-	got, err := store.GetJob(ctx, job.JobID)
-	if err != nil {
-		t.Fatalf("GetJob failed: %v", err)
-	}
-	if got.JobID != job.JobID {
-		t.Errorf("JobID mismatch: got %q, want %q", got.JobID, job.JobID)
-	}
-	if got.TenantID != job.TenantID {
-		t.Errorf("TenantID mismatch: got %q, want %q", got.TenantID, job.TenantID)
-	}
-	if got.Status != job.Status {
-		t.Errorf("Status mismatch: got %q, want %q", got.Status, job.Status)
-	}
-}
-
-func TestPGStoreCompleteAnalysisStage(t *testing.T) {
-	ctx := context.Background()
-
-	// 1. Check TEST_DATABASE_DSN
-	suDSN := os.Getenv("TEST_DATABASE_DSN")
-	if suDSN == "" {
-		t.Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-	}
-
-	// 2. Run migrations (idempotent)
-	migrator, err := db.NewMigrator(suDSN)
-	if err != nil {
-		t.Fatalf("failed to create migrator: %v", err)
-	}
-	if err := migrator.Up(ctx); err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
-	}
-	if err := migrator.Close(); err != nil {
-		t.Fatalf("failed to close migrator: %v", err)
-	}
-
-	// 3. Set app_user password (idempotent)
-	adminDB, err := sql.Open("pgx", suDSN)
-	if err != nil {
-		t.Fatalf("failed to open admin connection: %v", err)
-	}
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
-	if err != nil {
-		t.Fatalf("failed to set app_user password: %v", err)
-	}
-	if err := adminDB.Close(); err != nil {
-		t.Fatalf("failed to close admin connection: %v", err)
-	}
-
-	// 4. Create superuser pool
-	suPool, err := db.NewPool(db.PoolConfig{
-		DSN:          suDSN,
-		MaxOpenConns: 5,
-		Extensions:   []string{"age", "vector"},
-	})
-	if err != nil {
-		t.Fatalf("failed to create superuser pool: %v", err)
-	}
-	defer suPool.Close()
-
-	// 5. Build app_user DSN and create app pool
-	appDSN, err := appUserDSN(suDSN)
-	if err != nil {
-		t.Fatalf("failed to build app_user DSN: %v", err)
-	}
-	appPool, err := db.NewPool(db.PoolConfig{
-		DSN:          appDSN,
-		MaxOpenConns: 2,
-	})
-	if err != nil {
-		t.Fatalf("failed to create app_user pool: %v", err)
-	}
-	defer appPool.Close()
-
-	tenantConn := db.NewTenantPool(appPool)
-
-	// 6. Provision tenant (unique per run)
-	tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-	if err := db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it"); err != nil {
-		t.Fatalf("failed to ensure tenant: %v", err)
-	}
-
-	// 7. Set tenant context
-	ctx, err = tenant.WithTenant(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("failed to set tenant context: %v", err)
-	}
-
-	// 8. Create PGStore
-	store := pipeline.NewPGStore(tenantConn, suPool)
-
-	// 9. Build a valid Job
-	now := time.Now().UTC()
-	job := &pipeline.Job{
-		JobID:     uuid.New().String(),
-		TenantID:  tenantID,
-		Status:    pipeline.JobStatusPending,
-		Config:    []byte(`{}`),
-		CreatedBy: "integration-test",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	if err := store.CreateJob(ctx, job); err != nil {
-		t.Fatalf("CreateJob failed: %v", err)
-	}
-
-	stageNames := []string{"requires"}
-	if err := store.CreateStages(ctx, job.JobID, stageNames); err != nil {
-		t.Fatalf("CreateStages failed: %v", err)
-	}
-
-	// First write: upsert an initial result.
-	first := []byte(`[{"source_id":"AC-1","target_id":"AC-2","confidence":0.9}]`)
-	if err := store.CompleteAnalysisStage(ctx, job.JobID, "requires", first); err != nil {
-		t.Fatalf("CompleteAnalysisStage (first write) failed: %v", err)
-	}
-
-	// Second write to the same (tenant, job, analyzer) key: must upsert, not duplicate.
-	second := []byte(`[{"source_id":"AC-1","target_id":"AC-3","confidence":0.7}]`)
-	if err := store.CompleteAnalysisStage(ctx, job.JobID, "requires", second); err != nil {
-		t.Fatalf("CompleteAnalysisStage (second write) failed: %v", err)
-	}
-
-	// Verify the durably committed row directly. analysis_results has RLS
-	// (policy tenant_isolation gates on app.current_tenant), so a raw app_user
-	// read outside a tenant-scoped transaction sees nothing. Read as the
-	// superuser, which bypasses RLS, to assert the row physically committed
-	// with the expected content. The app-role RLS read path is separately
-	// exercised by store.GetStages below.
-	//
-	// Exactly one row survives, and it reflects the second write's content.
-	var count int
-	row := suPool.QueryRow(ctx,
-		"SELECT count(*) FROM analysis_results WHERE tenant_id = $1 AND job_id = $2 AND analyzer_name = $3",
-		tenantID, job.JobID, "requires")
-	if err := row.Scan(&count); err != nil {
-		t.Fatalf("counting analysis_results rows failed: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("analysis_results row count: got %d, want 1 (upsert should not duplicate)", count)
-	}
-
-	var data []byte
-	row = suPool.QueryRow(ctx,
-		"SELECT result_data FROM analysis_results WHERE tenant_id = $1 AND job_id = $2 AND analyzer_name = $3",
-		tenantID, job.JobID, "requires")
-	if err := row.Scan(&data); err != nil {
-		t.Fatalf("reading result_data failed: %v", err)
-	}
-
-	var gotResult, wantResult []map[string]any
-	if err := json.Unmarshal(data, &gotResult); err != nil {
-		t.Fatalf("unmarshaling stored result_data failed: %v", err)
-	}
-	if err := json.Unmarshal(second, &wantResult); err != nil {
-		t.Fatalf("unmarshaling expected result_data failed: %v", err)
-	}
-	if !reflect.DeepEqual(gotResult, wantResult) {
-		t.Errorf("result_data: got %s, want %s (should reflect the second write)", data, second)
-	}
-
-	// The job_stages row must be completed.
-	stages, err := store.GetStages(ctx, job.JobID)
-	if err != nil {
-		t.Fatalf("GetStages failed: %v", err)
-	}
-	if len(stages) != 1 {
-		t.Fatalf("GetStages: got %d stages, want 1", len(stages))
-	}
-	if stages[0].Status != pipeline.StageStatusCompleted {
-		t.Errorf("stage status: got %q, want %q", stages[0].Status, pipeline.StageStatusCompleted)
-	}
-	if stages[0].CompletedAt == nil {
-		t.Error("stage CompletedAt: got nil, want non-nil")
-	}
-}
-
-func TestPGStoreGetCompletedAnalysisResults(t *testing.T) {
-	ctx := context.Background()
-
-	// 1. Check TEST_DATABASE_DSN
-	suDSN := os.Getenv("TEST_DATABASE_DSN")
-	if suDSN == "" {
-		t.Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-	}
-
-	// 2. Run migrations (idempotent)
-	migrator, err := db.NewMigrator(suDSN)
-	if err != nil {
-		t.Fatalf("failed to create migrator: %v", err)
-	}
-	if err := migrator.Up(ctx); err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
-	}
-	if err := migrator.Close(); err != nil {
-		t.Fatalf("failed to close migrator: %v", err)
-	}
-
-	// 3. Set app_user password (idempotent)
-	adminDB, err := sql.Open("pgx", suDSN)
-	if err != nil {
-		t.Fatalf("failed to open admin connection: %v", err)
-	}
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
-	if err != nil {
-		t.Fatalf("failed to set app_user password: %v", err)
-	}
-	if err := adminDB.Close(); err != nil {
-		t.Fatalf("failed to close admin connection: %v", err)
-	}
-
-	// 4. Create superuser pool
-	suPool, err := db.NewPool(db.PoolConfig{
-		DSN:          suDSN,
-		MaxOpenConns: 5,
-		Extensions:   []string{"age", "vector"},
-	})
-	if err != nil {
-		t.Fatalf("failed to create superuser pool: %v", err)
-	}
-	defer suPool.Close()
-
-	// 5. Build app_user DSN and create app pool
-	appDSN, err := appUserDSN(suDSN)
-	if err != nil {
-		t.Fatalf("failed to build app_user DSN: %v", err)
-	}
-	appPool, err := db.NewPool(db.PoolConfig{
-		DSN:          appDSN,
-		MaxOpenConns: 2,
-	})
-	if err != nil {
-		t.Fatalf("failed to create app_user pool: %v", err)
-	}
-	defer appPool.Close()
-
-	tenantConn := db.NewTenantPool(appPool)
-
-	// 6. Provision tenant (unique per run)
-	tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-	if err := db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it"); err != nil {
-		t.Fatalf("failed to ensure tenant: %v", err)
-	}
-
-	// 7. Set tenant context
-	ctx, err = tenant.WithTenant(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("failed to set tenant context: %v", err)
-	}
-
-	// 8. Create PGStore
-	store := pipeline.NewPGStore(tenantConn, suPool)
-
-	// 9. Build a valid Job and its stages.
-	now := time.Now().UTC()
-	job := &pipeline.Job{
-		JobID:     uuid.New().String(),
-		TenantID:  tenantID,
-		Status:    pipeline.JobStatusPending,
-		Config:    []byte(`{}`),
-		CreatedBy: "integration-test",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := store.CreateJob(ctx, job); err != nil {
-		t.Fatalf("CreateJob failed: %v", err)
-	}
-
-	analyzerNames := []string{"classify", "embedding", "requires"}
-	if err := store.CreateStages(ctx, job.JobID, analyzerNames); err != nil {
-		t.Fatalf("CreateStages failed: %v", err)
-	}
-
-	// Complete "classify" and "embedding" with distinct payloads; leave
-	// "requires" never completed.
-	classifyData := []byte(`{"a":1}`)
-	if err := store.CompleteAnalysisStage(ctx, job.JobID, "classify", classifyData); err != nil {
-		t.Fatalf("CompleteAnalysisStage(classify) failed: %v", err)
-	}
-	embeddingData := []byte(`{"b":2}`)
-	if err := store.CompleteAnalysisStage(ctx, job.JobID, "embedding", embeddingData); err != nil {
-		t.Fatalf("CompleteAnalysisStage(embedding) failed: %v", err)
-	}
-
-	// Superset query: includes the never-completed "requires" analyzer.
-	// Only the two completed analyzers should come back.
-	results, err := store.GetCompletedAnalysisResults(ctx, job.JobID, []string{"classify", "embedding", "requires"})
-	if err != nil {
-		t.Fatalf("GetCompletedAnalysisResults (superset) failed: %v", err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("GetCompletedAnalysisResults (superset): got %d entries, want 2 (results=%+v)", len(results), results)
-	}
-	if _, ok := results["requires"]; ok {
-		t.Error(`GetCompletedAnalysisResults (superset): "requires" present, want absent (never completed)`)
-	}
-
-	classifyResult, ok := results["classify"]
-	if !ok {
-		t.Fatal(`GetCompletedAnalysisResults (superset): "classify" missing from results`)
-	}
-	if classifyResult.AnalyzerName != "classify" {
-		t.Errorf("classify result AnalyzerName: got %q, want %q", classifyResult.AnalyzerName, "classify")
-	}
-	// result_data is stored as JSONB, which normalizes whitespace on write
-	// (e.g. `{"a":1}` becomes `{"a": 1}`), so compare parsed values rather
-	// than raw bytes — mirrors TestPGStoreCompleteAnalysisStage's approach.
-	assertJSONEqual(t, "classify", classifyResult.ResultData, classifyData)
-
-	embeddingResult, ok := results["embedding"]
-	if !ok {
-		t.Fatal(`GetCompletedAnalysisResults (superset): "embedding" missing from results`)
-	}
-	if embeddingResult.AnalyzerName != "embedding" {
-		t.Errorf("embedding result AnalyzerName: got %q, want %q", embeddingResult.AnalyzerName, "embedding")
-	}
-	assertJSONEqual(t, "embedding", embeddingResult.ResultData, embeddingData)
-
-	// Subset query: only "classify" requested.
-	subsetResults, err := store.GetCompletedAnalysisResults(ctx, job.JobID, []string{"classify"})
-	if err != nil {
-		t.Fatalf("GetCompletedAnalysisResults (subset) failed: %v", err)
-	}
-	if len(subsetResults) != 1 {
-		t.Fatalf("GetCompletedAnalysisResults (subset): got %d entries, want 1 (results=%+v)", len(subsetResults), subsetResults)
-	}
-	if _, ok := subsetResults["classify"]; !ok {
-		t.Error(`GetCompletedAnalysisResults (subset): "classify" missing from results`)
-	}
-
-	// Tenant isolation: a second tenant's job and completed analyzer must
-	// never surface under the first tenant's context, even when the query
-	// deliberately targets the second tenant's job ID and analyzer name.
-	tenantID2 := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-	if err := db.EnsureTenant(ctx, suPool, tenantID2, "pipeline-it-2"); err != nil {
-		t.Fatalf("failed to ensure second tenant: %v", err)
-	}
-	ctx2, err := tenant.WithTenant(context.Background(), tenantID2)
-	if err != nil {
-		t.Fatalf("failed to set second tenant context: %v", err)
-	}
-
-	job2 := &pipeline.Job{
-		JobID:     uuid.New().String(),
-		TenantID:  tenantID2,
-		Status:    pipeline.JobStatusPending,
-		Config:    []byte(`{}`),
-		CreatedBy: "integration-test",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := store.CreateJob(ctx2, job2); err != nil {
-		t.Fatalf("CreateJob (tenant 2) failed: %v", err)
-	}
-	if err := store.CreateStages(ctx2, job2.JobID, []string{"classify"}); err != nil {
-		t.Fatalf("CreateStages (tenant 2) failed: %v", err)
-	}
-	tenant2Data := []byte(`{"c":3}`)
-	if err := store.CompleteAnalysisStage(ctx2, job2.JobID, "classify", tenant2Data); err != nil {
-		t.Fatalf("CompleteAnalysisStage (tenant 2) failed: %v", err)
-	}
-
-	// Query under tenant 1's context, but with tenant 2's job ID and
-	// analyzer name. Tenant isolation must prevent any row from surfacing.
-	isolationResults, err := store.GetCompletedAnalysisResults(ctx, job2.JobID, []string{"classify"})
-	if err != nil {
-		t.Fatalf("GetCompletedAnalysisResults (cross-tenant) failed: %v", err)
-	}
-	if len(isolationResults) != 0 {
-		t.Errorf("GetCompletedAnalysisResults (cross-tenant): got %d entries, want 0 (leaked tenant 2 data: %+v)", len(isolationResults), isolationResults)
-	}
-}
-
-func TestPGStoreWriteVoteSummaries(t *testing.T) {
-	ctx := context.Background()
-
-	// 1. Check TEST_DATABASE_DSN
-	suDSN := os.Getenv("TEST_DATABASE_DSN")
-	if suDSN == "" {
-		t.Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-	}
-
-	// 2. Run migrations (idempotent)
-	migrator, err := db.NewMigrator(suDSN)
-	if err != nil {
-		t.Fatalf("failed to create migrator: %v", err)
-	}
-	if err := migrator.Up(ctx); err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
-	}
-	if err := migrator.Close(); err != nil {
-		t.Fatalf("failed to close migrator: %v", err)
-	}
-
-	// 3. Set app_user password (idempotent)
-	adminDB, err := sql.Open("pgx", suDSN)
-	if err != nil {
-		t.Fatalf("failed to open admin connection: %v", err)
-	}
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
-	if err != nil {
-		t.Fatalf("failed to set app_user password: %v", err)
-	}
-	if err := adminDB.Close(); err != nil {
-		t.Fatalf("failed to close admin connection: %v", err)
-	}
-
-	// 4. Create superuser pool
-	suPool, err := db.NewPool(db.PoolConfig{
-		DSN:          suDSN,
-		MaxOpenConns: 5,
-		Extensions:   []string{"age", "vector"},
-	})
-	if err != nil {
-		t.Fatalf("failed to create superuser pool: %v", err)
-	}
-	defer suPool.Close()
-
-	// 5. Build app_user DSN and create app pool
-	appDSN, err := appUserDSN(suDSN)
-	if err != nil {
-		t.Fatalf("failed to build app_user DSN: %v", err)
-	}
-	appPool, err := db.NewPool(db.PoolConfig{
-		DSN:          appDSN,
-		MaxOpenConns: 2,
-	})
-	if err != nil {
-		t.Fatalf("failed to create app_user pool: %v", err)
-	}
-	defer appPool.Close()
-
-	tenantConn := db.NewTenantPool(appPool)
-
-	// 6. Provision tenant (unique per run)
-	tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-	if err := db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it"); err != nil {
-		t.Fatalf("failed to ensure tenant: %v", err)
-	}
-
-	// 7. Set tenant context
-	ctx, err = tenant.WithTenant(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("failed to set tenant context: %v", err)
-	}
-
-	// 8. Create PGStore
-	store := pipeline.NewPGStore(tenantConn, suPool)
-
-	// 9. Build a valid Job. vote_summaries.job_id has a foreign key to
-	// jobs(job_id), so a job must exist before writing vote_summaries rows.
-	now := time.Now().UTC()
-	job := &pipeline.Job{
-		JobID:     uuid.New().String(),
-		TenantID:  tenantID,
-		Status:    pipeline.JobStatusPending,
-		Config:    []byte(`{}`),
-		CreatedBy: "integration-test",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := store.CreateJob(ctx, job); err != nil {
-		t.Fatalf("CreateJob failed: %v", err)
-	}
-
-	pairs := []pipeline.VoteSummaryPair{
-		{SourceID: "AC-1", TargetID: "AC-2", Consensus: "requires", Confidence: 0.9},
-		{SourceID: "AC-3", TargetID: "AC-4", Consensus: "supports", Confidence: 0.8},
-	}
-
-	// First write: both rows must land with viability=0.
-	if err := store.WriteVoteSummaries(ctx, tenantID, job.JobID, pairs); err != nil {
-		t.Fatalf("WriteVoteSummaries (first write) failed: %v", err)
-	}
-
-	// vote_summaries has RLS (policy tenant_isolation gates on
-	// app.current_tenant); read as the superuser, which bypasses RLS, to
-	// assert the rows physically committed with the expected content —
-	// mirrors TestPGStoreCompleteAnalysisStage's readback approach.
-	type row struct {
-		sourceID, targetID, consensus string
-		confidence, viability         float64
-	}
-	readRows := func() []row {
-		t.Helper()
-		rows, err := suPool.Query(ctx,
-			"SELECT source_id, target_id, consensus, confidence, viability FROM vote_summaries WHERE tenant_id = $1 AND job_id = $2 ORDER BY source_id",
-			tenantID, job.JobID)
-		if err != nil {
-			t.Fatalf("querying vote_summaries failed: %v", err)
-		}
-		defer rows.Close()
-
-		var got []row
-		for rows.Next() {
-			var r row
-			if err := rows.Scan(&r.sourceID, &r.targetID, &r.consensus, &r.confidence, &r.viability); err != nil {
-				t.Fatalf("scanning vote_summaries row failed: %v", err)
-			}
-			got = append(got, r)
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatalf("iterating vote_summaries rows failed: %v", err)
-		}
-		return got
-	}
-
-	got := readRows()
-	if len(got) != 2 {
-		t.Fatalf("vote_summaries row count after first write: got %d, want 2 (rows=%+v)", len(got), got)
-	}
-	want := []row{
-		{sourceID: "AC-1", targetID: "AC-2", consensus: "requires", confidence: 0.9, viability: 0},
-		{sourceID: "AC-3", targetID: "AC-4", consensus: "supports", confidence: 0.8, viability: 0},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("vote_summaries rows after first write: got %+v, want %+v", got, want)
-	}
-
-	// Second write with the same pairs: ON CONFLICT DO NOTHING must leave the
-	// existing rows untouched (no error, no duplicates) — this is what makes
-	// a resumed job's re-run of the same requires/relationship pass safe
-	// against vote_summaries' immutability-on-UPDATE trigger.
-	if err := store.WriteVoteSummaries(ctx, tenantID, job.JobID, pairs); err != nil {
-		t.Fatalf("WriteVoteSummaries (second write, same pairs) failed: %v", err)
-	}
-
-	gotAfterRetry := readRows()
-	if len(gotAfterRetry) != 2 {
-		t.Fatalf("vote_summaries row count after second write: got %d, want 2 (no duplicates; rows=%+v)", len(gotAfterRetry), gotAfterRetry)
-	}
-	if !reflect.DeepEqual(gotAfterRetry, want) {
-		t.Errorf("vote_summaries rows after second write: got %+v, want %+v (must be unchanged)", gotAfterRetry, want)
-	}
-}
-
 // assertJSONEqual compares two JSON payloads for semantic equality,
 // tolerating the whitespace normalization Postgres's JSONB type applies on
-// write (e.g. `{"a":1}` is read back as `{"a": 1}`).
-func assertJSONEqual(t *testing.T, label string, got, want []byte) {
-	t.Helper()
+// write (e.g. `{"a":1}` is read back as `{"a": 1}`). Offset 1 so a failure
+// here is reported at the caller's line.
+func assertJSONEqual(label string, got, want []byte) {
 	var gotVal, wantVal any
-	if err := json.Unmarshal(got, &gotVal); err != nil {
-		t.Fatalf("%s: unmarshaling got JSON failed: %v", label, err)
-	}
-	if err := json.Unmarshal(want, &wantVal); err != nil {
-		t.Fatalf("%s: unmarshaling want JSON failed: %v", label, err)
-	}
-	if !reflect.DeepEqual(gotVal, wantVal) {
-		t.Errorf("%s result_data: got %s, want %s", label, got, want)
-	}
+	ExpectWithOffset(1, json.Unmarshal(got, &gotVal)).To(Succeed(), "%s: unmarshaling got JSON failed", label)
+	ExpectWithOffset(1, json.Unmarshal(want, &wantVal)).To(Succeed(), "%s: unmarshaling want JSON failed", label)
+	ExpectWithOffset(1, gotVal).To(Equal(wantVal), "%s result_data: got %s, want %s", label, got, want)
 }
 
 // appUserDSN swaps userinfo to app_user:apppass
@@ -682,72 +46,50 @@ func appUserDSN(suDSN string) (string, error) {
 
 // setupPGStore runs migrations, ensures the app_user role, builds superuser and
 // app pools, provisions a unique tenant, and returns a tenant-scoped context.
-// Pools are closed via t.Cleanup. Skips when TEST_DATABASE_DSN is unset.
-func setupPGStore(t *testing.T) (*pipeline.PGStore, db.Pool, string, context.Context) {
-	t.Helper()
+// Pools are closed via DeferCleanup. Skips when TEST_DATABASE_DSN is unset.
+func setupPGStore() (*pipeline.PGStore, db.Pool, string, context.Context) {
 	ctx := context.Background()
 
 	suDSN := os.Getenv("TEST_DATABASE_DSN")
 	if suDSN == "" {
-		t.Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
 	}
 
 	migrator, err := db.NewMigrator(suDSN)
-	if err != nil {
-		t.Fatalf("failed to create migrator: %v", err)
-	}
-	if err := migrator.Up(ctx); err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
-	}
-	if err := migrator.Close(); err != nil {
-		t.Fatalf("failed to close migrator: %v", err)
-	}
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to create migrator")
+	ExpectWithOffset(1, migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
+	ExpectWithOffset(1, migrator.Close()).To(Succeed(), "failed to close migrator")
 
 	adminDB, err := sql.Open("pgx", suDSN)
-	if err != nil {
-		t.Fatalf("failed to open admin connection: %v", err)
-	}
-	if _, err := adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'"); err != nil {
-		t.Fatalf("failed to set app_user password: %v", err)
-	}
-	if err := adminDB.Close(); err != nil {
-		t.Fatalf("failed to close admin connection: %v", err)
-	}
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to open admin connection")
+	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to set app_user password")
+	ExpectWithOffset(1, adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
 	suPool, err := db.NewPool(db.PoolConfig{
 		DSN:          suDSN,
 		MaxOpenConns: 5,
 		Extensions:   []string{"age", "vector"},
 	})
-	if err != nil {
-		t.Fatalf("failed to create superuser pool: %v", err)
-	}
-	t.Cleanup(func() { suPool.Close() })
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to create superuser pool")
+	DeferCleanup(func() { suPool.Close() })
 
 	appDSN, err := appUserDSN(suDSN)
-	if err != nil {
-		t.Fatalf("failed to build app_user DSN: %v", err)
-	}
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to build app_user DSN")
 	appPool, err := db.NewPool(db.PoolConfig{
 		DSN:          appDSN,
 		MaxOpenConns: 2,
 	})
-	if err != nil {
-		t.Fatalf("failed to create app_user pool: %v", err)
-	}
-	t.Cleanup(func() { appPool.Close() })
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to create app_user pool")
+	DeferCleanup(func() { appPool.Close() })
 
 	tenantConn := db.NewTenantPool(appPool)
 
 	tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-	if err := db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it"); err != nil {
-		t.Fatalf("failed to ensure tenant: %v", err)
-	}
+	ExpectWithOffset(1, db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
 
 	ctx, err = tenant.WithTenant(ctx, tenantID)
-	if err != nil {
-		t.Fatalf("failed to set tenant context: %v", err)
-	}
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to set tenant context")
 
 	return pipeline.NewPGStore(tenantConn, suPool), suPool, tenantID, ctx
 }
@@ -766,70 +108,6 @@ func newITJob(tenantID string) *pipeline.Job {
 	}
 }
 
-func TestPGStoreResetStagesFrom(t *testing.T) {
-	store, _, tenantID, ctx := setupPGStore(t)
-
-	job := newITJob(tenantID)
-	if err := store.CreateJob(ctx, job); err != nil {
-		t.Fatalf("CreateJob failed: %v", err)
-	}
-	stageNames := []string{"classify", "requires", "synthesis", "graph"}
-	if err := store.CreateStages(ctx, job.JobID, stageNames); err != nil {
-		t.Fatalf("CreateStages failed: %v", err)
-	}
-
-	// classify completes; requires fails.
-	if err := store.UpdateStageStatus(ctx, job.JobID, "classify", pipeline.StageStatusCompleted); err != nil {
-		t.Fatalf("UpdateStageStatus(classify, completed) failed: %v", err)
-	}
-	if err := store.UpdateStageError(ctx, job.JobID, "requires", errors.New("boom")); err != nil {
-		t.Fatalf("UpdateStageError failed: %v", err)
-	}
-
-	stages, err := store.GetStages(ctx, job.JobID)
-	if err != nil {
-		t.Fatalf("GetStages after UpdateStageError failed: %v", err)
-	}
-	byName := stagesByName(stages)
-	if byName["requires"].Status != pipeline.StageStatusFailed {
-		t.Errorf("requires status: got %q, want failed", byName["requires"].Status)
-	}
-	if byName["requires"].ErrorMessage != "boom" {
-		t.Errorf("requires error_message: got %q, want %q", byName["requires"].ErrorMessage, "boom")
-	}
-
-	// Reset from the failed stage onward.
-	if err := store.ResetStagesFrom(ctx, job.JobID, "requires", stageNames); err != nil {
-		t.Fatalf("ResetStagesFrom failed: %v", err)
-	}
-
-	stages, err = store.GetStages(ctx, job.JobID)
-	if err != nil {
-		t.Fatalf("GetStages after ResetStagesFrom failed: %v", err)
-	}
-	byName = stagesByName(stages)
-
-	// Earlier stage untouched.
-	if byName["classify"].Status != pipeline.StageStatusCompleted {
-		t.Errorf("classify status after reset: got %q, want completed (untouched)", byName["classify"].Status)
-	}
-	if byName["classify"].RetryCount != 0 {
-		t.Errorf("classify retry_count after reset: got %d, want 0 (untouched)", byName["classify"].RetryCount)
-	}
-	// fromStage and all later stages reset to pending with incremented retry_count.
-	for _, name := range []string{"requires", "synthesis", "graph"} {
-		if byName[name].Status != pipeline.StageStatusPending {
-			t.Errorf("%s status after reset: got %q, want pending", name, byName[name].Status)
-		}
-		if byName[name].RetryCount != 1 {
-			t.Errorf("%s retry_count after reset: got %d, want 1", name, byName[name].RetryCount)
-		}
-		if byName[name].ErrorMessage != "" {
-			t.Errorf("%s error_message after reset: got %q, want empty", name, byName[name].ErrorMessage)
-		}
-	}
-}
-
 // stagesByName indexes stages by StageName for assertion.
 func stagesByName(stages []*pipeline.Stage) map[string]*pipeline.Stage {
 	m := make(map[string]*pipeline.Stage, len(stages))
@@ -839,118 +117,520 @@ func stagesByName(stages []*pipeline.Stage) map[string]*pipeline.Stage {
 	return m
 }
 
-func TestPGStoreGetResumableJobs(t *testing.T) {
-	store, _, tenantID, ctx := setupPGStore(t)
+var _ = Describe("PGStore integration", func() {
+	It("creates a job and round-trips it via GetJob", func() {
+		ctx := context.Background()
 
-	// One running job (should be returned) and one completed job (should not).
-	running := newITJob(tenantID)
-	running.Status = pipeline.JobStatusPending
-	if err := store.CreateJob(ctx, running); err != nil {
-		t.Fatalf("CreateJob(running) failed: %v", err)
-	}
-	if err := store.UpdateJobStatus(ctx, running.JobID, pipeline.JobStatusRunning, nil); err != nil {
-		t.Fatalf("UpdateJobStatus(running) failed: %v", err)
-	}
-
-	completed := newITJob(tenantID)
-	if err := store.CreateJob(ctx, completed); err != nil {
-		t.Fatalf("CreateJob(completed) failed: %v", err)
-	}
-	if err := store.UpdateJobStatus(ctx, completed.JobID, pipeline.JobStatusCompleted, nil); err != nil {
-		t.Fatalf("UpdateJobStatus(completed) failed: %v", err)
-	}
-
-	jobs, err := store.GetResumableJobs(ctx)
-	if err != nil {
-		t.Fatalf("GetResumableJobs failed: %v", err)
-	}
-
-	found := map[string]bool{}
-	for _, j := range jobs {
-		found[j.JobID] = true
-		if j.Status != pipeline.JobStatusRunning {
-			t.Errorf("GetResumableJobs returned job %s with status %q, want running", j.JobID, j.Status)
+		suDSN := os.Getenv("TEST_DATABASE_DSN")
+		if suDSN == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
 		}
-	}
-	if !found[running.JobID] {
-		t.Errorf("GetResumableJobs missing the running job %s", running.JobID)
-	}
-	if found[completed.JobID] {
-		t.Errorf("GetResumableJobs returned the completed job %s, want excluded", completed.JobID)
-	}
-}
 
-func TestPGStoreListJobs(t *testing.T) {
-	store, _, tenantID, ctx := setupPGStore(t)
+		migrator, err := db.NewMigrator(suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
+		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
+		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
 
-	// Three completed jobs and one pending job for this tenant.
-	var completedIDs []string
-	for i := 0; i < 3; i++ {
-		j := newITJob(tenantID)
-		if err := store.CreateJob(ctx, j); err != nil {
-			t.Fatalf("CreateJob failed: %v", err)
+		adminDB, err := sql.Open("pgx", suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
+		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
+		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+
+		suPool, err := db.NewPool(db.PoolConfig{
+			DSN:          suDSN,
+			MaxOpenConns: 5,
+			Extensions:   []string{"age", "vector"},
+		})
+		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
+		defer suPool.Close()
+
+		appDSN, err := appUserDSN(suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
+		appPool, err := db.NewPool(db.PoolConfig{
+			DSN:          appDSN,
+			MaxOpenConns: 2,
+		})
+		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
+		defer appPool.Close()
+
+		tenantConn := db.NewTenantPool(appPool)
+
+		tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
+
+		ctx, err = tenant.WithTenant(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
+
+		store := pipeline.NewPGStore(tenantConn, suPool)
+
+		now := time.Now().UTC()
+		job := &pipeline.Job{
+			JobID:     uuid.New().String(),
+			TenantID:  tenantID,
+			Status:    pipeline.JobStatusPending,
+			Config:    []byte(`{}`),
+			CreatedBy: "integration-test",
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
-		if err := store.UpdateJobStatus(ctx, j.JobID, pipeline.JobStatusCompleted, nil); err != nil {
-			t.Fatalf("UpdateJobStatus(completed) failed: %v", err)
+
+		Expect(store.CreateJob(ctx, job)).To(Succeed(), "CreateJob failed")
+
+		got, err := store.GetJob(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred(), "GetJob failed")
+		Expect(got.JobID).To(Equal(job.JobID), "JobID mismatch")
+		Expect(got.TenantID).To(Equal(job.TenantID), "TenantID mismatch")
+		Expect(got.Status).To(Equal(job.Status), "Status mismatch")
+	})
+
+	It("CompleteAnalysisStage upserts analysis_results and completes the stage", func() {
+		ctx := context.Background()
+
+		suDSN := os.Getenv("TEST_DATABASE_DSN")
+		if suDSN == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
 		}
-		completedIDs = append(completedIDs, j.JobID)
-	}
-	pending := newITJob(tenantID)
-	if err := store.CreateJob(ctx, pending); err != nil {
-		t.Fatalf("CreateJob(pending) failed: %v", err)
-	}
 
-	// Filter by completed: total 3.
-	jobs, total, err := store.ListJobs(ctx, tenantID, pipeline.JobFilter{Status: pipeline.JobStatusCompleted, Limit: 2, Offset: 0})
-	if err != nil {
-		t.Fatalf("ListJobs(page 1) failed: %v", err)
-	}
-	if total != 3 {
-		t.Errorf("ListJobs total: got %d, want 3", total)
-	}
-	if len(jobs) != 2 {
-		t.Errorf("ListJobs page 1 len: got %d, want 2 (limit)", len(jobs))
-	}
-	for _, j := range jobs {
-		if j.Status != pipeline.JobStatusCompleted {
-			t.Errorf("ListJobs returned status %q, want completed (filtered)", j.Status)
+		migrator, err := db.NewMigrator(suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
+		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
+		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
+
+		adminDB, err := sql.Open("pgx", suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
+		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
+		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+
+		suPool, err := db.NewPool(db.PoolConfig{
+			DSN:          suDSN,
+			MaxOpenConns: 5,
+			Extensions:   []string{"age", "vector"},
+		})
+		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
+		defer suPool.Close()
+
+		appDSN, err := appUserDSN(suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
+		appPool, err := db.NewPool(db.PoolConfig{
+			DSN:          appDSN,
+			MaxOpenConns: 2,
+		})
+		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
+		defer appPool.Close()
+
+		tenantConn := db.NewTenantPool(appPool)
+
+		tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
+
+		ctx, err = tenant.WithTenant(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
+
+		store := pipeline.NewPGStore(tenantConn, suPool)
+
+		now := time.Now().UTC()
+		job := &pipeline.Job{
+			JobID:     uuid.New().String(),
+			TenantID:  tenantID,
+			Status:    pipeline.JobStatusPending,
+			Config:    []byte(`{}`),
+			CreatedBy: "integration-test",
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
-	}
+		Expect(store.CreateJob(ctx, job)).To(Succeed(), "CreateJob failed")
 
-	// Second page returns the remaining completed job.
-	page2, _, err := store.ListJobs(ctx, tenantID, pipeline.JobFilter{Status: pipeline.JobStatusCompleted, Limit: 2, Offset: 2})
-	if err != nil {
-		t.Fatalf("ListJobs(page 2) failed: %v", err)
-	}
-	if len(page2) != 1 {
-		t.Errorf("ListJobs page 2 len: got %d, want 1", len(page2))
-	}
+		stageNames := []string{"requires"}
+		Expect(store.CreateStages(ctx, job.JobID, stageNames)).To(Succeed(), "CreateStages failed")
 
-	// The two pages together cover exactly the three completed jobs we created,
-	// with no overlap — proving pagination returns the right rows, not just the
-	// right counts.
-	returned := make(map[string]bool)
-	for _, j := range jobs {
-		returned[j.JobID] = true
-	}
-	for _, j := range page2 {
-		returned[j.JobID] = true
-	}
-	if len(returned) != 3 {
-		t.Errorf("ListJobs pages covered %d distinct jobs, want 3 (no overlap)", len(returned))
-	}
-	for _, id := range completedIDs {
-		if !returned[id] {
-			t.Errorf("ListJobs pages missing completed job %s", id)
+		// First write: upsert an initial result.
+		first := []byte(`[{"source_id":"AC-1","target_id":"AC-2","confidence":0.9}]`)
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "requires", first)).To(Succeed(), "CompleteAnalysisStage (first write) failed")
+
+		// Second write to the same (tenant, job, analyzer) key: must upsert, not duplicate.
+		second := []byte(`[{"source_id":"AC-1","target_id":"AC-3","confidence":0.7}]`)
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "requires", second)).To(Succeed(), "CompleteAnalysisStage (second write) failed")
+
+		// Verify the durably committed row directly. analysis_results has RLS
+		// (policy tenant_isolation gates on app.current_tenant), so a raw app_user
+		// read outside a tenant-scoped transaction sees nothing. Read as the
+		// superuser, which bypasses RLS, to assert the row physically committed
+		// with the expected content. The app-role RLS read path is separately
+		// exercised by store.GetStages below.
+		//
+		// Exactly one row survives, and it reflects the second write's content.
+		var count int
+		row := suPool.QueryRow(ctx,
+			"SELECT count(*) FROM analysis_results WHERE tenant_id = $1 AND job_id = $2 AND analyzer_name = $3",
+			tenantID, job.JobID, "requires")
+		Expect(row.Scan(&count)).To(Succeed(), "counting analysis_results rows failed")
+		Expect(count).To(Equal(1), "analysis_results row count (upsert should not duplicate)")
+
+		var data []byte
+		row = suPool.QueryRow(ctx,
+			"SELECT result_data FROM analysis_results WHERE tenant_id = $1 AND job_id = $2 AND analyzer_name = $3",
+			tenantID, job.JobID, "requires")
+		Expect(row.Scan(&data)).To(Succeed(), "reading result_data failed")
+
+		var gotResult, wantResult []map[string]any
+		Expect(json.Unmarshal(data, &gotResult)).To(Succeed(), "unmarshaling stored result_data failed")
+		Expect(json.Unmarshal(second, &wantResult)).To(Succeed(), "unmarshaling expected result_data failed")
+		Expect(gotResult).To(Equal(wantResult), "result_data should reflect the second write")
+
+		// The job_stages row must be completed.
+		stages, err := store.GetStages(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred(), "GetStages failed")
+		Expect(stages).To(HaveLen(1))
+		Expect(stages[0].Status).To(Equal(pipeline.StageStatusCompleted), "stage status")
+		Expect(stages[0].CompletedAt).NotTo(BeNil(), "stage CompletedAt")
+	})
+
+	It("GetCompletedAnalysisResults returns only completed analyzers, scoped per tenant", func() {
+		ctx := context.Background()
+
+		suDSN := os.Getenv("TEST_DATABASE_DSN")
+		if suDSN == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
 		}
-	}
 
-	// No filter: all four jobs for the tenant.
-	_, totalAll, err := store.ListJobs(ctx, tenantID, pipeline.JobFilter{})
-	if err != nil {
-		t.Fatalf("ListJobs(no filter) failed: %v", err)
-	}
-	if totalAll != 4 {
-		t.Errorf("ListJobs total (no filter): got %d, want 4", totalAll)
-	}
-}
+		migrator, err := db.NewMigrator(suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
+		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
+		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
+
+		adminDB, err := sql.Open("pgx", suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
+		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
+		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+
+		suPool, err := db.NewPool(db.PoolConfig{
+			DSN:          suDSN,
+			MaxOpenConns: 5,
+			Extensions:   []string{"age", "vector"},
+		})
+		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
+		defer suPool.Close()
+
+		appDSN, err := appUserDSN(suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
+		appPool, err := db.NewPool(db.PoolConfig{
+			DSN:          appDSN,
+			MaxOpenConns: 2,
+		})
+		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
+		defer appPool.Close()
+
+		tenantConn := db.NewTenantPool(appPool)
+
+		tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
+
+		ctx, err = tenant.WithTenant(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
+
+		store := pipeline.NewPGStore(tenantConn, suPool)
+
+		now := time.Now().UTC()
+		job := &pipeline.Job{
+			JobID:     uuid.New().String(),
+			TenantID:  tenantID,
+			Status:    pipeline.JobStatusPending,
+			Config:    []byte(`{}`),
+			CreatedBy: "integration-test",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		Expect(store.CreateJob(ctx, job)).To(Succeed(), "CreateJob failed")
+
+		analyzerNames := []string{"classify", "embedding", "requires"}
+		Expect(store.CreateStages(ctx, job.JobID, analyzerNames)).To(Succeed(), "CreateStages failed")
+
+		// Complete "classify" and "embedding" with distinct payloads; leave
+		// "requires" never completed.
+		classifyData := []byte(`{"a":1}`)
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "classify", classifyData)).To(Succeed(), "CompleteAnalysisStage(classify) failed")
+		embeddingData := []byte(`{"b":2}`)
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "embedding", embeddingData)).To(Succeed(), "CompleteAnalysisStage(embedding) failed")
+
+		// Superset query: includes the never-completed "requires" analyzer.
+		// Only the two completed analyzers should come back.
+		results, err := store.GetCompletedAnalysisResults(ctx, job.JobID, []string{"classify", "embedding", "requires"})
+		Expect(err).NotTo(HaveOccurred(), "GetCompletedAnalysisResults (superset) failed")
+		Expect(results).To(HaveLen(2), "want 2 entries (results=%+v)", results)
+		_, ok := results["requires"]
+		Expect(ok).To(BeFalse(), `"requires" present, want absent (never completed)`)
+
+		classifyResult, ok := results["classify"]
+		Expect(ok).To(BeTrue(), `"classify" missing from results`)
+		Expect(classifyResult.AnalyzerName).To(Equal("classify"))
+		// result_data is stored as JSONB, which normalizes whitespace on write
+		// (e.g. `{"a":1}` becomes `{"a": 1}`), so compare parsed values rather
+		// than raw bytes — mirrors the CompleteAnalysisStage spec's approach.
+		assertJSONEqual("classify", classifyResult.ResultData, classifyData)
+
+		embeddingResult, ok := results["embedding"]
+		Expect(ok).To(BeTrue(), `"embedding" missing from results`)
+		Expect(embeddingResult.AnalyzerName).To(Equal("embedding"))
+		assertJSONEqual("embedding", embeddingResult.ResultData, embeddingData)
+
+		// Subset query: only "classify" requested.
+		subsetResults, err := store.GetCompletedAnalysisResults(ctx, job.JobID, []string{"classify"})
+		Expect(err).NotTo(HaveOccurred(), "GetCompletedAnalysisResults (subset) failed")
+		Expect(subsetResults).To(HaveLen(1), "results=%+v", subsetResults)
+		_, ok = subsetResults["classify"]
+		Expect(ok).To(BeTrue(), `"classify" missing from results`)
+
+		// Tenant isolation: a second tenant's job and completed analyzer must
+		// never surface under the first tenant's context, even when the query
+		// deliberately targets the second tenant's job ID and analyzer name.
+		tenantID2 := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, suPool, tenantID2, "pipeline-it-2")).To(Succeed(), "failed to ensure second tenant")
+		ctx2, err := tenant.WithTenant(context.Background(), tenantID2)
+		Expect(err).NotTo(HaveOccurred(), "failed to set second tenant context")
+
+		job2 := &pipeline.Job{
+			JobID:     uuid.New().String(),
+			TenantID:  tenantID2,
+			Status:    pipeline.JobStatusPending,
+			Config:    []byte(`{}`),
+			CreatedBy: "integration-test",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		Expect(store.CreateJob(ctx2, job2)).To(Succeed(), "CreateJob (tenant 2) failed")
+		Expect(store.CreateStages(ctx2, job2.JobID, []string{"classify"})).To(Succeed(), "CreateStages (tenant 2) failed")
+		tenant2Data := []byte(`{"c":3}`)
+		Expect(store.CompleteAnalysisStage(ctx2, job2.JobID, "classify", tenant2Data)).To(Succeed(), "CompleteAnalysisStage (tenant 2) failed")
+
+		// Query under tenant 1's context, but with tenant 2's job ID and
+		// analyzer name. Tenant isolation must prevent any row from surfacing.
+		isolationResults, err := store.GetCompletedAnalysisResults(ctx, job2.JobID, []string{"classify"})
+		Expect(err).NotTo(HaveOccurred(), "GetCompletedAnalysisResults (cross-tenant) failed")
+		Expect(isolationResults).To(BeEmpty(), "leaked tenant 2 data: %+v", isolationResults)
+	})
+
+	It("WriteVoteSummaries writes rows once and leaves them unchanged on retry", func() {
+		ctx := context.Background()
+
+		suDSN := os.Getenv("TEST_DATABASE_DSN")
+		if suDSN == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		migrator, err := db.NewMigrator(suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
+		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
+		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
+
+		adminDB, err := sql.Open("pgx", suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
+		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
+		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+
+		suPool, err := db.NewPool(db.PoolConfig{
+			DSN:          suDSN,
+			MaxOpenConns: 5,
+			Extensions:   []string{"age", "vector"},
+		})
+		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
+		defer suPool.Close()
+
+		appDSN, err := appUserDSN(suDSN)
+		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
+		appPool, err := db.NewPool(db.PoolConfig{
+			DSN:          appDSN,
+			MaxOpenConns: 2,
+		})
+		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
+		defer appPool.Close()
+
+		tenantConn := db.NewTenantPool(appPool)
+
+		tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
+
+		ctx, err = tenant.WithTenant(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
+
+		store := pipeline.NewPGStore(tenantConn, suPool)
+
+		// vote_summaries.job_id has a foreign key to jobs(job_id), so a job must
+		// exist before writing vote_summaries rows.
+		now := time.Now().UTC()
+		job := &pipeline.Job{
+			JobID:     uuid.New().String(),
+			TenantID:  tenantID,
+			Status:    pipeline.JobStatusPending,
+			Config:    []byte(`{}`),
+			CreatedBy: "integration-test",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		Expect(store.CreateJob(ctx, job)).To(Succeed(), "CreateJob failed")
+
+		pairs := []pipeline.VoteSummaryPair{
+			{SourceID: "AC-1", TargetID: "AC-2", Consensus: "requires", Confidence: 0.9},
+			{SourceID: "AC-3", TargetID: "AC-4", Consensus: "supports", Confidence: 0.8},
+		}
+
+		// First write: both rows must land with viability=0.
+		Expect(store.WriteVoteSummaries(ctx, tenantID, job.JobID, pairs)).To(Succeed(), "WriteVoteSummaries (first write) failed")
+
+		// vote_summaries has RLS (policy tenant_isolation gates on
+		// app.current_tenant); read as the superuser, which bypasses RLS, to
+		// assert the rows physically committed with the expected content —
+		// mirrors the CompleteAnalysisStage spec's readback approach.
+		type row struct {
+			sourceID, targetID, consensus string
+			confidence, viability         float64
+		}
+		readRows := func() []row {
+			rows, err := suPool.Query(ctx,
+				"SELECT source_id, target_id, consensus, confidence, viability FROM vote_summaries WHERE tenant_id = $1 AND job_id = $2 ORDER BY source_id",
+				tenantID, job.JobID)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "querying vote_summaries failed")
+			defer rows.Close()
+
+			var got []row
+			for rows.Next() {
+				var r row
+				ExpectWithOffset(1, rows.Scan(&r.sourceID, &r.targetID, &r.consensus, &r.confidence, &r.viability)).To(Succeed(), "scanning vote_summaries row failed")
+				got = append(got, r)
+			}
+			ExpectWithOffset(1, rows.Err()).NotTo(HaveOccurred(), "iterating vote_summaries rows failed")
+			return got
+		}
+
+		got := readRows()
+		Expect(got).To(HaveLen(2), "vote_summaries row count after first write (rows=%+v)", got)
+		want := []row{
+			{sourceID: "AC-1", targetID: "AC-2", consensus: "requires", confidence: 0.9, viability: 0},
+			{sourceID: "AC-3", targetID: "AC-4", consensus: "supports", confidence: 0.8, viability: 0},
+		}
+		Expect(got).To(Equal(want), "vote_summaries rows after first write")
+
+		// Second write with the same pairs: ON CONFLICT DO NOTHING must leave the
+		// existing rows untouched (no error, no duplicates) — this is what makes
+		// a resumed job's re-run of the same requires/relationship pass safe
+		// against vote_summaries' immutability-on-UPDATE trigger.
+		Expect(store.WriteVoteSummaries(ctx, tenantID, job.JobID, pairs)).To(Succeed(), "WriteVoteSummaries (second write, same pairs) failed")
+
+		gotAfterRetry := readRows()
+		Expect(gotAfterRetry).To(HaveLen(2), "vote_summaries row count after second write (no duplicates; rows=%+v)", gotAfterRetry)
+		Expect(gotAfterRetry).To(Equal(want), "vote_summaries rows after second write must be unchanged")
+	})
+
+	It("ResetStagesFrom resets the failed stage and all later stages, leaving earlier stages untouched", func() {
+		store, _, tenantID, ctx := setupPGStore()
+
+		job := newITJob(tenantID)
+		Expect(store.CreateJob(ctx, job)).To(Succeed(), "CreateJob failed")
+		stageNames := []string{"classify", "requires", "synthesis", "graph"}
+		Expect(store.CreateStages(ctx, job.JobID, stageNames)).To(Succeed(), "CreateStages failed")
+
+		// classify completes; requires fails.
+		Expect(store.UpdateStageStatus(ctx, job.JobID, "classify", pipeline.StageStatusCompleted)).To(Succeed(), "UpdateStageStatus(classify, completed) failed")
+		Expect(store.UpdateStageError(ctx, job.JobID, "requires", errors.New("boom"))).To(Succeed(), "UpdateStageError failed")
+
+		stages, err := store.GetStages(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred(), "GetStages after UpdateStageError failed")
+		byName := stagesByName(stages)
+		Expect(byName["requires"].Status).To(Equal(pipeline.StageStatusFailed), "requires status")
+		Expect(byName["requires"].ErrorMessage).To(Equal("boom"), "requires error_message")
+
+		// Reset from the failed stage onward.
+		Expect(store.ResetStagesFrom(ctx, job.JobID, "requires", stageNames)).To(Succeed(), "ResetStagesFrom failed")
+
+		stages, err = store.GetStages(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred(), "GetStages after ResetStagesFrom failed")
+		byName = stagesByName(stages)
+
+		// Earlier stage untouched.
+		Expect(byName["classify"].Status).To(Equal(pipeline.StageStatusCompleted), "classify status after reset (untouched)")
+		Expect(byName["classify"].RetryCount).To(Equal(0), "classify retry_count after reset (untouched)")
+		// fromStage and all later stages reset to pending with incremented retry_count.
+		for _, name := range []string{"requires", "synthesis", "graph"} {
+			Expect(byName[name].Status).To(Equal(pipeline.StageStatusPending), "%s status after reset", name)
+			Expect(byName[name].RetryCount).To(Equal(1), "%s retry_count after reset", name)
+			Expect(byName[name].ErrorMessage).To(BeEmpty(), "%s error_message after reset", name)
+		}
+	})
+
+	It("GetResumableJobs returns running jobs but excludes completed ones", func() {
+		store, _, tenantID, ctx := setupPGStore()
+
+		// One running job (should be returned) and one completed job (should not).
+		running := newITJob(tenantID)
+		running.Status = pipeline.JobStatusPending
+		Expect(store.CreateJob(ctx, running)).To(Succeed(), "CreateJob(running) failed")
+		Expect(store.UpdateJobStatus(ctx, running.JobID, pipeline.JobStatusRunning, nil)).To(Succeed(), "UpdateJobStatus(running) failed")
+
+		completed := newITJob(tenantID)
+		Expect(store.CreateJob(ctx, completed)).To(Succeed(), "CreateJob(completed) failed")
+		Expect(store.UpdateJobStatus(ctx, completed.JobID, pipeline.JobStatusCompleted, nil)).To(Succeed(), "UpdateJobStatus(completed) failed")
+
+		jobs, err := store.GetResumableJobs(ctx)
+		Expect(err).NotTo(HaveOccurred(), "GetResumableJobs failed")
+
+		found := map[string]bool{}
+		for _, j := range jobs {
+			found[j.JobID] = true
+			Expect(j.Status).To(Equal(pipeline.JobStatusRunning), "GetResumableJobs returned job %s", j.JobID)
+		}
+		Expect(found[running.JobID]).To(BeTrue(), "GetResumableJobs missing the running job %s", running.JobID)
+		Expect(found[completed.JobID]).To(BeFalse(), "GetResumableJobs returned the completed job %s, want excluded", completed.JobID)
+	})
+
+	It("ListJobs filters by status and paginates without overlap", func() {
+		store, _, tenantID, ctx := setupPGStore()
+
+		// Three completed jobs and one pending job for this tenant.
+		var completedIDs []string
+		for i := 0; i < 3; i++ {
+			j := newITJob(tenantID)
+			Expect(store.CreateJob(ctx, j)).To(Succeed(), "CreateJob failed")
+			Expect(store.UpdateJobStatus(ctx, j.JobID, pipeline.JobStatusCompleted, nil)).To(Succeed(), "UpdateJobStatus(completed) failed")
+			completedIDs = append(completedIDs, j.JobID)
+		}
+		pending := newITJob(tenantID)
+		Expect(store.CreateJob(ctx, pending)).To(Succeed(), "CreateJob(pending) failed")
+
+		// Filter by completed: total 3.
+		jobs, total, err := store.ListJobs(ctx, tenantID, pipeline.JobFilter{Status: pipeline.JobStatusCompleted, Limit: 2, Offset: 0})
+		Expect(err).NotTo(HaveOccurred(), "ListJobs(page 1) failed")
+		Expect(total).To(Equal(int64(3)), "ListJobs total")
+		Expect(jobs).To(HaveLen(2), "ListJobs page 1 len (limit)")
+		for _, j := range jobs {
+			Expect(j.Status).To(Equal(pipeline.JobStatusCompleted), "ListJobs returned status (filtered)")
+		}
+
+		// Second page returns the remaining completed job.
+		page2, _, err := store.ListJobs(ctx, tenantID, pipeline.JobFilter{Status: pipeline.JobStatusCompleted, Limit: 2, Offset: 2})
+		Expect(err).NotTo(HaveOccurred(), "ListJobs(page 2) failed")
+		Expect(page2).To(HaveLen(1), "ListJobs page 2 len")
+
+		// The two pages together cover exactly the three completed jobs we created,
+		// with no overlap — proving pagination returns the right rows, not just the
+		// right counts.
+		returned := make(map[string]bool)
+		for _, j := range jobs {
+			returned[j.JobID] = true
+		}
+		for _, j := range page2 {
+			returned[j.JobID] = true
+		}
+		Expect(returned).To(HaveLen(3), "ListJobs pages covered distinct jobs (no overlap)")
+		for _, id := range completedIDs {
+			Expect(returned[id]).To(BeTrue(), "ListJobs pages missing completed job %s", id)
+		}
+
+		// No filter: all four jobs for the tenant.
+		_, totalAll, err := store.ListJobs(ctx, tenantID, pipeline.JobFilter{})
+		Expect(err).NotTo(HaveOccurred(), "ListJobs(no filter) failed")
+		Expect(totalAll).To(Equal(int64(4)), "ListJobs total (no filter)")
+	})
+})

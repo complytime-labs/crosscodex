@@ -5,10 +5,11 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"testing"
 	"time"
 
 	connect "connectrpc.com/connect"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
@@ -103,59 +104,45 @@ func (m *memStorage) Close() error { return nil }
 
 var _ storage.Provider = (*memStorage)(nil)
 
-func TestParseCatalogGraphWritesSetValidFrom(t *testing.T) {
-	const oscalDoc = `{"catalog":{"uuid":"11111111-1111-1111-1111-111111111111",` +
-		`"metadata":{"title":"t","last-modified":"2026-08-22T00:00:00Z","version":"1","oscal-version":"1.1.2"},` +
-		`"groups":[{"id":"ac","class":"family","title":"Access Control","controls":[` +
-		`{"id":"ac-2","title":"Account Management","parts":[{"id":"ac-2_smt","name":"statement","prose":"p:",` +
-		`"parts":[{"id":"ac-2_smt.a","name":"item","prose":"x"},{"id":"ac-2_smt.b","name":"item","prose":"x"}]}]}` +
-		`]}]}}`
+var _ = Describe("ParseCatalog graph writes", func() {
+	It("sets ValidFrom on control nodes and PARENT_OF edges", func() {
+		const oscalDoc = `{"catalog":{"uuid":"11111111-1111-1111-1111-111111111111",` +
+			`"metadata":{"title":"t","last-modified":"2026-08-22T00:00:00Z","version":"1","oscal-version":"1.1.2"},` +
+			`"groups":[{"id":"ac","class":"family","title":"Access Control","controls":[` +
+			`{"id":"ac-2","title":"Account Management","parts":[{"id":"ac-2_smt","name":"statement","prose":"p:",` +
+			`"parts":[{"id":"ac-2_smt.a","name":"item","prose":"x"},{"id":"ac-2_smt.b","name":"item","prose":"x"}]}]}` +
+			`]}]}}`
 
-	graph := &captureGraph{}
-	st := &memStorage{}
-	// Pre-store the document so ParseCatalog's storage.Get returns it.
-	if err := st.Put(context.Background(), "doc", bytes.NewReader([]byte(oscalDoc))); err != nil {
-		t.Fatal(err)
-	}
-	svc := NewService(
-		WithParser(oscal.NewParser("")),
-		WithStore(&memStore{}),
-		WithStorage(st),
-		WithGraphDB(graph),
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
-	)
+		graph := &captureGraph{}
+		st := &memStorage{}
+		// Pre-store the document so ParseCatalog's storage.Get returns it.
+		Expect(st.Put(context.Background(), "doc", bytes.NewReader([]byte(oscalDoc)))).To(Succeed())
+		svc := NewService(
+			WithParser(oscal.NewParser("")),
+			WithStore(&memStore{}),
+			WithStorage(st),
+			WithGraphDB(graph),
+			WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+		)
 
-	ctx, err := tenant.WithTenant(context.Background(), "e2e")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = svc.ParseCatalog(ctx, connect.NewRequest(&pb.ParseCatalogRequest{
-		TenantContext: &pb.TenantContext{TenantId: "e2e"},
-		DocumentId:    "doc",
-		Format:        pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-		CatalogName:   "e2e",
-	}))
-	if err != nil {
-		t.Fatalf("ParseCatalog: %v", err)
-	}
+		ctx, err := tenant.WithTenant(context.Background(), "e2e")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = svc.ParseCatalog(ctx, connect.NewRequest(&pb.ParseCatalogRequest{
+			TenantContext: &pb.TenantContext{TenantId: "e2e"},
+			DocumentId:    "doc",
+			Format:        pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+			CatalogName:   "e2e",
+		}))
+		Expect(err).NotTo(HaveOccurred())
 
-	if len(graph.nodes) != 3 {
-		t.Fatalf("Control nodes: got %d, want 3", len(graph.nodes))
-	}
-	for _, n := range graph.nodes {
-		if n.ValidFrom.IsZero() {
-			t.Errorf("node %s has zero ValidFrom", n.ID)
+		Expect(graph.nodes).To(HaveLen(3), "Control nodes")
+		for _, n := range graph.nodes {
+			Expect(n.ValidFrom.IsZero()).To(BeFalse(), "node %s has zero ValidFrom", n.ID)
 		}
-	}
-	if len(graph.edges) != 2 {
-		t.Fatalf("PARENT_OF edges: got %d, want 2", len(graph.edges))
-	}
-	for _, e := range graph.edges {
-		if e.Label != "PARENT_OF" {
-			t.Errorf("edge %s label: got %q, want PARENT_OF", e.ID, e.Label)
+		Expect(graph.edges).To(HaveLen(2), "PARENT_OF edges")
+		for _, e := range graph.edges {
+			Expect(e.Label).To(Equal("PARENT_OF"), "edge %s label", e.ID)
+			Expect(e.ValidFrom.IsZero()).To(BeFalse(), "edge %s has zero ValidFrom", e.ID)
 		}
-		if e.ValidFrom.IsZero() {
-			t.Errorf("edge %s has zero ValidFrom", e.ID)
-		}
-	}
-}
+	})
+})

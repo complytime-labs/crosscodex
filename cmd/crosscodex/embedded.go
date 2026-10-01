@@ -27,10 +27,12 @@ import (
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	pkigen "github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -147,9 +149,11 @@ func embeddedAuthRegistry() (*authn.Registry, error) {
 		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
 	}
 
+	tracer, meter := telemetry.Instrumentation("pkg/authn")
 	return authn.NewRegistry(
 		noopAuditEmitter{},
 		[]authn.Authenticator{x509Auth},
+		authn.WithTelemetry(tracer, meter),
 	)
 }
 
@@ -466,7 +470,8 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		cfg.Database.SSLMode,
 		cfg.Database.Extensions,
 	)
-	pool, err := dbpkg.NewPool(poolCfg)
+	dbTracer, dbMeter := telemetry.Instrumentation("pkg/db")
+	pool, err := dbpkg.NewPool(poolCfg, dbpkg.WithTelemetry(dbTracer, dbMeter))
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to database: %w", err)
 	}
@@ -488,7 +493,8 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 
 	// Create local storage
 	dataDir := embeddedDataDir()
-	localStorage, err := storage.NewLocal(dataDir, "embedded")
+	storageTracer, storageMeter := telemetry.Instrumentation("pkg/storage")
+	localStorage, err := storage.NewLocal(dataDir, "embedded", storage.WithLocalTelemetry(storageTracer, storageMeter))
 	if err != nil {
 		resources.close()
 		return nil, nil, fmt.Errorf("create local storage: %w", err)
@@ -497,12 +503,16 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 
 	// Create catalog service (satisfies gateway.CatalogBackend)
 	catalogStore := catalog.NewPGStore(pool)
-	parser := oscal.NewParser("")
+	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
+	parser := oscal.NewParser("", oscal.WithParserTracer(oscalTracer))
+	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
 	catalogSvc := catalog.NewService(
 		catalog.WithParser(parser),
 		catalog.WithStore(catalogStore),
 		catalog.WithStorage(localStorage),
 		catalog.WithLogger(logger),
+		catalog.WithTracer(catalogTracer),
+		catalog.WithMeter(catalogMeter),
 	)
 
 	// Create local ingestion backend (stores raw content to local storage)
@@ -510,7 +520,8 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 
 	// Create local pipeline backend (records jobs, no execution)
 	tenantConn := dbpkg.NewTenantPool(pool)
-	pipelineStore := pipeline.NewPGStore(tenantConn, pool)
+	pipelineStore := pipeline.NewPGStore(tenantConn, pool,
+		pipeline.WithStoreTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()))
 	localPipeline := &localPipelineBackend{store: pipelineStore}
 
 	// Create auth registry
@@ -521,6 +532,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 	}
 
 	// Build gateway service with real backends
+	gatewayTracer, gatewayMeter := telemetry.Instrumentation("internal/gateway")
 	svc := gateway.NewService(
 		gateway.WithAuthn(registry),
 		gateway.WithCatalogBackend(catalogSvc),
@@ -529,6 +541,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(pool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(logger),
+		gateway.WithTelemetry(gatewayTracer, gatewayMeter),
 	)
 
 	return svc, resources, nil
