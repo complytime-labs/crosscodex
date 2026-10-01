@@ -1,0 +1,23 @@
+pkg/graphdb/memdriver/client.go
+  s_bb68e1a9cbe605::t_fdb39a7ed4e714 1-491
+pkg/graphdb/memdriver/doc.go
+  s_bb68e1a9cbe605::t_6eeefb53385f4c 1-15
+pkg/graphdb/memdriver/memdriver_bdd_test.go
+  s_bb68e1a9cbe605::t_eb3d75e04c90e1 1-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35cea09b26e7b2aa6ed2d48cd2573022824362fd",
+  "prompts": {},
+  "sessions": {
+    "s_bb68e1a9cbe605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6ae96d59-8b45-4a21-aa52-0ce94afb9608",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
