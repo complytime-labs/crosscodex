@@ -1,0 +1,26 @@
+cmd/crosscodexd/telemetry_wiring_bdd_test.go
+  s_4039b0f4645883::t_28877ea639d54d 53-55
+  s_4039b0f4645883::t_0f5790d6f6d033 1-52,56-137
+cmd/crosscodexd/bootstrap.go
+  s_4039b0f4645883::t_14a74eb2d4de1b 33,235-236,264-266,271-272,274,281-282,286,295,402,405,459-460,469,471-473,528,536-538,543,546,551-555,557,570,572,576,588,641,646
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_4039b0f4645883::t_9ae1fab640e85a 16,20,23,38-47,184-214
+cmd/crosscodexd/resources.go
+  s_4039b0f4645883::t_61685e7a40c434 19,114,117,134-135,155-156,165-166,184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99a57f2d04698f091c283a2d1ae87ead72f0ee30",
+  "prompts": {},
+  "sessions": {
+    "s_4039b0f4645883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce3b1ef7-4632-45ab-bea7-82b94f6d71b0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
