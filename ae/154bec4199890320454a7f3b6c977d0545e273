@@ -1,0 +1,24 @@
+internal/analyzer/relationship/materializer.go
+  s_18343ae1586a45::t_510b5e63183a60 6,132-133,135,150-152,154,159
+  s_18343ae1586a45::t_833192a0f0c994 153
+internal/analyzer/relationship/materializer_bdd_test.go
+  s_18343ae1586a45::t_9d6f70e8272c44 18,194-225
+  s_18343ae1586a45::t_a0f325d015d7ed 226
+  s_18343ae1586a45::t_fb3430f0375015 227-228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae154bec4199890320454a7f3b6c977d0545e273",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
