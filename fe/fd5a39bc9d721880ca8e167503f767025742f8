@@ -1,0 +1,86 @@
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_bb68e1a9cbe605::t_ac1d94f512fd7d 177
+  s_bb68e1a9cbe605::t_caf750cffc2ae7 622,626-635
+  s_bb68e1a9cbe605::t_69fe50f119fdfa 882,884,888,893-898,902
+  s_bb68e1a9cbe605::t_82155aa915d841 7
+  s_bb68e1a9cbe605::t_776938ef4196a1 202
+  s_bb68e1a9cbe605::t_c86000cb50403e 881,883,885-887,889-892,899-901,903
+  s_bb68e1a9cbe605::t_3ff809e90795df 805-828
+  s_bb68e1a9cbe605::t_6d2f0f83871eb4 651
+  s_bb68e1a9cbe605::t_2b29c25414b08b 904-905
+pkg/graphdb/agedriver/edges.go
+  s_bb68e1a9cbe605::t_0631c4a03bfea4 47
+  s_bb68e1a9cbe605::t_9113b5cdb50f11 80
+  s_bb68e1a9cbe605::t_3ce7b25223caf1 19
+  s_bb68e1a9cbe605::t_683066608fc25b 48-50
+  s_bb68e1a9cbe605::t_6ba0ecdc092611 98
+  s_bb68e1a9cbe605::t_3ee23048b88c21 55-58
+pkg/graphdb/agedriver/graphdb_property_test.go
+  s_bb68e1a9cbe605::t_06123bde644c6e 99
+  s_bb68e1a9cbe605::t_87e636522267ad 58
+pkg/graphdb/agedriver/checks.go
+  s_bb68e1a9cbe605::t_4bf5e503dc8719 54
+  s_bb68e1a9cbe605::t_2e2050b7b3dae8 1-13,15-20,22-36,38-39,41-53,55-62
+  s_bb68e1a9cbe605::t_459ff6f993f945 14,21
+  s_bb68e1a9cbe605::t_de781ec6d164c0 37,40
+pkg/graphdb/agedriver/client.go
+  s_bb68e1a9cbe605::t_5ea0823dbb8540 202
+  s_bb68e1a9cbe605::t_3494d6149a4cff 723-726
+  s_bb68e1a9cbe605::t_08191095c7771f 350
+  s_bb68e1a9cbe605::t_9322c7e1481983 181
+  s_bb68e1a9cbe605::t_deb3ac3028e0dc 244-246
+  s_bb68e1a9cbe605::t_58a337c0a2a251 855
+  s_bb68e1a9cbe605::t_a3aa48a52208d1 711
+  s_bb68e1a9cbe605::t_e7117ec7256af2 218-219
+  s_bb68e1a9cbe605::t_24f7fad0cd04c3 536,543
+  s_bb68e1a9cbe605::t_7df9d94fb0d22e 818
+  s_bb68e1a9cbe605::t_f10c9da24cc93c 774
+  s_bb68e1a9cbe605::t_04c617cc35a4e5 488
+  s_bb68e1a9cbe605::t_61acf46a69aac3 376,405
+  s_bb68e1a9cbe605::t_07e47c661c70eb 882,891
+  s_bb68e1a9cbe605::t_46417786e4d2ad 602,609
+  s_bb68e1a9cbe605::t_c31ed76636f1fc 262
+  s_bb68e1a9cbe605::t_01a82a47521c6b 692
+  s_bb68e1a9cbe605::t_71ef30f3bf94f4 750-752
+  s_bb68e1a9cbe605::t_9be57414d84bb0 788
+  s_bb68e1a9cbe605::t_7e8a2f00170f4a 243
+  s_bb68e1a9cbe605::t_e494f459e06ba2 468
+  s_bb68e1a9cbe605::t_77b94500a91bf8 693-695
+pkg/graphdb/agedriver/export_test.go
+  s_bb68e1a9cbe605::t_5ea17e84874986 17
+  s_bb68e1a9cbe605::t_f45c0e3bbeb4ac 18
+pkg/graphdb/agedriver/cypher.go
+  s_bb68e1a9cbe605::t_fc7f5c1afad956 5
+  s_bb68e1a9cbe605::t_e7fcbcd8550f41 118-121,124-129,131
+  s_bb68e1a9cbe605::t_fbcb40800e21cf 32,34
+  s_bb68e1a9cbe605::t_439c18108d6f42 52,54
+  s_bb68e1a9cbe605::t_a33bf5be78b09a 96-112,134
+  s_bb68e1a9cbe605::t_410e7215638370 113-117,122-123,130,132-133
+docs/dev/design-principles.md
+  s_bb68e1a9cbe605::t_d87abd3b136e0b 36-43
+  s_bb68e1a9cbe605::t_a4faa4150da768 44-51
+pkg/graphdb/agedriver/graphdb_fuzz_test.go
+  s_bb68e1a9cbe605::t_61ffa9d0f11953 4
+  s_bb68e1a9cbe605::t_aafa828f52e631 101,106,111-124,136
+  s_bb68e1a9cbe605::t_574db6bd80929c 102-105,107-110,125-135
+  s_bb68e1a9cbe605::t_4fb2ea8c802f8a 137-138
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_bb68e1a9cbe605::t_781e6400048f0f 750-777,779-780
+  s_bb68e1a9cbe605::t_08652ff08252a6 778
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fefd5a39bc9d721880ca8e167503f767025742f8",
+  "prompts": {},
+  "sessions": {
+    "s_bb68e1a9cbe605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6ae96d59-8b45-4a21-aa52-0ce94afb9608",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
