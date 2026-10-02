@@ -1,0 +1,42 @@
+pkg/graphdb/memdriver/client.go
+  s_bb68e1a9cbe605::t_3b2c9eb27596f0 293-299
+  s_bb68e1a9cbe605::t_9ac41e3e196255 58
+  s_bb68e1a9cbe605::t_fdb39a7ed4e714 1-57,59-292,300-496
+internal/analyzer/artifacts/materializer_bdd_test.go
+  s_bb68e1a9cbe605::t_e05844b29f6fac 9,17
+  s_bb68e1a9cbe605::t_980475afc84832 46-47,49-50,56-70,72-73,89-90,101-102,104-107,112-120,124,126-128,130,132-134,136-137,139,141,143-154
+pkg/graphdb/memdriver/export_test.go
+  s_bb68e1a9cbe605::t_2816ab29731b90 1-3
+pkg/graphdb/memdriver/doc.go
+  s_bb68e1a9cbe605::t_6eeefb53385f4c 1-15
+pkg/graphdb/memdriver/memdriver_property_test.go
+  s_bb68e1a9cbe605::t_8ee271df87ff1a 1-151
+AGENTS.md
+  s_bb68e1a9cbe605::t_806e6241c31173 36-37
+pkg/graphdb/memdriver/props.go
+  s_bb68e1a9cbe605::t_630fee65adfaee 24-26
+  s_bb68e1a9cbe605::t_f090e535e110a4 1-23,27-162
+pkg/graphdb/memdriver/memdriver_fuzz_test.go
+  s_bb68e1a9cbe605::t_60b5459e854e6a 1-60
+pkg/graphdb/memdriver/memdriver_bdd_test.go
+  s_bb68e1a9cbe605::t_c1991ded5c167d 94-118
+  s_bb68e1a9cbe605::t_eb3d75e04c90e1 1-93,119-170
+pkg/graphdb/doc.go
+  s_bb68e1a9cbe605::t_3dd5de63a8f7c7 5-6,8,10-11,13-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99401cbc1d4d8650b59f465f1913a70e412c5b83",
+  "prompts": {},
+  "sessions": {
+    "s_bb68e1a9cbe605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6ae96d59-8b45-4a21-aa52-0ce94afb9608",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
