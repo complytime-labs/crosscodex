@@ -1,0 +1,50 @@
+internal/graph/service.go
+  s_18343ae1586a45::t_218a07f0def666 50-52
+  s_18343ae1586a45::t_39186cb6ce3699 12,32-35,53-55
+pkg/config/validate.go
+  s_18343ae1586a45::t_554a5de77a44fe 63-65
+pkg/config/types.go
+  s_18343ae1586a45::t_554a5de77a44fe 29,693-706,709-718,721
+  s_18343ae1586a45::t_f94d800585bf41 707-708
+  s_18343ae1586a45::t_c6bb41f25d0bab 719-720
+  s_18343ae1586a45::t_341a898bf8ea73 722
+internal/graph/write_bdd_test.go
+  s_18343ae1586a45::t_6ff080d6c18b20 276-330
+  s_18343ae1586a45::t_2ab219a7fe760f 15
+pkg/config/config_property_test.go
+  s_18343ae1586a45::t_87c4a4ae0b57ee 359
+  s_18343ae1586a45::t_f683d2c9a2ad62 326,399
+pkg/config/defaults.go
+  s_18343ae1586a45::t_554a5de77a44fe 160-161
+pkg/config/config_prompt_bdd_test.go
+  s_18343ae1586a45::t_87c4a4ae0b57ee 42
+cmd/crosscodexd/bootstrap.go
+  s_18343ae1586a45::t_218a07f0def666 473-474
+internal/graph/options.go
+  s_18343ae1586a45::t_39186cb6ce3699 29-38
+README.md
+  s_18343ae1586a45::t_e15ac76558fe1f 264-266
+pkg/config/graph_bdd_test.go
+  s_18343ae1586a45::t_7fd1b60b2e5504 1-47
+internal/graph/write.go
+  s_18343ae1586a45::t_39186cb6ce3699 95-100
+pkg/config/config_bdd_test.go
+  s_18343ae1586a45::t_87c4a4ae0b57ee 1336,2965
+  s_18343ae1586a45::t_f683d2c9a2ad62 1366,1392,1779,1877,2005,2229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b9b80da2129e90a71bb6666ca77f5c10a36849e",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
