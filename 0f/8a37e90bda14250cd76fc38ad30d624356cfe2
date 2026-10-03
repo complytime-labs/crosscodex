@@ -1,0 +1,21 @@
+internal/catalog/graph_write_bdd_test.go
+  s_c3d52e474bc30e::t_45edd73a3ec1e1 6-7,10,25-27,30-32,36-38,46-50
+  s_c3d52e474bc30e::t_cd72b5fea3a134 229-257
+  s_c3d52e474bc30e::t_11cd3d256b5937 51-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f8a37e90bda14250cd76fc38ad30d624356cfe2",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
