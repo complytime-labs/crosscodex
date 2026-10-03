@@ -1,0 +1,22 @@
+pkg/config/tenants_bdd_test.go
+  s_c3d52e474bc30e::t_6f850f00babf57 1-49
+pkg/config/validate.go
+  s_c3d52e474bc30e::t_ee002d72cdd7e4 66-68,391-401
+  s_c3d52e474bc30e::t_bf66d707ce9b13 402-404
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e983422e75dae29fe45b3a773ca3d7a5daea778",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
