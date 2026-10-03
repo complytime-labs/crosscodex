@@ -1,0 +1,21 @@
+pkg/graphdb/agedriver/cypher.go
+  s_18343ae1586a45::t_5e627d3e40945f 5,7,82-83,98-99
+pkg/graphdb/agedriver/graphdb_property_test.go
+  s_18343ae1586a45::t_5e627d3e40945f 4,65-106,152-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "877866bcce727d9c1e7c355e574aa90f24490b8e",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
