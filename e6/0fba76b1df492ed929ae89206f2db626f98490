@@ -1,0 +1,71 @@
+pkg/natsbus/natsbus_property_test.go
+  s_18343ae1586a45::t_368427aa0bef48 17,19
+internal/testspecs/graphdb_contract.go
+  s_18343ae1586a45::t_1e95de755841ac 7,158-185,324-334
+  s_18343ae1586a45::t_795180b9c885ec 335-336
+internal/testspecs/fixtures.go
+  s_18343ae1586a45::t_e0ac3c45517ddb 49
+  s_18343ae1586a45::t_368427aa0bef48 31
+internal/testspecs/matchers.go
+  s_18343ae1586a45::t_368427aa0bef48 35
+pkg/graphdb/identifier.go
+  s_18343ae1586a45::t_a36dc30e439c33 7-8,56-70
+  s_18343ae1586a45::t_778c130e501a13 71-72
+pkg/graphdb/graphdb_property_test.go
+  s_18343ae1586a45::t_dd24c91914da2b 12,100-113,115-117
+  s_18343ae1586a45::t_45757b8f674ffc 114
+pkg/graphdb/graphdb_fuzz_test.go
+  s_18343ae1586a45::t_dd24c91914da2b 10,71-105
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_18343ae1586a45::t_5d609dae3181d2 52
+pkg/graphdb/agedriver/graphdb_property_test.go
+  s_18343ae1586a45::t_368427aa0bef48 65,67,73-74
+pkg/graphdb/agedriver/client.go
+  s_18343ae1586a45::t_d656b329883d3e 85-86,107-108
+internal/testspecs/testspecs_bdd_test.go
+  s_18343ae1586a45::t_368427aa0bef48 43,46,55,58
+pkg/tenant/tenant_bdd_test.go
+  s_18343ae1586a45::t_4a2087da9d6e8b 200-201,232-243
+  s_18343ae1586a45::t_45757b8f674ffc 204
+internal/worker/handler.go
+  s_18343ae1586a45::t_368427aa0bef48 48,55
+pkg/tenant/tenant_property_test.go
+  s_18343ae1586a45::t_4a2087da9d6e8b 17,41,43,54
+pkg/tenant/tenant_fuzz_test.go
+  s_18343ae1586a45::t_4a2087da9d6e8b 4,21-23,26-33
+pkg/tenant/validate.go
+  s_18343ae1586a45::t_3663e572a88514 12-18,28
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_18343ae1586a45::t_aa89439c72a5aa 819
+  s_18343ae1586a45::t_f13f15e07f3134 817-818,820-823,832-833
+pkg/graphdb/interface.go
+  s_18343ae1586a45::t_ed5deca9774899 16-21
+pkg/graphdb/memdriver/client.go
+  s_18343ae1586a45::t_d656b329883d3e 53-54,137-138
+pkg/graphdb/graphdb_bdd_test.go
+  s_18343ae1586a45::t_510b114cdde96d 4,12,149-173
+pkg/graphdb/agedriver/cypher.go
+  s_18343ae1586a45::t_f13f15e07f3134 143-147,154-155
+internal/testspecs/doc.go
+  s_18343ae1586a45::t_368427aa0bef48 66
+docs/dev/design-principles.md
+  s_18343ae1586a45::t_064bd752b73945 44
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_18343ae1586a45::t_5d609dae3181d2 39,181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e60fba76b1df492ed929ae89206f2db626f98490",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
