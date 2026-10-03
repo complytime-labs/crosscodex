@@ -1,0 +1,38 @@
+pkg/graphdb/agedriver/export_test.go
+  s_c3d52e474bc30e::t_d9e2f3f4c8911b 24
+pkg/graphdb/agedriver/edges.go
+  s_c3d52e474bc30e::t_ba33246d994c23 48
+docs/dev/telemetry.md
+  s_c3d52e474bc30e::t_63d24b624a15c4 176-177,211
+pkg/graphdb/agedriver/client.go
+  s_c3d52e474bc30e::t_9cd7ab65722360 112,126-154
+  s_c3d52e474bc30e::t_ba33246d994c23 349-351,482,759-761,819-821
+  s_c3d52e474bc30e::t_4694597dbe8727 155
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_c3d52e474bc30e::t_e37e737aced2ae 17
+  s_c3d52e474bc30e::t_d9e2f3f4c8911b 8,15,325-373,534-544
+  s_c3d52e474bc30e::t_41044f31356540 545
+pkg/graphdb/agedriver/bulk.go
+  s_c3d52e474bc30e::t_ba33246d994c23 64
+pkg/graphdb/agedriver/options.go
+  s_c3d52e474bc30e::t_e6dd4bdcd11528 21,26
+pkg/graphdb/agedriver/commit_integration_bdd_test.go
+  s_c3d52e474bc30e::t_6aead54de07b92 95,128-133,158-159,166-173,175,178,182,185-205,209
+  s_c3d52e474bc30e::t_e37e737aced2ae 88-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ad5acf14568aae28b7dfba538e35358bb410f69",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
