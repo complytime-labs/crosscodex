@@ -1,0 +1,19 @@
+docs/dev/design-principles.md
+  s_fe3ffaebda0956::t_ed08d62ac801f0 40,52,139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec887cb40e65a05f0711a015945f859d4c4ed690",
+  "prompts": {},
+  "sessions": {
+    "s_fe3ffaebda0956": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3aafe70f63fd0baf",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
