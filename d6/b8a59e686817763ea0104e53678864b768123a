@@ -1,0 +1,20 @@
+internal/analyzer/relationship/materializer_bdd_test.go
+  s_c3d52e474bc30e::t_038949dd8722f2 265-276
+  s_c3d52e474bc30e::t_948355a8d91fc0 246-247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6b8a59e686817763ea0104e53678864b768123a",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
