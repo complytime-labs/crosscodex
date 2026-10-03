@@ -1,0 +1,24 @@
+pkg/graphdb/interface.go
+  s_18343ae1586a45::t_3fd18d2cd24e13 56-57
+  s_18343ae1586a45::t_0ec9367f28ecbe 33-36
+  s_18343ae1586a45::t_bd3b31b0b1ead0 69-72
+internal/testspecs/graphdb_contract.go
+  s_18343ae1586a45::t_1b030b85ad54d9 420-437,598-599,617-618,777,779-792,794-801,817-826,891,895-903
+  s_18343ae1586a45::t_14d46dafa444ac 904
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd58af09705ba91ffb87c18788e3d882781f149a",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
