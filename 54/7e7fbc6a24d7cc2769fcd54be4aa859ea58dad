@@ -1,0 +1,39 @@
+pkg/natsbus/natsbus_external_integration_bdd_test.go
+  s_c3d52e474bc30e::t_a23e86818304fc 51,195,203
+pkg/db/db_integration_bdd_test.go
+  s_c3d52e474bc30e::t_e2f6f25814bc63 1598,1620
+  s_c3d52e474bc30e::t_bc89d4ff48db12 16
+test/integration/integration_bdd_test.go
+  s_c3d52e474bc30e::t_d9c162f0d8f19b 30
+  s_c3d52e474bc30e::t_0685ba3ef53e33 73
+test/integration/integration_telemetry_bdd_test.go
+  s_c3d52e474bc30e::t_dd7a6b1b139dbc 79
+pkg/natsbus/natsbus_integration_bdd_test.go
+  s_c3d52e474bc30e::t_77f6d6c2e54b45 196
+  s_c3d52e474bc30e::t_3ee0c357141c8f 59,278,285,392,471,516,551
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_c3d52e474bc30e::t_bfd4e4441dbe50 385
+pkg/attestation/attestation_integration_bdd_test.go
+  s_c3d52e474bc30e::t_29c69214b5bda4 105
+internal/catalog/catalog_integration_bdd_test.go
+  s_c3d52e474bc30e::t_bb3ae02c772e67 141,156
+  s_c3d52e474bc30e::t_a2778847e99ec8 998
+pkg/llmclient/llmclient_integration_bdd_test.go
+  s_c3d52e474bc30e::t_ab7c45d98c153b 56,76,541
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "547e7fbc6a24d7cc2769fcd54be4aa859ea58dad",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
