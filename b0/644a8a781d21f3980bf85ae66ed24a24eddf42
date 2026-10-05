@@ -1,0 +1,22 @@
+cmd/crosscodexd/pipeline_role_integration_test.go
+  h_4db53f42b9be42 7-8,10,231-249
+internal/pipeline/service_bdd_test.go
+  h_4db53f42b9be42 385-418,420,424-425,427,438-445,448,452-485
+internal/worker/handler_bdd_test.go
+  h_4db53f42b9be42 64,67,90,94,126,129,162,165,179,182,242,247,264,267
+internal/worker/testhelpers_test.go
+  h_4db53f42b9be42 67-74,96-104,108-113,131-139
+internal/worker/worker_bdd_test.go
+  h_4db53f42b9be42 147,151,165,168,234,237,272,275,315,319,349,352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b0644a8a781d21f3980bf85ae66ed24a24eddf42",
+  "prompts": {},
+  "humans": {
+    "h_4db53f42b9be42": {
+      "author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
