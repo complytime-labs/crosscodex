@@ -1,0 +1,62 @@
+internal/testspecs/graphdb_contract.go
+  s_18343ae1586a45::t_2238afecb7ffd9 364-370,372-381,383-391
+  s_18343ae1586a45::t_423119ab6ac64d 157-209
+  s_18343ae1586a45::t_520de1ad987158 371
+  s_18343ae1586a45::t_968bdd6a2fa6c3 382
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_18343ae1586a45::t_c777de84bf750e 260-265
+  s_18343ae1586a45::t_a311e1754e8117 584-590
+  s_18343ae1586a45::t_d81d0b6777d15c 825
+  s_18343ae1586a45::t_5702a32ceb7c80 817-824,826-829
+pkg/graphdb/graphdb_bdd_test.go
+  s_18343ae1586a45::t_46875515e156d3 87-146
+pkg/graphdb/identifier.go
+  s_18343ae1586a45::t_41f807ac92f74e 1-24,39-53
+  s_18343ae1586a45::t_097ea1e55eaccd 25-38
+pkg/graphdb/interface.go
+  s_18343ae1586a45::t_356e5882344584 18-20
+pkg/graphdb/graphdb_property_test.go
+  s_18343ae1586a45::t_46875515e156d3 44,61-65,67-79
+  s_18343ae1586a45::t_22944725f636d6 43,45-60,66
+  s_18343ae1586a45::t_3f70ca2993fa4d 80
+pkg/graphdb/agedriver/client.go
+  s_18343ae1586a45::t_98daf754e7704d 427-431
+  s_18343ae1586a45::t_9bdbf53d2d2114 783-790,792-793
+  s_18343ae1586a45::t_2b10f676629d2e 339
+  s_18343ae1586a45::t_264e38350aa4cd 155-160
+  s_18343ae1586a45::t_cf19159ab231cb 685-690
+  s_18343ae1586a45::t_c4e2eb4726201d 791
+  s_18343ae1586a45::t_eb71d7ec9348c0 230-235
+  s_18343ae1586a45::t_79d9a4ca783072 340-341
+pkg/graphdb/memdriver/client.go
+  s_18343ae1586a45::t_110bc44ad02fab 237-242
+  s_18343ae1586a45::t_26e4ef51ccb0f2 270-272
+  s_18343ae1586a45::t_6a91bcc076f6ec 283-285
+  s_18343ae1586a45::t_d6b831cdff0be4 183-188
+  s_18343ae1586a45::t_15fcf708bd203a 342-346
+  s_18343ae1586a45::t_5d864667c7ecec 155-160
+pkg/graphdb/agedriver/cypher.go
+  s_18343ae1586a45::t_3572754c639c56 19-21,25-27
+pkg/graphdb/graphdb_fuzz_test.go
+  s_18343ae1586a45::t_22944725f636d6 1-4,6-40
+pkg/graphdb/agedriver/graphdb_fuzz_test.go
+  s_18343ae1586a45::t_bb28d15419e045 20
+docs/dev/design-principles.md
+  s_18343ae1586a45::t_426034f79ecffb 44-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb36644d777f8ae994eabe006bbd641f76dc9d91",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
