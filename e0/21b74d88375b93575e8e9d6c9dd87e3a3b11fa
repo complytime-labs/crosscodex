@@ -1,0 +1,21 @@
+internal/graph/rpc_errors_bdd_test.go
+  s_c3d52e474bc30e::t_ba3813c390c21a 188-199
+internal/graph/options.go
+  s_c3d52e474bc30e::t_1286741cbc3796 42-43,46-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e021b74d88375b93575e8e9d6c9dd87e3a3b11fa",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
