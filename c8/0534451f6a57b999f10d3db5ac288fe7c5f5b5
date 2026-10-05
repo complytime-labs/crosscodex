@@ -1,0 +1,31 @@
+pkg/graphdb/agedriver/cypher.go
+  s_18343ae1586a45::t_60920843fedb15 59-64,67-71
+pkg/graphdb/memdriver/client.go
+  s_18343ae1586a45::t_60920843fedb15 178-181
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_18343ae1586a45::t_c87c2b1f486829 815,821
+  s_18343ae1586a45::t_87de312ab7d0f3 813,818,829-830
+internal/testspecs/graphdb_contract.go
+  s_18343ae1586a45::t_c87c2b1f486829 787,802,805,809-826
+  s_18343ae1586a45::t_d5510990fdc97b 827-828
+internal/catalog/graph_write_bdd_test.go
+  s_18343ae1586a45::t_2aff66a5c514a1 187
+pkg/graphdb/agedriver/client.go
+  s_18343ae1586a45::t_60920843fedb15 370-372
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c80534451f6a57b999f10d3db5ac288fe7c5f5b5",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
