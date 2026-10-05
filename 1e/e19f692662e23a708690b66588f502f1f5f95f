@@ -1,0 +1,23 @@
+pkg/graphdb/interface.go
+  s_18343ae1586a45::t_61462196f700f3 90-93
+docs/dev/design-principles.md
+  s_18343ae1586a45::t_5bf5e791087b9a 139-140
+pkg/graphdb/doc.go
+  s_18343ae1586a45::t_5bf5e791087b9a 15-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ee19f692662e23a708690b66588f502f1f5f95f",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
