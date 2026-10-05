@@ -1,0 +1,30 @@
+api/proto/crosscodex/v1/graph.proto
+  s_c3d52e474bc30e::t_d7023ceb5f4a0a 18-20
+  s_c3d52e474bc30e::t_e1f53c968f780d 16-17
+internal/graph/write.go
+  s_c3d52e474bc30e::t_8ee1cddd0f838c 38,77,129,175
+internal/graph/read.go
+  s_c3d52e474bc30e::t_8ee1cddd0f838c 37,66,106,140,204,254
+internal/graph/service.go
+  s_c3d52e474bc30e::t_8ee1cddd0f838c 6,86-108
+  s_c3d52e474bc30e::t_55bf12dc7f078e 109-110
+internal/graph/rpc_errors_bdd_test.go
+  s_c3d52e474bc30e::t_5419388bbad85c 1-25,27-177
+  s_c3d52e474bc30e::t_37fafc66eb6b89 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7677755e93a0a8d5edc99ba3b4552dac22f5ae7e",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
