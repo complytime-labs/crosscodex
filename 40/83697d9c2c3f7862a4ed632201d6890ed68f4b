@@ -1,0 +1,20 @@
+.taskfiles/dev.yml
+  s_c3d52e474bc30e::t_7e9b22fbeb0c50 99-100
+  s_c3d52e474bc30e::t_3222cb8bcd67b3 86-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4083697d9c2c3f7862a4ed632201d6890ed68f4b",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
