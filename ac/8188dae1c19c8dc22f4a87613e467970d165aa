@@ -1,0 +1,21 @@
+pkg/graphdb/agedriver/edges_requires_test.go
+  s_c3d52e474bc30e::t_866f8c6a0e334c 391-437
+pkg/graphdb/agedriver/query_integration_bdd_test.go
+  s_c3d52e474bc30e::t_3b3b61e7db049f 21-27,30-31,39,41,56,68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac8188dae1c19c8dc22f4a87613e467970d165aa",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
