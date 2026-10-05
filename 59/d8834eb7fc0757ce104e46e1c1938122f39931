@@ -1,0 +1,21 @@
+internal/synthesis/synthesis_property_test.go
+  s_c3d52e474bc30e::t_93ab2a3f7f4773 34-50
+internal/synthesis/testhelpers_test.go
+  s_c3d52e474bc30e::t_af8258037d9ccd 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59d8834eb7fc0757ce104e46e1c1938122f39931",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
