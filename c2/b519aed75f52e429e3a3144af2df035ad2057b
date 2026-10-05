@@ -1,0 +1,52 @@
+pkg/graphdb/memdriver/memdriver_bdd_test.go
+  s_18343ae1586a45::t_bb97526a7b68e5 88-98,265-275,302-304
+pkg/graphdb/agedriver/export_test.go
+  s_18343ae1586a45::t_e9cb41e6a4f4c8 14
+pkg/graphdb/memdriver/client.go
+  s_18343ae1586a45::t_f113e910d43c0c 149,152-156,158-167,173-180,185-190,192-197,199-200
+pkg/graphdb/agedriver/cypher.go
+  s_18343ae1586a45::t_a1051211f6418c 55-58,65-66,72-81,84-88,90,93,96,101,104-105,113-116
+  s_18343ae1586a45::t_435ca5040076a1 117
+pkg/graphdb/interface.go
+  s_18343ae1586a45::t_0ac6d0e3b4843e 26,38-40,50-51,96-100,105-107
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_18343ae1586a45::t_1b001e7d56d0ef 767-775,798-802
+  s_18343ae1586a45::t_ea7dc286580ab9 803
+internal/graph/testhelpers_test.go
+  s_18343ae1586a45::t_2fd6235870b7e7 5,43-45
+  s_18343ae1586a45::t_6cd8c1529a7703 46-47
+pkg/graphdb/identifier.go
+  s_18343ae1586a45::t_6ae78dedc90d49 4
+  s_18343ae1586a45::t_ec4e23f7eab460 102-124
+pkg/graphdb/agedriver/client.go
+  s_18343ae1586a45::t_171a50b5335bc3 275,330-334,338-339,342-358,363-365,367-372,373,375-377,382-386,388-395
+  s_18343ae1586a45::t_558078df15d8ef 396-397
+pkg/graphdb/graphdb_bdd_test.go
+  s_18343ae1586a45::t_4054e9dc25bd3c 139-164
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_18343ae1586a45::t_34f2594da58a30 764
+  s_18343ae1586a45::t_e9cb41e6a4f4c8 358-367,403-406,444-447,473-481,745-748,750,752-753,755-756,758-763,767
+  s_18343ae1586a45::t_c8e32edfd1005c 768
+internal/testspecs/graphdb_contract.go
+  s_18343ae1586a45::t_10083e88fcb1fe 905,907-909,911,913-919
+  s_18343ae1586a45::t_3b384aa94404e9 53-54,61-64,131-142,223,235,239-241,261-263,289-294,310-311,705-745,747-760,762-763,765-767,788-848,906,910,912,920-922
+  s_18343ae1586a45::t_1af16756dd5cf5 923-924
+docs/dev/telemetry.md
+  s_18343ae1586a45::t_951f7182c4f0af 201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2b519aed75f52e429e3a3144af2df035ad2057b",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
