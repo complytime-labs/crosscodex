@@ -1,0 +1,25 @@
+pkg/graphdb/agedriver/checks.go
+  s_18343ae1586a45::t_c37c8389881e78 17,181
+pkg/graphdb/agedriver/edges.go
+  s_18343ae1586a45::t_c37c8389881e78 91
+pkg/graphdb/agedriver/cypher.go
+  s_18343ae1586a45::t_c37c8389881e78 22-32
+pkg/graphdb/agedriver/client.go
+  s_18343ae1586a45::t_c37c8389881e78 353,411,432,478,577,673,734,794,906,1000
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "262bc7286dbd1ebddb28312394f69e89173542c2",
+  "prompts": {},
+  "sessions": {
+    "s_18343ae1586a45": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "213604c3-1fdf-4723-86e1-fb7de72fd9df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
