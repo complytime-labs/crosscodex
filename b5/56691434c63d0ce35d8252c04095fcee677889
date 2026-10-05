@@ -1,0 +1,21 @@
+docs/dev/telemetry.md
+  s_efc3bece02fecd::t_7b33f000294a93 209
+pkg/graphdb/agedriver/client.go
+  s_efc3bece02fecd::t_8de687e22044fc 90-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b556691434c63d0ce35d8252c04095fcee677889",
+  "prompts": {},
+  "sessions": {
+    "s_efc3bece02fecd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5a757357-de69-4eff-b5af-de30d15ba579",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
