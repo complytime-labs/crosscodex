@@ -1,0 +1,23 @@
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_c3d52e474bc30e::t_7adc25734de8d1 1172-1175,1177-1178
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_c3d52e474bc30e::t_7adc25734de8d1 937,952
+pkg/graphdb/agedriver/client.go
+  s_c3d52e474bc30e::t_6ecfb734d144f5 275-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "073869be56d5a720a85282ad0bbaf3b7922fd00d",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
