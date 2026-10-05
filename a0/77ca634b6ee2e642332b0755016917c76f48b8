@@ -1,0 +1,21 @@
+pkg/db/dbtest/dbtest_fuzz_test.go
+  s_c3d52e474bc30e::t_ff6213d978a0f2 7-8
+  s_c3d52e474bc30e::t_4ffd210119b4c1 28-30
+  s_c3d52e474bc30e::t_ab975000f284d6 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a077ca634b6ee2e642332b0755016917c76f48b8",
+  "prompts": {},
+  "sessions": {
+    "s_c3d52e474bc30e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81b1737c-e9d4-4270-b68c-9e1a3a48a409",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
