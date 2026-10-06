@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
@@ -73,15 +73,13 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	// Set a fresh graph_user password for this run, as test/e2e/provision
 	// does, so no fixed credential lives in the repository.
-	pw := make([]byte, 16)
-	_, err = rand.Read(pw)
+	password, err := dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "failed to generate graph_user password")
-	password := hex.EncodeToString(pw)
+	stmt, err := dbtest.AlterRolePasswordSQL("graph_user", password)
+	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE graph_user")
 	adminDB, err := sql.Open("pgx", dsn)
 	Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-	// ALTER ROLE takes no bound parameters. Interpolation is safe because
-	// password is hex, which cannot contain a quote.
-	_, err = adminDB.ExecContext(ctx, fmt.Sprintf("ALTER ROLE graph_user WITH PASSWORD '%s'", password))
+	_, err = adminDB.ExecContext(ctx, stmt)
 	Expect(err).NotTo(HaveOccurred(), "failed to set graph_user password")
 	Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 

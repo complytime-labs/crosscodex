@@ -3,9 +3,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -15,6 +13,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
 func main() {
@@ -53,19 +52,14 @@ func run() error {
 	}
 	defer adminDB.Close()
 
-	pwBytes := make([]byte, 16)
-	if _, err := rand.Read(pwBytes); err != nil {
+	password, err := dbtest.NewRolePassword()
+	if err != nil {
 		return fmt.Errorf("generate password: %w", err)
 	}
-	password := hex.EncodeToString(pwBytes)
-
-	// PostgreSQL's ALTER ROLE ... WITH PASSWORD does not accept a bound
-	// parameter for the password literal (it's parsed as DDL, not a query
-	// value) — the pgx driver returns a syntax error for $1 here. Direct
-	// interpolation is safe: password is always a locally-generated hex
-	// string (rand.Read + hex.EncodeToString above), so it cannot contain a
-	// quote or any other character requiring escaping.
-	stmt := fmt.Sprintf("ALTER ROLE graph_user WITH PASSWORD '%s'", password)
+	stmt, err := dbtest.AlterRolePasswordSQL("graph_user", password)
+	if err != nil {
+		return fmt.Errorf("build graph_user password statement: %w", err)
+	}
 	if _, err := adminDB.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("set graph_user password: %w", err)
 	}

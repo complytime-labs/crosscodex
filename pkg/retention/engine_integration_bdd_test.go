@@ -38,6 +38,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -61,7 +62,11 @@ func integPurgeUserDSN(suDSN string) string {
 	if err != nil {
 		panic(fmt.Sprintf("bad TEST_DATABASE_DSN: %v", err))
 	}
-	u.User = url.UserPassword("purge_user", "purgepass")
+	pw, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
+	if err != nil {
+		panic(fmt.Sprintf("purge_user password: %v", err))
+	}
+	u.User = url.UserPassword("purge_user", pw)
 	return u.String()
 }
 
@@ -433,12 +438,16 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
 		}
 
-		// Grant purge_user a known password so the engine can open its dedicated
+		// Set purge_user to this run's password so the engine can open its dedicated
 		// pool. Scoped here to avoid touching the shared BeforeSuite harness.
 		ctx := context.Background()
 		adminDB, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred(), "open admin connection")
-		_, err = adminDB.ExecContext(ctx, "ALTER ROLE purge_user WITH PASSWORD 'purgepass'")
+		purgePassword, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "purge_user password")
+		stmt, err := dbtest.AlterRolePasswordSQL("purge_user", purgePassword)
+		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE purge_user")
+		_, err = adminDB.ExecContext(ctx, stmt)
 		Expect(err).NotTo(HaveOccurred(), "set purge_user password")
 		Expect(adminDB.Close()).To(Succeed())
 

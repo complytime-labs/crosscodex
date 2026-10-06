@@ -9,9 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"database/sql"
-	"encoding/hex"
 	"encoding/pem"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,6 +27,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
 // testAttestationPrivateKeyPath and testAttestationPublicKeyPath point at a
@@ -183,18 +182,10 @@ func provisionGraphUser(ctx context.Context, dsn string) string {
 	defer adminDB.Close()
 
 	// Generate a random password per test run rather than a fixed literal.
-	pwBytes := make([]byte, 16)
-	_, err = rand.Read(pwBytes)
+	testPassword, err := dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "generate test fixture password")
-	testPassword := hex.EncodeToString(pwBytes)
-
-	// PostgreSQL's ALTER ROLE ... WITH PASSWORD does not accept a bound
-	// parameter for the password literal (it's parsed as DDL, not a query
-	// value) — the pgx driver returns a syntax error for $1 here. Direct
-	// interpolation is safe: testPassword is always a locally-generated
-	// hex string (rand.Read + hex.EncodeToString above), so it cannot
-	// contain a quote or any other character requiring escaping.
-	stmt := fmt.Sprintf("ALTER ROLE graph_user WITH PASSWORD '%s'", testPassword)
+	stmt, err := dbtest.AlterRolePasswordSQL("graph_user", testPassword)
+	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE graph_user")
 	_, err = adminDB.ExecContext(ctx, stmt)
 	Expect(err).NotTo(HaveOccurred(), "set graph_user password")
 

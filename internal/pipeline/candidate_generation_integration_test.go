@@ -19,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/google/uuid"
 )
@@ -34,15 +35,19 @@ func vectorLiteral(dim int, val float64) string {
 	return "[" + strings.Join(parts, ",") + "]"
 }
 
-// candidateITAppUserDSN swaps userinfo to app_user:apppass, mirroring
-// store_integration_test.go's appUserDSN (renamed to avoid a redeclaration
-// with that file, which shares this test binary).
+// candidateITAppUserDSN swaps userinfo to app_user and this run's app_user
+// password, mirroring store_integration_test.go's appUserDSN (renamed to
+// avoid a redeclaration with that file, which shares this test binary).
 func candidateITAppUserDSN(suDSN string) (string, error) {
 	u, err := url.Parse(suDSN)
 	if err != nil {
 		return "", err
 	}
-	u.User = url.UserPassword("app_user", "apppass")
+	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	if err != nil {
+		return "", err
+	}
+	u.User = url.UserPassword("app_user", pw)
 	return u.String(), nil
 }
 
@@ -92,7 +97,11 @@ var _ = Describe("CandidateGenerator integration", func() {
 		// Ensure app_user password (idempotent).
 		adminDB, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "app_user password")
+		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+		_, err = adminDB.ExecContext(ctx, stmt)
 		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
 		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 

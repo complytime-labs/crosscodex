@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
 // RetentionSchema specs cover:
@@ -33,9 +34,13 @@ var _ = Describe("Retention Schema", Ordered, func() {
 		if suPool == nil {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration")
 		}
-		// Grant purge_user a known password so we can open a connection as it.
+		// Set purge_user to this run's password so we can open a connection as it.
 		// Scoped here to avoid touching the shared harness.
-		err := suPool.Exec(context.Background(), "ALTER ROLE purge_user WITH PASSWORD 'purgepass'")
+		purgePassword, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "purge_user password")
+		stmt, err := dbtest.AlterRolePasswordSQL("purge_user", purgePassword)
+		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE purge_user")
+		err = suPool.Exec(context.Background(), stmt)
 		Expect(err).NotTo(HaveOccurred(), "set purge_user password")
 
 		purgeConn, err = sql.Open("pgx", purgeUserDSN())
@@ -184,6 +189,10 @@ func purgeUserDSN() string {
 	if err != nil {
 		panic(fmt.Sprintf("bad suDSN: %v", err))
 	}
-	u.User = url.UserPassword("purge_user", "purgepass")
+	pw, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
+	if err != nil {
+		panic(fmt.Sprintf("purge_user password: %v", err))
+	}
+	u.User = url.UserPassword("purge_user", pw)
 	return u.String()
 }
