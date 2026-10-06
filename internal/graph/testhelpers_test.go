@@ -5,7 +5,10 @@ import (
 	"errors"
 	"time"
 
+	. "github.com/onsi/gomega"
+
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
@@ -113,6 +116,18 @@ func (m *mockGraphDB) SupersedeFact(ctx context.Context, tenant string, req grap
 		return m.supersedeFactFunc(ctx, tenant, req)
 	}
 	return false, nil
+}
+
+// newMemGraph returns a memdriver graph holding tenant's graph and a Control
+// node for each of nodeIDs. Specs that need a working graph use it instead of
+// mockGraphDB, which accepts writes the GraphDB contract rejects.
+func newMemGraph(ctx context.Context, tenant string, nodeIDs ...string) graphdb.GraphDB {
+	g := memdriver.New()
+	Expect(g.CreateGraph(ctx, tenant)).To(Succeed())
+	for _, id := range nodeIDs {
+		Expect(g.CreateNode(ctx, tenant, graphdb.Node{ID: id, Label: "Control", ValidFrom: time.Now().UTC()})).To(Succeed())
+	}
+	return g
 }
 
 // mockVectorDB is a test double for vectordb.VectorDB.
