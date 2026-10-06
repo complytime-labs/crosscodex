@@ -8,6 +8,17 @@ vars:
   # Test-only credentials for local integration testing. Do NOT use in staging or production.
   POSTGRES_PASSWORD: '{{.POSTGRES_PASSWORD | default "integration"}}'
   POSTGRES_DB: '{{.POSTGRES_DB | default "crosscodex_test"}}'
+  # Role passwords for this run (pkg/db/dbtest reads them). Task evaluates a
+  # dynamic variable once per run, caching it by its command string, so
+  # every package and parallel Ginkgo node sees the same value. The trailing
+  # comments give the two commands different cache keys, so the roles get
+  # different passwords. secret: true keeps the values out of --verbose logs.
+  TEST_APP_USER_PASSWORD:
+    sh: "od -An -tx1 -N16 /dev/urandom | tr -d ' \\n' # app_user"
+    secret: true
+  TEST_PURGE_USER_PASSWORD:
+    sh: "od -An -tx1 -N16 /dev/urandom | tr -d ' \\n' # purge_user"
+    secret: true
   # Test-only credentials for local integration testing. Do NOT use in staging or production.
   RUSTFS_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY | default "rustfsadmin"}}'
   RUSTFS_SECRET_KEY: '{{.RUSTFS_SECRET_KEY | default "rustfsadmin"}}'
@@ -51,6 +62,8 @@ vars:
 env:
   TEST_TRACE_DIR: "{{.TEST_DIR}}/traces"
   TEST_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:15432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
+  TEST_APP_USER_PASSWORD: "{{.TEST_APP_USER_PASSWORD}}"
+  TEST_PURGE_USER_PASSWORD: "{{.TEST_PURGE_USER_PASSWORD}}"
   TEST_S3_ENDPOINT: "http://localhost:19000"
   TEST_S3_ACCESS_KEY: "{{.RUSTFS_ACCESS_KEY}}"
   TEST_S3_SECRET_KEY: "{{.RUSTFS_SECRET_KEY}}"
@@ -168,6 +181,13 @@ tasks:
           REPORT: integration-attestation
           COVERAGE: integration-attestation-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-nats-embedded
+          COVERAGE: integration-nats-embedded-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
       - task: run-ginkgo
         vars:
           TAGS: integration_llm
@@ -409,6 +429,19 @@ tasks:
           COVERAGE: integration-attestation-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
 
+  nats-embedded:
+    desc: Run natsbus integration tests against an embedded NATS server (no containers needed)
+    deps: [ensure-deps]
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-nats-embedded
+          COVERAGE: integration-nats-embedded-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
+
   clean:
     desc: Remove all integration test containers and their volumes
     cmds:
@@ -511,8 +544,13 @@ tasks:
     requires:
       vars: [TAGS, TIMEOUT, REPORT, COVERAGE, PACKAGES]
     cmds:
-      - go run github.com/onsi/ginkgo/v2/ginkgo run -v --race --tags {{.TAGS}} --timeout {{.TIMEOUT}} --coverprofile {{.COVERAGE}} --output-dir {{.TEST_DIR}} --json-report={{.REPORT}}.json {{.PACKAGES}}
-      - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/{{.REPORT}}.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
+      # --keep-going runs every suite after a failure; ginkgoleaf runs even
+      # when ginkgo fails, and the step exits non-zero if either step fails.
+      - |
+        status=0
+        go run github.com/onsi/ginkgo/v2/ginkgo run -v --keep-going --race --tags {{.TAGS}} --timeout {{.TIMEOUT}} --coverprofile {{.COVERAGE}} --output-dir {{.TEST_DIR}} --json-report={{.REPORT}}.json {{.PACKAGES}} || status=$?
+        go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/{{.REPORT}}.json -format {{.GINKGOLEAF_FORMAT}} -exit-code || status=$?
+        exit $status
 
   ensure-deps:
     internal: true

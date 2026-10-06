@@ -32,7 +32,7 @@ func (m *tenantIDMatcher) Match(actual interface{}) (bool, error) {
 }
 
 func (m *tenantIDMatcher) FailureMessage(actual interface{}) string {
-	return fmt.Sprintf("Expected '%v' to be a valid tenant ID (3-64 chars, alphanumeric with hyphens)", actual)
+	return fmt.Sprintf("Expected '%v' to be a valid tenant ID (3-52 chars, alphanumeric with hyphens)", actual)
 }
 
 func (m *tenantIDMatcher) NegatedFailureMessage(actual interface{}) string {

@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -41,7 +42,11 @@ var _ = BeforeSuite(func() {
 	// This mirrors the SynchronizedBeforeSuite in pkg/db/db_integration_bdd_test.go.
 	adminDB, err := sql.Open("pgx", suDSN)
 	Expect(err).NotTo(HaveOccurred(), "open admin connection")
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user PASSWORD 'apppass'")
+	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+	_, err = adminDB.ExecContext(ctx, stmt)
 	Expect(err).NotTo(HaveOccurred(), "set app_user password")
 	Expect(adminDB.Close()).To(Succeed(), "close admin connection")
 
@@ -65,7 +70,11 @@ func holdAppUserDSN(suDSN string) string {
 	if err != nil {
 		panic(fmt.Sprintf("bad TEST_DATABASE_DSN: %v", err))
 	}
-	u.User = url.UserPassword("app_user", "apppass")
+	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	if err != nil {
+		panic(fmt.Sprintf("app_user password: %v", err))
+	}
+	u.User = url.UserPassword("app_user", pw)
 	return u.String()
 }
 

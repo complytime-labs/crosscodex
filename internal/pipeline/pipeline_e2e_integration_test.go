@@ -29,6 +29,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
@@ -172,7 +173,11 @@ var _ = Describe("Pipeline end-to-end", func() {
 		// Ensure app_user password (idempotent).
 		adminDB, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred(), "open admin connection")
-		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "app_user password")
+		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+		_, err = adminDB.ExecContext(ctx, stmt)
 		Expect(err).NotTo(HaveOccurred(), "set app_user password")
 		Expect(adminDB.Close()).To(Succeed(), "close admin connection")
 

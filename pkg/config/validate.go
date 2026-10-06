@@ -60,6 +60,12 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := cfg.Retention.Validate(); err != nil {
 		return err
 	}
+	if err := validateGraph(&cfg.Graph, tracker); err != nil {
+		return err
+	}
+	if err := validateTenants(&cfg.Tenants, tracker); err != nil {
+		return err
+	}
 	if err := validateRole(cfg, tracker); err != nil {
 		return err
 	}
@@ -265,6 +271,13 @@ func validatePrompt(prompt *PromptConfig, tracker *sourceTracker) error {
 		}
 	}
 
+	for key := range prompt.TenantOverrides {
+		if err := tenant.ValidateTenantID(key); err != nil {
+			return fmt.Errorf("prompt.tenant_overrides key %q is not a valid tenant ID: it must be %s: %w",
+				key, tenant.IDRule, ErrInvalidConfig)
+		}
+	}
+
 	return nil
 }
 
@@ -371,6 +384,28 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		}
 	}
 
+	return nil
+}
+
+func validateGraph(g *GraphConfig, tracker *sourceTracker) error {
+	if g.MaxBulkEdges < 1 || g.MaxBulkEdges > maxGraphMaxBulkEdges {
+		return fmt.Errorf("graph.max_bulk_edges %d%s must be in range [1, %d]; it bounds the edges in one BulkCreateEdges request (default %d): %w",
+			g.MaxBulkEdges, formatSource(tracker, "graph.max_bulk_edges"), maxGraphMaxBulkEdges, DefaultGraphMaxBulkEdges, ErrInvalidConfig)
+	}
+	return nil
+}
+
+// validateTenants rejects a malformed default_tenant at load time, before
+// bootstrap uses it as a database key and AGE graph name. Empty is valid
+// here: roles that need a default tenant reject it at startup.
+func validateTenants(t *TenantsConfig, tracker *sourceTracker) error {
+	if t.DefaultTenant == "" {
+		return nil
+	}
+	if err := tenant.ValidateTenantID(t.DefaultTenant); err != nil {
+		return fmt.Errorf("tenants.default_tenant %q%s is not a valid tenant ID: it must be %s. Set it to an ID that matches, or leave it empty for roles that do not provision a default tenant: %w",
+			t.DefaultTenant, formatSource(tracker, "tenants.default_tenant"), tenant.IDRule, ErrInvalidConfig)
+	}
 	return nil
 }
 

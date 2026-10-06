@@ -48,7 +48,7 @@ func extSubscribeOne(client natsbus.Client, ctx context.Context, subject string)
 		return nil
 	})
 	Expect(err).NotTo(HaveOccurred(), "subscribe")
-	DeferCleanup(func() { sub.Unsubscribe() })
+	DeferCleanup(sub.Unsubscribe)
 	return received
 }
 
@@ -192,7 +192,7 @@ var _ = Describe("External NATS Integration", Ordered, func() {
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(func() { sub.Unsubscribe() })
+			DeferCleanup(sub.Unsubscribe)
 
 			time.Sleep(100 * time.Millisecond)
 
@@ -200,9 +200,7 @@ var _ = Describe("External NATS Integration", Ordered, func() {
 				Expect(client.Publish(ctx, subject, []byte("work"))).To(Succeed())
 			}
 
-			Eventually(func() int64 {
-				return count.Load()
-			}, 10*time.Second, 50*time.Millisecond).Should(BeNumerically(">=", int64(numMessages)))
+			Eventually(count.Load, 10*time.Second, 50*time.Millisecond).Should(BeNumerically(">=", int64(numMessages)))
 		})
 	})
 

@@ -355,8 +355,10 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 				},
 			}
 
-			if err := s.graph.CreateNode(ctx, tenantID, node); err != nil {
-				s.logger.Warn("create graph node failed", "control_id", item.ID, "error", err)
+			// Upsert, not create: the control row was just upserted and is
+			// authoritative, so a re-import must refresh the graph node too.
+			if _, err := s.graph.UpsertNode(ctx, tenantID, node); err != nil {
+				s.logger.Warn("upsert graph node failed", "control_id", item.ID, "error", err)
 			}
 
 			// Create PARENT_OF edge if parent exists
@@ -364,12 +366,15 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 				sourceID := fmt.Sprintf("%s/%s", catalogID, item.ParentID)
 				targetID := fmt.Sprintf("%s/%s", catalogID, item.ID)
 				edge := graphdb.Edge{
-					ID:        fmt.Sprintf("%s::parent_of::%s", sourceID, targetID),
+					ID:        graphdb.DerivedID("parent-of", sourceID, targetID),
 					Label:     "PARENT_OF",
 					ValidFrom: now,
 				}
 
-				if err := s.graph.CreateEdge(ctx, tenantID, sourceID, targetID, edge); err != nil {
+				// The edge ID is derived, so ErrEdgeExists means a re-import
+				// found the edge it would have written.
+				err := s.graph.CreateEdge(ctx, tenantID, sourceID, targetID, edge)
+				if err != nil && !errors.Is(err, graphdb.ErrEdgeExists) {
 					s.logger.Warn("create graph edge failed", "from", item.ParentID, "to", item.ID, "error", err)
 				}
 			}

@@ -10,6 +10,7 @@
 // - fixtures.go: Standard test data and contexts
 // - helpers.go: Setup/teardown utilities
 // - matchers.go: Custom Gomega matchers for CrossCodex-specific patterns
+// - graphdb_contract.go: GraphDBContractBehavior, the contract specs every graphdb.GraphDB driver runs
 //
 // Architecture:
 //
@@ -63,7 +64,7 @@
 // Custom Matchers:
 //
 // The package provides custom Gomega matchers for common CrossCodex patterns:
-// - BeValidTenantID(): Validates tenant ID format (3-64 chars, alphanumeric + hyphens)
+// - BeValidTenantID(): Validates tenant ID format (3-52 chars, alphanumeric + hyphens)
 // - HaveValidTenantPrefix(): Validates strings with tenant prefixes (tenant-id/path)
 // - BeSecureError(): Ensures errors don't leak sensitive information
 // - BeActionableError(): Ensures errors provide actionable guidance to users

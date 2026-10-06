@@ -107,11 +107,19 @@ var _ = Describe("Graph Service Integration", Ordered, func() {
 				SourceNodeId:  n1.Msg.GetNodeId(),
 				TargetNodeId:  n2.Msg.GetNodeId(),
 				Label:         "SEMANTIC_MATCH",
-				Properties:    map[string]string{"confidence": "0.95"},
-				Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now()},
+				Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now(), Confidence: 0.95, DeterminedBy: "job-traverse"},
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(edgeResp.Msg.GetEdgeId()).NotTo(BeEmpty())
+
+			// Confidence and determined_by round-trip through AGE as edge fields.
+			getEdge, err := svc.GetEdge(ctx, connect.NewRequest(&pb.GetEdgeRequest{
+				TenantContext: &pb.TenantContext{TenantId: tenantID},
+				EdgeId:        edgeResp.Msg.GetEdgeId(),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getEdge.Msg.GetEdge().GetTemporal().GetConfidence()).To(Equal(float32(0.95)))
+			Expect(getEdge.Msg.GetEdge().GetTemporal().GetDeterminedBy()).To(Equal("job-traverse"))
 
 			// Traverse outbound from n1.
 			traverseResp, err := svc.Traverse(ctx, connect.NewRequest(&pb.TraverseRequest{
@@ -171,22 +179,63 @@ var _ = Describe("Graph Service Integration", Ordered, func() {
 						SourceNodeId:  n1.Msg.GetNodeId(),
 						TargetNodeId:  n2.Msg.GetNodeId(),
 						Label:         "SEMANTIC_MATCH",
-						Properties:    map[string]string{"confidence": "0.90"},
-						Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now()},
+						Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now(), Confidence: 0.90},
 					},
 					{
 						TenantContext: &pb.TenantContext{TenantId: tenantID},
 						SourceNodeId:  n1.Msg.GetNodeId(),
 						TargetNodeId:  n3.Msg.GetNodeId(),
 						Label:         "SEMANTIC_MATCH",
-						Properties:    map[string]string{"confidence": "0.85"},
-						Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now()},
+						Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now(), Confidence: 0.85},
 					},
 				},
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(bulkResp.Msg.GetCreatedCount()).To(Equal(int32(2)))
 			Expect(bulkResp.Msg.GetEdgeIds()).To(HaveLen(2))
+
+			getEdge, err := svc.GetEdge(ctx, connect.NewRequest(&pb.GetEdgeRequest{
+				TenantContext: &pb.TenantContext{TenantId: tenantID},
+				EdgeId:        bulkResp.Msg.GetEdgeIds()[0],
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getEdge.Msg.GetEdge().GetTemporal().GetConfidence()).To(Equal(float32(0.90)))
+		})
+	})
+
+	Describe("reserved property keys", func() {
+		It("rejects properties[\"confidence\"] with InvalidArgument and an actionable message, and stores no edge", func() {
+			ids := make([]string, 2)
+			for i := range ids {
+				n, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
+					TenantContext: &pb.TenantContext{TenantId: tenantID},
+					Label:         "Control",
+					Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now()},
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				ids[i] = n.Msg.GetNodeId()
+			}
+
+			_, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
+				TenantContext: &pb.TenantContext{TenantId: tenantID},
+				SourceNodeId:  ids[0],
+				TargetNodeId:  ids[1],
+				Label:         "SEMANTIC_MATCH",
+				Properties:    map[string]string{"confidence": "0.95"},
+				Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now()},
+			}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err.Error()).To(ContainSubstring(`properties["confidence"] is reserved: set temporal.confidence instead`))
+			Expect(err.Error()).NotTo(ContainSubstring("Edge.Confidence"))
+
+			traverseResp, err := svc.Traverse(ctx, connect.NewRequest(&pb.TraverseRequest{
+				TenantContext: &pb.TenantContext{TenantId: tenantID},
+				StartNodeId:   ids[0],
+				Direction:     pb.TraversalDirection_TRAVERSAL_DIRECTION_OUTBOUND,
+				MaxDepth:      1,
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(traverseResp.Msg.GetEdges()).To(BeEmpty(), "the rejected edge was stored")
 		})
 	})
 

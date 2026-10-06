@@ -18,6 +18,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -58,7 +59,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	adminDB, err := sql.Open("pgx", intSuDSN)
 	Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+	_, err = adminDB.ExecContext(ctx, stmt)
 	Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
 	Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
@@ -96,7 +101,9 @@ var _ = SynchronizedAfterSuite(func() {
 func synthAppUserDSN() string {
 	u, err := url.Parse(intSuDSN)
 	Expect(err).NotTo(HaveOccurred(), "bad intSuDSN")
-	u.User = url.UserPassword("app_user", "apppass")
+	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	u.User = url.UserPassword("app_user", pw)
 	return u.String()
 }
 

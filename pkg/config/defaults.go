@@ -62,7 +62,6 @@ logging:
 tenants:
   enabled: false
   default_tenant: ""
-  allowed_tenants: []
 auth:
   x509_mappings: []
 observability:
@@ -157,6 +156,8 @@ pipeline:
   stage_timeout: 30m
   addr: ""
   endpoint: ""
+graph:
+  max_bulk_edges: 1000
 retention:
   defaults:
     attestation: "7y"

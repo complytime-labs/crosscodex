@@ -1,20 +1,21 @@
-// Package main provides a helper to run migrations and provision graph_user for E2E tests.
+// Package main runs migrations and sets the graph_user password for E2E tests.
+// The password comes from TEST_GRAPH_USER_PASSWORD, which .taskfiles/test/e2e.yml
+// generates and also embeds in CROSSCODEX_DATABASE_GRAPH_DSN, so nothing secret
+// is printed.
 package main
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
 func main() {
@@ -24,9 +25,9 @@ func main() {
 	}
 }
 
-// run performs migration and graph_user provisioning, printing the graph_user
-// DSN to stdout on success. It returns errors instead of calling os.Exit so
-// deferred Close calls always run (gocritic exitAfterDefer).
+// run performs migration and sets the graph_user password. It returns
+// errors instead of calling os.Exit so deferred Close calls always run
+// (gocritic exitAfterDefer).
 func run() error {
 	if len(os.Args) != 2 {
 		return fmt.Errorf("usage: %s <DSN>", os.Args[0])
@@ -53,29 +54,16 @@ func run() error {
 	}
 	defer adminDB.Close()
 
-	pwBytes := make([]byte, 16)
-	if _, err := rand.Read(pwBytes); err != nil {
-		return fmt.Errorf("generate password: %w", err)
+	password, err := dbtest.RolePassword(dbtest.GraphUserPasswordEnv)
+	if err != nil {
+		return fmt.Errorf("read graph_user password: %w", err)
 	}
-	password := hex.EncodeToString(pwBytes)
-
-	// PostgreSQL's ALTER ROLE ... WITH PASSWORD does not accept a bound
-	// parameter for the password literal (it's parsed as DDL, not a query
-	// value) — the pgx driver returns a syntax error for $1 here. Direct
-	// interpolation is safe: password is always a locally-generated hex
-	// string (rand.Read + hex.EncodeToString above), so it cannot contain a
-	// quote or any other character requiring escaping.
-	stmt := fmt.Sprintf("ALTER ROLE graph_user WITH PASSWORD '%s'", password)
+	stmt, err := dbtest.AlterRolePasswordSQL("graph_user", password)
+	if err != nil {
+		return fmt.Errorf("build graph_user password statement: %w", err)
+	}
 	if _, err := adminDB.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("set graph_user password: %w", err)
 	}
-
-	// Build and print graph_user DSN
-	u, err := url.Parse(dsn)
-	if err != nil {
-		return fmt.Errorf("parse DSN: %w", err)
-	}
-	u.User = url.UserPassword("graph_user", password)
-	fmt.Println(u.String())
 	return nil
 }

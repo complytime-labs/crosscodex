@@ -34,7 +34,7 @@ func (s *Service) GetNode(ctx context.Context, req *connect.Request[pb.GetNodeRe
 	if err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "GetNode", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "GetNode", code, err)
 	}
 
 	tc := &pb.TenantContext{TenantId: tenantID}
@@ -63,7 +63,7 @@ func (s *Service) GetEdge(ctx context.Context, req *connect.Request[pb.GetEdgeRe
 	if err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "GetEdge", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "GetEdge", code, err)
 	}
 
 	tc := &pb.TenantContext{TenantId: tenantID}
@@ -103,7 +103,7 @@ func (s *Service) Traverse(ctx context.Context, req *connect.Request[pb.Traverse
 	if err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "Traverse", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "Traverse", code, err)
 	}
 
 	tc := &pb.TenantContext{TenantId: tenantID}
@@ -137,7 +137,7 @@ func (s *Service) Query(ctx context.Context, req *connect.Request[pb.QueryReques
 	if err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "Query", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "Query", code, err)
 	}
 
 	s.recordRPC(ctx, "Query", start, connect.Code(0))
@@ -201,7 +201,7 @@ func (s *Service) SimilaritySearch(ctx context.Context, req *connect.Request[pb.
 	if err != nil {
 		code := mapVectorError(err)
 		s.recordRPC(ctx, "SimilaritySearch", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "SimilaritySearch", code, err)
 	}
 
 	tc := &pb.TenantContext{TenantId: tenantID}
@@ -245,13 +245,13 @@ func (s *Service) TemporalQuery(ctx context.Context, req *connect.Request[pb.Tem
 	if params == nil {
 		params = make(map[string]string)
 	}
-	params["as_of"] = req.Msg.GetAsOf().AsTime().Format(time.RFC3339Nano)
+	params["as_of"] = graphdb.FormatTime(req.Msg.GetAsOf().AsTime())
 
 	rows, err := s.graph.ExecuteQuery(ctx, tenantID, req.Msg.GetCypher(), params)
 	if err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "TemporalQuery", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "TemporalQuery", code, err)
 	}
 
 	s.recordRPC(ctx, "TemporalQuery", start, connect.Code(0))
@@ -302,6 +302,8 @@ func mapGraphError(err error) connect.Code {
 		return connect.CodeInvalidArgument
 	case errors.Is(err, graphdb.ErrReadOnlyViolation):
 		return connect.CodePermissionDenied
+	case errors.Is(err, graphdb.ErrNotSupported):
+		return connect.CodeUnimplemented
 	default:
 		return connect.CodeInternal
 	}

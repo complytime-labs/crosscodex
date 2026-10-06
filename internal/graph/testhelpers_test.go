@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
@@ -37,6 +38,11 @@ func (m *mockGraphDB) CreateNode(ctx context.Context, tenant string, node graphd
 		return m.createNodeFunc(ctx, tenant, node)
 	}
 	return nil
+}
+
+// UpsertNode satisfies graphdb.GraphDB; internal/graph never calls it.
+func (m *mockGraphDB) UpsertNode(context.Context, string, graphdb.Node) (bool, error) {
+	return false, errors.New("mockGraphDB: UpsertNode is not used by internal/graph")
 }
 
 func (m *mockGraphDB) CreateEdge(ctx context.Context, tenant, sourceID, targetID string, edge graphdb.Edge) error {

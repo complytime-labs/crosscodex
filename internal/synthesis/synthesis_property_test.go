@@ -31,6 +31,23 @@ func drawViabilityConfig(t *rapid.T) config.ViabilityConfig {
 	}
 }
 
+// defaultAssessmentConfig returns an AssessmentConfig with spec defaults.
+//
+// This file has no build tag (property specs run under every tag set), so
+// this helper lives here rather than in testhelpers_test.go (tagged
+// !integration): that keeps it reachable when the "integration" build tag
+// excludes the rest of the mock/BDD helpers.
+func defaultAssessmentConfig() config.AssessmentConfig {
+	return config.AssessmentConfig{
+		IQRGood:        20.0,
+		IQRPoor:        10.0,
+		NoRelHigh:      0.97,
+		NoRelLow:       0.80,
+		ContestedWarn:  0.20,
+		ActionableWarn: 0.30,
+	}
+}
+
 var _ = Describe("Property Specifications", Ordered, func() {
 
 	// -----------------------------------------------------------------------

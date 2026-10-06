@@ -76,7 +76,7 @@ var _ = Describe("Jaeger Export Smoke Test", func() {
 			time.Sleep(2 * time.Second)
 
 			queryURL := fmt.Sprintf("%s/api/traces?service=%s&limit=10", jaegerQueryURL, serviceName)
-			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, nil)
+			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, http.NoBody)
 			if reqErr != nil {
 				GinkgoWriter.Printf("attempt %d: request build error: %v\n", attempt+1, reqErr)
 				continue

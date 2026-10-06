@@ -17,7 +17,8 @@ var _ = Describe("Custom Gomega Matchers", func() {
 			Expect("acme-corp").To(BeValidTenantID())
 			Expect("tenant-123").To(BeValidTenantID())
 			Expect("a-b-c").To(BeValidTenantID())
-			Expect("abc").To(BeValidTenantID()) // minimum length
+			Expect("abc").To(BeValidTenantID())                  // minimum length
+			Expect(generateLongString(52)).To(BeValidTenantID()) // maximum length
 		})
 
 		It("should not match invalid tenant IDs", func() {
@@ -26,7 +27,7 @@ var _ = Describe("Custom Gomega Matchers", func() {
 			Expect("invalid@tenant").ToNot(BeValidTenantID())         // invalid chars
 			Expect("tenant_with_underscore").ToNot(BeValidTenantID()) // underscores not allowed
 			Expect("tenant with spaces").ToNot(BeValidTenantID())     // spaces not allowed
-			Expect(generateLongString(65)).ToNot(BeValidTenantID())   // too long
+			Expect(generateLongString(53)).ToNot(BeValidTenantID())   // one past the 52-character maximum
 		})
 
 		It("should handle non-string types gracefully", func() {

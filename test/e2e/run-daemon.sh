@@ -56,15 +56,17 @@ fi
 # Copy static config to XDG_CONFIG_HOME location (SRC_CONFIG resolved above)
 cp "$SRC_CONFIG" "$E2E_DIR/config/crosscodex/config.yaml"
 
-# Read base DSN from environment (set by taskfile)
+# Read DSNs from environment (set by taskfile). The graph DSN carries the
+# graph_user password that provision sets below.
 DSN="${CROSSCODEX_DATABASE_DSN:?CROSSCODEX_DATABASE_DSN not set}"
+: "${CROSSCODEX_DATABASE_GRAPH_DSN:?CROSSCODEX_DATABASE_GRAPH_DSN not set}"
 CERTS_DIR="$TEST_DIR/certs"
 
 # Provision graph_user: run migrations and set password
 echo "Provisioning graph_user..."
 cd "$ROOT_DIR"
 go build -o "$E2E_DIR/provision" ./test/e2e/provision
-GRAPH_DSN="$("$E2E_DIR/provision" "$DSN")"
+"$E2E_DIR/provision" "$DSN"
 
 # Generate attestation keypair
 go build -o "$E2E_DIR/genkey" ./test/e2e/genkey
@@ -73,7 +75,6 @@ go build -o "$E2E_DIR/genkey" ./test/e2e/genkey
 # Export config overrides via CROSSCODEX_ env vars
 export XDG_CONFIG_HOME="$E2E_DIR/config"
 export CROSSCODEX_DATABASE_DSN="$DSN"
-export CROSSCODEX_DATABASE_GRAPH_DSN="$GRAPH_DSN"
 export CROSSCODEX_NATS_EMBEDDED_STORE_DIR="$E2E_DIR/nats"
 export CROSSCODEX_STORAGE_OBJECTS_BASE_PATH="$E2E_DIR/objects"
 export CROSSCODEX_TLS_CA="$CERTS_DIR/ca.pem"

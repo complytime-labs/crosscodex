@@ -6,12 +6,14 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -37,6 +40,28 @@ var _ = BeforeEach(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 
 // suDSN is the superuser connection string.
 var suDSN string
+
+// appUserPassword and graphUserPassword are the role passwords for this
+// run, generated on node 1 so no fixed credential lives in the repository.
+var appUserPassword, graphUserPassword string
+
+// suiteSetup carries what node 1 provisioned to every parallel node.
+type suiteSetup struct {
+	DSN               string `json:"dsn"`
+	AppUserPassword   string `json:"app_user_password"`
+	GraphUserPassword string `json:"graph_user_password"`
+}
+
+// setRolePassword sets role's password to password with the statement
+// dbtest.AlterRolePasswordSQL builds, which refuses a non-hex password.
+func setRolePassword(ctx context.Context, adminDB *sql.DB, role, password string) error {
+	stmt, err := dbtest.AlterRolePasswordSQL(role, password)
+	if err != nil {
+		return err
+	}
+	_, err = adminDB.ExecContext(ctx, stmt)
+	return err
+}
 
 // suPool is the superuser pool for test setup operations.
 var suPool db.Pool
@@ -59,16 +84,23 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// Set passwords for application roles.
 	adminDB, err := sql.Open("pgx", dsn)
 	Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
-	Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE graph_user WITH PASSWORD 'graphpass'")
-	Expect(err).NotTo(HaveOccurred(), "failed to set graph_user password")
+	appPassword, err := dbtest.NewRolePassword()
+	Expect(err).NotTo(HaveOccurred(), "generate app_user password")
+	graphPassword, err := dbtest.NewRolePassword()
+	Expect(err).NotTo(HaveOccurred(), "generate graph_user password")
+	setup := suiteSetup{DSN: dsn, AppUserPassword: appPassword, GraphUserPassword: graphPassword}
+	Expect(setRolePassword(ctx, adminDB, "app_user", setup.AppUserPassword)).To(Succeed(), "failed to set app_user password")
+	Expect(setRolePassword(ctx, adminDB, "graph_user", setup.GraphUserPassword)).To(Succeed(), "failed to set graph_user password")
 	Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
-	return []byte(dsn)
+	data, err := json.Marshal(setup)
+	Expect(err).NotTo(HaveOccurred(), "failed to encode suite setup")
+	return data
 }, func(data []byte) {
-	// Runs on all nodes: store DSN and create superuser pool.
-	suDSN = string(data)
+	// Runs on all nodes: store the DSN and passwords, create superuser pool.
+	var setup suiteSetup
+	Expect(json.Unmarshal(data, &setup)).To(Succeed(), "failed to decode suite setup")
+	suDSN, appUserPassword, graphUserPassword = setup.DSN, setup.AppUserPassword, setup.GraphUserPassword
 
 	var err error
 	suPool, err = db.NewPool(db.PoolConfig{
@@ -94,7 +126,7 @@ func appUserDSN() string {
 	if err != nil {
 		panic(fmt.Sprintf("bad suDSN: %v", err))
 	}
-	u.User = url.UserPassword("app_user", "apppass")
+	u.User = url.UserPassword("app_user", appUserPassword)
 	return u.String()
 }
 
@@ -110,7 +142,7 @@ func graphUserDSN() string {
 	if err != nil {
 		panic(fmt.Sprintf("bad suDSN: %v", err))
 	}
-	u.User = url.UserPassword("graph_user", "graphpass")
+	u.User = url.UserPassword("graph_user", graphUserPassword)
 	return u.String()
 }
 
@@ -363,10 +395,8 @@ var _ = Describe("Database Integration", Ordered, func() {
 			adminDB, err := sql.Open("pgx", suDSN)
 			Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
 			defer adminDB.Close()
-			_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
-			Expect(err).NotTo(HaveOccurred(), "failed to restore app_user password")
-			_, err = adminDB.ExecContext(ctx, "ALTER ROLE graph_user WITH PASSWORD 'graphpass'")
-			Expect(err).NotTo(HaveOccurred(), "failed to restore graph_user password")
+			Expect(setRolePassword(ctx, adminDB, "app_user", appUserPassword)).To(Succeed(), "failed to restore app_user password")
+			Expect(setRolePassword(ctx, adminDB, "graph_user", graphUserPassword)).To(Succeed(), "failed to restore graph_user password")
 		})
 
 		It("returns a wrapped ErrMigrationDirty from Down() when the version is marked dirty", func() {
@@ -1491,6 +1521,33 @@ var _ = Describe("Database Integration", Ordered, func() {
 	})
 
 	// ===================================================================
+	// setRolePassword guard (the helper interpolates the password)
+	// ===================================================================
+
+	Describe("setRolePassword", func() {
+		DescribeTable("refuses a non-hex password without running ALTER ROLE",
+			func(password, want string) {
+				adminDB, err := sql.Open("pgx", suDSN)
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(adminDB.Close)
+
+				err = setRolePassword(context.Background(), adminDB, "app_user", password)
+				Expect(err).To(MatchError(ContainSubstring(want)))
+				Expect(err.Error()).To(ContainSubstring("dbtest.NewRolePassword"))
+
+				// app_user still authenticates with this run's password, so no
+				// ALTER ROLE ran.
+				Expect(appUserConn().PingContext(context.Background())).To(Succeed())
+			},
+			Entry("an empty password", "", "refusing an empty password"),
+			Entry("a single quote", "ab'cd", "refusing a non-hex password"),
+			Entry("a statement break", "00'; ALTER ROLE app_user NOLOGIN; --", "refusing a non-hex password"),
+			Entry("non-hex letters", "zz11", "refusing a non-hex password"),
+			Entry("odd-length hex", "abc", "refusing a non-hex password"),
+		)
+	})
+
+	// ===================================================================
 	// Role Isolation
 	// ===================================================================
 
@@ -1538,7 +1595,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 				schemaName := "crosscodex_" + tenantID
 				query := fmt.Sprintf(
-					`SELECT count(*) FROM "%s"._ag_label_vertex`, schemaName)
+					"SELECT count(*) FROM %s._ag_label_vertex", pgx.Identifier{schemaName}.Sanitize())
 				var count int
 				Expect(conn.QueryRowContext(context.Background(), query).Scan(&count)).To(Succeed())
 			})
@@ -1560,7 +1617,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 				schemaName := "crosscodex_" + tenantID
 				query := fmt.Sprintf(
-					`SELECT count(*) FROM "%s"._ag_label_vertex`, schemaName)
+					"SELECT count(*) FROM %s._ag_label_vertex", pgx.Identifier{schemaName}.Sanitize())
 				_, err := conn.ExecContext(context.Background(), query)
 				Expect(err).To(HaveOccurred(), "app_user should not be able to read graph schema")
 				Expect(err.Error()).To(ContainSubstring("permission denied"))

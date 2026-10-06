@@ -323,6 +323,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Enabled:        true,
 						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
 					},
+					Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 					Analysis: config.AnalysisConfig{
 						Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -355,6 +356,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Enabled:        true,
 						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
 					},
+					Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 					Analysis: config.AnalysisConfig{
 						Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -394,6 +396,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Enabled:        true,
 						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
 					},
+					Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 					Analysis: config.AnalysisConfig{
 						Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},

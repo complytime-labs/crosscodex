@@ -470,7 +470,8 @@ func attachGraph(cfg *config.Config, shared *sharedResources, rt *runtime) error
 	tenantConn := dbpkg.NewTenantPool(shared.appPool)
 	resolver := graph.NewPGResolver(tenantConn, graph.WithPGResolverTelemetry(tp, mp))
 	rt.graphService = graph.New(shared.graphDB_, shared.vectorDB, shared.natsClient,
-		graph.WithResolver(resolver), graph.WithTelemetry(tp, mp))
+		graph.WithResolver(resolver), graph.WithTelemetry(tp, mp),
+		graph.WithMaxBulkEdges(cfg.Graph.MaxBulkEdges))
 	rt.healthServer = newHealthServer(cfg.Health.Addr, dbPingCheck(shared.appPool))
 	return nil
 }

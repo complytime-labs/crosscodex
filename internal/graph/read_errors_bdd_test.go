@@ -23,6 +23,7 @@ var _ = Describe("mapGraphError", func() {
 		Entry("InvalidCypher", graphdb.ErrInvalidCypher, connect.CodeInvalidArgument),
 		Entry("TenantRequired", graphdb.ErrTenantRequired, connect.CodeInvalidArgument),
 		Entry("ReadOnlyViolation", graphdb.ErrReadOnlyViolation, connect.CodePermissionDenied),
+		Entry("NotSupported", graphdb.ErrNotSupported, connect.CodeUnimplemented),
 		Entry("unknown", errors.New("unknown"), connect.CodeInternal),
 	)
 })

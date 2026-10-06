@@ -6,8 +6,8 @@ Rules for coding agents in this Go monorepo. Rationale for the design rules belo
 
 Use `task` for everything; never run raw `go build` / `go test`.
 
-- `task dev:deps`, `task generate` (buf; output in gitignored `api/gen/`), `task build`, `task lint`, `task check` (lint + unit tests)
-- `task test:unit`, `task test:property`, `task test:fuzz` (`FUZZ_TIME=30s` in CI), `task test:integration:<name>` (see `task --list`)
+- `task dev:deps`, `task generate` (buf; output in gitignored `api/gen/`), `task build`, `task lint`, `task check` (lint, then unit tests, then `test:race`, sequentially)
+- `task test:unit`, `task test:property`, `task test:race` (`pkg/graphdb` with the race detector), `task test:fuzz` (`FUZZ_TIME=30s` in CI), `task test:integration:<name>` (see `task --list`)
 - `FIPS=1` on any build/test task enables BoringCrypto FIPS mode.
 - Proto changes: from `api/proto`, `go tool buf lint` and `go tool buf breaking --against '../../.git#branch=main,subdir=api/proto'` must introduce no new failures. No task or CI job runs these (`task dev:lint:proto` is protolint), and `buf lint` already has violations in `gateway.proto`.
 
@@ -33,7 +33,8 @@ Use `task` for everything; never run raw `go build` / `go test`.
 
 - Ginkgo v2 + Gomega only. Stdlib `testing` is allowed only in suite bootstraps (`RegisterFailHandler(Fail); RunSpecs(...)`), `export_test.go` bridge files, and `*_fuzz_test.go`.
 - File suffixes: `*_bdd_test.go` (specs), `*_property_test.go`, `*_fuzz_test.go`, `export_test.go`. Parameterize with `DescribeTable`/`Entry`, not table-driven loops.
-- Shared cross-package specs live in `internal/testspecs` (`TenantIsolationBehavior`, `ConfigurationComplianceBehavior`, `SecurityBoundaryBehavior`, `ErrorHandlingBehavior`).
+- Shared cross-package specs live in `internal/testspecs` (`TenantIsolationBehavior`, `ConfigurationComplianceBehavior`, `SecurityBoundaryBehavior`, `ErrorHandlingBehavior`, `GraphDBContractBehavior`). A new `graphdb.GraphDB` driver must run `GraphDBContractBehavior`; a contract change updates `graphdb.GraphDB`'s doc comment and the shared specs together.
+- Unit tests that need a graph use `pkg/graphdb/memdriver` (call `CreateGraph` first). To inject a driver error or an output memdriver can't produce, embed `graphdb.GraphDB` over a memdriver and override only those methods (see `countingGraph` in `internal/catalog/graph_write_bdd_test.go`); don't write a new full `GraphDB` fake. `internal/graph`'s `mockGraphDB` predates this rule; specs in that package may keep using it, including where every method must fail, but prefer the memdriver embed when only some methods are intercepted.
 - Every `pkg/` package needs unit tests with mocked externals and a `<pkg>_property_test.go`:
   - use `rapid.Check(GinkgoT(), ...)` inside `It`, never `rapid.MakeCheck`;
   - wrap specs in `Describe("Property Specifications", Ordered, ...)`;
@@ -57,11 +58,11 @@ Use `task` for everything; never run raw `go build` / `go test`.
 
 ## Errors and configuration
 
-- Return wrapped errors (`fmt.Errorf("...: %w", err)`); don't log and return.
+- Return wrapped errors (`fmt.Errorf("...: %w", err)`); don't log and return. Exception: where detail is withheld from the caller (CWE-209, e.g. `internal/graph` `rpcError` for `CodeInternal`), log the full error once at that boundary.
 - Human-triggerable errors state what happened, why it was blocked, and what to do instead — e.g. `cannot modify job abc123: status is "completed". To retry, create a new job instead of resetting this one.`
 - Tuning values a deployment might change (thresholds, patterns, allowlists, chunk sizes, retry counts) are config in `pkg/config`, not code.
 - Every functional option `WithX` has a `pkg/config` field feeding it, or a doc comment stating its wiring contract. Field names match meaning (e.g. `public_key_path`, not `cert_path`). With `tenant_overrides`, every tenant-variable field is overridable (document global-only fields), and overrides get the same validation as globals. Never add a second knob for a value with a canonical source (FIPS is always `tls.fips.enabled`). Each field is tested for default, valid override, and rejected invalid value with an actionable message.
-- On an identity conflict with valid data, upsert rather than reject. Reserve "already exists" for real bugs (e.g. duplicate derived IDs within one import batch).
+- On an identity conflict with valid data, upsert rather than reject. Reserve "already exists" for real bugs (e.g. duplicate derived IDs within one import batch). Exception: graph `CreateNode`/`CreateEdge` reject duplicates (`ErrNodeExists`/`ErrEdgeExists`); `internal/graph`'s subscriber writers treat that as success; the artifacts materializer accepts an existing Artifact node only when its content matches (verify-then-accept). Catalog ingest upserts `Control` nodes with `UpsertNode`, so re-import refreshes them. See "Upsert Over Reject" in `docs/dev/design-principles.md`.
 
 ## Observability and attestation
 

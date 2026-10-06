@@ -76,6 +76,17 @@ tasks:
     desc: Run linters
     deps: [deps, generate, lint:proto]
     dir: "{{.ROOT_DIR}}"
+    vars:
+      LINT_GIT_DIR:
+        sh: git -C "{{.ROOT_DIR}}" rev-parse --absolute-git-dir
+    env:
+      # golangci-lint keys its cache on package content but stores findings
+      # with the absolute path of the checkout that produced them, so a cache
+      # shared across worktrees replays a sibling's findings here, with its
+      # //nolint directives unapplied (golangci/golangci-lint#6695). Keep one
+      # cache per checkout, in its git dir so it is removed with a worktree.
+      # A GOLANGCI_LINT_CACHE set by the caller still wins.
+      GOLANGCI_LINT_CACHE: '{{.GOLANGCI_LINT_CACHE | default (printf "%s/golangci-lint" .LINT_GIT_DIR)}}'
     cmds:
       # Fence off megalinter-reports so ./... stops at its boundary.
       # The directory is gitignored and ephemeral; a sentinel go.mod
@@ -83,7 +94,21 @@ tasks:
       - test -d megalinter-reports && test ! -f megalinter-reports/go.mod && echo 'module megalinter-reports' > megalinter-reports/go.mod || true
       - go vet ./...
       - go fmt ./...
+      # golangci-lint only type-checks the active build-tag set, so a single
+      # untagged run never sees integration/stress-tagged files. Three passes
+      # cover every tag set in the repo:
+      #   1. untagged (also covers "!integration" unit-test bootstraps)
+      #   2. integration
+      #   3. integration_authn, integration_grpc, integration_llm,
+      #      integration_nats, integration_telemetry, stress
+      # Passes 2 and 3 can't be merged into one `--build-tags` run: with both
+      # sets of tags active, internal/gateway/stress_bdd_test.go needs
+      # helpers that only exist when "integration" is NOT also set, so the
+      # combined set fails to type-check. Each call below fails the task
+      # (and CI, which invokes `task lint`) on its own if it reports an issue.
       - go tool golangci-lint run ./...
+      - go tool golangci-lint run --build-tags=integration ./...
+      - go tool golangci-lint run --build-tags=integration_authn,integration_grpc,integration_llm,integration_nats,integration_telemetry,stress ./...
 
   lint:proto:
     desc: Run protolint on proto files

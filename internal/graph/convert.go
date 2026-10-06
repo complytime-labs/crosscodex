@@ -1,7 +1,10 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -42,9 +45,13 @@ func edgeToProto(e graphdb.EdgeWithEndpoints, tc *pb.TenantContext) *pb.Edge {
 		Label:         e.Label,
 		Properties:    stringifyProps(e.Properties),
 	}
-	if !e.ValidFrom.IsZero() {
+	if !e.ValidFrom.IsZero() || e.ValidTo != nil || e.DeterminedBy != "" || e.Confidence != 0 {
 		pe.Temporal = &pb.TemporalAttributes{
-			ValidFrom: timestamppb.New(e.ValidFrom),
+			DeterminedBy: e.DeterminedBy,
+			Confidence:   float32(e.Confidence),
+		}
+		if !e.ValidFrom.IsZero() {
+			pe.Temporal.ValidFrom = timestamppb.New(e.ValidFrom)
 		}
 		if e.ValidTo != nil {
 			pe.Temporal.ValidTo = timestamppb.New(*e.ValidTo)
@@ -88,6 +95,12 @@ func protoToEdge(pe *pb.CreateEdgeRequest) graphdb.Edge {
 			vt := pe.GetTemporal().GetValidTo().AsTime()
 			e.ValidTo = &vt
 		}
+		e.DeterminedBy = pe.GetTemporal().GetDeterminedBy()
+		// The proto carries confidence as float32. Widening it directly turns
+		// 0.95 into 0.949999988..., which fails thresholds such as >= 0.95,
+		// so parse its shortest float32 decimal instead. FormatFloat output
+		// always parses, so the error is always nil.
+		e.Confidence, _ = strconv.ParseFloat(strconv.FormatFloat(float64(pe.GetTemporal().GetConfidence()), 'g', -1, 32), 64)
 	}
 	if e.ValidFrom.IsZero() {
 		e.ValidFrom = time.Now().UTC()
@@ -213,4 +226,63 @@ func anyProps(m map[string]string) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// reservedKeyHints tells an RPC client what to send instead of a reserved
+// property key, in proto field names. graphdb.ReservedPropertyError names Go
+// fields, which mean nothing to a client. Every key in
+// graphdb.ReservedNodeKeys and graphdb.ReservedEdgeKeys needs an entry.
+var reservedKeyHints = map[string]string{
+	"id":                 "the server generates the ID; rename the property",
+	"valid_from":         "set temporal.valid_from instead",
+	"valid_to":           "set temporal.valid_to instead",
+	"determined_by":      "set temporal.determined_by instead",
+	"confidence":         "set temporal.confidence instead",
+	"created_by":         "set internally by the pipeline; rename the property",
+	"creation_method":    "set internally by the pipeline; rename the property",
+	"determination_type": "set internally by the pipeline; rename the property",
+	"supersedes":         "set internally by the pipeline; rename the property",
+	"superseded_by":      "call SupersedeFact with superseded_by_job_id instead",
+}
+
+// graphErrorMessage returns err's message for an RPC client. A reserved
+// property key error is rebuilt from its fields in proto field names, keeping
+// the index of a *graphdb.BulkEdgeError; nothing of the driver's Go-field
+// wording survives. A missing graph or a read-only violation gets a fixed
+// message: a driver reports both from a database error whose text (internal
+// graph names, SQLSTATE codes) must not reach a client (CWE-209), and the
+// client can act on the fixed text alone.
+func graphErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, graphdb.ErrGraphNotFound):
+		return graphdb.ErrGraphNotFound.Error() + ": the tenant's graph does not exist; create the tenant before using its graph"
+	case errors.Is(err, graphdb.ErrReadOnlyViolation):
+		return graphdb.ErrReadOnlyViolation.Error() + ": the query writes to the graph, but Query and TemporalQuery are read-only; write with CreateNode, CreateEdge, BulkCreateEdges or SupersedeFact instead"
+	}
+	var rk *graphdb.ReservedPropertyError
+	if !errors.As(err, &rk) {
+		return err.Error()
+	}
+	hint, ok := reservedKeyHints[rk.Key]
+	if !ok {
+		hint = "rename the property"
+	}
+	msg := fmt.Sprintf("properties[%q] is reserved: %s", rk.Key, hint)
+	var be *graphdb.BulkEdgeError
+	if errors.As(err, &be) {
+		msg = fmt.Sprintf("bulk create edges [%d]: %s", be.Index, msg)
+	}
+	return msg
+}
+
+// checkEdgeConfidence rejects a client-sent temporal.confidence that is not a
+// finite number in [0, 1]. ±Inf falls outside the range; NaN needs its own
+// test because every comparison with it is false.
+func checkEdgeConfidence(pe *pb.CreateEdgeRequest) error {
+	c := float64(pe.GetTemporal().GetConfidence())
+	if math.IsNaN(c) || c < 0 || c > 1 {
+		return fmt.Errorf("temporal.confidence %s is invalid: it must be a finite number from 0 to 1 inclusive. Send a value in [0, 1], or omit it",
+			strconv.FormatFloat(c, 'g', -1, 32))
+	}
+	return nil
 }

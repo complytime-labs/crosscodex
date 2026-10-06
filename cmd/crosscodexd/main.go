@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -113,6 +115,12 @@ func run(roleFlag string) int {
 		cfg.Role = canonical
 	}
 
+	// Install a stderr handler before telemetry.Init wraps the default.
+	// Wrapping slog's built-in handler instead would deadlock on the first
+	// log call: that handler writes through the log package, which
+	// slog.SetDefault redirects back into the wrapper.
+	slog.SetDefault(newLogger(os.Stderr, cfg.Logging))
+
 	// Init must precede bootstrap: resources capture tracers, meters, and the
 	// propagator from the otel globals at construction time. Its shutdown is
 	// deferred first so it runs last, flushing spans emitted by rt.stop.
@@ -157,4 +165,24 @@ func run(roleFlag string) int {
 	stop()
 	fmt.Println("crosscodexd shutting down")
 	return 0
+}
+
+// newLogger returns a logger that writes to w in the configured format
+// (json, or text otherwise) at the configured level (warn when empty, the
+// config default). The config loader has already rejected any other value.
+func newLogger(w io.Writer, cfg config.LoggingConfig) *slog.Logger {
+	level := slog.LevelWarn
+	switch cfg.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "error":
+		level = slog.LevelError
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	if cfg.Format == "json" {
+		return slog.New(slog.NewJSONHandler(w, opts))
+	}
+	return slog.New(slog.NewTextHandler(w, opts))
 }

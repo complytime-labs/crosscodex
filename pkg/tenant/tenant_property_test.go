@@ -14,7 +14,7 @@ import (
 // Suite bootstrap lives in tenant_bdd_test.go (TestTenantBDD).
 // This file only registers Describe nodes; Ginkgo collects them automatically.
 
-var tenantIDRegex = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}[a-z0-9]$`)
+var tenantIDRegex = regexp.MustCompile(`^[a-z][a-z0-9-]{1,50}[a-z0-9]$`)
 
 var _ = Describe("Property Specifications", Ordered, func() {
 	Context("ValidateTenantID", func() {
@@ -38,12 +38,15 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 
-		It("rejects all IDs longer than 64 characters", func() {
+		It("rejects all IDs longer than 52 characters", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				id := rapid.StringN(65, 200, -1).Draw(t, "long-id")
+				// Well-formed apart from length (53-152 characters), so only
+				// the 52-character cap can reject it.
+				id := rapid.StringMatching(`[a-z][a-z0-9-]{51,150}[a-z0-9]`).Draw(t, "long-id")
 				err := tenant.ValidateTenantID(id)
 				Expect(err).To(HaveOccurred(),
 					"ValidateTenantID accepted long ID %q (len=%d)", id, len(id))
+				Expect(err).To(MatchError(tenant.ErrInvalidTenant))
 			})
 		})
 	})
@@ -51,7 +54,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	Context("WithTenant / FromContext roundtrip", func() {
 		It("round-trips valid tenant IDs through context", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				id := rapid.StringMatching(`[a-z][a-z0-9-]{1,62}[a-z0-9]`).Draw(t, "tenant-id")
+				id := rapid.StringMatching(`[a-z][a-z0-9-]{1,50}[a-z0-9]`).Draw(t, "tenant-id")
 				ctx := context.Background()
 				ctx, err := tenant.WithTenant(ctx, id)
 				Expect(err).NotTo(HaveOccurred(),

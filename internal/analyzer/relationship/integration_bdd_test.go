@@ -16,6 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -247,23 +248,25 @@ Classify the NIST IR 8477 relationship FROM the source TO the target.
 		}
 
 		// Step 7-8: Create GraphMaterializer and materialize.
-		graph := &mockGraphDB{}
+		graph := newControlGraph(ctx, "test-tenant", "AC-1", "IT-3.2", "AC-2", "IT-4.1")
 		mat := relationship.NewGraphMaterializer(graph, store, config.RelationshipConfig{})
 		err = mat.Materialize(ctx, "test-tenant", "job-1")
 		Expect(err).NotTo(HaveOccurred())
 
 		// Step 9: Assert graph edges.
-		Expect(graph.captured).To(HaveLen(2))
-		for _, c := range graph.captured {
-			Expect(c.Edge.Label).To(Equal("SEMANTIC_MATCH"))
-			Expect(c.Edge.DeterminationType).To(Equal("llm_panel"))
-			Expect(c.Edge.Properties["relationship_type"]).To(Equal("SUPERSET_OF"))
+		rels, err := graph.QueryRelationships(ctx, "test-tenant", graphdb.RelationshipQuery{EdgeLabel: "SEMANTIC_MATCH"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rels).To(HaveLen(2))
+		for _, r := range rels {
+			Expect(r.Edge.Label).To(Equal("SEMANTIC_MATCH"))
+			Expect(r.Edge.DeterminationType).To(Equal("llm_panel"))
+			Expect(r.Edge.Properties["relationship_type"]).To(Equal("SUPERSET_OF"))
 		}
 
 		// Verify both pairs are represented.
 		edgePairs := make(map[string]bool)
-		for _, c := range graph.captured {
-			edgePairs[c.SourceID+"--"+c.TargetID] = true
+		for _, r := range rels {
+			edgePairs[r.Source.ID+"--"+r.Target.ID] = true
 		}
 		Expect(edgePairs).To(HaveKey("AC-1--IT-3.2"))
 		Expect(edgePairs).To(HaveKey("AC-2--IT-4.1"))

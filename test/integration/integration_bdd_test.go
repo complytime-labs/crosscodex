@@ -27,7 +27,7 @@ var _ = Describe("Cross-Service Trace Propagation", func() {
 	It("should propagate a single trace ID through NATS publish and subscribe", func() {
 		tp, err := telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { tp.Shutdown(context.Background()) })
+		DeferCleanup(tp.Shutdown)
 
 		tracer := tp.TracerProvider().Tracer("trace-propagation-test")
 		meter := tp.MeterProvider().Meter("trace-propagation-test")
@@ -70,7 +70,7 @@ var _ = Describe("Cross-Service Trace Propagation", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { sub.Unsubscribe() })
+		DeferCleanup(sub.Unsubscribe)
 
 		time.Sleep(100 * time.Millisecond)
 

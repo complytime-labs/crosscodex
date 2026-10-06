@@ -62,7 +62,7 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 
 	for _, r := range matches {
 		edge := graphdb.Edge{
-			ID:        fmt.Sprintf("%s_%s_%s", jobID, r.SourceID, r.TargetID),
+			ID:        graphdb.DerivedID("semantic-match", jobID, r.SourceID, r.TargetID),
 			Label:     "SEMANTIC_MATCH",
 			ValidFrom: time.Now().UTC(),
 			Properties: map[string]any{
@@ -154,7 +154,7 @@ func (s *Service) materializeArtifacts(ctx context.Context, tenantID, jobID stri
 
 			// DEMANDS edge: Requirement -> Artifact.
 			demandsEdge := graphdb.Edge{
-				ID:        fmt.Sprintf("%s_demands_%s", r.ControlID, artID),
+				ID:        graphdb.DerivedID("demands", r.ControlID, artID),
 				Label:     "DEMANDS",
 				ValidFrom: now,
 				Properties: map[string]any{
@@ -167,7 +167,7 @@ func (s *Service) materializeArtifacts(ctx context.Context, tenantID, jobID stri
 
 			// IS_TYPE edge: Artifact -> ArtifactType.
 			isTypeEdge := graphdb.Edge{
-				ID:        fmt.Sprintf("%s_is_type_%s", artID, a.Type),
+				ID:        graphdb.DerivedID("is-type", artID, a.Type),
 				Label:     "IS_TYPE",
 				ValidFrom: now,
 				Properties: map[string]any{

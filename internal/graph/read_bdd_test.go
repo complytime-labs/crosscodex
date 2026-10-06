@@ -541,5 +541,35 @@ var _ = Describe("Read RPCs", func() {
 			Expect(resp.Msg.RowCount).To(Equal(int32(1)))
 			Expect(capturedParams).To(HaveKey("as_of"))
 		})
+
+		It("encodes a whole-second as_of using the fixed-width graphdb layout", func() {
+			ctx := testspecs.SetupTenantContext("test-tenant")
+			ctx = graph.ExportContextWithIdentity(ctx, &authn.Identity{
+				Subject:  "admin@test.com",
+				TenantID: "test-tenant",
+				Roles:    []string{authn.RoleAdmin},
+			})
+
+			var capturedParams map[string]string
+			mockGraph.executeQueryFunc = func(ctx context.Context, tenant, cypher string, params map[string]string) ([]graphdb.QueryRow, error) {
+				capturedParams = params
+				return nil, nil
+			}
+
+			asOf := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+			resp, err := svc.TemporalQuery(ctx, connect.NewRequest(&pb.TemporalQueryRequest{
+				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
+				Cypher:        "MATCH (n) WHERE n.valid_from <= $as_of RETURN n",
+				AsOf:          timestamppb.New(asOf),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			// AGE compares temporal properties as strings, so the as_of parameter
+			// must use the same fixed-width layout stored properties use
+			// (graphdb.FormatTime), not RFC3339Nano which trims trailing zeros
+			// and would sort a whole-second as_of after a sub-second property value.
+			Expect(capturedParams["as_of"]).To(Equal(graphdb.FormatTime(asOf)))
+			Expect(capturedParams["as_of"]).To(Equal("2025-01-01T12:00:00.000000000Z"))
+		})
 	})
 })

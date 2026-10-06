@@ -18,12 +18,12 @@ func WithTelemetry(tracer trace.Tracer, meter metric.Meter) Option {
 
 		var err error
 		c.queryCounter, err = meter.Int64Counter("graphdb.queries.total",
-			metric.WithDescription("Total graph queries executed"))
+			metric.WithDescription("Graph driver calls by operation, status (ok or error) and result (ok, exists, not_found or error)"))
 		if err != nil {
 			return fmt.Errorf("create query counter: %w", err)
 		}
 		c.queryLatency, err = meter.Int64Histogram("graphdb.query.duration_ms",
-			metric.WithDescription("Graph query duration in milliseconds"))
+			metric.WithDescription("Graph driver call duration in milliseconds by operation, status and result"))
 		if err != nil {
 			return fmt.Errorf("create query latency histogram: %w", err)
 		}

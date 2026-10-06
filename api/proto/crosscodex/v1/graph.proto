@@ -13,14 +13,26 @@ option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex
 // COUPLING: Consumes synthesis.ControlMapping, provides traversal
 // STORAGE: PostgreSQL + Apache AGE (openCypher) + pgvector
 // TEMPORAL: All edges/nodes track valid_from, valid_to
+// ERRORS: an error the client can act on (NOT_FOUND, INVALID_ARGUMENT,
+// PERMISSION_DENIED, UNIMPLEMENTED, ...) carries a message saying what to
+// fix. INTERNAL carries only a fixed message naming the request's trace ID
+// (or, when the request has none, the method); the cause is in the server
+// logs under that trace ID and method.
 service GraphService {
   // Create node (typically a catalog control)
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
 
-  // Create relationship edge
+  // Create relationship edge.
+  // temporal.confidence must be a finite number from 0 to 1 inclusive;
+  // any other value is rejected with INVALID_ARGUMENT.
   rpc CreateEdge(CreateEdgeRequest) returns (CreateEdgeResponse);
 
-  // Bulk create edges from synthesis
+  // Bulk create edges from synthesis.
+  // A request with more edges than graph.max_bulk_edges (server config,
+  // default 1000) is rejected with INVALID_ARGUMENT and writes nothing;
+  // split the edges into requests at or under the limit. Every edge's
+  // temporal.confidence must be a finite number from 0 to 1 inclusive, or
+  // the whole request is rejected with INVALID_ARGUMENT.
   rpc BulkCreateEdges(BulkCreateEdgesRequest) returns (BulkCreateEdgesResponse);
 
   // Get node by ID
@@ -118,7 +130,11 @@ message BulkCreateEdgesRequest {
 message BulkCreateEdgesResponse {
   repeated string edge_ids = 1;
   int32 created_count = 2;
-  repeated Error errors = 3;
+  // Field 3 was `repeated Error errors`, which the server never populated:
+  // BulkCreateEdges is all-or-nothing, so a failure is reported only as the
+  // RPC's error status and message.
+  reserved 3;
+  reserved "errors";
 }
 
 message GetNodeRequest {

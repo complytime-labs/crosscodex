@@ -144,10 +144,11 @@ var _ = Describe("Worker Lifecycle", func() {
 
 			// Build and publish a classify task
 			payload := BuildCompletionPayload("classify", "gpt-4", 0.0, 256)
+			awaitResult := WatchResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
 			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
 
 			// Subscribe to results and verify
-			result := WaitForResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", 5*time.Second)
+			result := awaitResult(5 * time.Second)
 			Expect(result).NotTo(BeNil())
 			Expect(result.Fields["response"].GetStringValue()).To(Equal("ok"))
 			Expect(result.Fields["model"].GetStringValue()).To(Equal("gpt-4"))
@@ -161,9 +162,10 @@ var _ = Describe("Worker Lifecycle", func() {
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 			payload := BuildEmbeddingPayload("text-embedding-3-small", "test text")
+			awaitResult := WatchResult(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1")
 			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1", payload)
 
-			result := WaitForResult(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1", 5*time.Second)
+			result := awaitResult(5 * time.Second)
 			Expect(result).NotTo(BeNil())
 			Expect(result.Fields["model"].GetStringValue()).To(Equal("text-embedding-3-small"))
 			embeddings := result.Fields["embeddings"].GetListValue()
@@ -229,9 +231,10 @@ var _ = Describe("WithTelemetry", func() {
 		defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 		payload := BuildCompletionPayload("classify", "gpt-4", 0.0, 256)
+		awaitResult := WatchResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
 		PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
 
-		result := WaitForResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", 5*time.Second)
+		result := awaitResult(5 * time.Second)
 		Expect(result).NotTo(BeNil())
 
 		spans := tp.GetSpans()
@@ -266,9 +269,10 @@ var _ = Describe("WithTelemetry", func() {
 		defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 		payload := BuildCompletionPayload("classify", "gpt-4", 0.0, 256)
+		awaitResult := WatchResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
 		PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
 
-		result := WaitForResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", 5*time.Second)
+		result := awaitResult(5 * time.Second)
 		Expect(result).NotTo(BeNil())
 
 		rm := tp.GetMetrics()
@@ -308,10 +312,11 @@ var _ = Describe("WithTelemetry", func() {
 		defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 		payload := BuildCompletionPayload("classify", "gpt-4", 0.0, 256)
+		awaitError := WatchErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-err", "task-err")
 		PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-err", "task-err", payload)
 
 		// Wait for error result
-		errCategory := WaitForErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-err", "task-err", 5*time.Second)
+		errCategory := awaitError(5 * time.Second)
 		Expect(errCategory).NotTo(BeEmpty(), "error result must be published")
 
 		rm := tp.GetMetrics()
@@ -341,9 +346,10 @@ var _ = Describe("WithTelemetry", func() {
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 			payload := BuildCompletionPayload("classify", "gpt-4", 0.0, 256)
+			awaitResult := WatchResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
 			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
 
-			result := WaitForResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", 5*time.Second)
+			result := awaitResult(5 * time.Second)
 			Expect(result).NotTo(BeNil())
 		}).NotTo(Panic())
 	})

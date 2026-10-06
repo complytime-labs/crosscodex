@@ -156,3 +156,6 @@ func ExportValidateConfig(cfg *Config) error {
 func ExportValidateConfigWithTracker(cfg *Config, tracker *ExportSourceTracker) error {
 	return validate(cfg, tracker.inner)
 }
+
+// ExportDefaultConfigYAML exposes the compiled default config for specs.
+func ExportDefaultConfigYAML() string { return defaultConfigYAML }

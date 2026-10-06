@@ -19,6 +19,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/google/uuid"
 )
@@ -34,13 +35,17 @@ func assertJSONEqual(label string, got, want []byte) {
 	ExpectWithOffset(1, gotVal).To(Equal(wantVal), "%s result_data: got %s, want %s", label, got, want)
 }
 
-// appUserDSN swaps userinfo to app_user:apppass
+// appUserDSN swaps userinfo to app_user and this run's app_user password
 func appUserDSN(suDSN string) (string, error) {
 	u, err := url.Parse(suDSN)
 	if err != nil {
 		return "", err
 	}
-	u.User = url.UserPassword("app_user", "apppass")
+	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	if err != nil {
+		return "", err
+	}
+	u.User = url.UserPassword("app_user", pw)
 	return u.String(), nil
 }
 
@@ -62,7 +67,11 @@ func setupPGStore() (*pipeline.PGStore, db.Pool, string, context.Context) {
 
 	adminDB, err := sql.Open("pgx", suDSN)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to open admin connection")
-	_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+	_, err = adminDB.ExecContext(ctx, stmt)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to set app_user password")
 	ExpectWithOffset(1, adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
@@ -133,7 +142,11 @@ var _ = Describe("PGStore integration", func() {
 
 		adminDB, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "app_user password")
+		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+		_, err = adminDB.ExecContext(ctx, stmt)
 		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
 		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
@@ -199,7 +212,11 @@ var _ = Describe("PGStore integration", func() {
 
 		adminDB, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "app_user password")
+		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+		_, err = adminDB.ExecContext(ctx, stmt)
 		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
 		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
@@ -302,7 +319,11 @@ var _ = Describe("PGStore integration", func() {
 
 		adminDB, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "app_user password")
+		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+		_, err = adminDB.ExecContext(ctx, stmt)
 		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
 		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
@@ -427,7 +448,11 @@ var _ = Describe("PGStore integration", func() {
 
 		adminDB, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		_, err = adminDB.ExecContext(ctx, "ALTER ROLE app_user WITH PASSWORD 'apppass'")
+		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "app_user password")
+		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+		_, err = adminDB.ExecContext(ctx, stmt)
 		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
 		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
