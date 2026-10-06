@@ -108,6 +108,9 @@ jobs:
       - name: Run worker integration tests
         run: task test:integration:worker
 
+      - name: Run embedded-NATS natsbus integration tests
+        run: task test:integration:nats-embedded
+
       - name: Save DB image for cache
         if: always()
         run: |

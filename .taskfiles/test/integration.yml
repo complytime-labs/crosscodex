@@ -183,6 +183,13 @@ tasks:
           PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
       - task: run-ginkgo
         vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-nats-embedded
+          COVERAGE: integration-nats-embedded-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
+      - task: run-ginkgo
+        vars:
           TAGS: integration_llm
           TIMEOUT: 600s
           REPORT: integration-llm
@@ -422,6 +429,19 @@ tasks:
           COVERAGE: integration-attestation-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
 
+  nats-embedded:
+    desc: Run natsbus integration tests against an embedded NATS server (no containers needed)
+    deps: [ensure-deps]
+    cmds:
+      - mkdir -p {{.TEST_DIR}}
+      - task: run-ginkgo
+        vars:
+          TAGS: integration
+          TIMEOUT: 120s
+          REPORT: integration-nats-embedded
+          COVERAGE: integration-nats-embedded-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
+
   clean:
     desc: Remove all integration test containers and their volumes
     cmds:
@@ -524,8 +544,13 @@ tasks:
     requires:
       vars: [TAGS, TIMEOUT, REPORT, COVERAGE, PACKAGES]
     cmds:
-      - go run github.com/onsi/ginkgo/v2/ginkgo run -v --race --tags {{.TAGS}} --timeout {{.TIMEOUT}} --coverprofile {{.COVERAGE}} --output-dir {{.TEST_DIR}} --json-report={{.REPORT}}.json {{.PACKAGES}}
-      - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/{{.REPORT}}.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
+      # --keep-going runs every suite after a failure; ginkgoleaf runs even
+      # when ginkgo fails, and the step exits non-zero if either step fails.
+      - |
+        status=0
+        go run github.com/onsi/ginkgo/v2/ginkgo run -v --keep-going --race --tags {{.TAGS}} --timeout {{.TIMEOUT}} --coverprofile {{.COVERAGE}} --output-dir {{.TEST_DIR}} --json-report={{.REPORT}}.json {{.PACKAGES}} || status=$?
+        go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/{{.REPORT}}.json -format {{.GINKGOLEAF_FORMAT}} -exit-code || status=$?
+        exit $status
 
   ensure-deps:
     internal: true

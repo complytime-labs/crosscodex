@@ -56,7 +56,7 @@ func subscribeOne(client natsbus.Client, ctx context.Context, subject string) <-
 		return nil
 	})
 	Expect(err).NotTo(HaveOccurred(), "subscribe")
-	DeferCleanup(func() { sub.Unsubscribe() })
+	DeferCleanup(sub.Unsubscribe)
 	return received
 }
 
@@ -186,7 +186,6 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 
 			var counts [numWorkers]atomic.Int64
 
-			subs := make([]natsbus.Subscription, numWorkers)
 			for i := range numWorkers {
 				workerIdx := i
 				sub, subErr := client.QueueSubscribe(ctx, subject, "test-workers", func(_ context.Context, _ *natsbus.Message) error {
@@ -194,13 +193,8 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 					return nil
 				})
 				Expect(subErr).NotTo(HaveOccurred(), "queue subscribe worker %d", i)
-				subs[i] = sub
+				DeferCleanup(sub.Unsubscribe)
 			}
-			DeferCleanup(func() {
-				for _, sub := range subs {
-					sub.Unsubscribe()
-				}
-			})
 
 			// Small delay for subscriptions to propagate
 			time.Sleep(100 * time.Millisecond)
@@ -281,14 +275,14 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(func() { subA.Unsubscribe() })
+			DeferCleanup(subA.Unsubscribe)
 
 			subB, err := client.Subscribe(ctxB, subjectB, func(_ context.Context, _ *natsbus.Message) error {
 				receivedByB.Add(1)
 				return nil
 			})
 			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(func() { subB.Unsubscribe() })
+			DeferCleanup(subB.Unsubscribe)
 
 			time.Sleep(100 * time.Millisecond)
 
@@ -395,7 +389,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			var err error
 			tp, err = telemetrytest.NewTestProvider()
 			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(func() { tp.Shutdown(context.Background()) })
+			DeferCleanup(tp.Shutdown)
 
 			tracer = tp.TracerProvider().Tracer("natsbus-test")
 			meter = tp.MeterProvider().Meter("natsbus-test")
@@ -474,7 +468,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 					return nil
 				})
 				Expect(err).NotTo(HaveOccurred())
-				DeferCleanup(func() { sub.Unsubscribe() })
+				DeferCleanup(sub.Unsubscribe)
 
 				// Small delay for subscription propagation.
 				time.Sleep(100 * time.Millisecond)
@@ -519,7 +513,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 					return nil
 				})
 				Expect(err).NotTo(HaveOccurred())
-				DeferCleanup(func() { sub.Unsubscribe() })
+				DeferCleanup(sub.Unsubscribe)
 
 				spans := tp.GetSpans()
 				qsSpan := telemetrytest.FindSpan(spans, "natsbus.QueueSubscribe")
@@ -554,7 +548,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 					return nil
 				})
 				Expect(err).NotTo(HaveOccurred())
-				DeferCleanup(func() { sub.Unsubscribe() })
+				DeferCleanup(sub.Unsubscribe)
 
 				time.Sleep(100 * time.Millisecond)
 

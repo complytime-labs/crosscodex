@@ -53,7 +53,7 @@ var (
 
 // probeOllamaIntegration checks that Ollama responds at the given host.
 func probeOllamaIntegration(ctx context.Context, host string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+"/api/tags", http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func ensureModelIntegration(host, model string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+"/api/tags", http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -538,7 +538,7 @@ var _ = Describe("LLM Client Integration", Ordered, func() {
 			for attempt := 0; attempt < 10; attempt++ {
 				time.Sleep(2 * time.Second)
 
-				req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, nil)
+				req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, http.NoBody)
 				if reqErr != nil {
 					GinkgoWriter.Printf("attempt %d: request build error: %v\n", attempt, reqErr)
 					continue

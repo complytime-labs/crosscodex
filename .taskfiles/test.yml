@@ -35,8 +35,17 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       # testgrpc contains only integration_grpc-tagged tests requiring a live
       # gRPC server — skip it during unit runs; use task test:integration:grpc.
-      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --randomize-all --fail-on-pending --skip-package testgrpc --json-report={{.TEST_DIR}}/ginkgo-report.json ./pkg/... ./internal/... ./cmd/...
-      - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/ginkgo-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
+      # --keep-going runs every suite after a failure, so one run reports all
+      # failing packages. --output-dir keeps Ginkgo's per-suite reports in
+      # TEST_DIR: without it Ginkgo joins the absolute report path onto each
+      # package directory and leaves an empty <pkg>/workspace/... tree behind.
+      # ginkgoleaf runs even when ginkgo fails, and the step exits non-zero
+      # if either step fails.
+      - |
+        status=0
+        go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --keep-going --randomize-all --fail-on-pending --skip-package testgrpc --output-dir {{.TEST_DIR}} --json-report=ginkgo-report.json ./pkg/... ./internal/... ./cmd/... || status=$?
+        go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/ginkgo-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code || status=$?
+        exit $status
 
   race:
     desc: Run pkg/graphdb unit tests with the race detector
@@ -47,8 +56,12 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       # memdriver is shared by concurrent NATS subscriber tests; its locking
       # is only proven under the race detector.
-      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --race --randomize-all --fail-on-pending --json-report={{.TEST_DIR}}/race-report.json ./pkg/graphdb/...
-      - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/race-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
+      # See test:unit for --keep-going, --output-dir and the status handling.
+      - |
+        status=0
+        go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --keep-going --race --randomize-all --fail-on-pending --output-dir {{.TEST_DIR}} --json-report=race-report.json ./pkg/graphdb/... || status=$?
+        go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/race-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code || status=$?
+        exit $status
 
   fuzz:
     desc: Run fuzz tests across all packages
@@ -57,6 +70,11 @@ tasks:
       FUZZ_TIMEOUT: '{{.FUZZ_TIMEOUT | default "2m"}}'
     cmds:
       - mkdir -p {{.TEST_DIR}}
+      # Go before 1.27 can fail a target with "context deadline exceeded" right
+      # at -fuzztime even though nothing crashed (golang/go#75804: a race in
+      # the fuzz coordinator, fixed in go1.27). No crash input is written; rerun
+      # the target. The bump to go1.27 is deferred until Red Hat ships a Go 1.27
+      # toolchain, because FIPS=1 builds use Red Hat Go's OpenSSL FIPS module.
       - |
         failed=0
         for pkg in $(go list ./pkg/... ./internal/...); do
@@ -78,5 +96,9 @@ tasks:
     cmds:
       - mkdir -p {{.TEST_DIR}}
       # testgrpc: integration-only, no property specs — see task test:integration:grpc
-      - go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --focus "Property Specifications" --skip-package testgrpc --json-report={{.TEST_DIR}}/property-report.json ./pkg/... ./internal/...
-      - go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/property-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code
+      # See test:unit for --keep-going, --output-dir and the status handling.
+      - |
+        status=0
+        go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --keep-going --focus "Property Specifications" --skip-package testgrpc --output-dir {{.TEST_DIR}} --json-report=property-report.json ./pkg/... ./internal/... || status=$?
+        go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/property-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code || status=$?
+        exit $status

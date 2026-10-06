@@ -138,7 +138,7 @@ func setupCatalog(conn *sql.DB, tenantID, catalogID, name string) {
 	ctx := context.Background()
 	tx, err := conn.BeginTx(ctx, nil)
 	Expect(err).NotTo(HaveOccurred(), "BeginTx")
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.ExecContext(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID)
 	Expect(err).NotTo(HaveOccurred(), "set_config")
@@ -153,7 +153,7 @@ func execAsTenant(conn *sql.DB, tenantID string, fn func(tx *sql.Tx)) {
 	ctx := context.Background()
 	tx, err := conn.BeginTx(ctx, nil)
 	Expect(err).NotTo(HaveOccurred(), "BeginTx")
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.ExecContext(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID)
 	Expect(err).NotTo(HaveOccurred(), "set_config tenant")
@@ -995,7 +995,7 @@ var _ = Describe("E2E Integration", func() {
 			// Re-import: upsert the same controls with updated titles
 			By("re-importing with updated titles")
 			for i := range controlRecords {
-				controlRecords[i].Title = controlRecords[i].Title + " (updated)"
+				controlRecords[i].Title += " (updated)"
 			}
 			Expect(store.UpsertControls(ctx, controlRecords)).To(Succeed())
 

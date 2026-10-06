@@ -1,3 +1,5 @@
+//go:build !integration
+
 package synthesis_test
 
 import (
@@ -198,18 +200,6 @@ func defaultViabilityConfig() config.ViabilityConfig {
 		TypeMismatchFactor: 0.8,
 		SkipLevelFactor:    0.7,
 		IntegralToFactor:   1.1,
-	}
-}
-
-// defaultAssessmentConfig returns an AssessmentConfig with spec defaults.
-func defaultAssessmentConfig() config.AssessmentConfig {
-	return config.AssessmentConfig{
-		IQRGood:        20.0,
-		IQRPoor:        10.0,
-		NoRelHigh:      0.97,
-		NoRelLow:       0.80,
-		ContestedWarn:  0.20,
-		ActionableWarn: 0.30,
 	}
 }
 

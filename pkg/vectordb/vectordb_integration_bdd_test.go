@@ -382,7 +382,7 @@ var _ = Describe("VectorDB Telemetry", func() {
 
 		tp, err := telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { tp.Shutdown(context.Background()) })
+		DeferCleanup(tp.Shutdown)
 
 		tracer := tp.TracerProvider().Tracer("test")
 		meter := tp.MeterProvider().Meter("test")

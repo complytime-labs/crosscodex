@@ -13,6 +13,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -1594,7 +1595,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 				schemaName := "crosscodex_" + tenantID
 				query := fmt.Sprintf(
-					`SELECT count(*) FROM "%s"._ag_label_vertex`, schemaName)
+					"SELECT count(*) FROM %s._ag_label_vertex", pgx.Identifier{schemaName}.Sanitize())
 				var count int
 				Expect(conn.QueryRowContext(context.Background(), query).Scan(&count)).To(Succeed())
 			})
@@ -1616,7 +1617,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 				schemaName := "crosscodex_" + tenantID
 				query := fmt.Sprintf(
-					`SELECT count(*) FROM "%s"._ag_label_vertex`, schemaName)
+					"SELECT count(*) FROM %s._ag_label_vertex", pgx.Identifier{schemaName}.Sanitize())
 				_, err := conn.ExecContext(context.Background(), query)
 				Expect(err).To(HaveOccurred(), "app_user should not be able to read graph schema")
 				Expect(err.Error()).To(ContainSubstring("permission denied"))

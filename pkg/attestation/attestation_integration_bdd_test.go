@@ -102,7 +102,7 @@ var _ = Describe("Attestation Full Pipeline", func() {
 		// In-memory telemetry
 		tp, err = telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { tp.Shutdown(context.Background()) })
+		DeferCleanup(tp.Shutdown)
 
 		tracer = tp.TracerProvider().Tracer("attestation-pipeline-test")
 		meter := tp.MeterProvider().Meter("attestation-pipeline-test")
