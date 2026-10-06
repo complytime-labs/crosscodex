@@ -76,6 +76,17 @@ tasks:
     desc: Run linters
     deps: [deps, generate, lint:proto]
     dir: "{{.ROOT_DIR}}"
+    vars:
+      LINT_GIT_DIR:
+        sh: git -C "{{.ROOT_DIR}}" rev-parse --absolute-git-dir
+    env:
+      # golangci-lint keys its cache on package content but stores findings
+      # with the absolute path of the checkout that produced them, so a cache
+      # shared across worktrees replays a sibling's findings here, with its
+      # //nolint directives unapplied (golangci/golangci-lint#6695). Keep one
+      # cache per checkout, in its git dir so it is removed with a worktree.
+      # A GOLANGCI_LINT_CACHE set by the caller still wins.
+      GOLANGCI_LINT_CACHE: '{{.GOLANGCI_LINT_CACHE | default (printf "%s/golangci-lint" .LINT_GIT_DIR)}}'
     cmds:
       # Fence off megalinter-reports so ./... stops at its boundary.
       # The directory is gitignored and ephemeral; a sentinel go.mod
