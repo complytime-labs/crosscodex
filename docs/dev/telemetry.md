@@ -233,6 +233,8 @@ A log line with trace correlation looks like:
 
 To correlate a log entry with its trace in Jaeger, copy the `trace_id` value and search for it in the Jaeger UI.
 
+`Init` wraps whatever handler `slog.Default()` has when it runs, so each binary installs its own handler first: `crosscodexd` builds one from `logging.level` and `logging.format`, and `crosscodex` builds one from its verbosity flags and `logging.level`. Wrapping slog's built-in handler is not an option: that handler writes through the `log` package, and `slog.SetDefault` points `log`'s output back at the wrapper, so the first log call deadlocks on `log`'s mutex.
+
 ### Correlation Helpers
 
 For code that needs the trace or span ID as a string value (for example, to populate audit metadata or attestation records):

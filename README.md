@@ -493,7 +493,7 @@ Built-in observability with OTLP export:
 
 - **Traces**: Span per stage, span per LLM call, cross-service correlation
 - **Metrics**: Job duration, LLM latency, worker utilization, queue depth
-- **Logs**: Structured logging correlated to trace IDs
+- **Logs**: Structured logging correlated to trace IDs. `crosscodexd` writes logs to stderr at `logging.level` (default `warn`) in `logging.format` (`text` or `json`, default `text`)
 
 See [Telemetry Guide](docs/dev/telemetry.md) for configuration, Jaeger setup, metrics reference, and instrumentation status.
 

@@ -43,6 +43,11 @@ func WithResource(res *resource.Resource) Option {
 // default slog handler with trace ID injection, and returns a shutdown
 // function.
 //
+// Callers must install their own slog handler (slog.SetDefault) before Init.
+// slog's built-in default handler writes through the log package, and
+// slog.SetDefault points log's output at the new wrapper, so wrapping the
+// built-in handler deadlocks on log's mutex at the first log call.
+//
 // An empty resolved endpoint disables the signal (no-op provider, no error).
 // The returned shutdown function is always non-nil and safe to call.
 func Init(ctx context.Context, cfg config.ObservabilityConfig, opts ...Option) (func(context.Context) error, error) {
