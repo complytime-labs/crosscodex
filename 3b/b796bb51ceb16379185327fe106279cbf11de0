@@ -1,0 +1,25 @@
+internal/graph/subscriber_handlers.go
+  s_bdebf9e5d46259::t_afabfd835e1a55 237-242
+docs/dev/design-principles.md
+  s_bdebf9e5d46259::t_951c4aa771647b 36
+docs/dev/telemetry.md
+  s_bdebf9e5d46259::t_4ec75d51e208a8 178
+internal/graph/subscriber_missing_endpoint_bdd_test.go
+  s_bdebf9e5d46259::t_552b3cdf2a1c0c 93,122-127,131-134,137,141,145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3bb796bb51ceb16379185327fe106279cbf11de0",
+  "prompts": {},
+  "sessions": {
+    "s_bdebf9e5d46259": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a56538a6-078a-4a70-96f5-38858c732cd4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
