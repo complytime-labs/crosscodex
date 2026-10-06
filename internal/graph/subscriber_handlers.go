@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
@@ -76,7 +77,7 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 		}
 
 		err := s.graph.CreateEdge(ctx, tenantID, r.SourceID, r.TargetID, edge)
-		if err != nil && !isNodeExists(err) {
+		if err != nil && !isNodeExists(err) && !s.skipMissingEndpoint(ctx, tenantID, "relationship", "SEMANTIC_MATCH", r.SourceID, r.TargetID, err) {
 			return fmt.Errorf("create SEMANTIC_MATCH edge %s->%s: %w", r.SourceID, r.TargetID, err)
 		}
 	}
@@ -103,7 +104,8 @@ func (s *Service) materializeRequires(ctx context.Context, tenantID, jobID strin
 			JobID:      jobID,
 		}
 
-		if err := s.graph.CreateRequiresEdge(ctx, tenantID, reqEdge); err != nil && !isNodeExists(err) {
+		err := s.graph.CreateRequiresEdge(ctx, tenantID, reqEdge)
+		if err != nil && !isNodeExists(err) && !s.skipMissingEndpoint(ctx, tenantID, "requires", "REQUIRES", r.SourceID, r.TargetID, err) {
 			return fmt.Errorf("create REQUIRES edge %s->%s: %w", r.SourceID, r.TargetID, err)
 		}
 	}
@@ -161,7 +163,8 @@ func (s *Service) materializeArtifacts(ctx context.Context, tenantID, jobID stri
 					"job_id": jobID,
 				},
 			}
-			if err := s.graph.CreateEdge(ctx, tenantID, r.ControlID, artID, demandsEdge); err != nil && !isNodeExists(err) {
+			err := s.graph.CreateEdge(ctx, tenantID, r.ControlID, artID, demandsEdge)
+			if err != nil && !isNodeExists(err) && !s.skipMissingEndpoint(ctx, tenantID, "artifacts", "DEMANDS", r.ControlID, artID, err) {
 				return fmt.Errorf("create DEMANDS edge %s->%s: %w", r.ControlID, artID, err)
 			}
 
@@ -207,6 +210,37 @@ func (s *Service) materializeEmbed(ctx context.Context, tenantID, jobID string, 
 
 func isNodeExists(err error) bool {
 	return errors.Is(err, graphdb.ErrNodeExists) || errors.Is(err, graphdb.ErrEdgeExists)
+}
+
+// skipMissingEndpoint reports whether err means an edge endpoint node does
+// not exist, in which case the caller skips that edge and continues. The
+// subscription is core NATS, so failing the event would not redeliver it: it
+// would only drop every later edge in the same event. The skip is recorded
+// as a metric, a span event and a warning, because the edge stays absent
+// until the tenant's graph is rebuilt.
+func (s *Service) skipMissingEndpoint(ctx context.Context, tenantID, analyzer, label, sourceID, targetID string, err error) bool {
+	if !errors.Is(err, graphdb.ErrNodeNotFound) {
+		return false
+	}
+	if s.edgesSkipped != nil {
+		s.edgesSkipped.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("analyzer", analyzer),
+			attribute.String("edge.label", label),
+		))
+	}
+	trace.SpanFromContext(ctx).AddEvent("edge skipped: endpoint node missing", trace.WithAttributes(
+		attribute.String("edge.label", label),
+		attribute.String("edge.source_id", sourceID),
+		attribute.String("edge.target_id", targetID),
+		attribute.String("error.message", err.Error()),
+	))
+	s.logger.WarnContext(ctx, "skipped graph edge: an endpoint node does not exist in the tenant graph, "+
+		"usually because catalog ingest did not write that control (check the catalog ingest logs) or the analyzer "+
+		"emitted an ID that matches no Control node. The edge stays absent until it is rewritten: after fixing the cause, "+
+		"re-import the tenant's catalog, which rewrites the controls and queues a fresh analysis.",
+		"tenant", tenantID, "analyzer", analyzer, "edge.label", label,
+		"source_id", sourceID, "target_id", targetID, "error", err)
+	return true
 }
 
 func (s *Service) recordMaterialize(ctx context.Context, analyzer string, start time.Time) {

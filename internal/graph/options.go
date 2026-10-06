@@ -22,6 +22,7 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 			s.rpcLatency, _ = m.Float64Histogram("graph.rpc.duration_ms")
 			s.eventCounter, _ = m.Int64Counter("graph.events.total")
 			s.materializeLatency, _ = m.Float64Histogram("graph.materialize.duration_ms")
+			s.edgesSkipped, _ = m.Int64Counter("graph.materialize.edges_skipped.total")
 		}
 	}
 }

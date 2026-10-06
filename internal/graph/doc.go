@@ -29,8 +29,13 @@
 //
 // # Error Handling
 //
-// gRPC errors use canonical status codes. NATS handler errors NAK the message
-// for JetStream redelivery and emit audit events.
+// gRPC errors use canonical status codes. The NATS subscriber is a core-NATS
+// queue subscription, so a handler error is logged and recorded on the
+// natsbus.process span but the event is not redelivered. Because of that, an
+// edge whose endpoint node is missing (graphdb.ErrNodeNotFound) is skipped
+// rather than failing the event, so later edges in the event are still
+// written; each skip increments graph.materialize.edges_skipped.total, adds a
+// span event and logs a warning. Other driver errors still fail the event.
 package graph
 
 import (

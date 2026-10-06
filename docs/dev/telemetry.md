@@ -175,6 +175,7 @@ For components whose telemetry option takes a `(trace.Tracer, metric.Meter)` pai
 | `authn.duration_ms`                 | Int64Histogram   | pkg/authn          | Authentication latency                    |
 | `graphdb.queries.total`             | Int64Counter     | pkg/graphdb        | Graph driver calls by operation, status (ok or error) and result (ok, exists, not_found or error) |
 | `graphdb.query.duration_ms`         | Int64Histogram   | pkg/graphdb        | Graph driver call duration in milliseconds by operation, status and result |
+| `graph.materialize.edges_skipped.total` | Int64Counter | internal/graph     | Edges the NATS subscriber skipped because an endpoint node was missing, by `analyzer` and `edge.label`. Nonzero means the graph lacks edges until it is rebuilt; the warning log names the tenant, edge and endpoint IDs, and the `edge skipped: endpoint node missing` span event (on the `graph.materialize.<analyzer>` span, which carries `tenant.id`) names the edge and endpoint IDs |
 | `storage.operations.total`          | Int64Counter     | pkg/storage        | Storage operations                        |
 | `storage.operation.duration_ms`     | Int64Histogram   | pkg/storage        | Storage operation latency                 |
 | `vectordb.searches.total`           | Int64Counter     | pkg/vectordb       | Vector similarity searches                |
