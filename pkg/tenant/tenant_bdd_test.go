@@ -197,16 +197,11 @@ var _ = Describe("Tenant System", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			It("validates exactly 63 character tenant IDs", func() {
-				tenantID := "a" + strings.Repeat("b", 61) + "c" // 63 chars
+			It("validates maximum length 52 character tenant IDs", func() {
+				tenantID := "a" + strings.Repeat("b", 50) + "c" // 52 chars
 				err := tenant.ValidateTenantID(tenantID)
 				Expect(err).NotTo(HaveOccurred())
-			})
-
-			It("validates maximum length 64 character tenant IDs", func() {
-				tenantID := "a" + strings.Repeat("b", 62) + "c" // 64 chars
-				err := tenant.ValidateTenantID(tenantID)
-				Expect(err).NotTo(HaveOccurred())
+				Expect(len("crosscodex_"+tenantID)).To(Equal(63), "the graph name must fit PostgreSQL's 63-byte identifier limit")
 			})
 
 			It("allows consecutive hyphens in tenant IDs", func() {
@@ -234,12 +229,18 @@ var _ = Describe("Tenant System", Ordered, func() {
 				Expect(errors.Is(err, tenant.ErrInvalidTenant)).To(BeTrue())
 			})
 
-			It("rejects tenant IDs that are too long", func() {
-				tenantID := "a" + strings.Repeat("b", 63) + "c" // 65 chars
-				err := tenant.ValidateTenantID(tenantID)
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, tenant.ErrInvalidTenant)).To(BeTrue())
-			})
+			DescribeTable("rejects tenant IDs that are too long with an actionable message",
+				func(tenantID string) {
+					err := tenant.ValidateTenantID(tenantID)
+					Expect(err).To(HaveOccurred())
+					Expect(errors.Is(err, tenant.ErrInvalidTenant)).To(BeTrue())
+					Expect(err.Error()).To(ContainSubstring(tenant.IDRule))
+					Expect(err.Error()).To(HaveSuffix("Choose an ID that matches"))
+				},
+				Entry("53 chars, one past the limit", "a"+strings.Repeat("b", 51)+"c"),
+				Entry("64 chars, the former limit", "a"+strings.Repeat("b", 62)+"c"),
+				Entry("65 chars", "a"+strings.Repeat("b", 63)+"c"),
+			)
 
 			It("rejects tenant IDs with uppercase letters", func() {
 				err := tenant.ValidateTenantID("MyTenant")

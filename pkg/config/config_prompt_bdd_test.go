@@ -5,12 +5,15 @@ package config_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 var _ = Describe("PromptConfig", func() {
@@ -39,6 +42,7 @@ var _ = Describe("PromptConfig", func() {
 				Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+				Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 				Analysis: config.AnalysisConfig{
 					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -121,6 +125,37 @@ var _ = Describe("PromptConfig", func() {
 			err := config.ExportValidateConfig(cfg)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		// loadWithPromptOverride loads a config file whose only setting is a
+		// prompt.tenant_overrides entry under key.
+		loadWithPromptOverride := func(key string) (*config.Config, error) {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			writeTestFile(path, "prompt:\n  tenant_overrides:\n    \""+key+"\":\n      capture_content: false\n")
+			return config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
+		}
+
+		DescribeTable("rejects a tenant_overrides key that is not a valid tenant ID",
+			func(key string) {
+				_, err := loadWithPromptOverride(key)
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+				Expect(err.Error()).To(ContainSubstring("prompt.tenant_overrides key %q", key))
+				Expect(err.Error()).To(ContainSubstring(tenant.IDRule))
+			},
+			Entry("uppercase", "INVALID"),
+			Entry("53 characters, one over the graph-name limit", "a"+strings.Repeat("b", 52)),
+		)
+
+		DescribeTable("accepts a tenant_overrides key that is a valid tenant ID",
+			func(key string) {
+				cfg, err := loadWithPromptOverride(key)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cfg.Prompt.TenantOverrides).To(HaveKey(key))
+			},
+			Entry("a typical ID", "acme-corp"),
+			Entry("the longest ID, 52 characters", "a"+strings.Repeat("b", 51)),
+		)
 	})
 
 	Context("ForTenant", func() {

@@ -4,13 +4,19 @@ package agedriver_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/codes"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
@@ -173,7 +179,7 @@ var _ = Describe("GraphDB System", Ordered, func() {
 
 				By("including required identity and temporal fields")
 				Expect(got).To(ContainSubstring("id: 'req-1'"))
-				Expect(got).To(ContainSubstring("valid_from: '2025-01-01T00:00:00Z'"))
+				Expect(got).To(ContainSubstring("valid_from: '2025-01-01T00:00:00.000000000Z'"))
 
 				By("wrapping output in Cypher property map braces")
 				Expect(got).To(HavePrefix("{"))
@@ -198,7 +204,7 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				got := agedriver.NodeToAGProperties(n)
 
 				Expect(got).To(ContainSubstring("id: 'req-2'"))
-				Expect(got).To(ContainSubstring("valid_to: '2025-12-31T23:59:59Z'"))
+				Expect(got).To(ContainSubstring("valid_to: '2025-12-31T23:59:59.000000000Z'"))
 				Expect(got).To(ContainSubstring("created_by: 'admin'"))
 				Expect(got).To(ContainSubstring("creation_method: 'import'"))
 				Expect(got).To(ContainSubstring("severity: 'high'"))
@@ -240,6 +246,22 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				Expect(got).To(ContainSubstring("confidence: 0.85"))
 				Expect(got).To(ContainSubstring("supersedes: 'e-0'"))
 			})
+
+			It("writes caller properties in sorted key order, as it does for nodes", func() {
+				e := graphdb.Edge{
+					ID:        "e-1",
+					ValidFrom: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+					Properties: map[string]any{
+						"h": 8, "c": 3, "f": 6, "a": 1, "g": 7, "b": 2, "e": 5, "d": 4,
+					},
+				}
+				want := "{id: 'e-1', valid_from: '2025-01-01T00:00:00.000000000Z', a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8}"
+				// Map iteration order is randomized; repeating makes an
+				// unsorted implementation fail on effectively every run.
+				for range 20 {
+					Expect(agedriver.EdgeToAGProperties(e)).To(Equal(want))
+				}
+			})
 		})
 
 		Context("when escaping values for Cypher string literals", func() {
@@ -256,6 +278,12 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				Entry("dollar-quote tag stripped",
 					"prefix"+agedriver.ExportCypherDollarTag+"suffix",
 					"prefixsuffix"),
+				Entry("dollar-quote tag rebuilt by stripping is stripped too",
+					"$cyp"+agedriver.ExportCypherDollarTag+"her$",
+					""),
+				Entry("dollar-quote tag nested twice is stripped",
+					"$cyp$cyp"+agedriver.ExportCypherDollarTag+"her$her$",
+					""),
 				Entry("bare dollar signs preserved", "cost is $100", "cost is $100"),
 				Entry("bare $$ preserved", "foo $$ bar", "foo $$ bar"),
 			)
@@ -312,6 +340,55 @@ var _ = Describe("GraphDB System", Ordered, func() {
 			})
 		})
 
+		Context("when a call ends on an error", func() {
+			// endSpan runs markOutcome on a fresh span and returns it ended.
+			endSpan := func(err error) sdktrace.ReadOnlySpan {
+				tp, tpErr := telemetrytest.NewTestProvider()
+				Expect(tpErr).NotTo(HaveOccurred())
+				DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+				_, span := tp.TracerProvider().Tracer("test").Start(context.Background(), "op")
+				agedriver.MarkOutcome(span, err)
+				span.End()
+				got := telemetrytest.FindSpan(tp.GetSpans(), "op")
+				Expect(got).NotTo(BeNil())
+				return got
+			}
+
+			DescribeTable("marks a domain sentinel Ok with its result, as record counts it",
+				func(err error, wantResult string) {
+					got := endSpan(err)
+					Expect(got.Status().Code).To(Equal(codes.Ok))
+					result, found := telemetrytest.SpanAttribute(got, "graphdb.result")
+					Expect(found).To(BeTrue(), "span has no graphdb.result attribute")
+					Expect(result.AsString()).To(Equal(wantResult))
+				},
+				Entry("wrapped ErrNodeExists", fmt.Errorf("create node Control/a: %w", graphdb.ErrNodeExists), "exists"),
+				Entry("wrapped ErrEdgeExists", fmt.Errorf("edge %q: %w", "e1", graphdb.ErrEdgeExists), "exists"),
+				Entry("wrapped ErrNodeNotFound", fmt.Errorf("target: node %q: %w", "x", graphdb.ErrNodeNotFound), "not_found"),
+				Entry("wrapped ErrEdgeNotFound", fmt.Errorf("get edge e1: %w", graphdb.ErrEdgeNotFound), "not_found"),
+			)
+
+			DescribeTable("marks any other error Error with its message and no result attribute",
+				func(err error) {
+					got := endSpan(err)
+					Expect(got.Status().Code).To(Equal(codes.Error))
+					Expect(got.Status().Description).To(Equal(err.Error()))
+					_, found := telemetrytest.SpanAttribute(got, "graphdb.result")
+					Expect(found).To(BeFalse())
+				},
+				Entry("a backend failure", errors.New("create edge: connection reset")),
+				// A reused ID is a caller bug, so record counts it as an error.
+				Entry("a node ID conflict", fmt.Errorf("create node: %w",
+					&graphdb.NodeIDConflictError{ID: "a", Label: "Control", StoredLabel: "Requirement"})),
+			)
+
+			It("leaves a tenant error's status to checkTenant, so the rejected tenant is not copied into the span", func() {
+				got := endSpan(fmt.Errorf("begin tx: %w", graphdb.ErrTenantRequired))
+				Expect(got.Status().Code).To(Equal(codes.Unset))
+				Expect(got.Status().Description).To(BeEmpty())
+			})
+		})
+
 		Context("when operations produce spans (error path, no DB)", func() {
 			var (
 				tp     *telemetrytest.TestProvider
@@ -348,6 +425,16 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				Expect(span.Status().Code.String()).To(Equal("Error"))
 			})
 
+			It("emits a graphdb.UpsertNode span with Error status on empty tenant", func() {
+				created, err := client.UpsertNode(context.Background(), "", graphdb.Node{ID: "n1", Label: "Test", ValidFrom: time.Now()})
+				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
+				Expect(created).To(BeFalse())
+
+				span := telemetrytest.FindSpan(tp.GetSpans(), "graphdb.UpsertNode")
+				Expect(span).NotTo(BeNil(), "expected graphdb.UpsertNode span")
+				Expect(span.Status().Code.String()).To(Equal("Error"))
+			})
+
 			It("emits a graphdb.CreateEdge span with Error status on empty tenant", func() {
 				By("calling CreateEdge with valid fields but empty tenant")
 				err := client.CreateEdge(context.Background(), "", "req-1", "ctrl-1", graphdb.Edge{
@@ -362,22 +449,159 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				Expect(span.Status().Code.String()).To(Equal("Error"))
 			})
 
-			It("sets tenant.id span attribute even on error paths", func() {
-				By("calling CreateEdge with valid fields and a specific tenant that fails at beginTx")
-				_ = client.CreateNode(context.Background(), "", graphdb.Node{
-					ID:        "n1",
-					Label:     "Test",
-					ValidFrom: time.Now(),
-				})
+			DescribeTable("records a fixed tenant.id for a rejected tenant, never the caller's value",
+				func(bad string, op func(tenant string) error) {
+					Expect(op(bad)).To(MatchError(graphdb.ErrTenantRequired))
+					spans := tp.GetSpans()
+					Expect(spans).NotTo(BeEmpty())
+					span := spans[len(spans)-1]
+					tenantAttr, found := telemetrytest.SpanAttribute(span, "tenant.id")
+					Expect(found).To(BeTrue(), "expected tenant.id attribute on span %q", span.Name())
+					Expect(tenantAttr.AsString()).To(Equal("invalid"))
+					Expect(span.Status().Code.String()).To(Equal("Error"))
+					Expect(span.Status().Description).To(Equal("invalid tenant ID"))
+					if bad != "" {
+						Expect(span.Status().Description).NotTo(ContainSubstring(bad))
+					}
+				},
+				Entry("CreateNode with an empty tenant", "", func(tenant string) error {
+					return client.CreateNode(context.Background(), tenant, graphdb.Node{ID: "n1", Label: "Test", ValidFrom: time.Now()})
+				}),
+				Entry("CreateNode with a SQL breakout tenant", "x'); --", func(tenant string) error {
+					return client.CreateNode(context.Background(), tenant, graphdb.Node{ID: "n1", Label: "Test", ValidFrom: time.Now()})
+				}),
+				Entry("UpsertNode with a SQL breakout tenant", "x'); --", func(tenant string) error {
+					_, err := client.UpsertNode(context.Background(), tenant, graphdb.Node{ID: "n1", Label: "Test", ValidFrom: time.Now()})
+					return err
+				}),
+				Entry("GetNode with an uppercase tenant", "Acme", func(tenant string) error {
+					_, err := client.GetNode(context.Background(), tenant, "n1")
+					return err
+				}),
+				Entry("CreateGraph with a SQL breakout tenant", "x'); --", func(tenant string) error {
+					return client.CreateGraph(context.Background(), tenant)
+				}),
+				Entry("QueryRelationships with a SQL breakout tenant", "x'); --", func(tenant string) error {
+					_, err := client.QueryRelationships(context.Background(), tenant, graphdb.RelationshipQuery{})
+					return err
+				}),
+			)
 
-				spans := tp.GetSpans()
-				span := telemetrytest.FindSpan(spans, "graphdb.CreateNode")
-				Expect(span).NotTo(BeNil(), "expected graphdb.CreateNode span")
+			It("records a valid tenant as its own tenant.id", func() {
+				// A nil *sql.DB panics in BeginTx; a closed one fails there with
+				// no I/O, after the span has started.
+				db, err := sql.Open("pgx", "postgres://localhost/unused")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(db.Close()).To(Succeed())
+				closed, err := agedriver.New(db, agedriver.WithTelemetry(tp.TracerProvider().Tracer("graphdb-test"), tp.MeterProvider().Meter("graphdb-test")))
+				Expect(err).NotTo(HaveOccurred())
 
+				_, err = closed.QueryRelationships(context.Background(), "acme-corp", graphdb.RelationshipQuery{})
+				Expect(err).To(MatchError(ContainSubstring("database is closed")))
+				span := telemetrytest.FindSpan(tp.GetSpans(), "graphdb.QueryRelationships")
+				Expect(span).NotTo(BeNil())
 				tenantAttr, found := telemetrytest.SpanAttribute(span, "tenant.id")
-				Expect(found).To(BeTrue(), "expected tenant.id attribute on span")
-				Expect(tenantAttr.AsString()).To(Equal(""))
+				Expect(found).To(BeTrue())
+				Expect(tenantAttr.AsString()).To(Equal("acme-corp"))
 			})
+
+			DescribeTable("counts a call rejected inside its span as an error of its operation",
+				func(op string, call func() error) {
+					Expect(call()).To(HaveOccurred())
+					byOutcome, latencies := queryMetrics(tp, op)
+					Expect(byOutcome).To(Equal(map[string]int64{"error/error": 1}))
+					Expect(latencies).To(Equal(uint64(1)))
+				},
+				Entry("CreateNode with an empty tenant", "create_node", func() error {
+					return client.CreateNode(context.Background(), "", graphdb.Node{ID: "n1", Label: "Test", ValidFrom: time.Now()})
+				}),
+				Entry("UpsertNode with an empty tenant", "upsert_node", func() error {
+					_, err := client.UpsertNode(context.Background(), "", graphdb.Node{ID: "n1", Label: "Test", ValidFrom: time.Now()})
+					return err
+				}),
+				Entry("QueryRelationships with a malformed tenant", "query_relationships", func() error {
+					_, err := client.QueryRelationships(context.Background(), "x'); --", graphdb.RelationshipQuery{})
+					return err
+				}),
+				Entry("QueryAsOf with a malformed tenant", "query_as_of", func() error {
+					_, err := client.QueryAsOf(context.Background(), "x'); --", graphdb.RelationshipQuery{}, time.Now())
+					return err
+				}),
+				Entry("BulkCreateEdges with an empty tenant", "bulk_create_edges", func() error {
+					_, err := client.BulkCreateEdges(context.Background(), "", []graphdb.BulkEdge{
+						{SourceID: "a", TargetID: "b", Edge: graphdb.Edge{Label: "MAPS", ValidFrom: time.Now()}},
+					})
+					return err
+				}),
+			)
+
+			It("records no metrics for an argument check that runs before the span", func() {
+				Expect(client.CreateNode(context.Background(), "acme-corp", graphdb.Node{Label: "Test", ValidFrom: time.Now()})).
+					To(MatchError(ContainSubstring("id is required")))
+				Expect(telemetrytest.FindSpan(tp.GetSpans(), "graphdb.CreateNode")).To(BeNil())
+				byOutcome, latencies := queryMetrics(tp, "create_node")
+				Expect(byOutcome).To(BeEmpty())
+				Expect(latencies).To(BeZero())
+			})
+
+			DescribeTable("records no span or metrics for a query filter check that runs before the span",
+				func(spanName, op string, call func() error) {
+					Expect(call()).To(MatchError(graphdb.ErrInvalidCypher))
+					Expect(telemetrytest.FindSpan(tp.GetSpans(), spanName)).To(BeNil())
+					byOutcome, latencies := queryMetrics(tp, op)
+					Expect(byOutcome).To(BeEmpty())
+					Expect(latencies).To(BeZero())
+				},
+				Entry("QueryRelationships with an invalid edge label filter", "graphdb.QueryRelationships", "query_relationships", func() error {
+					_, err := client.QueryRelationships(context.Background(), "acme-corp", graphdb.RelationshipQuery{EdgeLabel: "a b"})
+					return err
+				}),
+				Entry("QueryAsOf with an invalid property filter key", "graphdb.QueryAsOf", "query_as_of", func() error {
+					_, err := client.QueryAsOf(context.Background(), "acme-corp", graphdb.RelationshipQuery{Properties: map[string]any{"a b": 1}}, time.Now())
+					return err
+				}),
+				Entry("Traverse with an invalid edge label", "graphdb.Traverse", "traverse", func() error {
+					_, err := client.Traverse(context.Background(), "acme-corp", graphdb.TraversalQuery{StartNode: "a", EdgeLabels: []string{"a b"}})
+					return err
+				}),
+			)
+
+			It("records the batch size as edge.count on the BulkCreateEdges span", func() {
+				edges := []graphdb.BulkEdge{
+					{SourceID: "a", TargetID: "b", Edge: graphdb.Edge{Label: "MAPS", ValidFrom: time.Now()}},
+					{SourceID: "b", TargetID: "c", Edge: graphdb.Edge{Label: "MAPS", ValidFrom: time.Now()}},
+					{SourceID: "c", TargetID: "a", Edge: graphdb.Edge{Label: "MAPS", ValidFrom: time.Now()}},
+				}
+				_, err := client.BulkCreateEdges(context.Background(), "", edges)
+				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
+				span := telemetrytest.FindSpan(tp.GetSpans(), "graphdb.BulkCreateEdges")
+				Expect(span).NotTo(BeNil())
+				count, found := telemetrytest.SpanAttribute(span, "edge.count")
+				Expect(found).To(BeTrue(), "span has no edge.count attribute")
+				Expect(count.AsInt64()).To(Equal(int64(3)))
+			})
+
+			It("records no UpsertNode span or metrics for a field check that runs before the span", func() {
+				_, err := client.UpsertNode(context.Background(), "acme-corp", graphdb.Node{ID: "n1", Label: "Test"})
+				Expect(err).To(MatchError(ContainSubstring("upsert node: valid_from is required")))
+				Expect(telemetrytest.FindSpan(tp.GetSpans(), "graphdb.UpsertNode")).To(BeNil())
+				byOutcome, latencies := queryMetrics(tp, "upsert_node")
+				Expect(byOutcome).To(BeEmpty())
+				Expect(latencies).To(BeZero())
+			})
+
+			It("describes both graph driver metrics by operation, status and result", func() {
+				Expect(client.CreateNode(context.Background(), "", graphdb.Node{ID: "n1", Label: "Test", ValidFrom: time.Now()})).To(HaveOccurred())
+				rm := tp.GetMetrics()
+				for _, name := range []string{"graphdb.queries.total", "graphdb.query.duration_ms"} {
+					m := telemetrytest.FindMetric(rm, name)
+					Expect(m).NotTo(BeNil(), "metric %s not recorded", name)
+					Expect(m.Description).To(And(
+						ContainSubstring("operation"), ContainSubstring("status"), ContainSubstring("result"),
+					), "metric %s", name)
+				}
+			})
+
 		})
 	})
 
@@ -574,6 +798,13 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Equal("create node: valid_from is required"))
 			})
+
+			It("rejects a label that is not an identifier before reaching the database", func() {
+				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
+				err := client.CreateNode(nil, "test-tenant", graphdb.Node{ID: "n-1", Label: "X) DETACH DELETE n //", ValidFrom: validFrom}) //nolint:staticcheck
+				Expect(err).To(MatchError(graphdb.ErrInvalidCypher))
+				Expect(err.Error()).To(ContainSubstring(`label "X) DETACH DELETE n //" must be an identifier`))
+			})
 		})
 	})
 
@@ -618,11 +849,44 @@ var _ = Describe("GraphDB System", Ordered, func() {
 
 	Describe("Node Property Serialization Edge Cases", func() {
 		Context("when serializing node properties with varying field populations", func() {
-			It("includes valid_from in RFC3339 format", func() {
+			It("includes valid_from in the fixed-width graphdb.TimeLayout format", func() {
 				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
 				n := graphdb.Node{ID: "n-1", ValidFrom: validFrom}
 				got := agedriver.NodeToAGProperties(n)
-				Expect(got).To(ContainSubstring("valid_from: '2025-01-01T00:00:00Z'"))
+				Expect(got).To(ContainSubstring("valid_from: '2025-01-01T00:00:00.000000000Z'"))
+			})
+
+			It("writes sub-second times at fixed width so string order matches time order", func() {
+				whole, _ := time.Parse(time.RFC3339, "2025-01-01T12:00:00Z")
+				half := whole.Add(500 * time.Millisecond)
+				wholeProps := agedriver.NodeToAGProperties(graphdb.Node{ID: "n-1", ValidFrom: whole})
+				halfProps := agedriver.NodeToAGProperties(graphdb.Node{ID: "n-1", ValidFrom: half})
+				Expect(wholeProps).To(ContainSubstring("valid_from: '2025-01-01T12:00:00.000000000Z'"))
+				Expect(halfProps).To(ContainSubstring("valid_from: '2025-01-01T12:00:00.500000000Z'"))
+			})
+		})
+
+		Context("when building the UpsertNode replacement map", func() {
+			validFrom := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+			It("keeps the stored valid_from and carries the stored supersede state over when ValidTo is unset", func() {
+				got := agedriver.NodeUpsertProperties(graphdb.Node{ID: "n-1", ValidFrom: validFrom})
+				Expect(got).To(Equal("{id: 'n-1', valid_from: n.valid_from, valid_to: n.valid_to, superseded_by: n.superseded_by}"))
+			})
+
+			It("keeps the stored valid_from, writes ValidTo and omits superseded_by when ValidTo is set", func() {
+				validTo := validFrom.Add(time.Hour)
+				got := agedriver.NodeUpsertProperties(graphdb.Node{ID: "n-1", ValidFrom: validFrom, ValidTo: &validTo})
+				Expect(got).To(Equal("{id: 'n-1', valid_from: n.valid_from, valid_to: '2025-01-01T01:00:00.000000000Z'}"))
+			})
+
+			It("escapes values exactly as CreateNode does", func() {
+				n := graphdb.Node{ID: "x' }) DETACH DELETE n //", ValidFrom: validFrom, Properties: map[string]any{"title": "a'b\\c"}}
+				got := agedriver.NodeUpsertProperties(n)
+				Expect(got).To(ContainSubstring(`id: 'x\' }) DETACH DELETE n //'`))
+				Expect(got).To(ContainSubstring(`title: 'a\'b\\c'`))
+				created := strings.Replace(agedriver.NodeToAGProperties(n), "valid_from: '2025-01-01T00:00:00.000000000Z'", "valid_from: n.valid_from", 1)
+				Expect(got).To(Equal(strings.TrimSuffix(created, "}") + ", valid_to: n.valid_to, superseded_by: n.superseded_by}"))
 			})
 		})
 	})
@@ -638,7 +902,7 @@ var _ = Describe("GraphDB System", Ordered, func() {
 					ValidTo:   &validTo,
 				}
 				got := agedriver.EdgeToAGProperties(e)
-				Expect(got).To(ContainSubstring("valid_to: '2025-12-31T23:59:59Z'"))
+				Expect(got).To(ContainSubstring("valid_to: '2025-12-31T23:59:59.000000000Z'"))
 			})
 		})
 	})
@@ -719,55 +983,48 @@ var _ = Describe("GraphDB System", Ordered, func() {
 		})
 
 		Context("when validating edge fields", func() {
-			It("rejects edges with empty label", func() {
-				validFrom := time.Now()
-				edges := []graphdb.BulkEdge{
-					{
-						SourceID: "src-1",
-						TargetID: "tgt-1",
-						Edge: graphdb.Edge{
-							ID:        "edge-1",
-							ValidFrom: validFrom,
-						},
-					},
-				}
-				_, err := client.BulkCreateEdges(context.Background(), "tenant-a", edges)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("label is required"))
-			})
+			DescribeTable("reports the index of an invalid edge, alone or after a valid one",
+				func(mutate func(*graphdb.BulkEdge), sentinel error, wantSuffix string) {
+					valid := graphdb.BulkEdge{SourceID: "src-1", TargetID: "tgt-1", Edge: graphdb.Edge{ID: "edge-1", Label: "REL", ValidFrom: time.Now()}}
+					invalid := valid
+					invalid.Edge.ID = "edge-2"
+					mutate(&invalid)
 
-			It("rejects edges with empty source", func() {
-				validFrom := time.Now()
-				edges := []graphdb.BulkEdge{
-					{
-						TargetID: "tgt-1",
-						Edge: graphdb.Edge{
-							ID:        "edge-1",
-							Label:     "REL",
-							ValidFrom: validFrom,
-						},
-					},
-				}
-				_, err := client.BulkCreateEdges(context.Background(), "tenant-a", edges)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("source and target are required"))
-			})
-
-			It("rejects edges with zero valid_from", func() {
-				edges := []graphdb.BulkEdge{
-					{
-						SourceID: "src-1",
-						TargetID: "tgt-1",
-						Edge: graphdb.Edge{
-							ID:    "edge-1",
-							Label: "REL",
-						},
-					},
-				}
-				_, err := client.BulkCreateEdges(context.Background(), "tenant-a", edges)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("valid_from is required"))
-			})
+					expectRejected := func(batch []graphdb.BulkEdge, prefix string) {
+						ids, err := client.BulkCreateEdges(context.Background(), "tenant-a", batch)
+						Expect(err).To(HaveOccurred())
+						Expect(ids).To(BeNil())
+						Expect(err.Error()).To(HavePrefix(prefix))
+						Expect(err.Error()).To(ContainSubstring(wantSuffix))
+						if sentinel != nil {
+							Expect(err).To(MatchError(sentinel))
+						}
+					}
+					expectRejected([]graphdb.BulkEdge{invalid}, "bulk create edges [0]: ")
+					expectRejected([]graphdb.BulkEdge{valid, invalid}, "bulk create edges [1]: ")
+				},
+				Entry("a label that is not an identifier",
+					func(be *graphdb.BulkEdge) { be.Edge.Label = "MAPS TO" },
+					graphdb.ErrInvalidCypher, `label "MAPS TO" must be an identifier`),
+				Entry("a reserved property key",
+					func(be *graphdb.BulkEdge) { be.Edge.Properties = map[string]any{"confidence": 0.5} },
+					graphdb.ErrInvalidCypher, `property key "confidence" is reserved`),
+				Entry("a property key that is not an identifier",
+					func(be *graphdb.BulkEdge) { be.Edge.Properties = map[string]any{"bad key": 1} },
+					graphdb.ErrInvalidCypher, `property key "bad key" must be an identifier`),
+				Entry("an empty label",
+					func(be *graphdb.BulkEdge) { be.Edge.Label = "" },
+					nil, "label is required"),
+				Entry("a missing source",
+					func(be *graphdb.BulkEdge) { be.SourceID = "" },
+					nil, "source and target are required"),
+				Entry("a missing target",
+					func(be *graphdb.BulkEdge) { be.TargetID = "" },
+					nil, "source and target are required"),
+				Entry("a zero valid_from",
+					func(be *graphdb.BulkEdge) { be.Edge.ValidFrom = time.Time{} },
+					nil, "valid_from is required"),
+			)
 		})
 	})
 
@@ -791,7 +1048,44 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				_, err := client.ExecuteQuery(context.Background(), "", "MATCH (n) RETURN n", nil)
 				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
 			})
+
+			// client wraps a nil *sql.DB, so reaching the database would panic:
+			// a returned error proves the check runs before any SQL is sent.
+			DescribeTable("rejects cypher that contains the dollar-quote tag",
+				func(cypher string) {
+					_, err := client.ExecuteQuery(context.Background(), "tenant-a", cypher, nil)
+					Expect(err).To(MatchError(graphdb.ErrInvalidCypher))
+					Expect(err.Error()).To(ContainSubstring(agedriver.ExportCypherDollarTag))
+					Expect(err.Error()).To(ContainSubstring("Remove it from the query"))
+				},
+				Entry("tag written directly", "RETURN 1 "+agedriver.ExportCypherDollarTag+") AS (v agtype); SELECT 1; --"),
+				Entry("tag split around a second copy", "RETURN 1 $cyp"+agedriver.ExportCypherDollarTag+"her$) AS (v agtype); --"),
+			)
 		})
+
+		DescribeTable("substitutes whole $name tokens only",
+			func(cypher string, params map[string]string, want string) {
+				Expect(agedriver.SubstituteParams(cypher, params)).To(Equal(want))
+			},
+			Entry("single parameter",
+				"MATCH (n {id: $id}) RETURN n", map[string]string{"id": "a"},
+				"MATCH (n {id: 'a'}) RETURN n"),
+			Entry("prefix-sharing names stay distinct",
+				"MATCH (n {id: $id2}) RETURN $id", map[string]string{"id": "a", "id2": "b"},
+				"MATCH (n {id: 'b'}) RETURN 'a'"),
+			Entry("a token without a parameter is left unchanged",
+				"MATCH (n {id: $id2}) RETURN n", map[string]string{"id": "a"},
+				"MATCH (n {id: $id2}) RETURN n"),
+			Entry("values are escaped",
+				"RETURN $v", map[string]string{"v": `it's \ odd`},
+				`RETURN 'it\'s \\ odd'`),
+			Entry("a substituted value is not substituted again",
+				"RETURN $a, $b", map[string]string{"a": "$b", "b": "x"},
+				"RETURN '$b', 'x'"),
+			Entry("nil params leave the query unchanged",
+				"RETURN $a", nil,
+				"RETURN $a"),
+		)
 	})
 
 	Describe("SupersedeFact", func() {
@@ -841,6 +1135,79 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				_, err := client.SupersedeFact(context.Background(), "", req)
 				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
 			})
+		})
+	})
+
+	Describe("advisory lock keys", func() {
+		It("pins the node lock key, so driver versions in a rolling deploy agree on it", func() {
+			key := agedriver.AdvisoryKey("node", "crosscodex_acme", "cat/ac-2")
+			Expect(agedriver.AdvisoryKey("node", "crosscodex_acme", "cat/ac-2")).To(Equal(key))
+			Expect(key).To(Equal(int64(-1839689787764898047)), "FNV-1a of the NUL-terminated parts")
+		})
+
+		DescribeTable("gives a different node key when the graph or ID differs",
+			func(gn, id string) {
+				Expect(agedriver.AdvisoryKey("node", gn, id)).NotTo(Equal(agedriver.AdvisoryKey("node", "crosscodex_acme", "cat/ac-2")))
+			},
+			Entry("graph", "crosscodex_other", "cat/ac-2"),
+			Entry("id", "crosscodex_acme", "cat/ac-3"),
+		)
+
+		It("separates parts, so moving a boundary changes the key", func() {
+			Expect(agedriver.AdvisoryKey("node", "ab", "c")).NotTo(Equal(agedriver.AdvisoryKey("node", "a", "bc")))
+			Expect(agedriver.AdvisoryKey("nodeg", "c")).NotTo(Equal(agedriver.AdvisoryKey("node", "gc")))
+		})
+
+		It("pins the graph lock key, so driver versions in a rolling deploy agree on it", func() {
+			Expect(agedriver.AdvisoryKey("graph", "crosscodex_acme")).To(Equal(int64(3793828271057324715)), "FNV-1a of the NUL-terminated parts")
+		})
+
+		It("keeps graph keys in a separate domain and distinct per graph", func() {
+			Expect(agedriver.AdvisoryKey("graph", "crosscodex_acme")).NotTo(Equal(agedriver.AdvisoryKey("graph", "crosscodex_other")))
+			Expect(agedriver.AdvisoryKey("graph", "crosscodex_acme")).NotTo(Equal(agedriver.AdvisoryKey("node", "crosscodex_acme", "")))
+		})
+	})
+
+	Describe("classifyErr", func() {
+		It("wraps AGE's missing-graph error with ErrGraphNotFound, names the tenant, and records AGE's text only on the span", func() {
+			tp, tpErr := telemetrytest.NewTestProvider()
+			Expect(tpErr).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+			ctx, span := tp.TracerProvider().Tracer("test").Start(context.Background(), "op")
+
+			cause := errors.New(`ERROR: graph "crosscodex_tenant-x" does not exist (SQLSTATE 3F000)`)
+			err := agedriver.ClassifyErr(ctx, "tenant-x", cause)
+			span.End()
+
+			Expect(err).To(MatchError(graphdb.ErrGraphNotFound))
+			Expect(err.Error()).To(Equal(`graph for tenant "tenant-x" does not exist; create the tenant (or call CreateGraph) before using its graph: graph not found`))
+			Expect(errors.Is(err, cause)).To(BeFalse(), "AGE's error names the internal graph and a SQLSTATE; it must not reach the caller")
+
+			got := telemetrytest.FindSpan(tp.GetSpans(), "op")
+			Expect(got).NotTo(BeNil())
+			var recorded []string
+			for _, ev := range got.Events() {
+				for _, kv := range ev.Attributes {
+					if kv.Key == "exception.message" {
+						recorded = append(recorded, kv.Value.AsString())
+					}
+				}
+			}
+			Expect(recorded).To(ConsistOf(cause.Error()), "operators find AGE's text on the span")
+		})
+
+		It("passes other errors through unchanged", func() {
+			cause := errors.New(`ERROR: relation "x" does not exist (SQLSTATE 42P01)`)
+			Expect(agedriver.ClassifyErr(context.Background(), "tenant-x", cause)).To(BeIdenticalTo(cause))
+		})
+
+		It("does not classify an error that merely contains a quoted graph name near 'does not exist' for an unrelated object", func() {
+			cause := errors.New(`ERROR: graph "g" exists but label "foo" does not exist`)
+			Expect(agedriver.ClassifyErr(context.Background(), "tenant-x", cause)).To(BeIdenticalTo(cause))
+		})
+
+		It("returns nil for nil", func() {
+			Expect(agedriver.ClassifyErr(context.Background(), "tenant-x", nil)).To(BeNil())
 		})
 	})
 

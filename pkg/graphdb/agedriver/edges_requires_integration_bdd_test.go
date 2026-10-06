@@ -388,5 +388,52 @@ var _ = Describe("RequiresEdge", func() {
 			confidence := results[0].Edge.Properties["confidence"].(float64)
 			Expect(confidence).To(BeNumerically("~", 0.9333333333, 0.00001))
 		})
+
+		DescribeTable("writes the REQUIRES property map in a fixed order with every value escaped",
+			func(reqEdge graphdb.RequiresEdge, wantProps func(ts string) string) {
+				tenantID := testID("requires-edge-sql")
+				setupTenant(tenantID)
+				DeferCleanup(func() { cleanupTenant(tenantID) })
+
+				recorder := &sqlRecorder{contains: "CREATE (s)-[e:REQUIRES"}
+				client, err := agedriver.New(openTracedGraphDB(recorder))
+				Expect(err).NotTo(HaveOccurred())
+				ctx := context.Background()
+				now := time.Date(2026, 1, 2, 3, 4, 5, 6000, time.UTC)
+				for _, id := range []string{"src", "tgt"} {
+					Expect(client.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Control", ValidFrom: now})).To(Succeed())
+				}
+
+				reqEdge.AnalyzedAt = now
+				reqEdge.TenantID = tenantID
+				Expect(client.CreateRequiresEdge(ctx, tenantID, reqEdge)).To(Succeed())
+
+				sqls := recorder.take()
+				Expect(sqls).To(HaveLen(1))
+				Expect(sqls[0]).To(ContainSubstring(
+					"MATCH (s {id: 'src'}), (t {id: 'tgt'}) CREATE (s)-[e:REQUIRES " + wantProps(graphdb.FormatTime(now)) + "]->(t)"))
+			},
+			Entry("with models and a prompt version, one model needing escaping",
+				graphdb.RequiresEdge{
+					SourceID: "src", TargetID: "tgt", Confidence: 0.85, ValidVotes: 8, TotalVotes: 9, VoteWeight: 8,
+					Models: []string{"llama3.2:3b", `o'neil\x`}, SamplesPerModel: 3, PromptVersion: "1.0.0", JobID: "job-1",
+				},
+				func(ts string) string {
+					return "{id: '" + graphdb.DerivedID("requires", "job-1", "src", "tgt") + "', valid_from: '" + ts +
+						`', confidence: 0.85, unanimous: false, valid_votes: 8, total_votes: 9, vote_weight: 8, ` +
+						`models: ['llama3.2:3b', 'o\'neil\\x'], samples_per_model: 3, prompt_version: '1.0.0', ` +
+						"analyzed_at: '" + ts + "', job_id: 'job-1'}"
+				}),
+			Entry("without models or a prompt version, which are omitted",
+				graphdb.RequiresEdge{
+					SourceID: "src", TargetID: "tgt", Confidence: 0.75, Unanimous: true, ValidVotes: 1, TotalVotes: 1,
+					VoteWeight: 1, SamplesPerModel: 1, JobID: "job-2",
+				},
+				func(ts string) string {
+					return "{id: '" + graphdb.DerivedID("requires", "job-2", "src", "tgt") + "', valid_from: '" + ts +
+						"', confidence: 0.75, unanimous: true, valid_votes: 1, total_votes: 1, vote_weight: 1, " +
+						"samples_per_model: 1, analyzed_at: '" + ts + "', job_id: 'job-2'}"
+				}),
+		)
 	})
 })

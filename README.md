@@ -14,6 +14,19 @@ ______________________________________________________________________
 
 CrossCodex is in early development. All foundational, domain, and service packages are implemented and tested. The CLI provides approximately 22 commands across project, catalog, run, results, prompt, version, and completion groups with daemon connectivity and embedded single-node mode. See [Development](#development) below to build from source and run tests.
 
+## Upgrading
+
+The graph storage hardening in #148 makes these breaking changes:
+
+- Tenant IDs are limited to 52 characters (3-52 lowercase letters, digits and hyphens). Existing longer tenants stop working and must be re-provisioned under a new ID; see the "Tenant IDs longer than 52 characters" note linked below for the detection query and steps.
+- Derived edge ID formats changed, so existing graphs do not deduplicate against newly written edges.
+- Temporal graph properties (`valid_from`, `valid_to`, `analyzed_at`) use a new fixed-width encoding.
+- Node and edge properties that use a reserved key (such as `id` or `valid_from`) are rejected.
+- `BulkCreateEdges` rejects requests with more than `graph.max_bulk_edges` edges (default 1000).
+- `CreateEdge` and `BulkCreateEdges` reject a `temporal.confidence` outside 0 to 1.
+
+Graphs written before this change must be rebuilt. Follow the "Upgrade note (#148)" in [docs/dev/design-principles.md](docs/dev/design-principles.md#graph-data-model).
+
 ## Quick Start
 
 **Prerequisites**: Go >= 1.23, Task (taskfile.dev), container engine (podman or docker)
@@ -260,6 +273,9 @@ analysis:
   candidates:
     min_embedding_coverage: 0.8          # Minimum fraction of a job's controls that must have an embedding before candidate generation runs; below this, the candidate_generation stage fails the job (fail-closed)
     embed_model: "snowflake-arctic-embed2"  # Embedding model candidate generation reads; must be one of analysis.embedding.models
+
+graph:
+  max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)
 
 synthesis:
   confidence_threshold: 0.5               # Minimum confidence for viable mappings

@@ -7,7 +7,7 @@
 // prerequisite detection generators). Each pair's prerequisite relationship is
 // classified and results are aggregated.
 //
-// Results are stored as per-pair JSON files in object storage (source of truth),
-// published as NATS events, and materialized as graph edges. The graph is a
-// materialized view, fully reconstructible from object storage.
+// Results are stored as per-pair JSON files in object storage (source of truth)
+// and published as NATS events. internal/graph consumes the events and writes
+// the REQUIRES edges.
 package requires

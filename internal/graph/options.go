@@ -26,10 +26,26 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 	}
 }
 
-// WithLogger sets the structured logger.
+// WithMaxBulkEdges sets the most edges one BulkCreateEdges request may carry.
+// Wired from config graph.max_bulk_edges (config.GraphConfig.MaxBulkEdges),
+// whose validation keeps n in [1, 10000]. Options cannot return errors, so a
+// value below 1 is ignored and the service keeps its default,
+// config.DefaultGraphMaxBulkEdges, rather than rejecting every request.
+func WithMaxBulkEdges(n int) Option {
+	return func(s *Service) {
+		if n >= 1 {
+			s.maxBulkEdges = n
+		}
+	}
+}
+
+// WithLogger sets the structured logger. A nil logger is ignored, keeping
+// slog.Default().
 func WithLogger(logger *slog.Logger) Option {
 	return func(s *Service) {
-		s.logger = logger
+		if logger != nil {
+			s.logger = logger
+		}
 	}
 }
 

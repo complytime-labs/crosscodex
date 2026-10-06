@@ -1333,6 +1333,7 @@ logging:
 				},
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+				Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 				Analysis: config.AnalysisConfig{
 					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -1362,6 +1363,7 @@ logging:
 				Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+				Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 				Analysis: config.AnalysisConfig{
 					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -1387,6 +1389,7 @@ logging:
 					Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 					Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 					Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+					Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 					Analysis: config.AnalysisConfig{
 						Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 						Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -1773,6 +1776,7 @@ logging:
 					Enabled:        true,
 					ExpiryDuration: 8760 * time.Hour,
 				},
+				Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 				Analysis: config.AnalysisConfig{
 					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -1870,6 +1874,7 @@ logging:
 					ExpiryDuration:    8760 * time.Hour,
 					IncludeByProducts: true,
 				},
+				Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 				Analysis: config.AnalysisConfig{
 					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -1997,6 +2002,7 @@ logging:
 					MaxConcurrentJobs: 10,
 					StageTimeout:      5 * time.Minute,
 				},
+				Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 				Analysis: config.AnalysisConfig{
 					Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
@@ -2220,6 +2226,7 @@ logging:
 					Enabled:        true,
 					ExpiryDuration: 8760 * time.Hour,
 				},
+				Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 				Analysis: config.AnalysisConfig{
 					Engine: config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 					Classification: config.ClassificationConfig{
@@ -2955,6 +2962,7 @@ var _ = Describe("SynthesisConfig validation", func() {
 			Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 			Logging:     config.LoggingConfig{Level: "info", Format: "text"},
 			Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
+			Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 			Analysis: config.AnalysisConfig{
 				Engine:         config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 				Classification: config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},

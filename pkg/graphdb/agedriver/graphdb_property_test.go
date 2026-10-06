@@ -1,6 +1,7 @@
 package agedriver_test
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 )
 
-var _ = Describe("Property Specifications", func() {
+var _ = Describe("Property Specifications", Ordered, func() {
 
 	Context("escapeCypher — injection prevention", func() {
 		It("never produces output with unescaped single quotes", func() {
@@ -55,21 +56,65 @@ var _ = Describe("Property Specifications", func() {
 					Expect(result).To(ContainSubstring(node.ID))
 				}
 				if !node.ValidFrom.IsZero() {
-					Expect(result).To(ContainSubstring(node.ValidFrom.Format(time.RFC3339Nano)))
+					Expect(result).To(ContainSubstring(graphdb.FormatTime(node.ValidFrom)))
+				}
+			})
+		})
+	})
+
+	Context("nodeUpsertProperties — replacement map", func() {
+		It("is the CreateNode map with stored-value references only for valid_from and, without ValidTo, the supersede keys; every caller value is quoted", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				props := drawStringMap(t)
+				for k := range graphdb.ReservedNodeKeys() {
+					delete(props, k) // CheckNode rejects these before serialization
+				}
+				node := graphdb.Node{
+					ID:             rapid.String().Draw(t, "id"),
+					Label:          "Control",
+					ValidFrom:      time.Unix(rapid.Int64Range(0, 4e9).Draw(t, "valid_from"), 0).UTC(),
+					CreatedBy:      rapid.String().Draw(t, "created_by"),
+					CreationMethod: rapid.String().Draw(t, "creation_method"),
+					Properties:     props,
+				}
+				wantRefs := []string{"n.valid_from"}
+				suffix := ", valid_to: n.valid_to, superseded_by: n.superseded_by}"
+				if rapid.Bool().Draw(t, "has_valid_to") {
+					validTo := node.ValidFrom.Add(time.Hour)
+					node.ValidTo = &validTo
+					suffix = "}"
+				} else {
+					wantRefs = append(wantRefs, "n.valid_to", "n.superseded_by")
+				}
+
+				got := agedriver.NodeUpsertProperties(node)
+				created := agedriver.NodeToAGProperties(node)
+				literal := "valid_from: '" + graphdb.FormatTime(node.ValidFrom) + "'"
+				Expect(strings.Count(created, literal)).To(BeNumerically(">=", 1))
+				want := strings.Replace(created, literal, "valid_from: n.valid_from", 1)
+				Expect(got).To(Equal(strings.TrimSuffix(want, "}") + suffix))
+
+				outside := unquotedText(got)
+				Expect(cypherRef.FindAllString(outside, -1)).To(Equal(wantRefs), "n.<key> references outside string literals in %q", got)
+				Expect(outside).To(MatchRegexp(`^[{}A-Za-z0-9_:,. ]*$`), "only keys, references and punctuation may appear unquoted in %q", got)
+				for k, v := range props {
+					Expect(got).To(ContainSubstring(k + ": '" + agedriver.EscapeCypher(v.(string)) + "'"))
 				}
 			})
 		})
 	})
 
 	Context("graphName — format compliance", func() {
-		It("always produces crosscodex_ prefix followed by the tenant", func() {
+		It("always produces crosscodex_ prefix followed by the tenant, within PostgreSQL's 63-byte identifier limit", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				tenant := rapid.StringMatching(`[a-z0-9-]{3,64}`).Draw(t, "tenant")
+				tenant := rapid.StringMatching(`[a-z][a-z0-9-]{1,50}[a-z0-9]`).Draw(t, "tenant")
 				result := agedriver.GraphName(tenant)
 
 				Expect(result).To(Equal("crosscodex_" + tenant))
 				Expect(strings.HasPrefix(result, "crosscodex_")).To(BeTrue(),
 					"result %q must have crosscodex_ prefix", result)
+				Expect(len(result)).To(BeNumerically("<=", 63),
+					"graph name %q exceeds 63 bytes and would be truncated", result)
 			})
 		})
 	})
@@ -96,12 +141,33 @@ var _ = Describe("Property Specifications", func() {
 					Expect(result).To(ContainSubstring(edge.ID))
 				}
 				if !edge.ValidFrom.IsZero() {
-					Expect(result).To(ContainSubstring(edge.ValidFrom.Format(time.RFC3339Nano)))
+					Expect(result).To(ContainSubstring(graphdb.FormatTime(edge.ValidFrom)))
 				}
 			})
 		})
 	})
 })
+
+// cypherRef matches a reference to a stored node property.
+var cypherRef = regexp.MustCompile(`\bn\.[A-Za-z_][A-Za-z0-9_]*`)
+
+// unquotedText returns s with every single-quoted Cypher string literal
+// removed, honoring backslash escapes inside literals.
+func unquotedText(s string) string {
+	var b strings.Builder
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case inQuote && c == '\\':
+			i++
+		case c == '\'':
+			inQuote = !inQuote
+		case !inQuote:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
 
 // drawStringMap generates a small map[string]any with string values for property tests.
 func drawStringMap(t *rapid.T) map[string]any {

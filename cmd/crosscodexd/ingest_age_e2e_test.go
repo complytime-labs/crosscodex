@@ -49,7 +49,7 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		// Unique per-run tenant so the spec is isolated and idempotent across
 		// repeated runs against a persistent DB, mirroring the sibling specs
 		// in e2e_integration_test.go and pipeline_role_integration_test.go.
-		tenantID := fmt.Sprintf("crosscodexd-all-role-e2e-%s", uuid.New().String())
+		tenantID := fmt.Sprintf("all-role-e2e-%s", uuid.New().String())
 
 		// Build config on baseTestConfig + RoleAll overrides, mirroring
 		// e2e_integration_test.go's configureRole closure.

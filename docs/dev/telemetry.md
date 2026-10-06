@@ -173,8 +173,8 @@ For components whose telemetry option takes a `(trace.Tracer, metric.Meter)` pai
 | `db.pool.open_connections`          | Int64Gauge       | pkg/db             | Current open connections                  |
 | `authn.attempts.total`              | Int64Counter     | pkg/authn          | Authentication attempts                   |
 | `authn.duration_ms`                 | Int64Histogram   | pkg/authn          | Authentication latency                    |
-| `graphdb.queries.total`             | Int64Counter     | pkg/graphdb        | Graph queries executed                    |
-| `graphdb.query.duration_ms`         | Int64Histogram   | pkg/graphdb        | Graph query latency                       |
+| `graphdb.queries.total`             | Int64Counter     | pkg/graphdb        | Graph driver calls by operation, status (ok or error) and result (ok, exists, not_found or error) |
+| `graphdb.query.duration_ms`         | Int64Histogram   | pkg/graphdb        | Graph driver call duration in milliseconds by operation, status and result |
 | `storage.operations.total`          | Int64Counter     | pkg/storage        | Storage operations                        |
 | `storage.operation.duration_ms`     | Int64Histogram   | pkg/storage        | Storage operation latency                 |
 | `vectordb.searches.total`           | Int64Counter     | pkg/vectordb       | Vector similarity searches                |
@@ -191,6 +191,27 @@ For components whose telemetry option takes a `(trace.Tracer, metric.Meter)` pai
 | `synthesis.duration_ms`             | Float64Histogram | internal/synthesis | Synthesis execution duration              |
 | `synthesis.pairs.ranked.total`      | Int64Counter     | internal/synthesis | Pairs ranked                              |
 | `synthesis.viability.updates.total` | Int64Counter     | internal/synthesis | Viability database updates                |
+
+### Graph Driver Metric Attributes
+
+`pkg/graphdb/agedriver` records `graphdb.queries.total` and `graphdb.query.duration_ms` once per call, with the same three attributes on both:
+
+| Attribute   | Values |
+|-------------|--------|
+| `operation` | `create_graph`, `create_node`, `upsert_node`, `create_edge`, `create_requires_edge`, `bulk_create_edges`, `query_relationships`, `query_as_of`, `traverse`, `get_node`, `get_edge`, `execute_query`, `supersede_fact` |
+| `status`    | `ok`, `error` |
+| `result`    | `ok`, `exists`, `not_found`, `error` |
+
+Counting rules:
+
+- A call that returns no error records `status=ok`, `result=ok`.
+- Domain sentinels are outcomes, not faults, and record `status=ok`: `ErrNodeExists` and `ErrEdgeExists` give `result=exists`; `ErrNodeNotFound` and `ErrEdgeNotFound` give `result=not_found`. Idempotent materializer re-runs meet "already exists" for every rebuilt fact, so counting them as errors would turn rebuild volume into error-rate alerts.
+- A write rejected because an endpoint node is missing (`CreateEdge`, `BulkCreateEdges`, `CreateRequiresEdge`) also records `status=ok`, `result=not_found`: it is a caller-input outcome, not a driver fault. Dashboards for write failures should filter on `result!=ok`, not only `status=error`.
+- Every other error, including a tenant or query rejected after the span starts, records `status=error`, `result=error`.
+- Spans follow the same classification. A domain sentinel marks the span `Ok` and sets the span attribute `graphdb.result` to `exists` or `not_found`, because OpenTelemetry discards the description of an `Ok` status. Every other error marks the span `Error` with the error message, except tenant errors, whose fixed status is set when the tenant is rejected so the rejected value never reaches the trace.
+- Argument checks that run before the span starts (for example a node without an ID) record no metrics and no span.
+- A call that panics is recorded as `status=ok`; the driver does not recover panics to count them.
+- Tenant IDs are never metric attributes; the span carries `tenant.id`.
 
 ## Logs
 

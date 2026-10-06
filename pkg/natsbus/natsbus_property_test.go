@@ -14,9 +14,9 @@ import (
 // This file only registers Describe nodes; Ginkgo collects them automatically.
 
 // validTenantGen generates tenant IDs matching the canonical regex
-// [a-z][a-z0-9-]{1,62}[a-z0-9] (3-64 chars).
+// [a-z][a-z0-9-]{1,50}[a-z0-9] (3-52 chars).
 func validTenantGen() *rapid.Generator[string] {
-	return rapid.StringMatching(`[a-z][a-z0-9-]{1,62}[a-z0-9]`)
+	return rapid.StringMatching(`[a-z][a-z0-9-]{1,50}[a-z0-9]`)
 }
 
 // safeTokenGen generates non-empty tokens without NATS delimiters (., *, >).

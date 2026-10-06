@@ -45,14 +45,18 @@ func (w *Worker) handleMessage(ctx context.Context, msg *natsbus.Message) error 
 	}
 
 	if tenantID == "" {
-		w.logger.Error("message missing tenant ID: tenant ID must be a 3-64 character lowercase alphanumeric string with hyphens")
+		w.logger.Error("message missing tenant ID: the " + natsbus.HeaderTenantID +
+			" header is empty, so the task was discarded. Publish the task with an " +
+			natsbus.HeaderTenantID + " header holding a tenant ID of " + tenant.IDRule)
 		w.recordError(ctx, metricTaskType, "missing_tenant")
 		return nil
 	}
 
 	ctx, err := tenant.WithTenant(ctx, tenantID)
 	if err != nil {
-		w.logger.Error("invalid tenant ID: value failed validation (must be 3-64 char lowercase alphanumeric with hyphens)",
+		// err already states tenant.IDRule (see tenant.ValidateTenantID).
+		w.logger.Error("invalid tenant ID: the task was discarded. Republish it with a valid "+
+			natsbus.HeaderTenantID+" header",
 			"error", err,
 		)
 		w.recordError(ctx, metricTaskType, "invalid_tenant")

@@ -3,6 +3,7 @@ package relationship
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,15 +26,17 @@ const (
 	storagePrefix     = "analysis/relationship/"
 )
 
-// GraphMaterializer creates graph edges from stored pair results.
-// The graph is a materialized view — fully reconstructible from object
-// storage via Materialize(). This follows the Graph Backend Portability
-// principle: no package outside pkg/graphdb imports AGE-specific types.
+// GraphMaterializer creates graph edges from stored pair results, so a job's
+// SEMANTIC_MATCH edges can be rebuilt from object storage via Materialize().
+// This follows the Graph Backend Portability principle: no package outside
+// pkg/graphdb imports AGE-specific types.
 //
-// Event-driven materialization via NATS subscription (a Start method that
-// listens on relationship result events) is deferred until the pipeline
-// orchestrator defines the event contract. On-demand Materialize() is
-// the current entry point, called by the pipeline after consensus.
+// Nothing in production calls it yet. The live SEMANTIC_MATCH writer is
+// internal/graph (materializeRelationship in subscriber_handlers.go), which
+// consumes relationship result events from NATS and writes a different
+// payload. The two use different edge ID kinds, so wiring this materializer
+// into a graph that internal/graph also writes adds separate edges instead of
+// colliding with them (see "Graph writers" in docs/dev/design-principles.md).
 type GraphMaterializer struct {
 	graph  graphdb.GraphDB
 	store  storage.Provider
@@ -79,6 +82,13 @@ func WithMaterializerTelemetry(tp trace.TracerProvider, mp metric.MeterProvider)
 // Materialize reads all pair results for a job from object storage and
 // creates corresponding graph edges. This is an on-demand rebuild that
 // can reconstruct the graph from the source-of-truth storage.
+//
+// Pairs are written one CreateEdge call at a time, so Materialize is not
+// atomic: an error returns immediately and leaves the edges already written
+// in place. Re-running the same job is safe and completes the rebuild,
+// because each SEMANTIC_MATCH edge ID is derived from the job and the pair:
+// graphdb.ErrEdgeExists means the edge is already there, so it counts as
+// success (it is not returned, and not counted as a newly created edge).
 func (m *GraphMaterializer) Materialize(ctx context.Context, tenantID, jobID string) error {
 	if err := tenant.ValidateTenantID(tenantID); err != nil {
 		return fmt.Errorf("materializer.Materialize: %w", err)
@@ -128,7 +138,12 @@ func (m *GraphMaterializer) Materialize(ctx context.Context, tenantID, jobID str
 			return fmt.Errorf("materializer.Materialize: parsing %s: %w", obj.Key, err)
 		}
 
+		// The ID is derived from the job and the pair, so re-running a job is
+		// rejected as ErrEdgeExists instead of duplicating the edge. The kind
+		// differs from internal/graph's "semantic-match", whose edges carry a
+		// different payload, so neither writer silently keeps the other's edge.
 		edge := graphdb.Edge{
+			ID:                graphdb.DerivedID("semantic-match-rebuild", jobID, pair.SourceControlID, pair.TargetControlID),
 			Label:             edgeLabel,
 			DeterminedBy:      jobID,
 			DeterminationType: determinationType,
@@ -143,13 +158,16 @@ func (m *GraphMaterializer) Materialize(ctx context.Context, tenantID, jobID str
 			},
 		}
 
-		if err := m.graph.CreateEdge(ctx, tenantID, pair.SourceControlID, pair.TargetControlID, edge); err != nil {
+		err = m.graph.CreateEdge(ctx, tenantID, pair.SourceControlID, pair.TargetControlID, edge)
+		switch {
+		case errors.Is(err, graphdb.ErrEdgeExists):
+			// An edge with this derived ID already exists.
+		case err != nil:
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return fmt.Errorf("materializer.Materialize: creating edge %s--%s: %w",
 				pair.SourceControlID, pair.TargetControlID, err)
-		}
-		if m.edgeCounter != nil {
+		case m.edgeCounter != nil:
 			m.edgeCounter.Add(ctx, 1, metric.WithAttributes(
 				attribute.String("relationship_type", pair.Consensus.Relationship.String()),
 			))

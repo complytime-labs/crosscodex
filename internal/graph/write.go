@@ -35,7 +35,7 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[pb.Create
 	if err := s.graph.CreateNode(ctx, tenantID, node); err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "CreateNode", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "CreateNode", code, err)
 	}
 
 	s.recordRPC(ctx, "CreateNode", start, connect.Code(0))
@@ -63,13 +63,18 @@ func (s *Service) CreateEdge(ctx context.Context, req *connect.Request[pb.Create
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("label is required"))
 	}
 
+	if err := checkEdgeConfidence(req.Msg); err != nil {
+		s.recordRPC(ctx, "CreateEdge", start, connect.CodeInvalidArgument)
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
 	edge := protoToEdge(req.Msg)
 	edge.ID = generateID()
 
 	if err := s.graph.CreateEdge(ctx, tenantID, req.Msg.GetSourceNodeId(), req.Msg.GetTargetNodeId(), edge); err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "CreateEdge", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "CreateEdge", code, err)
 	}
 
 	s.recordRPC(ctx, "CreateEdge", start, connect.Code(0))
@@ -92,6 +97,19 @@ func (s *Service) BulkCreateEdges(ctx context.Context, req *connect.Request[pb.B
 		s.recordRPC(ctx, "BulkCreateEdges", start, connect.Code(0))
 		return connect.NewResponse(&pb.BulkCreateEdgesResponse{}), nil
 	}
+	if n := len(req.Msg.GetEdges()); n > s.maxBulkEdges {
+		s.recordRPC(ctx, "BulkCreateEdges", start, connect.CodeInvalidArgument)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"bulk create edges: request has %d edges, more than the limit of %d (graph.max_bulk_edges); split the edges into requests of at most %d each",
+			n, s.maxBulkEdges, s.maxBulkEdges))
+	}
+
+	for i, pe := range req.Msg.GetEdges() {
+		if err := checkEdgeConfidence(pe); err != nil {
+			s.recordRPC(ctx, "BulkCreateEdges", start, connect.CodeInvalidArgument)
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("bulk create edges [%d]: %w", i, err))
+		}
+	}
 
 	bulkEdges := make([]graphdb.BulkEdge, len(req.Msg.GetEdges()))
 	for i, pe := range req.Msg.GetEdges() {
@@ -108,19 +126,7 @@ func (s *Service) BulkCreateEdges(ctx context.Context, req *connect.Request[pb.B
 	if err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "BulkCreateEdges", start, code)
-		// Use ERROR_CODE_INTERNAL for all bulk errors. BulkCreateEdges is
-		// transactional, so partial failures are edge cases where we don't
-		// want to expose fine-grained error types in the Error struct (the
-		// gRPC status code carries the precise error type).
-		resp := &pb.BulkCreateEdgesResponse{
-			EdgeIds:      ids,
-			CreatedCount: int32(len(ids)),
-			Errors: []*pb.Error{{
-				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
-				Message: err.Error(),
-			}},
-		}
-		return connect.NewResponse(resp), connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "BulkCreateEdges", code, err)
 	}
 
 	s.recordRPC(ctx, "BulkCreateEdges", start, connect.Code(0))
@@ -166,7 +172,7 @@ func (s *Service) SupersedeFact(ctx context.Context, req *connect.Request[pb.Sup
 	if err != nil {
 		code := mapGraphError(err)
 		s.recordRPC(ctx, "SupersedeFact", start, code)
-		return nil, connect.NewError(code, errors.New(err.Error()))
+		return nil, s.rpcError(ctx, "SupersedeFact", code, err)
 	}
 
 	s.recordRPC(ctx, "SupersedeFact", start, connect.Code(0))

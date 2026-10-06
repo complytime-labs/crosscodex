@@ -157,6 +157,8 @@ pipeline:
   stage_timeout: 30m
   addr: ""
   endpoint: ""
+graph:
+  max_bulk_edges: 1000
 retention:
   defaults:
     attestation: "7y"

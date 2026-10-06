@@ -11,9 +11,16 @@ var EscapeCypher = escapeCypher
 var ExportCypherDollarTag = cypherDollarTag
 var CypherValue = cypherValue
 var NodeToAGProperties = nodeToAGProperties
+var NodeUpsertProperties = nodeUpsertProperties
 var EdgeToAGProperties = edgeToAGProperties
 var GraphName = graphName
 var ParseQueryValue = parseQueryValue
+var SubstituteParams = substituteParams
+var ClassifyErr = classifyErr
+var CreateLabelEdges = createLabelEdges
+var CypherStringList = cypherStringList
+var AdvisoryKey = advisoryKey
+var MarkOutcome = markOutcome
 
 type TelemetryFields struct {
 	HasTracer       bool

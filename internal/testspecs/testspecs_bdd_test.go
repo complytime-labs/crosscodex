@@ -2,7 +2,9 @@ package testspecs_test
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +22,28 @@ import (
 var _ = Describe("Standard Fixtures", func() {
 
 	Context("Tenant Fixtures", func() {
+		fixtureEntries := func() []TableEntry {
+			names := slices.Sorted(maps.Keys(testspecs.StandardTenantContexts))
+			entries := make([]TableEntry, 0, len(names))
+			for _, name := range names {
+				entries = append(entries, Entry(name, name))
+			}
+			return entries
+		}
+
+		DescribeTable("sets Valid exactly when tenant.ValidateTenantID accepts the TenantID",
+			func(name string) {
+				f := testspecs.StandardTenantContexts[name]
+				err := tenant.ValidateTenantID(f.TenantID)
+				if f.Valid {
+					Expect(err).NotTo(HaveOccurred(), "fixture %q is marked Valid but ValidateTenantID rejects %q", name, f.TenantID)
+					return
+				}
+				Expect(err).To(MatchError(tenant.ErrInvalidTenant), "fixture %q is marked invalid but ValidateTenantID accepts %q", name, f.TenantID)
+			},
+			fixtureEntries(),
+		)
+
 		It("marks valid-tenant as Valid with a non-empty ID that passes pkg/tenant validation", func() {
 			f := testspecs.StandardTenantContexts["valid-tenant"]
 			Expect(f.Valid).To(BeTrue())
@@ -40,10 +64,10 @@ var _ = Describe("Standard Fixtures", func() {
 			Expect(f.TenantID).To(HaveLen(3))
 		})
 
-		It("has a max-length fixture with TenantID of exactly 64 characters", func() {
+		It("has a max-length fixture with TenantID of exactly 52 characters", func() {
 			f := testspecs.StandardTenantContexts["max-length"]
 			Expect(f.Valid).To(BeTrue())
-			Expect(f.TenantID).To(HaveLen(64))
+			Expect(f.TenantID).To(HaveLen(52))
 		})
 
 		It("marks too-short fixture as invalid with TenantID shorter than 3 chars", func() {
@@ -52,10 +76,10 @@ var _ = Describe("Standard Fixtures", func() {
 			Expect(len(f.TenantID)).To(BeNumerically("<", 3))
 		})
 
-		It("marks too-long fixture as invalid with TenantID longer than 64 chars", func() {
+		It("marks too-long fixture as invalid with TenantID one past the 52-character maximum", func() {
 			f := testspecs.StandardTenantContexts["too-long"]
 			Expect(f.Valid).To(BeFalse())
-			Expect(len(f.TenantID)).To(BeNumerically(">", 64))
+			Expect(f.TenantID).To(HaveLen(53))
 		})
 
 		It("marks empty fixture as invalid with empty TenantID", func() {

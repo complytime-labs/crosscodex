@@ -1,9 +1,12 @@
 package worker_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +21,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 func strPtr(s string) *string { return &s }
@@ -305,4 +309,64 @@ var _ = Describe("Handler", func() {
 			}, 2*time.Second, 50*time.Millisecond).Should(Equal(4), "all tasks should complete")
 		})
 	})
+})
+
+// publishSpyBus embeds natsbus.Client (nil; the tenant-validation handler
+// path returns before touching the bus, so no other method is ever called)
+// to record whether a rejected tenant's message ever reached a publish call.
+type publishSpyBus struct {
+	natsbus.Client
+	published bool
+}
+
+func (b *publishSpyBus) Publish(_ context.Context, _ string, _ []byte) error {
+	b.published = true
+	return nil
+}
+
+func (b *publishSpyBus) PublishWithHeaders(_ context.Context, _ string, _ []byte, _ map[string][]string) error {
+	b.published = true
+	return nil
+}
+
+var _ = Describe("Handler tenant validation", func() {
+	var (
+		logs      *bytes.Buffer
+		w         *worker.Worker
+		bus       *publishSpyBus
+		llmCalled bool
+	)
+
+	BeforeEach(func() {
+		logs = &bytes.Buffer{}
+		bus = &publishSpyBus{}
+		llmCalled = false
+		stubLLM := &stubLLMClient{
+			completeFunc: func(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+				llmCalled = true
+				return nil, errors.New("LLM must not be called for a rejected tenant")
+			},
+			embedFunc: func(_ context.Context, _ *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+				llmCalled = true
+				return nil, errors.New("LLM must not be called for a rejected tenant")
+			},
+		}
+		w = worker.New(bus, stubLLM, worker.WorkerConfig{},
+			worker.WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+	})
+
+	DescribeTable("discards the task and logs the tenant ID rule",
+		func(tenantID, wantMsg string) {
+			msg := &natsbus.Message{Metadata: natsbus.MessageMetadata{TenantID: tenantID}}
+			Expect(worker.ExportHandleMessage(w, context.Background(), msg)).To(Succeed())
+			Expect(logs.String()).To(ContainSubstring(wantMsg))
+			Expect(logs.String()).To(ContainSubstring(natsbus.HeaderTenantID))
+			Expect(logs.String()).To(ContainSubstring(tenant.IDRule))
+			Expect(llmCalled).To(BeFalse(), "a rejected tenant must never reach the LLM client")
+			Expect(bus.published).To(BeFalse(), "a rejected tenant must never publish a result")
+		},
+		Entry("missing tenant ID", "", "message missing tenant ID"),
+		Entry("53-character tenant ID", "a"+strings.Repeat("b", 52), "invalid tenant ID"),
+		Entry("uppercase tenant ID", "Tenant-1", "invalid tenant ID"),
+	)
 })

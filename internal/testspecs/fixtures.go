@@ -28,7 +28,7 @@ var StandardTenantContexts = map[string]TenantFixture{
 		ErrorType:   "",
 	},
 	"max-length": {
-		TenantID:    "a123456789b123456789c123456789d123456789e123456789f123456789g123", // exactly 64 characters (maximum)
+		TenantID:    "a123456789b123456789c123456789d123456789e123456789f1", // exactly 52 characters (maximum)
 		DisplayName: "Maximum length valid tenant",
 		Valid:       true,
 		ErrorType:   "",
@@ -46,7 +46,7 @@ var StandardTenantContexts = map[string]TenantFixture{
 		ErrorType:   "too_short",
 	},
 	"too-long": {
-		TenantID:    "a123456789b123456789c123456789d123456789e123456789f123456789g1234", // 65 characters
+		TenantID:    "a123456789b123456789c123456789d123456789e123456789f12", // 53 characters, one past the maximum
 		DisplayName: "Tenant ID longer than maximum length",
 		Valid:       false,
 		ErrorType:   "too_long",

@@ -2,6 +2,9 @@ package graph_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"math"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,7 +15,9 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 )
 
 var _ = Describe("Write RPCs", func() {
@@ -164,13 +169,16 @@ var _ = Describe("Write RPCs", func() {
 				SourceNodeId:  "node-1",
 				TargetNodeId:  "node-2",
 				Label:         "maps_to",
-				Properties:    map[string]string{"confidence": "0.95"},
+				Temporal:      &pb.TemporalAttributes{Confidence: 0.95, DeterminedBy: "job-7"},
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(resp.Msg.EdgeId).NotTo(BeEmpty())
 			Expect(capturedEdge.ID).To(Equal(resp.Msg.EdgeId))
 			Expect(capturedEdge.Label).To(Equal("maps_to"))
+			Expect(capturedEdge.Confidence).To(Equal(0.95))
+			Expect(capturedEdge.DeterminedBy).To(Equal("job-7"))
+			Expect(capturedEdge.Properties).NotTo(HaveKey("confidence"))
 			Expect(capturedSourceID).To(Equal("node-1"))
 			Expect(capturedTargetID).To(Equal("node-2"))
 		})
@@ -230,6 +238,7 @@ var _ = Describe("Write RPCs", func() {
 						SourceNodeId: "node-1",
 						TargetNodeId: "node-2",
 						Label:        "maps_to",
+						Temporal:     &pb.TemporalAttributes{Confidence: 0.8, DeterminedBy: "job-8"},
 					},
 					{
 						SourceNodeId: "node-2",
@@ -246,15 +255,19 @@ var _ = Describe("Write RPCs", func() {
 			Expect(capturedEdges[0].SourceID).To(Equal("node-1"))
 			Expect(capturedEdges[0].TargetID).To(Equal("node-2"))
 			Expect(capturedEdges[0].Edge.Label).To(Equal("maps_to"))
+			Expect(capturedEdges[0].Edge.Confidence).To(Equal(0.8))
+			Expect(capturedEdges[0].Edge.DeterminedBy).To(Equal("job-8"))
+			Expect(capturedEdges[1].Edge.Confidence).To(BeZero())
+			Expect(capturedEdges[1].Edge.DeterminedBy).To(BeEmpty())
 			Expect(capturedEdges[1].SourceID).To(Equal("node-2"))
 			Expect(capturedEdges[1].TargetID).To(Equal("node-3"))
 			Expect(capturedEdges[1].Edge.Label).To(Equal("depends_on"))
 		})
 
-		It("returns partial results on error", func() {
+		It("returns only the error when the driver rejects the batch", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			mockGraph.bulkCreateEdgesFunc = func(ctx context.Context, tenant string, edges []graphdb.BulkEdge) ([]string, error) {
-				return []string{"edge-1"}, graphdb.ErrNodeNotFound
+				return nil, graphdb.ErrNodeNotFound
 			}
 
 			resp, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
@@ -264,13 +277,80 @@ var _ = Describe("Write RPCs", func() {
 					{SourceNodeId: "node-3", TargetNodeId: "node-4", Label: "maps_to"},
 				},
 			}))
-			Expect(err).To(HaveOccurred())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
-			Expect(resp).NotTo(BeNil())
-			Expect(resp.Msg.CreatedCount).To(Equal(int32(1)))
-			Expect(resp.Msg.EdgeIds).To(HaveLen(1))
-			Expect(resp.Msg.Errors).To(HaveLen(1))
-			Expect(resp.Msg.Errors[0].Code).To(Equal(pb.ErrorCode_ERROR_CODE_INTERNAL))
+			var ce *connect.Error
+			Expect(errors.As(err, &ce)).To(BeTrue())
+			Expect(ce.Message()).To(Equal(graphdb.ErrNodeNotFound.Error()))
+			Expect(resp).To(BeNil(), "connect discards a response returned with an error, so the handler must not build one")
+		})
+
+		Context("edge count limit", func() {
+			var driverCalls int
+
+			edgesOf := func(n int) []*pb.CreateEdgeRequest {
+				edges := make([]*pb.CreateEdgeRequest, n)
+				for i := range edges {
+					edges[i] = &pb.CreateEdgeRequest{SourceNodeId: "node-1", TargetNodeId: "node-2", Label: "maps_to"}
+				}
+				return edges
+			}
+			bulk := func(n int) (*connect.Response[pb.BulkCreateEdgesResponse], error) {
+				return svc.BulkCreateEdges(testspecs.SetupTenantContext("test-tenant"), connect.NewRequest(&pb.BulkCreateEdgesRequest{
+					TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
+					Edges:         edgesOf(n),
+				}))
+			}
+
+			BeforeEach(func() {
+				driverCalls = 0
+				mockGraph.bulkCreateEdgesFunc = func(_ context.Context, _ string, edges []graphdb.BulkEdge) ([]string, error) {
+					driverCalls++
+					return make([]string, len(edges)), nil
+				}
+			})
+
+			It("accepts a request at the configured limit", func() {
+				svc = graph.New(mockGraph, mockVectors, nil, graph.WithMaxBulkEdges(3))
+				resp, err := bulk(3)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Msg.CreatedCount).To(Equal(int32(3)))
+				Expect(driverCalls).To(Equal(1))
+			})
+
+			It("rejects a request over the configured limit before reaching the graph", func() {
+				svc = graph.New(mockGraph, mockVectors, nil, graph.WithMaxBulkEdges(3))
+				resp, err := bulk(4)
+				Expect(resp).To(BeNil())
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(err.Error()).To(ContainSubstring("request has 4 edges"))
+				Expect(err.Error()).To(ContainSubstring("limit of 3 (graph.max_bulk_edges)"))
+				Expect(err.Error()).To(ContainSubstring("split the edges into requests of at most 3"))
+				Expect(driverCalls).To(BeZero())
+			})
+
+			DescribeTable("ignores a non-positive limit and keeps config.DefaultGraphMaxBulkEdges",
+				func(n int) {
+					svc = graph.New(mockGraph, mockVectors, nil, graph.WithMaxBulkEdges(n))
+					_, err := bulk(config.DefaultGraphMaxBulkEdges)
+					Expect(err).NotTo(HaveOccurred())
+
+					_, err = bulk(config.DefaultGraphMaxBulkEdges + 1)
+					Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+					Expect(err.Error()).To(ContainSubstring(fmt.Sprintf("limit of %d", config.DefaultGraphMaxBulkEdges)))
+				},
+				Entry("zero", 0),
+				Entry("negative", -1),
+			)
+
+			It("applies config.DefaultGraphMaxBulkEdges when no limit is configured", func() {
+				resp, err := bulk(config.DefaultGraphMaxBulkEdges)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Msg.CreatedCount).To(Equal(int32(config.DefaultGraphMaxBulkEdges)))
+
+				_, err = bulk(config.DefaultGraphMaxBulkEdges + 1)
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(driverCalls).To(Equal(1))
+			})
 		})
 	})
 
@@ -386,4 +466,230 @@ var _ = Describe("Write RPCs", func() {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
 		})
 	})
+})
+
+var _ = Describe("Edge confidence validation", func() {
+	const tenantID = "test-tenant"
+	var (
+		ctx context.Context
+		db  graphdb.GraphDB
+		svc *graph.Service
+	)
+
+	BeforeEach(func() {
+		ctx = testspecs.SetupTenantContext(tenantID)
+		db = memdriver.New()
+		Expect(db.CreateGraph(ctx, tenantID)).To(Succeed())
+		for _, id := range []string{"a", "b"} {
+			Expect(db.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Control", ValidFrom: time.Now()})).To(Succeed())
+		}
+		svc = graph.New(db, &mockVectorDB{}, nil)
+	})
+
+	edgeReq := func(confidence float32) *pb.CreateEdgeRequest {
+		return &pb.CreateEdgeRequest{
+			TenantContext: &pb.TenantContext{TenantId: tenantID},
+			SourceNodeId:  "a",
+			TargetNodeId:  "b",
+			Label:         "MAPS",
+			Temporal:      &pb.TemporalAttributes{ValidFrom: timestamppb.Now(), Confidence: confidence},
+		}
+	}
+	storedEdges := func() []graphdb.Relationship {
+		rels, err := db.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{})
+		Expect(err).NotTo(HaveOccurred())
+		return rels
+	}
+	invalid := []any{
+		Entry("NaN", float32(math.NaN())),
+		Entry("+Inf", float32(math.Inf(1))),
+		Entry("-Inf", float32(math.Inf(-1))),
+		Entry("-0.1", float32(-0.1)),
+		Entry("1.1", float32(1.1)),
+	}
+
+	DescribeTable("CreateEdge rejects a confidence that is not a finite number in [0, 1] and stores nothing",
+		append([]any{func(c float32) {
+			_, err := svc.CreateEdge(ctx, connect.NewRequest(edgeReq(c)))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err.Error()).To(ContainSubstring("temporal.confidence"))
+			Expect(err.Error()).To(ContainSubstring("from 0 to 1 inclusive"))
+			Expect(storedEdges()).To(BeEmpty())
+		}}, invalid...)...,
+	)
+
+	DescribeTable("BulkCreateEdges rejects the whole batch for one bad confidence, naming its index, and stores nothing",
+		append([]any{func(c float32) {
+			_, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
+				TenantContext: &pb.TenantContext{TenantId: tenantID},
+				Edges:         []*pb.CreateEdgeRequest{edgeReq(0.5), edgeReq(c)},
+			}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err.Error()).To(ContainSubstring("[1]"))
+			Expect(err.Error()).To(ContainSubstring("temporal.confidence"))
+			Expect(storedEdges()).To(BeEmpty())
+		}}, invalid...)...,
+	)
+
+	It("prints the rejected confidence as the client sent it", func() {
+		_, err := svc.CreateEdge(ctx, connect.NewRequest(edgeReq(-0.1)))
+		Expect(err.Error()).To(ContainSubstring("temporal.confidence -0.1 is invalid"))
+	})
+
+	DescribeTable("accepts the inclusive bounds and stores the edge",
+		func(c float32) {
+			_, err := svc.CreateEdge(ctx, connect.NewRequest(edgeReq(c)))
+			Expect(err).NotTo(HaveOccurred())
+			rels := storedEdges()
+			Expect(rels).To(HaveLen(1))
+			Expect(rels[0].Edge.Confidence).To(Equal(float64(c)))
+		},
+		Entry("0", float32(0)),
+		Entry("1", float32(1)),
+	)
+
+	It("rewords a reserved property key error in proto field names", func() {
+		req := edgeReq(0.5)
+		req.Properties = map[string]string{"confidence": "0.9"}
+		_, err := svc.CreateEdge(ctx, connect.NewRequest(req))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring(`properties["confidence"] is reserved: set temporal.confidence instead`))
+		Expect(err.Error()).NotTo(ContainSubstring("Edge.Confidence"))
+		Expect(storedEdges()).To(BeEmpty())
+	})
+
+	It("keeps the bulk edge index when rewording a reserved property key error", func() {
+		bad := edgeReq(0.5)
+		bad.Properties = map[string]string{"valid_from": "x"}
+		_, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
+			TenantContext: &pb.TenantContext{TenantId: tenantID},
+			Edges:         []*pb.CreateEdgeRequest{edgeReq(0.5), bad},
+		}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring(`[1]: properties["valid_from"] is reserved: set temporal.valid_from instead`))
+		Expect(storedEdges()).To(BeEmpty())
+	})
+})
+
+// createNodeSpy records the ID of every node the RPC hands to the driver,
+// then stores it in the embedded memdriver. Every other method goes straight
+// to the memdriver.
+type createNodeSpy struct {
+	graphdb.GraphDB
+	attempted []string
+}
+
+func (s *createNodeSpy) CreateNode(ctx context.Context, tenant string, n graphdb.Node) error {
+	s.attempted = append(s.attempted, n.ID)
+	return s.GraphDB.CreateNode(ctx, tenant, n)
+}
+
+var _ = Describe("CreateNode reserved property keys", func() {
+	const tenantID = "test-tenant"
+
+	// hints is what the RPC must tell a client instead of the driver's
+	// Go-field wording, one entry per graphdb.ReservedNodeKeys key.
+	hints := map[string]string{
+		"id":              "the server generates the ID; rename the property",
+		"valid_from":      "set temporal.valid_from instead",
+		"valid_to":        "set temporal.valid_to instead",
+		"created_by":      "set internally by the pipeline; rename the property",
+		"creation_method": "set internally by the pipeline; rename the property",
+		"superseded_by":   "call SupersedeFact with superseded_by_job_id instead",
+	}
+
+	var (
+		ctx context.Context
+		db  graphdb.GraphDB
+		spy *createNodeSpy
+		svc *graph.Service
+	)
+
+	BeforeEach(func() {
+		ctx = testspecs.SetupTenantContext(tenantID)
+		db = memdriver.New()
+		Expect(db.CreateGraph(ctx, tenantID)).To(Succeed())
+		// The RPC generates the node ID, so record it on its way to the
+		// driver to prove afterwards that nothing was stored under it.
+		spy = &createNodeSpy{GraphDB: db}
+		svc = graph.New(spy, &mockVectorDB{}, nil)
+	})
+
+	It("covers every reserved node key", func() {
+		Expect(hints).To(HaveLen(len(graphdb.ReservedNodeKeys())))
+		for key := range graphdb.ReservedNodeKeys() {
+			Expect(hints).To(HaveKey(key))
+		}
+	})
+
+	entries := []any{}
+	for key, hint := range hints {
+		entries = append(entries, Entry(key, key, hint))
+	}
+
+	DescribeTable("rejects the key with a message in proto field names and stores nothing",
+		append([]any{func(key, hint string) {
+			_, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
+				TenantContext: &pb.TenantContext{TenantId: tenantID},
+				Label:         "Control",
+				Properties:    map[string]string{key: "x"},
+			}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			var ce *connect.Error
+			Expect(errors.As(err, &ce)).To(BeTrue())
+			Expect(ce.Message()).To(Equal(fmt.Sprintf("properties[%q] is reserved: %s", key, hint)))
+			Expect(ce.Message()).NotTo(ContainSubstring("Node."), "no Go field name may reach the client")
+
+			Expect(spy.attempted).To(HaveLen(1), "the RPC must reach the driver exactly once")
+			_, err = db.GetNode(ctx, tenantID, spy.attempted[0])
+			Expect(err).To(MatchError(graphdb.ErrNodeNotFound), "the rejected node must not be stored")
+		}}, entries...)...,
+	)
+})
+
+var _ = Describe("BulkCreateEdges error details", func() {
+	const tenantID = "test-tenant"
+	var (
+		ctx context.Context
+		db  graphdb.GraphDB
+		svc *graph.Service
+	)
+
+	BeforeEach(func() {
+		ctx = testspecs.SetupTenantContext(tenantID)
+		db = memdriver.New()
+		Expect(db.CreateGraph(ctx, tenantID)).To(Succeed())
+		for _, id := range []string{"a", "b"} {
+			Expect(db.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Control", ValidFrom: time.Now()})).To(Succeed())
+		}
+		svc = graph.New(db, &mockVectorDB{}, nil)
+	})
+
+	DescribeTable("names the failing edge in the RPC error message and stores nothing",
+		func(bad *pb.CreateEdgeRequest, code connect.Code, message string) {
+			good := &pb.CreateEdgeRequest{SourceNodeId: "a", TargetNodeId: "b", Label: "MAPS"}
+			resp, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
+				TenantContext: &pb.TenantContext{TenantId: tenantID},
+				Edges:         []*pb.CreateEdgeRequest{good, bad},
+			}))
+			Expect(connect.CodeOf(err)).To(Equal(code))
+			var ce *connect.Error
+			Expect(errors.As(err, &ce)).To(BeTrue())
+			Expect(ce.Message()).To(Equal(message))
+
+			Expect(resp).To(BeNil())
+
+			rels, qerr := db.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{})
+			Expect(qerr).NotTo(HaveOccurred())
+			Expect(rels).To(BeEmpty(), "the batch is all-or-nothing, so edge [0] must not be stored either")
+		},
+		Entry("a missing endpoint, worded by the driver",
+			&pb.CreateEdgeRequest{SourceNodeId: "a", TargetNodeId: "missing", Label: "MAPS"},
+			connect.CodeNotFound,
+			`bulk create edges [1]: target: node "missing": node not found`),
+		Entry("a reserved property key, reworded in proto field names",
+			&pb.CreateEdgeRequest{SourceNodeId: "a", TargetNodeId: "b", Label: "MAPS", Properties: map[string]string{"valid_from": "x"}},
+			connect.CodeInvalidArgument,
+			`bulk create edges [1]: properties["valid_from"] is reserved: set temporal.valid_from instead`),
+	)
 })

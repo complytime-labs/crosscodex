@@ -42,6 +42,10 @@ jobs:
       - name: Test
         run: task test GINKGOLEAF_FORMAT=github
 
+      - name: Race tests
+        if: matrix.fips == ''
+        run: task test:race GINKGOLEAF_FORMAT=github
+
       - name: Fuzz tests
         if: matrix.fips == ''
         run: task test:fuzz FUZZ_TIME=30s

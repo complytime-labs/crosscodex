@@ -26,6 +26,7 @@ type Config struct {
 	Analysis      AnalysisConfig      `yaml:"analysis"      json:"analysis"`
 	Worker        WorkerConfig        `yaml:"worker"        json:"worker"`
 	Pipeline      PipelineConfig      `yaml:"pipeline"      json:"pipeline"`
+	Graph         GraphConfig         `yaml:"graph"         json:"graph"`
 	Synthesis     SynthesisConfig     `yaml:"synthesis"     json:"synthesis"`
 	Retention     RetentionConfig     `yaml:"retention"     json:"retention"`
 	Role          string              `yaml:"role"          json:"role"`
@@ -687,6 +688,28 @@ func (c *PipelineConfig) Validate() error {
 			c.StageTimeout, ErrInvalidConfig)
 	}
 	return nil
+}
+
+// DefaultGraphMaxBulkEdges is the compiled default for graph.max_bulk_edges,
+// also applied by internal/graph when no limit is configured. On Apache AGE a
+// 1000-edge batch commits in about 0.1 s against a 25k-node graph; the batch's
+// single CREATE statement grows faster than linearly (about 0.6 s at 5000 and
+// 2 s at 10000), and one write transaction stays open for all of it.
+const DefaultGraphMaxBulkEdges = 1000
+
+// maxGraphMaxBulkEdges caps graph.max_bulk_edges where one AGE write
+// transaction already takes seconds.
+const maxGraphMaxBulkEdges = 10000
+
+// GraphConfig configures the graph service (role "graph").
+//
+// Every field is global-only: there is no tenant_overrides map. MaxBulkEdges
+// bounds how long one request holds a write transaction and connection on the
+// graph database all tenants share, so it is sized per deployment.
+type GraphConfig struct {
+	// MaxBulkEdges is the most edges one BulkCreateEdges RPC may carry; larger
+	// requests are rejected with InvalidArgument. Range [1, 10000].
+	MaxBulkEdges int `yaml:"max_bulk_edges" json:"max_bulk_edges"`
 }
 
 // SynthesisConfig configures the synthesis service.

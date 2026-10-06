@@ -87,7 +87,10 @@ tasks:
 
   check:
     desc: Run all quality gates
-    deps: [lint, test]
+    cmds:
+      - task: lint
+      - task: test
+      - task: test:race
 
   clean:
     desc: Remove build artifacts and test output

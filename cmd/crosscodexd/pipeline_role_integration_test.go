@@ -36,7 +36,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 
 		ctx := context.Background()
 		natsURL := startSharedTestNATS(GinkgoT())
-		tenantID := fmt.Sprintf("crosscodexd-split-e2e-%s", uuid.New().String())
+		tenantID := fmt.Sprintf("split-e2e-%s", uuid.New().String())
 		fakeLLM := deterministicLLMClient{}
 
 		configureRole := func(role string) *config.Config {
@@ -178,7 +178,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 
 		ctx := context.Background()
 		natsURL := startSharedTestNATS(GinkgoT())
-		tenantID := fmt.Sprintf("crosscodexd-split-negative-%s", uuid.New().String())
+		tenantID := fmt.Sprintf("split-negative-%s", uuid.New().String())
 
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline

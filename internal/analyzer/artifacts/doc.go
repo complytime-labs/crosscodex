@@ -7,7 +7,10 @@
 // matching to deduplicate semantically equivalent artifacts across model votes.
 //
 // Results are stored as per-control JSON files in object storage (source of
-// truth) and materialized as graph nodes and edges by [GraphMaterializer].
+// truth). internal/graph consumes the published results and writes the live
+// Artifact and ArtifactType nodes and DEMANDS and IS_TYPE edges.
+// [GraphMaterializer] writes the same kinds of nodes and edges from object
+// storage, under its own ID scheme, but has no production caller yet.
 //
 // This is a port of OllamaCrosswalker's Python ArtifactExtractor.
 package artifacts
