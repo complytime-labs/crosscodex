@@ -130,7 +130,7 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 			"analyzer", event.Analyzer, "job_id", event.JobID, "error", err)
 		s.recordEvent(ctx, event.Analyzer, "error")
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("resolve: %w", err) // NAK for redelivery
+		return fmt.Errorf("resolve: %w", err) // logged by natsbus; core NATS does not redeliver
 	}
 
 	// Dispatch to analyzer-specific handler.
@@ -139,7 +139,7 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 			"analyzer", event.Analyzer, "job_id", event.JobID, "error", err)
 		s.recordEvent(ctx, event.Analyzer, "error")
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("materialize: %w", err) // NAK for redelivery
+		return fmt.Errorf("materialize: %w", err) // logged by natsbus; core NATS does not redeliver
 	}
 
 	s.recordEvent(ctx, event.Analyzer, "ok")

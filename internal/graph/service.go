@@ -39,6 +39,7 @@ type Service struct {
 	rpcLatency         metric.Float64Histogram
 	eventCounter       metric.Int64Counter
 	materializeLatency metric.Float64Histogram
+	edgesSkipped       metric.Int64Counter
 
 	// subscriber lifecycle (used in Task 4)
 	mu  sync.Mutex
