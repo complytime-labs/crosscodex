@@ -158,9 +158,8 @@ type TLSOverride struct {
 
 // TenantsConfig configures multi-tenant behavior.
 type TenantsConfig struct {
-	Enabled        bool     `yaml:"enabled" json:"enabled"`
-	DefaultTenant  string   `yaml:"default_tenant" json:"default_tenant"`
-	AllowedTenants []string `yaml:"allowed_tenants" json:"allowed_tenants"`
+	Enabled       bool   `yaml:"enabled" json:"enabled"`
+	DefaultTenant string `yaml:"default_tenant" json:"default_tenant"`
 }
 
 // AuthConfig configures authentication methods.

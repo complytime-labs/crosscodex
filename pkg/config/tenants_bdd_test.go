@@ -3,6 +3,7 @@ package config_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -46,4 +47,21 @@ var _ = Describe("TenantsConfig.DefaultTenant", func() {
 		Entry("trailing hyphen", "acme-"),
 		Entry("too short", "ab"),
 	)
+})
+
+var _ = Describe("TenantsConfig without allowed_tenants", func() {
+	It("ignores a leftover tenants.allowed_tenants key in a config file and loads the rest", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		writeTestFile(path, "tenants:\n  enabled: true\n  default_tenant: acme\n  allowed_tenants: [acme, beta]\n")
+
+		cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Tenants.Enabled).To(BeTrue())
+		Expect(cfg.Tenants.DefaultTenant).To(Equal("acme"))
+	})
+
+	It("does not ship allowed_tenants in the compiled defaults", func() {
+		Expect(config.ExportDefaultConfigYAML()).NotTo(ContainSubstring("allowed_tenants"))
+	})
 })

@@ -24,6 +24,8 @@ The graph storage hardening in #148 makes these breaking changes:
 - Node and edge properties that use a reserved key (such as `id` or `valid_from`) are rejected.
 - `BulkCreateEdges` rejects requests with more than `graph.max_bulk_edges` edges (default 1000).
 - `CreateEdge` and `BulkCreateEdges` reject a `temporal.confidence` outside 0 to 1.
+- The never-populated `BulkCreateEdgesResponse.errors` field (field 3) is removed and reserved; `BulkCreateEdges` reports failures only as the RPC status.
+- The unused `tenants.allowed_tenants` config key is removed. A config file or `CROSSCODEX_TENANTS_ALLOWED_TENANTS` that still sets it is ignored; delete it.
 
 Graphs written before this change must be rebuilt. Follow the "Upgrade note (#148)" in [docs/dev/design-principles.md](docs/dev/design-principles.md#graph-data-model).
 
