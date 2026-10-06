@@ -1,4 +1,7 @@
-// Package main provides a helper to run migrations and provision graph_user for E2E tests.
+// Package main runs migrations and sets the graph_user password for E2E tests.
+// The password comes from TEST_GRAPH_USER_PASSWORD, which .taskfiles/test/e2e.yml
+// generates and also embeds in CROSSCODEX_DATABASE_GRAPH_DSN, so nothing secret
+// is printed.
 package main
 
 import (
@@ -6,7 +9,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -23,9 +25,9 @@ func main() {
 	}
 }
 
-// run performs migration and graph_user provisioning, printing the graph_user
-// DSN to stdout on success. It returns errors instead of calling os.Exit so
-// deferred Close calls always run (gocritic exitAfterDefer).
+// run performs migration and sets the graph_user password. It returns
+// errors instead of calling os.Exit so deferred Close calls always run
+// (gocritic exitAfterDefer).
 func run() error {
 	if len(os.Args) != 2 {
 		return fmt.Errorf("usage: %s <DSN>", os.Args[0])
@@ -52,9 +54,9 @@ func run() error {
 	}
 	defer adminDB.Close()
 
-	password, err := dbtest.NewRolePassword()
+	password, err := dbtest.RolePassword(dbtest.GraphUserPasswordEnv)
 	if err != nil {
-		return fmt.Errorf("generate password: %w", err)
+		return fmt.Errorf("read graph_user password: %w", err)
 	}
 	stmt, err := dbtest.AlterRolePasswordSQL("graph_user", password)
 	if err != nil {
@@ -63,13 +65,5 @@ func run() error {
 	if _, err := adminDB.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("set graph_user password: %w", err)
 	}
-
-	// Build and print graph_user DSN
-	u, err := url.Parse(dsn)
-	if err != nil {
-		return fmt.Errorf("parse DSN: %w", err)
-	}
-	u.User = url.UserPassword("graph_user", password)
-	fmt.Println(u.String())
 	return nil
 }

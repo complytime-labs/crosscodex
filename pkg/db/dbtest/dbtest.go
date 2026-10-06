@@ -11,12 +11,14 @@ import (
 )
 
 // Environment variables carrying role passwords for one integration run.
-// .taskfiles/test/integration.yml generates a fresh random hex value for
+// .taskfiles/test/integration.yml (app_user, purge_user) and
+// .taskfiles/test/e2e.yml (graph_user) generate a fresh random hex value for
 // each on every task run, so every package and parallel Ginkgo node in that
 // run agrees on it.
 const (
 	AppUserPasswordEnv   = "TEST_APP_USER_PASSWORD"
 	PurgeUserPasswordEnv = "TEST_PURGE_USER_PASSWORD"
+	GraphUserPasswordEnv = "TEST_GRAPH_USER_PASSWORD"
 )
 
 // NewRolePassword returns a random 32-character lowercase hex password.
@@ -34,7 +36,7 @@ func NewRolePassword() (string, error) {
 func RolePassword(env string) (string, error) {
 	pw := os.Getenv(env)
 	if pw == "" {
-		return "", fmt.Errorf("%s is not set: run the integration suites through task test:integration:<name>, which generates a role password for each run", env)
+		return "", fmt.Errorf("%s is not set: run the suites through task test:integration:<name> or task test:e2e:venom, which generate a role password for each run", env)
 	}
 	if err := checkHex(pw); err != nil {
 		return "", fmt.Errorf("%s: %w", env, err)

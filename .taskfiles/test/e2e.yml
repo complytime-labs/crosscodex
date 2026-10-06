@@ -4,6 +4,13 @@ vars:
   MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
   TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
   CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
+  # graph_user password for this run, read by test/e2e/provision (via
+  # pkg/db/dbtest) and embedded in CROSSCODEX_DATABASE_GRAPH_DSN. The trailing
+  # comment keeps Task's per-command cache key distinct from the
+  # integration.yml role passwords. secret: true keeps it out of --verbose logs.
+  TEST_GRAPH_USER_PASSWORD:
+    sh: "od -An -tx1 -N16 /dev/urandom | tr -d ' \\n' # graph_user"
+    secret: true
 
 tasks:
   default:
@@ -26,6 +33,8 @@ tasks:
     env:
       TMPDIR: "{{.TEST_DIR}}/buildtmp"
       CROSSCODEX_DATABASE_DSN: "{{.DB_DSN}}"
+      CROSSCODEX_DATABASE_GRAPH_DSN: "postgres://graph_user:{{.TEST_GRAPH_USER_PASSWORD}}@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
+      TEST_GRAPH_USER_PASSWORD: "{{.TEST_GRAPH_USER_PASSWORD}}"
     preconditions:
       - sh: command -v psql >/dev/null 2>&1
         msg: "psql not found - install postgresql-client for host DB access"
@@ -73,6 +82,8 @@ tasks:
     env:
       TMPDIR: "{{.TEST_DIR}}/buildtmp"
       CROSSCODEX_DATABASE_DSN: "{{.DB_DSN}}"
+      CROSSCODEX_DATABASE_GRAPH_DSN: "postgres://graph_user:{{.TEST_GRAPH_USER_PASSWORD}}@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
+      TEST_GRAPH_USER_PASSWORD: "{{.TEST_GRAPH_USER_PASSWORD}}"
     preconditions:
       - sh: command -v psql >/dev/null 2>&1
         msg: "psql not found - install postgresql-client for host DB access"
