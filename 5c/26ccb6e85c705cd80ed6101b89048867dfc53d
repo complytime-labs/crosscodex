@@ -1,0 +1,32 @@
+pkg/telemetry/init.go
+  s_6c0fa3001236d8::t_3a36f87caf4925 46-50
+cmd/crosscodexd/main_bdd_test.go
+  s_6c0fa3001236d8::t_dce1e3eb851e98 4-6,17
+  s_6c0fa3001236d8::t_51d4383fea1c5f 30-55
+  s_6c0fa3001236d8::t_db3fda5a34ce6e 101-121
+  s_6c0fa3001236d8::t_11d7aa7e9f8884 7,9
+README.md
+  s_6c0fa3001236d8::t_f65e5f451ab98d 496
+cmd/crosscodexd/main.go
+  s_6c0fa3001236d8::t_9992599f3a06bf 7-8,118-123,169-187
+  s_6c0fa3001236d8::t_6d96bb20e25c26 188
+docs/dev/telemetry.md
+  s_6c0fa3001236d8::t_57bea20e722937 236
+  s_6c0fa3001236d8::t_fb440b88368cc4 237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c26ccb6e85c705cd80ed6101b89048867dfc53d",
+  "prompts": {},
+  "sessions": {
+    "s_6c0fa3001236d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6453eb94-a1f9-4b89-8efa-37de7cb84c41",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
