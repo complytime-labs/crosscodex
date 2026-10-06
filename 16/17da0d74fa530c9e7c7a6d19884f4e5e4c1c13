@@ -1,0 +1,34 @@
+internal/graph/subscriber_handlers.go
+  s_bdebf9e5d46259::t_8ac8de4a1aff67 215-243
+  s_bdebf9e5d46259::t_2477af5832a0f2 13,80,107-108,166-167
+internal/graph/subscriber_missing_endpoint_bdd_test.go
+  s_bdebf9e5d46259::t_398e6a45949173 1-172
+docs/dev/telemetry.md
+  s_bdebf9e5d46259::t_82e6341aeb8c36 178
+docs/dev/design-principles.md
+  s_bdebf9e5d46259::t_66bd85bd40a59a 36
+internal/graph/doc.go
+  s_bdebf9e5d46259::t_8ede438832549c 32-38
+internal/graph/options.go
+  s_bdebf9e5d46259::t_e0b6bb8113bad8 25
+internal/graph/service.go
+  s_bdebf9e5d46259::t_3dd0a380993ca6 42
+internal/graph/subscriber.go
+  s_bdebf9e5d46259::t_a21fa02c38e817 133,142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1617da0d74fa530c9e7c7a6d19884f4e5e4c1c13",
+  "prompts": {},
+  "sessions": {
+    "s_bdebf9e5d46259": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a56538a6-078a-4a70-96f5-38858c732cd4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
