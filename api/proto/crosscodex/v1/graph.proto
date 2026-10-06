@@ -130,10 +130,11 @@ message BulkCreateEdgesRequest {
 message BulkCreateEdgesResponse {
   repeated string edge_ids = 1;
   int32 created_count = 2;
-  // The server never populates this: BulkCreateEdges is all-or-nothing, so
-  // a failure is reported only as the RPC's error status and message, not
-  // as a partial response.
-  repeated Error errors = 3;
+  // Field 3 was `repeated Error errors`, which the server never populated:
+  // BulkCreateEdges is all-or-nothing, so a failure is reported only as the
+  // RPC's error status and message.
+  reserved 3;
+  reserved "errors";
 }
 
 message GetNodeRequest {
