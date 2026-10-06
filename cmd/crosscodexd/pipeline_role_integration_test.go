@@ -4,7 +4,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -225,8 +228,25 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		Expect(err).To(HaveOccurred(), "listener must reject a client presenting no certificate")
 		Expect(connect.CodeOf(err)).NotTo(Equal(connect.CodeUnauthenticated),
 			"a no-cert connection must fail at the TLS handshake, not reach the tenant interceptor")
-		Expect(err.Error()).To(Or(ContainSubstring("certificate"), ContainSubstring("tls")),
-			"error should surface as a TLS handshake failure")
+		// The TLS-layer rejection is asserted on a raw connection. With TLS 1.3
+		// the client finishes its side of the handshake before the server checks
+		// the (missing) client certificate; the server then sends a
+		// certificate_required alert and closes. Through the Connect client
+		// above, the error text depends on whether that alert or the request
+		// body write wins, so its text is not asserted there. A connection that
+		// writes nothing always reads the alert. Under TLS 1.2 the same alert
+		// fails the handshake itself, so the Dial error is checked the same way.
+		rawConn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, noCertTLS)
+		if err == nil {
+			defer func() { _ = rawConn.Close() }()
+			Expect(rawConn.SetReadDeadline(time.Now().Add(10 * time.Second))).To(Succeed())
+			_, err = rawConn.Read(make([]byte, 1))
+		}
+		var opErr *net.OpError
+		Expect(errors.As(err, &opErr)).To(BeTrue(), "expected the server's TLS alert, got %v", err)
+		Expect(opErr.Op).To(Equal("remote error"))
+		Expect(err).To(MatchError(ContainSubstring("tls: certificate required")),
+			"the listener must reject a client presenting no certificate at the TLS layer")
 
 		// Tenant-header enforcement: a client that DOES pass mTLS (valid client
 		// cert) but omits the tenant header must still be rejected with

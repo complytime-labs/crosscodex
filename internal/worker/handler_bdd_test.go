@@ -61,9 +61,10 @@ var _ = Describe("Handler", func() {
 				defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 				payload := BuildCompletionPayload("test", "gpt-4", 0.0, 256)
+				awaitResult := WatchResult(ctx, bus, "tenant-abc", taskType, "job-1", "task-1")
 				PublishWorkTask(ctx, bus, "tenant-abc", taskType, "job-1", "task-1", payload)
 
-				result := WaitForResult(ctx, bus, "tenant-abc", taskType, "job-1", "task-1", 5*time.Second)
+				result := awaitResult(5 * time.Second)
 				Expect(result).NotTo(BeNil())
 				Expect(result.Fields["response"].GetStringValue()).NotTo(BeEmpty())
 			},
@@ -86,10 +87,11 @@ var _ = Describe("Handler", func() {
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 			payload := BuildCompletionPayload("test", "gpt-4", 0.0, 256)
+			awaitError := WatchErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
 			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
 
 			// Wait for the error result
-			errorResult := WaitForErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", 5*time.Second)
+			errorResult := awaitError(5 * time.Second)
 			Expect(errorResult).To(Equal("llm_error"))
 		})
 	})
@@ -121,9 +123,10 @@ var _ = Describe("Handler", func() {
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 			payload := BuildCompletionPayload("test", "", 0.0, 256)
+			awaitResult := WatchResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
 			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
 
-			result := WaitForResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", 5*time.Second)
+			result := awaitResult(5 * time.Second)
 			Expect(result).NotTo(BeNil())
 			Expect(receivedModel).To(Equal("tenant-specific-model"))
 		})
@@ -156,9 +159,10 @@ var _ = Describe("Handler", func() {
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 			payload := BuildEmbeddingPayload("", "test text")
+			awaitResult := WatchResult(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1")
 			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1", payload)
 
-			result := WaitForResult(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1", 5*time.Second)
+			result := awaitResult(5 * time.Second)
 			Expect(result).NotTo(BeNil())
 			Expect(receivedModel).To(Equal("tenant-embed-model"))
 		})
@@ -172,9 +176,10 @@ var _ = Describe("Handler", func() {
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 			payload := BuildCompletionPayload("test", "gpt-4", 0.0, 256)
+			awaitError := WatchErrorResult(ctx, bus, "tenant-abc", "unknown_type", "job-1", "task-1")
 			PublishWorkTask(ctx, bus, "tenant-abc", "unknown_type", "job-1", "task-1", payload)
 
-			errorResult := WaitForErrorResult(ctx, bus, "tenant-abc", "unknown_type", "job-1", "task-1", 5*time.Second)
+			errorResult := awaitError(5 * time.Second)
 			Expect(errorResult).To(Equal("unsupported_task_type"))
 		})
 	})
@@ -234,11 +239,12 @@ var _ = Describe("Handler", func() {
 				"X-Task-Type": {"classify"},
 				"X-Job-Id":    {"job-1"},
 			}
+			awaitError := WatchErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-bad")
 			// Publish garbage bytes that won't unmarshal as structpb.Struct
 			err = bus.PublishWithHeaders(ctx, subject, []byte("not-proto-data"), headers)
 			Expect(err).NotTo(HaveOccurred())
 
-			errorResult := WaitForErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-bad", 5*time.Second)
+			errorResult := awaitError(5 * time.Second)
 			Expect(errorResult).To(Equal("invalid_payload"))
 		})
 	})
@@ -255,9 +261,10 @@ var _ = Describe("Handler", func() {
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
 			payload := BuildEmbeddingPayload("text-embedding-3-small", "test text")
+			awaitError := WatchErrorResult(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1")
 			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1", payload)
 
-			errorResult := WaitForErrorResult(ctx, bus, "tenant-abc", natsbus.TaskEmbed, "job-1", "task-1", 5*time.Second)
+			errorResult := awaitError(5 * time.Second)
 			Expect(errorResult).To(Equal("llm_error"))
 		})
 	})

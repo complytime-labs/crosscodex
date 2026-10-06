@@ -382,13 +382,49 @@ var _ = Describe("Service", func() {
 	})
 
 	Describe("RetryJob", func() {
-		It("resets failed stages and re-executes when retry_from_failure is true", func() {
+		It("resets the failed stage and re-runs the job from it when retry_from_failure is true", func() {
+			// blockingSynthesis parks the re-run inside the synthesis stage, so
+			// "running" is a state this spec can observe, not a window the
+			// background executeJob can close at any moment.
+			blocker := &blockingSynthesis{block: make(chan struct{})}
+			released := false
+			release := func() {
+				if !released {
+					released = true
+					close(blocker.block)
+				}
+			}
+
+			retrySvc := pipeline.New(
+				store,
+				nil,
+				registry,
+				blocker,
+				&fakeAttestor{},
+				pipelineattestation.NewConverter(),
+				&fakeNATSClient{},
+				newExecutorFakeStorage(),
+				config.PipelineConfig{
+					MaxConcurrentJobs: 10,
+					StageTimeout:      time.Hour,
+				},
+				config.AttestationConfig{Enabled: false},
+				nil,
+			)
+			DeferCleanup(func() {
+				release()
+				Expect(retrySvc.Stop(context.Background())).To(Succeed())
+			})
+
 			now := time.Now()
-			configBytes, _ := json.Marshal(&pb.JobConfig{
+			configBytes, err := json.Marshal(&pb.JobConfig{
 				Source: &pb.JobConfig_DocumentContent{
 					DocumentContent: []byte("test"),
 				},
+				CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+				CatalogName:   "test-catalog",
 			})
+			Expect(err).NotTo(HaveOccurred())
 			job := &pipeline.Job{
 				JobID:     "job-retry",
 				TenantID:  "test-tenant",
@@ -399,21 +435,54 @@ var _ = Describe("Service", func() {
 				UpdatedAt: now,
 			}
 			Expect(store.CreateJob(ctx, job)).To(Succeed())
-			Expect(store.CreateStages(ctx, "job-retry", []string{"stage-1", "stage-2"})).To(Succeed())
-			Expect(store.UpdateStageStatus(ctx, "job-retry", "stage-2", pipeline.StageStatusFailed)).To(Succeed())
+			// The stages CreateJob builds for an empty analyzer registry
+			// (buildStageNames in stages.go). The job failed in synthesis, so
+			// the stage before it had completed.
+			Expect(store.CreateStages(ctx, "job-retry", []string{"candidate_generation", "synthesis", "graph"})).To(Succeed())
+			Expect(store.UpdateStageStatus(ctx, "job-retry", "candidate_generation", pipeline.StageStatusCompleted)).To(Succeed())
+			Expect(store.UpdateStageStatus(ctx, "job-retry", "synthesis", pipeline.StageStatusFailed)).To(Succeed())
 
-			req := &pb.RetryJobRequest{
+			resp, err := retrySvc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{
 				JobId:            "job-retry",
 				RetryFromFailure: true,
-			}
-
-			resp, err := svc.RetryJob(ctx, connect.NewRequest(req))
+			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.NewJobId).To(Equal("job-retry"))
 
-			updatedJob, err := store.GetJob(ctx, "job-retry")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(updatedJob.Status).To(Equal(pipeline.JobStatusRunning))
+			stageStatus := func(name string) func() pipeline.StageStatus {
+				return func() pipeline.StageStatus {
+					stages, err := store.GetStages(ctx, "job-retry")
+					if err != nil {
+						return ""
+					}
+					for _, s := range stages {
+						if s.StageName == name {
+							return s.Status
+						}
+					}
+					return ""
+				}
+			}
+			jobStatus := func() pipeline.JobStatus {
+				j, err := store.GetJob(ctx, "job-retry")
+				if err != nil {
+					return ""
+				}
+				return j.Status
+			}
+
+			// The re-run reached the failed stage and is parked there.
+			Eventually(stageStatus("synthesis"), "2s", "20ms").Should(Equal(pipeline.StageStatusRunning))
+			Expect(stageStatus("candidate_generation")()).To(Equal(pipeline.StageStatusCompleted),
+				"stages before the failed one are not re-run")
+			Expect(stageStatus("graph")()).To(Equal(pipeline.StageStatusPending),
+				"stages after the failed one are reset to pending")
+			Expect(jobStatus()).To(Equal(pipeline.JobStatusRunning))
+
+			release()
+			Eventually(jobStatus, "2s", "20ms").Should(Equal(pipeline.JobStatusCompleted))
+			Expect(stageStatus("synthesis")()).To(Equal(pipeline.StageStatusCompleted))
+			Expect(stageStatus("graph")()).To(Equal(pipeline.StageStatusCompleted))
 		})
 
 		It("returns FailedPrecondition when no stage has failed", func() {

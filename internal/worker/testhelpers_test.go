@@ -64,9 +64,14 @@ func PublishWorkTask(ctx context.Context, bus natsbus.Client, tenantID string, t
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 }
 
-// WaitForResult subscribes to the result subject and waits for a result
-// matching the given task ID, or returns nil on timeout.
-func WaitForResult(ctx context.Context, bus natsbus.Client, tenantID string, taskType natsbus.TaskType, jobID, taskID string, timeout time.Duration) *structpb.Struct {
+// WatchResult subscribes to the result subject for taskID and returns a
+// function that waits up to timeout for that task's success result, returning
+// nil on timeout. Call it BEFORE publishing the task: the bus is core NATS,
+// which drops a message nobody is subscribed to, so a subscription made after
+// the publish loses the result whenever the worker answers first. The returned
+// function removes the subscription before it returns; a spec that never calls
+// it leaves the subscription to the connection close in AfterEach.
+func WatchResult(ctx context.Context, bus natsbus.Client, tenantID string, taskType natsbus.TaskType, jobID, taskID string) func(time.Duration) *structpb.Struct {
 	subject, err := natsbus.ResultSubject(tenantID, taskType, jobID)
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
@@ -87,20 +92,25 @@ func WaitForResult(ctx context.Context, bus natsbus.Client, tenantID string, tas
 		return nil
 	})
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
-	defer func() { gomega.ExpectWithOffset(1, sub.Unsubscribe()).To(gomega.Succeed()) }()
 
-	select {
-	case r := <-resultCh:
-		return r
-	case <-time.After(timeout):
-		return nil
+	return func(timeout time.Duration) *structpb.Struct {
+		defer func() { gomega.ExpectWithOffset(1, sub.Unsubscribe()).To(gomega.Succeed()) }()
+
+		select {
+		case r := <-resultCh:
+			return r
+		case <-time.After(timeout):
+			return nil
+		}
 	}
 }
 
-// WaitForErrorResult subscribes to the result subject and waits for an error
-// result (X-Error header present) matching the given task ID. Returns the
-// error category string, or empty string on timeout.
-func WaitForErrorResult(ctx context.Context, bus natsbus.Client, tenantID string, taskType natsbus.TaskType, jobID, taskID string, timeout time.Duration) string {
+// WatchErrorResult subscribes to the result subject for taskID and returns a
+// function that waits up to timeout for that task's error result (X-Error
+// header present), returning the error category or "" on timeout. Call it
+// BEFORE publishing the task, for the reason given on WatchResult. The
+// subscription is removed as described on WatchResult.
+func WatchErrorResult(ctx context.Context, bus natsbus.Client, tenantID string, taskType natsbus.TaskType, jobID, taskID string) func(time.Duration) string {
 	subject, err := natsbus.ResultSubject(tenantID, taskType, jobID)
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
@@ -117,12 +127,15 @@ func WaitForErrorResult(ctx context.Context, bus natsbus.Client, tenantID string
 		return nil
 	})
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
-	defer func() { gomega.ExpectWithOffset(1, sub.Unsubscribe()).To(gomega.Succeed()) }()
 
-	select {
-	case e := <-errCh:
-		return e
-	case <-time.After(timeout):
-		return ""
+	return func(timeout time.Duration) string {
+		defer func() { gomega.ExpectWithOffset(1, sub.Unsubscribe()).To(gomega.Succeed()) }()
+
+		select {
+		case e := <-errCh:
+			return e
+		case <-time.After(timeout):
+			return ""
+		}
 	}
 }
