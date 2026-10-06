@@ -1,0 +1,39 @@
+internal/graph/testhelpers_test.go
+  s_01f8941b967767::t_7fd83fdb53aefe 121-132
+  s_01f8941b967767::t_d846585fac045e 8-9,11
+internal/graph/write_bdd_test.go
+  s_01f8941b967767::t_11d96fae095b13 217-218,240-255
+  s_01f8941b967767::t_2e8682f1ebc720 90-91,103-106
+  s_01f8941b967767::t_7bbee5e3590caa 154
+  s_01f8941b967767::t_67d3c2c97cb3fa 56-57,67-71
+  s_01f8941b967767::t_e56891e410c36a 155,167-170,172-174,177,179-180,190-193
+  s_01f8941b967767::t_d7619f40bcd93f 171
+  s_01f8941b967767::t_02a6faf4f6242a 367-368,378-382,387-390,399-425,430-431,441-445,450-451,460-464
+internal/graph/read_bdd_test.go
+  s_01f8941b967767::t_28b482fff13179 105,118-124
+  s_01f8941b967767::t_74d3adb2c30f0f 117
+  s_01f8941b967767::t_b210f8472080a1 53,65-73
+internal/graph/subscriber_bdd_test.go
+  s_01f8941b967767::t_ead705e1744adc 35-37,39-62
+  s_01f8941b967767::t_ccfa6a3c0239eb 148-162
+  s_01f8941b967767::t_e64c0632a8b4ce 38
+  s_01f8941b967767::t_42f336c162e058 217-232
+  s_01f8941b967767::t_44e74fd9c3765e 235-236,247-260
+  s_01f8941b967767::t_ecbfc49610522d 237-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ef96a8e785375e4745c63da1b0681aabeed512d",
+  "prompts": {},
+  "sessions": {
+    "s_01f8941b967767": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "87e5934b-c2e6-4a3e-a8d8-4ae13d77d4a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
