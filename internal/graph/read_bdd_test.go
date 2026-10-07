@@ -152,6 +152,49 @@ var _ = Describe("Read RPCs", func() {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
+		It("rejects an undefined direction without calling the graph", func() {
+			ctx := testspecs.SetupTenantContext("test-tenant")
+			called := false
+			mockGraph.traverseFunc = func(ctx context.Context, tenant string, query graphdb.TraversalQuery) ([]graphdb.Path, error) {
+				called = true
+				return nil, nil
+			}
+			resp, err := svc.Traverse(ctx, connect.NewRequest(&pb.TraverseRequest{
+				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
+				StartNodeId:   "node-1",
+				Direction:     pb.TraversalDirection(99),
+			}))
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err).To(MatchError(ContainSubstring("unknown traversal direction 99")))
+			Expect(err).To(MatchError(ContainSubstring(
+				"use TRAVERSAL_DIRECTION_OUTBOUND, TRAVERSAL_DIRECTION_INBOUND or TRAVERSAL_DIRECTION_BOTH, or leave direction unset for outbound")),
+				"the error must name the accepted directions")
+			Expect(called).To(BeFalse(), "an undefined direction must not reach the graph")
+		})
+
+		DescribeTable("maps each defined direction to the graphdb direction",
+			func(d pb.TraversalDirection, want string) {
+				ctx := testspecs.SetupTenantContext("test-tenant")
+				var capturedQuery graphdb.TraversalQuery
+				mockGraph.traverseFunc = func(ctx context.Context, tenant string, query graphdb.TraversalQuery) ([]graphdb.Path, error) {
+					capturedQuery = query
+					return nil, nil
+				}
+				_, err := svc.Traverse(ctx, connect.NewRequest(&pb.TraverseRequest{
+					TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
+					StartNodeId:   "node-1",
+					Direction:     d,
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(capturedQuery.Direction).To(Equal(want))
+			},
+			Entry("unspecified defaults to outbound", pb.TraversalDirection_TRAVERSAL_DIRECTION_UNSPECIFIED, "outbound"),
+			Entry("outbound", pb.TraversalDirection_TRAVERSAL_DIRECTION_OUTBOUND, "outbound"),
+			Entry("inbound", pb.TraversalDirection_TRAVERSAL_DIRECTION_INBOUND, "inbound"),
+			Entry("both", pb.TraversalDirection_TRAVERSAL_DIRECTION_BOTH, "both"),
+		)
+
 		It("delegates to graph.Traverse with correct parameters", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			var capturedQuery graphdb.TraversalQuery
