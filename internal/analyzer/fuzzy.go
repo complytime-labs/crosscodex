@@ -30,32 +30,31 @@ func NormalizeArtifactName(name string) string {
 }
 
 // ArtifactNamesMatch reports whether two normalized artifact names have
-// sufficient token-set overlap. Overlap is computed as
-// |intersection| / min(|setA|, |setB|) and compared against threshold.
-// Port of Python ArtifactExtractor._names_match.
+// sufficient token-set overlap: TokenOverlap(a, b) >= threshold. A name with
+// no tokens never matches. Port of Python ArtifactExtractor._names_match.
 func ArtifactNamesMatch(a, b string, threshold float64) bool {
-	if a == "" || b == "" {
+	if strings.TrimSpace(a) == "" || strings.TrimSpace(b) == "" {
 		return false
 	}
+	return TokenOverlap(a, b) >= threshold
+}
+
+// TokenOverlap returns |intersection| / min(|setA|, |setB|) for the
+// whitespace-separated token sets of a and b, or 0 when either has no tokens.
+// A name contained in another scores 1.
+func TokenOverlap(a, b string) float64 {
 	tokensA := tokenSet(a)
 	tokensB := tokenSet(b)
 	if len(tokensA) == 0 || len(tokensB) == 0 {
-		return false
+		return 0
 	}
-
 	overlap := 0
 	for t := range tokensA {
 		if tokensB[t] {
 			overlap++
 		}
 	}
-
-	minLen := len(tokensA)
-	if len(tokensB) < minLen {
-		minLen = len(tokensB)
-	}
-
-	return float64(overlap)/float64(minLen) >= threshold
+	return float64(overlap) / float64(min(len(tokensA), len(tokensB)))
 }
 
 func tokenSet(s string) map[string]bool {

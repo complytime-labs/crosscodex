@@ -41,6 +41,27 @@ var _ = Describe("NormalizeArtifactName", func() {
 	})
 })
 
+var _ = Describe("TokenOverlap", func() {
+	DescribeTable("scores |A∩B| / min(|A|,|B|) over whitespace token sets",
+		func(a, b string, want float64) {
+			Expect(analyzer.TokenOverlap(a, b)).To(BeNumerically("~", want, 1e-9))
+			Expect(analyzer.TokenOverlap(b, a)).To(BeNumerically("~", want, 1e-9), "TokenOverlap must be symmetric")
+		},
+		Entry("identical names", "access policy", "access policy", 1.0),
+		Entry("containment scores 1", "policy", "access control policy", 1.0),
+		Entry("partial overlap", "audit log retention plan", "audit report", 0.5),
+		Entry("exactly the 0.6 boundary", "a b c d e", "a b c x y", 0.6),
+		Entry("disjoint names", "audit log", "incident report", 0.0),
+		Entry("repeated tokens count once", "log log", "log", 1.0),
+		Entry("empty name", "", "access policy", 0.0),
+		Entry("whitespace-only name", "   ", "access policy", 0.0),
+	)
+
+	It("leaves ArtifactNamesMatch false for a whitespace-only name even at threshold 0", func() {
+		Expect(analyzer.ArtifactNamesMatch("   ", "access policy", 0)).To(BeFalse())
+	})
+})
+
 var _ = Describe("ArtifactNamesMatch", func() {
 	// Python parity: test_identical_names_match
 	It("matches identical names", func() {

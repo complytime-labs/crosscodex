@@ -568,14 +568,37 @@ crosscodex admin hold release --tenant acme --name "litigation-2026-014"
 ### Daemon One-Shot (`crosscodexd admin`)
 
 For on-host operation (e.g. an external scheduler running next to the daemon),
-`crosscodexd` exposes an in-process one-shot scan. Like `healthcheck` and
-`version`, it is **unauthenticated by design** — it runs locally against the
-daemon's configured resources and selects its tenant with `--tenant`:
+`crosscodexd` exposes in-process one-shot commands. Like `healthcheck` and
+`version`, they are **unauthenticated by design**. They run locally against the
+daemon's configured resources and select their tenant with `--tenant`:
 
 ```sh
 crosscodexd admin retention scan --tenant acme
 crosscodexd admin retention scan --tenant acme --dry-run
+
+crosscodexd admin reconcile artifacts --tenant acme
+crosscodexd admin reconcile artifacts --tenant acme --dry-run --max-edges 10000
 ```
+
+`reconcile artifacts` links equivalent artifacts across controls and catalogs:
+
+- **Exact duplicates:** artifacts with the same type and normalized name join one
+  `ArtifactGroup` node through `MEMBER_OF` edges.
+- **Overlapping names:** groups of one type whose names overlap (token-set overlap of
+  0.6 or more) get a scored `SAME_AS` edge.
+
+It never merges or deletes nodes. Every run is a full pass, and re-running it over
+an unchanged graph writes nothing, so it is safe to schedule (cron, Kubernetes
+CronJob) once per tenant.
+
+- **Overlapping runs:** do not run two reconciles for the same tenant at the same
+  time.
+- **`--max-edges`:** defaults to 50000. A run that would add more `SAME_AS` edges
+  fails before writing anything; this usually means an over-broad artifact name.
+- **Exit codes:** 0 on success, 1 on failure, 2 on usage errors.
+- **`--dry-run`:** the `new_*` counts report what the run would have written.
+
+Re-run the reconciler after rebuilding a tenant's graph.
 
 ### Configuration Reference
 
