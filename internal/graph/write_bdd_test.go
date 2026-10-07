@@ -53,12 +53,8 @@ var _ = Describe("Write RPCs", func() {
 
 		It("creates a node with generated ID", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			var capturedNode graphdb.Node
-
-			mockGraph.createNodeFunc = func(ctx context.Context, tenant string, node graphdb.Node) error {
-				capturedNode = node
-				return nil
-			}
+			db := newMemGraph(ctx, "test-tenant")
+			svc := graph.New(db, mockVectors, nil)
 
 			resp, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -68,9 +64,11 @@ var _ = Describe("Write RPCs", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(resp.Msg.NodeId).NotTo(BeEmpty())
-			Expect(capturedNode.ID).To(Equal(resp.Msg.NodeId))
-			Expect(capturedNode.Label).To(Equal("Control"))
-			Expect(capturedNode.Properties["title"]).To(Equal("AC-1"))
+
+			stored, err := db.GetNode(ctx, "test-tenant", resp.Msg.NodeId)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.Label).To(Equal("Control"))
+			Expect(stored.Properties).To(HaveKeyWithValue("title", "AC-1"))
 		})
 
 		It("propagates graphdb errors", func() {
@@ -89,13 +87,9 @@ var _ = Describe("Write RPCs", func() {
 
 		It("preserves temporal attributes", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
+			db := newMemGraph(ctx, "test-tenant")
+			svc := graph.New(db, mockVectors, nil)
 			now := time.Now().UTC()
-			var capturedNode graphdb.Node
-
-			mockGraph.createNodeFunc = func(ctx context.Context, tenant string, node graphdb.Node) error {
-				capturedNode = node
-				return nil
-			}
 
 			resp, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -106,7 +100,10 @@ var _ = Describe("Write RPCs", func() {
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(capturedNode.ValidFrom).To(BeTemporally("~", now, time.Second))
+
+			stored, err := db.GetNode(ctx, "test-tenant", resp.Msg.NodeId)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.ValidFrom).To(BeTemporally("~", now, time.Second))
 		})
 	})
 
@@ -154,15 +151,8 @@ var _ = Describe("Write RPCs", func() {
 
 		It("creates an edge with generated ID", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			var capturedSourceID, capturedTargetID string
-			var capturedEdge graphdb.Edge
-
-			mockGraph.createEdgeFunc = func(ctx context.Context, tenant, sourceID, targetID string, edge graphdb.Edge) error {
-				capturedSourceID = sourceID
-				capturedTargetID = targetID
-				capturedEdge = edge
-				return nil
-			}
+			db := newMemGraph(ctx, "test-tenant", "node-1", "node-2")
+			svc := graph.New(db, mockVectors, nil)
 
 			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -174,20 +164,20 @@ var _ = Describe("Write RPCs", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(resp.Msg.EdgeId).NotTo(BeEmpty())
-			Expect(capturedEdge.ID).To(Equal(resp.Msg.EdgeId))
-			Expect(capturedEdge.Label).To(Equal("maps_to"))
-			Expect(capturedEdge.Confidence).To(Equal(0.95))
-			Expect(capturedEdge.DeterminedBy).To(Equal("job-7"))
-			Expect(capturedEdge.Properties).NotTo(HaveKey("confidence"))
-			Expect(capturedSourceID).To(Equal("node-1"))
-			Expect(capturedTargetID).To(Equal("node-2"))
+
+			stored, err := db.GetEdge(ctx, "test-tenant", resp.Msg.EdgeId)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.Label).To(Equal("maps_to"))
+			Expect(stored.Confidence).To(Equal(0.95))
+			Expect(stored.DeterminedBy).To(Equal("job-7"))
+			Expect(stored.SourceID).To(Equal("node-1"))
+			Expect(stored.TargetID).To(Equal("node-2"))
 		})
 
-		It("propagates graphdb errors", func() {
+		It("returns NotFound and stores nothing when an endpoint node does not exist", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			mockGraph.createEdgeFunc = func(ctx context.Context, tenant, sourceID, targetID string, edge graphdb.Edge) error {
-				return graphdb.ErrNodeNotFound
-			}
+			db := newMemGraph(ctx, "test-tenant", "node-1")
+			svc := graph.New(db, mockVectors, nil)
 
 			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -197,6 +187,10 @@ var _ = Describe("Write RPCs", func() {
 			}))
 			Expect(resp).To(BeNil())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+
+			rels, err := db.QueryRelationships(ctx, "test-tenant", graphdb.RelationshipQuery{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rels).To(BeEmpty())
 		})
 	})
 
@@ -220,16 +214,8 @@ var _ = Describe("Write RPCs", func() {
 
 		It("creates multiple edges in bulk", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			var capturedEdges []graphdb.BulkEdge
-
-			mockGraph.bulkCreateEdgesFunc = func(ctx context.Context, tenant string, edges []graphdb.BulkEdge) ([]string, error) {
-				capturedEdges = edges
-				ids := make([]string, len(edges))
-				for i := range edges {
-					ids[i] = edges[i].Edge.ID
-				}
-				return ids, nil
-			}
+			db := newMemGraph(ctx, "test-tenant", "node-1", "node-2", "node-3")
+			svc := graph.New(db, mockVectors, nil)
 
 			resp, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -251,17 +237,22 @@ var _ = Describe("Write RPCs", func() {
 			Expect(resp).NotTo(BeNil())
 			Expect(resp.Msg.CreatedCount).To(Equal(int32(2)))
 			Expect(resp.Msg.EdgeIds).To(HaveLen(2))
-			Expect(capturedEdges).To(HaveLen(2))
-			Expect(capturedEdges[0].SourceID).To(Equal("node-1"))
-			Expect(capturedEdges[0].TargetID).To(Equal("node-2"))
-			Expect(capturedEdges[0].Edge.Label).To(Equal("maps_to"))
-			Expect(capturedEdges[0].Edge.Confidence).To(Equal(0.8))
-			Expect(capturedEdges[0].Edge.DeterminedBy).To(Equal("job-8"))
-			Expect(capturedEdges[1].Edge.Confidence).To(BeZero())
-			Expect(capturedEdges[1].Edge.DeterminedBy).To(BeEmpty())
-			Expect(capturedEdges[1].SourceID).To(Equal("node-2"))
-			Expect(capturedEdges[1].TargetID).To(Equal("node-3"))
-			Expect(capturedEdges[1].Edge.Label).To(Equal("depends_on"))
+
+			first, err := db.GetEdge(ctx, "test-tenant", resp.Msg.EdgeIds[0])
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first.SourceID).To(Equal("node-1"))
+			Expect(first.TargetID).To(Equal("node-2"))
+			Expect(first.Label).To(Equal("maps_to"))
+			Expect(first.Confidence).To(Equal(0.8))
+			Expect(first.DeterminedBy).To(Equal("job-8"))
+
+			second, err := db.GetEdge(ctx, "test-tenant", resp.Msg.EdgeIds[1])
+			Expect(err).NotTo(HaveOccurred())
+			Expect(second.SourceID).To(Equal("node-2"))
+			Expect(second.TargetID).To(Equal("node-3"))
+			Expect(second.Label).To(Equal("depends_on"))
+			Expect(second.Confidence).To(BeZero())
+			Expect(second.DeterminedBy).To(BeEmpty())
 		})
 
 		It("returns only the error when the driver rejects the batch", func() {
@@ -373,12 +364,8 @@ var _ = Describe("Write RPCs", func() {
 
 		It("supersedes a node by ID", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			var capturedReq graphdb.SupersedeRequest
-
-			mockGraph.supersedeFactFunc = func(ctx context.Context, tenant string, req graphdb.SupersedeRequest) (bool, error) {
-				capturedReq = req
-				return true, nil
-			}
+			db := newMemGraph(ctx, "test-tenant", "node-1")
+			svc := graph.New(db, mockVectors, nil)
 
 			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext:     &pb.TenantContext{TenantId: "test-tenant"},
@@ -388,19 +375,19 @@ var _ = Describe("Write RPCs", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(resp.Msg.Updated).To(BeTrue())
-			Expect(capturedReq.NodeID).To(Equal("node-1"))
-			Expect(capturedReq.EdgeID).To(BeEmpty())
-			Expect(capturedReq.SupersededByJobID).To(Equal("job-123"))
+
+			stored, err := db.GetNode(ctx, "test-tenant", "node-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.ValidTo).NotTo(BeNil())
+			Expect(stored.Properties).To(HaveKeyWithValue("superseded_by", "job-123"))
 		})
 
 		It("supersedes an edge by ID", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			var capturedReq graphdb.SupersedeRequest
-
-			mockGraph.supersedeFactFunc = func(ctx context.Context, tenant string, req graphdb.SupersedeRequest) (bool, error) {
-				capturedReq = req
-				return true, nil
-			}
+			db := newMemGraph(ctx, "test-tenant", "node-1", "node-2")
+			Expect(db.CreateEdge(ctx, "test-tenant", "node-1", "node-2",
+				graphdb.Edge{ID: "edge-1", Label: "maps_to", ValidFrom: time.Now().UTC()})).To(Succeed())
+			svc := graph.New(db, mockVectors, nil)
 
 			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -409,19 +396,40 @@ var _ = Describe("Write RPCs", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 			Expect(resp.Msg.Updated).To(BeTrue())
-			Expect(capturedReq.EdgeID).To(Equal("edge-1"))
-			Expect(capturedReq.NodeID).To(BeEmpty())
+
+			stored, err := db.GetEdge(ctx, "test-tenant", "edge-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.ValidTo).NotTo(BeNil())
+			Expect(stored.Properties).NotTo(HaveKey("superseded_by"))
+
+			node, err := db.GetNode(ctx, "test-tenant", "node-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(node.ValidTo).To(BeNil(), "superseding an edge must not touch its endpoints")
+		})
+
+		It("reports Updated=false and changes nothing when the ID does not exist", func() {
+			ctx := testspecs.SetupTenantContext("test-tenant")
+			db := newMemGraph(ctx, "test-tenant", "node-1")
+			svc := graph.New(db, mockVectors, nil)
+
+			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
+				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
+				Target:        &pb.SupersedeFactRequest_NodeId{NodeId: "nonexistent"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			Expect(resp.Msg.Updated).To(BeFalse())
+
+			stored, err := db.GetNode(ctx, "test-tenant", "node-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.ValidTo).To(BeNil())
 		})
 
 		It("uses provided superseded_at timestamp", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
+			db := newMemGraph(ctx, "test-tenant", "node-1")
+			svc := graph.New(db, mockVectors, nil)
 			specificTime := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-			var capturedReq graphdb.SupersedeRequest
-
-			mockGraph.supersedeFactFunc = func(ctx context.Context, tenant string, req graphdb.SupersedeRequest) (bool, error) {
-				capturedReq = req
-				return true, nil
-			}
 
 			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -430,18 +438,18 @@ var _ = Describe("Write RPCs", func() {
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(capturedReq.SupersededAt).To(BeTemporally("~", specificTime, time.Second))
+
+			stored, err := db.GetNode(ctx, "test-tenant", "node-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.ValidTo).NotTo(BeNil())
+			Expect(*stored.ValidTo).To(BeTemporally("~", specificTime, time.Second))
 		})
 
 		It("defaults to current time when superseded_at is not provided", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
+			db := newMemGraph(ctx, "test-tenant", "node-1")
+			svc := graph.New(db, mockVectors, nil)
 			now := time.Now().UTC()
-			var capturedReq graphdb.SupersedeRequest
-
-			mockGraph.supersedeFactFunc = func(ctx context.Context, tenant string, req graphdb.SupersedeRequest) (bool, error) {
-				capturedReq = req
-				return true, nil
-			}
 
 			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -449,7 +457,11 @@ var _ = Describe("Write RPCs", func() {
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-			Expect(capturedReq.SupersededAt).To(BeTemporally("~", now, 2*time.Second))
+
+			stored, err := db.GetNode(ctx, "test-tenant", "node-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.ValidTo).NotTo(BeNil())
+			Expect(*stored.ValidTo).To(BeTemporally("~", now, 2*time.Second))
 		})
 
 		It("propagates graphdb errors", func() {

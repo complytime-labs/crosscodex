@@ -50,9 +50,7 @@ var _ = Describe("Read RPCs", func() {
 
 		It("returns NotFound when node does not exist", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			mockGraph.getNodeFunc = func(ctx context.Context, tenant, nodeID string) (*graphdb.Node, error) {
-				return nil, graphdb.ErrNodeNotFound
-			}
+			svc := graph.New(newMemGraph(ctx, "test-tenant"), mockVectors, nil)
 
 			resp, err := svc.GetNode(ctx, connect.NewRequest(&pb.GetNodeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -64,18 +62,15 @@ var _ = Describe("Read RPCs", func() {
 
 		It("returns the node when found", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			now := time.Now().UTC()
-			mockGraph.getNodeFunc = func(ctx context.Context, tenant, nodeID string) (*graphdb.Node, error) {
-				return &graphdb.Node{
-					ID:    "node-1",
-					Label: "Control",
-					Properties: map[string]any{
-						"title": "AC-1",
-					},
-					ValidFrom: now,
-					CreatedBy: "test-user",
-				}, nil
-			}
+			db := newMemGraph(ctx, "test-tenant")
+			Expect(db.CreateNode(ctx, "test-tenant", graphdb.Node{
+				ID:         "node-1",
+				Label:      "Control",
+				Properties: map[string]any{"title": "AC-1"},
+				ValidFrom:  time.Now().UTC(),
+				CreatedBy:  "test-user",
+			})).To(Succeed())
+			svc := graph.New(db, mockVectors, nil)
 
 			resp, err := svc.GetNode(ctx, connect.NewRequest(&pb.GetNodeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -107,9 +102,7 @@ var _ = Describe("Read RPCs", func() {
 
 		It("returns NotFound when edge does not exist", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			mockGraph.getEdgeFunc = func(ctx context.Context, tenant, edgeID string) (*graphdb.EdgeWithEndpoints, error) {
-				return nil, graphdb.ErrEdgeNotFound
-			}
+			svc := graph.New(newMemGraph(ctx, "test-tenant"), mockVectors, nil)
 
 			resp, err := svc.GetEdge(ctx, connect.NewRequest(&pb.GetEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
@@ -121,21 +114,14 @@ var _ = Describe("Read RPCs", func() {
 
 		It("returns the edge when found", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
-			now := time.Now().UTC()
-			mockGraph.getEdgeFunc = func(ctx context.Context, tenant, edgeID string) (*graphdb.EdgeWithEndpoints, error) {
-				return &graphdb.EdgeWithEndpoints{
-					Edge: graphdb.Edge{
-						ID:    "edge-1",
-						Label: "maps_to",
-						Properties: map[string]any{
-							"confidence": 0.95,
-						},
-						ValidFrom: now,
-					},
-					SourceID: "node-1",
-					TargetID: "node-2",
-				}, nil
-			}
+			db := newMemGraph(ctx, "test-tenant", "node-1", "node-2")
+			Expect(db.CreateEdge(ctx, "test-tenant", "node-1", "node-2", graphdb.Edge{
+				ID:         "edge-1",
+				Label:      "maps_to",
+				Properties: map[string]any{"method": "llm"},
+				ValidFrom:  time.Now().UTC(),
+			})).To(Succeed())
+			svc := graph.New(db, mockVectors, nil)
 
 			resp, err := svc.GetEdge(ctx, connect.NewRequest(&pb.GetEdgeRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
