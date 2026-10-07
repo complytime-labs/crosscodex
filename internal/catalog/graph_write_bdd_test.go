@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 
 	connect "connectrpc.com/connect"
@@ -72,6 +73,22 @@ func (p *revisingParser) Parse(ctx context.Context, r io.Reader) ([]oscal.Contro
 	return items, nil
 }
 
+// editingParser returns the wrapped parser's items passed through edit, when
+// set. Specs use it to reorder or drop items, such as listing a child before
+// its parent, which the OSCAL parser never does.
+type editingParser struct {
+	oscal.Parser
+	edit func([]oscal.ControlItem) []oscal.ControlItem
+}
+
+func (p *editingParser) Parse(ctx context.Context, r io.Reader) ([]oscal.ControlItem, error) {
+	items, err := p.Parser.Parse(ctx, r)
+	if err != nil || p.edit == nil {
+		return items, err
+	}
+	return p.edit(items), nil
+}
+
 // memStore is a minimal in-memory catalog Store.
 type memStore struct{ controls []ControlRecord }
 
@@ -129,6 +146,7 @@ var _ = Describe("ParseCatalog graph writes", func() {
 		ctx    context.Context
 		graph  *countingGraph
 		parser *revisingParser
+		editor *editingParser
 		svc    *Service
 		logBuf *bytes.Buffer
 	)
@@ -143,9 +161,10 @@ var _ = Describe("ParseCatalog graph writes", func() {
 		// Pre-store the document so ParseCatalog's storage.Get returns it.
 		Expect(st.Put(ctx, "doc", bytes.NewReader([]byte(oscalDoc)))).To(Succeed())
 		parser = &revisingParser{Parser: oscal.NewParser("")}
+		editor = &editingParser{Parser: parser}
 		logBuf = &bytes.Buffer{}
 		svc = NewService(
-			WithParser(parser),
+			WithParser(editor),
 			WithStore(&memStore{}),
 			WithStorage(st),
 			WithGraphDB(graph),
@@ -225,6 +244,35 @@ var _ = Describe("ParseCatalog graph writes", func() {
 			pairs[r.Source.ID+" -> "+r.Target.ID] = true
 		}
 		Expect(pairs).To(HaveLen(2), "one edge per parent/child pair")
+	})
+
+	It("writes PARENT_OF edges for children listed before their parent, without warnings", func() {
+		editor.edit = func(items []oscal.ControlItem) []oscal.ControlItem {
+			slices.Reverse(items)
+			Expect(items[len(items)-1].ParentID).To(BeEmpty(), "the parent must now come last")
+			return items
+		}
+		catalogID := ingest()
+
+		Expect(logBuf.String()).NotTo(ContainSubstring("create graph edge failed"))
+		rels := parentEdges()
+		Expect(rels).To(HaveLen(2), "PARENT_OF edges")
+		for _, r := range rels {
+			Expect(r.Source.ID).To(Equal(catalogID + "/ac-2"))
+		}
+	})
+
+	It("logs a failed PARENT_OF write when the parent is not in the catalog, and still writes the children", func() {
+		editor.edit = func(items []oscal.ControlItem) []oscal.ControlItem {
+			return slices.DeleteFunc(items, func(it oscal.ControlItem) bool { return it.ID == "ac-2" })
+		}
+		ingest()
+
+		Expect(strings.Count(logBuf.String(), "create graph edge failed")).To(Equal(2))
+		Expect(logBuf.String()).To(ContainSubstring("from=ac-2"))
+		Expect(logBuf.String()).To(ContainSubstring(graphdb.ErrNodeNotFound.Error()))
+		Expect(parentEdges()).To(BeEmpty())
+		Expect(graph.created).To(Equal(2), "a missing parent costs only the edges, not the child nodes")
 	})
 
 	DescribeTable("logs a failed PARENT_OF write unless the edge already exists, and still ingests",

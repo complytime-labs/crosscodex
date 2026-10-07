@@ -88,9 +88,18 @@ func (s *Service) Traverse(ctx context.Context, req *connect.Request[pb.Traverse
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("start_node_id is required"))
 	}
 
+	direction, ok := protoDirectionToString(req.Msg.GetDirection())
+	if !ok {
+		s.recordRPC(ctx, "Traverse", start, connect.CodeInvalidArgument)
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("unknown traversal direction %d: it is not a defined TraversalDirection, so the traversal was refused rather than guessed; "+
+				"use TRAVERSAL_DIRECTION_OUTBOUND, TRAVERSAL_DIRECTION_INBOUND or TRAVERSAL_DIRECTION_BOTH, or leave direction unset for outbound",
+				req.Msg.GetDirection()))
+	}
+
 	query := graphdb.TraversalQuery{
 		StartNode:  req.Msg.GetStartNodeId(),
-		Direction:  protoDirectionToString(req.Msg.GetDirection()),
+		Direction:  direction,
 		EdgeLabels: req.Msg.GetEdgeLabels(),
 		MaxDepth:   int(req.Msg.GetMaxDepth()),
 	}
@@ -276,15 +285,21 @@ func identityFromContext(ctx context.Context) *authn.Identity {
 	return authn.IdentityFromContext(ctx)
 }
 
-// protoDirectionToString converts proto TraversalDirection to string.
-func protoDirectionToString(d pb.TraversalDirection) string {
+// protoDirectionToString converts a proto TraversalDirection to the graphdb
+// direction string. UNSPECIFIED means outbound (proto3 zero value); ok is
+// false for an undefined enum number, which the caller must reject rather
+// than silently traverse outbound.
+func protoDirectionToString(d pb.TraversalDirection) (direction string, ok bool) {
 	switch d {
+	case pb.TraversalDirection_TRAVERSAL_DIRECTION_UNSPECIFIED,
+		pb.TraversalDirection_TRAVERSAL_DIRECTION_OUTBOUND:
+		return "outbound", true
 	case pb.TraversalDirection_TRAVERSAL_DIRECTION_INBOUND:
-		return "inbound"
+		return "inbound", true
 	case pb.TraversalDirection_TRAVERSAL_DIRECTION_BOTH:
-		return "both"
+		return "both", true
 	default:
-		return "outbound"
+		return "", false
 	}
 }
 

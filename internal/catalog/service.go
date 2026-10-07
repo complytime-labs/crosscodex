@@ -337,7 +337,8 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		}
 	}
 
-	// Build graph if configured
+	// Build graph if configured. Every node is written before any edge, so a
+	// child listed ahead of its parent still gets its PARENT_OF edge.
 	if s.graph != nil {
 		now := time.Now().UTC()
 		for _, item := range items {
@@ -360,23 +361,25 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			if _, err := s.graph.UpsertNode(ctx, tenantID, node); err != nil {
 				s.logger.Warn("upsert graph node failed", "control_id", item.ID, "error", err)
 			}
+		}
 
-			// Create PARENT_OF edge if parent exists
-			if item.ParentID != "" {
-				sourceID := fmt.Sprintf("%s/%s", catalogID, item.ParentID)
-				targetID := fmt.Sprintf("%s/%s", catalogID, item.ID)
-				edge := graphdb.Edge{
-					ID:        graphdb.DerivedID("parent-of", sourceID, targetID),
-					Label:     "PARENT_OF",
-					ValidFrom: now,
-				}
+		for _, item := range items {
+			if item.ParentID == "" {
+				continue
+			}
+			sourceID := fmt.Sprintf("%s/%s", catalogID, item.ParentID)
+			targetID := fmt.Sprintf("%s/%s", catalogID, item.ID)
+			edge := graphdb.Edge{
+				ID:        graphdb.DerivedID("parent-of", sourceID, targetID),
+				Label:     "PARENT_OF",
+				ValidFrom: now,
+			}
 
-				// The edge ID is derived, so ErrEdgeExists means a re-import
-				// found the edge it would have written.
-				err := s.graph.CreateEdge(ctx, tenantID, sourceID, targetID, edge)
-				if err != nil && !errors.Is(err, graphdb.ErrEdgeExists) {
-					s.logger.Warn("create graph edge failed", "from", item.ParentID, "to", item.ID, "error", err)
-				}
+			// The edge ID is derived, so ErrEdgeExists means a re-import
+			// found the edge it would have written.
+			err := s.graph.CreateEdge(ctx, tenantID, sourceID, targetID, edge)
+			if err != nil && !errors.Is(err, graphdb.ErrEdgeExists) {
+				s.logger.Warn("create graph edge failed", "from", item.ParentID, "to", item.ID, "error", err)
 			}
 		}
 	}
