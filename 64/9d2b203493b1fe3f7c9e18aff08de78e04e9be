@@ -1,0 +1,24 @@
+docs/dev/design-principles.md
+  s_2b5eda159e7d4d::t_0f81b84dc9b712 49
+internal/analyzer/artifacts/materializer.go
+  s_2b5eda159e7d4d::t_aa057338ae67fe 231-235,423-425,435
+internal/analyzer/artifacts/materializer_bdd_test.go
+  s_2b5eda159e7d4d::t_166578d3780ec5 233,240,302-306,478-482
+  s_2b5eda159e7d4d::t_59d095fc4cc4f8 483-484,486,488-497
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "649d2b203493b1fe3f7c9e18aff08de78e04e9be",
+  "prompts": {},
+  "sessions": {
+    "s_2b5eda159e7d4d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9383c715-2d6e-4195-b2f3-89090673b028",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
