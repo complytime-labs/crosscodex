@@ -1,0 +1,25 @@
+README.md
+  s_1a099972eda13d::t_ddea578c8cc222 571-573,578-580,583-601
+  s_1a099972eda13d::t_9540ef0ff2f83d 602
+docs/dev/design-principles.md
+  s_1a099972eda13d::t_a324082b84dece 36-49
+  s_1a099972eda13d::t_5e7c529a60aedb 77
+docs/dev/telemetry.md
+  s_1a099972eda13d::t_17cefa60083068 75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e33301b87d454333ee72541341e9aba5cfda4899",
+  "prompts": {},
+  "sessions": {
+    "s_1a099972eda13d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a41e9986-13de-4852-a654-87464bab61d2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
