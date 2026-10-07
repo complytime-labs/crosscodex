@@ -72,6 +72,7 @@ A span's instrumentation scope therefore tells you which package produced it. Pa
 | `pipeline.NewCandidateGenerator` and its PG readers | No instrumentation |
 | `pkg/analyzer/consensus` inside the requires analyzer | `Compute` takes no context, so its spans would be disconnected roots |
 | `crosscodexd admin retention scan` | One-shot command that does not call `telemetry.Init` |
+| `crosscodexd admin reconcile artifacts` | One-shot command that does not call `telemetry.Init` |
 
 ## Traces
 

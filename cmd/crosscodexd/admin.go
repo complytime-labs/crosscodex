@@ -11,26 +11,39 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
+// adminUsage lists every `crosscodexd admin` subcommand.
+const adminUsage = `usage:
+  crosscodexd admin retention scan --tenant <id> [--dry-run]
+  crosscodexd admin reconcile artifacts --tenant <id> [--dry-run] [--max-edges <n>]`
+
 // runAdmin dispatches the on-host `admin` subcommand tree. args are the tokens
 // after "admin" (e.g. ["retention", "scan", "--tenant", "acme"]). It returns a
 // process exit code: 2 for usage/argument errors, otherwise the code from the
-// resolved handler. Only `retention scan` exists today; it is an unauthenticated
-// on-host operation, consistent with the `healthcheck` and `version` one-shots.
+// resolved handler. Admin subcommands are unauthenticated on-host operations,
+// consistent with the `healthcheck` and `version` one-shots.
 func runAdmin(args []string) int {
-	if len(args) < 2 || args[0] != "retention" || args[1] != "scan" {
-		fmt.Fprintln(os.Stderr, "usage: crosscodexd admin retention scan --tenant <id> [--dry-run]")
-		return 2
+	switch {
+	case len(args) >= 2 && args[0] == "retention" && args[1] == "scan":
+		return retentionScanCmd(args[2:])
+	case len(args) >= 2 && args[0] == "reconcile" && args[1] == "artifacts":
+		return reconcileArtifactsCmd(args[2:])
 	}
+	fmt.Fprintln(os.Stderr, adminUsage)
+	return 2
+}
 
+// retentionScanCmd parses `admin retention scan` flags and runs the scan.
+func retentionScanCmd(args []string) int {
 	fs := flag.NewFlagSet("crosscodexd admin retention scan", flag.ContinueOnError)
 	tenantID := fs.String("tenant", "", "tenant ID whose data to scan (required)")
 	dryRun := fs.Bool("dry-run", false, "report what would change without mutating any data")
-	if err := fs.Parse(args[2:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
 		}
@@ -42,6 +55,31 @@ func runAdmin(args []string) int {
 	}
 
 	return runRetentionScan(*tenantID, *dryRun)
+}
+
+// reconcileArtifactsCmd parses `admin reconcile artifacts` flags and runs the
+// reconciler.
+func reconcileArtifactsCmd(args []string) int {
+	fs := flag.NewFlagSet("crosscodexd admin reconcile artifacts", flag.ContinueOnError)
+	tenantID := fs.String("tenant", "", "tenant ID whose artifacts to reconcile (required)")
+	dryRun := fs.Bool("dry-run", false, "report what would be written without writing")
+	maxEdges := fs.Int("max-edges", artifacts.DefaultReconcileMaxEdges, "fail before writing if the run would add more SAME_AS edges than this")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if *tenantID == "" {
+		fmt.Fprintln(os.Stderr, "admin reconcile artifacts: --tenant is required")
+		return 2
+	}
+	if *maxEdges <= 0 {
+		fmt.Fprintln(os.Stderr, "admin reconcile artifacts: --max-edges must be positive")
+		return 2
+	}
+
+	return runReconcileArtifacts(*tenantID, *dryRun, *maxEdges)
 }
 
 // runRetentionScan loads the daemon config, scopes the context to tenantID, runs
@@ -147,5 +185,74 @@ func writeRetentionReport(w io.Writer, report retention.Report) {
 
 	for _, e := range report.Errors {
 		fmt.Fprintf(w, "error: %s\n", e)
+	}
+}
+
+// runReconcileArtifacts loads the daemon config, scopes the context to
+// tenantID (failing a malformed tenant before any connection is opened), runs
+// one artifact reconcile and prints the result. It returns a process exit
+// code: 0 on success, 1 on any failure. Bulk writes use graph.max_bulk_edges
+// as the chunk size, the same bound the graph RPC enforces.
+func runReconcileArtifacts(tenantID string, dryRun bool, maxEdges int) int {
+	ctx := context.Background()
+
+	cfg, err := config.NewLoader().Load(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "admin reconcile artifacts: load config: %v\n", err)
+		return 1
+	}
+
+	ctx, err = tenant.WithTenant(ctx, tenantID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "admin reconcile artifacts: %v\n", err)
+		return 1
+	}
+
+	res, err := runReconcileArtifactsFn(ctx, cfg, tenantID, artifacts.ReconcileOptions{
+		DryRun:    dryRun,
+		MaxEdges:  maxEdges,
+		ChunkSize: cfg.Graph.MaxBulkEdges,
+		Now:       time.Now().UTC(),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "admin reconcile artifacts: %v\n", err)
+		return 1
+	}
+
+	writeReconcileReport(os.Stdout, res)
+	return 0
+}
+
+// runReconcileArtifactsFn runs one artifact reconcile against the daemon's
+// graph. It is a package var so flag parsing, config load and tenant scoping
+// can be unit-tested with a fake, without a live database. Production wiring
+// is daemonReconcileArtifacts.
+var runReconcileArtifactsFn = daemonReconcileArtifacts
+
+// daemonReconcileArtifacts opens only the graph connection and runs
+// artifacts.Reconcile. ctx must already carry the target tenant.
+func daemonReconcileArtifacts(ctx context.Context, cfg *config.Config, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error) {
+	shared, err := buildSharedResources(ctx, cfg, requiredResources{graph: true})
+	if err != nil {
+		return artifacts.ReconcileResult{}, err
+	}
+	defer shared.close()
+	return artifacts.Reconcile(ctx, shared.graphDB_, tenantID, opts)
+}
+
+// writeReconcileReport renders an artifacts.ReconcileResult to w. Under
+// --dry-run the new_* rows count what the run would have written.
+func writeReconcileReport(w io.Writer, res artifacts.ReconcileResult) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "METRIC\tVALUE")
+	fmt.Fprintf(tw, "artifacts\t%d\n", res.Artifacts)
+	fmt.Fprintf(tw, "skipped\t%d\n", res.Skipped)
+	fmt.Fprintf(tw, "groups\t%d\n", res.Groups)
+	fmt.Fprintf(tw, "new_groups\t%d\n", res.NewGroups)
+	fmt.Fprintf(tw, "new_memberships\t%d\n", res.NewMemberships)
+	fmt.Fprintf(tw, "matches\t%d\n", res.Matches)
+	fmt.Fprintf(tw, "new_matches\t%d\n", res.NewMatches)
+	if err := tw.Flush(); err != nil {
+		fmt.Fprintf(w, "error flushing output: %v\n", err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -93,5 +94,71 @@ var _ = Describe("runAdmin retention scan wiring", func() {
 		}
 		Expect(runAdmin([]string{"retention", "scan", "--tenant", "Bad_Tenant"})).To(Equal(1))
 		Expect(called).To(BeFalse(), "an invalid tenant must fail before the scan runs")
+	})
+})
+
+var _ = Describe("runAdmin reconcile artifacts arg parsing", func() {
+	DescribeTable("returns 2 for usage errors",
+		func(args ...string) {
+			Expect(runAdmin(args)).To(Equal(2))
+		},
+		Entry("reconcile without a target", "reconcile"),
+		Entry("unknown reconcile target", "reconcile", "bogus", "--tenant", "acme"),
+		Entry("missing --tenant", "reconcile", "artifacts"),
+		Entry("empty --tenant", "reconcile", "artifacts", "--tenant", ""),
+		Entry("unknown flag", "reconcile", "artifacts", "--tenant", "acme", "--nope"),
+		Entry("zero --max-edges", "reconcile", "artifacts", "--tenant", "acme", "--max-edges", "0"),
+		Entry("negative --max-edges", "reconcile", "artifacts", "--tenant", "acme", "--max-edges", "-1"),
+	)
+})
+
+var _ = Describe("runAdmin reconcile artifacts wiring", func() {
+	var (
+		gotTenant string
+		gotOpts   artifacts.ReconcileOptions
+		fnErr     error
+		origFn    func(context.Context, *config.Config, string, artifacts.ReconcileOptions) (artifacts.ReconcileResult, error)
+	)
+
+	BeforeEach(func() {
+		origFn = runReconcileArtifactsFn
+		gotTenant, gotOpts, fnErr = "", artifacts.ReconcileOptions{}, nil
+		runReconcileArtifactsFn = func(ctx context.Context, _ *config.Config, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error) {
+			t, err := tenant.FromContext(ctx)
+			Expect(err).NotTo(HaveOccurred(), "reconcile ctx must carry the tenant set by tenant.WithTenant")
+			Expect(t).To(Equal(tenantID))
+			gotTenant, gotOpts = tenantID, opts
+			return artifacts.ReconcileResult{}, fnErr
+		}
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+	})
+
+	AfterEach(func() {
+		runReconcileArtifactsFn = origFn
+	})
+
+	It("passes the tenant and defaults through", func() {
+		Expect(runAdmin([]string{"reconcile", "artifacts", "--tenant", "acme"})).To(Equal(0))
+		Expect(gotTenant).To(Equal("acme"))
+		Expect(gotOpts.DryRun).To(BeFalse())
+		Expect(gotOpts.MaxEdges).To(Equal(artifacts.DefaultReconcileMaxEdges))
+		Expect(gotOpts.ChunkSize).To(Equal(config.DefaultGraphMaxBulkEdges))
+		Expect(gotOpts.Now).NotTo(BeZero())
+	})
+
+	It("passes --dry-run and --max-edges through", func() {
+		Expect(runAdmin([]string{"reconcile", "artifacts", "--tenant", "acme", "--dry-run", "--max-edges", "7"})).To(Equal(0))
+		Expect(gotOpts.DryRun).To(BeTrue())
+		Expect(gotOpts.MaxEdges).To(Equal(7))
+	})
+
+	It("returns 1 when the reconcile fails", func() {
+		fnErr = errors.New("boom")
+		Expect(runAdmin([]string{"reconcile", "artifacts", "--tenant", "acme"})).To(Equal(1))
+	})
+
+	It("rejects a malformed --tenant before reconciling", func() {
+		Expect(runAdmin([]string{"reconcile", "artifacts", "--tenant", "Not_Valid"})).To(Equal(1))
+		Expect(gotTenant).To(BeEmpty())
 	})
 })
