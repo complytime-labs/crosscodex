@@ -1,0 +1,25 @@
+pkg/natsbus/errors.go
+  s_7681b370177c2f::t_70895879e1a0f3 35-38
+pkg/natsbus/client.go
+  s_7681b370177c2f::t_08624e4c0e8202 40-55
+  s_7681b370177c2f::t_c59cdae715100a 150-181
+  s_7681b370177c2f::t_554ab841da07c1 87
+pkg/natsbus/dial_bdd_test.go
+  s_7681b370177c2f::t_5bb94d764aa2f4 1-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e035f0b53f7b6d2b33799e99886210187453afe6",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
