@@ -228,12 +228,11 @@ func artifactID(controlID string, art ConsensusArtifact) string {
 // artifactNode builds the Artifact node a job writes for art.
 func artifactNode(jobID, controlID string, art ConsensusArtifact) graphdb.Node {
 	props := map[string]any{
-		"name":             art.Name,
-		"frequency":        art.Frequency,
-		"owner_role":       art.OwnerRole,
-		"description":      art.Description,
-		"confidence":       art.Confidence,
-		"dedup_generation": 0,
+		"name":        art.Name,
+		"frequency":   art.Frequency,
+		"owner_role":  art.OwnerRole,
+		"description": art.Description,
+		"confidence":  art.Confidence,
 	}
 	for k, v := range art.Properties {
 		props["prop_"+k] = v
@@ -421,9 +420,9 @@ func compareArtifact(stored, want graphdb.Node) error {
 	}
 }
 
-// differingFields lists the content fields in which stored differs from want,
-// comparing numbers as the float64 drivers read them back as. On agedriver the
-// comparison also assumes stored strings never contained the $cypher$ tag
+// differingFields lists the content fields in which stored differs from want.
+// Every property is a string or float64, the types drivers read them back as,
+// so values compare directly. On agedriver the comparison also assumes stored strings never contained the $cypher$ tag
 // (the driver strips it on write) and that floats round-trip, which needs
 // extra_float_digits >= 1 (the PostgreSQL 12+ default).
 func differingFields(stored, want graphdb.Node) []string {
@@ -433,7 +432,7 @@ func differingFields(stored, want graphdb.Node) []string {
 	}
 	for _, k := range slices.Sorted(maps.Keys(want.Properties)) {
 		got, ok := stored.Properties[k]
-		if !ok || readBackValue(got) != readBackValue(want.Properties[k]) {
+		if !ok || got != want.Properties[k] {
 			differing = append(differing, k)
 		}
 	}
@@ -443,15 +442,6 @@ func differingFields(stored, want graphdb.Node) []string {
 		}
 	}
 	return differing
-}
-
-// readBackValue converts a property value to the form drivers return it in:
-// the only number written as an int (dedup_generation) reads back as float64.
-func readBackValue(v any) any {
-	if n, ok := v.(int); ok {
-		return float64(n)
-	}
-	return v
 }
 
 func (m *GraphMaterializer) startSpan(ctx context.Context, name string) (context.Context, trace.Span) {
