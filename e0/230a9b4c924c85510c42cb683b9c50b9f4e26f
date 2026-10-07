@@ -1,0 +1,21 @@
+internal/graph/read_bdd_test.go
+  s_b76464653bcba4::t_1feec805a7c60d 170-172
+internal/graph/read.go
+  s_b76464653bcba4::t_e26f0f0d439c32 95-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e0230a9b4c924c85510c42cb683b9c50b9f4e26f",
+  "prompts": {},
+  "sessions": {
+    "s_b76464653bcba4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b633281c-1a8b-40a8-84a8-affa51a44019",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
