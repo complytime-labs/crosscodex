@@ -1,0 +1,24 @@
+.taskfiles/test/integration.yml
+  s_1a099972eda13d::t_d9b4f240428d48 117,235
+internal/analyzer/artifacts/reconcile_integration_bdd_test.go
+  s_1a099972eda13d::t_2929a54b896b07 1-86
+internal/analyzer/artifacts/reconcile_helpers_test.go
+  s_1a099972eda13d::t_1b5b7a9e098abc 34
+  s_1a099972eda13d::t_0b1276dd1752fe 13,18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bbd318b584b97185324e39fcf842d0d9235cc50c",
+  "prompts": {},
+  "sessions": {
+    "s_1a099972eda13d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a41e9986-13de-4852-a654-87464bab61d2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
