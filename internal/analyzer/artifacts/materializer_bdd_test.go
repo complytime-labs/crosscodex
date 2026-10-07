@@ -230,14 +230,14 @@ var _ = Describe("GraphMaterializer", func() {
 		}
 	})
 
-	It("creates Artifact node with dedup_generation 0", func() {
+	It("creates an Artifact node without a dedup_generation property", func() {
 		Expect(m.Materialize(ctx, tenantID, "job-1")).To(Succeed())
 
 		rels := demands(graph)
 		Expect(rels).To(HaveLen(1))
 		artifactNode := rels[0].Target
 		Expect(artifactNode.Label).To(Equal("Artifact"))
-		Expect(artifactNode.Properties).To(HaveKeyWithValue("dedup_generation", float64(0)))
+		Expect(artifactNode.Properties).NotTo(HaveKey("dedup_generation"))
 		Expect(artifactNode.Properties).To(HaveKeyWithValue("name", "access control policy"))
 		Expect(artifactNode.Properties).To(HaveKeyWithValue("confidence", 1.0))
 	})
@@ -299,12 +299,11 @@ var _ = Describe("GraphMaterializer", func() {
 				ID:    artID,
 				Label: "Artifact",
 				Properties: map[string]any{
-					"name":             policyArtifact.Name,
-					"frequency":        "",
-					"owner_role":       "",
-					"description":      "",
-					"confidence":       1.0,
-					"dedup_generation": 0,
+					"name":        policyArtifact.Name,
+					"frequency":   "",
+					"owner_role":  "",
+					"description": "",
+					"confidence":  1.0,
 				},
 				ValidFrom:      time.Now(),
 				CreatedBy:      "job-1",
@@ -476,21 +475,26 @@ var _ = Describe("GraphMaterializer", func() {
 			}),
 		)
 
-		It("accepts a stored node with an extra non-prop_ property and keeps it", func() {
-			stored := storedPolicyNode()
-			stored.Properties["merged_into"] = "ac-1__art_other"
-			Expect(graph.CreateNode(ctx, tenantID, stored)).To(Succeed())
-			before, err := graph.GetNode(ctx, tenantID, artID)
-			Expect(err).NotTo(HaveOccurred())
+		DescribeTable("accepts a stored node with an extra non-prop_ property and keeps it",
+			func(key string, value any) {
+				stored := storedPolicyNode()
+				stored.Properties[key] = value
+				Expect(graph.CreateNode(ctx, tenantID, stored)).To(Succeed())
+				before, err := graph.GetNode(ctx, tenantID, artID)
+				Expect(err).NotTo(HaveOccurred())
 
-			Expect(m.Materialize(ctx, tenantID, "job-1")).To(Succeed())
+				Expect(m.Materialize(ctx, tenantID, "job-1")).To(Succeed())
 
-			after, err := graph.GetNode(ctx, tenantID, artID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(after).To(Equal(before))
-			Expect(edgeCount("DEMANDS")).To(Equal(1))
-			Expect(edgeCount("IS_TYPE")).To(Equal(1))
-		})
+				after, err := graph.GetNode(ctx, tenantID, artID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(after).To(Equal(before))
+				Expect(edgeCount("DEMANDS")).To(Equal(1))
+				Expect(edgeCount("IS_TYPE")).To(Equal(1))
+			},
+			Entry("merged_into", "merged_into", "ac-1__art_other"),
+			// Nodes written before dedup_generation was retired still carry it.
+			Entry("the retired dedup_generation", "dedup_generation", 0),
+		)
 
 		It("rejects a conflicting node created between the check and the write, adding no edges", func() {
 			conflicting := storedPolicyNode()
