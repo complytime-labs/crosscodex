@@ -1,0 +1,32 @@
+docs/dev/telemetry.md
+  s_1a099972eda13d::t_17cefa60083068 75
+cmd/crosscodexd/admin_bdd_test.go
+  s_1a099972eda13d::t_998d8170e76e76 12
+  s_1a099972eda13d::t_5afcc885a405e7 99-164
+cmd/crosscodexd/admin.go
+  s_1a099972eda13d::t_9824dc9f610d8c 14,20-24,28-29,31-35,37-39,41-42,46,60-82
+  s_1a099972eda13d::t_d46996f2998c29 83,190-258
+  s_1a099972eda13d::t_e8a93657fc5cfd 84
+README.md
+  s_1a099972eda13d::t_ddea578c8cc222 571-573,578-580,583-601
+  s_1a099972eda13d::t_2eb71bb0133d51 602
+docs/dev/design-principles.md
+  s_1a099972eda13d::t_5e7c529a60aedb 77
+  s_1a099972eda13d::t_a324082b84dece 36-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f71d933984bb3768e99867acbec85584b2991688",
+  "prompts": {},
+  "sessions": {
+    "s_1a099972eda13d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a41e9986-13de-4852-a654-87464bab61d2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
