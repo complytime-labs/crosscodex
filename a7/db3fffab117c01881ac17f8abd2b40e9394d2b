@@ -1,0 +1,19 @@
+internal/analyzer/artifacts/reconcile_integration_bdd_test.go
+  s_1a099972eda13d::t_f0d6625eefd863 52-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7db3fffab117c01881ac17f8abd2b40e9394d2b",
+  "prompts": {},
+  "sessions": {
+    "s_1a099972eda13d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a41e9986-13de-4852-a654-87464bab61d2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
