@@ -154,7 +154,7 @@ func newIntegKit(tenantID string, wrapArchive func(storage.Provider) storage.Pro
 	purger := retention.NewPurger(purgeConn, primary)
 	audit := &integCaptureAudit{}
 
-	engine := retention.NewEngine(collectors, holds, arch, purger, audit, policy)
+	engine := retention.NewEngine(collectors, holds, arch, purger, audit, policy, &fakeScanLock{})
 
 	return integKit{engine: engine, primary: primary, archive: realArchive, audit: audit, tenant: tenantID}
 }

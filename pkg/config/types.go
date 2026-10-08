@@ -29,6 +29,7 @@ type Config struct {
 	Graph         GraphConfig         `yaml:"graph"         json:"graph"`
 	Synthesis     SynthesisConfig     `yaml:"synthesis"     json:"synthesis"`
 	Retention     RetentionConfig     `yaml:"retention"     json:"retention"`
+	Backup        BackupConfig        `yaml:"backup"        json:"backup"`
 	Role          string              `yaml:"role"          json:"role"`
 	Health        HealthConfig        `yaml:"health"        json:"health"`
 }

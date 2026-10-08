@@ -8,7 +8,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-func validateKey(key string) error {
+// ValidateKey reports whether key is a safe tenant-relative object key. Every failure wraps ErrInvalidKey.
+func ValidateKey(key string) error {
 	if key == "" {
 		return fmt.Errorf("%w: empty key", ErrInvalidKey)
 	}

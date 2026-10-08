@@ -176,6 +176,21 @@ retention:
     local:
       path: ""
   tenants: {}
+backup:
+  dsn: ""
+  destination:
+    backend: ""
+    local:
+      path: ""
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""
+      storage_class: ""
+  max_age:
+    postgres: 26h
+    objects: 26h
+    nats: 26h
 role: all
 health:
   addr: ":9091"

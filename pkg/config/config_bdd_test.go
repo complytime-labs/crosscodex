@@ -1347,6 +1347,9 @@ logging:
 					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
 					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
 				},
+				Backup: config.BackupConfig{
+					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
+				},
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1376,6 +1379,9 @@ logging:
 					MaxMappingsPerControl: 10,
 					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
 					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+				},
+				Backup: config.BackupConfig{
+					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
 				},
 			}
 
@@ -1790,6 +1796,9 @@ logging:
 					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
 					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
 				},
+				Backup: config.BackupConfig{
+					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
+				},
 				LLM: config.LLMConfig{
 					Timeout:    30,
 					MaxRetries: 3,
@@ -1887,6 +1896,9 @@ logging:
 					MaxMappingsPerControl: 10,
 					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
 					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+				},
+				Backup: config.BackupConfig{
+					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
 				},
 			}
 		}
@@ -2015,6 +2027,9 @@ logging:
 					MaxMappingsPerControl: 10,
 					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
 					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+				},
+				Backup: config.BackupConfig{
+					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
 				},
 			}
 		}
@@ -2256,6 +2271,9 @@ logging:
 					MaxMappingsPerControl: 10,
 					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
 					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+				},
+				Backup: config.BackupConfig{
+					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
 				},
 			}
 		}
@@ -2975,6 +2993,9 @@ var _ = Describe("SynthesisConfig validation", func() {
 				Assessment:            config.AssessmentConfig{IQRGood: 20.0, IQRPoor: 10.0, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
 				ConfidenceThreshold:   0.5,
 				MaxMappingsPerControl: 10,
+			},
+			Backup: config.BackupConfig{
+				MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
 			},
 		}
 	}

@@ -30,7 +30,7 @@ Flags:
 
 Available Commands:
   healthcheck Probe the gateway /healthz endpoint (exit 0 = healthy)
-  admin       On-host admin operations (retention scan --tenant <id> [--dry-run])
+  admin       On-host admin operations (retention scan, reconcile artifacts, backup run|list|verify|restore; see 'crosscodexd admin')
   version     Print version information
 
 Running crosscodexd with no arguments starts the daemon with role "all".

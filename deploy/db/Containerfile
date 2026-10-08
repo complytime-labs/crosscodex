@@ -1,4 +1,4 @@
-# Integration test image: PostgreSQL 16 + Apache AGE 1.5.0 + pgvector 0.7.4
+# PostgreSQL 16 + Apache AGE 1.5.0 + pgvector 0.7.4 + WAL-G (backups; see fetch-walg.sh)
 #
 # Single-stage build: install pgvector from source tarball into the AGE
 # image (which is based on postgres:16 with AGE pre-installed).
@@ -8,13 +8,15 @@
 
 FROM docker.io/apache/age:release_PG16_1.5.0
 
-USER root
+USER 0
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Reason: base image (apache/age) tracks Debian point releases; pinning
 # build-time-only packages to exact versions adds maintenance burden with
 # no security benefit since they are purged in the same layer.
+COPY fetch-walg.sh /tmp/fetch-walg.sh
+
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -29,9 +31,15 @@ RUN apt-get update && \
 WORKDIR /tmp/pgvector-0.7.4
 
 RUN make && make install && \
+    sh /tmp/fetch-walg.sh /usr/local/bin && \
+    rm /tmp/fetch-walg.sh && \
     apt-get purge -y build-essential curl postgresql-server-dev-16 && \
     apt-get autoremove -y && \
     rm -rf /tmp/pgvector-0.7.4
+
+# Lets Taskfile's build-db-image status check detect a stale image that
+# doesn't actually have this WAL-G version, even if its tag still exists.
+LABEL org.crosscodex.walg=v3.0.9
 
 WORKDIR /
 
@@ -42,7 +50,12 @@ RUN echo "CREATE EXTENSION IF NOT EXISTS age CASCADE;" > /docker-entrypoint-init
 # SSL cert/key paths are passed at runtime via CMD overrides.
 COPY pg_hba.conf /etc/postgresql/pg_hba.conf
 
-USER postgres
+# Restores a WAL-G base backup into an empty PGDATA (deploy/README.md, Restore).
+COPY --chmod=0755 crosscodex-db-restore /usr/local/bin/crosscodex-db-restore
+
+# 999 is the base image's postgres user. Group omitted on purpose: the runtime
+# then applies postgres's supplementary groups (ssl-cert) from /etc/group.
+USER 999
 
 HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
     CMD ["pg_isready"]

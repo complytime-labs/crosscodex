@@ -17,15 +17,15 @@ import (
 // This file only registers Describe nodes; Ginkgo collects them automatically.
 
 var _ = Describe("Property Specifications", Ordered, func() {
-	Context("validateKey — path traversal prevention", func() {
+	Context("ValidateKey — path traversal prevention", func() {
 		It("rejects keys containing dot-dot path segments", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				prefix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "prefix")
 				suffix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "suffix")
 				key := prefix + "/../" + suffix
-				err := storage.ExportValidateKey(key)
+				err := storage.ValidateKey(key)
 				Expect(err).To(HaveOccurred(),
-					"validateKey accepted path-traversal key %q", key)
+					"ValidateKey accepted path-traversal key %q", key)
 			})
 		})
 
@@ -33,9 +33,9 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				rest := rapid.StringMatching(`[a-z0-9/._-]{1,50}`).Draw(t, "rest")
 				key := "/" + rest
-				err := storage.ExportValidateKey(key)
+				err := storage.ValidateKey(key)
 				Expect(err).To(HaveOccurred(),
-					"validateKey accepted absolute key %q", key)
+					"ValidateKey accepted absolute key %q", key)
 			})
 		})
 
@@ -44,9 +44,9 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				prefix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "prefix")
 				suffix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "suffix")
 				key := prefix + "\x00" + suffix
-				err := storage.ExportValidateKey(key)
+				err := storage.ValidateKey(key)
 				Expect(err).To(HaveOccurred(),
-					"validateKey accepted null-byte key %q", key)
+					"ValidateKey accepted null-byte key %q", key)
 			})
 		})
 
@@ -55,9 +55,9 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				prefix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "prefix")
 				suffix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "suffix")
 				key := prefix + `\` + suffix
-				err := storage.ExportValidateKey(key)
+				err := storage.ValidateKey(key)
 				Expect(err).To(HaveOccurred(),
-					"validateKey accepted backslash key %q", key)
+					"ValidateKey accepted backslash key %q", key)
 			})
 		})
 	})

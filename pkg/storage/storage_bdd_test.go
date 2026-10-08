@@ -948,8 +948,8 @@ var _ = Describe("Storage System", Ordered, func() {
 	})
 
 	Describe("Key Validation Edge Cases", func() {
-		// These test validateKey behavior indirectly through Put/Get on a real provider
-		// since validateKey is unexported.
+		// These test ValidateKey behavior indirectly through Put/Get on a real provider
+		// since ValidateKey is unexported.
 		var p storage.Provider
 
 		BeforeEach(func() {
@@ -1065,10 +1065,10 @@ var _ = Describe("Storage System", Ordered, func() {
 	// (ported from old-style tests via export_test.go)
 	// =================================================================
 
-	Describe("internal: validateKey", func() {
+	Describe("internal: ValidateKey", func() {
 		DescribeTable("rejects invalid keys",
 			func(key string) {
-				err := storage.ExportValidateKey(key)
+				err := storage.ValidateKey(key)
 				Expect(err).To(MatchError(storage.ErrInvalidKey))
 			},
 			Entry("empty key", ""),
@@ -1084,7 +1084,7 @@ var _ = Describe("Storage System", Ordered, func() {
 
 		DescribeTable("accepts valid keys",
 			func(key string) {
-				err := storage.ExportValidateKey(key)
+				err := storage.ValidateKey(key)
 				Expect(err).NotTo(HaveOccurred())
 			},
 			Entry("valid flat", "file.json"),
@@ -1222,3 +1222,19 @@ func (m *storageclassMockS3) ListObjectsV2(_ context.Context, _ *s3.ListObjectsV
 func (m *storageclassMockS3) HeadObject(_ context.Context, _ *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
 	return nil, &bddTestAPIError{code: "NoSuchKey", message: "not found"}
 }
+
+var _ = Describe("ValidateKey", func() {
+	DescribeTable("rejects unsafe keys with ErrInvalidKey",
+		func(key string) {
+			Expect(storage.ValidateKey(key)).To(MatchError(storage.ErrInvalidKey))
+		},
+		Entry("empty", ""),
+		Entry("absolute", "/etc/passwd"),
+		Entry("traversal", "a/../../b"),
+		Entry("backslash", `a\b`),
+		Entry("NUL", "a\x00b"),
+	)
+	It("accepts a nested relative key", func() {
+		Expect(storage.ValidateKey("artifacts/2026/x.json")).To(Succeed())
+	})
+})

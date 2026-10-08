@@ -74,7 +74,7 @@ func NewLocal(root, tenantID string, opts ...LocalOption) (Provider, error) {
 }
 
 func (p *localProvider) resolveAndVerify(key string) (string, error) {
-	if err := validateKey(key); err != nil {
+	if err := ValidateKey(key); err != nil {
 		return "", err
 	}
 
@@ -251,7 +251,7 @@ func (p *localProvider) List(ctx context.Context, prefix string) ([]ObjectMetada
 
 	searchRoot := p.root
 	if prefix != "" {
-		if err := validateKey(prefix); err != nil {
+		if err := ValidateKey(prefix); err != nil {
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}

@@ -123,6 +123,7 @@ tasks:
       # version ldflags. Then copy each into its thin runtime image, using bin/
       # as the (tiny) build context.
       - CGO_ENABLED=0 GOOS=linux GOARCH={{.GOARCH}} task dev:build
+      - cp {{.ROOT_DIR}}/deploy/db/fetch-walg.sh {{.BUILD_DIR}}/fetch-walg.sh
       - >
         {{.CONTAINER_ENGINE}} build
         --target crosscodexd

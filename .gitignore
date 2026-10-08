@@ -70,6 +70,7 @@ docs/superpowers/
 
 # Deploy secrets
 deploy/.env
+deploy/backup.env
 deploy/certs/*.pem
 deploy/certs/.fingerprint
 .claude/handoff/

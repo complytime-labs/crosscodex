@@ -8,9 +8,6 @@ import (
 
 // Exported for testing. Do not use outside tests.
 
-// ExportValidateKey exposes validateKey for direct unit testing.
-var ExportValidateKey = validateKey
-
 // ExportValidateTenantID exposes validateTenantID for direct unit testing.
 var ExportValidateTenantID = validateTenantID
 

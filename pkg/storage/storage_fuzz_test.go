@@ -20,6 +20,6 @@ func FuzzValidateKey(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, key string) {
 		// Must not panic regardless of input
-		_ = storage.ExportValidateKey(key)
+		_ = storage.ValidateKey(key)
 	})
 }

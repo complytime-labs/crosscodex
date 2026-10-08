@@ -1,0 +1,116 @@
+# Backup/restore integration stack (task test:integration:backup).
+# The Ginkgo suite in test/backup drives it as project crosscodex-backup-test
+# with BACKUP_DEST=local|s3, which selects the WAL-G env file and the admin
+# config, and CROSSCODEX_BACKUP_DSN for the admin container.
+# Published ports must match the constants in test/backup/backup_integration_test.go.
+services:
+  backup-init:
+    image: crosscodex-test-db:latest
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    # Volume ownership as in deploy/compose.backup.yaml, plus a copy of the
+    # client certs readable by crosscodexd's uid (the shared cert volume's
+    # keys are owned by postgres, mode 0600).
+    command:
+      - >-
+        chown 65532:10001 /backup && chmod 2770 /backup &&
+        mkdir -p /backup/postgres &&
+        chown 999:10001 /backup/postgres && chmod 2770 /backup/postgres &&
+        cp /certs/ca.pem /certs/client.pem /certs/client-key.pem /admin-certs/ &&
+        chown 65532:65532 /admin-certs/* && chmod 0600 /admin-certs/client-key.pem
+    volumes:
+      - backup-repo:/backup
+      - certs:/certs:ro
+      - admin-certs:/admin-certs
+
+  db:
+    image: crosscodex-test-db:latest
+    container_name: crosscodex-backup-test-db
+    group_add: ["10001"]
+    ports:
+      - "25432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: integration # checkov:skip=CKV_SECRET_6 test-only credential for an ephemeral container
+      POSTGRES_DB: crosscodex_test
+    env_file: ["backup/backup-${BACKUP_DEST}.env"]
+    volumes:
+      - certs:/certs
+      - pgdata:/var/lib/postgresql/data
+      - backup-repo:/backup
+    command: >
+      postgres
+        -c shared_preload_libraries=age
+        -c hba_file=/etc/postgresql/pg_hba.conf
+        -c ssl=on
+        -c ssl_cert_file=/certs/server.pem
+        -c ssl_key_file=/certs/server-key.pem
+        -c ssl_ca_file=/certs/ca.pem
+        -c wal_level=replica
+        -c archive_mode=on
+        -c "archive_command=umask 0027 && wal-g wal-push %p"
+        -c archive_timeout=60
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -q"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  storage:
+    image: docker.io/rustfs/rustfs:1.0.0-beta.3
+    container_name: crosscodex-backup-test-storage
+    ports:
+      - "29000:9000"
+    environment:
+      RUSTFS_ROOT_USER: rustfsadmin
+      RUSTFS_ROOT_PASSWORD: rustfsadmin # DevSkim: ignore DS126858 - test-only credential for an ephemeral container
+    command: server /data
+
+  nats:
+    # Same server line as deploy/compose.yaml, so the suite also covers jsm.go
+    # against a pre-2.15 server (legacy stream.tar.s2 snapshot name).
+    image: docker.io/nats:2.11.17-alpine
+    container_name: crosscodex-backup-test-nats
+    ports:
+      - "24222:4222"
+    volumes:
+      - certs:/certs
+      - jetstream:/data
+    command: >
+      --tls
+      --tlscert=/certs/server.pem
+      --tlskey=/certs/server-key.pem
+      --tlscacert=/certs/ca.pem
+      --tlsverify
+      --jetstream
+      --store_dir=/data
+
+  admin:
+    image: crosscodex-test-crosscodexd:latest
+    group_add: ["10001"]
+    env_file: ["backup/backup-${BACKUP_DEST}.env"]
+    environment:
+      CROSSCODEX_BACKUP_DSN: ${CROSSCODEX_BACKUP_DSN}
+    volumes:
+      - ./backup/config-${BACKUP_DEST}.yaml:/etc/crosscodex/config.yaml:ro
+      - admin-certs:/admin-certs:ro
+      - backup-repo:/backup
+
+  db-restore:
+    image: crosscodex-test-db:latest
+    user: postgres
+    group_add: ["10001"]
+    env_file: ["backup/backup-${BACKUP_DEST}.env"]
+    entrypoint: ["crosscodex-db-restore"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - backup-repo:/backup
+
+volumes:
+  pgdata: {}
+  backup-repo: {}
+  jetstream: {}
+  admin-certs: {}
+  certs:
+    external: true
+    name: crosscodex-test-certs

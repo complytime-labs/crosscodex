@@ -60,6 +60,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 	if err := cfg.Retention.Validate(); err != nil {
 		return err
 	}
+	if err := validateBackup(&cfg.Backup, &cfg.Storage.Objects, tracker); err != nil {
+		return err
+	}
 	if err := validateGraph(&cfg.Graph, tracker); err != nil {
 		return err
 	}

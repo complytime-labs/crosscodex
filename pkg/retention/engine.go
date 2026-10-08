@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -27,6 +28,14 @@ type ScanOptions struct {
 	Now    time.Time
 }
 
+// ScanLock keeps a non-dry-run scan from overlapping `crosscodexd admin
+// backup run` (see db.BackupRetentionLockName). db.AdvisoryLocker
+// implements it. TryAcquire must not wait: it returns an error when the
+// lock is held. release is called exactly once.
+type ScanLock interface {
+	TryAcquire(ctx context.Context) (release func(context.Context) error, err error)
+}
+
 // Engine orchestrates the retention lifecycle: collect → hold-filter →
 // archive → purge → audit.
 type Engine struct {
@@ -36,10 +45,12 @@ type Engine struct {
 	purger     Purger
 	audit      AuditPublisher
 	policy     Policy
+	lock       ScanLock
 }
 
-// NewEngine wires together the retention engine components.
-func NewEngine(collectors []Collector, holds HoldStore, arch Archiver, purger Purger, audit AuditPublisher, policy Policy) *Engine {
+// NewEngine wires together the retention engine components. lock is
+// required for non-dry-run scans; Scan fails closed without it.
+func NewEngine(collectors []Collector, holds HoldStore, arch Archiver, purger Purger, audit AuditPublisher, policy Policy, lock ScanLock) *Engine {
 	return &Engine{
 		collectors: collectors,
 		holds:      holds,
@@ -47,6 +58,7 @@ func NewEngine(collectors []Collector, holds HoldStore, arch Archiver, purger Pu
 		purger:     purger,
 		audit:      audit,
 		policy:     policy,
+		lock:       lock,
 	}
 }
 
@@ -99,13 +111,28 @@ func (e *Engine) publishAudit(ctx context.Context, rep *Report, c Candidate, act
 //
 // Report.Scanned is the total count returned by collectors (collectors
 // already pre-filter by expiry — the engine does not re-check Policy.Expired).
-func (e *Engine) Scan(ctx context.Context, opts ScanOptions) (Report, error) {
+func (e *Engine) Scan(ctx context.Context, opts ScanOptions) (rep Report, err error) {
 	now := opts.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 
-	rep := Report{PerClass: make(map[DataClass]ClassCount)}
+	rep = Report{PerClass: make(map[DataClass]ClassCount)}
+
+	if !opts.DryRun {
+		if e.lock == nil {
+			return rep, errors.New("retention engine: no scan lock configured; a non-dry-run scan could race a backup run. Wire a ScanLock (db.AdvisoryLocker) or use --dry-run")
+		}
+		release, lerr := e.lock.TryAcquire(ctx)
+		if lerr != nil {
+			return rep, fmt.Errorf("retention engine: cannot archive or purge: %w. A backup run holds the lock; retry after it finishes, or use --dry-run to report without changes", lerr)
+		}
+		defer func() {
+			if rerr := release(context.WithoutCancel(ctx)); rerr != nil {
+				rep.Errors = append(rep.Errors, fmt.Errorf("retention engine: release scan lock: %w", rerr).Error())
+			}
+		}()
+	}
 
 	// Load active legal/compliance holds and build a fast checker.
 	active, err := e.holds.Active(ctx, now)

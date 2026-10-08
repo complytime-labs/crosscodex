@@ -87,6 +87,10 @@ env:
   TEST_OLLAMA_HOST: "{{.OLLAMA_HOST}}"
   TEST_LLM_CHAT_MODEL: "small"
   TEST_LLM_EMBED_MODEL: "embed"
+  TEST_COMPOSE_CMD: "{{.COMPOSE_CMD}}"
+  TEST_CONTAINER_ENGINE: "{{.CONTAINER_ENGINE}}"
+  TEST_BACKUP_COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.backup.yaml"
+  TEST_BACKUP_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:25432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
 
 tasks:
   default:
@@ -323,6 +327,24 @@ tasks:
           REPORT: integration-nats
           COVERAGE: integration-nats-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
+
+  backup:
+    desc: Run backup/restore integration tests (WAL-G archiving + PITR, objects, JetStream; local and S3 destinations)
+    deps: [ensure-deps]
+    cmds:
+      - task: prepare-cert-volume
+      - "{{.CONTAINER_ENGINE}} build --target crosscodexd -t crosscodex-test-crosscodexd:latest -f {{.ROOT_DIR}}/deploy/Dockerfile {{.ROOT_DIR}}"
+      # Safety net; the suite tears each stack down itself. BACKUP_DEST only
+      # lets compose resolve the env_file path while parsing.
+      - defer: BACKUP_DEST=local {{.COMPOSE_CMD}} -p crosscodex-backup-test -f {{.ROOT_DIR}}/test/compose.backup.yaml down -v
+      - mkdir -p {{.TEST_DIR}}
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_backup
+          TIMEOUT: 40m
+          REPORT: integration-backup
+          COVERAGE: integration-backup-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/test/backup/..."
 
   authn:
     desc: Run authn container integration tests (nginx mTLS proxy)
@@ -580,8 +602,13 @@ tasks:
     sources:
       - "{{.ROOT_DIR}}/deploy/db/Containerfile"
       - "{{.ROOT_DIR}}/deploy/db/pg_hba.conf"
+      - "{{.ROOT_DIR}}/deploy/db/fetch-walg.sh"
+      - "{{.ROOT_DIR}}/deploy/db/crosscodex-db-restore"
     status:
-      - "{{.CONTAINER_ENGINE}} image inspect crosscodex-test-db:latest >/dev/null 2>&1"
+      # Checking image existence alone would reuse a stale image (e.g. one
+      # retagged outside Task) that matches on name but lacks this WAL-G
+      # version, even though the sources checksum above is unchanged.
+      - '{{.CONTAINER_ENGINE}} image inspect --format ''{{"{{"}}index .Config.Labels "org.crosscodex.walg"{{"}}"}}'' crosscodex-test-db:latest | grep -qx v3.0.9'
     cmds:
       - "{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/deploy/db/Containerfile {{.ROOT_DIR}}/deploy/db"
 
