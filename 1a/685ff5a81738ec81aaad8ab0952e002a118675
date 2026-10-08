@@ -1,0 +1,27 @@
+pkg/backup/walg.go
+  s_7681b370177c2f::t_44d53d51f970b0 18
+  s_7681b370177c2f::t_24dc7ead1a047e 266-268,273-274
+  s_7681b370177c2f::t_13a20c3bbc65e0 275,289-291
+  s_7681b370177c2f::t_81d2737290d336 53-56,60-61,66-71
+  s_7681b370177c2f::t_5fde3a5783a6fa 170-211,213,218-234
+  s_7681b370177c2f::t_a29192ab890661 102-104,106-123,132-134,140-142
+pkg/backup/walg_bdd_test.go
+  s_7681b370177c2f::t_038cd4c55ae5f0 7-8,73-74,76-78,83-118,121,123-130,159-170,188-189,196-220,237-253
+  s_7681b370177c2f::t_5dfff3bf1fa3c1 75,79-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a685ff5a81738ec81aaad8ab0952e002a118675",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
