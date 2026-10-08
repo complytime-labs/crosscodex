@@ -1,0 +1,69 @@
+# Backups (issue #36): WAL archiving on db, a shared backup volume, and the
+# db-restore one-shot (profile "restore"). Use with the base file:
+#   docker compose -f compose.yaml -f compose.backup.yaml up -d
+# Needs backup.env (copy backup.env.example) and CROSSCODEX_BACKUP_DSN in .env.
+# Procedures: README.md, "Backups".
+#
+# Volume layout (local destination): /backup is owned by crosscodexd
+# (65532) and /backup/postgres by postgres (999), both group 10001 (the cert
+# GID every service already joins) with mode 2770. crosscodexd writes base
+# backups and backup points; postgres writes archived WAL. Both sides must
+# read each other's output (verify lists archived WAL, restore fetches base
+# backups). crosscodexd's WAL-G writes 0644 files in 0755 directories.
+# Postgres runs archive_command with umask 0077, which would leave WAL
+# unreadable to crosscodexd, so archive_command sets umask 0027 (0640 files
+# in 0750 directories, group 10001 through the setgid bit).
+services:
+  backup-init:
+    image: crosscodex-db:${TAG:-latest}
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        chown 65532:10001 /backup && chmod 2770 /backup &&
+        mkdir -p /backup/postgres &&
+        chown 999:10001 /backup/postgres && chmod 2770 /backup/postgres
+    volumes:
+      - crosscodex-backup:/backup
+
+  db:
+    env_file: [backup.env]
+    volumes:
+      - crosscodex-backup:/backup
+    depends_on:
+      backup-init:
+        condition: service_completed_successfully
+    # Repeats compose.yaml's command (compose replaces, not merges, it) and
+    # adds WAL archiving. archive_timeout bounds data loss on an idle system:
+    # a segment ships at least every 60s.
+    command: >
+      postgres
+        -c shared_preload_libraries=age
+        -c hba_file=/etc/postgresql/pg_hba.conf
+        -c ssl=on
+        -c ssl_cert_file=/certs/server.pem
+        -c ssl_key_file=/certs/server-key.pem
+        -c ssl_ca_file=/certs/ca.pem
+        -c wal_level=replica
+        -c archive_mode=on
+        -c "archive_command=umask 0027 && wal-g wal-push %p"
+        -c archive_timeout=60
+
+  crosscodexd:
+    volumes:
+      - crosscodex-backup:/backup
+      - ./backup.config.yaml:/etc/crosscodex/conf.d/50-backup.yaml:ro
+
+  db-restore:
+    profiles: [restore]
+    image: crosscodex-db:${TAG:-latest}
+    user: postgres
+    group_add: ["10001"]
+    env_file: [backup.env]
+    entrypoint: ["crosscodex-db-restore"]
+    volumes:
+      - crosscodex-pgdata:/var/lib/postgresql/data
+      - crosscodex-backup:/backup
+
+volumes:
+  crosscodex-backup:

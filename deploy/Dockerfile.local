@@ -7,13 +7,25 @@
 # the bin/ output directory as the context.
 #
 # The binaries MUST be static (CGO_ENABLED=0) and target linux/<image-arch> to
-# run in distroless/static -- the deploy:build:local task enforces this. For
+# run in distroless -- the deploy:build:local task enforces this. For
 # reproducible, CI-identical release images use the hermetic multi-stage build in
 # ./Dockerfile instead; this path trades that hermeticity for build speed and
-# depends on the host Go toolchain.
+# depends on the host Go toolchain. The daemon image is distroless/base
+# (WAL-G release binaries link glibc); the CLI image stays distroless/static.
 
-FROM gcr.io/distroless/static-debian12:nonroot AS crosscodexd
+# WAL-G for the daemon image; fetch-walg.sh is copied into the bin/ build
+# context by `task deploy:build LOCAL=1`.
+FROM docker.io/library/debian:bookworm-slim AS walg
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+COPY fetch-walg.sh /tmp/fetch-walg.sh
+RUN mkdir /out && sh /tmp/fetch-walg.sh /out
+
+FROM gcr.io/distroless/base-debian12:nonroot AS crosscodexd
 COPY crosscodexd /crosscodexd
+COPY --from=walg /out/wal-g /usr/local/bin/wal-g
 USER nonroot:nonroot
 ENTRYPOINT ["/crosscodexd"]
 

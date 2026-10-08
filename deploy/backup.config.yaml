@@ -1,0 +1,17 @@
+# Mounted at /etc/crosscodex/conf.d/50-backup.yaml by compose.backup.yaml.
+# backup.dsn comes from CROSSCODEX_BACKUP_DSN in .env (it holds a password).
+# Keep the destination in step with backup.env, which configures WAL-G on db.
+backup:
+  destination:
+    backend: local
+    local:
+      path: /backup
+  # For S3 instead (and switch backup.env to the S3 block):
+  #   backend: s3
+  #   s3:
+  #     bucket: crosscodex-backup
+  #     region: us-east-1
+  max_age:
+    postgres: 26h
+    objects: 26h
+    nats: 26h

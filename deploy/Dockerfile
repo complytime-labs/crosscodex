@@ -28,9 +28,14 @@ RUN LDFLAGS="-s -w -X ${MODULE}/internal/version.Version=${VERSION} -X ${MODULE}
     go build -ldflags "${LDFLAGS}" -o /out/crosscodexd ./cmd/crosscodexd && \
     go build -ldflags "${LDFLAGS}" -o /out/crosscodex  ./cmd/crosscodex
 
-# Daemon image.
-FROM gcr.io/distroless/static-debian12:nonroot AS crosscodexd
+# Pinned, sha256-verified WAL-G for `crosscodexd admin backup` (backup-push in
+# remote mode, backup-list, wal-verify). The builder image has curl and dpkg.
+RUN sh deploy/db/fetch-walg.sh /out
+
+# Daemon image. distroless/base (not static): WAL-G release binaries link glibc.
+FROM gcr.io/distroless/base-debian12:nonroot AS crosscodexd
 COPY --from=builder /out/crosscodexd /crosscodexd
+COPY --from=builder /out/wal-g /usr/local/bin/wal-g
 USER nonroot:nonroot
 ENTRYPOINT ["/crosscodexd"]
 

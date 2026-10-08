@@ -1,0 +1,67 @@
+#!/bin/sh
+# crosscodex-db-restore <walg-backup-name> [--target-time <RFC3339>]
+#
+# Restores a WAL-G base backup into an EMPTY $PGDATA and configures
+# recovery, then exits. Starting the database afterwards replays archived
+# WAL (up to --target-time when given) and promotes. Run it with Postgres
+# stopped, as the postgres user, with the same WALG_* settings as the
+# archiving database (deploy/compose.backup.yaml, service db-restore).
+#
+# Exit codes: 0 restored, 1 refused or failed, 2 usage.
+set -eu
+
+usage() {
+  echo "usage: crosscodex-db-restore <walg-backup-name> [--target-time <RFC3339>]" >&2
+  echo "  walg-backup-name: the POSTGRES detail of a point in 'crosscodexd admin backup list' (base_...)" >&2
+  exit 2
+}
+
+[ $# -ge 1 ] || usage
+name=$1
+shift
+target=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target-time) [ $# -ge 2 ] || usage; target=$2; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+# Both values end up in postgresql.auto.conf or argv; accept only their exact shapes.
+printf '%s' "$name" | grep -Eq '^base_[0-9A-F]{24}$' || {
+  echo "crosscodex-db-restore: \"$name\" is not a WAL-G base backup name (base_ plus 24 hex digits)" >&2
+  exit 2
+}
+if [ -n "$target" ] && ! printf '%s' "$target" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'; then
+  echo "crosscodex-db-restore: --target-time \"$target\" is not an RFC 3339 timestamp (e.g. 2026-10-07T01:30:00Z)" >&2
+  exit 2
+fi
+
+: "${PGDATA:?PGDATA must be set}"
+if [ -z "${WALG_FILE_PREFIX:-}" ] && [ -z "${WALG_S3_PREFIX:-}" ]; then
+  echo "crosscodex-db-restore: neither WALG_FILE_PREFIX nor WALG_S3_PREFIX is set; use the same backup.env as the archiving database" >&2
+  exit 1
+fi
+if [ -d "$PGDATA" ] && [ -n "$(ls -A "$PGDATA")" ]; then
+  echo "crosscodex-db-restore: refusing to restore: PGDATA $PGDATA is not empty. Restore needs an empty data directory; remove and recreate the pgdata volume (deploy/README.md, Restore), then retry." >&2
+  exit 1
+fi
+
+# PostgreSQL rejects the RFC 3339 "Z" designator in recovery_target_time
+# (numeric offsets parse) and then refuses to start, so write UTC as +00:00.
+pg_target=$target
+case "$target" in
+  *Z) pg_target="${target%Z}+00:00" ;;
+esac
+
+wal-g backup-fetch "$PGDATA" "$name"
+touch "$PGDATA/recovery.signal"
+{
+  echo "restore_command = 'wal-g wal-fetch %f %p'"
+  echo "recovery_target_action = 'promote'"
+  if [ -n "$target" ]; then
+    echo "recovery_target_time = '$pg_target'"
+  fi
+} >> "$PGDATA/postgresql.auto.conf"
+chmod 0700 "$PGDATA"
+echo "crosscodex-db-restore: restored $name into $PGDATA; start the database to replay WAL${target:+ up to $target} and promote"

@@ -580,8 +580,13 @@ tasks:
     sources:
       - "{{.ROOT_DIR}}/deploy/db/Containerfile"
       - "{{.ROOT_DIR}}/deploy/db/pg_hba.conf"
+      - "{{.ROOT_DIR}}/deploy/db/fetch-walg.sh"
+      - "{{.ROOT_DIR}}/deploy/db/crosscodex-db-restore"
     status:
-      - "{{.CONTAINER_ENGINE}} image inspect crosscodex-test-db:latest >/dev/null 2>&1"
+      # Checking image existence alone would reuse a stale image (e.g. one
+      # retagged outside Task) that matches on name but lacks this WAL-G
+      # version, even though the sources checksum above is unchanged.
+      - "{{.CONTAINER_ENGINE}} image inspect --format '{{\"{{\"}}index .Config.Labels \"org.crosscodex.walg\"{{\"}}\"}}' crosscodex-test-db:latest | grep -qx v3.0.9"
     cmds:
       - "{{.CONTAINER_ENGINE}} build -t {{.CONTAINER_IMAGE}} -f {{.ROOT_DIR}}/deploy/db/Containerfile {{.ROOT_DIR}}/deploy/db"
 
