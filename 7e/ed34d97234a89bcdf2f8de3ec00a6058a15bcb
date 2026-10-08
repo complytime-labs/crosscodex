@@ -1,0 +1,38 @@
+test/backup/backup-local.env
+  s_c465797653095c::t_3ccaf47844f5a1 4
+deploy/db/fetch-walg.sh
+  s_c465797653095c::t_c4b7e68e77226a 16-19,23-34
+deploy/Dockerfile
+  s_c465797653095c::t_3ccaf47844f5a1 40,46
+  s_c465797653095c::t_721e4ac40098a7 39
+deploy/db/Containerfile
+  s_c465797653095c::t_3ccaf47844f5a1 11,58
+  s_c465797653095c::t_721e4ac40098a7 56-57
+docs/dev/telemetry.md
+  s_c465797653095c::t_d268c213f4f6b0 67-76,166-201
+docs/dev/backup.md
+  s_c465797653095c::t_06328b6e7f6d33 71-85
+  s_c465797653095c::t_d268c213f4f6b0 114-132,136-141
+.taskfiles/test/integration.yml
+  s_c465797653095c::t_e61d8bb70d48c1 611
+deploy/README.md
+  s_c465797653095c::t_d268c213f4f6b0 304-309
+test/backup/backup-s3.env
+  s_c465797653095c::t_3ccaf47844f5a1 4,6-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7eed34d97234a89bcdf2f8de3ec00a6058a15bcb",
+  "prompts": {},
+  "sessions": {
+    "s_c465797653095c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2264962-77a9-4275-a88d-0eda2c7febdc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
