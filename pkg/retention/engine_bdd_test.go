@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 )
 
@@ -140,7 +141,7 @@ var _ = Describe("Engine.Scan", func() {
 		publisher = &engineFakeAuditPublisher{}
 		// Policy zero value is intentional: the fake collector ignores it and
 		// the engine does not call Policy.Expired directly.
-		eng = retention.NewEngine([]retention.Collector{collector}, holds, archiver, purger, publisher, retention.Policy{})
+		eng = retention.NewEngine([]retention.Collector{collector}, holds, archiver, purger, publisher, retention.Policy{}, &fakeScanLock{})
 	})
 
 	It("archives then purges non-held expired candidates", func() {
@@ -232,7 +233,7 @@ var _ = Describe("Engine.Scan", func() {
 		objPublisher := &engineFakeAuditPublisher{}
 		objEng := retention.NewEngine(
 			[]retention.Collector{objCollector}, objHolds,
-			objArchiver, objPurger, objPublisher, retention.Policy{},
+			objArchiver, objPurger, objPublisher, retention.Policy{}, &fakeScanLock{},
 		)
 
 		rep, err := objEng.Scan(ctx, retention.ScanOptions{Now: now})
@@ -260,7 +261,7 @@ var _ = Describe("Engine.Scan", func() {
 		noHolds := &engineFakeHoldStore{}
 		localEng := retention.NewEngine(
 			[]retention.Collector{c1Only}, noHolds,
-			archiver, purger, publisher, retention.Policy{},
+			archiver, purger, publisher, retention.Policy{}, &fakeScanLock{},
 		)
 
 		rep, err := localEng.Scan(ctx, retention.ScanOptions{Now: now})
@@ -286,7 +287,7 @@ var _ = Describe("Engine.Scan", func() {
 		noHolds := &engineFakeHoldStore{}
 		orderedEng := retention.NewEngine(
 			[]retention.Collector{c1Only}, noHolds,
-			archiver, purger, publisher, retention.Policy{},
+			archiver, purger, publisher, retention.Policy{}, &fakeScanLock{},
 		)
 
 		_, err := orderedEng.Scan(ctx, retention.ScanOptions{Now: now})
@@ -296,4 +297,57 @@ var _ = Describe("Engine.Scan", func() {
 		Expect(log[0]).To(Equal("archive:job-c1"))
 		Expect(log[1]).To(Equal("purge:job-c1"))
 	})
+
+	Describe("scan lock", func() {
+		newLockedEngine := func(lock retention.ScanLock) *retention.Engine {
+			return retention.NewEngine([]retention.Collector{collector}, holds, archiver, purger, publisher, retention.Policy{}, lock)
+		}
+
+		It("holds the lock for a non-dry-run scan and releases it once", func() {
+			lock := &fakeScanLock{}
+			_, err := newLockedEngine(lock).Scan(ctx, retention.ScanOptions{Now: now})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(lock.acquired).To(Equal(1))
+			Expect(lock.released).To(Equal(1))
+		})
+
+		It("refuses to archive or purge while a backup holds the lock", func() {
+			lock := &fakeScanLock{heldErr: fmt.Errorf("advisory lock %q: %w", db.BackupRetentionLockName, db.ErrLockHeld)}
+			_, err := newLockedEngine(lock).Scan(ctx, retention.ScanOptions{Now: now})
+			Expect(err).To(MatchError(db.ErrLockHeld))
+			Expect(err.Error()).To(ContainSubstring("--dry-run"))
+			Expect(archiver.calls).To(BeEmpty(), "nothing archived")
+			Expect(purger.calls).To(BeEmpty(), "nothing purged")
+			Expect(publisher.records).To(BeEmpty(), "nothing audited")
+		})
+
+		It("does not take the lock for a dry run", func() {
+			lock := &fakeScanLock{heldErr: db.ErrLockHeld}
+			rep, err := newLockedEngine(lock).Scan(ctx, retention.ScanOptions{Now: now, DryRun: true})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rep.Scanned).To(Equal(2))
+		})
+
+		It("fails closed without a lock", func() {
+			_, err := newLockedEngine(nil).Scan(ctx, retention.ScanOptions{Now: now})
+			Expect(err).To(MatchError(ContainSubstring("no scan lock")))
+			Expect(archiver.calls).To(BeEmpty())
+			Expect(purger.calls).To(BeEmpty())
+		})
+	})
 })
+
+// fakeScanLock records acquisitions; heldErr makes TryAcquire fail.
+type fakeScanLock struct {
+	heldErr  error
+	acquired int
+	released int
+}
+
+func (l *fakeScanLock) TryAcquire(context.Context) (func(context.Context) error, error) {
+	if l.heldErr != nil {
+		return nil, l.heldErr
+	}
+	l.acquired++
+	return func(context.Context) error { l.released++; return nil }, nil
+}

@@ -72,7 +72,7 @@ func (s *stubDriftSource) source(_ context.Context) ([]retention.StreamDrift, er
 
 func newTestService(holds retention.HoldStore, drift *stubDriftSource) *Service {
 	engineFor := func(_ string, p retention.Policy) (*retention.Engine, error) {
-		return retention.NewEngine(nil, holds, nil, nil, nil, p), nil
+		return retention.NewEngine(nil, holds, nil, nil, nil, p, nil), nil
 	}
 	policy, err := retention.NewPolicy(config.RetentionConfig{})
 	Expect(err).NotTo(HaveOccurred())

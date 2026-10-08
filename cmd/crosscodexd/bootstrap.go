@@ -439,7 +439,10 @@ func buildRetentionWiring(cfg *config.Config, shared *sharedResources, logger *s
 		}
 		archiver := retention.NewArchiver(shared.appPool, primary, archiveProvider)
 		purger := retention.NewPurger(purgeConn, primary)
-		return retention.NewEngine(collectors, holds, archiver, purger, auditPublisher, policy), nil
+		// Session advisory lock on the app database, shared with `admin backup
+		// run` (which takes it as backup_user on the same database).
+		scanLock := dbpkg.NewAdvisoryLocker(cfg.Database.DSN, dbpkg.BackupRetentionLockName)
+		return retention.NewEngine(collectors, holds, archiver, purger, auditPublisher, policy, scanLock), nil
 	}
 
 	return retentionWiring{

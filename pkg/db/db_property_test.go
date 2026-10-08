@@ -40,4 +40,13 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 	})
+
+	It("AdvisoryLockKey is deterministic for any name", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			name := rapid.String().Draw(t, "name")
+			if db.AdvisoryLockKey(name) != db.AdvisoryLockKey(name) { //nolint:staticcheck // SA4000: two independent calls, verifying they agree is the point
+				t.Fatalf("AdvisoryLockKey(%q) is not deterministic", name)
+			}
+		})
+	})
 })
