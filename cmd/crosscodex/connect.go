@@ -160,10 +160,11 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	}
 
 	srv, err := gateway.NewServer(ctx, gateway.ServerConfig{
-		Addr:    "localhost:0",
-		TLS:     tlsCfg,
-		Service: svc,
-		Logger:  embeddedLogger,
+		TenantStatus: gateway.NewPoolTenantStatus(resources.dbPool),
+		Addr:         "localhost:0",
+		TLS:          tlsCfg,
+		Service:      svc,
+		Logger:       embeddedLogger,
 	})
 	if err != nil {
 		resources.close()

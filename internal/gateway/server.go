@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -30,11 +31,19 @@ type ServerConfig struct {
 	Service      *Service
 	// Admin, when non-nil, mounts the AdminService (retention/legal-hold RPCs)
 	// on the same mux with the same interceptors as the GatewayService.
-	Admin  crosscodexv1connect.AdminServiceHandler
-	Logger *slog.Logger
+	Admin crosscodexv1connect.AdminServiceHandler
+	// TenantStatus is required: the auth interceptor refuses every
+	// non-health request from a tenant it reports inactive. Nil fails
+	// NewServer (fail closed). The interceptor, and so this check, is
+	// installed only when Service has an authn registry (WithAuthn).
+	TenantStatus TenantStatusChecker
+	Logger       *slog.Logger
 }
 
 func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
+	if cfg.TenantStatus == nil {
+		return nil, errors.New("gateway server: ServerConfig.TenantStatus is required so suspended tenants are refused; pass gateway.NewPoolTenantStatus(appPool)")
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -46,7 +55,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		rpcserver.NewRecoveryInterceptor(cfg.Logger),
 	}
 	if cfg.Service.authn != nil {
-		interceptors = append(interceptors, cfg.Service.connectAuthInterceptor())
+		interceptors = append(interceptors, cfg.Service.connectAuthInterceptor(cfg.TenantStatus))
 	}
 
 	otelInterceptor, err := otelconnect.NewInterceptor()

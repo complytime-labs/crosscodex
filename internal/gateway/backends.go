@@ -32,6 +32,13 @@ type GraphBackend interface {
 	SimilaritySearch(ctx context.Context, req *connect.Request[pb.SimilaritySearchRequest]) (*connect.Response[pb.SimilaritySearchResponse], error)
 }
 
+// TenantStatusChecker reports whether a tenant may make requests. The auth
+// interceptor refuses every non-health request from a tenant it reports
+// inactive (suspended or not provisioned).
+type TenantStatusChecker interface {
+	TenantActive(ctx context.Context, tenantID string) (bool, error)
+}
+
 type FeedbackBackend interface {
 	SubmitVote(ctx context.Context, req *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error)
 	GetReviewQueue(ctx context.Context, req *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error)
