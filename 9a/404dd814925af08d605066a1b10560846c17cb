@@ -1,0 +1,40 @@
+pkg/backup/manifest.go
+  s_7681b370177c2f::t_8a444aeb0c3b69 216-218
+  s_7681b370177c2f::t_e0b7814dc9fc9f 10-11
+  s_7681b370177c2f::t_b071603a9f0ffd 245-247
+pkg/backup/repository_bdd_test.go
+  s_7681b370177c2f::t_a1cdb385e4c333 84
+  s_7681b370177c2f::t_e37794d70a86c2 137-141,143-194
+  s_7681b370177c2f::t_4da9b1bd63c7ba 102,105-118
+  s_7681b370177c2f::t_4d6e8373768073 142
+  s_7681b370177c2f::t_efb5292aec9b1e 119
+pkg/backup/backup_fuzz_test.go
+  s_7681b370177c2f::t_0205bb23f00e30 5-6
+  s_7681b370177c2f::t_1841076dc151f0 33-37,45-46
+  s_7681b370177c2f::t_a839358d91c6c5 47
+pkg/backup/manifest_bdd_test.go
+  s_7681b370177c2f::t_ea87a0d244c3ed 137-148,157-167
+  s_7681b370177c2f::t_8d84ff82257238 5
+pkg/backup/repository.go
+  s_7681b370177c2f::t_645b8c18d70f45 14
+  s_7681b370177c2f::t_8ddaec0a8b9f62 178
+  s_7681b370177c2f::t_ff85695219b0a1 102-104
+  s_7681b370177c2f::t_7e5dc7c73c45a5 185-187,193-195,201-203,207-223,226-228,234-236
+  s_7681b370177c2f::t_a9536098464350 137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a404dd814925af08d605066a1b10560846c17cb",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
