@@ -1,0 +1,27 @@
+deploy/backup.env.example
+  s_7681b370177c2f::t_c3f88d3bc4f821 1-15
+deploy/compose.backup.yaml
+  s_7681b370177c2f::t_c744e6abac9bc2 1-65
+.gitignore
+  s_7681b370177c2f::t_74fa6482f9f95f 73
+deploy/backup.config.yaml
+  s_7681b370177c2f::t_43b84bd68b9c46 1-17
+deploy/.env.example
+  s_7681b370177c2f::t_237e0e39852939 18-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "769faa09fbaae45b7efc3156d0458d6a9684447e",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
