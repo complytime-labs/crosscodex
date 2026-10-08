@@ -1,0 +1,26 @@
+cmd/crosscodexd/admin_backup.go
+  s_7681b370177c2f::t_1de4fbd17f0f06 1-382
+cmd/crosscodexd/admin_backup_bdd_test.go
+  s_7681b370177c2f::t_cd3b16ebb0c1cf 1-206
+cmd/crosscodexd/admin.go
+  s_7681b370177c2f::t_d7d9beda3815a9 40-47
+  s_7681b370177c2f::t_e3aab58e104f80 23-27
+cmd/crosscodexd/main.go
+  s_7681b370177c2f::t_036d6cc9cfc7ab 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b1c3b093b825e8dea7425b2923d5af649f4928c",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
