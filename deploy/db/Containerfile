@@ -8,7 +8,7 @@
 
 FROM docker.io/apache/age:release_PG16_1.5.0
 
-USER root
+USER 0
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -53,7 +53,9 @@ COPY pg_hba.conf /etc/postgresql/pg_hba.conf
 # Restores a WAL-G base backup into an empty PGDATA (deploy/README.md, Restore).
 COPY --chmod=0755 crosscodex-db-restore /usr/local/bin/crosscodex-db-restore
 
-USER postgres
+# 999 is the base image's postgres user. Group omitted on purpose: the runtime
+# then applies postgres's supplementary groups (ssl-cert) from /etc/group.
+USER 999
 
 HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
     CMD ["pg_isready"]

@@ -13,13 +13,25 @@ set -eu
 
 WALG_VERSION=v3.0.9
 
-[ $# -eq 1 ] || { echo "usage: fetch-walg.sh <install-dir>" >&2; exit 2; }
+[ $# -eq 1 ] || {
+	echo "usage: fetch-walg.sh <install-dir>" >&2
+	exit 2
+}
 
 arch=$(dpkg --print-architecture)
 case "$arch" in
-  amd64) asset=wal-g-pg-22.04-amd64;   sum=4f03ee4679db7f660bfd1b2b8291ac5df247cd2ec48074b60c112f4897299f24 ;;
-  arm64) asset=wal-g-pg-22.04-aarch64; sum=20191a37ad091a880c25f4cc907e6f0deb7f12bdd8a53fd62dbc7fcbf2eac712 ;;
-  *) echo "fetch-walg.sh: no pinned WAL-G build for architecture $arch" >&2; exit 1 ;;
+amd64)
+	asset=wal-g-pg-22.04-amd64
+	sum=4f03ee4679db7f660bfd1b2b8291ac5df247cd2ec48074b60c112f4897299f24
+	;;
+arm64)
+	asset=wal-g-pg-22.04-aarch64
+	sum=20191a37ad091a880c25f4cc907e6f0deb7f12bdd8a53fd62dbc7fcbf2eac712
+	;;
+*)
+	echo "fetch-walg.sh: no pinned WAL-G build for architecture $arch" >&2
+	exit 1
+	;;
 esac
 
 tmp=$(mktemp -d)
