@@ -1,0 +1,21 @@
+pkg/backup/walg_bdd_test.go
+  s_7681b370177c2f::t_979763022cd7ef 1-147
+pkg/backup/walg.go
+  s_7681b370177c2f::t_8bcb8ea2a69379 1-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48fd1c564493cb2b3bf980773584eaa02d65ef87",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
