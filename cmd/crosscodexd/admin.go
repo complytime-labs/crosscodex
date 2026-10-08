@@ -20,7 +20,11 @@ import (
 // adminUsage lists every `crosscodexd admin` subcommand.
 const adminUsage = `usage:
   crosscodexd admin retention scan --tenant <id> [--dry-run]
-  crosscodexd admin reconcile artifacts --tenant <id> [--dry-run] [--max-edges <n>]`
+  crosscodexd admin reconcile artifacts --tenant <id> [--dry-run] [--max-edges <n>]
+  crosscodexd admin backup run
+  crosscodexd admin backup list
+  crosscodexd admin backup verify [--point <id>]
+  crosscodexd admin backup restore --point <id>`
 
 // runAdmin dispatches the on-host `admin` subcommand tree. args are the tokens
 // after "admin" (e.g. ["retention", "scan", "--tenant", "acme"]). It returns a
@@ -33,6 +37,14 @@ func runAdmin(args []string) int {
 		return retentionScanCmd(args[2:])
 	case len(args) >= 2 && args[0] == "reconcile" && args[1] == "artifacts":
 		return reconcileArtifactsCmd(args[2:])
+	case len(args) >= 2 && args[0] == "backup" && args[1] == "run":
+		return backupRunCmd(args[2:])
+	case len(args) >= 2 && args[0] == "backup" && args[1] == "list":
+		return backupListCmd(args[2:])
+	case len(args) >= 2 && args[0] == "backup" && args[1] == "verify":
+		return backupVerifyCmd(args[2:])
+	case len(args) >= 2 && args[0] == "backup" && args[1] == "restore":
+		return backupRestoreCmd(args[2:])
 	}
 	fmt.Fprintln(os.Stderr, adminUsage)
 	return 2
