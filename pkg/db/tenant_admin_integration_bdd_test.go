@@ -263,4 +263,104 @@ var _ = Describe("tenant_admin role and functions", Ordered, func() {
 		_, _, found := tenantRow("tadm-hijack")
 		Expect(found).To(BeTrue())
 	})
+
+	It("tenant_is_active is true only for an active tenant, as app_user", func() {
+		appPool, err := db.NewPool(db.PoolConfig{DSN: appUserDSN()})
+		Expect(err).NotTo(HaveOccurred())
+		defer appPool.Close()
+
+		active, err := db.TenantActive(ctx, appPool, "tadm-existing")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(active).To(BeTrue())
+
+		active, err = db.TenantActive(ctx, appPool, "tadm-new") // suspended above
+		Expect(err).NotTo(HaveOccurred())
+		Expect(active).To(BeFalse())
+
+		active, err = db.TenantActive(ctx, appPool, "tadm-nobody")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(active).To(BeFalse())
+	})
+
+	Context("through TenantAdmin as tenant_admin", Ordered, func() {
+		var admin *db.TenantAdmin
+
+		BeforeAll(func() {
+			var err error
+			admin, err = db.OpenTenantAdmin(tenantAdminDSN)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(admin.Close)
+		})
+
+		It("creates, renames, reads and suspends a tenant", func() {
+			created, err := admin.Provision(ctx, "tadm-go", "Go Co")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(created).To(BeTrue())
+
+			created, err = admin.Provision(ctx, "tadm-go", "Go Co Renamed")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(created).To(BeFalse())
+
+			rec, err := admin.Get(ctx, "tadm-go")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rec.DisplayName).To(Equal("Go Co Renamed"))
+			Expect(rec.Status).To(Equal(db.TenantStatusActive))
+			Expect(rec.CreatedAt).NotTo(BeZero())
+
+			previous, err := admin.SetStatus(ctx, "tadm-go", db.TenantStatusSuspended)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(previous).To(Equal(db.TenantStatusActive))
+
+			list, err := admin.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(list).To(ContainElement(SatisfyAll(
+				HaveField("ID", "tadm-go"),
+				HaveField("DisplayName", "Go Co Renamed"),
+				HaveField("Status", db.TenantStatusSuspended),
+			)))
+		})
+
+		It("reports an unknown tenant as ErrTenantNotFound with the fix", func() {
+			_, err := admin.Get(ctx, "tadm-nobody")
+			Expect(err).To(MatchError(db.ErrTenantNotFound))
+			Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant create"))
+
+			_, err = admin.SetStatus(ctx, "tadm-nobody", db.TenantStatusSuspended)
+			Expect(err).To(MatchError(db.ErrTenantNotFound))
+		})
+
+		It("imports a batch and reports created versus updated per tenant", func() {
+			created, err := admin.Import(ctx, []db.TenantSpec{
+				{ID: "tadm-go", DisplayName: "Go Co Imported"},
+				{ID: "tadm-imp-b", DisplayName: "Imported B"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(created).To(Equal([]bool{false, true}))
+			name, status, _ := tenantRow("tadm-go")
+			Expect([]string{name, status}).To(Equal([]string{"Go Co Imported", "suspended"}))
+		})
+
+		It("rolls back the whole import when one tenant fails in the database", func() {
+			// A graph named crosscodex_<id> without a tenants row is the #148
+			// collision: inserting that tenant fails inside tenant_graph_create.
+			Expect(suPool.Exec(ctx, "SELECT ag_catalog.create_graph('crosscodex_tadm-clash')")).To(Succeed())
+			DeferCleanup(func() {
+				Expect(suPool.Exec(ctx, "SELECT ag_catalog.drop_graph('crosscodex_tadm-clash', true)")).To(Succeed())
+			})
+
+			_, err := admin.Import(ctx, []db.TenantSpec{
+				{ID: "tadm-imp-ok", DisplayName: "Would Be Created"},
+				{ID: "tadm-clash", DisplayName: "Clashes"},
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("tenant 2 of 2"))
+			Expect(err.Error()).To(ContainSubstring("Nothing was imported"))
+
+			_, _, found := tenantRow("tadm-imp-ok")
+			Expect(found).To(BeFalse())
+			Expect(graphExists("tadm-imp-ok")).To(BeFalse())
+			_, _, found = tenantRow("tadm-clash")
+			Expect(found).To(BeFalse())
+		})
+	})
 })

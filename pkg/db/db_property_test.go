@@ -1,6 +1,8 @@
 package db_test
 
 import (
+	"context"
+	"errors"
 	"net/url"
 	"strings"
 
@@ -8,6 +10,7 @@ import (
 	"pgregory.net/rapid"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 var _ = Describe("Property Specifications", Ordered, func() {
@@ -47,6 +50,31 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			if db.AdvisoryLockKey(name) != db.AdvisoryLockKey(name) { //nolint:staticcheck // SA4000: two independent calls, verifying they agree is the point
 				t.Fatalf("AdvisoryLockKey(%q) is not deterministic", name)
 			}
+		})
+	})
+	Context("TenantAdmin ID pre-validation", func() {
+		It("sends an ID to the database exactly when pkg/tenant accepts it", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				id := rapid.OneOf(
+					rapid.StringMatching(`[a-z][a-z0-9-]{1,50}[a-z0-9]`),
+					rapid.String(),
+				).Draw(t, "id")
+				pool, calls := db.ExportNewFailingPool()
+				admin, err := db.ExportNewTenantAdmin(pool, nil, nil)
+				if err != nil {
+					t.Fatalf("new TenantAdmin: %v", err)
+				}
+				_, err = admin.Provision(context.Background(), id, "Name")
+				if tenant.ValidateTenantID(id) == nil {
+					if !errors.Is(err, db.ErrExportPoolUsed) || calls() != 1 {
+						t.Fatalf("valid ID %q: want one query, got %d calls, err %v", id, calls(), err)
+					}
+					return
+				}
+				if !errors.Is(err, tenant.ErrInvalidTenant) || calls() != 0 {
+					t.Fatalf("invalid ID %q reached the database (%d calls) or was not rejected as invalid: %v", id, calls(), err)
+				}
+			})
 		})
 	})
 })
