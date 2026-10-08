@@ -1,0 +1,29 @@
+docs/dev/backup.md
+  s_7681b370177c2f::t_2ef1cd8a1896b4 117
+  s_7681b370177c2f::t_3d465a80827164 1-116,118-143
+README.md
+  s_7681b370177c2f::t_225703744bfe61 603-618
+  s_7681b370177c2f::t_f030735ca32a26 663-683
+docs/dev/telemetry.md
+  s_7681b370177c2f::t_a3f6ee93005068 197-203
+  s_7681b370177c2f::t_ce35228f227aab 76
+deploy/README.md
+  s_7681b370177c2f::t_65f2abc7427d57 308
+  s_7681b370177c2f::t_8827101843261f 197-307,309-310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "069ee838f9668764313914286fe9b154dae7b144",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
