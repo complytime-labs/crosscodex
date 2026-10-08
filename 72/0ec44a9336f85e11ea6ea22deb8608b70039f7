@@ -1,0 +1,23 @@
+pkg/db/migrations/007_tenant_admin.up.sql
+  s_fcd8b9a6a88faa::t_4ae2da2d6f350f 15-19,48,52,54,56,68,87,94
+pkg/db/tenant_admin_integration_bdd_test.go
+  s_fcd8b9a6a88faa::t_467ea961c85ad1 246
+  s_fcd8b9a6a88faa::t_32654ecea62bd3 124,127
+  s_fcd8b9a6a88faa::t_4ae2da2d6f350f 200,247-248,251-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "720ec44a9336f85e11ea6ea22deb8608b70039f7",
+  "prompts": {},
+  "sessions": {
+    "s_fcd8b9a6a88faa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fffb1577-e9a5-4ea0-85a2-3b971c425ecc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
