@@ -1,0 +1,19 @@
+deploy/README.md
+  s_5818b41b93ac38::t_0eab69f260e826 211,214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "571e6054146d93068dac9ec29b1c5b7637e1f701",
+  "prompts": {},
+  "sessions": {
+    "s_5818b41b93ac38": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "437878a0-83b8-47b7-9a79-e95a11cbdcbe",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
