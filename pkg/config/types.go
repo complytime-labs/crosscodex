@@ -187,20 +187,24 @@ type X509MatchConfig struct {
 
 // DatabaseConfig configures PostgreSQL connections.
 //
-// Three DSNs support the four-role security model (see pkg/db/doc.go):
+// Four DSNs support the role security model (see pkg/db/doc.go):
 //   - DSN connects as app_user for relational data behind RLS.
 //   - GraphDSN connects as graph_user for AGE cypher queries.
 //     graph_user owns per-tenant graph schemas but has no relational access.
 //   - PurgeDSN connects as purge_user (member of retention_purge), the only
 //     credential the delete-path immutability triggers accept for the
 //     sanctioned retention purge. Empty disables DB purge.
+//   - TenantAdminDSN connects as tenant_admin (migration 007) for
+//     `crosscodexd admin tenant`; the daemon never uses it. Global-only: a
+//     tenant cannot administer tenants. Empty makes those commands refuse.
 type DatabaseConfig struct {
-	DSN        string   `yaml:"dsn" json:"dsn"`
-	GraphDSN   string   `yaml:"graph_dsn" json:"graph_dsn"`
-	PurgeDSN   string   `yaml:"purge_dsn" json:"purge_dsn"`
-	Extensions []string `yaml:"extensions" json:"extensions"`
-	MaxConns   int      `yaml:"max_conns" json:"max_conns"`
-	SSLMode    string   `yaml:"ssl_mode" json:"ssl_mode"`
+	DSN            string   `yaml:"dsn" json:"dsn"`
+	GraphDSN       string   `yaml:"graph_dsn" json:"graph_dsn"`
+	PurgeDSN       string   `yaml:"purge_dsn" json:"purge_dsn"`
+	TenantAdminDSN string   `yaml:"tenant_admin_dsn" json:"tenant_admin_dsn"`
+	Extensions     []string `yaml:"extensions" json:"extensions"`
+	MaxConns       int      `yaml:"max_conns" json:"max_conns"`
+	SSLMode        string   `yaml:"ssl_mode" json:"ssl_mode"`
 }
 
 // NATSConfig configures NATS JetStream connection.
