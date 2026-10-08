@@ -212,7 +212,7 @@ var envAllowlistPrefixes = []string{"AWS_CONTAINER_", "AWS_EC2_METADATA_"}
 func (w *WALG) environ() []string {
 	hasRegion := slices.ContainsFunc(w.env, func(kv string) bool { return strings.HasPrefix(kv, "AWS_REGION=") })
 	inherited := os.Environ()
-	env := make([]string, 0, len(inherited)+len(w.env))
+	env := make([]string, 0, len(inherited))
 	for _, kv := range inherited {
 		k, _, _ := strings.Cut(kv, "=")
 		switch {
