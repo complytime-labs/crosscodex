@@ -99,8 +99,8 @@ tasks:
       # cover every tag set in the repo:
       #   1. untagged (also covers "!integration" unit-test bootstraps)
       #   2. integration
-      #   3. integration_authn, integration_grpc, integration_llm,
-      #      integration_nats, integration_telemetry, stress
+      #   3. integration_authn, integration_backup, integration_grpc,
+      #      integration_llm, integration_nats, integration_telemetry, stress
       # Passes 2 and 3 can't be merged into one `--build-tags` run: with both
       # sets of tags active, internal/gateway/stress_bdd_test.go needs
       # helpers that only exist when "integration" is NOT also set, so the
@@ -108,7 +108,7 @@ tasks:
       # (and CI, which invokes `task lint`) on its own if it reports an issue.
       - go tool golangci-lint run ./...
       - go tool golangci-lint run --build-tags=integration ./...
-      - go tool golangci-lint run --build-tags=integration_authn,integration_grpc,integration_llm,integration_nats,integration_telemetry,stress ./...
+      - go tool golangci-lint run --build-tags=integration_authn,integration_backup,integration_grpc,integration_llm,integration_nats,integration_telemetry,stress ./...
 
   lint:proto:
     desc: Run protolint on proto files

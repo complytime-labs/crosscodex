@@ -1,0 +1,20 @@
+# crosscodexd config for the admin container (local backup destination).
+storage:
+  objects:
+    backend: s3
+    bucket: crosscodex-objects
+    region: us-east-1
+    endpoint: http://storage:9000
+nats:
+  url: tls://nats:4222
+  tls: true
+tls:
+  mode: mutual
+  ca: /admin-certs/ca.pem
+  cert: /admin-certs/client.pem
+  key: /admin-certs/client-key.pem
+backup:
+  destination:
+    backend: local
+    local:
+      path: /backup
