@@ -1,0 +1,23 @@
+pkg/config/tenant_admin_dsn_bdd_test.go
+  s_fcd8b9a6a88faa::t_af1991c1aa56ec 1-46
+pkg/config/defaults.go
+  s_fcd8b9a6a88faa::t_ace1448ee93eb9 38
+pkg/config/types.go
+  s_fcd8b9a6a88faa::t_0ab7918f8a44ac 190,197-199,201-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1cc0e1d269ade6a23b6e77e383fe0cbd83d289a8",
+  "prompts": {},
+  "sessions": {
+    "s_fcd8b9a6a88faa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fffb1577-e9a5-4ea0-85a2-3b971c425ecc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
