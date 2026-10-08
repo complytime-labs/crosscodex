@@ -1,0 +1,25 @@
+pkg/db/export_test.go
+  s_5818b41b93ac38::t_11536a51aadb6f 188,190
+  s_5818b41b93ac38::t_7d88959ce5aeb3 133-135,138,143,171-175,184-187,189,191-219
+  s_5818b41b93ac38::t_886a5a3aaa5dcf 220
+pkg/db/tenant_admin_bdd_test.go
+  s_5818b41b93ac38::t_da80457680b27f 139,152-176,179,206-239,243,245-249
+pkg/db/tenant_admin_integration_bdd_test.go
+  s_5818b41b93ac38::t_b96e25b2860c1a 316-320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a20482a4a621f0863149939b709736f689edaeb5",
+  "prompts": {},
+  "sessions": {
+    "s_5818b41b93ac38": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "437878a0-83b8-47b7-9a79-e95a11cbdcbe",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
