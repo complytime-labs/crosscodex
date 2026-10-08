@@ -208,10 +208,10 @@ CrossCodex backs up PostgreSQL (WAL-G base backups plus continuous WAL archiving
 
 2. Set `CROSSCODEX_BACKUP_DSN` in `.env` (see `.env.example`); it is a `postgres://` URL for `backup_user`.
 
-3. `backup_user` is created by migration `006_backup_user` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser:
+3. `backup_user` is created by migration `006_backup_user` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser. Use psql's `\password`, which prompts for the password and hashes it on the client, so it stays out of shell history, the process list and the server log:
 
    ```bash
-   docker compose exec db psql -U crosscodex -d crosscodex -c "ALTER ROLE backup_user PASSWORD '...'"
+   docker compose exec db psql -U crosscodex -d crosscodex -c '\password backup_user'
    ```
 
 4. Bring the stack up with both compose files:
