@@ -16,6 +16,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/in-toto/in-toto-golang v0.11.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/nats-io/jsm.go v0.5.0
 	github.com/nats-io/nats-server/v2 v2.15.0
 	github.com/nats-io/nats.go v1.54.0
 	github.com/onsi/ginkgo/v2 v2.32.1
@@ -169,6 +170,7 @@ require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect
+	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect

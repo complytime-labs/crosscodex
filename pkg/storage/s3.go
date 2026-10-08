@@ -174,7 +174,7 @@ func (p *s3Provider) Get(ctx context.Context, key string) (io.ReadCloser, error)
 	defer span.End()
 	span.SetAttributes(attribute.String("storage.key", key))
 
-	if err := validateKey(key); err != nil {
+	if err := ValidateKey(key); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func (p *s3Provider) Put(ctx context.Context, key string, data io.Reader) error 
 	defer span.End()
 	span.SetAttributes(attribute.String("storage.key", key))
 
-	if err := validateKey(key); err != nil {
+	if err := ValidateKey(key); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
@@ -236,7 +236,7 @@ func (p *s3Provider) Delete(ctx context.Context, key string) error {
 	defer span.End()
 	span.SetAttributes(attribute.String("storage.key", key))
 
-	if err := validateKey(key); err != nil {
+	if err := ValidateKey(key); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
@@ -265,7 +265,7 @@ func (p *s3Provider) List(ctx context.Context, prefix string) ([]ObjectMetadata,
 	span.SetAttributes(attribute.String("storage.prefix", prefix))
 
 	if prefix != "" {
-		if err := validateKey(prefix); err != nil {
+		if err := ValidateKey(prefix); err != nil {
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
@@ -334,7 +334,7 @@ func (p *s3Provider) Exists(ctx context.Context, key string) (bool, error) {
 	defer span.End()
 	span.SetAttributes(attribute.String("storage.key", key))
 
-	if err := validateKey(key); err != nil {
+	if err := ValidateKey(key); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return false, err
 	}
@@ -363,7 +363,7 @@ func (p *s3Provider) Stat(ctx context.Context, key string) (*ObjectMetadata, err
 	defer span.End()
 	span.SetAttributes(attribute.String("storage.key", key))
 
-	if err := validateKey(key); err != nil {
+	if err := ValidateKey(key); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}

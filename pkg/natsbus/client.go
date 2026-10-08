@@ -37,6 +37,22 @@ type client struct {
 	processLatency metric.Int64Histogram
 }
 
+// connectOptions builds the nats.go options shared by New and DialExternal.
+func connectOptions(cfg config.NATSConfig, o clientOptions) []nats.Option {
+	natsOpts := []nats.Option{
+		nats.Timeout(o.connectTimeout),
+		nats.ReconnectWait(o.reconnectWait),
+		nats.MaxReconnects(o.maxReconnects),
+		nats.Name("crosscodex"),
+	}
+	if o.tlsConfig != nil {
+		natsOpts = append(natsOpts, nats.Secure(o.tlsConfig))
+	} else if cfg.TLS {
+		natsOpts = append(natsOpts, nats.Secure())
+	}
+	return natsOpts
+}
+
 // New creates a new NATS Client. When cfg.URL is empty, an embedded
 // NATS server is started. When cfg.URL is set, the client connects
 // to the external server.
@@ -68,20 +84,7 @@ func New(cfg config.NATSConfig, opts ...Option) (Client, error) {
 		connectURL = cfg.URL
 	}
 
-	natsOpts := []nats.Option{
-		nats.Timeout(o.connectTimeout),
-		nats.ReconnectWait(o.reconnectWait),
-		nats.MaxReconnects(o.maxReconnects),
-		nats.Name("crosscodex"),
-	}
-
-	if o.tlsConfig != nil {
-		natsOpts = append(natsOpts, nats.Secure(o.tlsConfig))
-	} else if cfg.TLS {
-		natsOpts = append(natsOpts, nats.Secure())
-	}
-
-	nc, err := nats.Connect(connectURL, natsOpts...)
+	nc, err := nats.Connect(connectURL, connectOptions(cfg, o)...)
 	if err != nil {
 		if c.embedded != nil {
 			c.embedded.shutdown()
@@ -142,6 +145,38 @@ func New(cfg config.NATSConfig, opts ...Option) (Client, error) {
 	)
 
 	return c, nil
+}
+
+// DialExternal connects to the external NATS server at cfg.URL with the same
+// TLS and timeout options as New, but creates no streams and starts no
+// embedded server. Admin one-shots use it: a separate process cannot reach
+// the daemon's embedded server, and starting a second embedded server on
+// the same store directory would corrupt JetStream (nats-server does not
+// lock its store directory). Restore also needs the audit streams absent,
+// which New's stream provisioning would prevent.
+func DialExternal(cfg config.NATSConfig, opts ...Option) (*nats.Conn, error) {
+	if isEmbeddedMode(cfg.URL) {
+		return nil, fmt.Errorf("%w: JetStream backup and restore need an external NATS server; set nats.url to it", ErrExternalURLRequired)
+	}
+	o := defaultClientOptions()
+	for _, opt := range opts {
+		opt(&o)
+	}
+	nc, err := nats.Connect(cfg.URL, connectOptions(cfg, o)...)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to NATS at %s: %w", cfg.URL, err)
+	}
+	return nc, nil
+}
+
+// AuditStreamNames returns the audit stream names in creation order.
+func AuditStreamNames() []string {
+	configs := auditStreamConfigs(config.NATSStreamsConfig{})
+	names := make([]string, 0, len(configs))
+	for _, sc := range configs {
+		names = append(names, sc.Name)
+	}
+	return names
 }
 
 // Publish sends a message with automatically injected provenance headers.

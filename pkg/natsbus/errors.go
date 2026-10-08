@@ -32,4 +32,8 @@ var (
 	// ErrContentHashMismatch indicates the received message payload does not
 	// match the content hash in the X-Content-SHA256 provenance header.
 	ErrContentHashMismatch = errors.New("content hash mismatch")
+
+	// ErrExternalURLRequired means an operation needs an external NATS server
+	// but nats.url is empty (embedded mode).
+	ErrExternalURLRequired = errors.New("nats.url is empty (embedded mode)")
 )
