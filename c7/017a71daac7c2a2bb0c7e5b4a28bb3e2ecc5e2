@@ -1,0 +1,39 @@
+README.md
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 624-658
+  s_fcd8b9a6a88faa::t_7baed2d8291cc9 32-36
+deploy/README.md
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 311-332
+pkg/db/doc.go
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 57-58,76-83
+  s_fcd8b9a6a88faa::t_eb557078fc93b4 84
+docs/dev/design-principles.md
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 56,92
+  s_fcd8b9a6a88faa::t_57ec59fb12cd9a 55
+docs/dev/telemetry.md
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 77,203-205,207
+deploy/.env.example
+  s_fcd8b9a6a88faa::t_ffe8e8c623cf87 25-27
+cmd/crosscodexd/admin_tenant_bdd_test.go
+  s_fcd8b9a6a88faa::t_8ce719696a70e9 135-140,143,195-202
+  s_fcd8b9a6a88faa::t_1a0947b94c895d 203-204
+cmd/crosscodexd/admin_tenant_fuzz_test.go
+  s_fcd8b9a6a88faa::t_8ce719696a70e9 42-44
+cmd/crosscodexd/admin_tenant.go
+  s_fcd8b9a6a88faa::t_1e56622580cb2e 10-11,14,295-303,312,320-322,335
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7017a71daac7c2a2bb0c7e5b4a28bb3e2ecc5e2",
+  "prompts": {},
+  "sessions": {
+    "s_fcd8b9a6a88faa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fffb1577-e9a5-4ea0-85a2-3b971c425ecc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+cmd/crosscodexd/admin_tenant_fuzz_test.go
+  s_fcd8b9a6a88faa::t_e0f3cbc3a19a34 1-11,19-41,45-47
+  s_fcd8b9a6a88faa::t_c79bfec848372a 12-18
+cmd/crosscodexd/admin_tenant_bdd_test.go
+  s_fcd8b9a6a88faa::t_e0f3cbc3a19a34 1-134,141-142,144-194,205-268
+cmd/crosscodexd/admin_tenant.go
+  s_fcd8b9a6a88faa::t_ae74af75ad0563 1-9,12-13,15-294,304-311,313-319,323-334,336-338
+cmd/crosscodexd/admin_backup_bdd_test.go
+  s_fcd8b9a6a88faa::t_69c320f4417375 21-24,26-29,33-34,39-43
+  s_fcd8b9a6a88faa::t_5ddd3257a81215 44-45
+cmd/crosscodexd/admin.go
+  s_fcd8b9a6a88faa::t_ae74af75ad0563 16,28-34,55-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05b1fb1e204e77d6beb2f2faae878f37370962d7",
+  "prompts": {},
+  "sessions": {
+    "s_fcd8b9a6a88faa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fffb1577-e9a5-4ea0-85a2-3b971c425ecc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

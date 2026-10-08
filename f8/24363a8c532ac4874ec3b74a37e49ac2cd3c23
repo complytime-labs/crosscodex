@@ -1,0 +1,38 @@
+pkg/db/db_integration_bdd_test.go
+  s_fcd8b9a6a88faa::t_0e18146b03b083 342,388
+pkg/db/tenant_admin_integration_bdd_test.go
+  s_fcd8b9a6a88faa::t_79862d04bcc972 1-9,11-42,44-69,70-123,125-126,128-199,201-239,241-245,249-250,255-266
+  s_fcd8b9a6a88faa::t_91196faa1e4551 10,240
+  s_fcd8b9a6a88faa::t_0e18146b03b083 43
+  s_fcd8b9a6a88faa::t_467ea961c85ad1 246
+  s_fcd8b9a6a88faa::t_32654ecea62bd3 127
+  s_fcd8b9a6a88faa::t_4ae2da2d6f350f 200,247-248,251-254
+  s_fcd8b9a6a88faa::t_0651d99e45818b 124
+pkg/db/migrations/007_tenant_admin.up.sql
+  s_fcd8b9a6a88faa::t_79862d04bcc972 1-14,20-47,49-51,53,55,57-67,69-86,88-93,95-138
+  s_fcd8b9a6a88faa::t_4ae2da2d6f350f 15-19,48,52,54,56,68,87,94
+pkg/db/migrations/007_tenant_admin.down.sql
+  s_fcd8b9a6a88faa::t_79862d04bcc972 1-6
+pkg/config/tenant_admin_dsn_bdd_test.go
+  s_fcd8b9a6a88faa::t_af1991c1aa56ec 1-46
+pkg/config/defaults.go
+  s_fcd8b9a6a88faa::t_ace1448ee93eb9 38
+pkg/config/types.go
+  s_fcd8b9a6a88faa::t_0ab7918f8a44ac 190,197-199,201-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f824363a8c532ac4874ec3b74a37e49ac2cd3c23",
+  "prompts": {},
+  "sessions": {
+    "s_fcd8b9a6a88faa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fffb1577-e9a5-4ea0-85a2-3b971c425ecc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
