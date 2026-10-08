@@ -1,0 +1,24 @@
+pkg/db/migrations/006_backup_user.down.sql
+  s_7681b370177c2f::t_bb0cc61bb8a381 3
+pkg/db/migrations/006_backup_user.up.sql
+  s_7681b370177c2f::t_bb0cc61bb8a381 2-5,16-17
+  s_7681b370177c2f::t_0a66074d92a7b4 18
+pkg/db/backup_role_integration_bdd_test.go
+  s_7681b370177c2f::t_bb0cc61bb8a381 66-73,99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "675e7672a252a1a99a547a7e3edea427bfcf6eb9",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
