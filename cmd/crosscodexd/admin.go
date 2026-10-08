@@ -13,6 +13,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -24,7 +25,13 @@ const adminUsage = `usage:
   crosscodexd admin backup run
   crosscodexd admin backup list
   crosscodexd admin backup verify [--point <id>]
-  crosscodexd admin backup restore --point <id>`
+  crosscodexd admin backup restore --point <id>
+  crosscodexd admin tenant create --tenant <id> --display-name <name>
+  crosscodexd admin tenant list
+  crosscodexd admin tenant inspect --tenant <id>
+  crosscodexd admin tenant suspend --tenant <id>
+  crosscodexd admin tenant resume --tenant <id>
+  crosscodexd admin tenant import --file <path>`
 
 // runAdmin dispatches the on-host `admin` subcommand tree. args are the tokens
 // after "admin" (e.g. ["retention", "scan", "--tenant", "acme"]). It returns a
@@ -45,6 +52,18 @@ func runAdmin(args []string) int {
 		return backupVerifyCmd(args[2:])
 	case len(args) >= 2 && args[0] == "backup" && args[1] == "restore":
 		return backupRestoreCmd(args[2:])
+	case len(args) >= 2 && args[0] == "tenant" && args[1] == "create":
+		return tenantCreateCmd(args[2:])
+	case len(args) >= 2 && args[0] == "tenant" && args[1] == "list":
+		return tenantListCmd(args[2:])
+	case len(args) >= 2 && args[0] == "tenant" && args[1] == "inspect":
+		return tenantInspectCmd(args[2:])
+	case len(args) >= 2 && args[0] == "tenant" && args[1] == "suspend":
+		return tenantSetStatusCmd(args[2:], "suspend", dbpkg.TenantStatusSuspended)
+	case len(args) >= 2 && args[0] == "tenant" && args[1] == "resume":
+		return tenantSetStatusCmd(args[2:], "resume", dbpkg.TenantStatusActive)
+	case len(args) >= 2 && args[0] == "tenant" && args[1] == "import":
+		return tenantImportCmd(args[2:])
 	}
 	fmt.Fprintln(os.Stderr, adminUsage)
 	return 2
