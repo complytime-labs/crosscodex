@@ -73,6 +73,7 @@ A span's instrumentation scope therefore tells you which package produced it. Pa
 | `pkg/analyzer/consensus` inside the requires analyzer | `Compute` takes no context, so its spans would be disconnected roots |
 | `crosscodexd admin retention scan` | One-shot command that does not call `telemetry.Init` |
 | `crosscodexd admin reconcile artifacts` | One-shot command that does not call `telemetry.Init` |
+| `crosscodexd admin backup *` | One-shot command that does not call `telemetry.Init` |
 
 ## Traces
 
@@ -193,6 +194,13 @@ For components whose telemetry option takes a `(trace.Tracer, metric.Meter)` pai
 | `synthesis.duration_ms`             | Float64Histogram | internal/synthesis | Synthesis execution duration              |
 | `synthesis.pairs.ranked.total`      | Int64Counter     | internal/synthesis | Pairs ranked                              |
 | `synthesis.viability.updates.total` | Int64Counter     | internal/synthesis | Viability database updates                |
+| `backup.operations.total`           | Int64Counter     | pkg/backup         | Backup commands by `operation` (`run`, `list`, `verify`, `restore`) and `result` (`ok`, `error`) |
+| `backup.step.duration_ms`           | Float64Histogram | pkg/backup         | Duration of each store's capture during `backup run`, by `store` (`postgres`, `objects`, `nats`) |
+| `backup.bytes.total`                | Int64Counter     | pkg/backup         | Bytes captured per store during `backup run`, by `store`; recorded only on that step's success |
+| `backup.verify.failures.total`      | Int64Counter     | pkg/backup         | Integrity problems found by `backup verify` (manifest issues plus WAL `FAILURE` checks), summed per call; not recorded when zero |
+| `backup.staleness_seconds`          | Float64Gauge     | pkg/backup         | Age of each store's newest backup point in seconds, by `store`; absent (not zero) when no complete point exists |
+
+`crosscodexd admin backup *` does not call `telemetry.Init` (see the uninstrumented-paths table above), so these instruments exist but are never exported today.
 
 ### Graph Driver Metric Attributes
 

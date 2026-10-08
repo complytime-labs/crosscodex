@@ -600,6 +600,22 @@ CronJob) once per tenant.
 
 Re-run the reconciler after rebuilding a tenant's graph.
 
+`crosscodexd admin backup` captures, lists, verifies and restores PostgreSQL (WAL-G base backups plus WAL archiving for PITR), tenant object stores, and the JetStream audit streams:
+
+```sh
+crosscodexd admin backup run
+crosscodexd admin backup list
+crosscodexd admin backup verify [--point ID]
+crosscodexd admin backup restore --point ID
+```
+
+- `backup run` — captures Postgres, every tenant's objects and the audit streams into a new backup point.
+- `backup list` — lists complete backup points (and incomplete ones separately).
+- `backup verify` — checks blob/snapshot checksums, WAL-G base backup presence, WAL continuity and staleness.
+- `backup restore` — restores objects and audit streams from a backup point; Postgres is restored separately with `crosscodex-db-restore`.
+
+Exit codes: 0 ok, 1 failure or stale, 2 usage error. See [deploy/README.md, Backups](deploy/README.md#backups) for setup, the run/verify/restore procedures, and PITR.
+
 ### Configuration Reference
 
 ```yaml
@@ -644,6 +660,27 @@ database:
   # delete-path immutability triggers accept. When purge_dsn is unset, scans
   # still run but purges fail closed rather than deleting under the wrong role.
   purge_dsn: "${PURGE_DATABASE_DSN}"   # e.g. postgres://purge_user:...@localhost:5432/crosscodex
+
+backup:
+  # postgres:// URL for backup_user (LOGIN REPLICATION, migration 006).
+  # Required when destination.backend is set. Never logged.
+  # CROSSCODEX_BACKUP_DSN sets this field from the environment.
+  dsn: ""
+  destination:
+    backend: ""           # local | s3 | "" (backup disabled; fails closed)
+    local:
+      path: ""              # absolute; must not overlap storage.objects.base_path
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""           # S3-compatible stores; enables path-style addressing
+      storage_class: ""
+  max_age:
+    # `admin backup verify` reports a store stale once its newest backup
+    # point is older than this. Each value must be greater than zero.
+    postgres: 26h
+    objects: 26h
+    nats: 26h
 ```
 
 ### External Cron Example

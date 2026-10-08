@@ -194,6 +194,120 @@ task deploy:down VOLUMES=1
 
 **Warning**: `VOLUMES=1` is destructive and deletes all catalogs, analysis results, and objects.
 
+## Backups
+
+CrossCodex backs up PostgreSQL (WAL-G base backups plus continuous WAL archiving, which enables point-in-time recovery), every tenant's object store, and the three JetStream audit streams into versioned backup points on a local or S3 destination. Backup requires an external NATS server (`nats.url` set); it refuses in embedded mode.
+
+### Enable
+
+1. Copy the WAL-G env file (used by the `db` service and the restore one-shot) and edit it for your destination:
+
+   ```bash
+   cp backup.env.example backup.env
+   ```
+
+2. Set `CROSSCODEX_BACKUP_DSN` in `.env` (see `.env.example`); it is a `postgres://` URL for `backup_user`.
+
+3. `backup_user` is created by migration `006_backup_user` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser:
+
+   ```bash
+   docker compose exec db psql -U crosscodex -d crosscodex -c "ALTER ROLE backup_user PASSWORD '...'"
+   ```
+
+4. Bring the stack up with both compose files:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.backup.yaml up -d
+   ```
+
+`backup.config.yaml` (mounted into `crosscodexd`) and `backup.env` (WAL-G's settings on `db`) must name the **same destination** — keep both in step when switching between local and S3.
+
+### Encryption requirement (security)
+
+Backups hold a second copy of all tenant evidence; protect the destination like primary data:
+
+- **S3**: enable SSE-KMS on the bucket and attach a bucket policy that denies unencrypted `PutObject` and non-TLS requests.
+- **Local**: the volume layout is group 10001 only, mode `2770`; keep the host directory backing the volume at mode `0700`.
+- Client-side encryption is **not implemented yet** — destination-side encryption (above) is the only protection today.
+
+### Run and verify
+
+```bash
+docker compose -f compose.yaml -f compose.backup.yaml exec crosscodexd /crosscodexd admin backup run
+docker compose -f compose.yaml -f compose.backup.yaml exec crosscodexd /crosscodexd admin backup list
+docker compose -f compose.yaml -f compose.backup.yaml exec crosscodexd /crosscodexd admin backup verify [--point ID]
+```
+
+Exit codes: `0` ok, `1` failure or stale, `2` usage error. `verify` reports a store stale once its newest backup point is older than `backup.max_age.postgres` / `.objects` / `.nats` (default `26h` each).
+
+There is no in-daemon scheduler yet (sub-project 2 of issue #36); run `backup run` from cron or a systemd timer until it lands.
+
+`backup run` and a non-dry-run `retention scan` share one global advisory lock and exclude each other — the lock is global, so two non-dry-run retention scans (any tenants) also exclude each other. Whichever side loses the race exits `1` with `backup/retention in progress, retry later`; retry it once the winner finishes.
+
+### Restore
+
+1. Stop crosscodexd:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.backup.yaml stop crosscodexd
+   ```
+
+2. Pick a backup point:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.backup.yaml run --rm --no-deps crosscodexd admin backup list
+   ```
+
+   For point-in-time recovery, pick a target time `T` and use the newest point whose objects/NATS capture windows end at or before `T` (Postgres itself recovers to the exact time `T` via `--target-time` below).
+
+3. Recreate an empty pgdata volume:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.backup.yaml stop db
+   docker compose -f compose.yaml -f compose.backup.yaml rm -f db
+   docker volume rm <project>_crosscodex-pgdata
+   ```
+
+4. Restore Postgres from the point's `base_...` backup name (see it in the `list` output):
+
+   ```bash
+   docker compose -f compose.yaml -f compose.backup.yaml --profile restore run --rm db-restore <base_...> [--target-time T]
+   ```
+
+5. Start the database and wait for recovery to finish:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.backup.yaml up -d db
+   ```
+
+   Poll `SELECT pg_is_in_recovery();` (as the `crosscodex` superuser) until it returns `f`.
+
+6. Restore objects and audit streams:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.backup.yaml run --rm --no-deps crosscodexd admin backup restore --point <id>
+   ```
+
+7. Start crosscodexd and confirm:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.backup.yaml up -d crosscodexd
+   docker compose -f compose.yaml -f compose.backup.yaml exec crosscodexd /crosscodexd admin backup verify
+   ```
+
+### Consistency model
+
+Postgres is captured first and is authoritative. The objects and JetStream steps that follow it may end up slightly ahead — never behind — because the backup/retention advisory lock blocks purges for the whole run, so nothing a completed Postgres capture already references can disappear before the later steps copy it. The AGE graph needs no separate backup: it is a materialized view rebuilt from Postgres.
+
+### Troubleshooting
+
+| Message | Meaning |
+|---|---|
+| `refusing to restore: ... is not empty` | Restore refuses to write over an existing target, so a refusal changes nothing: `crosscodex-db-restore` checks that PGDATA is empty; `admin backup restore` checks that each tenant's object store is empty (`already holds N object(s)`) and that no target JetStream stream already exists (`already exists on the NATS server`). Recreate the pgdata volume, empty the tenant's object prefix, or delete the stream, then retry. |
+| `JetStream backup and restore need an external NATS server` | `nats.url` is empty (embedded mode). Point it at an external NATS server; backup and restore do not support the embedded server. |
+| `verify` reports `FAILURE` under WAL CHECK | An archived WAL segment is missing: point-in-time recovery across the gap is impossible. Take a new `backup run` to restart the WAL chain. A gap within the newest `WALG_UPLOAD_CONCURRENCY` segments (default 16) instead reports `WARNING` ("probably uploading") and does not fail verify. |
+| `backup is disabled` | `backup.destination.backend` is empty. Set it to `local` or `s3` and set `backup.dsn` (or `CROSSCODEX_BACKUP_DSN`), then retry. |
+
 ## What's next
 
 The single-host compose stack is suitable for evaluation and small-scale production use. For multi-host deployments, distributed role assignment, or FIPS 140 container images, see issue [#17](https://github.com/complytime-labs/crosscodex/issues/17).
