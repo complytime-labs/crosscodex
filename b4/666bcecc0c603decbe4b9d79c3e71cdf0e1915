@@ -1,0 +1,30 @@
+README.md
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 619-653
+deploy/README.md
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 311-332
+pkg/db/doc.go
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 57-58,76-83
+  s_fcd8b9a6a88faa::t_eb557078fc93b4 84
+docs/dev/design-principles.md
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 55-56,92
+docs/dev/telemetry.md
+  s_fcd8b9a6a88faa::t_f7c2d2dcd855e8 77,203-205,207
+deploy/.env.example
+  s_fcd8b9a6a88faa::t_ffe8e8c623cf87 25-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b4666bcecc0c603decbe4b9d79c3e71cdf0e1915",
+  "prompts": {},
+  "sessions": {
+    "s_fcd8b9a6a88faa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fffb1577-e9a5-4ea0-85a2-3b971c425ecc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
