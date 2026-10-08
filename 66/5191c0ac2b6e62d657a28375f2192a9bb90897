@@ -1,0 +1,26 @@
+pkg/backup/backup_property_test.go
+  s_7681b370177c2f::t_bd1f82f0568fc1 5,8-10,17
+  s_7681b370177c2f::t_462bbc40e6a2ab 113-149
+pkg/backup/objects_bdd_test.go
+  s_7681b370177c2f::t_ad26840188a808 1-158
+pkg/backup/objects.go
+  s_7681b370177c2f::t_74425ed7d6d3f5 1-213
+pkg/backup/export_test.go
+  s_7681b370177c2f::t_50887d66cdb0a1 10-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "665191c0ac2b6e62d657a28375f2192a9bb90897",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
