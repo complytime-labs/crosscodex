@@ -1,0 +1,25 @@
+pkg/backup/service_bdd_test.go
+  s_7681b370177c2f::t_bc63605c821c3a 1-379
+pkg/backup/service.go
+  s_7681b370177c2f::t_2bf1f4f45d0c69 1-493
+pkg/backup/tenants.go
+  s_7681b370177c2f::t_72a6e11bd8b655 1-55
+pkg/backup/telemetry.go
+  s_7681b370177c2f::t_63cda1fa5ff52a 1-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cfde38621a45836055fde1e7309da938448a00c4",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
