@@ -1,0 +1,19 @@
+pkg/backup/walg.go
+  s_c465797653095c::t_3ccaf47844f5a1 215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06d49b37d77afc107a68d87accf78feac33dcd18",
+  "prompts": {},
+  "sessions": {
+    "s_c465797653095c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2264962-77a9-4275-a88d-0eda2c7febdc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
