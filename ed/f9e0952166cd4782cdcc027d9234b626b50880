@@ -1,0 +1,31 @@
+deploy/db/pg_hba.conf
+  s_7681b370177c2f::t_52e9a72b285d74 17-21
+.taskfiles/test/integration.yml
+  s_7681b370177c2f::t_3ba5e0806dd5ed 583-584,586-589
+deploy/db/Containerfile
+  s_7681b370177c2f::t_91e450ab7856bf 18-19
+  s_7681b370177c2f::t_185211b45df525 40-43
+  s_7681b370177c2f::t_47bf7313a07ba3 1
+  s_7681b370177c2f::t_138cc34821d521 34-35
+  s_7681b370177c2f::t_4425b784095c57 53-55
+deploy/db/crosscodex-db-restore
+  s_7681b370177c2f::t_3a02b8a18fee67 1-60
+deploy/db/fetch-walg.sh
+  s_7681b370177c2f::t_300eae8ea1533f 1-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "edf9e0952166cd4782cdcc027d9234b626b50880",
+  "prompts": {},
+  "sessions": {
+    "s_7681b370177c2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7c00c98-28a8-4195-b98f-266e96d88a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
