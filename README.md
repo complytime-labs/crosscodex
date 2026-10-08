@@ -29,6 +29,11 @@ The graph storage hardening in #148 makes these breaking changes:
 
 Graphs written before this change must be rebuilt. Follow the "Upgrade note (#148)" in [docs/dev/design-principles.md](docs/dev/design-principles.md#graph-data-model).
 
+Tenant administration (#31), migration `007_tenant_admin`:
+
+- The gateway refuses every non-health request, with `PermissionDenied`, from a tenant whose `tenants` row is missing or suspended. Migration 007 creates the `tenant_admin` role that `crosscodexd admin tenant` connects as, so tenants can only be provisioned after it runs. Once crosscodexd has migrated, set the role's password and `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`, then run `crosscodexd admin tenant create` for each authenticated tenant before sending it traffic; requests from that tenant are refused until then. Role `all` still provisions `tenants.default_tenant` itself. See [Tenant administration](deploy/README.md#tenant-administration).
+- The migration fails if a hand-edited `tenants.status` holds a value other than `active` or `suspended`. Fix that row first.
+
 ## Quick Start
 
 **Prerequisites**: Go >= 1.23, Task (taskfile.dev), container engine (podman or docker)
@@ -615,6 +620,41 @@ crosscodexd admin backup restore --point ID
 - `backup restore` — restores objects and audit streams from a backup point; Postgres is restored separately with `crosscodex-db-restore`.
 
 Exit codes: 0 ok, 1 failure or stale, 2 usage error. See [deploy/README.md, Backups](deploy/README.md#backups) for setup, the run/verify/restore procedures, and PITR.
+
+#### Tenant administration
+
+```sh
+crosscodexd admin tenant create  --tenant acme --display-name "Acme Corp"
+crosscodexd admin tenant list
+crosscodexd admin tenant inspect --tenant acme
+crosscodexd admin tenant suspend --tenant acme
+crosscodexd admin tenant resume  --tenant acme
+crosscodexd admin tenant import  --file tenants.yaml
+```
+
+These commands connect as the least-privilege `tenant_admin` role, never the
+app or owner credential. Set `database.tenant_admin_dsn` (or
+`CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`) to a DSN for that role. Migration
+`007_tenant_admin` creates the role; set its password yourself. The commands
+refuse to run while the DSN is empty.
+
+- **`create`:** creates the tenant and its graph, or renames an existing one
+  without changing its status. Prints `created` or `updated`. Display names
+  must not be blank or contain control characters.
+- **`suspend` / `resume`:** while suspended, the gateway refuses every request
+  from the tenant except health checks, until `resume`. Queued pipeline work
+  still drains. Prints `suspended` or `already suspended`, and `resumed` or
+  `already active`.
+- **`import`:** applies a YAML file in one transaction, so either every tenant
+  is created or renamed, or none is:
+
+  ```yaml
+  tenants:
+    - tenant_id: acme
+      display_name: Acme Corp
+  ```
+
+- **Exit codes:** 0 on success, 1 on failure, 2 on usage errors.
 
 ### Configuration Reference
 
