@@ -1,0 +1,24 @@
+internal/analyzer/artifacts/sameas_parser_bdd_test.go
+  s_6a62b7549ddda9::t_1cc5e00ff9a25d 35-37,39
+  s_6a62b7549ddda9::t_7cc69ac78d250d 38
+internal/analyzer/artifacts/sameas_parser.go
+  s_6a62b7549ddda9::t_7cc69ac78d250d 11-13,20-21
+internal/analyzer/artifacts/sameas_parser_property_test.go
+  s_6a62b7549ddda9::t_1cc5e00ff9a25d 20-22,31-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2238111766820619d48f8fe10e2f9b761ba788ad",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
