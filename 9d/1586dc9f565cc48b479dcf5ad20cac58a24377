@@ -1,0 +1,24 @@
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_6a62b7549ddda9::t_48dcf84be188bb 1-331
+internal/analyzer/artifacts/verdicts.go
+  s_6a62b7549ddda9::t_d1f53882d554cf 32-34
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_6a62b7549ddda9::t_271edce5b13448 1-141,143-442
+  s_6a62b7549ddda9::t_82635ac9852436 142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d1586dc9f565cc48b479dcf5ad20cac58a24377",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
