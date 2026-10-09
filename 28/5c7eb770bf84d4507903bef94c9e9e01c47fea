@@ -1,0 +1,21 @@
+docs/dev/design-principles.md
+  s_6a62b7549ddda9::t_9b475fdb75e7c7 62
+README.md
+  s_6a62b7549ddda9::t_9b475fdb75e7c7 615-619,665-667
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "285c7eb770bf84d4507903bef94c9e9e01c47fea",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
