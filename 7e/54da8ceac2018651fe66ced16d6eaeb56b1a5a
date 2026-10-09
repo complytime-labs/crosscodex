@@ -1,0 +1,26 @@
+cmd/crosscodexd/admin_bdd_test.go
+  s_6a62b7549ddda9::t_f1f5dd78ab9069 6,118-128
+  s_6a62b7549ddda9::t_e6697b4d928caa 129-130
+internal/analyzer/artifacts/reconcile.go
+  s_6a62b7549ddda9::t_3690ccd26d5b7e 194,205-211,248
+internal/analyzer/artifacts/reconcile_bdd_test.go
+  s_6a62b7549ddda9::t_98cfbf7a38aed0 405-416,419-423,446-451
+internal/analyzer/artifacts/verdictstore_fake_test.go
+  s_6a62b7549ddda9::t_557538a2c100e3 19,21-24,126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e54da8ceac2018651fe66ced16d6eaeb56b1a5a",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
