@@ -1,0 +1,34 @@
+docs/dev/design-principles.md
+  s_13690df42e435e::t_2cb4b0511e0144 56
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_13690df42e435e::t_a3c84e046f2a14 205
+  s_13690df42e435e::t_584d13a547d4e1 353,364,368-385,396
+internal/analyzer/artifacts/adjudicate_queue_bdd_test.go
+  s_13690df42e435e::t_a3c84e046f2a14 32
+internal/analyzer/artifacts/verdictstore_fake_test.go
+  s_13690df42e435e::t_b52365d979862c 157,161,164,169,174,176,178,183
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_13690df42e435e::t_b52365d979862c 189,191,195,199,201,203,205,220,222,227,229
+internal/analyzer/artifacts/adjudicate.go
+  s_13690df42e435e::t_b52365d979862c 381-383,385,389,410
+internal/analyzer/artifacts/adjudicate_bdd_test.go
+  s_13690df42e435e::t_3f2910d1afbc61 122-145
+internal/analyzer/artifacts/verdicts.go
+  s_13690df42e435e::t_b52365d979862c 115-125,175-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1472c4cbb6d9b88319e4554b66d5d6f9fd58ab54",
+  "prompts": {},
+  "sessions": {
+    "s_13690df42e435e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5822cf3a-552b-478b-b420-0d02a17cc6ed",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
