@@ -1,0 +1,24 @@
+README.md
+  s_f590f7a3daccdf::t_362f562adf8410 700-701
+  s_f590f7a3daccdf::t_0534bbb9b848a3 702-704
+cmd/crosscodexd/admin.go
+  s_f590f7a3daccdf::t_362f562adf8410 340
+cmd/crosscodexd/admin_adjudicate_bdd_test.go
+  s_f590f7a3daccdf::t_362f562adf8410 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9c2e467cc18ef5c422895a4343f8aca0e873433d",
+  "prompts": {},
+  "sessions": {
+    "s_f590f7a3daccdf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bbd5bb3a-db23-48ac-9ad2-65c6d29da2c6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
