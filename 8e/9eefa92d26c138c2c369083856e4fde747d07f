@@ -1,0 +1,32 @@
+docs/dev/design-principles.md
+  s_6a62b7549ddda9::t_659df4df68edbf 55-56
+internal/analyzer/artifacts/reconcile.go
+  s_6a62b7549ddda9::t_659df4df68edbf 107-109
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_6a62b7549ddda9::t_56c792d3cbd632 88-90
+internal/analyzer/artifacts/verdictstore_fake_test.go
+  s_6a62b7549ddda9::t_56c792d3cbd632 91-94
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_6a62b7549ddda9::t_4ffdc2c07c8943 95-98,112-113,115-116,172-225
+  s_6a62b7549ddda9::t_24ee521d49e838 226
+internal/analyzer/artifacts/reconcile_bdd_test.go
+  s_6a62b7549ddda9::t_c8b288375c4629 467-503
+internal/analyzer/artifacts/verdicts.go
+  s_6a62b7549ddda9::t_56c792d3cbd632 152-156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e9eefa92d26c138c2c369083856e4fde747d07f",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
