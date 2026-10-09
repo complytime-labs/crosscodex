@@ -1,0 +1,20 @@
+cmd/crosscodexd/admin_all_tenants_bdd_test.go
+  s_5fbbfb43685d8f::t_9ba48ba95838fd 172,186-191,194-196,207-208,210-211,254-262
+  s_5fbbfb43685d8f::t_4f972a0a92fa15 263-266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d180cf1366da28cbc297502f9e4c9b0eff90d21",
+  "prompts": {},
+  "sessions": {
+    "s_5fbbfb43685d8f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7c6a5490-582f-449b-8372-da4342338282",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
