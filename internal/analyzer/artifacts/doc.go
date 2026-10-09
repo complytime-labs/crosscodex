@@ -13,4 +13,11 @@
 // storage, under its own ID scheme, but has no production caller yet.
 //
 // This is a port of OllamaCrosswalker's Python ArtifactExtractor.
+//
+// [Reconcile] groups equivalent Artifact nodes and proposes token-overlap
+// SAME_AS edges between groups, queueing each proposal in a [VerdictStore].
+// [Adjudicator] leases queued proposals, asks an LLM panel whether the two
+// groups denote one artifact, records the verdict in the store (the source of
+// truth) and projects it onto the graph. Automation never overrides a human
+// verdict.
 package artifacts

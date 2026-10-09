@@ -368,6 +368,9 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 	if err := a.Artifacts.Validate(); err != nil {
 		return err
 	}
+	if err := a.ArtifactAdjudication.Validate(); err != nil {
+		return err
+	}
 
 	if err := a.Candidates.Validate(); err != nil {
 		return err

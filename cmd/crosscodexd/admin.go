@@ -14,6 +14,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 )
 
@@ -21,6 +22,7 @@ import (
 const adminUsage = `usage:
   crosscodexd admin retention scan (--tenant <id> | --all-tenants) [--dry-run]
   crosscodexd admin reconcile artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-edges <n>]
+  crosscodexd admin adjudicate artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-pairs <n>]
   crosscodexd admin backup run
   crosscodexd admin backup list
   crosscodexd admin backup verify [--point <id>]
@@ -43,6 +45,8 @@ func runAdmin(args []string) int {
 		return retentionScanCmd(args[2:])
 	case len(args) >= 2 && args[0] == "reconcile" && args[1] == "artifacts":
 		return reconcileArtifactsCmd(args[2:])
+	case len(args) >= 2 && args[0] == "adjudicate" && args[1] == "artifacts":
+		return adjudicateArtifactsCmd(args[2:])
 	case len(args) >= 2 && args[0] == "backup" && args[1] == "run":
 		return backupRunCmd(args[2:])
 	case len(args) >= 2 && args[0] == "backup" && args[1] == "list":
@@ -269,21 +273,24 @@ func runReconcileArtifacts(tenantID string, all, dryRun bool, maxEdges int) int 
 // target tenant.
 type artifactReconciler func(ctx context.Context, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error)
 
-// openReconcileArtifactsFn opens the daemon's graph connection and returns a
-// reconciler over it plus the func that closes it. It is a package var so flag
-// parsing, config load and tenant scoping can be unit-tested with a fake,
-// without a live database. Production wiring is daemonOpenReconcileArtifacts.
+// openReconcileArtifactsFn opens the daemon's graph connection and app pool
+// and returns a reconciler over them plus the func that closes them. It is a
+// package var so flag parsing, config load and tenant scoping can be
+// unit-tested with a fake, without a live database. Production wiring is
+// daemonOpenReconcileArtifacts.
 var openReconcileArtifactsFn = daemonOpenReconcileArtifacts
 
-// daemonOpenReconcileArtifacts opens only the graph connection; each reconcile
-// runs artifacts.Reconcile on it.
+// daemonOpenReconcileArtifacts opens the graph connection and the app pool
+// that backs the SAME_AS verdict store; each reconcile runs
+// artifacts.Reconcile on them.
 func daemonOpenReconcileArtifacts(ctx context.Context, cfg *config.Config) (artifactReconciler, func(), error) {
-	shared, err := buildSharedResources(ctx, cfg, requiredResources{graph: true})
+	shared, err := buildSharedResources(ctx, cfg, requiredResources{db: true, graph: true})
 	if err != nil {
 		return nil, nil, err
 	}
+	store := artifacts.NewPGVerdictStore(dbpkg.NewTenantPool(shared.appPool))
 	reconcile := func(ctx context.Context, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error) {
-		return artifacts.Reconcile(ctx, shared.graphDB_, tenantID, opts)
+		return artifacts.Reconcile(ctx, shared.graphDB_, store, tenantID, opts)
 	}
 	return reconcile, shared.close, nil
 }
@@ -299,7 +306,124 @@ func writeReconcileReport(w io.Writer, res artifacts.ReconcileResult) {
 	fmt.Fprintf(tw, "new_groups\t%d\n", res.NewGroups)
 	fmt.Fprintf(tw, "new_memberships\t%d\n", res.NewMemberships)
 	fmt.Fprintf(tw, "matches\t%d\n", res.Matches)
+	fmt.Fprintf(tw, "closed\t%d\n", res.Closed)
 	fmt.Fprintf(tw, "new_matches\t%d\n", res.NewMatches)
+	if err := tw.Flush(); err != nil {
+		fmt.Fprintf(w, "error flushing output: %v\n", err)
+	}
+}
+
+// adjudicateArtifactsCmd parses `admin adjudicate artifacts` flags and runs
+// the SAME_AS adjudicator.
+func adjudicateArtifactsCmd(args []string) int {
+	fs := flag.NewFlagSet("crosscodexd admin adjudicate artifacts", flag.ContinueOnError)
+	tenantID := fs.String("tenant", "", "tenant ID whose SAME_AS candidates to adjudicate")
+	allTenants := fs.Bool("all-tenants", false, "adjudicate every active tenant (needs database.tenant_admin_dsn)")
+	dryRun := fs.Bool("dry-run", false, "report the queue without leasing pairs or calling the LLM")
+	maxPairs := fs.Int("max-pairs", artifacts.DefaultAdjudicateMaxPairs, "most candidate pairs to send to the LLM panel per tenant")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if !tenantSelection("admin adjudicate artifacts", *tenantID, *allTenants) {
+		return 2
+	}
+	if *maxPairs <= 0 {
+		fmt.Fprintln(os.Stderr, "admin adjudicate artifacts: --max-pairs must be positive")
+		return 2
+	}
+
+	return runAdjudicateArtifacts(*tenantID, *allTenants, *dryRun, *maxPairs)
+}
+
+// runAdjudicateArtifacts loads the daemon config and adjudicates tenantID's
+// SAME_AS candidates, or every active tenant's when all is set, printing each
+// result, including the partial result of a run that failed. It refuses to run unless analysis.artifact_adjudication is enabled.
+// It returns a process exit code: 0 on success, 1 on any failure.
+func runAdjudicateArtifacts(tenantID string, all, dryRun bool, maxPairs int) int {
+	const cmd = "admin adjudicate artifacts"
+	ctx := context.Background()
+
+	cfg, ok := loadAdminConfig(ctx, cmd)
+	if !ok {
+		return 1
+	}
+	if !cfg.Analysis.ArtifactAdjudication.Enabled {
+		fmt.Fprintf(os.Stderr, "%s: analysis.artifact_adjudication.enabled is false; enable it and set analysis.artifact_adjudication.models\n", cmd)
+		return 1
+	}
+
+	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+		adjudicate, closeFn, err := openAdjudicateArtifactsFn(ctx, cfg, dryRun)
+		if err != nil {
+			return nil, nil, err
+		}
+		return func(ctx context.Context, id string) error {
+			res, err := adjudicate(ctx, id, artifacts.AdjudicateOptions{
+				DryRun:   dryRun,
+				MaxPairs: maxPairs,
+				Now:      func() time.Time { return time.Now().UTC() },
+			})
+			// A run stopped by an outage or a store error has already
+			// recorded verdicts; report them before the error.
+			writeAdjudicateReport(os.Stdout, res, dryRun)
+			return err
+		}, closeFn, nil
+	})
+}
+
+// artifactAdjudicator runs one tenant's adjudication on resources opened once
+// for the whole command. ctx must already carry the target tenant.
+type artifactAdjudicator func(ctx context.Context, tenantID string, opts artifacts.AdjudicateOptions) (artifacts.AdjudicateResult, error)
+
+// openAdjudicateArtifactsFn opens the resources adjudication needs and
+// returns an adjudicator over them plus the func that closes them. It is a
+// package var so flag parsing, config checks and tenant scoping can be
+// unit-tested with a fake. Production wiring is daemonOpenAdjudicateArtifacts.
+var openAdjudicateArtifactsFn = daemonOpenAdjudicateArtifacts
+
+// daemonOpenAdjudicateArtifacts loads the prompt registry and opens the app
+// pool (verdict store), the graph connection and, unless dryRun is set, the
+// LLM client. A dry run only counts the queue and never calls the LLM, so it
+// runs on a host without an LLM gateway.
+func daemonOpenAdjudicateArtifacts(ctx context.Context, cfg *config.Config, dryRun bool) (artifactAdjudicator, func(), error) {
+	prompts, err := prompt.NewRegistry(cfg.Prompt)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load prompts: %w", err)
+	}
+	shared, err := buildSharedResources(ctx, cfg, requiredResources{db: true, graph: true, llm: !dryRun})
+	if err != nil {
+		return nil, nil, err
+	}
+	adj := artifacts.NewAdjudicator(shared.graphDB_, artifacts.NewPGVerdictStore(dbpkg.NewTenantPool(shared.appPool)),
+		shared.llmClient, prompts, cfg.Analysis.ArtifactAdjudication)
+	return adj.Run, shared.close, nil
+}
+
+// writeAdjudicateReport renders an artifacts.AdjudicateResult to w: the
+// queue counts under --dry-run, the run's counters otherwise.
+func writeAdjudicateReport(w io.Writer, res artifacts.AdjudicateResult, dryRun bool) {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "METRIC\tVALUE")
+	if dryRun {
+		fmt.Fprintf(tw, "pending\t%d\n", res.Pending)
+		fmt.Fprintf(tw, "due\t%d\n", res.Due)
+		fmt.Fprintf(tw, "unprojected\t%d\n", res.Unprojected)
+	} else {
+		fmt.Fprintf(tw, "recovered\t%d\n", res.Recovered)
+		fmt.Fprintf(tw, "orphaned\t%d\n", res.Orphaned)
+		fmt.Fprintf(tw, "leased\t%d\n", res.Leased)
+		fmt.Fprintf(tw, "confirmed\t%d\n", res.Confirmed)
+		fmt.Fprintf(tw, "rejected\t%d\n", res.Rejected)
+		fmt.Fprintf(tw, "undecided\t%d\n", res.Undecided)
+		fmt.Fprintf(tw, "failed\t%d\n", res.Failed)
+		fmt.Fprintf(tw, "abandoned\t%d\n", res.Abandoned)
+		fmt.Fprintf(tw, "dissent\t%d\n", res.Dissent)
+		fmt.Fprintf(tw, "stale\t%d\n", res.Stale)
+		fmt.Fprintf(tw, "expired\t%d\n", res.Expired)
+	}
 	if err := tw.Flush(); err != nil {
 		fmt.Fprintf(w, "error flushing output: %v\n", err)
 	}

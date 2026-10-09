@@ -23,6 +23,7 @@ const (
 	exactNameMethod    = "exact_name"
 	tokenOverlapMethod = "token_overlap"
 	reconcileThreshold = 0.6
+	maxSamplesPerGroup = 3
 )
 
 // ReconcileAlgorithmVersion names the rule that produces SAME_AS edges:
@@ -65,12 +66,14 @@ type ReconcileResult struct {
 	NewGroups      int // ArtifactGroup nodes created (under DryRun: groups with no stored MEMBER_OF edge)
 	NewMemberships int // MEMBER_OF edges
 	Matches        int // SAME_AS pairs among the groups
+	Closed         int // matches skipped because a verdict closed them (confirmed or rejected)
 	NewMatches     int // SAME_AS edges
 }
 
 type artifactGroup struct {
 	id, name, typ string
-	members       []string // Artifact node IDs, sorted
+	members       []string       // Artifact node IDs, sorted
+	samples       []MemberSample // the first maxSamplesPerGroup members, for the panel
 }
 
 type groupMatch struct {
@@ -92,14 +95,19 @@ type groupMatch struct {
 // edge.
 //
 // The stored-edge queries cannot see superseded edges, so a superseded
-// MEMBER_OF or SAME_AS edge keeps its ID forever: it is never recreated.
-// Each run plans it again, then drops it on ErrEdgeExists; that costs an
-// extra BulkCreateEdges attempt per such edge. It also inflates DryRun's New*
-// counts (a group whose MEMBER_OF edges are all superseded counts in
-// NewGroups), and a superseded SAME_AS edge counts against MaxEdges. Issue
-// #170's adjudicator, which will supersede SAME_AS edges, must account for
-// this.
-func Reconcile(ctx context.Context, g graphdb.GraphDB, tenantID string, opts ReconcileOptions) (ReconcileResult, error) {
+// MEMBER_OF edge keeps its ID forever: it is never recreated. Each run plans
+// it again, then drops it on ErrEdgeExists; that costs an extra
+// BulkCreateEdges attempt per such edge and inflates DryRun's New* counts (a
+// group whose MEMBER_OF edges are all superseded counts in NewGroups).
+//
+// store is the SAME_AS verdict store. A pair whose verdict is closed
+// (confirmed or rejected, by the adjudicator or a human) is excluded before
+// planning: its token-overlap edge may be superseded, and it never needs
+// rewriting. After the writes, every remaining match is enqueued for
+// adjudication; Enqueue only moves an already-queued pending pair to the
+// current candidate edge and score, so re-running also queues a match whose
+// edge an earlier run wrote but failed to enqueue. DryRun enqueues nothing.
+func Reconcile(ctx context.Context, g graphdb.GraphDB, store VerdictStore, tenantID string, opts ReconcileOptions) (ReconcileResult, error) {
 	var res ReconcileResult
 	if opts.MaxEdges <= 0 || opts.ChunkSize <= 0 || opts.Now.IsZero() {
 		return res, fmt.Errorf("reconcile artifacts: invalid options: MaxEdges (%d) and ChunkSize (%d) must be positive and Now must be set",
@@ -113,6 +121,19 @@ func Reconcile(ctx context.Context, g graphdb.GraphDB, tenantID string, opts Rec
 	matches := matchGroups(groups)
 	res.Artifacts, res.Skipped, res.Groups, res.Matches = loaded, skipped, len(groups), len(matches)
 
+	closed, err := store.ClosedPairs(ctx, tenantID)
+	if err != nil {
+		return res, fmt.Errorf("reconcile artifacts: load closed pairs: %w", err)
+	}
+	open := make([]groupMatch, 0, len(matches))
+	for _, m := range matches {
+		if closed[PairKey(m.low, m.high)] {
+			res.Closed++
+			continue
+		}
+		open = append(open, m)
+	}
+
 	storedMembers, err := g.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{
 		SourceLabel: artifactLabel, EdgeLabel: memberOfLabel, TargetLabel: artifactGroupLabel})
 	if err != nil {
@@ -124,7 +145,7 @@ func Reconcile(ctx context.Context, g graphdb.GraphDB, tenantID string, opts Rec
 		return res, fmt.Errorf("reconcile artifacts: load SAME_AS edges: %w", err)
 	}
 
-	newGroups, memberships, sameAs := planWrites(groups, matches, storedMembers, storedSameAs, opts.Now)
+	newGroups, memberships, sameAs := planWrites(groups, open, storedMembers, storedSameAs, opts.Now)
 	if len(sameAs) > opts.MaxEdges {
 		return res, fmt.Errorf("reconcile artifacts: %d new SAME_AS edges exceed the limit of %d, so nothing was written; "+
 			"look for an over-broad artifact name, or raise --max-edges", len(sameAs), opts.MaxEdges)
@@ -152,7 +173,40 @@ func Reconcile(ctx context.Context, g graphdb.GraphDB, tenantID string, opts Rec
 	if res.NewMatches, err = writeEdges(ctx, g, tenantID, sameAs, opts.ChunkSize); err != nil {
 		return res, fmt.Errorf("reconcile artifacts: write SAME_AS edges: %w", err)
 	}
+	if err := store.Enqueue(ctx, tenantID, pairCandidates(groups, open), opts.Now); err != nil {
+		return res, fmt.Errorf("reconcile artifacts: enqueue candidates: %w", err)
+	}
 	return res, nil
+}
+
+// pairCandidates builds the verdict-store entries for matches, whose groups
+// must all be in groups.
+func pairCandidates(groups []*artifactGroup, matches []groupMatch) []PairCandidate {
+	byID := make(map[string]*artifactGroup, len(groups))
+	for _, gr := range groups {
+		byID[gr.id] = gr
+	}
+	out := make([]PairCandidate, len(matches))
+	for i, m := range matches {
+		low, high := byID[m.low], byID[m.high]
+		out[i] = PairCandidate{
+			LowGroupID: m.low, HighGroupID: m.high,
+			CandidateEdgeID: sameAsEdgeID(m.low, m.high),
+			SimilarityScore: m.score,
+			Context: PairContext{
+				Type: low.typ, LowName: low.name, HighName: high.name,
+				LowSamples: low.samples, HighSamples: high.samples,
+			},
+		}
+	}
+	return out
+}
+
+// sameAsEdgeID is the ID of the token-overlap SAME_AS edge from group low to
+// group high. planWrites writes the edge under it and pairCandidates records it
+// as the candidate the adjudicator later supersedes, so both must use it.
+func sameAsEdgeID(low, high string) string {
+	return graphdb.DerivedID("same-as", ReconcileAlgorithmVersion, low, high)
 }
 
 // planWrites diffs groups and matches against the stored MEMBER_OF and
@@ -191,7 +245,7 @@ func planWrites(groups []*artifactGroup, matches []groupMatch, storedMembers, st
 		}
 	}
 	for _, m := range matches {
-		id := graphdb.DerivedID("same-as", ReconcileAlgorithmVersion, m.low, m.high)
+		id := sameAsEdgeID(m.low, m.high)
 		if storedEdges[id] {
 			continue
 		}
@@ -212,7 +266,8 @@ func planWrites(groups []*artifactGroup, matches []groupMatch, storedMembers, st
 // the artifacts by lowercased type and normalized name. It returns the groups
 // sorted by ID, how many artifacts it grouped, and how many it skipped for
 // lacking a usable name or type. QueryRelationships excludes superseded edges
-// but not superseded nodes, so loadGroups drops those itself.
+// but not superseded nodes, so loadGroups drops those itself. It records up to
+// maxSamplesPerGroup member samples per group for adjudication.
 func loadGroups(ctx context.Context, g graphdb.GraphDB, tenantID string) ([]*artifactGroup, int, int, error) {
 	rels, err := g.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{
 		SourceLabel: controlLabel, EdgeLabel: demandsLabel, TargetLabel: artifactLabel})
@@ -220,6 +275,7 @@ func loadGroups(ctx context.Context, g graphdb.GraphDB, tenantID string) ([]*art
 		return nil, 0, 0, err
 	}
 	byID := make(map[string]*artifactGroup)
+	sampleOf := make(map[string]MemberSample, len(rels))
 	seen := make(map[string]bool, len(rels))
 	loaded, skipped := 0, 0
 	for _, r := range rels {
@@ -228,9 +284,9 @@ func loadGroups(ctx context.Context, g graphdb.GraphDB, tenantID string) ([]*art
 			continue
 		}
 		seen[art.ID] = true
-		name, _ := art.Properties["name"].(string)
+		rawName, _ := art.Properties["name"].(string)
 		typ, _ := art.Properties["type"].(string)
-		name = intanalyzer.NormalizeArtifactName(name)
+		name := intanalyzer.NormalizeArtifactName(rawName)
 		typ = strings.ToLower(strings.TrimSpace(typ))
 		if name == "" || typ == "" {
 			skipped++
@@ -243,11 +299,17 @@ func loadGroups(ctx context.Context, g graphdb.GraphDB, tenantID string) ([]*art
 			byID[id] = gr
 		}
 		gr.members = append(gr.members, art.ID)
+		owner, _ := art.Properties["owner_role"].(string)
+		freq, _ := art.Properties["frequency"].(string)
+		sampleOf[art.ID] = MemberSample{Name: rawName, OwnerRole: owner, Frequency: freq}
 		loaded++
 	}
 	groups := slices.SortedFunc(maps.Values(byID), func(a, b *artifactGroup) int { return cmp.Compare(a.id, b.id) })
 	for _, gr := range groups {
 		slices.Sort(gr.members)
+		for _, id := range gr.members[:min(len(gr.members), maxSamplesPerGroup)] {
+			gr.samples = append(gr.samples, sampleOf[id])
+		}
 	}
 	return groups, loaded, skipped, nil
 }

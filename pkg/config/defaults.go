@@ -136,6 +136,16 @@ analysis:
   candidates:
     min_embedding_coverage: 0.8
     embed_model: snowflake-arctic-embed2
+  artifact_adjudication:
+    enabled: false
+    models: []
+    samples_per_model: 3
+    allow_even_samples: false
+    sampling_temperature: 0.3
+    max_tokens: 200
+    consensus_threshold: 0.67
+    max_error_rate: 0.34
+    max_attempts: 5
 worker:
   queue_group: "llm-workers"
 synthesis:

@@ -26,6 +26,7 @@ var _ = Describe("runAdmin --all-tenants arg parsing", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--tenant", "acme", "--all-tenants"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--tenant", "acme", "--all-tenants"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--tenant", "acme", "--all-tenants"),
 	)
 
 	DescribeTable("names both flags when neither is given",
@@ -36,14 +37,16 @@ var _ = Describe("runAdmin --all-tenants arg parsing", func() {
 		},
 		Entry("retention scan", "retention", "scan"),
 		Entry("reconcile artifacts", "reconcile", "artifacts"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts"),
 	)
 })
 
 var _ = Describe("runAdmin --all-tenants", func() {
 	var (
-		origList      func(context.Context, string) ([]dbpkg.TenantRecord, error)
-		origScan      func(context.Context, *config.Config) (retentionScanner, func(), error)
-		origReconcile func(context.Context, *config.Config) (artifactReconciler, func(), error)
+		origList       func(context.Context, string) ([]dbpkg.TenantRecord, error)
+		origScan       func(context.Context, *config.Config) (retentionScanner, func(), error)
+		origReconcile  func(context.Context, *config.Config) (artifactReconciler, func(), error)
+		origAdjudicate func(context.Context, *config.Config, bool) (artifactAdjudicator, func(), error)
 
 		records   []dbpkg.TenantRecord
 		listErr   error
@@ -72,6 +75,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 
 	BeforeEach(func() {
 		origList, origScan, origReconcile = runTenantListFn, openRetentionScanFn, openReconcileArtifactsFn
+		origAdjudicate = openAdjudicateArtifactsFn
 		records = []dbpkg.TenantRecord{
 			{ID: "acme", Status: dbpkg.TenantStatusActive},
 			{ID: "globex", Status: dbpkg.TenantStatusSuspended},
@@ -104,12 +108,22 @@ var _ = Describe("runAdmin --all-tenants", func() {
 				return artifacts.ReconcileResult{}, record(ctx, tenantID, opts.DryRun)
 			}, func() { closes++ }, nil
 		}
-		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		openAdjudicateArtifactsFn = func(context.Context, *config.Config, bool) (artifactAdjudicator, func(), error) {
+			opens++
+			if openErr != nil {
+				return nil, nil, openErr
+			}
+			return func(ctx context.Context, tenantID string, opts artifacts.AdjudicateOptions) (artifacts.AdjudicateResult, error) {
+				return artifacts.AdjudicateResult{}, record(ctx, tenantID, opts.DryRun)
+			}, func() { closes++ }, nil
+		}
+		writeAdjudicationConfig(true)
 		GinkgoT().Setenv("CROSSCODEX_DATABASE_TENANT_ADMIN_DSN", testTenantAdminDSN)
 	})
 
 	AfterEach(func() {
 		runTenantListFn, openRetentionScanFn, openReconcileArtifactsFn = origList, origScan, origReconcile
+		openAdjudicateArtifactsFn = origAdjudicate
 	})
 
 	DescribeTable("runs once per active tenant, in list order, skipping suspended tenants",
@@ -123,6 +137,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--all-tenants"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--all-tenants"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--all-tenants"),
 	)
 
 	DescribeTable("opens the command's resources once for every tenant and closes them",
@@ -134,6 +149,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--all-tenants"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--all-tenants"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--all-tenants"),
 	)
 
 	DescribeTable("stops with one error when the resources cannot be opened",
@@ -149,6 +165,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--all-tenants"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--all-tenants"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--all-tenants"),
 	)
 
 	DescribeTable("passes --dry-run to every tenant",
@@ -159,6 +176,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--all-tenants", "--dry-run"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--all-tenants", "--dry-run"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--all-tenants", "--dry-run"),
 	)
 
 	DescribeTable("continues past a failing tenant and exits 1 naming it",
@@ -173,6 +191,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--all-tenants"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--all-tenants"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--all-tenants"),
 	)
 
 	DescribeTable("fails a malformed listed tenant without running it, quoting its ID",
@@ -200,6 +219,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--all-tenants"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--all-tenants"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--all-tenants"),
 	)
 
 	It("opens nothing when every listed tenant is malformed", func() {
@@ -250,6 +270,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--tenant", "acme"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--tenant", "acme"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--tenant", "acme"),
 	)
 
 	DescribeTable("closes the resources when a single tenant fails",
@@ -263,5 +284,6 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		},
 		Entry("retention scan", "retention", "scan", "--tenant", "acme"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--tenant", "acme"),
+		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--tenant", "acme"),
 	)
 })

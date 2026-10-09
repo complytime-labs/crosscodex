@@ -280,6 +280,16 @@ analysis:
   candidates:
     min_embedding_coverage: 0.8          # Minimum fraction of a job's controls that must have an embedding before candidate generation runs; below this, the candidate_generation stage fails the job (fail-closed)
     embed_model: "snowflake-arctic-embed2"  # Embedding model candidate generation reads; must be one of analysis.embedding.models
+  artifact_adjudication:                 # `crosscodexd admin adjudicate artifacts`
+    enabled: false                       # The command refuses to run until true
+    models: []                           # Panel models; required when enabled
+    samples_per_model: 3                 # Votes per model per pair; odd unless allow_even_samples
+    allow_even_samples: false            # Allow an even samples_per_model
+    sampling_temperature: 0.3            # [0, 2]; 0 is used with one sample per model
+    max_tokens: 200                      # Max tokens per panel reply
+    consensus_threshold: 0.67            # [0.5, 1]; below it (or on a split) the pair is undecided
+    max_error_rate: 0.34                 # [0, 1]; more failed votes than this fails the panel (0 disables)
+    max_attempts: 5                      # Failed panels before a pair is abandoned
 
 graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)
@@ -586,6 +596,10 @@ crosscodexd admin retention scan --all-tenants
 crosscodexd admin reconcile artifacts --tenant acme
 crosscodexd admin reconcile artifacts --tenant acme --dry-run --max-edges 10000
 crosscodexd admin reconcile artifacts --all-tenants --dry-run
+
+crosscodexd admin adjudicate artifacts --tenant acme
+crosscodexd admin adjudicate artifacts --tenant acme --dry-run
+crosscodexd admin adjudicate artifacts --all-tenants --max-pairs 500
 ```
 
 `--all-tenants` and `--tenant` are mutually exclusive. With `--all-tenants`:
@@ -598,9 +612,11 @@ crosscodexd admin reconcile artifacts --all-tenants --dry-run
   `tenant: <id>` line.
 - **Failures:** a failing tenant does not stop the rest. Its error goes to
   stderr, and once every tenant has run the command prints
-  `<n> of <m> tenants failed: <ids>` and exits `1`. If the connections cannot
-  be opened at all (database or NATS unreachable), the command prints that one
-  error and exits `1` without running any tenant.
+  `<n> of <m> tenants failed: <ids>` and exits `1`. If the command's
+  connections or configuration cannot be opened at all (for example the
+  database, graph or NATS is unreachable, or the adjudicator's prompts or LLM
+  client cannot be set up), the command prints that one error and exits `1`
+  without running any tenant.
 - **No active tenants:** the command says so on stderr and exits `0`.
 
 `reconcile artifacts` links equivalent artifacts across controls and catalogs:
@@ -611,8 +627,9 @@ crosscodexd admin reconcile artifacts --all-tenants --dry-run
   0.6 or more) get a scored `SAME_AS` edge.
 
 It never merges or deletes nodes. Every run is a full pass, and re-running it over
-an unchanged graph writes nothing, so it is safe to schedule (cron, Kubernetes
-CronJob) once per tenant or once with `--all-tenants`.
+an unchanged graph writes no graph elements (it re-queues open pairs for
+adjudication, which leaves already-queued pairs unchanged), so it is safe to
+schedule (cron, Kubernetes CronJob) once per tenant or once with `--all-tenants`.
 
 - **Overlapping runs:** do not run two reconciles for the same tenant at the same
   time.
@@ -621,7 +638,81 @@ CronJob) once per tenant or once with `--all-tenants`.
 - **Exit codes:** 0 on success, 1 on failure, 2 on usage errors.
 - **`--dry-run`:** the `new_*` counts report what the run would have written.
 
-Re-run the reconciler after rebuilding a tenant's graph.
+`reconcile artifacts` also queues every overlapping-name pair for
+adjudication in PostgreSQL (`artifact_pair_verdicts`). It skips pairs that are
+closed, meaning confirmed or rejected, and reports them in its `closed` row. It
+therefore needs the database as well as the graph.
+
+`adjudicate artifacts` asks an LLM panel whether each queued pair really
+denotes one artifact. Token overlap over-matches containment: "Policy" scores
+1.0 against "Password Policy".
+
+- **Confirmed:** the panel says yes. The scored edge is superseded by a
+  `SAME_AS` edge with `determination_type` `llm_panel`.
+- **Rejected:** the panel says no. The scored edge is superseded and nothing
+  replaces it.
+- **Undecided:** the panel split or fell below
+  `analysis.artifact_adjudication.consensus_threshold`. Automation does not
+  retry the pair; only a human verdict can change it.
+- **Failed:** too many calls failed or replies did not parse. The pair is
+  retried after a backoff (1 minute, doubling, at most 24 hours) and is
+  abandoned after `max_attempts` failures.
+- **LLM unavailable:** if every call for a pair fails because the LLM gateway
+  is unavailable or not configured, the rate limit is hit, the credentials
+  cannot be resolved or are rejected, or the model is not allowed, the
+  tenant's run stops, the command exits `1`, and the pair is
+  not charged a failure. An outage or a wrong key therefore cannot abandon the
+  queue; fix the cause and run the command again. With `--all-tenants`, an
+  outage stops each tenant's run in turn: every tenant fails fast on its first
+  pair, no attempts are charged, and the command exits `1` naming them.
+- **Human verdicts win:** automation never overwrites a pair a human decided
+  (`determination_type` `human`; no command records one yet, so this means a
+  row set in the database). If one lands while the panel is running, the panel's opinion is stored as
+  dissent and the graph is not touched.
+
+Other behavior:
+
+- **Scheduling:** run `reconcile artifacts` first, then `adjudicate
+  artifacts`, each on its own schedule. Concurrent adjudicators are safe:
+  each pair is leased to one run at a time, and a pair whose lease expired
+  before its panel started is skipped and retried by a later run.
+- **`--max-pairs`:** the most pairs sent to the panel per tenant per run
+  (default 200), which bounds LLM spend. Every pair costs
+  `len(models) × samples_per_model` completions.
+- **Report:** `recovered` (verdicts from earlier runs written to the graph
+  now), `orphaned` (confirmations whose groups are gone from the graph),
+  `leased`, `confirmed`, `rejected`, `undecided`, `failed`, `abandoned`,
+  `dissent` (a human decided the pair meanwhile), `stale` (another run decided
+  it meanwhile) and `expired` (lease expired before the panel started).
+- **`--dry-run`:** reports `pending`, `due` and `unprojected` counts without
+  leasing, calling the LLM or writing verdicts or graph elements. It opens no
+  LLM client, so it runs on a host without an LLM gateway (the configuration
+  check below still applies). Like every command that opens the database, it
+  first applies pending schema migrations.
+- **Configuration:** the command refuses to run until
+  `analysis.artifact_adjudication.enabled` is `true` and `models` is set (see
+  [Key Configuration Examples](#key-configuration-examples)).
+- **Prompt:** the panel uses the `artifact_same_as` prompt. Like any other
+  prompt, a YAML file with that `name` in `$XDG_DATA_HOME/crosscodex/prompts/`
+  or in a directory listed in `prompt.layer_paths` overrides it. Artifact
+  names and samples come from analyzed catalogs, so they are flattened to one
+  line, stripped of invisible characters, capped and escaped before they reach
+  the prompt.
+- **Exit codes:** 0 on success, 1 on failure, 2 on usage errors.
+- **Clocks:** leases are timed by the clock of the host running the command.
+  If adjudicators run on several hosts, keep their clocks in sync (NTP);
+  otherwise a skewed host can take a pair whose lease has not yet expired.
+
+After rebuilding a tenant's graph, re-run the reconciler, then mark that
+tenant's verdicts unprojected so the next adjudication run writes them back:
+
+```sql
+UPDATE artifact_pair_verdicts SET graph_applied = false
+WHERE tenant_id = '<tenant>' AND status IN ('confirmed', 'rejected');
+```
+
+Run it as the database owner, since `app_user` is confined by row-level
+security.
 
 `crosscodexd admin backup` captures, lists, verifies and restores PostgreSQL (WAL-G base backups plus WAL archiving for PITR), tenant object stores, and the JetStream audit streams:
 
@@ -754,6 +845,13 @@ scan of every active tenant at 02:00:
 To scan only one tenant, use `--tenant acme` in place of `--all-tenants`. Do not
 schedule both at the same time: non-dry-run scans share one global lock, so one
 of them would fail every night (see [Backups](deploy/README.md#backups)).
+
+Artifact deduplication runs the same way. Reconcile first, then adjudicate:
+
+```cron
+0 3 * * *  crosscodexd admin reconcile artifacts --all-tenants >> /var/log/crosscodex/reconcile.log 2>&1
+30 3 * * * crosscodexd admin adjudicate artifacts --all-tenants >> /var/log/crosscodex/adjudicate.log 2>&1
+```
 
 ## Uninstall
 

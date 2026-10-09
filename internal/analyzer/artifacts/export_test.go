@@ -4,3 +4,6 @@ package artifacts
 
 // ExportArtifactID exposes the deterministic Artifact node ID derivation.
 var ExportArtifactID = artifactID
+
+// ExportCleanText exposes cleanText.
+var ExportCleanText = cleanText

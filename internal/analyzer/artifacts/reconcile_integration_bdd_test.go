@@ -22,6 +22,7 @@ var _ = Describe("Reconcile on Apache AGE", Ordered, func() {
 		ctx          context.Context
 		db           *sql.DB
 		g            graphdb.GraphDB
+		store        *fakeVerdictStore
 		cleanup      testspecs.TestCleanup
 		tenantID     string
 		opts         artifacts.ReconcileOptions
@@ -38,6 +39,7 @@ var _ = Describe("Reconcile on Apache AGE", Ordered, func() {
 		tenantID = "reconcile-int-" + uuid.New().String()
 		Expect(g.CreateGraph(ctx, tenantID)).To(Succeed())
 		graphCreated = true
+		store = newFakeVerdictStore()
 		// ChunkSize 2 forces several BulkCreateEdges transactions.
 		opts = artifacts.ReconcileOptions{MaxEdges: 100, ChunkSize: 2, Now: reconcileNow}
 
@@ -60,7 +62,7 @@ var _ = Describe("Reconcile on Apache AGE", Ordered, func() {
 	})
 
 	It("writes groups, memberships and matches in chunks", func() {
-		res, err := artifacts.Reconcile(ctx, g, tenantID, opts)
+		res, err := artifacts.Reconcile(ctx, g, store, tenantID, opts)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).To(Equal(artifacts.ReconcileResult{
 			Artifacts: 4, Groups: 3, NewGroups: 3, NewMemberships: 4, Matches: 1, NewMatches: 1,
@@ -70,7 +72,7 @@ var _ = Describe("Reconcile on Apache AGE", Ordered, func() {
 	})
 
 	It("writes nothing on a second run", func() {
-		res, err := artifacts.Reconcile(ctx, g, tenantID, opts)
+		res, err := artifacts.Reconcile(ctx, g, store, tenantID, opts)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res).To(Equal(artifacts.ReconcileResult{Artifacts: 4, Groups: 3, Matches: 1}))
 	})
@@ -83,7 +85,7 @@ var _ = Describe("Reconcile on Apache AGE", Ordered, func() {
 
 		// The superseded edge still owns its ID, so the write drops it and
 		// completes the rest without error.
-		res, err := artifacts.Reconcile(ctx, g, tenantID, opts)
+		res, err := artifacts.Reconcile(ctx, g, store, tenantID, opts)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.NewMemberships).To(Equal(0))
 	})
