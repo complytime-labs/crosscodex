@@ -1,0 +1,50 @@
+internal/analyzer/artifacts/adjudicate.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-491
+internal/analyzer/artifacts/adjudicate_queue_bdd_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-236
+internal/analyzer/artifacts/sameas_parser_property_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-40
+pkg/config/types.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 422-429,642-693,695
+  s_6a62b7549ddda9::t_9664e7e15a96f6 694,696
+internal/analyzer/artifacts/adjudicate_helpers_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-76
+internal/analyzer/artifacts/adjudicate_integration_bdd_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-129
+pkg/config/validate.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 371-373
+internal/analyzer/artifacts/export_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 7-9
+internal/analyzer/artifacts/adjudicate_helpers_unit_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-16
+internal/analyzer/artifacts/sameas_parser_bdd_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-41
+pkg/prompt/defaults/artifact_same_as.yaml
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-137
+internal/analyzer/artifacts/adjudicate_bdd_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-555
+pkg/prompt/prompt_bdd_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1257,1260,1268
+pkg/config/defaults.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 139-148
+pkg/config/config_adjudication_bdd_test.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-92
+internal/analyzer/artifacts/sameas_parser.go
+  s_6a62b7549ddda9::t_db3fe980eb576f 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9d5656f4bf1a689c0cd69431bbbec58e6111b49",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
