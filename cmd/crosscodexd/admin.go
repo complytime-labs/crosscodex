@@ -15,13 +15,12 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
-	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // adminUsage lists every `crosscodexd admin` subcommand.
 const adminUsage = `usage:
-  crosscodexd admin retention scan --tenant <id> [--dry-run]
-  crosscodexd admin reconcile artifacts --tenant <id> [--dry-run] [--max-edges <n>]
+  crosscodexd admin retention scan (--tenant <id> | --all-tenants) [--dry-run]
+  crosscodexd admin reconcile artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-edges <n>]
   crosscodexd admin backup run
   crosscodexd admin backup list
   crosscodexd admin backup verify [--point <id>]
@@ -72,7 +71,8 @@ func runAdmin(args []string) int {
 // retentionScanCmd parses `admin retention scan` flags and runs the scan.
 func retentionScanCmd(args []string) int {
 	fs := flag.NewFlagSet("crosscodexd admin retention scan", flag.ContinueOnError)
-	tenantID := fs.String("tenant", "", "tenant ID whose data to scan (required)")
+	tenantID := fs.String("tenant", "", "tenant ID whose data to scan")
+	allTenants := fs.Bool("all-tenants", false, "scan every active tenant (needs database.tenant_admin_dsn)")
 	dryRun := fs.Bool("dry-run", false, "report what would change without mutating any data")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -80,19 +80,19 @@ func retentionScanCmd(args []string) int {
 		}
 		return 2
 	}
-	if *tenantID == "" {
-		fmt.Fprintln(os.Stderr, "admin retention scan: --tenant is required")
+	if !tenantSelection("admin retention scan", *tenantID, *allTenants) {
 		return 2
 	}
 
-	return runRetentionScan(*tenantID, *dryRun)
+	return runRetentionScan(*tenantID, *allTenants, *dryRun)
 }
 
 // reconcileArtifactsCmd parses `admin reconcile artifacts` flags and runs the
 // reconciler.
 func reconcileArtifactsCmd(args []string) int {
 	fs := flag.NewFlagSet("crosscodexd admin reconcile artifacts", flag.ContinueOnError)
-	tenantID := fs.String("tenant", "", "tenant ID whose artifacts to reconcile (required)")
+	tenantID := fs.String("tenant", "", "tenant ID whose artifacts to reconcile")
+	allTenants := fs.Bool("all-tenants", false, "reconcile every active tenant (needs database.tenant_admin_dsn)")
 	dryRun := fs.Bool("dry-run", false, "report what would be written without writing")
 	maxEdges := fs.Int("max-edges", artifacts.DefaultReconcileMaxEdges, "fail before writing if the run would add more SAME_AS edges than this")
 	if err := fs.Parse(args); err != nil {
@@ -101,8 +101,7 @@ func reconcileArtifactsCmd(args []string) int {
 		}
 		return 2
 	}
-	if *tenantID == "" {
-		fmt.Fprintln(os.Stderr, "admin reconcile artifacts: --tenant is required")
+	if !tenantSelection("admin reconcile artifacts", *tenantID, *allTenants) {
 		return 2
 	}
 	if *maxEdges <= 0 {
@@ -110,75 +109,85 @@ func reconcileArtifactsCmd(args []string) int {
 		return 2
 	}
 
-	return runReconcileArtifacts(*tenantID, *dryRun, *maxEdges)
+	return runReconcileArtifacts(*tenantID, *allTenants, *dryRun, *maxEdges)
 }
 
-// runRetentionScan loads the daemon config, scopes the context to tenantID, runs
-// one in-process retention scan against the daemon's configured resources, and
-// prints the report. It returns a process exit code (0 success, 1 on any
-// failure). The context is scoped via tenant.WithTenant before the scan so the
-// RLS-keyed DBCollector, archive, and purge paths resolve the target tenant;
-// scoping first also fails a malformed tenant fast, before any pool is opened.
-func runRetentionScan(tenantID string, dryRun bool) int {
+// runRetentionScan loads the daemon config and runs one in-process retention
+// scan for tenantID, or for every active tenant when all is set, printing each
+// report. It returns a process exit code (0 success, 1 on any failure).
+// runForTenants scopes the context via tenant.WithTenant before each scan so
+// the RLS-keyed DBCollector, archive, and purge paths resolve the target
+// tenant; scoping first also fails a malformed tenant fast, before any pool is
+// opened.
+func runRetentionScan(tenantID string, all, dryRun bool) int {
+	const cmd = "admin retention scan"
 	ctx := context.Background()
 
-	cfg, err := config.NewLoader().Load(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "admin retention scan: load config: %v\n", err)
+	cfg, ok := loadAdminConfig(ctx, cmd)
+	if !ok {
 		return 1
 	}
 
-	ctx, err = tenant.WithTenant(ctx, tenantID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "admin retention scan: %v\n", err)
-		return 1
-	}
-
-	report, err := runRetentionScanFn(ctx, cfg, tenantID, retention.ScanOptions{
-		DryRun: dryRun,
-		Now:    time.Now().UTC(),
+	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+		scan, closeFn, err := openRetentionScanFn(ctx, cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return func(ctx context.Context, id string) error {
+			report, err := scan(ctx, id, retention.ScanOptions{
+				DryRun: dryRun,
+				Now:    time.Now().UTC(),
+			})
+			if err != nil {
+				return err
+			}
+			writeRetentionReport(os.Stdout, report)
+			return nil
+		}, closeFn, nil
 	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "admin retention scan: %v\n", err)
-		return 1
-	}
-
-	writeRetentionReport(os.Stdout, report)
-	return 0
 }
 
-// runRetentionScanFn executes a tenant-scoped retention scan against the
-// daemon's configured resources. It is a package var so the one-shot's config
-// load, tenant scoping, and dry-run propagation can be unit-tested with a fake
-// that records its arguments, without a live database. Production wiring is
-// daemonRetentionScan.
-var runRetentionScanFn = daemonRetentionScan
+// retentionScanner runs one tenant's retention scan on resources opened once
+// for the whole command. ctx must already carry the target tenant.
+type retentionScanner func(ctx context.Context, tenantID string, opts retention.ScanOptions) (retention.Report, error)
 
-// daemonRetentionScan builds the shared resources and a per-tenant
-// retention.Engine via the same seam the gateway AdminService uses
-// (buildRetentionWiring), runs one scan with the configured default policy, and
-// closes every pool it opened before returning. ctx must already carry the
-// target tenant.
-func daemonRetentionScan(ctx context.Context, cfg *config.Config, tenantID string, opts retention.ScanOptions) (retention.Report, error) {
+// openRetentionScanFn opens the resources a retention scan needs and returns
+// a scanner over them plus the func that closes them. It is a package var so
+// the one-shot's config load, tenant scoping, and dry-run propagation can be
+// unit-tested with a fake that records its arguments, without a live
+// database. Production wiring is daemonOpenRetentionScan.
+var openRetentionScanFn = daemonOpenRetentionScan
+
+// daemonOpenRetentionScan builds the shared resources and the retention wiring
+// the gateway AdminService uses (buildRetentionWiring) once, so --all-tenants
+// runs every tenant on one set of connections. Each scan builds that tenant's
+// retention.Engine and runs it with the configured default policy.
+func daemonOpenRetentionScan(ctx context.Context, cfg *config.Config) (retentionScanner, func(), error) {
 	shared, err := buildSharedResources(ctx, cfg, requiredResources{db: true, nats: true})
 	if err != nil {
-		return retention.Report{}, err
+		return nil, nil, err
 	}
-	defer shared.close()
 
 	wiring, err := buildRetentionWiring(cfg, shared, slog.Default())
 	if err != nil {
-		return retention.Report{}, err
-	}
-	if wiring.purgePool != nil {
-		defer wiring.purgePool.Close()
+		shared.close()
+		return nil, nil, err
 	}
 
-	engine, err := wiring.engineFor(tenantID, wiring.defaultPolicy)
-	if err != nil {
-		return retention.Report{}, err
+	scan := func(ctx context.Context, tenantID string, opts retention.ScanOptions) (retention.Report, error) {
+		engine, err := wiring.engineFor(tenantID, wiring.defaultPolicy)
+		if err != nil {
+			return retention.Report{}, err
+		}
+		return engine.Scan(ctx, opts)
 	}
-	return engine.Scan(ctx, opts)
+	closeFn := func() {
+		if wiring.purgePool != nil {
+			wiring.purgePool.Close()
+		}
+		shared.close()
+	}
+	return scan, closeFn, nil
 }
 
 // writeRetentionReport renders a retention.Report to w in a human-readable form:
@@ -219,56 +228,64 @@ func writeRetentionReport(w io.Writer, report retention.Report) {
 	}
 }
 
-// runReconcileArtifacts loads the daemon config, scopes the context to
-// tenantID (failing a malformed tenant before any connection is opened), runs
-// one artifact reconcile and prints the result. It returns a process exit
-// code: 0 on success, 1 on any failure. Bulk writes use graph.max_bulk_edges
-// as the chunk size, the same bound the graph RPC enforces.
-func runReconcileArtifacts(tenantID string, dryRun bool, maxEdges int) int {
+// runReconcileArtifacts loads the daemon config and runs one artifact
+// reconcile for tenantID, or for every active tenant when all is set, printing
+// each result. runForTenants scopes the context first, failing a malformed
+// tenant before any connection is opened. It returns a process exit code: 0 on
+// success, 1 on any failure. Bulk writes use graph.max_bulk_edges as the chunk
+// size, the same bound the graph RPC enforces.
+func runReconcileArtifacts(tenantID string, all, dryRun bool, maxEdges int) int {
+	const cmd = "admin reconcile artifacts"
 	ctx := context.Background()
 
-	cfg, err := config.NewLoader().Load(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "admin reconcile artifacts: load config: %v\n", err)
+	cfg, ok := loadAdminConfig(ctx, cmd)
+	if !ok {
 		return 1
 	}
 
-	ctx, err = tenant.WithTenant(ctx, tenantID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "admin reconcile artifacts: %v\n", err)
-		return 1
-	}
-
-	res, err := runReconcileArtifactsFn(ctx, cfg, tenantID, artifacts.ReconcileOptions{
-		DryRun:    dryRun,
-		MaxEdges:  maxEdges,
-		ChunkSize: cfg.Graph.MaxBulkEdges,
-		Now:       time.Now().UTC(),
+	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+		reconcile, closeFn, err := openReconcileArtifactsFn(ctx, cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return func(ctx context.Context, id string) error {
+			res, err := reconcile(ctx, id, artifacts.ReconcileOptions{
+				DryRun:    dryRun,
+				MaxEdges:  maxEdges,
+				ChunkSize: cfg.Graph.MaxBulkEdges,
+				Now:       time.Now().UTC(),
+			})
+			if err != nil {
+				return err
+			}
+			writeReconcileReport(os.Stdout, res)
+			return nil
+		}, closeFn, nil
 	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "admin reconcile artifacts: %v\n", err)
-		return 1
-	}
-
-	writeReconcileReport(os.Stdout, res)
-	return 0
 }
 
-// runReconcileArtifactsFn runs one artifact reconcile against the daemon's
-// graph. It is a package var so flag parsing, config load and tenant scoping
-// can be unit-tested with a fake, without a live database. Production wiring
-// is daemonReconcileArtifacts.
-var runReconcileArtifactsFn = daemonReconcileArtifacts
+// artifactReconciler runs one tenant's artifact reconcile on a graph
+// connection opened once for the whole command. ctx must already carry the
+// target tenant.
+type artifactReconciler func(ctx context.Context, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error)
 
-// daemonReconcileArtifacts opens only the graph connection and runs
-// artifacts.Reconcile. ctx must already carry the target tenant.
-func daemonReconcileArtifacts(ctx context.Context, cfg *config.Config, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error) {
+// openReconcileArtifactsFn opens the daemon's graph connection and returns a
+// reconciler over it plus the func that closes it. It is a package var so flag
+// parsing, config load and tenant scoping can be unit-tested with a fake,
+// without a live database. Production wiring is daemonOpenReconcileArtifacts.
+var openReconcileArtifactsFn = daemonOpenReconcileArtifacts
+
+// daemonOpenReconcileArtifacts opens only the graph connection; each reconcile
+// runs artifacts.Reconcile on it.
+func daemonOpenReconcileArtifacts(ctx context.Context, cfg *config.Config) (artifactReconciler, func(), error) {
 	shared, err := buildSharedResources(ctx, cfg, requiredResources{graph: true})
 	if err != nil {
-		return artifacts.ReconcileResult{}, err
+		return nil, nil, err
 	}
-	defer shared.close()
-	return artifacts.Reconcile(ctx, shared.graphDB_, tenantID, opts)
+	reconcile := func(ctx context.Context, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error) {
+		return artifacts.Reconcile(ctx, shared.graphDB_, tenantID, opts)
+	}
+	return reconcile, shared.close, nil
 }
 
 // writeReconcileReport renders an artifacts.ReconcileResult to w. Under

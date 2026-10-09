@@ -242,7 +242,7 @@ Exit codes: `0` ok, `1` failure or stale, `2` usage error. `verify` reports a st
 
 There is no in-daemon scheduler yet (sub-project 2 of issue #36); run `backup run` from cron or a systemd timer until it lands.
 
-`backup run` and a non-dry-run `retention scan` share one global advisory lock and exclude each other — the lock is global, so two non-dry-run retention scans (any tenants) also exclude each other. Whichever side loses the race exits `1` with `backup/retention in progress, retry later`; retry it once the winner finishes.
+`backup run` and a non-dry-run `retention scan` share one global advisory lock and exclude each other — the lock is global, so two non-dry-run retention scans (any tenants) also exclude each other. Whichever side loses the race exits `1` with `backup/retention in progress, retry later`; retry it once the winner finishes. A `retention scan --all-tenants` scans tenants one at a time, so it never contends with itself, but a tenant whose scan loses the race to a backup is reported as failed and the run exits `1` after the remaining tenants.
 
 ### Restore
 

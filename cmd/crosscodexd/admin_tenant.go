@@ -15,6 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -37,6 +38,12 @@ func tenantAdminDSN(ctx context.Context, cmd string) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	return requireTenantAdminDSN(cmd, cfg)
+}
+
+// requireTenantAdminDSN returns cfg's database.tenant_admin_dsn, printing how
+// to set it when it is empty.
+func requireTenantAdminDSN(cmd string, cfg *config.Config) (string, bool) {
 	if cfg.Database.TenantAdminDSN == "" {
 		fmt.Fprintf(os.Stderr, "%s: database.tenant_admin_dsn is not set. Set CROSSCODEX_DATABASE_TENANT_ADMIN_DSN to a DSN for the tenant_admin role (created by migration 007_tenant_admin).\n", cmd)
 		return "", false
