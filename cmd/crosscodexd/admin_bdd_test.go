@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 
@@ -112,6 +113,19 @@ var _ = Describe("runAdmin reconcile artifacts arg parsing", func() {
 		Entry("zero --max-edges", "reconcile", "artifacts", "--tenant", "acme", "--max-edges", "0"),
 		Entry("negative --max-edges", "reconcile", "artifacts", "--tenant", "acme", "--max-edges", "-1"),
 	)
+})
+
+var _ = Describe("writeReconcileReport", func() {
+	It("prints every metric, including closed, with its value", func() {
+		var buf bytes.Buffer
+		writeReconcileReport(&buf, artifacts.ReconcileResult{Artifacts: 1, Skipped: 2, Groups: 3, NewGroups: 4,
+			NewMemberships: 5, Matches: 6, Closed: 7, NewMatches: 8})
+		Expect(buf.String()).To(MatchRegexp(`^METRIC +VALUE\n`))
+		for metric, value := range map[string]int{"artifacts": 1, "skipped": 2, "groups": 3, "new_groups": 4,
+			"new_memberships": 5, "matches": 6, "closed": 7, "new_matches": 8} {
+			Expect(buf.String()).To(MatchRegexp(`(?m)^%s +%d$`, metric, value))
+		}
+	})
 })
 
 var _ = Describe("runAdmin reconcile artifacts wiring", func() {

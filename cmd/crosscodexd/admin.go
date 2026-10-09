@@ -269,21 +269,24 @@ func runReconcileArtifacts(tenantID string, all, dryRun bool, maxEdges int) int 
 // target tenant.
 type artifactReconciler func(ctx context.Context, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error)
 
-// openReconcileArtifactsFn opens the daemon's graph connection and returns a
-// reconciler over it plus the func that closes it. It is a package var so flag
-// parsing, config load and tenant scoping can be unit-tested with a fake,
-// without a live database. Production wiring is daemonOpenReconcileArtifacts.
+// openReconcileArtifactsFn opens the daemon's graph connection and app pool
+// and returns a reconciler over them plus the func that closes them. It is a
+// package var so flag parsing, config load and tenant scoping can be
+// unit-tested with a fake, without a live database. Production wiring is
+// daemonOpenReconcileArtifacts.
 var openReconcileArtifactsFn = daemonOpenReconcileArtifacts
 
-// daemonOpenReconcileArtifacts opens only the graph connection; each reconcile
-// runs artifacts.Reconcile on it.
+// daemonOpenReconcileArtifacts opens the graph connection and the app pool
+// that backs the SAME_AS verdict store; each reconcile runs
+// artifacts.Reconcile on them.
 func daemonOpenReconcileArtifacts(ctx context.Context, cfg *config.Config) (artifactReconciler, func(), error) {
-	shared, err := buildSharedResources(ctx, cfg, requiredResources{graph: true})
+	shared, err := buildSharedResources(ctx, cfg, requiredResources{db: true, graph: true})
 	if err != nil {
 		return nil, nil, err
 	}
+	store := artifacts.NewPGVerdictStore(dbpkg.NewTenantPool(shared.appPool))
 	reconcile := func(ctx context.Context, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error) {
-		return artifacts.Reconcile(ctx, shared.graphDB_, tenantID, opts)
+		return artifacts.Reconcile(ctx, shared.graphDB_, store, tenantID, opts)
 	}
 	return reconcile, shared.close, nil
 }
@@ -299,6 +302,7 @@ func writeReconcileReport(w io.Writer, res artifacts.ReconcileResult) {
 	fmt.Fprintf(tw, "new_groups\t%d\n", res.NewGroups)
 	fmt.Fprintf(tw, "new_memberships\t%d\n", res.NewMemberships)
 	fmt.Fprintf(tw, "matches\t%d\n", res.Matches)
+	fmt.Fprintf(tw, "closed\t%d\n", res.Closed)
 	fmt.Fprintf(tw, "new_matches\t%d\n", res.NewMatches)
 	if err := tw.Flush(); err != nil {
 		fmt.Fprintf(w, "error flushing output: %v\n", err)
