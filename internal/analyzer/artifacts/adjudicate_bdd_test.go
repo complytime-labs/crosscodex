@@ -119,6 +119,30 @@ var _ = Describe("Adjudicator", func() {
 			Expect(r.graphApplied).To(BeTrue())
 		})
 
+		It("projects onto the candidate edge the pair was re-enqueued with mid-panel, not the leased one", func() {
+			bumped := graphdb.DerivedID("same-as", "token_overlap_v99", f.low, f.high)
+			var once sync.Once
+			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+				once.Do(func() {
+					Expect(f.g.CreateEdge(f.ctx, adjTenant, f.low, f.high, graphdb.Edge{ID: bumped, Label: "SAME_AS",
+						ValidFrom: f.now, DeterminationType: "token_overlap", Confidence: 0.9})).To(Succeed())
+					Expect(f.store.Enqueue(f.ctx, adjTenant, []artifacts.PairCandidate{{LowGroupID: f.low,
+						HighGroupID: f.high, CandidateEdgeID: bumped, SimilarityScore: 0.9}}, f.now)).To(Succeed())
+				})
+				return answer("YES"), nil
+			}
+			res, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Confirmed: 1}))
+
+			bumpedEdge, err := f.g.GetEdge(f.ctx, adjTenant, bumped)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bumpedEdge.ValidTo).NotTo(BeNil(), "the re-enqueued candidate is superseded")
+			panel, err := f.g.GetEdge(f.ctx, adjTenant, graphdb.DerivedID("same-as", "llm_panel", f.low, f.high))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(panel.Supersedes).To(Equal(bumped))
+		})
+
 		It("leaves a pair below the threshold undecided, terminally, with the graph unchanged", func() {
 			f.cfg.ConsensusThreshold = 0.8
 			f.llm.reply = func(req *llmclient.CompletionRequest) (string, error) {

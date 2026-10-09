@@ -154,33 +154,33 @@ func (s *fakeVerdictStore) Lease(ctx context.Context, tenantID string, n int, le
 	return out, nil
 }
 
-func (s *fakeVerdictStore) Decide(ctx context.Context, tenantID, key string, v artifacts.Verdict) (artifacts.DecideOutcome, error) {
+func (s *fakeVerdictStore) Decide(ctx context.Context, tenantID, key string, v artifacts.Verdict) (artifacts.Decision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.err["Decide"]; err != nil {
-		return 0, err
+		return artifacts.Decision{}, err
 	}
 	if err := checkTenant(ctx, tenantID); err != nil {
-		return 0, err
+		return artifacts.Decision{}, err
 	}
 	switch v.Status {
 	case artifacts.VerdictConfirmed, artifacts.VerdictRejected, artifacts.VerdictUndecided:
 	default:
-		return 0, fmt.Errorf("decide %s: status %q is not a panel verdict", key, v.Status)
+		return artifacts.Decision{}, fmt.Errorf("decide %s: status %q is not a panel verdict", key, v.Status)
 	}
 	r, ok := s.rows[fakeRowID(tenantID, key)]
 	switch {
 	case !ok:
-		return 0, fmt.Errorf("decide %s: pair is not queued", key)
+		return artifacts.Decision{}, fmt.Errorf("decide %s: pair is not queued", key)
 	case r.determination == artifacts.DeterminationHuman:
-		return artifacts.DecideHumanOwned, nil
+		return artifacts.Decision{Outcome: artifacts.DecideHumanOwned}, nil
 	case r.status != artifacts.VerdictPending:
-		return artifacts.DecideStale, nil
+		return artifacts.Decision{Outcome: artifacts.DecideStale}, nil
 	}
 	r.status, r.determination = v.Status, artifacts.DeterminationLLMPanel
 	r.confidence, r.evidence, r.decidedAt = v.Confidence, v.Evidence, v.DecidedAt
 	r.leasedUntil, r.graphApplied, r.lastError = time.Time{}, false, ""
-	return artifacts.DecideApplied, nil
+	return artifacts.Decision{Outcome: artifacts.DecideApplied, CandidateEdgeID: r.cand.CandidateEdgeID}, nil
 }
 
 func (s *fakeVerdictStore) RecordDissent(ctx context.Context, tenantID, key string, v artifacts.Verdict) error {

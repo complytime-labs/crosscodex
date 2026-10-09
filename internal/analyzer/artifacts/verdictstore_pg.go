@@ -186,24 +186,23 @@ UPDATE artifact_pair_verdicts
 SET status = $3, determination_type = 'llm_panel', determined_by = $4, confidence = $5,
     evidence = $6::jsonb, decided_at = $7, leased_until = NULL, graph_applied = false, last_error = NULL
 WHERE tenant_id = $1 AND pair_key = $2 AND status = 'pending' AND determination_type <> 'human'
-RETURNING pair_key`
+RETURNING candidate_edge_id`
 
-func (s *PGVerdictStore) Decide(ctx context.Context, tenantID, key string, v Verdict) (DecideOutcome, error) {
+func (s *PGVerdictStore) Decide(ctx context.Context, tenantID, key string, v Verdict) (Decision, error) {
 	switch v.Status {
 	case VerdictConfirmed, VerdictRejected, VerdictUndecided:
 	default:
-		return 0, fmt.Errorf("decide %s: status %q is not a panel verdict", key, v.Status)
+		return Decision{}, fmt.Errorf("decide %s: status %q is not a panel verdict", key, v.Status)
 	}
 	evidence, err := json.Marshal(v.Evidence)
 	if err != nil {
-		return 0, fmt.Errorf("decide %s: encode evidence: %w", key, err)
+		return Decision{}, fmt.Errorf("decide %s: encode evidence: %w", key, err)
 	}
-	var outcome DecideOutcome
+	var d Decision
 	err = s.inTx(ctx, tenantID, func(tx db.Transaction) error {
-		var got string
-		err := tx.QueryRow(ctx, decideSQL, tenantID, key, string(v.Status), adjudicatorName, v.Confidence, string(evidence), v.DecidedAt).Scan(&got)
+		err := tx.QueryRow(ctx, decideSQL, tenantID, key, string(v.Status), adjudicatorName, v.Confidence, string(evidence), v.DecidedAt).Scan(&d.CandidateEdgeID)
 		if err == nil {
-			outcome = DecideApplied
+			d.Outcome = DecideApplied
 			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -218,16 +217,16 @@ func (s *PGVerdictStore) Decide(ctx context.Context, tenantID, key string, v Ver
 		case err != nil:
 			return fmt.Errorf("decide %s: %w", key, err)
 		case determination == DeterminationHuman:
-			outcome = DecideHumanOwned
+			d.Outcome = DecideHumanOwned
 		default:
-			outcome = DecideStale
+			d.Outcome = DecideStale
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return Decision{}, err
 	}
-	return outcome, nil
+	return d, nil
 }
 
 func (s *PGVerdictStore) RecordDissent(ctx context.Context, tenantID, key string, v Verdict) error {

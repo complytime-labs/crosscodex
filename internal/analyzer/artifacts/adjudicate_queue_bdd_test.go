@@ -29,7 +29,7 @@ var _ = Describe("Adjudicator queue", func() {
 		out, err := f.store.Decide(f.ctx, adjTenant, f.key, artifacts.Verdict{Status: status, Confidence: 1,
 			Evidence: artifacts.PanelEvidence{PromptName: "artifact_same_as", PromptVersion: "9.9.9"}, DecidedAt: f.now})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(out).To(Equal(artifacts.DecideApplied))
+		Expect(out.Outcome).To(Equal(artifacts.DecideApplied))
 	}
 
 	noLLM := func(*llmclient.CompletionRequest) (string, error) {

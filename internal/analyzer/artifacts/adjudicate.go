@@ -378,13 +378,15 @@ func formatSamples(samples []MemberSample) string {
 	return strings.Join(lines, "\n")
 }
 
-// commit records v and, when the store applied it, projects it.
+// commit records v and, when the store applied it, projects it onto the
+// candidate edge Decide returns, which a reconcile run may have changed since
+// p was leased.
 func (a *Adjudicator) commit(ctx context.Context, tenantID string, p LeasedPair, v Verdict, res *AdjudicateResult) error {
-	outcome, err := a.store.Decide(ctx, tenantID, p.Key, v)
+	d, err := a.store.Decide(ctx, tenantID, p.Key, v)
 	if err != nil {
 		return fmt.Errorf("adjudicate artifacts: record verdict for %s: %w", p.Key, err)
 	}
-	switch outcome {
+	switch d.Outcome {
 	case DecideHumanOwned:
 		if err := a.store.RecordDissent(ctx, tenantID, p.Key, v); err != nil {
 			return fmt.Errorf("adjudicate artifacts: record dissent for %s: %w", p.Key, err)
@@ -405,7 +407,7 @@ func (a *Adjudicator) commit(ctx context.Context, tenantID string, p LeasedPair,
 		return nil
 	}
 	return a.project(ctx, tenantID, Projection{
-		Key: p.Key, LowGroupID: p.LowGroupID, HighGroupID: p.HighGroupID, CandidateEdgeID: p.CandidateEdgeID,
+		Key: p.Key, LowGroupID: p.LowGroupID, HighGroupID: p.HighGroupID, CandidateEdgeID: d.CandidateEdgeID,
 		Status: v.Status, Confidence: v.Confidence, Evidence: v.Evidence, DecidedAt: v.DecidedAt,
 	}, res)
 }
