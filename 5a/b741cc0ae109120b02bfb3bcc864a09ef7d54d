@@ -1,0 +1,30 @@
+README.md
+  s_6a62b7549ddda9::t_ac13ba0a0d5ee6 684-687
+internal/analyzer/artifacts/adjudicate.go
+  s_6a62b7549ddda9::t_ac13ba0a0d5ee6 128-129
+internal/analyzer/artifacts/adjudicate_queue_bdd_test.go
+  s_6a62b7549ddda9::t_2130c54fbee170 213-219
+cmd/crosscodexd/admin.go
+  s_6a62b7549ddda9::t_01435d46141f2a 359,388-391,396
+cmd/crosscodexd/admin_all_tenants_bdd_test.go
+  s_6a62b7549ddda9::t_2130c54fbee170 49
+  s_6a62b7549ddda9::t_c2f222b051dae8 111
+cmd/crosscodexd/admin_adjudicate_bdd_test.go
+  s_6a62b7549ddda9::t_c2f222b051dae8 54-55,61-62,82,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ab741cc0ae109120b02bfb3bcc864a09ef7d54d",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
