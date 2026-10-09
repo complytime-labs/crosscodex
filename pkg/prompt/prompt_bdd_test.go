@@ -1254,10 +1254,10 @@ var _ = Describe("SubstitutePlaceholders (extended)", func() {
 })
 
 var _ = Describe("Embedded Defaults (extended)", func() {
-	It("loads exactly seven defaults", func() {
+	It("loads exactly eight defaults", func() {
 		specs, err := prompt.ExportLoadEmbeddedDefaults()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(specs).To(HaveLen(7))
+		Expect(specs).To(HaveLen(8))
 		Expect(specs).To(HaveKey("artifacts"))
 		Expect(specs).To(HaveKey("requires"))
 		Expect(specs).To(HaveKey("relationship"))
@@ -1265,6 +1265,7 @@ var _ = Describe("Embedded Defaults (extended)", func() {
 		Expect(specs).To(HaveKey("enrichment"))
 		Expect(specs).To(HaveKey("section-detect"))
 		Expect(specs).To(HaveKey("structured-extract"))
+		Expect(specs).To(HaveKey("artifact_same_as"))
 	})
 })
 

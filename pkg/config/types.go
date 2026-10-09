@@ -419,13 +419,14 @@ func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
 
 // AnalysisConfig configures the analysis service.
 type AnalysisConfig struct {
-	Engine         EngineConfig         `yaml:"engine" json:"engine"`
-	Classification ClassificationConfig `yaml:"classification" json:"classification"`
-	Embedding      EmbeddingConfig      `yaml:"embedding" json:"embedding"`
-	Relationship   RelationshipConfig   `yaml:"relationship" json:"relationship"`
-	Candidates     CandidateConfig      `yaml:"candidates" json:"candidates"`
-	Requires       RequiresConfig       `yaml:"requires" json:"requires"`
-	Artifacts      ArtifactsConfig      `yaml:"artifacts" json:"artifacts"`
+	Engine               EngineConfig               `yaml:"engine" json:"engine"`
+	Classification       ClassificationConfig       `yaml:"classification" json:"classification"`
+	Embedding            EmbeddingConfig            `yaml:"embedding" json:"embedding"`
+	Relationship         RelationshipConfig         `yaml:"relationship" json:"relationship"`
+	Candidates           CandidateConfig            `yaml:"candidates" json:"candidates"`
+	Requires             RequiresConfig             `yaml:"requires" json:"requires"`
+	Artifacts            ArtifactsConfig            `yaml:"artifacts" json:"artifacts"`
+	ArtifactAdjudication ArtifactAdjudicationConfig `yaml:"artifact_adjudication" json:"artifact_adjudication"`
 }
 
 // EngineConfig configures the analysis engine orchestrator.
@@ -635,6 +636,61 @@ func (c *ArtifactsConfig) Validate() error {
 			c.FuzzyThreshold, ErrInvalidConfig)
 	}
 
+	return nil
+}
+
+// ArtifactAdjudicationConfig configures `crosscodexd admin adjudicate
+// artifacts`, the LLM panel that confirms or rejects the reconciler's
+// token-overlap SAME_AS candidates.
+type ArtifactAdjudicationConfig struct {
+	Enabled             bool     `yaml:"enabled" json:"enabled"`                           // The command refuses to run unless true
+	Models              []string `yaml:"models" json:"models"`                             // LLM models on the panel; must be non-empty when enabled
+	SamplesPerModel     int      `yaml:"samples_per_model" json:"samples_per_model"`       // Votes per model per pair; positive and odd unless allow_even_samples
+	AllowEvenSamples    bool     `yaml:"allow_even_samples" json:"allow_even_samples"`     // Allow an even samples_per_model
+	SamplingTemperature float64  `yaml:"sampling_temperature" json:"sampling_temperature"` // [0.0, 2.0]; 0 is used when samples_per_model is 1
+	MaxTokens           int      `yaml:"max_tokens" json:"max_tokens"`                     // Max tokens per reply; must be positive
+	ConsensusThreshold  float64  `yaml:"consensus_threshold" json:"consensus_threshold"`   // Minimum consensus fraction for a verdict [0.5, 1.0]
+	MaxErrorRate        float64  `yaml:"max_error_rate" json:"max_error_rate"`             // Max fraction of failed votes [0.0, 1.0]; 0 disables the check
+	MaxAttempts         int      `yaml:"max_attempts" json:"max_attempts"`                 // Failed panels before a pair is abandoned; must be positive
+}
+
+// Validate checks ArtifactAdjudicationConfig when it is enabled.
+// Errors wrap ErrInvalidConfig.
+func (c *ArtifactAdjudicationConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if len(c.Models) == 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.models must not be empty when enabled: %w", ErrInvalidConfig)
+	}
+	if c.SamplesPerModel <= 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.samples_per_model %d must be positive: %w",
+			c.SamplesPerModel, ErrInvalidConfig)
+	}
+	if !c.AllowEvenSamples && c.SamplesPerModel%2 == 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.samples_per_model %d must be odd unless allow_even_samples=true: %w",
+			c.SamplesPerModel, ErrInvalidConfig)
+	}
+	if c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
+		return fmt.Errorf("analysis.artifact_adjudication.sampling_temperature %g must be in range [0.0, 2.0]: %w",
+			c.SamplingTemperature, ErrInvalidConfig)
+	}
+	if c.MaxTokens <= 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.max_tokens %d must be positive: %w",
+			c.MaxTokens, ErrInvalidConfig)
+	}
+	if c.ConsensusThreshold < 0.5 || c.ConsensusThreshold > 1.0 {
+		return fmt.Errorf("analysis.artifact_adjudication.consensus_threshold %g must be in range [0.5, 1.0]: %w",
+			c.ConsensusThreshold, ErrInvalidConfig)
+	}
+	if c.MaxErrorRate < 0.0 || c.MaxErrorRate > 1.0 {
+		return fmt.Errorf("analysis.artifact_adjudication.max_error_rate %g must be in range [0.0, 1.0]: %w",
+			c.MaxErrorRate, ErrInvalidConfig)
+	}
+	if c.MaxAttempts <= 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.max_attempts %d must be positive: %w",
+			c.MaxAttempts, ErrInvalidConfig)
+	}
 	return nil
 }
 
