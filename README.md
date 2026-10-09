@@ -575,15 +575,33 @@ crosscodex admin hold release --tenant acme --name "litigation-2026-014"
 For on-host operation (e.g. an external scheduler running next to the daemon),
 `crosscodexd` exposes in-process one-shot commands. Like `healthcheck` and
 `version`, they are **unauthenticated by design**. They run locally against the
-daemon's configured resources and select their tenant with `--tenant`:
+daemon's configured resources and select their tenant with `--tenant`, or run
+for every active tenant with `--all-tenants`:
 
 ```sh
 crosscodexd admin retention scan --tenant acme
 crosscodexd admin retention scan --tenant acme --dry-run
+crosscodexd admin retention scan --all-tenants
 
 crosscodexd admin reconcile artifacts --tenant acme
 crosscodexd admin reconcile artifacts --tenant acme --dry-run --max-edges 10000
+crosscodexd admin reconcile artifacts --all-tenants --dry-run
 ```
+
+`--all-tenants` and `--tenant` are mutually exclusive. With `--all-tenants`:
+
+- **Tenant list:** the command lists tenants through
+  [`database.tenant_admin_dsn`](#tenant-administration) and skips suspended ones.
+  It refuses to run when that DSN is unset.
+- **Order and output:** tenants run one at a time in ID order, on one set of
+  connections opened for the whole run. Each report on stdout is preceded by a
+  `tenant: <id>` line.
+- **Failures:** a failing tenant does not stop the rest. Its error goes to
+  stderr, and once every tenant has run the command prints
+  `<n> of <m> tenants failed: <ids>` and exits `1`. If the connections cannot
+  be opened at all (database or NATS unreachable), the command prints that one
+  error and exits `1` without running any tenant.
+- **No active tenants:** the command says so on stderr and exits `0`.
 
 `reconcile artifacts` links equivalent artifacts across controls and catalogs:
 
@@ -594,7 +612,7 @@ crosscodexd admin reconcile artifacts --tenant acme --dry-run --max-edges 10000
 
 It never merges or deletes nodes. Every run is a full pass, and re-running it over
 an unchanged graph writes nothing, so it is safe to schedule (cron, Kubernetes
-CronJob) once per tenant.
+CronJob) once per tenant or once with `--all-tenants`.
 
 - **Overlapping runs:** do not run two reconciles for the same tenant at the same
   time.
@@ -727,11 +745,15 @@ backup:
 
 When `retention.scan_schedule` is left empty, drive scans from an external
 scheduler using the daemon one-shot. Example crontab entry running a nightly
-scan for one tenant at 02:00:
+scan of every active tenant at 02:00:
 
 ```cron
-0 2 * * *  crosscodexd admin retention scan --tenant acme >> /var/log/crosscodex/retention.log 2>&1
+0 2 * * *  crosscodexd admin retention scan --all-tenants >> /var/log/crosscodex/retention.log 2>&1
 ```
+
+To scan only one tenant, use `--tenant acme` in place of `--all-tenants`. Do not
+schedule both at the same time: non-dry-run scans share one global lock, so one
+of them would fail every night (see [Backups](deploy/README.md#backups)).
 
 ## Uninstall
 

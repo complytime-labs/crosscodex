@@ -180,7 +180,10 @@ application code.
   the host with no RPC authentication, consistent with the `healthcheck` and
   `version` one-shots. It selects its tenant via `--tenant` and scopes the
   context before scanning; RLS still confines every database operation to that
-  tenant.
+  tenant. `--all-tenants` lists active tenants through the `tenant_admin` role
+  (`cmd/crosscodexd/admin_batch.go`), then scans each one the same way, one at
+  a time, on one set of connections opened before the first valid tenant; the
+  scan itself never runs as `tenant_admin`.
 
 The cross-tenant isolation spec in
 `pkg/retention/engine_integration_bdd_test.go` proves this end to end against a

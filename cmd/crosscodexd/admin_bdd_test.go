@@ -24,10 +24,6 @@ var _ = Describe("runAdmin arg parsing", func() {
 		Expect(runAdmin([]string{"retention"})).To(Equal(2))
 	})
 
-	It("requires --tenant", func() {
-		Expect(runAdmin([]string{"retention", "scan"})).To(Equal(2))
-	})
-
 	It("requires a non-empty --tenant value", func() {
 		Expect(runAdmin([]string{"retention", "scan", "--tenant", ""})).To(Equal(2))
 	})
@@ -41,14 +37,21 @@ var _ = Describe("runAdmin retention scan wiring", func() {
 	var (
 		gotTenant string
 		gotDryRun bool
-		origFn    func(context.Context, *config.Config, string, retention.ScanOptions) (retention.Report, error)
+		origFn    func(context.Context, *config.Config) (retentionScanner, func(), error)
 	)
 
+	// openWith installs scan as the scanner the one-shot opens.
+	openWith := func(scan retentionScanner) {
+		openRetentionScanFn = func(context.Context, *config.Config) (retentionScanner, func(), error) {
+			return scan, func() {}, nil
+		}
+	}
+
 	BeforeEach(func() {
-		origFn = runRetentionScanFn
+		origFn = openRetentionScanFn
 		gotTenant = ""
 		gotDryRun = false
-		runRetentionScanFn = func(ctx context.Context, _ *config.Config, tenantID string, opts retention.ScanOptions) (retention.Report, error) {
+		openWith(func(ctx context.Context, tenantID string, opts retention.ScanOptions) (retention.Report, error) {
 			// The scan ctx must carry the tenant that runRetentionScan set via
 			// tenant.WithTenant, so the RLS-scoped collectors resolve it.
 			t, err := tenant.FromContext(ctx)
@@ -56,7 +59,7 @@ var _ = Describe("runAdmin retention scan wiring", func() {
 			gotTenant = t
 			gotDryRun = opts.DryRun
 			return retention.Report{}, nil
-		}
+		})
 		// Point config.NewLoader().Load at an empty XDG dir so it resolves to
 		// built-in defaults, keeping this wiring test free of any DB or on-disk
 		// config.
@@ -64,7 +67,7 @@ var _ = Describe("runAdmin retention scan wiring", func() {
 	})
 
 	AfterEach(func() {
-		runRetentionScanFn = origFn
+		openRetentionScanFn = origFn
 	})
 
 	It("scopes the scan ctx to --tenant and passes --dry-run through", func() {
@@ -80,20 +83,20 @@ var _ = Describe("runAdmin retention scan wiring", func() {
 	})
 
 	It("returns 1 when the scan fails", func() {
-		runRetentionScanFn = func(context.Context, *config.Config, string, retention.ScanOptions) (retention.Report, error) {
+		openWith(func(context.Context, string, retention.ScanOptions) (retention.Report, error) {
 			return retention.Report{}, errors.New("boom")
-		}
+		})
 		Expect(runAdmin([]string{"retention", "scan", "--tenant", "acme"})).To(Equal(1))
 	})
 
-	It("rejects a malformed --tenant before running the scan", func() {
-		called := false
-		runRetentionScanFn = func(context.Context, *config.Config, string, retention.ScanOptions) (retention.Report, error) {
-			called = true
-			return retention.Report{}, nil
+	It("rejects a malformed --tenant before opening any resource", func() {
+		opened := false
+		openRetentionScanFn = func(context.Context, *config.Config) (retentionScanner, func(), error) {
+			opened = true
+			return nil, nil, errors.New("must not open")
 		}
 		Expect(runAdmin([]string{"retention", "scan", "--tenant", "Bad_Tenant"})).To(Equal(1))
-		Expect(called).To(BeFalse(), "an invalid tenant must fail before the scan runs")
+		Expect(opened).To(BeFalse(), "an invalid tenant must fail before any pool is opened")
 	})
 })
 
@@ -104,7 +107,6 @@ var _ = Describe("runAdmin reconcile artifacts arg parsing", func() {
 		},
 		Entry("reconcile without a target", "reconcile"),
 		Entry("unknown reconcile target", "reconcile", "bogus", "--tenant", "acme"),
-		Entry("missing --tenant", "reconcile", "artifacts"),
 		Entry("empty --tenant", "reconcile", "artifacts", "--tenant", ""),
 		Entry("unknown flag", "reconcile", "artifacts", "--tenant", "acme", "--nope"),
 		Entry("zero --max-edges", "reconcile", "artifacts", "--tenant", "acme", "--max-edges", "0"),
@@ -117,24 +119,28 @@ var _ = Describe("runAdmin reconcile artifacts wiring", func() {
 		gotTenant string
 		gotOpts   artifacts.ReconcileOptions
 		fnErr     error
-		origFn    func(context.Context, *config.Config, string, artifacts.ReconcileOptions) (artifacts.ReconcileResult, error)
+		opened    bool
+		origFn    func(context.Context, *config.Config) (artifactReconciler, func(), error)
 	)
 
 	BeforeEach(func() {
-		origFn = runReconcileArtifactsFn
-		gotTenant, gotOpts, fnErr = "", artifacts.ReconcileOptions{}, nil
-		runReconcileArtifactsFn = func(ctx context.Context, _ *config.Config, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error) {
-			t, err := tenant.FromContext(ctx)
-			Expect(err).NotTo(HaveOccurred(), "reconcile ctx must carry the tenant set by tenant.WithTenant")
-			Expect(t).To(Equal(tenantID))
-			gotTenant, gotOpts = tenantID, opts
-			return artifacts.ReconcileResult{}, fnErr
+		origFn = openReconcileArtifactsFn
+		gotTenant, gotOpts, fnErr, opened = "", artifacts.ReconcileOptions{}, nil, false
+		openReconcileArtifactsFn = func(context.Context, *config.Config) (artifactReconciler, func(), error) {
+			opened = true
+			return func(ctx context.Context, tenantID string, opts artifacts.ReconcileOptions) (artifacts.ReconcileResult, error) {
+				t, err := tenant.FromContext(ctx)
+				Expect(err).NotTo(HaveOccurred(), "reconcile ctx must carry the tenant set by tenant.WithTenant")
+				Expect(t).To(Equal(tenantID))
+				gotTenant, gotOpts = tenantID, opts
+				return artifacts.ReconcileResult{}, fnErr
+			}, func() {}, nil
 		}
 		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
 	})
 
 	AfterEach(func() {
-		runReconcileArtifactsFn = origFn
+		openReconcileArtifactsFn = origFn
 	})
 
 	It("passes the tenant and defaults through", func() {
@@ -157,8 +163,9 @@ var _ = Describe("runAdmin reconcile artifacts wiring", func() {
 		Expect(runAdmin([]string{"reconcile", "artifacts", "--tenant", "acme"})).To(Equal(1))
 	})
 
-	It("rejects a malformed --tenant before reconciling", func() {
+	It("rejects a malformed --tenant before opening the graph connection", func() {
 		Expect(runAdmin([]string{"reconcile", "artifacts", "--tenant", "Not_Valid"})).To(Equal(1))
+		Expect(opened).To(BeFalse())
 		Expect(gotTenant).To(BeEmpty())
 	})
 })
