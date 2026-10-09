@@ -1,0 +1,31 @@
+pkg/db/migrations/008_artifact_pair_verdicts.up.sql
+  s_6a62b7549ddda9::t_06692610abe920 39-45
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_6a62b7549ddda9::t_06692610abe920 148-149,166,251-252,256,310-311
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_6a62b7549ddda9::t_3db6b0cf1bcded 158-160,238-248,348-350,352,358,369-370,381-383,388-389,394-424,429-433,455,459-466,473-479,535-546
+  s_6a62b7549ddda9::t_4d538322b86b26 255-276,547
+internal/analyzer/artifacts/verdicts.go
+  s_6a62b7549ddda9::t_4383ff05acd4cb 174
+  s_6a62b7549ddda9::t_06692610abe920 166-168
+  s_6a62b7549ddda9::t_dce1fd56084f2d 70-72,121
+internal/analyzer/artifacts/verdictstore_fake_test.go
+  s_6a62b7549ddda9::t_555aa9841102b9 13,50-60,122,128-130,135-136,149,155-157,167,173-175,196,201,207-209,230,236-238,245,251-253,255-256,267,273-275,300,306-310,316,322,324
+  s_6a62b7549ddda9::t_90d0a791574f8d 323
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37ebbadb53d56d8dd80ea50c3402dbe3da466659",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
