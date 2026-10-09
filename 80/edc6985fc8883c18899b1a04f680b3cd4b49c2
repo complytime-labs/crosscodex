@@ -1,0 +1,19 @@
+internal/analyzer/artifacts/adjudicate_integration_bdd_test.go
+  s_6a62b7549ddda9::t_c56ffc2b9a2b38 1-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "80edc6985fc8883c18899b1a04f680b3cd4b49c2",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
