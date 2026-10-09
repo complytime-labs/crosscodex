@@ -1,0 +1,28 @@
+pkg/prompt/defaults/artifact_same_as.yaml
+  s_6a62b7549ddda9::t_077ecd4da98a6d 2,17-18,20-30,36,38,42,44,53-55,59-72,75-76,79-93,96,99-113,115-116,119-133,135-137
+internal/analyzer/artifacts/adjudicate_bdd_test.go
+  s_6a62b7549ddda9::t_3b891557788f21 9,16
+  s_6a62b7549ddda9::t_077ecd4da98a6d 389
+  s_6a62b7549ddda9::t_a8ca481d2e084f 367-388,390-415,425-448
+  s_6a62b7549ddda9::t_75cdf0e05619f6 416-424
+internal/analyzer/artifacts/adjudicate.go
+  s_6a62b7549ddda9::t_dbbe7cce2254bd 7,41-42,47-48,52-56,233-235,341-351,365
+  s_6a62b7549ddda9::t_75cdf0e05619f6 359-360,362-363
+  s_6a62b7549ddda9::t_477c188263b273 49-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61cfde8a407ee4c0af1c56780b1a2301bf7c435f",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
