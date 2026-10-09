@@ -339,7 +339,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 			version, dirty, err := migrator.Version(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(uint(6)))
+			Expect(version).To(Equal(uint(7)))
 			Expect(dirty).To(BeFalse())
 		})
 
@@ -385,7 +385,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 			version, dirty, err = migrator.Version(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(uint(6)))
+			Expect(version).To(Equal(uint(7)))
 			Expect(dirty).To(BeFalse())
 
 			// Restore role passwords wiped by the Down/Up round trip so

@@ -302,10 +302,11 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	rt.retentionPurgePool = purgePool
 
 	server, err := gateway.NewServer(ctx, gateway.ServerConfig{
-		Addr:    cfg.Server.Addr,
-		TLS:     cfg.TLS,
-		Service: gatewaySvc,
-		Admin:   adminSvc,
+		TenantStatus: gateway.NewPoolTenantStatus(shared.appPool),
+		Addr:         cfg.Server.Addr,
+		TLS:          cfg.TLS,
+		Service:      gatewaySvc,
+		Admin:        adminSvc,
 	})
 	if err != nil {
 		return fmt.Errorf("create gateway server: %w", err)
@@ -651,9 +652,10 @@ func attachGatewayServer(ctx context.Context, cfg *config.Config, shared *shared
 	)
 
 	server, err := gateway.NewServer(ctx, gateway.ServerConfig{
-		Addr:    cfg.Server.Addr,
-		TLS:     cfg.TLS,
-		Service: gatewaySvc,
+		TenantStatus: gateway.NewPoolTenantStatus(shared.appPool),
+		Addr:         cfg.Server.Addr,
+		TLS:          cfg.TLS,
+		Service:      gatewaySvc,
 	})
 	if err != nil {
 		return fmt.Errorf("create gateway server: %w", err)

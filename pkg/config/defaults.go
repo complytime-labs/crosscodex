@@ -35,6 +35,7 @@ tls:
 database:
   dsn: ""
   graph_dsn: ""
+  tenant_admin_dsn: ""
   extensions: []
   max_conns: 10
   ssl_mode: prefer

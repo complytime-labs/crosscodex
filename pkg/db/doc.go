@@ -54,7 +54,8 @@
 // can escalate to another's capabilities.
 //
 //   - postgres (superuser): Owns all tables and extensions. Used only for
-//     schema migrations and tenant provisioning (INSERT INTO tenants).
+//     schema migrations, role all's default_tenant provisioning
+//     (EnsureTenant), and as the owner the tenant_admin functions run as.
 //     Never used by application code at runtime.
 //
 //   - app_user: SELECT/INSERT/UPDATE/DELETE on public-schema tables, with
@@ -71,6 +72,15 @@
 //     graph metadata queries, but has NO access to public-schema relational
 //     tables. This is the role used by the graph connection pool (configured
 //     via database.graph_dsn).
+//
+//   - tenant_admin (migration 007): no table, sequence or schema grants.
+//     It may only EXECUTE the SECURITY DEFINER functions provision_tenant,
+//     set_tenant_status and list_tenants, so operators can provision and
+//     suspend tenants (crosscodexd admin tenant, via TenantAdmin) without
+//     the owner credential, and cannot read tenant data or bulk-modify
+//     tenants. app_user may EXECUTE only tenant_is_active, which the
+//     gateway calls (TenantActive) to refuse suspended tenants despite the
+//     tenants RLS policy.
 //
 // This separation means a bug in graph-handling code cannot read or modify
 // relational data (jobs, classifications, vote summaries), and a bug in

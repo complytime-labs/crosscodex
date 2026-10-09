@@ -18,23 +18,29 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 )
 
+// captureStream swaps *stream (os.Stdout or os.Stderr) for a temp file for
+// the duration of fn and returns fn's result plus everything written to it.
+func captureStream(stream **os.File, fn func() int) (int, string) {
+	f, err := os.CreateTemp(GinkgoT().TempDir(), "out")
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(f.Close)
+	orig := *stream
+	*stream = f
+	DeferCleanup(func() { *stream = orig })
+
+	code := fn()
+
+	*stream = orig
+	data, err := os.ReadFile(f.Name())
+	Expect(err).NotTo(HaveOccurred())
+	return code, string(data)
+}
+
 // captureStderr swaps os.Stderr for a temp file for the duration of fn, the
 // same approach runWithEnv in main_bdd_test.go uses, and returns fn's result
 // plus everything written to stderr.
 func captureStderr(fn func() int) (int, string) {
-	stderrFile, err := os.CreateTemp(GinkgoT().TempDir(), "stderr")
-	Expect(err).NotTo(HaveOccurred())
-	DeferCleanup(stderrFile.Close)
-	origStderr := os.Stderr
-	os.Stderr = stderrFile
-	DeferCleanup(func() { os.Stderr = origStderr })
-
-	code := fn()
-
-	os.Stderr = origStderr
-	data, err := os.ReadFile(stderrFile.Name())
-	Expect(err).NotTo(HaveOccurred())
-	return code, string(data)
+	return captureStream(&os.Stderr, fn)
 }
 
 func cmdSampleManifest() *backup.Manifest {

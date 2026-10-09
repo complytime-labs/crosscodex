@@ -208,10 +208,10 @@ CrossCodex backs up PostgreSQL (WAL-G base backups plus continuous WAL archiving
 
 2. Set `CROSSCODEX_BACKUP_DSN` in `.env` (see `.env.example`); it is a `postgres://` URL for `backup_user`.
 
-3. `backup_user` is created by migration `006_backup_user` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser:
+3. `backup_user` is created by migration `006_backup_user` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser. Use psql's `\password`, which prompts for the password and hashes it on the client, so it stays out of shell history, the process list and the server log:
 
    ```bash
-   docker compose exec db psql -U crosscodex -d crosscodex -c "ALTER ROLE backup_user PASSWORD '...'"
+   docker compose exec db psql -U crosscodex -d crosscodex -c '\password backup_user'
    ```
 
 4. Bring the stack up with both compose files:
@@ -307,6 +307,30 @@ Postgres is captured first and is authoritative. The objects and JetStream steps
 | `JetStream backup and restore need an external NATS server` | `nats.url` is empty (embedded mode). Point it at an external NATS server; backup and restore do not support the embedded server.                                                                                                                                                                                                                                                                                                    |
 | `verify` reports `FAILURE` under WAL CHECK                  | An archived WAL segment is missing: point-in-time recovery across the gap is impossible. Take a new `backup run` to restart the WAL chain. A gap within the newest `WALG_UPLOAD_CONCURRENCY` segments (default 16) instead reports `WARNING` ("probably uploading") and does not fail verify.                                                                                                                                       |
 | `backup is disabled`                                        | `backup.destination.backend` is empty. Set it to `local` or `s3` and set `backup.dsn` (or `CROSSCODEX_BACKUP_DSN`), then retry.                                                                                                                                                                                                                                                                                                     |
+
+## Tenant administration
+
+`crosscodexd admin tenant` creates, lists, suspends and resumes tenants as the `tenant_admin` role. That role holds no table privileges; it can only call the tenant functions from migration `007_tenant_admin`.
+
+1. `tenant_admin` is created by migration `007_tenant_admin` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser. Use psql's `\password`, which prompts for the password and hashes it on the client, so it stays out of shell history, the process list and the server log:
+
+   ```bash
+   docker compose exec db psql -U crosscodex -d crosscodex -c '\password tenant_admin'
+   ```
+
+2. Set `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN` in `.env` (see `.env.example`), then recreate the `crosscodexd` container so it picks up the variable.
+
+3. Run the commands inside the container:
+
+   ```bash
+   docker compose exec crosscodexd /crosscodexd admin tenant list
+   docker compose exec crosscodexd /crosscodexd admin tenant create --tenant acme --display-name "Acme Corp"
+   docker compose exec crosscodexd /crosscodexd admin tenant suspend --tenant acme
+   ```
+
+A suspended tenant's requests are refused with `PermissionDenied` until `admin tenant resume`.
+
+The gateway checks tenant status with one uncached database query per request or stream, on the same pool as application queries (`database.max_conns`, default 10). Suspension therefore takes effect on the next request. Under heavy concurrency, raise `database.max_conns`: an exhausted pool refuses requests with `Unavailable`.
 
 ## What's next
 

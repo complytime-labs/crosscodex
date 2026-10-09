@@ -52,11 +52,12 @@ func identityFromContext(ctx context.Context) *authn.Identity {
 }
 
 type connectAuthInterceptor struct {
-	service *Service
+	service      *Service
+	tenantStatus TenantStatusChecker
 }
 
-func (s *Service) connectAuthInterceptor() connect.Interceptor {
-	return &connectAuthInterceptor{service: s}
+func (s *Service) connectAuthInterceptor(tenantStatus TenantStatusChecker) connect.Interceptor {
+	return &connectAuthInterceptor{service: s, tenantStatus: tenantStatus}
 }
 
 func (i *connectAuthInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
@@ -90,6 +91,9 @@ func (i *connectAuthInterceptor) WrapUnary(next connect.UnaryFunc) connect.Unary
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("invalid tenant: %w", err))
 		}
 		ctx = tenant.WithUser(ctx, identity.Subject)
+		if err := i.checkTenantActive(ctx, identity.TenantID); err != nil {
+			return nil, err
+		}
 
 		return next(ctx, req)
 	}
@@ -130,9 +134,31 @@ func (i *connectAuthInterceptor) WrapStreamingHandler(next connect.StreamingHand
 			return connect.NewError(connect.CodeInternal, fmt.Errorf("invalid tenant: %w", err))
 		}
 		ctx = tenant.WithUser(ctx, identity.Subject)
+		if err := i.checkTenantActive(ctx, identity.TenantID); err != nil {
+			return err
+		}
 
 		return next(ctx, conn)
 	}
+}
+
+// checkTenantActive refuses a tenant that is suspended or has no tenants
+// row. A failed lookup also refuses (fail closed); its detail is logged here
+// and withheld from the caller (CWE-209).
+func (i *connectAuthInterceptor) checkTenantActive(ctx context.Context, tenantID string) error {
+	active, err := i.tenantStatus.TenantActive(ctx, tenantID)
+	if err != nil {
+		i.service.logger.ErrorContext(ctx, "tenant status check failed", "tenant", tenantID, "error", err)
+		i.service.recordAuthFailure(ctx, "tenant_status_error")
+		return connect.NewError(connect.CodeUnavailable, errors.New("tenant status could not be checked; retry later"))
+	}
+	if !active {
+		i.service.recordAuthFailure(ctx, "tenant_inactive")
+		return connect.NewError(connect.CodePermissionDenied, fmt.Errorf(
+			"tenant %q is suspended or not provisioned; requests are refused until an operator runs 'crosscodexd admin tenant resume --tenant %s' (or 'crosscodexd admin tenant create' if it does not exist)",
+			tenantID, tenantID))
+	}
+	return nil
 }
 
 func (s *Service) recordAuthFailure(ctx context.Context, reason string) {

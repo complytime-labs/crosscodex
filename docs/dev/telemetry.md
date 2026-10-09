@@ -74,6 +74,7 @@ A span's instrumentation scope therefore tells you which package produced it. Pa
 | `crosscodexd admin retention scan`                                         | One-shot command that does not call `telemetry.Init`                 |
 | `crosscodexd admin reconcile artifacts`                                    | One-shot command that does not call `telemetry.Init`                 |
 | `crosscodexd admin backup *`                                               | One-shot command that does not call `telemetry.Init`                 |
+| `crosscodexd admin tenant *`                                               | One-shot command that does not call `telemetry.Init`                 |
 
 ## Traces
 
@@ -199,8 +200,11 @@ For components whose telemetry option takes a `(trace.Tracer, metric.Meter)` pai
 | `backup.bytes.total`                    | Int64Counter     | pkg/backup         | Bytes captured per store during `backup run`, by `store`; recorded only on that step's success                                                                                                                                                                                                                                                                                             |
 | `backup.verify.failures.total`          | Int64Counter     | pkg/backup         | Integrity problems found by `backup verify` (manifest issues plus WAL `FAILURE` checks), summed per call; not recorded when zero                                                                                                                                                                                                                                                           |
 | `backup.staleness_seconds`              | Float64Gauge     | pkg/backup         | Age of each store's newest backup point in seconds, by `store`; absent (not zero) when no complete point exists                                                                                                                                                                                                                                                                            |
+| `db.tenant_admin.operations.total`      | Int64Counter     | pkg/db             | Tenant administration calls by `operation` (`provision`, `set_status`, `list`, `get`, `import`) and `result` (`ok`, `error`) |
+| `db.tenant_admin.duration_ms`           | Float64Histogram | pkg/db             | Duration of each tenant administration call in milliseconds, by `operation` |
+| `crosscodex.gateway.auth.failures.total` | Int64Counter     | internal/gateway   | Rejected requests by `reason`: `no_tls`, `auth_failed`, `tenant_inactive` (suspended or not provisioned), `tenant_status_error` (status lookup failed) |
 
-`crosscodexd admin backup *` does not call `telemetry.Init` (see the uninstrumented-paths table above), so these instruments exist but are never exported today.
+`crosscodexd admin backup *` does not call `telemetry.Init` (see the uninstrumented-paths table above), so these instruments exist but are never exported today. The same holds for `db.tenant_admin.*` under `crosscodexd admin tenant *`.
 
 ### Graph Driver Metric Attributes
 
