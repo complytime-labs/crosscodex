@@ -1,0 +1,21 @@
+internal/analyzer/artifacts/adjudicate_bdd_test.go
+  s_f590f7a3daccdf::t_57921dc429e31a 359
+internal/analyzer/artifacts/adjudicate.go
+  s_f590f7a3daccdf::t_0543c07ef16797 68-71,281,321,355-356
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4fd7092972e1f44a3dbceb782a480be6256eea01",
+  "prompts": {},
+  "sessions": {
+    "s_f590f7a3daccdf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bbd5bb3a-db23-48ac-9ad2-65c6d29da2c6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
