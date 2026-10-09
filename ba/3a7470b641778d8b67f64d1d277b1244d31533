@@ -1,0 +1,45 @@
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 1-608
+internal/analyzer/artifacts/reconcile.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 26,69,75-76,98-110,124-136,148,176-178,182-211,248,269-270,278,287,289,302-304,310-312
+pkg/db/migrations/008_artifact_pair_verdicts.down.sql
+  s_6a62b7549ddda9::t_4824b50e3a87b7 1-2
+cmd/crosscodexd/admin_bdd_test.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 6,118-128
+  s_6a62b7549ddda9::t_3c2957406ad97e 129-130
+pkg/db/migrations/008_artifact_pair_verdicts.up.sql
+  s_6a62b7549ddda9::t_4824b50e3a87b7 1-59
+internal/analyzer/artifacts/verdicts.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 1-182
+internal/analyzer/artifacts/reconcile_bdd_test.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 54-57,68,76,101,127,138,151,160,171,180,183,192,196,206,220,231,250,261,271,279,291,302,313,323,342,357,370,374-538
+  s_6a62b7549ddda9::t_85f40f2cdb5427 539
+pkg/db/db_integration_bdd_test.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 342,388
+cmd/crosscodexd/admin.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 272-276,279-281,283,287,289,305
+internal/analyzer/artifacts/verdictstore_fake_inspect_test.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 1-59
+internal/analyzer/artifacts/reconcile_integration_bdd_test.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 25,42,65,75,88
+internal/analyzer/artifacts/verdictstore_fake_test.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 1-299
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_6a62b7549ddda9::t_4824b50e3a87b7 1-336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba3a7470b641778d8b67f64d1d277b1244d31533",
+  "prompts": {},
+  "sessions": {
+    "s_6a62b7549ddda9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c19d433-ffa6-4530-9a99-175b94d5ff7e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
