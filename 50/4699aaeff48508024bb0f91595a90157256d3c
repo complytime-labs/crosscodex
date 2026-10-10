@@ -1,0 +1,19 @@
+internal/analyzer/artifacts/verdictstore_contract_bdd_test.go
+  s_eef827ad3fb01c::t_8ed8ccf8927d6b 86,89,106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "504699aaeff48508024bb0f91595a90157256d3c",
+  "prompts": {},
+  "sessions": {
+    "s_eef827ad3fb01c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8578c1c5-471a-4203-9442-8b021c871891",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
