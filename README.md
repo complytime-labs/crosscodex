@@ -604,6 +604,7 @@ crosscodexd admin reconcile artifacts --all-tenants --dry-run
 
 crosscodexd admin adjudicate artifacts --tenant acme
 crosscodexd admin adjudicate artifacts --tenant acme --dry-run
+crosscodexd admin adjudicate artifacts --tenant acme --reproject
 crosscodexd admin adjudicate artifacts --all-tenants --max-pairs 500
 ```
 
@@ -685,7 +686,8 @@ Other behavior:
 - **`--max-pairs`:** the most pairs sent to the panel per tenant per run
   (default 200), which bounds LLM spend. Every pair costs
   `len(models) × samples_per_model` completions.
-- **Report:** `recovered` (verdicts from earlier runs written to the graph
+- **Report:** `reset` (with `--reproject`: verdicts marked for
+  re-projection), `recovered` (verdicts from earlier runs written to the graph
   now), `orphaned` (confirmations whose groups are gone from the graph),
   `leased`, `confirmed`, `rejected`, `undecided`, `failed`, `abandoned`,
   `dissent` (a human decided the pair meanwhile), `stale` (another run decided
@@ -695,6 +697,11 @@ Other behavior:
   LLM client, so it runs on a host without an LLM gateway (the configuration
   check below still applies). Like every command that opens the database, it
   first applies pending schema migrations.
+- **`--reproject`:** with `--tenant` only. Marks the tenant's projected
+  LLM-panel confirmed and rejected verdicts unprojected, then runs as usual,
+  so the run writes them back to the graph (`reset` counts them). Use it
+  after rebuilding the tenant's graph; human verdicts are untouched. It
+  cannot be combined with `--dry-run` or `--all-tenants`.
 - **Configuration:** the command refuses to run until
   `analysis.artifact_adjudication.enabled` is `true` and `models` is set (see
   [Key Configuration Examples](#key-configuration-examples)).
@@ -709,16 +716,9 @@ Other behavior:
   If adjudicators run on several hosts, keep their clocks in sync (NTP);
   otherwise a skewed host can take a pair whose lease has not yet expired.
 
-After rebuilding a tenant's graph, re-run the reconciler, then mark that
-tenant's verdicts unprojected so the next adjudication run writes them back:
-
-```sql
-UPDATE artifact_pair_verdicts SET graph_applied = false
-WHERE tenant_id = '<tenant>' AND status IN ('confirmed', 'rejected');
-```
-
-Run it as the database owner, since `app_user` is confined by row-level
-security.
+After rebuilding a tenant's graph, re-run the reconciler, then run
+`crosscodexd admin adjudicate artifacts --tenant <tenant> --reproject` to write
+the tenant's verdicts back to the graph.
 
 `crosscodexd admin backup` captures, lists, verifies and restores PostgreSQL (WAL-G base backups plus WAL archiving for PITR), tenant object stores, and the JetStream audit streams:
 

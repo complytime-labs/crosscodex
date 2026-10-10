@@ -49,6 +49,13 @@ func (s *fakeVerdictStore) set(tenantID string, cand artifacts.PairCandidate, st
 	r.status, r.determination = status, determination
 }
 
+// setProjected marks an existing row as written to the graph.
+func (s *fakeVerdictStore) setProjected(tenantID, key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rows[fakeRowID(tenantID, key)].graphApplied = true
+}
+
 // setHuman records a human verdict on an existing row, as the human verdict
 // API (a follow-up issue) will.
 func (s *fakeVerdictStore) setHuman(tenantID, key string, status artifacts.VerdictStatus) {

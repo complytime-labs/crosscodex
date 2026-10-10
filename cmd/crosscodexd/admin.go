@@ -22,7 +22,7 @@ import (
 const adminUsage = `usage:
   crosscodexd admin retention scan (--tenant <id> | --all-tenants) [--dry-run]
   crosscodexd admin reconcile artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-edges <n>]
-  crosscodexd admin adjudicate artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-pairs <n>]
+  crosscodexd admin adjudicate artifacts (--tenant <id> [--reproject] | --all-tenants) [--dry-run] [--max-pairs <n>]
   crosscodexd admin backup run
   crosscodexd admin backup list
   crosscodexd admin backup verify [--point <id>]
@@ -320,6 +320,7 @@ func adjudicateArtifactsCmd(args []string) int {
 	tenantID := fs.String("tenant", "", "tenant ID whose SAME_AS candidates to adjudicate")
 	allTenants := fs.Bool("all-tenants", false, "adjudicate every active tenant (needs database.tenant_admin_dsn)")
 	dryRun := fs.Bool("dry-run", false, "report the queue without leasing pairs or calling the LLM")
+	reproject := fs.Bool("reproject", false, "first mark the tenant's LLM-panel verdicts unprojected, so this run writes them back to a rebuilt graph (needs --tenant)")
 	maxPairs := fs.Int("max-pairs", artifacts.DefaultAdjudicateMaxPairs, "most candidate pairs to send to the LLM panel per tenant")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -335,14 +336,24 @@ func adjudicateArtifactsCmd(args []string) int {
 		return 2
 	}
 
-	return runAdjudicateArtifacts(*tenantID, *allTenants, *dryRun, *maxPairs)
+	if *reproject && *allTenants {
+		fmt.Fprintln(os.Stderr, "admin adjudicate artifacts: --reproject needs --tenant, not --all-tenants: a graph is rebuilt per tenant, so run --reproject once with --tenant <id> for each rebuilt tenant")
+		return 2
+	}
+	if *reproject && *dryRun {
+		fmt.Fprintln(os.Stderr, "admin adjudicate artifacts: --reproject cannot be combined with --dry-run, which writes nothing: drop --dry-run to re-project, or drop --reproject to preview the queue")
+		return 2
+	}
+
+	return runAdjudicateArtifacts(*tenantID, *allTenants, *dryRun, *reproject, *maxPairs)
 }
 
 // runAdjudicateArtifacts loads the daemon config and adjudicates tenantID's
 // SAME_AS candidates, or every active tenant's when all is set, printing each
 // result, including the partial result of a run that failed. It refuses to run unless analysis.artifact_adjudication is enabled.
+// With reproject it first marks the tenant's verdicts unprojected (see artifacts.AdjudicateOptions.Reproject).
 // It returns a process exit code: 0 on success, 1 on any failure.
-func runAdjudicateArtifacts(tenantID string, all, dryRun bool, maxPairs int) int {
+func runAdjudicateArtifacts(tenantID string, all, dryRun, reproject bool, maxPairs int) int {
 	const cmd = "admin adjudicate artifacts"
 	ctx := context.Background()
 
@@ -362,9 +373,10 @@ func runAdjudicateArtifacts(tenantID string, all, dryRun bool, maxPairs int) int
 		}
 		return func(ctx context.Context, id string) error {
 			res, err := adjudicate(ctx, id, artifacts.AdjudicateOptions{
-				DryRun:   dryRun,
-				MaxPairs: maxPairs,
-				Now:      func() time.Time { return time.Now().UTC() },
+				DryRun:    dryRun,
+				Reproject: reproject,
+				MaxPairs:  maxPairs,
+				Now:       func() time.Time { return time.Now().UTC() },
 			})
 			// A run stopped by an outage or a store error has already
 			// recorded verdicts; report them before the error.
@@ -412,6 +424,7 @@ func writeAdjudicateReport(w io.Writer, res artifacts.AdjudicateResult, dryRun b
 		fmt.Fprintf(tw, "due\t%d\n", res.Due)
 		fmt.Fprintf(tw, "unprojected\t%d\n", res.Unprojected)
 	} else {
+		fmt.Fprintf(tw, "reset\t%d\n", res.Reset)
 		fmt.Fprintf(tw, "recovered\t%d\n", res.Recovered)
 		fmt.Fprintf(tw, "orphaned\t%d\n", res.Orphaned)
 		fmt.Fprintf(tw, "leased\t%d\n", res.Leased)

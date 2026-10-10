@@ -115,10 +115,11 @@ var _ = Describe("Adjudicate on Apache AGE", Ordered, func() {
 	})
 
 	It("re-projects idempotently", func() {
-		store.resetProjected(tenantID)
-		res, err := adj.Run(ctx, tenantID, opts)
+		reproject := opts
+		reproject.Reproject = true
+		res, err := adj.Run(ctx, tenantID, reproject)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 2}))
+		Expect(res).To(Equal(artifacts.AdjudicateResult{Reset: 2, Recovered: 2}))
 		Expect(edgesOf(ctx, g, tenantID, "ArtifactGroup", "SAME_AS", "ArtifactGroup")).To(HaveLen(1))
 	})
 

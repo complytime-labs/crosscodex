@@ -556,6 +556,52 @@ var _ = Describe("PGVerdictStore", func() {
 		})
 	})
 
+	Describe("ResetProjection", func() {
+		It("marks projected llm_panel verdicts unprojected and leaves human rows alone", func() {
+			confirmed, rejected, undecided, human := verdictCandidate(1), verdictCandidate(2), verdictCandidate(3), verdictCandidate(4)
+			enqueue(confirmed, rejected, undecided, human)
+			for _, d := range []struct {
+				c artifacts.PairCandidate
+				s artifacts.VerdictStatus
+			}{{confirmed, artifacts.VerdictConfirmed}, {rejected, artifacts.VerdictRejected}, {undecided, artifacts.VerdictUndecided}} {
+				_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(d.c), artifacts.Verdict{Status: d.s, Confidence: 1, Evidence: ev, DecidedAt: t0})
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(env.store.MarkProjected(env.ctxA, env.tenantA, keyOf(confirmed))).To(Succeed())
+			Expect(env.store.MarkProjected(env.ctxA, env.tenantA, keyOf(rejected))).To(Succeed())
+			Expect(env.su.Exec(context.Background(),
+				`UPDATE artifact_pair_verdicts SET status = 'confirmed', determination_type = 'human', graph_applied = true
+				 WHERE tenant_id = $1 AND pair_key = $2`, env.tenantA, keyOf(human))).To(Succeed())
+			Expect(env.su.Exec(context.Background(),
+				`UPDATE artifact_pair_verdicts SET graph_applied = true WHERE tenant_id = $1 AND pair_key = $2`,
+				env.tenantA, keyOf(undecided))).To(Succeed())
+
+			n, err := env.store.ResetProjection(env.ctxB, env.tenantB)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n).To(BeZero(), "tenant B sees none of tenant A's rows")
+			Expect(env.stored(env.tenantA, keyOf(confirmed)).graphApplied).To(BeTrue())
+
+			n, err = env.store.ResetProjection(env.ctxA, env.tenantA)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n).To(Equal(2))
+			Expect(env.stored(env.tenantA, keyOf(confirmed)).graphApplied).To(BeFalse())
+			Expect(env.stored(env.tenantA, keyOf(rejected)).graphApplied).To(BeFalse())
+			Expect(env.stored(env.tenantA, keyOf(undecided)).graphApplied).To(BeTrue())
+			Expect(env.stored(env.tenantA, keyOf(human)).graphApplied).To(BeTrue())
+		})
+
+		It("refuses a tenant argument that differs from the context and changes nothing", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c), artifacts.Verdict{Status: artifacts.VerdictConfirmed, Confidence: 1, Evidence: ev, DecidedAt: t0})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.store.MarkProjected(env.ctxA, env.tenantA, keyOf(c))).To(Succeed())
+			_, err = env.store.ResetProjection(env.ctxB, env.tenantA)
+			Expect(err).To(MatchError(ContainSubstring("does not match")))
+			Expect(env.stored(env.tenantA, keyOf(c)).graphApplied).To(BeTrue())
+		})
+	})
+
 	Describe("tenant isolation", func() {
 		It("confines every operation to the context's tenant", func() {
 			c := verdictCandidate(1)

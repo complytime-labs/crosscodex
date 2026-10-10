@@ -154,8 +154,8 @@ type QueueCounts struct {
 // adjudicator's work queue. PGVerdictStore is the production implementation.
 //
 // Rules every implementation keeps:
-//   - Lease, Decide, RecordFailure, Unprojected and MarkProjected never touch
-//     a row whose determination type is human.
+//   - Lease, Decide, RecordFailure, Unprojected, MarkProjected and
+//     ResetProjection never touch a row whose determination type is human.
 //   - Decide applies only to pending rows.
 //   - Lease never hands a pair to two callers whose leases overlap.
 type VerdictStore interface {
@@ -189,6 +189,12 @@ type VerdictStore interface {
 	// MarkProjected records that a verdict is in the graph. It does nothing to
 	// a human-owned pair or one that is not confirmed or rejected.
 	MarkProjected(ctx context.Context, tenantID, key string) error
+	// ResetProjection marks every projected llm_panel confirmed or rejected
+	// verdict of the tenant unprojected, so the next Run writes it to the
+	// graph again, and returns how many it marked. Use it after the tenant's
+	// graph was rebuilt. Human verdicts are not reset; whatever projects them
+	// needs its own reset after a rebuild.
+	ResetProjection(ctx context.Context, tenantID string) (int, error)
 	// Counts summarizes the queue as of now.
 	Counts(ctx context.Context, tenantID string, now time.Time) (QueueCounts, error)
 }

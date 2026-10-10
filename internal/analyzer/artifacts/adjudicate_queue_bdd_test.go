@@ -52,12 +52,44 @@ var _ = Describe("Adjudicator queue", func() {
 		It("re-projects idempotently when the edge already exists", func() {
 			_, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
-			f.store.resetProjected(adjTenant)
 
+			f.opts.Reproject = true
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 1}))
+			Expect(res).To(Equal(artifacts.AdjudicateResult{Reset: 1, Recovered: 1}))
 			Expect(f.liveSameAs()).To(HaveLen(1))
+			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeTrue())
+		})
+
+		It("resets only llm_panel verdicts, never a human one", func() {
+			_, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			human := artifacts.PairCandidate{LowGroupID: "h-a", HighGroupID: "h-b", CandidateEdgeID: "h-edge"}
+			f.store.set(adjTenant, human, artifacts.VerdictConfirmed, artifacts.DeterminationHuman)
+			humanKey := artifacts.PairKey(human.LowGroupID, human.HighGroupID)
+			f.store.setProjected(adjTenant, humanKey)
+
+			f.opts.Reproject = true
+			res, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Reset).To(Equal(1))
+			Expect(res.Recovered).To(Equal(1))
+			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeTrue(), "llm_panel row re-projected")
+			Expect(f.store.row(adjTenant, humanKey).graphApplied).To(BeTrue(), "human row stays projected")
+		})
+
+		It("stops before projecting or leasing when the reset fails", func() {
+			decide(artifacts.VerdictConfirmed)
+			f.opts.Reproject = true
+			f.store.err["ResetProjection"] = errors.New("db down")
+			f.llm.reply = noLLM
+			res, err := f.run()
+			Expect(err).To(MatchError(ContainSubstring("reset projection: db down")))
+			Expect(res).To(Equal(artifacts.AdjudicateResult{}))
+			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeFalse(), "the decided verdict stays unprojected")
+			for _, r := range f.liveSameAs() {
+				Expect(r.Edge.DeterminationType).NotTo(Equal("llm_panel"), "no llm_panel edge is written")
+			}
 		})
 
 		It("marks a confirmation whose groups are gone as orphaned instead of failing", func() {

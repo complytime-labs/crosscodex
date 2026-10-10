@@ -606,6 +606,9 @@ var _ = Describe("Adjudicator", func() {
 		f.opts = artifacts.AdjudicateOptions{MaxPairs: 1}
 		_, err = f.run()
 		Expect(err).To(MatchError(ContainSubstring("invalid options")))
+		f.opts = artifacts.AdjudicateOptions{MaxPairs: 1, Now: func() time.Time { return f.now }, DryRun: true, Reproject: true}
+		_, err = f.run()
+		Expect(err).To(MatchError(ContainSubstring("DryRun excludes Reproject")))
 	})
 
 	It("stops on a store failure while recording the verdict", func() {

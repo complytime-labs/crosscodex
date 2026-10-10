@@ -80,6 +80,10 @@ type AdjudicateOptions struct {
 	// DryRun reports the queue (Pending, Due, Unprojected) without leasing,
 	// calling the LLM or writing.
 	DryRun bool
+	// Reproject first marks every projected llm_panel confirmed or rejected
+	// verdict of the tenant unprojected (VerdictStore.ResetProjection), so this
+	// run writes them back to the graph. Use it after rebuilding the tenant's graph. Not with DryRun.
+	Reproject bool
 }
 
 // AdjudicateResult reports one Adjudicator.Run. Under DryRun only Pending,
@@ -90,6 +94,7 @@ type AdjudicateOptions struct {
 // recorded; a RecordFailure fenced off because another run re-leased the pair
 // writes nothing but is still counted.
 type AdjudicateResult struct {
+	Reset     int // Reproject: projected verdicts marked unprojected before recovery
 	Recovered int // decided verdicts from earlier runs projected by this run (Orphaned ones included)
 	Leased    int // pairs leased (Expired ones included)
 	Expired   int // leased pairs skipped because their lease expired before their panel started; a later run retries them
@@ -133,8 +138,10 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 		)}
 }
 
-// Run first projects verdicts that earlier runs recorded but did not project,
-// then adjudicates up to opts.MaxPairs due pairs of tenantID. Each verdict is
+// Run first projects verdicts that earlier runs recorded but did not project
+// (with opts.Reproject it first marks every projected llm_panel confirmed or
+// rejected verdict unprojected, so this step re-projects them), then
+// adjudicates up to opts.MaxPairs due pairs of tenantID. Each verdict is
 // recorded with a conditional Decide first and projected only if Decide
 // applied it, so a human verdict that lands mid-panel wins. A panel without
 // enough valid votes is retried after a backoff and abandoned at
@@ -147,8 +154,8 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 // become due again when their lease expires.
 func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateOptions) (AdjudicateResult, error) {
 	var res AdjudicateResult
-	if opts.MaxPairs <= 0 || opts.Now == nil {
-		return res, fmt.Errorf("adjudicate artifacts: invalid options: MaxPairs (%d) must be positive and Now must be set", opts.MaxPairs)
+	if opts.MaxPairs <= 0 || opts.Now == nil || (opts.DryRun && opts.Reproject) {
+		return res, fmt.Errorf("adjudicate artifacts: invalid options: MaxPairs (%d) must be positive, Now must be set, and DryRun excludes Reproject", opts.MaxPairs)
 	}
 	if opts.DryRun {
 		c, err := a.store.Counts(ctx, tenantID, opts.Now())
@@ -157,6 +164,13 @@ func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateO
 		}
 		res.Pending, res.Due, res.Unprojected = c.Pending, c.Due, c.Unprojected
 		return res, nil
+	}
+	if opts.Reproject {
+		n, err := a.store.ResetProjection(ctx, tenantID)
+		if err != nil {
+			return res, fmt.Errorf("adjudicate artifacts: reset projection: %w", err)
+		}
+		res.Reset = n
 	}
 	if err := a.recoverProjections(ctx, tenantID, &res); err != nil {
 		return res, err

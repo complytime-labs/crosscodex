@@ -41,6 +41,19 @@ var _ = Describe("runAdmin adjudicate artifacts arg parsing", func() {
 		Entry("negative --max-pairs", "adjudicate", "artifacts", "--tenant", "acme", "--max-pairs", "-1"),
 		Entry("both --tenant and --all-tenants", "adjudicate", "artifacts", "--tenant", "acme", "--all-tenants"),
 		Entry("neither --tenant nor --all-tenants", "adjudicate", "artifacts"),
+		Entry("--reproject with --all-tenants", "adjudicate", "artifacts", "--all-tenants", "--reproject"),
+		Entry("--reproject with --dry-run", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--dry-run"),
+		Entry("--reproject alone", "adjudicate", "artifacts", "--reproject"),
+	)
+
+	DescribeTable("explains how to use --reproject instead",
+		func(want string, args ...string) {
+			code, stderr := captureStderr(func() int { return runAdmin(args) })
+			Expect(code).To(Equal(2))
+			Expect(stderr).To(ContainSubstring(want))
+		},
+		Entry("with --all-tenants", "--reproject needs --tenant", "adjudicate", "artifacts", "--all-tenants", "--reproject"),
+		Entry("with --dry-run", "drop --dry-run to re-project", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--dry-run"),
 	)
 })
 
@@ -79,10 +92,17 @@ var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 		Expect(runAdmin([]string{"adjudicate", "artifacts", "--tenant", "acme"})).To(Equal(0))
 		Expect(gotTenant).To(Equal("acme"))
 		Expect(gotOpts.DryRun).To(BeFalse())
+		Expect(gotOpts.Reproject).To(BeFalse())
 		Expect(openedDry).To(BeFalse(), "a real run opens the LLM client")
 		Expect(gotOpts.MaxPairs).To(Equal(artifacts.DefaultAdjudicateMaxPairs))
 		Expect(gotOpts.Now).NotTo(BeNil())
 		Expect(gotOpts.Now()).NotTo(BeZero())
+	})
+
+	It("passes --reproject through", func() {
+		Expect(runAdmin([]string{"adjudicate", "artifacts", "--tenant", "acme", "--reproject"})).To(Equal(0))
+		Expect(gotOpts.Reproject).To(BeTrue())
+		Expect(gotOpts.DryRun).To(BeFalse())
 	})
 
 	It("passes --dry-run and --max-pairs through", func() {
@@ -134,11 +154,11 @@ var _ = Describe("writeAdjudicateReport", func() {
 		var buf bytes.Buffer
 		writeAdjudicateReport(&buf, artifacts.AdjudicateResult{Recovered: 1, Orphaned: 2, Leased: 3, Confirmed: 4,
 			Rejected: 5, Undecided: 6, Failed: 7, Abandoned: 8, Dissent: 9, Stale: 10, Expired: 11,
-			Pending: 12, Due: 13, Unprojected: 14}, false)
+			Pending: 12, Due: 13, Unprojected: 14, Reset: 15}, false)
 		out := buf.String()
 		Expect(out).To(MatchRegexp(`^METRIC +VALUE\n`))
 		for metric, value := range map[string]int{"recovered": 1, "orphaned": 2, "leased": 3, "confirmed": 4,
-			"rejected": 5, "undecided": 6, "failed": 7, "abandoned": 8, "dissent": 9, "stale": 10, "expired": 11} {
+			"rejected": 5, "undecided": 6, "failed": 7, "abandoned": 8, "dissent": 9, "stale": 10, "expired": 11, "reset": 15} {
 			Expect(out).To(MatchRegexp(`(?m)^%s +%d$`, metric, value))
 		}
 		for _, metric := range []string{"pending", "due", "unprojected"} {
@@ -156,7 +176,7 @@ var _ = Describe("writeAdjudicateReport", func() {
 			Expect(out).To(MatchRegexp(`(?m)^%s +%d$`, metric, value))
 		}
 		for _, metric := range []string{"recovered", "orphaned", "leased", "confirmed", "rejected", "undecided",
-			"failed", "abandoned", "dissent", "stale", "expired"} {
+			"failed", "abandoned", "dissent", "stale", "expired", "reset"} {
 			Expect(out).NotTo(MatchRegexp(`(?m)^%s `, metric))
 		}
 	})

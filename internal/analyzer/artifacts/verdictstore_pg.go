@@ -320,6 +320,32 @@ func (s *PGVerdictStore) MarkProjected(ctx context.Context, tenantID, key string
 	})
 }
 
+// resetProjectionSQL is deliberately narrower than the <> 'human' filter of
+// Unprojected and MarkProjected: only the adjudicator's own llm_panel verdicts
+// are re-projected.
+const resetProjectionSQL = `
+WITH reset AS (
+    UPDATE artifact_pair_verdicts SET graph_applied = false
+    WHERE tenant_id = $1 AND determination_type = 'llm_panel' AND status IN ('confirmed', 'rejected')
+      AND graph_applied
+    RETURNING 1
+)
+SELECT count(*) FROM reset`
+
+func (s *PGVerdictStore) ResetProjection(ctx context.Context, tenantID string) (int, error) {
+	var n int
+	err := s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+		if err := tx.QueryRow(ctx, resetProjectionSQL, tenantID).Scan(&n); err != nil {
+			return fmt.Errorf("reset projection: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (s *PGVerdictStore) Counts(ctx context.Context, tenantID string, now time.Time) (QueueCounts, error) {
 	var c QueueCounts
 	err := s.inTx(ctx, tenantID, func(tx db.Transaction) error {
