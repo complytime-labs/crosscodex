@@ -117,6 +117,14 @@ func (e verdictStoreEnv) stored(tenantID, key string) storedVerdict {
 	return v
 }
 
+// count returns how many pairs the tenant has stored, read as the superuser.
+func (e verdictStoreEnv) count(tenantID string) int {
+	var n int
+	Expect(e.su.QueryRow(context.Background(), `SELECT count(*) FROM artifact_pair_verdicts WHERE tenant_id = $1`,
+		tenantID).Scan(&n)).To(Succeed())
+	return n
+}
+
 func verdictCandidate(i int) artifacts.PairCandidate {
 	return artifacts.PairCandidate{
 		LowGroupID: fmt.Sprintf("g-%03d-a", i), HighGroupID: fmt.Sprintf("g-%03d-b", i),
@@ -308,7 +316,37 @@ var _ = Describe("PGVerdictStore", func() {
 		It("rejects a pair whose group IDs are out of byte order", func() {
 			c := verdictCandidate(1)
 			c.LowGroupID, c.HighGroupID = c.HighGroupID, c.LowGroupID
-			Expect(env.store.Enqueue(env.ctxA, env.tenantA, []artifacts.PairCandidate{c}, t0)).NotTo(Succeed())
+			err := env.store.Enqueue(env.ctxA, env.tenantA, []artifacts.PairCandidate{c}, t0)
+			Expect(db.IsPgErrorCode(err, "23514")).To(BeTrue(), "expected a check violation, got %v", err)
+			Expect(env.count(env.tenantA)).To(BeZero())
+		})
+
+		It("rolls back every chunk when a later chunk holds an out-of-order pair", func() {
+			cs := make([]artifacts.PairCandidate, artifacts.ExportEnqueueChunk+1)
+			for i := range cs {
+				cs[i] = verdictCandidate(i)
+			}
+			last := &cs[len(cs)-1]
+			last.LowGroupID, last.HighGroupID = last.HighGroupID, last.LowGroupID
+			err := env.store.Enqueue(env.ctxA, env.tenantA, cs, t0)
+			Expect(db.IsPgErrorCode(err, "23514")).To(BeTrue(), "expected a check violation, got %v", err)
+			Expect(env.count(env.tenantA)).To(BeZero(), "chunk 1 was inserted before chunk 2 failed and must be rolled back")
+		})
+
+		It("enqueues more pairs than one INSERT chunk carries", func() {
+			n := artifacts.ExportEnqueueChunk + 1
+			cs := make([]artifacts.PairCandidate, n)
+			keys := make([]string, n)
+			for i := range cs {
+				cs[i] = verdictCandidate(i)
+				keys[i] = keyOf(cs[i])
+			}
+			enqueue(cs...)
+			var present int
+			Expect(env.su.QueryRow(context.Background(), `SELECT count(*) FROM artifact_pair_verdicts
+				WHERE tenant_id = $1 AND pair_key = ANY($2::text[])`, env.tenantA, keys).Scan(&present)).To(Succeed())
+			Expect(env.count(env.tenantA)).To(Equal(n))
+			Expect(present).To(Equal(n))
 		})
 
 		It("rejects context, evidence or dissent that is not a JSON object", func() {
@@ -554,6 +592,20 @@ var _ = Describe("PGVerdictStore", func() {
 			_, err = env.store.Unprojected(env.ctxA, env.tenantA, -1)
 			Expect(err).To(MatchError(ContainSubstring("must be positive")))
 		})
+
+		It("fails Unprojected on a decided row without confidence and leaves the row unprojected", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c),
+				artifacts.Verdict{Status: artifacts.VerdictConfirmed, Confidence: 1, Evidence: ev, DecidedAt: t0})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.su.Exec(context.Background(), `UPDATE artifact_pair_verdicts SET confidence = NULL
+				WHERE tenant_id = $1 AND pair_key = $2`, env.tenantA, keyOf(c))).To(Succeed())
+			before := env.stored(env.tenantA, keyOf(c))
+			_, err = env.store.Unprojected(env.ctxA, env.tenantA, 10)
+			Expect(err).To(MatchError(ContainSubstring(keyOf(c) + " is decided but lacks confidence, evidence or decided_at")))
+			Expect(env.stored(env.tenantA, keyOf(c))).To(Equal(before))
+		})
 	})
 
 	Describe("ResetProjection", func() {
@@ -630,6 +682,23 @@ var _ = Describe("PGVerdictStore", func() {
 			Expect(err).To(MatchError(ContainSubstring("does not match")))
 		})
 
+		It("leaves a pair pending when Decide names a tenant other than the context's", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			before := env.stored(env.tenantA, keyOf(c))
+			_, err := env.store.Decide(env.ctxB, env.tenantA, keyOf(c),
+				artifacts.Verdict{Status: artifacts.VerdictConfirmed, Confidence: 1, Evidence: ev, DecidedAt: t0})
+			Expect(err).To(MatchError(ContainSubstring("does not match")))
+			Expect(env.stored(env.tenantA, keyOf(c))).To(Equal(before))
+			Expect(before.status).To(Equal("pending"))
+		})
+
+		It("refuses Enqueue from a context without a tenant and writes nothing", func() {
+			err := env.store.Enqueue(context.Background(), env.tenantA, []artifacts.PairCandidate{verdictCandidate(1)}, t0)
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+			Expect(env.count(env.tenantA)).To(BeZero())
+		})
+
 		It("blocks cross-tenant reads and writes at the database", func() {
 			enqueue(verdictCandidate(1))
 			ctx := context.Background()
@@ -668,5 +737,22 @@ var _ = Describe("PGVerdictStore", func() {
 			_, err = tx.ExecContext(ctx, "DELETE FROM artifact_pair_verdicts")
 			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "expected a privilege violation, got %v", err)
 		})
+	})
+})
+
+var _ = Describe("PGVerdictStore contract", func() {
+	verdictStoreContract(func() verdictStoreContractEnv {
+		env := setupVerdictStore()
+		return verdictStoreContractEnv{store: env.store, ctx: env.ctxA, tenantID: env.tenantA,
+			setHuman: func(key string, status artifacts.VerdictStatus) {
+				Expect(env.su.Exec(context.Background(), `UPDATE artifact_pair_verdicts
+					SET status = $3, determination_type = 'human' WHERE tenant_id = $1 AND pair_key = $2`,
+					env.tenantA, key, string(status))).To(Succeed())
+			},
+			row: func(key string) contractRow {
+				v := env.stored(env.tenantA, key)
+				return contractRow{status: artifacts.VerdictStatus(v.status),
+					graphApplied: v.graphApplied, attempts: v.attempts, hasDissent: v.dissent != nil}
+			}}
 	})
 })

@@ -9,7 +9,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 )
 
-var _ = Describe("Property Specifications", func() {
+var _ = Describe("Property Specifications", Ordered, func() {
 	noSameLine := rapid.String().Filter(func(s string) bool {
 		return !strings.Contains(strings.ToUpper(s), "SAME:")
 	})

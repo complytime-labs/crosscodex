@@ -123,6 +123,27 @@ var _ = Describe("Adjudicator queue", func() {
 			Expect(res.Recovered).To(Equal(150))
 		})
 
+		It("leaves a confirmation unprojected when the edge write fails, and projects it on a later healthy run", func() {
+			healthy := f.g
+			f.g = failingCreateEdge{GraphDB: healthy}
+			res, err := f.run()
+			Expect(err).To(MatchError(ContainSubstring("write SAME_AS")))
+			Expect(err).To(MatchError(ContainSubstring("graph down")))
+			Expect(res.Confirmed).To(Equal(1))
+			r := f.store.row(adjTenant, f.key)
+			Expect(r.status).To(Equal(artifacts.VerdictConfirmed))
+			Expect(r.graphApplied).To(BeFalse())
+			Expect(f.candidateSuperseded()).To(BeFalse())
+
+			f.g = healthy
+			res, err = f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 1}))
+			Expect(f.liveSameAs()).To(HaveLen(1))
+			Expect(f.candidateSuperseded()).To(BeTrue())
+			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeTrue())
+		})
+
 		It("finishes on the next run a confirmation that crashed between the edge write and the supersede", func() {
 			decide(artifacts.VerdictConfirmed)
 			healthy := f.g
@@ -258,6 +279,69 @@ var _ = Describe("Adjudicator queue", func() {
 			Expect(f.candidateSuperseded()).To(BeFalse())
 		})
 	})
+
+	DescribeTable("stops on a store failure, naming the step, without completing that step",
+		func(method, step string, setup func(), check func()) {
+			setup()
+			f.store.err[method] = errors.New("db down")
+			_, err := f.run()
+			Expect(err).To(MatchError(ContainSubstring(step)))
+			Expect(err).To(MatchError(ContainSubstring("db down")))
+			check()
+		},
+		Entry("Counts", "Counts", "count queue",
+			func() { f.opts.DryRun = true },
+			func() {
+				r := f.store.row(adjTenant, f.key)
+				Expect(r.status).To(Equal(artifacts.VerdictPending))
+				Expect(r.leasedUntil).To(BeZero())
+			}),
+		Entry("Lease", "Lease", "lease pairs",
+			func() { f.llm.reply = noLLM },
+			func() {
+				Expect(f.store.row(adjTenant, f.key).leasedUntil).To(BeZero())
+				Expect(f.llm.callCount()).To(BeZero())
+			}),
+		Entry("Unprojected", "Unprojected", "load unprojected verdicts",
+			func() { decide(artifacts.VerdictConfirmed); f.llm.reply = noLLM },
+			func() {
+				Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeFalse())
+				Expect(f.candidateSuperseded()).To(BeFalse())
+				Expect(f.llm.callCount()).To(BeZero())
+			}),
+		Entry("RecordFailure", "RecordFailure", "record failure",
+			func() {
+				f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
+			},
+			func() {
+				r := f.store.row(adjTenant, f.key)
+				Expect(r.status).To(Equal(artifacts.VerdictPending))
+				Expect(r.attempts).To(BeZero())
+				Expect(r.lastError).To(BeEmpty())
+			}),
+		Entry("RecordDissent", "RecordDissent", "record dissent",
+			func() {
+				f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+					f.store.setHuman(adjTenant, f.key, artifacts.VerdictRejected)
+					return answer("YES"), nil
+				}
+			},
+			func() {
+				r := f.store.row(adjTenant, f.key)
+				Expect(r.dissent).To(BeNil())
+				Expect(r.status).To(Equal(artifacts.VerdictRejected))
+				Expect(f.candidateSuperseded()).To(BeFalse())
+			}),
+		Entry("MarkProjected", "MarkProjected", "projected: db down",
+			func() {},
+			func() {
+				Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeFalse())
+				// The graph write is idempotent and already done; recovery
+				// re-projects it, so the edge stays live.
+				Expect(f.liveSameAs()).To(HaveLen(1))
+				Expect(f.liveSameAs()[0].Edge.DeterminationType).To(Equal("llm_panel"))
+			}),
+	)
 })
 
 // failingSupersede fails every SupersedeFact.
@@ -265,4 +349,11 @@ type failingSupersede struct{ graphdb.GraphDB }
 
 func (failingSupersede) SupersedeFact(context.Context, string, graphdb.SupersedeRequest) (bool, error) {
 	return false, errors.New("graph down")
+}
+
+// failingCreateEdge fails every CreateEdge.
+type failingCreateEdge struct{ graphdb.GraphDB }
+
+func (failingCreateEdge) CreateEdge(context.Context, string, string, string, graphdb.Edge) error {
+	return errors.New("graph down")
 }

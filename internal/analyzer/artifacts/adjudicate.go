@@ -457,9 +457,12 @@ func panelError(ctx context.Context, tenantID, key string, err error, votes []co
 
 // promptValue makes an untrusted value safe to render inside a prompt tag:
 // one line without format characters, at most maxPromptValueBytes of the
-// original text, with no character that could close the tag. Escaping comes last, so the cap never
+// (UTF-8-repaired) original text, with no character that could close the tag. Escaping comes last, so the cap never
 // splits an entity.
 func promptValue(s string) string {
+	// Repair invalid UTF-8 first: stripping an invisible rune from between the
+	// bytes of a split sequence would otherwise splice them into a new rune such as U+202E.
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	s = promptBreaks.ReplaceAllString(promptInvisibles.ReplaceAllString(s, ""), " ")
 	s = strings.TrimSpace(cleanText(s, maxPromptValueBytes))
 	return promptEscaper.Replace(s)
