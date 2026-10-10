@@ -11,6 +11,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/consensus"
@@ -18,6 +22,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 )
 
 const (
@@ -123,12 +128,41 @@ type Adjudicator struct {
 	prompts   prompt.Registry
 	cfg       config.ArtifactAdjudicationConfig
 	consensus *consensus.Computer
+
+	tracer        trace.Tracer          // optional, nil-safe
+	outcomes      metric.Int64Counter   // optional, nil-safe
+	panelDuration metric.Int64Histogram // optional, nil-safe
+	// inFlight is an up-down counter, not a gauge: Add is atomic, so
+	// concurrent goroutines cannot record stale values out of order.
+	inFlight metric.Int64UpDownCounter // optional, nil-safe
+}
+
+// AdjudicatorOption configures an Adjudicator.
+type AdjudicatorOption func(*Adjudicator)
+
+// WithAdjudicatorTelemetry enables tracing and metrics for the adjudicator.
+// Either provider may be nil; nil providers are ignored.
+func WithAdjudicatorTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) AdjudicatorOption {
+	return func(a *Adjudicator) {
+		if tp != nil {
+			a.tracer = tp.Tracer("crosscodex/internal/analyzer/artifacts")
+		}
+		if mp != nil {
+			meter := mp.Meter("crosscodex")
+			a.outcomes, _ = meter.Int64Counter("artifacts.adjudications.total",
+				metric.WithDescription("Adjudicated SAME_AS pairs by outcome"))
+			a.panelDuration, _ = meter.Int64Histogram("artifacts.adjudicate.panel.duration_ms",
+				metric.WithDescription("LLM panel duration per pair in milliseconds"), metric.WithUnit("ms"))
+			a.inFlight, _ = meter.Int64UpDownCounter("artifacts.adjudicate.completions.in_flight",
+				metric.WithDescription("LLM completions the adjudicator has in flight"))
+		}
+	}
 }
 
 // NewAdjudicator returns an Adjudicator; cfg must have passed Validate. llm
 // may be nil when every Run is a DryRun, which never calls the LLM.
-func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client, prompts prompt.Registry, cfg config.ArtifactAdjudicationConfig) *Adjudicator {
-	return &Adjudicator{g: g, store: store, llm: llm, prompts: prompts, cfg: cfg,
+func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client, prompts prompt.Registry, cfg config.ArtifactAdjudicationConfig, opts ...AdjudicatorOption) *Adjudicator {
+	a := &Adjudicator{g: g, store: store, llm: llm, prompts: prompts, cfg: cfg,
 		consensus: consensus.New(
 			consensus.WithThreshold(cfg.ConsensusThreshold),
 			consensus.WithMaxErrorRate(cfg.MaxErrorRate),
@@ -136,6 +170,10 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 			// 0.0-confidence result, so an outage would become a verdict.
 			consensus.WithMinValidVotes(1),
 		)}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // Run first projects verdicts that earlier runs recorded but did not project
@@ -153,6 +191,27 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 // every pair during an outage. Pairs a stopped run leased but did not finish
 // become due again when their lease expires.
 func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateOptions) (AdjudicateResult, error) {
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.adjudicate.run")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.Bool("adjudicate.dry_run", opts.DryRun))
+	res, err := a.run(ctx, tenantID, opts)
+	span.SetAttributes(attribute.Int("adjudicate.leased", res.Leased), attribute.Int("adjudicate.recovered", res.Recovered))
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+	// The caller reports err; this records how far the run got.
+	slog.InfoContext(ctx, "artifact adjudication run finished", "tenant.id", tenantID, "stopped_early", err != nil,
+		"reset", res.Reset, "recovered", res.Recovered, "leased", res.Leased, "confirmed", res.Confirmed,
+		"rejected", res.Rejected, "undecided", res.Undecided, "failed", res.Failed, "abandoned", res.Abandoned,
+		"expired", res.Expired, "dissent", res.Dissent, "stale", res.Stale, "orphaned", res.Orphaned,
+		"dry_run", opts.DryRun, "pending", res.Pending, "due", res.Due, "unprojected", res.Unprojected)
+	return res, err
+}
+
+func (a *Adjudicator) run(ctx context.Context, tenantID string, opts AdjudicateOptions) (AdjudicateResult, error) {
 	var res AdjudicateResult
 	if opts.MaxPairs <= 0 || opts.Now == nil || (opts.DryRun && opts.Reproject) {
 		return res, fmt.Errorf("adjudicate artifacts: invalid options: MaxPairs (%d) must be positive, Now must be set, and DryRun excludes Reproject", opts.MaxPairs)
@@ -218,12 +277,35 @@ func (a *Adjudicator) recoverProjections(ctx context.Context, tenantID string, r
 	}
 }
 
-func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID string, p LeasedPair, now func() time.Time, res *AdjudicateResult) error {
+// record counts one pair's outcome and logs it.
+func (a *Adjudicator) record(ctx context.Context, tenantID, key, outcome string) {
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("adjudicate.outcome", outcome))
+	if a.outcomes != nil {
+		a.outcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+	}
+	slog.InfoContext(ctx, "artifact pair adjudicated", "tenant.id", tenantID, "pair.key", key, "outcome", outcome)
+}
+
+func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID string, p LeasedPair, now func() time.Time, res *AdjudicateResult) (err error) {
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.adjudicate.pair")
+	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.String("pair.key", p.Key))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 	if !now().Before(p.LeasedUntil) {
 		res.Expired++
+		a.record(ctx, tenantID, p.Key, "expired")
 		return nil
 	}
+	start := time.Now()
 	v, err := a.panel(ctx, tenantID, p)
+	if a.panelDuration != nil {
+		a.panelDuration.Record(ctx, time.Since(start).Milliseconds())
+	}
 	// PostgreSQL keeps microseconds; truncating keeps a re-projected
 	// timestamp identical to the first one.
 	at := now().UTC().Truncate(time.Microsecond)
@@ -277,10 +359,16 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 		model, sample := a.cfg.Models[i/a.cfg.SamplesPerModel], i%a.cfg.SamplesPerModel
 		eg.Go(func() error {
 			voterID := fmt.Sprintf("%s__s%d", model, sample)
+			if a.inFlight != nil {
+				a.inFlight.Add(ctx, 1)
+			}
 			resp, err := a.llm.Complete(ctx, &llmclient.CompletionRequest{
 				Model: model, Messages: messages, MaxTokens: a.cfg.MaxTokens, Temperature: &temperature,
 				TenantID: tenantID, PromptName: rp.Name, PromptVersion: rp.Version,
 			})
+			if a.inFlight != nil {
+				a.inFlight.Add(ctx, -1)
+			}
 			switch {
 			case err != nil:
 				votes[i], errs[i] = consensus.Vote{VoterID: voterID}, err
@@ -414,18 +502,23 @@ func (a *Adjudicator) commit(ctx context.Context, tenantID string, p LeasedPair,
 			return fmt.Errorf("adjudicate artifacts: record dissent for %s: %w", p.Key, err)
 		}
 		res.Dissent++
+		a.record(ctx, tenantID, p.Key, "dissent")
 		return nil
 	case DecideStale:
 		res.Stale++
+		a.record(ctx, tenantID, p.Key, "stale")
 		return nil
 	}
 	switch v.Status {
 	case VerdictConfirmed:
 		res.Confirmed++
+		a.record(ctx, tenantID, p.Key, "confirmed")
 	case VerdictRejected:
 		res.Rejected++
+		a.record(ctx, tenantID, p.Key, "rejected")
 	default:
 		res.Undecided++
+		a.record(ctx, tenantID, p.Key, "undecided")
 		return nil
 	}
 	return a.project(ctx, tenantID, Projection{
@@ -485,8 +578,10 @@ func (a *Adjudicator) recordFailure(ctx context.Context, tenantID string, p Leas
 	}
 	if f.Abandon {
 		res.Abandoned++
+		a.record(ctx, tenantID, p.Key, "abandoned")
 	} else {
 		res.Failed++
+		a.record(ctx, tenantID, p.Key, "failed")
 	}
 	return nil
 }

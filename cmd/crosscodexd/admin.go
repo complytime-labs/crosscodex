@@ -7,9 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"sort"
+	"syscall"
 	"text/tabwriter"
 	"time"
+
+	"go.opentelemetry.io/otel"
 
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
@@ -355,7 +359,11 @@ func adjudicateArtifactsCmd(args []string) int {
 // It returns a process exit code: 0 on success, 1 on any failure.
 func runAdjudicateArtifacts(tenantID string, all, dryRun, reproject bool, maxPairs int) int {
 	const cmd = "admin adjudicate artifacts"
-	ctx := context.Background()
+	// SIGINT or SIGTERM cancels the run; it stops at its next store or LLM
+	// call and reports what it did, like any failed run. Pairs it leased
+	// become due again when their leases expire.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	cfg, ok := loadAdminConfig(ctx, cmd)
 	if !ok {
@@ -396,6 +404,11 @@ type artifactAdjudicator func(ctx context.Context, tenantID string, opts artifac
 // unit-tested with a fake. Production wiring is daemonOpenAdjudicateArtifacts.
 var openAdjudicateArtifactsFn = daemonOpenAdjudicateArtifacts
 
+// buildSharedResourcesFn is buildSharedResources behind a package var, so a
+// unit test can check which resources daemonOpenAdjudicateArtifacts asks for
+// without opening any.
+var buildSharedResourcesFn = buildSharedResources
+
 // daemonOpenAdjudicateArtifacts loads the prompt registry and opens the app
 // pool (verdict store), the graph connection and, unless dryRun is set, the
 // LLM client. A dry run only counts the queue and never calls the LLM, so it
@@ -405,12 +418,15 @@ func daemonOpenAdjudicateArtifacts(ctx context.Context, cfg *config.Config, dryR
 	if err != nil {
 		return nil, nil, fmt.Errorf("load prompts: %w", err)
 	}
-	shared, err := buildSharedResources(ctx, cfg, requiredResources{db: true, graph: true, llm: !dryRun})
+	shared, err := buildSharedResourcesFn(ctx, cfg, requiredResources{db: true, graph: true, llm: !dryRun})
 	if err != nil {
 		return nil, nil, err
 	}
-	adj := artifacts.NewAdjudicator(shared.graphDB_, artifacts.NewPGVerdictStore(dbpkg.NewTenantPool(shared.appPool)),
-		shared.llmClient, prompts, cfg.Analysis.ArtifactAdjudication)
+	// No-op today: admin subcommands run before telemetry.Init (see docs/dev/telemetry.md).
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	store := artifacts.NewPGVerdictStore(dbpkg.NewTenantPool(shared.appPool), artifacts.WithVerdictStoreTelemetry(tp, mp))
+	adj := artifacts.NewAdjudicator(shared.graphDB_, store, shared.llmClient, prompts, cfg.Analysis.ArtifactAdjudication,
+		artifacts.WithAdjudicatorTelemetry(tp, mp))
 	return adj.Run, shared.close, nil
 }
 

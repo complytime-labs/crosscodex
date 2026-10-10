@@ -17,6 +17,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/codes"
 
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
@@ -25,6 +26,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
 const adjTenant = "adjudicate-test"
@@ -722,3 +724,146 @@ func (s *leaseRecorder) Lease(ctx context.Context, tenantID string, n int, lease
 	s.ns = append(s.ns, n)
 	return s.fakeVerdictStore.Lease(ctx, tenantID, n, leaseFor, now)
 }
+
+var _ = Describe("Adjudicator telemetry", func() {
+	var (
+		f  *adjFixture
+		tp *telemetrytest.TestProvider
+	)
+	BeforeEach(func() {
+		f = newAdjFixture()
+		var err error
+		tp, err = telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+	})
+	run := func() (artifacts.AdjudicateResult, error) {
+		return artifacts.NewAdjudicator(f.g, f.store, f.llm, f.prompts, f.cfg,
+			artifacts.WithAdjudicatorTelemetry(tp.TracerProvider(), tp.MeterProvider())).Run(f.ctx, adjTenant, f.opts)
+	}
+
+	It("traces the run and each pair under it, with the tenant", func() {
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		runSpan := telemetrytest.FindSpan(tp.GetSpans(), "artifacts.adjudicate.run")
+		Expect(runSpan).NotTo(BeNil())
+		v, ok := telemetrytest.SpanAttribute(runSpan, "tenant.id")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal(adjTenant))
+		pair := telemetrytest.FindSpan(tp.GetSpans(), "artifacts.adjudicate.pair")
+		Expect(pair).NotTo(BeNil())
+		Expect(pair.Parent().SpanID()).To(Equal(runSpan.SpanContext().SpanID()))
+		v, ok = telemetrytest.SpanAttribute(pair, "tenant.id")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal(adjTenant))
+		v, ok = telemetrytest.SpanAttribute(pair, "pair.key")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal(f.key))
+		v, ok = telemetrytest.SpanAttribute(pair, "adjudicate.outcome")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal("confirmed"))
+	})
+
+	It("marks the pair span as failed when the pair errors", func() {
+		f.store.err["Decide"] = errors.New("db down")
+		_, err := run()
+		Expect(err).To(HaveOccurred())
+		pair := telemetrytest.FindSpan(tp.GetSpans(), "artifacts.adjudicate.pair")
+		Expect(pair).NotTo(BeNil())
+		Expect(pair.Status().Code).To(Equal(codes.Error))
+	})
+
+	It("marks the run span as failed when the run stops", func() {
+		f.store.err["Decide"] = errors.New("db down")
+		_, err := run()
+		Expect(err).To(HaveOccurred())
+		runSpan := telemetrytest.FindSpan(tp.GetSpans(), "artifacts.adjudicate.run")
+		Expect(runSpan).NotTo(BeNil())
+		Expect(runSpan.Status().Code).To(Equal(codes.Error))
+	})
+
+	It("counts outcomes and times each panel", func() {
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "confirmed")).To(Equal(int64(1)))
+		m := telemetrytest.FindMetric(tp.GetMetrics(), "artifacts.adjudicate.panel.duration_ms")
+		Expect(m).NotTo(BeNil())
+		n, err := telemetrytest.HistogramCount(m)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(n).To(Equal(uint64(1)))
+	})
+
+	It("counts a failed panel", func() {
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "failed")).To(Equal(int64(1)))
+		v, err := telemetrytest.CounterValue(telemetrytest.FindMetric(tp.GetMetrics(), "artifacts.adjudicate.completions.in_flight"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(BeZero())
+	})
+
+	It("reports completions in flight", func() {
+		f.cfg.PanelConcurrency = 1
+		var seen []int64
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			defer GinkgoRecover()
+			m := telemetrytest.FindMetric(tp.GetMetrics(), "artifacts.adjudicate.completions.in_flight")
+			Expect(m).NotTo(BeNil())
+			v, err := telemetrytest.CounterValue(m)
+			Expect(err).NotTo(HaveOccurred())
+			seen = append(seen, v)
+			return answer("YES"), nil
+		}
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen).To(Equal([]int64{1, 1, 1}))
+		v, err := telemetrytest.CounterValue(telemetrytest.FindMetric(tp.GetMetrics(), "artifacts.adjudicate.completions.in_flight"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(BeZero())
+	})
+
+	It("logs each pair outcome and a run summary without the error text", func() {
+		var logs bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		DeferCleanup(func() { slog.SetDefault(prev) })
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(logs.String()).To(MatchRegexp(`msg="artifact pair adjudicated".*pair.key=\S*.*outcome=confirmed`))
+		Expect(logs.String()).To(MatchRegexp(`msg="artifact adjudication run finished".*stopped_early=false.*orphaned=0 dry_run=false pending=0 due=0 unprojected=0`))
+	})
+
+	It("counts a dissent when a human decides mid-panel", func() {
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			f.store.setHuman(adjTenant, f.key, artifacts.VerdictRejected)
+			return answer("YES"), nil
+		}
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "dissent")).To(Equal(int64(1)))
+	})
+
+	It("counts a stale pair when another run decides mid-panel", func() {
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			f.store.set(adjTenant, artifacts.PairCandidate{LowGroupID: f.low, HighGroupID: f.high},
+				artifacts.VerdictRejected, artifacts.DeterminationLLMPanel)
+			return answer("YES"), nil
+		}
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "stale")).To(Equal(int64(1)))
+	})
+
+	It("reports stopped_early=true in the summary and keeps the error text out of it", func() {
+		f.store.err["Decide"] = errors.New("secret db detail")
+		var logs bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		DeferCleanup(func() { slog.SetDefault(prev) })
+		_, err := run()
+		Expect(err).To(HaveOccurred())
+		Expect(logs.String()).To(MatchRegexp(`msg="artifact adjudication run finished".*stopped_early=true`))
+		Expect(logs.String()).NotTo(ContainSubstring("secret db detail"))
+	})
+})
