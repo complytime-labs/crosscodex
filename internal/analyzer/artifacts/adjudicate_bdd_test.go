@@ -3,9 +3,11 @@
 package artifacts_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -188,7 +190,7 @@ var _ = Describe("Adjudicator", func() {
 			Expect(r.status).To(Equal(artifacts.VerdictPending))
 			Expect(r.attempts).To(Equal(1))
 			Expect(r.nextAttemptAt).To(Equal(f.now.Add(time.Minute)))
-			Expect(r.lastError).To(ContainSubstring("gateway down"))
+			Expect(r.lastError).To(ContainSubstring("first completion error: completion failed"))
 			Expect(f.candidateSuperseded()).To(BeFalse())
 
 			again, err := f.run()
@@ -242,6 +244,46 @@ var _ = Describe("Adjudicator", func() {
 			Expect(r.lastError).NotTo(ContainSubstring("raw gateway text"), "a sentinel's text replaces the raw gateway error")
 		})
 
+		DescribeTable("stores only a redacted name for the first completion error",
+			func(callErr error, want string) {
+				f.llm.reply = func(req *llmclient.CompletionRequest) (string, error) {
+					if req.Model == "m1" {
+						return "", callErr
+					}
+					return "I cannot tell.", nil
+				}
+				res, err := f.run()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Failed: 1}))
+				r := f.store.row(adjTenant, f.key)
+				Expect(r.lastError).To(ContainSubstring("first completion error: " + want))
+				Expect(r.lastError).NotTo(ContainSubstring("raw gateway text"))
+			},
+			Entry("gateway unavailable", fmt.Errorf("raw gateway text: %w", llmclient.ErrGatewayUnavailable), llmclient.ErrGatewayUnavailable.Error()),
+			Entry("rate limit", fmt.Errorf("raw gateway text: %w", llmclient.ErrRateLimitExceeded), llmclient.ErrRateLimitExceeded.Error()),
+			Entry("authentication", fmt.Errorf("raw gateway text: %w", llmclient.ErrAuthentication), llmclient.ErrAuthentication.Error()),
+			Entry("credential resolution", fmt.Errorf("raw gateway text: %w", llmclient.ErrCredentialResolution), llmclient.ErrCredentialResolution.Error()),
+			Entry("model not allowed", fmt.Errorf("raw gateway text: %w", llmclient.ErrModelNotAllowed), llmclient.ErrModelNotAllowed.Error()),
+			Entry("no gateway", fmt.Errorf("raw gateway text: %w", llmclient.ErrNoGateway), llmclient.ErrNoGateway.Error()),
+			Entry("invalid request", fmt.Errorf("raw gateway text: %w", llmclient.ErrInvalidRequest), llmclient.ErrInvalidRequest.Error()),
+			Entry("max tokens exceeded", fmt.Errorf("raw gateway text: %w", llmclient.ErrMaxTokensExceeded), llmclient.ErrMaxTokensExceeded.Error()),
+			Entry("response too large", fmt.Errorf("raw gateway text: %w", llmclient.ErrResponseTooLarge), llmclient.ErrResponseTooLarge.Error()),
+			Entry("API error without a sentinel", &llmclient.APIError{StatusCode: 502, Message: "raw gateway text"}, "LLM API error (HTTP 502)"),
+			Entry("any other error", errors.New("raw gateway text"), "completion failed"),
+		)
+
+		It("logs the unredacted completion error once", func() {
+			var logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			DeferCleanup(func() { slog.SetDefault(prev) })
+			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("raw gateway text") }
+			_, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.Count(logs.String(), "raw gateway text")).To(Equal(1))
+			Expect(logs.String()).To(ContainSubstring(f.key))
+		})
+
 		It("doubles the backoff on each failure", func() {
 			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
 			_, err := f.run()
@@ -293,7 +335,7 @@ var _ = Describe("Adjudicator", func() {
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Failed: 1}))
 			r := f.store.row(adjTenant, f.key)
 			Expect(r.status).To(Equal(artifacts.VerdictPending))
-			Expect(r.lastError).To(ContainSubstring("first completion error: down"))
+			Expect(r.lastError).To(ContainSubstring("first completion error: completion failed"))
 		})
 
 		It("records nothing when another run re-leased the pair during the panel", func() {
@@ -338,7 +380,7 @@ var _ = Describe("Adjudicator", func() {
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Failed: 1}))
-			Expect(f.store.row(adjTenant, f.key).lastError).To(ContainSubstring("completion returned no choices"))
+			Expect(f.store.row(adjTenant, f.key).lastError).To(ContainSubstring("first completion error: completion returned no choices"))
 		})
 
 		It("tolerates failed votes within max_error_rate", func() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
@@ -64,6 +65,10 @@ var (
 // systemLLMErrors. Run stops on it without recording a failure.
 var errLLMUnavailable = errors.New("LLM unavailable")
 
+// errNoChoices is the vote error for a completion with no choices. It is our
+// own text, so panelError stores it as is.
+var errNoChoices = errors.New("completion returned no choices")
+
 // systemLLMErrors are failures of the LLM service or its configuration, not
 // of one pair; they fail every pair alike.
 var systemLLMErrors = []error{
@@ -72,7 +77,8 @@ var systemLLMErrors = []error{
 }
 
 // llmErrors are all llmclient sentinels. A failure message names the
-// sentinel instead of the full error, which can carry the gateway's reply.
+// sentinel instead of the full error, which can carry the gateway's reply;
+// panelError replaces every other error with a fixed message.
 var llmErrors = append(slices.Clone(systemLLMErrors),
 	llmclient.ErrInvalidRequest, llmclient.ErrMaxTokensExceeded, llmclient.ErrResponseTooLarge)
 
@@ -272,7 +278,7 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 			case err != nil:
 				votes[i], errs[i] = consensus.Vote{VoterID: voterID}, err
 			case len(resp.Choices) == 0:
-				votes[i], errs[i] = consensus.Vote{VoterID: voterID}, errors.New("completion returned no choices")
+				votes[i], errs[i] = consensus.Vote{VoterID: voterID}, errNoChoices
 			default:
 				votes[i] = ParseSameAsResponse(voterID, resp.Choices[0].Message.Content)
 			}
@@ -285,7 +291,7 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 
 	result, err := a.consensus.Compute(votes)
 	if err != nil {
-		return Verdict{}, panelError(err, votes, errs)
+		return Verdict{}, panelError(ctx, tenantID, p.Key, err, votes, errs)
 	}
 
 	ev := PanelEvidence{PromptName: rp.Name, PromptVersion: rp.Version, Models: slices.Clone(a.cfg.Models),
@@ -308,10 +314,13 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 
 // panelError explains why Compute rejected the votes. When every call failed
 // with a system-level LLM error it returns errLLMUnavailable, which stops the
-// run. Otherwise it adds the first completion error, named by its llmclient
-// sentinel when it has one so the gateway's raw reply is not stored, or, when
-// no call failed, how many replies had no valid SAME: line.
-func panelError(err error, votes []consensus.Vote, errs []error) error {
+// run. Otherwise it adds, when no call failed, how many replies had no valid
+// SAME: line, or else the first completion error redacted for storage in
+// last_error (CWE-209: an llmclient error can carry the gateway's raw reply).
+// It is stored as its llmclient sentinel's text, as "LLM API error (HTTP n)"
+// for an *llmclient.APIError, as errNoChoices's own text, or else as
+// "completion failed"; the full error is logged here, once.
+func panelError(ctx context.Context, tenantID, key string, err error, votes []consensus.Vote, errs []error) error {
 	var first error
 	allSystem := true
 	for _, e := range errs {
@@ -338,9 +347,15 @@ func panelError(err error, votes []consensus.Vote, errs []error) error {
 	case allSystem:
 		return fmt.Errorf("%w: %w", errLLMUnavailable, first)
 	}
-	msg := first.Error()
+	slog.WarnContext(ctx, "artifact adjudication: completion failed", "tenant.id", tenantID, "pair.key", key, "error", first)
+	msg := "completion failed"
+	var apiErr *llmclient.APIError
 	if i := slices.IndexFunc(llmErrors, func(s error) bool { return errors.Is(first, s) }); i >= 0 {
 		msg = llmErrors[i].Error()
+	} else if errors.Is(first, errNoChoices) {
+		msg = errNoChoices.Error()
+	} else if errors.As(first, &apiErr) {
+		msg = fmt.Sprintf("LLM API error (HTTP %d)", apiErr.StatusCode)
 	}
 	return fmt.Errorf("%w (first completion error: %s)", err, msg)
 }
