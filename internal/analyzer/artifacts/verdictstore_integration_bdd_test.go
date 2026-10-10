@@ -202,7 +202,7 @@ var _ = Describe("PGVerdictStore", func() {
 			out, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(decided), artifacts.Verdict{
 				Status: artifacts.VerdictConfirmed, Confidence: 1, Evidence: ev, DecidedAt: t0})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal(artifacts.DecideApplied))
+			Expect(out.Outcome).To(Equal(artifacts.DecideApplied))
 			Expect(env.su.Exec(context.Background(),
 				`UPDATE artifact_pair_verdicts SET determination_type = 'human' WHERE tenant_id = $1 AND pair_key = $2`,
 				env.tenantA, keyOf(human))).To(Succeed())
@@ -350,7 +350,7 @@ var _ = Describe("PGVerdictStore", func() {
 			v := artifacts.Verdict{Status: artifacts.VerdictConfirmed, Confidence: 0.75, Evidence: ev, DecidedAt: t0}
 			out, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c), v)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal(artifacts.DecideApplied))
+			Expect(out).To(Equal(artifacts.Decision{Outcome: artifacts.DecideApplied, CandidateEdgeID: c.CandidateEdgeID}))
 			row := env.stored(env.tenantA, keyOf(c))
 			Expect(row.status).To(Equal("confirmed"))
 			Expect(row.determination).To(Equal("llm_panel"))
@@ -361,8 +361,26 @@ var _ = Describe("PGVerdictStore", func() {
 
 			out, err = env.store.Decide(env.ctxA, env.tenantA, keyOf(c), artifacts.Verdict{Status: artifacts.VerdictRejected, Evidence: ev, DecidedAt: t0})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal(artifacts.DecideStale))
+			Expect(out).To(Equal(artifacts.Decision{Outcome: artifacts.DecideStale}))
 			Expect(env.stored(env.tenantA, keyOf(c)).status).To(Equal("confirmed"))
+		})
+
+		It("returns the candidate edge a re-enqueue moved the pair to while its lease was held", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			leased, err := env.store.Lease(env.ctxA, env.tenantA, 1, time.Minute, t0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leased).To(HaveLen(1))
+			bumped := c
+			bumped.CandidateEdgeID = "edge-001-v2"
+			Expect(env.store.Enqueue(env.ctxA, env.tenantA, []artifacts.PairCandidate{bumped}, t0)).To(Succeed())
+
+			out, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c),
+				artifacts.Verdict{Status: artifacts.VerdictConfirmed, Confidence: 1, Evidence: ev, DecidedAt: t0})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(leased[0].CandidateEdgeID).To(Equal(c.CandidateEdgeID))
+			Expect(out).To(Equal(artifacts.Decision{Outcome: artifacts.DecideApplied, CandidateEdgeID: "edge-001-v2"}))
+			Expect(env.stored(env.tenantA, keyOf(c)).candidateEdgeID).To(Equal("edge-001-v2"))
 		})
 
 		It("leaves a human verdict alone and stores dissent only on human rows", func() {
@@ -375,7 +393,7 @@ var _ = Describe("PGVerdictStore", func() {
 			v := artifacts.Verdict{Status: artifacts.VerdictConfirmed, Confidence: 1, Evidence: ev, DecidedAt: t0}
 			out, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(human), v)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal(artifacts.DecideHumanOwned))
+			Expect(out).To(Equal(artifacts.Decision{Outcome: artifacts.DecideHumanOwned}))
 			Expect(env.stored(env.tenantA, keyOf(human)).status).To(Equal("rejected"))
 
 			Expect(env.store.RecordDissent(env.ctxA, env.tenantA, keyOf(human), v)).To(Succeed())

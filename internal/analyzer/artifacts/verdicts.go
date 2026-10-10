@@ -112,6 +112,17 @@ const (
 	DecideStale
 )
 
+// Decision is what Decide did and, when it applied the verdict, the pair's
+// candidate edge as stored at that moment.
+type Decision struct {
+	Outcome DecideOutcome
+	// CandidateEdgeID is the edge the verdict must be projected onto. It can
+	// differ from the LeasedPair's copy: Enqueue moves a pending pair to the
+	// current algorithm version's edge even while an adjudicator holds its
+	// lease. Empty unless Outcome is DecideApplied.
+	CandidateEdgeID string
+}
+
 // Failure is one failed panel attempt.
 type Failure struct {
 	Err           string    // stored in last_error
@@ -161,8 +172,9 @@ type VerdictStore interface {
 	// Lease takes up to n due pending pairs (next_attempt_at <= now, no
 	// active lease, not human-owned) and holds each until now+leaseFor.
 	Lease(ctx context.Context, tenantID string, n int, leaseFor time.Duration, now time.Time) ([]LeasedPair, error)
-	// Decide records an llm_panel verdict by the adjudicator.
-	Decide(ctx context.Context, tenantID, key string, v Verdict) (DecideOutcome, error)
+	// Decide records an llm_panel verdict by the adjudicator and, when it
+	// applies, returns the pair's stored candidate edge ID.
+	Decide(ctx context.Context, tenantID, key string, v Verdict) (Decision, error)
 	// RecordDissent stores v as the automated opinion on a human-owned pair.
 	// It does nothing to any other pair.
 	RecordDissent(ctx context.Context, tenantID, key string, v Verdict) error
