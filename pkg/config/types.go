@@ -643,15 +643,20 @@ func (c *ArtifactsConfig) Validate() error {
 // artifacts`, the LLM panel that confirms or rejects the reconciler's
 // token-overlap SAME_AS candidates.
 type ArtifactAdjudicationConfig struct {
-	Enabled             bool     `yaml:"enabled" json:"enabled"`                           // The command refuses to run unless true
-	Models              []string `yaml:"models" json:"models"`                             // LLM models on the panel; must be non-empty when enabled
-	SamplesPerModel     int      `yaml:"samples_per_model" json:"samples_per_model"`       // Votes per model per pair; positive and odd unless allow_even_samples
-	AllowEvenSamples    bool     `yaml:"allow_even_samples" json:"allow_even_samples"`     // Allow an even samples_per_model
-	SamplingTemperature float64  `yaml:"sampling_temperature" json:"sampling_temperature"` // [0.0, 2.0]; 0 is used when samples_per_model is 1
-	MaxTokens           int      `yaml:"max_tokens" json:"max_tokens"`                     // Max tokens per reply; must be positive
-	ConsensusThreshold  float64  `yaml:"consensus_threshold" json:"consensus_threshold"`   // Minimum consensus fraction for a verdict [0.5, 1.0]
-	MaxErrorRate        float64  `yaml:"max_error_rate" json:"max_error_rate"`             // Max fraction of failed votes [0.0, 1.0]; 0 disables the check
-	MaxAttempts         int      `yaml:"max_attempts" json:"max_attempts"`                 // Failed panels before a pair is abandoned; must be positive
+	Enabled             bool          `yaml:"enabled" json:"enabled"`                           // The command refuses to run unless true
+	Models              []string      `yaml:"models" json:"models"`                             // LLM models on the panel; must be non-empty when enabled
+	SamplesPerModel     int           `yaml:"samples_per_model" json:"samples_per_model"`       // Votes per model per pair; positive and odd unless allow_even_samples
+	AllowEvenSamples    bool          `yaml:"allow_even_samples" json:"allow_even_samples"`     // Allow an even samples_per_model
+	SamplingTemperature float64       `yaml:"sampling_temperature" json:"sampling_temperature"` // [0.0, 2.0]; 0 is used when samples_per_model is 1
+	MaxTokens           int           `yaml:"max_tokens" json:"max_tokens"`                     // Max tokens per reply; must be positive
+	ConsensusThreshold  float64       `yaml:"consensus_threshold" json:"consensus_threshold"`   // Minimum consensus fraction for a verdict [0.5, 1.0]
+	MaxErrorRate        float64       `yaml:"max_error_rate" json:"max_error_rate"`             // Max fraction of failed votes [0.0, 1.0]; 0 disables the check
+	MaxAttempts         int           `yaml:"max_attempts" json:"max_attempts"`                 // Failed panels before a pair is abandoned; must be positive
+	LeaseDuration       time.Duration `yaml:"lease_duration" json:"lease_duration"`             // How long a run holds each leased pair; must be positive
+	LeaseBatch          int           `yaml:"lease_batch" json:"lease_batch"`                   // Pairs leased per store round trip; must be positive
+	PanelConcurrency    int           `yaml:"panel_concurrency" json:"panel_concurrency"`       // Completions in flight per pair; must be positive
+	RetryBaseDelay      time.Duration `yaml:"retry_base_delay" json:"retry_base_delay"`         // Wait after a pair's first failed panel, doubling per failure; must be positive
+	RetryMaxDelay       time.Duration `yaml:"retry_max_delay" json:"retry_max_delay"`           // Cap on the retry wait; must be at least retry_base_delay
 }
 
 // Validate checks ArtifactAdjudicationConfig when it is enabled.
@@ -690,6 +695,26 @@ func (c *ArtifactAdjudicationConfig) Validate() error {
 	if c.MaxAttempts <= 0 {
 		return fmt.Errorf("analysis.artifact_adjudication.max_attempts %d must be positive: %w",
 			c.MaxAttempts, ErrInvalidConfig)
+	}
+	if c.LeaseDuration <= 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.lease_duration %s must be positive (e.g. 15m): %w",
+			c.LeaseDuration, ErrInvalidConfig)
+	}
+	if c.LeaseBatch <= 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.lease_batch %d must be positive: %w",
+			c.LeaseBatch, ErrInvalidConfig)
+	}
+	if c.PanelConcurrency <= 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.panel_concurrency %d must be positive: %w",
+			c.PanelConcurrency, ErrInvalidConfig)
+	}
+	if c.RetryBaseDelay <= 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.retry_base_delay %s must be positive (e.g. 1m): %w",
+			c.RetryBaseDelay, ErrInvalidConfig)
+	}
+	if c.RetryMaxDelay < c.RetryBaseDelay {
+		return fmt.Errorf("analysis.artifact_adjudication.retry_max_delay %s must not be below retry_base_delay %s: %w",
+			c.RetryMaxDelay, c.RetryBaseDelay, ErrInvalidConfig)
 	}
 	return nil
 }

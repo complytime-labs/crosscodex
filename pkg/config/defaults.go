@@ -146,6 +146,11 @@ analysis:
     consensus_threshold: 0.67
     max_error_rate: 0.34
     max_attempts: 5
+    lease_duration: 15m
+    lease_batch: 10
+    panel_concurrency: 4
+    retry_base_delay: 1m
+    retry_max_delay: 24h
 worker:
   queue_group: "llm-workers"
 synthesis:

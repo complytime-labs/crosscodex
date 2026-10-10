@@ -26,17 +26,6 @@ const (
 	// DefaultAdjudicateMaxPairs is the default AdjudicateOptions.MaxPairs.
 	DefaultAdjudicateMaxPairs = 200
 
-	// Pairs are leased leaseBatch at a time, each for leaseFor, so a lease
-	// rarely expires while its pair waits behind the rest of its batch. One
-	// that does (slow panels) is skipped, since another run may hold it now.
-	leaseBatch = 10
-	leaseFor   = 15 * time.Minute
-	// panelConcurrency bounds one pair's completions in flight.
-	panelConcurrency = 4
-
-	retryBaseDelay = time.Minute
-	retryMaxDelay  = 24 * time.Hour
-
 	projectBatch = 100 // decided verdicts per Unprojected call
 
 	maxPromptValueBytes = 200 // per untrusted value rendered into the prompt, before escaping
@@ -173,7 +162,11 @@ func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateO
 		return res, err
 	}
 	for res.Leased < opts.MaxPairs {
-		pairs, err := a.store.Lease(ctx, tenantID, min(leaseBatch, opts.MaxPairs-res.Leased), leaseFor, opts.Now())
+		// Pairs are leased lease_batch at a time, each for lease_duration, so a
+		// lease rarely expires while its pair waits behind the rest of its
+		// batch. One that does (slow panels) is skipped, since another run may
+		// hold it now.
+		pairs, err := a.store.Lease(ctx, tenantID, min(a.cfg.LeaseBatch, opts.MaxPairs-res.Leased), a.cfg.LeaseDuration, opts.Now())
 		if err != nil {
 			return res, fmt.Errorf("adjudicate artifacts: lease pairs: %w", err)
 		}
@@ -265,7 +258,7 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 	votes := make([]consensus.Vote, n)
 	errs := make([]error, n)
 	var eg errgroup.Group
-	eg.SetLimit(panelConcurrency)
+	eg.SetLimit(a.cfg.PanelConcurrency)
 	for i := range n {
 		model, sample := a.cfg.Models[i/a.cfg.SamplesPerModel], i%a.cfg.SamplesPerModel
 		eg.Go(func() error {
@@ -472,7 +465,7 @@ func (a *Adjudicator) markProjected(ctx context.Context, tenantID, key string) e
 func (a *Adjudicator) recordFailure(ctx context.Context, tenantID string, p LeasedPair, cause error, at time.Time, res *AdjudicateResult) error {
 	attempts := p.Attempts + 1
 	f := Failure{Err: cleanText(cause.Error(), maxErrorChars), At: at, LeasedUntil: p.LeasedUntil,
-		NextAttemptAt: at.Add(retryDelay(attempts)), Abandon: attempts >= a.cfg.MaxAttempts}
+		NextAttemptAt: at.Add(retryDelay(attempts, a.cfg.RetryBaseDelay, a.cfg.RetryMaxDelay)), Abandon: attempts >= a.cfg.MaxAttempts}
 	if err := a.store.RecordFailure(ctx, tenantID, p.Key, f); err != nil {
 		return fmt.Errorf("adjudicate artifacts: record failure for %s: %w", p.Key, err)
 	}
@@ -484,14 +477,18 @@ func (a *Adjudicator) recordFailure(ctx context.Context, tenantID string, p Leas
 	return nil
 }
 
-// retryDelay is the wait after the attempts-th failure: retryBaseDelay,
-// doubling per failure, capped at retryMaxDelay.
-func retryDelay(attempts int) time.Duration {
-	d := retryBaseDelay
-	for i := 1; i < attempts && d < retryMaxDelay; i++ {
+// retryDelay is the wait after the attempts-th failure: base, doubling per
+// failure, capped at maxDelay. It stops doubling before d could pass
+// maxDelay, so d never overflows, whatever attempts is.
+func retryDelay(attempts int, base, maxDelay time.Duration) time.Duration {
+	d := base
+	for i := 1; i < attempts; i++ {
+		if d > maxDelay/2 {
+			return maxDelay
+		}
 		d *= 2
 	}
-	return min(d, retryMaxDelay)
+	return min(d, maxDelay)
 }
 
 // cleanText makes s storable in PostgreSQL text and jsonb, which reject NUL

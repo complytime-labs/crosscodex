@@ -290,6 +290,11 @@ analysis:
     consensus_threshold: 0.67            # [0.5, 1]; below it (or on a split) the pair is undecided
     max_error_rate: 0.34                 # [0, 1]; more failed votes than this fails the panel (0 disables)
     max_attempts: 5                      # Failed panels before a pair is abandoned
+    lease_duration: 15m                  # How long a run holds each leased pair
+    lease_batch: 10                      # Pairs leased per round trip
+    panel_concurrency: 4                 # Completions in flight per pair
+    retry_base_delay: 1m                 # Wait after a pair's first failed panel, doubling per failure
+    retry_max_delay: 24h                 # Cap on that wait; at least retry_base_delay
 
 graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)
@@ -655,8 +660,9 @@ denotes one artifact. Token overlap over-matches containment: "Policy" scores
   `analysis.artifact_adjudication.consensus_threshold`. Automation does not
   retry the pair; only a human verdict can change it.
 - **Failed:** too many calls failed or replies did not parse. The pair is
-  retried after a backoff (1 minute, doubling, at most 24 hours) and is
-  abandoned after `max_attempts` failures.
+  retried after a backoff (`retry_base_delay`, doubling per failure up to
+  `retry_max_delay`; 1 minute and 24 hours by default) and is abandoned after
+  `max_attempts` failures.
 - **LLM unavailable:** if every call for a pair fails because the LLM gateway
   is unavailable or not configured, the rate limit is hit, the credentials
   cannot be resolved or are rejected, or the model is not allowed, the

@@ -7,3 +7,6 @@ var ExportArtifactID = artifactID
 
 // ExportCleanText exposes cleanText.
 var ExportCleanText = cleanText
+
+// ExportRetryDelay exposes retryDelay.
+var ExportRetryDelay = retryDelay

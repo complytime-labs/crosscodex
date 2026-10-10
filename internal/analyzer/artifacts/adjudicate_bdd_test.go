@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -55,7 +57,9 @@ func newAdjFixture() *adjFixture {
 	f.key = artifacts.PairKey(f.low, f.high)
 	f.candidate = graphdb.DerivedID("same-as", artifacts.ReconcileAlgorithmVersion, f.low, f.high)
 	f.cfg = config.ArtifactAdjudicationConfig{Enabled: true, Models: []string{"m1", "m2", "m3"}, SamplesPerModel: 1,
-		SamplingTemperature: 0.3, MaxTokens: 200, ConsensusThreshold: 0.6, MaxErrorRate: 0.34, MaxAttempts: 3}
+		SamplingTemperature: 0.3, MaxTokens: 200, ConsensusThreshold: 0.6, MaxErrorRate: 0.34, MaxAttempts: 3,
+		LeaseDuration: 15 * time.Minute, LeaseBatch: 10, PanelConcurrency: 4,
+		RetryBaseDelay: time.Minute, RetryMaxDelay: 24 * time.Hour}
 	f.now = reconcileNow.Add(time.Hour)
 	f.opts = artifacts.AdjudicateOptions{MaxPairs: 10, Now: func() time.Time { return f.now }}
 	return f
@@ -619,3 +623,99 @@ var _ = Describe("Adjudicator", func() {
 		})
 	})
 })
+
+var _ = Describe("retryDelay", func() {
+	DescribeTable("doubles from the base per failure, capped, without overflow",
+		func(attempts int, base, maxDelay, want time.Duration) {
+			Expect(artifacts.ExportRetryDelay(attempts, base, maxDelay)).To(Equal(want))
+		},
+		Entry("first failure", 1, time.Minute, 24*time.Hour, time.Minute),
+		Entry("second failure", 2, time.Minute, 24*time.Hour, 2*time.Minute),
+		Entry("eleventh failure, below the cap", 11, time.Minute, 24*time.Hour, 1024*time.Minute),
+		Entry("base equal to the cap", 2, time.Hour, time.Hour, time.Hour),
+		Entry("no failures yet", 0, time.Minute, 24*time.Hour, time.Minute),
+		Entry("twelfth failure, capped", 12, time.Minute, 24*time.Hour, 24*time.Hour),
+		Entry("1000th failure, capped", 1000, time.Minute, 24*time.Hour, 24*time.Hour),
+		Entry("1000th failure under a cap near the int64 limit", 1000, time.Nanosecond, time.Duration(math.MaxInt64), time.Duration(math.MaxInt64)),
+	)
+})
+
+var _ = Describe("Adjudicator tuning", func() {
+	var f *adjFixture
+	BeforeEach(func() { f = newAdjFixture() })
+
+	It("holds each lease for lease_duration", func() {
+		f.cfg.LeaseDuration = 7 * time.Minute
+		// reply otherwise runs on several panel goroutines writing leasedUntil.
+		f.cfg.PanelConcurrency = 1
+		var leasedUntil time.Time
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			leasedUntil = f.store.row(adjTenant, f.key).leasedUntil
+			return answer("YES"), nil
+		}
+		_, err := f.run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(leasedUntil).To(Equal(f.now.Add(7 * time.Minute)))
+	})
+
+	It("leases lease_batch pairs per round trip", func() {
+		var cands []artifacts.PairCandidate
+		for i := range 3 {
+			cands = append(cands, artifacts.PairCandidate{LowGroupID: fmt.Sprintf("t-%d-a", i),
+				HighGroupID: fmt.Sprintf("t-%d-b", i), CandidateEdgeID: fmt.Sprintf("t-edge-%d", i)})
+		}
+		Expect(f.store.Enqueue(f.ctx, adjTenant, cands, f.now)).To(Succeed())
+		f.cfg.LeaseBatch = 2
+		// Failed panels touch no graph, so the extra pairs need no edges, and
+		// a failed pair is not due again within the run.
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
+		store := &leaseRecorder{fakeVerdictStore: f.store}
+		res, err := artifacts.NewAdjudicator(f.g, store, f.llm, f.prompts, f.cfg).Run(f.ctx, adjTenant, f.opts)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Leased).To(Equal(4))
+		Expect(store.ns).To(Equal([]int{2, 2, 2}), "two full batches, then an empty one ends the loop")
+	})
+
+	It("keeps at most panel_concurrency completions in flight", func() {
+		f.cfg.PanelConcurrency = 1
+		var inFlight, peak atomic.Int64
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			n := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				p := peak.Load()
+				if n <= p || peak.CompareAndSwap(p, n) {
+					break
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+			return answer("YES"), nil
+		}
+		_, err := f.run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(peak.Load()).To(Equal(int64(1)))
+	})
+
+	It("backs off from retry_base_delay up to retry_max_delay", func() {
+		f.cfg.RetryBaseDelay, f.cfg.RetryMaxDelay = 5*time.Minute, 7*time.Minute
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
+		_, err := f.run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.store.row(adjTenant, f.key).nextAttemptAt).To(Equal(f.now.Add(5 * time.Minute)))
+		f.now = f.now.Add(5 * time.Minute)
+		_, err = f.run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.store.row(adjTenant, f.key).nextAttemptAt).To(Equal(f.now.Add(7 * time.Minute)))
+	})
+})
+
+// leaseRecorder records the n of every Lease call.
+type leaseRecorder struct {
+	*fakeVerdictStore
+	ns []int
+}
+
+func (s *leaseRecorder) Lease(ctx context.Context, tenantID string, n int, leaseFor time.Duration, now time.Time) ([]artifacts.LeasedPair, error) {
+	s.ns = append(s.ns, n)
+	return s.fakeVerdictStore.Lease(ctx, tenantID, n, leaseFor, now)
+}

@@ -12,7 +12,11 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-// enqueueChunk bounds the rows one Enqueue INSERT carries.
+// enqueueChunk bounds the rows one Enqueue INSERT carries. A chunk binds nine
+// parameters whatever its size (six UNNEST arrays and three scalars), so no
+// bind-parameter limit applies and the value only bounds statement size. It
+// is a constant rather than config because Enqueue runs inside reconcile,
+// which does not depend on analysis.artifact_adjudication.
 const enqueueChunk = 1000
 
 // PGVerdictStore is the VerdictStore over the artifact_pair_verdicts table
