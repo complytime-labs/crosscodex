@@ -1,0 +1,38 @@
+docs/dev/design-principles.md
+  s_f0d92b87bb9789::t_83229efcab3a8d 57,63
+cmd/crosscodexd/admin_review_bdd_test.go
+  s_f0d92b87bb9789::t_e0d79ef9a00367 266-273
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_f0d92b87bb9789::t_72926a1750abfd 334-340,344-345,374,384,404,406-414,449
+internal/analyzer/artifacts/verdictstore_fake_test.go
+  s_f0d92b87bb9789::t_7e22324579b114 225-229
+  s_f0d92b87bb9789::t_144783fded6446 257,382-388
+  s_f0d92b87bb9789::t_5e7dd2f9d9b3df 389-390
+internal/analyzer/artifacts/verdictstore_contract_bdd_test.go
+  s_f0d92b87bb9789::t_50775ecc9b1a0c 316-383
+README.md
+  s_f0d92b87bb9789::t_83229efcab3a8d 825-831
+cmd/crosscodexd/admin_review.go
+  s_f0d92b87bb9789::t_ad3663d254dca5 200-202,204-207
+internal/analyzer/artifacts/adjudicate_human_bdd_test.go
+  s_f0d92b87bb9789::t_f6a083fa9c55ef 108-127
+internal/analyzer/artifacts/verdicts.go
+  s_f0d92b87bb9789::t_ad3663d254dca5 366-370
+  s_f0d92b87bb9789::t_a0706ce4152f6a 238-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d23afcf8900674810c749c1538dc2922c128b2ac",
+  "prompts": {},
+  "sessions": {
+    "s_f0d92b87bb9789": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c3efb1dc-e7ce-4e49-9257-b59fde3d50b7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
