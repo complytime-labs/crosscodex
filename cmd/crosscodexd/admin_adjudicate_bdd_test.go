@@ -39,8 +39,19 @@ var _ = Describe("runAdmin adjudicate artifacts arg parsing", func() {
 		Entry("unknown flag", "adjudicate", "artifacts", "--tenant", "acme", "--nope"),
 		Entry("zero --max-pairs", "adjudicate", "artifacts", "--tenant", "acme", "--max-pairs", "0"),
 		Entry("negative --max-pairs", "adjudicate", "artifacts", "--tenant", "acme", "--max-pairs", "-1"),
-		Entry("both --tenant and --all-tenants", "adjudicate", "artifacts", "--tenant", "acme", "--all-tenants"),
-		Entry("neither --tenant nor --all-tenants", "adjudicate", "artifacts"),
+		Entry("--reproject with --all-tenants", "adjudicate", "artifacts", "--all-tenants", "--reproject"),
+		Entry("--reproject with --dry-run", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--dry-run"),
+		Entry("--reproject alone", "adjudicate", "artifacts", "--reproject"),
+	)
+
+	DescribeTable("explains how to use --reproject instead",
+		func(want string, args ...string) {
+			code, stderr := captureStderr(func() int { return runAdmin(args) })
+			Expect(code).To(Equal(2))
+			Expect(stderr).To(ContainSubstring(want))
+		},
+		Entry("with --all-tenants", "--reproject needs --tenant", "adjudicate", "artifacts", "--all-tenants", "--reproject"),
+		Entry("with --dry-run", "drop --dry-run to re-project", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--dry-run"),
 	)
 })
 
@@ -48,6 +59,7 @@ var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 	var (
 		gotTenant string
 		gotOpts   artifacts.AdjudicateOptions
+		gotCtx    context.Context
 		fnRes     artifacts.AdjudicateResult
 		fnErr     error
 		opened    bool
@@ -57,14 +69,14 @@ var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 
 	BeforeEach(func() {
 		origFn = openAdjudicateArtifactsFn
-		gotTenant, gotOpts, fnRes, fnErr, opened = "", artifacts.AdjudicateOptions{}, artifacts.AdjudicateResult{}, nil, false
+		gotTenant, gotOpts, gotCtx, fnRes, fnErr, opened = "", artifacts.AdjudicateOptions{}, nil, artifacts.AdjudicateResult{}, nil, false
 		openAdjudicateArtifactsFn = func(_ context.Context, _ *config.Config, dryRun bool) (artifactAdjudicator, func(), error) {
 			opened, openedDry = true, dryRun
 			return func(ctx context.Context, tenantID string, opts artifacts.AdjudicateOptions) (artifacts.AdjudicateResult, error) {
 				t, err := tenant.FromContext(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(t).To(Equal(tenantID))
-				gotTenant, gotOpts = tenantID, opts
+				gotTenant, gotOpts, gotCtx = tenantID, opts, ctx
 				return fnRes, fnErr
 			}, func() {}, nil
 		}
@@ -79,10 +91,17 @@ var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 		Expect(runAdmin([]string{"adjudicate", "artifacts", "--tenant", "acme"})).To(Equal(0))
 		Expect(gotTenant).To(Equal("acme"))
 		Expect(gotOpts.DryRun).To(BeFalse())
+		Expect(gotOpts.Reproject).To(BeFalse())
 		Expect(openedDry).To(BeFalse(), "a real run opens the LLM client")
 		Expect(gotOpts.MaxPairs).To(Equal(artifacts.DefaultAdjudicateMaxPairs))
 		Expect(gotOpts.Now).NotTo(BeNil())
 		Expect(gotOpts.Now()).NotTo(BeZero())
+	})
+
+	It("passes --reproject through", func() {
+		Expect(runAdmin([]string{"adjudicate", "artifacts", "--tenant", "acme", "--reproject"})).To(Equal(0))
+		Expect(gotOpts.Reproject).To(BeTrue())
+		Expect(gotOpts.DryRun).To(BeFalse())
 	})
 
 	It("passes --dry-run and --max-pairs through", func() {
@@ -115,6 +134,22 @@ var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 		Expect(stderr).To(ContainSubstring("llm gateway unavailable"))
 	})
 
+	It("runs under a cancellable context and reports a cancelled run like any failed one", func() {
+		fnRes = artifacts.AdjudicateResult{Leased: 2, Confirmed: 1}
+		fnErr = context.Canceled
+		var stdout string
+		code, _ := captureStderr(func() int {
+			var code int
+			code, stdout = captureStream(&os.Stdout, func() int {
+				return runAdmin([]string{"adjudicate", "artifacts", "--tenant", "acme"})
+			})
+			return code
+		})
+		Expect(gotCtx.Done()).NotTo(BeNil(), "SIGINT/SIGTERM must be able to cancel the run")
+		Expect(code).To(Equal(1))
+		Expect(stdout).To(MatchRegexp(`(?m)^confirmed +1$`))
+	})
+
 	It("refuses to run when artifact_adjudication is not enabled", func() {
 		writeAdjudicationConfig(false)
 		code, stderr := captureStderr(func() int { return runAdmin([]string{"adjudicate", "artifacts", "--tenant", "acme"}) })
@@ -134,11 +169,11 @@ var _ = Describe("writeAdjudicateReport", func() {
 		var buf bytes.Buffer
 		writeAdjudicateReport(&buf, artifacts.AdjudicateResult{Recovered: 1, Orphaned: 2, Leased: 3, Confirmed: 4,
 			Rejected: 5, Undecided: 6, Failed: 7, Abandoned: 8, Dissent: 9, Stale: 10, Expired: 11,
-			Pending: 12, Due: 13, Unprojected: 14}, false)
+			Pending: 12, Due: 13, Unprojected: 14, Reset: 15}, false)
 		out := buf.String()
 		Expect(out).To(MatchRegexp(`^METRIC +VALUE\n`))
 		for metric, value := range map[string]int{"recovered": 1, "orphaned": 2, "leased": 3, "confirmed": 4,
-			"rejected": 5, "undecided": 6, "failed": 7, "abandoned": 8, "dissent": 9, "stale": 10, "expired": 11} {
+			"rejected": 5, "undecided": 6, "failed": 7, "abandoned": 8, "dissent": 9, "stale": 10, "expired": 11, "reset": 15} {
 			Expect(out).To(MatchRegexp(`(?m)^%s +%d$`, metric, value))
 		}
 		for _, metric := range []string{"pending", "due", "unprojected"} {
@@ -156,8 +191,37 @@ var _ = Describe("writeAdjudicateReport", func() {
 			Expect(out).To(MatchRegexp(`(?m)^%s +%d$`, metric, value))
 		}
 		for _, metric := range []string{"recovered", "orphaned", "leased", "confirmed", "rejected", "undecided",
-			"failed", "abandoned", "dissent", "stale", "expired"} {
+			"failed", "abandoned", "dissent", "stale", "expired", "reset"} {
 			Expect(out).NotTo(MatchRegexp(`(?m)^%s `, metric))
 		}
+	})
+})
+
+var _ = Describe("daemonOpenAdjudicateArtifacts", func() {
+	DescribeTable("opens the LLM client only for a real run",
+		func(dryRun, wantLLM bool) {
+			writeAdjudicationConfig(true)
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			orig := buildSharedResourcesFn
+			DeferCleanup(func() { buildSharedResourcesFn = orig })
+			var got requiredResources
+			buildSharedResourcesFn = func(_ context.Context, _ *config.Config, need requiredResources, _ ...ResourceOption) (*sharedResources, error) {
+				got = need
+				return nil, errors.New("stop before connecting")
+			}
+			_, _, err = daemonOpenAdjudicateArtifacts(context.Background(), cfg, dryRun)
+			Expect(err).To(MatchError("stop before connecting"))
+			Expect(got).To(Equal(requiredResources{db: true, graph: true, llm: wantLLM}))
+		},
+		Entry("dry run: no LLM client", true, false),
+		Entry("real run: LLM client", false, true),
+	)
+})
+
+var _ = Describe("top-level help", func() {
+	It("lists adjudicate artifacts among the admin operations", func() {
+		_, out := captureStream(&os.Stdout, func() int { printUsage(); return 0 })
+		Expect(out).To(ContainSubstring("adjudicate artifacts"))
 	})
 })

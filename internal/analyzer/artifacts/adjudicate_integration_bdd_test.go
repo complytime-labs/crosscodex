@@ -72,7 +72,9 @@ var _ = Describe("Adjudicate on Apache AGE", Ordered, func() {
 			return answer("NO"), nil
 		}}
 		cfg := config.ArtifactAdjudicationConfig{Enabled: true, Models: []string{"m1"}, SamplesPerModel: 1,
-			MaxTokens: 200, ConsensusThreshold: 0.6, MaxErrorRate: 0, MaxAttempts: 3}
+			MaxTokens: 200, ConsensusThreshold: 0.6, MaxErrorRate: 0, MaxAttempts: 3,
+			LeaseDuration: 15 * time.Minute, LeaseBatch: 10, PanelConcurrency: 4,
+			RetryBaseDelay: time.Minute, RetryMaxDelay: 24 * time.Hour}
 		adj = artifacts.NewAdjudicator(g, store, llm, &fixedPrompts{}, cfg)
 		now := reconcileNow.Add(time.Hour)
 		opts = artifacts.AdjudicateOptions{MaxPairs: 10, Now: func() time.Time { return now }}
@@ -113,10 +115,11 @@ var _ = Describe("Adjudicate on Apache AGE", Ordered, func() {
 	})
 
 	It("re-projects idempotently", func() {
-		store.resetProjected(tenantID)
-		res, err := adj.Run(ctx, tenantID, opts)
+		reproject := opts
+		reproject.Reproject = true
+		res, err := adj.Run(ctx, tenantID, reproject)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 2}))
+		Expect(res).To(Equal(artifacts.AdjudicateResult{Reset: 2, Recovered: 2}))
 		Expect(edgesOf(ctx, g, tenantID, "ArtifactGroup", "SAME_AS", "ArtifactGroup")).To(HaveLen(1))
 	})
 

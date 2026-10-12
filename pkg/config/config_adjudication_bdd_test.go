@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -17,6 +18,7 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 		return config.ArtifactAdjudicationConfig{
 			Enabled: true, Models: []string{"m1"}, SamplesPerModel: 3, SamplingTemperature: 0.3,
 			MaxTokens: 200, ConsensusThreshold: 0.67, MaxErrorRate: 0.34, MaxAttempts: 5,
+			LeaseDuration: 15 * time.Minute, LeaseBatch: 10, PanelConcurrency: 4, RetryBaseDelay: time.Minute, RetryMaxDelay: 24 * time.Hour,
 		}
 	}
 
@@ -43,6 +45,7 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 			Expect(err.Error()).To(ContainSubstring("analysis.artifact_adjudication." + field))
+			Expect(err.Error()).To(MatchRegexp("must (be|not)"))
 		},
 		Entry("no models", func(c *config.ArtifactAdjudicationConfig) { c.Models = nil }, "models"),
 		Entry("zero samples", func(c *config.ArtifactAdjudicationConfig) { c.SamplesPerModel = 0 }, "samples_per_model"),
@@ -55,6 +58,27 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 		Entry("negative error rate", func(c *config.ArtifactAdjudicationConfig) { c.MaxErrorRate = -0.01 }, "max_error_rate"),
 		Entry("error rate above 1", func(c *config.ArtifactAdjudicationConfig) { c.MaxErrorRate = 1.01 }, "max_error_rate"),
 		Entry("zero max_attempts", func(c *config.ArtifactAdjudicationConfig) { c.MaxAttempts = 0 }, "max_attempts"),
+		Entry("zero lease_duration", func(c *config.ArtifactAdjudicationConfig) { c.LeaseDuration = 0 }, "lease_duration"),
+		Entry("negative lease_duration", func(c *config.ArtifactAdjudicationConfig) { c.LeaseDuration = -time.Minute }, "lease_duration"),
+		Entry("zero lease_batch", func(c *config.ArtifactAdjudicationConfig) { c.LeaseBatch = 0 }, "lease_batch"),
+		Entry("zero panel_concurrency", func(c *config.ArtifactAdjudicationConfig) { c.PanelConcurrency = 0 }, "panel_concurrency"),
+		Entry("zero retry_base_delay", func(c *config.ArtifactAdjudicationConfig) { c.RetryBaseDelay = 0 }, "retry_base_delay"),
+		Entry("retry_max_delay below retry_base_delay", func(c *config.ArtifactAdjudicationConfig) { c.RetryMaxDelay = 30 * time.Second }, "retry_max_delay"),
+	)
+
+	DescribeTable("accepts the inclusive endpoints of each range",
+		func(mutate func(*config.ArtifactAdjudicationConfig)) {
+			c := valid()
+			mutate(&c)
+			Expect(c.Validate()).To(Succeed())
+		},
+		Entry("consensus_threshold 0.5", func(c *config.ArtifactAdjudicationConfig) { c.ConsensusThreshold = 0.5 }),
+		Entry("consensus_threshold 1.0", func(c *config.ArtifactAdjudicationConfig) { c.ConsensusThreshold = 1.0 }),
+		Entry("sampling_temperature 0", func(c *config.ArtifactAdjudicationConfig) { c.SamplingTemperature = 0 }),
+		Entry("sampling_temperature 2.0", func(c *config.ArtifactAdjudicationConfig) { c.SamplingTemperature = 2.0 }),
+		Entry("max_error_rate 0", func(c *config.ArtifactAdjudicationConfig) { c.MaxErrorRate = 0 }),
+		Entry("max_error_rate 1.0", func(c *config.ArtifactAdjudicationConfig) { c.MaxErrorRate = 1.0 }),
+		Entry("retry_max_delay equal to retry_base_delay", func(c *config.ArtifactAdjudicationConfig) { c.RetryMaxDelay = c.RetryBaseDelay }),
 	)
 
 	Describe("loading", func() {
@@ -72,7 +96,29 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 			Expect(cfg.Analysis.ArtifactAdjudication).To(Equal(config.ArtifactAdjudicationConfig{
 				Enabled: true, Models: []string{"m1"}, SamplesPerModel: 3, SamplingTemperature: 0.3,
 				MaxTokens: 200, ConsensusThreshold: 0.67, MaxErrorRate: 0.34, MaxAttempts: 5,
+				LeaseDuration: 15 * time.Minute, LeaseBatch: 10, PanelConcurrency: 4, RetryBaseDelay: time.Minute, RetryMaxDelay: 24 * time.Hour,
 			}))
+		})
+
+		It("loads overrides of the tuning fields", func() {
+			writeUserConfig("analysis:\n  artifact_adjudication:\n    enabled: true\n    models: [m1]\n" +
+				"    lease_duration: 30m\n    lease_batch: 5\n    panel_concurrency: 2\n" +
+				"    retry_base_delay: 30s\n    retry_max_delay: 1h\n")
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			a := cfg.Analysis.ArtifactAdjudication
+			Expect(a.LeaseDuration).To(Equal(30 * time.Minute))
+			Expect(a.LeaseBatch).To(Equal(5))
+			Expect(a.PanelConcurrency).To(Equal(2))
+			Expect(a.RetryBaseDelay).To(Equal(30 * time.Second))
+			Expect(a.RetryMaxDelay).To(Equal(time.Hour))
+		})
+
+		It("fails to load a non-positive lease_duration, naming it", func() {
+			writeUserConfig("analysis:\n  artifact_adjudication:\n    enabled: true\n    models: [m1]\n    lease_duration: 0s\n")
+			_, err := config.NewLoader().Load(context.Background())
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue(), "got %v", err)
+			Expect(err.Error()).To(ContainSubstring("analysis.artifact_adjudication.lease_duration"))
 		})
 
 		It("is disabled when not configured", func() {

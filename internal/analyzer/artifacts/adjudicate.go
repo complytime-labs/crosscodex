@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/consensus"
@@ -17,6 +22,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 )
 
 const (
@@ -24,17 +30,6 @@ const (
 
 	// DefaultAdjudicateMaxPairs is the default AdjudicateOptions.MaxPairs.
 	DefaultAdjudicateMaxPairs = 200
-
-	// Pairs are leased leaseBatch at a time, each for leaseFor, so a lease
-	// rarely expires while its pair waits behind the rest of its batch. One
-	// that does (slow panels) is skipped, since another run may hold it now.
-	leaseBatch = 10
-	leaseFor   = 15 * time.Minute
-	// panelConcurrency bounds one pair's completions in flight.
-	panelConcurrency = 4
-
-	retryBaseDelay = time.Minute
-	retryMaxDelay  = 24 * time.Hour
 
 	projectBatch = 100 // decided verdicts per Unprojected call
 
@@ -64,6 +59,10 @@ var (
 // systemLLMErrors. Run stops on it without recording a failure.
 var errLLMUnavailable = errors.New("LLM unavailable")
 
+// errNoChoices is the vote error for a completion with no choices. It is our
+// own text, so panelError stores it as is.
+var errNoChoices = errors.New("completion returned no choices")
+
 // systemLLMErrors are failures of the LLM service or its configuration, not
 // of one pair; they fail every pair alike.
 var systemLLMErrors = []error{
@@ -72,7 +71,8 @@ var systemLLMErrors = []error{
 }
 
 // llmErrors are all llmclient sentinels. A failure message names the
-// sentinel instead of the full error, which can carry the gateway's reply.
+// sentinel instead of the full error, which can carry the gateway's reply;
+// panelError replaces every other error with a fixed message.
 var llmErrors = append(slices.Clone(systemLLMErrors),
 	llmclient.ErrInvalidRequest, llmclient.ErrMaxTokensExceeded, llmclient.ErrResponseTooLarge)
 
@@ -85,6 +85,10 @@ type AdjudicateOptions struct {
 	// DryRun reports the queue (Pending, Due, Unprojected) without leasing,
 	// calling the LLM or writing.
 	DryRun bool
+	// Reproject first marks every projected llm_panel confirmed or rejected
+	// verdict of the tenant unprojected (VerdictStore.ResetProjection), so this
+	// run writes them back to the graph. Use it after rebuilding the tenant's graph. Not with DryRun.
+	Reproject bool
 }
 
 // AdjudicateResult reports one Adjudicator.Run. Under DryRun only Pending,
@@ -95,6 +99,7 @@ type AdjudicateOptions struct {
 // recorded; a RecordFailure fenced off because another run re-leased the pair
 // writes nothing but is still counted.
 type AdjudicateResult struct {
+	Reset     int // Reproject: projected verdicts marked unprojected before recovery
 	Recovered int // decided verdicts from earlier runs projected by this run (Orphaned ones included)
 	Leased    int // pairs leased (Expired ones included)
 	Expired   int // leased pairs skipped because their lease expired before their panel started; a later run retries them
@@ -123,12 +128,41 @@ type Adjudicator struct {
 	prompts   prompt.Registry
 	cfg       config.ArtifactAdjudicationConfig
 	consensus *consensus.Computer
+
+	tracer        trace.Tracer          // optional, nil-safe
+	outcomes      metric.Int64Counter   // optional, nil-safe
+	panelDuration metric.Int64Histogram // optional, nil-safe
+	// inFlight is an up-down counter, not a gauge: Add is atomic, so
+	// concurrent goroutines cannot record stale values out of order.
+	inFlight metric.Int64UpDownCounter // optional, nil-safe
+}
+
+// AdjudicatorOption configures an Adjudicator.
+type AdjudicatorOption func(*Adjudicator)
+
+// WithAdjudicatorTelemetry enables tracing and metrics for the adjudicator.
+// Either provider may be nil; nil providers are ignored.
+func WithAdjudicatorTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) AdjudicatorOption {
+	return func(a *Adjudicator) {
+		if tp != nil {
+			a.tracer = tp.Tracer("crosscodex/internal/analyzer/artifacts")
+		}
+		if mp != nil {
+			meter := mp.Meter("crosscodex")
+			a.outcomes, _ = meter.Int64Counter("artifacts.adjudications.total",
+				metric.WithDescription("Adjudicated SAME_AS pairs by outcome"))
+			a.panelDuration, _ = meter.Int64Histogram("artifacts.adjudicate.panel.duration_ms",
+				metric.WithDescription("LLM panel duration per pair in milliseconds"), metric.WithUnit("ms"))
+			a.inFlight, _ = meter.Int64UpDownCounter("artifacts.adjudicate.completions.in_flight",
+				metric.WithDescription("LLM completions the adjudicator has in flight"))
+		}
+	}
 }
 
 // NewAdjudicator returns an Adjudicator; cfg must have passed Validate. llm
 // may be nil when every Run is a DryRun, which never calls the LLM.
-func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client, prompts prompt.Registry, cfg config.ArtifactAdjudicationConfig) *Adjudicator {
-	return &Adjudicator{g: g, store: store, llm: llm, prompts: prompts, cfg: cfg,
+func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client, prompts prompt.Registry, cfg config.ArtifactAdjudicationConfig, opts ...AdjudicatorOption) *Adjudicator {
+	a := &Adjudicator{g: g, store: store, llm: llm, prompts: prompts, cfg: cfg,
 		consensus: consensus.New(
 			consensus.WithThreshold(cfg.ConsensusThreshold),
 			consensus.WithMaxErrorRate(cfg.MaxErrorRate),
@@ -136,10 +170,16 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 			// 0.0-confidence result, so an outage would become a verdict.
 			consensus.WithMinValidVotes(1),
 		)}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
-// Run first projects verdicts that earlier runs recorded but did not project,
-// then adjudicates up to opts.MaxPairs due pairs of tenantID. Each verdict is
+// Run first projects verdicts that earlier runs recorded but did not project
+// (with opts.Reproject it first marks every projected llm_panel confirmed or
+// rejected verdict unprojected, so this step re-projects them), then
+// adjudicates up to opts.MaxPairs due pairs of tenantID. Each verdict is
 // recorded with a conditional Decide first and projected only if Decide
 // applied it, so a human verdict that lands mid-panel wins. A panel without
 // enough valid votes is retried after a backoff and abandoned at
@@ -151,9 +191,30 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 // every pair during an outage. Pairs a stopped run leased but did not finish
 // become due again when their lease expires.
 func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateOptions) (AdjudicateResult, error) {
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.adjudicate.run")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.Bool("adjudicate.dry_run", opts.DryRun))
+	res, err := a.run(ctx, tenantID, opts)
+	span.SetAttributes(attribute.Int("adjudicate.leased", res.Leased), attribute.Int("adjudicate.recovered", res.Recovered))
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+	// The caller reports err; this records how far the run got.
+	slog.InfoContext(ctx, "artifact adjudication run finished", "tenant.id", tenantID, "stopped_early", err != nil,
+		"reset", res.Reset, "recovered", res.Recovered, "leased", res.Leased, "confirmed", res.Confirmed,
+		"rejected", res.Rejected, "undecided", res.Undecided, "failed", res.Failed, "abandoned", res.Abandoned,
+		"expired", res.Expired, "dissent", res.Dissent, "stale", res.Stale, "orphaned", res.Orphaned,
+		"dry_run", opts.DryRun, "pending", res.Pending, "due", res.Due, "unprojected", res.Unprojected)
+	return res, err
+}
+
+func (a *Adjudicator) run(ctx context.Context, tenantID string, opts AdjudicateOptions) (AdjudicateResult, error) {
 	var res AdjudicateResult
-	if opts.MaxPairs <= 0 || opts.Now == nil {
-		return res, fmt.Errorf("adjudicate artifacts: invalid options: MaxPairs (%d) must be positive and Now must be set", opts.MaxPairs)
+	if opts.MaxPairs <= 0 || opts.Now == nil || (opts.DryRun && opts.Reproject) {
+		return res, fmt.Errorf("adjudicate artifacts: invalid options: MaxPairs (%d) must be positive, Now must be set, and DryRun excludes Reproject", opts.MaxPairs)
 	}
 	if opts.DryRun {
 		c, err := a.store.Counts(ctx, tenantID, opts.Now())
@@ -163,11 +224,22 @@ func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateO
 		res.Pending, res.Due, res.Unprojected = c.Pending, c.Due, c.Unprojected
 		return res, nil
 	}
+	if opts.Reproject {
+		n, err := a.store.ResetProjection(ctx, tenantID)
+		if err != nil {
+			return res, fmt.Errorf("adjudicate artifacts: reset projection: %w", err)
+		}
+		res.Reset = n
+	}
 	if err := a.recoverProjections(ctx, tenantID, &res); err != nil {
 		return res, err
 	}
 	for res.Leased < opts.MaxPairs {
-		pairs, err := a.store.Lease(ctx, tenantID, min(leaseBatch, opts.MaxPairs-res.Leased), leaseFor, opts.Now())
+		// Pairs are leased lease_batch at a time, each for lease_duration, so a
+		// lease rarely expires while its pair waits behind the rest of its
+		// batch. One that does (slow panels) is skipped, since another run may
+		// hold it now.
+		pairs, err := a.store.Lease(ctx, tenantID, min(a.cfg.LeaseBatch, opts.MaxPairs-res.Leased), a.cfg.LeaseDuration, opts.Now())
 		if err != nil {
 			return res, fmt.Errorf("adjudicate artifacts: lease pairs: %w", err)
 		}
@@ -205,12 +277,35 @@ func (a *Adjudicator) recoverProjections(ctx context.Context, tenantID string, r
 	}
 }
 
-func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID string, p LeasedPair, now func() time.Time, res *AdjudicateResult) error {
+// record counts one pair's outcome and logs it.
+func (a *Adjudicator) record(ctx context.Context, tenantID, key, outcome string) {
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("adjudicate.outcome", outcome))
+	if a.outcomes != nil {
+		a.outcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+	}
+	slog.InfoContext(ctx, "artifact pair adjudicated", "tenant.id", tenantID, "pair.key", key, "outcome", outcome)
+}
+
+func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID string, p LeasedPair, now func() time.Time, res *AdjudicateResult) (err error) {
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.adjudicate.pair")
+	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.String("pair.key", p.Key))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 	if !now().Before(p.LeasedUntil) {
 		res.Expired++
+		a.record(ctx, tenantID, p.Key, "expired")
 		return nil
 	}
+	start := time.Now()
 	v, err := a.panel(ctx, tenantID, p)
+	if a.panelDuration != nil {
+		a.panelDuration.Record(ctx, time.Since(start).Milliseconds())
+	}
 	// PostgreSQL keeps microseconds; truncating keeps a re-projected
 	// timestamp identical to the first one.
 	at := now().UTC().Truncate(time.Microsecond)
@@ -259,20 +354,26 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 	votes := make([]consensus.Vote, n)
 	errs := make([]error, n)
 	var eg errgroup.Group
-	eg.SetLimit(panelConcurrency)
+	eg.SetLimit(a.cfg.PanelConcurrency)
 	for i := range n {
 		model, sample := a.cfg.Models[i/a.cfg.SamplesPerModel], i%a.cfg.SamplesPerModel
 		eg.Go(func() error {
 			voterID := fmt.Sprintf("%s__s%d", model, sample)
+			if a.inFlight != nil {
+				a.inFlight.Add(ctx, 1)
+			}
 			resp, err := a.llm.Complete(ctx, &llmclient.CompletionRequest{
 				Model: model, Messages: messages, MaxTokens: a.cfg.MaxTokens, Temperature: &temperature,
 				TenantID: tenantID, PromptName: rp.Name, PromptVersion: rp.Version,
 			})
+			if a.inFlight != nil {
+				a.inFlight.Add(ctx, -1)
+			}
 			switch {
 			case err != nil:
 				votes[i], errs[i] = consensus.Vote{VoterID: voterID}, err
 			case len(resp.Choices) == 0:
-				votes[i], errs[i] = consensus.Vote{VoterID: voterID}, errors.New("completion returned no choices")
+				votes[i], errs[i] = consensus.Vote{VoterID: voterID}, errNoChoices
 			default:
 				votes[i] = ParseSameAsResponse(voterID, resp.Choices[0].Message.Content)
 			}
@@ -285,7 +386,7 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 
 	result, err := a.consensus.Compute(votes)
 	if err != nil {
-		return Verdict{}, panelError(err, votes, errs)
+		return Verdict{}, panelError(ctx, tenantID, p.Key, err, votes, errs)
 	}
 
 	ev := PanelEvidence{PromptName: rp.Name, PromptVersion: rp.Version, Models: slices.Clone(a.cfg.Models),
@@ -308,10 +409,13 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 
 // panelError explains why Compute rejected the votes. When every call failed
 // with a system-level LLM error it returns errLLMUnavailable, which stops the
-// run. Otherwise it adds the first completion error, named by its llmclient
-// sentinel when it has one so the gateway's raw reply is not stored, or, when
-// no call failed, how many replies had no valid SAME: line.
-func panelError(err error, votes []consensus.Vote, errs []error) error {
+// run. Otherwise it adds, when no call failed, how many replies had no valid
+// SAME: line, or else the first completion error redacted for storage in
+// last_error (CWE-209: an llmclient error can carry the gateway's raw reply).
+// It is stored as its llmclient sentinel's text, as "LLM API error (HTTP n)"
+// for an *llmclient.APIError, as errNoChoices's own text, or else as
+// "completion failed"; the full error is logged here, once.
+func panelError(ctx context.Context, tenantID, key string, err error, votes []consensus.Vote, errs []error) error {
 	var first error
 	allSystem := true
 	for _, e := range errs {
@@ -338,18 +442,27 @@ func panelError(err error, votes []consensus.Vote, errs []error) error {
 	case allSystem:
 		return fmt.Errorf("%w: %w", errLLMUnavailable, first)
 	}
-	msg := first.Error()
+	slog.WarnContext(ctx, "artifact adjudication: completion failed", "tenant.id", tenantID, "pair.key", key, "error", first)
+	msg := "completion failed"
+	var apiErr *llmclient.APIError
 	if i := slices.IndexFunc(llmErrors, func(s error) bool { return errors.Is(first, s) }); i >= 0 {
 		msg = llmErrors[i].Error()
+	} else if errors.Is(first, errNoChoices) {
+		msg = errNoChoices.Error()
+	} else if errors.As(first, &apiErr) {
+		msg = fmt.Sprintf("LLM API error (HTTP %d)", apiErr.StatusCode)
 	}
 	return fmt.Errorf("%w (first completion error: %s)", err, msg)
 }
 
 // promptValue makes an untrusted value safe to render inside a prompt tag:
 // one line without format characters, at most maxPromptValueBytes of the
-// original text, with no character that could close the tag. Escaping comes last, so the cap never
+// (UTF-8-repaired) original text, with no character that could close the tag. Escaping comes last, so the cap never
 // splits an entity.
 func promptValue(s string) string {
+	// Repair invalid UTF-8 first: stripping an invisible rune from between the
+	// bytes of a split sequence would otherwise splice them into a new rune such as U+202E.
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	s = promptBreaks.ReplaceAllString(promptInvisibles.ReplaceAllString(s, ""), " ")
 	s = strings.TrimSpace(cleanText(s, maxPromptValueBytes))
 	return promptEscaper.Replace(s)
@@ -392,18 +505,23 @@ func (a *Adjudicator) commit(ctx context.Context, tenantID string, p LeasedPair,
 			return fmt.Errorf("adjudicate artifacts: record dissent for %s: %w", p.Key, err)
 		}
 		res.Dissent++
+		a.record(ctx, tenantID, p.Key, "dissent")
 		return nil
 	case DecideStale:
 		res.Stale++
+		a.record(ctx, tenantID, p.Key, "stale")
 		return nil
 	}
 	switch v.Status {
 	case VerdictConfirmed:
 		res.Confirmed++
+		a.record(ctx, tenantID, p.Key, "confirmed")
 	case VerdictRejected:
 		res.Rejected++
+		a.record(ctx, tenantID, p.Key, "rejected")
 	default:
 		res.Undecided++
+		a.record(ctx, tenantID, p.Key, "undecided")
 		return nil
 	}
 	return a.project(ctx, tenantID, Projection{
@@ -457,26 +575,32 @@ func (a *Adjudicator) markProjected(ctx context.Context, tenantID, key string) e
 func (a *Adjudicator) recordFailure(ctx context.Context, tenantID string, p LeasedPair, cause error, at time.Time, res *AdjudicateResult) error {
 	attempts := p.Attempts + 1
 	f := Failure{Err: cleanText(cause.Error(), maxErrorChars), At: at, LeasedUntil: p.LeasedUntil,
-		NextAttemptAt: at.Add(retryDelay(attempts)), Abandon: attempts >= a.cfg.MaxAttempts}
+		NextAttemptAt: at.Add(retryDelay(attempts, a.cfg.RetryBaseDelay, a.cfg.RetryMaxDelay)), Abandon: attempts >= a.cfg.MaxAttempts}
 	if err := a.store.RecordFailure(ctx, tenantID, p.Key, f); err != nil {
 		return fmt.Errorf("adjudicate artifacts: record failure for %s: %w", p.Key, err)
 	}
 	if f.Abandon {
 		res.Abandoned++
+		a.record(ctx, tenantID, p.Key, "abandoned")
 	} else {
 		res.Failed++
+		a.record(ctx, tenantID, p.Key, "failed")
 	}
 	return nil
 }
 
-// retryDelay is the wait after the attempts-th failure: retryBaseDelay,
-// doubling per failure, capped at retryMaxDelay.
-func retryDelay(attempts int) time.Duration {
-	d := retryBaseDelay
-	for i := 1; i < attempts && d < retryMaxDelay; i++ {
+// retryDelay is the wait after the attempts-th failure: base, doubling per
+// failure, capped at maxDelay. It stops doubling before d could pass
+// maxDelay, so d never overflows, whatever attempts is.
+func retryDelay(attempts int, base, maxDelay time.Duration) time.Duration {
+	d := base
+	for i := 1; i < attempts; i++ {
+		if d > maxDelay/2 {
+			return maxDelay
+		}
 		d *= 2
 	}
-	return min(d, retryMaxDelay)
+	return min(d, maxDelay)
 }
 
 // cleanText makes s storable in PostgreSQL text and jsonb, which reject NUL

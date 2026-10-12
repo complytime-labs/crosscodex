@@ -7,9 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"sort"
+	"syscall"
 	"text/tabwriter"
 	"time"
+
+	"go.opentelemetry.io/otel"
 
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
@@ -22,7 +26,7 @@ import (
 const adminUsage = `usage:
   crosscodexd admin retention scan (--tenant <id> | --all-tenants) [--dry-run]
   crosscodexd admin reconcile artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-edges <n>]
-  crosscodexd admin adjudicate artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-pairs <n>]
+  crosscodexd admin adjudicate artifacts (--tenant <id> [--reproject] | --all-tenants) [--dry-run] [--max-pairs <n>]
   crosscodexd admin backup run
   crosscodexd admin backup list
   crosscodexd admin backup verify [--point <id>]
@@ -320,6 +324,7 @@ func adjudicateArtifactsCmd(args []string) int {
 	tenantID := fs.String("tenant", "", "tenant ID whose SAME_AS candidates to adjudicate")
 	allTenants := fs.Bool("all-tenants", false, "adjudicate every active tenant (needs database.tenant_admin_dsn)")
 	dryRun := fs.Bool("dry-run", false, "report the queue without leasing pairs or calling the LLM")
+	reproject := fs.Bool("reproject", false, "first mark the tenant's LLM-panel verdicts unprojected, so this run writes them back to a rebuilt graph (needs --tenant)")
 	maxPairs := fs.Int("max-pairs", artifacts.DefaultAdjudicateMaxPairs, "most candidate pairs to send to the LLM panel per tenant")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -335,16 +340,30 @@ func adjudicateArtifactsCmd(args []string) int {
 		return 2
 	}
 
-	return runAdjudicateArtifacts(*tenantID, *allTenants, *dryRun, *maxPairs)
+	if *reproject && *allTenants {
+		fmt.Fprintln(os.Stderr, "admin adjudicate artifacts: --reproject needs --tenant, not --all-tenants: a graph is rebuilt per tenant, so run --reproject once with --tenant <id> for each rebuilt tenant")
+		return 2
+	}
+	if *reproject && *dryRun {
+		fmt.Fprintln(os.Stderr, "admin adjudicate artifacts: --reproject cannot be combined with --dry-run, which writes nothing: drop --dry-run to re-project, or drop --reproject to preview the queue")
+		return 2
+	}
+
+	return runAdjudicateArtifacts(*tenantID, *allTenants, *dryRun, *reproject, *maxPairs)
 }
 
 // runAdjudicateArtifacts loads the daemon config and adjudicates tenantID's
 // SAME_AS candidates, or every active tenant's when all is set, printing each
 // result, including the partial result of a run that failed. It refuses to run unless analysis.artifact_adjudication is enabled.
+// With reproject it first marks the tenant's verdicts unprojected (see artifacts.AdjudicateOptions.Reproject).
 // It returns a process exit code: 0 on success, 1 on any failure.
-func runAdjudicateArtifacts(tenantID string, all, dryRun bool, maxPairs int) int {
+func runAdjudicateArtifacts(tenantID string, all, dryRun, reproject bool, maxPairs int) int {
 	const cmd = "admin adjudicate artifacts"
-	ctx := context.Background()
+	// SIGINT or SIGTERM cancels the run; it stops at its next store or LLM
+	// call and reports what it did, like any failed run. Pairs it leased
+	// become due again when their leases expire.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	cfg, ok := loadAdminConfig(ctx, cmd)
 	if !ok {
@@ -362,9 +381,10 @@ func runAdjudicateArtifacts(tenantID string, all, dryRun bool, maxPairs int) int
 		}
 		return func(ctx context.Context, id string) error {
 			res, err := adjudicate(ctx, id, artifacts.AdjudicateOptions{
-				DryRun:   dryRun,
-				MaxPairs: maxPairs,
-				Now:      func() time.Time { return time.Now().UTC() },
+				DryRun:    dryRun,
+				Reproject: reproject,
+				MaxPairs:  maxPairs,
+				Now:       func() time.Time { return time.Now().UTC() },
 			})
 			// A run stopped by an outage or a store error has already
 			// recorded verdicts; report them before the error.
@@ -384,6 +404,11 @@ type artifactAdjudicator func(ctx context.Context, tenantID string, opts artifac
 // unit-tested with a fake. Production wiring is daemonOpenAdjudicateArtifacts.
 var openAdjudicateArtifactsFn = daemonOpenAdjudicateArtifacts
 
+// buildSharedResourcesFn is buildSharedResources behind a package var, so a
+// unit test can check which resources daemonOpenAdjudicateArtifacts asks for
+// without opening any.
+var buildSharedResourcesFn = buildSharedResources
+
 // daemonOpenAdjudicateArtifacts loads the prompt registry and opens the app
 // pool (verdict store), the graph connection and, unless dryRun is set, the
 // LLM client. A dry run only counts the queue and never calls the LLM, so it
@@ -393,12 +418,15 @@ func daemonOpenAdjudicateArtifacts(ctx context.Context, cfg *config.Config, dryR
 	if err != nil {
 		return nil, nil, fmt.Errorf("load prompts: %w", err)
 	}
-	shared, err := buildSharedResources(ctx, cfg, requiredResources{db: true, graph: true, llm: !dryRun})
+	shared, err := buildSharedResourcesFn(ctx, cfg, requiredResources{db: true, graph: true, llm: !dryRun})
 	if err != nil {
 		return nil, nil, err
 	}
-	adj := artifacts.NewAdjudicator(shared.graphDB_, artifacts.NewPGVerdictStore(dbpkg.NewTenantPool(shared.appPool)),
-		shared.llmClient, prompts, cfg.Analysis.ArtifactAdjudication)
+	// No-op today: admin subcommands run before telemetry.Init (see docs/dev/telemetry.md).
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	store := artifacts.NewPGVerdictStore(dbpkg.NewTenantPool(shared.appPool), artifacts.WithVerdictStoreTelemetry(tp, mp))
+	adj := artifacts.NewAdjudicator(shared.graphDB_, store, shared.llmClient, prompts, cfg.Analysis.ArtifactAdjudication,
+		artifacts.WithAdjudicatorTelemetry(tp, mp))
 	return adj.Run, shared.close, nil
 }
 
@@ -412,6 +440,7 @@ func writeAdjudicateReport(w io.Writer, res artifacts.AdjudicateResult, dryRun b
 		fmt.Fprintf(tw, "due\t%d\n", res.Due)
 		fmt.Fprintf(tw, "unprojected\t%d\n", res.Unprojected)
 	} else {
+		fmt.Fprintf(tw, "reset\t%d\n", res.Reset)
 		fmt.Fprintf(tw, "recovered\t%d\n", res.Recovered)
 		fmt.Fprintf(tw, "orphaned\t%d\n", res.Orphaned)
 		fmt.Fprintf(tw, "leased\t%d\n", res.Leased)

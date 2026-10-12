@@ -3,16 +3,21 @@
 package artifacts_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"math"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/codes"
 
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
@@ -21,6 +26,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
 const adjTenant = "adjudicate-test"
@@ -53,7 +59,9 @@ func newAdjFixture() *adjFixture {
 	f.key = artifacts.PairKey(f.low, f.high)
 	f.candidate = graphdb.DerivedID("same-as", artifacts.ReconcileAlgorithmVersion, f.low, f.high)
 	f.cfg = config.ArtifactAdjudicationConfig{Enabled: true, Models: []string{"m1", "m2", "m3"}, SamplesPerModel: 1,
-		SamplingTemperature: 0.3, MaxTokens: 200, ConsensusThreshold: 0.6, MaxErrorRate: 0.34, MaxAttempts: 3}
+		SamplingTemperature: 0.3, MaxTokens: 200, ConsensusThreshold: 0.6, MaxErrorRate: 0.34, MaxAttempts: 3,
+		LeaseDuration: 15 * time.Minute, LeaseBatch: 10, PanelConcurrency: 4,
+		RetryBaseDelay: time.Minute, RetryMaxDelay: 24 * time.Hour}
 	f.now = reconcileNow.Add(time.Hour)
 	f.opts = artifacts.AdjudicateOptions{MaxPairs: 10, Now: func() time.Time { return f.now }}
 	return f
@@ -188,7 +196,7 @@ var _ = Describe("Adjudicator", func() {
 			Expect(r.status).To(Equal(artifacts.VerdictPending))
 			Expect(r.attempts).To(Equal(1))
 			Expect(r.nextAttemptAt).To(Equal(f.now.Add(time.Minute)))
-			Expect(r.lastError).To(ContainSubstring("gateway down"))
+			Expect(r.lastError).To(ContainSubstring("first completion error: completion failed"))
 			Expect(f.candidateSuperseded()).To(BeFalse())
 
 			again, err := f.run()
@@ -242,6 +250,46 @@ var _ = Describe("Adjudicator", func() {
 			Expect(r.lastError).NotTo(ContainSubstring("raw gateway text"), "a sentinel's text replaces the raw gateway error")
 		})
 
+		DescribeTable("stores only a redacted name for the first completion error",
+			func(callErr error, want string) {
+				f.llm.reply = func(req *llmclient.CompletionRequest) (string, error) {
+					if req.Model == "m1" {
+						return "", callErr
+					}
+					return "I cannot tell.", nil
+				}
+				res, err := f.run()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Failed: 1}))
+				r := f.store.row(adjTenant, f.key)
+				Expect(r.lastError).To(ContainSubstring("first completion error: " + want))
+				Expect(r.lastError).NotTo(ContainSubstring("raw gateway text"))
+			},
+			Entry("gateway unavailable", fmt.Errorf("raw gateway text: %w", llmclient.ErrGatewayUnavailable), llmclient.ErrGatewayUnavailable.Error()),
+			Entry("rate limit", fmt.Errorf("raw gateway text: %w", llmclient.ErrRateLimitExceeded), llmclient.ErrRateLimitExceeded.Error()),
+			Entry("authentication", fmt.Errorf("raw gateway text: %w", llmclient.ErrAuthentication), llmclient.ErrAuthentication.Error()),
+			Entry("credential resolution", fmt.Errorf("raw gateway text: %w", llmclient.ErrCredentialResolution), llmclient.ErrCredentialResolution.Error()),
+			Entry("model not allowed", fmt.Errorf("raw gateway text: %w", llmclient.ErrModelNotAllowed), llmclient.ErrModelNotAllowed.Error()),
+			Entry("no gateway", fmt.Errorf("raw gateway text: %w", llmclient.ErrNoGateway), llmclient.ErrNoGateway.Error()),
+			Entry("invalid request", fmt.Errorf("raw gateway text: %w", llmclient.ErrInvalidRequest), llmclient.ErrInvalidRequest.Error()),
+			Entry("max tokens exceeded", fmt.Errorf("raw gateway text: %w", llmclient.ErrMaxTokensExceeded), llmclient.ErrMaxTokensExceeded.Error()),
+			Entry("response too large", fmt.Errorf("raw gateway text: %w", llmclient.ErrResponseTooLarge), llmclient.ErrResponseTooLarge.Error()),
+			Entry("API error without a sentinel", &llmclient.APIError{StatusCode: 502, Message: "raw gateway text"}, "LLM API error (HTTP 502)"),
+			Entry("any other error", errors.New("raw gateway text"), "completion failed"),
+		)
+
+		It("logs the unredacted completion error once", func() {
+			var logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			DeferCleanup(func() { slog.SetDefault(prev) })
+			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("raw gateway text") }
+			_, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.Count(logs.String(), "raw gateway text")).To(Equal(1))
+			Expect(logs.String()).To(ContainSubstring(f.key))
+		})
+
 		It("doubles the backoff on each failure", func() {
 			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
 			_, err := f.run()
@@ -293,7 +341,7 @@ var _ = Describe("Adjudicator", func() {
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Failed: 1}))
 			r := f.store.row(adjTenant, f.key)
 			Expect(r.status).To(Equal(artifacts.VerdictPending))
-			Expect(r.lastError).To(ContainSubstring("first completion error: down"))
+			Expect(r.lastError).To(ContainSubstring("first completion error: completion failed"))
 		})
 
 		It("records nothing when another run re-leased the pair during the panel", func() {
@@ -338,7 +386,7 @@ var _ = Describe("Adjudicator", func() {
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Failed: 1}))
-			Expect(f.store.row(adjTenant, f.key).lastError).To(ContainSubstring("completion returned no choices"))
+			Expect(f.store.row(adjTenant, f.key).lastError).To(ContainSubstring("first completion error: completion returned no choices"))
 		})
 
 		It("tolerates failed votes within max_error_rate", func() {
@@ -560,6 +608,9 @@ var _ = Describe("Adjudicator", func() {
 		f.opts = artifacts.AdjudicateOptions{MaxPairs: 1}
 		_, err = f.run()
 		Expect(err).To(MatchError(ContainSubstring("invalid options")))
+		f.opts = artifacts.AdjudicateOptions{MaxPairs: 1, Now: func() time.Time { return f.now }, DryRun: true, Reproject: true}
+		_, err = f.run()
+		Expect(err).To(MatchError(ContainSubstring("DryRun excludes Reproject")))
 	})
 
 	It("stops on a store failure while recording the verdict", func() {
@@ -575,5 +626,244 @@ var _ = Describe("Adjudicator", func() {
 			Expect(artifacts.ExportCleanText("aé", 2)).To(Equal("a"))
 			Expect(artifacts.ExportCleanText("abc", 3)).To(Equal("abc"))
 		})
+	})
+})
+
+var _ = Describe("retryDelay", func() {
+	DescribeTable("doubles from the base per failure, capped, without overflow",
+		func(attempts int, base, maxDelay, want time.Duration) {
+			Expect(artifacts.ExportRetryDelay(attempts, base, maxDelay)).To(Equal(want))
+		},
+		Entry("first failure", 1, time.Minute, 24*time.Hour, time.Minute),
+		Entry("second failure", 2, time.Minute, 24*time.Hour, 2*time.Minute),
+		Entry("eleventh failure, below the cap", 11, time.Minute, 24*time.Hour, 1024*time.Minute),
+		Entry("base equal to the cap", 2, time.Hour, time.Hour, time.Hour),
+		Entry("no failures yet", 0, time.Minute, 24*time.Hour, time.Minute),
+		Entry("twelfth failure, capped", 12, time.Minute, 24*time.Hour, 24*time.Hour),
+		Entry("1000th failure, capped", 1000, time.Minute, 24*time.Hour, 24*time.Hour),
+		Entry("1000th failure under a cap near the int64 limit", 1000, time.Nanosecond, time.Duration(math.MaxInt64), time.Duration(math.MaxInt64)),
+	)
+})
+
+var _ = Describe("Adjudicator tuning", func() {
+	var f *adjFixture
+	BeforeEach(func() { f = newAdjFixture() })
+
+	It("holds each lease for lease_duration", func() {
+		f.cfg.LeaseDuration = 7 * time.Minute
+		// reply otherwise runs on several panel goroutines writing leasedUntil.
+		f.cfg.PanelConcurrency = 1
+		var leasedUntil time.Time
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			leasedUntil = f.store.row(adjTenant, f.key).leasedUntil
+			return answer("YES"), nil
+		}
+		_, err := f.run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(leasedUntil).To(Equal(f.now.Add(7 * time.Minute)))
+	})
+
+	It("leases lease_batch pairs per round trip", func() {
+		var cands []artifacts.PairCandidate
+		for i := range 3 {
+			cands = append(cands, artifacts.PairCandidate{LowGroupID: fmt.Sprintf("t-%d-a", i),
+				HighGroupID: fmt.Sprintf("t-%d-b", i), CandidateEdgeID: fmt.Sprintf("t-edge-%d", i)})
+		}
+		Expect(f.store.Enqueue(f.ctx, adjTenant, cands, f.now)).To(Succeed())
+		f.cfg.LeaseBatch = 2
+		// Failed panels touch no graph, so the extra pairs need no edges, and
+		// a failed pair is not due again within the run.
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
+		store := &leaseRecorder{fakeVerdictStore: f.store}
+		res, err := artifacts.NewAdjudicator(f.g, store, f.llm, f.prompts, f.cfg).Run(f.ctx, adjTenant, f.opts)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Leased).To(Equal(4))
+		Expect(store.ns).To(Equal([]int{2, 2, 2}), "two full batches, then an empty one ends the loop")
+	})
+
+	It("keeps at most panel_concurrency completions in flight", func() {
+		f.cfg.PanelConcurrency = 1
+		var inFlight, peak atomic.Int64
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			n := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				p := peak.Load()
+				if n <= p || peak.CompareAndSwap(p, n) {
+					break
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+			return answer("YES"), nil
+		}
+		_, err := f.run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(peak.Load()).To(Equal(int64(1)))
+	})
+
+	It("backs off from retry_base_delay up to retry_max_delay", func() {
+		f.cfg.RetryBaseDelay, f.cfg.RetryMaxDelay = 5*time.Minute, 7*time.Minute
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
+		_, err := f.run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.store.row(adjTenant, f.key).nextAttemptAt).To(Equal(f.now.Add(5 * time.Minute)))
+		f.now = f.now.Add(5 * time.Minute)
+		_, err = f.run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.store.row(adjTenant, f.key).nextAttemptAt).To(Equal(f.now.Add(7 * time.Minute)))
+	})
+})
+
+// leaseRecorder records the n of every Lease call.
+type leaseRecorder struct {
+	*fakeVerdictStore
+	ns []int
+}
+
+func (s *leaseRecorder) Lease(ctx context.Context, tenantID string, n int, leaseFor time.Duration, now time.Time) ([]artifacts.LeasedPair, error) {
+	s.ns = append(s.ns, n)
+	return s.fakeVerdictStore.Lease(ctx, tenantID, n, leaseFor, now)
+}
+
+var _ = Describe("Adjudicator telemetry", func() {
+	var (
+		f  *adjFixture
+		tp *telemetrytest.TestProvider
+	)
+	BeforeEach(func() {
+		f = newAdjFixture()
+		var err error
+		tp, err = telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+	})
+	run := func() (artifacts.AdjudicateResult, error) {
+		return artifacts.NewAdjudicator(f.g, f.store, f.llm, f.prompts, f.cfg,
+			artifacts.WithAdjudicatorTelemetry(tp.TracerProvider(), tp.MeterProvider())).Run(f.ctx, adjTenant, f.opts)
+	}
+
+	It("traces the run and each pair under it, with the tenant", func() {
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		runSpan := telemetrytest.FindSpan(tp.GetSpans(), "artifacts.adjudicate.run")
+		Expect(runSpan).NotTo(BeNil())
+		v, ok := telemetrytest.SpanAttribute(runSpan, "tenant.id")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal(adjTenant))
+		pair := telemetrytest.FindSpan(tp.GetSpans(), "artifacts.adjudicate.pair")
+		Expect(pair).NotTo(BeNil())
+		Expect(pair.Parent().SpanID()).To(Equal(runSpan.SpanContext().SpanID()))
+		v, ok = telemetrytest.SpanAttribute(pair, "tenant.id")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal(adjTenant))
+		v, ok = telemetrytest.SpanAttribute(pair, "pair.key")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal(f.key))
+		v, ok = telemetrytest.SpanAttribute(pair, "adjudicate.outcome")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal("confirmed"))
+	})
+
+	It("marks the pair span as failed when the pair errors", func() {
+		f.store.err["Decide"] = errors.New("db down")
+		_, err := run()
+		Expect(err).To(HaveOccurred())
+		pair := telemetrytest.FindSpan(tp.GetSpans(), "artifacts.adjudicate.pair")
+		Expect(pair).NotTo(BeNil())
+		Expect(pair.Status().Code).To(Equal(codes.Error))
+	})
+
+	It("marks the run span as failed when the run stops", func() {
+		f.store.err["Decide"] = errors.New("db down")
+		_, err := run()
+		Expect(err).To(HaveOccurred())
+		runSpan := telemetrytest.FindSpan(tp.GetSpans(), "artifacts.adjudicate.run")
+		Expect(runSpan).NotTo(BeNil())
+		Expect(runSpan.Status().Code).To(Equal(codes.Error))
+	})
+
+	It("counts outcomes and times each panel", func() {
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "confirmed")).To(Equal(int64(1)))
+		m := telemetrytest.FindMetric(tp.GetMetrics(), "artifacts.adjudicate.panel.duration_ms")
+		Expect(m).NotTo(BeNil())
+		n, err := telemetrytest.HistogramCount(m)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(n).To(Equal(uint64(1)))
+	})
+
+	It("counts a failed panel", func() {
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "failed")).To(Equal(int64(1)))
+		v, err := telemetrytest.CounterValue(telemetrytest.FindMetric(tp.GetMetrics(), "artifacts.adjudicate.completions.in_flight"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(BeZero())
+	})
+
+	It("reports completions in flight", func() {
+		f.cfg.PanelConcurrency = 1
+		var seen []int64
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			defer GinkgoRecover()
+			m := telemetrytest.FindMetric(tp.GetMetrics(), "artifacts.adjudicate.completions.in_flight")
+			Expect(m).NotTo(BeNil())
+			v, err := telemetrytest.CounterValue(m)
+			Expect(err).NotTo(HaveOccurred())
+			seen = append(seen, v)
+			return answer("YES"), nil
+		}
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(seen).To(Equal([]int64{1, 1, 1}))
+		v, err := telemetrytest.CounterValue(telemetrytest.FindMetric(tp.GetMetrics(), "artifacts.adjudicate.completions.in_flight"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(BeZero())
+	})
+
+	It("logs each pair outcome and a run summary without the error text", func() {
+		var logs bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		DeferCleanup(func() { slog.SetDefault(prev) })
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(logs.String()).To(MatchRegexp(`msg="artifact pair adjudicated".*pair.key=\S*.*outcome=confirmed`))
+		Expect(logs.String()).To(MatchRegexp(`msg="artifact adjudication run finished".*stopped_early=false.*orphaned=0 dry_run=false pending=0 due=0 unprojected=0`))
+	})
+
+	It("counts a dissent when a human decides mid-panel", func() {
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			f.store.setHuman(adjTenant, f.key, artifacts.VerdictRejected)
+			return answer("YES"), nil
+		}
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "dissent")).To(Equal(int64(1)))
+	})
+
+	It("counts a stale pair when another run decides mid-panel", func() {
+		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			f.store.set(adjTenant, artifacts.PairCandidate{LowGroupID: f.low, HighGroupID: f.high},
+				artifacts.VerdictRejected, artifacts.DeterminationLLMPanel)
+			return answer("YES"), nil
+		}
+		_, err := run()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "stale")).To(Equal(int64(1)))
+	})
+
+	It("reports stopped_early=true in the summary and keeps the error text out of it", func() {
+		f.store.err["Decide"] = errors.New("secret db detail")
+		var logs bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		DeferCleanup(func() { slog.SetDefault(prev) })
+		_, err := run()
+		Expect(err).To(HaveOccurred())
+		Expect(logs.String()).To(MatchRegexp(`msg="artifact adjudication run finished".*stopped_early=true`))
+		Expect(logs.String()).NotTo(ContainSubstring("secret db detail"))
 	})
 })

@@ -73,6 +73,7 @@ A span's instrumentation scope therefore tells you which package produced it. Pa
 | `pkg/analyzer/consensus` inside the requires analyzer                      | `Compute` takes no context, so its spans would be disconnected roots |
 | `crosscodexd admin retention scan`                                         | One-shot command that does not call `telemetry.Init`                 |
 | `crosscodexd admin reconcile artifacts`                                    | One-shot command that does not call `telemetry.Init`                 |
+| `crosscodexd admin adjudicate artifacts`                                   | Passes the global providers to the adjudicator and verdict store but does not call `telemetry.Init`, so they stay no-op |
 | `crosscodexd admin backup *`                                               | One-shot command that does not call `telemetry.Init`                 |
 | `crosscodexd admin tenant *`                                               | One-shot command that does not call `telemetry.Init`                 |
 
@@ -202,9 +203,14 @@ For components whose telemetry option takes a `(trace.Tracer, metric.Meter)` pai
 | `backup.staleness_seconds`              | Float64Gauge     | pkg/backup         | Age of each store's newest backup point in seconds, by `store`; absent (not zero) when no complete point exists                                                                                                                                                                                                                                                                            |
 | `db.tenant_admin.operations.total`      | Int64Counter     | pkg/db             | Tenant administration calls by `operation` (`provision`, `set_status`, `list`, `get`, `import`) and `result` (`ok`, `error`) |
 | `db.tenant_admin.duration_ms`           | Float64Histogram | pkg/db             | Duration of each tenant administration call in milliseconds, by `operation` |
+| `artifacts.adjudications.total` | Int64Counter | internal/analyzer/artifacts | Adjudicated SAME_AS pairs by `outcome` (`confirmed`, `rejected`, `undecided`, `failed`, `abandoned`, `expired`, `dissent`, `stale`). Outcome totals equal leased pairs only for runs that finish; a run that stops early (LLM outage or cancellation) leaves its in-progress pair uncounted |
+| `artifacts.adjudicate.panel.duration_ms` | Int64Histogram | internal/analyzer/artifacts | LLM panel duration per pair in milliseconds |
+| `artifacts.adjudicate.completions.in_flight` | Int64UpDownCounter | internal/analyzer/artifacts | LLM completions in flight |
+| `artifacts.verdictstore.operations.total` | Int64Counter | internal/analyzer/artifacts | Verdict store calls by `operation` and `status` (`ok`, `error`) |
+| `artifacts.verdictstore.operation.duration_ms` | Int64Histogram | internal/analyzer/artifacts | Verdict store call duration in milliseconds, by `operation` and `status` |
 | `crosscodex.gateway.auth.failures.total` | Int64Counter     | internal/gateway   | Rejected requests by `reason`: `no_tls`, `auth_failed`, `tenant_inactive` (suspended or not provisioned), `tenant_status_error` (status lookup failed) |
 
-`crosscodexd admin backup *` does not call `telemetry.Init` (see the uninstrumented-paths table above), so these instruments exist but are never exported today. The same holds for `db.tenant_admin.*` under `crosscodexd admin tenant *`.
+`crosscodexd admin backup *` does not call `telemetry.Init` (see the uninstrumented-paths table above), so these instruments exist but are never exported today. The same holds for `db.tenant_admin.*` under `crosscodexd admin tenant *`, and for the `artifacts.adjudicat*` and `artifacts.verdictstore.*` instruments under `crosscodexd admin adjudicate artifacts`.
 
 ### Graph Driver Metric Attributes
 

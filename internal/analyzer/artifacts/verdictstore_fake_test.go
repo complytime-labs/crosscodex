@@ -15,7 +15,7 @@ import (
 
 // fakeVerdictStore is an in-memory artifacts.VerdictStore with the same
 // semantics as PGVerdictStore. Tests inspect rows with row and set them up
-// with set, setHuman and resetProjected; err injects a failure per method
+// with set and setHuman; err injects a failure per method
 // name. enqueued records the candidates of every Enqueue call.
 type fakeVerdictStore struct {
 	mu       sync.Mutex
@@ -57,18 +57,6 @@ func checkTenant(ctx context.Context, tenantID string) error {
 		return fmt.Errorf("verdict store: context tenant %q does not match tenant %q", ctxTenant, tenantID)
 	}
 	return nil
-}
-
-// resetProjected marks every decided row of the tenant unprojected, as the
-// documented post-rebuild SQL step does.
-func (s *fakeVerdictStore) resetProjected(tenantID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, r := range s.rows {
-		if strings.HasPrefix(id, tenantID+"\x00") {
-			r.graphApplied = false
-		}
-	}
 }
 
 func (s *fakeVerdictStore) Enqueue(ctx context.Context, tenantID string, cands []artifacts.PairCandidate, now time.Time) error {
@@ -267,6 +255,26 @@ func (s *fakeVerdictStore) MarkProjected(ctx context.Context, tenantID, key stri
 		r.graphApplied = true
 	}
 	return nil
+}
+
+func (s *fakeVerdictStore) ResetProjection(ctx context.Context, tenantID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.err["ResetProjection"]; err != nil {
+		return 0, err
+	}
+	if err := checkTenant(ctx, tenantID); err != nil {
+		return 0, err
+	}
+	n := 0
+	for id, r := range s.rows {
+		if strings.HasPrefix(id, tenantID+"\x00") && r.graphApplied && r.determination == artifacts.DeterminationLLMPanel &&
+			(r.status == artifacts.VerdictConfirmed || r.status == artifacts.VerdictRejected) {
+			r.graphApplied = false
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (s *fakeVerdictStore) Counts(ctx context.Context, tenantID string, now time.Time) (artifacts.QueueCounts, error) {
