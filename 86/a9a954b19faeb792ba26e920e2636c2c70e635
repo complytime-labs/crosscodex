@@ -1,0 +1,30 @@
+cmd/crosscodexd/admin_review_bdd_test.go
+  s_f0d92b87bb9789::t_44f82b2b7f03f3 12,34-37,62-67,117-120,188-220
+  s_f0d92b87bb9789::t_c38adfbb1cbe10 411
+  s_f0d92b87bb9789::t_fe98c0ad2e798d 221
+docs/dev/design-principles.md
+  s_f0d92b87bb9789::t_0ca303e8b6ba77 57
+cmd/crosscodexd/admin_review.go
+  s_f0d92b87bb9789::t_57c3cc490b0aee 27,91-93,100,114-123,125-132,137,243-247,249
+README.md
+  s_f0d92b87bb9789::t_62604b71c86ae2 805-806
+  s_f0d92b87bb9789::t_0ca303e8b6ba77 793-804,807,814-815
+cmd/crosscodexd/admin.go
+  s_f0d92b87bb9789::t_57c3cc490b0aee 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86a9a954b19faeb792ba26e920e2636c2c70e635",
+  "prompts": {},
+  "sessions": {
+    "s_f0d92b87bb9789": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c3efb1dc-e7ce-4e49-9257-b59fde3d50b7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
