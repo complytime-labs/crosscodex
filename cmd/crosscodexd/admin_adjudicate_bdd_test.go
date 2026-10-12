@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -42,6 +43,9 @@ var _ = Describe("runAdmin adjudicate artifacts arg parsing", func() {
 		Entry("--reproject with --all-tenants", "adjudicate", "artifacts", "--all-tenants", "--reproject"),
 		Entry("--reproject with --dry-run", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--dry-run"),
 		Entry("--reproject alone", "adjudicate", "artifacts", "--reproject"),
+		Entry("--reproject with --max-pairs", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--max-pairs", "5"),
+		Entry("--reproject with the default --max-pairs spelled out", "adjudicate", "artifacts", "--tenant", "acme", "--reproject",
+			"--max-pairs", strconv.Itoa(artifacts.DefaultAdjudicateMaxPairs)),
 	)
 
 	DescribeTable("explains how to use --reproject instead",
@@ -52,6 +56,7 @@ var _ = Describe("runAdmin adjudicate artifacts arg parsing", func() {
 		},
 		Entry("with --all-tenants", "--reproject needs --tenant", "adjudicate", "artifacts", "--all-tenants", "--reproject"),
 		Entry("with --dry-run", "drop --dry-run to re-project", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--dry-run"),
+		Entry("with --max-pairs", "drop --max-pairs to re-project", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--max-pairs", "5"),
 	)
 })
 

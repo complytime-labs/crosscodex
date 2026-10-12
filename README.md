@@ -716,7 +716,7 @@ Other behavior:
   makes no LLM calls, so like `--dry-run` it needs no LLM gateway or NATS.
   Use it after rebuilding the tenant's graph, then run without `--reproject`
   to adjudicate due pairs; human verdicts are untouched. It cannot be
-  combined with `--dry-run` or `--all-tenants`.
+  combined with `--dry-run`, `--max-pairs` or `--all-tenants`.
 - **Configuration:** the command refuses to run until
   `analysis.artifact_adjudication.enabled` is `true` and `models` is set (see
   [Key Configuration Examples](#key-configuration-examples)).

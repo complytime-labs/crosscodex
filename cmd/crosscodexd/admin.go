@@ -26,7 +26,8 @@ import (
 const adminUsage = `usage:
   crosscodexd admin retention scan (--tenant <id> | --all-tenants) [--dry-run]
   crosscodexd admin reconcile artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-edges <n>]
-  crosscodexd admin adjudicate artifacts (--tenant <id> [--reproject] | --all-tenants) [--dry-run] [--max-pairs <n>]
+  crosscodexd admin adjudicate artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-pairs <n>]
+  crosscodexd admin adjudicate artifacts --tenant <id> --reproject
   crosscodexd admin backup run
   crosscodexd admin backup list
   crosscodexd admin backup verify [--point <id>]
@@ -348,6 +349,12 @@ func adjudicateArtifactsCmd(args []string) int {
 	}
 	if *reproject && *dryRun {
 		fmt.Fprintln(os.Stderr, "admin adjudicate artifacts: --reproject cannot be combined with --dry-run, which writes nothing: drop --dry-run to re-project, or drop --reproject to preview the queue")
+		return 2
+	}
+	maxPairsSet := false
+	fs.Visit(func(f *flag.Flag) { maxPairsSet = maxPairsSet || f.Name == "max-pairs" })
+	if *reproject && maxPairsSet {
+		fmt.Fprintln(os.Stderr, "admin adjudicate artifacts: --reproject cannot be combined with --max-pairs: a re-projection sends no pairs to the LLM panel: drop --max-pairs to re-project, then run without --reproject to adjudicate")
 		return 2
 	}
 
