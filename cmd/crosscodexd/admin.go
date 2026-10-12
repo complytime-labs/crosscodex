@@ -326,7 +326,7 @@ func adjudicateArtifactsCmd(args []string) int {
 	tenantID := fs.String("tenant", "", "tenant ID whose SAME_AS candidates to adjudicate")
 	allTenants := fs.Bool("all-tenants", false, "adjudicate every active tenant (needs database.tenant_admin_dsn)")
 	dryRun := fs.Bool("dry-run", false, "report the queue without leasing pairs or calling the LLM")
-	reproject := fs.Bool("reproject", false, "first mark the tenant's LLM-panel verdicts unprojected, so this run writes them back to a rebuilt graph (needs --tenant)")
+	reproject := fs.Bool("reproject", false, "write the tenant's LLM-panel verdicts back to a rebuilt graph, without leasing pairs or calling the LLM (needs --tenant)")
 	maxPairs := fs.Int("max-pairs", artifacts.DefaultAdjudicateMaxPairs, "most candidate pairs to send to the LLM panel per tenant")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -357,7 +357,7 @@ func adjudicateArtifactsCmd(args []string) int {
 // runAdjudicateArtifacts loads the daemon config and adjudicates tenantID's
 // SAME_AS candidates, or every active tenant's when all is set, printing each
 // result, including the partial result of a run that failed. It refuses to run unless analysis.artifact_adjudication is enabled.
-// With reproject it first marks the tenant's verdicts unprojected (see artifacts.AdjudicateOptions.Reproject).
+// With reproject it only re-projects the tenant's verdicts (see artifacts.AdjudicateOptions.Reproject), so like a dry run it opens no LLM client or NATS connection.
 // It returns a process exit code: 0 on success, 1 on any failure.
 func runAdjudicateArtifacts(tenantID string, all, dryRun, reproject bool, maxPairs int) int {
 	const cmd = "admin adjudicate artifacts"
@@ -377,7 +377,7 @@ func runAdjudicateArtifacts(tenantID string, all, dryRun, reproject bool, maxPai
 	}
 
 	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
-		adjudicate, closeFn, err := openAdjudicateArtifactsFn(ctx, cfg, dryRun)
+		adjudicate, closeFn, err := openAdjudicateArtifactsFn(ctx, cfg, dryRun || reproject)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -412,17 +412,18 @@ var openAdjudicateArtifactsFn = daemonOpenAdjudicateArtifacts
 var buildSharedResourcesFn = buildSharedResources
 
 // daemonOpenAdjudicateArtifacts loads the prompt registry and opens the app
-// pool (verdict store), the graph connection and, unless dryRun is set, the
+// pool (verdict store), the graph connection and, unless noLLM is set, the
 // LLM client and the NATS connection its audit events are published on. A dry
-// run only counts the queue and never calls the LLM, so it runs on a host
-// without an LLM gateway or NATS. A real run attaches to the daemon's NATS
-// server (requiredResources.attachNATS).
-func daemonOpenAdjudicateArtifacts(ctx context.Context, cfg *config.Config, dryRun bool) (artifactAdjudicator, func(), error) {
+// run only counts the queue and a re-projection only replays stored verdicts;
+// neither calls the LLM, so both run on a host without an LLM gateway or
+// NATS. An adjudicating run attaches to the daemon's NATS server
+// (requiredResources.attachNATS).
+func daemonOpenAdjudicateArtifacts(ctx context.Context, cfg *config.Config, noLLM bool) (artifactAdjudicator, func(), error) {
 	prompts, err := prompt.NewRegistry(cfg.Prompt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load prompts: %w", err)
 	}
-	shared, err := buildSharedResourcesFn(ctx, cfg, requiredResources{db: true, graph: true, nats: !dryRun, attachNATS: !dryRun, llm: !dryRun})
+	shared, err := buildSharedResourcesFn(ctx, cfg, requiredResources{db: true, graph: true, nats: !noLLM, attachNATS: !noLLM, llm: !noLLM})
 	if err != nil {
 		return nil, nil, err
 	}

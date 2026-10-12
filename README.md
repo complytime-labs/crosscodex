@@ -608,8 +608,8 @@ crosscodexd admin adjudicate artifacts --tenant acme --reproject
 crosscodexd admin adjudicate artifacts --all-tenants --max-pairs 500
 ```
 
-`retention scan` and a real (non-`--dry-run`) `adjudicate artifacts` publish
-audit events, so they attach to the daemon's NATS server. They refuse to start
+`retention scan` and an `adjudicate artifacts` run without `--dry-run` or
+`--reproject` publish audit events, so they attach to the daemon's NATS server. They refuse to start
 when `nats.url` is empty, because embedded mode would start a second JetStream
 server on the daemon's store directory. They also refuse a server whose audit
 streams do not exist yet, and never create or update a stream, so a one-shot
@@ -711,10 +711,12 @@ Other behavior:
   command that opens the database, it first applies pending schema
   migrations.
 - **`--reproject`:** with `--tenant` only. Marks the tenant's projected
-  LLM-panel confirmed and rejected verdicts unprojected, then runs as usual,
-  so the run writes them back to the graph (`reset` counts them). Use it
-  after rebuilding the tenant's graph; human verdicts are untouched. It
-  cannot be combined with `--dry-run` or `--all-tenants`.
+  LLM-panel confirmed and rejected verdicts unprojected and writes them back
+  to the graph (`reset` counts them), then stops: it leases no pairs and
+  makes no LLM calls, so like `--dry-run` it needs no LLM gateway or NATS.
+  Use it after rebuilding the tenant's graph, then run without `--reproject`
+  to adjudicate due pairs; human verdicts are untouched. It cannot be
+  combined with `--dry-run` or `--all-tenants`.
 - **Configuration:** the command refuses to run until
   `analysis.artifact_adjudication.enabled` is `true` and `models` is set (see
   [Key Configuration Examples](#key-configuration-examples)).
