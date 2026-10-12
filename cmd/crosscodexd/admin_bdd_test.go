@@ -183,3 +183,18 @@ var _ = Describe("runAdmin reconcile artifacts wiring", func() {
 		Expect(gotTenant).To(BeEmpty())
 	})
 })
+
+var _ = Describe("daemonOpenRetentionScan", func() {
+	It("attaches to the daemon's NATS rather than embedding or provisioning streams", func() {
+		orig := buildSharedResourcesFn
+		DeferCleanup(func() { buildSharedResourcesFn = orig })
+		var got requiredResources
+		buildSharedResourcesFn = func(_ context.Context, _ *config.Config, need requiredResources, _ ...ResourceOption) (*sharedResources, error) {
+			got = need
+			return nil, errors.New("stop before connecting")
+		}
+		_, _, err := daemonOpenRetentionScan(context.Background(), &config.Config{})
+		Expect(err).To(MatchError("stop before connecting"))
+		Expect(got).To(Equal(requiredResources{db: true, nats: true, attachNATS: true}))
+	})
+})

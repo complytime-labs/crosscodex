@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.opentelemetry.io/otel"
 
+	"github.com/complytime-labs/crosscodex/internal/worker"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
@@ -27,7 +29,13 @@ type requiredResources struct {
 	db    bool // appPool + appDB + vectordb (gateway, graph, all)
 	graph bool // graphDB + graphdb.GraphDB, in addition to db (graph, all)
 	nats  bool // gateway, worker, graph, all
-	llm   bool // gateway, worker, all
+	// attachNATS, with nats: attach to the daemon's NATS server and its
+	// existing audit streams (natsbus.WithExistingStreams). Admin one-shots
+	// set it: embedding would start a second JetStream server on the daemon's
+	// store directory, and provisioning would overwrite the daemon's stream
+	// retention with this process's nats.streams values.
+	attachNATS bool
+	llm        bool // pipeline, worker, all; requires nats, which carries the LLM audit events
 }
 
 // ResourceOption customizes sharedResources construction. Used by tests to
@@ -97,7 +105,12 @@ func (r *sharedResources) close() {
 
 // buildSharedResources constructs exactly the resources need declares.
 // Every partially-constructed resource is released on any error return path.
+// The LLM client publishes an audit event for every call to NATS, so need.llm
+// without need.nats is refused rather than run unaudited.
 func buildSharedResources(ctx context.Context, cfg *config.Config, need requiredResources, opts ...ResourceOption) (*sharedResources, error) {
+	if need.llm && !need.nats {
+		return nil, errors.New("cannot open the LLM client without NATS: LLM audit events are published to NATS, and an LLM call must not go unaudited. Have the caller request the nats resource alongside llm")
+	}
 	res := &sharedResources{}
 
 	if need.db {
@@ -164,6 +177,9 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 	if need.nats {
 		natsTracer, natsMeter := telemetry.Instrumentation("pkg/natsbus")
 		natsOpts := []natsbus.Option{natsbus.WithTelemetry(natsTracer, natsMeter)}
+		if need.attachNATS {
+			natsOpts = append(natsOpts, natsbus.WithExistingStreams())
+		}
 		tlsCfg, err := natsTLSConfig(ctx, cfg)
 		if err != nil {
 			res.close()
@@ -181,7 +197,11 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 	}
 
 	if need.llm {
-		llmOpts := []llmclient.Option{llmclient.WithTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider())}
+		auditor := worker.NewNATSAuditEmitterWithMetrics(res.natsClient, slog.Default(), otel.GetMeterProvider())
+		llmOpts := []llmclient.Option{
+			llmclient.WithTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()),
+			llmclient.WithAuditEmitter(auditor),
+		}
 		httpClient, err := llmHTTPClient(ctx, cfg)
 		if err != nil {
 			res.close()

@@ -10,6 +10,8 @@
 //
 // Three JetStream audit streams (AUDIT_LLM, AUDIT_DECISIONS,
 // AUDIT_EVENTS) are created on startup for compliance record retention.
+// [WithExistingStreams] instead attaches to streams another process created,
+// leaving them unchanged.
 //
 // Work distribution uses core NATS queue groups via [Client.QueueSubscribe].
 //

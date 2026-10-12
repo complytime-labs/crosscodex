@@ -58,11 +58,15 @@ func connectOptions(cfg config.NATSConfig, o clientOptions) []nats.Option {
 // to the external server.
 //
 // Three audit streams (AUDIT_LLM, AUDIT_DECISIONS, AUDIT_EVENTS) are
-// created or updated on startup.
+// created or updated on startup, unless WithExistingStreams is set, in which
+// case they must already exist and are left unchanged.
 func New(cfg config.NATSConfig, opts ...Option) (Client, error) {
 	o := defaultClientOptions()
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if o.existingStreams && isEmbeddedMode(cfg.URL) {
+		return nil, fmt.Errorf("%w: this process attaches to the daemon's NATS server and must not start an embedded one, which would share the daemon's JetStream store directory. Set nats.url to the daemon's NATS server", ErrExternalURLRequired)
 	}
 
 	c := &client{
@@ -103,7 +107,12 @@ func New(cfg config.NATSConfig, opts ...Option) (Client, error) {
 	}
 	c.js = js
 
-	if err := c.ensureStreams(context.Background(), cfg.Streams); err != nil {
+	if o.existingStreams {
+		err = c.verifyStreams(context.Background())
+	} else {
+		err = c.ensureStreams(context.Background(), cfg.Streams)
+	}
+	if err != nil {
 		nc.Close()
 		if c.embedded != nil {
 			c.embedded.shutdown()
@@ -419,6 +428,21 @@ func (c *client) ensureStreams(ctx context.Context, streamsCfg config.NATSStream
 	for _, cfg := range auditStreamConfigs(streamsCfg) {
 		if err := c.CreateStream(ctx, cfg); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// verifyStreams checks that every audit stream exists, without creating or
+// updating any.
+func (c *client) verifyStreams(ctx context.Context) error {
+	for _, name := range AuditStreamNames() {
+		_, err := c.js.Stream(ctx, name)
+		if errors.Is(err, jetstream.ErrStreamNotFound) {
+			return fmt.Errorf("%w: %s is missing on the NATS server, and this process only attaches to existing streams so it never changes their retention. Start the daemon, which creates them, or set nats.url to the daemon's NATS server", ErrStreamNotFound, name)
+		}
+		if err != nil {
+			return fmt.Errorf("look up stream %s: %w", name, err)
 		}
 	}
 	return nil

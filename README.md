@@ -608,6 +608,13 @@ crosscodexd admin adjudicate artifacts --tenant acme --reproject
 crosscodexd admin adjudicate artifacts --all-tenants --max-pairs 500
 ```
 
+`retention scan` and a real (non-`--dry-run`) `adjudicate artifacts` publish
+audit events, so they attach to the daemon's NATS server. They refuse to start
+when `nats.url` is empty, because embedded mode would start a second JetStream
+server on the daemon's store directory. They also refuse a server whose audit
+streams do not exist yet, and never create or update a stream, so a one-shot
+cannot change the daemon's stream retention. Start the daemon first.
+
 `--all-tenants` and `--tenant` are mutually exclusive. With `--all-tenants`:
 
 - **Tenant list:** the command lists tenants through
@@ -692,11 +699,17 @@ Other behavior:
   `leased`, `confirmed`, `rejected`, `undecided`, `failed`, `abandoned`,
   `dissent` (a human decided the pair meanwhile), `stale` (another run decided
   it meanwhile) and `expired` (lease expired before the panel started).
+- **Audit:** every panel call publishes an LLM audit event to the
+  `AUDIT_LLM` stream (see [Audit Trails](#audit-trails)), so a real run also
+  attaches to the daemon's NATS server (see above). A tenant run's events
+  share the job ID
+  `artifact-adjudication-<uuid>`, logged as `run.id`.
 - **`--dry-run`:** reports `pending`, `due` and `unprojected` counts without
   leasing, calling the LLM or writing verdicts or graph elements. It opens no
-  LLM client, so it runs on a host without an LLM gateway (the configuration
-  check below still applies). Like every command that opens the database, it
-  first applies pending schema migrations.
+  LLM client and no NATS connection, so it runs on a host without an LLM
+  gateway or NATS (the configuration check below still applies). Like every
+  command that opens the database, it first applies pending schema
+  migrations.
 - **`--reproject`:** with `--tenant` only. Marks the tenant's projected
   LLM-panel confirmed and rejected verdicts unprojected, then runs as usual,
   so the run writes them back to the graph (`reset` counts them). Use it

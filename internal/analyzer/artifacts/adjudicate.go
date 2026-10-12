@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
@@ -189,12 +190,18 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 // LLM error (gateway unavailable, rate limit, authentication, credentials,
 // model not allowed, no gateway): recording it would spend an attempt on
 // every pair during an outage. Pairs a stopped run leased but did not finish
-// become due again when their lease expires.
+// become due again when their lease expires. Every LLM request of a run
+// carries the run's ID as its JobID, so the run's LLM audit events share one
+// audit subject; Run logs the ID with its summary.
 func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateOptions) (AdjudicateResult, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.adjudicate.run")
 	defer span.End()
-	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.Bool("adjudicate.dry_run", opts.DryRun))
-	res, err := a.run(ctx, tenantID, opts)
+	// A run ID, not a pair key, because pair keys embed artifact names, which
+	// may contain characters a NATS subject token cannot.
+	runID := "artifact-adjudication-" + uuid.NewString()
+	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.String("adjudicate.run_id", runID),
+		attribute.Bool("adjudicate.dry_run", opts.DryRun))
+	res, err := a.run(ctx, tenantID, runID, opts)
 	span.SetAttributes(attribute.Int("adjudicate.leased", res.Leased), attribute.Int("adjudicate.recovered", res.Recovered))
 	if err != nil {
 		span.RecordError(err)
@@ -203,7 +210,7 @@ func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateO
 		span.SetStatus(codes.Ok, "")
 	}
 	// The caller reports err; this records how far the run got.
-	slog.InfoContext(ctx, "artifact adjudication run finished", "tenant.id", tenantID, "stopped_early", err != nil,
+	slog.InfoContext(ctx, "artifact adjudication run finished", "tenant.id", tenantID, "run.id", runID, "stopped_early", err != nil,
 		"reset", res.Reset, "recovered", res.Recovered, "leased", res.Leased, "confirmed", res.Confirmed,
 		"rejected", res.Rejected, "undecided", res.Undecided, "failed", res.Failed, "abandoned", res.Abandoned,
 		"expired", res.Expired, "dissent", res.Dissent, "stale", res.Stale, "orphaned", res.Orphaned,
@@ -211,7 +218,7 @@ func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateO
 	return res, err
 }
 
-func (a *Adjudicator) run(ctx context.Context, tenantID string, opts AdjudicateOptions) (AdjudicateResult, error) {
+func (a *Adjudicator) run(ctx context.Context, tenantID, runID string, opts AdjudicateOptions) (AdjudicateResult, error) {
 	var res AdjudicateResult
 	if opts.MaxPairs <= 0 || opts.Now == nil || (opts.DryRun && opts.Reproject) {
 		return res, fmt.Errorf("adjudicate artifacts: invalid options: MaxPairs (%d) must be positive, Now must be set, and DryRun excludes Reproject", opts.MaxPairs)
@@ -248,7 +255,7 @@ func (a *Adjudicator) run(ctx context.Context, tenantID string, opts AdjudicateO
 		}
 		res.Leased += len(pairs)
 		for _, p := range pairs {
-			if err := a.adjudicatePair(ctx, tenantID, p, opts.Now, &res); err != nil {
+			if err := a.adjudicatePair(ctx, tenantID, runID, p, opts.Now, &res); err != nil {
 				return res, err
 			}
 		}
@@ -286,7 +293,7 @@ func (a *Adjudicator) record(ctx context.Context, tenantID, key, outcome string)
 	slog.InfoContext(ctx, "artifact pair adjudicated", "tenant.id", tenantID, "pair.key", key, "outcome", outcome)
 }
 
-func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID string, p LeasedPair, now func() time.Time, res *AdjudicateResult) (err error) {
+func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID, runID string, p LeasedPair, now func() time.Time, res *AdjudicateResult) (err error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.adjudicate.pair")
 	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.String("pair.key", p.Key))
 	defer func() {
@@ -302,7 +309,7 @@ func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID string, p Lea
 		return nil
 	}
 	start := time.Now()
-	v, err := a.panel(ctx, tenantID, p)
+	v, err := a.panel(ctx, tenantID, runID, p)
 	if a.panelDuration != nil {
 		a.panelDuration.Record(ctx, time.Since(start).Milliseconds())
 	}
@@ -329,7 +336,7 @@ func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID string, p Lea
 // unparseable reply is an errored vote; too many of them return an error
 // wrapping *consensus.ErrInsufficientVotes, unless every call failed with a
 // systemLLMErrors error, which returns errLLMUnavailable instead.
-func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) (Verdict, error) {
+func (a *Adjudicator) panel(ctx context.Context, tenantID, runID string, p LeasedPair) (Verdict, error) {
 	c := p.Context
 	rp, err := a.prompts.Render(ctx, sameAsPromptName, map[string]string{
 		"artifact_type": promptValue(c.Type),
@@ -364,7 +371,7 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID string, p LeasedPair) 
 			}
 			resp, err := a.llm.Complete(ctx, &llmclient.CompletionRequest{
 				Model: model, Messages: messages, MaxTokens: a.cfg.MaxTokens, Temperature: &temperature,
-				TenantID: tenantID, PromptName: rp.Name, PromptVersion: rp.Version,
+				TenantID: tenantID, JobID: runID, PromptName: rp.Name, PromptVersion: rp.Version,
 			})
 			if a.inFlight != nil {
 				a.inFlight.Add(ctx, -1)

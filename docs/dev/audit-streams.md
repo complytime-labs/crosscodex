@@ -18,6 +18,15 @@ Three audit streams are created at startup. Messages without valid provenance he
 
 The `*` in each subject pattern is the tenant ID. All audit subjects are scoped per-tenant by design.
 
+### LLM Call Events
+
+`buildSharedResources` (`cmd/crosscodexd/resources.go`) attaches an `internal/worker.NATSAuditEmitter` to every LLM client it opens, so each completion and embedding call from the daemon roles and the admin one-shots publishes an `llmclient.AuditEvent` to `crosscodex.audit.<tenant>.llm.<job_id>`. The event records the tenant, job ID, model, operation, a SHA-256 hash of the prompt, prompt name and version, tokens used, duration, success or error, and the trace ID.
+
+- **Fail closed at startup:** a caller that asks for the `llm` resource without `nats` is refused, so no LLM client is ever opened unaudited.
+- **Best effort per call:** a publish failure is logged and counted in `crosscodex.worker.audit.failures.total` (by `reason`), but does not fail the LLM call (the `llmclient.AuditEmitter` contract).
+- **Job ID:** the subject token, so it must be non-empty and free of `.`, `*` and `>`; the emitter drops events that fail this check and counts them as `invalid_subject`. Worker calls (dispatched by the pipeline's analyzers) use the analysis job ID. `crosscodexd admin adjudicate artifacts` uses one ID per tenant run, `artifact-adjudication-<uuid>`, logged as `run.id` in the run's summary line; its events also carry the `artifact_same_as` prompt name and version stored in each verdict's evidence.
+- **Admin one-shots attach to the daemon's NATS server:** see [Stream Creation](#stream-creation). Admin one-shots do not call `telemetry.Init` (see [telemetry.md](telemetry.md)), so their events carry an empty `trace_id` and the failure counter is not exported.
+
 ### Retention Configuration
 
 LLM and events stream retention is configurable:
@@ -34,6 +43,12 @@ The decisions stream has no retention limit. Compliance determinations are kept 
 ### Stream Creation
 
 Streams are created or updated automatically when the NATS client starts (`natsbus.New`). If a stream already exists, its configuration is updated to match. Manual stream management is not required.
+
+Admin one-shots that publish audit events (`crosscodexd admin retention scan`, and `admin adjudicate artifacts` without `--dry-run`) instead attach with `natsbus.WithExistingStreams` (`requiredResources.attachNATS` in `cmd/crosscodexd/resources.go`). That mode:
+
+- refuses an empty `nats.url` (`ErrExternalURLRequired`) before starting anything, since an embedded server would share the daemon's JetStream store directory;
+- never creates or updates a stream, so a one-shot run with a different `nats.streams.*` cannot change the daemon's retention;
+- fails with `ErrStreamNotFound` when an audit stream is missing; start the daemon, which creates them.
 
 ## Provenance Headers
 

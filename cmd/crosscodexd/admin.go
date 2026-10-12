@@ -169,9 +169,11 @@ var openRetentionScanFn = daemonOpenRetentionScan
 // daemonOpenRetentionScan builds the shared resources and the retention wiring
 // the gateway AdminService uses (buildRetentionWiring) once, so --all-tenants
 // runs every tenant on one set of connections. Each scan builds that tenant's
-// retention.Engine and runs it with the configured default policy.
+// retention.Engine and runs it with the configured default policy. It
+// publishes retention audit events, so it attaches to the daemon's NATS
+// server (requiredResources.attachNATS).
 func daemonOpenRetentionScan(ctx context.Context, cfg *config.Config) (retentionScanner, func(), error) {
-	shared, err := buildSharedResources(ctx, cfg, requiredResources{db: true, nats: true})
+	shared, err := buildSharedResourcesFn(ctx, cfg, requiredResources{db: true, nats: true, attachNATS: true})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -405,20 +407,22 @@ type artifactAdjudicator func(ctx context.Context, tenantID string, opts artifac
 var openAdjudicateArtifactsFn = daemonOpenAdjudicateArtifacts
 
 // buildSharedResourcesFn is buildSharedResources behind a package var, so a
-// unit test can check which resources daemonOpenAdjudicateArtifacts asks for
-// without opening any.
+// unit test can check which resources the admin openers (retention scan,
+// adjudicate artifacts) ask for without opening any.
 var buildSharedResourcesFn = buildSharedResources
 
 // daemonOpenAdjudicateArtifacts loads the prompt registry and opens the app
 // pool (verdict store), the graph connection and, unless dryRun is set, the
-// LLM client. A dry run only counts the queue and never calls the LLM, so it
-// runs on a host without an LLM gateway.
+// LLM client and the NATS connection its audit events are published on. A dry
+// run only counts the queue and never calls the LLM, so it runs on a host
+// without an LLM gateway or NATS. A real run attaches to the daemon's NATS
+// server (requiredResources.attachNATS).
 func daemonOpenAdjudicateArtifacts(ctx context.Context, cfg *config.Config, dryRun bool) (artifactAdjudicator, func(), error) {
 	prompts, err := prompt.NewRegistry(cfg.Prompt)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load prompts: %w", err)
 	}
-	shared, err := buildSharedResourcesFn(ctx, cfg, requiredResources{db: true, graph: true, llm: !dryRun})
+	shared, err := buildSharedResourcesFn(ctx, cfg, requiredResources{db: true, graph: true, nats: !dryRun, attachNATS: !dryRun, llm: !dryRun})
 	if err != nil {
 		return nil, nil, err
 	}
