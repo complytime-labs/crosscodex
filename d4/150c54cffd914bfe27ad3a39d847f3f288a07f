@@ -1,0 +1,21 @@
+README.md
+  s_079c0887a9d9f3::t_c6d6e67360431b 699-701,706-708
+docs/dev/audit-streams.md
+  s_079c0887a9d9f3::t_72dd39d7b45f9a 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4150c54cffd914bfe27ad3a39d847f3f288a07f",
+  "prompts": {},
+  "sessions": {
+    "s_079c0887a9d9f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "034ac9e8-81c7-4bc1-8a77-6b5014725362",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
