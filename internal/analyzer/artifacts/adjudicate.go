@@ -86,9 +86,10 @@ type AdjudicateOptions struct {
 	// DryRun reports the queue (Pending, Due, Unprojected) without leasing,
 	// calling the LLM or writing.
 	DryRun bool
-	// Reproject first marks every projected llm_panel confirmed or rejected
-	// verdict of the tenant unprojected (VerdictStore.ResetProjection), so this
-	// run writes them back to the graph. Use it after rebuilding the tenant's graph. Not with DryRun.
+	// Reproject marks every projected llm_panel confirmed or rejected verdict
+	// of the tenant unprojected (VerdictStore.ResetProjection) and writes them
+	// back to the graph, then stops without leasing or calling the LLM. Use it
+	// after rebuilding the tenant's graph. Not with DryRun.
 	Reproject bool
 }
 
@@ -179,8 +180,8 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 
 // Run first projects verdicts that earlier runs recorded but did not project
 // (with opts.Reproject it first marks every projected llm_panel confirmed or
-// rejected verdict unprojected, so this step re-projects them), then
-// adjudicates up to opts.MaxPairs due pairs of tenantID. Each verdict is
+// rejected verdict unprojected, so this step re-projects them, and stops
+// there), then adjudicates up to opts.MaxPairs due pairs of tenantID. Each verdict is
 // recorded with a conditional Decide first and projected only if Decide
 // applied it, so a human verdict that lands mid-panel wins. A panel without
 // enough valid votes is retried after a backoff and abandoned at
@@ -240,6 +241,9 @@ func (a *Adjudicator) run(ctx context.Context, tenantID, runID string, opts Adju
 	}
 	if err := a.recoverProjections(ctx, tenantID, &res); err != nil {
 		return res, err
+	}
+	if opts.Reproject {
+		return res, nil
 	}
 	for res.Leased < opts.MaxPairs {
 		// Pairs are leased lease_batch at a time, each for lease_duration, so a

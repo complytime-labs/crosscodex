@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -42,6 +43,9 @@ var _ = Describe("runAdmin adjudicate artifacts arg parsing", func() {
 		Entry("--reproject with --all-tenants", "adjudicate", "artifacts", "--all-tenants", "--reproject"),
 		Entry("--reproject with --dry-run", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--dry-run"),
 		Entry("--reproject alone", "adjudicate", "artifacts", "--reproject"),
+		Entry("--reproject with --max-pairs", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--max-pairs", "5"),
+		Entry("--reproject with the default --max-pairs spelled out", "adjudicate", "artifacts", "--tenant", "acme", "--reproject",
+			"--max-pairs", strconv.Itoa(artifacts.DefaultAdjudicateMaxPairs)),
 	)
 
 	DescribeTable("explains how to use --reproject instead",
@@ -52,26 +56,27 @@ var _ = Describe("runAdmin adjudicate artifacts arg parsing", func() {
 		},
 		Entry("with --all-tenants", "--reproject needs --tenant", "adjudicate", "artifacts", "--all-tenants", "--reproject"),
 		Entry("with --dry-run", "drop --dry-run to re-project", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--dry-run"),
+		Entry("with --max-pairs", "drop --max-pairs to re-project", "adjudicate", "artifacts", "--tenant", "acme", "--reproject", "--max-pairs", "5"),
 	)
 })
 
 var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 	var (
-		gotTenant string
-		gotOpts   artifacts.AdjudicateOptions
-		gotCtx    context.Context
-		fnRes     artifacts.AdjudicateResult
-		fnErr     error
-		opened    bool
-		openedDry bool
-		origFn    func(context.Context, *config.Config, bool) (artifactAdjudicator, func(), error)
+		gotTenant   string
+		gotOpts     artifacts.AdjudicateOptions
+		gotCtx      context.Context
+		fnRes       artifacts.AdjudicateResult
+		fnErr       error
+		opened      bool
+		openedNoLLM bool
+		origFn      func(context.Context, *config.Config, bool) (artifactAdjudicator, func(), error)
 	)
 
 	BeforeEach(func() {
 		origFn = openAdjudicateArtifactsFn
 		gotTenant, gotOpts, gotCtx, fnRes, fnErr, opened = "", artifacts.AdjudicateOptions{}, nil, artifacts.AdjudicateResult{}, nil, false
-		openAdjudicateArtifactsFn = func(_ context.Context, _ *config.Config, dryRun bool) (artifactAdjudicator, func(), error) {
-			opened, openedDry = true, dryRun
+		openAdjudicateArtifactsFn = func(_ context.Context, _ *config.Config, noLLM bool) (artifactAdjudicator, func(), error) {
+			opened, openedNoLLM = true, noLLM
 			return func(ctx context.Context, tenantID string, opts artifacts.AdjudicateOptions) (artifacts.AdjudicateResult, error) {
 				t, err := tenant.FromContext(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -92,7 +97,7 @@ var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 		Expect(gotTenant).To(Equal("acme"))
 		Expect(gotOpts.DryRun).To(BeFalse())
 		Expect(gotOpts.Reproject).To(BeFalse())
-		Expect(openedDry).To(BeFalse(), "a real run opens the LLM client")
+		Expect(openedNoLLM).To(BeFalse(), "a real run opens the LLM client")
 		Expect(gotOpts.MaxPairs).To(Equal(artifacts.DefaultAdjudicateMaxPairs))
 		Expect(gotOpts.Now).NotTo(BeNil())
 		Expect(gotOpts.Now()).NotTo(BeZero())
@@ -102,12 +107,13 @@ var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 		Expect(runAdmin([]string{"adjudicate", "artifacts", "--tenant", "acme", "--reproject"})).To(Equal(0))
 		Expect(gotOpts.Reproject).To(BeTrue())
 		Expect(gotOpts.DryRun).To(BeFalse())
+		Expect(openedNoLLM).To(BeTrue(), "re-projection adjudicates nothing, so it opens no LLM client or NATS connection")
 	})
 
 	It("passes --dry-run and --max-pairs through", func() {
 		Expect(runAdmin([]string{"adjudicate", "artifacts", "--tenant", "acme", "--dry-run", "--max-pairs", "7"})).To(Equal(0))
 		Expect(gotOpts.DryRun).To(BeTrue())
-		Expect(openedDry).To(BeTrue(), "a dry run opens no LLM client, so it needs no gateway")
+		Expect(openedNoLLM).To(BeTrue(), "a dry run opens no LLM client, so it needs no gateway")
 		Expect(gotOpts.MaxPairs).To(Equal(7))
 	})
 
@@ -198,8 +204,8 @@ var _ = Describe("writeAdjudicateReport", func() {
 })
 
 var _ = Describe("daemonOpenAdjudicateArtifacts", func() {
-	DescribeTable("opens the LLM client, and the daemon's NATS for its audit events, only for a real run",
-		func(dryRun, wantReal bool) {
+	DescribeTable("opens the LLM client, and the daemon's NATS for its audit events, only for an adjudicating run",
+		func(noLLM, wantReal bool) {
 			writeAdjudicationConfig(true)
 			cfg, err := config.NewLoader().Load(context.Background())
 			Expect(err).NotTo(HaveOccurred())
@@ -210,12 +216,12 @@ var _ = Describe("daemonOpenAdjudicateArtifacts", func() {
 				got = need
 				return nil, errors.New("stop before connecting")
 			}
-			_, _, err = daemonOpenAdjudicateArtifacts(context.Background(), cfg, dryRun)
+			_, _, err = daemonOpenAdjudicateArtifacts(context.Background(), cfg, noLLM)
 			Expect(err).To(MatchError("stop before connecting"))
 			Expect(got).To(Equal(requiredResources{db: true, graph: true, nats: wantReal, attachNATS: wantReal, llm: wantReal}))
 		},
-		Entry("dry run: no LLM client, no NATS", true, false),
-		Entry("real run: LLM client and attached NATS", false, true),
+		Entry("dry run or re-projection: no LLM client, no NATS", true, false),
+		Entry("adjudicating run: LLM client and attached NATS", false, true),
 	)
 })
 

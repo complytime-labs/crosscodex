@@ -78,6 +78,18 @@ var _ = Describe("Adjudicator queue", func() {
 			Expect(f.store.row(adjTenant, humanKey).graphApplied).To(BeTrue(), "human row stays projected")
 		})
 
+		It("re-projects without leasing a due pair or calling the LLM", func() {
+			f.opts.Reproject = true
+			f.llm.reply = noLLM
+			res, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(artifacts.AdjudicateResult{}))
+			Expect(f.llm.calls).To(BeEmpty())
+			row := f.store.row(adjTenant, f.key)
+			Expect(row.status).To(Equal(artifacts.VerdictPending), "the due pair waits for a normal run")
+			Expect(row.leasedUntil).To(BeZero())
+		})
+
 		It("stops before projecting or leasing when the reset fails", func() {
 			decide(artifacts.VerdictConfirmed)
 			f.opts.Reproject = true
