@@ -1,0 +1,23 @@
+internal/analyzer/artifacts/reconcile_bdd_test.go
+  s_f0d92b87bb9789::t_e937c04b0554dd 319-329
+internal/analyzer/artifacts/reconcile.go
+  s_f0d92b87bb9789::t_a2db6c2cd23d4c 167-168
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_f0d92b87bb9789::t_7beae85e93539e 172,175,177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a374256301f4846410488166519fe85ef33f0886",
+  "prompts": {},
+  "sessions": {
+    "s_f0d92b87bb9789": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c3efb1dc-e7ce-4e49-9257-b59fde3d50b7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
