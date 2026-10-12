@@ -1,0 +1,25 @@
+cmd/crosscodexd/admin.go
+  s_cf0050a7cbe694::t_6664fd345ae8d2 354-359
+  s_cf0050a7cbe694::t_8711704da93129 29-30
+cmd/crosscodexd/admin_adjudicate_bdd_test.go
+  s_cf0050a7cbe694::t_3379d5c37dd3cc 12
+  s_cf0050a7cbe694::t_0c78391776813b 46-48,59
+README.md
+  s_cf0050a7cbe694::t_bedd2b0724c46f 719
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbba30a5406e57a91545393b8f2c1217a842311c",
+  "prompts": {},
+  "sessions": {
+    "s_cf0050a7cbe694": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4adecde9-a1e2-40f6-959d-d640a48081ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
