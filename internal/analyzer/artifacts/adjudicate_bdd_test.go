@@ -25,6 +25,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
@@ -478,6 +479,34 @@ var _ = Describe("Adjudicator", func() {
 					{Role: "user", Content: "access control policy vs access policy"},
 				}))
 			}
+		})
+
+		It("tags every request of a run with one run ID that is a valid audit subject token", func() {
+			f.cfg.Models, f.cfg.SamplesPerModel = []string{"m1", "m2"}, 3
+			_, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(f.llm.calls).To(HaveLen(6))
+			runID := f.llm.calls[0].JobID
+			Expect(runID).To(HavePrefix("artifact-adjudication-"))
+			_, err = natsbus.AuditSubject(adjTenant, natsbus.AuditLLM, runID)
+			Expect(err).NotTo(HaveOccurred(), "the LLM audit emitter drops events whose job ID is not a valid subject token")
+			for _, req := range f.llm.calls {
+				Expect(req.JobID).To(Equal(runID))
+			}
+		})
+
+		It("gives each run its own run ID", func() {
+			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("gateway down") }
+			_, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			first := f.llm.calls[0].JobID
+
+			f.now = f.now.Add(time.Hour)
+			f.llm.calls = nil
+			_, err = f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(f.llm.calls).NotTo(BeEmpty())
+			Expect(f.llm.calls[0].JobID).NotTo(Equal(first))
 		})
 
 		It("uses temperature 0 with one sample per model", func() {

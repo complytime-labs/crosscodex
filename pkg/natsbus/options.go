@@ -20,6 +20,8 @@ type clientOptions struct {
 	tlsConfig      *tls.Config
 	tracer         trace.Tracer
 	meter          metric.Meter
+	// existingStreams: see WithExistingStreams.
+	existingStreams bool
 }
 
 func defaultClientOptions() clientOptions {
@@ -28,6 +30,21 @@ func defaultClientOptions() clientOptions {
 		connectTimeout: 5 * time.Second,
 		reconnectWait:  2 * time.Second,
 		maxReconnects:  60,
+	}
+}
+
+// WithExistingStreams makes New attach to a server whose audit streams
+// already exist: it refuses embedded mode (ErrExternalURLRequired) before
+// starting any server, never creates or updates a stream, and fails with
+// ErrStreamNotFound when an audit stream is missing. Admin one-shots use it,
+// so they neither start a second JetStream server on the daemon's store
+// directory nor overwrite the daemon's stream retention with their own
+// nats.streams values. Wiring: cmd/crosscodexd buildSharedResources sets it
+// for requiredResources.attachNATS; it has no config field because it
+// describes the calling process, not the deployment.
+func WithExistingStreams() Option {
+	return func(o *clientOptions) {
+		o.existingStreams = true
 	}
 }
 

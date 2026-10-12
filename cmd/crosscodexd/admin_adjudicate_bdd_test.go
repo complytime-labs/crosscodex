@@ -198,8 +198,8 @@ var _ = Describe("writeAdjudicateReport", func() {
 })
 
 var _ = Describe("daemonOpenAdjudicateArtifacts", func() {
-	DescribeTable("opens the LLM client only for a real run",
-		func(dryRun, wantLLM bool) {
+	DescribeTable("opens the LLM client, and the daemon's NATS for its audit events, only for a real run",
+		func(dryRun, wantReal bool) {
 			writeAdjudicationConfig(true)
 			cfg, err := config.NewLoader().Load(context.Background())
 			Expect(err).NotTo(HaveOccurred())
@@ -212,10 +212,10 @@ var _ = Describe("daemonOpenAdjudicateArtifacts", func() {
 			}
 			_, _, err = daemonOpenAdjudicateArtifacts(context.Background(), cfg, dryRun)
 			Expect(err).To(MatchError("stop before connecting"))
-			Expect(got).To(Equal(requiredResources{db: true, graph: true, llm: wantLLM}))
+			Expect(got).To(Equal(requiredResources{db: true, graph: true, nats: wantReal, attachNATS: wantReal, llm: wantReal}))
 		},
-		Entry("dry run: no LLM client", true, false),
-		Entry("real run: LLM client", false, true),
+		Entry("dry run: no LLM client, no NATS", true, false),
+		Entry("real run: LLM client and attached NATS", false, true),
 	)
 })
 
