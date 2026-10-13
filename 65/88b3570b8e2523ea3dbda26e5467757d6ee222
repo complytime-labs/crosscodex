@@ -1,0 +1,21 @@
+README.md
+  s_27e4f12e0732fb::t_db4d120fa3e9b9 814
+cmd/crosscodexd/admin_review.go
+  s_27e4f12e0732fb::t_db4d120fa3e9b9 223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6588b3570b8e2523ea3dbda26e5467757d6ee222",
+  "prompts": {},
+  "sessions": {
+    "s_27e4f12e0732fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b587255c-c11e-4b30-baa0-e73dda485de9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
