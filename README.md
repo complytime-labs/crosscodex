@@ -290,7 +290,7 @@ analysis:
     consensus_threshold: 0.67            # [0.5, 1]; below it (or on a split) the pair is undecided
     max_error_rate: 0.34                 # [0, 1]; more failed votes than this fails the panel (0 disables)
     max_attempts: 5                      # Failed panels before a pair is abandoned
-    lease_duration: 15m                  # How long a run holds each leased pair
+    lease_duration: 15m                  # How long a run holds each leased pair, and each verdict it or `decide` projects; must be positive even when enabled is false
     lease_batch: 10                      # Pairs leased per round trip
     panel_concurrency: 4                 # Completions in flight per pair
     retry_base_delay: 1m                 # Wait after a pair's first failed panel, doubling per failure
@@ -606,6 +606,9 @@ crosscodexd admin adjudicate artifacts --tenant acme
 crosscodexd admin adjudicate artifacts --tenant acme --dry-run
 crosscodexd admin adjudicate artifacts --tenant acme --reproject
 crosscodexd admin adjudicate artifacts --all-tenants --max-pairs 500
+
+crosscodexd admin adjudicate artifacts review --tenant acme
+crosscodexd admin adjudicate artifacts decide --tenant acme --pair 3f9c0a1b2d4e5f60 --verdict rejected --reviewer jdoe
 ```
 
 `retention scan` and an `adjudicate artifacts` run without `--dry-run` or
@@ -615,7 +618,8 @@ server on the daemon's store directory. They also refuse a server whose audit
 streams do not exist yet, and never create or update a stream, so a one-shot
 cannot change the daemon's stream retention. Start the daemon first.
 
-`--all-tenants` and `--tenant` are mutually exclusive. With `--all-tenants`:
+`--all-tenants` and `--tenant` are mutually exclusive, and `adjudicate
+artifacts review` and `decide` take `--tenant` only. With `--all-tenants`:
 
 - **Tenant list:** the command lists tenants through
   [`database.tenant_admin_dsn`](#tenant-administration) and skips suspended ones.
@@ -666,7 +670,7 @@ denotes one artifact. Token overlap over-matches containment: "Policy" scores
   replaces it.
 - **Undecided:** the panel split or fell below
   `analysis.artifact_adjudication.consensus_threshold`. Automation does not
-  retry the pair; only a human verdict can change it.
+  retry the pair; only a [human verdict](#human-verdicts) can change it.
 - **Failed:** too many calls failed or replies did not parse. The pair is
   retried after a backoff (`retry_base_delay`, doubling per failure up to
   `retry_max_delay`; 1 minute and 24 hours by default) and is abandoned after
@@ -680,9 +684,9 @@ denotes one artifact. Token overlap over-matches containment: "Policy" scores
   outage stops each tenant's run in turn: every tenant fails fast on its first
   pair, no attempts are charged, and the command exits `1` naming them.
 - **Human verdicts win:** automation never overwrites a pair a human decided
-  (`determination_type` `human`; no command records one yet, so this means a
-  row set in the database). If one lands while the panel is running, the panel's opinion is stored as
-  dissent and the graph is not touched.
+  with `decide` (see [Human verdicts](#human-verdicts)). If one lands while
+  the panel is running, the panel's opinion is stored as dissent and the
+  graph keeps the human verdict.
 
 Other behavior:
 
@@ -698,7 +702,10 @@ Other behavior:
   now), `orphaned` (confirmations whose groups are gone from the graph),
   `leased`, `confirmed`, `rejected`, `undecided`, `failed`, `abandoned`,
   `dissent` (a human decided the pair meanwhile), `stale` (another run decided
-  it meanwhile) and `expired` (lease expired before the panel started).
+  it meanwhile), `expired` (lease expired before the panel started), `fenced`
+  (a newer verdict replaced the one being written to the graph, or another
+  run took over the write; the newer verdict is written next) and `busy`
+  (another run is writing the pair's verdict to the graph and finishes it).
 - **Audit:** every panel call publishes an LLM audit event to the
   `AUDIT_LLM` stream (see [Audit Trails](#audit-trails)), so a real run also
   attaches to the daemon's NATS server (see above). A tenant run's events
@@ -711,15 +718,16 @@ Other behavior:
   command that opens the database, it first applies pending schema
   migrations.
 - **`--reproject`:** with `--tenant` only. Marks the tenant's projected
-  LLM-panel confirmed and rejected verdicts unprojected and writes them back
-  to the graph (`reset` counts them), then stops: it leases no pairs and
-  makes no LLM calls, so like `--dry-run` it needs no LLM gateway or NATS.
-  Use it after rebuilding the tenant's graph, then run without `--reproject`
-  to adjudicate due pairs; human verdicts are untouched. It cannot be
-  combined with `--dry-run`, `--max-pairs` or `--all-tenants`.
+  confirmed and rejected verdicts, LLM-panel and human alike, unprojected and
+  writes them back to the graph (`reset` counts them), then stops: it leases
+  no pairs and makes no LLM calls, so like `--dry-run` it needs no LLM
+  gateway or NATS. Use it after rebuilding the tenant's graph, then run
+  without `--reproject` to adjudicate due pairs. It cannot be combined with
+  `--dry-run`, `--max-pairs` or `--all-tenants`.
 - **Configuration:** the command refuses to run until
   `analysis.artifact_adjudication.enabled` is `true` and `models` is set (see
-  [Key Configuration Examples](#key-configuration-examples)).
+  [Key Configuration Examples](#key-configuration-examples)). `review` and
+  `decide` do not.
 - **Prompt:** the panel uses the `artifact_same_as` prompt. Like any other
   prompt, a YAML file with that `name` in `$XDG_DATA_HOME/crosscodex/prompts/`
   or in a directory listed in `prompt.layer_paths` overrides it. Artifact
@@ -727,13 +735,19 @@ Other behavior:
   line, stripped of invisible characters, capped and escaped before they reach
   the prompt.
 - **Exit codes:** 0 on success, 1 on failure, 2 on usage errors.
-- **Clocks:** leases are timed by the clock of the host running the command.
-  If adjudicators run on several hosts, keep their clocks in sync (NTP);
-  otherwise a skewed host can take a pair whose lease has not yet expired.
+- **Clocks:** leases, and the claims that reserve a verdict while it is
+  written to the graph, are timed by the clock of the host running the
+  command (`adjudicate` or `decide`). Keep every such host in sync (NTP);
+  otherwise a skewed host can take a pair whose lease or claim has not yet
+  expired. A host whose clock runs far ahead holds its claims that far into
+  the future: until then every run skips the pair (`--dry-run` still counts
+  it as `unprojected`) and its verdict does not reach the graph.
+  `--reproject` does not clear a claim; clearing one early takes a manual
+  database update of that pair's row.
 
 After rebuilding a tenant's graph, re-run the reconciler, then run
 `crosscodexd admin adjudicate artifacts --tenant <tenant> --reproject` to write
-the tenant's verdicts back to the graph.
+the tenant's verdicts back to the graph, human verdicts included.
 
 `crosscodexd admin backup` captures, lists, verifies and restores PostgreSQL (WAL-G base backups plus WAL archiving for PITR), tenant object stores, and the JetStream audit streams:
 
@@ -750,6 +764,93 @@ crosscodexd admin backup restore --point ID
 - `backup restore` — restores objects and audit streams from a backup point; Postgres is restored separately with `crosscodex-db-restore`.
 
 Exit codes: 0 ok, 1 failure or stale, 2 usage error. See [deploy/README.md, Backups](deploy/README.md#backups) for setup, the run/verify/restore procedures, and PITR.
+
+#### Human verdicts
+
+`adjudicate artifacts review` and `decide` let a person settle the `SAME_AS`
+pairs the panel could not, or overrule a panel verdict:
+
+```sh
+crosscodexd admin adjudicate artifacts review --tenant acme --limit 20
+crosscodexd admin adjudicate artifacts decide --tenant acme --pair 3f9c0a1b2d4e5f60 --verdict confirmed --reviewer jdoe
+```
+
+`review` lists up to `--limit` pairs (default 100), oldest first, that need a
+person:
+
+- `undecided` and `abandoned` pairs;
+- human verdicts that a later panel run disagreed with (its opinion is stored
+  as dissent).
+
+Its columns are `PAIR` (the pair ref), `STATUS`, `BY` (who decided it:
+`llm_panel`, `human`, or `token_overlap` for an abandoned pair), `TYPE`, `LOW`
+and `HIGH` (the two artifact groups' names), `SCORE` (token overlap) and
+`DISSENT` (the dissenting verdict, or `-`). Names come from analyzed catalogs,
+so they are flattened to one line, stripped of control and invisible
+characters and capped before they are printed. With nothing to review it
+prints `no pairs need review`.
+
+To change a verdict the panel already reached, find the pair with `--name`:
+
+```sh
+crosscodexd admin adjudicate artifacts review --tenant acme --name "access policy"
+crosscodexd admin adjudicate artifacts decide --tenant acme --pair 7d21e0c4b9a85f36 --verdict rejected --reviewer jdoe
+```
+
+`review --name <text>` lists, instead of the review queue, up to `--limit`
+pairs in any status (pending, confirmed, rejected, undecided, abandoned),
+whoever decided them, whose `LOW` or `HIGH` name contains the text. Matching
+ignores case, and `%`, `_` and `\` match only themselves. The text must be
+1–200 bytes of plain text (no control or invisible characters). Same columns,
+oldest first; on a pair a person decided, `DISSENT` shows the panel's
+opinion, such as the verdict the person overrode. With no match it prints `no pairs match "<text>"`.
+
+`decide` records `--verdict confirmed` or `--verdict rejected` on one pair:
+
+- **Pair ref:** `--pair` is the `PAIR` column of `review`, 16 lowercase hex
+  characters derived from the pair's internal key. It is opaque and safe to
+  paste; the key itself embeds artifact names and is never printed. A ref
+  that matches no pair of the tenant records nothing. `review` lists only
+  pairs that need a person; use `review --name` to find the ref of any
+  other pair, such as one the panel confirmed or rejected.
+- **`--reviewer`:** required. The ID of the person recording the verdict,
+  stored as `determined_by` on the verdict and on a confirmation's graph
+  edge (at most 256 bytes, no control or invisible characters). It is not
+  authenticated: like every `crosscodexd admin` command, `decide` trusts
+  whoever can run it on the host.
+- **Authority:** a human verdict outranks the panel, and automation never
+  changes it. Any pair can be decided, including one the panel decided or
+  another person decided; a panel verdict it overrides is kept as dissent.
+  Repeating a pair's current human verdict changes nothing and prints
+  `unchanged` (the original `determined_by` is kept), unless a later panel
+  run disagreed with it (the pair is in `review`). Then `decide` with the same
+  verdict re-affirms it: it records `--reviewer` and the new decision time,
+  writes a fresh graph edge for a confirmation (the earlier human edge ends
+  at the new decision time), prints `re-affirmed over the panel's later
+  dissent`, and the pair leaves `review`. The panel's opinion stays as
+  dissent.
+- **Graph:** `decide` writes the verdict to the graph at once. A confirmation
+  adds a `SAME_AS` edge with `determination_type` `human` and confidence 1;
+  either verdict supersedes every other current `SAME_AS` edge between the
+  two groups (the token-overlap candidate, a panel edge, an earlier human
+  edge). It then prints the projection report: `recovered` (verdicts written
+  to the graph), `orphaned` (confirmations whose groups are gone from the
+  graph), `fenced` and `busy` (as for `adjudicate artifacts`).
+- **Delays:** if an `adjudicate` run is writing the pair's previous verdict
+  to the graph at that moment, `decide` records the verdict, prints that it
+  reaches the graph when that run finishes or by re-running `decide` after a
+  printed time, and leaves the pair to that run. If its own graph write
+  fails, it says the verdict is recorded and when to re-run (up to
+  `lease_duration` later). Re-running `decide` with the same arguments never
+  records the verdict twice; it finishes the graph write.
+- **Requirements:** neither command needs
+  `analysis.artifact_adjudication.enabled`, an LLM gateway or NATS; they open
+  only the database and the graph. `lease_duration` bounds how long one
+  write may hold a pair, so it is validated (must be positive) even when
+  adjudication is disabled, and a non-positive value fails config load.
+- **Rebuilds:** `adjudicate artifacts --reproject` writes human verdicts back
+  to a rebuilt graph along with the panel's.
+- **Exit codes:** 0 on success, 1 on failure, 2 on usage errors.
 
 #### Tenant administration
 
