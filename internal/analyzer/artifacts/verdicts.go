@@ -2,7 +2,14 @@ package artifacts
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 )
@@ -37,6 +44,87 @@ const adjudicatorName = "artifact-adjudicator"
 // though group IDs embed arbitrary artifact names.
 func PairKey(low, high string) string {
 	return graphdb.DerivedID("artifact-pair", low, high)
+}
+
+// pairRefLen is the length of a PairRef in hex characters (64 bits).
+const pairRefLen = 16
+
+// maxReviewerBytes bounds a human reviewer ID.
+const maxReviewerBytes = 256
+
+var (
+	// ErrPairNotFound: no pair of the tenant has the given ref.
+	ErrPairNotFound = errors.New("no pair of this tenant has this ref")
+	// ErrPairRefAmbiguous: more than one pair of the tenant shares the ref.
+	ErrPairRefAmbiguous = errors.New("more than one pair has this ref")
+)
+
+// PairRef returns the short, opaque handle operators use for a pair: the
+// first 16 hex characters of sha256(key). Pair keys embed untrusted artifact
+// names, so they are unsafe to print or paste; PGVerdictStore computes the
+// same value in SQL to resolve a ref.
+func PairRef(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])[:pairRefLen]
+}
+
+// ValidatePairRef reports whether ref has PairRef's shape.
+func ValidatePairRef(ref string) error {
+	if len(ref) != pairRefLen || strings.Trim(ref, "0123456789abcdef") != "" {
+		return fmt.Errorf("pair ref %q is not %d lowercase hex characters; copy the PAIR column from the review listing", ref, pairRefLen)
+	}
+	return nil
+}
+
+// unprintable returns the first control, format or line/paragraph separator
+// character in s, which ValidateReviewer and ValidateSearchName refuse.
+func unprintable(s string) (rune, bool) {
+	for _, r := range s {
+		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
+// ValidateReviewer checks a human reviewer ID before it is stored as
+// determined_by in PostgreSQL and on graph edges.
+func ValidateReviewer(id string) error {
+	switch {
+	case strings.TrimSpace(id) == "":
+		return errors.New("reviewer is empty: pass the ID of the person recording this verdict; it is stored as determined_by")
+	case len(id) > maxReviewerBytes:
+		return fmt.Errorf("reviewer is %d bytes: use an ID of at most %d bytes", len(id), maxReviewerBytes)
+	case !utf8.ValidString(id):
+		return errors.New("reviewer is not valid UTF-8: use a plain-text ID")
+	}
+	if r, bad := unprintable(id); bad {
+		return fmt.Errorf("reviewer contains control, format or line-separator characters (%U): use a plain-text ID", r)
+	}
+	if strings.TrimSpace(id) != id {
+		return errors.New("reviewer has leading or trailing spaces: pass the ID exactly as it should be stored")
+	}
+	return nil
+}
+
+// MaxSearchNameBytes bounds SearchPairs' name text.
+const MaxSearchNameBytes = 200
+
+// ValidateSearchName checks SearchPairs' name text, which comes from an
+// operator. It is matched literally, so wildcards need no check here.
+func ValidateSearchName(name string) error {
+	switch {
+	case strings.TrimSpace(name) == "":
+		return errors.New("search name is empty: pass part of the LOW or HIGH name of the pair to find")
+	case len(name) > MaxSearchNameBytes:
+		return fmt.Errorf("search name is %d bytes: search with at most %d bytes of the name", len(name), MaxSearchNameBytes)
+	case !utf8.ValidString(name):
+		return errors.New("search name is not valid UTF-8: pass plain text")
+	}
+	if r, bad := unprintable(name); bad {
+		return fmt.Errorf("search name contains control, format or line-separator characters (%U): pass plain text; listings print names without such characters, so search with the visible part", r)
+	}
+	return nil
 }
 
 // MemberSample is one Artifact of a group as the panel sees it.
@@ -132,32 +220,122 @@ type Failure struct {
 	LeasedUntil   time.Time // the caller's lease (LeasedPair.LeasedUntil); a failure recorded under an expired, replaced lease is ignored
 }
 
-// Projection is a decided automated verdict not yet written to the graph.
+// HumanVerdict is a reviewer's decision on a pair.
+type HumanVerdict struct {
+	Status    VerdictStatus // confirmed or rejected
+	Reviewer  string        // stored as determined_by; must pass ValidateReviewer
+	DecidedAt time.Time
+}
+
+// HumanOutcome reports what DecideHuman did.
+type HumanOutcome int
+
+const (
+	// HumanApplied: the verdict was recorded and queued for projection.
+	HumanApplied HumanOutcome = iota + 1
+	// HumanUnchanged: a human had already recorded this status; nothing changed.
+	HumanUnchanged
+	// HumanReaffirmed: a human had already recorded this status and a panel
+	// contradicted it afterwards; the verdict was recorded again under the
+	// new reviewer and decision time, which takes the pair off the review
+	// queue, and queued for projection.
+	HumanReaffirmed
+)
+
+// HumanDecision is DecideHuman's result.
+type HumanDecision struct {
+	Outcome HumanOutcome
+	Key     string // the pair the ref resolved to
+	// ClaimedUntil is the pair's projection claim when it is still live at
+	// the decision time, else zero. A live claim means a projection pass is
+	// writing the pair's previous verdict; the new verdict reaches the graph
+	// when that pass finishes or once the claim expires.
+	ClaimedUntil time.Time
+}
+
+// ReviewItem is one pair as ReviewQueue and SearchPairs list it. Context
+// values are untrusted; pass them through CleanDisplay before printing.
+type ReviewItem struct {
+	Ref               string
+	Key               string
+	Status            VerdictStatus
+	DeterminationType string
+	SimilarityScore   float64
+	Context           PairContext
+	DissentStatus     VerdictStatus // "" when there is no dissent
+}
+
+// validateHumanVerdict checks DecideHuman's input before any row is read.
+func validateHumanVerdict(ref string, h HumanVerdict) error {
+	if h.Status != VerdictConfirmed && h.Status != VerdictRejected {
+		return fmt.Errorf("verdict %q is not a human verdict: use confirmed or rejected", h.Status)
+	}
+	if h.DecidedAt.IsZero() {
+		return errors.New("human verdict decision time is not set: pass the time the reviewer decided")
+	}
+	if err := ValidatePairRef(ref); err != nil {
+		return err
+	}
+	return ValidateReviewer(h.Reviewer)
+}
+
+// Projection is a decided verdict not yet written to the graph.
 type Projection struct {
 	Key                     string
 	LowGroupID, HighGroupID string
 	CandidateEdgeID         string
 	Status                  VerdictStatus // confirmed or rejected
 	Confidence              float64
-	Evidence                PanelEvidence
+	Evidence                PanelEvidence // set only for an llm_panel verdict
 	DecidedAt               time.Time
+	DeterminationType       string // llm_panel or human
+	DeterminedBy            string // the reviewer, for a human verdict
 }
+
+// ClaimOutcome reports what ClaimProjection did.
+type ClaimOutcome int
+
+const (
+	// ClaimAcquired: the caller holds the pair's projection claim and may
+	// write the verdict to the graph, then release the claim with
+	// MarkProjected.
+	ClaimAcquired ClaimOutcome = iota + 1
+	// ClaimReplaced: the pair no longer holds the verdict; a newer one
+	// replaced it and is queued. Write nothing.
+	ClaimReplaced
+	// ClaimBusy: the pair holds the verdict, but another live claim holds it
+	// or it is already projected. Write nothing; the claimant finishes it.
+	ClaimBusy
+)
 
 // QueueCounts summarizes a tenant's queue for a dry run.
 type QueueCounts struct {
 	Pending     int // pending, not human-owned
 	Due         int // pending and leasable now
-	Unprojected int // decided automated confirmed/rejected verdicts not yet in the graph
+	Unprojected int // decided confirmed/rejected verdicts not yet in the graph, including ones a projection pass has claimed
 }
 
 // VerdictStore is the source of truth for SAME_AS verdicts and the
 // adjudicator's work queue. PGVerdictStore is the production implementation.
 //
 // Rules every implementation keeps:
-//   - Lease, Decide, RecordFailure, Unprojected, MarkProjected and
-//     ResetProjection never touch a row whose determination type is human.
+//   - Enqueue, Lease, Decide and RecordFailure never modify a row whose
+//     determination type is human.
 //   - Decide applies only to pending rows.
 //   - Lease never hands a pair to two callers whose leases overlap.
+//   - Projection is claim, write, release: ClaimProjection grants a decided,
+//     unprojected row to one caller until its claim expires, Unprojected
+//     hides rows under a live claim, and MarkProjected releases only the
+//     caller's own claim. While a claim is live, no other caller writes the
+//     row's verdict to the graph, so a newer verdict is projected after the
+//     claimant's graph writes, never before them.
+//   - MarkProjected is a fence: it marks a row projected only if the row
+//     still holds the verdict that was projected, and otherwise leaves it
+//     unprojected so the newer verdict is projected next.
+//   - Only ClaimProjection, MarkProjected and ReleaseClaim change a claim;
+//     DecideHuman, Decide and ResetProjection leave it as it is.
+//   - Timestamps are stored at microsecond precision; equality on
+//     decided_at compares at that precision.
 type VerdictStore interface {
 	// Enqueue adds each candidate as a pending token_overlap row, due at now.
 	// A pair that is already queued and still pending and automation-owned
@@ -183,17 +361,66 @@ type VerdictStore interface {
 	// the lease (f.LeasedUntil equals the pair's current lease), and nothing
 	// to any other pair.
 	RecordFailure(ctx context.Context, tenantID, key string, f Failure) error
-	// Unprojected returns up to n decided automated confirmed/rejected
-	// verdicts not yet projected, oldest decision first.
-	Unprojected(ctx context.Context, tenantID string, n int) ([]Projection, error)
-	// MarkProjected records that a verdict is in the graph. It does nothing to
-	// a human-owned pair or one that is not confirmed or rejected.
-	MarkProjected(ctx context.Context, tenantID, key string) error
-	// ResetProjection marks every projected llm_panel confirmed or rejected
-	// verdict of the tenant unprojected, so the next Run writes it to the
-	// graph again, and returns how many it marked. Use it after the tenant's
-	// graph was rebuilt. Human verdicts are not reset; whatever projects them
-	// needs its own reset after a rebuild.
+	// DecideHuman records h on the tenant's pair with the given ref. Any
+	// state may be decided. A pair whose current verdict is already a human
+	// verdict with h.Status is left unchanged (HumanUnchanged), unless a
+	// panel contradicted that verdict afterwards (the condition ReviewQueue
+	// lists it for): then h is recorded again as a re-affirmation
+	// (HumanReaffirmed), which takes h.Reviewer and h.DecidedAt, keeps the
+	// dissent and so takes the pair off the review queue. Otherwise the
+	// row becomes human-owned with confidence 1, its lease and last error are
+	// cleared, it is queued for projection, and an llm_panel verdict it held
+	// moves to dissent. Its projection claim is kept, and reported in
+	// ClaimedUntil when it is live at h.DecidedAt. Returns ErrPairNotFound or
+	// ErrPairRefAmbiguous (wrapped) when ref resolves to no pair or to
+	// several.
+	DecideHuman(ctx context.Context, tenantID, ref string, h HumanVerdict) (HumanDecision, error)
+	// ReviewQueue returns up to n pairs that need a human, oldest created
+	// first: undecided and abandoned pairs, and human verdicts that a panel
+	// contradicted afterwards (a confirmed or rejected dissent, different from
+	// the human status, decided after the human verdict). The panel verdict a
+	// human overrode is dissent too, but it predates the human verdict, so the
+	// override alone does not list a pair.
+	ReviewQueue(ctx context.Context, tenantID string, n int) ([]ReviewItem, error)
+	// SearchPairs returns up to n of the tenant's pairs, in any status and
+	// whoever decided them, whose Context.LowName or Context.HighName contains
+	// name case-insensitively, oldest created first. %, _ and \ in name match
+	// only themselves. name must pass ValidateSearchName. DissentStatus is the
+	// stored dissent's status, as in ReviewQueue, so a human override of a
+	// panel verdict shows the overridden status.
+	SearchPairs(ctx context.Context, tenantID, name string, n int) ([]ReviewItem, error)
+	// Unprojected returns up to n decided llm_panel or human confirmed/rejected
+	// verdicts not yet projected and not under a live projection claim (one
+	// that ends after now), oldest decision first.
+	Unprojected(ctx context.Context, tenantID string, n int, now time.Time) ([]Projection, error)
+	// ClaimProjection claims pair p.Key for projecting p until until, if the
+	// pair still holds p (p.DeterminationType, p.Status and p.DecidedAt), is
+	// not projected, and has no live claim (none, or one that ends at or
+	// before now). Otherwise it reports ClaimReplaced when the pair no longer
+	// holds p, or ClaimBusy. until must be after now. Returns an error for a
+	// pair that is not queued. A claim covers [now, until): at until it has
+	// ended, as an edge has at its valid_to.
+	ClaimProjection(ctx context.Context, tenantID string, p Projection, until, now time.Time) (ClaimOutcome, error)
+	// MarkProjected releases the caller's claim on pair p.Key, the one
+	// ClaimProjection granted until claimedUntil, and sets graph_applied to
+	// whether the pair still holds the verdict p describes; it reports that.
+	// false with the claim released means a newer verdict replaced p while it
+	// was projected; the pair stays queued. A pair whose claim is not
+	// claimedUntil (it expired and another caller claimed or released it) is
+	// left exactly as it is and reported false.
+	MarkProjected(ctx context.Context, tenantID string, p Projection, claimedUntil time.Time) (bool, error)
+	// ReleaseClaim clears the projection claim on pair key if it is the one
+	// ClaimProjection granted until claimedUntil, leaving graph_applied as it
+	// is, so the pair can be claimed again at once. Use it when a projection
+	// fails before writing anything to the graph. A pair under another claim,
+	// or none, or not queued, is left alone.
+	ReleaseClaim(ctx context.Context, tenantID, key string, claimedUntil time.Time) error
+	// ResetProjection marks every projected llm_panel or human confirmed or
+	// rejected verdict of the tenant unprojected, so the next Run writes it to
+	// the graph again, and returns how many it marked. Use it after the
+	// tenant's graph was rebuilt. A claimed row is never projected (claims are
+	// taken only on unprojected rows and released when marking), so the reset
+	// never meets a claim and leaves claims alone.
 	ResetProjection(ctx context.Context, tenantID string) (int, error)
 	// Counts summarizes the queue as of now.
 	Counts(ctx context.Context, tenantID string, now time.Time) (QueueCounts, error)

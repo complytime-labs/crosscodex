@@ -652,16 +652,21 @@ type ArtifactAdjudicationConfig struct {
 	ConsensusThreshold  float64       `yaml:"consensus_threshold" json:"consensus_threshold"`   // Minimum consensus fraction for a verdict [0.5, 1.0]
 	MaxErrorRate        float64       `yaml:"max_error_rate" json:"max_error_rate"`             // Max fraction of failed votes [0.0, 1.0]; 0 disables the check
 	MaxAttempts         int           `yaml:"max_attempts" json:"max_attempts"`                 // Failed panels before a pair is abandoned; must be positive
-	LeaseDuration       time.Duration `yaml:"lease_duration" json:"lease_duration"`             // How long a run holds each leased pair; must be positive
+	LeaseDuration       time.Duration `yaml:"lease_duration" json:"lease_duration"`             // How long a run holds each leased pair, and each verdict it projects; must be positive, even when disabled: decide uses it as the projection claim TTL
 	LeaseBatch          int           `yaml:"lease_batch" json:"lease_batch"`                   // Pairs leased per store round trip; must be positive
 	PanelConcurrency    int           `yaml:"panel_concurrency" json:"panel_concurrency"`       // Completions in flight per pair; must be positive
 	RetryBaseDelay      time.Duration `yaml:"retry_base_delay" json:"retry_base_delay"`         // Wait after a pair's first failed panel, doubling per failure; must be positive
 	RetryMaxDelay       time.Duration `yaml:"retry_max_delay" json:"retry_max_delay"`           // Cap on the retry wait; must be at least retry_base_delay
 }
 
-// Validate checks ArtifactAdjudicationConfig when it is enabled.
-// Errors wrap ErrInvalidConfig.
+// Validate checks ArtifactAdjudicationConfig. Only lease_duration is checked
+// when it is disabled: `admin adjudicate artifacts decide` runs either way
+// and uses it as the projection claim TTL. Errors wrap ErrInvalidConfig.
 func (c *ArtifactAdjudicationConfig) Validate() error {
+	if c.LeaseDuration <= 0 {
+		return fmt.Errorf("analysis.artifact_adjudication.lease_duration %s must be positive (e.g. 15m): %w",
+			c.LeaseDuration, ErrInvalidConfig)
+	}
 	if !c.Enabled {
 		return nil
 	}
@@ -695,10 +700,6 @@ func (c *ArtifactAdjudicationConfig) Validate() error {
 	if c.MaxAttempts <= 0 {
 		return fmt.Errorf("analysis.artifact_adjudication.max_attempts %d must be positive: %w",
 			c.MaxAttempts, ErrInvalidConfig)
-	}
-	if c.LeaseDuration <= 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.lease_duration %s must be positive (e.g. 15m): %w",
-			c.LeaseDuration, ErrInvalidConfig)
 	}
 	if c.LeaseBatch <= 0 {
 		return fmt.Errorf("analysis.artifact_adjudication.lease_batch %d must be positive: %w",

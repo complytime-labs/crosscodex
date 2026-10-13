@@ -316,6 +316,17 @@ var _ = Describe("Reconcile", func() {
 		Expect(res.NewMemberships).To(Equal(0))
 	})
 
+	It("names a group whose ID embeds terminal escapes without the escapes when CreateNode fails", func() {
+		seedArtifact(ctx, g, reconcileTenant, "c1", "c1__art_0", "evil\x1b]0;x\x07 policy", "document")
+		fg := &reconcileFaultyGraph{GraphDB: g, createNodeErr: errors.New("boom")}
+
+		_, err := artifacts.Reconcile(ctx, fg, store, reconcileTenant, opts)
+		Expect(err).To(MatchError(ContainSubstring("create ArtifactGroup")))
+		Expect(err.Error()).To(ContainSubstring("evil ]0;x policy"), "the group stays recognizable")
+		Expect(err.Error()).NotTo(ContainSubstring("\x1b"))
+		Expect(err.Error()).NotTo(ContainSubstring("\x07"))
+	})
+
 	It("does not retry a BulkEdgeError that is not ErrEdgeExists", func() {
 		seedArtifact(ctx, g, reconcileTenant, "c1", "c1__art_0", "Access Policy", "document")
 		fg := &reconcileFaultyGraph{GraphDB: g, bulkErr: &graphdb.BulkEdgeError{Index: 0, Err: graphdb.ErrNodeNotFound}}

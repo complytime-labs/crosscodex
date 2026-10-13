@@ -19,3 +19,10 @@ const ExportMaxPromptValueBytes = maxPromptValueBytes
 
 // ExportEnqueueChunk exposes enqueueChunk.
 const ExportEnqueueChunk = enqueueChunk
+
+// ExportValidateHumanVerdict exposes validateHumanVerdict, so the fake store
+// checks DecideHuman input exactly as PGVerdictStore does.
+var ExportValidateHumanVerdict = validateHumanVerdict
+
+// ExportEscapeLike exposes escapeLike for its fuzz target.
+var ExportEscapeLike = escapeLike

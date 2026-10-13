@@ -23,8 +23,13 @@ var _ = Describe("fakeVerdictStore contract", func() {
 			row: func(key string) contractRow {
 				r := s.row(id, key)
 				Expect(r).NotTo(BeNil())
-				return contractRow{status: r.status,
-					graphApplied: r.graphApplied, attempts: r.attempts, hasDissent: r.dissent != nil}
+				row := contractRow{status: r.status, determination: r.determination, determinedBy: r.determinedBy,
+					graphApplied: r.graphApplied, attempts: r.attempts, leased: !r.leasedUntil.IsZero(), hasDissent: r.dissent != nil,
+					claimedUntil: r.claimedUntil}
+				if r.dissent != nil {
+					row.dissentStatus = r.dissent.Status
+				}
+				return row
 			}}
 	})
 })

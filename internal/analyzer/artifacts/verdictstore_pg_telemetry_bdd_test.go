@@ -64,8 +64,23 @@ var _ = Describe("PGVerdictStore telemetry", func() {
 			return store.RecordDissent(ctxB, "tenant-a", "k", artifacts.Verdict{Status: artifacts.VerdictConfirmed})
 		}),
 		Entry("RecordFailure", "RecordFailure", func() error { return store.RecordFailure(ctxB, "tenant-a", "k", artifacts.Failure{}) }),
-		Entry("Unprojected", "Unprojected", func() error { _, err := store.Unprojected(ctxB, "tenant-a", 1); return err }),
-		Entry("MarkProjected", "MarkProjected", func() error { return store.MarkProjected(ctxB, "tenant-a", "k") }),
+		Entry("Unprojected", "Unprojected", func() error { _, err := store.Unprojected(ctxB, "tenant-a", 1, time.Time{}); return err }),
+		Entry("ClaimProjection", "ClaimProjection", func() error {
+			_, err := store.ClaimProjection(ctxB, "tenant-a", artifacts.Projection{Key: "k"}, time.Unix(60, 0), time.Unix(0, 0))
+			return err
+		}),
+		Entry("MarkProjected", "MarkProjected", func() error {
+			_, err := store.MarkProjected(ctxB, "tenant-a", artifacts.Projection{Key: "k"}, time.Time{})
+			return err
+		}),
+		Entry("ReleaseClaim", "ReleaseClaim", func() error { return store.ReleaseClaim(ctxB, "tenant-a", "k", time.Time{}) }),
+		Entry("DecideHuman", "DecideHuman", func() error {
+			_, err := store.DecideHuman(ctxB, "tenant-a", artifacts.PairRef("k"),
+				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: time.Now()})
+			return err
+		}),
+		Entry("ReviewQueue", "ReviewQueue", func() error { _, err := store.ReviewQueue(ctxB, "tenant-a", 1); return err }),
+		Entry("SearchPairs", "SearchPairs", func() error { _, err := store.SearchPairs(ctxB, "tenant-a", "policy", 1); return err }),
 		Entry("ResetProjection", "ResetProjection", func() error { _, err := store.ResetProjection(ctxB, "tenant-a"); return err }),
 		Entry("Counts", "Counts", func() error { _, err := store.Counts(ctxB, "tenant-a", time.Time{}); return err }),
 	)

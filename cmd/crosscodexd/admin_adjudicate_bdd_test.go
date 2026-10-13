@@ -171,15 +171,16 @@ var _ = Describe("runAdmin adjudicate artifacts wiring", func() {
 })
 
 var _ = Describe("writeAdjudicateReport", func() {
-	It("prints every run counter, including expired, with its value", func() {
+	It("prints every run counter, including expired, fenced and busy, with its value", func() {
 		var buf bytes.Buffer
 		writeAdjudicateReport(&buf, artifacts.AdjudicateResult{Recovered: 1, Orphaned: 2, Leased: 3, Confirmed: 4,
 			Rejected: 5, Undecided: 6, Failed: 7, Abandoned: 8, Dissent: 9, Stale: 10, Expired: 11,
-			Pending: 12, Due: 13, Unprojected: 14, Reset: 15}, false)
+			Pending: 12, Due: 13, Unprojected: 14, Reset: 15, Fenced: 16, Busy: 17}, false)
 		out := buf.String()
 		Expect(out).To(MatchRegexp(`^METRIC +VALUE\n`))
 		for metric, value := range map[string]int{"recovered": 1, "orphaned": 2, "leased": 3, "confirmed": 4,
-			"rejected": 5, "undecided": 6, "failed": 7, "abandoned": 8, "dissent": 9, "stale": 10, "expired": 11, "reset": 15} {
+			"rejected": 5, "undecided": 6, "failed": 7, "abandoned": 8, "dissent": 9, "stale": 10, "expired": 11, "reset": 15,
+			"fenced": 16, "busy": 17} {
 			Expect(out).To(MatchRegexp(`(?m)^%s +%d$`, metric, value))
 		}
 		for _, metric := range []string{"pending", "due", "unprojected"} {
@@ -190,14 +191,14 @@ var _ = Describe("writeAdjudicateReport", func() {
 	It("prints the queue counts with their values under --dry-run", func() {
 		var buf bytes.Buffer
 		writeAdjudicateReport(&buf, artifacts.AdjudicateResult{Pending: 4, Due: 3, Unprojected: 2,
-			Leased: 7, Confirmed: 8, Expired: 9}, true)
+			Leased: 7, Confirmed: 8, Expired: 9, Fenced: 10, Busy: 11}, true)
 		out := buf.String()
 		Expect(out).To(MatchRegexp(`^METRIC +VALUE\n`))
 		for metric, value := range map[string]int{"pending": 4, "due": 3, "unprojected": 2} {
 			Expect(out).To(MatchRegexp(`(?m)^%s +%d$`, metric, value))
 		}
 		for _, metric := range []string{"recovered", "orphaned", "leased", "confirmed", "rejected", "undecided",
-			"failed", "abandoned", "dissent", "stale", "expired", "reset"} {
+			"failed", "abandoned", "dissent", "stale", "expired", "reset", "fenced", "busy"} {
 			Expect(out).NotTo(MatchRegexp(`(?m)^%s `, metric))
 		}
 	})

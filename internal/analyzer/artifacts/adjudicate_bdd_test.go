@@ -82,6 +82,30 @@ func (f *adjFixture) candidateSuperseded() bool {
 	return e.ValidTo != nil
 }
 
+// humanRejectsMidPanel is an LLM reply that first records a human rejection
+// of the fixture pair, as a reviewer would while the panel runs. Panel calls
+// run concurrently; the first records the verdict and the others find it
+// unchanged.
+func humanRejectsMidPanel(f *adjFixture) func(*llmclient.CompletionRequest) (string, error) {
+	return func(*llmclient.CompletionRequest) (string, error) {
+		defer GinkgoRecover()
+		f.decideHuman(artifacts.VerdictRejected, "bob", f.now)
+		return answer("YES"), nil
+	}
+}
+
+// otherRunRejectsMidPanel is an LLM reply that first records another run's
+// panel rejection of the fixture pair, not yet projected. Panel calls run
+// concurrently; the first applies and the others are stale.
+func otherRunRejectsMidPanel(f *adjFixture) func(*llmclient.CompletionRequest) (string, error) {
+	return func(*llmclient.CompletionRequest) (string, error) {
+		defer GinkgoRecover()
+		_, err := f.store.Decide(f.ctx, adjTenant, f.key, artifacts.Verdict{Status: artifacts.VerdictRejected, Confidence: 1, DecidedAt: f.now})
+		Expect(err).NotTo(HaveOccurred())
+		return answer("YES"), nil
+	}
+}
+
 var _ = Describe("Adjudicator", func() {
 	var f *adjFixture
 	BeforeEach(func() { f = newAdjFixture() })
@@ -423,21 +447,23 @@ var _ = Describe("Adjudicator", func() {
 	})
 
 	Describe("human authority", func() {
-		It("records dissent and leaves the graph alone when a human decides mid-panel", func() {
-			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
-				f.store.setHuman(adjTenant, f.key, artifacts.VerdictRejected)
-				return answer("YES"), nil
-			}
+		It("records dissent when a human decides mid-panel, and projects the human verdict", func() {
+			f.llm.reply = humanRejectsMidPanel(f)
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Dissent: 1}))
+			// The panel's confirmation is only dissent; the end-of-run
+			// projection pass writes the human rejection.
+			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Dissent: 1, Recovered: 1}))
 			r := f.store.row(adjTenant, f.key)
 			Expect(r.status).To(Equal(artifacts.VerdictRejected))
 			Expect(r.determination).To(Equal(artifacts.DeterminationHuman))
+			Expect(r.graphApplied).To(BeTrue())
 			Expect(r.dissent).NotTo(BeNil())
 			Expect(r.dissent.Status).To(Equal(artifacts.VerdictConfirmed))
-			Expect(f.liveSameAs()).To(HaveLen(1))
-			Expect(f.candidateSuperseded()).To(BeFalse())
+			Expect(f.liveSameAs()).To(BeEmpty())
+			Expect(f.candidateSuperseded()).To(BeTrue())
+			_, err = f.g.GetEdge(f.ctx, adjTenant, graphdb.DerivedID("same-as", "llm_panel", f.low, f.high))
+			Expect(err).To(MatchError(graphdb.ErrEdgeNotFound), "the panel's confirmation is never written")
 		})
 
 		It("never leases a human-owned pair", func() {
@@ -448,16 +474,16 @@ var _ = Describe("Adjudicator", func() {
 			Expect(f.llm.callCount()).To(BeZero())
 		})
 
-		It("reports a pair another run decided mid-panel as stale", func() {
-			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
-				f.store.set(adjTenant, artifacts.PairCandidate{LowGroupID: f.low, HighGroupID: f.high},
-					artifacts.VerdictRejected, artifacts.DeterminationLLMPanel)
-				return answer("YES"), nil
-			}
+		It("reports a pair another run decided mid-panel as stale, and projects that run's verdict", func() {
+			f.llm.reply = otherRunRejectsMidPanel(f)
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Stale: 1}))
-			Expect(f.liveSameAs()).To(HaveLen(1))
+			// The other run's rejection is not projected yet; the end-of-run
+			// projection pass writes it.
+			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Stale: 1, Recovered: 1}))
+			Expect(f.liveSameAs()).To(BeEmpty())
+			_, err = f.g.GetEdge(f.ctx, adjTenant, graphdb.DerivedID("same-as", "llm_panel", f.low, f.high))
+			Expect(err).To(MatchError(graphdb.ErrEdgeNotFound), "the stale confirmation is never written")
 		})
 	})
 
@@ -788,6 +814,9 @@ var _ = Describe("Adjudicator telemetry", func() {
 		v, ok = telemetrytest.SpanAttribute(pair, "pair.key")
 		Expect(ok).To(BeTrue())
 		Expect(v.AsString()).To(Equal(f.key))
+		v, ok = telemetrytest.SpanAttribute(pair, "pair.ref")
+		Expect(ok).To(BeTrue())
+		Expect(v.AsString()).To(Equal(artifacts.PairRef(f.key)))
 		v, ok = telemetrytest.SpanAttribute(pair, "adjudicate.outcome")
 		Expect(ok).To(BeTrue())
 		Expect(v.AsString()).To(Equal("confirmed"))
@@ -859,26 +888,19 @@ var _ = Describe("Adjudicator telemetry", func() {
 		DeferCleanup(func() { slog.SetDefault(prev) })
 		_, err := run()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(logs.String()).To(MatchRegexp(`msg="artifact pair adjudicated".*pair.key=\S*.*outcome=confirmed`))
-		Expect(logs.String()).To(MatchRegexp(`msg="artifact adjudication run finished".*stopped_early=false.*orphaned=0 dry_run=false pending=0 due=0 unprojected=0`))
+		Expect(logs.String()).To(MatchRegexp(`msg="artifact pair adjudicated".*pair.key=\S*.* pair.ref=%s outcome=confirmed`, artifacts.PairRef(f.key)))
+		Expect(logs.String()).To(MatchRegexp(`msg="artifact adjudication run finished".*stopped_early=false.*orphaned=0 fenced=0 busy=0 dry_run=false pending=0 due=0 unprojected=0`))
 	})
 
 	It("counts a dissent when a human decides mid-panel", func() {
-		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
-			f.store.setHuman(adjTenant, f.key, artifacts.VerdictRejected)
-			return answer("YES"), nil
-		}
+		f.llm.reply = humanRejectsMidPanel(f)
 		_, err := run()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "dissent")).To(Equal(int64(1)))
 	})
 
 	It("counts a stale pair when another run decides mid-panel", func() {
-		f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
-			f.store.set(adjTenant, artifacts.PairCandidate{LowGroupID: f.low, HighGroupID: f.high},
-				artifacts.VerdictRejected, artifacts.DeterminationLLMPanel)
-			return answer("YES"), nil
-		}
+		f.llm.reply = otherRunRejectsMidPanel(f)
 		_, err := run()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(counterByAttr(tp, "artifacts.adjudications.total", "outcome", "stale")).To(Equal(int64(1)))

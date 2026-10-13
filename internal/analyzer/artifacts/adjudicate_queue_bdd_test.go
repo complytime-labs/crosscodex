@@ -61,21 +61,26 @@ var _ = Describe("Adjudicator queue", func() {
 			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeTrue())
 		})
 
-		It("resets only llm_panel verdicts, never a human one", func() {
+		It("resets llm_panel and human verdicts", func() {
 			_, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			human := artifacts.PairCandidate{LowGroupID: "h-a", HighGroupID: "h-b", CandidateEdgeID: "h-edge"}
-			f.store.set(adjTenant, human, artifacts.VerdictConfirmed, artifacts.DeterminationHuman)
+			Expect(f.store.Enqueue(f.ctx, adjTenant, []artifacts.PairCandidate{human}, f.now)).To(Succeed())
 			humanKey := artifacts.PairKey(human.LowGroupID, human.HighGroupID)
+			_, err = f.store.DecideHuman(f.ctx, adjTenant, artifacts.PairRef(humanKey),
+				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: f.now})
+			Expect(err).NotTo(HaveOccurred())
 			f.store.setProjected(adjTenant, humanKey)
 
 			f.opts.Reproject = true
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(res.Reset).To(Equal(1))
-			Expect(res.Recovered).To(Equal(1))
+			// The human pair's groups h-a and h-b are not in the graph, so its
+			// projection is Orphaned whichever path projects it; a human
+			// projection branch must keep counting it that way.
+			Expect(res).To(Equal(artifacts.AdjudicateResult{Reset: 2, Recovered: 2, Orphaned: 1}))
 			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeTrue(), "llm_panel row re-projected")
-			Expect(f.store.row(adjTenant, humanKey).graphApplied).To(BeTrue(), "human row stays projected")
+			Expect(f.store.row(adjTenant, humanKey).graphApplied).To(BeTrue(), "human row re-projected")
 		})
 
 		It("re-projects without leasing a due pair or calling the LLM", func() {
@@ -135,7 +140,7 @@ var _ = Describe("Adjudicator queue", func() {
 			Expect(res.Recovered).To(Equal(150))
 		})
 
-		It("leaves a confirmation unprojected when the edge write fails, and projects it on a later healthy run", func() {
+		It("leaves a confirmation unprojected when the edge write fails, and projects it once its claim expires", func() {
 			healthy := f.g
 			f.g = failingCreateEdge{GraphDB: healthy}
 			res, err := f.run()
@@ -150,13 +155,18 @@ var _ = Describe("Adjudicator queue", func() {
 			f.g = healthy
 			res, err = f.run()
 			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(artifacts.AdjudicateResult{}), "the failed projection still holds its claim")
+
+			f.now = f.now.Add(f.cfg.LeaseDuration)
+			res, err = f.run()
+			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 1}))
 			Expect(f.liveSameAs()).To(HaveLen(1))
 			Expect(f.candidateSuperseded()).To(BeTrue())
 			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeTrue())
 		})
 
-		It("finishes on the next run a confirmation that crashed between the edge write and the supersede", func() {
+		It("finishes, once its claim expires, a confirmation that crashed between the edge write and the supersede", func() {
 			decide(artifacts.VerdictConfirmed)
 			healthy := f.g
 			f.g = &failingSupersede{GraphDB: healthy}
@@ -165,6 +175,7 @@ var _ = Describe("Adjudicator queue", func() {
 			f.g = healthy
 			Expect(f.liveSameAs()).To(HaveLen(2), "the crash leaves the llm_panel edge and the candidate both live")
 
+			f.now = f.now.Add(f.cfg.LeaseDuration) // the crashed projection's claim expires
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 1}))
@@ -199,6 +210,23 @@ var _ = Describe("Adjudicator queue", func() {
 			_, err := f.run()
 			Expect(err).To(MatchError(ContainSubstring("supersede")))
 			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeFalse())
+		})
+
+		It("stops the run when the candidate edge cannot be read", func() {
+			decide(artifacts.VerdictRejected)
+			healthy := f.g
+			f.g = failingGetEdge{GraphDB: healthy}
+			_, err := f.run()
+			Expect(err).To(MatchError(ContainSubstring("read candidate edge of pair " + artifacts.PairRef(f.key))))
+			Expect(err).To(MatchError(ContainSubstring("graph down")))
+			f.g = healthy
+			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeFalse())
+			Expect(f.candidateSuperseded()).To(BeFalse())
+
+			res, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 1}), "nothing was written, so the claim was released")
+			Expect(f.candidateSuperseded()).To(BeTrue())
 		})
 	})
 
@@ -333,10 +361,7 @@ var _ = Describe("Adjudicator queue", func() {
 			}),
 		Entry("RecordDissent", "RecordDissent", "record dissent",
 			func() {
-				f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
-					f.store.setHuman(adjTenant, f.key, artifacts.VerdictRejected)
-					return answer("YES"), nil
-				}
+				f.llm.reply = humanRejectsMidPanel(f)
 			},
 			func() {
 				r := f.store.row(adjTenant, f.key)

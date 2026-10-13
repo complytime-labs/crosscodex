@@ -28,6 +28,8 @@ const adminUsage = `usage:
   crosscodexd admin reconcile artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-edges <n>]
   crosscodexd admin adjudicate artifacts (--tenant <id> | --all-tenants) [--dry-run] [--max-pairs <n>]
   crosscodexd admin adjudicate artifacts --tenant <id> --reproject
+  crosscodexd admin adjudicate artifacts review --tenant <id> [--name <text>] [--limit <n>]
+  crosscodexd admin adjudicate artifacts decide --tenant <id> --pair <ref> --verdict confirmed|rejected --reviewer <id>
   crosscodexd admin backup run
   crosscodexd admin backup list
   crosscodexd admin backup verify [--point <id>]
@@ -50,6 +52,10 @@ func runAdmin(args []string) int {
 		return retentionScanCmd(args[2:])
 	case len(args) >= 2 && args[0] == "reconcile" && args[1] == "artifacts":
 		return reconcileArtifactsCmd(args[2:])
+	case len(args) >= 3 && args[0] == "adjudicate" && args[1] == "artifacts" && args[2] == "review":
+		return reviewArtifactsCmd(args[3:])
+	case len(args) >= 3 && args[0] == "adjudicate" && args[1] == "artifacts" && args[2] == "decide":
+		return decideArtifactsCmd(args[3:])
 	case len(args) >= 2 && args[0] == "adjudicate" && args[1] == "artifacts":
 		return adjudicateArtifactsCmd(args[2:])
 	case len(args) >= 2 && args[0] == "backup" && args[1] == "run":
@@ -464,6 +470,8 @@ func writeAdjudicateReport(w io.Writer, res artifacts.AdjudicateResult, dryRun b
 		fmt.Fprintf(tw, "dissent\t%d\n", res.Dissent)
 		fmt.Fprintf(tw, "stale\t%d\n", res.Stale)
 		fmt.Fprintf(tw, "expired\t%d\n", res.Expired)
+		fmt.Fprintf(tw, "fenced\t%d\n", res.Fenced)
+		fmt.Fprintf(tw, "busy\t%d\n", res.Busy)
 	}
 	if err := tw.Flush(); err != nil {
 		fmt.Fprintf(w, "error flushing output: %v\n", err)
