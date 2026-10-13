@@ -1,0 +1,22 @@
+cmd/crosscodexd/admin_review.go
+  s_27e4f12e0732fb::t_3fe2ce24ca168d 39-44,351,369-373,389-391,396,398,417-461,478-480
+  s_27e4f12e0732fb::t_99a80d42461f18 11,481-500,503-506
+cmd/crosscodexd/admin_review_bdd_test.go
+  s_27e4f12e0732fb::t_25f1b2eabd114e 273-275,294,336-349,352,357-359,371-373,394-429,668-682
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "631a8a1902d58ceb0ecc24c2806c36073c8a53c6",
+  "prompts": {},
+  "sessions": {
+    "s_27e4f12e0732fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b587255c-c11e-4b30-baa0-e73dda485de9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
