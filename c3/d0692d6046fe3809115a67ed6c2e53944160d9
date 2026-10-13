@@ -1,0 +1,26 @@
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_27e4f12e0732fb::t_8f9cd323e8bf56 562-563,565-566,575-628
+  s_27e4f12e0732fb::t_b48240d170bdc3 629
+internal/analyzer/artifacts/pairdetail.go
+  s_27e4f12e0732fb::t_1114145c416ea6 77
+internal/analyzer/artifacts/verdictstore_contract_detail_bdd_test.go
+  s_27e4f12e0732fb::t_63efbfadd9b178 5-6,210-222,225-226,231-246,253
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_27e4f12e0732fb::t_63efbfadd9b178 852-874
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c3d0692d6046fe3809115a67ed6c2e53944160d9",
+  "prompts": {},
+  "sessions": {
+    "s_27e4f12e0732fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b587255c-c11e-4b30-baa0-e73dda485de9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
