@@ -27,9 +27,20 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 		Expect(c.Validate()).To(Succeed())
 	})
 
-	It("skips validation when disabled", func() {
-		Expect((&config.ArtifactAdjudicationConfig{}).Validate()).To(Succeed())
+	It("skips panel-only fields when disabled", func() {
+		Expect((&config.ArtifactAdjudicationConfig{LeaseDuration: time.Minute}).Validate()).To(Succeed())
 	})
+
+	DescribeTable("rejects a non-positive lease_duration even when disabled, naming it",
+		func(d time.Duration) {
+			err := (&config.ArtifactAdjudicationConfig{LeaseDuration: d}).Validate()
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue(), "got %v", err)
+			Expect(err.Error()).To(ContainSubstring("analysis.artifact_adjudication.lease_duration"))
+			Expect(err.Error()).To(ContainSubstring("must be positive (e.g. 15m)"))
+		},
+		Entry("zero", time.Duration(0)),
+		Entry("negative", -time.Minute),
+	)
 
 	It("accepts even samples when allow_even_samples is set", func() {
 		c := valid()
@@ -121,11 +132,19 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 			Expect(err.Error()).To(ContainSubstring("analysis.artifact_adjudication.lease_duration"))
 		})
 
-		It("is disabled when not configured", func() {
+		It("fails to load a non-positive lease_duration when disabled, naming it", func() {
+			writeUserConfig("analysis:\n  artifact_adjudication:\n    enabled: false\n    lease_duration: 0s\n")
+			_, err := config.NewLoader().Load(context.Background())
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue(), "got %v", err)
+			Expect(err.Error()).To(ContainSubstring("analysis.artifact_adjudication.lease_duration"))
+		})
+
+		It("is disabled when not configured, with a positive default lease_duration", func() {
 			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
 			cfg, err := config.NewLoader().Load(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Analysis.ArtifactAdjudication.Enabled).To(BeFalse())
+			Expect(cfg.Analysis.ArtifactAdjudication.LeaseDuration).To(Equal(15 * time.Minute))
 		})
 
 		It("fails to load an enabled block without models", func() {
