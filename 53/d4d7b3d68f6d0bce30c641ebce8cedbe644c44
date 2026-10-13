@@ -1,0 +1,35 @@
+internal/analyzer/artifacts/decide_current_test.go
+  s_27e4f12e0732fb::t_679554ca32b7fd 1-13
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_27e4f12e0732fb::t_eab5ec62bef874 814-871
+  s_27e4f12e0732fb::t_9823b65bcdcf08 812-813
+internal/analyzer/artifacts/verdictstore_pg_telemetry_bdd_test.go
+  s_27e4f12e0732fb::t_eab5ec62bef874 83-86
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_27e4f12e0732fb::t_173c3d2d276df5 343-347,351,357-386,405,412-413
+  s_27e4f12e0732fb::t_c5774f51a30b15 474-598
+internal/analyzer/artifacts/verdicts.go
+  s_27e4f12e0732fb::t_b25391883345f8 397-405
+internal/analyzer/artifacts/verdictstore_fake_test.go
+  s_27e4f12e0732fb::t_1a50c74a9e0d72 5,207-209,231-275,290-350
+  s_27e4f12e0732fb::t_eb65d85c6f5c3b 351
+internal/analyzer/artifacts/verdictstore_contract_detail_bdd_test.go
+  s_27e4f12e0732fb::t_679554ca32b7fd 101,109-247
+  s_27e4f12e0732fb::t_d6a23ccdf46a79 248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53d4d7b3d68f6d0bce30c641ebce8cedbe644c44",
+  "prompts": {},
+  "sessions": {
+    "s_27e4f12e0732fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b587255c-c11e-4b30-baa0-e73dda485de9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
