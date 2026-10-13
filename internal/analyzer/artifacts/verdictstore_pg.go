@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -93,14 +94,18 @@ func (s *PGVerdictStore) observe(ctx context.Context, op, tenantID string, fn fu
 	return err
 }
 
-// dissentRecord is the dissent column: the panel's opinion on a pair a human
-// had already decided.
+// dissentRecord is the dissent column: a panel opinion on a human-owned pair,
+// either given after a human decided it (RecordDissent) or the panel verdict
+// a human overrode (DecideHuman). Evidence is raw JSON so DecideHuman can
+// copy stored evidence it may no longer be able to decode. DecidedAt is
+// stored at microsecond precision, so ReviewQueue's comparison with the
+// decided_at column is exact.
 type dissentRecord struct {
-	Status       VerdictStatus `json:"status"`
-	Confidence   float64       `json:"confidence"`
-	DeterminedBy string        `json:"determined_by"`
-	DecidedAt    time.Time     `json:"decided_at"`
-	Evidence     PanelEvidence `json:"evidence"`
+	Status       VerdictStatus   `json:"status"`
+	Confidence   float64         `json:"confidence"`
+	DeterminedBy string          `json:"determined_by"`
+	DecidedAt    time.Time       `json:"decided_at"`
+	Evidence     json.RawMessage `json:"evidence"`
 }
 
 // inTx runs fn in one tenant-scoped transaction and commits it when fn
@@ -164,11 +169,12 @@ func (s *PGVerdictStore) Enqueue(ctx context.Context, tenantID string, candidate
 					make([]string, len(chunk)), make([]string, len(chunk)), make([]string, len(chunk))
 				scores := make([]float64, len(chunk))
 				for i, c := range chunk {
+					key := PairKey(c.LowGroupID, c.HighGroupID)
 					b, err := json.Marshal(c.Context)
 					if err != nil {
-						return fmt.Errorf("enqueue: encode context of %s: %w", c.CandidateEdgeID, err)
+						return fmt.Errorf("enqueue: encode context of pair %s: %w", PairRef(key), err)
 					}
-					keys[i], lows[i], highs[i] = PairKey(c.LowGroupID, c.HighGroupID), c.LowGroupID, c.HighGroupID
+					keys[i], lows[i], highs[i] = key, c.LowGroupID, c.HighGroupID
 					edges[i], scores[i], contexts[i] = c.CandidateEdgeID, c.SimilarityScore, string(b)
 				}
 				if err := tx.Exec(ctx, enqueueSQL, tenantID, keys, lows, highs, edges, scores, contexts, reconcilerName, now); err != nil {
@@ -237,7 +243,7 @@ func (s *PGVerdictStore) Lease(ctx context.Context, tenantID string, n int, leas
 					return fmt.Errorf("lease: %w", err)
 				}
 				if err := json.Unmarshal(raw, &p.Context); err != nil {
-					return fmt.Errorf("lease: decode context of %s: %w", p.Key, err)
+					return fmt.Errorf("lease: decode context of pair %s: %w", PairRef(p.Key), err)
 				}
 				out = append(out, p)
 				return nil
@@ -263,11 +269,11 @@ func (s *PGVerdictStore) Decide(ctx context.Context, tenantID, key string, v Ver
 		switch v.Status {
 		case VerdictConfirmed, VerdictRejected, VerdictUndecided:
 		default:
-			return fmt.Errorf("decide %s: status %q is not a panel verdict", key, v.Status)
+			return fmt.Errorf("decide pair %s: status %q is not a panel verdict", PairRef(key), v.Status)
 		}
 		evidence, err := json.Marshal(v.Evidence)
 		if err != nil {
-			return fmt.Errorf("decide %s: encode evidence: %w", key, err)
+			return fmt.Errorf("decide pair %s: encode evidence: %w", PairRef(key), err)
 		}
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
 			err := tx.QueryRow(ctx, decideSQL, tenantID, key, string(v.Status), adjudicatorName, v.Confidence, string(evidence), v.DecidedAt).Scan(&d.CandidateEdgeID)
@@ -276,16 +282,16 @@ func (s *PGVerdictStore) Decide(ctx context.Context, tenantID, key string, v Ver
 				return nil
 			}
 			if !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("decide %s: %w", key, err)
+				return fmt.Errorf("decide pair %s: %w", PairRef(key), err)
 			}
 			var determination string
 			err = tx.QueryRow(ctx, `SELECT determination_type FROM artifact_pair_verdicts
 			WHERE tenant_id = $1 AND pair_key = $2`, tenantID, key).Scan(&determination)
 			switch {
 			case errors.Is(err, sql.ErrNoRows):
-				return fmt.Errorf("decide %s: pair is not queued", key)
+				return fmt.Errorf("decide pair %s: pair is not queued", PairRef(key))
 			case err != nil:
-				return fmt.Errorf("decide %s: %w", key, err)
+				return fmt.Errorf("decide pair %s: %w", PairRef(key), err)
 			case determination == DeterminationHuman:
 				d.Outcome = DecideHumanOwned
 			default:
@@ -302,19 +308,235 @@ func (s *PGVerdictStore) Decide(ctx context.Context, tenantID, key string, v Ver
 
 func (s *PGVerdictStore) RecordDissent(ctx context.Context, tenantID, key string, v Verdict) error {
 	return s.observe(ctx, "RecordDissent", tenantID, func(ctx context.Context) error {
-		b, err := json.Marshal(dissentRecord{Status: v.Status, Confidence: v.Confidence, DeterminedBy: adjudicatorName,
-			DecidedAt: v.DecidedAt, Evidence: v.Evidence})
+		ev, err := json.Marshal(v.Evidence)
 		if err != nil {
-			return fmt.Errorf("record dissent %s: encode: %w", key, err)
+			return fmt.Errorf("record dissent pair %s: encode evidence: %w", PairRef(key), err)
+		}
+		b, err := json.Marshal(dissentRecord{Status: v.Status, Confidence: v.Confidence, DeterminedBy: adjudicatorName,
+			DecidedAt: v.DecidedAt.Truncate(time.Microsecond), Evidence: ev})
+		if err != nil {
+			return fmt.Errorf("record dissent pair %s: encode: %w", PairRef(key), err)
 		}
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
 			if err := tx.Exec(ctx, `UPDATE artifact_pair_verdicts SET dissent = $3::jsonb
 			WHERE tenant_id = $1 AND pair_key = $2 AND determination_type = 'human'`, tenantID, key, string(b)); err != nil {
-				return fmt.Errorf("record dissent %s: %w", key, err)
+				return fmt.Errorf("record dissent pair %s: %w", PairRef(key), err)
 			}
 			return nil
 		})
 	})
+}
+
+// pairRefSQL computes PairRef in SQL: the first 16 hex characters of
+// sha256(pair_key). pair_key is TEXT in a UTF-8 database, so convert_to
+// yields the bytes Go hashes.
+const pairRefSQL = `left(encode(sha256(convert_to(pair_key, 'UTF8')), 'hex'), 16)`
+
+// disputedSQL is true for a human verdict a panel contradicted afterwards: a
+// confirmed or rejected dissent, different from the human status, decided
+// after the human verdict. The panel verdict a human overrode is dissent too,
+// but it predates the human verdict, so it never makes a pair disputed.
+const disputedSQL = `(determination_type = 'human' AND dissent->>'status' IN ('confirmed', 'rejected')
+           AND dissent->>'status' <> status AND (dissent->>'decided_at')::timestamptz > decided_at)`
+
+// selectByRefSQL locks the tenant's pairs with a ref. LIMIT 2 is enough to
+// tell one match from several.
+const selectByRefSQL = `
+SELECT pair_key, status, determination_type, determined_by, confidence, evidence, decided_at, projection_claimed_until,
+       COALESCE(` + disputedSQL + `, false)
+FROM artifact_pair_verdicts
+WHERE tenant_id = $1 AND ` + pairRefSQL + ` = $2
+LIMIT 2
+FOR UPDATE`
+
+// decideHumanSQL makes a pair human-owned. $5 is the dissent to store, or
+// NULL to keep the stored one. The projection claim is kept: its holder is
+// writing the previous verdict, and the new one must reach the graph after
+// those writes.
+const decideHumanSQL = `
+UPDATE artifact_pair_verdicts
+SET status = $3, determination_type = 'human', determined_by = $4, confidence = 1, evidence = NULL,
+    dissent = COALESCE($5::jsonb, dissent), decided_at = $6, graph_applied = false,
+    leased_until = NULL, last_error = NULL
+WHERE tenant_id = $1 AND pair_key = $2`
+
+func (s *PGVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string, h HumanVerdict) (HumanDecision, error) {
+	var d HumanDecision
+	err := s.observe(ctx, "DecideHuman", tenantID, func(ctx context.Context) error {
+		if err := validateHumanVerdict(ref, h); err != nil {
+			return err
+		}
+		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			type current struct {
+				key, status, determination, determinedBy string
+				confidence                               sql.NullFloat64
+				evidence                                 []byte
+				decidedAt, claimedUntil                  sql.NullTime
+				disputed                                 bool
+			}
+			var found []current
+			rows, err := tx.Query(ctx, selectByRefSQL, tenantID, ref)
+			if err != nil {
+				return fmt.Errorf("decide human %s: %w", ref, err)
+			}
+			// scanRows closes rows before the UPDATE below runs on tx.
+			if err := scanRows(rows, func() error {
+				var c current
+				if err := rows.Scan(&c.key, &c.status, &c.determination, &c.determinedBy, &c.confidence, &c.evidence, &c.decidedAt, &c.claimedUntil, &c.disputed); err != nil {
+					return fmt.Errorf("decide human %s: %w", ref, err)
+				}
+				found = append(found, c)
+				return nil
+			}); err != nil {
+				return err
+			}
+			switch len(found) {
+			case 0:
+				return fmt.Errorf("decide human %s: %w", ref, ErrPairNotFound)
+			case 1:
+			default:
+				return fmt.Errorf("decide human %s: %w", ref, ErrPairRefAmbiguous)
+			}
+			c := found[0]
+			d.Key = c.key
+			if c.claimedUntil.Valid && c.claimedUntil.Time.After(h.DecidedAt) {
+				d.ClaimedUntil = c.claimedUntil.Time
+			}
+			d.Outcome = HumanApplied
+			if c.determination == DeterminationHuman && VerdictStatus(c.status) == h.Status {
+				if !c.disputed {
+					d.Outcome = HumanUnchanged
+					return nil
+				}
+				// The reviewer stands by the verdict a panel contradicted
+				// afterwards. Recording it again at h.DecidedAt makes the
+				// stored dissent older than the human verdict, so the pair
+				// leaves the review queue.
+				d.Outcome = HumanReaffirmed
+			}
+			var dissent any // nil keeps the stored dissent
+			if c.determination == DeterminationLLMPanel {
+				// Evidence is copied, not decoded, so evidence written in an
+				// older shape never blocks a human verdict.
+				ev := json.RawMessage(c.evidence)
+				if c.evidence == nil {
+					if ev, err = json.Marshal(PanelEvidence{}); err != nil {
+						return fmt.Errorf("decide human %s: encode empty evidence: %w", ref, err)
+					}
+				}
+				b, err := json.Marshal(dissentRecord{Status: VerdictStatus(c.status), Confidence: c.confidence.Float64,
+					DeterminedBy: c.determinedBy, DecidedAt: c.decidedAt.Time, Evidence: ev})
+				if err != nil {
+					return fmt.Errorf("decide human %s: encode dissent: %w", ref, err)
+				}
+				dissent = string(b)
+			}
+			if err := tx.Exec(ctx, decideHumanSQL, tenantID, c.key, string(h.Status), h.Reviewer, dissent, h.DecidedAt); err != nil {
+				return fmt.Errorf("decide human %s: %w", ref, err)
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return HumanDecision{}, err
+	}
+	return d, nil
+}
+
+const reviewQueueSQL = `
+SELECT ` + reviewItemColumnsSQL + `
+FROM artifact_pair_verdicts
+WHERE tenant_id = $1
+  AND (status IN ('undecided', 'abandoned') OR ` + disputedSQL + `)
+ORDER BY created_at, pair_key
+LIMIT $2`
+
+// reviewItemColumnsSQL selects the columns scanReviewItems reads.
+const reviewItemColumnsSQL = pairRefSQL + `, pair_key, status, determination_type, similarity_score, context,
+       COALESCE(dissent->>'status', '')`
+
+// scanReviewItems reads ReviewQueue's and SearchPairs' rows; op prefixes its
+// errors.
+func scanReviewItems(rows db.Rows, op string) ([]ReviewItem, error) {
+	var out []ReviewItem
+	err := scanRows(rows, func() error {
+		var (
+			it                    ReviewItem
+			status, dissentStatus string
+			raw                   []byte
+		)
+		if err := rows.Scan(&it.Ref, &it.Key, &status, &it.DeterminationType, &it.SimilarityScore, &raw, &dissentStatus); err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+		if err := json.Unmarshal(raw, &it.Context); err != nil {
+			return fmt.Errorf("%s: decode context of pair %s: %w", op, PairRef(it.Key), err)
+		}
+		it.Status, it.DissentStatus = VerdictStatus(status), VerdictStatus(dissentStatus)
+		out = append(out, it)
+		return nil
+	})
+	return out, err
+}
+
+func (s *PGVerdictStore) ReviewQueue(ctx context.Context, tenantID string, n int) ([]ReviewItem, error) {
+	var out []ReviewItem
+	err := s.observe(ctx, "ReviewQueue", tenantID, func(ctx context.Context) error {
+		if n <= 0 {
+			return fmt.Errorf("review queue: n (%d) must be positive", n)
+		}
+		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			rows, err := tx.Query(ctx, reviewQueueSQL, tenantID, n)
+			if err != nil {
+				return fmt.Errorf("review queue: %w", err)
+			}
+			out, err = scanReviewItems(rows, "review queue")
+			return err
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// escapeLike backslash-escapes \, % and _ so s matches only itself inside an
+// ILIKE pattern with ESCAPE '\'. The search text comes from an operator, and
+// an unescaped % or _ would widen the match.
+var escapeLike = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace
+
+// searchPairsSQL matches $2, an escaped '%text%' pattern, against both names.
+// ILIKE folds case by the database's locale; the ESCAPE clause is explicit so
+// matching never depends on the default escape character.
+const searchPairsSQL = `
+SELECT ` + reviewItemColumnsSQL + `
+FROM artifact_pair_verdicts
+WHERE tenant_id = $1
+  AND ((context->>'low_name') ILIKE $2 ESCAPE '\' OR (context->>'high_name') ILIKE $2 ESCAPE '\')
+ORDER BY created_at, pair_key
+LIMIT $3`
+
+func (s *PGVerdictStore) SearchPairs(ctx context.Context, tenantID, name string, n int) ([]ReviewItem, error) {
+	var out []ReviewItem
+	err := s.observe(ctx, "SearchPairs", tenantID, func(ctx context.Context) error {
+		if n <= 0 {
+			return fmt.Errorf("search pairs: n (%d) must be positive", n)
+		}
+		if err := ValidateSearchName(name); err != nil {
+			return err
+		}
+		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			rows, err := tx.Query(ctx, searchPairsSQL, tenantID, "%"+escapeLike(name)+"%", n)
+			if err != nil {
+				return fmt.Errorf("search pairs: %w", err)
+			}
+			out, err = scanReviewItems(rows, "search pairs")
+			return err
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 const recordFailureSQL = `
@@ -329,14 +551,14 @@ func (s *PGVerdictStore) RecordFailure(ctx context.Context, tenantID, key string
 	return s.observe(ctx, "RecordFailure", tenantID, func(ctx context.Context) error {
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
 			if err := tx.Exec(ctx, recordFailureSQL, tenantID, key, f.Err, f.NextAttemptAt, f.Abandon, f.At, f.LeasedUntil); err != nil {
-				return fmt.Errorf("record failure %s: %w", key, err)
+				return fmt.Errorf("record failure pair %s: %w", PairRef(key), err)
 			}
 			return nil
 		})
 	})
 }
 
-func (s *PGVerdictStore) Unprojected(ctx context.Context, tenantID string, n int) ([]Projection, error) {
+func (s *PGVerdictStore) Unprojected(ctx context.Context, tenantID string, n int, now time.Time) ([]Projection, error) {
 	var out []Projection
 	err := s.observe(ctx, "Unprojected", tenantID, func(ctx context.Context) error {
 		if n <= 0 {
@@ -344,12 +566,13 @@ func (s *PGVerdictStore) Unprojected(ctx context.Context, tenantID string, n int
 		}
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
 			rows, err := tx.Query(ctx, `
-			SELECT pair_key, low_group_id, high_group_id, candidate_edge_id, status, confidence, evidence, decided_at
+			SELECT pair_key, low_group_id, high_group_id, candidate_edge_id, status, confidence, evidence, decided_at,
+			       determination_type, determined_by
 			FROM artifact_pair_verdicts
 			WHERE tenant_id = $1 AND status IN ('confirmed', 'rejected') AND NOT graph_applied
-			  AND determination_type <> 'human'
+			  AND (projection_claimed_until IS NULL OR projection_claimed_until <= $3)
 			ORDER BY decided_at, pair_key
-			LIMIT $2`, tenantID, n)
+			LIMIT $2`, tenantID, n, now)
 			if err != nil {
 				return fmt.Errorf("unprojected: %w", err)
 			}
@@ -361,14 +584,18 @@ func (s *PGVerdictStore) Unprojected(ctx context.Context, tenantID string, n int
 					raw        []byte
 					decidedAt  sql.NullTime
 				)
-				if err := rows.Scan(&p.Key, &p.LowGroupID, &p.HighGroupID, &p.CandidateEdgeID, &status, &confidence, &raw, &decidedAt); err != nil {
+				if err := rows.Scan(&p.Key, &p.LowGroupID, &p.HighGroupID, &p.CandidateEdgeID, &status, &confidence, &raw, &decidedAt,
+					&p.DeterminationType, &p.DeterminedBy); err != nil {
 					return fmt.Errorf("unprojected: %w", err)
 				}
-				if !confidence.Valid || !decidedAt.Valid || raw == nil {
-					return fmt.Errorf("unprojected: %s is decided but lacks confidence, evidence or decided_at", p.Key)
+				panel := p.DeterminationType == DeterminationLLMPanel
+				if !confidence.Valid || !decidedAt.Valid || (panel && raw == nil) {
+					return fmt.Errorf("unprojected: pair %s is decided but lacks confidence, evidence or decided_at", PairRef(p.Key))
 				}
-				if err := json.Unmarshal(raw, &p.Evidence); err != nil {
-					return fmt.Errorf("unprojected: decode evidence of %s: %w", p.Key, err)
+				if panel {
+					if err := json.Unmarshal(raw, &p.Evidence); err != nil {
+						return fmt.Errorf("unprojected: decode evidence of pair %s: %w", PairRef(p.Key), err)
+					}
 				}
 				p.Status, p.Confidence, p.DecidedAt = VerdictStatus(status), confidence.Float64, decidedAt.Time
 				out = append(out, p)
@@ -382,26 +609,107 @@ func (s *PGVerdictStore) Unprojected(ctx context.Context, tenantID string, n int
 	return out, nil
 }
 
-func (s *PGVerdictStore) MarkProjected(ctx context.Context, tenantID, key string) error {
-	return s.observe(ctx, "MarkProjected", tenantID, func(ctx context.Context) error {
+// claimProjectionSQL claims a row for projecting the verdict $3, $4, $5
+// until $6, if it still holds that verdict, is not projected and has no live
+// claim at $7. Both sides of the decided_at comparison are microseconds,
+// since pgx truncates $5.
+const claimProjectionSQL = `
+UPDATE artifact_pair_verdicts
+SET projection_claimed_until = $6
+WHERE tenant_id = $1 AND pair_key = $2 AND determination_type = $3 AND status = $4 AND decided_at = $5
+  AND NOT graph_applied AND (projection_claimed_until IS NULL OR projection_claimed_until <= $7)
+RETURNING 1`
+
+// claimHoldsSQL tells ClaimBusy from ClaimReplaced when claimProjectionSQL
+// matched nothing: whether the row still holds the verdict.
+const claimHoldsSQL = `
+SELECT determination_type = $3 AND status = $4 AND decided_at IS NOT DISTINCT FROM $5
+FROM artifact_pair_verdicts WHERE tenant_id = $1 AND pair_key = $2`
+
+func (s *PGVerdictStore) ClaimProjection(ctx context.Context, tenantID string, p Projection, until, now time.Time) (ClaimOutcome, error) {
+	var out ClaimOutcome
+	err := s.observe(ctx, "ClaimProjection", tenantID, func(ctx context.Context) error {
+		if !until.After(now) {
+			return fmt.Errorf("claim projection pair %s: until (%s) must be after now (%s)", PairRef(p.Key), until, now)
+		}
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
-			if err := tx.Exec(ctx, `UPDATE artifact_pair_verdicts SET graph_applied = true
-			WHERE tenant_id = $1 AND pair_key = $2 AND status IN ('confirmed', 'rejected')
-			  AND determination_type <> 'human'`, tenantID, key); err != nil {
-				return fmt.Errorf("mark projected %s: %w", key, err)
+			var one int
+			err := tx.QueryRow(ctx, claimProjectionSQL, tenantID, p.Key, p.DeterminationType, string(p.Status), p.DecidedAt, until, now).Scan(&one)
+			if err == nil {
+				out = ClaimAcquired
+				return nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("claim projection pair %s: %w", PairRef(p.Key), err)
+			}
+			var holds bool
+			err = tx.QueryRow(ctx, claimHoldsSQL, tenantID, p.Key, p.DeterminationType, string(p.Status), p.DecidedAt).Scan(&holds)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				return fmt.Errorf("claim projection pair %s: pair is not queued", PairRef(p.Key))
+			case err != nil:
+				return fmt.Errorf("claim projection pair %s: %w", PairRef(p.Key), err)
+			case holds:
+				out = ClaimBusy
+			default:
+				out = ClaimReplaced
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return 0, err
+	}
+	return out, nil
+}
+
+// markProjectedSQL releases the caller's claim ($6) and is the projection
+// fence: graph_applied becomes true only if the row still holds the verdict
+// identified by $3, $4 and $5. A row under another claim, or none, is not
+// touched. Both sides of each timestamp comparison are microseconds, since
+// pgx truncates $5 and $6.
+const markProjectedSQL = `
+UPDATE artifact_pair_verdicts
+SET graph_applied = (determination_type = $3 AND status = $4 AND decided_at = $5), projection_claimed_until = NULL
+WHERE tenant_id = $1 AND pair_key = $2 AND projection_claimed_until = $6
+RETURNING graph_applied`
+
+func (s *PGVerdictStore) MarkProjected(ctx context.Context, tenantID string, p Projection, claimedUntil time.Time) (bool, error) {
+	var applied bool
+	err := s.observe(ctx, "MarkProjected", tenantID, func(ctx context.Context) error {
+		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			err := tx.QueryRow(ctx, markProjectedSQL, tenantID, p.Key, p.DeterminationType, string(p.Status), p.DecidedAt, claimedUntil).Scan(&applied)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("mark projected pair %s: %w", PairRef(p.Key), err)
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
+func (s *PGVerdictStore) ReleaseClaim(ctx context.Context, tenantID, key string, claimedUntil time.Time) error {
+	return s.observe(ctx, "ReleaseClaim", tenantID, func(ctx context.Context) error {
+		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			if err := tx.Exec(ctx, `UPDATE artifact_pair_verdicts SET projection_claimed_until = NULL
+			WHERE tenant_id = $1 AND pair_key = $2 AND projection_claimed_until = $3`, tenantID, key, claimedUntil); err != nil {
+				return fmt.Errorf("release projection claim pair %s: %w", PairRef(key), err)
 			}
 			return nil
 		})
 	})
 }
 
-// resetProjectionSQL is deliberately narrower than the <> 'human' filter of
-// Unprojected and MarkProjected: only the adjudicator's own llm_panel verdicts
-// are re-projected.
+// resetProjectionSQL re-queues every projected verdict, llm_panel and human
+// alike. The determination types are listed explicitly so a future type is
+// not reset by accident.
 const resetProjectionSQL = `
 WITH reset AS (
     UPDATE artifact_pair_verdicts SET graph_applied = false
-    WHERE tenant_id = $1 AND determination_type = 'llm_panel' AND status IN ('confirmed', 'rejected')
+    WHERE tenant_id = $1 AND determination_type IN ('llm_panel', 'human') AND status IN ('confirmed', 'rejected')
       AND graph_applied
     RETURNING 1
 )
@@ -429,12 +737,12 @@ func (s *PGVerdictStore) Counts(ctx context.Context, tenantID string, now time.T
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
 			if err := tx.QueryRow(ctx, `
 			SELECT
-			  count(*) FILTER (WHERE status = 'pending'),
-			  count(*) FILTER (WHERE status = 'pending' AND next_attempt_at <= $2
+			  count(*) FILTER (WHERE status = 'pending' AND determination_type <> 'human'),
+			  count(*) FILTER (WHERE status = 'pending' AND determination_type <> 'human' AND next_attempt_at <= $2
 			                   AND (leased_until IS NULL OR leased_until < $2)),
 			  count(*) FILTER (WHERE status IN ('confirmed', 'rejected') AND NOT graph_applied)
 			FROM artifact_pair_verdicts
-			WHERE tenant_id = $1 AND determination_type <> 'human'`, tenantID, now).Scan(&c.Pending, &c.Due, &c.Unprojected); err != nil {
+			WHERE tenant_id = $1`, tenantID, now).Scan(&c.Pending, &c.Due, &c.Unprojected); err != nil {
 				return fmt.Errorf("counts: %w", err)
 			}
 			return nil

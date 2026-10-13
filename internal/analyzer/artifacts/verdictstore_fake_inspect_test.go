@@ -56,11 +56,23 @@ func (s *fakeVerdictStore) setProjected(tenantID, key string) {
 	s.rows[fakeRowID(tenantID, key)].graphApplied = true
 }
 
-// setHuman records a human verdict on an existing row, as the human verdict
-// API (a follow-up issue) will.
+// setUnprojected queues an existing row for projection again, as
+// ResetProjection does for every projected row.
+func (s *fakeVerdictStore) setUnprojected(tenantID, key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rows[fakeRowID(tenantID, key)].graphApplied = false
+}
+
+// setHuman makes an existing row human-owned with the given status and
+// queues it for projection, the row effects of DecideHuman. Specs use it for
+// states DecideHuman cannot produce, such as a human-owned pending row. It
+// leaves decided_at as it is, so a human confirmed or rejected row it makes
+// cannot be projected (the graph needs a time); use DecideHuman for those.
 func (s *fakeVerdictStore) setHuman(tenantID, key string, status artifacts.VerdictStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.rows[fakeRowID(tenantID, key)]
-	r.status, r.determination = status, artifacts.DeterminationHuman
+	r.status, r.determination, r.determinedBy = status, artifacts.DeterminationHuman, "test-reviewer"
+	r.graphApplied = false
 }

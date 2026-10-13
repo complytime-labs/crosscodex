@@ -129,4 +129,43 @@ var _ = Describe("Adjudicate on Apache AGE", Ordered, func() {
 		Expect(res.Closed).To(Equal(2))
 		Expect(res.NewMatches).To(Equal(0))
 	})
+
+	It("projects human verdicts over the panel's, superseding only live edges", func() {
+		panelAt := opts.Now()
+		humanAt := panelAt.Add(time.Hour)
+		for _, d := range []struct {
+			low, high string
+			status    artifacts.VerdictStatus
+		}{{accessLow, accessHigh, artifacts.VerdictRejected}, {passLow, passHigh, artifacts.VerdictConfirmed}} {
+			_, err := store.DecideHuman(ctx, tenantID, artifacts.PairRef(artifacts.PairKey(d.low, d.high)),
+				artifacts.HumanVerdict{Status: d.status, Reviewer: "alice", DecidedAt: humanAt})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		check := func() {
+			live := edgesOf(ctx, g, tenantID, "ArtifactGroup", "SAME_AS", "ArtifactGroup")
+			Expect(live).To(HaveLen(1))
+			Expect(live[0].Edge.ID).To(Equal(graphdb.DerivedID("same-as", "human", passLow, passHigh, graphdb.FormatTime(humanAt))))
+			Expect(live[0].Edge.DeterminedBy).To(Equal("alice"))
+			llm, err := g.GetEdge(ctx, tenantID, graphdb.DerivedID("same-as", "llm_panel", accessLow, accessHigh))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*llm.ValidTo).To(BeTemporally("==", humanAt))
+			for _, c := range []string{candidateOf(accessLow, accessHigh), candidateOf(passLow, passHigh)} {
+				e, err := g.GetEdge(ctx, tenantID, c)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(*e.ValidTo).To(BeTemporally("==", panelAt), "an already superseded candidate keeps its valid_to")
+			}
+		}
+
+		res, err := adj.Project(ctx, tenantID, opts.Now)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 2}))
+		check()
+
+		reproject := opts
+		reproject.Reproject = true
+		res, err = adj.Run(ctx, tenantID, reproject)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).To(Equal(artifacts.AdjudicateResult{Reset: 2, Recovered: 2}))
+		check()
+	})
 })

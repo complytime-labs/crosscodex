@@ -86,10 +86,10 @@ type AdjudicateOptions struct {
 	// DryRun reports the queue (Pending, Due, Unprojected) without leasing,
 	// calling the LLM or writing.
 	DryRun bool
-	// Reproject marks every projected llm_panel confirmed or rejected verdict
-	// of the tenant unprojected (VerdictStore.ResetProjection) and writes them
-	// back to the graph, then stops without leasing or calling the LLM. Use it
-	// after rebuilding the tenant's graph. Not with DryRun.
+	// Reproject marks every projected llm_panel or human confirmed or rejected
+	// verdict of the tenant unprojected (VerdictStore.ResetProjection) and
+	// writes them back to the graph, then stops without leasing or calling
+	// the LLM. Use it after rebuilding the tenant's graph. Not with DryRun.
 	Reproject bool
 }
 
@@ -101,8 +101,13 @@ type AdjudicateOptions struct {
 // recorded; a RecordFailure fenced off because another run re-leased the pair
 // writes nothing but is still counted.
 type AdjudicateResult struct {
-	Reset     int // Reproject: projected verdicts marked unprojected before recovery
-	Recovered int // decided verdicts from earlier runs projected by this run (Orphaned ones included)
+	Reset int // Reproject: projected verdicts marked unprojected before recovery
+	// Recovered counts the verdicts a projection pass (at the start or end of
+	// Run, or Project) claimed and wrote to the graph, including Orphaned ones
+	// and ones whose MarkProjected was fenced. Verdicts the pass skipped as
+	// Busy or found replaced before claiming are not counted, nor are the
+	// verdicts Run projects right after its own Decide.
+	Recovered int
 	Leased    int // pairs leased (Expired ones included)
 	Expired   int // leased pairs skipped because their lease expired before their panel started; a later run retries them
 	Confirmed int // verdicts recorded as confirmed
@@ -113,6 +118,13 @@ type AdjudicateResult struct {
 	Dissent   int // panels on a pair a human decided meanwhile; opinion stored as dissent
 	Stale     int // panels on a pair another run decided meanwhile
 	Orphaned  int // confirmed verdicts whose groups are no longer in the graph
+	// Fenced counts projections a newer verdict overtook, before the claim or
+	// while it was held (the newer verdict stays queued and the pass retries),
+	// and projections whose claim expired and was taken over by another pass.
+	Fenced int
+	// Busy counts projections skipped because another pass held a live claim
+	// on the verdict or had already projected it; that pass finishes it.
+	Busy int
 
 	Pending     int // DryRun: pending pairs
 	Due         int // DryRun: pending pairs leasable now
@@ -162,7 +174,8 @@ func WithAdjudicatorTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) 
 }
 
 // NewAdjudicator returns an Adjudicator; cfg must have passed Validate. llm
-// may be nil when every Run is a DryRun, which never calls the LLM.
+// and prompts may be nil when every call is a DryRun or Reproject Run, or
+// Project: none of them renders a prompt or calls the LLM.
 func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client, prompts prompt.Registry, cfg config.ArtifactAdjudicationConfig, opts ...AdjudicatorOption) *Adjudicator {
 	a := &Adjudicator{g: g, store: store, llm: llm, prompts: prompts, cfg: cfg,
 		consensus: consensus.New(
@@ -178,14 +191,33 @@ func NewAdjudicator(g graphdb.GraphDB, store VerdictStore, llm llmclient.Client,
 	return a
 }
 
-// Run first projects verdicts that earlier runs recorded but did not project
-// (with opts.Reproject it first marks every projected llm_panel confirmed or
-// rejected verdict unprojected, so this step re-projects them, and stops
-// there), then adjudicates up to opts.MaxPairs due pairs of tenantID. Each verdict is
-// recorded with a conditional Decide first and projected only if Decide
-// applied it, so a human verdict that lands mid-panel wins. A panel without
-// enough valid votes is retried after a backoff and abandoned at
-// max_attempts. A pair whose lease expired before its panel started is
+// Run first projects verdicts that earlier runs or humans recorded but did
+// not project (with opts.Reproject it first marks every projected llm_panel or
+// human confirmed or rejected verdict unprojected, so this step re-projects
+// them, and stops there), then adjudicates up to opts.MaxPairs due pairs of
+// tenantID, and finally projects again, so a human verdict that replaced a
+// panel verdict while the run projected it reaches the graph before Run
+// returns. Each verdict is recorded with a conditional Decide first and
+// projected only if Decide applied it, so a human verdict that lands
+// mid-panel wins.
+//
+// Every projection claims its pair first (VerdictStore.ClaimProjection, for
+// lease_duration), writes to the graph, then releases the claim with the
+// fenced MarkProjected; a pair claimed elsewhere is skipped (Busy). While a
+// claim is live nobody else projects the pair, so a human verdict recorded
+// during a panel projection is projected after the panel's graph writes, even
+// if the panel run crashes before MarkProjected: the claim then expires and a
+// later pass supersedes the panel's edge. A projection that fails keeps its
+// claim, so its pair is projected again once lease_duration has passed, like
+// a leased pair, unless it failed before writing anything: then the claim is
+// released and the next pass retries at once. One window remains: a
+// projection outliving lease_duration minus the clock skew between hosts
+// (hosts must be NTP-synced, as for leases) can be overtaken by another pass,
+// and a graph write it makes after that pass read the graph is not undone.
+// Run --reproject repairs it.
+//
+// A panel without enough valid votes is retried after a backoff and abandoned
+// at max_attempts. A pair whose lease expired before its panel started is
 // skipped and counted as Expired. Store, graph and prompt errors stop the
 // run, and so does a panel in which every call failed with a system-level
 // LLM error (gateway unavailable, rate limit, authentication, credentials,
@@ -203,7 +235,8 @@ func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateO
 	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.String("adjudicate.run_id", runID),
 		attribute.Bool("adjudicate.dry_run", opts.DryRun))
 	res, err := a.run(ctx, tenantID, runID, opts)
-	span.SetAttributes(attribute.Int("adjudicate.leased", res.Leased), attribute.Int("adjudicate.recovered", res.Recovered))
+	span.SetAttributes(attribute.Int("adjudicate.leased", res.Leased), attribute.Int("adjudicate.recovered", res.Recovered),
+		attribute.Int("adjudicate.fenced", res.Fenced), attribute.Int("adjudicate.busy", res.Busy))
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -215,7 +248,7 @@ func (a *Adjudicator) Run(ctx context.Context, tenantID string, opts AdjudicateO
 		"reset", res.Reset, "recovered", res.Recovered, "leased", res.Leased, "confirmed", res.Confirmed,
 		"rejected", res.Rejected, "undecided", res.Undecided, "failed", res.Failed, "abandoned", res.Abandoned,
 		"expired", res.Expired, "dissent", res.Dissent, "stale", res.Stale, "orphaned", res.Orphaned,
-		"dry_run", opts.DryRun, "pending", res.Pending, "due", res.Due, "unprojected", res.Unprojected)
+		"fenced", res.Fenced, "busy", res.Busy, "dry_run", opts.DryRun, "pending", res.Pending, "due", res.Due, "unprojected", res.Unprojected)
 	return res, err
 }
 
@@ -239,7 +272,7 @@ func (a *Adjudicator) run(ctx context.Context, tenantID, runID string, opts Adju
 		}
 		res.Reset = n
 	}
-	if err := a.recoverProjections(ctx, tenantID, &res); err != nil {
+	if err := a.recoverProjections(ctx, tenantID, opts.Now, &res); err != nil {
 		return res, err
 	}
 	if opts.Reproject {
@@ -264,25 +297,82 @@ func (a *Adjudicator) run(ctx context.Context, tenantID, runID string, opts Adju
 			}
 		}
 	}
+	// A fence trip (a human verdict that replaced a panel verdict before or
+	// while this run projected it) left the newer verdict queued; project it
+	// before returning, so the graph does not keep the panel's edge until the
+	// next run.
+	if err := a.recoverProjections(ctx, tenantID, opts.Now, &res); err != nil {
+		return res, err
+	}
 	return res, nil
 }
 
+// Project writes every decided verdict not yet in the graph and not claimed
+// by another pass, panel and human alike, and stops: it neither leases pairs
+// nor calls the LLM, so the Adjudicator may have a nil LLM client and prompt
+// registry. now is the clock that times projection claims; it is required.
+// It is the pass to run right after recording a human verdict. A pair whose
+// previous verdict another pass is still projecting is left to that pass's
+// end-of-run projection, or to a later pass once the claim expires. As for
+// Run, a projection outliving lease_duration minus the clock skew between
+// hosts (hosts must be NTP-synced, as for leases) may leave a stale edge that
+// only Run with Reproject repairs.
+func (a *Adjudicator) Project(ctx context.Context, tenantID string, now func() time.Time) (AdjudicateResult, error) {
+	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.adjudicate.project")
+	defer span.End()
+	span.SetAttributes(attribute.String("tenant.id", tenantID))
+	var (
+		res AdjudicateResult
+		err error
+	)
+	if now == nil {
+		err = errors.New("adjudicate artifacts: project: now must be set")
+	} else {
+		err = a.recoverProjections(ctx, tenantID, now, &res)
+	}
+	span.SetAttributes(attribute.Int("adjudicate.recovered", res.Recovered), attribute.Int("adjudicate.fenced", res.Fenced),
+		attribute.Int("adjudicate.busy", res.Busy))
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+	// The caller reports err; this records how far the pass got.
+	slog.InfoContext(ctx, "artifact verdict projection finished", "tenant.id", tenantID, "stopped_early", err != nil,
+		"recovered", res.Recovered, "orphaned", res.Orphaned, "fenced", res.Fenced, "busy", res.Busy)
+	return res, err
+}
+
 // recoverProjections projects every decided verdict that is not yet in the
-// graph, projectBatch at a time. Each projected verdict is marked, and one
-// that a human takes over drops out of Unprojected, so the loop ends.
-func (a *Adjudicator) recoverProjections(ctx context.Context, tenantID string, res *AdjudicateResult) error {
+// graph and not under a live claim, llm_panel and human alike, projectBatch at
+// a time. A verdict a newer one replaced before it could be claimed, or while
+// it was claimed (the MarkProjected fence), counts as Fenced and the newer
+// verdict stays queued; so does one whose claim expired and was taken over.
+// The loop returns only after a short batch without a fence trip, so when it
+// returns no verdict it saw is left contradicting the latest one, except a
+// verdict another live claim holds, which that claimant projects. It
+// terminates because every fence trip, and so every retry, needs a decision
+// or a claim made concurrently with this pass. Claims exclude other passes
+// only while every projection finishes within lease_duration minus the clock
+// skew between hosts (hosts must be NTP-synced, as for leases).
+func (a *Adjudicator) recoverProjections(ctx context.Context, tenantID string, now func() time.Time, res *AdjudicateResult) error {
 	for {
-		batch, err := a.store.Unprojected(ctx, tenantID, projectBatch)
+		batch, err := a.store.Unprojected(ctx, tenantID, projectBatch, now())
 		if err != nil {
 			return fmt.Errorf("adjudicate artifacts: load unprojected verdicts: %w", err)
 		}
+		fenced := res.Fenced
 		for _, pr := range batch {
-			if err := a.project(ctx, tenantID, pr, res); err != nil {
+			wrote, err := a.project(ctx, tenantID, pr, now, res)
+			if err != nil {
 				return err
 			}
-			res.Recovered++
+			if wrote {
+				res.Recovered++
+			}
 		}
-		if len(batch) < projectBatch {
+		if len(batch) < projectBatch && res.Fenced == fenced {
 			return nil
 		}
 	}
@@ -294,12 +384,12 @@ func (a *Adjudicator) record(ctx context.Context, tenantID, key, outcome string)
 	if a.outcomes != nil {
 		a.outcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
 	}
-	slog.InfoContext(ctx, "artifact pair adjudicated", "tenant.id", tenantID, "pair.key", key, "outcome", outcome)
+	slog.InfoContext(ctx, "artifact pair adjudicated", "tenant.id", tenantID, "pair.key", key, "pair.ref", PairRef(key), "outcome", outcome)
 }
 
 func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID, runID string, p LeasedPair, now func() time.Time, res *AdjudicateResult) (err error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.adjudicate.pair")
-	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.String("pair.key", p.Key))
+	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.String("pair.key", p.Key), attribute.String("pair.ref", PairRef(p.Key)))
 	defer func() {
 		if err != nil {
 			span.RecordError(err)
@@ -329,10 +419,10 @@ func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID, runID string
 	case errors.As(err, &insufficient):
 		return a.recordFailure(ctx, tenantID, p, err, at, res)
 	case err != nil:
-		return fmt.Errorf("adjudicate artifacts: pair %s: %w", p.Key, err)
+		return fmt.Errorf("adjudicate artifacts: pair %s: %w", PairRef(p.Key), err)
 	}
 	v.DecidedAt = at
-	return a.commit(ctx, tenantID, p, v, res)
+	return a.commit(ctx, tenantID, p, v, now, res)
 }
 
 // panel asks every model SamplesPerModel times whether p's groups denote one
@@ -466,17 +556,24 @@ func panelError(ctx context.Context, tenantID, key string, err error, votes []co
 	return fmt.Errorf("%w (first completion error: %s)", err, msg)
 }
 
-// promptValue makes an untrusted value safe to render inside a prompt tag:
-// one line without format characters, at most maxPromptValueBytes of the
-// (UTF-8-repaired) original text, with no character that could close the tag. Escaping comes last, so the cap never
-// splits an entity.
-func promptValue(s string) string {
+// CleanDisplay makes untrusted text safe to show as one line, in a prompt
+// or a terminal: it repairs invalid UTF-8, removes Unicode format
+// characters, collapses control and separator runs to one space, caps the
+// result at maxBytes on a rune boundary and trims it. maxBytes must be >= 0;
+// callers pass constants, so it is not clamped.
+func CleanDisplay(s string, maxBytes int) string {
 	// Repair invalid UTF-8 first: stripping an invisible rune from between the
 	// bytes of a split sequence would otherwise splice them into a new rune such as U+202E.
 	s = strings.ToValidUTF8(s, "\uFFFD")
 	s = promptBreaks.ReplaceAllString(promptInvisibles.ReplaceAllString(s, ""), " ")
-	s = strings.TrimSpace(cleanText(s, maxPromptValueBytes))
-	return promptEscaper.Replace(s)
+	return strings.TrimSpace(cleanText(s, maxBytes))
+}
+
+// promptValue makes an untrusted value safe to render inside a prompt tag:
+// CleanDisplay at maxPromptValueBytes, then entity-escaped so no character
+// can close the tag. Escaping comes last, so the cap never splits an entity.
+func promptValue(s string) string {
+	return promptEscaper.Replace(CleanDisplay(s, maxPromptValueBytes))
 }
 
 // formatSamples renders member samples as prompt lines, each value through
@@ -505,15 +602,15 @@ func formatSamples(samples []MemberSample) string {
 // commit records v and, when the store applied it, projects it onto the
 // candidate edge Decide returns, which a reconcile run may have changed since
 // p was leased.
-func (a *Adjudicator) commit(ctx context.Context, tenantID string, p LeasedPair, v Verdict, res *AdjudicateResult) error {
+func (a *Adjudicator) commit(ctx context.Context, tenantID string, p LeasedPair, v Verdict, now func() time.Time, res *AdjudicateResult) error {
 	d, err := a.store.Decide(ctx, tenantID, p.Key, v)
 	if err != nil {
-		return fmt.Errorf("adjudicate artifacts: record verdict for %s: %w", p.Key, err)
+		return fmt.Errorf("adjudicate artifacts: record verdict for pair %s: %w", PairRef(p.Key), err)
 	}
 	switch d.Outcome {
 	case DecideHumanOwned:
 		if err := a.store.RecordDissent(ctx, tenantID, p.Key, v); err != nil {
-			return fmt.Errorf("adjudicate artifacts: record dissent for %s: %w", p.Key, err)
+			return fmt.Errorf("adjudicate artifacts: record dissent for pair %s: %w", PairRef(p.Key), err)
 		}
 		res.Dissent++
 		a.record(ctx, tenantID, p.Key, "dissent")
@@ -535,20 +632,72 @@ func (a *Adjudicator) commit(ctx context.Context, tenantID string, p LeasedPair,
 		a.record(ctx, tenantID, p.Key, "undecided")
 		return nil
 	}
-	return a.project(ctx, tenantID, Projection{
+	_, err = a.project(ctx, tenantID, Projection{
 		Key: p.Key, LowGroupID: p.LowGroupID, HighGroupID: p.HighGroupID, CandidateEdgeID: d.CandidateEdgeID,
 		Status: v.Status, Confidence: v.Confidence, Evidence: v.Evidence, DecidedAt: v.DecidedAt,
-	}, res)
+		DeterminationType: DeterminationLLMPanel,
+	}, now, res)
+	return err
 }
 
-// project writes a decided verdict to the graph, then marks it projected. A
-// confirmation adds an llm_panel SAME_AS edge (ErrEdgeExists means an earlier
-// projection wrote it) and then supersedes the candidate, so a crash between
-// the two leaves both live until the next run finishes the job. A rejection
-// only supersedes the candidate. A confirmation whose groups are no longer in
-// the graph has nothing to attach to: it counts as Orphaned and is marked
-// projected, so it cannot block the queue.
-func (a *Adjudicator) project(ctx context.Context, tenantID string, pr Projection, res *AdjudicateResult) error {
+// project claims pr's pair for lease_duration, writes pr to the graph and
+// releases the claim through the MarkProjected fence; it reports whether it
+// held the claim and wrote. A pair that no longer holds pr counts as Fenced,
+// one claimed elsewhere or already projected as Busy; neither is written. A
+// panel verdict and a human verdict project differently; see projectPanel
+// and projectHuman. On an error before any graph write the claim is
+// released; after a write that may have landed it stays until it expires.
+func (a *Adjudicator) project(ctx context.Context, tenantID string, pr Projection, now func() time.Time, res *AdjudicateResult) (bool, error) {
+	t := now()
+	// PostgreSQL keeps microseconds; MarkProjected must name the claim exactly
+	// as stored.
+	until := t.Add(a.cfg.LeaseDuration).UTC().Truncate(time.Microsecond)
+	claim, err := a.store.ClaimProjection(ctx, tenantID, pr, until, t)
+	if err != nil {
+		return false, fmt.Errorf("adjudicate artifacts: claim projection of pair %s: %w", PairRef(pr.Key), err)
+	}
+	switch claim {
+	case ClaimReplaced:
+		res.Fenced++
+		a.record(ctx, tenantID, pr.Key, "fenced")
+		return false, nil
+	case ClaimBusy:
+		res.Busy++
+		a.record(ctx, tenantID, pr.Key, "busy")
+		return false, nil
+	}
+	var wrote bool
+	if pr.DeterminationType == DeterminationHuman {
+		wrote, err = a.projectHuman(ctx, tenantID, pr, res)
+	} else {
+		wrote, err = a.projectPanel(ctx, tenantID, pr, res)
+	}
+	if err != nil {
+		// Nothing reached the graph, so nothing needs a fence: release the
+		// claim and let the next pass retry at once. After a write that may
+		// have landed, the claim is kept until it expires, so a newer verdict
+		// is projected after that write.
+		if !wrote {
+			if rerr := a.store.ReleaseClaim(ctx, tenantID, pr.Key, until); rerr != nil {
+				err = errors.Join(err, fmt.Errorf("adjudicate artifacts: release projection claim on pair %s: %w", PairRef(pr.Key), rerr))
+			}
+		}
+		return true, err
+	}
+	return true, a.markProjected(ctx, tenantID, pr, until, res)
+}
+
+// projectPanel makes the graph match an llm_panel verdict. A confirmation
+// adds an llm_panel SAME_AS edge (ErrEdgeExists means an earlier projection
+// wrote it) and then supersedes the candidate unless it is already
+// superseded, so a crash between the two leaves both live until a later pass
+// finishes the job once the claim expires. A rejection only supersedes the
+// candidate, with the same exception. A confirmation whose groups are no
+// longer in the graph has nothing to attach to: it counts as Orphaned and is
+// marked projected, so it cannot block the queue. wrote reports whether a
+// graph write that may have landed was made (a failed write may have landed
+// too).
+func (a *Adjudicator) projectPanel(ctx context.Context, tenantID string, pr Projection, res *AdjudicateResult) (wrote bool, err error) {
 	if pr.Status == VerdictConfirmed {
 		err := a.g.CreateEdge(ctx, tenantID, pr.LowGroupID, pr.HighGroupID, graphdb.Edge{
 			ID: graphdb.DerivedID("same-as", DeterminationLLMPanel, pr.LowGroupID, pr.HighGroupID), Label: sameAsLabel,
@@ -563,20 +712,105 @@ func (a *Adjudicator) project(ctx context.Context, tenantID string, pr Projectio
 		switch {
 		case errors.Is(err, graphdb.ErrNodeNotFound):
 			res.Orphaned++
-			return a.markProjected(ctx, tenantID, pr.Key)
-		case err != nil && !errors.Is(err, graphdb.ErrEdgeExists):
-			return fmt.Errorf("adjudicate artifacts: write SAME_AS for %s: %w", pr.Key, err)
+			return false, nil
+		case err == nil:
+			wrote = true
+		case !errors.Is(err, graphdb.ErrEdgeExists):
+			return true, fmt.Errorf("adjudicate artifacts: write SAME_AS for pair %s: %w", PairRef(pr.Key), err)
 		}
 	}
-	if _, err := a.g.SupersedeFact(ctx, tenantID, graphdb.SupersedeRequest{EdgeID: pr.CandidateEdgeID, SupersededAt: pr.DecidedAt}); err != nil {
-		return fmt.Errorf("adjudicate artifacts: supersede %s: %w", pr.CandidateEdgeID, err)
+	// A candidate already superseded (by a human projection that ran
+	// meanwhile, or by an earlier projection of this verdict) keeps its
+	// valid_to: SupersedeFact overwrites it, which would rewrite history. A
+	// missing candidate has nothing to supersede.
+	c, err := a.g.GetEdge(ctx, tenantID, pr.CandidateEdgeID)
+	switch {
+	case errors.Is(err, graphdb.ErrEdgeNotFound):
+		return wrote, nil
+	case err != nil:
+		return wrote, fmt.Errorf("adjudicate artifacts: read candidate edge of pair %s: %w", PairRef(pr.Key), err)
+	case c.ValidTo != nil:
+		return wrote, nil
 	}
-	return a.markProjected(ctx, tenantID, pr.Key)
+	if _, err := a.g.SupersedeFact(ctx, tenantID, graphdb.SupersedeRequest{EdgeID: pr.CandidateEdgeID, SupersededAt: pr.DecidedAt}); err != nil {
+		return true, fmt.Errorf("adjudicate artifacts: supersede candidate edge of pair %s: %w", PairRef(pr.Key), err)
+	}
+	return true, nil
 }
 
-func (a *Adjudicator) markProjected(ctx context.Context, tenantID, key string) error {
-	if err := a.store.MarkProjected(ctx, tenantID, key); err != nil {
-		return fmt.Errorf("adjudicate artifacts: mark %s projected: %w", key, err)
+// projectHuman makes the graph match a human verdict. A confirmation adds a
+// human SAME_AS edge whose ID includes the decision time, so a reversal and
+// re-confirmation writes a new edge instead of colliding with its own
+// superseded one; a confirmation whose groups are gone counts as Orphaned, as
+// for the panel. Both verdicts then supersede every other live SAME_AS edge
+// from low to high: the candidate, older-version candidates, an llm_panel
+// edge (also one a racing run wrote after an earlier pass of this verdict,
+// which the fence re-queued it for) and an earlier human edge. Each is
+// superseded at the decision time, or at its own valid_from if that is later,
+// so clock skew never ends an edge before it began. Edges already superseded
+// are skipped, because SupersedeFact overwrites valid_to and would rewrite
+// history; this also makes two passes projecting the same verdict write the
+// same valid_to. wrote is as for projectPanel.
+func (a *Adjudicator) projectHuman(ctx context.Context, tenantID string, pr Projection, res *AdjudicateResult) (wrote bool, err error) {
+	keep := ""
+	if pr.Status == VerdictConfirmed {
+		keep = graphdb.DerivedID("same-as", DeterminationHuman, pr.LowGroupID, pr.HighGroupID, graphdb.FormatTime(pr.DecidedAt))
+		err := a.g.CreateEdge(ctx, tenantID, pr.LowGroupID, pr.HighGroupID, graphdb.Edge{
+			ID: keep, Label: sameAsLabel, ValidFrom: pr.DecidedAt, DeterminedBy: pr.DeterminedBy,
+			DeterminationType: DeterminationHuman, Confidence: 1, Supersedes: pr.CandidateEdgeID,
+		})
+		switch {
+		case errors.Is(err, graphdb.ErrNodeNotFound):
+			res.Orphaned++
+			return false, nil
+		case err == nil:
+			wrote = true
+		case !errors.Is(err, graphdb.ErrEdgeExists):
+			return true, fmt.Errorf("adjudicate artifacts: write human SAME_AS for pair %s: %w", PairRef(pr.Key), err)
+		}
+	}
+	// Without AsOf, Traverse returns superseded edges too; ValidTo tells them
+	// apart. A depth-1 outbound path is [low, target] with one edge.
+	paths, err := a.g.Traverse(ctx, tenantID, graphdb.TraversalQuery{StartNode: pr.LowGroupID, Direction: "outbound",
+		EdgeLabels: []string{sameAsLabel}, MaxDepth: 1})
+	if err != nil {
+		return wrote, fmt.Errorf("adjudicate artifacts: list SAME_AS edges for pair %s: %w", PairRef(pr.Key), err)
+	}
+	for _, p := range paths {
+		if len(p.Edges) != 1 || len(p.Nodes) != 2 || p.Nodes[1].ID != pr.HighGroupID {
+			continue
+		}
+		e := p.Edges[0]
+		if e.ID == keep || e.ValidTo != nil {
+			continue
+		}
+		// A reviewer's clock may run behind the adjudicator's; an edge never
+		// ends before it began.
+		at := pr.DecidedAt
+		if e.ValidFrom.After(at) {
+			at = e.ValidFrom
+		}
+		if _, err := a.g.SupersedeFact(ctx, tenantID, graphdb.SupersedeRequest{EdgeID: e.ID, SupersededAt: at}); err != nil {
+			return true, fmt.Errorf("adjudicate artifacts: supersede a SAME_AS edge of pair %s: %w", PairRef(pr.Key), err)
+		}
+		wrote = true
+	}
+	return wrote, nil
+}
+
+// markProjected releases the claim until on pr's pair and marks pr
+// projected, unless a newer verdict replaced it while it was projected or the
+// claim expired and another pass took the pair over. Either way it counts a
+// fence trip: a replaced verdict stays queued for a retry, and a pass that
+// took the pair over projects it.
+func (a *Adjudicator) markProjected(ctx context.Context, tenantID string, pr Projection, until time.Time, res *AdjudicateResult) error {
+	ok, err := a.store.MarkProjected(ctx, tenantID, pr, until)
+	if err != nil {
+		return fmt.Errorf("adjudicate artifacts: mark pair %s projected: %w", PairRef(pr.Key), err)
+	}
+	if !ok {
+		res.Fenced++
+		a.record(ctx, tenantID, pr.Key, "fenced")
 	}
 	return nil
 }
@@ -588,7 +822,7 @@ func (a *Adjudicator) recordFailure(ctx context.Context, tenantID string, p Leas
 	f := Failure{Err: cleanText(cause.Error(), maxErrorChars), At: at, LeasedUntil: p.LeasedUntil,
 		NextAttemptAt: at.Add(retryDelay(attempts, a.cfg.RetryBaseDelay, a.cfg.RetryMaxDelay)), Abandon: attempts >= a.cfg.MaxAttempts}
 	if err := a.store.RecordFailure(ctx, tenantID, p.Key, f); err != nil {
-		return fmt.Errorf("adjudicate artifacts: record failure for %s: %w", p.Key, err)
+		return fmt.Errorf("adjudicate artifacts: record failure for pair %s: %w", PairRef(p.Key), err)
 	}
 	if f.Abandon {
 		res.Abandoned++

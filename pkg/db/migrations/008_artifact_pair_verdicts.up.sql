@@ -5,7 +5,8 @@
 -- is a projection of this table, never the other way round.
 --
 -- determination_type ranks authority: human > llm_panel > token_overlap.
--- Automation never leases, overwrites or projects a human row.
+-- Automation never leases or overwrites a human row (#180's `decide` writes
+-- them); projection passes do project human rows into the graph.
 --
 -- low_group_id < high_group_id is compared under COLLATE "C" so the check
 -- matches Go's byte-wise string order whatever the database collation.
@@ -30,6 +31,11 @@ CREATE TABLE IF NOT EXISTS artifact_pair_verdicts (
     last_error         TEXT,
     created_at         TIMESTAMPTZ NOT NULL,
     decided_at         TIMESTAMPTZ,
+    -- A projection pass holds a decided row until this time while it writes
+    -- the verdict to the graph; no other pass projects the row meanwhile, so
+    -- a newer verdict is never projected before an older one's graph writes.
+    -- NULL or past: unclaimed.
+    projection_claimed_until TIMESTAMPTZ,
     PRIMARY KEY (tenant_id, pair_key),
     CONSTRAINT artifact_pair_verdicts_order
         CHECK (low_group_id COLLATE "C" < high_group_id COLLATE "C"),
