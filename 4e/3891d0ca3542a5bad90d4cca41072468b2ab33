@@ -1,0 +1,40 @@
+internal/analyzer/artifacts/verdicts.go
+  s_27e4f12e0732fb::t_2a73923018f639 228-230,287-290,388-394
+internal/analyzer/artifacts/decide_current_test.go
+  s_27e4f12e0732fb::t_44f014f65860c3 9-11,13-16,18-21
+internal/analyzer/artifacts/verdictstore_fake_test.go
+  s_27e4f12e0732fb::t_2a73923018f639 211-215
+internal/analyzer/artifacts/adjudicate_human_bdd_test.go
+  s_27e4f12e0732fb::t_fe759fe02747b5 23,165,434
+internal/analyzer/artifacts/adjudicate_integration_bdd_test.go
+  s_27e4f12e0732fb::t_fe759fe02747b5 140
+internal/analyzer/artifacts/verdictstore_contract_detail_bdd_test.go
+  s_27e4f12e0732fb::t_8c1738de3bb6d6 4,274-408
+  s_27e4f12e0732fb::t_08f5015e0e7a06 409
+internal/analyzer/artifacts/adjudicate_queue_bdd_test.go
+  s_27e4f12e0732fb::t_fe759fe02747b5 70
+internal/analyzer/artifacts/verdictstore_contract_bdd_test.go
+  s_27e4f12e0732fb::t_fe759fe02747b5 168,185,218,269,292,308,311,322,333,357,367,371,378,392,394,407,434,477,483,487,494,501,548,612,630,634,737,745,751
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_27e4f12e0732fb::t_fe759fe02747b5 562,723,905,914,924,938,954
+internal/analyzer/artifacts/verdictstore_pg_telemetry_bdd_test.go
+  s_27e4f12e0732fb::t_56aabfadf5ff8f 79
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_27e4f12e0732fb::t_2a73923018f639 429-441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e3891d0ca3542a5bad90d4cca41072468b2ab33",
+  "prompts": {},
+  "sessions": {
+    "s_27e4f12e0732fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b587255c-c11e-4b30-baa0-e73dda485de9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
