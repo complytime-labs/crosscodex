@@ -1,0 +1,29 @@
+pkg/db/backup_role_integration_bdd_test.go
+  s_34c7f65a88ab67::t_5e0562b682359e 53-55
+pkg/db/db_integration_bdd_test.go
+  s_34c7f65a88ab67::t_57021c5e9214b3 789-791
+pkg/db/dbtest/dbtest_fuzz_test.go
+  s_34c7f65a88ab67::t_263ccc04c12a27 50-51
+pkg/db/retention_schema_integration_bdd_test.go
+  s_34c7f65a88ab67::t_5c6f82804b3c41 62-64
+pkg/db/tenant_admin_integration_bdd_test.go
+  s_34c7f65a88ab67::t_2e32415692f69e 78-90
+pkg/retention/engine_integration_bdd_test.go
+  s_34c7f65a88ab67::t_f4fa3a2be31ad9 480-482
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b334c84513a4af60027e9cce0fbd47daa47b94d",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
