@@ -225,6 +225,9 @@ type HumanVerdict struct {
 	Status    VerdictStatus // confirmed or rejected
 	Reviewer  string        // stored as determined_by; must pass ValidateReviewer
 	DecidedAt time.Time
+	// Expect is the PairDetail Expect the reviewer decided from; it must
+	// pass ValidateExpect.
+	Expect string
 }
 
 // HumanOutcome reports what DecideHuman did.
@@ -263,6 +266,11 @@ type ReviewItem struct {
 	SimilarityScore   float64
 	Context           PairContext
 	DissentStatus     VerdictStatus // "" when there is no dissent
+	// Votes is the current llm_panel verdict's vote split; nil for other
+	// determinations. Missing or undecodable llm_panel evidence leaves it nil
+	// and sets VotesUnreadable instead.
+	Votes           *VoteSplit
+	VotesUnreadable bool
 }
 
 // validateHumanVerdict checks DecideHuman's input before any row is read.
@@ -276,7 +284,10 @@ func validateHumanVerdict(ref string, h HumanVerdict) error {
 	if err := ValidatePairRef(ref); err != nil {
 		return err
 	}
-	return ValidateReviewer(h.Reviewer)
+	if err := ValidateReviewer(h.Reviewer); err != nil {
+		return err
+	}
+	return ValidateExpect(h.Expect)
 }
 
 // Projection is a decided verdict not yet written to the graph.
@@ -374,6 +385,13 @@ type VerdictStore interface {
 	// ClaimedUntil when it is live at h.DecidedAt. Returns ErrPairNotFound or
 	// ErrPairRefAmbiguous (wrapped) when ref resolves to no pair or to
 	// several.
+	//
+	// h.Expect must be the Expect PairDetail returned for the pair. When the
+	// pair no longer holds that state, DecideHuman changes nothing and returns
+	// a *PairChangedError (errors.Is ErrPairChanged), unless the pair already
+	// holds an undisputed human verdict with h.Status: that is HumanUnchanged,
+	// whatever the token, so re-running a decide whose projection failed
+	// still finishes it.
 	DecideHuman(ctx context.Context, tenantID, ref string, h HumanVerdict) (HumanDecision, error)
 	// ReviewQueue returns up to n pairs that need a human, oldest created
 	// first: undecided and abandoned pairs, and human verdicts that a panel
@@ -389,6 +407,15 @@ type VerdictStore interface {
 	// stored dissent's status, as in ReviewQueue, so a human override of a
 	// panel verdict shows the overridden status.
 	SearchPairs(ctx context.Context, tenantID, name string, n int) ([]ReviewItem, error)
+	// PairDetail returns the tenant's pair with the given ref and up to
+	// relatedLimit other pairs that share one of its artifact groups (newest
+	// decision first, undecided last, then by key), with how many there are.
+	// It changes nothing. Evidence that cannot be decoded is reported in
+	// EvidenceErr (and Votes is then nil, VotesUnreadable true), not as an
+	// error, so the caller still gets Expect. relatedLimit must be positive.
+	// Returns ErrPairNotFound or ErrPairRefAmbiguous (wrapped) as DecideHuman
+	// does.
+	PairDetail(ctx context.Context, tenantID, ref string, relatedLimit int) (PairDetail, error)
 	// Unprojected returns up to n decided llm_panel or human confirmed/rejected
 	// verdicts not yet projected and not under a live projection claim (one
 	// that ends after now), oldest decision first.

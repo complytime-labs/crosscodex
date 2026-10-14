@@ -26,3 +26,10 @@ var ExportValidateHumanVerdict = validateHumanVerdict
 
 // ExportEscapeLike exposes escapeLike for its fuzz target.
 var ExportEscapeLike = escapeLike
+
+// ExportPairState exposes pairState, so the fake store computes expect
+// tokens with the same function as PGVerdictStore.
+type ExportPairState = pairState
+
+// ExportPairStateToken exposes pairState.token.
+func ExportPairStateToken(p ExportPairState) string { return p.token() }

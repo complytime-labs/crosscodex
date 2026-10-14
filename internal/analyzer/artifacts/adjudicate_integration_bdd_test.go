@@ -137,7 +137,7 @@ var _ = Describe("Adjudicate on Apache AGE", Ordered, func() {
 			low, high string
 			status    artifacts.VerdictStatus
 		}{{accessLow, accessHigh, artifacts.VerdictRejected}, {passLow, passHigh, artifacts.VerdictConfirmed}} {
-			_, err := store.DecideHuman(ctx, tenantID, artifacts.PairRef(artifacts.PairKey(d.low, d.high)),
+			_, err := decideCurrent(ctx, store, tenantID, artifacts.PairRef(artifacts.PairKey(d.low, d.high)),
 				artifacts.HumanVerdict{Status: d.status, Reviewer: "alice", DecidedAt: humanAt})
 			Expect(err).NotTo(HaveOccurred())
 		}

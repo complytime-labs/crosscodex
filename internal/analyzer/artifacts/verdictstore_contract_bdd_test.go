@@ -165,7 +165,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 	It("stores dissent only on a human-owned pair", func() {
 		human, auto := cand(1), cand(2)
 		enqueue(human, auto)
-		_, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(human)), artifacts.HumanVerdict{
+		_, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(human)), artifacts.HumanVerdict{
 			Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: t0})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(e.store.RecordDissent(e.ctx, e.tenantID, key(human), verdict(artifacts.VerdictRejected))).To(Succeed())
@@ -182,7 +182,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		_, err := e.store.Decide(e.ctx, e.tenantID, key(decided), verdict(artifacts.VerdictConfirmed))
 		Expect(err).NotTo(HaveOccurred())
 		e.setHuman(key(humanPending), artifacts.VerdictPending)
-		_, err = e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(humanConfirmed)), human(artifacts.VerdictConfirmed, "alice", t0))
+		_, err = decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(humanConfirmed)), human(artifacts.VerdictConfirmed, "alice", t0))
 		Expect(err).NotTo(HaveOccurred())
 		counts, err := e.store.Counts(e.ctx, e.tenantID, t0)
 		Expect(err).NotTo(HaveOccurred())
@@ -215,7 +215,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = e.store.Decide(e.ctx, e.tenantID, key(undecided), verdict(artifacts.VerdictUndecided))
 		Expect(err).NotTo(HaveOccurred())
-		_, err = e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(humanConfirmed)), human(artifacts.VerdictConfirmed, "alice", t0))
+		_, err = decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(humanConfirmed)), human(artifacts.VerdictConfirmed, "alice", t0))
 		Expect(err).NotTo(HaveOccurred())
 		bothListed := ConsistOf(
 			SatisfyAll(HaveField("Key", key(confirmed)), HaveField("DeterminationType", artifacts.DeterminationLLMPanel),
@@ -266,7 +266,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		c := cand(1)
 		enqueue(c)
 		lease(t0)
-		d, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
+		d, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(d).To(Equal(artifacts.HumanDecision{Outcome: artifacts.HumanApplied, Key: key(c)}))
 		r := e.row(key(c))
@@ -289,7 +289,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 			enqueue(c)
 			_, err := e.store.Decide(e.ctx, e.tenantID, key(c), verdict(panel))
 			Expect(err).NotTo(HaveOccurred())
-			_, err = e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictRejected, "bob", t0.Add(time.Hour)))
+			_, err = decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictRejected, "bob", t0.Add(time.Hour)))
 			Expect(err).NotTo(HaveOccurred())
 			r := e.row(key(c))
 			Expect(r.status).To(Equal(artifacts.VerdictRejected))
@@ -305,10 +305,10 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		c := cand(1)
 		enqueue(c)
 		ref := artifacts.PairRef(key(c))
-		_, err := e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictConfirmed, "alice", t0))
+		_, err := decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictConfirmed, "alice", t0))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(project(humanP(c, artifacts.VerdictConfirmed, t0))).To(BeTrue())
-		d, err := e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictConfirmed, "carol", t0.Add(time.Hour)))
+		d, err := decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictConfirmed, "carol", t0.Add(time.Hour)))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(d).To(Equal(artifacts.HumanDecision{Outcome: artifacts.HumanUnchanged, Key: key(c)}))
 		Expect(e.row(key(c)).determinedBy).To(Equal("alice"))
@@ -319,7 +319,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		c := cand(1)
 		enqueue(c)
 		ref := artifacts.PairRef(key(c))
-		_, err := e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictConfirmed, "alice", t0))
+		_, err := decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictConfirmed, "alice", t0))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(project(humanP(c, artifacts.VerdictConfirmed, t0))).To(BeTrue())
 		dissent := verdict(artifacts.VerdictRejected)
@@ -330,7 +330,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		Expect(items).To(ConsistOf(HaveField("Key", key(c))), "precondition: the dispute is listed")
 
 		at := t0.Add(2 * time.Hour)
-		d, err := e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictConfirmed, "carol", at))
+		d, err := decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictConfirmed, "carol", at))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(d).To(Equal(artifacts.HumanDecision{Outcome: artifacts.HumanReaffirmed, Key: key(c)}))
 		r := e.row(key(c))
@@ -354,7 +354,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 			enqueue(c)
 			setup(c)
 			Expect(project(humanP(c, artifacts.VerdictConfirmed, t0.Add(time.Hour)))).To(BeTrue())
-			d, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "carol", t0.Add(3*time.Hour)))
+			d, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "carol", t0.Add(3*time.Hour)))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(d.Outcome).To(Equal(artifacts.HumanUnchanged))
 			r := e.row(key(c))
@@ -364,18 +364,18 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		Entry("an overridden panel rejection, which predates the human verdict", func(c artifacts.PairCandidate) {
 			_, err := e.store.Decide(e.ctx, e.tenantID, key(c), verdict(artifacts.VerdictRejected))
 			Expect(err).NotTo(HaveOccurred())
-			_, err = e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0.Add(time.Hour)))
+			_, err = decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0.Add(time.Hour)))
 			Expect(err).NotTo(HaveOccurred())
 		}),
 		Entry("a later panel that agrees", func(c artifacts.PairCandidate) {
-			_, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0.Add(time.Hour)))
+			_, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0.Add(time.Hour)))
 			Expect(err).NotTo(HaveOccurred())
 			v := verdict(artifacts.VerdictConfirmed)
 			v.DecidedAt = t0.Add(2 * time.Hour)
 			Expect(e.store.RecordDissent(e.ctx, e.tenantID, key(c), v)).To(Succeed())
 		}),
 		Entry("a later panel that is undecided", func(c artifacts.PairCandidate) {
-			_, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0.Add(time.Hour)))
+			_, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0.Add(time.Hour)))
 			Expect(err).NotTo(HaveOccurred())
 			v := verdict(artifacts.VerdictUndecided)
 			v.DecidedAt = t0.Add(2 * time.Hour)
@@ -389,9 +389,9 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		_, err := e.store.Decide(e.ctx, e.tenantID, key(c), verdict(artifacts.VerdictConfirmed))
 		Expect(err).NotTo(HaveOccurred())
 		ref := artifacts.PairRef(key(c))
-		_, err = e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictRejected, "alice", t0))
+		_, err = decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictRejected, "alice", t0))
 		Expect(err).NotTo(HaveOccurred())
-		d, err := e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictConfirmed, "bob", t0.Add(time.Hour)))
+		d, err := decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictConfirmed, "bob", t0.Add(time.Hour)))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(d.Outcome).To(Equal(artifacts.HumanApplied))
 		r := e.row(key(c))
@@ -404,7 +404,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		func(status artifacts.VerdictStatus, reviewer string, at time.Time, refOf func(string) string, want any) {
 			c := cand(1)
 			enqueue(c)
-			_, err := e.store.DecideHuman(e.ctx, e.tenantID, refOf(key(c)), human(status, reviewer, at))
+			_, err := decideCurrent(e.ctx, e.store, e.tenantID, refOf(key(c)), human(status, reviewer, at))
 			Expect(err).To(MatchError(want))
 			r := e.row(key(c))
 			Expect(r.status).To(Equal(artifacts.VerdictPending))
@@ -431,7 +431,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 			}
 		}
 		for _, c := range []artifacts.PairCandidate{agreed, disputed} {
-			_, err = e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
+			_, err = decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
 			Expect(err).NotTo(HaveOccurred())
 		}
 		later := func(s artifacts.VerdictStatus) artifacts.Verdict {
@@ -474,31 +474,31 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		Entry("not when a human confirms an undecided panel pair", func(c artifacts.PairCandidate) {
 			_, err := e.store.Decide(e.ctx, e.tenantID, key(c), verdict(artifacts.VerdictUndecided))
 			Expect(err).NotTo(HaveOccurred())
-			_, err = e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0.Add(time.Hour)))
+			_, err = decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0.Add(time.Hour)))
 			Expect(err).NotTo(HaveOccurred())
 		}, false),
 		Entry("not when a human rejects a panel confirmation", func(c artifacts.PairCandidate) {
 			_, err := e.store.Decide(e.ctx, e.tenantID, key(c), verdict(artifacts.VerdictConfirmed))
 			Expect(err).NotTo(HaveOccurred())
-			_, err = e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictRejected, "alice", t0.Add(time.Hour)))
+			_, err = decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictRejected, "alice", t0.Add(time.Hour)))
 			Expect(err).NotTo(HaveOccurred())
 		}, false),
 		Entry("when a later panel rejects a human confirmation", func(c artifacts.PairCandidate) {
-			_, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
+			_, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
 			Expect(err).NotTo(HaveOccurred())
 			v := verdict(artifacts.VerdictRejected)
 			v.DecidedAt = t0.Add(time.Microsecond)
 			Expect(e.store.RecordDissent(e.ctx, e.tenantID, key(c), v)).To(Succeed())
 		}, true),
 		Entry("not when a later panel is undecided on a human confirmation", func(c artifacts.PairCandidate) {
-			_, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
+			_, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
 			Expect(err).NotTo(HaveOccurred())
 			v := verdict(artifacts.VerdictUndecided)
 			v.DecidedAt = t0.Add(time.Hour)
 			Expect(e.store.RecordDissent(e.ctx, e.tenantID, key(c), v)).To(Succeed())
 		}, false),
 		Entry("not when a rejecting panel opinion predates the human confirmation", func(c artifacts.PairCandidate) {
-			_, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
+			_, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictConfirmed, "alice", t0))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(e.store.RecordDissent(e.ctx, e.tenantID, key(c), verdict(artifacts.VerdictRejected))).To(Succeed())
 		}, false),
@@ -545,7 +545,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 			Expect(err).NotTo(HaveOccurred())
 		}
 		for _, c := range []artifacts.PairCandidate{humanRejected, overridden} {
-			_, err := e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictRejected, "alice", t0.Add(time.Hour)))
+			_, err := decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictRejected, "alice", t0.Add(time.Hour)))
 			Expect(err).NotTo(HaveOccurred())
 		}
 
@@ -609,7 +609,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		Expect(err).NotTo(HaveOccurred())
 		panel := panelP(c, artifacts.VerdictConfirmed, t0)
 		Expect(claim(panel, claimUntil, t0)).To(Equal(artifacts.ClaimAcquired))
-		_, err = e.store.DecideHuman(e.ctx, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictRejected, "bob", t0.Add(30*time.Second)))
+		_, err = decideCurrent(e.ctx, e.store, e.tenantID, artifacts.PairRef(key(c)), human(artifacts.VerdictRejected, "bob", t0.Add(30*time.Second)))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(mark(panel, claimUntil)).To(BeFalse(), "the llm_panel verdict was replaced while claimed")
 		r := e.row(key(c))
@@ -627,11 +627,11 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		c := cand(1)
 		enqueue(c)
 		ref := artifacts.PairRef(key(c))
-		_, err := e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictConfirmed, "alice", t0))
+		_, err := decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictConfirmed, "alice", t0))
 		Expect(err).NotTo(HaveOccurred())
 		confirmed := humanP(c, artifacts.VerdictConfirmed, t0)
 		Expect(claim(confirmed, claimUntil, t0)).To(Equal(artifacts.ClaimAcquired))
-		_, err = e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictRejected, "bob", t0))
+		_, err = decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictRejected, "bob", t0))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(mark(confirmed, claimUntil)).To(BeFalse(), "the confirmation was replaced by a rejection")
 		Expect(e.row(key(c)).graphApplied).To(BeFalse())
@@ -734,7 +734,7 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(claim(panelP(c, artifacts.VerdictConfirmed, t0), claimUntil, t0)).To(Equal(artifacts.ClaimAcquired))
 		ref := artifacts.PairRef(key(c))
-		d, err := e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictRejected, "bob", t0.Add(30*time.Second)))
+		d, err := decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictRejected, "bob", t0.Add(30*time.Second)))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(d.ClaimedUntil).To(BeTemporally("==", claimUntil))
 		Expect(e.row(key(c)).claimedUntil).To(BeTemporally("==", claimUntil))
@@ -742,13 +742,13 @@ func verdictStoreContract(newEnv func() verdictStoreContractEnv) {
 		Expect(claim(rejected, t0.Add(2*time.Minute), t0.Add(40*time.Second))).To(Equal(artifacts.ClaimBusy),
 			"the panel claimant is still writing")
 
-		d, err = e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictConfirmed, "carol", claimUntil))
+		d, err = decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictConfirmed, "carol", claimUntil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(d.Outcome).To(Equal(artifacts.HumanApplied))
 		Expect(d.ClaimedUntil).To(BeZero(), "the claim ended at the decision time")
 		Expect(e.row(key(c)).claimedUntil).To(BeTemporally("==", claimUntil), "an expired claim is kept too")
 
-		d, err = e.store.DecideHuman(e.ctx, e.tenantID, ref, human(artifacts.VerdictConfirmed, "dave", t0))
+		d, err = decideCurrent(e.ctx, e.store, e.tenantID, ref, human(artifacts.VerdictConfirmed, "dave", t0))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(d.Outcome).To(Equal(artifacts.HumanUnchanged))
 		Expect(d.ClaimedUntil).To(BeTemporally("==", claimUntil), "a repeated verdict reports a claim live at its decision time too")

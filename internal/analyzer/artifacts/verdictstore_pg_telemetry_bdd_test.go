@@ -76,10 +76,14 @@ var _ = Describe("PGVerdictStore telemetry", func() {
 		Entry("ReleaseClaim", "ReleaseClaim", func() error { return store.ReleaseClaim(ctxB, "tenant-a", "k", time.Time{}) }),
 		Entry("DecideHuman", "DecideHuman", func() error {
 			_, err := store.DecideHuman(ctxB, "tenant-a", artifacts.PairRef("k"),
-				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: time.Now()})
+				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: time.Now(), Expect: staleExpect})
 			return err
 		}),
 		Entry("ReviewQueue", "ReviewQueue", func() error { _, err := store.ReviewQueue(ctxB, "tenant-a", 1); return err }),
+		Entry("PairDetail", "PairDetail", func() error {
+			_, err := store.PairDetail(ctxB, "tenant-a", artifacts.PairRef("k"), 1)
+			return err
+		}),
 		Entry("SearchPairs", "SearchPairs", func() error { _, err := store.SearchPairs(ctxB, "tenant-a", "policy", 1); return err }),
 		Entry("ResetProjection", "ResetProjection", func() error { _, err := store.ResetProjection(ctxB, "tenant-a"); return err }),
 		Entry("Counts", "Counts", func() error { _, err := store.Counts(ctxB, "tenant-a", time.Time{}); return err }),
