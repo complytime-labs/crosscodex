@@ -39,6 +39,16 @@ type fakeHumanVerdicts struct {
 	projectNow func() time.Time
 	projectRes artifacts.AdjudicateResult
 	projectErr error
+	detailRef  string
+	detailN    int
+	detail     artifacts.PairDetail
+	detailErr  error
+}
+
+func (f *fakeHumanVerdicts) PairDetail(ctx context.Context, tenantID, ref string, n int) (artifacts.PairDetail, error) {
+	expectTenant(ctx, tenantID)
+	f.detailRef, f.detailN = ref, n
+	return f.detail, f.detailErr
 }
 
 func expectTenant(ctx context.Context, tenantID string) {
@@ -84,6 +94,7 @@ func runAdminCaptured(args ...string) (int, string, string) {
 }
 
 const testRef = "0123456789abcdef"
+const testExpect = "9b04c2e1d7a35f80"
 
 var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 	var (
@@ -118,25 +129,34 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 		Entry("review with a blank --name", "--name: search name is empty", "review", "--tenant", "acme", "--name", "  "),
 		Entry("review with a control character in --name", "--name: search name contains control, format or line-separator characters", "review", "--tenant", "acme", "--name", "a\x1bb"),
 		Entry("review with an oversized --name", "at most 200 bytes", "review", "--tenant", "acme", "--name", strings.Repeat("a", 201)),
-		Entry("decide without --tenant", "--tenant is required", "decide", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "alice"),
-		Entry("decide with --all-tenants", "decide needs --tenant", "decide", "--all-tenants", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "alice"),
-		Entry("decide without --pair", "--pair is required", "decide", "--tenant", "acme", "--verdict", "confirmed", "--reviewer", "alice"),
-		Entry("decide with a malformed --pair", "not 16 lowercase hex", "decide", "--tenant", "acme", "--pair", "XYZ", "--verdict", "confirmed", "--reviewer", "alice"),
-		Entry("decide with an uppercase --pair", "not 16 lowercase hex", "decide", "--tenant", "acme", "--pair", "0123456789ABCDEF", "--verdict", "confirmed", "--reviewer", "alice"),
-		Entry("decide without --verdict", "--verdict is required: use confirmed or rejected", "decide", "--tenant", "acme", "--pair", testRef, "--reviewer", "alice"),
-		Entry("decide with --verdict undecided", "use confirmed or rejected", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "undecided", "--reviewer", "alice"),
-		Entry("decide with --verdict abandoned", "is not a human verdict", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "abandoned", "--reviewer", "alice"),
-		Entry("decide without --reviewer", "pass the ID of the person recording this verdict", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed"),
-		Entry("decide with a control character in --reviewer", "control, format or line-separator characters", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "a\x1bb"),
-		Entry("decide with a format character in --reviewer", "control, format or line-separator characters", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "a\u202eb"),
-		Entry("decide with padded --reviewer", "leading or trailing spaces", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed", "--reviewer", " alice"),
-		Entry("decide with an unknown flag", "flag provided but not defined", "decide", "--tenant", "acme", "--nope"),
+		Entry("decide without --tenant", "--tenant is required", "decide", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "alice", "--expect", testExpect),
+		Entry("decide with --all-tenants", "decide needs --tenant", "decide", "--all-tenants", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "alice", "--expect", testExpect),
+		Entry("decide without --pair", "--pair is required", "decide", "--tenant", "acme", "--verdict", "confirmed", "--reviewer", "alice", "--expect", testExpect),
+		Entry("decide with a malformed --pair", "not 16 lowercase hex", "decide", "--tenant", "acme", "--pair", "XYZ", "--verdict", "confirmed", "--reviewer", "alice", "--expect", testExpect),
+		Entry("decide with an uppercase --pair", "not 16 lowercase hex", "decide", "--tenant", "acme", "--pair", "0123456789ABCDEF", "--verdict", "confirmed", "--reviewer", "alice", "--expect", testExpect),
+		Entry("decide without --verdict", "--verdict is required: use confirmed or rejected", "decide", "--tenant", "acme", "--pair", testRef, "--reviewer", "alice", "--expect", testExpect),
+		Entry("decide with --verdict undecided", "use confirmed or rejected", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "undecided", "--reviewer", "alice", "--expect", testExpect),
+		Entry("decide with --verdict abandoned", "is not a human verdict", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "abandoned", "--reviewer", "alice", "--expect", testExpect),
+		Entry("decide without --reviewer", "pass the ID of the person recording this verdict", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed", "--expect", testExpect),
+		Entry("decide with a control character in --reviewer", "control, format or line-separator characters", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "a\x1bb", "--expect", testExpect),
+		Entry("decide with a format character in --reviewer", "control, format or line-separator characters", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "a\u202eb", "--expect", testExpect),
+		Entry("decide with padded --reviewer", "leading or trailing spaces", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed", "--reviewer", " alice", "--expect", testExpect),
+		Entry("show without --tenant", "--tenant is required", "show", "--pair", testRef),
+		Entry("show with --all-tenants", "show needs --tenant", "show", "--all-tenants", "--pair", testRef),
+		Entry("show without --pair", "--pair is required", "show", "--tenant", "acme"),
+		Entry("show with a malformed --pair", "not 16 lowercase hex", "show", "--tenant", "acme", "--pair", "XYZ"),
+		Entry("show with zero --related", "--related must be positive", "show", "--tenant", "acme", "--pair", testRef, "--related", "0"),
+		Entry("decide without --expect", "--expect is required: run \"crosscodexd admin adjudicate artifacts show --tenant acme --pair "+testRef+"\"",
+			"decide", "--tenant", "acme", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "alice"),
+		Entry("decide with a malformed --expect", "--expect: expect token", "decide", "--tenant", "acme", "--pair", testRef,
+			"--verdict", "confirmed", "--reviewer", "alice", "--expect", "ZZZ"),
+		Entry("decide with an unknown flag", "flag provided but not defined", "decide", "--tenant", "acme", "--nope", "--expect", testExpect),
 	)
 
 	Describe("review", func() {
 		It("lists the queue with sanitized names and passes the default limit", func() {
 			fake.items = []artifacts.ReviewItem{
-				{Ref: "aaaaaaaaaaaaaaaa", Status: artifacts.VerdictUndecided, DeterminationType: "llm_panel", SimilarityScore: 0.8312,
+				{Ref: "aaaaaaaaaaaaaaaa", Status: artifacts.VerdictUndecided, DeterminationType: "llm_panel", SimilarityScore: 0.8312, Votes: &artifacts.VoteSplit{Same: 1, Valid: 3, Total: 3},
 					Context: artifacts.PairContext{Type: "report", LowName: "evil\x1b]0;x\x07", HighName: "Weekly\treport"}},
 				{Ref: "bbbbbbbbbbbbbbbb", Status: artifacts.VerdictConfirmed, DeterminationType: "human", SimilarityScore: 0.5,
 					Context: artifacts.PairContext{Type: "log", LowName: "a", HighName: "b"}, DissentStatus: artifacts.VerdictRejected},
@@ -144,12 +164,27 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 			code, stdout, _ := runAdminCaptured("adjudicate", "artifacts", "review", "--tenant", "acme")
 			Expect(code).To(Equal(0))
 			Expect(fake.reviewN).To(Equal(defaultReviewLimit))
-			Expect(stdout).To(MatchRegexp(`^PAIR +STATUS +BY +TYPE +LOW +HIGH +SCORE +DISSENT\n`))
+			Expect(stdout).To(MatchRegexp(`^PAIR +STATUS +BY +VOTES +TYPE +LOW +HIGH +SCORE +DISSENT\n`))
 			Expect(stdout).NotTo(ContainSubstring("\x1b"))
 			Expect(stdout).NotTo(ContainSubstring("\x07"))
-			Expect(stdout).To(MatchRegexp(`(?m)^aaaaaaaaaaaaaaaa +undecided +llm_panel +report +evil ]0;x +Weekly report +0\.83 +-$`))
-			Expect(stdout).To(MatchRegexp(`(?m)^bbbbbbbbbbbbbbbb +confirmed +human +log +a +b +0\.50 +rejected$`))
+			Expect(stdout).To(MatchRegexp(`(?m)^aaaaaaaaaaaaaaaa +undecided +llm_panel +1/3 same +report +evil ]0;x +Weekly report +0\.83 +-$`))
+			Expect(stdout).To(MatchRegexp(`(?m)^bbbbbbbbbbbbbbbb +confirmed +human +- +log +a +b +0\.50 +rejected$`))
 		})
+
+		DescribeTable("renders the vote split",
+			func(it artifacts.ReviewItem, want string) {
+				it.Ref, it.Status, it.DeterminationType = "dddddddddddddddd", artifacts.VerdictUndecided, "llm_panel"
+				it.Context = artifacts.PairContext{Type: "t", LowName: "a", HighName: "b"}
+				fake.items = []artifacts.ReviewItem{it}
+				code, stdout, _ := runAdminCaptured("adjudicate", "artifacts", "review", "--tenant", "acme")
+				Expect(code).To(Equal(0))
+				Expect(stdout).To(MatchRegexp(`(?m)^dddddddddddddddd +undecided +llm_panel +` + regexp.QuoteMeta(want) + ` +t +a +b `))
+			},
+			Entry("all valid", artifacts.ReviewItem{Votes: &artifacts.VoteSplit{Same: 2, Valid: 3, Total: 3}}, "2/3 same"),
+			Entry("with failed votes", artifacts.ReviewItem{Votes: &artifacts.VoteSplit{Same: 2, Valid: 2, Total: 3}}, "2/2 same (1 failed)"),
+			Entry("unreadable evidence", artifacts.ReviewItem{VotesUnreadable: true}, "unreadable"),
+			Entry("no votes", artifacts.ReviewItem{}, "-"),
+		)
 
 		It("strips control and bidi characters from every untrusted cell, dissent included", func() {
 			fake.items = []artifacts.ReviewItem{{Ref: "cccccccccccccccc", Status: artifacts.VerdictConfirmed, DeterminationType: "human",
@@ -160,7 +195,7 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 			for _, bad := range []string{"\x1b", "\x00", "\u009b", "\u202e", "\u2028"} {
 				Expect(stdout).NotTo(ContainSubstring(bad))
 			}
-			Expect(stdout).To(MatchRegexp(`(?m)^cccccccccccccccc +confirmed +human +type +lo w +hi gh +0\.70 +rej \[31mected$`))
+			Expect(stdout).To(MatchRegexp(`(?m)^cccccccccccccccc +confirmed +human +- +type +lo w +hi gh +0\.70 +rej \[31mected$`))
 		})
 
 		It("passes --limit through", func() {
@@ -197,8 +232,8 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 				Expect(fake.searchName).To(Equal("access policy"))
 				Expect(fake.searchN).To(Equal(5))
 				Expect(fake.reviewN).To(BeZero(), "review --name must not read the review queue")
-				Expect(stdout).To(MatchRegexp(`^PAIR +STATUS +BY +TYPE +LOW +HIGH +SCORE +DISSENT\n`))
-				Expect(stdout).To(MatchRegexp(`(?m)^dddddddddddddddd +confirmed +llm_panel +document +Access Policy +Access Control Policy +0\.90 +-$`))
+				Expect(stdout).To(MatchRegexp(`^PAIR +STATUS +BY +VOTES +TYPE +LOW +HIGH +SCORE +DISSENT\n`))
+				Expect(stdout).To(MatchRegexp(`(?m)^dddddddddddddddd +confirmed +llm_panel +- +document +Access Policy +Access Control Policy +0\.90 +-$`))
 			})
 
 			It("passes the default limit", func() {
@@ -221,10 +256,229 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 		})
 	})
 
+	Describe("show", func() {
+		yes, no := true, false
+		conf := 0.5
+		decided := time.Date(2026, 10, 1, 14, 2, 11, 123456000, time.UTC)
+		panel := artifacts.PanelEvidence{PromptName: "artifact_same_as", PromptVersion: "1.2.0", Models: []string{"m1", "m2", "m3"},
+			Votes: []artifacts.VoteRecord{
+				{VoterID: "m1", Decision: &yes, Confidence: "high", Justification: "Both name the Splunk SIEM product."},
+				{VoterID: "m2", Decision: &no, Confidence: "medium", Justification: "Enterprise is a distinct edition."},
+				{VoterID: "m3"},
+			}, ValidVotes: 2, TotalVotes: 3}
+		showArgs := []string{"adjudicate", "artifacts", "show", "--tenant", "acme", "--pair", testRef}
+
+		BeforeEach(func() {
+			fake.detail = artifacts.PairDetail{
+				ReviewItem: artifacts.ReviewItem{Ref: testRef, Status: artifacts.VerdictUndecided, DeterminationType: "llm_panel",
+					SimilarityScore: 0.83, Context: artifacts.PairContext{Type: "tool", LowName: "Splunk Enterprise", HighName: "splunk"},
+					Votes: &artifacts.VoteSplit{Same: 1, Valid: 2, Total: 3}},
+				DeterminedBy: "artifact-adjudicator", Confidence: &conf, DecidedAt: decided, Evidence: &panel,
+				Related: []artifacts.RelatedPair{{Ref: "8c21d0aa91fe4402", Status: artifacts.VerdictConfirmed, DeterminationType: "human",
+					LowName: "splunk", HighName: "Splunk"}},
+				RelatedTotal: 3, Expect: "9b04c2e1d7a35f80",
+			}
+		})
+
+		It("prints the verdict, every vote's reasoning, related pairs and the decide command with its token", func() {
+			code, stdout, stderr := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(0), stderr)
+			Expect(fake.detailRef).To(Equal(testRef))
+			Expect(fake.detailN).To(Equal(defaultRelatedLimit))
+			for _, line := range []string{
+				`^PAIR +` + testRef + `$`, `^TYPE +tool$`, `^LOW +Splunk Enterprise$`, `^HIGH +splunk$`, `^SCORE +0\.83$`,
+				`^STATUS +undecided$`, `^BY +llm_panel / artifact-adjudicator$`, `^CONFIDENCE +0\.50$`,
+				`^DECIDED +2026-10-01T14:02:11\.123456Z$`, `^PROMPT +artifact_same_as v1\.2\.0$`,
+				`^VOTES \(1 same, 1 distinct, 1 failed; 2 valid of 3\)$`,
+				`^  m1 +same +high\n    Both name the Splunk SIEM product\.$`,
+				`^  m2 +distinct +medium\n    Enterprise is a distinct edition\.$`,
+				`^  m3 +failed +-\n\nPANEL DISSENT$`,
+				`^PANEL DISSENT$`, `^  none$`,
+				`^RELATED PAIRS \(showing 1 of 3 that share a group\)$`,
+				`^  8c21d0aa91fe4402 +confirmed +human +splunk \| Splunk$`,
+				`^EXPECT +9b04c2e1d7a35f80$`,
+				`^To decide: crosscodexd admin adjudicate artifacts decide --tenant acme --pair ` + testRef +
+					` --verdict <confirmed\|rejected> --reviewer <id> --expect 9b04c2e1d7a35f80$`,
+			} {
+				Expect(stdout).To(MatchRegexp(`(?m)` + line))
+			}
+			Expect(stdout).NotTo(ContainSubstring("LAST ERROR"))
+		})
+
+		It("shows an undecided pair's missing decision, no prompt and no votes for a pending pair", func() {
+			fake.detail = artifacts.PairDetail{ReviewItem: artifacts.ReviewItem{Ref: testRef, Status: artifacts.VerdictPending,
+				DeterminationType: "token_overlap", Context: artifacts.PairContext{Type: "t", LowName: "a", HighName: "b"}},
+				Expect: "9b04c2e1d7a35f80"}
+			code, stdout, _ := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(0))
+			Expect(stdout).To(MatchRegexp(`(?m)^BY +token_overlap / -$`))
+			Expect(stdout).To(MatchRegexp(`(?m)^DECIDED +-$`))
+			Expect(stdout).To(MatchRegexp(`(?m)^CONFIDENCE +-$`))
+			Expect(stdout).NotTo(ContainSubstring("PROMPT"))
+			Expect(stdout).NotTo(MatchRegexp(`(?m)^VOTES`))
+			Expect(stdout).To(MatchRegexp(`(?m)^RELATED PAIRS$\n^  none$`))
+		})
+
+		It("shows why an abandoned pair failed", func() {
+			fake.detail.Status, fake.detail.Evidence, fake.detail.Votes = artifacts.VerdictAbandoned, nil, nil
+			fake.detail.DeterminationType, fake.detail.LastError = "token_overlap", "panel timed out\x1b[2J"
+			code, stdout, _ := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(0))
+			Expect(stdout).To(MatchRegexp(`(?m)^LAST ERROR$\n^  panel timed out \[2J$`))
+		})
+
+		DescribeTable("labels a human pair's dissent by when the panel gave it",
+			func(dissentAt time.Time, disputed bool, heading string) {
+				fake.detail.Status, fake.detail.DeterminationType, fake.detail.DeterminedBy = artifacts.VerdictRejected, "human", "alice"
+				fake.detail.Evidence, fake.detail.Votes, fake.detail.Disputed = nil, nil, disputed
+				fake.detail.Dissent = &artifacts.PanelDissent{Status: artifacts.VerdictConfirmed, Confidence: 0.5,
+					DeterminedBy: "artifact-adjudicator", DecidedAt: dissentAt, Evidence: &panel}
+				code, stdout, _ := runAdminCaptured(showArgs...)
+				Expect(code).To(Equal(0))
+				Expect(stdout).To(MatchRegexp(`(?m)^PANEL DISSENT: ` + regexp.QuoteMeta(heading) + `$`))
+				Expect(stdout).To(MatchRegexp(`(?m)^  confirmed by artifact-adjudicator at \S+ \(confidence 0\.50, artifact_same_as v1\.2\.0\)$`))
+				Expect(stdout).To(MatchRegexp(`(?m)^    Enterprise is a distinct edition\.$`))
+			},
+			Entry("overridden", decided.Add(-time.Hour), false, "overridden by the human verdict"),
+			Entry("later, disagreeing", decided.Add(time.Hour), true, "given after the human verdict (disputed)"),
+			Entry("later, agreeing", decided.Add(time.Hour), false, "given after the human verdict (agrees)"),
+		)
+
+		It("says when the dissent's evidence cannot be read, and still exits 0", func() {
+			fake.detail.Status, fake.detail.DeterminationType, fake.detail.Evidence, fake.detail.Votes = artifacts.VerdictRejected, "human", nil, nil
+			fake.detail.Dissent = &artifacts.PanelDissent{Status: artifacts.VerdictConfirmed, DecidedAt: decided.Add(-time.Hour),
+				EvidenceErr: errors.New("decode dissent evidence: bad")}
+			code, stdout, _ := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(0))
+			Expect(stdout).To(MatchRegexp(`(?m)^  evidence not readable: decode dissent evidence: bad$`))
+		})
+
+		DescribeTable("shows an unreadable dissent record without inventing who, when or how confident",
+			func(disputed bool, heading string) {
+				fake.detail.Status, fake.detail.DeterminationType, fake.detail.Evidence, fake.detail.Votes = artifacts.VerdictRejected, "human", nil, nil
+				fake.detail.Disputed = disputed
+				fake.detail.Dissent = &artifacts.PanelDissent{EvidenceErr: errors.New("decode dissent: bad")}
+				code, stdout, _ := runAdminCaptured(showArgs...)
+				Expect(code).To(Equal(0))
+				Expect(stdout).To(MatchRegexp(`(?m)^PANEL DISSENT: ` + regexp.QuoteMeta(heading) + `\n^  -\n^  dissent not readable: decode dissent: bad$`))
+				Expect(stdout).NotTo(ContainSubstring("confidence"))
+			},
+			Entry("not disputed", false, "unreadable"),
+			Entry("disputed", true, "given after the human verdict (disputed)"),
+		)
+
+		It("prints the header and token but exits 1 when the current evidence cannot be read", func() {
+			fake.detail.Evidence, fake.detail.Votes, fake.detail.VotesUnreadable = nil, nil, true
+			fake.detail.EvidenceErr = errors.New("decode evidence: \x1b[31mbad")
+			code, stdout, stderr := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(1))
+			Expect(stdout).To(MatchRegexp(`(?m)^PAIR +` + testRef + `$`))
+			Expect(stdout).To(MatchRegexp(`(?m)^EXPECT +9b04c2e1d7a35f80$`))
+			Expect(stdout).To(MatchRegexp(`(?m)^VOTES$\n^  unreadable: decode evidence: \[31mbad$`))
+			Expect(stderr).To(ContainSubstring("stored evidence cannot be decoded: decode evidence: [31mbad"))
+			Expect(stderr).NotTo(ContainSubstring("\x1b"))
+			Expect(stderr).To(ContainSubstring("The pair can still be decided"))
+		})
+
+		It("neutralizes control, escape, bidi and line-separator characters in every untrusted field", func() {
+			bad := "x\x1b]0;t\x07\x00\u202e\u2028\u009by"
+			fake.detail.Context = artifacts.PairContext{Type: bad, LowName: bad, HighName: bad}
+			fake.detail.DeterminedBy = bad
+			ev := panel
+			ev.PromptName, ev.PromptVersion = bad, bad
+			ev.Votes = []artifacts.VoteRecord{{VoterID: bad, Decision: &yes, Confidence: bad, Justification: "line1\nline2" + bad}}
+			fake.detail.Evidence = &ev
+			fake.detail.LastError = bad
+			fake.detail.Dissent = &artifacts.PanelDissent{Status: artifacts.VerdictStatus(bad), DeterminedBy: bad,
+				DecidedAt: decided.Add(-time.Hour), Evidence: &ev}
+			fake.detail.Related = []artifacts.RelatedPair{{Ref: "8c21d0aa91fe4402", Status: artifacts.VerdictStatus(bad),
+				DeterminationType: bad, LowName: bad, HighName: bad}}
+			code, stdout, _ := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(0))
+			for _, c := range []string{"\x1b", "\x07", "\x00", "\u202e", "\u2028", "\u009b"} {
+				Expect(stdout).NotTo(ContainSubstring(c))
+			}
+			Expect(stdout).To(MatchRegexp(`(?m)^    line1 line2x`))
+		})
+
+		It("keeps a long justification whole, up to the stored cap", func() {
+			long := strings.Repeat("a", 1990) + "END"
+			ev := panel
+			ev.Votes = []artifacts.VoteRecord{{VoterID: "m1", Decision: &yes, Justification: long}}
+			fake.detail.Evidence = &ev
+			code, stdout, _ := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(0))
+			Expect(stdout).To(ContainSubstring("END"))
+		})
+
+		It("renders at most the stored cap of an oversized justification", func() {
+			ev := panel
+			ev.Votes = []artifacts.VoteRecord{{VoterID: "m1", Decision: &yes, Justification: strings.Repeat("abcd ", 419) + "ZEND5"}}
+			fake.detail.Evidence = &ev
+			code, stdout, _ := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(0))
+			Expect(stdout).NotTo(ContainSubstring("ZEND5"))
+			var body string
+			lines := strings.Split(stdout, "\n")
+			for i, l := range lines {
+				if strings.HasPrefix(l, "  m1 ") {
+					for _, c := range lines[i+1:] {
+						if !strings.HasPrefix(c, "    ") {
+							break
+						}
+						body += strings.ReplaceAll(c, " ", "")
+					}
+				}
+			}
+			Expect(len(body)).To(BeNumerically(">", 1000))
+			Expect(len(body)).To(BeNumerically("<=", 2000))
+		})
+
+		It("wraps a long justification at 100 columns under its voter", func() {
+			ev := panel
+			ev.Votes = []artifacts.VoteRecord{{VoterID: "m1", Decision: &yes, Justification: strings.Repeat("word ", 40)}}
+			fake.detail.Evidence = &ev
+			_, stdout, _ := runAdminCaptured(showArgs...)
+			Expect(stdout).To(MatchRegexp(`(?m)^  m1 +same.*\n(    (word )+word\n)+    word( word)*$`))
+			for _, l := range strings.Split(stdout, "\n") {
+				if strings.HasPrefix(l, "    word") {
+					Expect(len(l)).To(BeNumerically("<=", 100))
+				}
+			}
+		})
+
+		It("passes --related through", func() {
+			code, _, _ := runAdminCaptured(append(showArgs, "--related", "5")...)
+			Expect(code).To(Equal(0))
+			Expect(fake.detailN).To(Equal(5))
+		})
+
+		It("maps an unknown ref to an actionable error", func() {
+			fake.detailErr = fmt.Errorf("pair detail %s: %w", testRef, artifacts.ErrPairNotFound)
+			code, _, stderr := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring("no pair with ref " + testRef + " in tenant acme; nothing was changed"))
+			Expect(stderr).To(ContainSubstring("review --tenant acme --name <text>"))
+		})
+
+		It("asks for a bug report when the ref is ambiguous", func() {
+			fake.detailErr = fmt.Errorf("pair detail %s: %w", testRef, artifacts.ErrPairRefAmbiguous)
+			code, _, stderr := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring("Please report this as a bug"))
+		})
+
+		It("rejects a malformed --tenant before opening any connection", func() {
+			code, _, _ := runAdminCaptured("adjudicate", "artifacts", "show", "--tenant", "Bad_Tenant", "--pair", testRef)
+			Expect(code).To(Equal(1))
+			Expect(opened).To(BeFalse())
+		})
+	})
+
 	Describe("decide", func() {
 		decideArgs := func(extra ...string) []string {
 			return append([]string{"adjudicate", "artifacts", "decide", "--tenant", "acme", "--pair", testRef,
-				"--verdict", "confirmed", "--reviewer", "alice"}, extra...)
+				"--verdict", "confirmed", "--reviewer", "alice", "--expect", testExpect}, extra...)
 		}
 
 		It("records the verdict, projects it and prints the projection report, without adjudication enabled", func() {
@@ -247,8 +501,27 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 			Expect(stdout).NotTo(ContainSubstring("projecting this pair"))
 		})
 
+		It("passes --expect to the store", func() {
+			code, _, stderr := runAdminCaptured(decideArgs()...)
+			Expect(code).To(Equal(0), stderr)
+			Expect(fake.decideH.Expect).To(Equal(testExpect))
+		})
+
+		It("refuses a pair that changed since it was viewed, naming its current verdict, and does not project", func() {
+			fake.decideErr = &artifacts.PairChangedError{Ref: testRef, Status: artifacts.VerdictRejected, DeterminationType: "human",
+				DeterminedBy: "bob\x1b[31m", DecidedAt: time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)}
+			code, stdout, stderr := runAdminCaptured(decideArgs()...)
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring("pair " + testRef + " changed since you viewed it: it is now rejected by bob [31m (human) at 2026-10-02T09:00:00Z; nothing was recorded"))
+			Expect(stderr).To(ContainSubstring(`Run "crosscodexd admin adjudicate artifacts show --tenant acme --pair ` + testRef + `"`))
+			Expect(stderr).To(ContainSubstring("decide again with its EXPECT value"))
+			Expect(stderr).NotTo(ContainSubstring("\x1b"))
+			Expect(fake.projected).To(BeFalse())
+			Expect(stdout).To(BeEmpty())
+		})
+
 		It("records --verdict rejected", func() {
-			args := []string{"adjudicate", "artifacts", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "rejected", "--reviewer", "bob"}
+			args := []string{"adjudicate", "artifacts", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "rejected", "--reviewer", "bob", "--expect", testExpect}
 			code, stdout, _ := runAdminCaptured(args...)
 			Expect(code).To(Equal(0))
 			Expect(fake.decideH.Status).To(Equal(artifacts.VerdictRejected))
@@ -379,7 +652,7 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 		})
 
 		It("rejects a malformed --tenant before opening any connection", func() {
-			args := []string{"adjudicate", "artifacts", "decide", "--tenant", "Not_Valid", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "alice"}
+			args := []string{"adjudicate", "artifacts", "decide", "--tenant", "Not_Valid", "--pair", testRef, "--verdict", "confirmed", "--reviewer", "alice", "--expect", testExpect}
 			Expect(runAdmin(args)).To(Equal(1))
 			Expect(opened).To(BeFalse())
 		})
@@ -427,6 +700,22 @@ var _ = Describe("admin usage", func() {
 		code, stderr := captureStderr(func() int { return runAdmin(nil) })
 		Expect(code).To(Equal(2))
 		Expect(stderr).To(ContainSubstring("crosscodexd admin adjudicate artifacts review --tenant <id> [--name <text>] [--limit <n>]"))
-		Expect(stderr).To(ContainSubstring("crosscodexd admin adjudicate artifacts decide --tenant <id> --pair <ref> --verdict confirmed|rejected --reviewer <id>"))
+		Expect(stderr).To(ContainSubstring("crosscodexd admin adjudicate artifacts decide --tenant <id> --pair <ref> --verdict confirmed|rejected --reviewer <id> --expect <token>"))
+		Expect(stderr).To(ContainSubstring("crosscodexd admin adjudicate artifacts show --tenant <id> --pair <ref> [--related <n>]"))
 	})
 })
+
+var _ = DescribeTable("wrapIndent",
+	func(s, indent string, width int, want string) {
+		Expect(wrapIndent(s, indent, width)).To(Equal(want))
+	},
+	Entry("short text stays on one line", "a b", "    ", 100, "    a b"),
+	Entry("empty text yields nothing", "  ", "    ", 100, ""),
+	Entry("a line of exactly the width is kept", strings.Repeat("a", 48)+" "+strings.Repeat("b", 47), "    ", 100,
+		"    "+strings.Repeat("a", 48)+" "+strings.Repeat("b", 47)),
+	Entry("one column over wraps on the word boundary", strings.Repeat("a", 48)+" "+strings.Repeat("b", 48), "    ", 100,
+		"    "+strings.Repeat("a", 48)+"\n    "+strings.Repeat("b", 48)),
+	Entry("a word longer than the width gets its own unbroken line", "ab "+strings.Repeat("x", 120)+" cd", "  ", 100,
+		"  ab\n  "+strings.Repeat("x", 120)+"\n  cd"),
+	Entry("runs of spaces collapse", "a   b", "  ", 100, "  a b"),
+)

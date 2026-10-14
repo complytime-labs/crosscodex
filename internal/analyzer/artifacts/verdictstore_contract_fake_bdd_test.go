@@ -13,7 +13,7 @@ import (
 )
 
 var _ = Describe("fakeVerdictStore contract", func() {
-	verdictStoreContract(func() verdictStoreContractEnv {
+	newEnv := func() verdictStoreContractEnv {
 		const id = "contract-fake"
 		s := newFakeVerdictStore()
 		ctx, err := tenant.WithTenant(context.Background(), id)
@@ -31,5 +31,7 @@ var _ = Describe("fakeVerdictStore contract", func() {
 				}
 				return row
 			}}
-	})
+	}
+	verdictStoreContract(newEnv)
+	reviewDetailContract(newEnv)
 })

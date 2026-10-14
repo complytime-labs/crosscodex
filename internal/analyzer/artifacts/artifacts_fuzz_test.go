@@ -194,3 +194,20 @@ func FuzzEscapeLike(f *testing.F) {
 		}
 	})
 }
+
+// FuzzValidateExpect checks that ValidateExpect accepts exactly the tokens a
+// pair state can produce: 16 lowercase hex characters.
+func FuzzValidateExpect(f *testing.F) {
+	for _, s := range []string{"0123456789abcdef", "", "0123456789ABCDEF", "0123456789abcde", "0123456789abcdef0",
+		"\x1b[31m0123456789", "0123456789abcde\u202e"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, token string) {
+		if artifacts.ValidateExpect(token) != nil {
+			return
+		}
+		if len(token) != 16 || strings.Trim(token, "0123456789abcdef") != "" {
+			t.Fatalf("accepted %q", token)
+		}
+	})
+}

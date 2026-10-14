@@ -67,7 +67,7 @@ var _ = Describe("Adjudicator queue", func() {
 			human := artifacts.PairCandidate{LowGroupID: "h-a", HighGroupID: "h-b", CandidateEdgeID: "h-edge"}
 			Expect(f.store.Enqueue(f.ctx, adjTenant, []artifacts.PairCandidate{human}, f.now)).To(Succeed())
 			humanKey := artifacts.PairKey(human.LowGroupID, human.HighGroupID)
-			_, err = f.store.DecideHuman(f.ctx, adjTenant, artifacts.PairRef(humanKey),
+			_, err = decideCurrent(f.ctx, f.store, adjTenant, artifacts.PairRef(humanKey),
 				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: f.now})
 			Expect(err).NotTo(HaveOccurred())
 			f.store.setProjected(adjTenant, humanKey)

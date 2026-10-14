@@ -2,6 +2,7 @@ package artifacts_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -203,20 +204,15 @@ func (s *fakeVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string
 	if err := artifacts.ExportValidateHumanVerdict(ref, h); err != nil {
 		return artifacts.HumanDecision{}, err
 	}
-	var matches []*fakeVerdictRow
-	for id, r := range s.rows {
-		if strings.HasPrefix(id, tenantID+"\x00") && artifacts.PairRef(r.key) == ref {
-			matches = append(matches, r)
-		}
+	r, err := s.byRef(tenantID, ref, "decide human")
+	if err != nil {
+		return artifacts.HumanDecision{}, err
 	}
-	switch len(matches) {
-	case 0:
-		return artifacts.HumanDecision{}, fmt.Errorf("decide human %s: %w", ref, artifacts.ErrPairNotFound)
-	case 1:
-	default:
-		return artifacts.HumanDecision{}, fmt.Errorf("decide human %s: %w", ref, artifacts.ErrPairRefAmbiguous)
+	unchanged := r.determination == artifacts.DeterminationHuman && r.status == h.Status && !r.disputed()
+	if !unchanged && artifacts.ExportPairStateToken(r.state()) != h.Expect {
+		return artifacts.HumanDecision{}, &artifacts.PairChangedError{Ref: ref, Status: r.status,
+			DeterminationType: r.determination, DeterminedBy: r.determinedBy, DecidedAt: r.decidedAt}
 	}
-	r := matches[0]
 	d := artifacts.HumanDecision{Outcome: artifacts.HumanApplied, Key: r.key}
 	if r.claimedUntil.After(h.DecidedAt) {
 		d.ClaimedUntil = r.claimedUntil
@@ -234,6 +230,127 @@ func (s *fakeVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string
 	r.status, r.determination, r.determinedBy = h.Status, artifacts.DeterminationHuman, h.Reviewer
 	r.confidence, r.evidence, r.decidedAt = 1, artifacts.PanelEvidence{}, h.DecidedAt.Truncate(time.Microsecond)
 	r.graphApplied, r.leasedUntil, r.lastError = false, time.Time{}, ""
+	return d, nil
+}
+
+// byRef returns the tenant's one pair with ref; op prefixes the error.
+func (s *fakeVerdictStore) byRef(tenantID, ref, op string) (*fakeVerdictRow, error) {
+	var matches []*fakeVerdictRow
+	for id, r := range s.rows {
+		if strings.HasPrefix(id, tenantID+"\x00") && artifacts.PairRef(r.key) == ref {
+			matches = append(matches, r)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("%s %s: %w", op, ref, artifacts.ErrPairNotFound)
+	case 1:
+		return matches[0], nil
+	default:
+		return nil, fmt.Errorf("%s %s: %w", op, ref, artifacts.ErrPairRefAmbiguous)
+	}
+}
+
+// mustJSON marshals a value the fake stores; its types always encode.
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// state is r's expect-token input, NULL where PGVerdictStore stores NULL:
+// no confidence before a verdict, no evidence unless the panel decided.
+func (r *fakeVerdictRow) state() artifacts.ExportPairState {
+	p := artifacts.ExportPairState{Status: string(r.status), DeterminationType: r.determination,
+		DeterminedBy: r.determinedBy, DecidedAt: r.decidedAt, SimilarityScore: r.cand.SimilarityScore}
+	if r.determination != artifacts.DeterminationTokenOverlap {
+		c := r.confidence
+		p.Confidence = &c
+	}
+	if r.determination == artifacts.DeterminationLLMPanel {
+		p.Evidence = mustJSON(r.evidence)
+	}
+	if r.dissent != nil {
+		p.Dissent = mustJSON(r.dissent)
+	}
+	return p
+}
+
+// reviewItem is r as ReviewQueue, SearchPairs and PairDetail list it.
+func (r *fakeVerdictRow) reviewItem() artifacts.ReviewItem {
+	it := artifacts.ReviewItem{Ref: artifacts.PairRef(r.key), Key: r.key, Status: r.status,
+		DeterminationType: r.determination, SimilarityScore: r.cand.SimilarityScore, Context: r.cand.Context}
+	if r.dissent != nil {
+		it.DissentStatus = r.dissent.Status
+	}
+	if r.determination == artifacts.DeterminationLLMPanel {
+		s := r.evidence.Split()
+		it.Votes = &s
+	}
+	return it
+}
+
+func (s *fakeVerdictStore) PairDetail(ctx context.Context, tenantID, ref string, relatedLimit int) (artifacts.PairDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.err["PairDetail"]; err != nil {
+		return artifacts.PairDetail{}, err
+	}
+	if err := checkTenant(ctx, tenantID); err != nil {
+		return artifacts.PairDetail{}, err
+	}
+	if err := artifacts.ValidatePairRef(ref); err != nil {
+		return artifacts.PairDetail{}, err
+	}
+	if relatedLimit <= 0 {
+		return artifacts.PairDetail{}, fmt.Errorf("pair detail %s: relatedLimit (%d) must be positive", ref, relatedLimit)
+	}
+	r, err := s.byRef(tenantID, ref, "pair detail")
+	if err != nil {
+		return artifacts.PairDetail{}, err
+	}
+	d := artifacts.PairDetail{ReviewItem: r.reviewItem(), DeterminedBy: r.determinedBy, DecidedAt: r.decidedAt,
+		LastError: r.lastError, Disputed: r.disputed(), Expect: artifacts.ExportPairStateToken(r.state())}
+	if r.determination != artifacts.DeterminationTokenOverlap {
+		c := r.confidence
+		d.Confidence = &c
+	}
+	if r.determination == artifacts.DeterminationLLMPanel {
+		ev := r.evidence
+		d.Evidence = &ev
+	}
+	if r.dissent != nil {
+		ev := r.dissent.Evidence
+		d.Dissent = &artifacts.PanelDissent{Status: r.dissent.Status, Confidence: r.dissent.Confidence,
+			DeterminedBy: "artifact-adjudicator", DecidedAt: r.dissent.DecidedAt, Evidence: &ev}
+	}
+	var related []*fakeVerdictRow
+	for id, o := range s.rows {
+		if strings.HasPrefix(id, tenantID+"\x00") && o.key != r.key &&
+			(o.cand.LowGroupID == r.cand.LowGroupID || o.cand.LowGroupID == r.cand.HighGroupID ||
+				o.cand.HighGroupID == r.cand.LowGroupID || o.cand.HighGroupID == r.cand.HighGroupID) {
+			related = append(related, o)
+		}
+	}
+	slices.SortFunc(related, func(a, b *fakeVerdictRow) int {
+		switch {
+		case a.decidedAt.IsZero() != b.decidedAt.IsZero():
+			if a.decidedAt.IsZero() {
+				return 1
+			}
+			return -1
+		case !a.decidedAt.Equal(b.decidedAt):
+			return b.decidedAt.Compare(a.decidedAt)
+		}
+		return strings.Compare(a.key, b.key)
+	})
+	d.RelatedTotal = len(related)
+	for _, o := range related[:min(relatedLimit, len(related))] {
+		d.Related = append(d.Related, artifacts.RelatedPair{Ref: artifacts.PairRef(o.key), Status: o.status,
+			DeterminationType: o.determination, LowName: o.cand.Context.LowName, HighName: o.cand.Context.HighName})
+	}
 	return d, nil
 }
 
@@ -266,12 +383,7 @@ func (s *fakeVerdictStore) ReviewQueue(ctx context.Context, tenantID string, n i
 	})
 	var out []artifacts.ReviewItem
 	for _, r := range rows[:min(n, len(rows))] {
-		item := artifacts.ReviewItem{Ref: artifacts.PairRef(r.key), Key: r.key, Status: r.status,
-			DeterminationType: r.determination, SimilarityScore: r.cand.SimilarityScore, Context: r.cand.Context}
-		if r.dissent != nil {
-			item.DissentStatus = r.dissent.Status
-		}
-		out = append(out, item)
+		out = append(out, r.reviewItem())
 	}
 	return out, nil
 }
@@ -310,12 +422,7 @@ func (s *fakeVerdictStore) SearchPairs(ctx context.Context, tenantID, name strin
 	})
 	var out []artifacts.ReviewItem
 	for _, r := range rows[:min(n, len(rows))] {
-		item := artifacts.ReviewItem{Ref: artifacts.PairRef(r.key), Key: r.key, Status: r.status,
-			DeterminationType: r.determination, SimilarityScore: r.cand.SimilarityScore, Context: r.cand.Context}
-		if r.dissent != nil {
-			item.DissentStatus = r.dissent.Status
-		}
-		out = append(out, item)
+		out = append(out, r.reviewItem())
 	}
 	return out, nil
 }

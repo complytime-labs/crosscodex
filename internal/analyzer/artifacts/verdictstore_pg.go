@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -339,15 +340,49 @@ const pairRefSQL = `left(encode(sha256(convert_to(pair_key, 'UTF8')), 'hex'), 16
 const disputedSQL = `(determination_type = 'human' AND dissent->>'status' IN ('confirmed', 'rejected')
            AND dissent->>'status' <> status AND (dissent->>'decided_at')::timestamptz > decided_at)`
 
+// pairByRefColumnsSQL is what DecideHuman and PairDetail read of a pair found
+// by ref; pairRow.dest scans it.
+const pairByRefColumnsSQL = `pair_key, status, determination_type, determined_by, confidence, evidence, decided_at,
+       projection_claimed_until, COALESCE(` + disputedSQL + `, false), similarity_score, dissent`
+
 // selectByRefSQL locks the tenant's pairs with a ref. LIMIT 2 is enough to
 // tell one match from several.
 const selectByRefSQL = `
-SELECT pair_key, status, determination_type, determined_by, confidence, evidence, decided_at, projection_claimed_until,
-       COALESCE(` + disputedSQL + `, false)
+SELECT ` + pairByRefColumnsSQL + `
 FROM artifact_pair_verdicts
 WHERE tenant_id = $1 AND ` + pairRefSQL + ` = $2
 LIMIT 2
 FOR UPDATE`
+
+// pairRow is one pairByRefColumnsSQL row.
+type pairRow struct {
+	key, status, determination, determinedBy string
+	confidence                               sql.NullFloat64
+	evidence, dissent                        []byte
+	decidedAt, claimedUntil                  sql.NullTime
+	disputed                                 bool
+	score                                    float64
+}
+
+// dest returns scan destinations in pairByRefColumnsSQL order.
+func (c *pairRow) dest() []any {
+	return []any{&c.key, &c.status, &c.determination, &c.determinedBy, &c.confidence, &c.evidence, &c.decidedAt,
+		&c.claimedUntil, &c.disputed, &c.score, &c.dissent}
+}
+
+// state is the part of c an expect token covers.
+func (c *pairRow) state() pairState {
+	p := pairState{Status: c.status, DeterminationType: c.determination, DeterminedBy: c.determinedBy,
+		SimilarityScore: c.score, Evidence: c.evidence, Dissent: c.dissent}
+	if c.confidence.Valid {
+		v := c.confidence.Float64
+		p.Confidence = &v
+	}
+	if c.decidedAt.Valid {
+		p.DecidedAt = c.decidedAt.Time
+	}
+	return p
+}
 
 // decideHumanSQL makes a pair human-owned. $5 is the dissent to store, or
 // NULL to keep the stored one. The projection claim is kept: its holder is
@@ -367,22 +402,15 @@ func (s *PGVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string, 
 			return err
 		}
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
-			type current struct {
-				key, status, determination, determinedBy string
-				confidence                               sql.NullFloat64
-				evidence                                 []byte
-				decidedAt, claimedUntil                  sql.NullTime
-				disputed                                 bool
-			}
-			var found []current
+			var found []pairRow
 			rows, err := tx.Query(ctx, selectByRefSQL, tenantID, ref)
 			if err != nil {
 				return fmt.Errorf("decide human %s: %w", ref, err)
 			}
 			// scanRows closes rows before the UPDATE below runs on tx.
 			if err := scanRows(rows, func() error {
-				var c current
-				if err := rows.Scan(&c.key, &c.status, &c.determination, &c.determinedBy, &c.confidence, &c.evidence, &c.decidedAt, &c.claimedUntil, &c.disputed); err != nil {
+				var c pairRow
+				if err := rows.Scan(c.dest()...); err != nil {
 					return fmt.Errorf("decide human %s: %w", ref, err)
 				}
 				found = append(found, c)
@@ -398,6 +426,19 @@ func (s *PGVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string, 
 				return fmt.Errorf("decide human %s: %w", ref, ErrPairRefAmbiguous)
 			}
 			c := found[0]
+			// The reviewer decided from the state their token was taken from.
+			// A pair that already holds this undisputed human verdict needs no
+			// write, so it falls through to HumanUnchanged below whatever the
+			// token says.
+			unchanged := c.determination == DeterminationHuman && VerdictStatus(c.status) == h.Status && !c.disputed
+			if !unchanged && c.state().token() != h.Expect {
+				changed := &PairChangedError{Ref: ref, Status: VerdictStatus(c.status), DeterminationType: c.determination,
+					DeterminedBy: c.determinedBy}
+				if c.decidedAt.Valid {
+					changed.DecidedAt = c.decidedAt.Time
+				}
+				return changed
+			}
 			d.Key = c.key
 			if c.claimedUntil.Valid && c.claimedUntil.Time.After(h.DecidedAt) {
 				d.ClaimedUntil = c.claimedUntil.Time
@@ -443,6 +484,162 @@ func (s *PGVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string, 
 	return d, nil
 }
 
+// pairDetailSQL reads the tenant's pairs with a ref, as selectByRefSQL does,
+// without locking them.
+const pairDetailSQL = `
+SELECT ` + pairByRefColumnsSQL + `, context, low_group_id, high_group_id, COALESCE(last_error, '')
+FROM artifact_pair_verdicts
+WHERE tenant_id = $1 AND ` + pairRefSQL + ` = $2
+LIMIT 2`
+
+// relatedPairsSQL lists up to $5 pairs other than $2 that share group $3 or
+// $4, with how many there are: the window count is taken before LIMIT.
+const relatedPairsSQL = `
+SELECT ` + pairRefSQL + `, status, determination_type,
+       COALESCE(context->>'low_name', ''), COALESCE(context->>'high_name', ''), count(*) OVER ()
+FROM artifact_pair_verdicts
+WHERE tenant_id = $1 AND pair_key <> $2
+  AND (low_group_id IN ($3, $4) OR high_group_id IN ($3, $4))
+ORDER BY decided_at DESC NULLS LAST, pair_key COLLATE "C"
+LIMIT $5`
+
+func (s *PGVerdictStore) PairDetail(ctx context.Context, tenantID, ref string, relatedLimit int) (PairDetail, error) {
+	var d PairDetail
+	err := s.observe(ctx, "PairDetail", tenantID, func(ctx context.Context) error {
+		if err := ValidatePairRef(ref); err != nil {
+			return err
+		}
+		if relatedLimit <= 0 {
+			return fmt.Errorf("pair detail %s: relatedLimit (%d) must be positive", ref, relatedLimit)
+		}
+		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			type detailRow struct {
+				pairRow
+				context              []byte
+				low, high, lastError string
+			}
+			var found []detailRow
+			rows, err := tx.Query(ctx, pairDetailSQL, tenantID, ref)
+			if err != nil {
+				return fmt.Errorf("pair detail %s: %w", ref, err)
+			}
+			if err := scanRows(rows, func() error {
+				var f detailRow
+				if err := rows.Scan(append(f.dest(), &f.context, &f.low, &f.high, &f.lastError)...); err != nil {
+					return fmt.Errorf("pair detail %s: %w", ref, err)
+				}
+				found = append(found, f)
+				return nil
+			}); err != nil {
+				return err
+			}
+			switch len(found) {
+			case 0:
+				return fmt.Errorf("pair detail %s: %w", ref, ErrPairNotFound)
+			case 1:
+			default:
+				return fmt.Errorf("pair detail %s: %w", ref, ErrPairRefAmbiguous)
+			}
+			f := found[0]
+			d = PairDetail{
+				ReviewItem: ReviewItem{Ref: ref, Key: f.key, Status: VerdictStatus(f.status),
+					DeterminationType: f.determination, SimilarityScore: f.score},
+				DeterminedBy: f.determinedBy, LastError: f.lastError, Disputed: f.disputed, Expect: f.state().token(),
+			}
+			if err := json.Unmarshal(f.context, &d.Context); err != nil {
+				return fmt.Errorf("pair detail %s: decode context: %w", ref, err)
+			}
+			if f.confidence.Valid {
+				v := f.confidence.Float64
+				d.Confidence = &v
+			}
+			if f.decidedAt.Valid {
+				d.DecidedAt = f.decidedAt.Time
+			}
+			// Judged as scanReviewItems judges it, so the listing and the
+			// detail agree on which pairs are unreadable.
+			if f.determination == DeterminationLLMPanel {
+				var ev PanelEvidence
+				err := errors.New("stored evidence is missing")
+				if f.evidence != nil {
+					err = json.Unmarshal(f.evidence, &ev)
+				}
+				if err != nil {
+					d.EvidenceErr, d.VotesUnreadable = fmt.Errorf("decode evidence: %w", err), true
+				} else {
+					split := ev.Split()
+					d.Evidence, d.Votes = &ev, &split
+				}
+			}
+			if f.dissent != nil {
+				d.Dissent = decodeDissent(f.dissent)
+				d.DissentStatus = d.Dissent.Status
+			}
+			d.Related, d.RelatedTotal, err = relatedPairs(ctx, tx, tenantID, ref, f.key, f.low, f.high, relatedLimit)
+			return err
+		})
+	})
+	if err != nil {
+		return PairDetail{}, err
+	}
+	return d, nil
+}
+
+// decodeDissent decodes a stored dissent column. A record or evidence that
+// cannot be decoded is reported in EvidenceErr rather than as an error, so
+// PairDetail still returns the expect token; a record that cannot be decoded
+// keeps its status when the status alone can be read.
+func decodeDissent(raw []byte) *PanelDissent {
+	var rec dissentRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		var partial struct {
+			Status VerdictStatus `json:"status"`
+		}
+		if json.Unmarshal(raw, &partial) != nil {
+			partial.Status = ""
+		}
+		return &PanelDissent{Status: partial.Status, EvidenceErr: fmt.Errorf("decode dissent: %w", err)}
+	}
+	pd := &PanelDissent{Status: rec.Status, Confidence: rec.Confidence, DeterminedBy: rec.DeterminedBy, DecidedAt: rec.DecidedAt}
+	var ev PanelEvidence
+	if err := json.Unmarshal(rec.Evidence, &ev); err != nil {
+		pd.EvidenceErr = fmt.Errorf("decode dissent evidence: %w", err)
+	} else {
+		pd.Evidence = &ev
+	}
+	return pd
+}
+
+// relatedPairs runs relatedPairsSQL for the pair with key, whose groups are
+// low and high, and returns up to limit related pairs with how many there are.
+// ref prefixes errors.
+func relatedPairs(ctx context.Context, tx db.Transaction, tenantID, ref, key, low, high string, limit int) ([]RelatedPair, int, error) {
+	var (
+		out   []RelatedPair
+		total int
+	)
+	rows, err := tx.Query(ctx, relatedPairsSQL, tenantID, key, low, high, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("pair detail %s: related pairs: %w", ref, err)
+	}
+	err = scanRows(rows, func() error {
+		var (
+			r      RelatedPair
+			status string
+		)
+		if err := rows.Scan(&r.Ref, &status, &r.DeterminationType, &r.LowName, &r.HighName, &total); err != nil {
+			return fmt.Errorf("pair detail %s: related pairs: %w", ref, err)
+		}
+		r.Status = VerdictStatus(status)
+		out = append(out, r)
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
+}
+
 const reviewQueueSQL = `
 SELECT ` + reviewItemColumnsSQL + `
 FROM artifact_pair_verdicts
@@ -451,27 +648,48 @@ WHERE tenant_id = $1
 ORDER BY created_at, pair_key
 LIMIT $2`
 
-// reviewItemColumnsSQL selects the columns scanReviewItems reads.
+// reviewItemColumnsSQL selects the columns scanReviewItems reads. Evidence is
+// selected only for llm_panel rows, the only ones whose current verdict has
+// votes. The split is computed in Go rather than SQL so this path and
+// PairDetail judge "unreadable" the same way.
 const reviewItemColumnsSQL = pairRefSQL + `, pair_key, status, determination_type, similarity_score, context,
-       COALESCE(dissent->>'status', '')`
+       COALESCE(dissent->>'status', ''), CASE WHEN determination_type = 'llm_panel' THEN evidence END`
 
 // scanReviewItems reads ReviewQueue's and SearchPairs' rows; op prefixes its
-// errors.
-func scanReviewItems(rows db.Rows, op string) ([]ReviewItem, error) {
+// errors. Evidence that cannot be decoded marks the item VotesUnreadable
+// rather than failing the listing, so one bad row cannot hide the queue;
+// PairDetail reports the decode error.
+func scanReviewItems(ctx context.Context, rows db.Rows, tenantID, op string) ([]ReviewItem, error) {
 	var out []ReviewItem
 	err := scanRows(rows, func() error {
 		var (
 			it                    ReviewItem
 			status, dissentStatus string
-			raw                   []byte
+			raw, evidence         []byte
 		)
-		if err := rows.Scan(&it.Ref, &it.Key, &status, &it.DeterminationType, &it.SimilarityScore, &raw, &dissentStatus); err != nil {
+		if err := rows.Scan(&it.Ref, &it.Key, &status, &it.DeterminationType, &it.SimilarityScore, &raw, &dissentStatus, &evidence); err != nil {
 			return fmt.Errorf("%s: %w", op, err)
 		}
 		if err := json.Unmarshal(raw, &it.Context); err != nil {
 			return fmt.Errorf("%s: decode context of pair %s: %w", op, PairRef(it.Key), err)
 		}
 		it.Status, it.DissentStatus = VerdictStatus(status), VerdictStatus(dissentStatus)
+		var evErr error
+		switch {
+		case evidence != nil:
+			var ev PanelEvidence
+			if evErr = json.Unmarshal(evidence, &ev); evErr == nil {
+				s := ev.Split()
+				it.Votes = &s
+			}
+		case it.DeterminationType == DeterminationLLMPanel:
+			evErr = errors.New("stored evidence is missing")
+		}
+		if evErr != nil {
+			it.VotesUnreadable = true
+			slog.WarnContext(ctx, "artifact review item: stored evidence cannot be decoded",
+				"tenant.id", tenantID, "op", op, "pair.ref", PairRef(it.Key), "error", evErr)
+		}
 		out = append(out, it)
 		return nil
 	})
@@ -489,7 +707,7 @@ func (s *PGVerdictStore) ReviewQueue(ctx context.Context, tenantID string, n int
 			if err != nil {
 				return fmt.Errorf("review queue: %w", err)
 			}
-			out, err = scanReviewItems(rows, "review queue")
+			out, err = scanReviewItems(ctx, rows, tenantID, "review queue")
 			return err
 		})
 	})
@@ -529,7 +747,7 @@ func (s *PGVerdictStore) SearchPairs(ctx context.Context, tenantID, name string,
 			if err != nil {
 				return fmt.Errorf("search pairs: %w", err)
 			}
-			out, err = scanReviewItems(rows, "search pairs")
+			out, err = scanReviewItems(ctx, rows, tenantID, "search pairs")
 			return err
 		})
 	})

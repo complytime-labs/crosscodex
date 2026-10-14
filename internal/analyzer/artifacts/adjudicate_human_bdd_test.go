@@ -20,7 +20,7 @@ import (
 )
 
 func (f *adjFixture) decideHuman(status artifacts.VerdictStatus, by string, at time.Time) {
-	_, err := f.store.DecideHuman(f.ctx, adjTenant, artifacts.PairRef(f.key),
+	_, err := decideCurrent(f.ctx, f.store, adjTenant, artifacts.PairRef(f.key),
 		artifacts.HumanVerdict{Status: status, Reviewer: by, DecidedAt: at})
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -162,7 +162,7 @@ var _ = Describe("Adjudicator human verdicts", func() {
 		f.store.set(adjTenant, artifacts.PairCandidate{LowGroupID: "gone-a", HighGroupID: "gone-b", CandidateEdgeID: "gone-edge"},
 			artifacts.VerdictPending, artifacts.DeterminationTokenOverlap)
 		gone := artifacts.PairKey("gone-a", "gone-b")
-		_, err := f.store.DecideHuman(f.ctx, adjTenant, artifacts.PairRef(gone),
+		_, err := decideCurrent(f.ctx, f.store, adjTenant, artifacts.PairRef(gone),
 			artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: f.now})
 		Expect(err).NotTo(HaveOccurred())
 		res, err := f.project()
@@ -431,7 +431,7 @@ var _ = Describe("Adjudicator human verdicts", func() {
 			hostile := artifacts.PairCandidate{LowGroupID: "evil\x1b]0;x\x07-a", HighGroupID: "evil\x1b]0;x\x07-b", CandidateEdgeID: "evil-edge"}
 			f.store.set(adjTenant, hostile, artifacts.VerdictPending, artifacts.DeterminationTokenOverlap)
 			key := artifacts.PairKey(hostile.LowGroupID, hostile.HighGroupID)
-			_, err := f.store.DecideHuman(f.ctx, adjTenant, artifacts.PairRef(key),
+			_, err := decideCurrent(f.ctx, f.store, adjTenant, artifacts.PairRef(key),
 				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: f.now})
 			Expect(err).NotTo(HaveOccurred())
 			f.store.err["ClaimProjection"] = errors.New("db down")

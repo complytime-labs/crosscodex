@@ -559,7 +559,7 @@ var _ = Describe("PGVerdictStore", func() {
 		It("lists decided verdicts until they are marked projected, and counts the queue", func() {
 			confirmed, undecided, pending, human := verdictCandidate(1), verdictCandidate(2), verdictCandidate(3), verdictCandidate(4)
 			enqueue(confirmed, undecided, pending, human)
-			_, err := env.store.DecideHuman(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(human)),
+			_, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(human)),
 				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: t0.Add(time.Hour)})
 			Expect(err).NotTo(HaveOccurred())
 			_, err = env.store.Decide(env.ctxA, env.tenantA, keyOf(confirmed),
@@ -720,7 +720,7 @@ var _ = Describe("PGVerdictStore", func() {
 				_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(d.c), artifacts.Verdict{Status: d.s, Confidence: 1, Evidence: ev, DecidedAt: t0})
 				Expect(err).NotTo(HaveOccurred())
 			}
-			_, err := env.store.DecideHuman(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(human)),
+			_, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(human)),
 				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: t0})
 			Expect(err).NotTo(HaveOccurred())
 			for _, p := range []struct {
@@ -765,6 +765,134 @@ var _ = Describe("PGVerdictStore", func() {
 		})
 	})
 
+	Describe("vote split", func() {
+		It("marks a pair whose stored evidence cannot be decoded as unreadable, and still lists the queue", func() {
+			bad, good := verdictCandidate(1), verdictCandidate(2)
+			enqueue(bad, good)
+			for _, c := range []artifacts.PairCandidate{bad, good} {
+				_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c), artifacts.Verdict{Status: artifacts.VerdictUndecided,
+					Confidence: 0.5, Evidence: artifacts.PanelEvidence{ValidVotes: 1, TotalVotes: 1}, DecidedAt: t0})
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(env.su.Exec(context.Background(), `UPDATE artifact_pair_verdicts SET evidence = '{"votes": "x"}'
+				WHERE tenant_id = $1 AND pair_key = $2`, env.tenantA, keyOf(bad))).To(Succeed())
+			items, err := env.store.ReviewQueue(env.ctxA, env.tenantA, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(items).To(HaveLen(2))
+			byKey := map[string]artifacts.ReviewItem{items[0].Key: items[0], items[1].Key: items[1]}
+			Expect(byKey[keyOf(bad)].VotesUnreadable).To(BeTrue())
+			Expect(byKey[keyOf(bad)].Votes).To(BeNil())
+			Expect(byKey[keyOf(good)].Votes).To(Equal(&artifacts.VoteSplit{Valid: 1, Total: 1}))
+
+			found, err := env.store.SearchPairs(env.ctxA, env.tenantA, bad.Context.LowName, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(HaveLen(2))
+			for _, it := range found {
+				if it.Key == keyOf(bad) {
+					Expect(it.VotesUnreadable).To(BeTrue())
+					Expect(it.Votes).To(BeNil())
+				}
+			}
+		})
+
+		It("marks an llm_panel pair whose stored evidence is missing as unreadable", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c), artifacts.Verdict{Status: artifacts.VerdictUndecided,
+				Confidence: 0.5, Evidence: artifacts.PanelEvidence{ValidVotes: 1, TotalVotes: 1}, DecidedAt: t0})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.su.Exec(context.Background(), `UPDATE artifact_pair_verdicts SET evidence = NULL
+				WHERE tenant_id = $1 AND pair_key = $2`, env.tenantA, keyOf(c))).To(Succeed())
+			items, err := env.store.ReviewQueue(env.ctxA, env.tenantA, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(items).To(HaveLen(1))
+			Expect(items[0].VotesUnreadable).To(BeTrue())
+			Expect(items[0].Votes).To(BeNil())
+		})
+	})
+
+	Describe("PairDetail", func() {
+		panel := artifacts.PanelEvidence{PromptName: "p", PromptVersion: "1", ValidVotes: 1, TotalVotes: 1}
+
+		It("reports undecodable current evidence in EvidenceErr and still returns the expect token", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c), artifacts.Verdict{Status: artifacts.VerdictUndecided,
+				Confidence: 0.5, Evidence: panel, DecidedAt: t0})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.su.Exec(context.Background(), `UPDATE artifact_pair_verdicts SET evidence = '{"votes": "x"}'
+				WHERE tenant_id = $1 AND pair_key = $2`, env.tenantA, keyOf(c))).To(Succeed())
+			d, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(d.EvidenceErr).To(MatchError(ContainSubstring("decode evidence")))
+			Expect(d.Evidence).To(BeNil())
+			Expect(d.VotesUnreadable).To(BeTrue())
+			Expect(artifacts.ValidateExpect(d.Expect)).To(Succeed())
+		})
+
+		It("reports undecodable dissent evidence inside the dissent, keeping its status", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c), artifacts.Verdict{Status: artifacts.VerdictConfirmed,
+				Confidence: 1, Evidence: panel, DecidedAt: t0})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)),
+				artifacts.HumanVerdict{Status: artifacts.VerdictRejected, Reviewer: "alice", DecidedAt: t0.Add(time.Hour)})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.su.Exec(context.Background(), `UPDATE artifact_pair_verdicts
+				SET dissent = jsonb_set(dissent, '{evidence}', '{"votes": "x"}')
+				WHERE tenant_id = $1 AND pair_key = $2`, env.tenantA, keyOf(c))).To(Succeed())
+			d, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(d.Dissent.Status).To(Equal(artifacts.VerdictConfirmed))
+			Expect(d.Dissent.Evidence).To(BeNil())
+			Expect(d.Dissent.EvidenceErr).To(MatchError(ContainSubstring("decode dissent evidence")))
+		})
+
+		It("reports an undecodable dissent inside the dissent, keeping its status and the expect token", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c), artifacts.Verdict{Status: artifacts.VerdictRejected,
+				Confidence: 1, Evidence: panel, DecidedAt: t0})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)),
+				artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: "alice", DecidedAt: t0.Add(time.Hour)})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.su.Exec(context.Background(), `UPDATE artifact_pair_verdicts
+				SET dissent = '{"status": "confirmed", "decided_at": "not-a-time"}'
+				WHERE tenant_id = $1 AND pair_key = $2`, env.tenantA, keyOf(c))).To(Succeed())
+			d, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(d.Dissent).NotTo(BeNil())
+			Expect(d.Dissent.Status).To(Equal(artifacts.VerdictConfirmed))
+			Expect(d.DissentStatus).To(Equal(artifacts.VerdictConfirmed))
+			Expect(d.Dissent.Evidence).To(BeNil())
+			Expect(d.Dissent.EvidenceErr).To(MatchError(ContainSubstring("decode dissent")))
+			Expect(artifacts.ValidateExpect(d.Expect)).To(Succeed())
+		})
+
+		It("does not resolve another tenant's pair ref, nor list its pairs as related", func() {
+			mine, theirs := verdictCandidate(1), verdictCandidate(2)
+			theirs.LowGroupID = mine.LowGroupID
+			enqueue(mine)
+			Expect(env.store.Enqueue(env.ctxB, env.tenantB, []artifacts.PairCandidate{theirs}, t0)).To(Succeed())
+			_, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(theirs)), 10)
+			Expect(err).To(MatchError(artifacts.ErrPairNotFound))
+			d, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(mine)), 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(d.RelatedTotal).To(BeZero())
+		})
+
+		It("changes nothing", func() {
+			c := verdictCandidate(1)
+			enqueue(c)
+			before := env.stored(env.tenantA, keyOf(c))
+			_, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(env.stored(env.tenantA, keyOf(c))).To(Equal(before))
+		})
+	})
+
 	Describe("DecideHuman", func() {
 		human := func(by string) artifacts.HumanVerdict {
 			return artifacts.HumanVerdict{Status: artifacts.VerdictConfirmed, Reviewer: by, DecidedAt: t0}
@@ -774,7 +902,7 @@ var _ = Describe("PGVerdictStore", func() {
 			c := verdictCandidate(1)
 			c.LowGroupID, c.HighGroupID = "artifact-group_document_naïve \"quoted\" name", "artifact-group_document_zzz"
 			enqueue(c)
-			d, err := env.store.DecideHuman(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice"))
+			d, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(d).To(Equal(artifacts.HumanDecision{Outcome: artifacts.HumanApplied, Key: keyOf(c)}))
 		})
@@ -783,7 +911,7 @@ var _ = Describe("PGVerdictStore", func() {
 			c := verdictCandidate(1)
 			Expect(env.store.Enqueue(env.ctxB, env.tenantB, []artifacts.PairCandidate{c}, t0)).To(Succeed())
 			before := env.stored(env.tenantB, keyOf(c))
-			_, err := env.store.DecideHuman(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice"))
+			_, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice"))
 			Expect(err).To(MatchError(artifacts.ErrPairNotFound))
 			Expect(env.stored(env.tenantB, keyOf(c))).To(Equal(before))
 			Expect(before.status).To(Equal("pending"))
@@ -793,7 +921,7 @@ var _ = Describe("PGVerdictStore", func() {
 			c := verdictCandidate(1)
 			enqueue(c)
 			before := env.stored(env.tenantA, keyOf(c))
-			_, err := env.store.DecideHuman(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice\u202e"))
+			_, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice\u202e"))
 			Expect(err).To(MatchError(ContainSubstring("control, format or line-separator")))
 			Expect(env.stored(env.tenantA, keyOf(c))).To(Equal(before))
 		})
@@ -807,7 +935,7 @@ var _ = Describe("PGVerdictStore", func() {
 			Expect(env.su.Exec(context.Background(), `UPDATE artifact_pair_verdicts SET evidence = '{"votes": "not-a-list"}'
 				WHERE tenant_id = $1 AND pair_key = $2`, env.tenantA, keyOf(c))).To(Succeed())
 
-			d, err := env.store.DecideHuman(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)),
+			d, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)),
 				artifacts.HumanVerdict{Status: artifacts.VerdictRejected, Reviewer: "bob", DecidedAt: t0.Add(time.Hour)})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(d.Outcome).To(Equal(artifacts.HumanApplied))
@@ -823,7 +951,7 @@ var _ = Describe("PGVerdictStore", func() {
 			_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c),
 				artifacts.Verdict{Status: artifacts.VerdictConfirmed, Confidence: 0.75, Evidence: ev, DecidedAt: t0})
 			Expect(err).NotTo(HaveOccurred())
-			_, err = env.store.DecideHuman(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)),
+			_, err = decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)),
 				artifacts.HumanVerdict{Status: artifacts.VerdictRejected, Reviewer: "bob", DecidedAt: t0.Add(time.Hour)})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -952,7 +1080,7 @@ var _ = Describe("PGVerdictStore", func() {
 })
 
 var _ = Describe("PGVerdictStore contract", func() {
-	verdictStoreContract(func() verdictStoreContractEnv {
+	newEnv := func() verdictStoreContractEnv {
 		env := setupVerdictStore()
 		return verdictStoreContractEnv{store: env.store, ctx: env.ctxA, tenantID: env.tenantA,
 			setHuman: func(key string, status artifacts.VerdictStatus) {
@@ -978,5 +1106,7 @@ var _ = Describe("PGVerdictStore contract", func() {
 				}
 				return row
 			}}
-	})
+	}
+	verdictStoreContract(newEnv)
+	reviewDetailContract(newEnv)
 })
