@@ -608,7 +608,8 @@ crosscodexd admin adjudicate artifacts --tenant acme --reproject
 crosscodexd admin adjudicate artifacts --all-tenants --max-pairs 500
 
 crosscodexd admin adjudicate artifacts review --tenant acme
-crosscodexd admin adjudicate artifacts decide --tenant acme --pair 3f9c0a1b2d4e5f60 --verdict rejected --reviewer jdoe
+crosscodexd admin adjudicate artifacts show --tenant acme --pair 3f9c0a1b2d4e5f60
+crosscodexd admin adjudicate artifacts decide --tenant acme --pair 3f9c0a1b2d4e5f60 --verdict rejected --reviewer jdoe --expect <token>
 ```
 
 `retention scan` and an `adjudicate artifacts` run without `--dry-run` or
@@ -767,34 +768,103 @@ Exit codes: 0 ok, 1 failure or stale, 2 usage error. See [deploy/README.md, Back
 
 #### Human verdicts
 
-`adjudicate artifacts review` and `decide` let a person settle the `SAME_AS`
-pairs the panel could not, or overrule a panel verdict:
+`adjudicate artifacts review`, `show` and `decide` let a person settle the
+`SAME_AS` pairs the panel could not, or overrule a panel verdict. The workflow
+has three steps: list, read, decide.
 
 ```sh
 crosscodexd admin adjudicate artifacts review --tenant acme --limit 20
-crosscodexd admin adjudicate artifacts decide --tenant acme --pair 3f9c0a1b2d4e5f60 --verdict confirmed --reviewer jdoe
+crosscodexd admin adjudicate artifacts show --tenant acme --pair 3f9c0a1b2d4e5f60
+crosscodexd admin adjudicate artifacts decide --tenant acme --pair 3f9c0a1b2d4e5f60 --verdict confirmed --reviewer jdoe --expect <token>
 ```
 
-`review` lists up to `--limit` pairs (default 100), oldest first, that need a
-person:
+**1. `review`** lists up to `--limit` pairs (default 100), oldest first, that
+need a person:
 
 - `undecided` and `abandoned` pairs;
 - human verdicts that a later panel run disagreed with (its opinion is stored
   as dissent).
 
 Its columns are `PAIR` (the pair ref), `STATUS`, `BY` (who decided it:
-`llm_panel`, `human`, or `token_overlap` for an abandoned pair), `TYPE`, `LOW`
-and `HIGH` (the two artifact groups' names), `SCORE` (token overlap) and
-`DISSENT` (the dissenting verdict, or `-`). Names come from analyzed catalogs,
-so they are flattened to one line, stripped of control and invisible
-characters and capped before they are printed. With nothing to review it
-prints `no pairs need review`.
+`llm_panel`, `human`, or `token_overlap` for an abandoned pair), `VOTES`,
+`TYPE`, `LOW` and `HIGH` (the two artifact groups' names), `SCORE` (token
+overlap) and `DISSENT` (the dissenting verdict, or `-`). `VOTES` is the
+current panel verdict's split:
+
+- `2/3 same`: two of three valid votes said the groups are the same;
+- `2/3 same (1 failed)`: the same, with one more vote that failed and did not
+  count;
+- `unreadable`: the stored votes cannot be decoded; `show` prints the error;
+- `-`: no panel verdict (an abandoned or human-decided pair).
+
+Names come from analyzed catalogs, so they are flattened to one line,
+stripped of control and invisible characters and capped before they are
+printed. With nothing to review it prints `no pairs need review`.
+
+**2. `show`** prints everything a reviewer needs to decide one pair, so the
+decision rests on the panel's reasoning and not only its vote count:
+
+```text
+PAIR        3f9c0a1b2d4e5f60
+TYPE        policy
+LOW         Access Control Policy
+HIGH        Access Policy
+SCORE       0.71
+STATUS      undecided
+BY          llm_panel / artifact-adjudicator
+CONFIDENCE  0.50
+DECIDED     2026-10-13T09:14:02.51Z
+PROMPT      artifact_same_as v1.1.0
+
+VOTES (1 same, 1 distinct, 1 failed; 2 valid of 3)
+  voter-a  same  high
+    Both titles name the organization's access control policy ...
+  voter-b  distinct  medium
+    The second document scopes only remote access ...
+  voter-c  failed  -
+
+PANEL DISSENT
+  none
+
+RELATED PAIRS (showing 1 of 1 that share a group)
+  7d21e0c4b9a85f36  confirmed  llm_panel  Access Policy | Access Control Standard
+
+EXPECT    9be41c07d3a2f685
+To decide: crosscodexd admin adjudicate artifacts decide --tenant acme --pair 3f9c0a1b2d4e5f60 --verdict <confirmed|rejected> --reviewer <id> --expect 9be41c07d3a2f685
+```
+
+The example is illustrative; values vary. Its sections:
+
+- **Header:** the pair, its artifact groups, the token-overlap `SCORE`, the
+  current `STATUS`, who decided it (`BY` is determination type / decider),
+  `CONFIDENCE`, `DECIDED` time and the prompt that produced the panel verdict.
+- **`VOTES`:** the split, then each vote's voter, decision (`same`,
+  `distinct` or `failed`), confidence and justification.
+- **`PANEL DISSENT`:** on a human verdict, the panel's opinion, labelled
+  `overridden by the human verdict` (the panel verdict the person replaced),
+  `given after the human verdict (disputed)` (a later panel run disagreed;
+  the pair is in `review`) or `given after the human verdict (agrees)`. A
+  dissent that cannot be decoded is labelled `unreadable`. Otherwise `none`.
+- **`LAST ERROR`:** shown only when the last panel attempt failed.
+- **`RELATED PAIRS`:** other pairs that share a group with this one, with
+  their status and decider. `--related <n>` sets how many to list (default
+  20, must be positive); the heading says how many exist in total.
+- **`EXPECT`:** the token `decide` needs, and a ready-to-edit `decide`
+  command.
+
+Everything printed from stored data is cleaned the same way as `review`.
+`show` changes nothing. If the stored votes cannot be decoded, it prints the
+pair with an `unreadable` `VOTES` section and the `EXPECT` token anyway, then
+exits 1 with the error; the pair can still be decided.
+
+**3. `decide`** records the verdict, using the `EXPECT` token from `show`
+(see the `--expect` item below).
 
 To change a verdict the panel already reached, find the pair with `--name`:
 
 ```sh
 crosscodexd admin adjudicate artifacts review --tenant acme --name "access policy"
-crosscodexd admin adjudicate artifacts decide --tenant acme --pair 7d21e0c4b9a85f36 --verdict rejected --reviewer jdoe
+crosscodexd admin adjudicate artifacts decide --tenant acme --pair 7d21e0c4b9a85f36 --verdict rejected --reviewer jdoe --expect <token>
 ```
 
 `review --name <text>` lists, instead of the review queue, up to `--limit`
@@ -813,6 +883,16 @@ opinion, such as the verdict the person overrode. With no match it prints `no pa
   that matches no pair of the tenant records nothing. `review` lists only
   pairs that need a person; use `review --name` to find the ref of any
   other pair, such as one the panel confirmed or rejected.
+- **`--expect`:** required. The `EXPECT` value `show` printed for this pair.
+  It identifies the state you read: the verdict, who decided it, its
+  confidence, decision time, score, votes and dissent. If another person or
+  a panel run changed the pair since, `decide` records nothing and says `pair
+  <ref> changed since you viewed it: it is now ...`. Run `show` again, read
+  the new reasoning, and decide with the new token. Queue bookkeeping
+  (retries, leases, projection) does not change the token. Repeating a
+  verdict the pair already holds from a person is accepted with any valid
+  token. Without `--expect`, `decide` exits 2 and names the `show` command
+  to run.
 - **`--reviewer`:** required. The ID of the person recording the verdict,
   stored as `determined_by` on the verdict and on a confirmation's graph
   edge (at most 256 bytes, no control or invisible characters). It is not
