@@ -1,0 +1,39 @@
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_34c7f65a88ab67::t_fcff636da8bd46 82-84
+pkg/db/backup_role_integration_bdd_test.go
+  s_34c7f65a88ab67::t_9ad9dda073a9ea 53-55
+pkg/db/db_integration_bdd_test.go
+  s_34c7f65a88ab67::t_8fae545125edbd 789-791
+pkg/db/dbtest/dbtest.go
+  s_34c7f65a88ab67::t_2834baa504c65f 11-12,69-98
+pkg/db/dbtest/dbtest_bdd_test.go
+  s_34c7f65a88ab67::t_fa236599043757 74-94
+pkg/db/dbtest/dbtest_fuzz_test.go
+  s_34c7f65a88ab67::t_3b8ae7a5df3ed4 37-57
+pkg/db/dbtest/dbtest_property_test.go
+  s_34c7f65a88ab67::t_3fada6884169ce 33-49
+pkg/db/retention_schema_integration_bdd_test.go
+  s_34c7f65a88ab67::t_cf2eee0915cabf 62-64
+pkg/db/tenant_admin_integration_bdd_test.go
+  s_34c7f65a88ab67::t_7c024bce0ce091 77-92
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_34c7f65a88ab67::t_9e27e0afda14fb 142-147
+pkg/retention/engine_integration_bdd_test.go
+  s_34c7f65a88ab67::t_ac276d7d5aa050 482-483
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17789a0cb978aa2a3842ee4d1f1a72a806d88658",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
