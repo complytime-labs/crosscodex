@@ -1,0 +1,32 @@
+pkg/db/db_integration_bdd_test.go
+  s_34c7f65a88ab67::t_05cc8d2bd28e93 93,95
+  s_34c7f65a88ab67::t_729a908a47ea44 44-47,53-54,94,98,108,161-176,421
+  s_34c7f65a88ab67::t_95bd4e1ca3e05b 51-52
+  s_34c7f65a88ab67::t_f207d40ae07e2b 386,388-390
+pkg/db/tenant_admin_integration_bdd_test.go
+  s_34c7f65a88ab67::t_f207d40ae07e2b 20-22,25-26,53,287
+pkg/db/identity_integration_bdd_test.go
+  s_34c7f65a88ab67::t_0bdacf0748540f 203
+  s_34c7f65a88ab67::t_0214e807bbdc53 7,9-11,16,122-202,204-554
+  s_34c7f65a88ab67::t_dc58c900368109 555
+pkg/db/migrations/009_identity_lifecycle.up.sql
+  s_34c7f65a88ab67::t_a68b58c0506be4 60-401
+pkg/db/migrations/009_identity_lifecycle.down.sql
+  s_34c7f65a88ab67::t_3c1d2c9ac2cef5 4-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20edb2c21afc54193180fcdb57cd2a14e9041c8b",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
