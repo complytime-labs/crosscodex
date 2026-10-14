@@ -7,7 +7,8 @@ Rules for coding agents in this Go monorepo. Rationale for the design rules belo
 Use `task` for everything; never run raw `go build` / `go test`.
 
 - `task dev:deps`, `task generate` (buf; output in gitignored `api/gen/`), `task build`, `task lint`, `task check` (lint, then unit tests, then `test:race`, sequentially)
-- `task test:unit`, `task test:property`, `task test:race` (`pkg/graphdb` with the race detector), `task test:fuzz` (`FUZZ_TIME=30s` in CI), `task test:integration:<name>` (see `task --list`)
+- `task test:unit`, `task test:property`, `task test:race` (`pkg/graphdb` with the race detector), `task test:integration:<name>` (see `task --list`)
+- Fuzzing is human-only: agents never run `task test:fuzz` or `go test -fuzz` in any form. It fuzzes every target with a worker per core and saturates the machine. When a change needs fuzzing, ask the human to run it and name the targets. CI runs `task test:fuzz FUZZ_TIME=30s`.
 - `FIPS=1` on any build/test task enables BoringCrypto FIPS mode.
 - Proto changes: from `api/proto`, `go tool buf lint` and `go tool buf breaking --against '../../.git#branch=main,subdir=api/proto'` must introduce no new failures. No task or CI job runs these (`task dev:lint:proto` is protolint), and `buf lint` already has violations in `gateway.proto`.
 
