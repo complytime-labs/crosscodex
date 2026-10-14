@@ -1,0 +1,26 @@
+pkg/db/identity_integration_bdd_test.go
+  s_34c7f65a88ab67::t_d36f97dfa825e7 373-375,377-393,425-435,506
+  s_34c7f65a88ab67::t_b4bc0c6a14b043 291,376,624
+pkg/db/db_integration_bdd_test.go
+  s_34c7f65a88ab67::t_b4bc0c6a14b043 272-276
+pkg/db/migrations/009_identity_lifecycle.down.sql
+  s_34c7f65a88ab67::t_b4bc0c6a14b043 14,108
+pkg/db/migrations/009_identity_lifecycle.up.sql
+  s_34c7f65a88ab67::t_b4bc0c6a14b043 133-138,140,147-149,165-172,179-189,196,219,249,286,311,396-399,401-402,436-438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d9774f013f559189b70348c27eb9f6ac1f6cd70",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
