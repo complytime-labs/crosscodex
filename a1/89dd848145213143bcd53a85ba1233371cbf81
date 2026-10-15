@@ -1,5 +1,5 @@
 pkg/db/migrations/009_identity_lifecycle.up.sql
-  s_34c7f65a88ab67::t_60f45a9229ad4d 40,501
+  s_a7087b6bbdb59d::t_7d4d77c08e1a8d 40,501
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -7,13 +7,13 @@ pkg/db/migrations/009_identity_lifecycle.up.sql
   "base_commit_sha": "a189dd848145213143bcd53a85ba1233371cbf81",
   "prompts": {},
   "sessions": {
-    "s_34c7f65a88ab67": {
+    "s_a7087b6bbdb59d": {
       "agent_id": {
         "tool": "claude",
-        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
-        "model": "claude-opus-5-5"
+        "id": "s_a7087b6bbdb59d",
+        "model": "unknown"
       },
-      "human_author": "LLM (riotbox) <llm@riotbox>"
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
     }
   }
 }
