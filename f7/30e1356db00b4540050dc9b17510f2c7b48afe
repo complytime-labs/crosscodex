@@ -1,0 +1,76 @@
+cmd/crosscodexd/admin_batch.go
+  s_34c7f65a88ab67::t_5834f6dbfe4f6e 43-46,60,66,68-88,90,93,113,132-133
+  s_34c7f65a88ab67::t_ae76296bc2dfad 28-37,42,58,67
+cmd/crosscodexd/admin.go
+  s_34c7f65a88ab67::t_466eeb2f2d1915 93,134
+  s_34c7f65a88ab67::t_ae76296bc2dfad 149,266,395
+pkg/db/migrations/009_identity_lifecycle.up.sql
+  s_34c7f65a88ab67::t_64ce3b2c68309a 855-876
+pkg/db/tenant_admin.go
+  s_34c7f65a88ab67::t_64ce3b2c68309a 39-48,57,171-198
+  s_34c7f65a88ab67::t_af7dd770b643a9 199
+  s_34c7f65a88ab67::t_38edd55c37aa1d 58-59
+pkg/db/migrations/009_identity_lifecycle.down.sql
+  s_34c7f65a88ab67::t_64ce3b2c68309a 22-24
+internal/pipeline/relationship_candidates.go
+  s_34c7f65a88ab67::t_64ce3b2c68309a 98
+README.md
+  s_34c7f65a88ab67::t_52b6a82feb6dfd 594-596,640,1043
+docs/dev/retention.md
+  s_34c7f65a88ab67::t_52b6a82feb6dfd 183-184,187-190
+  s_34c7f65a88ab67::t_211abaf5d617b7 191-194
+pkg/db/identity_integration_bdd_test.go
+  s_34c7f65a88ab67::t_2fcfe2c25288fc 306,315-316,330,554-574,615-633
+  s_34c7f65a88ab67::t_8ae9dc226d76ee 634
+  s_34c7f65a88ab67::t_38edd55c37aa1d 541,551
+pkg/db/tenant_admin_bdd_test.go
+  s_34c7f65a88ab67::t_2fcfe2c25288fc 240-270
+pkg/db/tenant_pool.go
+  s_34c7f65a88ab67::t_64ce3b2c68309a 18-19,22-28,30,32-41,47-48,50,68-69
+cmd/crosscodexd/admin_tenant.go
+  s_34c7f65a88ab67::t_5834f6dbfe4f6e 26-31,279-284
+  s_34c7f65a88ab67::t_ce6d9991bfa51e 285-286
+cmd/crosscodexd/bootstrap.go
+  s_34c7f65a88ab67::t_64ce3b2c68309a 419-421
+pkg/db/enter_tenant_bdd_test.go
+  s_34c7f65a88ab67::t_2aa2a49c165c4e 26-27,48-51
+  s_34c7f65a88ab67::t_38edd55c37aa1d 9,16-23,29-45,73
+cmd/crosscodexd/admin_all_tenants_bdd_test.go
+  s_34c7f65a88ab67::t_07d1d4e9218652 47,57,84-85,100-107,111-114,148,164-194,301-303,310,312,317-324
+  s_34c7f65a88ab67::t_c122357849cd7e 52,58-66
+  s_34c7f65a88ab67::t_e9641da868f022 53-56,108-110
+  s_34c7f65a88ab67::t_b6fed4396f8cdf 325
+pkg/db/export_test.go
+  s_34c7f65a88ab67::t_2aa2a49c165c4e 239-247,252
+  s_34c7f65a88ab67::t_c47617a09a0fc5 6,227-238,248-251,253
+pkg/db/tenant_pool_scope_bdd_test.go
+  s_34c7f65a88ab67::t_2aa2a49c165c4e 1-37
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_34c7f65a88ab67::t_211abaf5d617b7 227-271
+internal/pipeline/store_integration_test.go
+  s_34c7f65a88ab67::t_211abaf5d617b7 662-693
+pkg/graphdb/agedriver/client.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 183-185,204
+cmd/crosscodexd/admin_review.go
+  s_34c7f65a88ab67::t_ae76296bc2dfad 270
+pkg/db/doc.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 35-36
+pkg/db/interface.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 37-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f730e1356db00b4540050dc9b17510f2c7b48afe",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+deploy/README.md
+  s_34c7f65a88ab67::t_4522d89475ef56 334-335,337-338,339-342
+  s_34c7f65a88ab67::t_2e7d159fbc27e9 313
+  s_34c7f65a88ab67::t_c3dadc8b68e258 333,336
+docs/dev/design-principles.md
+  s_34c7f65a88ab67::t_36f06426aed413 93
+  s_34c7f65a88ab67::t_d7d53083a031bb 73,134
+  s_34c7f65a88ab67::t_779bda630432c3 206
+  s_34c7f65a88ab67::t_8f051d47505235 113
+  s_34c7f65a88ab67::t_813bd5282645ec 119-133,135-137,139,141-162
+  s_34c7f65a88ab67::t_85fcee5f0383c6 138,140
+  s_34c7f65a88ab67::t_7333c57caac45e 65
+README.md
+  s_34c7f65a88ab67::t_1470d19caaf3d1 906-909,980-1027
+  s_34c7f65a88ab67::t_195fa71ec29218 34,37-38,40-41
+  s_34c7f65a88ab67::t_27f2d338160286 42,1029
+  s_34c7f65a88ab67::t_5b1e2b4548ec61 39,969,971-972,1028
+pkg/db/identity_integration_bdd_test.go
+  s_34c7f65a88ab67::t_7548c15fe742d0 443-445,448-455
+  s_34c7f65a88ab67::t_25cd01d26b82b6 1031-1032,1034,1037-1046
+  s_34c7f65a88ab67::t_d82d23b8a9ae68 755,758
+  s_34c7f65a88ab67::t_b60a5177e5d61e 159-167,1272,1274
+  s_34c7f65a88ab67::t_60034de2197d23 1253-1271,1273,1275-1276
+  s_34c7f65a88ab67::t_3049b1e4809307 858
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f4514357c8650d1f42971a54ebd0d710dc226f5",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
