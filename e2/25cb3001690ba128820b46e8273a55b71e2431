@@ -1,0 +1,24 @@
+pkg/db/identity_integration_bdd_test.go
+  s_34c7f65a88ab67::t_7548c15fe742d0 443-445,448-455
+  s_34c7f65a88ab67::t_25cd01d26b82b6 1031-1032,1034,1037-1046
+  s_34c7f65a88ab67::t_d82d23b8a9ae68 755,758
+  s_34c7f65a88ab67::t_b60a5177e5d61e 159-167,1272,1274
+  s_34c7f65a88ab67::t_60034de2197d23 1253-1271,1273,1275-1276
+  s_34c7f65a88ab67::t_3049b1e4809307 858
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e225cb3001690ba128820b46e8273a55b71e2431",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
