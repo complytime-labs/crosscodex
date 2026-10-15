@@ -1,0 +1,29 @@
+cmd/crosscodexd/admin_identity.go
+  s_34c7f65a88ab67::t_30ced74b706118 271,280-281
+cmd/crosscodexd/admin_tenant.go
+  s_34c7f65a88ab67::t_30ced74b706118 320-335
+cmd/crosscodexd/admin_identity_integration_test.go
+  s_34c7f65a88ab67::t_cddbd89d35de54 148
+  s_34c7f65a88ab67::t_8728f146d8df0f 1-147,149-196
+cmd/crosscodexd/main_bdd_test.go
+  s_34c7f65a88ab67::t_3c972c525af7cf 137-161
+cmd/crosscodexd/admin_identity_bdd_test.go
+  s_34c7f65a88ab67::t_538713e5c19a00 16,31,33,35,164,227-247
+  s_34c7f65a88ab67::t_189a5592a3a76e 248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ea29a241966b498a22cf78aa6a0e7e6023427a4",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
