@@ -317,15 +317,37 @@ func displayCell(s string) string {
 	return s
 }
 
+// yesNo renders a flag column.
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
+// timeOrDash renders an optional timestamp column.
+func timeOrDash(t *time.Time) string {
+	if t == nil {
+		return "-"
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 func writeTenantList(w io.Writer, records []dbpkg.TenantRecord) {
 	if len(records) == 0 {
 		fmt.Fprintln(w, "no tenants")
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "TENANT\tDISPLAY NAME\tSTATUS\tCREATED")
+	fmt.Fprintln(tw, "TENANT\tDISPLAY NAME\tSTATUS\tCREATED\tDELETED\tHIDDEN")
 	for _, r := range records {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", displayCell(r.ID), displayCell(r.DisplayName), displayCell(r.Status), r.CreatedAt.UTC().Format(time.RFC3339))
+		// A hidden tenant is listed by pseudonym with no display name.
+		name := displayCell(r.DisplayName)
+		if name == "" {
+			name = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", displayCell(r.ID), name, displayCell(r.Status), r.CreatedAt.UTC().Format(time.RFC3339),
+			timeOrDash(r.DeletedAt), yesNo(r.Hidden))
 	}
 	flushTable(tw, w)
 }
@@ -337,6 +359,7 @@ func writeTenantRecord(w io.Writer, r dbpkg.TenantRecord) {
 	fmt.Fprintf(tw, "display_name\t%s\n", displayCell(r.DisplayName))
 	fmt.Fprintf(tw, "status\t%s\n", displayCell(r.Status))
 	fmt.Fprintf(tw, "created_at\t%s\n", r.CreatedAt.UTC().Format(time.RFC3339))
+	fmt.Fprintf(tw, "deleted_at\t%s\n", timeOrDash(r.DeletedAt))
 	flushTable(tw, w)
 }
 

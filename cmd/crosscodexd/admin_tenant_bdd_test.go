@@ -209,10 +209,18 @@ var _ = Describe("runAdmin tenant commands", func() {
 		Expect(code).To(Equal(0))
 		lines := strings.Split(strings.TrimSpace(stdout), "\n")
 		Expect(lines).To(HaveLen(2))
-		Expect(strings.Fields(lines[0])).To(Equal([]string{"TENANT", "DISPLAY", "NAME", "STATUS", "CREATED"}))
-		Expect(lines[1]).To(ContainSubstring("acme"))
-		Expect(lines[1]).To(ContainSubstring("Acme Corp"))
-		Expect(lines[1]).To(ContainSubstring("2026-10-08T12:00:00Z"))
+		Expect(strings.Fields(lines[0])).To(Equal([]string{"TENANT", "DISPLAY", "NAME", "STATUS", "CREATED", "DELETED", "HIDDEN"}))
+		Expect(strings.Fields(lines[1])).To(Equal([]string{"acme", "Acme", "Corp", "active", "2026-10-08T12:00:00Z", "-", "no"}))
+	})
+
+	It("list shows deleted and hidden tenants without a display name for a hidden one", func() {
+		deleted := time.Date(2026, 10, 9, 8, 30, 0, 0, time.UTC)
+		hidden := dbpkg.TenantRecord{ID: "hidden-tenant-0123456789abcdef", Status: "deleted", CreatedAt: record.CreatedAt, DeletedAt: &deleted, Hidden: true}
+		var buf bytes.Buffer
+		writeTenantList(&buf, []dbpkg.TenantRecord{hidden})
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		Expect(lines).To(HaveLen(2))
+		Expect(strings.Fields(lines[1])).To(Equal([]string{"hidden-tenant-0123456789abcdef", "-", "deleted", "2026-10-08T12:00:00Z", "2026-10-09T08:30:00Z", "yes"}))
 	})
 
 	It("list quotes control characters in stored values", func() {
@@ -233,6 +241,14 @@ var _ = Describe("runAdmin tenant commands", func() {
 		Expect(stdout).To(MatchRegexp(`(?m)^display_name\s+Acme Corp$`))
 		Expect(stdout).To(MatchRegexp(`(?m)^status\s+active$`))
 		Expect(stdout).To(MatchRegexp(`(?m)^created_at\s+2026-10-08T12:00:00Z$`))
+		Expect(stdout).To(MatchRegexp(`(?m)^deleted_at\s+-$`))
+	})
+
+	It("inspect prints when a deleted tenant was deleted", func() {
+		deleted := time.Date(2026, 10, 9, 8, 30, 0, 0, time.UTC)
+		var buf bytes.Buffer
+		writeTenantRecord(&buf, dbpkg.TenantRecord{ID: "acme", DisplayName: "Acme", Status: "deleted", CreatedAt: record.CreatedAt, DeletedAt: &deleted})
+		Expect(buf.String()).To(MatchRegexp(`(?m)^deleted_at\s+2026-10-09T08:30:00Z$`))
 	})
 
 	It("inspect quotes control characters in stored values", func() {

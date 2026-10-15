@@ -220,7 +220,7 @@ func decideArtifactsCmd(args []string) int {
 				at = changed.DecidedAt.UTC().Format(time.RFC3339Nano)
 			}
 			return fmt.Errorf("pair %s changed since you viewed it: it is now %s by %s (%s) at %s; nothing was recorded. Run \"crosscodexd admin adjudicate artifacts show --tenant %s --pair %s\", review the current reasoning, and decide again with its EXPECT value",
-				*pair, cell(string(changed.Status)), artifacts.CleanDisplay(changed.DeterminedBy, maxReviewerDisplayBytes), cell(changed.DeterminationType), at, id, *pair)
+				*pair, cell(string(changed.Status)), artifacts.CleanDisplay(changed.DisplayBy, maxReviewerDisplayBytes), cell(changed.DeterminationType), at, id, *pair)
 		case err != nil:
 			return err
 		}
@@ -397,7 +397,7 @@ func writePairDetail(w io.Writer, d artifacts.PairDetail, tenantID string) {
 	kv("HIGH", cell(d.Context.HighName))
 	kv("SCORE", fmt.Sprintf("%.2f", d.SimilarityScore))
 	kv("STATUS", cell(string(d.Status)))
-	by := cell(d.DeterminedBy)
+	by := cell(d.DisplayBy)
 	if by == "" {
 		by = "-"
 	}

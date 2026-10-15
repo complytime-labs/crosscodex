@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"syscall"
 	"text/tabwriter"
@@ -40,7 +41,11 @@ const adminUsage = `usage:
   crosscodexd admin tenant inspect --tenant <id>
   crosscodexd admin tenant suspend --tenant <id>
   crosscodexd admin tenant resume --tenant <id>
-  crosscodexd admin tenant import --file <path>`
+  crosscodexd admin tenant import --file <path>
+  crosscodexd admin tenant delete|restore|hide|unhide --tenant <id> --by <operator> --reason <text>
+  crosscodexd admin reviewer add|delete|restore|hide|unhide --tenant <id> --reviewer <id> --by <operator> --reason <text>
+  crosscodexd admin reviewer list --tenant <id>
+  crosscodexd admin identity trace --pseudonym <pseudonym> --by <operator> --reason <text>`
 
 // runAdmin dispatches the on-host `admin` subcommand tree. args are the tokens
 // after "admin" (e.g. ["retention", "scan", "--tenant", "acme"]). It returns a
@@ -81,6 +86,14 @@ func runAdmin(args []string) int {
 		return tenantSetStatusCmd(args[2:], "resume", dbpkg.TenantStatusActive)
 	case len(args) >= 2 && args[0] == "tenant" && args[1] == "import":
 		return tenantImportCmd(args[2:])
+	case len(args) >= 2 && args[0] == "tenant" && slices.Contains([]string{"delete", "restore", "hide", "unhide"}, args[1]):
+		return identityActionCmd(args[2:], dbpkg.IdentityKindTenant, args[1])
+	case len(args) >= 2 && args[0] == "reviewer" && args[1] == "list":
+		return reviewerListCmd(args[2:])
+	case len(args) >= 2 && args[0] == "reviewer" && slices.Contains([]string{"add", "delete", "restore", "hide", "unhide"}, args[1]):
+		return identityActionCmd(args[2:], dbpkg.IdentityKindReviewer, args[1])
+	case len(args) >= 2 && args[0] == "identity" && args[1] == "trace":
+		return identityTraceCmd(args[2:])
 	}
 	fmt.Fprintln(os.Stderr, adminUsage)
 	return 2

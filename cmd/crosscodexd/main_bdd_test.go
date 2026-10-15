@@ -134,3 +134,28 @@ var _ = Describe("run telemetry initialization", func() {
 		Expect(otel.GetTextMapPropagator().Fields()).To(BeEmpty())
 	})
 })
+
+// captureStream swaps *stream (os.Stdout or os.Stderr) for a temp file for
+// the duration of fn and returns fn's result plus everything written to it.
+func captureStream(stream **os.File, fn func() int) (int, string) {
+	f, err := os.CreateTemp(GinkgoT().TempDir(), "out")
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(f.Close)
+	orig := *stream
+	*stream = f
+	DeferCleanup(func() { *stream = orig })
+
+	code := fn()
+
+	*stream = orig
+	data, err := os.ReadFile(f.Name())
+	Expect(err).NotTo(HaveOccurred())
+	return code, string(data)
+}
+
+// captureStderr swaps os.Stderr for a temp file for the duration of fn, the
+// same approach runWithEnv in main_bdd_test.go uses, and returns fn's result
+// plus everything written to stderr.
+func captureStderr(fn func() int) (int, string) {
+	return captureStream(&os.Stderr, fn)
+}

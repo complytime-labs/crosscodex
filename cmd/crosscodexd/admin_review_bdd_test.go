@@ -273,7 +273,7 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 				ReviewItem: artifacts.ReviewItem{Ref: testRef, Status: artifacts.VerdictUndecided, DeterminationType: "llm_panel",
 					SimilarityScore: 0.83, Context: artifacts.PairContext{Type: "tool", LowName: "Splunk Enterprise", HighName: "splunk"},
 					Votes: &artifacts.VoteSplit{Same: 1, Valid: 2, Total: 3}},
-				DeterminedBy: "artifact-adjudicator", Confidence: &conf, DecidedAt: decided, Evidence: &panel,
+				DeterminedBy: "artifact-adjudicator", DisplayBy: "artifact-adjudicator", Confidence: &conf, DecidedAt: decided, Evidence: &panel,
 				Related: []artifacts.RelatedPair{{Ref: "8c21d0aa91fe4402", Status: artifacts.VerdictConfirmed, DeterminationType: "human",
 					LowName: "splunk", HighName: "Splunk"}},
 				RelatedTotal: 3, Expect: "9b04c2e1d7a35f80",
@@ -329,7 +329,8 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 
 		DescribeTable("labels a human pair's dissent by when the panel gave it",
 			func(dissentAt time.Time, disputed bool, heading string) {
-				fake.detail.Status, fake.detail.DeterminationType, fake.detail.DeterminedBy = artifacts.VerdictRejected, "human", "alice"
+				fake.detail.Status, fake.detail.DeterminationType = artifacts.VerdictRejected, "human"
+				fake.detail.DeterminedBy, fake.detail.DisplayBy = "alice", "alice"
 				fake.detail.Evidence, fake.detail.Votes, fake.detail.Disputed = nil, nil, disputed
 				fake.detail.Dissent = &artifacts.PanelDissent{Status: artifacts.VerdictConfirmed, Confidence: 0.5,
 					DeterminedBy: "artifact-adjudicator", DecidedAt: dissentAt, Evidence: &panel}
@@ -383,7 +384,7 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 		It("neutralizes control, escape, bidi and line-separator characters in every untrusted field", func() {
 			bad := "x\x1b]0;t\x07\x00\u202e\u2028\u009by"
 			fake.detail.Context = artifacts.PairContext{Type: bad, LowName: bad, HighName: bad}
-			fake.detail.DeterminedBy = bad
+			fake.detail.DeterminedBy, fake.detail.DisplayBy = bad, bad
 			ev := panel
 			ev.PromptName, ev.PromptVersion = bad, bad
 			ev.Votes = []artifacts.VoteRecord{{VoterID: bad, Decision: &yes, Confidence: bad, Justification: "line1\nline2" + bad}}
@@ -445,6 +446,15 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 					Expect(len(l)).To(BeNumerically("<=", 100))
 				}
 			}
+		})
+
+		It("shows a hidden reviewer by pseudonym, never by ID", func() {
+			fake.detail.Status, fake.detail.DeterminationType = artifacts.VerdictConfirmed, "human"
+			fake.detail.DeterminedBy, fake.detail.DisplayBy = "alice", "hidden-reviewer-0123456789abcdef"
+			code, stdout, _ := runAdminCaptured(showArgs...)
+			Expect(code).To(Equal(0))
+			Expect(stdout).To(MatchRegexp(`(?m)^BY +human / hidden-reviewer-0123456789abcdef$`))
+			Expect(stdout).NotTo(ContainSubstring("alice"))
 		})
 
 		It("passes --related through", func() {
@@ -509,7 +519,7 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 
 		It("refuses a pair that changed since it was viewed, naming its current verdict, and does not project", func() {
 			fake.decideErr = &artifacts.PairChangedError{Ref: testRef, Status: artifacts.VerdictRejected, DeterminationType: "human",
-				DeterminedBy: "bob\x1b[31m", DecidedAt: time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)}
+				DeterminedBy: "bob\x1b[31m", DisplayBy: "bob\x1b[31m", DecidedAt: time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)}
 			code, stdout, stderr := runAdminCaptured(decideArgs()...)
 			Expect(code).To(Equal(1))
 			Expect(stderr).To(ContainSubstring("pair " + testRef + " changed since you viewed it: it is now rejected by bob [31m (human) at 2026-10-02T09:00:00Z; nothing was recorded"))
@@ -519,6 +529,32 @@ var _ = Describe("runAdmin adjudicate artifacts review and decide", func() {
 			Expect(fake.projected).To(BeFalse())
 			Expect(stdout).To(BeEmpty())
 		})
+
+		It("names a hidden reviewer of a changed pair by pseudonym, never by ID", func() {
+			fake.decideErr = &artifacts.PairChangedError{Ref: testRef, Status: artifacts.VerdictRejected, DeterminationType: "human",
+				DeterminedBy: "carol", DisplayBy: "hidden-reviewer-0123456789abcdef", DecidedAt: time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)}
+			code, _, stderr := runAdminCaptured(decideArgs()...)
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring("it is now rejected by hidden-reviewer-0123456789abcdef (human)"))
+			Expect(stderr).NotTo(ContainSubstring("carol"))
+		})
+
+		DescribeTable("refuses an unregistered or deleted reviewer with the store's fix, and does not project",
+			func(storeErr error, want string) {
+				fake.decideErr = storeErr
+				code, stdout, stderr := runAdminCaptured(decideArgs()...)
+				Expect(code).To(Equal(1))
+				Expect(stderr).To(ContainSubstring("admin adjudicate artifacts decide: " + want))
+				Expect(fake.projected).To(BeFalse())
+				Expect(stdout).To(BeEmpty())
+			},
+			Entry("unregistered", fmt.Errorf("reviewer %q is not registered for tenant %q; nothing was recorded. Register them with 'crosscodexd admin reviewer add --tenant acme --reviewer alice --by <operator> --reason <text>': %w",
+				"alice", "acme", artifacts.ErrReviewerNotRegistered),
+				`reviewer "alice" is not registered for tenant "acme"; nothing was recorded. Register them with 'crosscodexd admin reviewer add`),
+			Entry("deleted", fmt.Errorf("the reviewer passed with --reviewer was deleted; nothing was recorded. Restore them with 'crosscodexd admin reviewer restore --tenant acme --reviewer <reviewer> --by <operator> --reason <text>': %w",
+				artifacts.ErrReviewerDeleted),
+				"the reviewer passed with --reviewer was deleted; nothing was recorded. Restore them with 'crosscodexd admin reviewer restore"),
+		)
 
 		It("records --verdict rejected", func() {
 			args := []string{"adjudicate", "artifacts", "decide", "--tenant", "acme", "--pair", testRef, "--verdict", "rejected", "--reviewer", "bob", "--expect", testExpect}
