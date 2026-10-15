@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"syscall"
 	"text/tabwriter"
@@ -40,7 +41,11 @@ const adminUsage = `usage:
   crosscodexd admin tenant inspect --tenant <id>
   crosscodexd admin tenant suspend --tenant <id>
   crosscodexd admin tenant resume --tenant <id>
-  crosscodexd admin tenant import --file <path>`
+  crosscodexd admin tenant import --file <path>
+  crosscodexd admin tenant delete|restore|hide|unhide --tenant <id> --by <operator> --reason <text>
+  crosscodexd admin reviewer add|delete|restore|hide|unhide --tenant <id> --reviewer <id> --by <operator> --reason <text>
+  crosscodexd admin reviewer list --tenant <id>
+  crosscodexd admin identity trace --pseudonym <pseudonym> --by <operator> --reason <text>`
 
 // runAdmin dispatches the on-host `admin` subcommand tree. args are the tokens
 // after "admin" (e.g. ["retention", "scan", "--tenant", "acme"]). It returns a
@@ -81,6 +86,14 @@ func runAdmin(args []string) int {
 		return tenantSetStatusCmd(args[2:], "resume", dbpkg.TenantStatusActive)
 	case len(args) >= 2 && args[0] == "tenant" && args[1] == "import":
 		return tenantImportCmd(args[2:])
+	case len(args) >= 2 && args[0] == "tenant" && slices.Contains([]string{"delete", "restore", "hide", "unhide"}, args[1]):
+		return identityActionCmd(args[2:], dbpkg.IdentityKindTenant, args[1])
+	case len(args) >= 2 && args[0] == "reviewer" && args[1] == "list":
+		return reviewerListCmd(args[2:])
+	case len(args) >= 2 && args[0] == "reviewer" && slices.Contains([]string{"add", "delete", "restore", "hide", "unhide"}, args[1]):
+		return identityActionCmd(args[2:], dbpkg.IdentityKindReviewer, args[1])
+	case len(args) >= 2 && args[0] == "identity" && args[1] == "trace":
+		return identityTraceCmd(args[2:])
 	}
 	fmt.Fprintln(os.Stderr, adminUsage)
 	return 2
@@ -90,7 +103,7 @@ func runAdmin(args []string) int {
 func retentionScanCmd(args []string) int {
 	fs := flag.NewFlagSet("crosscodexd admin retention scan", flag.ContinueOnError)
 	tenantID := fs.String("tenant", "", "tenant ID whose data to scan")
-	allTenants := fs.Bool("all-tenants", false, "scan every active tenant (needs database.tenant_admin_dsn)")
+	allTenants := fs.Bool("all-tenants", false, "scan every tenant, deleted and suspended included (needs database.tenant_admin_dsn)")
 	dryRun := fs.Bool("dry-run", false, "report what would change without mutating any data")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -131,7 +144,7 @@ func reconcileArtifactsCmd(args []string) int {
 }
 
 // runRetentionScan loads the daemon config and runs one in-process retention
-// scan for tenantID, or for every active tenant when all is set, printing each
+// scan for tenantID, or for every tenant (deleted and suspended included) when all is set, printing each
 // report. It returns a process exit code (0 success, 1 on any failure).
 // runForTenants scopes the context via tenant.WithTenant before each scan so
 // the RLS-keyed DBCollector, archive, and purge paths resolve the target
@@ -146,7 +159,7 @@ func runRetentionScan(tenantID string, all, dryRun bool) int {
 		return 1
 	}
 
-	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+	return runForTenants(ctx, cmd, cfg, tenantID, all, scopeRetention, func(ctx context.Context) (tenantRunner, func(), error) {
 		scan, closeFn, err := openRetentionScanFn(ctx, cfg)
 		if err != nil {
 			return nil, nil, err
@@ -263,7 +276,7 @@ func runReconcileArtifacts(tenantID string, all, dryRun bool, maxEdges int) int 
 		return 1
 	}
 
-	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+	return runForTenants(ctx, cmd, cfg, tenantID, all, scopeActive, func(ctx context.Context) (tenantRunner, func(), error) {
 		reconcile, closeFn, err := openReconcileArtifactsFn(ctx, cfg)
 		if err != nil {
 			return nil, nil, err
@@ -392,7 +405,7 @@ func runAdjudicateArtifacts(tenantID string, all, dryRun, reproject bool, maxPai
 		return 1
 	}
 
-	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+	return runForTenants(ctx, cmd, cfg, tenantID, all, scopeActive, func(ctx context.Context) (tenantRunner, func(), error) {
 		adjudicate, closeFn, err := openAdjudicateArtifactsFn(ctx, cfg, dryRun || reproject)
 		if err != nil {
 			return nil, nil, err

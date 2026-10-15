@@ -44,20 +44,26 @@ var _ = Describe("runAdmin --all-tenants arg parsing", func() {
 var _ = Describe("runAdmin --all-tenants", func() {
 	var (
 		origList       func(context.Context, string) ([]dbpkg.TenantRecord, error)
+		origRetList    func(context.Context, string) ([]dbpkg.RetentionTenant, error)
 		origScan       func(context.Context, *config.Config) (retentionScanner, func(), error)
 		origReconcile  func(context.Context, *config.Config) (artifactReconciler, func(), error)
 		origAdjudicate func(context.Context, *config.Config, bool) (artifactAdjudicator, func(), error)
 
-		records   []dbpkg.TenantRecord
-		listErr   error
-		listDSN   string
-		listCalls int
-		openErr   error
-		opens     int
-		closes    int
-		ran       []string
-		dryRuns   []bool
-		failFor   map[string]bool
+		records []dbpkg.TenantRecord
+		// retentionTenants overrides what list_retention_tenants returns. When
+		// nil the shared fixture lists the non-suspended records, so the tables
+		// shared with reconcile and adjudicate see the same two tenants; the
+		// dedicated retention specs set it to cover suspended, deleted and hidden.
+		retentionTenants []dbpkg.RetentionTenant
+		listErr          error
+		listDSN          string
+		listCalls        int
+		openErr          error
+		opens            int
+		closes           int
+		ran              []string
+		dryRuns          []bool
+		failFor          map[string]bool
 	)
 
 	// record asserts the run ctx is scoped to tenantID, then records the run.
@@ -75,7 +81,8 @@ var _ = Describe("runAdmin --all-tenants", func() {
 
 	BeforeEach(func() {
 		origList, origScan, origReconcile = runTenantListFn, openRetentionScanFn, openReconcileArtifactsFn
-		origAdjudicate = openAdjudicateArtifactsFn
+		origAdjudicate, origRetList = openAdjudicateArtifactsFn, runRetentionTenantListFn
+		retentionTenants = nil
 		records = []dbpkg.TenantRecord{
 			{ID: "acme", Status: dbpkg.TenantStatusActive},
 			{ID: "globex", Status: dbpkg.TenantStatusSuspended},
@@ -89,6 +96,21 @@ var _ = Describe("runAdmin --all-tenants", func() {
 			listCalls++
 			listDSN = dsn
 			return records, listErr
+		}
+		runRetentionTenantListFn = func(_ context.Context, dsn string) ([]dbpkg.RetentionTenant, error) {
+			listCalls++
+			listDSN = dsn
+			if retentionTenants != nil || listErr != nil {
+				return retentionTenants, listErr
+			}
+			var all []dbpkg.RetentionTenant
+			for _, r := range records {
+				if r.Status == dbpkg.TenantStatusSuspended {
+					continue
+				}
+				all = append(all, dbpkg.RetentionTenant{ID: r.ID, DisplayID: r.ID, Status: r.Status})
+			}
+			return all, nil
 		}
 		openRetentionScanFn = func(context.Context, *config.Config) (retentionScanner, func(), error) {
 			opens++
@@ -123,7 +145,7 @@ var _ = Describe("runAdmin --all-tenants", func() {
 
 	AfterEach(func() {
 		runTenantListFn, openRetentionScanFn, openReconcileArtifactsFn = origList, origScan, origReconcile
-		openAdjudicateArtifactsFn = origAdjudicate
+		openAdjudicateArtifactsFn, runRetentionTenantListFn = origAdjudicate, origRetList
 	})
 
 	DescribeTable("runs once per active tenant, in list order, skipping suspended tenants",
@@ -135,10 +157,40 @@ var _ = Describe("runAdmin --all-tenants", func() {
 			Expect(stdout).To(MatchRegexp(`(?s)tenant: acme\n.*METRIC.*\n\ntenant: initech\n.*METRIC`))
 			Expect(stdout).NotTo(ContainSubstring("globex"))
 		},
-		Entry("retention scan", "retention", "scan", "--all-tenants"),
 		Entry("reconcile artifacts", "reconcile", "artifacts", "--all-tenants"),
 		Entry("adjudicate artifacts", "adjudicate", "artifacts", "--all-tenants"),
 	)
+
+	It("retention scan runs every tenant, deleted and suspended included, showing the display ID", func() {
+		retentionTenants = []dbpkg.RetentionTenant{
+			{ID: "acme", DisplayID: "acme", Status: dbpkg.TenantStatusActive},
+			{ID: "globex", DisplayID: "globex", Status: dbpkg.TenantStatusSuspended},
+			{ID: "gone", DisplayID: "gone", Status: "deleted"},
+			{ID: "secret-co", DisplayID: "hidden-tenant-0123456789abcdef", Status: "deleted"},
+		}
+		code, stdout := captureStream(&os.Stdout, func() int { return runAdmin([]string{"retention", "scan", "--all-tenants"}) })
+		Expect(code).To(Equal(0))
+		Expect(listDSN).To(Equal(testTenantAdminDSN))
+		Expect(ran).To(Equal([]string{"acme", "globex", "gone", "secret-co"}))
+		Expect(stdout).To(ContainSubstring("tenant: hidden-tenant-0123456789abcdef\n"))
+		Expect(stdout).NotTo(ContainSubstring("secret-co"))
+	})
+
+	It("retention scan names a hidden tenant by its display ID in failures", func() {
+		retentionTenants = []dbpkg.RetentionTenant{{ID: "secret-co", DisplayID: "hidden-tenant-0123456789abcdef", Status: "deleted"}}
+		failFor["secret-co"] = true
+		code, stderr := captureStderr(func() int { return runAdmin([]string{"retention", "scan", "--all-tenants"}) })
+		Expect(code).To(Equal(1))
+		Expect(stderr).To(ContainSubstring("tenant hidden-tenant-0123456789abcdef: boom"))
+		Expect(stderr).To(ContainSubstring("1 of 1 tenants failed: hidden-tenant-0123456789abcdef"))
+		Expect(stderr).NotTo(ContainSubstring("secret-co"))
+	})
+
+	It("reconcile and adjudicate never list retention tenants", func() {
+		Expect(runAdmin([]string{"reconcile", "artifacts", "--all-tenants"})).To(Equal(0))
+		Expect(runAdmin([]string{"adjudicate", "artifacts", "--all-tenants"})).To(Equal(0))
+		Expect(ran).To(Equal([]string{"acme", "initech", "acme", "initech"}))
+	})
 
 	DescribeTable("opens the command's resources once for every tenant and closes them",
 		func(args ...string) {
@@ -246,17 +298,29 @@ var _ = Describe("runAdmin --all-tenants", func() {
 		code, stderr := captureStderr(func() int { return runAdmin([]string{"reconcile", "artifacts", "--all-tenants"}) })
 		Expect(code).To(Equal(1))
 		Expect(stderr).To(ContainSubstring("admin reconcile artifacts: list tenants: connection refused"))
+		code, stderr = captureStderr(func() int { return runAdmin([]string{"retention", "scan", "--all-tenants"}) })
+		Expect(code).To(Equal(1))
+		Expect(stderr).To(ContainSubstring("admin retention scan: list tenants: connection refused"))
 		Expect(opens).To(BeZero())
 		Expect(ran).To(BeEmpty())
 	})
 
 	It("exits 0 and says so when no tenant is active", func() {
 		records = []dbpkg.TenantRecord{{ID: "globex", Status: dbpkg.TenantStatusSuspended}}
-		code, stderr := captureStderr(func() int { return runAdmin([]string{"retention", "scan", "--all-tenants"}) })
+		code, stderr := captureStderr(func() int { return runAdmin([]string{"reconcile", "artifacts", "--all-tenants"}) })
 		Expect(code).To(Equal(0))
-		Expect(stderr).To(ContainSubstring("admin retention scan: no active tenants"))
+		Expect(stderr).To(ContainSubstring("admin reconcile artifacts: no active tenants"))
 		Expect(opens).To(BeZero())
 		Expect(ran).To(BeEmpty())
+	})
+
+	It("retention scan exits 0 and says so when there is no tenant at all", func() {
+		records = []dbpkg.TenantRecord{}
+		retentionTenants = []dbpkg.RetentionTenant{}
+		code, stderr := captureStderr(func() int { return runAdmin([]string{"retention", "scan", "--all-tenants"}) })
+		Expect(code).To(Equal(0))
+		Expect(stderr).To(ContainSubstring("admin retention scan: no tenants"))
+		Expect(opens).To(BeZero())
 	})
 
 	DescribeTable("keeps single-tenant output free of the tenant header",

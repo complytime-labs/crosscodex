@@ -15,16 +15,39 @@ import (
 // All operations require a tenant ID in the context (set via tenant.WithTenant).
 type tenantPool struct {
 	pool Pool
+	// scopeSQL takes the tenant ID as $1 and scopes the transaction to it.
+	scopeSQL string
 }
 
+// enterTenantSQL is the scope statement of every app path. public.enter_tenant
+// refuses a deleted tenant.
+const enterTenantSQL = "SELECT public.enter_tenant($1)"
+
+// retentionScopeSQL is the scope statement of NewRetentionTenantPool only.
+const retentionScopeSQL = "SELECT set_config('app.current_tenant', $1, true)"
+
 // NewTenantPool creates a TenantConnection that enforces RLS on every transaction.
+// Its Begin refuses a deleted tenant.
 func NewTenantPool(pool Pool) TenantConnection {
-	return &tenantPool{pool: pool}
+	return &tenantPool{pool: pool, scopeSQL: enterTenantSQL}
+}
+
+// NewRetentionTenantPool is NewTenantPool without the deleted-tenant check.
+// Use it for retention only: a deleted tenant's job data still follows
+// retention, so scans and holds must reach it. Judgements (artifact pair
+// verdicts) have no retention grant, so retention cannot touch them. Never
+// use it on an app path; those must refuse deleted tenants.
+func NewRetentionTenantPool(pool Pool) TenantConnection {
+	return &tenantPool{pool: pool, scopeSQL: retentionScopeSQL}
 }
 
 // Begin starts a transaction with tenant-scoped RLS.
 // The tenant ID is extracted from the context via tenant.FromContext.
 // Returns ErrTenantRequired if no tenant is present in the context.
+// NewTenantPool enters the tenant through public.enter_tenant, which refuses
+// a deleted tenant (SQLSTATE 42501, "admin tenant restore") so no app path
+// can read or write a deleted tenant's data until an admin restores it.
+// NewRetentionTenantPool does not make that check.
 func (tp *tenantPool) Begin(ctx context.Context) (Transaction, error) {
 	ctx, span := otel.GetTracerProvider().Tracer("crosscodex/pkg/db").Start(ctx, "db.TenantBegin")
 	defer span.End()
@@ -43,10 +66,10 @@ func (tp *tenantPool) Begin(ctx context.Context) (Transaction, error) {
 	}
 
 	// Set the tenant for RLS policies
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, tp.scopeSQL, tenantID); err != nil {
 		_ = tx.Rollback()
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("set tenant session variable: %w", err)
+		return nil, fmt.Errorf("enter tenant: %w", err)
 	}
 
 	// Set the user if present (optional for RLS)

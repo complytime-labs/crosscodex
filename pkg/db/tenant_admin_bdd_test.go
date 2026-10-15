@@ -49,6 +49,9 @@ var _ = Describe("TenantAdmin", func() {
 		Entry("Provision: blank display name",
 			func(a *db.TenantAdmin) error { _, err := a.Provision(ctx, "acme", " \t "); return err },
 			"display name is empty"),
+		Entry("Provision: reserved hidden- prefix",
+			func(a *db.TenantAdmin) error { _, err := a.Provision(ctx, "hidden-acme", "Acme"); return err },
+			`"hidden-" are reserved`),
 		Entry("Provision: control character in display name",
 			func(a *db.TenantAdmin) error { _, err := a.Provision(ctx, "acme", "Acme\x1b[2J"); return err },
 			"control character"),
@@ -195,11 +198,14 @@ var _ = Describe("TenantAdmin", func() {
 			Expect(err).To(MatchError(cause))
 		})
 
-		It("Get maps no rows to ErrTenantNotFound with the create command", func() {
+		It("Get maps no rows to ErrTenantNotFound with the create and unhide commands", func() {
 			_, err := newAdmin(db.ExportNewScriptedRowPool(sql.ErrNoRows)).Get(ctx, "acme")
 
 			Expect(err).To(MatchError(db.ErrTenantNotFound))
 			Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant create"))
+			Expect(err.Error()).To(ContainSubstring("hidden"))
+			Expect(err.Error()).To(ContainSubstring("crosscodexd admin identity trace"))
+			Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant unhide"))
 		})
 	})
 
@@ -234,6 +240,37 @@ var _ = Describe("TenantAdmin", func() {
 			Entry("rows.Err after iterating", 2, nil, errors.New("rows boom"), nil, "list tenants: "),
 			Entry("Close fails after every row was read", 2, nil, nil, errors.New("close boom"), "close boom"),
 			Entry("Scan and Close both fail", 1, errors.New("scan boom"), nil, errors.New("close boom"), "list tenants: read row: "),
+		)
+	})
+
+	Describe("ListRetentionTenants", func() {
+		It("wraps a database error and records its span", func() {
+			_, err := admin.ListRetentionTenants(ctx)
+			Expect(err).To(MatchError(db.ErrExportPoolUsed))
+			Expect(err.Error()).To(HavePrefix("list retention tenants: "))
+			Expect(telemetrytest.FindSpan(tp.GetSpans(), "db.TenantAdmin.list_retention_tenants")).NotTo(BeNil())
+		})
+
+		DescribeTable("returns no tenants and closes the rows when reading fails",
+			func(scanErr, rowsErr, closeErr error, wantPrefix string) {
+				pool, closes := db.ExportNewScriptedRowsPool(2, scanErr, rowsErr, closeErr)
+				a, err := db.ExportNewTenantAdmin(pool, tp.TracerProvider().Tracer("test"), tp.MeterProvider().Meter("test"))
+				Expect(err).NotTo(HaveOccurred())
+
+				tenants, err := a.ListRetentionTenants(ctx)
+
+				for _, want := range []error{scanErr, rowsErr, closeErr} {
+					if want != nil {
+						Expect(err).To(MatchError(want))
+					}
+				}
+				Expect(err.Error()).To(HavePrefix(wantPrefix))
+				Expect(tenants).To(BeNil())
+				Expect(closes()).To(Equal(1))
+			},
+			Entry("Scan fails", errors.New("scan boom"), nil, nil, "list retention tenants: read row: "),
+			Entry("rows.Err after iterating", nil, errors.New("rows boom"), nil, "list retention tenants: "),
+			Entry("Close fails", nil, nil, errors.New("close boom"), "close boom"),
 		)
 	})
 

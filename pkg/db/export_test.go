@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
@@ -176,9 +177,16 @@ func ExportNewScriptedTxPool(rowErrs []error, commitErr, rollbackErr error) (Poo
 	return &scriptedPool{tx: tx}, func() (int, int) { return tx.commits, tx.rollbacks }
 }
 
-// ExportNewScriptedRowPool returns a Pool whose every QueryRow Scan returns err.
+// scriptedRowPool answers QueryRow and Exec with rowErr; every other call
+// fails like failingPool.
+type scriptedRowPool struct{ scriptedPool }
+
+func (p *scriptedRowPool) Exec(context.Context, string, ...any) error { return p.rowErr }
+
+// ExportNewScriptedRowPool returns a Pool whose every QueryRow Scan and
+// every Exec returns err.
 func ExportNewScriptedRowPool(err error) Pool {
-	return &scriptedPool{rowErr: err}
+	return &scriptedRowPool{scriptedPool{rowErr: err}}
 }
 
 // scriptedRows yields n rows, each Scan returning scanErr without touching
@@ -223,3 +231,30 @@ type ExportSQLStateError string
 
 func (e ExportSQLStateError) Error() string    { return "sqlstate " + string(e) }
 func (e ExportSQLStateError) SQLState() string { return string(e) }
+
+// recordingTx records every Exec statement and argument list.
+type recordingTx struct {
+	scriptedTx
+	execs *[]string
+}
+
+func (t *recordingTx) Exec(_ context.Context, query string, args ...any) error {
+	*t.execs = append(*t.execs, fmt.Sprint(query, args))
+	return nil
+}
+
+// recordingPool hands out a recordingTx from Begin; every other call fails
+// like failingPool.
+type recordingPool struct {
+	failingPool
+	tx *recordingTx
+}
+
+func (p *recordingPool) Begin(context.Context) (Transaction, error) { return p.tx, nil }
+
+// ExportNewRecordingPool returns a Pool whose Begin yields a transaction
+// that records each Exec as "<query>[<args>]", plus a func returning them.
+func ExportNewRecordingPool() (Pool, func() []string) {
+	execs := &[]string{}
+	return &recordingPool{tx: &recordingTx{execs: execs}}, func() []string { return *execs }
+}

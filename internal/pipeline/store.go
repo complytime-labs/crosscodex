@@ -115,7 +115,7 @@ func (s *PGStore) CreateJob(ctx context.Context, job *Job) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", job.TenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", job.TenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.CreateJob: setting tenant: %w", err)
@@ -178,7 +178,7 @@ func (s *PGStore) GetJob(ctx context.Context, jobID string) (*Job, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("PGStore.GetJob: setting tenant: %w", err)
@@ -242,7 +242,7 @@ func (s *PGStore) ListJobs(ctx context.Context, tenantID string, filter JobFilte
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, 0, fmt.Errorf("PGStore.ListJobs: setting tenant: %w", err)
@@ -350,7 +350,7 @@ func (s *PGStore) UpdateJobStatus(ctx context.Context, jobID string, status JobS
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.UpdateJobStatus: setting tenant: %w", err)
@@ -422,7 +422,7 @@ func (s *PGStore) CreateStages(ctx context.Context, jobID string, stageNames []s
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.CreateStages: setting tenant: %w", err)
@@ -490,7 +490,7 @@ func (s *PGStore) UpdateStageStatus(ctx context.Context, jobID, stageName string
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.UpdateStageStatus: setting tenant: %w", err)
@@ -576,7 +576,7 @@ func (s *PGStore) UpdateStageError(ctx context.Context, jobID, stageName string,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.UpdateStageError: setting tenant: %w", err)
@@ -645,7 +645,7 @@ func (s *PGStore) GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("PGStore.GetStages: setting tenant: %w", err)
@@ -747,7 +747,7 @@ func (s *PGStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.ResetStagesFrom: setting tenant: %w", err)
@@ -815,7 +815,7 @@ func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.CompleteAnalysisStage: setting tenant: %w", err)
@@ -899,7 +899,7 @@ func (s *PGStore) GetCompletedAnalysisResults(ctx context.Context, jobID string,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("PGStore.GetCompletedAnalysisResults: setting tenant: %w", err)

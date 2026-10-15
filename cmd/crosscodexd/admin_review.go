@@ -42,9 +42,9 @@ const showWrapWidth = 100
 // cell sanitizes one untrusted value for a single table cell or line.
 func cell(s string) string { return artifacts.CleanDisplay(s, reviewCellBytes) }
 
-// maxReviewerDisplayBytes caps the reviewer echoed by decide; ValidateReviewer
-// already bounds it to the same length.
-const maxReviewerDisplayBytes = 256
+// maxReviewerDisplayBytes caps the reviewer echoed by decide;
+// ValidateReviewerID already bounds it to the same length.
+const maxReviewerDisplayBytes = dbpkg.MaxReviewerBytes
 
 // openHumanVerdictsFn opens the app pool and graph and returns humanVerdicts
 // over them plus the func that closes them. A package var so flag parsing and
@@ -188,7 +188,7 @@ func decideArtifactsCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: --reviewer is required: pass the ID of the person recording this verdict; it is stored as determined_by\n", cmd)
 		return 2
 	}
-	if err := artifacts.ValidateReviewer(*reviewer); err != nil {
+	if err := dbpkg.ValidateReviewerID(*reviewer); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: --reviewer: %v\n", cmd, err)
 		return 2
 	}
@@ -220,7 +220,7 @@ func decideArtifactsCmd(args []string) int {
 				at = changed.DecidedAt.UTC().Format(time.RFC3339Nano)
 			}
 			return fmt.Errorf("pair %s changed since you viewed it: it is now %s by %s (%s) at %s; nothing was recorded. Run \"crosscodexd admin adjudicate artifacts show --tenant %s --pair %s\", review the current reasoning, and decide again with its EXPECT value",
-				*pair, cell(string(changed.Status)), artifacts.CleanDisplay(changed.DeterminedBy, maxReviewerDisplayBytes), cell(changed.DeterminationType), at, id, *pair)
+				*pair, cell(string(changed.Status)), artifacts.CleanDisplay(changed.DisplayBy, maxReviewerDisplayBytes), cell(changed.DeterminationType), at, id, *pair)
 		case err != nil:
 			return err
 		}
@@ -267,7 +267,7 @@ func runHumanVerdicts(cmd, tenantID string, fn func(ctx context.Context, cfg *co
 	if !ok {
 		return 1
 	}
-	return runForTenants(ctx, cmd, cfg, tenantID, false, func(ctx context.Context) (tenantRunner, func(), error) {
+	return runForTenants(ctx, cmd, cfg, tenantID, false, scopeActive, func(ctx context.Context) (tenantRunner, func(), error) {
 		hv, closeFn, err := openHumanVerdictsFn(ctx, cfg)
 		if err != nil {
 			return nil, nil, err
@@ -397,7 +397,7 @@ func writePairDetail(w io.Writer, d artifacts.PairDetail, tenantID string) {
 	kv("HIGH", cell(d.Context.HighName))
 	kv("SCORE", fmt.Sprintf("%.2f", d.SimilarityScore))
 	kv("STATUS", cell(string(d.Status)))
-	by := cell(d.DeterminedBy)
+	by := cell(d.DisplayBy)
 	if by == "" {
 		by = "-"
 	}

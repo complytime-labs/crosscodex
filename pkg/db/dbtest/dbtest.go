@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // Environment variables carrying role passwords for one integration run.
@@ -63,4 +65,34 @@ func checkHex(password string) error {
 		return errors.New("refusing a non-hex password; generate one with dbtest.NewRolePassword")
 	}
 	return nil
+}
+
+// HardDeleteTenantSQL returns a superuser-only statement that removes a test
+// tenant, every public row carrying its tenant_id, and its graph. Migration
+// 009 makes tenants and verdicts undeletable for every role through triggers;
+// session_replication_role = replica (superuser only) skips those and FK
+// triggers, which is acceptable only for disposable test databases. The ID is
+// validated before it is interpolated, because DO blocks take no parameters.
+func HardDeleteTenantSQL(id string) (string, error) {
+	if err := tenant.ValidateTenantID(id); err != nil {
+		return "", fmt.Errorf("hard delete test tenant: %w", err)
+	}
+	return fmt.Sprintf(`DO $hd$
+DECLARE t record;
+BEGIN
+    SET LOCAL session_replication_role = replica;
+    FOR t IN
+        SELECT c.table_name FROM information_schema.columns c
+        JOIN information_schema.tables tb ON tb.table_schema = c.table_schema AND tb.table_name = c.table_name
+        WHERE c.table_schema = 'public' AND c.column_name = 'tenant_id'
+          AND tb.table_type = 'BASE TABLE' AND c.table_name <> 'tenants'
+    LOOP
+        EXECUTE format('DELETE FROM public.%%I WHERE tenant_id = %%L', t.table_name, '%[1]s');
+    END LOOP;
+    DELETE FROM public.tenants WHERE tenant_id = '%[1]s';
+    IF EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name::text = 'crosscodex_%[1]s') THEN
+        PERFORM ag_catalog.drop_graph('crosscodex_%[1]s', true);
+    END IF;
+END
+$hd$`, id), nil
 }

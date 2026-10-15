@@ -85,7 +85,7 @@ func writeVoteSummaries(ctx context.Context, conn db.TenantConnection, tenantID,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
 		return fmt.Errorf("writeVoteSummaries: setting tenant: %w", err)
 	}
 

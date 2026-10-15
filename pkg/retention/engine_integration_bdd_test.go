@@ -142,7 +142,10 @@ func newIntegKit(tenantID string, wrapArchive func(storage.Provider) storage.Pro
 	Expect(err).NotTo(HaveOccurred(), "build policy")
 
 	appConn := db.NewTenantPool(holdIntegPool)
-	purgeConn := db.NewTenantPool(enginePurgePool)
+	// Production hands the purger the raw purge_user pool: it scopes the tenant
+	// with set_config itself, because enter_tenant would refuse deleted tenants
+	// and retention must keep working for them.
+	purgeConn := enginePurgePool
 
 	collectors := []retention.Collector{
 		retention.NewDBCollector(appConn),
@@ -273,6 +276,20 @@ func integCountJobChildren(tenantID, jobID string) int {
 	return n
 }
 
+// integPurgeTx begins a purge_user transaction scoped to tenantID with
+// set_config, as the purger does. purge_user cannot execute enter_tenant.
+func integPurgeTx(ctx context.Context, tenantID string) (db.Transaction, error) {
+	tx, err := enginePurgePool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
 // integPurgeJobChildren deletes jobID and its FK children for tenantID as
 // purge_user (children first, then the parent — FK-safe). Best-effort cleanup.
 func integPurgeJobChildren(tenantID, jobID string) {
@@ -280,7 +297,7 @@ func integPurgeJobChildren(tenantID, jobID string) {
 	if err != nil {
 		return
 	}
-	tx, err := db.NewTenantPool(enginePurgePool).Begin(ctx)
+	tx, err := integPurgeTx(ctx, tenantID)
 	if err != nil {
 		return
 	}
@@ -315,7 +332,7 @@ func integPurgeJob(tenantID, jobID string) {
 	if err != nil {
 		return
 	}
-	tx, err := db.NewTenantPool(enginePurgePool).Begin(ctx)
+	tx, err := integPurgeTx(ctx, tenantID)
 	if err != nil {
 		return
 	}
@@ -420,7 +437,7 @@ func integPurgeCatalog(tenantID, catalogID string) {
 	if err != nil {
 		return
 	}
-	tx, err := db.NewTenantPool(enginePurgePool).Begin(ctx)
+	tx, err := integPurgeTx(ctx, tenantID)
 	if err != nil {
 		return
 	}
@@ -465,11 +482,11 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 	})
 
 	AfterAll(func() {
-		// Drop every tenant these specs provision. Deleting a tenant fires the
-		// tenant_graph_drop trigger, removing the per-tenant graph schema owned by
-		// graph_user — otherwise those schemas leak into later packages in the same
-		// `ginkgo run` and block 001.down's DROP ROLE graph_user (2BP01). Must run
-		// before engineSuPool is closed. Best-effort. Tenant B in the isolation
+		// Drop every tenant these specs provision. HardDeleteTenantSQL also drops
+		// the per-tenant graph schema owned by graph_user — otherwise those
+		// schemas leak into later packages in the same `ginkgo run` and block
+		// 001.down's DROP ROLE graph_user (2BP01). Must run before engineSuPool
+		// is closed. Best-effort. Tenant B in the isolation
 		// spec is never provisioned (no seed), so it is not listed here.
 		if engineSuPool != nil {
 			ctx := context.Background()
@@ -477,18 +494,9 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 				"ret-e2e-purge", "ret-e2e-hold", "ret-e2e-corrupt", "ret-e2e-iso-a",
 				"ret-e2e-children", "ret-e2e-catalog",
 			} {
-				// Delete FK children before the parent jobs/catalogs so a spec that
-				// leaked a row cannot block the tenant delete below.
-				for _, table := range []string{
-					"job_stages", "vote_summaries", "analysis_results", "relationship_candidates",
-					"requires_candidates",
-					"classifications", "embeddings", "controls",
-				} {
-					_ = engineSuPool.Exec(ctx, "DELETE FROM "+table+" WHERE tenant_id = $1", tenantID)
-				}
-				_ = engineSuPool.Exec(ctx, "DELETE FROM jobs WHERE tenant_id = $1", tenantID)
-				_ = engineSuPool.Exec(ctx, "DELETE FROM catalogs WHERE tenant_id = $1", tenantID)
-				_ = engineSuPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", tenantID)
+				stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
+				Expect(err).NotTo(HaveOccurred())
+				_ = engineSuPool.Exec(ctx, stmt)
 			}
 			engineSuPool.Close() //nolint:errcheck
 		}

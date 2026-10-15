@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 )
 
@@ -49,14 +50,15 @@ func PairKey(low, high string) string {
 // pairRefLen is the length of a PairRef in hex characters (64 bits).
 const pairRefLen = 16
 
-// maxReviewerBytes bounds a human reviewer ID.
-const maxReviewerBytes = 256
-
 var (
 	// ErrPairNotFound: no pair of the tenant has the given ref.
 	ErrPairNotFound = errors.New("no pair of this tenant has this ref")
 	// ErrPairRefAmbiguous: more than one pair of the tenant shares the ref.
 	ErrPairRefAmbiguous = errors.New("more than one pair has this ref")
+	// ErrReviewerNotRegistered: the reviewer has no reviewers row for the tenant.
+	ErrReviewerNotRegistered = errors.New("reviewer is not registered for this tenant")
+	// ErrReviewerDeleted: the reviewer was soft-deleted.
+	ErrReviewerDeleted = errors.New("reviewer was deleted")
 )
 
 // PairRef returns the short, opaque handle operators use for a pair: the
@@ -77,7 +79,7 @@ func ValidatePairRef(ref string) error {
 }
 
 // unprintable returns the first control, format or line/paragraph separator
-// character in s, which ValidateReviewer and ValidateSearchName refuse.
+// character in s, which ValidateSearchName refuses.
 func unprintable(s string) (rune, bool) {
 	for _, r := range s {
 		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
@@ -85,26 +87,6 @@ func unprintable(s string) (rune, bool) {
 		}
 	}
 	return 0, false
-}
-
-// ValidateReviewer checks a human reviewer ID before it is stored as
-// determined_by in PostgreSQL and on graph edges.
-func ValidateReviewer(id string) error {
-	switch {
-	case strings.TrimSpace(id) == "":
-		return errors.New("reviewer is empty: pass the ID of the person recording this verdict; it is stored as determined_by")
-	case len(id) > maxReviewerBytes:
-		return fmt.Errorf("reviewer is %d bytes: use an ID of at most %d bytes", len(id), maxReviewerBytes)
-	case !utf8.ValidString(id):
-		return errors.New("reviewer is not valid UTF-8: use a plain-text ID")
-	}
-	if r, bad := unprintable(id); bad {
-		return fmt.Errorf("reviewer contains control, format or line-separator characters (%U): use a plain-text ID", r)
-	}
-	if strings.TrimSpace(id) != id {
-		return errors.New("reviewer has leading or trailing spaces: pass the ID exactly as it should be stored")
-	}
-	return nil
 }
 
 // MaxSearchNameBytes bounds SearchPairs' name text.
@@ -223,7 +205,7 @@ type Failure struct {
 // HumanVerdict is a reviewer's decision on a pair.
 type HumanVerdict struct {
 	Status    VerdictStatus // confirmed or rejected
-	Reviewer  string        // stored as determined_by; must pass ValidateReviewer
+	Reviewer  string        // stored as determined_by; must pass db.ValidateReviewerID
 	DecidedAt time.Time
 	// Expect is the PairDetail Expect the reviewer decided from; it must
 	// pass ValidateExpect.
@@ -284,7 +266,7 @@ func validateHumanVerdict(ref string, h HumanVerdict) error {
 	if err := ValidatePairRef(ref); err != nil {
 		return err
 	}
-	if err := ValidateReviewer(h.Reviewer); err != nil {
+	if err := db.ValidateReviewerID(h.Reviewer); err != nil {
 		return err
 	}
 	return ValidateExpect(h.Expect)
@@ -384,7 +366,10 @@ type VerdictStore interface {
 	// moves to dissent. Its projection claim is kept, and reported in
 	// ClaimedUntil when it is live at h.DecidedAt. Returns ErrPairNotFound or
 	// ErrPairRefAmbiguous (wrapped) when ref resolves to no pair or to
-	// several.
+	// several. h.Reviewer must be registered and not deleted for the tenant:
+	// otherwise DecideHuman changes nothing and returns
+	// ErrReviewerNotRegistered or ErrReviewerDeleted (wrapped). The reviewer
+	// cannot be deleted while the verdict is being recorded.
 	//
 	// h.Expect must be the Expect PairDetail returned for the pair. When the
 	// pair no longer holds that state, DecideHuman changes nothing and returns

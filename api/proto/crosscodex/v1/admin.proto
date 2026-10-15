@@ -107,7 +107,10 @@ message UpdateTenantResponse {
 
 message DeleteTenantRequest {
   string tenant_id = 1;
-  bool purge_data = 2;
+  // Deprecated: deleting a tenant is a soft delete (#195). Judgements
+  // (artifact_pair_verdicts) are never purged, and job data follows the
+  // normal retention policy, so there is nothing for this flag to purge.
+  bool purge_data = 2 [deprecated = true];
 }
 
 message DeleteTenantResponse {

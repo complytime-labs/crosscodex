@@ -341,9 +341,15 @@ const disputedSQL = `(determination_type = 'human' AND dissent->>'status' IN ('c
            AND dissent->>'status' <> status AND (dissent->>'decided_at')::timestamptz > decided_at)`
 
 // pairByRefColumnsSQL is what DecideHuman and PairDetail read of a pair found
-// by ref; pairRow.dest scans it.
+// by ref; pairRow.dest scans it. The last column is determined_by as shown:
+// a hidden reviewer's pseudonym on a human verdict, determined_by otherwise.
+// It is a scalar subquery so selectByRefSQL's FOR UPDATE still locks only
+// the verdict row.
 const pairByRefColumnsSQL = `pair_key, status, determination_type, determined_by, confidence, evidence, decided_at,
-       projection_claimed_until, COALESCE(` + disputedSQL + `, false), similarity_score, dissent`
+       projection_claimed_until, COALESCE(` + disputedSQL + `, false), similarity_score, dissent,
+       COALESCE((SELECT r.pseudonym FROM reviewers r
+                 WHERE r.tenant_id = artifact_pair_verdicts.tenant_id AND r.reviewer_id = artifact_pair_verdicts.determined_by
+                   AND r.hidden_at IS NOT NULL AND artifact_pair_verdicts.determination_type = 'human'), determined_by)`
 
 // selectByRefSQL locks the tenant's pairs with a ref. LIMIT 2 is enough to
 // tell one match from several.
@@ -357,6 +363,7 @@ FOR UPDATE`
 // pairRow is one pairByRefColumnsSQL row.
 type pairRow struct {
 	key, status, determination, determinedBy string
+	displayBy                                string // not part of state: hiding a reviewer keeps tokens valid
 	confidence                               sql.NullFloat64
 	evidence, dissent                        []byte
 	decidedAt, claimedUntil                  sql.NullTime
@@ -367,7 +374,7 @@ type pairRow struct {
 // dest returns scan destinations in pairByRefColumnsSQL order.
 func (c *pairRow) dest() []any {
 	return []any{&c.key, &c.status, &c.determination, &c.determinedBy, &c.confidence, &c.evidence, &c.decidedAt,
-		&c.claimedUntil, &c.disputed, &c.score, &c.dissent}
+		&c.claimedUntil, &c.disputed, &c.score, &c.dissent, &c.displayBy}
 }
 
 // state is the part of c an expect token covers.
@@ -402,6 +409,21 @@ func (s *PGVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string, 
 			return err
 		}
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			// Locks the reviewer row FOR SHARE until commit, so the reviewer
+			// cannot be deleted while this verdict is recorded.
+			if err := tx.Exec(ctx, "SELECT public.require_active_reviewer($1)", h.Reviewer); err != nil {
+				switch {
+				case db.IsPgErrorCode(err, "P0002"):
+					return fmt.Errorf("reviewer %q is not registered for tenant %q; nothing was recorded. Register them with 'crosscodexd admin reviewer add --tenant %s --reviewer %s --by <operator> --reason <text>': %w",
+						h.Reviewer, tenantID, tenantID, h.Reviewer, ErrReviewerNotRegistered)
+				case db.IsPgErrorCode(err, "55000"):
+					// The ID is left out: the message reaches span status, and a
+					// deleted reviewer may be hidden.
+					return fmt.Errorf("the reviewer passed with --reviewer was deleted; nothing was recorded. Restore them with 'crosscodexd admin reviewer restore --tenant %s --reviewer <reviewer> --by <operator> --reason <text>' (run 'crosscodexd admin reviewer unhide --tenant %s --reviewer <reviewer> --by <operator> --reason <text>' first if they are hidden) or decide as another reviewer: %w",
+						tenantID, tenantID, ErrReviewerDeleted)
+				}
+				return fmt.Errorf("decide human %s: check reviewer: %w", ref, err)
+			}
 			var found []pairRow
 			rows, err := tx.Query(ctx, selectByRefSQL, tenantID, ref)
 			if err != nil {
@@ -433,7 +455,7 @@ func (s *PGVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string, 
 			unchanged := c.determination == DeterminationHuman && VerdictStatus(c.status) == h.Status && !c.disputed
 			if !unchanged && c.state().token() != h.Expect {
 				changed := &PairChangedError{Ref: ref, Status: VerdictStatus(c.status), DeterminationType: c.determination,
-					DeterminedBy: c.determinedBy}
+					DeterminedBy: c.determinedBy, DisplayBy: c.displayBy}
 				if c.decidedAt.Valid {
 					changed.DecidedAt = c.decidedAt.Time
 				}
@@ -544,7 +566,7 @@ func (s *PGVerdictStore) PairDetail(ctx context.Context, tenantID, ref string, r
 			d = PairDetail{
 				ReviewItem: ReviewItem{Ref: ref, Key: f.key, Status: VerdictStatus(f.status),
 					DeterminationType: f.determination, SimilarityScore: f.score},
-				DeterminedBy: f.determinedBy, LastError: f.lastError, Disputed: f.disputed, Expect: f.state().token(),
+				DeterminedBy: f.determinedBy, DisplayBy: f.displayBy, LastError: f.lastError, Disputed: f.disputed, Expect: f.state().token(),
 			}
 			if err := json.Unmarshal(f.context, &d.Context); err != nil {
 				return fmt.Errorf("pair detail %s: decode context: %w", ref, err)

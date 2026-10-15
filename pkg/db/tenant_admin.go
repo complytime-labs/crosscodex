@@ -28,12 +28,25 @@ const (
 // ErrTenantNotFound reports an operation on a tenant that has no tenants row.
 var ErrTenantNotFound = errors.New("tenant not found")
 
-// TenantRecord is one tenants row as list_tenants() returns it.
+// TenantRecord is one tenants row as list_tenants() returns it. A hidden
+// tenant has its pseudonym as ID and an empty DisplayName.
 type TenantRecord struct {
 	ID          string
 	DisplayName string
 	Status      string
 	CreatedAt   time.Time
+	DeletedAt   *time.Time
+	Hidden      bool
+}
+
+// RetentionTenant is one tenant as list_retention_tenants() returns it.
+type RetentionTenant struct {
+	// ID is the real tenant ID, for scoping a run. A hidden tenant's ID must
+	// not be printed: show DisplayID instead.
+	ID string
+	// DisplayID is the pseudonym of a hidden tenant, else ID.
+	DisplayID string
+	Status    string
 }
 
 // TenantSpec is a tenant to create, or to rename if it exists.
@@ -44,9 +57,10 @@ type TenantSpec struct {
 
 // TenantAdmin provisions and suspends tenants as the tenant_admin role
 // (migration 007). That role holds no table privilege: it can only call the
-// SECURITY DEFINER functions provision_tenant, set_tenant_status and
-// list_tenants, so it cannot read tenant data or bulk-modify tenants. This
-// is the only Go code that calls those functions.
+// SECURITY DEFINER functions provision_tenant, set_tenant_status,
+// list_tenants, list_retention_tenants and the identity lifecycle functions
+// of migration 009 (see identity.go), so it cannot read tenant data or
+// bulk-modify tenants. This is the only Go code that calls those functions.
 type TenantAdmin struct {
 	pool Pool
 	tel  *tenantAdminInstruments
@@ -135,7 +149,7 @@ func (a *TenantAdmin) SetStatus(ctx context.Context, id, status string) (previou
 func (a *TenantAdmin) List(ctx context.Context) (records []TenantRecord, err error) {
 	ctx, done := a.tel.op(ctx, "list")
 	defer func() { done(err) }()
-	rows, err := a.pool.Query(ctx, "SELECT tenant_id, display_name, status, created_at FROM public.list_tenants()")
+	rows, err := a.pool.Query(ctx, "SELECT tenant_id, display_name, status, created_at, deleted_at, hidden FROM public.list_tenants()")
 	if err != nil {
 		return nil, fmt.Errorf("list tenants: %w", err)
 	}
@@ -147,7 +161,7 @@ func (a *TenantAdmin) List(ctx context.Context) (records []TenantRecord, err err
 	}()
 	for rows.Next() {
 		var r TenantRecord
-		if err := rows.Scan(&r.ID, &r.DisplayName, &r.Status, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.DisplayName, &r.Status, &r.CreatedAt, &r.DeletedAt, &r.Hidden); err != nil {
 			return nil, fmt.Errorf("list tenants: read row: %w", err)
 		}
 		records = append(records, r)
@@ -158,8 +172,37 @@ func (a *TenantAdmin) List(ctx context.Context) (records []TenantRecord, err err
 	return records, nil
 }
 
-// Get returns one tenant. An unknown tenant returns an error wrapping
-// ErrTenantNotFound.
+// ListRetentionTenants returns every tenant, deleted ones included, ordered
+// by ID. A deleted tenant's job data still follows retention, so retention
+// scans must reach it. Print DisplayID, never ID, of a hidden tenant.
+func (a *TenantAdmin) ListRetentionTenants(ctx context.Context) (tenants []RetentionTenant, err error) {
+	ctx, done := a.tel.op(ctx, "list_retention_tenants")
+	defer func() { done(err) }()
+	rows, err := a.pool.Query(ctx, "SELECT tenant_id, display_id, status FROM public.list_retention_tenants()")
+	if err != nil {
+		return nil, fmt.Errorf("list retention tenants: %w", err)
+	}
+	defer func() {
+		err = errors.Join(err, rows.Close())
+		if err != nil {
+			tenants = nil
+		}
+	}()
+	for rows.Next() {
+		var t RetentionTenant
+		if err := rows.Scan(&t.ID, &t.DisplayID, &t.Status); err != nil {
+			return nil, fmt.Errorf("list retention tenants: read row: %w", err)
+		}
+		tenants = append(tenants, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list retention tenants: %w", err)
+	}
+	return tenants, nil
+}
+
+// Get returns one tenant. An unknown tenant, or a hidden one (listed only by
+// its pseudonym), returns an error wrapping ErrTenantNotFound.
 func (a *TenantAdmin) Get(ctx context.Context, id string) (record TenantRecord, err error) {
 	ctx, done := a.tel.op(ctx, "get")
 	defer func() { done(err) }()
@@ -168,10 +211,11 @@ func (a *TenantAdmin) Get(ctx context.Context, id string) (record TenantRecord, 
 	}
 	setTenantAttribute(ctx, id)
 	err = a.pool.QueryRow(ctx,
-		"SELECT tenant_id, display_name, status, created_at FROM public.list_tenants() WHERE tenant_id = $1", id).
-		Scan(&record.ID, &record.DisplayName, &record.Status, &record.CreatedAt)
+		"SELECT tenant_id, display_name, status, created_at, deleted_at, hidden FROM public.list_tenants() WHERE tenant_id = $1", id).
+		Scan(&record.ID, &record.DisplayName, &record.Status, &record.CreatedAt, &record.DeletedAt, &record.Hidden)
 	if errors.Is(err, sql.ErrNoRows) {
-		return TenantRecord{}, fmt.Errorf("tenant %q does not exist. Create it with 'crosscodexd admin tenant create --tenant %s --display-name <name>': %w",
+		return TenantRecord{}, fmt.Errorf("tenant %q does not exist or is hidden. Create it with 'crosscodexd admin tenant create --tenant %s --display-name <name>'; "+
+			"if it is hidden, confirm its pseudonym with 'crosscodexd admin identity trace' and show it again with 'crosscodexd admin tenant unhide': %w",
 			id, id, ErrTenantNotFound)
 	}
 	if err != nil {
@@ -222,11 +266,16 @@ func provisionTenant(ctx context.Context, q rowQuerier, id, displayName string) 
 }
 
 // ValidateTenantSpec applies provision_tenant's rules in Go: a valid
-// tenant ID and a display name that is neither blank nor holds a control
-// character (which would corrupt tabular output and terminals).
+// tenant ID outside the reserved "hidden-" prefix, and a display name that
+// is neither blank nor holds a control character (which would corrupt
+// tabular output and terminals).
 func ValidateTenantSpec(s TenantSpec) error {
 	if err := tenant.ValidateTenantID(s.ID); err != nil {
 		return err
+	}
+	if strings.HasPrefix(s.ID, "hidden-") {
+		return fmt.Errorf("tenant ID %q is reserved: IDs starting with \"hidden-\" are reserved for pseudonyms of hidden tenants; choose another ID: %w",
+			s.ID, tenant.ErrInvalidTenant)
 	}
 	if strings.TrimSpace(s.DisplayName) == "" {
 		return fmt.Errorf("tenant %q: display name is empty; give the tenant a human-readable name", s.ID)
@@ -312,12 +361,39 @@ func (in *tenantAdminInstruments) op(ctx context.Context, operation string) (con
 		result := "ok"
 		if err != nil {
 			result = "error"
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
+			span.SetStatus(codes.Error, spanErrorDescription(err))
 		}
 		opAttr := attribute.String("operation", operation)
 		in.operations.Add(ctx, 1, metric.WithAttributes(opAttr, attribute.String("result", result)))
 		in.duration.Record(ctx, float64(time.Since(start))/float64(time.Millisecond), metric.WithAttributes(opAttr))
 		span.End()
 	}
+}
+
+// spanSentinels name the errors a span may report, most specific first.
+var spanSentinels = []struct {
+	err  error
+	name string
+}{
+	{ErrTenantNotFound, "tenant_not_found"},
+	{ErrReviewerNotFound, "reviewer_not_found"},
+	{ErrPseudonymNotFound, "pseudonym_not_found"},
+	{ErrIdentityState, "identity_state"},
+	{tenant.ErrInvalidTenant, "invalid_tenant"},
+}
+
+// spanErrorDescription is the coarse cause put on a failed span: a sentinel
+// name, else the SQLSTATE, else "error". Never the message: messages embed
+// reviewer IDs and other operator input, and the database's messages repeat
+// them, so they stay in the returned error and out of the trace backend.
+func spanErrorDescription(err error) string {
+	for _, s := range spanSentinels {
+		if errors.Is(err, s.err) {
+			return s.name
+		}
+	}
+	if state, ok := pgErrorCode(err); ok {
+		return "sqlstate " + state
+	}
+	return "error"
 }

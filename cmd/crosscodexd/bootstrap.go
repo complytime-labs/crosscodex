@@ -416,7 +416,9 @@ func buildRetentionWiring(cfg *config.Config, shared *sharedResources, logger *s
 	// tenantAppConn scopes the DBCollector and hold store to the tenant carried
 	// in each request's context via RLS. The hold store is shared across
 	// requests because it is stateless and derives its tenant from the context.
-	tenantAppConn := dbpkg.NewTenantPool(shared.appPool)
+	// It uses the retention pool so a deleted tenant's data still follows
+	// retention; every other app path refuses deleted tenants.
+	tenantAppConn := dbpkg.NewRetentionTenantPool(shared.appPool)
 	holds := retention.NewPgHoldStore(tenantAppConn)
 	auditPublisher := retention.NewAuditPublisher(shared.natsClient)
 
