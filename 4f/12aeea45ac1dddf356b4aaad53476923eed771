@@ -1,0 +1,23 @@
+docs/dev/design-principles.md
+  s_34c7f65a88ab67::t_85fcee5f0383c6 138,140
+README.md
+  s_34c7f65a88ab67::t_5b1e2b4548ec61 39,969,971-972,1028
+deploy/README.md
+  s_34c7f65a88ab67::t_c3dadc8b68e258 333,336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f12aeea45ac1dddf356b4aaad53476923eed771",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
