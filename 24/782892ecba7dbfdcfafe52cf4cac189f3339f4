@@ -1,0 +1,37 @@
+pkg/db/identity.go
+  s_34c7f65a88ab67::t_4571733e3043fb 32-34,72-75,77-79,113,115-124,127-129,131-132,135-146,149-151,153,157,160-162,174-181,264,268,286,299,312,328
+pkg/db/db_fuzz_test.go
+  s_34c7f65a88ab67::t_cff2ee10bf0a5c 34-47,55,61-68,71-72,79-84,86-88,93-100,112-118,121,123-125
+  s_34c7f65a88ab67::t_770ed7bd28a3a0 69-70,73-78
+  s_34c7f65a88ab67::t_92fd3755ba0086 122
+cmd/crosscodexd/admin_review.go
+  s_34c7f65a88ab67::t_eece79e0e477af 45-47,191
+internal/analyzer/artifacts/verdicts.go
+  s_34c7f65a88ab67::t_f524706e7cfebc 14
+  s_34c7f65a88ab67::t_eece79e0e477af 78,204,265
+docs/dev/telemetry.md
+  s_34c7f65a88ab67::t_b5b9113f6f9acd 215-216
+pkg/db/tenant_admin.go
+  s_34c7f65a88ab67::t_af7b036ea88fca 364,372-399
+pkg/db/errors.go
+  s_34c7f65a88ab67::t_af7b036ea88fca 35-41,46-47,49
+pkg/db/identity_bdd_test.go
+  s_34c7f65a88ab67::t_f93bbeb0f863f9 14-15,32-35,50-51,58-83,111-116,218-222,227,281-293,295-297,299-306,342-348
+  s_34c7f65a88ab67::t_92fd3755ba0086 294,298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24782892ecba7dbfdcfafe52cf4cac189f3339f4",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
