@@ -41,32 +41,6 @@ var _ = Describe("ValidatePairRef", func() {
 	)
 })
 
-var _ = Describe("ValidateReviewer", func() {
-	DescribeTable("accepts",
-		func(id string) { Expect(artifacts.ValidateReviewer(id)).To(Succeed()) },
-		Entry("an email", "alice@example.com"),
-		Entry("a name with spaces", "Alice Smith"),
-		Entry("exactly 256 bytes", strings.Repeat("a", 256)),
-	)
-	DescribeTable("rejects with an actionable message",
-		func(id, want string) {
-			Expect(artifacts.ValidateReviewer(id)).To(MatchError(ContainSubstring(want)))
-		},
-		Entry("empty", "", "pass the ID of the person recording this verdict"),
-		Entry("blank", "   ", "pass the ID of the person recording this verdict"),
-		Entry("257 bytes", strings.Repeat("a", 257), "at most 256 bytes"),
-		Entry("invalid UTF-8", "al\xffice", "valid UTF-8"),
-		Entry("a newline", "alice\nbob", "control, format or line-separator characters"),
-		Entry("an ANSI escape", "alice\x1b[31m", "control, format or line-separator characters"),
-		Entry("a bidi override", "alice\u202e", "control, format or line-separator characters"),
-		Entry("a line separator", "alice\u2028bob", "control, format or line-separator characters"),
-		Entry("a paragraph separator", "alice\u2029bob", "control, format or line-separator characters"),
-		Entry("a leading space", " alice", "leading or trailing spaces"),
-		Entry("a trailing space", "alice ", "leading or trailing spaces"),
-		Entry("a trailing no-break space", "alice\u00a0", "leading or trailing spaces"),
-	)
-})
-
 var _ = Describe("CleanDisplay", func() {
 	DescribeTable("makes untrusted text safe for one terminal cell",
 		func(in, want string) { Expect(artifacts.CleanDisplay(in, 40)).To(Equal(want)) },

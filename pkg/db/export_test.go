@@ -177,9 +177,16 @@ func ExportNewScriptedTxPool(rowErrs []error, commitErr, rollbackErr error) (Poo
 	return &scriptedPool{tx: tx}, func() (int, int) { return tx.commits, tx.rollbacks }
 }
 
-// ExportNewScriptedRowPool returns a Pool whose every QueryRow Scan returns err.
+// scriptedRowPool answers QueryRow and Exec with rowErr; every other call
+// fails like failingPool.
+type scriptedRowPool struct{ scriptedPool }
+
+func (p *scriptedRowPool) Exec(context.Context, string, ...any) error { return p.rowErr }
+
+// ExportNewScriptedRowPool returns a Pool whose every QueryRow Scan and
+// every Exec returns err.
 func ExportNewScriptedRowPool(err error) Pool {
-	return &scriptedPool{rowErr: err}
+	return &scriptedRowPool{scriptedPool{rowErr: err}}
 }
 
 // scriptedRows yields n rows, each Scan returning scanErr without touching

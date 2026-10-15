@@ -32,17 +32,21 @@ func (e *ExtensionError) Unwrap() error {
 // IsPgErrorCode checks if err carries the given PostgreSQL SQLSTATE code.
 // It returns true when err unwraps to a type with SQLState() that matches code.
 func IsPgErrorCode(err error, code string) bool {
-	if err == nil {
-		return false
-	}
+	state, ok := pgErrorCode(err)
+	return ok && state == code
+}
+
+// pgErrorCode returns the SQLSTATE err carries, if it unwraps to a type
+// with SQLState().
+func pgErrorCode(err error) (string, bool) {
 	type pgErr interface {
 		SQLState() string
 	}
 	var pe pgErr
-	if errors.As(err, &pe) {
-		return pe.SQLState() == code
+	if err != nil && errors.As(err, &pe) {
+		return pe.SQLState(), true
 	}
-	return false
+	return "", false
 }
 
 // ClassifyPgError maps PostgreSQL error codes from triggers/RLS to sentinel errors.

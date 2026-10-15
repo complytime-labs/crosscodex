@@ -49,6 +49,9 @@ var _ = Describe("TenantAdmin", func() {
 		Entry("Provision: blank display name",
 			func(a *db.TenantAdmin) error { _, err := a.Provision(ctx, "acme", " \t "); return err },
 			"display name is empty"),
+		Entry("Provision: reserved hidden- prefix",
+			func(a *db.TenantAdmin) error { _, err := a.Provision(ctx, "hidden-acme", "Acme"); return err },
+			`"hidden-" are reserved`),
 		Entry("Provision: control character in display name",
 			func(a *db.TenantAdmin) error { _, err := a.Provision(ctx, "acme", "Acme\x1b[2J"); return err },
 			"control character"),
@@ -195,11 +198,14 @@ var _ = Describe("TenantAdmin", func() {
 			Expect(err).To(MatchError(cause))
 		})
 
-		It("Get maps no rows to ErrTenantNotFound with the create command", func() {
+		It("Get maps no rows to ErrTenantNotFound with the create and unhide commands", func() {
 			_, err := newAdmin(db.ExportNewScriptedRowPool(sql.ErrNoRows)).Get(ctx, "acme")
 
 			Expect(err).To(MatchError(db.ErrTenantNotFound))
 			Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant create"))
+			Expect(err.Error()).To(ContainSubstring("hidden"))
+			Expect(err.Error()).To(ContainSubstring("crosscodexd admin identity trace"))
+			Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant unhide"))
 		})
 	})
 

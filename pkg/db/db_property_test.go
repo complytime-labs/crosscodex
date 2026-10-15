@@ -52,11 +52,30 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 		})
 	})
+	Context("ValidatePseudonym", func() {
+		It("accepts every well-formed pseudonym and refuses it with any uppercase letter", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				kind := rapid.SampledFrom([]string{db.IdentityKindTenant, db.IdentityKindReviewer}).Draw(t, "kind")
+				p := "hidden-" + kind + "-" + rapid.StringMatching(`[0-9a-f]{16}`).Draw(t, "hex")
+				if err := db.ValidatePseudonym(p); err != nil {
+					t.Fatalf("well-formed pseudonym %q refused: %v", p, err)
+				}
+				i := rapid.IntRange(0, len(p)-1).Draw(t, "index")
+				upper := rapid.ByteRange('A', 'Z').Draw(t, "upper")
+				mutated := p[:i] + string(upper) + p[i+1:]
+				if db.ValidatePseudonym(mutated) == nil {
+					t.Fatalf("pseudonym with uppercase %q at %d accepted: %q", upper, i, mutated)
+				}
+			})
+		})
+	})
+
 	Context("TenantAdmin ID pre-validation", func() {
 		It("sends an ID to the database exactly when pkg/tenant accepts it", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				id := rapid.OneOf(
 					rapid.StringMatching(`[a-z][a-z0-9-]{1,50}[a-z0-9]`),
+					rapid.StringMatching(`hidden-[a-z0-9-]{0,40}[a-z0-9]`),
 					rapid.String(),
 				).Draw(t, "id")
 				pool, calls := db.ExportNewFailingPool()
@@ -65,7 +84,8 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					t.Fatalf("new TenantAdmin: %v", err)
 				}
 				_, err = admin.Provision(context.Background(), id, "Name")
-				if tenant.ValidateTenantID(id) == nil {
+				// IDs starting with "hidden-" are reserved for pseudonyms (#195).
+				if tenant.ValidateTenantID(id) == nil && !strings.HasPrefix(id, "hidden-") {
 					if !errors.Is(err, db.ErrExportPoolUsed) || calls() != 1 {
 						t.Fatalf("valid ID %q: want one query, got %d calls, err %v", id, calls(), err)
 					}

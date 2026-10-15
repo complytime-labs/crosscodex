@@ -78,35 +78,6 @@ func FuzzParseSameAsResponse(f *testing.F) {
 	})
 }
 
-func FuzzValidateReviewer(f *testing.F) {
-	for _, s := range []string{
-		"alice@example.com",      // valid
-		"",                       // boundary: empty
-		strings.Repeat("a", 256), // boundary: at the cap
-		strings.Repeat("a", 257), // boundary: past the cap
-		"a\x1b[2J",               // attack: terminal escape
-		"a\u202eb",               // attack: bidi override
-		"a\u2028b",               // attack: line separator
-		" alice",                 // boundary: leading space
-		"\xff",                   // invalid UTF-8
-	} {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, id string) {
-		if artifacts.ValidateReviewer(id) != nil {
-			return
-		}
-		if !utf8.ValidString(id) || len(id) > 256 || id == "" || strings.TrimSpace(id) != id {
-			t.Fatalf("accepted %q", id)
-		}
-		for _, r := range id {
-			if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
-				t.Fatalf("accepted %q with %U", id, r)
-			}
-		}
-	})
-}
-
 func FuzzValidateSearchName(f *testing.F) {
 	for _, s := range []string{
 		"access policy", // valid

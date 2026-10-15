@@ -42,9 +42,9 @@ const showWrapWidth = 100
 // cell sanitizes one untrusted value for a single table cell or line.
 func cell(s string) string { return artifacts.CleanDisplay(s, reviewCellBytes) }
 
-// maxReviewerDisplayBytes caps the reviewer echoed by decide; ValidateReviewer
-// already bounds it to the same length.
-const maxReviewerDisplayBytes = 256
+// maxReviewerDisplayBytes caps the reviewer echoed by decide;
+// ValidateReviewerID already bounds it to the same length.
+const maxReviewerDisplayBytes = dbpkg.MaxReviewerBytes
 
 // openHumanVerdictsFn opens the app pool and graph and returns humanVerdicts
 // over them plus the func that closes them. A package var so flag parsing and
@@ -188,7 +188,7 @@ func decideArtifactsCmd(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s: --reviewer is required: pass the ID of the person recording this verdict; it is stored as determined_by\n", cmd)
 		return 2
 	}
-	if err := artifacts.ValidateReviewer(*reviewer); err != nil {
+	if err := dbpkg.ValidateReviewerID(*reviewer); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: --reviewer: %v\n", cmd, err)
 		return 2
 	}

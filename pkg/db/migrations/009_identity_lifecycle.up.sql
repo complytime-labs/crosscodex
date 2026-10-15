@@ -37,7 +37,7 @@ END $$;
 
 -- Every reviewer of an existing human verdict is registered in reviewers
 -- below, so each one must satisfy the reviewers ID constraints
--- (reviewers_id_format, which mirrors artifacts.ValidateReviewer, and
+-- (reviewers_id_format, which mirrors db.ValidateReviewerID, and
 -- reviewers_id_not_reserved). Checked first for the same reason as tenants.
 -- The message lists at most 20 IDs, each cut to 64 characters with control
 -- characters shown as \uXXXX, so it stays bounded and printable.
@@ -498,7 +498,7 @@ GRANT EXECUTE ON FUNCTION public.enter_tenant(text) TO app_user, graph_user;
 -- determined_by on a human verdict holds reviewer_id. Rows are soft-deleted
 -- and hidden like tenants. app_user reads it to show a hidden reviewer's
 -- pseudonym; every change goes through the tenant_admin functions below.
--- reviewers_id_format mirrors artifacts.ValidateReviewer (maxReviewerBytes
+-- reviewers_id_format mirrors db.ValidateReviewerID (MaxReviewerBytes
 -- = 256); Go stays the boundary check that also refuses format characters.
 CREATE TABLE public.reviewers (
     tenant_id   text NOT NULL REFERENCES public.tenants (tenant_id) ON DELETE RESTRICT,

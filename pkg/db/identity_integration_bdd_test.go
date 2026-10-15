@@ -7,11 +7,12 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"regexp"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -125,31 +126,26 @@ var _ = Describe("Judgements are never deleted", Ordered, func() {
 	})
 })
 
-// identityRequest is the canonical request an operator signs. Field order is
-// fixed by the struct, so the bytes are deterministic.
-type identityRequest struct {
-	Action      string `json:"action"`
-	Kind        string `json:"kind"`
-	TenantID    string `json:"tenant_id"`
-	IdentityID  string `json:"identity_id"`
-	Actor       string `json:"actor"`
-	Reason      string `json:"reason"`
-	RequestedAt string `json:"requested_at"`
-}
-
-// signed returns canonical request bytes and a link envelope whose single
-// material digest is sha256(request).
+// signed returns canonical request bytes, built by db.IdentityRequest so
+// the database's request binding is tested against the Go encoding, and a
+// link envelope whose single material digest is sha256(request).
 func signed(gen attestation.Generator, action, kind, tenantID, identity, actor, reason string) (req, env []byte) {
-	req, err := json.Marshal(identityRequest{
+	req, err := db.IdentityRequest{
 		Action: action, Kind: kind, TenantID: tenantID, IdentityID: identity,
-		Actor: actor, Reason: reason, RequestedAt: "2026-10-14T00:00:00Z",
-	})
+		Actor: actor, Reason: reason, RequestedAt: time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC),
+	}.Canonical()
 	Expect(err).NotTo(HaveOccurred())
 	sum := sha256.Sum256(req)
 	link, err := gen.CreateLink(context.Background(), "identity."+action,
 		[]attestation.Artifact{{URI: "crosscodex:identity-request", Digest: hex.EncodeToString(sum[:])}}, nil)
 	Expect(err).NotTo(HaveOccurred())
 	return req, link.Raw
+}
+
+// signedRequest is signed as a db.SignedRequest.
+func signedRequest(gen attestation.Generator, action, kind, tenantID, identity, actor, reason string) db.SignedRequest {
+	req, env := signed(gen, action, kind, tenantID, identity, actor, reason)
+	return db.SignedRequest{Request: req, Attestation: env}
 }
 
 // eventCount counts tenant id's identity_events rows, read as the superuser.
@@ -1378,5 +1374,222 @@ var _ = Describe("Reviewer registry", Ordered, func() {
 		},
 		Entry(nil, "DELETE FROM reviewers WHERE tenant_id = '"+tenantID+"'"),
 		Entry(nil, "TRUNCATE reviewers"),
+	)
+})
+
+// TenantAdmin's identity methods (#195) are the Go API the CLI calls. These
+// specs run them as tenant_admin against migration 009, signing each request
+// with an ephemeral key, and check that every refusal maps to its sentinel
+// and leaves the rows and the audit log unchanged.
+var _ = Describe("TenantAdmin identity API", Ordered, func() {
+	const (
+		tenantID = "idl-go"
+		unknown  = "idl-go-nobody"
+		rita     = "rita@example.invalid"
+		nobody   = "nobody@example.invalid"
+		actor    = "ops@example.invalid"
+		reason   = "identity API round trip"
+	)
+	ctx := context.Background()
+	var (
+		gen   attestation.Generator
+		admin *db.TenantAdmin
+	)
+	sign := func(action, kind, tenant, identity string) db.SignedRequest {
+		return signedRequest(gen, action, kind, tenant, identity, actor, reason)
+	}
+	// snapshot is the tenant's row, its reviewers and its identity_events
+	// count, read as the superuser so RLS hides nothing.
+	snapshot := func(id string) string {
+		var row string
+		Expect(suPool.QueryRow(ctx, `SELECT coalesce((SELECT row_to_json(t)::text FROM tenants t WHERE tenant_id = $1), '')
+			|| coalesce((SELECT json_agg(r ORDER BY reviewer_id)::text FROM reviewers r WHERE tenant_id = $1), '')`, id).
+			Scan(&row)).To(Succeed())
+		return fmt.Sprintf("%s events=%d", row, eventCount(id))
+	}
+	totalEvents := func() int {
+		var n int
+		Expect(suPool.QueryRow(ctx, "SELECT count(*) FROM identity_events").Scan(&n)).To(Succeed())
+		return n
+	}
+	// expectRefusedUnchanged asserts the sentinel, an actionable message and
+	// that nothing changed, the audit log included.
+	expectRefusedUnchanged := func(call func() error, sentinel error, msg string) {
+		before, events := snapshot(tenantID), totalEvents()
+		err := call()
+		Expect(err).To(HaveOccurred())
+		if sentinel != nil {
+			Expect(errors.Is(err, sentinel)).To(BeTrue(), "want %v, got %v", sentinel, err)
+		}
+		Expect(err.Error()).To(ContainSubstring(msg))
+		Expect(snapshot(tenantID)).To(Equal(before))
+		Expect(totalEvents()).To(Equal(events))
+	}
+
+	BeforeAll(func() {
+		if suPool == nil {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+		kp, err := attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		gen, err = attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+		admin, err = db.OpenTenantAdmin(tenantAdminDSN())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(admin.Close)
+		setupTenant(tenantID, "Identity API")
+	})
+
+	AfterAll(func() {
+		if suPool != nil {
+			stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(suPool.Exec(ctx, stmt)).To(Succeed())
+		}
+	})
+
+	It("adds, deletes, hides, traces, unhides and restores a reviewer", func() {
+		created, err := admin.AddReviewer(ctx, tenantID, rita, actor, reason, sign("add", db.IdentityKindReviewer, tenantID, rita))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeTrue())
+		created, err = admin.AddReviewer(ctx, tenantID, rita, actor, reason, sign("add", db.IdentityKindReviewer, tenantID, rita))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(created).To(BeFalse())
+
+		Expect(admin.DeleteReviewer(ctx, tenantID, rita, actor, reason, sign("delete", db.IdentityKindReviewer, tenantID, rita))).To(Succeed())
+		pseudonym, err := admin.HideReviewer(ctx, tenantID, rita, actor, reason, sign("hide", db.IdentityKindReviewer, tenantID, rita))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(db.ValidatePseudonym(pseudonym)).To(Succeed())
+		Expect(pseudonym).To(HavePrefix("hidden-reviewer-"))
+
+		list, err := admin.ListReviewers(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list).To(HaveLen(1))
+		Expect(list[0].ID).To(Equal(pseudonym))
+		Expect(list[0].Status).To(Equal("deleted"))
+		Expect(list[0].Hidden).To(BeTrue())
+		Expect(list[0].DeletedAt).NotTo(BeNil())
+		Expect(list[0].CreatedBy).To(Equal(actor))
+		Expect(list[0].CreatedAt).NotTo(BeZero())
+
+		traced, err := admin.Trace(ctx, pseudonym, actor, reason, sign("trace", "", "", pseudonym))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(traced).To(Equal(db.TraceResult{Kind: db.IdentityKindReviewer, TenantID: tenantID, IdentityID: rita,
+			Status: "deleted", Hidden: true}))
+
+		Expect(admin.UnhideReviewer(ctx, tenantID, rita, actor, reason, sign("unhide", db.IdentityKindReviewer, tenantID, rita))).To(Succeed())
+		Expect(admin.RestoreReviewer(ctx, tenantID, rita, actor, reason, sign("restore", db.IdentityKindReviewer, tenantID, rita))).To(Succeed())
+		list, err = admin.ListReviewers(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list).To(ConsistOf(SatisfyAll(
+			HaveField("ID", rita), HaveField("Status", "active"),
+			HaveField("Hidden", false), HaveField("DeletedAt", BeNil()))))
+	})
+
+	It("deletes, hides, traces, unhides and restores a tenant", func() {
+		Expect(admin.DeleteTenant(ctx, tenantID, actor, reason, sign("delete", db.IdentityKindTenant, tenantID, tenantID))).To(Succeed())
+		rec, err := admin.Get(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec.Status).To(Equal(db.TenantStatusDeleted))
+		Expect(rec.DeletedAt).NotTo(BeNil())
+		Expect(rec.Hidden).To(BeFalse())
+
+		pseudonym, err := admin.HideTenant(ctx, tenantID, actor, reason, sign("hide", db.IdentityKindTenant, tenantID, tenantID))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pseudonym).To(HavePrefix("hidden-tenant-"))
+		Expect(db.ValidatePseudonym(pseudonym)).To(Succeed())
+
+		_, err = admin.Get(ctx, tenantID)
+		Expect(err).To(MatchError(db.ErrTenantNotFound))
+		Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant unhide"))
+		list, err := admin.List(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list).NotTo(ContainElement(HaveField("ID", tenantID)))
+		Expect(list).To(ContainElement(SatisfyAll(
+			HaveField("ID", pseudonym), HaveField("DisplayName", ""),
+			HaveField("Status", db.TenantStatusDeleted), HaveField("Hidden", true),
+			HaveField("DeletedAt", Not(BeNil())))))
+
+		traced, err := admin.Trace(ctx, pseudonym, actor, reason, sign("trace", "", "", pseudonym))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(traced).To(Equal(db.TraceResult{Kind: db.IdentityKindTenant, TenantID: tenantID, IdentityID: tenantID,
+			Status: db.TenantStatusDeleted, Hidden: true}))
+
+		Expect(admin.UnhideTenant(ctx, tenantID, actor, reason, sign("unhide", db.IdentityKindTenant, tenantID, tenantID))).To(Succeed())
+		Expect(admin.RestoreTenant(ctx, tenantID, actor, reason, sign("restore", db.IdentityKindTenant, tenantID, tenantID))).To(Succeed())
+		rec, err = admin.Get(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rec).To(SatisfyAll(
+			HaveField("ID", tenantID), HaveField("DisplayName", "Identity API"),
+			HaveField("Status", db.TenantStatusSuspended), HaveField("Hidden", false), HaveField("DeletedAt", BeNil())))
+
+		// A restored tenant comes back suspended, so it is re-activated deliberately.
+		previous, err := admin.SetStatus(ctx, tenantID, db.TenantStatusActive)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(previous).To(Equal(db.TenantStatusSuspended))
+	})
+
+	It("records one event per change and trace, in order", func() {
+		rows, err := suPool.Query(ctx, "SELECT action, kind FROM identity_events WHERE tenant_id = $1 ORDER BY event_id", tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		defer rows.Close()
+		var got []string
+		for rows.Next() {
+			var action, kind string
+			Expect(rows.Scan(&action, &kind)).To(Succeed())
+			got = append(got, kind+" "+action)
+		}
+		Expect(rows.Err()).NotTo(HaveOccurred())
+		// The second add of an active reviewer changes nothing but is still recorded.
+		Expect(got).To(Equal([]string{
+			"reviewer add", "reviewer add", "reviewer delete", "reviewer hide", "reviewer trace",
+			"reviewer unhide", "reviewer restore",
+			"tenant delete", "tenant hide", "tenant trace", "tenant unhide", "tenant restore",
+		}))
+	})
+
+	DescribeTable("refuses with the sentinel, an actionable message and nothing changed",
+		func(call func() error, sentinel error, msg string) { expectRefusedUnchanged(call, sentinel, msg) },
+		Entry("delete an unknown tenant", func() error {
+			return admin.DeleteTenant(ctx, unknown, actor, reason, sign("delete", db.IdentityKindTenant, unknown, unknown))
+		}, db.ErrTenantNotFound, "crosscodexd admin tenant list"),
+		Entry("hide an active tenant", func() error {
+			_, err := admin.HideTenant(ctx, tenantID, actor, reason, sign("hide", db.IdentityKindTenant, tenantID, tenantID))
+			return err
+		}, db.ErrIdentityState, "crosscodexd admin tenant delete"),
+		Entry("restore an active tenant", func() error {
+			return admin.RestoreTenant(ctx, tenantID, actor, reason, sign("restore", db.IdentityKindTenant, tenantID, tenantID))
+		}, db.ErrIdentityState, "is not deleted"),
+		Entry("unhide a shown tenant", func() error {
+			return admin.UnhideTenant(ctx, tenantID, actor, reason, sign("unhide", db.IdentityKindTenant, tenantID, tenantID))
+		}, db.ErrIdentityState, "is not hidden"),
+		Entry("add a reviewer to an unknown tenant", func() error {
+			_, err := admin.AddReviewer(ctx, unknown, rita, actor, reason, sign("add", db.IdentityKindReviewer, unknown, rita))
+			return err
+		}, db.ErrTenantNotFound, "does not exist"),
+		Entry("delete an unregistered reviewer", func() error {
+			return admin.DeleteReviewer(ctx, tenantID, nobody, actor, reason, sign("delete", db.IdentityKindReviewer, tenantID, nobody))
+		}, db.ErrReviewerNotFound, "crosscodexd admin reviewer add"),
+		Entry("hide an active reviewer", func() error {
+			_, err := admin.HideReviewer(ctx, tenantID, rita, actor, reason, sign("hide", db.IdentityKindReviewer, tenantID, rita))
+			return err
+		}, db.ErrIdentityState, "crosscodexd admin reviewer delete"),
+		Entry("trace an unknown pseudonym", func() error {
+			p := "hidden-tenant-0000000000000000"
+			_, err := admin.Trace(ctx, p, actor, reason, sign("trace", "", "", p))
+			return err
+		}, db.ErrPseudonymNotFound, "Check the pseudonym"),
+		Entry("replay a request signed for another tenant", func() error {
+			return admin.DeleteTenant(ctx, tenantID, actor, reason, sign("delete", db.IdentityKindTenant, unknown, unknown))
+		}, nil, "Sign a new request for this change"),
+		Entry("add a reserved reviewer ID", func() error {
+			r := "hidden-reviewer-0123456789abcdef"
+			_, err := admin.AddReviewer(ctx, tenantID, r, actor, reason, sign("add", db.IdentityKindReviewer, tenantID, r))
+			return err
+		}, nil, "Choose another ID"),
+		Entry("provision a reserved tenant ID", func() error {
+			_, err := admin.Provision(ctx, "hidden-tenant-0123456789abcdef", "Reserved")
+			return err
+		}, tenant.ErrInvalidTenant, "choose another ID"),
 	)
 })
