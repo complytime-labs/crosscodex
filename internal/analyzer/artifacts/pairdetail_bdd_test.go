@@ -108,9 +108,16 @@ var _ = Describe("PanelEvidence.Split", func() {
 var _ = Describe("PairChangedError", func() {
 	It("matches ErrPairChanged and states the pair's current verdict", func() {
 		err := error(&artifacts.PairChangedError{Ref: "0123456789abcdef", Status: artifacts.VerdictRejected,
-			DeterminationType: "human", DeterminedBy: "bob", DecidedAt: time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)})
+			DeterminationType: "human", DeterminedBy: "bob", DisplayBy: "bob", DecidedAt: time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)})
 		Expect(errors.Is(err, artifacts.ErrPairChanged)).To(BeTrue())
 		Expect(err.Error()).To(Equal(`decide human 0123456789abcdef: pair changed since it was viewed: it is now rejected by "bob" (human), decided 2026-10-02T09:00:00Z; view the pair again and decide from its current EXPECT token`))
+	})
+
+	It("names a hidden reviewer only by their pseudonym, since the message reaches spans and logs", func() {
+		err := &artifacts.PairChangedError{Ref: "0123456789abcdef", Status: artifacts.VerdictRejected,
+			DeterminationType: "human", DeterminedBy: "bob", DisplayBy: "hidden-reviewer-0123456789abcdef"}
+		Expect(err.Error()).To(ContainSubstring(`it is now rejected by "hidden-reviewer-0123456789abcdef" (human)`))
+		Expect(err.Error()).NotTo(ContainSubstring("bob"))
 	})
 
 	It("says never for a pair no one has decided", func() {

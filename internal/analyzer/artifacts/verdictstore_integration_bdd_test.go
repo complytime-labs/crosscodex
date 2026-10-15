@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -84,6 +85,11 @@ func setupVerdictStore() verdictStoreEnv {
 			Expect(su.Exec(ctx, stmt)).To(Succeed())
 		}
 	})
+	// DecideHuman refuses reviewers without an active reviewers row, so the
+	// reviewers the specs decide as are registered in tenant A.
+	for _, id := range []string{"alice", "bob", "carol", "dave"} {
+		env.addReviewer(env.tenantA, id)
+	}
 	env.ctxA, err = tenant.WithTenant(ctx, env.tenantA)
 	Expect(err).NotTo(HaveOccurred())
 	env.ctxB, err = tenant.WithTenant(ctx, env.tenantB)
@@ -105,6 +111,34 @@ type storedVerdict struct {
 	graphApplied                        bool
 	dissent                             []byte
 	claimedUntil                        sql.NullTime
+}
+
+// addReviewer registers an active reviewer as the superuser, as 'crosscodexd
+// admin reviewer add' would without its identity event.
+func (e verdictStoreEnv) addReviewer(tenantID, id string) {
+	Expect(e.su.Exec(context.Background(), `INSERT INTO reviewers (tenant_id, reviewer_id, created_by) VALUES ($1, $2, 'test')`,
+		tenantID, id)).To(Succeed())
+}
+
+// deleteReviewer soft-deletes a reviewer as the superuser.
+func (e verdictStoreEnv) deleteReviewer(tenantID, id string) {
+	Expect(e.su.Exec(context.Background(), `UPDATE reviewers SET status = 'deleted', deleted_at = now(), deleted_by = 'test'
+		WHERE tenant_id = $1 AND reviewer_id = $2`, tenantID, id)).To(Succeed())
+}
+
+// hideReviewer hides a deleted reviewer behind pseudonym as the superuser.
+func (e verdictStoreEnv) hideReviewer(tenantID, id, pseudonym string) {
+	Expect(e.su.Exec(context.Background(), `UPDATE reviewers SET pseudonym = $3, hidden_at = now()
+		WHERE tenant_id = $1 AND reviewer_id = $2`, tenantID, id, pseudonym)).To(Succeed())
+}
+
+// rowJSON reads a whole row as the superuser, so a spec can check that a
+// refusal changed nothing at all.
+func (e verdictStoreEnv) rowJSON(tenantID, key string) string {
+	var s string
+	Expect(e.su.QueryRow(context.Background(), `SELECT to_jsonb(v)::text FROM artifact_pair_verdicts v
+		WHERE tenant_id = $1 AND pair_key = $2`, tenantID, key).Scan(&s)).To(Succeed())
+	return s
 }
 
 // stored reads a row as the superuser, bypassing RLS.
@@ -925,6 +959,109 @@ var _ = Describe("PGVerdictStore", func() {
 			_, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice\u202e"))
 			Expect(err).To(MatchError(ContainSubstring("control, format or line-separator")))
 			Expect(env.stored(env.tenantA, keyOf(c))).To(Equal(before))
+		})
+
+		Describe("reviewer gate", func() {
+			const pseudonym = "hidden-reviewer-0123456789abcdef"
+
+			DescribeTable("refuses a reviewer who cannot decide and leaves the row unchanged",
+				func(setup func(), reviewer string, sentinel error, advice string, namesReviewer bool) {
+					setup()
+					c := verdictCandidate(1)
+					enqueue(c)
+					before := env.rowJSON(env.tenantA, keyOf(c))
+					_, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)), human(reviewer))
+					Expect(err).To(MatchError(sentinel))
+					Expect(err.Error()).To(ContainSubstring("nothing was recorded"))
+					if namesReviewer {
+						Expect(err.Error()).To(ContainSubstring(advice + " --tenant " + env.tenantA + " --reviewer " + reviewer))
+					} else {
+						// A deleted reviewer may be hidden, and the message reaches span status.
+						Expect(err.Error()).To(ContainSubstring(advice + " --tenant " + env.tenantA + " --reviewer <reviewer>"))
+						Expect(err.Error()).To(ContainSubstring("crosscodexd admin reviewer unhide --tenant " + env.tenantA + " --reviewer <reviewer>"))
+						Expect(err.Error()).NotTo(ContainSubstring(reviewer))
+					}
+					Expect(env.rowJSON(env.tenantA, keyOf(c))).To(Equal(before))
+				},
+				Entry("an unregistered reviewer", func() {}, "erin", artifacts.ErrReviewerNotRegistered,
+					"crosscodexd admin reviewer add", true),
+				Entry("a reviewer registered only in another tenant", func() { env.addReviewer(env.tenantB, "erin") }, "erin",
+					artifacts.ErrReviewerNotRegistered, "crosscodexd admin reviewer add", true),
+				Entry("a deleted reviewer", func() { env.deleteReviewer(env.tenantA, "alice") }, "alice",
+					artifacts.ErrReviewerDeleted, "crosscodexd admin reviewer restore", false),
+				Entry("a deleted and hidden reviewer", func() {
+					env.deleteReviewer(env.tenantA, "alice")
+					env.hideReviewer(env.tenantA, "alice", pseudonym)
+				}, "alice", artifacts.ErrReviewerDeleted, "crosscodexd admin reviewer restore", false),
+			)
+
+			It("records the verdict of an active reviewer", func() {
+				c := verdictCandidate(1)
+				enqueue(c)
+				d, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(d.Outcome).To(Equal(artifacts.HumanApplied))
+				Expect(env.stored(env.tenantA, keyOf(c)).determinedBy).To(Equal("alice"))
+			})
+
+			It("shows a hidden reviewer by pseudonym without changing the expect token", func() {
+				c := verdictCandidate(1)
+				enqueue(c)
+				_, err := decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice"))
+				Expect(err).NotTo(HaveOccurred())
+				shown, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 1)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(shown.DisplayBy).To(Equal("alice"))
+
+				env.deleteReviewer(env.tenantA, "alice")
+				deleted, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 1)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(deleted.DisplayBy).To(Equal("alice"), "a deleted reviewer is shown by ID until hidden")
+
+				env.hideReviewer(env.tenantA, "alice", pseudonym)
+				hidden, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 1)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(hidden.DeterminedBy).To(Equal("alice"))
+				Expect(hidden.DisplayBy).To(Equal(pseudonym))
+				Expect(hidden.Expect).To(Equal(shown.Expect), "hiding a reviewer must not invalidate tokens")
+			})
+
+			It("shows a panel verdict by its determined_by even when a hidden reviewer has that ID", func() {
+				c := verdictCandidate(1)
+				enqueue(c)
+				_, err := env.store.Decide(env.ctxA, env.tenantA, keyOf(c),
+					artifacts.Verdict{Status: artifacts.VerdictConfirmed, Confidence: 1, Evidence: ev, DecidedAt: t0})
+				Expect(err).NotTo(HaveOccurred())
+				env.addReviewer(env.tenantA, "artifact-adjudicator")
+				env.deleteReviewer(env.tenantA, "artifact-adjudicator")
+				env.hideReviewer(env.tenantA, "artifact-adjudicator", pseudonym)
+				d, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 1)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(d.DisplayBy).To(Equal("artifact-adjudicator"))
+			})
+
+			It("names a hidden reviewer only by pseudonym when refusing a stale token", func() {
+				c := verdictCandidate(1)
+				enqueue(c)
+				stale, err := env.store.PairDetail(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), 1)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = decideCurrent(env.ctxA, env.store, env.tenantA, artifacts.PairRef(keyOf(c)), human("alice"))
+				Expect(err).NotTo(HaveOccurred())
+				env.deleteReviewer(env.tenantA, "alice")
+				env.hideReviewer(env.tenantA, "alice", pseudonym)
+				before := env.rowJSON(env.tenantA, keyOf(c))
+
+				h := human("bob")
+				h.Status, h.Expect = artifacts.VerdictRejected, stale.Expect
+				_, err = env.store.DecideHuman(env.ctxA, env.tenantA, artifacts.PairRef(keyOf(c)), h)
+				var changed *artifacts.PairChangedError
+				Expect(errors.As(err, &changed)).To(BeTrue(), "want *PairChangedError, got %v", err)
+				Expect(changed.DeterminedBy).To(Equal("alice"))
+				Expect(changed.DisplayBy).To(Equal(pseudonym))
+				Expect(err.Error()).To(ContainSubstring(pseudonym))
+				Expect(err.Error()).NotTo(ContainSubstring("alice"))
+				Expect(env.rowJSON(env.tenantA, keyOf(c))).To(Equal(before))
+			})
 		})
 
 		It("keeps panel evidence it cannot decode, so old evidence never blocks a human verdict", func() {

@@ -55,6 +55,10 @@ var (
 	ErrPairNotFound = errors.New("no pair of this tenant has this ref")
 	// ErrPairRefAmbiguous: more than one pair of the tenant shares the ref.
 	ErrPairRefAmbiguous = errors.New("more than one pair has this ref")
+	// ErrReviewerNotRegistered: the reviewer has no reviewers row for the tenant.
+	ErrReviewerNotRegistered = errors.New("reviewer is not registered for this tenant")
+	// ErrReviewerDeleted: the reviewer was soft-deleted.
+	ErrReviewerDeleted = errors.New("reviewer was deleted")
 )
 
 // PairRef returns the short, opaque handle operators use for a pair: the
@@ -362,7 +366,10 @@ type VerdictStore interface {
 	// moves to dissent. Its projection claim is kept, and reported in
 	// ClaimedUntil when it is live at h.DecidedAt. Returns ErrPairNotFound or
 	// ErrPairRefAmbiguous (wrapped) when ref resolves to no pair or to
-	// several.
+	// several. h.Reviewer must be registered and not deleted for the tenant:
+	// otherwise DecideHuman changes nothing and returns
+	// ErrReviewerNotRegistered or ErrReviewerDeleted (wrapped). The reviewer
+	// cannot be deleted while the verdict is being recorded.
 	//
 	// h.Expect must be the Expect PairDetail returned for the pair. When the
 	// pair no longer holds that state, DecideHuman changes nothing and returns

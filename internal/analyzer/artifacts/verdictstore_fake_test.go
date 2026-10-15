@@ -18,7 +18,10 @@ import (
 // semantics as PGVerdictStore, including microsecond timestamps. Tests
 // inspect rows with row and set them up with set and setHuman; err injects a
 // failure per method name. enqueued records the candidates of every Enqueue
-// call.
+// call. It has no reviewer registry: DecideHuman accepts every valid
+// reviewer and DisplayBy is always determined_by. The reviewer gate and
+// pseudonyms are specified against PostgreSQL in
+// verdictstore_integration_bdd_test.go.
 type fakeVerdictStore struct {
 	mu       sync.Mutex
 	rows     map[string]*fakeVerdictRow // fakeRowID(tenant, key)
@@ -211,7 +214,7 @@ func (s *fakeVerdictStore) DecideHuman(ctx context.Context, tenantID, ref string
 	unchanged := r.determination == artifacts.DeterminationHuman && r.status == h.Status && !r.disputed()
 	if !unchanged && artifacts.ExportPairStateToken(r.state()) != h.Expect {
 		return artifacts.HumanDecision{}, &artifacts.PairChangedError{Ref: ref, Status: r.status,
-			DeterminationType: r.determination, DeterminedBy: r.determinedBy, DecidedAt: r.decidedAt}
+			DeterminationType: r.determination, DeterminedBy: r.determinedBy, DisplayBy: r.determinedBy, DecidedAt: r.decidedAt}
 	}
 	d := artifacts.HumanDecision{Outcome: artifacts.HumanApplied, Key: r.key}
 	if r.claimedUntil.After(h.DecidedAt) {
@@ -311,7 +314,7 @@ func (s *fakeVerdictStore) PairDetail(ctx context.Context, tenantID, ref string,
 	if err != nil {
 		return artifacts.PairDetail{}, err
 	}
-	d := artifacts.PairDetail{ReviewItem: r.reviewItem(), DeterminedBy: r.determinedBy, DecidedAt: r.decidedAt,
+	d := artifacts.PairDetail{ReviewItem: r.reviewItem(), DeterminedBy: r.determinedBy, DisplayBy: r.determinedBy, DecidedAt: r.decidedAt,
 		LastError: r.lastError, Disputed: r.disputed(), Expect: artifacts.ExportPairStateToken(r.state())}
 	if r.determination != artifacts.DeterminationTokenOverlap {
 		c := r.confidence

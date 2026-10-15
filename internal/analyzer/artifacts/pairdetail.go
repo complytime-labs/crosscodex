@@ -18,13 +18,14 @@ const expectLen = 16
 var ErrPairChanged = errors.New("pair changed since it was viewed")
 
 // PairChangedError is DecideHuman's refusal of a stale expect token. It
-// describes the pair as it is now. DeterminedBy is stored, untrusted text:
-// sanitize it before display.
+// describes the pair as it is now. DeterminedBy and DisplayBy are stored,
+// untrusted text: sanitize them before display, and show DisplayBy.
 type PairChangedError struct {
 	Ref               string
 	Status            VerdictStatus
 	DeterminationType string
 	DeterminedBy      string
+	DisplayBy         string    // DeterminedBy, or its pseudonym when the reviewer is hidden
 	DecidedAt         time.Time // zero: not decided
 }
 
@@ -34,7 +35,7 @@ func (e *PairChangedError) Error() string {
 		at = e.DecidedAt.UTC().Format(time.RFC3339Nano)
 	}
 	return fmt.Sprintf("decide human %s: %v: it is now %s by %q (%s), decided %s; view the pair again and decide from its current EXPECT token",
-		e.Ref, ErrPairChanged, e.Status, e.DeterminedBy, e.DeterminationType, at)
+		e.Ref, ErrPairChanged, e.Status, e.DisplayBy, e.DeterminationType, at)
 }
 
 // Is makes errors.Is(err, ErrPairChanged) match.
@@ -90,6 +91,7 @@ type RelatedPair struct {
 type PairDetail struct {
 	ReviewItem
 	DeterminedBy string
+	DisplayBy    string    // DeterminedBy, or its pseudonym when the reviewer is hidden
 	Confidence   *float64  // nil: not decided
 	DecidedAt    time.Time // zero: not decided
 	LastError    string

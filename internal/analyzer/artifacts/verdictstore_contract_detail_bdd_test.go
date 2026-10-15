@@ -145,6 +145,7 @@ func reviewDetailContract(newEnv func() verdictStoreContractEnv) {
 				Expect(d.Status).To(Equal(s))
 				Expect(d.DeterminationType).To(Equal(artifacts.DeterminationLLMPanel))
 				Expect(d.DeterminedBy).To(Equal("artifact-adjudicator"))
+				Expect(d.DisplayBy).To(Equal("artifact-adjudicator"))
 				Expect(d.Confidence).To(HaveValue(Equal(0.5)))
 				Expect(d.DecidedAt).To(BeTemporally("==", t0))
 				Expect(d.Evidence).To(HaveValue(Equal(panelEv)))
@@ -176,6 +177,7 @@ func reviewDetailContract(newEnv func() verdictStoreContractEnv) {
 			Expect(d.Status).To(Equal(artifacts.VerdictRejected))
 			Expect(d.DeterminationType).To(Equal(artifacts.DeterminationHuman))
 			Expect(d.DeterminedBy).To(Equal("alice"))
+			Expect(d.DisplayBy).To(Equal("alice"), "a reviewer who is not hidden is shown by their ID")
 			Expect(d.Evidence).To(BeNil())
 			Expect(d.Votes).To(BeNil())
 			Expect(d.Disputed).To(BeFalse())
@@ -286,6 +288,7 @@ func reviewDetailContract(newEnv func() verdictStoreContractEnv) {
 			Expect(errors.As(err, &changed)).To(BeTrue())
 			Expect(changed.Status).To(Equal(now))
 			Expect(changed.DeterminedBy).To(Equal(by))
+			Expect(changed.DisplayBy).To(Equal(by), "a reviewer who is not hidden is shown by their ID")
 			Expect(err.Error()).To(ContainSubstring("it is now " + string(now)))
 		}
 
