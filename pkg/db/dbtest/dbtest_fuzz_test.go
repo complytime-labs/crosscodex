@@ -34,3 +34,24 @@ func FuzzAlterRolePasswordSQL(f *testing.F) {
 		}
 	})
 }
+
+func FuzzHardDeleteTenantSQL(f *testing.F) {
+	f.Add("acme")                  // valid
+	f.Add("")                      // empty
+	f.Add("a'b")                   // quote
+	f.Add(strings.Repeat("a", 60)) // too long
+	f.Add("a'; DROP TABLE tenants; --")
+
+	f.Fuzz(func(t *testing.T, id string) {
+		stmt, err := dbtest.HardDeleteTenantSQL(id)
+		if err != nil {
+			return
+		}
+		if strings.Trim(id, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+			t.Fatalf("accepted tenant ID %q outside [a-z0-9-]", id)
+		}
+		if !strings.Contains(stmt, "'"+id+"'") {
+			t.Fatalf("statement does not quote the accepted ID %q", id)
+		}
+	})
+}

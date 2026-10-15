@@ -50,7 +50,9 @@ var _ = Describe("backup_user role", Ordered, func() {
 		}
 		if suPool != nil {
 			for _, t := range tenants {
-				_ = suPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", t)
+				stmt, err := dbtest.HardDeleteTenantSQL(t)
+				Expect(err).NotTo(HaveOccurred())
+				_ = suPool.Exec(ctx, stmt)
 			}
 		}
 	})

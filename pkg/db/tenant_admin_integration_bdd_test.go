@@ -74,8 +74,21 @@ var _ = Describe("tenant_admin role and functions", Ordered, func() {
 			adminConn.Close()
 		}
 		if suPool != nil {
-			// The tenant_graph_drop trigger drops each tenant's graph.
-			_ = suPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id LIKE 'tadm-%'")
+			rows, err := suPool.Query(ctx, "SELECT tenant_id FROM tenants WHERE tenant_id LIKE 'tadm-%'")
+			Expect(err).NotTo(HaveOccurred())
+			var ids []string
+			for rows.Next() {
+				var id string
+				Expect(rows.Scan(&id)).To(Succeed())
+				ids = append(ids, id)
+			}
+			Expect(rows.Err()).NotTo(HaveOccurred())
+			Expect(rows.Close()).To(Succeed())
+			for _, id := range ids {
+				stmt, err := dbtest.HardDeleteTenantSQL(id)
+				Expect(err).NotTo(HaveOccurred())
+				_ = suPool.Exec(ctx, stmt)
+			}
 		}
 	})
 

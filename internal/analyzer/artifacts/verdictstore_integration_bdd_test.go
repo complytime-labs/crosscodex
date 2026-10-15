@@ -79,8 +79,9 @@ func setupVerdictStore() verdictStoreEnv {
 	}
 	DeferCleanup(func() {
 		for _, id := range []string{env.tenantA, env.tenantB} {
-			Expect(su.Exec(ctx, "DELETE FROM artifact_pair_verdicts WHERE tenant_id = $1", id)).To(Succeed())
-			Expect(su.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", id)).To(Succeed())
+			stmt, err := dbtest.HardDeleteTenantSQL(id)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(su.Exec(ctx, stmt)).To(Succeed())
 		}
 	})
 	env.ctxA, err = tenant.WithTenant(ctx, env.tenantA)

@@ -59,8 +59,9 @@ var _ = Describe("Retention Schema", Ordered, func() {
 		if suPool != nil {
 			ctx := context.Background()
 			for _, tenantID := range []string{"ret-block", "ret-purge"} {
-				_ = suPool.Exec(ctx, "DELETE FROM jobs WHERE tenant_id = $1", tenantID)
-				_ = suPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", tenantID)
+				stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
+				Expect(err).NotTo(HaveOccurred())
+				_ = suPool.Exec(ctx, stmt)
 			}
 		}
 	})

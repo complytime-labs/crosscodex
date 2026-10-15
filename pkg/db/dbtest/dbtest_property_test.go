@@ -30,4 +30,21 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 		})
 	})
+
+	It("HardDeleteTenantSQL accepts every well-formed tenant ID and quotes exactly that ID", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			id := rapid.StringMatching("^[a-z][a-z0-9-]{1,50}[a-z0-9]$").Draw(t, "id")
+
+			stmt, err := dbtest.HardDeleteTenantSQL(id)
+			if err != nil {
+				t.Fatalf("well-formed tenant ID %q refused: %v", id, err)
+			}
+			if !strings.Contains(stmt, "'"+id+"'") {
+				t.Fatalf("statement does not quote ID %q", id)
+			}
+			if got := strings.Count(stmt, "'crosscodex_"+id+"'"); got != 2 {
+				t.Fatalf("statement must quote the graph name for %q exactly twice, found %d", id, got)
+			}
+		})
+	})
 })

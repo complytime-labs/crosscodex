@@ -477,18 +477,9 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 				"ret-e2e-purge", "ret-e2e-hold", "ret-e2e-corrupt", "ret-e2e-iso-a",
 				"ret-e2e-children", "ret-e2e-catalog",
 			} {
-				// Delete FK children before the parent jobs/catalogs so a spec that
-				// leaked a row cannot block the tenant delete below.
-				for _, table := range []string{
-					"job_stages", "vote_summaries", "analysis_results", "relationship_candidates",
-					"requires_candidates",
-					"classifications", "embeddings", "controls",
-				} {
-					_ = engineSuPool.Exec(ctx, "DELETE FROM "+table+" WHERE tenant_id = $1", tenantID)
-				}
-				_ = engineSuPool.Exec(ctx, "DELETE FROM jobs WHERE tenant_id = $1", tenantID)
-				_ = engineSuPool.Exec(ctx, "DELETE FROM catalogs WHERE tenant_id = $1", tenantID)
-				_ = engineSuPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", tenantID)
+				stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
+				Expect(err).NotTo(HaveOccurred())
+				_ = engineSuPool.Exec(ctx, stmt)
 			}
 			engineSuPool.Close() //nolint:errcheck
 		}

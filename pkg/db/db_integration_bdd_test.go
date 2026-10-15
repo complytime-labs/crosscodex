@@ -786,8 +786,9 @@ var _ = Describe("Database Integration", Ordered, func() {
 		AfterEach(func() {
 			// Best-effort cleanup of tenants this suite may have created.
 			for _, id := range []string{"provision-test", "provision-a", "provision-b", "rogue"} {
-				_ = suPool.Exec(ctx, "DELETE FROM catalogs WHERE tenant_id = $1", id)
-				_ = suPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", id)
+				stmt, err := dbtest.HardDeleteTenantSQL(id)
+				Expect(err).NotTo(HaveOccurred())
+				_ = suPool.Exec(ctx, stmt)
 			}
 		})
 

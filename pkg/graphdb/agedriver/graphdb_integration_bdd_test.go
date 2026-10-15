@@ -139,8 +139,12 @@ func cleanupTenant(tenantID string) {
 	if _, err := suDB.ExecContext(ctx, "LOAD 'age'"); err != nil {
 		GinkgoWriter.Printf("cleanupTenant LOAD age: %v\n", err)
 	}
-	if _, err := suDB.ExecContext(ctx,
-		"DELETE FROM tenants WHERE tenant_id = $1", tenantID); err != nil {
+	stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
+	if err != nil {
+		GinkgoWriter.Printf("cleanupTenant(%q): %v\n", tenantID, err)
+		return
+	}
+	if _, err := suDB.ExecContext(ctx, stmt); err != nil {
 		GinkgoWriter.Printf("cleanupTenant(%q): %v\n", tenantID, err)
 	}
 }

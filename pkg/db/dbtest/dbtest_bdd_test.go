@@ -71,3 +71,24 @@ var _ = Describe("AlterRolePasswordSQL", func() {
 		Entry("odd-length hex", "abc"),
 	)
 })
+
+var _ = Describe("HardDeleteTenantSQL", func() {
+	It("quotes a valid tenant ID into every statement", func() {
+		stmt, err := dbtest.HardDeleteTenantSQL("acme-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stmt).To(ContainSubstring("session_replication_role = replica"))
+		Expect(stmt).To(ContainSubstring("'acme-1'"))
+		Expect(stmt).To(ContainSubstring("'crosscodex_acme-1'"))
+	})
+
+	DescribeTable("refuses an invalid tenant ID with an actionable message",
+		func(id string) {
+			stmt, err := dbtest.HardDeleteTenantSQL(id)
+			Expect(err).To(MatchError(ContainSubstring("tenant ID")))
+			Expect(stmt).To(BeEmpty())
+		},
+		Entry("empty", ""),
+		Entry("quote injection", "a'; DROP TABLE tenants; --"),
+		Entry("uppercase", "Acme"),
+	)
+})
