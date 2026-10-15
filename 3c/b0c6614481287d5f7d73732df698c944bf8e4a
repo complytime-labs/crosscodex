@@ -1,0 +1,19 @@
+pkg/db/migrations/009_identity_lifecycle.up.sql
+  s_34c7f65a88ab67::t_60f45a9229ad4d 40,501
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3cb0c6614481287d5f7d73732df698c944bf8e4a",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
