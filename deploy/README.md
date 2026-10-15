@@ -310,7 +310,7 @@ Postgres is captured first and is authoritative. The objects and JetStream steps
 
 ## Tenant administration
 
-`crosscodexd admin tenant` creates, lists, suspends and resumes tenants as the `tenant_admin` role. That role holds no table privileges; it can only call the tenant functions from migration `007_tenant_admin`.
+`crosscodexd admin tenant` creates, lists, suspends, resumes, deletes and restores tenants, and `crosscodexd admin reviewer` registers the people who record verdicts, as the `tenant_admin` role. That role holds no table privileges; it can only call the functions from migrations `007_tenant_admin` and `009_identity_lifecycle`.
 
 1. `tenant_admin` is created by migration `007_tenant_admin` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser. Use psql's `\password`, which prompts for the password and hashes it on the client, so it stays out of shell history, the process list and the server log:
 
@@ -329,6 +329,16 @@ Postgres is captured first and is authoritative. The objects and JetStream steps
    ```
 
 A suspended tenant's requests are refused with `PermissionDenied` until `admin tenant resume`.
+
+Tenants and reviewers are never removed; they are soft-deleted, and a deleted one can be hidden behind a pseudonym. `adjudicate artifacts decide` accepts only registered reviewers; migration 009 registered everyone who had already recorded a human verdict. The identity commands (`admin tenant delete|restore|hide|unhide`, `admin reviewer add|list|delete|restore|hide|unhide`, `admin identity trace`) run the same way. All but `reviewer list` need `--by` and `--reason` and are signed with the attestation keypair in `deploy/certs/` (`attestation.private_key_path` and `attestation.public_key_path` in `deploy/config.yaml`), plus the same `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`. For example:
+
+```bash
+docker compose exec crosscodexd /crosscodexd admin reviewer add --tenant acme --reviewer jdoe --by alice --reason "joined review team"
+docker compose exec crosscodexd /crosscodexd admin tenant delete --tenant acme --by alice --reason "contract ended"
+docker compose exec crosscodexd /crosscodexd admin tenant restore --tenant acme --by alice --reason "contract renewed"
+```
+
+A deleted tenant is refused like a suspended one, and also by every service. `tenant restore` brings it back as `suspended`; run `admin tenant resume` to reactivate it. See [Tenant administration](../README.md#tenant-administration) for what each command does.
 
 The gateway checks tenant status with one uncached database query per request or stream, on the same pool as application queries (`database.max_conns`, default 10). Suspension therefore takes effect on the next request. Under heavy concurrency, raise `database.max_conns`: an exhausted pool refuses requests with `Unavailable`.
 

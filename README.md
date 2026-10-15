@@ -31,8 +31,14 @@ Graphs written before this change must be rebuilt. Follow the "Upgrade note (#14
 
 Tenant administration (#31), migration `007_tenant_admin`:
 
-- The gateway refuses every non-health request, with `PermissionDenied`, from a tenant whose `tenants` row is missing or suspended. Migration 007 creates the `tenant_admin` role that `crosscodexd admin tenant` connects as, so tenants can only be provisioned after it runs. Once crosscodexd has migrated, set the role's password and `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`, then run `crosscodexd admin tenant create` for each authenticated tenant before sending it traffic; requests from that tenant are refused until then. Role `all` still provisions `tenants.default_tenant` itself. See [Tenant administration](deploy/README.md#tenant-administration).
+- The gateway refuses every non-health request, with `PermissionDenied`, from a tenant whose `tenants` row is missing, suspended or deleted. Migration 007 creates the `tenant_admin` role that `crosscodexd admin tenant` connects as, so tenants can only be provisioned after it runs. Once crosscodexd has migrated, set the role's password and `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`, then run `crosscodexd admin tenant create` for each authenticated tenant before sending it traffic; requests from that tenant are refused until then. Role `all` still provisions `tenants.default_tenant` itself. See [Tenant administration](deploy/README.md#tenant-administration).
 - The migration fails if a hand-edited `tenants.status` holds a value other than `active` or `suspended`. Fix that row first.
+
+Identity lifecycle (#195), migration `009_identity_lifecycle`:
+
+- Tenants and SAME_AS verdicts can no longer be deleted by any role short of the database owner or a superuser deliberately disabling triggers (see [Identity Lifecycle](docs/dev/design-principles.md#identity-lifecycle)). Retire a tenant or reviewer with the soft-delete commands under [Tenant administration](#tenant-administration).
+- `adjudicate artifacts decide` requires a registered reviewer. The migration registered everyone who already recorded a human verdict; register anyone else with `crosscodexd admin reviewer add`.
+- The migration fails, changing nothing, if a tenant ID or a human verdict's reviewer ID starts with the reserved `hidden-` prefix, or a reviewer ID breaks the `--reviewer` rules. The error lists the offending IDs; fix them as the database owner first.
 
 ## Quick Start
 
@@ -897,7 +903,10 @@ opinion, such as the verdict the person overrode. With no match it prints `no pa
   to run.
 - **`--reviewer`:** required. The ID of the person recording the verdict,
   stored as `determined_by` on the verdict and on a confirmation's graph
-  edge (at most 256 bytes, no control or invisible characters). It is not
+  edge (at most 256 bytes, no control or invisible characters). It must be
+  a registered, non-deleted reviewer of the tenant (`crosscodexd admin
+  reviewer add`, see [Tenant administration](#tenant-administration));
+  otherwise `decide` records nothing and names the command to run. It is not
   authenticated: like every `crosscodexd admin` command, `decide` trusts
   whoever can run it on the host.
 - **Authority:** a human verdict outranks the panel, and automation never
@@ -957,9 +966,10 @@ refuse to run while the DSN is empty.
 - **`suspend` / `resume`:** while suspended, the gateway refuses every request
   from the tenant except health checks, until `resume`. Queued pipeline work
   still drains. Prints `suspended` or `already suspended`, and `resumed` or
-  `already active`.
+  `already active`. Both refuse a deleted tenant; run `tenant restore` first.
 - **`import`:** applies a YAML file in one transaction, so either every tenant
-  is created or renamed, or none is:
+  is created or renamed, or none is. Renaming a deleted tenant is refused,
+  as with `create`:
 
   ```yaml
   tenants:
@@ -967,6 +977,54 @@ refuse to run while the DSN is empty.
       display_name: Acme Corp
   ```
 
+Tenants and reviewers are never removed, because their judgements are
+permanent. They are soft-deleted, and a deleted one can be hidden behind a
+pseudonym:
+
+```sh
+crosscodexd admin tenant delete   --tenant acme --by alice --reason "contract ended"
+crosscodexd admin tenant restore  --tenant acme --by alice --reason "contract renewed"
+crosscodexd admin tenant hide     --tenant acme --by alice --reason "customer requested"
+crosscodexd admin tenant unhide   --tenant acme --by alice --reason "audit follow-up"
+crosscodexd admin reviewer add     --tenant acme --reviewer jdoe --by alice --reason "joined review team"
+crosscodexd admin reviewer list    --tenant acme
+crosscodexd admin reviewer delete  --tenant acme --reviewer jdoe --by alice --reason "left the team"
+crosscodexd admin reviewer restore --tenant acme --reviewer jdoe --by alice --reason "rejoined"
+crosscodexd admin reviewer hide    --tenant acme --reviewer jdoe --by alice --reason "privacy request"
+crosscodexd admin reviewer unhide  --tenant acme --reviewer jdoe --by alice --reason "audit follow-up"
+crosscodexd admin identity trace   --pseudonym hidden-reviewer-0123456789abcdef --by alice --reason "audit query"
+```
+
+These also connect as `tenant_admin`. Every command except `reviewer list`
+changes or reveals an identity, so it requires `--by` (who is acting, 1-256
+bytes) and `--reason` (1-500 bytes), is signed with the attestation keys
+(`attestation.private_key_path` and `attestation.public_key_path`) and is
+recorded in the database's audit log. Without the keys or
+`database.tenant_admin_dsn` the commands refuse to run and change nothing.
+
+- **`tenant delete`:** the tenant's data and verdicts are kept, but the
+  gateway and every service refuse it. Retention still applies to its job
+  data. `create` cannot rename a deleted tenant.
+- **`tenant restore`:** brings a deleted tenant back as `suspended`; run
+  `crosscodexd admin tenant resume` to reactivate it. A hidden tenant must be
+  unhidden first.
+- **`reviewer add`:** registers a reviewer so `adjudicate artifacts decide`
+  accepts them. Prints `added`, or `already registered`. Migration 009
+  registered everyone who had already recorded a human verdict. A deleted
+  reviewer is restored with `reviewer restore`, not added again.
+- **`reviewer delete` / `restore`:** a deleted reviewer's verdicts stay, but
+  `decide` refuses new ones from them. Restoring makes them active again.
+  On a deleted tenant, `reviewer add` and `restore` are refused; `delete`,
+  `hide` and `unhide` still work.
+- **`hide` / `unhide`:** only a deleted tenant or reviewer can be hidden.
+  `hide` prints the pseudonym (`hidden-tenant-…` or `hidden-reviewer-…`),
+  which then replaces the ID in `tenant list`, `reviewer list`, `retention
+  scan --all-tenants` and `adjudicate artifacts show`. The pseudonym stays
+  the same across unhide and hide again. Hiding is not erasure: the real ID
+  remains in stored verdicts, graph edges and audit records. Tenant and
+  reviewer IDs starting with `hidden-` are reserved.
+- **`identity trace`:** prints the kind, tenant, identity, status and hidden
+  flag behind a pseudonym. The lookup itself is recorded.
 - **Exit codes:** 0 on success, 1 on failure, 2 on usage errors.
 
 ### Configuration Reference
