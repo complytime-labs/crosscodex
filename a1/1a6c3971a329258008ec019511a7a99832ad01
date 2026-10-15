@@ -1,0 +1,41 @@
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_34c7f65a88ab67::t_211abaf5d617b7 227-271
+internal/pipeline/store_integration_test.go
+  s_34c7f65a88ab67::t_211abaf5d617b7 662-693
+pkg/graphdb/agedriver/client.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 183-185,204
+cmd/crosscodexd/admin_review.go
+  s_34c7f65a88ab67::t_ae76296bc2dfad 270
+pkg/db/enter_tenant_bdd_test.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 9,16-23,29-45,73
+docs/dev/retention.md
+  s_34c7f65a88ab67::t_211abaf5d617b7 191-194
+pkg/db/tenant_admin.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 58-59
+pkg/db/doc.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 35-36
+pkg/db/identity_integration_bdd_test.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 536,546
+pkg/db/interface.go
+  s_34c7f65a88ab67::t_38edd55c37aa1d 37-41
+cmd/crosscodexd/admin.go
+  s_34c7f65a88ab67::t_ae76296bc2dfad 149,266,395
+cmd/crosscodexd/admin_batch.go
+  s_34c7f65a88ab67::t_ae76296bc2dfad 28-37,42,58,67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a11a6c3971a329258008ec019511a7a99832ad01",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
