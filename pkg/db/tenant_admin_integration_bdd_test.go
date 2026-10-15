@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"sort"
 	"strings"
 
@@ -18,14 +17,13 @@ import (
 )
 
 // tenant_admin (migration 007) provisions and suspends tenants only through
-// SECURITY DEFINER functions; it holds no table privilege. One Ordered
-// container sets the role's password once, so parallel nodes never race on
-// ALTER ROLE. The suite entry point lives in db_integration_bdd_test.go.
+// SECURITY DEFINER functions; it holds no table privilege. Its password is
+// set once in SynchronizedBeforeSuite, so parallel nodes never race on ALTER
+// ROLE. The suite entry point lives in db_integration_bdd_test.go.
 var _ = Describe("tenant_admin role and functions", Ordered, func() {
 	var (
-		adminConn      *sql.DB
-		appConn        *sql.DB
-		tenantAdminDSN string
+		adminConn *sql.DB
+		appConn   *sql.DB
 	)
 	ctx := context.Background()
 
@@ -52,27 +50,13 @@ var _ = Describe("tenant_admin role and functions", Ordered, func() {
 		if suPool == nil {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
 		}
-		pw, err := dbtest.NewRolePassword()
-		Expect(err).NotTo(HaveOccurred())
-		stmt, err := dbtest.AlterRolePasswordSQL("tenant_admin", pw)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(suPool.Exec(ctx, stmt)).To(Succeed(), "set tenant_admin password")
-
-		u, err := url.Parse(suDSN)
-		Expect(err).NotTo(HaveOccurred())
-		u.User = url.UserPassword("tenant_admin", pw)
-		tenantAdminDSN = u.String()
-		adminConn, err = sql.Open("pgx", tenantAdminDSN)
-		Expect(err).NotTo(HaveOccurred())
+		adminConn = tenantAdminConn()
 		appConn = appUserConn()
 
 		setupTenant("tadm-existing", "Existing")
 	})
 
 	AfterAll(func() {
-		if adminConn != nil {
-			adminConn.Close()
-		}
 		if suPool != nil {
 			rows, err := suPool.Query(ctx, "SELECT tenant_id FROM tenants WHERE tenant_id LIKE 'tadm-%'")
 			Expect(err).NotTo(HaveOccurred())
@@ -300,7 +284,7 @@ var _ = Describe("tenant_admin role and functions", Ordered, func() {
 
 		BeforeAll(func() {
 			var err error
-			admin, err = db.OpenTenantAdmin(tenantAdminDSN)
+			admin, err = db.OpenTenantAdmin(tenantAdminDSN())
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(admin.Close)
 		})

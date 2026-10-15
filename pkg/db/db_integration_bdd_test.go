@@ -41,15 +41,17 @@ var _ = BeforeEach(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 // suDSN is the superuser connection string.
 var suDSN string
 
-// appUserPassword and graphUserPassword are the role passwords for this
-// run, generated on node 1 so no fixed credential lives in the repository.
-var appUserPassword, graphUserPassword string
+// appUserPassword, graphUserPassword and tenantAdminPassword are the role
+// passwords for this run, generated on node 1 so no fixed credential lives in
+// the repository and parallel nodes never race on ALTER ROLE.
+var appUserPassword, graphUserPassword, tenantAdminPassword string
 
 // suiteSetup carries what node 1 provisioned to every parallel node.
 type suiteSetup struct {
-	DSN               string `json:"dsn"`
-	AppUserPassword   string `json:"app_user_password"`
-	GraphUserPassword string `json:"graph_user_password"`
+	DSN                 string `json:"dsn"`
+	AppUserPassword     string `json:"app_user_password"`
+	GraphUserPassword   string `json:"graph_user_password"`
+	TenantAdminPassword string `json:"tenant_admin_password"`
 }
 
 // setRolePassword sets role's password to password with the statement
@@ -88,9 +90,12 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).NotTo(HaveOccurred(), "generate app_user password")
 	graphPassword, err := dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "generate graph_user password")
-	setup := suiteSetup{DSN: dsn, AppUserPassword: appPassword, GraphUserPassword: graphPassword}
+	adminPassword, err := dbtest.NewRolePassword()
+	Expect(err).NotTo(HaveOccurred(), "generate tenant_admin password")
+	setup := suiteSetup{DSN: dsn, AppUserPassword: appPassword, GraphUserPassword: graphPassword, TenantAdminPassword: adminPassword}
 	Expect(setRolePassword(ctx, adminDB, "app_user", setup.AppUserPassword)).To(Succeed(), "failed to set app_user password")
 	Expect(setRolePassword(ctx, adminDB, "graph_user", setup.GraphUserPassword)).To(Succeed(), "failed to set graph_user password")
+	Expect(setRolePassword(ctx, adminDB, "tenant_admin", setup.TenantAdminPassword)).To(Succeed(), "failed to set tenant_admin password")
 	Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
 
 	data, err := json.Marshal(setup)
@@ -100,7 +105,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// Runs on all nodes: store the DSN and passwords, create superuser pool.
 	var setup suiteSetup
 	Expect(json.Unmarshal(data, &setup)).To(Succeed(), "failed to decode suite setup")
-	suDSN, appUserPassword, graphUserPassword = setup.DSN, setup.AppUserPassword, setup.GraphUserPassword
+	suDSN, appUserPassword, graphUserPassword, tenantAdminPassword = setup.DSN, setup.AppUserPassword, setup.GraphUserPassword, setup.TenantAdminPassword
 
 	var err error
 	suPool, err = db.NewPool(db.PoolConfig{
@@ -149,6 +154,22 @@ func graphUserDSN() string {
 func graphUserConn() *sql.DB {
 	conn, err := sql.Open("pgx", graphUserDSN())
 	Expect(err).NotTo(HaveOccurred(), "failed to open graph_user connection")
+	DeferCleanup(func() { conn.Close() })
+	return conn
+}
+
+func tenantAdminDSN() string {
+	u, err := url.Parse(suDSN)
+	if err != nil {
+		panic(fmt.Sprintf("bad suDSN: %v", err))
+	}
+	u.User = url.UserPassword("tenant_admin", tenantAdminPassword)
+	return u.String()
+}
+
+func tenantAdminConn() *sql.DB {
+	conn, err := sql.Open("pgx", tenantAdminDSN())
+	Expect(err).NotTo(HaveOccurred(), "failed to open tenant_admin connection")
 	DeferCleanup(func() { conn.Close() })
 	return conn
 }
@@ -248,7 +269,11 @@ func expectErrorAsTenant(conn *sql.DB, tenantID string, fn func(tx *sql.Tx)) {
 // Integration Tests
 // ---------------------------------------------------------------------------
 
-var _ = Describe("Database Integration", Ordered, func() {
+// Serial: the migration round trip below drops and recreates every role and
+// table, so no other spec may run alongside it on a parallel node. Ginkgo
+// allows Serial on a spec in an Ordered container only when the container
+// itself is Serial.
+var _ = Describe("Database Integration", Ordered, Serial, func() {
 
 	// ===================================================================
 	// Connection Pool
@@ -339,7 +364,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 			version, dirty, err := migrator.Version(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(uint(8)))
+			Expect(version).To(Equal(uint(9)))
 			Expect(dirty).To(BeFalse())
 		})
 
@@ -362,11 +387,11 @@ var _ = Describe("Database Integration", Ordered, func() {
 		// Placing this spec first, right after "runs Up idempotently" and
 		// before any setupTenant() call in the file, keeps Down() clean.
 		//
-		// Down()+Up() also recreates app_user/graph_user via
+		// Down()+Up() also recreates app_user/graph_user/tenant_admin via
 		// `CREATE ROLE ... LOGIN` with no password, wiping the passwords
-		// SynchronizedBeforeSuite set once at suite start. Every other
-		// spec in this file authenticates as those roles via
-		// appUserConn()/graphUserConn(), so this spec re-applies the same
+		// SynchronizedBeforeSuite set once at suite start. Other specs
+		// authenticate as those roles via appUserConn()/graphUserConn()/
+		// tenantAdminConn(), so this spec re-applies the same
 		// ALTER ROLE statements before returning to leave the suite in the
 		// state downstream specs expect.
 		It("runs Up, Down, and Up again without error, ending at the latest version", func() {
@@ -385,7 +410,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 
 			version, dirty, err = migrator.Version(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(uint(8)))
+			Expect(version).To(Equal(uint(9)))
 			Expect(dirty).To(BeFalse())
 
 			// Restore role passwords wiped by the Down/Up round trip so
@@ -397,6 +422,7 @@ var _ = Describe("Database Integration", Ordered, func() {
 			defer adminDB.Close()
 			Expect(setRolePassword(ctx, adminDB, "app_user", appUserPassword)).To(Succeed(), "failed to restore app_user password")
 			Expect(setRolePassword(ctx, adminDB, "graph_user", graphUserPassword)).To(Succeed(), "failed to restore graph_user password")
+			Expect(setRolePassword(ctx, adminDB, "tenant_admin", tenantAdminPassword)).To(Succeed(), "failed to restore tenant_admin password")
 		})
 
 		It("returns a wrapped ErrMigrationDirty from Down() when the version is marked dirty", func() {
@@ -1328,28 +1354,36 @@ var _ = Describe("Database Integration", Ordered, func() {
 			Expect(graphName).To(Equal("crosscodex_" + tenantID))
 		})
 
-		It("drops the graph when a tenant is deleted", func() {
-			tenantID := "graph-drop"
-			setupTenant(tenantID, "Graph Drop Corp")
+		It("keeps the graph when deleting the tenant is refused", func() {
+			tenantID := "graph-keep"
+			setupTenant(tenantID, "Graph Keep Corp")
+			DeferCleanup(func() {
+				stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(suPool.Exec(context.Background(), stmt)).To(Succeed())
+			})
 
 			ctx := context.Background()
+			graphCount := func() int {
+				var n int
+				Expect(suPool.QueryRow(ctx,
+					"SELECT count(*) FROM ag_catalog.ag_graph WHERE name::text = $1",
+					"crosscodex_"+tenantID).Scan(&n)).To(Succeed())
+				return n
+			}
+			Expect(graphCount()).To(Equal(1))
 
-			// Verify graph exists.
-			var graphName string
-			row := suPool.QueryRow(ctx,
-				"SELECT name FROM ag_catalog.ag_graph WHERE name = $1",
-				"crosscodex_"+tenantID)
-			Expect(row.Scan(&graphName)).To(Succeed())
+			// Migration 009 refuses hard deletes even for the owner, so the
+			// graph-drop trigger is gone and the graph must survive.
+			err := suPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", tenantID)
+			Expect(err).To(HaveOccurred())
+			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "got %v", err)
+			Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant delete"))
 
-			// Delete the tenant (superuser, bypasses RLS).
-			Expect(suPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", tenantID)).To(Succeed())
-
-			// Verify graph was dropped.
-			row = suPool.QueryRow(ctx,
-				"SELECT name FROM ag_catalog.ag_graph WHERE name = $1",
-				"crosscodex_"+tenantID)
-			err := row.Scan(&graphName)
-			Expect(err).To(HaveOccurred(), "graph still exists after tenant deletion")
+			var n int
+			Expect(suPool.QueryRow(ctx, "SELECT count(*) FROM tenants WHERE tenant_id = $1", tenantID).Scan(&n)).To(Succeed())
+			Expect(n).To(Equal(1))
+			Expect(graphCount()).To(Equal(1))
 		})
 
 		It("returns the correct graph name via tenant_graph_name()", func() {

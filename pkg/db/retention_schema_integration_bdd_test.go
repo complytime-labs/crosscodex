@@ -51,11 +51,10 @@ var _ = Describe("Retention Schema", Ordered, func() {
 		if purgeConn != nil {
 			purgeConn.Close()
 		}
-		// Drop the tenants these specs provision. Deleting a tenant fires the
-		// tenant_graph_drop trigger, removing the per-tenant graph schema owned
-		// by graph_user — otherwise those schemas leak and later block
-		// 001.down's DROP ROLE graph_user (2BP01). Best-effort, mirroring the
-		// tenant cleanup in db_integration_bdd_test.go.
+		// Drop the tenants these specs provision. HardDeleteTenantSQL also drops
+		// the per-tenant graph schema owned by graph_user — otherwise those
+		// schemas leak and later block 001.down's DROP ROLE graph_user (2BP01).
+		// Best-effort, mirroring the tenant cleanup in db_integration_bdd_test.go.
 		if suPool != nil {
 			ctx := context.Background()
 			for _, tenantID := range []string{"ret-block", "ret-purge"} {

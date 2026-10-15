@@ -465,11 +465,11 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 	})
 
 	AfterAll(func() {
-		// Drop every tenant these specs provision. Deleting a tenant fires the
-		// tenant_graph_drop trigger, removing the per-tenant graph schema owned by
-		// graph_user — otherwise those schemas leak into later packages in the same
-		// `ginkgo run` and block 001.down's DROP ROLE graph_user (2BP01). Must run
-		// before engineSuPool is closed. Best-effort. Tenant B in the isolation
+		// Drop every tenant these specs provision. HardDeleteTenantSQL also drops
+		// the per-tenant graph schema owned by graph_user — otherwise those
+		// schemas leak into later packages in the same `ginkgo run` and block
+		// 001.down's DROP ROLE graph_user (2BP01). Must run before engineSuPool
+		// is closed. Best-effort. Tenant B in the isolation
 		// spec is never provisioned (no seed), so it is not listed here.
 		if engineSuPool != nil {
 			ctx := context.Background()
