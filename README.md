@@ -591,7 +591,9 @@ For on-host operation (e.g. an external scheduler running next to the daemon),
 `crosscodexd` exposes in-process one-shot commands. Like `healthcheck` and
 `version`, they are **unauthenticated by design**. They run locally against the
 daemon's configured resources and select their tenant with `--tenant`, or run
-for every active tenant with `--all-tenants`:
+for every active tenant with `--all-tenants` (`retention scan --all-tenants`
+covers every tenant, deleted and suspended included, because a deleted tenant's
+job data still follows retention):
 
 ```sh
 crosscodexd admin retention scan --tenant acme
@@ -635,7 +637,7 @@ artifacts review` and `decide` take `--tenant` only. With `--all-tenants`:
   database, graph or NATS is unreachable, or the adjudicator's prompts or LLM
   client cannot be set up), the command prints that one error and exits `1`
   without running any tenant.
-- **No active tenants:** the command says so on stderr and exits `0`.
+- **No active tenants** (`retention scan`: no tenants): the command says so on stderr and exits `0`.
 
 `reconcile artifacts` links equivalent artifacts across controls and catalogs:
 
@@ -1038,7 +1040,7 @@ backup:
 
 When `retention.scan_schedule` is left empty, drive scans from an external
 scheduler using the daemon one-shot. Example crontab entry running a nightly
-scan of every active tenant at 02:00:
+scan of every tenant at 02:00:
 
 ```cron
 0 2 * * *  crosscodexd admin retention scan --all-tenants >> /var/log/crosscodex/retention.log 2>&1

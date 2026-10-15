@@ -659,3 +659,35 @@ var _ = Describe("PGStore integration", func() {
 		Expect(totalAll).To(Equal(int64(4)), "ListJobs total (no filter)")
 	})
 })
+
+var _ = Describe("PGStore on a deleted tenant", func() {
+	// The tenant is soft-deleted with a superuser UPDATE: delete_tenant needs
+	// a signed attestation, and enter_tenant reads only the row state.
+	It("refuses writes with an actionable error and leaves the jobs table unchanged", func() {
+		store, suPool, tenantID, ctx := setupPGStore()
+		job := newITJob(tenantID)
+		Expect(store.CreateJob(ctx, job)).To(Succeed())
+		DeferCleanup(func() {
+			_ = suPool.Exec(context.Background(), "UPDATE tenants SET status = 'active', deleted_at = NULL, deleted_by = NULL WHERE tenant_id = $1", tenantID)
+		})
+		Expect(suPool.Exec(ctx, "UPDATE tenants SET status = 'deleted', deleted_at = now(), deleted_by = 'test' WHERE tenant_id = $1", tenantID)).To(Succeed())
+
+		jobState := func() (count int, status string) {
+			Expect(suPool.QueryRow(ctx, "SELECT count(*) FROM jobs WHERE tenant_id = $1", tenantID).Scan(&count)).To(Succeed())
+			Expect(suPool.QueryRow(ctx, "SELECT status FROM jobs WHERE job_id = $1", job.JobID).Scan(&status)).To(Succeed())
+			return count, status
+		}
+
+		err := store.CreateJob(ctx, newITJob(tenantID))
+		Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
+		Expect(err.Error()).To(ContainSubstring("admin tenant restore"))
+
+		err = store.UpdateJobStatus(ctx, job.JobID, pipeline.JobStatusRunning, nil)
+		Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
+		Expect(err.Error()).To(ContainSubstring("admin tenant restore"))
+
+		count, status := jobState()
+		Expect(count).To(Equal(1))
+		Expect(status).To(Equal(string(pipeline.JobStatusPending)))
+	})
+})

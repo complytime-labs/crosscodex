@@ -31,9 +31,9 @@
 // # Tenant-Scoped Queries
 //
 // Every tenant-scoped operation must go through a transaction. The
-// TenantPool sets app.current_tenant (and optionally app.current_user)
-// via SET LOCAL, which PostgreSQL automatically reverts on rollback or
-// commit. Direct Query/Exec calls on TenantPool return ErrTenantRequired
+// TenantPool sets app.current_tenant via public.enter_tenant (which
+// refuses deleted tenants) and optionally app.current_user via SET LOCAL.
+// PostgreSQL reverts both on rollback or commit. Direct Query/Exec calls on TenantPool return ErrTenantRequired
 // because SET LOCAL has no effect outside a transaction.
 //
 //	ctx, err := tenant.WithTenant(ctx, tenantID)

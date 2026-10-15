@@ -23,11 +23,12 @@ import (
 // Seams: specs replace these to exercise parsing, output and exit codes
 // without a database.
 var (
-	runTenantCreateFn    = daemonTenantCreate
-	runTenantListFn      = daemonTenantList
-	runTenantInspectFn   = daemonTenantInspect
-	runTenantSetStatusFn = daemonTenantSetStatus
-	runTenantImportFn    = daemonTenantImport
+	runTenantCreateFn        = daemonTenantCreate
+	runTenantListFn          = daemonTenantList
+	runRetentionTenantListFn = daemonRetentionTenantList
+	runTenantInspectFn       = daemonTenantInspect
+	runTenantSetStatusFn     = daemonTenantSetStatus
+	runTenantImportFn        = daemonTenantImport
 )
 
 // tenantAdminDSN loads config for cmd and returns database.tenant_admin_dsn,
@@ -273,6 +274,14 @@ func daemonTenantList(ctx context.Context, dsn string) (records []dbpkg.TenantRe
 		return err
 	})
 	return records, err
+}
+
+func daemonRetentionTenantList(ctx context.Context, dsn string) (tenants []dbpkg.RetentionTenant, err error) {
+	err = withTenantAdmin(dsn, func(a *dbpkg.TenantAdmin) (err error) {
+		tenants, err = a.ListRetentionTenants(ctx)
+		return err
+	})
+	return tenants, err
 }
 
 func daemonTenantInspect(ctx context.Context, dsn, id string) (record dbpkg.TenantRecord, err error) {

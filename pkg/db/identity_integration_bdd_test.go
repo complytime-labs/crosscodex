@@ -20,6 +20,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/db/migrations"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // Migration 009 (#195) makes judgements permanent: artifact_pair_verdicts
@@ -302,6 +303,7 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 		Entry(nil, "public.unhide_tenant(text, text, text, bytea, bytea)"),
 		Entry(nil, "public.list_tenants()"),
 		Entry(nil, "public.enter_tenant(text)"),
+		Entry(nil, "public.list_retention_tenants()"),
 	)
 
 	It("declares every definer function with a pinned search_path", func() {
@@ -310,7 +312,8 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 			FROM pg_proc
 			WHERE pronamespace = 'public'::regnamespace
 			  AND proname IN ('delete_tenant', 'restore_tenant', 'hide_tenant', 'unhide_tenant',
-			                  'list_tenants', 'set_tenant_status', 'provision_tenant', 'enter_tenant')
+			                  'list_tenants', 'set_tenant_status', 'provision_tenant', 'enter_tenant',
+			                  'list_retention_tenants')
 			ORDER BY proname`)
 		Expect(err).NotTo(HaveOccurred())
 		defer rows.Close()
@@ -324,7 +327,7 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 			names = append(names, name)
 		}
 		Expect(rows.Err()).NotTo(HaveOccurred())
-		Expect(names).To(HaveLen(8))
+		Expect(names).To(HaveLen(9))
 	})
 
 	DescribeTable("reserves the 'hidden-' tenant ID prefix for pseudonyms",
@@ -529,6 +532,46 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 		Entry(nil, "graph_user"),
 	)
 
+	It("refuses TenantPool.Begin for a deleted tenant", func() {
+		appPool, err := db.NewPool(db.PoolConfig{DSN: appUserDSN()})
+		Expect(err).NotTo(HaveOccurred())
+		defer appPool.Close()
+		scoped, err := tenant.WithTenant(ctx, deletedID)
+		Expect(err).NotTo(HaveOccurred())
+		before := tenantSnapshot(deletedID)
+
+		tx, err := db.NewTenantPool(appPool).Begin(scoped)
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+		Expect(tx).To(BeNil())
+		Expect(err).To(HaveOccurred())
+		Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
+		Expect(err.Error()).To(ContainSubstring("admin tenant restore"))
+		Expect(tenantSnapshot(deletedID)).To(Equal(before), "the refused Begin must not change the tenant row")
+	})
+
+	It("lets NewRetentionTenantPool begin for a deleted tenant while NewTenantPool still refuses", func() {
+		appPool, err := db.NewPool(db.PoolConfig{DSN: appUserDSN()})
+		Expect(err).NotTo(HaveOccurred())
+		defer appPool.Close()
+		scoped, err := tenant.WithTenant(ctx, deletedID)
+		Expect(err).NotTo(HaveOccurred())
+
+		tx, err := db.NewRetentionTenantPool(appPool).Begin(scoped)
+		Expect(err).NotTo(HaveOccurred())
+		var current string
+		Expect(tx.QueryRow(scoped, "SELECT current_setting('app.current_tenant')").Scan(&current)).To(Succeed())
+		Expect(current).To(Equal(deletedID))
+		Expect(tx.Rollback()).To(Succeed())
+
+		denied, err := db.NewTenantPool(appPool).Begin(scoped)
+		if denied != nil {
+			_ = denied.Rollback()
+		}
+		Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
+	})
+
 	It("refuses set_tenant_status on a deleted tenant", func() {
 		expectRefusedUnchanged(deletedID, func() error {
 			_, err := adminConn.ExecContext(ctx, "SELECT public.set_tenant_status($1, 'active')", deletedID)
@@ -567,6 +610,26 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 			"SELECT EXISTS (SELECT 1 FROM list_tenants() WHERE tenant_id = $1)", deletedID).Scan(&realIDListed)).To(Succeed())
 		Expect(realIDListed).To(BeFalse())
 		Expect(eventActions(deletedID)).To(Equal([]string{"delete", "hide"}))
+	})
+
+	It("list_retention_tenants shows every tenant, a hidden one by pseudonym, to tenant_admin only", func() {
+		rows, err := adminConn.QueryContext(ctx, "SELECT tenant_id, display_id, status FROM list_retention_tenants()")
+		Expect(err).NotTo(HaveOccurred())
+		defer rows.Close()
+		listed := map[string][2]string{}
+		for rows.Next() {
+			var id, display, status string
+			Expect(rows.Scan(&id, &display, &status)).To(Succeed())
+			listed[id] = [2]string{display, status}
+		}
+		Expect(rows.Err()).NotTo(HaveOccurred())
+		Expect(listed).To(HaveKeyWithValue(liveID, [2]string{liveID, "active"}))
+		Expect(listed).To(HaveKeyWithValue(deletedID, [2]string{pseudonym, "deleted"}))
+
+		for _, role := range []string{"app_user", "graph_user"} {
+			_, err := connFor(role).ExecContext(ctx, "SELECT * FROM list_retention_tenants()")
+			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "%s: want insufficient_privilege, got %v", role, err)
+		}
 	})
 
 	DescribeTable("refuses identity actions that do not apply to a hidden tenant",

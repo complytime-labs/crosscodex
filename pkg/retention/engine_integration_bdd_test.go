@@ -142,7 +142,10 @@ func newIntegKit(tenantID string, wrapArchive func(storage.Provider) storage.Pro
 	Expect(err).NotTo(HaveOccurred(), "build policy")
 
 	appConn := db.NewTenantPool(holdIntegPool)
-	purgeConn := db.NewTenantPool(enginePurgePool)
+	// Production hands the purger the raw purge_user pool: it scopes the tenant
+	// with set_config itself, because enter_tenant would refuse deleted tenants
+	// and retention must keep working for them.
+	purgeConn := enginePurgePool
 
 	collectors := []retention.Collector{
 		retention.NewDBCollector(appConn),
@@ -273,6 +276,20 @@ func integCountJobChildren(tenantID, jobID string) int {
 	return n
 }
 
+// integPurgeTx begins a purge_user transaction scoped to tenantID with
+// set_config, as the purger does. purge_user cannot execute enter_tenant.
+func integPurgeTx(ctx context.Context, tenantID string) (db.Transaction, error) {
+	tx, err := enginePurgePool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
 // integPurgeJobChildren deletes jobID and its FK children for tenantID as
 // purge_user (children first, then the parent — FK-safe). Best-effort cleanup.
 func integPurgeJobChildren(tenantID, jobID string) {
@@ -280,7 +297,7 @@ func integPurgeJobChildren(tenantID, jobID string) {
 	if err != nil {
 		return
 	}
-	tx, err := db.NewTenantPool(enginePurgePool).Begin(ctx)
+	tx, err := integPurgeTx(ctx, tenantID)
 	if err != nil {
 		return
 	}
@@ -315,7 +332,7 @@ func integPurgeJob(tenantID, jobID string) {
 	if err != nil {
 		return
 	}
-	tx, err := db.NewTenantPool(enginePurgePool).Begin(ctx)
+	tx, err := integPurgeTx(ctx, tenantID)
 	if err != nil {
 		return
 	}
@@ -420,7 +437,7 @@ func integPurgeCatalog(tenantID, catalogID string) {
 	if err != nil {
 		return
 	}
-	tx, err := db.NewTenantPool(enginePurgePool).Begin(ctx)
+	tx, err := integPurgeTx(ctx, tenantID)
 	if err != nil {
 		return
 	}

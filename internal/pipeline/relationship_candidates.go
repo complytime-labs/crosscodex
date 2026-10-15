@@ -95,7 +95,7 @@ func (p *RelationshipCandidateProvider) Candidates(ctx context.Context, tenantID
 	start := time.Now()
 
 	// Start tenant-scoped transaction for RLS enforcement. TenantConnection.Begin
-	// already sets app.current_tenant for the session; no manual set_config here.
+	// already scopes the transaction to the tenant (via enter_tenant); no manual scoping here.
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
 		span.RecordError(err)

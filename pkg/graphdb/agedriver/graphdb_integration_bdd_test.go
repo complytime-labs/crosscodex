@@ -224,6 +224,51 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 		})
 	})
 
+	Describe("Deleted tenant", func() {
+		// The tenant is soft-deleted with a superuser UPDATE: delete_tenant
+		// needs a signed attestation, which this suite has no key for, and
+		// the row state is all enter_tenant reads.
+		setDeleted := func(tenantID string, deleted bool) {
+			stmt := "UPDATE tenants SET status = 'active', deleted_at = NULL, deleted_by = NULL WHERE tenant_id = $1"
+			if deleted {
+				stmt = "UPDATE tenants SET status = 'deleted', deleted_at = now(), deleted_by = 'test' WHERE tenant_id = $1"
+			}
+			suDB, err := sql.Open("pgx", suDSN)
+			Expect(err).NotTo(HaveOccurred())
+			defer suDB.Close()
+			_, err = suDB.ExecContext(context.Background(), stmt, tenantID)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		It("refuses CreateNode with an actionable error and leaves the graph unchanged", func() {
+			tenantID := testID("graphdb-deleted")
+			setupTenant(tenantID)
+			DeferCleanup(func() { cleanupTenant(tenantID) })
+			ctx := context.Background()
+			client, err := agedriver.New(testDB)
+			Expect(err).NotTo(HaveOccurred())
+			node := func(id string) graphdb.Node {
+				return graphdb.Node{ID: id, Label: "Requirement", ValidFrom: time.Now().UTC().Truncate(time.Microsecond),
+					CreatedBy: "test-job", CreationMethod: "import"}
+			}
+			Expect(client.CreateNode(ctx, tenantID, node("kept"))).To(Succeed())
+
+			setDeleted(tenantID, true)
+			err = client.CreateNode(ctx, tenantID, node("refused"))
+			Expect(err).To(HaveOccurred())
+			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
+			Expect(err.Error()).To(ContainSubstring("admin tenant restore"))
+
+			// Restore so the graph can be read back as graph_user.
+			setDeleted(tenantID, false)
+			kept, err := client.GetNode(ctx, tenantID, "kept")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(kept.ID).To(Equal("kept"))
+			_, err = client.GetNode(ctx, tenantID, "refused")
+			Expect(err).To(MatchError(graphdb.ErrNodeNotFound))
+		})
+	})
+
 	// ===================================================================
 	// Edge Operations
 	// ===================================================================

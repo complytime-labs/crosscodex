@@ -180,8 +180,9 @@ func graphName(tenant string) string {
 }
 
 // beginTx starts a transaction, sets the search path for ag_catalog, and
-// records the tenant via set_config for defensive assertions
-// (assert_tenant_graph).
+// enters the tenant via enter_tenant for defensive assertions
+// (assert_tenant_graph). enter_tenant refuses a deleted tenant with SQLSTATE
+// 42501, so no graph read or write reaches a deleted tenant's graph.
 //
 // This client connects as graph_user — a dedicated role that owns per-tenant
 // graph schemas. graph_user has no access to relational tables; app_user has
@@ -200,7 +201,7 @@ func (c *ageClient) beginTx(ctx context.Context, tenant string) (*sql.Tx, error)
 	// default of REPEATABLE READ cannot change driver semantics. lockNode
 	// depends on it: each statement must see rows committed while it waited
 	// for the lock, and REPEATABLE READ would fix the snapshot at the first
-	// statement (set_config below), before the wait. Every other method is a
+	// statement (enter_tenant below), before the wait. Every other method is a
 	// short write or read designed and tested against READ COMMITTED, so the
 	// pin is applied to all of them rather than only to the node writes.
 	tx, err := c.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -212,9 +213,9 @@ func (c *ageClient) beginTx(ctx context.Context, tenant string) (*sql.Tx, error)
 		return nil, fmt.Errorf("set search_path: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		"SELECT set_config('app.current_tenant', $1, true)", tenant); err != nil {
+		"SELECT public.enter_tenant($1)", tenant); err != nil {
 		_ = tx.Rollback()
-		return nil, fmt.Errorf("set tenant config: %w", err)
+		return nil, fmt.Errorf("enter tenant: %w", err)
 	}
 	return tx, nil
 }

@@ -34,8 +34,11 @@ type Migrator interface {
 }
 
 // TenantConnection wraps a Connection with tenant-scoped RLS enforcement.
-// Every transaction started via Begin() automatically sets
-// app.current_tenant for the duration of that transaction via SET LOCAL.
+// Every transaction started via Begin() automatically scopes
+// app.current_tenant to the tenant for the duration of that transaction
+// (transaction-local, like SET LOCAL). NewTenantPool does so through
+// enter_tenant, which refuses a deleted tenant; NewRetentionTenantPool does
+// not.
 // Query, QueryRow, and Exec are rejected with ErrTenantRequired because
 // SET LOCAL has no effect outside a transaction.
 type TenantConnection interface {

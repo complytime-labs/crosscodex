@@ -36,6 +36,16 @@ type TenantRecord struct {
 	CreatedAt   time.Time
 }
 
+// RetentionTenant is one tenant as list_retention_tenants() returns it.
+type RetentionTenant struct {
+	// ID is the real tenant ID, for scoping a run. A hidden tenant's ID must
+	// not be printed: show DisplayID instead.
+	ID string
+	// DisplayID is the pseudonym of a hidden tenant, else ID.
+	DisplayID string
+	Status    string
+}
+
 // TenantSpec is a tenant to create, or to rename if it exists.
 type TenantSpec struct {
 	ID          string
@@ -44,9 +54,9 @@ type TenantSpec struct {
 
 // TenantAdmin provisions and suspends tenants as the tenant_admin role
 // (migration 007). That role holds no table privilege: it can only call the
-// SECURITY DEFINER functions provision_tenant, set_tenant_status and
-// list_tenants, so it cannot read tenant data or bulk-modify tenants. This
-// is the only Go code that calls those functions.
+// SECURITY DEFINER functions provision_tenant, set_tenant_status,
+// list_tenants and list_retention_tenants, so it cannot read tenant data or
+// bulk-modify tenants. This is the only Go code that calls those functions.
 type TenantAdmin struct {
 	pool Pool
 	tel  *tenantAdminInstruments
@@ -156,6 +166,35 @@ func (a *TenantAdmin) List(ctx context.Context) (records []TenantRecord, err err
 		return nil, fmt.Errorf("list tenants: %w", err)
 	}
 	return records, nil
+}
+
+// ListRetentionTenants returns every tenant, deleted ones included, ordered
+// by ID. A deleted tenant's job data still follows retention, so retention
+// scans must reach it. Print DisplayID, never ID, of a hidden tenant.
+func (a *TenantAdmin) ListRetentionTenants(ctx context.Context) (tenants []RetentionTenant, err error) {
+	ctx, done := a.tel.op(ctx, "list_retention_tenants")
+	defer func() { done(err) }()
+	rows, err := a.pool.Query(ctx, "SELECT tenant_id, display_id, status FROM public.list_retention_tenants()")
+	if err != nil {
+		return nil, fmt.Errorf("list retention tenants: %w", err)
+	}
+	defer func() {
+		err = errors.Join(err, rows.Close())
+		if err != nil {
+			tenants = nil
+		}
+	}()
+	for rows.Next() {
+		var t RetentionTenant
+		if err := rows.Scan(&t.ID, &t.DisplayID, &t.Status); err != nil {
+			return nil, fmt.Errorf("list retention tenants: read row: %w", err)
+		}
+		tenants = append(tenants, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list retention tenants: %w", err)
+	}
+	return tenants, nil
 }
 
 // Get returns one tenant. An unknown tenant returns an error wrapping

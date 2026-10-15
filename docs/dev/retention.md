@@ -180,10 +180,18 @@ application code.
   the host with no RPC authentication, consistent with the `healthcheck` and
   `version` one-shots. It selects its tenant via `--tenant` and scopes the
   context before scanning; RLS still confines every database operation to that
-  tenant. `--all-tenants` lists active tenants through the `tenant_admin` role
+  tenant. `--all-tenants` lists every tenant, deleted and suspended included, through
+  the `tenant_admin` role's `list_retention_tenants()`
   (`cmd/crosscodexd/admin_batch.go`), then scans each one the same way, one at
   a time, on one set of connections opened before the first valid tenant; the
-  scan itself never runs as `tenant_admin`.
+  scan itself never runs as `tenant_admin`. A deleted tenant's job data still
+  follows retention, so the retention wiring uses `db.NewRetentionTenantPool`,
+  which scopes with `set_config` and skips `enter_tenant`'s deleted-tenant
+  refusal. Judgements have no retention grant, so retention cannot touch them.
+  A hidden tenant is printed by its pseudonym, but retention audit records and
+  NATS subjects carry the real tenant ID even for hidden tenants: hiding is
+  view-level. Holds for deleted tenants are guarded only by the gateway's
+  `tenant_is_active` check.
 
 The cross-tenant isolation spec in
 `pkg/retention/engine_integration_bdd_test.go` proves this end to end against a

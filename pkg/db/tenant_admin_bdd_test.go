@@ -237,6 +237,37 @@ var _ = Describe("TenantAdmin", func() {
 		)
 	})
 
+	Describe("ListRetentionTenants", func() {
+		It("wraps a database error and records its span", func() {
+			_, err := admin.ListRetentionTenants(ctx)
+			Expect(err).To(MatchError(db.ErrExportPoolUsed))
+			Expect(err.Error()).To(HavePrefix("list retention tenants: "))
+			Expect(telemetrytest.FindSpan(tp.GetSpans(), "db.TenantAdmin.list_retention_tenants")).NotTo(BeNil())
+		})
+
+		DescribeTable("returns no tenants and closes the rows when reading fails",
+			func(scanErr, rowsErr, closeErr error, wantPrefix string) {
+				pool, closes := db.ExportNewScriptedRowsPool(2, scanErr, rowsErr, closeErr)
+				a, err := db.ExportNewTenantAdmin(pool, tp.TracerProvider().Tracer("test"), tp.MeterProvider().Meter("test"))
+				Expect(err).NotTo(HaveOccurred())
+
+				tenants, err := a.ListRetentionTenants(ctx)
+
+				for _, want := range []error{scanErr, rowsErr, closeErr} {
+					if want != nil {
+						Expect(err).To(MatchError(want))
+					}
+				}
+				Expect(err.Error()).To(HavePrefix(wantPrefix))
+				Expect(tenants).To(BeNil())
+				Expect(closes()).To(Equal(1))
+			},
+			Entry("Scan fails", errors.New("scan boom"), nil, nil, "list retention tenants: read row: "),
+			Entry("rows.Err after iterating", nil, errors.New("rows boom"), nil, "list retention tenants: "),
+			Entry("Close fails", nil, nil, errors.New("close boom"), "close boom"),
+		)
+	})
+
 	It("uses exactly the statuses migration 007's CHECK allows", func() {
 		sqlText, err := fs.ReadFile(migrations.FS, "007_tenant_admin.up.sql")
 		Expect(err).NotTo(HaveOccurred())

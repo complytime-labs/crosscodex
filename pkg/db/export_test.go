@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.opentelemetry.io/otel/metric"
@@ -223,3 +224,30 @@ type ExportSQLStateError string
 
 func (e ExportSQLStateError) Error() string    { return "sqlstate " + string(e) }
 func (e ExportSQLStateError) SQLState() string { return string(e) }
+
+// recordingTx records every Exec statement and argument list.
+type recordingTx struct {
+	scriptedTx
+	execs *[]string
+}
+
+func (t *recordingTx) Exec(_ context.Context, query string, args ...any) error {
+	*t.execs = append(*t.execs, fmt.Sprint(query, args))
+	return nil
+}
+
+// recordingPool hands out a recordingTx from Begin; every other call fails
+// like failingPool.
+type recordingPool struct {
+	failingPool
+	tx *recordingTx
+}
+
+func (p *recordingPool) Begin(context.Context) (Transaction, error) { return p.tx, nil }
+
+// ExportNewRecordingPool returns a Pool whose Begin yields a transaction
+// that records each Exec as "<query>[<args>]", plus a func returning them.
+func ExportNewRecordingPool() (Pool, func() []string) {
+	execs := &[]string{}
+	return &recordingPool{tx: &recordingTx{execs: execs}}, func() []string { return *execs }
+}

@@ -25,11 +25,25 @@ func tenantSelection(cmd, tenantID string, all bool) bool {
 	return true
 }
 
+// tenantScope selects which tenants --all-tenants covers.
+type tenantScope int
+
+const (
+	// scopeActive covers active tenants only.
+	scopeActive tenantScope = iota
+	// scopeRetention covers every tenant, deleted and suspended included.
+	scopeRetention
+)
+
 // tenantRunner runs a command for one tenant. ctx carries that tenant.
 type tenantRunner func(ctx context.Context, id string) error
 
 // runForTenants runs the command for tenantID or, when all is set, once per
-// active tenant. It returns a process exit code.
+// active tenant. With scopeRetention, --all-tenants instead covers every
+// tenant, deleted and suspended included, because a deleted tenant's job data
+// still follows retention; it lists them through list_retention_tenants and
+// prints a hidden tenant's pseudonym, never its real ID. It returns a process
+// exit code.
 //
 // open builds the resources every tenant shares and is called once, just
 // before the first tenant whose ID is valid, so a malformed tenant fails
@@ -41,26 +55,42 @@ type tenantRunner func(ctx context.Context, id string) error
 // with the command's usual connections. A failing tenant does not stop the
 // others: its error goes to stderr, and the run exits 1 after naming every
 // failure. Each tenant's report is preceded by a "tenant: <id>" line on stdout.
-func runForTenants(ctx context.Context, cmd string, cfg *config.Config, tenantID string, all bool, open func(context.Context) (tenantRunner, func(), error)) int {
+func runForTenants(ctx context.Context, cmd string, cfg *config.Config, tenantID string, all bool, scope tenantScope, open func(context.Context) (tenantRunner, func(), error)) int {
 	ids := []string{tenantID}
+	displayIDs := ids
 	if all {
 		dsn, ok := requireTenantAdminDSN(cmd, cfg)
 		if !ok {
 			return 1
 		}
-		records, err := runTenantListFn(ctx, dsn)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: list tenants: %v\n", cmd, err)
-			return 1
-		}
-		ids = nil
-		for _, r := range records {
-			if r.Status == dbpkg.TenantStatusActive {
-				ids = append(ids, r.ID)
+		var none string
+		if scope == scopeRetention {
+			tenants, err := runRetentionTenantListFn(ctx, dsn)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s: list tenants: %v\n", cmd, err)
+				return 1
 			}
+			ids, displayIDs, none = nil, nil, "no tenants"
+			for _, t := range tenants {
+				ids = append(ids, t.ID)
+				displayIDs = append(displayIDs, t.DisplayID)
+			}
+		} else {
+			records, err := runTenantListFn(ctx, dsn)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s: list tenants: %v\n", cmd, err)
+				return 1
+			}
+			ids, none = nil, "no active tenants"
+			for _, r := range records {
+				if r.Status == dbpkg.TenantStatusActive {
+					ids = append(ids, r.ID)
+				}
+			}
+			displayIDs = ids
 		}
 		if len(ids) == 0 {
-			fmt.Fprintf(os.Stderr, "%s: no active tenants\n", cmd)
+			fmt.Fprintf(os.Stderr, "%s: %s\n", cmd, none)
 			return 0
 		}
 	}
@@ -80,7 +110,7 @@ func runForTenants(ctx context.Context, cmd string, cfg *config.Config, tenantID
 			if i > 0 {
 				fmt.Fprintln(os.Stdout)
 			}
-			fmt.Fprintf(os.Stdout, "tenant: %s\n", displayCell(id))
+			fmt.Fprintf(os.Stdout, "tenant: %s\n", displayCell(displayIDs[i]))
 		}
 		tctx, err := tenant.WithTenant(ctx, id)
 		if err == nil && run == nil {
@@ -99,8 +129,8 @@ func runForTenants(ctx context.Context, cmd string, cfg *config.Config, tenantID
 			fmt.Fprintf(os.Stderr, "%s: %v\n", cmd, err)
 			return 1
 		}
-		fmt.Fprintf(os.Stderr, "%s: tenant %s: %v\n", cmd, displayCell(id), err)
-		failed = append(failed, displayCell(id))
+		fmt.Fprintf(os.Stderr, "%s: tenant %s: %v\n", cmd, displayCell(displayIDs[i]), err)
+		failed = append(failed, displayCell(displayIDs[i]))
 	}
 	if len(failed) > 0 {
 		fmt.Fprintf(os.Stderr, "%s: %d of %d tenants failed: %s\n", cmd, len(failed), len(ids), strings.Join(failed, ", "))

@@ -267,7 +267,7 @@ func runHumanVerdicts(cmd, tenantID string, fn func(ctx context.Context, cfg *co
 	if !ok {
 		return 1
 	}
-	return runForTenants(ctx, cmd, cfg, tenantID, false, func(ctx context.Context) (tenantRunner, func(), error) {
+	return runForTenants(ctx, cmd, cfg, tenantID, false, scopeActive, func(ctx context.Context) (tenantRunner, func(), error) {
 		hv, closeFn, err := openHumanVerdictsFn(ctx, cfg)
 		if err != nil {
 			return nil, nil, err

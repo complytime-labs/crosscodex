@@ -90,7 +90,7 @@ func runAdmin(args []string) int {
 func retentionScanCmd(args []string) int {
 	fs := flag.NewFlagSet("crosscodexd admin retention scan", flag.ContinueOnError)
 	tenantID := fs.String("tenant", "", "tenant ID whose data to scan")
-	allTenants := fs.Bool("all-tenants", false, "scan every active tenant (needs database.tenant_admin_dsn)")
+	allTenants := fs.Bool("all-tenants", false, "scan every tenant, deleted and suspended included (needs database.tenant_admin_dsn)")
 	dryRun := fs.Bool("dry-run", false, "report what would change without mutating any data")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -131,7 +131,7 @@ func reconcileArtifactsCmd(args []string) int {
 }
 
 // runRetentionScan loads the daemon config and runs one in-process retention
-// scan for tenantID, or for every active tenant when all is set, printing each
+// scan for tenantID, or for every tenant (deleted and suspended included) when all is set, printing each
 // report. It returns a process exit code (0 success, 1 on any failure).
 // runForTenants scopes the context via tenant.WithTenant before each scan so
 // the RLS-keyed DBCollector, archive, and purge paths resolve the target
@@ -146,7 +146,7 @@ func runRetentionScan(tenantID string, all, dryRun bool) int {
 		return 1
 	}
 
-	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+	return runForTenants(ctx, cmd, cfg, tenantID, all, scopeRetention, func(ctx context.Context) (tenantRunner, func(), error) {
 		scan, closeFn, err := openRetentionScanFn(ctx, cfg)
 		if err != nil {
 			return nil, nil, err
@@ -263,7 +263,7 @@ func runReconcileArtifacts(tenantID string, all, dryRun bool, maxEdges int) int 
 		return 1
 	}
 
-	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+	return runForTenants(ctx, cmd, cfg, tenantID, all, scopeActive, func(ctx context.Context) (tenantRunner, func(), error) {
 		reconcile, closeFn, err := openReconcileArtifactsFn(ctx, cfg)
 		if err != nil {
 			return nil, nil, err
@@ -392,7 +392,7 @@ func runAdjudicateArtifacts(tenantID string, all, dryRun, reproject bool, maxPai
 		return 1
 	}
 
-	return runForTenants(ctx, cmd, cfg, tenantID, all, func(ctx context.Context) (tenantRunner, func(), error) {
+	return runForTenants(ctx, cmd, cfg, tenantID, all, scopeActive, func(ctx context.Context) (tenantRunner, func(), error) {
 		adjudicate, closeFn, err := openAdjudicateArtifactsFn(ctx, cfg, dryRun || reproject)
 		if err != nil {
 			return nil, nil, err

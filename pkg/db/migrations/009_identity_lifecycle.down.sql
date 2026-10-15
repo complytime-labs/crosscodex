@@ -19,6 +19,9 @@ BEGIN
     END IF;
 END $$;
 
+-- Added last in the up migration, so removed first.
+DROP FUNCTION public.list_retention_tenants();
+
 -- Reviewer rows are dropped with the table. Every reviewer change wrote an
 -- identity_events row, which refuses the rollback above, so only reviewers
 -- registered by the 009 backfill can be lost, and re-applying 009 backfills

@@ -852,3 +852,25 @@ GRANT EXECUTE ON FUNCTION public.unhide_reviewer(text, text, text, text, bytea, 
 GRANT EXECUTE ON FUNCTION public.list_reviewers(text) TO tenant_admin;
 GRANT EXECUTE ON FUNCTION public.trace_pseudonym(text, text, text, bytea, bytea) TO tenant_admin;
 GRANT EXECUTE ON FUNCTION public.require_active_reviewer(text) TO app_user;
+
+-- list_retention_tenants lists every tenant for 'crosscodexd admin retention
+-- scan --all-tenants': a deleted tenant's job data still follows retention.
+-- tenant_id is real, to scope the scan; display_id is the pseudonym of a
+-- hidden tenant, else the tenant_id, and is the only column to print. The
+-- caller already holds tenant_admin, which can run delete_tenant and
+-- trace_pseudonym, so exposing real IDs here widens nothing.
+CREATE FUNCTION public.list_retention_tenants()
+RETURNS TABLE (tenant_id text, display_id text, status text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+    SELECT t.tenant_id,
+           CASE WHEN t.hidden_at IS NULL THEN t.tenant_id ELSE t.pseudonym END,
+           t.status
+    FROM public.tenants t
+    ORDER BY 1
+$$;
+REVOKE ALL ON FUNCTION public.list_retention_tenants() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.list_retention_tenants() TO tenant_admin;
