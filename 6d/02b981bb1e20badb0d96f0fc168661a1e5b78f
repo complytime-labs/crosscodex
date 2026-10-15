@@ -1,0 +1,21 @@
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_34c7f65a88ab67::t_0a7df3da5f938a 968,976-983,987,989,991,995
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_34c7f65a88ab67::t_0a7df3da5f938a 420-423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d02b981bb1e20badb0d96f0fc168661a1e5b78f",
+  "prompts": {},
+  "sessions": {
+    "s_34c7f65a88ab67": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e88ae64a-2e12-477d-9372-5bd0e090e351",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
