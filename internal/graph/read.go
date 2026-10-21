@@ -303,7 +303,10 @@ func protoDirectionToString(d pb.TraversalDirection) (direction string, ok bool)
 	}
 }
 
-// mapGraphError maps graphdb errors to Connect status codes.
+// mapGraphError maps graphdb errors to Connect status codes. Node ID and
+// label-kind conflicts are FailedPrecondition, not AlreadyExists: the write
+// is refused because of what the graph already holds, and graph writers
+// treat AlreadyExists-style errors as idempotent success.
 func mapGraphError(err error) connect.Code {
 	switch {
 	case err == nil:
@@ -319,6 +322,9 @@ func mapGraphError(err error) connect.Code {
 		return connect.CodePermissionDenied
 	case errors.Is(err, graphdb.ErrNotSupported):
 		return connect.CodeUnimplemented
+	case errors.Is(err, graphdb.ErrNodeIDConflict),
+		errors.Is(err, graphdb.ErrLabelKindConflict):
+		return connect.CodeFailedPrecondition
 	default:
 		return connect.CodeInternal
 	}

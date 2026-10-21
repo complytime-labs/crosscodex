@@ -85,6 +85,24 @@ var _ = Describe("Write RPCs", func() {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
+		// CreateNode generates a fresh ID, so a real driver cannot conflict
+		// here today; the mock pins what a client sees if one does.
+		It("returns FailedPrecondition with the actionable message for a node ID conflict", func() {
+			ctx := testspecs.SetupTenantContext("test-tenant")
+			mockGraph.createNodeFunc = func(ctx context.Context, tenant string, node graphdb.Node) error {
+				return fmt.Errorf("create node: %w", &graphdb.NodeIDConflictError{ID: node.ID, Label: node.Label, StoredLabel: "Artifact"})
+			}
+
+			resp, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
+				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
+				Label:         "Control",
+			}))
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring("belongs to a node labeled Artifact"))
+			Expect(err.Error()).To(ContainSubstring("Give the Control node an ID no other node uses"))
+		})
+
 		It("preserves temporal attributes", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			db := newMemGraph(ctx, "test-tenant")
@@ -187,6 +205,27 @@ var _ = Describe("Write RPCs", func() {
 			}))
 			Expect(resp).To(BeNil())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+
+			rels, err := db.QueryRelationships(ctx, "test-tenant", graphdb.RelationshipQuery{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rels).To(BeEmpty())
+		})
+
+		It("returns FailedPrecondition with the actionable message when the label already names nodes", func() {
+			ctx := testspecs.SetupTenantContext("test-tenant")
+			db := newMemGraph(ctx, "test-tenant", "node-1", "node-2")
+			svc := graph.New(db, mockVectors, nil)
+
+			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
+				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
+				SourceNodeId:  "node-1",
+				TargetNodeId:  "node-2",
+				Label:         "Control",
+			}))
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring(`"Control" is already a node label`))
+			Expect(err.Error()).To(ContainSubstring("use a different label name"))
 
 			rels, err := db.QueryRelationships(ctx, "test-tenant", graphdb.RelationshipQuery{})
 			Expect(err).NotTo(HaveOccurred())

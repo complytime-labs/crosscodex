@@ -15,16 +15,17 @@ import (
 // ExecuteQuery execution, concurrent first-time CreateGraph and the
 // "ambiguous node ID" error for graphs written before #148):
 //
-//   - Field, identifier (CheckIdentifier) and reserved-key validation run
+//   - Field, identifier (CheckLabel, CheckIdentifier) and reserved-key validation run
 //     before the tenant check. The tenant check is
 //     CheckTenant: an empty tenant returns ErrTenantRequired, and a tenant
 //     that fails tenant.ValidateTenantID (at most 52 characters, so the
 //     graph name crosscodex_<tenant> fits PostgreSQL's 63-byte limit) returns
 //     an error wrapping ErrTenantRequired that states the rule. Either way
 //     nothing is read or stored.
-//   - Labels and property keys, written or used as query filters, must pass
-//     CheckIdentifier; anything else returns an error wrapping
-//     ErrInvalidCypher and stores nothing.
+//   - Labels, written or used as query filters, must pass CheckLabel (an
+//     identifier of at most MaxLabelBytes bytes that does not start with
+//     "_ag_"); property keys must pass CheckIdentifier. Anything else returns
+//     an error wrapping ErrInvalidCypher and stores nothing.
 //   - Written Properties (CreateNode, UpsertNode, CreateEdge, BulkCreateEdges) must not
 //     use a key the driver writes itself from a Node or Edge field (id,
 //     valid_from, valid_to, ...; the sets are ReservedNodeKeys and
@@ -39,6 +40,16 @@ import (
 //     returns a *NodeIDConflictError, which wraps ErrNodeIDConflict (never
 //     ErrNodeExists, which graph writers treat as success), and changes
 //     nothing.
+//   - A label names either nodes or edges in a tenant's graph, never both. A
+//     write (CreateNode, UpsertNode, CreateEdge, CreateRequiresEdge's
+//     REQUIRES, BulkCreateEdges) whose label already names the other kind
+//     returns a *LabelKindConflictError, which wraps ErrLabelKindConflict
+//     (never ErrNodeExists or ErrEdgeExists), and stores nothing. A label's
+//     kind is fixed by the first write that passes validation and the tenant
+//     and graph checks, even if that write is then refused (a missing
+//     endpoint, ErrNodeIDConflict, ErrEdgeExists, a later label of the same
+//     BulkCreateEdges batch conflicting), because agedriver commits the label
+//     before the write that needs it.
 //   - CreateNode rejects a node whose (label, ID) pair already exists with an
 //     error wrapping ErrNodeExists and keeps the stored node unchanged.
 //   - UpsertNode validates exactly like CreateNode. With no node under the ID
@@ -142,7 +153,9 @@ type GraphDB interface {
 	// zero-based index of the first failing edge, the message begins
 	// "bulk create edges [Index]: ", and it wraps the error CreateEdge would
 	// return for that edge (ErrNodeNotFound, ErrEdgeExists, a
-	// *ReservedPropertyError, ...).
+	// *ReservedPropertyError, ...). A label kind conflict is not a
+	// *BulkEdgeError: it belongs to a label, not to one edge, so it is
+	// returned as a wrapped *LabelKindConflictError.
 	BulkCreateEdges(ctx context.Context, tenant string, edges []BulkEdge) ([]string, error)
 
 	// ExecuteQuery runs a read-only openCypher query against the tenant's graph.

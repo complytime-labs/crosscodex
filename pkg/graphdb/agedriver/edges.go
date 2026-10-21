@@ -29,6 +29,11 @@ func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEd
 		attribute.String("target.id", reqEdge.TargetID),
 	)
 
+	if err := c.ensureLabel(ctx, tenant, edgeLabel, "REQUIRES"); err != nil {
+		failSpan(span, err)
+		return fmt.Errorf("create requires edge: %w", err)
+	}
+
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
 		failSpan(span, err)
@@ -67,7 +72,7 @@ func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEd
 	)
 
 	cypher := fmt.Sprintf(
-		"MATCH (s {id: '%s'}), (t {id: '%s'}) CREATE (s)-[e:REQUIRES %s]->(t)",
+		"MATCH (s), (t) WHERE s.id = '%s' AND t.id = '%s' CREATE (s)-[e:REQUIRES %s]->(t)",
 		escapeCypher(reqEdge.SourceID),
 		escapeCypher(reqEdge.TargetID),
 		joinPropertyPairs(pairs),

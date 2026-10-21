@@ -267,6 +267,33 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			_, err = client.GetNode(ctx, tenantID, "refused")
 			Expect(err).To(MatchError(graphdb.ErrNodeNotFound))
 		})
+
+		It("refuses a node under a never-used label without creating the label", func() {
+			tenantID := testID("graphdb-deleted-label")
+			setupTenant(tenantID)
+			DeferCleanup(func() { cleanupTenant(tenantID) })
+			ctx := context.Background()
+			client, err := agedriver.New(testDB)
+			Expect(err).NotTo(HaveOccurred())
+			const label = "NeverUsedLabel"
+
+			setDeleted(tenantID, true)
+			err = client.CreateNode(ctx, tenantID, graphdb.Node{ID: "refused", Label: label,
+				ValidFrom: time.Now().UTC().Truncate(time.Microsecond), CreatedBy: "test-job", CreationMethod: "import"})
+			Expect(err).To(HaveOccurred())
+			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
+			Expect(err.Error()).To(ContainSubstring("admin tenant restore"))
+
+			// Restore so the graph can be read back as graph_user.
+			setDeleted(tenantID, false)
+			_, err = client.GetNode(ctx, tenantID, "refused")
+			Expect(err).To(MatchError(graphdb.ErrNodeNotFound))
+			var labels int
+			Expect(testDB.QueryRowContext(ctx,
+				"SELECT count(*) FROM ag_catalog.ag_label l JOIN ag_catalog.ag_graph g ON g.graphid = l.graph WHERE g.name = $1 AND l.name = $2",
+				"crosscodex_"+tenantID, label).Scan(&labels)).To(Succeed())
+			Expect(labels).To(Equal(0), "a refused write must not create the label")
+		})
 	})
 
 	// ===================================================================
@@ -1155,6 +1182,11 @@ var _ = Describe("Node creation lock", func() {
 		Expect(level).To(Equal("repeatable read"), "the spec needs a REPEATABLE READ session default")
 		rrClient, err := agedriver.New(rrDB)
 		Expect(err).NotTo(HaveOccurred())
+		// Create and index the Control label first. Otherwise the holder's
+		// raw Cypher CREATE would create it lazily and uncommitted, and the
+		// writers would block in ensureLabel's create_vlabel instead of on
+		// the node lock this spec is about.
+		Expect(rrClient.CreateNode(ctx, tenantID, graphdb.Node{ID: "label-seed", Label: "Control", ValidFrom: validNow})).To(Succeed())
 
 		// The holder creates the node under the lock and commits only after
 		// both writers are waiting on it.

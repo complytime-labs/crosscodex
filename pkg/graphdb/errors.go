@@ -9,6 +9,7 @@ var (
 	ErrNodeNotFound      = errors.New("node not found")
 	ErrNodeExists        = errors.New("node already exists")
 	ErrNodeIDConflict    = errors.New("node ID already used under another label")
+	ErrLabelKindConflict = errors.New("label already used for the other element kind")
 	ErrEdgeNotFound      = errors.New("edge not found")
 	ErrInvalidCypher     = errors.New("invalid openCypher query")
 	ErrGraphNotFound     = errors.New("graph not found")
@@ -36,6 +37,33 @@ func (e *NodeIDConflictError) Error() string {
 }
 
 func (e *NodeIDConflictError) Unwrap() error { return ErrNodeIDConflict }
+
+// LabelKindConflictError is returned (wrapping ErrLabelKindConflict) when a
+// write uses a label that already names the other element kind in the
+// tenant's graph: a node label for an edge, or an edge label for a node. Kind
+// is the kind the write asked for and StoredKind the kind the label already
+// has, each "node" or "edge". Apache AGE stores each label as one table of one
+// kind and keeps label names unique per graph across kinds, so it cannot hold
+// both; every driver rejects the reuse so the contract is the portable
+// intersection. It deliberately does not wrap ErrNodeExists or ErrEdgeExists:
+// graph writers treat those as success, and a conflict is not a re-write.
+type LabelKindConflictError struct {
+	Label      string
+	Kind       string
+	StoredKind string
+}
+
+func (e *LabelKindConflictError) Error() string {
+	article := "a"
+	if e.StoredKind == "edge" {
+		article = "an"
+	}
+	return fmt.Sprintf("%s: cannot write %s label %q: %q is already %s %s label. "+
+		"A label names either nodes or edges in a tenant's graph, never both; use a different label name",
+		ErrLabelKindConflict, e.Kind, e.Label, e.Label, article, e.StoredKind)
+}
+
+func (e *LabelKindConflictError) Unwrap() error { return ErrLabelKindConflict }
 
 // BulkEdgeError is returned by BulkCreateEdges when one edge of the batch
 // fails: Index is the zero-based position of the first failing edge and Err

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -27,14 +28,45 @@ func CheckIdentifier(kind, s string) error {
 		ErrInvalidCypher, kind, s)
 }
 
-// CheckRelationshipQuery applies CheckIdentifier to every label q sets and
+// MaxLabelBytes is PostgreSQL's identifier limit (NAMEDATALEN-1). agedriver
+// stores each label as a table name, and PostgreSQL silently truncates longer
+// identifiers, which would merge distinct labels into one table.
+const MaxLabelBytes = 63
+
+// reservedLabelPrefix starts the names of Apache AGE's internal tables. A
+// label _ag_label_vertex or _ag_label_edge names the parent table every label
+// inherits from, so writing it bypasses per-label tables and querying it
+// matches every vertex or edge.
+const reservedLabelPrefix = "_ag_"
+
+// CheckLabel returns an error wrapping ErrInvalidCypher unless s passes
+// CheckIdentifier, does not start with "_ag_" and is at most MaxLabelBytes
+// long. Every driver applies it to node and edge labels, written or used as
+// query filters, so all drivers accept the same labels. kind names the field
+// in the message, for example "edge label".
+func CheckLabel(kind, s string) error {
+	if err := CheckIdentifier(kind, s); err != nil {
+		return err
+	}
+	if strings.HasPrefix(s, reservedLabelPrefix) {
+		return fmt.Errorf("%w: %s %q starts with %q, which Apache AGE reserves for its internal tables. Rename it, for example by dropping the prefix",
+			ErrInvalidCypher, kind, s, reservedLabelPrefix)
+	}
+	if len(s) > MaxLabelBytes {
+		return fmt.Errorf("%w: %s %q is %d bytes; labels are limited to %d bytes because PostgreSQL truncates longer identifiers, which would merge distinct labels. Shorten it",
+			ErrInvalidCypher, kind, s, len(s), MaxLabelBytes)
+	}
+	return nil
+}
+
+// CheckRelationshipQuery applies CheckLabel to every label q sets and
 // CheckPropertyKeys to its property filter.
 func CheckRelationshipQuery(q RelationshipQuery) error {
 	for _, l := range [][2]string{{"source label", q.SourceLabel}, {"target label", q.TargetLabel}, {"edge label", q.EdgeLabel}} {
 		if l[1] == "" {
 			continue
 		}
-		if err := CheckIdentifier(l[0], l[1]); err != nil {
+		if err := CheckLabel(l[0], l[1]); err != nil {
 			return err
 		}
 	}
@@ -100,7 +132,7 @@ func CheckEdgeProperties(props map[string]any) error {
 }
 
 // CheckNode validates a node being written (CreateNode, UpsertNode): ID,
-// Label and ValidFrom are required, the label must pass CheckIdentifier and
+// Label and ValidFrom are required, the label must pass CheckLabel and
 // Properties must pass CheckNodeProperties. Errors are unprefixed so each
 // driver method can name itself.
 func CheckNode(n Node) error {
@@ -110,7 +142,7 @@ func CheckNode(n Node) error {
 	if n.Label == "" {
 		return errors.New("label is required")
 	}
-	if err := CheckIdentifier("label", n.Label); err != nil {
+	if err := CheckLabel("label", n.Label); err != nil {
 		return err
 	}
 	if err := CheckNodeProperties(n.Properties); err != nil {
@@ -124,13 +156,13 @@ func CheckNode(n Node) error {
 
 // CheckEdge validates an edge being written (CreateEdge, BulkCreateEdges):
 // Label, both endpoint IDs and ValidFrom are required, the label must pass
-// CheckIdentifier and Properties must pass CheckEdgeProperties. Edge.ID is
+// CheckLabel and Properties must pass CheckEdgeProperties. Edge.ID is
 // optional. Errors are unprefixed so each driver method can name itself.
 func CheckEdge(sourceID, targetID string, e Edge) error {
 	if e.Label == "" {
 		return errors.New("label is required")
 	}
-	if err := CheckIdentifier("label", e.Label); err != nil {
+	if err := CheckLabel("label", e.Label); err != nil {
 		return err
 	}
 	if err := CheckEdgeProperties(e.Properties); err != nil {

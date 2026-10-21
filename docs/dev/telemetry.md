@@ -220,7 +220,7 @@ A failed `db.TenantAdmin.*` span carries only a coarse status description: a sen
 
 | Attribute   | Values |
 |-------------|--------|
-| `operation` | `create_graph`, `create_node`, `upsert_node`, `create_edge`, `create_requires_edge`, `bulk_create_edges`, `query_relationships`, `query_as_of`, `traverse`, `get_node`, `get_edge`, `execute_query`, `supersede_fact` |
+| `operation` | `create_graph`, `ensure_label`, `create_node`, `upsert_node`, `create_edge`, `create_requires_edge`, `bulk_create_edges`, `query_relationships`, `query_as_of`, `traverse`, `get_node`, `get_edge`, `execute_query`, `supersede_fact` |
 | `status`    | `ok`, `error` |
 | `result`    | `ok`, `exists`, `not_found`, `error` |
 
