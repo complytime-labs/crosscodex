@@ -1,0 +1,25 @@
+docs/dev/design-principles.md
+  s_5b768aa7619f87::t_7b537af9b57f4b 184
+internal/graph/read.go
+  s_5b768aa7619f87::t_2394dd1981d917 306-309,325-326
+internal/graph/read_errors_bdd_test.go
+  s_5b768aa7619f87::t_8cee92db7c39a7 28
+internal/graph/write_bdd_test.go
+  s_5b768aa7619f87::t_58a174c8ca02f2 88-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ee452aa686c4e362aec932b3f68ce19b5c93bd1",
+  "prompts": {},
+  "sessions": {
+    "s_5b768aa7619f87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55e098ec-3b79-460b-b842-5c16757d7694",
+        "model": "unknown"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
