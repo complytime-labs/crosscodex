@@ -361,6 +361,62 @@ func nonIdentifierOps() []any {
 	}
 }
 
+// reservedLabelOps lists every label position, written or used as a query
+// filter, with each label CheckLabel rejects although CheckIdentifier accepts
+// it: AGE's internal parent tables and a 64-byte label that PostgreSQL would
+// truncate. want is a fragment of the actionable message.
+func reservedLabelOps() []any {
+	labels := []struct{ name, label, want string }{
+		{"_ag_label_vertex", "_ag_label_vertex", `starts with "_ag_"`},
+		{"_ag_label_edge", "_ag_label_edge", `starts with "_ag_"`},
+		{"a 64-byte label", strings.Repeat("A", 64), "limited to 63 bytes"},
+	}
+	var entries []any
+	for _, l := range labels {
+		label := l.label
+		ops := []namedOp{
+			{"CreateNode", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				return db.CreateNode(ctx, tenant, graphdb.Node{ID: "bad", Label: label, ValidFrom: contractT0})
+			}},
+			{"UpsertNode", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				_, err := db.UpsertNode(ctx, tenant, graphdb.Node{ID: "bad", Label: label, ValidFrom: contractT0})
+				return err
+			}},
+			{"CreateEdge", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				return db.CreateEdge(ctx, tenant, "a", "b", graphdb.Edge{ID: "bad-e", Label: label, ValidFrom: contractT0})
+			}},
+			{"BulkCreateEdges", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				_, err := db.BulkCreateEdges(ctx, tenant, []graphdb.BulkEdge{{SourceID: "a", TargetID: "b", Edge: graphdb.Edge{ID: "bad-e", Label: label, ValidFrom: contractT0}}})
+				return err
+			}},
+			{"QueryRelationships source label", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				_, err := db.QueryRelationships(ctx, tenant, graphdb.RelationshipQuery{SourceLabel: label})
+				return err
+			}},
+			{"QueryRelationships target label", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				_, err := db.QueryRelationships(ctx, tenant, graphdb.RelationshipQuery{TargetLabel: label})
+				return err
+			}},
+			{"QueryRelationships edge label", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				_, err := db.QueryRelationships(ctx, tenant, graphdb.RelationshipQuery{EdgeLabel: label})
+				return err
+			}},
+			{"QueryAsOf edge label", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				_, err := db.QueryAsOf(ctx, tenant, graphdb.RelationshipQuery{EdgeLabel: label}, contractT0)
+				return err
+			}},
+			{"Traverse edge label", func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+				_, err := db.Traverse(ctx, tenant, graphdb.TraversalQuery{StartNode: "a", EdgeLabels: []string{"MAPS", label}, MaxDepth: 1})
+				return err
+			}},
+		}
+		for _, op := range ops {
+			entries = append(entries, ginkgo.Entry(op.name+" with "+l.name, op.op, l.want))
+		}
+	}
+	return entries
+}
+
 func randomTenantID(prefix string) string {
 	b := make([]byte, 4)
 	_, err := rand.Read(b)
@@ -699,6 +755,24 @@ func GraphDBContractBehavior(setup GraphDBSetup) func() {
 					}
 				}, nonIdentifierOps())...,
 			)
+
+			ginkgo.DescribeTable("rejects a label AGE reserves or PostgreSQL would truncate with ErrInvalidCypher and stores nothing",
+				tableArgs(func(op graphOp, want string) {
+					err := op(ctx, db, tenant)
+					gomega.Expect(err).To(gomega.MatchError(graphdb.ErrInvalidCypher))
+					gomega.Expect(err.Error()).To(gomega.ContainSubstring(want))
+					_, err = db.GetNode(ctx, tenant, "bad")
+					gomega.Expect(err).To(gomega.MatchError(graphdb.ErrNodeNotFound))
+					gomega.Expect(currentEdges(graphdb.RelationshipQuery{})).To(gomega.BeEmpty())
+				}, reservedLabelOps())...,
+			)
+
+			ginkgo.It("accepts a 63-byte label", func() {
+				long := strings.Repeat("A", 63)
+				gomega.Expect(db.CreateNode(ctx, tenant, graphdb.Node{ID: "c", Label: long, ValidFrom: contractT0})).To(gomega.Succeed())
+				mustEdge("a", "c", graphdb.Edge{ID: "e63", Label: "MAPS", ValidFrom: contractT0})
+				gomega.Expect(relEdgeIDs(currentEdges(graphdb.RelationshipQuery{TargetLabel: long}))).To(gomega.Equal([]string{"e63"}))
+			})
 
 			ginkgo.It("accepts identifiers with underscores and digits", func() {
 				gomega.Expect(db.CreateNode(ctx, tenant, graphdb.Node{ID: "c", Label: "_Control_2", ValidFrom: contractT0, Properties: map[string]any{"_k9": "v"}})).To(gomega.Succeed())

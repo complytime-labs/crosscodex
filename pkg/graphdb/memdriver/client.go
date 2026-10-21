@@ -341,7 +341,7 @@ func matchesProps(props, want map[string]any) bool {
 
 func (c *memClient) Traverse(_ context.Context, tenant string, query graphdb.TraversalQuery) ([]graphdb.Path, error) {
 	for _, l := range query.EdgeLabels {
-		if err := graphdb.CheckIdentifier("edge label", l); err != nil {
+		if err := graphdb.CheckLabel("edge label", l); err != nil {
 			return nil, fmt.Errorf("traverse: %w", err)
 		}
 	}

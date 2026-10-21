@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -45,24 +46,24 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
-	Context("CheckIdentifier — acceptance", func() {
-		// isIdentifier restates the rule rune by rune so the property does
-		// not share an implementation with the code under test.
-		isIdentifier := func(s string) bool {
-			if s == "" {
+	// isIdentifier restates the rule rune by rune so the property does
+	// not share an implementation with the code under test.
+	isIdentifier := func(s string) bool {
+		if s == "" {
+			return false
+		}
+		for i, r := range s {
+			switch {
+			case r == '_', r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+			case r >= '0' && r <= '9' && i > 0:
+			default:
 				return false
 			}
-			for i, r := range s {
-				switch {
-				case r == '_', r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
-				case r >= '0' && r <= '9' && i > 0:
-				default:
-					return false
-				}
-			}
-			return true
 		}
+		return true
+	}
 
+	Context("CheckIdentifier — acceptance", func() {
 		It("accepts a string exactly when it is an ASCII identifier", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				s := rapid.String().Draw(t, "s")
@@ -79,6 +80,27 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				s := rapid.StringMatching(`[A-Za-z_][A-Za-z0-9_]{0,40}`).Draw(t, "s")
 				Expect(graphdb.CheckIdentifier("label", s)).To(Succeed())
+			})
+		})
+	})
+
+	Context("CheckLabel — acceptance", func() {
+		// The generator mixes arbitrary strings with near-identifiers that
+		// straddle both extra rules: the "_ag_" prefix and the 63-byte cap.
+		label := rapid.OneOf(
+			rapid.String(),
+			rapid.StringMatching(`(_ag_)?[A-Za-z_][A-Za-z0-9_]{0,70}`),
+		)
+
+		It("accepts exactly the identifiers of at most 63 bytes without the _ag_ prefix", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				s := label.Draw(t, "s")
+				err := graphdb.CheckLabel("label", s)
+				if isIdentifier(s) && len(s) <= 63 && !strings.HasPrefix(s, "_ag_") {
+					Expect(err).NotTo(HaveOccurred())
+				} else {
+					Expect(err).To(MatchError(graphdb.ErrInvalidCypher))
+				}
 			})
 		})
 	})

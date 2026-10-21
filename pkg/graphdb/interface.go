@@ -15,16 +15,17 @@ import (
 // ExecuteQuery execution, concurrent first-time CreateGraph and the
 // "ambiguous node ID" error for graphs written before #148):
 //
-//   - Field, identifier (CheckIdentifier) and reserved-key validation run
+//   - Field, identifier (CheckLabel, CheckIdentifier) and reserved-key validation run
 //     before the tenant check. The tenant check is
 //     CheckTenant: an empty tenant returns ErrTenantRequired, and a tenant
 //     that fails tenant.ValidateTenantID (at most 52 characters, so the
 //     graph name crosscodex_<tenant> fits PostgreSQL's 63-byte limit) returns
 //     an error wrapping ErrTenantRequired that states the rule. Either way
 //     nothing is read or stored.
-//   - Labels and property keys, written or used as query filters, must pass
-//     CheckIdentifier; anything else returns an error wrapping
-//     ErrInvalidCypher and stores nothing.
+//   - Labels, written or used as query filters, must pass CheckLabel (an
+//     identifier of at most MaxLabelBytes bytes that does not start with
+//     "_ag_"); property keys must pass CheckIdentifier. Anything else returns
+//     an error wrapping ErrInvalidCypher and stores nothing.
 //   - Written Properties (CreateNode, UpsertNode, CreateEdge, BulkCreateEdges) must not
 //     use a key the driver writes itself from a Node or Edge field (id,
 //     valid_from, valid_to, ...; the sets are ReservedNodeKeys and

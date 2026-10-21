@@ -40,6 +40,38 @@ func FuzzCheckIdentifier(f *testing.F) {
 	})
 }
 
+// FuzzCheckLabel checks that every label CheckLabel accepts is an identifier
+// that PostgreSQL stores untruncated and that does not name one of Apache
+// AGE's internal tables.
+func FuzzCheckLabel(f *testing.F) {
+	f.Add("Control")
+	f.Add("_ag_label_vertex")
+	f.Add("_ag_label_edge")
+	f.Add(strings.Repeat("A", 63))
+	f.Add(strings.Repeat("A", 64))
+	f.Add("Control) DETACH DELETE n //")
+	f.Add("")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		err := graphdb.CheckLabel("label", s)
+		if err != nil {
+			if !errors.Is(err, graphdb.ErrInvalidCypher) {
+				t.Errorf("rejection of %q does not wrap ErrInvalidCypher: %v", s, err)
+			}
+			return
+		}
+		if graphdb.CheckIdentifier("label", s) != nil {
+			t.Errorf("accepted %q, which is not an identifier", s)
+		}
+		if len(s) > 63 {
+			t.Errorf("accepted %q, which is %d bytes", s, len(s))
+		}
+		if strings.HasPrefix(s, "_ag_") {
+			t.Errorf("accepted %q, which has AGE's reserved prefix", s)
+		}
+	})
+}
+
 // FuzzDerivedID checks that every derived ID decodes back to the parts it was
 // built from, which is what makes distinct part lists yield distinct IDs. The
 // fuzzer supplies one string; splitting it on "|" yields the parts.

@@ -618,7 +618,7 @@ func (c *ageClient) queryRelationshipsInternal(
 // Traverse performs a variable-length path traversal starting from a given node.
 func (c *ageClient) Traverse(ctx context.Context, tenant string, query graphdb.TraversalQuery) (_ []graphdb.Path, err error) {
 	for _, l := range query.EdgeLabels {
-		if err := graphdb.CheckIdentifier("edge label", l); err != nil {
+		if err := graphdb.CheckLabel("edge label", l); err != nil {
 			return nil, fmt.Errorf("traverse: %w", err)
 		}
 	}
