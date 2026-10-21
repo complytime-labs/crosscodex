@@ -1,0 +1,21 @@
+pkg/graphdb/agedriver/labels_integration_bdd_test.go
+  s_4741dfafb6fa34::t_311efe21b2983b 239,241,243-244
+pkg/graphdb/agedriver/labels.go
+  s_4741dfafb6fa34::t_311efe21b2983b 149-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d61f032a312242096de7f7efa9400f7632fe6124",
+  "prompts": {},
+  "sessions": {
+    "s_4741dfafb6fa34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a93d410b-fb66-422d-9d41-a4c93c6c408a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
