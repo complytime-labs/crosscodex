@@ -7,6 +7,7 @@ package agedriver_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -189,19 +190,22 @@ var _ = Describe("Label indexes", func() {
 		Expect(labelIndexes(ctx, gn, "REQUIRES")).To(Equal(wantEdgeIndexes("REQUIRES")))
 	})
 
-	It("refuses an edge label that is already a vertex label, writes nothing and does not cache the failure", func() {
+	It("refuses an edge label that is already a node label, writes nothing and does not cache the failure", func() {
 		Expect(client.CreateNode(ctx, tenantID, graphdb.Node{ID: "a", Label: "Dual", ValidFrom: now})).To(Succeed())
 		Expect(client.CreateNode(ctx, tenantID, graphdb.Node{ID: "b", Label: "Dual", ValidFrom: now})).To(Succeed())
 		rec.reset()
 
 		for range 2 {
 			err := client.CreateEdge(ctx, tenantID, "a", "b", graphdb.Edge{ID: "e1", Label: "Dual", ValidFrom: now})
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring(`cannot write edge label "Dual"`))
-			Expect(err.Error()).To(ContainSubstring(`"Dual" is already a vertex label`))
+			Expect(err).To(MatchError(graphdb.ErrLabelKindConflict))
+			var conflict *graphdb.LabelKindConflictError
+			Expect(errors.As(err, &conflict)).To(BeTrue())
+			Expect(*conflict).To(Equal(graphdb.LabelKindConflictError{Label: "Dual", Kind: "edge", StoredKind: "node"}))
+			// The typed error names the label, so ensureLabel adds no prefix.
+			Expect(err.Error()).To(HavePrefix(`create edge: label already used for the other element kind: cannot write edge label "Dual"`))
+			Expect(err.Error()).To(ContainSubstring(`"Dual" is already a node label`))
 			Expect(err.Error()).To(ContainSubstring("use a different label name"))
-			// CWE-209: the caller sees its tenant, never the internal graph name.
-			Expect(err.Error()).To(ContainSubstring(fmt.Sprintf("for tenant %q", tenantID)))
+			// CWE-209: the caller never sees the internal graph name.
 			Expect(err.Error()).NotTo(ContainSubstring(gn))
 		}
 		Expect(ensures()).To(Equal(map[string]int64{"ok/ok": 1, "error/error": 2}))
@@ -240,7 +244,7 @@ var _ = Describe("Label indexes", func() {
 		Expect(labelIndexes(ctx, gn, "Fresh")).To(Equal(wantVertexIndexes("Fresh")))
 	})
 
-	It("lets concurrent first writers of one label name as a vertex and as an edge get one success and one actionable mismatch", func() {
+	It("lets concurrent first writers of one label name as a node and as an edge get one success and one LabelKindConflictError", func() {
 		Expect(client.CreateNode(ctx, tenantID, graphdb.Node{ID: "a", Label: "Ends", ValidFrom: now})).To(Succeed())
 		Expect(client.CreateNode(ctx, tenantID, graphdb.Node{ID: "b", Label: "Ends", ValidFrom: now})).To(Succeed())
 		nodeClient, edgeClient := newClient(testDB), newClient(testDB)
@@ -266,11 +270,14 @@ var _ = Describe("Label indexes", func() {
 
 		Expect((nodeErr == nil) != (edgeErr == nil)).To(BeTrue(),
 			"want exactly one success; CreateNode: %v, CreateEdge: %v", nodeErr, edgeErr)
-		loser, want, stored := edgeErr, `cannot write edge label "Race"`, `"Race" is already a vertex label`
+		loser, wantConflict, stored := edgeErr, graphdb.LabelKindConflictError{Label: "Race", Kind: "edge", StoredKind: "node"}, `"Race" is already a node label`
 		if nodeErr != nil {
-			loser, want, stored = nodeErr, `cannot write vertex label "Race"`, `"Race" is already an edge label`
+			loser, wantConflict, stored = nodeErr, graphdb.LabelKindConflictError{Label: "Race", Kind: "node", StoredKind: "edge"}, `"Race" is already an edge label`
 		}
-		Expect(loser.Error()).To(ContainSubstring(want))
+		Expect(loser).To(MatchError(graphdb.ErrLabelKindConflict))
+		var conflict *graphdb.LabelKindConflictError
+		Expect(errors.As(loser, &conflict)).To(BeTrue())
+		Expect(*conflict).To(Equal(wantConflict))
 		Expect(loser.Error()).To(ContainSubstring(stored))
 		Expect(loser.Error()).NotTo(ContainSubstring("already exists"))
 	})

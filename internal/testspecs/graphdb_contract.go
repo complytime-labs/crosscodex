@@ -1153,6 +1153,109 @@ func GraphDBContractBehavior(setup GraphDBSetup) func() {
 			})
 		})
 
+		ginkgo.Describe("label kinds", func() {
+			ginkgo.BeforeEach(func() {
+				mustNode("a", "Control")
+				mustNode("b", "Control")
+			})
+
+			// The seed writes label as storedKind: a node "seed", or an edge
+			// a->b. The write then uses label as the other kind, writing only
+			// edges between a and b or a node "x".
+			ginkgo.DescribeTable("rejects a label already used for the other kind with a LabelKindConflictError and leaves the graph unchanged",
+				func(label, storedKind, kind string, write func() error) {
+					if storedKind == "node" {
+						mustNode("seed", label)
+					} else {
+						mustEdge("a", "b", graphdb.Edge{ID: "seed", Label: label, ValidFrom: contractT0})
+					}
+					edgesBefore := currentEdges(graphdb.RelationshipQuery{})
+					nodesBefore := map[string]*graphdb.Node{}
+					for _, id := range []string{"a", "b", "seed"} {
+						if n, err := db.GetNode(ctx, tenant, id); err == nil {
+							nodesBefore[id] = n
+						}
+					}
+
+					err := write()
+					gomega.Expect(err).To(gomega.MatchError(graphdb.ErrLabelKindConflict))
+					gomega.Expect(errors.Is(err, graphdb.ErrNodeExists)).To(gomega.BeFalse(), "graph writers treat ErrNodeExists as success")
+					gomega.Expect(errors.Is(err, graphdb.ErrEdgeExists)).To(gomega.BeFalse(), "graph writers treat ErrEdgeExists as success")
+					var conflict *graphdb.LabelKindConflictError
+					gomega.Expect(errors.As(err, &conflict)).To(gomega.BeTrue())
+					gomega.Expect(*conflict).To(gomega.Equal(graphdb.LabelKindConflictError{Label: label, Kind: kind, StoredKind: storedKind}))
+					article := "a"
+					if storedKind == "edge" {
+						article = "an"
+					}
+					gomega.Expect(err.Error()).To(gomega.ContainSubstring(fmt.Sprintf("%q is already %s %s label", label, article, storedKind)))
+					gomega.Expect(err.Error()).To(gomega.ContainSubstring("use a different label name"))
+
+					gomega.Expect(currentEdges(graphdb.RelationshipQuery{})).To(gomega.Equal(edgesBefore))
+					for id, before := range nodesBefore {
+						after, err := db.GetNode(ctx, tenant, id)
+						gomega.Expect(err).NotTo(gomega.HaveOccurred())
+						gomega.Expect(after).To(gomega.Equal(before), "node %s", id)
+					}
+					_, err = db.GetNode(ctx, tenant, "x")
+					gomega.Expect(err).To(gomega.MatchError(graphdb.ErrNodeNotFound))
+				},
+				ginkgo.Entry("CreateEdge with a node label", "Shared", "node", "edge", func() error {
+					return db.CreateEdge(ctx, tenant, "a", "b", graphdb.Edge{ID: "e1", Label: "Shared", ValidFrom: contractT0})
+				}),
+				ginkgo.Entry("BulkCreateEdges with a node label", "Shared", "node", "edge", func() error {
+					ids, err := db.BulkCreateEdges(ctx, tenant, []graphdb.BulkEdge{
+						{SourceID: "a", TargetID: "b", Edge: graphdb.Edge{ID: "e1", Label: "Shared", ValidFrom: contractT0}},
+					})
+					gomega.Expect(ids).To(gomega.BeNil())
+					var bulkErr *graphdb.BulkEdgeError
+					gomega.Expect(errors.As(err, &bulkErr)).To(gomega.BeFalse(), "a label conflict belongs to the label, not one edge")
+					return err
+				}),
+				// BatchFirst is used nowhere else, so the batch is its first
+				// write. Labels are recorded in first-occurrence order, so it
+				// stays an edge label although the batch is refused.
+				ginkgo.Entry("BulkCreateEdges whose second label is a node label", "Shared", "node", "edge", func() error {
+					ids, err := db.BulkCreateEdges(ctx, tenant, []graphdb.BulkEdge{
+						{SourceID: "a", TargetID: "b", Edge: graphdb.Edge{ID: "e1", Label: "BatchFirst", ValidFrom: contractT0}},
+						{SourceID: "a", TargetID: "b", Edge: graphdb.Edge{ID: "e2", Label: "Shared", ValidFrom: contractT0}},
+					})
+					gomega.Expect(ids).To(gomega.BeNil())
+					var bulkErr *graphdb.BulkEdgeError
+					gomega.Expect(errors.As(err, &bulkErr)).To(gomega.BeFalse(), "a label conflict belongs to the label, not one edge")
+
+					nodeErr := db.CreateNode(ctx, tenant, graphdb.Node{ID: "x", Label: "BatchFirst", ValidFrom: contractT0})
+					var conflict *graphdb.LabelKindConflictError
+					gomega.Expect(errors.As(nodeErr, &conflict)).To(gomega.BeTrue(), "got %v", nodeErr)
+					gomega.Expect(*conflict).To(gomega.Equal(graphdb.LabelKindConflictError{Label: "BatchFirst", Kind: "node", StoredKind: "edge"}))
+					return err
+				}),
+				ginkgo.Entry("CreateRequiresEdge with REQUIRES as a node label", "REQUIRES", "node", "edge", func() error {
+					return db.CreateRequiresEdge(ctx, tenant, graphdb.RequiresEdge{SourceID: "a", TargetID: "b", AnalyzedAt: contractT0, JobID: "j"})
+				}),
+				ginkgo.Entry("CreateNode with an edge label", "LINKS", "edge", "node", func() error {
+					return db.CreateNode(ctx, tenant, graphdb.Node{ID: "x", Label: "LINKS", ValidFrom: contractT0})
+				}),
+				ginkgo.Entry("UpsertNode with an edge label", "LINKS", "edge", "node", func() error {
+					_, err := db.UpsertNode(ctx, tenant, graphdb.Node{ID: "x", Label: "LINKS", ValidFrom: contractT0})
+					return err
+				}),
+			)
+
+			ginkgo.It("fixes a label's kind at the first write that passes validation, even when that write is refused", func() {
+				err := db.CreateEdge(ctx, tenant, "a", "missing", graphdb.Edge{ID: "e1", Label: "Ghost", ValidFrom: contractT0})
+				gomega.Expect(err).To(gomega.MatchError(graphdb.ErrNodeNotFound))
+				gomega.Expect(currentEdges(graphdb.RelationshipQuery{})).To(gomega.BeEmpty())
+
+				err = db.CreateNode(ctx, tenant, graphdb.Node{ID: "g", Label: "Ghost", ValidFrom: contractT0})
+				var conflict *graphdb.LabelKindConflictError
+				gomega.Expect(errors.As(err, &conflict)).To(gomega.BeTrue(), "got %v", err)
+				gomega.Expect(*conflict).To(gomega.Equal(graphdb.LabelKindConflictError{Label: "Ghost", Kind: "node", StoredKind: "edge"}))
+				_, err = db.GetNode(ctx, tenant, "g")
+				gomega.Expect(err).To(gomega.MatchError(graphdb.ErrNodeNotFound))
+			})
+		})
+
 		ginkgo.Describe("edges", func() {
 			ginkgo.BeforeEach(func() {
 				mustNode("a", "Control")

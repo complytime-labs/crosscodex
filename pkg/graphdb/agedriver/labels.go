@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 )
 
 // labelKind is ag_label.kind: 'v' for a vertex label, 'e' for an edge label.
@@ -18,11 +20,13 @@ const (
 	edgeLabel   labelKind = 'e'
 )
 
+// String returns the graphdb API's name for the kind, "node" or "edge",
+// which LabelKindConflictError reports.
 func (k labelKind) String() string {
 	if k == edgeLabel {
 		return "edge"
 	}
-	return "vertex"
+	return "node"
 }
 
 // propertyIDExpr is the expression AGE 1.5 compiles n.id to. An index on it
@@ -86,6 +90,12 @@ func (c *ageClient) ensureLabel(ctx context.Context, tenant string, kind labelKi
 	start := time.Now()
 	defer func() { c.record(ctx, "ensure_label", start, err) }()
 	if err := c.indexLabel(ctx, tenant, key); err != nil {
+		// A kind conflict already names the label; wrapping it again would
+		// repeat the label in the message clients see.
+		var conflict *graphdb.LabelKindConflictError
+		if errors.As(err, &conflict) {
+			return err
+		}
 		return fmt.Errorf("ensure label %q: %w", label, err)
 	}
 	c.labels.Store(key, struct{}{})
@@ -107,7 +117,7 @@ func (c *ageClient) indexLabel(ctx context.Context, tenant string, key labelKey)
 	// Serialize first writers of one label name of either kind, across
 	// processes too: without the lock two could both miss the label and the
 	// second create_vlabel or create_elabel would fail with AGE's raw
-	// "already exists" instead of the kind-mismatch error below. The kind is
+	// "already exists" instead of the LabelKindConflictError below. The kind is
 	// not part of the key because AGE label names are unique per graph
 	// across kinds. Under beginTx's READ COMMITTED the lookup after the wait
 	// sees the label the previous holder committed. The leading "label" part
@@ -146,12 +156,7 @@ func (c *ageClient) indexLabel(ctx context.Context, tenant string, key labelKey)
 		return fmt.Errorf("look up label: %w", err)
 	}
 	if stored != key.kind {
-		article := "a"
-		if stored == edgeLabel {
-			article = "an"
-		}
-		return fmt.Errorf("cannot write %s label %q for tenant %q: %q is already %s %s label. Labels are per-graph and single-kind; use a different label name",
-			key.kind, key.label, tenant, key.label, article, stored)
+		return &graphdb.LabelKindConflictError{Label: key.label, Kind: key.kind.String(), StoredKind: stored.String()}
 	}
 
 	for _, stmt := range labelIndexDDL(key.kind, key.label, relation) {

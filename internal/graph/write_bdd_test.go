@@ -192,6 +192,27 @@ var _ = Describe("Write RPCs", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rels).To(BeEmpty())
 		})
+
+		It("returns FailedPrecondition with the actionable message when the label already names nodes", func() {
+			ctx := testspecs.SetupTenantContext("test-tenant")
+			db := newMemGraph(ctx, "test-tenant", "node-1", "node-2")
+			svc := graph.New(db, mockVectors, nil)
+
+			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
+				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
+				SourceNodeId:  "node-1",
+				TargetNodeId:  "node-2",
+				Label:         "Control",
+			}))
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring(`"Control" is already a node label`))
+			Expect(err.Error()).To(ContainSubstring("use a different label name"))
+
+			rels, err := db.QueryRelationships(ctx, "test-tenant", graphdb.RelationshipQuery{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rels).To(BeEmpty())
+		})
 	})
 
 	Describe("BulkCreateEdges", func() {

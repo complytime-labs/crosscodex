@@ -31,6 +31,9 @@ type memGraph struct {
 	nodes   []*memNode
 	edges   []*memEdge
 	lastSeq int64
+	// labelKinds maps each label written so far to "node" or "edge", the
+	// way agedriver's catalog fixes one kind per label name (see useLabel).
+	labelKinds map[string]string
 }
 
 // memClient holds one in-memory graph per tenant. A single RWMutex guards
@@ -58,6 +61,24 @@ func (c *memClient) graph(tenant string) (*memGraph, error) {
 		return nil, fmt.Errorf("graph for tenant %q does not exist; create the tenant (or call CreateGraph) before using its graph: %w", tenant, graphdb.ErrGraphNotFound)
 	}
 	return g, nil
+}
+
+// useLabel records label as kind ("node" or "edge") or, if the label already
+// names the other kind, returns a *graphdb.LabelKindConflictError. Write
+// methods call it after the tenant and graph checks and before their own,
+// and the recorded kind stays even when the write is then refused: agedriver
+// commits a label before the write that needs it, so memdriver must not let
+// a refused write leave the label kind-free.
+func (g *memGraph) useLabel(label, kind string) error {
+	stored, ok := g.labelKinds[label]
+	if !ok {
+		g.labelKinds[label] = kind
+		return nil
+	}
+	if stored != kind {
+		return &graphdb.LabelKindConflictError{Label: label, Kind: kind, StoredKind: stored}
+	}
+	return nil
 }
 
 // resolveNode returns the node whose id property equals id. CreateNode and
@@ -131,7 +152,7 @@ func (c *memClient) CreateGraph(_ context.Context, tenant string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.graphs[tenant]; !ok {
-		c.graphs[tenant] = &memGraph{}
+		c.graphs[tenant] = &memGraph{labelKinds: make(map[string]string)}
 	}
 	return nil
 }
@@ -145,6 +166,9 @@ func (c *memClient) CreateNode(_ context.Context, tenant string, node graphdb.No
 	g, err := c.graph(tenant)
 	if err != nil {
 		return err
+	}
+	if err := g.useLabel(node.Label, "node"); err != nil {
+		return fmt.Errorf("create node: %w", err)
 	}
 	if existing := g.nodeByID(node.ID); existing != nil {
 		if existing.label != node.Label {
@@ -165,6 +189,9 @@ func (c *memClient) UpsertNode(_ context.Context, tenant string, node graphdb.No
 	g, err := c.graph(tenant)
 	if err != nil {
 		return false, err
+	}
+	if err := g.useLabel(node.Label, "node"); err != nil {
+		return false, fmt.Errorf("upsert node: %w", err)
 	}
 	props := nodeProps(node)
 	existing := g.nodeByID(node.ID)
@@ -211,6 +238,9 @@ func (c *memClient) CreateEdge(_ context.Context, tenant, sourceID, targetID str
 	if err != nil {
 		return err
 	}
+	if err := g.useLabel(edge.Label, "edge"); err != nil {
+		return fmt.Errorf("create edge: %w", err)
+	}
 	if err := g.addEdge(sourceID, targetID, edge.Label, edgeProps(edge)); err != nil {
 		return fmt.Errorf("create edge: %w", err)
 	}
@@ -226,6 +256,9 @@ func (c *memClient) CreateRequiresEdge(_ context.Context, tenant string, reqEdge
 	g, err := c.graph(tenant)
 	if err != nil {
 		return err
+	}
+	if err := g.useLabel("REQUIRES", "edge"); err != nil {
+		return fmt.Errorf("create requires edge: %w", err)
 	}
 	if err := g.addEdge(reqEdge.SourceID, reqEdge.TargetID, "REQUIRES", requiresProps(reqEdge)); err != nil {
 		return fmt.Errorf("create requires edge: %w", err)
@@ -253,6 +286,14 @@ func (c *memClient) BulkCreateEdges(_ context.Context, tenant string, edges []gr
 	g, err := c.graph(tenant)
 	if err != nil {
 		return nil, err
+	}
+	// Labels are recorded in first-occurrence order before any endpoint
+	// check, as agedriver ensures them, so a conflict on a later label leaves
+	// the earlier ones recorded.
+	for _, be := range edges {
+		if err := g.useLabel(be.Edge.Label, "edge"); err != nil {
+			return nil, fmt.Errorf("bulk create edges: %w", err)
+		}
 	}
 	edgeCount, lastSeq := len(g.edges), g.lastSeq
 	ids := make([]string, 0, len(edges))
