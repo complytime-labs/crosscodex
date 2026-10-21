@@ -1,0 +1,42 @@
+pkg/graphdb/interface.go
+  s_4741dfafb6fa34::t_8445aefe211860 43-52
+pkg/graphdb/memdriver/client.go
+  s_4741dfafb6fa34::t_32d64ad02947ed 34-36,66-83,155,170-172,193-195,241-243,260-262,290-297
+internal/graph/read.go
+  s_4741dfafb6fa34::t_d4184326b1d206 306-309,325-326
+pkg/graphdb/agedriver/labels_integration_bdd_test.go
+  s_4741dfafb6fa34::t_1640b66349d0c6 193,200-203,205,207,246,272,274,276-279
+  s_4741dfafb6fa34::t_afcf01ac5e2d90 10
+internal/testspecs/graphdb_contract.go
+  s_4741dfafb6fa34::t_bc1e84e22576ad 1156-1246
+internal/graph/read_errors_bdd_test.go
+  s_4741dfafb6fa34::t_e9e9a56ea16a20 5
+  s_4741dfafb6fa34::t_9d27bb699acf09 28
+pkg/graphdb/errors.go
+  s_4741dfafb6fa34::t_f8bc820a1b65dc 57-60,63
+  s_4741dfafb6fa34::t_0e85f9ca342ec0 12,41-56,61-62,64-66
+  s_4741dfafb6fa34::t_137ba315a009b9 67
+docs/dev/design-principles.md
+  s_4741dfafb6fa34::t_5bcff1d3f76100 87
+  s_4741dfafb6fa34::t_324882fd3625d3 77
+internal/graph/write_bdd_test.go
+  s_4741dfafb6fa34::t_9d27bb699acf09 195-215
+pkg/graphdb/agedriver/labels.go
+  s_4741dfafb6fa34::t_ec5adf96533d6a 11-12,23-24,29,114,153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a38fef3af09c18a658dfb72832aabf97cb962f8a",
+  "prompts": {},
+  "sessions": {
+    "s_4741dfafb6fa34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a93d410b-fb66-422d-9d41-a4c93c6c408a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
