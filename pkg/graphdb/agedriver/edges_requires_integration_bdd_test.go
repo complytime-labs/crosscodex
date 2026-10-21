@@ -411,7 +411,7 @@ var _ = Describe("RequiresEdge", func() {
 				sqls := recorder.take()
 				Expect(sqls).To(HaveLen(1))
 				Expect(sqls[0]).To(ContainSubstring(
-					"MATCH (s {id: 'src'}), (t {id: 'tgt'}) CREATE (s)-[e:REQUIRES " + wantProps(graphdb.FormatTime(now)) + "]->(t)"))
+					"MATCH (s), (t) WHERE s.id = 'src' AND t.id = 'tgt' CREATE (s)-[e:REQUIRES " + wantProps(graphdb.FormatTime(now)) + "]->(t)"))
 			},
 			Entry("with models and a prompt version, one model needing escaping",
 				graphdb.RequiresEdge{

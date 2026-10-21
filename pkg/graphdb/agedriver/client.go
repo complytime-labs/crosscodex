@@ -9,6 +9,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -26,6 +27,9 @@ type ageClient struct {
 	meter        metric.Meter
 	queryCounter metric.Int64Counter
 	queryLatency metric.Int64Histogram
+	// labels caches the labelKeys ensureLabel has created and indexed, so
+	// only a client's first write per label pays for the catalog check.
+	labels sync.Map
 }
 
 // New creates a GraphDB client backed by Apache AGE.
@@ -110,6 +114,11 @@ func (c *ageClient) commit(span trace.Span, tx *sql.Tx, op string) error {
 // intentional panics, and the methods do not recover just to count one. The
 // tenant is not an attribute: tenant IDs are unbounded, and the span already
 // carries tenant.id.
+//
+// ensure_label is the one internal operation recorded. ensureLabel records it
+// only on a label-cache miss, inside its caller's span and alongside the
+// caller's own operation, so a tenant or graph failure in ensureLabel counts
+// once under ensure_label and once under the caller's operation.
 func (c *ageClient) record(ctx context.Context, op string, start time.Time, err error) {
 	status, result := outcome(err)
 	attrs := metric.WithAttributes(
@@ -255,7 +264,8 @@ func advisoryKey(parts ...string) int64 {
 // serializes the exists check and create_graph. Creating a graph needs
 // privileges the restricted graph_user does not have; production graphs are
 // created by the tenant_graph_create trigger, so for graph_user this method
-// only succeeds for an existing graph.
+// only succeeds for an existing graph. Creating a graph also forgets the
+// client's cached labels for it (see ensureLabel).
 func (c *ageClient) CreateGraph(ctx context.Context, tenant string) (err error) {
 	start := time.Now()
 	ctx, span := c.startSpan(ctx, "graphdb.CreateGraph", tenant)
@@ -297,7 +307,11 @@ func (c *ageClient) CreateGraph(ctx context.Context, tenant string) (err error) 
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("create graph %q: %w", gn, err)
 	}
-	return c.commit(span, tx, "create graph")
+	if err := c.commit(span, tx, "create graph"); err != nil {
+		return err
+	}
+	c.forgetGraphLabels(gn)
+	return nil
 }
 
 // CreateNode creates a vertex in the tenant's graph.
@@ -316,6 +330,11 @@ func (c *ageClient) CreateNode(ctx context.Context, tenant string, node graphdb.
 	ctx, span := c.startSpan(ctx, "graphdb.CreateNode", tenant)
 	defer span.End()
 	defer func() { c.record(ctx, "create_node", start, err) }()
+
+	if err := c.ensureLabel(ctx, tenant, vertexLabel, node.Label); err != nil {
+		failSpan(span, err)
+		return fmt.Errorf("create node: %w", err)
+	}
 
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
@@ -382,6 +401,11 @@ func (c *ageClient) UpsertNode(ctx context.Context, tenant string, node graphdb.
 	defer span.End()
 	defer func() { c.record(ctx, "upsert_node", start, err) }()
 
+	if err := c.ensureLabel(ctx, tenant, vertexLabel, node.Label); err != nil {
+		failSpan(span, err)
+		return false, fmt.Errorf("upsert node: %w", err)
+	}
+
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
 		failSpan(span, err)
@@ -406,7 +430,7 @@ func (c *ageClient) UpsertNode(ctx context.Context, tenant string, node graphdb.
 		return false, fmt.Errorf("upsert node: %w", conflict)
 	}
 
-	setCypher := fmt.Sprintf("MATCH (n:%s {id: '%s'}) SET n = %s RETURN n",
+	setCypher := fmt.Sprintf("MATCH (n:%s) WHERE n.id = '%s' SET n = %s RETURN n",
 		escapeCypher(node.Label), escapeCypher(node.ID), nodeUpsertProperties(node))
 	setQuery := cypherSQL(gn, setCypher, "v agtype")
 	rows, err := tx.QueryContext(ctx, setQuery)
@@ -455,6 +479,11 @@ func (c *ageClient) CreateEdge(ctx context.Context, tenant, sourceID, targetID s
 	defer span.End()
 	defer func() { c.record(ctx, "create_edge", start, err) }()
 
+	if err := c.ensureLabel(ctx, tenant, edgeLabel, edge.Label); err != nil {
+		failSpan(span, err)
+		return fmt.Errorf("create edge: %w", err)
+	}
+
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
 		failSpan(span, err)
@@ -469,7 +498,7 @@ func (c *ageClient) CreateEdge(ctx context.Context, tenant, sourceID, targetID s
 	}
 	props := edgeToAGProperties(edge)
 	cypher := fmt.Sprintf(
-		"MATCH (s {id: '%s'}), (t {id: '%s'}) CREATE (s)-[e:%s %s]->(t)",
+		"MATCH (s), (t) WHERE s.id = '%s' AND t.id = '%s' CREATE (s)-[e:%s %s]->(t)",
 		escapeCypher(sourceID),
 		escapeCypher(targetID),
 		escapeCypher(edge.Label),
@@ -654,18 +683,18 @@ func (c *ageClient) Traverse(ctx context.Context, tenant string, query graphdb.T
 	switch query.Direction {
 	case "inbound":
 		matchPattern = fmt.Sprintf(
-			"MATCH p = (start_node {id: '%s'})<-[%s%s]-(end_node)",
-			escapeCypher(query.StartNode), edgePattern, depthSuffix,
+			"MATCH p = (start_node)<-[%s%s]-(end_node) WHERE start_node.id = '%s'",
+			edgePattern, depthSuffix, escapeCypher(query.StartNode),
 		)
 	case "both":
 		matchPattern = fmt.Sprintf(
-			"MATCH p = (start_node {id: '%s'})-[%s%s]-(end_node)",
-			escapeCypher(query.StartNode), edgePattern, depthSuffix,
+			"MATCH p = (start_node)-[%s%s]-(end_node) WHERE start_node.id = '%s'",
+			edgePattern, depthSuffix, escapeCypher(query.StartNode),
 		)
 	default:
 		matchPattern = fmt.Sprintf(
-			"MATCH p = (start_node {id: '%s'})-[%s%s]->(end_node)",
-			escapeCypher(query.StartNode), edgePattern, depthSuffix,
+			"MATCH p = (start_node)-[%s%s]->(end_node) WHERE start_node.id = '%s'",
+			edgePattern, depthSuffix, escapeCypher(query.StartNode),
 		)
 	}
 
@@ -730,7 +759,7 @@ func (c *ageClient) GetNode(ctx context.Context, tenant, nodeID string) (_ *grap
 	defer func() { _ = tx.Rollback() }()
 
 	gn := graphName(tenant)
-	cypher := fmt.Sprintf("MATCH (n {id: '%s'}) RETURN n", escapeCypher(nodeID))
+	cypher := fmt.Sprintf("MATCH (n) WHERE n.id = '%s' RETURN n", escapeCypher(nodeID))
 	query := cypherSQL(gn, cypher, "v agtype")
 
 	rows, err := tx.QueryContext(ctx, query)
@@ -790,7 +819,7 @@ func (c *ageClient) GetEdge(ctx context.Context, tenant, edgeID string) (_ *grap
 	defer func() { _ = tx.Rollback() }()
 
 	gn := graphName(tenant)
-	cypher := fmt.Sprintf("MATCH (s)-[e {id: '%s'}]->(t) RETURN s, e, t", escapeCypher(edgeID))
+	cypher := fmt.Sprintf("MATCH (s)-[e]->(t) WHERE e.id = '%s' RETURN s, e, t", escapeCypher(edgeID))
 	query := cypherSQL(gn, cypher, "s agtype, e agtype, t agtype")
 
 	rows, err := tx.QueryContext(ctx, query)
@@ -980,14 +1009,14 @@ func (c *ageClient) SupersedeFact(ctx context.Context, tenant string, req graphd
 		if req.SupersededByJobID != "" {
 			setClauses += fmt.Sprintf(", n.superseded_by = '%s'", escapeCypher(req.SupersededByJobID))
 		}
-		cypher = fmt.Sprintf("MATCH (n {id: '%s'}) SET %s RETURN n",
+		cypher = fmt.Sprintf("MATCH (n) WHERE n.id = '%s' SET %s RETURN n",
 			escapeCypher(req.NodeID), setClauses)
 	} else {
 		setClauses := fmt.Sprintf("e.valid_to = '%s'", ts)
 		if req.SupersededByJobID != "" {
 			setClauses += fmt.Sprintf(", e.superseded_by = '%s'", escapeCypher(req.SupersededByJobID))
 		}
-		cypher = fmt.Sprintf("MATCH ()-[e {id: '%s'}]->() SET %s RETURN e",
+		cypher = fmt.Sprintf("MATCH ()-[e]->() WHERE e.id = '%s' SET %s RETURN e",
 			escapeCypher(req.EdgeID), setClauses)
 	}
 

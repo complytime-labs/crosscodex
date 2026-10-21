@@ -146,6 +146,33 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 	})
+
+	Context("labelIndexName — safe, deterministic index names", func() {
+		label := rapid.StringMatching(`[A-Za-z_][A-Za-z0-9_]{0,62}`)
+		kind := rapid.SampledFrom([]byte{'v', 'e'})
+		col := rapid.SampledFrom([]string{"gid", "pid", "sid", "eid"})
+
+		It("is deterministic, fits 63 bytes and needs no quoting", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				k, l, c := kind.Draw(t, "kind"), label.Draw(t, "label"), col.Draw(t, "col")
+				name := agedriver.LabelIndexName(k, l, c)
+				Expect(agedriver.LabelIndexName(k, l, c)).To(Equal(name))
+				Expect(len(name)).To(BeNumerically("<=", 63))
+				Expect(name).To(MatchRegexp(`^[a-z0-9_]+$`))
+			})
+		})
+
+		It("differs for distinct kind, label or column", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				k1, l1, c1 := kind.Draw(t, "kind1"), label.Draw(t, "label1"), col.Draw(t, "col1")
+				k2, l2, c2 := kind.Draw(t, "kind2"), label.Draw(t, "label2"), col.Draw(t, "col2")
+				if k1 == k2 && l1 == l2 && c1 == c2 {
+					return
+				}
+				Expect(agedriver.LabelIndexName(k1, l1, c1)).NotTo(Equal(agedriver.LabelIndexName(k2, l2, c2)))
+			})
+		})
+	})
 })
 
 // cypherRef matches a reference to a stored node property.

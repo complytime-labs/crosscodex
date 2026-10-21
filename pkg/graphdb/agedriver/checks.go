@@ -32,7 +32,7 @@ func countQuery(ctx context.Context, tx *sql.Tx, tenant, gn, cypher string) (int
 // written before #148; sorting keeps the label a conflict error names
 // deterministic there.
 func storedNodeLabels(ctx context.Context, tx *sql.Tx, tenant, gn, id string) ([]string, error) {
-	query := cypherSQL(gn, fmt.Sprintf("MATCH (n {id: '%s'}) RETURN n", escapeCypher(id)), "v agtype")
+	query := cypherSQL(gn, fmt.Sprintf("MATCH (n) WHERE n.id = '%s' RETURN n", escapeCypher(id)), "v agtype")
 	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("check existing: %w", classifyErr(ctx, tenant, err))
@@ -75,7 +75,7 @@ func storedNodeLabels(ctx context.Context, tx *sql.Tx, tenant, gn, id string) ([
 func checkEdgeWrite(ctx context.Context, tx *sql.Tx, tenant, gn, sourceID, targetID, edgeID string) error {
 	endpoints := []struct{ role, id string }{{"source", sourceID}, {"target", targetID}}
 	for _, ep := range endpoints {
-		n, err := countQuery(ctx, tx, tenant, gn, fmt.Sprintf("MATCH (n {id: '%s'}) RETURN count(n)", escapeCypher(ep.id)))
+		n, err := countQuery(ctx, tx, tenant, gn, fmt.Sprintf("MATCH (n) WHERE n.id = '%s' RETURN count(n)", escapeCypher(ep.id)))
 		if err != nil {
 			return fmt.Errorf("check %s node: %w", ep.role, err)
 		}
@@ -86,7 +86,7 @@ func checkEdgeWrite(ctx context.Context, tx *sql.Tx, tenant, gn, sourceID, targe
 	if edgeID == "" {
 		return nil
 	}
-	n, err := countQuery(ctx, tx, tenant, gn, fmt.Sprintf("MATCH ()-[e {id: '%s'}]->() RETURN count(e)", escapeCypher(edgeID)))
+	n, err := countQuery(ctx, tx, tenant, gn, fmt.Sprintf("MATCH ()-[e]->() WHERE e.id = '%s' RETURN count(e)", escapeCypher(edgeID)))
 	if err != nil {
 		return fmt.Errorf("check edge id: %w", err)
 	}
@@ -116,10 +116,11 @@ func endpointErr(role, id string, n int64) error {
 // A non-empty edge ID repeated within the batch is reported at its second
 // occurrence, as if the earlier edge had already been created.
 //
-// Neither query has a property index to use (see "How bulk writes work" and
-// "Why there are no indexes" in docs/dev/design-principles.md), so each costs
-// a fixed number of sequential scans. Like checkEdgeWrite it takes no lock,
-// so the same concurrent-duplicate window applies.
+// Both queries use WHERE n.id IN [...], which each label table's id-property
+// index serves (see propertyIDExpr, "How bulk writes work" and "Label indexes"
+// in docs/dev/design-principles.md), so each costs a fixed number of index
+// scans per label table. Like checkEdgeWrite it takes no lock, so the same
+// concurrent-duplicate window applies.
 func checkBulkEdgeWrites(ctx context.Context, tx *sql.Tx, tenant, gn string, edges []graphdb.BulkEdge) error {
 	var nodeIDs, edgeIDs []string
 	seenNode := make(map[string]bool)
@@ -153,7 +154,7 @@ func checkBulkEdgeWrites(ctx context.Context, tx *sql.Tx, tenant, gn string, edg
 
 	// The queries return stored IDs, which escapeCypher has stripped of the
 	// dollar-quote tag, so lookups strip it too. This matches checkEdgeWrite,
-	// whose {id: '...'} match compares the stripped value.
+	// whose WHERE x.id = '...' comparison uses the stripped value.
 	batchEdge := make(map[string]bool, len(edgeIDs))
 	for i, be := range edges {
 		endpoints := []struct{ role, id string }{{"source", be.SourceID}, {"target", be.TargetID}}

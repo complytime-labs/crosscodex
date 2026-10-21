@@ -505,6 +505,28 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				Expect(tenantAttr.AsString()).To(Equal("acme-corp"))
 			})
 
+			It("refuses a write whose label cannot be ensured, records ensure_label as an error and caches nothing", func() {
+				// A closed *sql.DB fails at BeginTx with no I/O, so ensureLabel
+				// fails before the write's own transaction is opened.
+				db, err := sql.Open("pgx", "postgres://localhost/unused")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(db.Close()).To(Succeed())
+				closed, err := agedriver.New(db, agedriver.WithTelemetry(tp.TracerProvider().Tracer("graphdb-test"), tp.MeterProvider().Meter("graphdb-test")))
+				Expect(err).NotTo(HaveOccurred())
+				node := graphdb.Node{ID: "n1", Label: "Control", ValidFrom: time.Now()}
+
+				for range 2 {
+					err = closed.CreateNode(context.Background(), "acme-corp", node)
+					Expect(err).To(MatchError(ContainSubstring(`create node: ensure label "Control": begin transaction`)))
+					Expect(err).To(MatchError(ContainSubstring("database is closed")))
+				}
+				// Two attempts, two ensures: the failure was not cached.
+				ensure, _ := queryMetrics(tp, "ensure_label")
+				Expect(ensure).To(Equal(map[string]int64{"error/error": 2}))
+				create, _ := queryMetrics(tp, "create_node")
+				Expect(create).To(Equal(map[string]int64{"error/error": 2}))
+			})
+
 			DescribeTable("counts a call rejected inside its span as an error of its operation",
 				func(op string, call func() error) {
 					Expect(call()).To(HaveOccurred())

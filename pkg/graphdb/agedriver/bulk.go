@@ -45,6 +45,21 @@ func (c *ageClient) BulkCreateEdges(ctx context.Context, tenant string, edges []
 		attribute.Int("edge.count", len(edges)),
 	)
 
+	var labels []string
+	byLabel := make(map[string][]graphdb.BulkEdge)
+	for _, be := range edges {
+		if _, ok := byLabel[be.Edge.Label]; !ok {
+			labels = append(labels, be.Edge.Label)
+		}
+		byLabel[be.Edge.Label] = append(byLabel[be.Edge.Label], be)
+	}
+	for _, label := range labels {
+		if err := c.ensureLabel(ctx, tenant, edgeLabel, label); err != nil {
+			failSpan(span, err)
+			return nil, fmt.Errorf("bulk create edges: %w", err)
+		}
+	}
+
 	tx, err := c.beginTx(ctx, tenant)
 	if err != nil {
 		failSpan(span, err)
@@ -58,14 +73,6 @@ func (c *ageClient) BulkCreateEdges(ctx context.Context, tenant string, edges []
 		return nil, err
 	}
 
-	var labels []string
-	byLabel := make(map[string][]graphdb.BulkEdge)
-	for _, be := range edges {
-		if _, ok := byLabel[be.Edge.Label]; !ok {
-			labels = append(labels, be.Edge.Label)
-		}
-		byLabel[be.Edge.Label] = append(byLabel[be.Edge.Label], be)
-	}
 	for _, label := range labels {
 		created, err := countQuery(ctx, tx, tenant, gn, createLabelEdges(label, byLabel[label]))
 		if err != nil {
@@ -98,9 +105,9 @@ func (c *ageClient) BulkCreateEdges(ctx context.Context, tenant string, edges []
 // reads each with r.p['key']; a row without that key yields null, which AGE
 // does not store, so every edge keeps exactly its own properties. Subscript
 // access is used because AGE's parser rejects reserved words such as end
-// after a dot. Endpoints are matched with WHERE equality rather than
-// {id: ...}, so the planner can hash-join the rows against one scan of the
-// vertices instead of scanning once per row.
+// after a dot. Endpoints are matched with WHERE equality, like every driver
+// ID lookup (see propertyIDExpr), so the planner can hash-join the rows
+// against one scan of the vertices instead of scanning once per row.
 func createLabelEdges(label string, edges []graphdb.BulkEdge) string {
 	var keys []string
 	seenKey := make(map[string]bool)

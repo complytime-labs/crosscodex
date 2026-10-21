@@ -41,3 +41,9 @@ func ExportTelemetryFields(g graphdb.GraphDB) TelemetryFields {
 		HasQueryLatency: c.queryLatency != nil,
 	}
 }
+
+// LabelIndexName exposes labelIndexName with kind as ag_label's byte ('v' or
+// 'e'), since labelKind is unexported.
+func LabelIndexName(kind byte, label, col string) string {
+	return labelIndexName(labelKind(kind), label, col)
+}
