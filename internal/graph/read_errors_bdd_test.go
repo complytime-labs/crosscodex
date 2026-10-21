@@ -25,6 +25,7 @@ var _ = Describe("mapGraphError", func() {
 		Entry("TenantRequired", graphdb.ErrTenantRequired, connect.CodeInvalidArgument),
 		Entry("ReadOnlyViolation", graphdb.ErrReadOnlyViolation, connect.CodePermissionDenied),
 		Entry("NotSupported", graphdb.ErrNotSupported, connect.CodeUnimplemented),
+		Entry("NodeIDConflict", fmt.Errorf("create node: %w", &graphdb.NodeIDConflictError{ID: "n1", Label: "Artifact", StoredLabel: "Control"}), connect.CodeFailedPrecondition),
 		Entry("LabelKindConflict", fmt.Errorf("create edge: %w", &graphdb.LabelKindConflictError{Label: "Control", Kind: "edge", StoredKind: "node"}), connect.CodeFailedPrecondition),
 		Entry("unknown", errors.New("unknown"), connect.CodeInternal),
 	)
