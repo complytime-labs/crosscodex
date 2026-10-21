@@ -1,0 +1,32 @@
+pkg/graphdb/agedriver/checks.go
+  s_4741dfafb6fa34::t_ba8f89f22abfa9 35,78,89,156
+pkg/graphdb/agedriver/bulk.go
+  s_4741dfafb6fa34::t_98695cb9296db8 108-110
+pkg/graphdb/agedriver/client.go
+  s_4741dfafb6fa34::t_ba8f89f22abfa9 433,501,686-687,691-692,696-697,762,822,1012,1019
+pkg/graphdb/agedriver/edges_requires_integration_bdd_test.go
+  s_4741dfafb6fa34::t_49424025b99b37 414
+pkg/graphdb/agedriver/labels_integration_bdd_test.go
+  s_4741dfafb6fa34::t_3d23b89a524cb2 93-95,100-107,110-122,312-335,338-349
+  s_4741dfafb6fa34::t_49424025b99b37 336-337
+  s_4741dfafb6fa34::t_1782f5e883dad4 96-99,108-109
+  s_4741dfafb6fa34::t_90553dfbaaf311 350
+pkg/graphdb/agedriver/edges.go
+  s_4741dfafb6fa34::t_ba8f89f22abfa9 75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f3faf18f3e5f333a2d049075b6e008d0cd9da94",
+  "prompts": {},
+  "sessions": {
+    "s_4741dfafb6fa34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a93d410b-fb66-422d-9d41-a4c93c6c408a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
