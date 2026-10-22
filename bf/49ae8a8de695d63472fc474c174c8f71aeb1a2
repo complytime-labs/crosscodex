@@ -1,0 +1,26 @@
+.taskfiles/dev.yml
+  s_5d02ede7813626::t_c0ac674e7f6f1c 9,136-140
+  s_5d02ede7813626::t_e57dbdef4ee679 6-7
+go.mod
+  s_5d02ede7813626::t_c0ac674e7f6f1c 3
+.github/workflows/megalinter.yml
+  s_5d02ede7813626::t_c0ac674e7f6f1c 53
+deploy/Dockerfile
+  s_5d02ede7813626::t_c0ac674e7f6f1c 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf49ae8a8de695d63472fc474c174c8f71aeb1a2",
+  "prompts": {},
+  "sessions": {
+    "s_5d02ede7813626": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae276345-fb0b-40c2-b5d6-4a7357163f34",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
