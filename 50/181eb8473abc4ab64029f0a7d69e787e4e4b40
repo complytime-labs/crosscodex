@@ -1,0 +1,19 @@
+internal/catalog/catalog_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_11c785b60aad31 87,90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50181eb8473abc4ab64029f0a7d69e787e4e4b40",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
