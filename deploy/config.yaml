@@ -7,9 +7,10 @@ health:
   addr: ":9091"
 server:
   addr: ":50051"
+# The DSNs (database.dsn, database.graph_dsn, database.migration_dsn, and the
+# optional tenant_admin and backup DSNs) carry passwords, so they come from the
+# CROSSCODEX_* variables in compose.yaml's `environment:`, not from this file.
 database:
-  dsn: "postgres://crosscodex@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem"
-  graph_dsn: "postgres://crosscodex@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem"
   ssl_mode: verify-full
 nats:
   url: "tls://nats:4222"

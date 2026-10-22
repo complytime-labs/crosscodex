@@ -222,6 +222,32 @@ var _ = Describe("Service", func() {
 			}, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
 		})
 
+		// The jobs RLS policy refuses a row whose created_by differs from
+		// app.current_user, and the gateway shows a non-admin only the jobs
+		// it created, so the creator is the caller's identity.
+		DescribeTable("records the job's creator",
+			func(user, wantCreator string) {
+				callCtx := ctx
+				if user != "" {
+					callCtx = tenant.WithUser(ctx, user)
+				}
+				resp, err := svc.CreateJob(callCtx, connect.NewRequest(&pb.CreateJobRequest{
+					Config: &pb.JobConfig{
+						Source:        &pb.JobConfig_DocumentContent{DocumentContent: []byte("test")},
+						CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+						CatalogName:   "test-catalog",
+					},
+				}))
+				Expect(err).NotTo(HaveOccurred())
+
+				job, err := store.GetJob(ctx, resp.Msg.JobId)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(job.CreatedBy).To(Equal(wantCreator))
+			},
+			Entry("as the calling user when the context carries one", "alice@example.com", "alice@example.com"),
+			Entry("as the tenant for a system call without a user", "", "test-tenant"),
+		)
+
 		It("returns InvalidArgument when tenant context is missing", func() {
 			req := &pb.CreateJobRequest{
 				Config: &pb.JobConfig{},
@@ -549,6 +575,43 @@ var _ = Describe("Service", func() {
 			_, err = store.GetJob(ctx, resp.Msg.NewJobId)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		// The new job belongs to whoever retries: the jobs RLS WITH CHECK
+		// demands created_by = app.current_user, the retrying caller.
+		DescribeTable("records the retrying caller as the new job's creator",
+			func(user, wantCreator string) {
+				now := time.Now()
+				configBytes, err := json.Marshal(&pb.JobConfig{
+					Source: &pb.JobConfig_DocumentContent{DocumentContent: []byte("test")},
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID:     "job-retry-creator",
+					TenantID:  "test-tenant",
+					Status:    pipeline.JobStatusFailed,
+					Config:    configBytes,
+					CreatedBy: "original-creator",
+					CreatedAt: now,
+					UpdatedAt: now,
+				})).To(Succeed())
+
+				callCtx := ctx
+				if user != "" {
+					callCtx = tenant.WithUser(ctx, user)
+				}
+				resp, err := svc.RetryJob(callCtx, connect.NewRequest(&pb.RetryJobRequest{
+					JobId:            "job-retry-creator",
+					RetryFromFailure: false,
+				}))
+				Expect(err).NotTo(HaveOccurred())
+
+				newJob, err := store.GetJob(ctx, resp.Msg.NewJobId)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(newJob.CreatedBy).To(Equal(wantCreator))
+			},
+			Entry("as the calling user when the context carries one", "bob@example.com", "bob@example.com"),
+			Entry("as the tenant for a system call without a user", "", "test-tenant"),
+		)
 	})
 
 	Describe("Stop", func() {

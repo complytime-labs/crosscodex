@@ -31,6 +31,7 @@ Flags:
 Available Commands:
   healthcheck Probe the gateway /healthz endpoint (exit 0 = healthy)
   admin       On-host admin operations (retention scan, reconcile artifacts, adjudicate artifacts, backup run|list|verify|restore; see 'crosscodexd admin')
+  migrate     Apply schema migrations, set restricted role passwords and provision the default tenant, as database.migration_dsn (run before starting the daemon)
   version     Print version information
 
 Running crosscodexd with no arguments starts the daemon with role "all".
@@ -72,6 +73,8 @@ func main() {
 			os.Exit(runHealthcheck())
 		case "admin":
 			os.Exit(runAdmin(flags.Args()[1:]))
+		case "migrate":
+			os.Exit(runMigrate(flags.Args()[1:]))
 		case "version", "--version":
 			printVersion()
 			return

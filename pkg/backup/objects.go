@@ -12,7 +12,7 @@ import (
 )
 
 // TenantLister returns every tenant ID. SQLTenantLister reads them as
-// backup_user through its dedicated RLS policy (migration 006).
+// backup_user through its dedicated RLS policy (backup_list_tenants).
 type TenantLister interface {
 	TenantIDs(ctx context.Context) ([]string, error)
 }

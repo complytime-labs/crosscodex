@@ -16,7 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
-// tenant_admin (migration 007) provisions and suspends tenants only through
+// tenant_admin provisions and suspends tenants only through
 // SECURITY DEFINER functions; it holds no table privilege. Its password is
 // set once in SynchronizedBeforeSuite, so parallel nodes never race on ALTER
 // ROLE. The suite entry point lives in db_integration_bdd_test.go.

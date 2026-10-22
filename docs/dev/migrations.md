@@ -10,19 +10,12 @@ CrossCodex uses [golang-migrate/migrate](https://github.com/golang-migrate/migra
 
 ```
 pkg/db/migrations/
-  embed.go                           # //go:embed *.sql → migrations.FS
-  001_create_tenants.up.sql
-  001_create_tenants.down.sql
-  002_create_jobs.up.sql
-  002_create_jobs.down.sql
-  ...
-  009_tenant_graph_lifecycle.up.sql
-  009_tenant_graph_lifecycle.down.sql
-  010_create_controls.up.sql
-  010_create_controls.down.sql
-  011_create_requires_tables.up.sql
-  011_create_requires_tables.down.sql
+  embed.go                       # //go:embed *.sql → migrations.FS
+  001_initial_schema.up.sql      # the baseline: roles, tables, RLS, triggers, functions, grants
+  001_initial_schema.down.sql    # drops everything the baseline creates, roles included
 ```
+
+`001_initial_schema` is the whole pre-release schema in one baseline, grouped by domain (roles; tenants and identity; jobs; catalogs; retention; verdicts; tenant administration; restricted-role access; the AGE graph lifecycle). The next migration is `002`.
 
 Each migration is a pair of SQL files:
 
@@ -31,6 +24,11 @@ Each migration is a pair of SQL files:
 
 The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequential integers. Never reuse or reorder a number that has been applied to any environment.
 
+## Editing Policy
+
+- **Until the first release**, the baseline may be edited in place. No released database needs an upgrade path, so fold the change into `001_initial_schema.up.sql` (and its down) and recreate development databases with `crosscodexd migrate`.
+- **After the first release**, never edit an applied migration. Add a new one with the next sequence number; see [Checksum Verification Failure](#checksum-verification-failure).
+
 ## Creating a New Migration
 
 1. Determine the next sequence number by checking the highest existing prefix in `pkg/db/migrations/`.
@@ -38,8 +36,8 @@ The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequenti
 2. Create both files:
 
    ```bash
-   touch pkg/db/migrations/012_your_description.up.sql
-   touch pkg/db/migrations/012_your_description.down.sql
+   touch pkg/db/migrations/002_your_description.up.sql
+   touch pkg/db/migrations/002_your_description.down.sql
    ```
 
 3. Write the SQL. The up migration should be idempotent where possible (`CREATE TABLE IF NOT EXISTS`, `DO $$ ... $$`). The down migration should cleanly reverse the up migration.
@@ -50,9 +48,9 @@ The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequenti
 
 ### Naming Conventions
 
-- Use lowercase with underscores: `012_add_audit_log.up.sql`
+- Use lowercase with underscores: `002_add_audit_log.up.sql`
 - Start with a verb describing the action: `create_`, `add_`, `enable_`, `drop_`
-- Be specific: `013_add_retry_count_to_jobs` not `013_update_jobs`
+- Be specific: `002_add_retry_count_to_jobs` not `002_update_jobs`
 
 ### Writing Down Migrations
 
@@ -60,15 +58,37 @@ Every up migration must have a corresponding down migration. The down migration 
 
 ## Running Migrations
 
-Migrations run programmatically through the `Migrator` interface. There is no standalone migration CLI.
+Migrations run only through `crosscodexd migrate`, which uses the `Migrator` interface. The daemon and the `crosscodexd admin` commands that open the database never migrate.
 
-### Application Startup
+### `crosscodexd migrate`
 
-The standard startup sequence runs migrations with the superuser (schema owner) DSN (Data Source Name — the PostgreSQL connection string), then opens the application pool with the restricted `app_user` DSN:
+```bash
+crosscodexd migrate
+```
+
+`database.migration_dsn` (env `CROSSCODEX_DATABASE_MIGRATION_DSN`) must be a DSN for the schema owner (Data Source Name — the PostgreSQL connection string). In order, the command:
+
+1. Applies pending migrations as the owner.
+2. Sets the passwords of `app_user`, `graph_user`, `purge_user`, `tenant_admin` and `backup_user` from the passwords in `database.dsn`, `database.graph_dsn`, `database.purge_dsn`, `database.tenant_admin_dsn` and `backup.dsn`. Passwords are sent as client-side SCRAM-SHA-256 verifiers, never in plaintext. Every DSN is validated before the database is touched: each must be a `postgres://` URL for its role with the password in the userinfo (`postgres://role:password@host/...`); a `password` query parameter is refused, because the daemon would use it but `crosscodexd migrate` would not. A malformed `database.migration_dsn` is refused without echoing it.
+3. Provisions `tenants.default_tenant`.
+
+Run it on first install and after every upgrade, before starting the new `crosscodexd`. It is idempotent. The embedded `crosscodex` CLI (single-node mode) still migrates and provisions with the owner DSN it is given.
+
+### Startup Checks
+
+The daemon opens the application pool with the restricted `app_user` DSN and refuses to start unless:
+
+- `db.CheckRestrictedRole` finds the `database.dsn` and `database.graph_dsn` connections, and, for role `all` and `admin retention scan`, the `database.purge_dsn` connection when it is set, are not a superuser, `BYPASSRLS`, a table owner, or a member of one. `purge_user` passes: its `retention_purge` membership grants neither.
+- `db.CheckSchemaVersion` finds the schema at the latest embedded migration version (`db.LatestMigrationVersion`) and not dirty. It reads `schema_migrations`, on which the initial schema grants `app_user` `SELECT`. An outdated schema error points at `crosscodexd migrate`.
+
+The `crosscodexd admin` commands that open the database (`retention scan`, `reconcile artifacts`, `adjudicate artifacts`) run the same checks. Role `all` also refuses to start when `tenants.default_tenant` does not exist; `crosscodexd migrate` creates it.
+
+### Using the Migrator Directly
+
+Code that must migrate (the `migrate` command, the embedded CLI, tests) uses the `Migrator` with the owner DSN:
 
 ```go
-// 1. Run migrations as superuser.
-migrator, err := db.NewMigrator(superuserDSN)
+migrator, err := db.NewMigrator(ownerDSN)
 if err != nil {
     return fmt.Errorf("create migrator: %w", err)
 }
@@ -77,17 +97,6 @@ defer migrator.Close()
 if err := migrator.Up(ctx); err != nil {
     return fmt.Errorf("run migrations: %w", err)
 }
-
-// 2. Open application pool as app_user.
-pool, err := db.NewPool(db.PoolConfig{
-    DSN:          appUserDSN,
-    MaxOpenConns: 20,
-    Extensions:   []string{"age", "vector"},
-}) // signature: NewPool(cfg PoolConfig, opts ...Option)
-if err != nil {
-    return fmt.Errorf("create pool: %w", err)
-}
-defer pool.Close()
 ```
 
 `Migrator.Up` is idempotent. If all migrations have already been applied, it returns nil (not an error).
@@ -179,7 +188,7 @@ a migration SQL file is edited after it has been applied, the database schema wi
 describes. This is dangerous because future rollbacks will execute SQL that does not match the actual schema state, and
 developers reading the migration history will have a false picture of the database.
 
-**Rule: never edit a migration file that has been applied to any environment.** If you need to change something an earlier migration created, write a new migration with the next sequence number.
+**Rule: after the first release, never edit a migration file that has been applied to any environment** (see [Editing Policy](#editing-policy) for the pre-release exception). If you need to change something an earlier migration created, write a new migration with the next sequence number.
 
 If a migration file was edited accidentally:
 
@@ -193,8 +202,8 @@ Never force-apply a modified migration by resetting the version in `schema_migra
 
 ## Security Notes
 
-- Migrations run as the superuser role, which owns all tables and bypasses RLS. This is intentional: the migration role is the only role with DDL privileges.
+- Migrations run as the schema owner (`database.migration_dsn`), which owns all tables and bypasses RLS. This is intentional: the owner is the only role with DDL privileges, and only `crosscodexd migrate` uses it. The daemon refuses an owner, superuser or `BYPASSRLS` connection (`db.CheckRestrictedRole`).
 - The application role (`app_user`) cannot run migrations, alter tables, disable RLS, or disable triggers. This privilege separation is enforced by PostgreSQL GRANTs configured in the migration files themselves.
 - Never embed credentials in migration SQL. Database roles and passwords are configured through DSN connection strings
-  passed to `NewMigrator` and `NewPool`.
+  passed to `NewMigrator` and `NewPool`; `crosscodexd migrate` derives the role passwords from them.
 

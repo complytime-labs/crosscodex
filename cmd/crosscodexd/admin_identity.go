@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,6 +27,7 @@ var (
 	runIdentityActionFn = daemonIdentityAction
 	runReviewerListFn   = daemonReviewerList
 	runTraceFn          = daemonTrace
+	runIdentityExportFn = daemonIdentityExport
 )
 
 // identityResult is what a tenant or reviewer action returns: the
@@ -235,6 +239,109 @@ func reviewerListCmd(args []string) int {
 	return 0
 }
 
+// identityExportCmd runs `admin identity export`, which reads only and is
+// not signed, like `admin reviewer list`.
+func identityExportCmd(args []string) int {
+	const cmd = "admin identity export"
+	fs := flag.NewFlagSet("crosscodexd "+cmd, flag.ContinueOnError)
+	out := fs.String("out", "", "JSONL file to create; it must not exist. It holds the real IDs of hidden tenants and reviewers: store it securely (required)")
+	if code, ok := parseNoArgs(fs, cmd, args); !ok {
+		return code
+	}
+	if *out == "" {
+		fmt.Fprintf(os.Stderr, "%s: --out is required; name a file that does not exist yet\n", cmd)
+		return 2
+	}
+	ctx := context.Background()
+	dsn, ok := tenantAdminDSN(ctx, cmd)
+	if !ok {
+		return 1
+	}
+	n, err := writeIdentityExport(ctx, dsn, *out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmd, err)
+		return 1
+	}
+	fmt.Fprintf(os.Stdout, "exported %d identity events to %s\n", n, *out)
+	return 0
+}
+
+// identityExportLine is one line of an export. encoding/json writes []byte
+// as standard base64, so Request and Attestation keep their exact bytes and
+// sha256 can be recomputed from them.
+type identityExportLine struct {
+	EventID           int64  `json:"event_id"`
+	OccurredAt        string `json:"occurred_at"`
+	Action            string `json:"action"`
+	Kind              string `json:"kind"`
+	TenantID          string `json:"tenant_id"`
+	IdentityID        string `json:"identity_id"`
+	Actor             string `json:"actor"`
+	DBUser            string `json:"db_user"`
+	Reason            string `json:"reason"`
+	Request           []byte `json:"request"`
+	Attestation       []byte `json:"attestation"`
+	AttestationSHA256 string `json:"attestation_sha256"`
+}
+
+// writeIdentityExport writes the whole audit log as JSONL to out and
+// returns the event count. It writes to out.partial (mode 0600, never an
+// existing file) and links it to out only once complete, removing the
+// partial file on any failure, so a file at out is always a whole export.
+// Linking, unlike renaming, fails rather than replace a file created at out
+// meanwhile.
+func writeIdentityExport(ctx context.Context, dsn, out string) (n int, err error) {
+	if _, err := os.Lstat(out); err == nil {
+		return 0, fmt.Errorf("%s already exists; nothing was written. Choose a new --out path: an export never overwrites a file", out)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("check %s: %w", out, err)
+	}
+	partial := out + ".partial"
+	f, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return 0, fmt.Errorf("%s already exists, probably left by an interrupted export, and is incomplete; nothing was written. Remove it and run the export again", partial)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("create %s: %w. Check that the directory exists and is writable", partial, err)
+	}
+	w := bufio.NewWriter(f)
+	enc := json.NewEncoder(w)
+	err = runIdentityExportFn(ctx, dsn, func(e dbpkg.IdentityEvent) error {
+		if err := enc.Encode(identityExportLine{
+			EventID: e.EventID, OccurredAt: e.OccurredAt.UTC().Format(time.RFC3339Nano),
+			Action: e.Action, Kind: e.Kind, TenantID: e.TenantID, IdentityID: e.IdentityID, Actor: e.Actor,
+			DBUser: e.DBUser, Reason: e.Reason, Request: e.Request, Attestation: e.Attestation,
+			AttestationSHA256: e.AttestationSHA256,
+		}); err != nil {
+			return fmt.Errorf("write %s: %w", partial, err)
+		}
+		n++
+		return nil
+	})
+	if err == nil {
+		err = w.Flush()
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Link(partial, out)
+		if errors.Is(err, os.ErrExist) {
+			err = fmt.Errorf("%s was created by something else during the export; it was left untouched. Choose a new --out path and run the export again", out)
+		}
+	}
+	if err != nil {
+		return 0, errors.Join(err, os.Remove(partial))
+	}
+	if err := os.Remove(partial); err != nil {
+		return 0, fmt.Errorf("the export is complete in %s, but removing %s failed: %w. Remove it by hand", out, partial, err)
+	}
+	return n, nil
+}
+
 // daemonIdentityAction applies req through the TenantAdmin method for its
 // kind and action. identityActionCmd only builds the pairs handled here.
 func daemonIdentityAction(ctx context.Context, dsn string, req dbpkg.IdentityRequest, s dbpkg.SignedRequest) (res identityResult, err error) {
@@ -285,6 +392,12 @@ func daemonTrace(ctx context.Context, dsn string, req dbpkg.IdentityRequest, s d
 		return err
 	})
 	return res, err
+}
+
+// daemonIdentityExport passes every identity_events row to fn, in event_id
+// order, as tenant_admin.
+func daemonIdentityExport(ctx context.Context, dsn string, fn func(dbpkg.IdentityEvent) error) error {
+	return withTenantAdmin(dsn, func(a *dbpkg.TenantAdmin) error { return a.ExportIdentityEvents(ctx, fn) })
 }
 
 func writeReviewerList(w io.Writer, records []dbpkg.ReviewerRecord) {

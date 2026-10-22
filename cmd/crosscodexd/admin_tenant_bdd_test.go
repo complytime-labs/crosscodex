@@ -119,7 +119,7 @@ var _ = Describe("runAdmin tenant commands", func() {
 			GinkgoT().Setenv("CROSSCODEX_DATABASE_TENANT_ADMIN_DSN", "")
 			code, stderr := captureStderr(func() int { return runAdmin(args) })
 			Expect(code).To(Equal(1))
-			Expect(stderr).To(ContainSubstring("database.tenant_admin_dsn is not set. Set CROSSCODEX_DATABASE_TENANT_ADMIN_DSN to a DSN for the tenant_admin role (created by migration 007_tenant_admin)."))
+			Expect(stderr).To(ContainSubstring("database.tenant_admin_dsn is not set. Set CROSSCODEX_DATABASE_TENANT_ADMIN_DSN to a DSN for the tenant_admin role (created by `crosscodexd migrate`)."))
 			Expect(seamCalls).To(BeZero())
 		},
 		Entry("create", "tenant", "create", "--tenant", "acme", "--display-name", "Acme"),
@@ -134,7 +134,7 @@ var _ = Describe("runAdmin tenant commands", func() {
 		GinkgoT().Setenv("CROSSCODEX_DATABASE_TENANT_ADMIN_DSN", "")
 		code, stderr := captureStderr(func() int { return runAdmin([]string{"tenant", "import", "--file", path}) })
 		Expect(code).To(Equal(1))
-		Expect(stderr).To(ContainSubstring("database.tenant_admin_dsn is not set. Set CROSSCODEX_DATABASE_TENANT_ADMIN_DSN to a DSN for the tenant_admin role (created by migration 007_tenant_admin)."))
+		Expect(stderr).To(ContainSubstring("database.tenant_admin_dsn is not set. Set CROSSCODEX_DATABASE_TENANT_ADMIN_DSN to a DSN for the tenant_admin role (created by `crosscodexd migrate`)."))
 		Expect(seamCalls).To(BeZero())
 	})
 

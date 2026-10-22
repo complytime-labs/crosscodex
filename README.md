@@ -29,16 +29,16 @@ The graph storage hardening in #148 makes these breaking changes:
 
 Graphs written before this change must be rebuilt. Follow the "Upgrade note (#148)" in [docs/dev/design-principles.md](docs/dev/design-principles.md#graph-data-model).
 
-Tenant administration (#31), migration `007_tenant_admin`:
+The pre-release schema migrations are collapsed into one baseline, `001_initial_schema`. A database migrated by an earlier build cannot be upgraded; `crosscodexd` refuses it as newer than itself. Drop it (for the compose deployment, `task deploy:down VOLUMES=1`) and recreate it with `crosscodexd migrate`.
 
-- The gateway refuses every non-health request, with `PermissionDenied`, from a tenant whose `tenants` row is missing, suspended or deleted. Migration 007 creates the `tenant_admin` role that `crosscodexd admin tenant` connects as, so tenants can only be provisioned after it runs. Once crosscodexd has migrated, set the role's password and `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`, then run `crosscodexd admin tenant create` for each authenticated tenant before sending it traffic; requests from that tenant are refused until then. Role `all` still provisions `tenants.default_tenant` itself. See [Tenant administration](deploy/README.md#tenant-administration).
-- The migration fails if a hand-edited `tenants.status` holds a value other than `active` or `suspended`. Fix that row first.
+Tenant administration (#31):
 
-Identity lifecycle (#195), migration `009_identity_lifecycle`:
+- The gateway refuses every non-health request, with `PermissionDenied`, from a tenant whose `tenants` row is missing, suspended or deleted. The initial schema creates the `tenant_admin` role that `crosscodexd admin tenant` connects as, so tenants can only be provisioned after `crosscodexd migrate` runs. Once crosscodexd has migrated, set the role's password and `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`, then run `crosscodexd admin tenant create` for each authenticated tenant before sending it traffic; requests from that tenant are refused until then. Role `all` still provisions `tenants.default_tenant` itself. See [Tenant administration](deploy/README.md#tenant-administration).
+
+Identity lifecycle (#195):
 
 - Tenants and SAME_AS verdicts can no longer be deleted by any role short of the database owner or a superuser deliberately disabling triggers (see [Identity Lifecycle](docs/dev/design-principles.md#identity-lifecycle)). Retire a tenant or reviewer with the soft-delete commands under [Tenant administration](#tenant-administration).
-- `adjudicate artifacts decide` requires a registered reviewer. The migration registered everyone who already recorded a human verdict; register anyone else with `crosscodexd admin reviewer add`.
-- The migration fails, changing nothing, if a tenant ID or a human verdict's reviewer ID starts with the reserved `hidden-` prefix, or a reviewer ID breaks the `--reviewer` rules. The error lists the offending IDs; fix them as the database owner first.
+- `adjudicate artifacts decide` requires a registered reviewer; register reviewers with `crosscodexd admin reviewer add`.
 
 ## Quick Start
 
@@ -181,7 +181,7 @@ flowchart TD
 
 ### Deployment Modes
 
-- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
+- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. Run `crosscodexd migrate` before starting `crosscodexd` against a database. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
 - **Production (compose)** -- Single-host production stack with full mutual TLS across all services (PostgreSQL, NATS, LiteLLM, CrossCodex gateway). One-command bring-up via `task deploy:up` after populating `deploy/.env` and generating certificates with `task deploy:certs`. The LiteLLM gateway runs behind a stunnel sidecar to provide end-to-end mTLS. See [deploy/README.md](deploy/README.md) for setup, first-use CLI commands, and operations.
 - **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage. Multi-host deployment and FIPS 140 container images tracked in issue [#17](https://github.com/complytime-labs/crosscodex/issues/17).
 
@@ -243,7 +243,8 @@ storage:
 
 # Database
 database:
-  dsn: "${DATABASE_DSN}"          # e.g. postgres://user:password@localhost:5432/crosscodex
+  dsn: "${DATABASE_DSN}"          # app_user, e.g. postgres://app_user:example-password@localhost:5432/crosscodex
+  migration_dsn: "${MIGRATION_DSN}"  # schema owner, used only by `crosscodexd migrate`, e.g. postgres://owner:example-password@localhost:5432/crosscodex
   extensions: [age, vector]
 
 # TLS (Global Default)
@@ -591,6 +592,16 @@ crosscodex admin hold list --tenant acme
 crosscodex admin hold release --tenant acme --name "litigation-2026-014"
 ```
 
+### Database Migration (`crosscodexd migrate`)
+
+`crosscodexd` never migrates. Before the first start, and after every upgrade, run:
+
+```sh
+crosscodexd migrate
+```
+
+It connects as the schema owner (`database.migration_dsn`, env `CROSSCODEX_DATABASE_MIGRATION_DSN`), applies pending migrations, sets the passwords of `app_user`, `graph_user`, `purge_user`, `tenant_admin` and `backup_user` from the passwords in `database.dsn`, `database.graph_dsn`, `database.purge_dsn`, `database.tenant_admin_dsn` and `backup.dsn`, and provisions `tenants.default_tenant`. It is idempotent. The daemon and the `crosscodexd admin` commands that open the application database (`retention scan`, `reconcile artifacts`, and `adjudicate artifacts` including `review`, `show` and `decide`) refuse a superuser, `BYPASSRLS` or table-owner connection, and a schema that is not at the latest migration. `admin tenant`, `admin identity` (`database.tenant_admin_dsn`) and `admin backup` (`backup.dsn`) do not run these checks. See [Database Migrations](docs/dev/migrations.md). The embedded `crosscodex` CLI is unchanged: it migrates and provisions with the DSN it is given.
+
 ### Daemon One-Shot (`crosscodexd admin`)
 
 For on-host operation (e.g. an external scheduler running next to the daemon),
@@ -724,8 +735,8 @@ Other behavior:
   leasing, calling the LLM or writing verdicts or graph elements. It opens no
   LLM client and no NATS connection, so it runs on a host without an LLM
   gateway or NATS (the configuration check below still applies). Like every
-  command that opens the database, it first applies pending schema
-  migrations.
+  command that opens the database, it does not migrate: it refuses an
+  outdated schema and points at `crosscodexd migrate`.
 - **`--reproject`:** with `--tenant` only. Marks the tenant's projected
   confirmed and rejected verdicts, LLM-panel and human alike, unprojected and
   writes them back to the graph (`reset` counts them), then stops: it leases
@@ -956,8 +967,8 @@ crosscodexd admin tenant import  --file tenants.yaml
 
 These commands connect as the least-privilege `tenant_admin` role, never the
 app or owner credential. Set `database.tenant_admin_dsn` (or
-`CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`) to a DSN for that role. Migration
-`007_tenant_admin` creates the role; set its password yourself. The commands
+`CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`) to a DSN for that role.
+`crosscodexd migrate` creates the role; set its password yourself. The commands
 refuse to run while the DSN is empty.
 
 - **`create`:** creates the tenant and its graph, or renames an existing one
@@ -993,10 +1004,11 @@ crosscodexd admin reviewer restore --tenant acme --reviewer jdoe --by alice --re
 crosscodexd admin reviewer hide    --tenant acme --reviewer jdoe --by alice --reason "privacy request"
 crosscodexd admin reviewer unhide  --tenant acme --reviewer jdoe --by alice --reason "audit follow-up"
 crosscodexd admin identity trace   --pseudonym hidden-reviewer-0123456789abcdef --by alice --reason "audit query"
+crosscodexd admin identity export  --out /secure/crosscodex-audit-2026-10-22.jsonl
 ```
 
 These also connect as `tenant_admin`. Every command except `reviewer list`
-changes or reveals an identity, so it requires `--by` (who is acting, 1-256
+and `identity export` changes or reveals an identity, so it requires `--by` (who is acting, 1-256
 bytes) and `--reason` (1-500 bytes), is signed with the attestation keys
 (`attestation.private_key_path` and `attestation.public_key_path`) and is
 recorded in the database's audit log. Without the keys or
@@ -1009,8 +1021,7 @@ recorded in the database's audit log. Without the keys or
   `crosscodexd admin tenant resume` to reactivate it. A hidden tenant must be
   unhidden first.
 - **`reviewer add`:** registers a reviewer so `adjudicate artifacts decide`
-  accepts them. Prints `added`, or `already registered`. Migration 009
-  registered everyone who had already recorded a human verdict. A deleted
+  accepts them. Prints `added`, or `already registered`. A deleted
   reviewer is restored with `reviewer restore`, not added again.
 - **`reviewer delete` / `restore`:** a deleted reviewer's verdicts stay, but
   `decide` refuses new ones from them. Restoring makes them active again.
@@ -1025,6 +1036,18 @@ recorded in the database's audit log. Without the keys or
   reviewer IDs starting with `hidden-` are reserved.
 - **`identity trace`:** prints the kind, tenant, identity, status and hidden
   flag behind a pseudonym. The lookup itself is recorded.
+- **`identity export`:** writes the whole audit log to `--out` as JSON Lines,
+  one event per line in `event_id` order, and prints `exported <n> identity
+  events to <path>`. Each line has `event_id`, `occurred_at` (RFC 3339, UTC),
+  `action`, `kind`, `tenant_id`, `identity_id`, `actor`, `db_user`, `reason`,
+  `request` and `attestation` (base64 of the stored bytes, so their SHA-256
+  can be recomputed) and `attestation_sha256`. The file is sensitive: it
+  holds the real IDs of hidden tenants and reviewers, so store it securely.
+  It is created with mode `0600` and never overwrites an existing file. It is
+  written as `<path>.partial` first and moved into place only when complete;
+  a failed export removes the partial file. It reads only, so it needs no
+  `--by`, `--reason` or attestation keys. Run it before decommissioning a
+  database (see [Decommissioning](deploy/README.md#decommissioning)).
 - **Exit codes:** 0 on success, 1 on failure, 2 on usage errors.
 
 ### Configuration Reference
@@ -1073,7 +1096,7 @@ database:
   purge_dsn: "${PURGE_DATABASE_DSN}"   # e.g. postgres://purge_user:...@localhost:5432/crosscodex
 
 backup:
-  # postgres:// URL for backup_user (LOGIN REPLICATION, migration 006).
+  # postgres:// URL for backup_user (LOGIN REPLICATION).
   # Required when destination.backend is set. Never logged.
   # CROSSCODEX_BACKUP_DSN sets this field from the environment.
   dsn: ""

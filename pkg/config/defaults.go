@@ -34,6 +34,7 @@ tls:
   cipher_deny: []
 database:
   dsn: ""
+  migration_dsn: ""
   graph_dsn: ""
   tenant_admin_dsn: ""
   extensions: []

@@ -274,16 +274,16 @@ var _ = Describe("TenantAdmin", func() {
 		)
 	})
 
-	It("uses exactly the statuses migration 007's CHECK allows", func() {
-		sqlText, err := fs.ReadFile(migrations.FS, "007_tenant_admin.up.sql")
+	It("uses exactly the statuses tenants_status_check allows", func() {
+		sqlText, err := fs.ReadFile(migrations.FS, "001_initial_schema.up.sql")
 		Expect(err).NotTo(HaveOccurred())
-		m := regexp.MustCompile(`(?i)CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)\s*\)`).FindSubmatch(sqlText)
-		Expect(m).NotTo(BeNil(), "tenants_status_check not found in migration 007")
+		m := regexp.MustCompile(`(?i)tenants_status_check\s+CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)\s*\)`).FindSubmatch(sqlText)
+		Expect(m).NotTo(BeNil(), "tenants_status_check not found in the initial schema")
 		var allowed []string
 		for _, q := range regexp.MustCompile(`'([^']*)'`).FindAllSubmatch(m[1], -1) {
 			allowed = append(allowed, string(q[1]))
 		}
-		Expect(allowed).To(ConsistOf(db.TenantStatusActive, db.TenantStatusSuspended))
+		Expect(allowed).To(ConsistOf(db.TenantStatusActive, db.TenantStatusSuspended, db.TenantStatusDeleted))
 	})
 })
 

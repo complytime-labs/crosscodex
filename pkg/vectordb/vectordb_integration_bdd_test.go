@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
@@ -26,7 +28,49 @@ func TestVectorDBIntegrationBDD(t *testing.T) {
 	RunSpecs(t, "VectorDB Integration Suite")
 }
 
-var testDSN string
+// testDSN is the superuser DSN, used only to migrate, seed and clean up.
+// appDSN connects as the restricted app_user that crosscodexd runs as, so
+// every PgVectorStore spec runs under the embeddings RLS policy.
+var testDSN, appDSN string
+
+// deletedTenant is soft-deleted and restored by the deleted-tenant specs.
+const deletedTenant = "vectordb-deleted"
+
+// tenantCatalog is the catalog each tenant other than test-tenant embeds
+// against. Catalog IDs are global and an embedding may reference only a
+// catalog of its own tenant, so every tenant gets its own.
+var tenantCatalog = map[string]string{
+	"tenant-1":    "tenant-1-catalog",
+	"tenant-2":    "tenant-2-catalog",
+	deletedTenant: deletedTenant + "-catalog",
+}
+
+// appUserDSN returns dsn with its credentials replaced by app_user's.
+func appUserDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	Expect(err).NotTo(HaveOccurred(), "bad TEST_DATABASE_DSN")
+	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	u.User = url.UserPassword("app_user", pw)
+	return u.String()
+}
+
+// openAppUser opens an app_user connection closed at the end of the spec.
+func openAppUser() *sql.DB {
+	conn, err := sql.Open("pgx", appDSN)
+	Expect(err).NotTo(HaveOccurred(), "failed to open app_user connection")
+	DeferCleanup(conn.Close)
+	return conn
+}
+
+// openSuperuser opens a superuser connection for seeding and verification,
+// closed at the end of the spec.
+func openSuperuser() *sql.DB {
+	conn, err := sql.Open("pgx", testDSN)
+	Expect(err).NotTo(HaveOccurred(), "failed to open superuser connection")
+	DeferCleanup(conn.Close)
+	return conn
+}
 
 const testVectorDim = 2000
 
@@ -72,27 +116,42 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		{"test-tenant", "Test Tenant"},
 		{"tenant-1", "Tenant One"},
 		{"tenant-2", "Tenant Two"},
+		{deletedTenant, "Deleted Tenant"},
 	} {
 		Expect(db.EnsureTenant(ctx, adminPool, t.id, t.name)).
 			To(Succeed(), "failed to insert tenant %s", t.id)
 	}
 
-	for _, cid := range []string{"nist-800-53", "iso-27001"} {
+	catalogs := map[string]string{"nist-800-53": "test-tenant", "iso-27001": "test-tenant"}
+	for tid, cid := range tenantCatalog {
+		catalogs[cid] = tid
+	}
+	for cid, tid := range catalogs {
 		err := adminPool.Exec(ctx,
 			`INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
 			 VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
-			cid, "test-tenant", cid, "1.0", "oscal", "test-fixture")
+			cid, tid, cid, "1.0", "oscal", "test-fixture")
 		Expect(err).NotTo(HaveOccurred(), "failed to insert catalog %s", cid)
 	}
+
+	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
+	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
+	Expect(adminPool.Exec(ctx, stmt)).To(Succeed(), "failed to set app_user password")
 
 	return []byte(testDSN)
 }, func(data []byte) {
 	testDSN = string(data)
+	if testDSN != "" {
+		appDSN = appUserDSN(testDSN)
+	}
 })
 
-// cleanupTestData removes all embeddings inserted during the test run.
+// cleanupTestData removes all embeddings inserted during the test run. It
+// needs a superuser connection: RLS would scope app_user to one tenant.
 func cleanupTestData(sqlDB *sql.DB) {
-	tenants := []string{"test-tenant", "tenant-1", "tenant-2"}
+	tenants := []string{"test-tenant", "tenant-1", "tenant-2", deletedTenant}
 	for _, tid := range tenants {
 		_, err := sqlDB.Exec(`DELETE FROM embeddings WHERE tenant_id = $1`, tid)
 		if err != nil {
@@ -103,7 +162,7 @@ func cleanupTestData(sqlDB *sql.DB) {
 
 var _ = Describe("VectorDB Integration", func() {
 	var (
-		sqlDB *sql.DB
+		suDB  *sql.DB
 		store *vectordb.PgVectorStore
 		ctx   context.Context
 	)
@@ -113,20 +172,15 @@ var _ = Describe("VectorDB Integration", func() {
 			Skip("TEST_DATABASE_DSN not set")
 		}
 
-		var err error
-		sqlDB, err = sql.Open("pgx", testDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to connect to database")
+		suDB = openSuperuser()
+		DeferCleanup(func() { cleanupTestData(suDB) })
 
-		store, err = vectordb.NewPgVectorStore(sqlDB)
+		var err error
+		store, err = vectordb.NewPgVectorStore(openAppUser())
 		Expect(err).NotTo(HaveOccurred(), "failed to create vector store")
 
 		ctx, err = tenant.WithTenant(context.Background(), "test-tenant")
 		Expect(err).NotTo(HaveOccurred())
-
-		DeferCleanup(func() {
-			cleanupTestData(sqlDB)
-			sqlDB.Close()
-		})
 	})
 
 	Context("StoreAndRetrieve", func() {
@@ -239,72 +293,47 @@ var _ = Describe("VectorDB Integration", func() {
 	})
 
 	Context("TenantIsolation", func() {
-		It("should prevent tenants from seeing each other's embeddings", func() {
-			ctx1, err := tenant.WithTenant(context.Background(), "tenant-1")
-			Expect(err).NotTo(HaveOccurred())
-			ctx2, err := tenant.WithTenant(context.Background(), "tenant-2")
-			Expect(err).NotTo(HaveOccurred())
-
-			// Store embeddings for tenant-1
-			Expect(store.StoreEmbedding(ctx1, "tenant-1", vectordb.Embedding{
-				CatalogID: "iso-27001",
-				ControlID: "A.5.1",
-				Model:     "text-embedding-ada-002",
-				Vector:    testVector(0.9, 0.8, 0.7, 0.6, 0.5),
-			})).To(Succeed())
-
-			// Store embeddings for tenant-2
-			Expect(store.StoreEmbedding(ctx2, "tenant-2", vectordb.Embedding{
-				CatalogID: "iso-27001",
-				ControlID: "A.6.1",
-				Model:     "text-embedding-ada-002",
-				Vector:    testVector(0.1, 0.2, 0.3, 0.4, 0.5),
-			})).To(Succeed())
-
-			// Query as tenant-1: must NOT see tenant-2's control A.6.1
-			results1, err := store.FindSimilar(ctx1, "tenant-1", vectordb.FindSimilarQuery{
-				CatalogID: "iso-27001",
-				Model:     "text-embedding-ada-002",
-				Vector:    testVector(0.1, 0.2, 0.3, 0.4, 0.5),
-				Limit:     10,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			for _, r := range results1 {
-				Expect(r.ControlID).NotTo(Equal("A.6.1"),
-					"tenant-1 can see tenant-2's control A.6.1 — tenant isolation violated")
+		BeforeEach(func() {
+			for _, e := range []struct{ tenantID, controlID string }{
+				{"tenant-1", "A.5.1"},
+				{"tenant-2", "A.6.1"},
+			} {
+				tctx, err := tenant.WithTenant(context.Background(), e.tenantID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.StoreEmbedding(tctx, e.tenantID, vectordb.Embedding{
+					CatalogID: tenantCatalog[e.tenantID],
+					ControlID: e.controlID,
+					Model:     "text-embedding-ada-002",
+					Vector:    testVector(0.5, 0.5, 0.5),
+				})).To(Succeed())
 			}
-			// Verify tenant-1 can still see their own data
-			found := false
-			for _, r := range results1 {
-				if r.ControlID == "A.5.1" {
-					found = true
-					break
-				}
-			}
-			Expect(found).To(BeTrue(), "tenant-1 cannot see their own control A.5.1")
-
-			// Query as tenant-2: must NOT see tenant-1's control A.5.1
-			results2, err := store.FindSimilar(ctx2, "tenant-2", vectordb.FindSimilarQuery{
-				CatalogID: "iso-27001",
-				Model:     "text-embedding-ada-002",
-				Vector:    testVector(0.9, 0.8, 0.7, 0.6, 0.5),
-				Limit:     10,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			for _, r := range results2 {
-				Expect(r.ControlID).NotTo(Equal("A.5.1"),
-					"tenant-2 can see tenant-1's control A.5.1 — tenant isolation violated")
-			}
-			// Verify tenant-2 can still see their own data
-			found = false
-			for _, r := range results2 {
-				if r.ControlID == "A.6.1" {
-					found = true
-					break
-				}
-			}
-			Expect(found).To(BeTrue(), "tenant-2 cannot see their own control A.6.1")
 		})
+
+		DescribeTable("should prevent tenants from seeing each other's embeddings",
+			func(own, other, ownControl string) {
+				tctx, err := tenant.WithTenant(context.Background(), own)
+				Expect(err).NotTo(HaveOccurred())
+				query := func(catalogID string) ([]vectordb.SimilarityResult, error) {
+					return store.FindSimilar(tctx, own, vectordb.FindSimilarQuery{
+						CatalogID: catalogID,
+						Model:     "text-embedding-ada-002",
+						Vector:    testVector(0.5, 0.5, 0.5),
+						Limit:     10,
+					})
+				}
+
+				results, err := query(tenantCatalog[own])
+				Expect(err).NotTo(HaveOccurred())
+				Expect(results).To(HaveLen(1), "%s must see exactly its own embedding", own)
+				Expect(results[0].ControlID).To(Equal(ownControl))
+
+				_, err = query(tenantCatalog[other])
+				Expect(err).To(MatchError(vectordb.ErrModelNotFound),
+					"%s can see %s's catalog — tenant isolation violated", own, other)
+			},
+			Entry("tenant-1", "tenant-1", "tenant-2", "A.5.1"),
+			Entry("tenant-2", "tenant-2", "tenant-1", "A.6.1"),
+		)
 	})
 
 	Context("ModelAgnosticDimensions", func() {
@@ -367,18 +396,249 @@ var _ = Describe("VectorDB Integration", func() {
 	})
 })
 
+// countEmbeddings counts tenantID's embeddings through a superuser
+// connection, which RLS does not filter, so a negative spec can prove the
+// data is unchanged regardless of what app_user can see.
+func countEmbeddings(suDB *sql.DB, tenantID string) int {
+	var n int
+	Expect(suDB.QueryRow(`SELECT COUNT(*) FROM embeddings WHERE tenant_id = $1`, tenantID).Scan(&n)).To(Succeed())
+	return n
+}
+
+var _ = Describe("VectorDB row-level security", func() {
+	var (
+		suDB  *sql.DB
+		store *vectordb.PgVectorStore
+	)
+
+	tenantCtx := func(id string) context.Context {
+		ctx, err := tenant.WithTenant(context.Background(), id)
+		Expect(err).NotTo(HaveOccurred())
+		return ctx
+	}
+
+	BeforeEach(func() {
+		if testDSN == "" {
+			Skip("TEST_DATABASE_DSN not set")
+		}
+		suDB = openSuperuser()
+		DeferCleanup(func() { cleanupTestData(suDB) })
+
+		var err error
+		store, err = vectordb.NewPgVectorStore(openAppUser())
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("stores, finds, gets, counts and deletes a tenant's own embeddings", func() {
+		ctx := tenantCtx("tenant-1")
+		Expect(store.StoreEmbedding(ctx, "tenant-1", vectordb.Embedding{
+			CatalogID: tenantCatalog["tenant-1"], ControlID: "RLS-1", Model: "rls-model", Vector: testVector(0.1, 0.2),
+		})).To(Succeed())
+		Expect(store.StoreBatch(ctx, "tenant-1", []vectordb.Embedding{
+			{CatalogID: tenantCatalog["tenant-1"], ControlID: "RLS-2", Model: "rls-model", Vector: testVector(0.2, 0.1)},
+		})).To(Succeed())
+
+		results, err := store.FindSimilar(ctx, "tenant-1", vectordb.FindSimilarQuery{
+			CatalogID: tenantCatalog["tenant-1"], Model: "rls-model", Vector: testVector(0.1, 0.2), Limit: 10,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(results).To(HaveLen(2))
+
+		got, err := store.Get(ctx, "RLS-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.ID).To(Equal("RLS-1"))
+		Expect(got.Vector).To(Equal(testVector(0.1, 0.2)))
+
+		Expect(store.Count(ctx)).To(Equal(int64(2)))
+
+		Expect(store.Delete(ctx, "RLS-1")).To(Succeed())
+		Expect(store.DeleteByModel(ctx, "tenant-1", tenantCatalog["tenant-1"], "rls-model")).To(Succeed())
+		Expect(store.Count(ctx)).To(Equal(int64(0)))
+		Expect(countEmbeddings(suDB, "tenant-1")).To(Equal(0))
+	})
+
+	Context("when another tenant reaches for tenant-1's embeddings", func() {
+		BeforeEach(func() {
+			Expect(store.StoreEmbedding(tenantCtx("tenant-1"), "tenant-1", vectordb.Embedding{
+				CatalogID: tenantCatalog["tenant-1"], ControlID: "RLS-A", Model: "rls-model", Vector: testVector(0.3, 0.4),
+			})).To(Succeed())
+		})
+
+		It("hides them from FindSimilar, Get and Count", func() {
+			ctx := tenantCtx("tenant-2")
+			_, err := store.FindSimilar(ctx, "tenant-2", vectordb.FindSimilarQuery{
+				CatalogID: tenantCatalog["tenant-1"], Model: "rls-model", Vector: testVector(0.3, 0.4), Limit: 10,
+			})
+			Expect(err).To(MatchError(vectordb.ErrModelNotFound))
+
+			_, err = store.Get(ctx, "RLS-A")
+			Expect(err).To(MatchError(vectordb.ErrNotFound))
+
+			Expect(store.Count(ctx)).To(Equal(int64(0)))
+		})
+
+		It("refuses Delete with ErrNotFound and leaves them unchanged", func() {
+			err := store.Delete(tenantCtx("tenant-2"), "RLS-A")
+			Expect(err).To(MatchError(vectordb.ErrNotFound))
+			Expect(countEmbeddings(suDB, "tenant-1")).To(Equal(1))
+		})
+
+		It("deletes nothing through DeleteByModel", func() {
+			Expect(store.DeleteByModel(tenantCtx("tenant-2"), "tenant-2", tenantCatalog["tenant-1"], "rls-model")).To(Succeed())
+			Expect(countEmbeddings(suDB, "tenant-1")).To(Equal(1))
+		})
+	})
+
+	// The embeddings key includes tenant_id, so two tenants embedding the
+	// same control with the same model each own a row; an upsert never
+	// takes over another tenant's row. Each tenant embeds against its own
+	// catalog, the only kind it may reference, so the two
+	// keys differ in catalog_id too; pkg/db's "embeddings tenant key" spec
+	// proves the key itself leads with tenant_id.
+	Context("when two tenants store the same control and model", func() {
+		shared := func(tenantID string, vector []float32) vectordb.Embedding {
+			return vectordb.Embedding{CatalogID: tenantCatalog[tenantID], ControlID: "RLS-SHARED", Model: "rls-model", Vector: vector}
+		}
+		vectorOf := func(id string) []float32 {
+			got, err := store.Get(tenantCtx(id), "RLS-SHARED")
+			Expect(err).NotTo(HaveOccurred(), "Get for %s", id)
+			return got.Vector
+		}
+		storeOne := func(ctx context.Context, tenantID string, e vectordb.Embedding) error {
+			return store.StoreEmbedding(ctx, tenantID, e)
+		}
+		storeAsBatch := func(ctx context.Context, tenantID string, e vectordb.Embedding) error {
+			return store.StoreBatch(ctx, tenantID, []vectordb.Embedding{e})
+		}
+
+		DescribeTable("keeps a row per tenant, and a re-store updates only its own",
+			func(store1, store2 func(ctx context.Context, tenantID string, e vectordb.Embedding) error) {
+				Expect(store1(tenantCtx("tenant-1"), "tenant-1", shared("tenant-1", testVector(0.1)))).To(Succeed())
+				Expect(store2(tenantCtx("tenant-2"), "tenant-2", shared("tenant-2", testVector(0.9)))).To(Succeed())
+				Expect(countEmbeddings(suDB, "tenant-1")).To(Equal(1))
+				Expect(countEmbeddings(suDB, "tenant-2")).To(Equal(1))
+				Expect(vectorOf("tenant-1")).To(Equal(testVector(0.1)))
+				Expect(vectorOf("tenant-2")).To(Equal(testVector(0.9)))
+
+				Expect(store1(tenantCtx("tenant-1"), "tenant-1", shared("tenant-1", testVector(0.5)))).To(Succeed())
+				Expect(countEmbeddings(suDB, "tenant-1")).To(Equal(1))
+				Expect(countEmbeddings(suDB, "tenant-2")).To(Equal(1))
+				Expect(vectorOf("tenant-1")).To(Equal(testVector(0.5)))
+				Expect(vectorOf("tenant-2")).To(Equal(testVector(0.9)))
+			},
+			Entry("StoreEmbedding", storeOne, storeOne),
+			Entry("StoreBatch", storeAsBatch, storeAsBatch),
+			Entry("StoreEmbedding then StoreBatch", storeOne, storeAsBatch),
+		)
+	})
+
+	// Foreign keys ignore RLS, so only the composite catalog foreign key
+	// (embeddings_catalog_tenant_fkey) stops a tenant embedding against another tenant's
+	// catalog. A batch holding one such embedding is refused whole.
+	DescribeTable("refuses an embedding against another tenant's catalog and writes nothing",
+		func(op func(ctx context.Context) error) {
+			err := op(tenantCtx("tenant-1"))
+			Expect(err).To(MatchError(ContainSubstring(fmt.Sprintf(
+				"catalog %q is not a catalog of tenant %q; store embeddings only for the tenant's own catalogs",
+				tenantCatalog["tenant-2"], "tenant-1"))))
+			Expect(db.IsPgErrorCode(err, "23503")).To(BeTrue(), "want the foreign_key_violation wrapped, got %v", err)
+			Expect(countEmbeddings(suDB, "tenant-1")).To(BeZero())
+			Expect(countEmbeddings(suDB, "tenant-2")).To(BeZero())
+		},
+		Entry("StoreEmbedding", func(ctx context.Context) error {
+			return store.StoreEmbedding(ctx, "tenant-1", vectordb.Embedding{
+				CatalogID: tenantCatalog["tenant-2"], ControlID: "RLS-X", Model: "rls-model", Vector: testVector(0.7),
+			})
+		}),
+		Entry("StoreBatch", func(ctx context.Context) error {
+			return store.StoreBatch(ctx, "tenant-1", []vectordb.Embedding{
+				{CatalogID: tenantCatalog["tenant-1"], ControlID: "RLS-OWN", Model: "rls-model", Vector: testVector(0.7)},
+				{CatalogID: tenantCatalog["tenant-2"], ControlID: "RLS-X", Model: "rls-model", Vector: testVector(0.7)},
+			})
+		}),
+		Entry("Insert", func(ctx context.Context) error {
+			return store.Insert(ctx, "RLS-X", testVector(0.7), map[string]any{
+				"catalog_id": tenantCatalog["tenant-2"], "model": "rls-model",
+			})
+		}),
+	)
+
+	Context("when the tenant is deleted", func() {
+		// The tenant is soft-deleted with a superuser UPDATE: delete_tenant
+		// needs a signed attestation, which this suite has no key for, and
+		// the row state is all enter_tenant reads.
+		setDeleted := func(deleted bool) {
+			stmt := "UPDATE tenants SET status = 'active', deleted_at = NULL, deleted_by = NULL WHERE tenant_id = $1"
+			if deleted {
+				stmt = "UPDATE tenants SET status = 'deleted', deleted_at = now(), deleted_by = 'test' WHERE tenant_id = $1"
+			}
+			_, err := suDB.Exec(stmt, deletedTenant)
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		BeforeEach(func() {
+			Expect(store.StoreEmbedding(tenantCtx(deletedTenant), deletedTenant, vectordb.Embedding{
+				CatalogID: tenantCatalog[deletedTenant], ControlID: "RLS-KEPT", Model: "rls-model", Vector: testVector(0.5),
+			})).To(Succeed())
+			setDeleted(true)
+			DeferCleanup(func() { setDeleted(false) })
+		})
+
+		// expectRefused asserts the enter_tenant refusal: SQLSTATE 42501
+		// with the restore command an operator needs.
+		expectRefused := func(err error) {
+			Expect(err).To(HaveOccurred())
+			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
+			Expect(err.Error()).To(ContainSubstring("admin tenant restore"))
+		}
+
+		DescribeTable("refuses every operation and leaves the data unchanged",
+			func(op func(ctx context.Context) error) {
+				expectRefused(op(tenantCtx(deletedTenant)))
+				Expect(countEmbeddings(suDB, deletedTenant)).To(Equal(1))
+			},
+			Entry("StoreEmbedding", func(ctx context.Context) error {
+				return store.StoreEmbedding(ctx, deletedTenant, vectordb.Embedding{
+					CatalogID: tenantCatalog[deletedTenant], ControlID: "RLS-NEW", Model: "rls-model", Vector: testVector(0.6),
+				})
+			}),
+			Entry("StoreBatch", func(ctx context.Context) error {
+				return store.StoreBatch(ctx, deletedTenant, []vectordb.Embedding{
+					{CatalogID: tenantCatalog[deletedTenant], ControlID: "RLS-NEW", Model: "rls-model", Vector: testVector(0.6)},
+				})
+			}),
+			Entry("FindSimilar", func(ctx context.Context) error {
+				_, err := store.FindSimilar(ctx, deletedTenant, vectordb.FindSimilarQuery{
+					CatalogID: tenantCatalog[deletedTenant], Model: "rls-model", Vector: testVector(0.5), Limit: 10,
+				})
+				return err
+			}),
+			Entry("Get", func(ctx context.Context) error {
+				_, err := store.Get(ctx, "RLS-KEPT")
+				return err
+			}),
+			Entry("Count", func(ctx context.Context) error {
+				_, err := store.Count(ctx)
+				return err
+			}),
+			Entry("Delete", func(ctx context.Context) error {
+				return store.Delete(ctx, "RLS-KEPT")
+			}),
+			Entry("DeleteByModel", func(ctx context.Context) error {
+				return store.DeleteByModel(ctx, deletedTenant, tenantCatalog[deletedTenant], "rls-model")
+			}),
+		)
+	})
+})
+
 var _ = Describe("VectorDB Telemetry", func() {
 	It("should emit spans and metrics for StoreEmbedding and FindSimilar", func() {
 		if testDSN == "" {
 			Skip("TEST_DATABASE_DSN not set")
 		}
 
-		sqlDB, err := sql.Open("pgx", testDSN)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() {
-			cleanupTestData(sqlDB)
-			sqlDB.Close()
-		})
+		suDB := openSuperuser()
+		DeferCleanup(func() { cleanupTestData(suDB) })
 
 		tp, err := telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
@@ -387,7 +647,7 @@ var _ = Describe("VectorDB Telemetry", func() {
 		tracer := tp.TracerProvider().Tracer("test")
 		meter := tp.MeterProvider().Meter("test")
 
-		store, err := vectordb.NewPgVectorStore(sqlDB, vectordb.WithTelemetry(tracer, meter))
+		store, err := vectordb.NewPgVectorStore(openAppUser(), vectordb.WithTelemetry(tracer, meter))
 		Expect(err).NotTo(HaveOccurred())
 
 		ctx, err := tenant.WithTenant(context.Background(), "test-tenant")

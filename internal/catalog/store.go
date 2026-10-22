@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // Store interface for catalog and control persistence.
@@ -97,8 +98,19 @@ func NewPGStore(conn db.Connection) *PGStore {
 	return &PGStore{conn: conn}
 }
 
-// UpsertCatalog inserts or updates a catalog record.
+// UpsertCatalog inserts or updates a catalog record of the context tenant.
+// It refuses a record for another tenant, and an ID already used by another
+// tenant's catalog, without writing anything.
 func (s *PGStore) UpsertCatalog(ctx context.Context, catalog CatalogRecord) error {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return fmt.Errorf("upsert catalog: %w", err)
+	}
+	if catalog.TenantID != tenantID {
+		return fmt.Errorf("upsert catalog %s: record tenant %q does not match the request tenant %q; refusing to write across tenants. Build the record with the request's tenant",
+			catalog.CatalogID, catalog.TenantID, tenantID)
+	}
+
 	tx, err := s.conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin upsert catalog: %w", err)
@@ -125,9 +137,12 @@ func (s *PGStore) UpsertCatalog(ctx context.Context, catalog CatalogRecord) erro
 			output_hash = EXCLUDED.output_hash,
 			extractor_name = EXCLUDED.extractor_name,
 			extractor_version = EXCLUDED.extractor_version
+		WHERE catalogs.tenant_id = EXCLUDED.tenant_id
+		RETURNING catalog_id
 	`
 
-	if err := tx.Exec(ctx, query,
+	var upserted string
+	err = tx.QueryRow(ctx, query,
 		catalog.CatalogID,
 		catalog.TenantID,
 		catalog.Name,
@@ -142,15 +157,28 @@ func (s *PGStore) UpsertCatalog(ctx context.Context, catalog CatalogRecord) erro
 		catalog.OutputHash,
 		catalog.ExtractorName,
 		catalog.ExtractorVersion,
-	); err != nil {
-		return err
+	).Scan(&upserted)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The WHERE above skipped the update: the ID is another tenant's.
+		// Catalog IDs hash the content with the tenant, so this is a
+		// collision or a caller-built ID, never a re-import.
+		return fmt.Errorf("upsert catalog %s: the catalog ID belongs to another tenant; nothing was written. Catalog IDs are derived from content and tenant, so report this collision to the operator",
+			catalog.CatalogID)
+	}
+	if err != nil {
+		return fmt.Errorf("upsert catalog %s: %w", catalog.CatalogID, err)
 	}
 
 	return tx.Commit()
 }
 
-// GetCatalog retrieves a catalog by ID.
+// GetCatalog retrieves a catalog of the context tenant by ID.
 func (s *PGStore) GetCatalog(ctx context.Context, catalogID string) (*CatalogRecord, error) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get catalog: %w", err)
+	}
+
 	tx, err := s.conn.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin get catalog: %w", err)
@@ -167,13 +195,13 @@ func (s *PGStore) GetCatalog(ctx context.Context, catalogID string) (*CatalogRec
 			COALESCE(output_hash, '') as output_hash,
 			COALESCE(extractor_name, '') as extractor_name,
 			COALESCE(extractor_version, '') as extractor_version,
-			(SELECT COUNT(*) FROM controls c WHERE c.catalog_id = catalogs.catalog_id) as control_count
+			(SELECT COUNT(*) FROM controls c WHERE c.catalog_id = catalogs.catalog_id AND c.tenant_id = catalogs.tenant_id) as control_count
 		FROM catalogs
-		WHERE catalog_id = $1
+		WHERE catalog_id = $1 AND tenant_id = $2
 	`
 
 	var rec CatalogRecord
-	err = tx.QueryRow(ctx, query, catalogID).Scan(
+	err = tx.QueryRow(ctx, query, catalogID, tenantID).Scan(
 		&rec.CatalogID,
 		&rec.TenantID,
 		&rec.Name,
@@ -203,8 +231,13 @@ func (s *PGStore) GetCatalog(ctx context.Context, catalogID string) (*CatalogRec
 	return &rec, nil
 }
 
-// ListCatalogs retrieves catalogs with pagination.
+// ListCatalogs retrieves the context tenant's catalogs with pagination.
 func (s *PGStore) ListCatalogs(ctx context.Context, opts ListOptions) ([]CatalogRecord, PageInfo, error) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, PageInfo{}, fmt.Errorf("list catalogs: %w", err)
+	}
+
 	tx, err := s.conn.Begin(ctx)
 	if err != nil {
 		return nil, PageInfo{}, fmt.Errorf("begin list catalogs: %w", err)
@@ -215,7 +248,7 @@ func (s *PGStore) ListCatalogs(ctx context.Context, opts ListOptions) ([]Catalog
 
 	// Get total count
 	var totalCount int64
-	if err := tx.QueryRow(ctx, "SELECT COUNT(*) FROM catalogs").Scan(&totalCount); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT COUNT(*) FROM catalogs WHERE tenant_id = $1", tenantID).Scan(&totalCount); err != nil {
 		return nil, PageInfo{}, err
 	}
 
@@ -230,13 +263,14 @@ func (s *PGStore) ListCatalogs(ctx context.Context, opts ListOptions) ([]Catalog
 			COALESCE(output_hash, '') as output_hash,
 			COALESCE(extractor_name, '') as extractor_name,
 			COALESCE(extractor_version, '') as extractor_version,
-			(SELECT COUNT(*) FROM controls c WHERE c.catalog_id = catalogs.catalog_id) as control_count
+			(SELECT COUNT(*) FROM controls c WHERE c.catalog_id = catalogs.catalog_id AND c.tenant_id = catalogs.tenant_id) as control_count
 		FROM catalogs
+		WHERE tenant_id = $1
 		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2
+		LIMIT $2 OFFSET $3
 	`
 
-	rows, err := tx.Query(ctx, query, limit, opts.Offset)
+	rows, err := tx.Query(ctx, query, tenantID, limit, opts.Offset)
 	if err != nil {
 		return nil, PageInfo{}, err
 	}
@@ -285,10 +319,26 @@ func (s *PGStore) ListCatalogs(ctx context.Context, opts ListOptions) ([]Catalog
 	return records, pageInfo, nil
 }
 
-// UpsertControls inserts or updates multiple control records in a transaction.
+// errNotTenantCatalog is the format of UpsertControls' refusal of a catalog
+// that is not the request tenant's: control ID, catalog ID, tenant ID.
+const errNotTenantCatalog = "upsert control %s: catalog %q is not a catalog of tenant %q, so no control in this batch was written. Upsert the catalog first, or use one of the tenant's catalog IDs"
+
+// UpsertControls inserts or updates multiple control records of the context
+// tenant in a transaction. If any record is for another tenant, or names a
+// catalog that is not the tenant's, it writes none of them.
 func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) error {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return fmt.Errorf("upsert controls: %w", err)
+	}
 	if len(controls) == 0 {
 		return nil
+	}
+	for _, ctrl := range controls {
+		if ctrl.TenantID != tenantID {
+			return fmt.Errorf("upsert control %s: record tenant %q does not match the request tenant %q; refusing to write across tenants, so no control in this batch was written. Build every record with the request's tenant",
+				ctrl.ControlID, ctrl.TenantID, tenantID)
+		}
 	}
 
 	tx, err := s.conn.Begin(ctx)
@@ -296,6 +346,27 @@ func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) 
 		return fmt.Errorf("begin upsert controls: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	// The (catalog_id, tenant_id) foreign key to catalogs
+	// refuses another tenant's catalog; checking first names the catalog
+	// and tells the caller what to do instead.
+	checked := make(map[string]bool)
+	for _, ctrl := range controls {
+		if checked[ctrl.CatalogID] {
+			continue
+		}
+		var owned int
+		err := tx.QueryRow(ctx, "SELECT 1 FROM catalogs WHERE catalog_id = $1 AND tenant_id = $2",
+			ctrl.CatalogID, tenantID).Scan(&owned)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf(errNotTenantCatalog,
+				ctrl.ControlID, ctrl.CatalogID, tenantID)
+		}
+		if err != nil {
+			return fmt.Errorf("upsert control %s: check catalog %s: %w", ctrl.ControlID, ctrl.CatalogID, err)
+		}
+		checked[ctrl.CatalogID] = true
+	}
 
 	query := `
 		INSERT INTO controls (
@@ -334,6 +405,12 @@ func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) 
 			propsJSON,
 			ctrl.CreatedAt,
 		); err != nil {
+			// A foreign-key violation past the check above means the
+			// catalog was deleted concurrently; tenants are never deleted.
+			if db.IsPgErrorCode(err, "23503") {
+				return fmt.Errorf(errNotTenantCatalog+": %w",
+					ctrl.ControlID, ctrl.CatalogID, tenantID, err)
+			}
 			return fmt.Errorf("upsert control %s: %w", ctrl.ControlID, err)
 		}
 	}
@@ -341,8 +418,13 @@ func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) 
 	return tx.Commit()
 }
 
-// GetControl retrieves a control by ID.
+// GetControl retrieves a control of the context tenant by ID.
 func (s *PGStore) GetControl(ctx context.Context, controlID string) (*ControlRecord, error) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get control: %w", err)
+	}
+
 	tx, err := s.conn.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin get control: %w", err)
@@ -354,13 +436,13 @@ func (s *PGStore) GetControl(ctx context.Context, controlID string) (*ControlRec
 			tenant_id, control_id, catalog_id, identifier, title, statement,
 			class, parent_id, group_id, props, created_at
 		FROM controls
-		WHERE control_id = $1
+		WHERE control_id = $1 AND tenant_id = $2
 	`
 
 	var rec ControlRecord
 	var propsJSON []byte
 
-	err = tx.QueryRow(ctx, query, controlID).Scan(
+	err = tx.QueryRow(ctx, query, controlID, tenantID).Scan(
 		&rec.TenantID,
 		&rec.ControlID,
 		&rec.CatalogID,
@@ -392,8 +474,13 @@ func (s *PGStore) GetControl(ctx context.Context, controlID string) (*ControlRec
 	return &rec, nil
 }
 
-// SearchControls performs full-text search on controls.
+// SearchControls performs full-text search on the context tenant's controls.
 func (s *PGStore) SearchControls(ctx context.Context, sq SearchQuery) ([]ControlRecord, PageInfo, error) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, PageInfo{}, fmt.Errorf("search controls: %w", err)
+	}
+
 	tx, err := s.conn.Begin(ctx)
 	if err != nil {
 		return nil, PageInfo{}, fmt.Errorf("begin search controls: %w", err)
@@ -425,6 +512,9 @@ func (s *PGStore) SearchControls(ctx context.Context, sq SearchQuery) ([]Control
 		}
 		whereClause += fmt.Sprintf(" AND catalog_id IN (%s)", placeholders)
 	}
+	whereClause += fmt.Sprintf(" AND tenant_id = $%d", argIndex)
+	args = append(args, tenantID)
+	argIndex++
 
 	// Get total count
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM controls %s", whereClause)

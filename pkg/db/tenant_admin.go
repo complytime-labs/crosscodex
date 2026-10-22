@@ -18,8 +18,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-// Tenant lifecycle states. Migration 007's tenants_status_check allows
-// exactly these; the gateway refuses every tenant that is not active.
+// Tenant lifecycle states. tenants_status_check allows exactly these and
+// TenantStatusDeleted; the gateway refuses every tenant that is not active.
 const (
 	TenantStatusActive    = "active"
 	TenantStatusSuspended = "suspended"
@@ -55,11 +55,11 @@ type TenantSpec struct {
 	DisplayName string
 }
 
-// TenantAdmin provisions and suspends tenants as the tenant_admin role
-// (migration 007). That role holds no table privilege: it can only call the
+// TenantAdmin provisions and suspends tenants as the tenant_admin role.
+// That role holds no table privilege: it can only call the
 // SECURITY DEFINER functions provision_tenant, set_tenant_status,
 // list_tenants, list_retention_tenants and the identity lifecycle functions
-// of migration 009 (see identity.go), so it cannot read tenant data or
+// (see identity.go), so it cannot read tenant data or
 // bulk-modify tenants. This is the only Go code that calls those functions.
 type TenantAdmin struct {
 	pool Pool

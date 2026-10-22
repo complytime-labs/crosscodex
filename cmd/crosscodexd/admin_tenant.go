@@ -46,7 +46,7 @@ func tenantAdminDSN(ctx context.Context, cmd string) (string, bool) {
 // to set it when it is empty.
 func requireTenantAdminDSN(cmd string, cfg *config.Config) (string, bool) {
 	if cfg.Database.TenantAdminDSN == "" {
-		fmt.Fprintf(os.Stderr, "%s: database.tenant_admin_dsn is not set. Set CROSSCODEX_DATABASE_TENANT_ADMIN_DSN to a DSN for the tenant_admin role (created by migration 007_tenant_admin).\n", cmd)
+		fmt.Fprintf(os.Stderr, "%s: database.tenant_admin_dsn is not set. Set CROSSCODEX_DATABASE_TENANT_ADMIN_DSN to a DSN for the tenant_admin role (created by `crosscodexd migrate`).\n", cmd)
 		return "", false
 	}
 	return cfg.Database.TenantAdminDSN, true

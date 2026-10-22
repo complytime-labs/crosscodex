@@ -95,8 +95,9 @@ func (s *Service) recordRPC(ctx context.Context, method string, start time.Time,
 // from the caller the log is the only record of it. The logged error may
 // echo fragments of client-supplied Cypher; that stays server-side, and no
 // credentials reach driver errors. trace_id is set
-// explicitly because no binary installs telemetry.Init's trace-correlating
-// slog handler yet.
+// explicitly so the record carries it even when telemetry.Init's
+// trace-correlating slog handler is not installed (the crosscodexd admin
+// subcommands and tests do not call Init).
 func (s *Service) rpcError(ctx context.Context, method string, code connect.Code, err error) *connect.Error {
 	if code != connect.CodeInternal {
 		return connect.NewError(code, errors.New(graphErrorMessage(err)))

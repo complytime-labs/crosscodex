@@ -71,8 +71,8 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
 	Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
 
-	// Set a fresh graph_user password for this run, as test/e2e/provision
-	// does, so no fixed credential lives in the repository.
+	// Set a fresh graph_user password for this run, so no fixed credential
+	// lives in the repository.
 	password, err := dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "failed to generate graph_user password")
 	stmt, err := dbtest.AlterRolePasswordSQL("graph_user", password)

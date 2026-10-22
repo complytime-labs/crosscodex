@@ -11,13 +11,17 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	connectrpc "connectrpc.com/connect"
 	"go.opentelemetry.io/otel"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
+	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 var _ = Describe("ensurePKI", func() {
@@ -188,6 +192,39 @@ var _ = Describe("gateway.PoolAdminBackend", func() {
 
 var _ gateway.IngestionBackend = (*backend.PassthroughIngestion)(nil)
 var _ gateway.PipelineBackend = (*localPipelineBackend)(nil)
+
+// capturingJobStore records the job passed to CreateJob; every other
+// pipeline.Store method is unused here and panics through the nil embed.
+type capturingJobStore struct {
+	pipeline.Store
+	created *pipeline.Job
+}
+
+func (s *capturingJobStore) CreateJob(_ context.Context, job *pipeline.Job) error {
+	s.created = job
+	return nil
+}
+
+var _ = Describe("localPipelineBackend.CreateJob", func() {
+	DescribeTable("records the job's creator",
+		func(user, wantCreator string) {
+			ctx, err := tenant.WithTenant(context.Background(), "embedded")
+			Expect(err).NotTo(HaveOccurred())
+			if user != "" {
+				ctx = tenant.WithUser(ctx, user)
+			}
+			store := &capturingJobStore{}
+			b := &localPipelineBackend{store: store}
+
+			_, err = b.CreateJob(ctx, connectrpc.NewRequest(&pb.CreateJobRequest{Config: &pb.JobConfig{}}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.created).NotTo(BeNil())
+			Expect(store.created.CreatedBy).To(Equal(wantCreator))
+		},
+		Entry("as the calling user when the context carries one", "alice@example.com", "alice@example.com"),
+		Entry("as the tenant for a system call without a user", "", "embedded"),
+	)
+})
 
 var _ = Describe("buildEmbeddedService", func() {
 	It("returns an error when database DSN is empty", func() {

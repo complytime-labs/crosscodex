@@ -68,8 +68,8 @@ func checkHex(password string) error {
 }
 
 // HardDeleteTenantSQL returns a superuser-only statement that removes a test
-// tenant, every public row carrying its tenant_id, and its graph. Migration
-// 009 makes tenants and verdicts undeletable for every role through triggers;
+// tenant, every public row carrying its tenant_id, and its graph. The schema
+// makes tenants and verdicts undeletable for every role through triggers;
 // session_replication_role = replica (superuser only) skips those and FK
 // triggers, which is acceptable only for disposable test databases. The ID is
 // validated before it is interpolated, because DO blocks take no parameters.

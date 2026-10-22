@@ -20,6 +20,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 	"go.opentelemetry.io/otel/attribute"
@@ -174,6 +175,22 @@ func WithLogger(l *slog.Logger) ServiceOption {
 	}
 }
 
+// internalError turns an error the client cannot fix into the Connect error
+// an RPC returns. Store and storage errors carry SQL, SQLSTATE codes, table
+// names and file paths that must not reach a client (CWE-209), so the client
+// gets a fixed message pointing at the trace and the full error is logged
+// here, once, because the log is then the only record of it.
+func (s *Service) internalError(ctx context.Context, method string, err error) *connect.Error {
+	traceID := telemetry.TraceIDFromContext(ctx)
+	s.logger.ErrorContext(ctx, "catalog RPC failed", "method", method, "trace_id", traceID, "error", err)
+	if traceID == "" {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf(
+			"internal catalog error; the server logged the cause. Retry the request, and if it keeps failing, give an operator the time of the failure and the method name (%s)", method))
+	}
+	return connect.NewError(connect.CodeInternal, fmt.Errorf(
+		"internal catalog error; the server logged the cause under trace %s. Retry the request, and if it keeps failing, give that trace ID to an operator", traceID))
+}
+
 // ParseCatalog parses a catalog document from object storage, persists controls, builds graph, generates embeddings.
 func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crosscodexv1.ParseCatalogRequest]) (*connect.Response[crosscodexv1.ParseCatalogResponse], error) {
 	start := time.Now()
@@ -218,13 +235,13 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	// Create provenance tracker with tee reader
 	prov, teeReader, err := oscal.NewProvenance(reader)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("create provenance: %v", err))
+		return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("create provenance: %w", err))
 	}
 
 	// Read all data
 	data, err := io.ReadAll(teeReader)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("read document: %v", err))
+		return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("read document: %w", err))
 	}
 
 	// Detect actual format from content
@@ -311,7 +328,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		}
 
 		if err := s.store.UpsertCatalog(ctx, catalogRecord); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("store catalog: %v", err))
+			return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store catalog: %w", err))
 		}
 
 		// Persist controls
@@ -333,7 +350,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		}
 
 		if err := s.store.UpsertControls(ctx, controlRecords); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("store controls: %v", err))
+			return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store controls: %w", err))
 		}
 	}
 
@@ -473,7 +490,7 @@ func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[crosscode
 		if strings.Contains(err.Error(), "not found") {
 			return nil, connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
 		}
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get catalog: %v", err))
+		return nil, s.internalError(ctx, "GetCatalog", fmt.Errorf("get catalog: %w", err))
 	}
 
 	return connect.NewResponse(&crosscodexv1.GetCatalogResponse{
@@ -528,7 +545,7 @@ func (s *Service) ListCatalogs(ctx context.Context, req *connect.Request[crossco
 
 	records, pageInfo, err := s.store.ListCatalogs(ctx, opts)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list catalogs: %v", err))
+		return nil, s.internalError(ctx, "ListCatalogs", fmt.Errorf("list catalogs: %w", err))
 	}
 
 	catalogs := make([]*crosscodexv1.Catalog, len(records))
@@ -577,7 +594,7 @@ func (s *Service) GetControl(ctx context.Context, req *connect.Request[crosscode
 		if strings.Contains(err.Error(), "not found") {
 			return nil, connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
 		}
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get control: %v", err))
+		return nil, s.internalError(ctx, "GetControl", fmt.Errorf("get control: %w", err))
 	}
 
 	return connect.NewResponse(&crosscodexv1.GetControlResponse{
@@ -638,7 +655,7 @@ func (s *Service) SearchControls(ctx context.Context, req *connect.Request[cross
 	// Full-text search via Store
 	ftRecords, pageInfo, err := s.store.SearchControls(ctx, query)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("search controls: %v", err))
+		return nil, s.internalError(ctx, "SearchControls", fmt.Errorf("search controls: %w", err))
 	}
 
 	// Semantic search via VectorDB if available

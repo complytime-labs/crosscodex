@@ -373,3 +373,164 @@ var _ = Describe("runAdmin identity commands", func() {
 		})
 	})
 })
+
+var _ = Describe("runAdmin identity export", func() {
+	var (
+		seamCalls int
+		gotDSN    string
+		events    []dbpkg.IdentityEvent
+		failAfter error
+		dir, out  string
+	)
+	occurred := time.Date(2026, 10, 14, 9, 30, 0, 123456000, time.FixedZone("CEST", 2*60*60))
+
+	BeforeEach(func() {
+		orig := runIdentityExportFn
+		seamCalls, gotDSN, failAfter = 0, "", nil
+		events = []dbpkg.IdentityEvent{
+			{EventID: 7, OccurredAt: occurred, Action: "delete", Kind: "tenant", TenantID: "acme", IdentityID: "acme",
+				Actor: "ops", DBUser: "tenant_admin", Reason: "offboarded", Request: []byte(`{"action":"delete"}`),
+				Attestation: []byte{0x00, 0xff, '\n'}, AttestationSHA256: "abc"},
+			{EventID: 9, OccurredAt: occurred, Action: "trace", Kind: "reviewer", TenantID: "acme", IdentityID: "alice",
+				Actor: "ops", DBUser: "tenant_admin", Reason: "audit", Request: []byte(`{}`), Attestation: []byte(`{}`), AttestationSHA256: "def"},
+		}
+		// The seam streams events, then fails with failAfter if it is set,
+		// as a lost connection mid-export would.
+		runIdentityExportFn = func(_ context.Context, dsn string, fn func(dbpkg.IdentityEvent) error) error {
+			seamCalls++
+			gotDSN = dsn
+			for _, e := range events {
+				if err := fn(e); err != nil {
+					return err
+				}
+			}
+			return failAfter
+		}
+		DeferCleanup(func() { runIdentityExportFn = orig })
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		GinkgoT().Setenv("CROSSCODEX_DATABASE_TENANT_ADMIN_DSN", testTenantAdminDSN)
+		dir = GinkgoT().TempDir()
+		out = filepath.Join(dir, "audit.jsonl")
+	})
+
+	// dirEntries lists dir's file names, to prove nothing else was left.
+	dirEntries := func() []string {
+		entries, err := os.ReadDir(dir)
+		Expect(err).NotTo(HaveOccurred())
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		return names
+	}
+
+	DescribeTable("returns 2 with an actionable message for usage errors, before any call",
+		func(want string, args ...string) {
+			code, stderr := captureStderr(func() int { return runAdmin(append([]string{"identity", "export"}, args...)) })
+			Expect(code).To(Equal(2))
+			Expect(stderr).To(ContainSubstring(want))
+			Expect(seamCalls).To(BeZero())
+			Expect(dirEntries()).To(BeEmpty())
+		},
+		Entry("without --out", "admin identity export: --out is required; name a file that does not exist yet"),
+		Entry("with an extra argument", `unexpected argument "x"`, "--out", "audit.jsonl", "x"),
+	)
+
+	It("returns 0 for -h and documents that the file is sensitive", func() {
+		code, stderr := captureStderr(func() int { return runAdmin([]string{"identity", "export", "-h"}) })
+		Expect(code).To(Equal(0))
+		Expect(stderr).To(ContainSubstring("real IDs of hidden tenants and reviewers"))
+		Expect(stderr).To(ContainSubstring("store it securely"))
+	})
+
+	It("lists the command in the admin usage", func() {
+		Expect(adminUsage).To(ContainSubstring("crosscodexd admin identity export --out <path>"))
+	})
+
+	It("refuses with the fix when database.tenant_admin_dsn is unset, writing nothing", func() {
+		GinkgoT().Setenv("CROSSCODEX_DATABASE_TENANT_ADMIN_DSN", "")
+		code, stdout, stderr := runAdminCaptured("identity", "export", "--out", out)
+		Expect(code).To(Equal(1))
+		Expect(stderr).To(ContainSubstring("database.tenant_admin_dsn is not set"))
+		Expect(stdout).To(BeEmpty())
+		Expect(seamCalls).To(BeZero())
+		Expect(dirEntries()).To(BeEmpty())
+	})
+
+	DescribeTable("refuses to overwrite, leaving the existing file unchanged and reading nothing",
+		func(existing, want string) {
+			path := filepath.Join(dir, existing)
+			Expect(os.WriteFile(path, []byte("earlier export\n"), 0o640)).To(Succeed())
+			code, stdout, stderr := runAdminCaptured("identity", "export", "--out", out)
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring(want))
+			Expect(stdout).To(BeEmpty())
+			Expect(seamCalls).To(BeZero())
+			Expect(dirEntries()).To(Equal([]string{existing}))
+			body, err := os.ReadFile(path)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(Equal("earlier export\n"))
+			info, err := os.Stat(path)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o640)))
+		},
+		Entry("the --out file", "audit.jsonl", "audit.jsonl already exists; nothing was written. Choose a new --out path"),
+		Entry("a partial file from an interrupted export", "audit.jsonl.partial",
+			"audit.jsonl.partial already exists, probably left by an interrupted export, and is incomplete; nothing was written. Remove it and run the export again"),
+	)
+
+	It("refuses a --out in a missing directory with the fix", func() {
+		missing := filepath.Join(dir, "nope", "audit.jsonl")
+		code, _, stderr := runAdminCaptured("identity", "export", "--out", missing)
+		Expect(code).To(Equal(1))
+		Expect(stderr).To(ContainSubstring("Check that the directory exists and is writable"))
+		Expect(dirEntries()).To(BeEmpty())
+	})
+
+	It("removes the partial file and leaves no --out file when the export fails midway", func() {
+		failAfter = errors.New("connection lost")
+		code, stdout, stderr := runAdminCaptured("identity", "export", "--out", out)
+		Expect(code).To(Equal(1))
+		Expect(stderr).To(ContainSubstring("admin identity export: connection lost"))
+		Expect(stdout).To(BeEmpty())
+		Expect(seamCalls).To(Equal(1))
+		Expect(dirEntries()).To(BeEmpty())
+	})
+
+	It("writes one JSON object per event to a 0600 file, then reports the count", func() {
+		code, stdout, stderr := runAdminCaptured("identity", "export", "--out", out)
+		Expect(code).To(Equal(0), stderr)
+		Expect(gotDSN).To(Equal(testTenantAdminDSN))
+		Expect(stdout).To(Equal(fmt.Sprintf("exported 2 identity events to %s\n", out)))
+		Expect(dirEntries()).To(Equal([]string{"audit.jsonl"}))
+		info, err := os.Stat(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+
+		body, err := os.ReadFile(out)
+		Expect(err).NotTo(HaveOccurred())
+		lines := strings.Split(strings.TrimSuffix(string(body), "\n"), "\n")
+		Expect(lines).To(HaveLen(2))
+		var first map[string]any
+		Expect(json.Unmarshal([]byte(lines[0]), &first)).To(Succeed())
+		Expect(first).To(Equal(map[string]any{
+			"event_id": float64(7), "occurred_at": "2026-10-14T07:30:00.123456Z", "action": "delete", "kind": "tenant",
+			"tenant_id": "acme", "identity_id": "acme", "actor": "ops", "db_user": "tenant_admin", "reason": "offboarded",
+			"request": "eyJhY3Rpb24iOiJkZWxldGUifQ==", "attestation": "AP8K", "attestation_sha256": "abc",
+		}))
+		var second map[string]any
+		Expect(json.Unmarshal([]byte(lines[1]), &second)).To(Succeed())
+		Expect(second).To(HaveKeyWithValue("event_id", float64(9)))
+		Expect(second).To(HaveKeyWithValue("identity_id", "alice"))
+	})
+
+	It("writes an empty file for an empty audit log", func() {
+		events = nil
+		code, stdout, stderr := runAdminCaptured("identity", "export", "--out", out)
+		Expect(code).To(Equal(0), stderr)
+		Expect(stdout).To(Equal(fmt.Sprintf("exported 0 identity events to %s\n", out)))
+		body, err := os.ReadFile(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(body).To(BeEmpty())
+	})
+})

@@ -22,6 +22,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
+	"github.com/complytime-labs/crosscodex/pkg/db/migrations"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -364,7 +365,7 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 
 			version, dirty, err := migrator.Version(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(uint(9)))
+			Expect(db.LatestMigrationVersion()).To(Equal(version), "the schema is at the latest embedded migration")
 			Expect(dirty).To(BeFalse())
 		})
 
@@ -399,6 +400,16 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(migrator.Close)
 
+			// The teardown refuses while the audit log holds records (see the
+			// next spec); an operator exports them and drops the database
+			// instead. This disposable test database clears them as the
+			// owner, past the append-only triggers, so the round trip can run.
+			Expect(suPool.Exec(context.Background(), `
+				BEGIN;
+				SET LOCAL session_replication_role = replica;
+				DELETE FROM identity_events;
+				COMMIT;`)).To(Succeed())
+
 			Expect(migrator.Down(context.Background())).To(Succeed())
 
 			version, dirty, err := migrator.Version(context.Background())
@@ -410,7 +421,7 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 
 			version, dirty, err = migrator.Version(context.Background())
 			Expect(err).NotTo(HaveOccurred())
-			Expect(version).To(Equal(uint(9)))
+			Expect(db.LatestMigrationVersion()).To(Equal(version), "the schema is at the latest embedded migration")
 			Expect(dirty).To(BeFalse())
 
 			// Restore role passwords wiped by the Down/Up round trip so
@@ -423,6 +434,44 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 			Expect(setRolePassword(ctx, adminDB, "app_user", appUserPassword)).To(Succeed(), "failed to restore app_user password")
 			Expect(setRolePassword(ctx, adminDB, "graph_user", graphUserPassword)).To(Succeed(), "failed to restore graph_user password")
 			Expect(setRolePassword(ctx, adminDB, "tenant_admin", tenantAdminPassword)).To(Succeed(), "failed to restore tenant_admin password")
+		})
+
+		It("refuses the teardown while identity_events holds audit records, leaving them in place", func() {
+			// Run the down file in a transaction that is rolled back, as
+			// golang-migrate would mark the version dirty on a refused Down.
+			ctx := context.Background()
+			down, err := migrations.FS.ReadFile("001_initial_schema.down.sql")
+			Expect(err).NotTo(HaveOccurred())
+			suDB, err := sql.Open("pgx", suDSN)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(suDB.Close)
+
+			const id = "teardown-guard"
+			Expect(db.EnsureTenant(ctx, suPool, id, id)).To(Succeed())
+			countEvents := func() int {
+				var n int
+				Expect(suDB.QueryRowContext(ctx, "SELECT count(*) FROM identity_events WHERE tenant_id = $1", id).Scan(&n)).To(Succeed())
+				return n
+			}
+			before := countEvents()
+
+			tx, err := suDB.BeginTx(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = tx.Rollback() }()
+			_, err = tx.ExecContext(ctx, `INSERT INTO identity_events (action, kind, tenant_id, identity_id, actor, reason, request, attestation)
+				VALUES ('delete', 'tenant', $1, $1, 'operator', 'teardown guard spec', '\x7b7d', '\x00')`, id)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = tx.ExecContext(ctx, string(down))
+			Expect(err).To(MatchError(ContainSubstring("cannot tear down the schema: identity_events holds")))
+			Expect(err).To(MatchError(ContainSubstring("which are permanent. To decommission this database, " +
+				"export them with crosscodexd admin identity export --out <file>, then drop the database instead of running this teardown")))
+			Expect(tx.Rollback()).To(Succeed())
+
+			Expect(countEvents()).To(Equal(before), "a refused teardown leaves the audit log unchanged")
+			var tables int
+			Expect(suDB.QueryRowContext(ctx, "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tablename IN ('identity_events', 'tenants')").Scan(&tables)).To(Succeed())
+			Expect(tables).To(Equal(2), "a refused teardown drops nothing")
 		})
 
 		It("returns a wrapped ErrMigrationDirty from Down() when the version is marked dirty", func() {
@@ -1373,8 +1422,8 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 			}
 			Expect(graphCount()).To(Equal(1))
 
-			// Migration 009 refuses hard deletes even for the owner, so the
-			// graph-drop trigger is gone and the graph must survive.
+			// Tenants refuse hard deletes even for the owner, so there is no
+			// graph-drop trigger and the graph must survive.
 			err := suPool.Exec(ctx, "DELETE FROM tenants WHERE tenant_id = $1", tenantID)
 			Expect(err).To(HaveOccurred())
 			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "got %v", err)

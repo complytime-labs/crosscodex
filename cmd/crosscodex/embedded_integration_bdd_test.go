@@ -14,6 +14,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 )
 
 var _ = Describe("Embedded daemon startup (S1/S3)", func() {
@@ -519,16 +520,31 @@ var _ = Describe("Bug record #4 — startup health vs DB reachability", func() {
 	})
 })
 
-var _ = Describe("Bug record #9 — ListCatalogs tenant scoping", func() {
-	// No active tripwire: exposing the missing tenant filter needs a SECOND
-	// tenant, which is out of #114 scope ([H]). This Pending spec is the
-	// durable record for parity with #2–#7. PGStore.ListCatalogs
-	// (internal/catalog/store.go) has no WHERE tenant_id; it relies on RLS,
-	// which the embedded owner pool bypasses.
-	PIt("#9 ListCatalogs returns only the current tenant's catalogs", func() {
-		// Correct behavior asserted once a second tenant harness exists:
-		// import under tenant A and tenant B, then ListCatalogs as A returns
-		// only A's catalogs. Requires cross-tenant scaffolding (out of scope).
-		Fail("requires a second-tenant harness — see Known bugs out of scope")
+var _ = Describe("Bug record #9 — catalog tenant scoping", func() {
+	// The embedded pool is the table owner, so RLS does not apply; only the
+	// catalog store's tenant predicates keep another tenant's rows out.
+	// Embedded auth pins every request to embeddedTenantID, so the second
+	// tenant's catalog is written directly through the owner pool.
+	It("#9 ListCatalogs and GetCatalog return only the embedded tenant's catalogs", func() {
+		ctx := context.Background()
+		pool := sharedState.daemon.resources.dbPool
+		truncateCatalogs(ctx, pool)
+
+		_, err := importCatalog(ctx, sharedState.client, fixture("minimal-catalog.json"), pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "mine")
+		Expect(err).NotTo(HaveOccurred())
+
+		const otherTenant, otherCatalog = "other-tenant", "other-tenant-catalog"
+		Expect(dbpkg.EnsureTenant(ctx, pool, otherTenant, "Other Tenant")).To(Succeed())
+		Expect(pool.Exec(ctx,
+			"INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path) VALUES ($1, $2, 'Other', '1.0', 'oscal', 'other')",
+			otherCatalog, otherTenant)).To(Succeed())
+
+		catalogs, err := listCatalogs(ctx, sharedState.client)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(catalogs).To(HaveLen(1))
+		Expect(catalogs[0].GetTenantContext().GetTenantId()).To(Equal(embeddedTenantID))
+
+		_, err = getCatalog(ctx, sharedState.client, otherCatalog)
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound))
 	})
 })

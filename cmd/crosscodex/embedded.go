@@ -186,7 +186,7 @@ func (b *localPipelineBackend) CreateJob(ctx context.Context, req *connectrpc.Re
 		TenantID:  tenantID,
 		Status:    pipeline.JobStatusPending,
 		Config:    configBytes,
-		CreatedBy: tenantID,
+		CreatedBy: pipeline.JobCreator(ctx, tenantID),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -501,8 +501,10 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 	}
 	resources.storage = localStorage
 
+	tenantConn := dbpkg.NewTenantPool(pool)
+
 	// Create catalog service (satisfies gateway.CatalogBackend)
-	catalogStore := catalog.NewPGStore(pool)
+	catalogStore := catalog.NewPGStore(tenantConn)
 	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
 	parser := oscal.NewParser("", oscal.WithParserTracer(oscalTracer))
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
@@ -519,7 +521,6 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 	localIngestion := backend.NewPassthroughIngestion(localStorage)
 
 	// Create local pipeline backend (records jobs, no execution)
-	tenantConn := dbpkg.NewTenantPool(pool)
 	pipelineStore := pipeline.NewPGStore(tenantConn, pool,
 		pipeline.WithStoreTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()))
 	localPipeline := &localPipelineBackend{store: pipelineStore}

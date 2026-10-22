@@ -20,7 +20,9 @@ Edit `deploy/.env` and fill in these required values:
 
 | Variable                         | Purpose                                                                                            | Example                    |
 |----------------------------------|----------------------------------------------------------------------------------------------------|----------------------------|
-| `POSTGRES_PASSWORD`              | PostgreSQL superuser password for the `db` container                                               | `a-strong-random-password` |
+| `POSTGRES_PASSWORD`              | Password of the `crosscodex` owner (superuser); only `db` and the `migrate` service receive it (hex: `openssl rand -hex 24`) | `9b4d...` (48 hex chars)   |
+| `APP_USER_PASSWORD`              | Password for `app_user`, the role crosscodexd uses for relational data (hex: `openssl rand -hex 24`) | `3f9c...` (48 hex chars)   |
+| `GRAPH_USER_PASSWORD`            | Password for `graph_user`, the role crosscodexd uses for the AGE graph (hex: `openssl rand -hex 24`) | `a71e...` (48 hex chars)   |
 | `OPENAI_API_KEY`                 | Upstream model provider key (OpenAI, Azure, etc.) that LiteLLM uses to reach the real model API    | `sk-proj-...`              |
 | `CROSSCODEX_LLM_API_KEY`         | The key CrossCodex presents to LiteLLM (must match a virtual key in `deploy/litellm/config.yaml`)  | `sk-crosscodex-to-litellm` |
 | `CROSSCODEX_LLM_DEFAULT_MODEL`   | Model alias the daemon requests for general inference (must exist in `deploy/litellm/config.yaml`) | `default`                  |
@@ -28,6 +30,16 @@ Edit `deploy/.env` and fill in these required values:
 | `TAG`                            | Container image tag to run (optional)                                                              | `latest`                   |
 
 **Security note**: Never commit real secrets. The `.env` file is gitignored by default.
+
+`POSTGRES_PASSWORD` and the role passwords are embedded in `postgres://` URLs, so they must be URL-safe: use hex. `task deploy:up` refuses any of the three that contains a character other than `A-Z a-z 0-9 . _ ~ -`. The `migrate` service sets them on every start of the stack, so changing one in `.env` and running `task deploy:up` again rotates it.
+
+### Database roles
+
+crosscodexd runs as the restricted roles `app_user` (relational data, subject to row-level security) and `graph_user` (the AGE graph). At startup it refuses a superuser, a `BYPASSRLS` role or the schema owner, and a schema that is not at the latest migration version.
+
+The one-shot `migrate` service runs `crosscodexd migrate` before the daemon starts, as the `crosscodex` owner. It applies the schema migrations, sets the password of each restricted role from the password in that role's DSN (`app_user`, `graph_user`, and `tenant_admin` and `backup_user` when their DSNs are set in `.env`), and provisions the default tenant. The DSNs are assembled in `deploy/compose.yaml`'s `environment:`; `deploy/config.yaml` holds none. Only `db` and `migrate` receive `POSTGRES_PASSWORD`.
+
+podman-compose waits for `migrate` to exit but does not check its exit code. If `migrate` fails, crosscodexd still refuses to start (the schema is not at the latest version, its role password is not set, or the default tenant is missing), so when the daemon will not come up, check `task deploy:logs -- migrate` first.
 
 ### 2. Generate TLS certificates
 
@@ -206,15 +218,11 @@ CrossCodex backs up PostgreSQL (WAL-G base backups plus continuous WAL archiving
    cp backup.env.example backup.env
    ```
 
-2. Set `CROSSCODEX_BACKUP_DSN` in `.env` (see `.env.example`); it is a `postgres://` URL for `backup_user`.
+2. Uncomment `CROSSCODEX_BACKUP_DSN` in `.env` (see `.env.example`) and replace `change-me` with a real hex password; it is a `postgres://` URL for `backup_user`.
 
-3. `backup_user` is created by migration `006_backup_user` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser. Use psql's `\password`, which prompts for the password and hashes it on the client, so it stays out of shell history, the process list and the server log:
+   The `migrate` service sets `backup_user`'s password from that DSN when the stack starts; no manual `ALTER ROLE` is needed.
 
-   ```bash
-   docker compose exec db psql -U crosscodex -d crosscodex -c '\password backup_user'
-   ```
-
-4. Bring the stack up with both compose files:
+3. Bring the stack up with both compose files:
 
    ```bash
    docker compose -f compose.yaml -f compose.backup.yaml up -d
@@ -310,17 +318,11 @@ Postgres is captured first and is authoritative. The objects and JetStream steps
 
 ## Tenant administration
 
-`crosscodexd admin tenant` creates, lists, suspends, resumes, deletes and restores tenants, and `crosscodexd admin reviewer` registers the people who record verdicts, as the `tenant_admin` role. That role holds no table privileges; it can only call the functions from migrations `007_tenant_admin` and `009_identity_lifecycle`.
+`crosscodexd admin tenant` creates, lists, suspends, resumes, deletes and restores tenants, and `crosscodexd admin reviewer` registers the people who record verdicts, as the `tenant_admin` role. That role holds no table privileges; it can only call the `SECURITY DEFINER` tenant administration functions of the initial schema.
 
-1. `tenant_admin` is created by migration `007_tenant_admin` the first time crosscodexd runs migrations. Only once it exists, set its password as the `crosscodex` superuser. Use psql's `\password`, which prompts for the password and hashes it on the client, so it stays out of shell history, the process list and the server log:
+1. Uncomment `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN` in `.env` (see `.env.example`) and replace `change-me` with a real hex password, then run `task deploy:up` again. The `migrate` service sets `tenant_admin`'s password from that DSN, and the recreated `crosscodexd` container picks up the variable.
 
-   ```bash
-   docker compose exec db psql -U crosscodex -d crosscodex -c '\password tenant_admin'
-   ```
-
-2. Set `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN` in `.env` (see `.env.example`), then recreate the `crosscodexd` container so it picks up the variable.
-
-3. Run the commands inside the container:
+2. Run the commands inside the container:
 
    ```bash
    docker compose exec crosscodexd /crosscodexd admin tenant list
@@ -330,7 +332,7 @@ Postgres is captured first and is authoritative. The objects and JetStream steps
 
 A suspended tenant's requests are refused with `PermissionDenied` until `admin tenant resume`.
 
-Tenants and reviewers are never removed; they are soft-deleted, and a deleted one can be hidden behind a pseudonym. `adjudicate artifacts decide` accepts only registered reviewers; migration 009 registered everyone who had already recorded a human verdict. The identity commands (`admin tenant delete|restore|hide|unhide`, `admin reviewer add|list|delete|restore|hide|unhide`, `admin identity trace`) run the same way. All but `reviewer list` need `--by` and `--reason` and are signed with the attestation keypair in `deploy/certs/` (`attestation.private_key_path` and `attestation.public_key_path` in `deploy/config.yaml`), plus the same `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`. For example:
+Tenants and reviewers are never removed; they are soft-deleted, and a deleted one can be hidden behind a pseudonym. `adjudicate artifacts decide` accepts only registered reviewers. The identity commands (`admin tenant delete|restore|hide|unhide`, `admin reviewer add|list|delete|restore|hide|unhide`, `admin identity trace|export`) run the same way. All but `reviewer list` and `identity export` need `--by` and `--reason` and are signed with the attestation keypair in `deploy/certs/` (`attestation.private_key_path` and `attestation.public_key_path` in `deploy/config.yaml`), plus the same `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`. For example:
 
 ```bash
 docker compose exec crosscodexd /crosscodexd admin reviewer add --tenant acme --reviewer jdoe --by alice --reason "joined review team"
@@ -338,9 +340,25 @@ docker compose exec crosscodexd /crosscodexd admin tenant delete --tenant acme -
 docker compose exec crosscodexd /crosscodexd admin tenant restore --tenant acme --by alice --reason "contract renewed"
 ```
 
+`admin identity export` writes the whole identity audit log as JSON Lines to a new file (mode `0600`; an existing file is never overwritten). The file holds the real IDs of hidden tenants and reviewers, so treat it as sensitive. Write it to the container's `/tmp` and copy it out; the container copy is discarded when the container is removed (for example by `docker compose down`):
+
+```bash
+docker compose exec crosscodexd /crosscodexd admin identity export --out /tmp/identity-audit.jsonl
+docker compose cp crosscodexd:/tmp/identity-audit.jsonl ./identity-audit.jsonl
+chmod 600 ./identity-audit.jsonl
+```
+
 A deleted tenant is refused like a suspended one, and also by every service. `tenant restore` brings it back as `suspended`; run `admin tenant resume` to reactivate it. See [Tenant administration](../README.md#tenant-administration) for what each command does.
 
 The gateway checks tenant status with one uncached database query per request or stream, on the same pool as application queries (`database.max_conns`, default 10). Suspension therefore takes effect on the next request. Under heavy concurrency, raise `database.max_conns`: an exhausted pool refuses requests with `Unavailable`.
+
+## Decommissioning
+
+The identity audit log (`identity_events`) is permanent: no command deletes it, and the schema teardown (`001_initial_schema.down.sql`) refuses while it holds any record. To retire a deployment:
+
+1. Export the audit log as shown in [Tenant administration](#tenant-administration) and store the file securely; it holds the real IDs of hidden tenants and reviewers. Each line keeps the signed `request` and `attestation` bytes, so events stay verifiable with the attestation public key, which you should keep alongside it.
+2. Take a final backup if you need the rest of the data (see [Backups](#backups)).
+3. Remove the database with its volume: `docker compose down -v`, or `DROP DATABASE` on an external server. Dropping the database never runs the schema teardown.
 
 ## What's next
 
@@ -353,7 +371,7 @@ The single-host compose stack is suitable for evaluation and small-scale product
 If `task deploy:up` times out waiting for `/healthz`:
 
 1. Check recent logs: `task deploy:logs -- crosscodexd`
-2. Verify the `.env` file is populated (especially `POSTGRES_PASSWORD` and `CROSSCODEX_LLM_API_KEY`)
+2. Verify the `.env` file is populated (especially `POSTGRES_PASSWORD`, `APP_USER_PASSWORD`, `GRAPH_USER_PASSWORD` and `CROSSCODEX_LLM_API_KEY`), and that `migrate` succeeded: `task deploy:logs -- migrate`
 3. Ensure no other service is bound to port 50051 on the host: `ss -lntp | grep 50051`
 4. Verify the certs volume exists and is populated: `podman volume inspect crosscodex-certs` (or `docker volume inspect`)
 

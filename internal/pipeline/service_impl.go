@@ -74,7 +74,7 @@ func (s *Service) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJ
 		TenantID:  tenantID,
 		Status:    JobStatusPending,
 		Config:    configBytes,
-		CreatedBy: tenantID,
+		CreatedBy: JobCreator(ctx, tenantID),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -349,7 +349,7 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 			TenantID:  tenantID,
 			Status:    JobStatusPending,
 			Config:    job.Config,
-			CreatedBy: tenantID,
+			CreatedBy: JobCreator(ctx, tenantID),
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
