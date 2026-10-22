@@ -1,0 +1,21 @@
+cmd/crosscodexd/migrate.go
+  s_7ee90879f1e7b6::t_2b5c489db7b613 61-66
+cmd/crosscodexd/migrate_bdd_test.go
+  s_7ee90879f1e7b6::t_a25537f7fa9f06 43,48-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b08c406aec5d5c790f7bb3f775deb4b1f003843d",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
