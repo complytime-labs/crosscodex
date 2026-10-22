@@ -1,0 +1,36 @@
+internal/pipeline/store.go
+  s_7ee90879f1e7b6::t_2a646439b4a123 982-984,989,993
+  s_7ee90879f1e7b6::t_bff4355da448c0 985-986
+internal/pipeline/store_integration_test.go
+  s_7ee90879f1e7b6::t_01bbb000bc681e 54-55,105,590-609,614-624,626,629,631,634-641
+  s_7ee90879f1e7b6::t_0af6b92f3abde1 611-612
+pkg/db/migrations/011_resumable_jobs.down.sql
+  s_7ee90879f1e7b6::t_2a646439b4a123 1-2
+docs/dev/design-principles.md
+  s_7ee90879f1e7b6::t_de88f8a8fc00c2 139
+pkg/db/db_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_d02033a0d6bbc2 367,413
+pkg/db/migrations/011_resumable_jobs.up.sql
+  s_7ee90879f1e7b6::t_81c2d19843dd3e 1-30
+pkg/db/role_check_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_d02033a0d6bbc2 38
+  s_7ee90879f1e7b6::t_aa72569b6bf64f 9,56-61,66-69
+pkg/db/resumable_jobs_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_69117e47e31ef2 1-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a900dc4619bc7dc3f57759b1a88cafe5c39e7af9",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
