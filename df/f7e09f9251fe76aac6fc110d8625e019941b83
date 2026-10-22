@@ -1,0 +1,50 @@
+pkg/db/catalog_tenant_fk_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_70231e940058b9 1-7,9-14,16-22,26-98,102-109,111-117,135
+  s_7ee90879f1e7b6::t_129695f7382a42 146
+  s_7ee90879f1e7b6::t_b0ab2f0949642c 8,15,99-101,110,118-134,136-145,147-159
+  s_7ee90879f1e7b6::t_1f81d969609837 23-25
+pkg/db/embeddings_key_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_6c1db694fa0b70 8,14,69-74
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_08811654d76217 435,438,442,455,463,470,487
+  s_7ee90879f1e7b6::t_f3bf58767df1f2 493-500,516-517,523,535-564
+  s_7ee90879f1e7b6::t_44d51fbd5c866a 581,602,607,612,628
+  s_7ee90879f1e7b6::t_b5803d2f267590 39-47,125-129,133
+  s_7ee90879f1e7b6::t_920c3d3ab56efa 296-299,301,303-305,307-308,310,312-322,324-336
+  s_7ee90879f1e7b6::t_98917fbaea98ec 300,302,306
+  s_7ee90879f1e7b6::t_0937d86f944a1d 565
+pkg/db/role_check_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_6c1db694fa0b70 38
+pkg/db/db_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_6c1db694fa0b70 367,413
+internal/catalog/store.go
+  s_7ee90879f1e7b6::t_2aacaa55793148 322-325,362,411
+  s_7ee90879f1e7b6::t_f00f4f354b7d4c 350-352,408-410,412-413
+pkg/vectordb/pgvector.go
+  s_7ee90879f1e7b6::t_47af8db5152b32 13,327-330,332-333
+  s_7ee90879f1e7b6::t_6f6538c0616c0d 314,331,334-339,408
+pkg/db/migrations/013_catalog_tenant_fk.down.sql
+  s_7ee90879f1e7b6::t_94a8a812d0db90 1-19
+internal/catalog/catalog_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_25c9bdb47cda64 153,195-225,656-680
+pkg/db/migrations/013_catalog_tenant_fk.up.sql
+  s_7ee90879f1e7b6::t_a5aa7394247190 1-26
+docs/dev/embeddings.md
+  s_7ee90879f1e7b6::t_578565346aec4b 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dff7e09f9251fe76aac6fc110d8625e019941b83",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
