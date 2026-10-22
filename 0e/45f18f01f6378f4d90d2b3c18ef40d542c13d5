@@ -1,0 +1,39 @@
+pkg/vectordb/pgvector.go
+  s_7ee90879f1e7b6::t_d613a77fed0b5b 602-603
+docs/dev/migrations.md
+  s_7ee90879f1e7b6::t_d8bd20e15bc401 78
+cmd/crosscodexd/migrate_integration_test.go
+  s_7ee90879f1e7b6::t_22ee91c6a8e731 85,101-104
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_7ee90879f1e7b6::t_d98f0d161a0e3a 629-661
+cmd/crosscodexd/migrate_bdd_test.go
+  s_7ee90879f1e7b6::t_22ee91c6a8e731 92-97
+cmd/crosscodexd/migrate.go
+  s_7ee90879f1e7b6::t_d613a77fed0b5b 98-100,113-114,134-135
+  s_7ee90879f1e7b6::t_f273b8a45ae6b3 136
+cmd/crosscodexd/bootstrap.go
+  s_7ee90879f1e7b6::t_d613a77fed0b5b 262-265
+README.md
+  s_7ee90879f1e7b6::t_f961c55e25b855 603
+pkg/db/db_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_2124a38da8e495 367,413
+pkg/db/migrations/012_embeddings_tenant_key.up.sql
+  s_7ee90879f1e7b6::t_783c6ddf93a29f 7-8
+  s_7ee90879f1e7b6::t_d613a77fed0b5b 4-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e45f18f01f6378f4d90d2b3c18ef40d542c13d5",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
