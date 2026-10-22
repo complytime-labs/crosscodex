@@ -1,0 +1,22 @@
+internal/catalog/rpc_errors_bdd_test.go
+  s_7ee90879f1e7b6::t_a568d454fbd184 3-133
+  s_7ee90879f1e7b6::t_59af2c9651dbf8 1-2
+internal/catalog/service.go
+  s_7ee90879f1e7b6::t_6e0121646c897c 23,178-193,238,244,331,353,493,548,597,658
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cda0dfa10b34dfc106c42fcdd4c3797c37931ce9",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
