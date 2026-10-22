@@ -1,0 +1,24 @@
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_b4e4681b1f1b51 10,20,31-64,110,124-128,138-139,141,152,162-163,165-166,578-579,588
+  s_7ee90879f1e7b6::t_bd7b575b288dee 133-135,411-432,436-437,439-440,442-454,456-569,576
+  s_7ee90879f1e7b6::t_a5bbca9ca9d588 129,570-575,577
+pkg/vectordb/pgvector.go
+  s_7ee90879f1e7b6::t_0e09201949f435 176-182,184-192,206-209,211-214,216-219,243-250,252,306-316,319,372-377,383,385-399,401,460-469,471-473,480-500,502-506,508,510,534-545,548,582-605
+  s_7ee90879f1e7b6::t_462a56f9834288 606-607
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1884ce1a20d06a2d850e01ad27b070b04b96f4ff",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
