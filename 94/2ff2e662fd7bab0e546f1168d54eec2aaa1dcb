@@ -1,0 +1,26 @@
+pkg/db/db_property_test.go
+  s_7ee90879f1e7b6::t_3596f54fdf8313 7,18-39
+pkg/db/db_fuzz_test.go
+  s_7ee90879f1e7b6::t_3596f54fdf8313 128-147
+pkg/db/scram_bdd_test.go
+  s_7ee90879f1e7b6::t_3596f54fdf8313 17,19
+  s_7ee90879f1e7b6::t_0abc5286eccbb3 1-16,18,20-37
+pkg/db/scram.go
+  s_7ee90879f1e7b6::t_7510fd2752a956 1-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "942ff2e662fd7bab0e546f1168d54eec2aaa1dcb",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
