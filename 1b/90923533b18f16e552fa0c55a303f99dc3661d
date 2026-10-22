@@ -1,0 +1,26 @@
+cmd/crosscodexd/migrate_bdd_test.go
+  s_7ee90879f1e7b6::t_a30e3b5e3606c7 1-19,31-79
+  s_7ee90879f1e7b6::t_62d4469b18b8ca 20-30
+cmd/crosscodexd/migrate.go
+  s_7ee90879f1e7b6::t_932a1d22bf3044 1-166
+cmd/crosscodexd/main.go
+  s_7ee90879f1e7b6::t_49923c5813534e 34,76-77
+cmd/crosscodexd/migrate_integration_test.go
+  s_7ee90879f1e7b6::t_7c91f16ecbafbc 1-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1b90923533b18f16e552fa0c55a303f99dc3661d",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
