@@ -1,0 +1,19 @@
+.github/workflows/megalinter.yml
+  s_5d02ede7813626::t_190d687a9a9164 57-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7313e8bafc73e4693b2a890bf46d8bbe39aeccb8",
+  "prompts": {},
+  "sessions": {
+    "s_5d02ede7813626": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae276345-fb0b-40c2-b5d6-4a7357163f34",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
