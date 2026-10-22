@@ -1,0 +1,42 @@
+pkg/db/embeddings_key_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_ef08c3c70fa4bb 15,67,72-73,77
+  s_7ee90879f1e7b6::t_93afa9d5272c4b 68-71,74-76
+pkg/db/migrations/010_restricted_roles.down.sql
+  s_7ee90879f1e7b6::t_cf438b9d7b8e36 1-44
+docs/dev/design-principles.md
+  s_7ee90879f1e7b6::t_b09e985ca5056b 139
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_b09e985ca5056b 41,495,536
+pkg/db/role_check_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_a65c98e762a96b 38
+docs/dev/migrations.md
+  s_7ee90879f1e7b6::t_b09e985ca5056b 21-24,41-42
+pkg/db/migrations/010_restricted_roles.up.sql
+  s_7ee90879f1e7b6::t_cf438b9d7b8e36 1-81
+docs/dev/embeddings.md
+  s_7ee90879f1e7b6::t_b09e985ca5056b 7
+internal/pipeline/store.go
+  s_7ee90879f1e7b6::t_b09e985ca5056b 984
+internal/catalog/store.go
+  s_7ee90879f1e7b6::t_b09e985ca5056b 350
+pkg/vectordb/pgvector.go
+  s_7ee90879f1e7b6::t_b09e985ca5056b 329
+pkg/db/catalog_tenant_fk_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_93afa9d5272c4b 18,119-120,128,135-150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f2a6d9fd1d6cc3f542fd986f6967e68cd3ac8224",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
