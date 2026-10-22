@@ -1,0 +1,98 @@
+pkg/db/migrations/001_initial_schema.up.sql
+  s_7ee90879f1e7b6::t_298337c6c1adfe 1-16,21-23,25-27,36-41,50-91,96-106,108,110-122,124-142,147-162,170-263,265-267,462-464,548-607,628-1586,1593-1597
+  s_7ee90879f1e7b6::t_3fabf262040810 92-95
+pkg/db/migrations/001_initial_schema.down.sql
+  s_7ee90879f1e7b6::t_7d4e8eebe53f47 1-3,6,11-14,19-64,66,72,74-75,77,79-80,83
+pkg/db/identity_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_56abb39d51b79b 1263-1264
+  s_1da84727508088::t_9d3960a83306b3 24,165,670,1074-1075,1222
+pkg/db/role_check_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_5243bc3697c1e6 64-74
+  s_7ee90879f1e7b6::t_b37e13fb5def4a 38
+pkg/db/embeddings_key_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_a465bc332512fa 12-15,17,23
+README.md
+  s_7ee90879f1e7b6::t_8fc84dc571ff8d 32,34,36-38,41,970-971,1023,1086
+cmd/crosscodexd/admin_tenant.go
+  s_7ee90879f1e7b6::t_6061abf8dbb6c1 49
+cmd/crosscodexd/admin_tenant_bdd_test.go
+  s_7ee90879f1e7b6::t_a13b650dd88ff0 122,137
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_7ee90879f1e7b6::t_711a1342934210 612-613,616-617,620-621,627-629
+deploy/README.md
+  s_7ee90879f1e7b6::t_b5dc40ff6e0721 321,335
+docs/dev/design-principles.md
+  s_7ee90879f1e7b6::t_00588889ae502c 55,64-65,73,114,122,136,139,141,162
+docs/dev/embeddings.md
+  s_7ee90879f1e7b6::t_2f25ed333a2e3d 7
+docs/dev/migrations.md
+  s_7ee90879f1e7b6::t_7125ac8bc30c42 13-15,18-19,27-31,39-40,51,53,82,191
+docs/dev/retention.md
+  s_7ee90879f1e7b6::t_fc67229a7b0f77 124,145-149,165
+internal/analyzer/artifacts/verdictstore_pg.go
+  s_7ee90879f1e7b6::t_b0da1612c4cb37 30-31
+internal/catalog/catalog_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_dbe4cd7acf0a48 87,90
+internal/catalog/store.go
+  s_7ee90879f1e7b6::t_2c8f0ff8a5e4e2 350
+internal/pipeline/store.go
+  s_7ee90879f1e7b6::t_fee1686854e69b 984
+internal/synthesis/synthesis_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_16ceadb87085f5 85
+pkg/backup/objects.go
+  s_7ee90879f1e7b6::t_656adcdaac0c63 15
+pkg/backup/tenants.go
+  s_7ee90879f1e7b6::t_bc796e95d79499 15
+pkg/config/backup.go
+  s_7ee90879f1e7b6::t_6e90bce541340e 14-16
+pkg/config/types.go
+  s_7ee90879f1e7b6::t_e3592ee1312b33 198
+pkg/db/backup_role_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_6cffaa41c7c9de 18
+pkg/db/catalog_tenant_fk_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_6ce4fb46d6e461 16,18,105
+pkg/db/db_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_986967ec64d8d6 1376-1377
+pkg/db/dbtest/dbtest.go
+  s_7ee90879f1e7b6::t_055b4b10cd2619 71-72
+pkg/db/doc.go
+  s_7ee90879f1e7b6::t_37686d75286408 89
+pkg/db/identity.go
+  s_7ee90879f1e7b6::t_d39aaeb3ff8d76 3
+pkg/db/role_check.go
+  s_7ee90879f1e7b6::t_6516911dc40a54 50,74-75,83
+pkg/db/tenant_admin.go
+  s_7ee90879f1e7b6::t_f136a81dd0c8cd 21-22,58-59,62
+pkg/db/tenant_admin_bdd_test.go
+  s_7ee90879f1e7b6::t_ae49329bf5324f 277-278,280-281,286
+pkg/db/tenant_admin_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_757dcc79d0fe9e 19
+pkg/vectordb/pgvector.go
+  s_7ee90879f1e7b6::t_50733b04a86704 329
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_2d5d51497c05fa 41,495,536
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aaddcdaef17a3c468416061b0b575d1023ad758e",
+  "prompts": {},
+  "sessions": {
+    "s_1da84727508088": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a0701c4b90ffdceaa",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
