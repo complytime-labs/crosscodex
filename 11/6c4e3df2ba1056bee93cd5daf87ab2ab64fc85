@@ -1,0 +1,26 @@
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_b20fafbb8356a3 74-75
+.taskfiles/test/e2e.yml
+  s_7ee90879f1e7b6::t_58641da8955b75 10-11
+  s_7ee90879f1e7b6::t_646cb62efdf093 7-9,12-14,39-42,90-93
+test/e2e/run-daemon.sh
+  s_7ee90879f1e7b6::t_6e0c75fba46175 57,83-88
+  s_7ee90879f1e7b6::t_b45d4a337be264 56,59,61-65,70
+  s_7ee90879f1e7b6::t_12db8099e6340b 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "116c4e3df2ba1056bee93cd5daf87ab2ab64fc85",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
