@@ -1,0 +1,25 @@
+pkg/db/db_fuzz_test.go
+  s_7ee90879f1e7b6::t_36a49ed4b8c973 4,130-131,146-147
+pkg/db/role_check_integration_bdd_test.go
+  s_7ee90879f1e7b6::t_36a49ed4b8c973 128-147
+pkg/db/role_check.go
+  s_7ee90879f1e7b6::t_4cc75436c57126 48-50,75-78,80-83,87-92,95-96,105-106,108
+pkg/db/db_property_test.go
+  s_7ee90879f1e7b6::t_36a49ed4b8c973 32-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45113e60ed03b805df76d2953a155114e92f1fac",
+  "prompts": {},
+  "sessions": {
+    "s_7ee90879f1e7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce420645-f7d5-4ba7-81d1-574c8382afcf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
