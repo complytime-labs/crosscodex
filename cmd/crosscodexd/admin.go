@@ -45,7 +45,8 @@ const adminUsage = `usage:
   crosscodexd admin tenant delete|restore|hide|unhide --tenant <id> --by <operator> --reason <text>
   crosscodexd admin reviewer add|delete|restore|hide|unhide --tenant <id> --reviewer <id> --by <operator> --reason <text>
   crosscodexd admin reviewer list --tenant <id>
-  crosscodexd admin identity trace --pseudonym <pseudonym> --by <operator> --reason <text>`
+  crosscodexd admin identity trace --pseudonym <pseudonym> --by <operator> --reason <text>
+  crosscodexd admin identity export --out <path>   (sensitive: real IDs of hidden tenants and reviewers)`
 
 // runAdmin dispatches the on-host `admin` subcommand tree. args are the tokens
 // after "admin" (e.g. ["retention", "scan", "--tenant", "acme"]). It returns a
@@ -94,6 +95,8 @@ func runAdmin(args []string) int {
 		return identityActionCmd(args[2:], dbpkg.IdentityKindReviewer, args[1])
 	case len(args) >= 2 && args[0] == "identity" && args[1] == "trace":
 		return identityTraceCmd(args[2:])
+	case len(args) >= 2 && args[0] == "identity" && args[1] == "export":
+		return identityExportCmd(args[2:])
 	}
 	fmt.Fprintln(os.Stderr, adminUsage)
 	return 2
@@ -201,7 +204,7 @@ func daemonOpenRetentionScan(ctx context.Context, cfg *config.Config) (retention
 		return nil, nil, err
 	}
 
-	wiring, err := buildRetentionWiring(cfg, shared, slog.Default())
+	wiring, err := buildRetentionWiring(ctx, cfg, shared, slog.Default())
 	if err != nil {
 		shared.close()
 		return nil, nil, err

@@ -15,7 +15,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
-// backup_user (migration 006) runs `crosscodexd admin backup`. It may list
+// backup_user runs `crosscodexd admin backup`. It may list
 // tenant IDs and stream base backups (REPLICATION), and nothing else.
 // The suite entry point lives in db_integration_bdd_test.go.
 var _ = Describe("backup_user role", Ordered, func() {

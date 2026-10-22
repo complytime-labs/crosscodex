@@ -12,7 +12,7 @@ import (
 )
 
 // SQLTenantLister reads tenant IDs as backup_user, which sees every row of
-// tenants (tenant_id only) through its own RLS policy (migration 006).
+// tenants (tenant_id only) through its own RLS policy (backup_list_tenants).
 type SQLTenantLister struct {
 	db *sql.DB
 }

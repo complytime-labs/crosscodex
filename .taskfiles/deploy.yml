@@ -217,16 +217,29 @@ tasks:
       - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
         msg: "deploy/.env missing. Copy deploy/.env.example to deploy/.env and fill it in."
       # Fail before starting the stack if a required key is absent or empty,
-      # rather than at first DB connect / LLM call. POSTGRES_PASSWORD is also
-      # enforced by compose (${POSTGRES_PASSWORD:?}); checked here too so all
-      # required keys fail the same way, up front.
+      # rather than at first DB connect / LLM call. The three database
+      # passwords are also enforced by compose (${...:?}); checked here too so
+      # all required keys fail the same way, up front.
       - sh: |
           missing=""
-          for k in POSTGRES_PASSWORD OPENAI_API_KEY CROSSCODEX_LLM_API_KEY CROSSCODEX_LLM_DEFAULT_MODEL CROSSCODEX_LLM_EMBEDDING_MODEL; do
+          for k in POSTGRES_PASSWORD APP_USER_PASSWORD GRAPH_USER_PASSWORD OPENAI_API_KEY CROSSCODEX_LLM_API_KEY CROSSCODEX_LLM_DEFAULT_MODEL CROSSCODEX_LLM_EMBEDDING_MODEL; do
             grep -qE "^${k}=.+" {{.ROOT_DIR}}/deploy/.env || missing="${missing} ${k}"
           done
           test -z "${missing}" || { echo "deploy/.env is missing or has empty values for:${missing}" >&2; exit 1; }
         msg: "deploy/.env is missing one or more required keys (see stderr for names)."
+      # compose.yaml interpolates the database passwords into postgres://
+      # URLs unescaped, so a character such as '%', '@', '/' or ':' would
+      # break the DSN (or change its meaning). Allow only URL-unreserved
+      # characters; hex from `openssl rand -hex 24` always qualifies.
+      - sh: |
+          bad=""
+          for k in POSTGRES_PASSWORD APP_USER_PASSWORD GRAPH_USER_PASSWORD; do
+            if grep -E "^${k}=" {{.ROOT_DIR}}/deploy/.env | grep -qvE "^${k}=[A-Za-z0-9._~-]+$"; then
+              bad="${bad} ${k}"
+            fi
+          done
+          test -z "${bad}" || { echo "deploy/.env has database passwords that are not URL-safe:${bad}" >&2; exit 1; }
+        msg: "deploy/.env database passwords may contain only A-Z a-z 0-9 . _ ~ - because compose.yaml embeds them in postgres:// URLs (see stderr for names). Generate each with: openssl rand -hex 24"
     cmds:
       - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} up -d --build"
       - |

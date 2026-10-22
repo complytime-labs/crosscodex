@@ -27,8 +27,8 @@ import (
 // which does not depend on analysis.artifact_adjudication.
 const enqueueChunk = 1000
 
-// PGVerdictStore is the VerdictStore over the artifact_pair_verdicts table
-// (migration 008). Each method runs in one transaction on a
+// PGVerdictStore is the VerdictStore over the artifact_pair_verdicts table.
+// Each method runs in one transaction on a
 // db.TenantConnection, so row-level security confines it to the tenant in
 // ctx. That tenant must equal the tenantID argument.
 type PGVerdictStore struct {

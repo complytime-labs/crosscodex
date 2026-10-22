@@ -82,7 +82,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// Verify migrations applied (vote_summaries must exist).
 	err = intSuPool.Exec(ctx, "SELECT 1 FROM vote_summaries LIMIT 0")
 	Expect(err).NotTo(HaveOccurred(),
-		"vote_summaries table does not exist — migration 005 may not have applied.\n"+
+		"vote_summaries table does not exist — the initial schema may not have applied.\n"+
 			"If the schema_migrations table is dirty, run: task test:integration:clean")
 })
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
@@ -173,22 +174,23 @@ func (db *PgVectorStore) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("tenant context required: %w", err)
 	}
 
-	result, err := db.db.ExecContext(ctx,
-		`DELETE FROM embeddings WHERE tenant_id = $1 AND control_id = $2`,
-		tenantID, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete embedding: %w", err)
-	}
+	return db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx,
+			`DELETE FROM embeddings WHERE tenant_id = $1 AND control_id = $2`,
+			tenantID, id)
+		if err != nil {
+			return fmt.Errorf("failed to delete embedding: %w", err)
+		}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
+		if rowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 // Get retrieves a vector embedding by ID (control_id).
@@ -202,14 +204,20 @@ func (db *PgVectorStore) Get(ctx context.Context, id string) (*Match, error) {
 	}
 
 	var controlID, vectorStr string
-	err = db.db.QueryRowContext(ctx,
-		`SELECT control_id, vector FROM embeddings WHERE tenant_id = $1 AND control_id = $2 LIMIT 1`,
-		tenantID, id).Scan(&controlID, &vectorStr)
-	if err != nil {
+	err = db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx,
+			`SELECT control_id, vector FROM embeddings WHERE tenant_id = $1 AND control_id = $2 LIMIT 1`,
+			tenantID, id).Scan(&controlID, &vectorStr)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
+			return ErrNotFound
 		}
-		return nil, fmt.Errorf("failed to get embedding: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to get embedding: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	vector, err := parseVectorString(vectorStr)
@@ -233,11 +241,16 @@ func (db *PgVectorStore) Count(ctx context.Context) (int64, error) {
 	}
 
 	var count int64
-	err = db.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM embeddings WHERE tenant_id = $1`,
-		tenantID).Scan(&count)
+	err = db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM embeddings WHERE tenant_id = $1`,
+			tenantID).Scan(&count); err != nil {
+			return fmt.Errorf("failed to count embeddings: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to count embeddings: %w", err)
+		return 0, err
 	}
 
 	return count, nil
@@ -246,10 +259,10 @@ func (db *PgVectorStore) Count(ctx context.Context) (int64, error) {
 // VectorDB interface implementation - minimal stubs for now
 
 // The embeddings.vector column is model-agnostic (dimensionless): vectors of
-// any width persist, keyed per model by the (catalog_id, control_id, model)
-// primary key. Per-model width safety is enforced by every read path scoping
-// to a single model (FindSimilar's WHERE model = $4; SimilarityMatrix's
-// a.model = b.model). Never introduce a similarity query that spans models —
+// any width persist, keyed per tenant and model by the (tenant_id, catalog_id,
+// control_id, model) primary key. Per-model width safety is enforced by every
+// read path scoping to a single model (FindSimilar's WHERE model = $4;
+// SimilarityMatrix's a.model = b.model). Never introduce a similarity query that spans models —
 // pgvector rejects <=> across differing widths. See
 // docs/dev/adr/0001-model-agnostic-embedding-storage.md.
 
@@ -288,22 +301,40 @@ func (db *PgVectorStore) StoreEmbedding(ctx context.Context, tenantID string, em
 	query := `
         INSERT INTO embeddings (catalog_id, control_id, model, vector, tenant_id)
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (catalog_id, control_id, model) 
-        DO UPDATE SET vector = EXCLUDED.vector, tenant_id = EXCLUDED.tenant_id`
+        ON CONFLICT (tenant_id, catalog_id, control_id, model)
+        DO UPDATE SET vector = EXCLUDED.vector`
 
-	_, err := db.db.ExecContext(ctx, query,
-		embedding.CatalogID,
-		embedding.ControlID,
-		embedding.Model,
-		vectorToString(embedding.Vector),
-		tenantID)
+	err := db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, query,
+			embedding.CatalogID,
+			embedding.ControlID,
+			embedding.Model,
+			vectorToString(embedding.Vector),
+			tenantID); err != nil {
+			return fmt.Errorf("failed to store embedding: %w", catalogOwnershipError(err, tenantID, embedding.CatalogID))
+		}
+		return nil
+	})
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("failed to store embedding: %w", err)
+		return err
 	}
 
 	span.SetStatus(codes.Ok, "embedding stored successfully")
 	return nil
+}
+
+// catalogOwnershipError explains a violation of the embeddings catalog
+// foreign key and returns any other error unchanged. Foreign keys ignore RLS,
+// so that composite (catalog_id, tenant_id) key is what
+// refuses a catalog that is not the tenant's.
+func catalogOwnershipError(err error, tenantID, catalogID string) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23503" || pgErr.ConstraintName != "embeddings_catalog_tenant_fkey" {
+		return err
+	}
+	return fmt.Errorf("catalog %q is not a catalog of tenant %q; store embeddings only for the tenant's own catalogs: %w",
+		catalogID, tenantID, err)
 }
 
 // vectorToString converts float32 slice to pgvector format string
@@ -352,44 +383,36 @@ func (db *PgVectorStore) StoreBatch(ctx context.Context, tenantID string, embedd
 		}
 	}()
 
-	// Use a transaction so the batch is atomic — all embeddings
-	// succeed or none do, preventing partial writes.
-	tx, err := db.db.BeginTx(ctx, nil)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
-
-	// Prepare the upsert statement once and reuse it for each row,
-	// avoiding repeated query parsing overhead on large batches.
-	stmt, err := tx.PrepareContext(ctx, `
+	// One transaction keeps the batch atomic — all embeddings succeed or
+	// none do, preventing partial writes.
+	err := db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		// Prepare the upsert statement once and reuse it for each row,
+		// avoiding repeated query parsing overhead on large batches.
+		stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO embeddings (catalog_id, control_id, model, vector, tenant_id)
 		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (catalog_id, control_id, model)
-		DO UPDATE SET vector = EXCLUDED.vector, tenant_id = EXCLUDED.tenant_id`)
+		ON CONFLICT (tenant_id, catalog_id, control_id, model)
+		DO UPDATE SET vector = EXCLUDED.vector`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
+		}
+		defer stmt.Close()
+
+		for i, embedding := range embeddings {
+			if _, err := stmt.ExecContext(ctx,
+				embedding.CatalogID,
+				embedding.ControlID,
+				embedding.Model,
+				vectorToString(embedding.Vector),
+				tenantID); err != nil {
+				return fmt.Errorf("failed to store embedding %d: %w", i, catalogOwnershipError(err, tenantID, embedding.CatalogID))
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for i, embedding := range embeddings {
-		_, err = stmt.ExecContext(ctx,
-			embedding.CatalogID,
-			embedding.ControlID,
-			embedding.Model,
-			vectorToString(embedding.Vector),
-			tenantID)
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			return fmt.Errorf("failed to store embedding %d: %w", i, err)
-		}
-	}
-
-	if err = tx.Commit(); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("failed to commit batch: %w", err)
+		return err
 	}
 
 	if db.storeCounter != nil {
@@ -448,53 +471,57 @@ func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query
 	// "model exists but no similar results" (empty slice), giving callers
 	// actionable error information. The extra round-trip is acceptable
 	// because similarity searches are not latency-critical hot paths.
-	var count int
-	checkQuery := `SELECT COUNT(*) FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND model = $3`
-	err := db.db.QueryRowContext(ctx, checkQuery, tenantID, query.CatalogID, query.Model).Scan(&count)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("failed to check model existence: %w", err)
-	}
-	if count == 0 {
-		span.SetStatus(codes.Error, "model not found")
-		return nil, ErrModelNotFound
-	}
+	var results []SimilarityResult
+	err := db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var count int
+		checkQuery := `SELECT COUNT(*) FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND model = $3`
+		if err := tx.QueryRowContext(ctx, checkQuery, tenantID, query.CatalogID, query.Model).Scan(&count); err != nil {
+			return fmt.Errorf("failed to check model existence: %w", err)
+		}
+		if count == 0 {
+			return ErrModelNotFound
+		}
 
-	// Execute similarity search using pgvector cosine distance operator (<=>)
-	// Cosine similarity = 1 - cosine distance
-	sqlQuery := `
+		// Execute similarity search using pgvector cosine distance operator (<=>)
+		// Cosine similarity = 1 - cosine distance
+		sqlQuery := `
 		SELECT control_id, 1 - (vector <=> $1) as similarity
 		FROM embeddings
 		WHERE tenant_id = $2 AND catalog_id = $3 AND model = $4
 		ORDER BY vector <=> $1
 		LIMIT $5`
 
-	rows, err := db.db.QueryContext(ctx, sqlQuery,
-		vectorToString(query.Vector),
-		tenantID,
-		query.CatalogID,
-		query.Model,
-		query.Limit)
+		rows, err := tx.QueryContext(ctx, sqlQuery,
+			vectorToString(query.Vector),
+			tenantID,
+			query.CatalogID,
+			query.Model,
+			query.Limit)
+		if err != nil {
+			return fmt.Errorf("similarity search failed: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var result SimilarityResult
+			if err := rows.Scan(&result.ControlID, &result.Similarity); err != nil {
+				return fmt.Errorf("failed to scan result: %w", err)
+			}
+			result.Metadata = make(map[string]any)
+			results = append(results, result)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("error iterating results: %w", err)
+		}
+		return nil
+	})
+	if errors.Is(err, ErrModelNotFound) {
+		span.SetStatus(codes.Error, "model not found")
+		return nil, err
+	}
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("similarity search failed: %w", err)
-	}
-	defer rows.Close()
-
-	var results []SimilarityResult
-	for rows.Next() {
-		var result SimilarityResult
-		if err := rows.Scan(&result.ControlID, &result.Similarity); err != nil {
-			span.SetStatus(codes.Error, err.Error())
-			return nil, fmt.Errorf("failed to scan result: %w", err)
-		}
-		result.Metadata = make(map[string]any)
-		results = append(results, result)
-	}
-
-	if err = rows.Err(); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("error iterating results: %w", err)
+		return nil, err
 	}
 
 	span.SetAttributes(attribute.Int("results.count", len(results)))
@@ -518,17 +545,21 @@ func (db *PgVectorStore) DeleteByModel(ctx context.Context, tenantID, catalogID,
 		return err
 	}
 
-	query := `DELETE FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND model = $3`
-	result, err := db.db.ExecContext(ctx, query, tenantID, catalogID, model)
+	var rowsAffected int64
+	err := db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		query := `DELETE FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND model = $3`
+		result, err := tx.ExecContext(ctx, query, tenantID, catalogID, model)
+		if err != nil {
+			return fmt.Errorf("failed to delete embeddings: %w", err)
+		}
+		if rowsAffected, err = result.RowsAffected(); err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("failed to delete embeddings: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("failed to get rows affected: %w", err)
+		return err
 	}
 
 	span.SetAttributes(attribute.Int64("rows.deleted", rowsAffected))
@@ -560,6 +591,33 @@ func parseVectorString(s string) ([]float32, error) {
 	}
 
 	return result, nil
+}
+
+// inTenant runs fn in a transaction entered into tenantID, committing when
+// fn succeeds and rolling back otherwise. crosscodexd connects as the
+// restricted app_user, for which the embeddings RLS policy matches only rows
+// of app.current_tenant; public.enter_tenant sets it for this transaction and
+// refuses a deleted tenant (SQLSTATE 42501), so no path reaches a deleted
+// tenant's embeddings. The tenant_id predicates in each query are kept as
+// defense in depth. It mirrors pkg/db.NewTenantPool's Begin (also built on
+// enter_tenant); change both together.
+func (db *PgVectorStore) inTenant(ctx context.Context, tenantID string, fn func(tx *sql.Tx) error) error {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	if _, err := tx.ExecContext(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
+		return fmt.Errorf("enter tenant %q: %w", tenantID, err)
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
 }
 
 // startSpan begins a new trace span using the store's configured tracer,

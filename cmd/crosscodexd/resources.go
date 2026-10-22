@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.opentelemetry.io/otel"
 
@@ -105,6 +104,11 @@ func (r *sharedResources) close() {
 
 // buildSharedResources constructs exactly the resources need declares.
 // Every partially-constructed resource is released on any error return path.
+// It never migrates: `crosscodexd migrate` does, as the schema owner. It
+// refuses a database.dsn or database.graph_dsn role that bypasses row-level
+// security (superuser, BYPASSRLS, table owner), because tenant isolation
+// holds only for the restricted app_user and graph_user roles, and refuses a
+// schema not at the version this binary needs.
 // The LLM client publishes an audit event for every call to NATS, so need.llm
 // without need.nats is refused rather than run unaudited.
 func buildSharedResources(ctx context.Context, cfg *config.Config, need requiredResources, opts ...ResourceOption) (*sharedResources, error) {
@@ -114,16 +118,6 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 	res := &sharedResources{}
 
 	if need.db {
-		migrator, err := dbpkg.NewMigrator(cfg.Database.DSN)
-		if err != nil {
-			return nil, fmt.Errorf("create migrator: %w", err)
-		}
-		if err := migrator.Up(ctx); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-			migrator.Close()
-			return nil, fmt.Errorf("run migrations: %w", err)
-		}
-		migrator.Close()
-
 		dbTracer, dbMeter := telemetry.Instrumentation("pkg/db")
 		appPool, err := dbpkg.NewPool(dbpkg.NewPoolConfigFrom(
 			cfg.Database.DSN, cfg.Database.GraphDSN, cfg.Database.MaxConns, cfg.Database.SSLMode, cfg.Database.Extensions,
@@ -143,6 +137,14 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 			return nil, fmt.Errorf("open app_user sql.DB: %w", err)
 		}
 		res.appDB = appDB
+		if err := dbpkg.CheckRestrictedRole(ctx, appDB, "database.dsn"); err != nil {
+			res.close()
+			return nil, fmt.Errorf("check the app_user connection: %w", err)
+		}
+		if err := dbpkg.CheckSchemaVersion(ctx, appDB); err != nil {
+			res.close()
+			return nil, fmt.Errorf("check schema version: %w", err)
+		}
 
 		vdbTracer, vdbMeter := telemetry.Instrumentation("pkg/vectordb")
 		vdb, err := vectordb.NewPgVectorStore(appDB, vectordb.WithTelemetry(vdbTracer, vdbMeter))
@@ -163,6 +165,10 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 		if err := graphDB.PingContext(ctx); err != nil {
 			res.close()
 			return nil, fmt.Errorf("ping graph_user sql.DB: %w", err)
+		}
+		if err := dbpkg.CheckRestrictedRole(ctx, graphDB, "database.graph_dsn"); err != nil {
+			res.close()
+			return nil, fmt.Errorf("check the graph_user connection: %w", err)
 		}
 
 		graphTracer, graphMeter := telemetry.Instrumentation("pkg/graphdb")

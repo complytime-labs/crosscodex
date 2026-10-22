@@ -9,8 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
-	"regexp"
 	"strings"
 	"time"
 
@@ -20,11 +18,10 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
-	"github.com/complytime-labs/crosscodex/pkg/db/migrations"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-// Migration 009 (#195) makes judgements permanent: artifact_pair_verdicts
+// Judgements are permanent (#195): artifact_pair_verdicts
 // rows and the tenants they belong to are never hard-deleted. app_user is
 // refused by privileges; the superuser table owner is refused by triggers. The suite entry
 // point lives in db_integration_bdd_test.go.
@@ -165,24 +162,7 @@ func tenantSnapshot(id string) string {
 	return row
 }
 
-// runMigrationFileRolledBack runs setup and then a 009 migration file as
-// the superuser in one transaction that is always rolled back, so a
-// refusal can be proven without touching the shared database.
-func runMigrationFileRolledBack(file string, setup ...string) error {
-	ctx := context.Background()
-	sqlText, err := fs.ReadFile(migrations.FS, file)
-	Expect(err).NotTo(HaveOccurred())
-	tx, err := suPool.Begin(ctx)
-	Expect(err).NotTo(HaveOccurred())
-	defer tx.Rollback() //nolint:errcheck // probe transaction, always rolled back
-	Expect(tx.Exec(ctx, "SET LOCAL lock_timeout = '5s'")).To(Succeed())
-	for _, stmt := range setup {
-		Expect(tx.Exec(ctx, stmt)).To(Succeed(), stmt)
-	}
-	return tx.Exec(ctx, string(sqlText))
-}
-
-// Migration 009 (#195) tenant lifecycle: tenant_admin soft-deletes, restores,
+// Tenant lifecycle (#195): tenant_admin soft-deletes, restores,
 // hides and unhides tenants only through SECURITY DEFINER functions, each of
 // which appends a signed event to the append-only identity_events table, and
 // enter_tenant refuses a deleted tenant on every app path. These specs call
@@ -344,16 +324,6 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 		}, "23514", "tenants_id_not_reserved"),
 	)
 
-	It("refuses to apply 009 over a tenant that already uses the 'hidden-' prefix", func() {
-		expectRefusedUnchanged(liveID, func() error {
-			return runMigrationFileRolledBack("009_identity_lifecycle.up.sql",
-				"SET LOCAL session_replication_role = replica", // skip the graph-creating trigger
-				"ALTER TABLE tenants DROP CONSTRAINT tenants_id_not_reserved",
-				"INSERT INTO tenants (tenant_id, display_name) VALUES ('hidden-legacy', 'Legacy')")
-		}, "23514", "'hidden-legacy'")
-		Expect(tenantSnapshot("hidden-legacy")).To(BeEmpty())
-	})
-
 	DescribeTable("delete_tenant refuses invalid operator input and changes nothing",
 		func(build func() (callActor, callReason string, req, env []byte), wantMsg string) {
 			callActor, callReason, req, env := build()
@@ -510,13 +480,6 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 		Expect(eventCount(deletedID)).To(Equal(1))
 	})
 
-	It("refuses to roll back 009 while a tenant is deleted", func() {
-		expectRefusedUnchanged(deletedID, func() error {
-			return runMigrationFileRolledBack("009_identity_lifecycle.down.sql")
-		}, "P0001", "also refused while identity_events holds audit records")
-		Expect(tenantField(deletedID, "status").String).To(Equal("deleted"))
-	})
-
 	DescribeTable("enter_tenant refuses a deleted tenant",
 		func(role string) {
 			expectRefusedUnchanged(deletedID, func() error {
@@ -666,13 +629,6 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 		Expect(current).To(Equal(deletedID))
 	})
 
-	It("refuses to roll back 009 while identity_events holds audit records", func() {
-		expectRefusedUnchanged(deletedID, func() error {
-			return runMigrationFileRolledBack("009_identity_lifecycle.down.sql")
-		}, "P0001", "audit records, which are never deleted")
-		Expect(eventCount(deletedID)).To(Equal(6))
-	})
-
 	DescribeTable("no application role can read, forge or change identity_events",
 		func(role, stmt string) {
 			expectRefusedUnchanged(deletedID, func() error {
@@ -711,22 +667,7 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 	)
 })
 
-// humanVerdictSQL inserts a human verdict by determinedBy into tenantID,
-// keyed by pairKey. It runs as the superuser, bypassing the reviewer gate.
-func humanVerdictSQL(tenantID, pairKey, determinedBy string) string {
-	return fmt.Sprintf(`INSERT INTO artifact_pair_verdicts
-		(tenant_id, pair_key, low_group_id, high_group_id, candidate_edge_id, similarity_score, context,
-		 status, determination_type, determined_by, next_attempt_at, created_at, decided_at)
-		VALUES (%s, %s, 'a', 'b', 'e', 0.5, '{}', 'confirmed', 'human', %s, now(), now(), now())`,
-		quoteLiteral(tenantID), quoteLiteral(pairKey), quoteLiteral(determinedBy))
-}
-
-// quoteLiteral quotes s as a SQL string literal for test-built statements.
-func quoteLiteral(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
-// Migration 009 (#195) reviewer registry: tenant_admin adds, soft-deletes,
+// Reviewer registry (#195): tenant_admin adds, soft-deletes,
 // restores, hides and unhides reviewers through SECURITY DEFINER functions
 // that each append a signed identity_events row; trace_pseudonym maps a
 // pseudonym back; app_user checks a reviewer only through
@@ -916,64 +857,6 @@ var _ = Describe("Reviewer registry", Ordered, func() {
 		}
 		Expect(rows.Err()).NotTo(HaveOccurred())
 		Expect(names).To(HaveLen(8))
-	})
-
-	It("backfills every reviewer of an existing human verdict, re-runnably", func() {
-		Expect(suPool.Exec(ctx, humanVerdictSQL(tenantID, "backfill-1", "legacy@example.invalid"))).To(Succeed())
-		Expect(suPool.Exec(ctx, humanVerdictSQL(tenantID, "backfill-2", "legacy@example.invalid"))).To(Succeed())
-		Expect(suPool.Exec(ctx, `INSERT INTO artifact_pair_verdicts
-			(tenant_id, pair_key, low_group_id, high_group_id, candidate_edge_id, similarity_score, context,
-			 determination_type, determined_by, next_attempt_at, created_at)
-			VALUES ($1, 'backfill-3', 'a', 'b', 'e', 0.5, '{}', 'llm_panel', 'panel-model', now(), now())`, tenantID)).To(Succeed())
-		// The backfill statement is read from the migration itself and run
-		// twice to prove it is re-runnable.
-		upSQL, err := fs.ReadFile(migrations.FS, "009_identity_lifecycle.up.sql")
-		Expect(err).NotTo(HaveOccurred())
-		found := regexp.MustCompile(`(?s)INSERT INTO public\.reviewers \(tenant_id, reviewer_id, created_by\)\s+SELECT DISTINCT .*?ON CONFLICT DO NOTHING;`).
-			FindAllString(string(upSQL), -1)
-		Expect(found).To(HaveLen(1), "009 must contain exactly one reviewers backfill statement")
-		backfill := found[0]
-		Expect(suPool.Exec(ctx, backfill)).To(Succeed())
-		row := reviewerSnapshot(tenantID, "legacy@example.invalid")
-		Expect(suPool.Exec(ctx, backfill)).To(Succeed())
-		Expect(reviewerSnapshot(tenantID, "legacy@example.invalid")).To(Equal(row))
-		Expect(reviewerField(tenantID, "legacy@example.invalid", "created_by").String).To(Equal("migration-009"))
-		Expect(reviewerField(tenantID, "legacy@example.invalid", "status").String).To(Equal("active"))
-		Expect(reviewerSnapshot(tenantID, "panel-model")).To(BeEmpty())
-	})
-
-	DescribeTable("refuses to apply 009 over a human verdict whose reviewer cannot be registered",
-		func(determinedBy, wantMsg string) {
-			expectRefusedUnchanged(tenantID, determinedBy, func() error {
-				return runMigrationFileRolledBack("009_identity_lifecycle.up.sql",
-					humanVerdictSQL(tenantID, "legacy-bad", determinedBy))
-			}, "23514", wantMsg)
-			Expect(reviewerSnapshot(tenantID, determinedBy)).To(BeEmpty())
-			var n int
-			Expect(suPool.QueryRow(ctx, "SELECT count(*) FROM artifact_pair_verdicts WHERE pair_key = 'legacy-bad'").Scan(&n)).To(Succeed())
-			Expect(n).To(BeZero())
-		},
-		Entry("a pseudonym-shaped reviewer ID", reservedID, "'"+reservedID+"'"),
-		Entry("a reviewer ID with a leading space", " lead", "' lead'"),
-		Entry("a reviewer ID with a control character, escaped", "ctl\x01x", `'ctl\u0001x'`),
-	)
-
-	It("lists at most 20 unregistrable reviewer IDs when refusing to apply 009", func() {
-		var setup []string
-		for i := range 25 {
-			setup = append(setup, humanVerdictSQL(tenantID, fmt.Sprintf("legacy-bad-%02d", i), fmt.Sprintf("hidden-legacy-%02d", i)))
-		}
-		events := eventCount(tenantID)
-		err := runMigrationFileRolledBack("009_identity_lifecycle.up.sql", setup...)
-		Expect(err).To(HaveOccurred())
-		Expect(db.IsPgErrorCode(err, "23514")).To(BeTrue(), "got %v", err)
-		Expect(err.Error()).To(ContainSubstring("'hidden-legacy-19'"))
-		Expect(err.Error()).NotTo(ContainSubstring("'hidden-legacy-20'"))
-		Expect(err.Error()).To(ContainSubstring("and 5 more"))
-		Expect(eventCount(tenantID)).To(Equal(events))
-		var n int
-		Expect(suPool.QueryRow(ctx, "SELECT count(*) FROM artifact_pair_verdicts WHERE pair_key LIKE 'legacy-bad-%'").Scan(&n)).To(Succeed())
-		Expect(n).To(BeZero())
 	})
 
 	It("adds a reviewer and records a signed event", func() {
@@ -1188,9 +1071,8 @@ var _ = Describe("Reviewer registry", Ordered, func() {
 		}
 		Expect(rows.Err()).NotTo(HaveOccurred())
 		Expect(listed).To(Equal(map[string]string{
-			reviewerPseudonym:        "deleted hidden=true",
-			bob:                      "active hidden=false",
-			"legacy@example.invalid": "active hidden=false",
+			reviewerPseudonym: "deleted hidden=true",
+			bob:               "active hidden=false",
 		}))
 		Expect(reviewerEvents(tenantID, alice)).To(Equal([]string{"add", "add", "delete", "hide"}))
 	})
@@ -1337,7 +1219,7 @@ var _ = Describe("Reviewer registry", Ordered, func() {
 		var total, foreign int
 		Expect(tx.QueryRowContext(ctx,
 			"SELECT count(*), count(*) FILTER (WHERE tenant_id <> $1) FROM reviewers", tenantID).Scan(&total, &foreign)).To(Succeed())
-		Expect(total).To(Equal(3)) // alice, bob, legacy
+		Expect(total).To(Equal(2)) // alice, bob
 		Expect(foreign).To(BeZero())
 	})
 
@@ -1378,8 +1260,8 @@ var _ = Describe("Reviewer registry", Ordered, func() {
 })
 
 // TenantAdmin's identity methods (#195) are the Go API the CLI calls. These
-// specs run them as tenant_admin against migration 009, signing each request
-// with an ephemeral key, and check that every refusal maps to its sentinel
+// specs run them as tenant_admin, signing each request with an ephemeral
+// key, and check that every refusal maps to its sentinel
 // and leaves the rows and the audit log unchanged.
 var _ = Describe("TenantAdmin identity API", Ordered, func() {
 	const (
@@ -1592,4 +1474,192 @@ var _ = Describe("TenantAdmin identity API", Ordered, func() {
 			return err
 		}, tenant.ErrInvalidTenant, "choose another ID"),
 	)
+})
+
+// export_identity_events is the one read path for the audit log, used by
+// 'crosscodexd admin identity export' before a database is decommissioned.
+// These specs write events through the real identity functions and read
+// them back as tenant_admin through TenantAdmin.ExportIdentityEvents.
+var _ = Describe("Identity audit log export", Ordered, func() {
+	const (
+		tenantID = "idl-export"
+		rita     = "rita-export@example.invalid"
+		actor    = "ops@example.invalid"
+		reason   = "decommission export"
+	)
+	ctx := context.Background()
+	var (
+		gen                           attestation.Generator
+		admin                         *db.TenantAdmin
+		adminConn, appConn, graphConn *sql.DB
+	)
+	connFor := func(role string) *sql.DB {
+		return map[string]*sql.DB{"app_user": appConn, "graph_user": graphConn}[role]
+	}
+	totalEvents := func() int {
+		var n int
+		Expect(suPool.QueryRow(ctx, "SELECT count(*) FROM identity_events").Scan(&n)).To(Succeed())
+		return n
+	}
+	// stored reads tenantID's events as the superuser: the reference the
+	// export is checked against. Times are normalized to UTC on both sides.
+	stored := func() []db.IdentityEvent {
+		rows, err := suPool.Query(ctx, `SELECT event_id, occurred_at, action, kind, tenant_id, identity_id, actor,
+			db_user, reason, request, attestation, attestation_sha256
+			FROM identity_events WHERE tenant_id = $1 ORDER BY event_id`, tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		defer rows.Close()
+		var events []db.IdentityEvent
+		for rows.Next() {
+			var e db.IdentityEvent
+			Expect(rows.Scan(&e.EventID, &e.OccurredAt, &e.Action, &e.Kind, &e.TenantID, &e.IdentityID, &e.Actor,
+				&e.DBUser, &e.Reason, &e.Request, &e.Attestation, &e.AttestationSHA256)).To(Succeed())
+			e.OccurredAt = e.OccurredAt.UTC()
+			events = append(events, e)
+		}
+		Expect(rows.Err()).NotTo(HaveOccurred())
+		return events
+	}
+	// collect returns an export callback that asserts event_id strictly
+	// increases across the whole log and keeps tenantID's events; other
+	// specs' events share the log.
+	collect := func(into *[]db.IdentityEvent) func(db.IdentityEvent) error {
+		var last int64
+		return func(e db.IdentityEvent) error {
+			Expect(e.EventID).To(BeNumerically(">", last))
+			last = e.EventID
+			if e.TenantID == tenantID {
+				e.OccurredAt = e.OccurredAt.UTC()
+				*into = append(*into, e)
+			}
+			return nil
+		}
+	}
+
+	BeforeAll(func() {
+		if suPool == nil {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+		kp, err := attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		gen, err = attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+		admin, err = db.OpenTenantAdmin(tenantAdminDSN())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(admin.Close)
+		adminConn, appConn, graphConn = tenantAdminConn(), appUserConn(), graphUserConn()
+		setupTenant(tenantID, "Identity Export")
+
+		_, err = admin.AddReviewer(ctx, tenantID, rita, actor, reason,
+			signedRequest(gen, "add", db.IdentityKindReviewer, tenantID, rita, actor, reason))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(admin.DeleteTenant(ctx, tenantID, actor, reason,
+			signedRequest(gen, "delete", db.IdentityKindTenant, tenantID, tenantID, actor, reason))).To(Succeed())
+		Expect(admin.RestoreTenant(ctx, tenantID, actor, reason,
+			signedRequest(gen, "restore", db.IdentityKindTenant, tenantID, tenantID, actor, reason))).To(Succeed())
+	})
+
+	AfterAll(func() {
+		if suPool != nil {
+			stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(suPool.Exec(ctx, stmt)).To(Succeed())
+		}
+	})
+
+	It("returns every event in event_id order with the stored bytes intact", func() {
+		var got []db.IdentityEvent
+		Expect(admin.ExportIdentityEvents(ctx, collect(&got))).To(Succeed())
+		Expect(got).To(Equal(stored()))
+		Expect(got).To(HaveLen(3))
+		var actions []string
+		for _, e := range got {
+			actions = append(actions, e.Kind+" "+e.Action)
+			Expect(e.Actor).To(Equal(actor))
+			Expect(e.Reason).To(Equal(reason))
+			Expect(e.DBUser).To(Equal("tenant_admin"))
+			Expect(e.OccurredAt).NotTo(BeZero())
+			attSum := sha256.Sum256(e.Attestation)
+			Expect(e.AttestationSHA256).To(Equal(hex.EncodeToString(attSum[:])))
+			link, err := gen.Verify(ctx, e.Attestation)
+			Expect(err).NotTo(HaveOccurred())
+			reqSum := sha256.Sum256(e.Request)
+			Expect(link.Materials).To(Equal([]attestation.Artifact{{URI: "crosscodex:identity-request", Digest: hex.EncodeToString(reqSum[:])}}))
+		}
+		Expect(actions).To(Equal([]string{"reviewer add", "tenant delete", "tenant restore"}))
+	})
+
+	DescribeTable("pages through the whole log across page boundaries",
+		func(pageSize int) {
+			var got []db.IdentityEvent
+			Expect(db.ExportIdentityEventsWithPageSize(ctx, admin, pageSize, collect(&got))).To(Succeed())
+			Expect(got).To(Equal(stored()))
+		},
+		Entry("one event per page", 1),
+		Entry("two events per page", 2),
+		Entry("the largest page", db.MaxIdentityExportPage),
+	)
+
+	It("stops at the first callback error and returns it", func() {
+		stop := errors.New("disk full")
+		calls := 0
+		err := admin.ExportIdentityEvents(ctx, func(db.IdentityEvent) error { calls++; return stop })
+		Expect(err).To(MatchError(stop))
+		Expect(err.Error()).To(HavePrefix("export identity events: "))
+		Expect(calls).To(Equal(1))
+	})
+
+	DescribeTable("refuses a page size outside 1..10000, reading nothing",
+		func(pageSize int) {
+			before := totalEvents()
+			calls := 0
+			err := db.ExportIdentityEventsWithPageSize(ctx, admin, pageSize, func(db.IdentityEvent) error { calls++; return nil })
+			Expect(err).To(HaveOccurred())
+			Expect(db.IsPgErrorCode(err, "22023")).To(BeTrue(), "got %v", err)
+			Expect(err.Error()).To(ContainSubstring("Pass a page size from 1 to 10000"))
+			Expect(calls).To(BeZero())
+			Expect(totalEvents()).To(Equal(before))
+		},
+		Entry("zero", 0),
+		Entry("one past the largest", db.MaxIdentityExportPage+1),
+		Entry("negative", -1),
+	)
+
+	It("refuses a NULL starting event_id with the fix", func() {
+		_, err := adminConn.ExecContext(ctx, "SELECT * FROM public.export_identity_events(NULL, 10)")
+		Expect(err).To(HaveOccurred())
+		Expect(db.IsPgErrorCode(err, "22023")).To(BeTrue(), "got %v", err)
+		Expect(err.Error()).To(ContainSubstring("Pass 0 to start at the first event"))
+	})
+
+	DescribeTable("refuses every application role but tenant_admin, reading nothing",
+		func(role string) {
+			before := totalEvents()
+			_, err := connFor(role).ExecContext(ctx, "SELECT * FROM public.export_identity_events(0, 10)")
+			Expect(err).To(HaveOccurred())
+			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "got %v", err)
+			Expect(err.Error()).To(ContainSubstring("permission denied for function export_identity_events"))
+			Expect(totalEvents()).To(Equal(before))
+		},
+		Entry(nil, "app_user"),
+		Entry(nil, "graph_user"),
+	)
+
+	It("is not executable by PUBLIC", func() {
+		var ok bool
+		Expect(suPool.QueryRow(ctx, "SELECT has_function_privilege('public', 'public.export_identity_events(bigint, integer)', 'EXECUTE')").
+			Scan(&ok)).To(Succeed())
+		Expect(ok).To(BeFalse())
+	})
+
+	It("is a stable definer function with a pinned search_path", func() {
+		var definer bool
+		var volatility, config string
+		Expect(suPool.QueryRow(ctx, `SELECT prosecdef, provolatile::text, coalesce(array_to_string(proconfig, ';'), '')
+			FROM pg_proc WHERE oid = 'public.export_identity_events(bigint, integer)'::regprocedure`).
+			Scan(&definer, &volatility, &config)).To(Succeed())
+		Expect(definer).To(BeTrue())
+		Expect(volatility).To(Equal("s"))
+		Expect(config).To(Equal("search_path=pg_catalog, public, pg_temp"))
+	})
 })

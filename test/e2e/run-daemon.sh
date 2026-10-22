@@ -53,28 +53,25 @@ if timeout 1 bash -c "cat < /dev/null > /dev/tcp/$SERVER_HOST/$SERVER_PORT" 2>/d
 	exit 1
 fi
 
-# Copy static config to XDG_CONFIG_HOME location (SRC_CONFIG resolved above)
+# Copy static config to XDG_CONFIG_HOME location (SRC_CONFIG resolved above).
+# migrate provisions tenants.default_tenant from it.
 cp "$SRC_CONFIG" "$E2E_DIR/config/crosscodex/config.yaml"
+export XDG_CONFIG_HOME="$E2E_DIR/config"
 
-# Read DSNs from environment (set by taskfile). The graph DSN carries the
-# graph_user password that provision sets below.
-DSN="${CROSSCODEX_DATABASE_DSN:?CROSSCODEX_DATABASE_DSN not set}"
+# DSNs come from the environment (set by the taskfile). The migration DSN is
+# the schema owner; the other two carry the app_user and graph_user passwords
+# that migrate sets.
+: "${CROSSCODEX_DATABASE_MIGRATION_DSN:?CROSSCODEX_DATABASE_MIGRATION_DSN not set}"
+: "${CROSSCODEX_DATABASE_DSN:?CROSSCODEX_DATABASE_DSN not set}"
 : "${CROSSCODEX_DATABASE_GRAPH_DSN:?CROSSCODEX_DATABASE_GRAPH_DSN not set}"
 CERTS_DIR="$TEST_DIR/certs"
 
-# Provision graph_user: run migrations and set password
-echo "Provisioning graph_user..."
-cd "$ROOT_DIR"
-go build -o "$E2E_DIR/provision" ./test/e2e/provision
-"$E2E_DIR/provision" "$DSN"
-
 # Generate attestation keypair
+cd "$ROOT_DIR"
 go build -o "$E2E_DIR/genkey" ./test/e2e/genkey
 "$E2E_DIR/genkey" "$E2E_DIR/attestation"
 
 # Export config overrides via CROSSCODEX_ env vars
-export XDG_CONFIG_HOME="$E2E_DIR/config"
-export CROSSCODEX_DATABASE_DSN="$DSN"
 export CROSSCODEX_NATS_EMBEDDED_STORE_DIR="$E2E_DIR/nats"
 export CROSSCODEX_STORAGE_OBJECTS_BASE_PATH="$E2E_DIR/objects"
 export CROSSCODEX_TLS_CA="$CERTS_DIR/ca.pem"
@@ -82,6 +79,13 @@ export CROSSCODEX_TLS_CERT="$CERTS_DIR/server.pem"
 export CROSSCODEX_TLS_KEY="$CERTS_DIR/server-key.pem"
 export CROSSCODEX_ATTESTATION_PRIVATE_KEY_PATH="$E2E_DIR/attestation/private.pem"
 export CROSSCODEX_ATTESTATION_PUBLIC_KEY_PATH="$E2E_DIR/attestation/public.pem"
+
+# migrate loads and validates the same config as the daemon, so it runs after
+# every override above is exported.
+echo "Running crosscodexd migrate..."
+"$ROOT_DIR/bin/crosscodexd" migrate
+# The daemon refuses an owner connection and must never hold its credential.
+unset CROSSCODEX_DATABASE_MIGRATION_DSN
 
 echo "Starting crosscodexd --role all..."
 "$ROOT_DIR/bin/crosscodexd" --role all >"$E2E_DIR/daemon.log" 2>&1 &

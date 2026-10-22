@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 type JobStatus string
@@ -35,6 +36,17 @@ type Job struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	ErrorMessage string
+}
+
+// JobCreator returns the created_by of a job created in ctx: the calling
+// user, else tenantID for a system call that carries no user. The jobs RLS
+// policy refuses a row whose created_by differs from a set app.current_user,
+// and the gateway lists a non-admin only the jobs it created.
+func JobCreator(ctx context.Context, tenantID string) string {
+	if user := tenant.UserFromContext(ctx); user != "" {
+		return user
+	}
+	return tenantID
 }
 
 type Stage struct {

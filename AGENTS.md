@@ -53,6 +53,7 @@ Use `task` for everything; never run raw `go build` / `go test`.
 - Never log or commit credentials. Load them from env or secret managers.
 - Production network traffic uses TLS via `pkg/tlsconfig`; TLS mode `off` is for dev and tests only.
 - Fail closed: an absent or misconfigured safety mechanism denies (RLS matches zero rows without `app.current_tenant`; no fallback graph; missing extension → refuse to start).
+- The daemon refuses superuser, BYPASSRLS and owner connections (`pkg/db.CheckRestrictedRole`) and never migrates; schema changes run only through `crosscodexd migrate` (`database.migration_dsn`).
 - Batch operations over rows with mixed protection states must fail entirely, not partially.
 - The app runs as a restricted DB role. GRANTs are explicit and minimal (SELECT, INSERT, UPDATE, DELETE — never TRUNCATE, ALTER, TRIGGER). Comment in code why the restricted role exists.
 - Guard against the tired admin: test bulk ops over mixed rows, attempts to disable triggers/RLS, privilege escalation (TRUNCATE/ALTER/COPY), and manual "fixes" like resetting a completed job or reassigning rows between tenants.
@@ -68,7 +69,7 @@ Use `task` for everything; never run raw `go build` / `go test`.
 ## Observability and attestation
 
 - Every package doing I/O, business logic, or cross-service calls is instrumented with `pkg/telemetry`: spans on public methods with tenant/operation attributes; an operations counter, a duration histogram, and a gauge for resource usage via `telemetry.NewCounter` / `NewHistogram` / `NewGauge` / `NewIntCounter`; slog logging; `context.Context` propagated everywhere. Test with `telemetrytest.NewTestProvider()`.
-- Service mains call `telemetry.Init()` at startup (no binary does yet — a known wiring gap), and trace context propagates through NATS message headers and Connect request headers.
+- `cmd/crosscodexd/main.go` and the embedded daemon start (`cmd/crosscodex/connect.go`) call `telemetry.Init()`; the `crosscodexd admin` subcommands do not. Trace context propagates through NATS message headers and Connect request headers.
 - Populate `AuditMetadata.correlation_id` from the active span's trace ID.
 - Catalog ingestion, control mappings, risk assessments, and policy enforcement actions produce in-toto attestations (`pkg/attestation`) embedding `telemetry.TraceIDFromContext(ctx)`.
 

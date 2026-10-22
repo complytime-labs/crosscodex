@@ -121,7 +121,7 @@ Primary data is protected by delete-path immutability triggers: the ordinary
 `app_user` role cannot delete completed jobs or other terminal records. Purge is
 therefore performed under a dedicated, sanctioned credential:
 
-- Migration 001 creates a `NOLOGIN` group role `retention_purge` and a
+- The initial schema creates a `NOLOGIN` group role `retention_purge` and a
   `purge_user` login role that is a member of it. `purge_user` is **not**
   `BYPASSRLS`; it is still subject to tenant isolation. It is the only credential
   the delete-path immutability triggers accept.
@@ -142,13 +142,11 @@ therefore performed under a dedicated, sanctioned credential:
   The children reference only the parent (not one another), so their relative order
   is free; the parent MUST be last, or the FK (which has no `ON DELETE CASCADE`)
   raises `foreign_key_violation`. All table/column names are compile-time
-  constants; the candidate id is only ever a bound `$1`. Migration 003 grants
-  `purge_user` `DELETE` on `analysis_results` and `relationship_candidates` (001
-  already covered `jobs`/`job_stages`/`vote_summaries`); migration 004 grants
-  `DELETE` on `controls` (001 already covered `catalogs`/`classifications`/
-  `embeddings`); migration 005 grants `DELETE` on `requires_candidates`. None of
-  these tables has an immutability delete trigger that rejects `purge_user`, so a
-  grant alone suffices.
+  constants; the candidate id is only ever a bound `$1`. The initial schema
+  grants `purge_user` `SELECT` and `DELETE` on every table above. `jobs`,
+  `job_stages`, `vote_summaries` and `classifications` have immutability delete
+  triggers, which accept `purge_user` through its `retention_purge` membership;
+  the other tables have none, so the grant alone suffices.
 - The daemon opens this connection from `config.Database.PurgeDSN`
   (`cmd/crosscodexd/bootstrap.go`). When `PurgeDSN` is unset the Purger falls
   back to the app pool so scans still run, but purges fail closed against the
@@ -164,7 +162,7 @@ application code.
   `tenant.WithTenant` before `Engine.Scan`. `DBCollector`, `archiveDB`, and
   `purgeDB` all begin tenant transactions that set `app.current_tenant`; an
   unscoped context is rejected with `ErrTenantRequired`.
-- **`retention_holds` RLS (migration 002).** The `tenant_isolation` policy lets a
+- **`retention_holds` RLS.** The `tenant_isolation` policy lets a
   tenant see its own holds **and** global holds (`tenant_id IS NULL`), so a
   global hold blocks every tenant's purge — this mirrors the wildcard semantics
   of `HoldScope` in `pkg/retention/hold.go`. The `WITH CHECK` clause is stricter:

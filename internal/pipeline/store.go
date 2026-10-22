@@ -979,16 +979,18 @@ func (s *PGStore) GetResumableJobs(ctx context.Context) ([]*Job, error) {
 
 	start := time.Now()
 
-	// System-level query - NO tenant scoping, no RLS.
-	// Use systemDB Pool directly instead of TenantConnection.
+	// System-level read across tenants on the systemDB pool, with no tenant
+	// entered. As app_user, RLS hides every job outside a tenant, so the read
+	// goes through the resumable_jobs() definer function: it
+	// returns only running jobs, and none of a deleted tenant. The outer
+	// ORDER BY is the ordering guarantee; a function's own ORDER BY is not.
 	query := `
 		SELECT job_id, tenant_id, status, config, created_by, created_at, updated_at, error_message
-		FROM jobs
-		WHERE status = $1
+		FROM public.resumable_jobs()
 		ORDER BY created_at
 	`
 
-	rows, err := s.systemDB.Query(ctx, query, JobStatusRunning)
+	rows, err := s.systemDB.Query(ctx, query)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())

@@ -4,7 +4,7 @@ This document covers the model-agnostic embedding storage schema, the procedure 
 
 ## Model-Agnostic Column
 
-The `embeddings.vector` column is dimensionless (no fixed width). Any embedding model's vectors are stored without schema modification. Rows are keyed by `(catalog_id, control_id, model)`, allowing multiple models to coexist in the same database.
+The `embeddings.vector` column is dimensionless (no fixed width). Any embedding model's vectors are stored without schema modification. Rows are keyed by `(tenant_id, catalog_id, control_id, model)`, allowing multiple models to coexist in the same database and each tenant to own its embedding of the same control. An embedding may reference only a catalog of its own tenant: the foreign key to `catalogs` is `(catalog_id, tenant_id)`, because foreign keys ignore RLS and catalog IDs are global. `StoreEmbedding` and `StoreBatch` report a violation as `catalog "<id>" is not a catalog of tenant "<tenant>"`.
 
 Every similarity query is model-scoped via `WHERE model = $model`, so mixed vector widths never collide in query results:
 
@@ -15,7 +15,7 @@ This design decouples schema evolution from model selection. See [ADR 0001](adr/
 
 The initial schema (`001_initial_schema`) creates `embeddings.vector` as a dimensionless `vector` column with no ivfflat index, so a fresh install stores any model's vectors directly with no further migration. A fixed-width column such as `vector(2000)` was rejected precisely because it would reject vectors of any other dimension.
 
-Migrations run automatically via `Up()` (embedded `*.sql` files are auto-discovered through `//go:embed`). See [Database Migrations](migrations.md) for migration authoring and runtime behavior.
+Migrations are applied by `crosscodexd migrate`, never by the daemon (embedded `*.sql` files are auto-discovered through `//go:embed`). See [Database Migrations](migrations.md) for migration authoring and runtime behavior.
 
 ## Switching or Adding an Embedding Model
 

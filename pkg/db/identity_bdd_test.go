@@ -346,3 +346,54 @@ type exportMessageError struct{ state, msg string }
 
 func (e exportMessageError) Error() string    { return e.msg }
 func (e exportMessageError) SQLState() string { return e.state }
+
+var _ = Describe("TenantAdmin.ExportIdentityEvents", func() {
+	ctx := context.Background()
+	var tp *telemetrytest.TestProvider
+	newAdmin := func(pool db.Pool) *db.TenantAdmin {
+		a, err := db.ExportNewTenantAdmin(pool, tp.TracerProvider().Tracer("test"), tp.MeterProvider().Meter("test"))
+		Expect(err).NotTo(HaveOccurred())
+		return a
+	}
+	never := func(db.IdentityEvent) error {
+		Fail("the callback must not run when the export fails before reading")
+		return nil
+	}
+
+	BeforeEach(func() {
+		var err error
+		tp, err = telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+	})
+
+	It("wraps a failure to begin the snapshot and marks the span failed, without a tenant", func() {
+		pool, _ := db.ExportNewFailingPool()
+		err := newAdmin(pool).ExportIdentityEvents(ctx, never)
+		Expect(err).To(MatchError(db.ErrExportPoolUsed))
+		Expect(err.Error()).To(HavePrefix("export identity events: "))
+		span := telemetrytest.FindSpan(tp.GetSpans(), "db.TenantAdmin.export_identity_events")
+		Expect(span).NotTo(BeNil())
+		Expect(span.Status().Code).To(Equal(codes.Error))
+		_, ok := telemetrytest.SpanAttribute(span, "tenant.id")
+		Expect(ok).To(BeFalse())
+	})
+
+	It("rolls back when the snapshot cannot be set", func() {
+		pool, counts := db.ExportNewScriptedTxPool(nil, nil, nil)
+		err := newAdmin(pool).ExportIdentityEvents(ctx, never)
+		Expect(err).To(MatchError(db.ErrExportPoolUsed))
+		Expect(err.Error()).To(HavePrefix("export identity events: "))
+		commits, rollbacks := counts()
+		Expect(commits).To(BeZero())
+		Expect(rollbacks).To(Equal(1))
+	})
+
+	It("reads in one read-only repeatable-read snapshot and wraps a query failure", func() {
+		pool, execs := db.ExportNewRecordingPool()
+		err := newAdmin(pool).ExportIdentityEvents(ctx, never)
+		Expect(err).To(MatchError(db.ErrExportPoolUsed))
+		Expect(err.Error()).To(HavePrefix("export identity events: "))
+		Expect(execs()).To(Equal([]string{"SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY[]"}))
+	})
+})

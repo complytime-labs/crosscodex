@@ -84,10 +84,10 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	})
 	Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
 
-	// Verify migration 010 applied (controls table must exist).
+	// Verify the schema is applied (controls table must exist).
 	err = suPool.Exec(ctx, "SELECT 1 FROM controls LIMIT 0")
 	Expect(err).NotTo(HaveOccurred(),
-		"controls table does not exist — migration 010 may not have applied.\n"+
+		"controls table does not exist — the initial schema may not have applied.\n"+
 			"If the schema_migrations table is dirty, run: task test:integration:clean")
 })
 
@@ -147,6 +147,80 @@ func setupCatalog(conn *sql.DB, tenantID, catalogID, name string) {
 		catalogID, tenantID, name)
 	Expect(err).NotTo(HaveOccurred(), "insert catalog")
 	Expect(tx.Commit()).To(Succeed(), "commit")
+}
+
+// twoTenants is one catalog with one control under each of two fresh tenants.
+// Both controls' statements contain "sentinel".
+type twoTenants struct {
+	tenantA, tenantB   string
+	catalogA, catalogB string
+	controlA, controlB string
+}
+
+func (s twoTenants) ctx(tenantID string) context.Context {
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	Expect(err).NotTo(HaveOccurred())
+	return ctx
+}
+
+// seedTwoTenants writes through the owner pool, bypassing RLS and the store
+// under test.
+func seedTwoTenants() twoTenants {
+	n := time.Now().UnixNano()
+	s := twoTenants{
+		tenantA:  fmt.Sprintf("scope-a-%d", n),
+		tenantB:  fmt.Sprintf("scope-b-%d", n),
+		catalogA: fmt.Sprintf("scope-cat-a-%d", n),
+		catalogB: fmt.Sprintf("scope-cat-b-%d", n),
+	}
+	s.controlA = s.catalogA + "/sc-1"
+	s.controlB = s.catalogB + "/sc-1"
+
+	ctx := context.Background()
+	for _, t := range []struct{ tenantID, catalogID, controlID, name, title string }{
+		{s.tenantA, s.catalogA, s.controlA, "Alpha Scoped", "Alpha Sentinel"},
+		{s.tenantB, s.catalogB, s.controlB, "Beta Scoped", "Beta Sentinel"},
+	} {
+		setupTenant(t.tenantID, t.name)
+		Expect(suPool.Exec(ctx,
+			"INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path) VALUES ($1, $2, $3, '1.0', 'oscal', 'test')",
+			t.catalogID, t.tenantID, t.name)).To(Succeed())
+		Expect(suPool.Exec(ctx,
+			"INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id, group_id) VALUES ($1, $2, $3, 'sc-1', $4, 'Sentinel statement.', 'compliance-requirement', '', '')",
+			t.tenantID, t.controlID, t.catalogID, t.title)).To(Succeed())
+	}
+	return s
+}
+
+// catalogDeletingConn deletes catalogID through the owner pool just before
+// the first controls insert of each transaction it begins, so a spec can
+// land a concurrent catalog delete between UpsertControls' ownership check
+// and its insert.
+type catalogDeletingConn struct {
+	db.Connection
+	catalogID string
+}
+
+func (c catalogDeletingConn) Begin(ctx context.Context) (db.Transaction, error) {
+	tx, err := c.Connection.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &catalogDeletingTx{Transaction: tx, catalogID: c.catalogID}, nil
+}
+
+type catalogDeletingTx struct {
+	db.Transaction
+	catalogID string
+	deleted   bool
+}
+
+func (t *catalogDeletingTx) Exec(ctx context.Context, query string, args ...any) error {
+	if !t.deleted && strings.Contains(query, "INSERT INTO controls") {
+		t.deleted = true
+		Expect(suPool.Exec(ctx, "DELETE FROM catalogs WHERE catalog_id = $1", t.catalogID)).To(Succeed())
+	}
+	return t.Transaction.Exec(ctx, query, args...)
 }
 
 func execAsTenant(conn *sql.DB, tenantID string, fn func(tx *sql.Tx)) {
@@ -488,6 +562,121 @@ var _ = Describe("PGStore Integration", func() {
 			err := conn.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM controls").Scan(&count)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(count).To(Equal(0), "no-context query returned controls (RLS fail-closed)")
+		})
+	})
+
+	// The owner connection bypasses RLS (as the embedded daemon's pool does),
+	// so only the store's own tenant predicates keep tenants apart there.
+	Describe("StoreTenantScoping", func() {
+		ownerConn := func() db.Connection { return suPool }
+
+		DescribeTable("returns only the context tenant's catalogs and controls",
+			func(newConn func() db.Connection) {
+				s := seedTwoTenants()
+				store := catalog.NewPGStore(newConn())
+				ctx := s.ctx(s.tenantA)
+
+				records, pageInfo, err := store.ListCatalogs(ctx, catalog.ListOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(records).To(HaveLen(1))
+				Expect(records[0].CatalogID).To(Equal(s.catalogA))
+				Expect(records[0].ControlCount).To(Equal(int64(1)))
+				Expect(pageInfo.TotalCount).To(Equal(int64(1)), "total count must not include other tenants")
+
+				_, err = store.GetCatalog(ctx, s.catalogB)
+				Expect(err).To(MatchError(ContainSubstring("catalog not found")))
+				own, err := store.GetCatalog(s.ctx(s.tenantB), s.catalogB)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(own.ControlCount).To(Equal(int64(1)), "control count must not include another tenant's controls")
+				_, err = store.GetControl(ctx, s.controlB)
+				Expect(err).To(MatchError(ContainSubstring("control not found")))
+
+				found, pageInfo, err := store.SearchControls(ctx, catalog.SearchQuery{Query: "sentinel"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(HaveLen(1))
+				Expect(found[0].ControlID).To(Equal(s.controlA))
+				Expect(pageInfo.TotalCount).To(Equal(int64(1)))
+
+				found, _, err = store.SearchControls(ctx, catalog.SearchQuery{Query: "sentinel", CatalogIDs: []string{s.catalogB}})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(found).To(BeEmpty())
+			},
+			Entry("owner connection", ownerConn),
+			Entry("app_user tenant pool", tenantConn),
+		)
+
+		DescribeTable("refuses writes that reach another tenant and leaves its rows unchanged",
+			func(newConn func() db.Connection) {
+				s := seedTwoTenants()
+				store := catalog.NewPGStore(newConn())
+				ctx := s.ctx(s.tenantA)
+
+				err := store.UpsertCatalog(ctx, catalog.CatalogRecord{
+					CatalogID: s.catalogB, TenantID: s.tenantA, Name: "hijacked",
+					Version: "9", SourceType: "oscal", ObjectPath: "x", CreatedAt: time.Now().UTC(),
+				})
+				Expect(err).To(MatchError(ContainSubstring("belongs to another tenant")))
+
+				err = store.UpsertCatalog(ctx, catalog.CatalogRecord{
+					CatalogID: "scope-foreign-" + s.tenantB, TenantID: s.tenantB, Name: "foreign",
+					Version: "1", SourceType: "oscal", ObjectPath: "x", CreatedAt: time.Now().UTC(),
+				})
+				Expect(err).To(MatchError(ContainSubstring("does not match the request tenant")))
+
+				err = store.UpsertControls(ctx, []catalog.ControlRecord{{
+					TenantID: s.tenantB, ControlID: s.controlB, CatalogID: s.catalogB,
+					Identifier: "sc-1", Title: "hijacked", Statement: "hijacked", CreatedAt: time.Now().UTC(),
+				}})
+				Expect(err).To(MatchError(ContainSubstring("does not match the request tenant")))
+
+				err = store.UpsertControls(ctx, []catalog.ControlRecord{{
+					TenantID: s.tenantA, ControlID: s.controlA, CatalogID: s.catalogB,
+					Identifier: "sc-1", Title: "moved", Statement: "moved", CreatedAt: time.Now().UTC(),
+				}})
+				Expect(err).To(MatchError(ContainSubstring("is not a catalog of tenant")))
+
+				var catalogName, controlTitle, movedCatalog string
+				var foreign int
+				Expect(suPool.QueryRow(context.Background(),
+					"SELECT name FROM catalogs WHERE catalog_id = $1", s.catalogB).Scan(&catalogName)).To(Succeed())
+				Expect(suPool.QueryRow(context.Background(),
+					"SELECT title FROM controls WHERE control_id = $1", s.controlB).Scan(&controlTitle)).To(Succeed())
+				Expect(suPool.QueryRow(context.Background(),
+					"SELECT COUNT(*) FROM catalogs WHERE catalog_id = $1", "scope-foreign-"+s.tenantB).Scan(&foreign)).To(Succeed())
+				Expect(catalogName).To(Equal("Beta Scoped"))
+				Expect(controlTitle).To(Equal("Beta Sentinel"))
+				Expect(suPool.QueryRow(context.Background(),
+					"SELECT catalog_id FROM controls WHERE control_id = $1", s.controlA).Scan(&movedCatalog)).To(Succeed())
+				Expect(foreign).To(Equal(0))
+				Expect(movedCatalog).To(Equal(s.catalogA), "a refused batch must not move a control")
+			},
+			Entry("owner connection", ownerConn),
+			Entry("app_user tenant pool", tenantConn),
+		)
+
+		It("refuses controls whose catalog is deleted after the ownership check", func() {
+			n := time.Now().UnixNano()
+			tenantID, catalogID := fmt.Sprintf("scope-race-%d", n), fmt.Sprintf("scope-race-cat-%d", n)
+			setupTenant(tenantID, "Race Scoped")
+			Expect(suPool.Exec(context.Background(),
+				"INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path) VALUES ($1, $2, 'race', '1.0', 'oscal', 'test')",
+				catalogID, tenantID)).To(Succeed())
+			ctx, err := tenant.WithTenant(context.Background(), tenantID)
+			Expect(err).NotTo(HaveOccurred())
+
+			store := catalog.NewPGStore(catalogDeletingConn{Connection: suPool, catalogID: catalogID})
+			err = store.UpsertControls(ctx, []catalog.ControlRecord{{
+				TenantID: tenantID, ControlID: catalogID + "/sc-1", CatalogID: catalogID,
+				Identifier: "sc-1", Title: "raced", Statement: "raced", CreatedAt: time.Now().UTC(),
+			}})
+			Expect(err).To(MatchError(ContainSubstring(fmt.Sprintf(
+				"catalog %q is not a catalog of tenant %q, so no control in this batch was written", catalogID, tenantID))))
+			Expect(db.IsPgErrorCode(err, "23503")).To(BeTrue(), "want the foreign_key_violation wrapped, got %v", err)
+
+			var count int
+			Expect(suPool.QueryRow(context.Background(),
+				"SELECT COUNT(*) FROM controls WHERE tenant_id = $1", tenantID).Scan(&count)).To(Succeed())
+			Expect(count).To(BeZero())
 		})
 	})
 

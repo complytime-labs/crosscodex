@@ -1,6 +1,6 @@
 package db
 
-// Identity lifecycle (#195, migration 009): tenants and reviewers are
+// Identity lifecycle (#195): tenants and reviewers are
 // soft-deleted, can be hidden behind a pseudonym, and every change or trace
 // appends an identity_events row carrying the signed request. TenantAdmin is
 // the only Go code that calls these SECURITY DEFINER functions.
@@ -102,6 +102,32 @@ type ReviewerRecord struct {
 	DeletedAt *time.Time
 	Hidden    bool
 }
+
+// IdentityEvent is one identity_events row as export_identity_events
+// returns it. IDs are real, hidden tenants' and reviewers' included, so an
+// export is sensitive. Request and Attestation are the stored bytes: a
+// verifier hashes Request as stored, never a re-encoding.
+type IdentityEvent struct {
+	EventID           int64
+	OccurredAt        time.Time
+	Action            string
+	Kind              string
+	TenantID          string
+	IdentityID        string
+	Actor             string
+	DBUser            string
+	Reason            string
+	Request           []byte
+	Attestation       []byte
+	AttestationSHA256 string
+}
+
+// MaxIdentityExportPage is the largest page export_identity_events returns.
+const MaxIdentityExportPage = 10000
+
+// identityExportPageSize is how many events ExportIdentityEvents reads per
+// call. It bounds memory only; the export's content does not depend on it.
+const identityExportPageSize = 1000
 
 // TraceResult is the identity behind a pseudonym.
 type TraceResult struct {
@@ -391,4 +417,65 @@ func (a *TenantAdmin) Trace(ctx context.Context, pseudonym, actor, reason string
 		return TraceResult{}, identityErr(fmt.Sprintf("trace pseudonym %q", pseudonym), ErrPseudonymNotFound, err)
 	}
 	return result, nil
+}
+
+// ExportIdentityEvents calls fn with every identity_events row in event_id
+// order, a page at a time, and stops at fn's first error. All pages come
+// from one read-only snapshot, so events committed during the export are
+// either wholly included or wholly absent, never skipped between pages. The
+// span carries no tenant: the export spans every tenant.
+func (a *TenantAdmin) ExportIdentityEvents(ctx context.Context, fn func(IdentityEvent) error) error {
+	return a.exportIdentityEvents(ctx, identityExportPageSize, fn)
+}
+
+func (a *TenantAdmin) exportIdentityEvents(ctx context.Context, pageSize int, fn func(IdentityEvent) error) (err error) {
+	ctx, done := a.tel.op(ctx, "export_identity_events")
+	defer func() { done(err) }()
+	const op = "export identity events"
+	tx, err := a.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if err := tx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"); err != nil {
+		return errors.Join(fmt.Errorf("%s: %w", op, err), tx.Rollback())
+	}
+	var after int64
+	for {
+		n, last, err := exportIdentityPage(ctx, tx, after, pageSize, fn)
+		if err != nil {
+			return errors.Join(fmt.Errorf("%s: %w", op, err), tx.Rollback())
+		}
+		if n < pageSize {
+			break
+		}
+		after = last
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%s: commit: %w", op, err)
+	}
+	return nil
+}
+
+// exportIdentityPage passes the up to pageSize events after event_id after
+// to fn, returning how many it read and the last event_id.
+func exportIdentityPage(ctx context.Context, tx Transaction, after int64, pageSize int, fn func(IdentityEvent) error) (n int, last int64, err error) {
+	rows, err := tx.Query(ctx, `SELECT event_id, occurred_at, action, kind, tenant_id, identity_id, actor, db_user,
+		reason, request, attestation, attestation_sha256 FROM public.export_identity_events($1, $2)`, after, pageSize)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	last = after
+	for rows.Next() {
+		var e IdentityEvent
+		if err := rows.Scan(&e.EventID, &e.OccurredAt, &e.Action, &e.Kind, &e.TenantID, &e.IdentityID, &e.Actor,
+			&e.DBUser, &e.Reason, &e.Request, &e.Attestation, &e.AttestationSHA256); err != nil {
+			return n, last, fmt.Errorf("read event after %d: %w", last, err)
+		}
+		if err := fn(e); err != nil {
+			return n, last, fmt.Errorf("event %d: %w", e.EventID, err)
+		}
+		n, last = n+1, e.EventID
+	}
+	return n, last, rows.Err()
 }

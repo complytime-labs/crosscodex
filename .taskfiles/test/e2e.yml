@@ -4,10 +4,14 @@ vars:
   MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
   TEST_DIR: '{{.TEST_DIR | default (printf "%s/.test-output" .ROOT_DIR)}}'
   CONTAINER_ENGINE: '{{.CONTAINER_ENGINE | default "podman"}}'
-  # graph_user password for this run, read by test/e2e/provision (via
-  # pkg/db/dbtest) and embedded in CROSSCODEX_DATABASE_GRAPH_DSN. The trailing
-  # comment keeps Task's per-command cache key distinct from the
-  # integration.yml role passwords. secret: true keeps it out of --verbose logs.
+  # Restricted-role passwords for this run, embedded in the daemon's DSNs.
+  # `crosscodexd migrate` (run by test/e2e/run-daemon.sh as the superuser)
+  # sets each role's password from its DSN. The trailing comments give the
+  # commands distinct Task cache keys, so the roles get different passwords.
+  # secret: true keeps them out of --verbose logs.
+  TEST_APP_USER_PASSWORD:
+    sh: "od -An -tx1 -N16 /dev/urandom | tr -d ' \\n' # app_user"
+    secret: true
   TEST_GRAPH_USER_PASSWORD:
     sh: "od -An -tx1 -N16 /dev/urandom | tr -d ' \\n' # graph_user"
     secret: true
@@ -32,9 +36,11 @@ tasks:
       DB_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
     env:
       TMPDIR: "{{.TEST_DIR}}/buildtmp"
-      CROSSCODEX_DATABASE_DSN: "{{.DB_DSN}}"
+      # Owner credential for `crosscodexd migrate` only; run-daemon.sh unsets
+      # it before starting the daemon.
+      CROSSCODEX_DATABASE_MIGRATION_DSN: "{{.DB_DSN}}"
+      CROSSCODEX_DATABASE_DSN: "postgres://app_user:{{.TEST_APP_USER_PASSWORD}}@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
       CROSSCODEX_DATABASE_GRAPH_DSN: "postgres://graph_user:{{.TEST_GRAPH_USER_PASSWORD}}@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
-      TEST_GRAPH_USER_PASSWORD: "{{.TEST_GRAPH_USER_PASSWORD}}"
     preconditions:
       - sh: command -v psql >/dev/null 2>&1
         msg: "psql not found - install postgresql-client for host DB access"
@@ -81,9 +87,11 @@ tasks:
       DB_DSN: "postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
     env:
       TMPDIR: "{{.TEST_DIR}}/buildtmp"
-      CROSSCODEX_DATABASE_DSN: "{{.DB_DSN}}"
+      # Owner credential for `crosscodexd migrate` only; run-daemon.sh unsets
+      # it before starting the daemon.
+      CROSSCODEX_DATABASE_MIGRATION_DSN: "{{.DB_DSN}}"
+      CROSSCODEX_DATABASE_DSN: "postgres://app_user:{{.TEST_APP_USER_PASSWORD}}@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
       CROSSCODEX_DATABASE_GRAPH_DSN: "postgres://graph_user:{{.TEST_GRAPH_USER_PASSWORD}}@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem"
-      TEST_GRAPH_USER_PASSWORD: "{{.TEST_GRAPH_USER_PASSWORD}}"
     preconditions:
       - sh: command -v psql >/dev/null 2>&1
         msg: "psql not found - install postgresql-client for host DB access"

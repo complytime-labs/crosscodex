@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"unicode"
@@ -122,6 +123,28 @@ func FuzzValidatePseudonym(f *testing.F) {
 			if c := rest[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 				t.Fatalf("accepted pseudonym %q with non-hex byte %q", p, c)
 			}
+		}
+	})
+}
+
+var scramVerifierShape = regexp.MustCompile(`^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$`)
+
+func FuzzSCRAMVerifier(f *testing.F) {
+	f.Add("3f9a1c7e5b2d4a6c8e0f1b3d5a7c9e2f")
+	f.Add("")
+	f.Add("has space")
+	f.Add("x'; ALTER ROLE postgres SUPERUSER; --")
+	f.Add("pässword")
+	f.Add(strings.Repeat("a", 4096))
+
+	salt := []byte("0123456789abcdef")
+	f.Fuzz(func(t *testing.T, password string) {
+		v, err := db.SCRAMVerifier(password, salt)
+		if err != nil {
+			return
+		}
+		if !scramVerifierShape.MatchString(v) {
+			t.Fatalf("accepted %q but produced malformed verifier %q", password, v)
 		}
 	})
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
 
@@ -238,8 +240,9 @@ func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
 
 // attachAllGateway wires a fully-featured gateway for the all-in-one role:
 // authn, pass-through ingestion, catalog (with graph writes), the in-process
-// pipeline, and admin. It also provisions the default tenant and its AGE graph
-// so document submission has a tenant and a graph to write into.
+// pipeline, and admin. It refuses a default tenant that `crosscodexd migrate`
+// has not provisioned, and ensures the tenant's AGE graph exists, so document
+// submission has a tenant and a graph to write into.
 func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, backendPipeline gateway.PipelineBackend) error {
 	if cfg.Tenants.DefaultTenant == "" {
 		return errors.New("all role: tenants.default_tenant must be set")
@@ -248,10 +251,32 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		return errors.New("all role: storage.objects.base_path must be set")
 	}
 
-	// Provision the default tenant (relational FK) and its AGE graph.
-	if err := dbpkg.EnsureTenant(ctx, shared.appPool, cfg.Tenants.DefaultTenant, cfg.Tenants.DefaultTenant); err != nil {
-		return fmt.Errorf("provision default tenant: %w", err)
+	// The default tenant is provisioned by `crosscodexd migrate` (as the
+	// schema owner); the daemon only checks it. enter_tenant refuses a
+	// deleted tenant.
+	tctx, err := tenant.WithTenant(ctx, cfg.Tenants.DefaultTenant)
+	if err != nil {
+		return fmt.Errorf("all role: tenants.default_tenant: %w", err)
 	}
+	tx, err := dbpkg.NewTenantPool(shared.appPool).Begin(tctx)
+	if dbpkg.IsPgErrorCode(err, "42501") {
+		return fmt.Errorf("default tenant %q is deleted. Restore it with crosscodexd admin tenant restore --tenant %s --by <operator> --reason <text>, or set tenants.default_tenant to an active tenant: %w",
+			cfg.Tenants.DefaultTenant, cfg.Tenants.DefaultTenant, err)
+	}
+	if err != nil {
+		return fmt.Errorf("check default tenant %q: %w", cfg.Tenants.DefaultTenant, err)
+	}
+	var found int
+	err = tx.QueryRow(tctx, "SELECT 1 FROM tenants WHERE tenant_id = $1", cfg.Tenants.DefaultTenant).Scan(&found)
+	_ = tx.Rollback()
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("default tenant %q does not exist. Run `crosscodexd migrate`, which provisions tenants.default_tenant, then start crosscodexd again", cfg.Tenants.DefaultTenant)
+	}
+	if err != nil {
+		return fmt.Errorf("check default tenant %q: %w", cfg.Tenants.DefaultTenant, err)
+	}
+	// The tenants insert trigger created the tenant's AGE graph; graph_user
+	// cannot create one, so CreateGraph only confirms it exists.
 	if err := shared.graphDB_.CreateGraph(ctx, cfg.Tenants.DefaultTenant); err != nil {
 		return fmt.Errorf("provision tenant graph: %w", err)
 	}
@@ -272,7 +297,7 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
 	catalogSvc := catalog.NewService(
 		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer))),
-		catalog.WithStore(catalog.NewPGStore(shared.appPool)),
+		catalog.WithStore(catalog.NewPGStore(dbpkg.NewTenantPool(shared.appPool))),
 		catalog.WithStorage(storageProvider),
 		catalog.WithGraphDB(shared.graphDB_),
 		catalog.WithVectorDB(shared.vectorDB),
@@ -295,7 +320,7 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		gateway.WithTelemetry(gatewayTracer, gatewayMeter),
 	)
 
-	adminSvc, purgePool, err := buildRetentionAdmin(cfg, shared, slog.Default())
+	adminSvc, purgePool, err := buildRetentionAdmin(ctx, cfg, shared, slog.Default())
 	if err != nil {
 		return fmt.Errorf("build retention admin: %w", err)
 	}
@@ -346,8 +371,8 @@ func (disabledArchive) Close() error { return nil }
 // PurgeDSN is unset, in which case the Purger reuses the app pool and fails
 // closed at the DB immutability trigger). The caller owns the returned pool and
 // must close it via runtime.close.
-func buildRetentionAdmin(cfg *config.Config, shared *sharedResources, logger *slog.Logger) (crosscodexv1connect.AdminServiceHandler, dbpkg.Pool, error) {
-	wiring, err := buildRetentionWiring(cfg, shared, logger)
+func buildRetentionAdmin(ctx context.Context, cfg *config.Config, shared *sharedResources, logger *slog.Logger) (crosscodexv1connect.AdminServiceHandler, dbpkg.Pool, error) {
+	wiring, err := buildRetentionWiring(ctx, cfg, shared, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -387,7 +412,7 @@ type retentionWiring struct {
 // on a tenant-scoped pool (RLS keyed on the request-context tenant), and the
 // archiver/purger self-scope per candidate via c.TenantID. This ensures a caller
 // only ever scans and mutates its own tenant.
-func buildRetentionWiring(cfg *config.Config, shared *sharedResources, logger *slog.Logger) (retentionWiring, error) {
+func buildRetentionWiring(ctx context.Context, cfg *config.Config, shared *sharedResources, logger *slog.Logger) (retentionWiring, error) {
 	defaultPolicy, err := retention.NewPolicy(cfg.Retention)
 	if err != nil {
 		return retentionWiring{}, fmt.Errorf("build retention policy: %w", err)
@@ -400,6 +425,17 @@ func buildRetentionWiring(cfg *config.Config, shared *sharedResources, logger *s
 	var purgeConn dbpkg.Connection = shared.appPool
 	var purgePool dbpkg.Pool
 	if cfg.Database.PurgeDSN != "" {
+		// A superuser or owner purge_dsn would bypass RLS and satisfy the
+		// retention_purge triggers for every tenant, so refuse it up front.
+		purgeDB, err := sql.Open("pgx", cfg.Database.PurgeDSN)
+		if err != nil {
+			return retentionWiring{}, fmt.Errorf("open purge_user sql.DB: %w", err)
+		}
+		err = dbpkg.CheckRestrictedRole(ctx, purgeDB, "database.purge_dsn")
+		purgeDB.Close()
+		if err != nil {
+			return retentionWiring{}, fmt.Errorf("check the purge_user connection: %w", err)
+		}
 		dbTracer, dbMeter := telemetry.Instrumentation("pkg/db")
 		pool, err := dbpkg.NewPool(dbpkg.NewPoolConfigFrom(
 			cfg.Database.PurgeDSN, cfg.Database.GraphDSN, cfg.Database.MaxConns, cfg.Database.SSLMode, cfg.Database.Extensions,

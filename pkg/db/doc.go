@@ -4,16 +4,20 @@
 //
 // # Startup Lifecycle
 //
-// A typical service initializes the database layer in three stages:
+// Schema changes and the default tenant are provisioned out of band by
+// `crosscodexd migrate`, which connects as the schema owner
+// (database.migration_dsn). A service then connects only as the restricted
+// roles, in three stages:
 //
-//  1. Run migrations (superuser connection, owns the schema):
+//  1. (Once, as the owner, in `crosscodexd migrate`) Run migrations:
 //
-//     migrator, err := db.NewMigrator(superuserDSN)
+//     migrator, err := db.NewMigrator(ownerDSN)
 //     if err != nil { return err }
 //     defer migrator.Close()
 //     if err := migrator.Up(ctx); err != nil { return err }
 //
-//  2. Open the application pool and verify extensions:
+//  2. Open the application pool, check the role and schema version, and
+//     verify extensions:
 //
 //     pool, err := db.NewPool(db.PoolConfig{
 //     DSN:          appUserDSN,
@@ -22,7 +26,14 @@
 //     })
 //     if err != nil { return err }
 //     defer pool.Close()
+//     if err := db.CheckRestrictedRole(ctx, appDB, "database.dsn"); err != nil { return err }
+//     if err := db.CheckSchemaVersion(ctx, appDB); err != nil { return err }
 //     if err := pool.VerifyExtensions(ctx); err != nil { return err }
+//
+//     CheckRestrictedRole refuses a superuser, BYPASSRLS, table-owner or
+//     member-of-one connection. CheckSchemaVersion refuses a schema that is
+//     not at LatestMigrationVersion or is dirty. appDB is a *sql.DB on the
+//     same DSN (anything satisfying RowQueryer).
 //
 //  3. Wrap the pool for tenant-scoped access:
 //
@@ -53,10 +64,12 @@
 // Each role has the minimum privileges needed for its purpose, and none
 // can escalate to another's capabilities.
 //
-//   - postgres (superuser): Owns all tables and extensions. Used only for
-//     schema migrations, role all's default_tenant provisioning
-//     (EnsureTenant), and as the owner the tenant_admin functions run as.
-//     Never used by application code at runtime.
+//   - postgres (superuser): Owns all tables and extensions. Used only by
+//     `crosscodexd migrate` (database.migration_dsn) for schema migrations,
+//     role passwords and default_tenant provisioning (EnsureTenant), and as
+//     the owner the tenant_admin functions run as. Never used by application
+//     code at runtime; the daemon refuses to start on this role
+//     (CheckRestrictedRole).
 //
 //   - app_user: SELECT/INSERT/UPDATE/DELETE on public-schema tables, with
 //     Row-Level Security (RLS) policies enforcing tenant isolation per
@@ -73,7 +86,7 @@
 //     tables. This is the role used by the graph connection pool (configured
 //     via database.graph_dsn).
 //
-//   - tenant_admin (migration 007): no table, sequence or schema grants.
+//   - tenant_admin: no table, sequence or schema grants.
 //     It may only EXECUTE the SECURITY DEFINER functions provision_tenant,
 //     set_tenant_status and list_tenants, so operators can provision and
 //     suspend tenants (crosscodexd admin tenant, via TenantAdmin) without

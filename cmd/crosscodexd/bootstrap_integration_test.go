@@ -10,15 +10,13 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/pem"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"errors"
-
-	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -26,7 +24,6 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
-	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
@@ -48,6 +45,12 @@ var (
 // expected to get past that check references these paths. testServerTLS and
 // testClientTLS assemble the server-side and client-side config.TLSConfig
 // from them.
+// testGraphUserPassword is graph_user's password for this suite, generated
+// once in BeforeSuite so every config built by baseTestConfig agrees on it:
+// each call re-sets it, and a fresh value per call would lock out a runtime
+// built from an earlier config.
+var testGraphUserPassword string
+
 var (
 	testTLSCAPath         string
 	testTLSServerCertPath string
@@ -118,6 +121,9 @@ var _ = BeforeSuite(func() {
 	testTLSServerKeyPath = filepath.Join(certDir, "server-key.pem")
 	testTLSClientCertPath = filepath.Join(certDir, "client.pem")
 	testTLSClientKeyPath = filepath.Join(certDir, "client-key.pem")
+
+	testGraphUserPassword, err = dbtest.NewRolePassword()
+	Expect(err).NotTo(HaveOccurred(), "generate graph_user password")
 })
 
 func TestCrosscodexdIntegrationBDD(t *testing.T) {
@@ -132,23 +138,27 @@ var _ = BeforeEach(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 
 // baseTestConfig builds a minimal *config.Config pointing Database/NATS at
 // the test compose stack, with no Role set — callers set cfg.Role to the
-// role under test. Database.DSN connects as the role from TEST_DATABASE_DSN
-// (app_user in production, the compose superuser here, per the convention
-// used by other integration suites in this repo — see
-// pkg/vectordb/vectordb_integration_bdd_test.go). Database.Extensions
-// mirrors the production default (see config.defaults) so buildSharedResources'
+// role under test. suDSN is TEST_DATABASE_DSN, the compose superuser, used
+// only as database.migration_dsn: the daemon refuses a superuser, so
+// Database.DSN connects as app_user (with the run's shared
+// TEST_APP_USER_PASSWORD, which other suites also use) and Database.GraphDSN
+// as graph_user, as in production. Database.Extensions mirrors the
+// production default (see config.defaults) so buildSharedResources'
 // VerifyExtensions call has something to check.
 //
-// This helper does not set Database.GraphDSN — the graph_user credential it
-// requires is only needed by roles that request the graph resource, so
-// graph-role tests derive their own GraphDSN via testConfig below rather
-// than paying that setup cost unconditionally.
-func baseTestConfig(dsn string) *config.Config {
-	return &config.Config{
+// It runs migrateDatabase (crosscodexd migrate), which migrates the schema
+// and sets both role passwords. A role=all spec must set
+// cfg.Tenants.DefaultTenant and call migrateDatabase again to provision the
+// tenant, because the daemon only checks that it exists.
+func baseTestConfig(suDSN string) *config.Config {
+	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred())
+	cfg := &config.Config{
 		Database: config.DatabaseConfig{
-			DSN:        dsn,
-			GraphDSN:   dsn,
-			Extensions: []string{"age", "vector"},
+			MigrationDSN: suDSN,
+			DSN:          withRole(suDSN, "app_user", appPassword),
+			GraphDSN:     withRole(suDSN, "graph_user", testGraphUserPassword),
+			Extensions:   []string{"age", "vector"},
 		},
 		NATS: config.NATSConfig{
 			URL: "", // empty = embedded mode
@@ -157,54 +167,13 @@ func baseTestConfig(dsn string) *config.Config {
 			},
 		},
 	}
+	Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "crosscodexd migrate")
+	return cfg
 }
 
-// provisionGraphUser runs migrations and assigns graph_user a fresh random
-// password, returning a DSN authenticated as graph_user. graph_user (created
-// by migration 001) must exist and own the per-tenant graph schemas before
-// graphdb.New can connect; both RoleGraph and RoleAll require this.
-func provisionGraphUser(ctx context.Context, dsn string) string {
-	// bootstrap() also runs migrations, but graph_user must exist (created by
-	// migration 001) before we can set its password below, so migrate here
-	// first; bootstrap's subsequent Up() is a documented no-op re-run.
-	migrator, err := db.NewMigrator(dsn)
-	Expect(err).NotTo(HaveOccurred(), "create migrator")
-	if err := migrator.Up(ctx); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		migrator.Close()
-		Expect(err).NotTo(HaveOccurred(), "run migrations")
-	}
-	migrator.Close()
-
-	// Migrations create graph_user without a password. Set one so we can
-	// authenticate as it below (idempotent: safe to run every test invocation).
-	adminDB, err := sql.Open("pgx", dsn)
-	Expect(err).NotTo(HaveOccurred(), "open admin connection")
-	defer adminDB.Close()
-
-	// Generate a random password per test run rather than a fixed literal.
-	testPassword, err := dbtest.NewRolePassword()
-	Expect(err).NotTo(HaveOccurred(), "generate test fixture password")
-	stmt, err := dbtest.AlterRolePasswordSQL("graph_user", testPassword)
-	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE graph_user")
-	_, err = adminDB.ExecContext(ctx, stmt)
-	Expect(err).NotTo(HaveOccurred(), "set graph_user password")
-
-	u, err := url.Parse(dsn)
-	Expect(err).NotTo(HaveOccurred(), "parse TEST_DATABASE_DSN")
-	u.User = url.UserPassword("graph_user", testPassword)
-	return u.String()
-}
-
-// testConfig builds on baseTestConfig for the graph role: it runs migrations
-// up front (graph_user must exist, created by migration 001, before we can
-// set its password below) and rewrites Database.GraphDSN to authenticate as
-// graph_user, mirroring pkg/graphdb/graphdb_integration_bdd_test.go, since
-// graphdb.New requires a connection with graph_user's schema-ownership
-// privileges.
-func testConfig(dsn string) *config.Config {
-	graphDSN := provisionGraphUser(context.Background(), dsn)
-	cfg := baseTestConfig(dsn)
-	cfg.Database.GraphDSN = graphDSN
+// testConfig is baseTestConfig for the graph role.
+func testConfig(suDSN string) *config.Config {
+	cfg := baseTestConfig(suDSN)
 	cfg.Role = config.RoleGraph
 	return cfg
 }
@@ -506,6 +475,7 @@ var _ = Describe("bootstrap with role=all", func() {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		rt, err := bootstrap(ctx, cfg)
 		Expect(err).NotTo(HaveOccurred(), "bootstrap failed")
@@ -518,5 +488,201 @@ var _ = Describe("bootstrap with role=all", func() {
 		// "all" relies on the gateway's own /healthz; no separate
 		// dedicated health listener is started for co-located services.
 		Expect(rt.healthServer).To(BeNil(), "all role must not leave a dedicated health listener up")
+	})
+})
+
+// The daemon connects only as the restricted roles, which RLS applies to, and
+// never migrates: crosscodexd migrate does both owner-only jobs. Each spec
+// checks the refusal names what to do, and that the database is unchanged.
+var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated database", func() {
+	var (
+		ctx   context.Context
+		suDSN string
+		suDB  *sql.DB
+	)
+
+	BeforeEach(func() {
+		suDSN = os.Getenv("TEST_DATABASE_DSN")
+		if suDSN == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), time.Minute)
+		DeferCleanup(cancel)
+		var err error
+		suDB, err = sql.Open("pgx", suDSN)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(suDB.Close)
+	})
+
+	type schemaVersion struct {
+		version int64
+		dirty   bool
+	}
+	schemaState := func() schemaVersion {
+		var s schemaVersion
+		Expect(suDB.QueryRowContext(ctx, "SELECT version, dirty FROM schema_migrations").Scan(&s.version, &s.dirty)).To(Succeed())
+		return s
+	}
+	superuser := func() string {
+		u, err := url.Parse(suDSN)
+		Expect(err).NotTo(HaveOccurred())
+		return u.User.Username()
+	}
+
+	It("connects as the restricted roles without migrating", func() {
+		cfg := baseTestConfig(suDSN)
+		before := schemaState()
+
+		res, err := buildSharedResources(ctx, cfg, requiredResources{db: true, graph: true})
+		Expect(err).NotTo(HaveOccurred())
+		res.close()
+
+		Expect(schemaState()).To(Equal(before))
+	})
+
+	It("refuses a superuser database.dsn", func() {
+		cfg := baseTestConfig(suDSN)
+		cfg.Database.DSN = suDSN
+		before := schemaState()
+
+		_, err := buildSharedResources(ctx, cfg, requiredResources{db: true})
+		Expect(err).To(MatchError(ContainSubstring(`database.dsn connects as "` + superuser() + `", which is a superuser`)))
+		Expect(err.Error()).To(ContainSubstring("crosscodexd migrate"))
+		Expect(schemaState()).To(Equal(before))
+	})
+
+	It("refuses a superuser database.graph_dsn", func() {
+		cfg := baseTestConfig(suDSN)
+		cfg.Database.GraphDSN = suDSN
+
+		_, err := buildSharedResources(ctx, cfg, requiredResources{db: true, graph: true})
+		Expect(err).To(MatchError(ContainSubstring(`database.graph_dsn connects as "` + superuser() + `", which is a superuser`)))
+		Expect(err.Error()).To(ContainSubstring("connect database.graph_dsn as graph_user"))
+	})
+
+	It("refuses a superuser database.purge_dsn", func() {
+		cfg := baseTestConfig(suDSN)
+		cfg.Database.PurgeDSN = suDSN
+		res, err := buildSharedResources(ctx, cfg, requiredResources{db: true})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(res.close)
+		var rowsBefore int
+		Expect(suDB.QueryRowContext(ctx, "SELECT count(*) FROM jobs").Scan(&rowsBefore)).To(Succeed())
+
+		_, err = buildRetentionWiring(ctx, cfg, res, slog.Default())
+		Expect(err).To(MatchError(ContainSubstring(`database.purge_dsn connects as "` + superuser() + `", which is a superuser`)))
+		Expect(err.Error()).To(ContainSubstring("connect database.purge_dsn as purge_user"))
+		var rowsAfter int
+		Expect(suDB.QueryRowContext(ctx, "SELECT count(*) FROM jobs").Scan(&rowsAfter)).To(Succeed())
+		Expect(rowsAfter).To(Equal(rowsBefore), "nothing may be purged")
+	})
+
+	It("accepts purge_user as database.purge_dsn", func() {
+		purgePassword, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred())
+		cfg := baseTestConfig(suDSN)
+		cfg.Database.PurgeDSN = withRole(suDSN, "purge_user", purgePassword)
+		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "set purge_user's password")
+		res, err := buildSharedResources(ctx, cfg, requiredResources{db: true})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(res.close)
+
+		wiring, err := buildRetentionWiring(ctx, cfg, res, slog.Default())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(wiring.purgePool).NotTo(BeNil())
+		Expect(wiring.purgePool.Close()).To(Succeed())
+	})
+
+	It("refuses a schema it cannot read the version of", func() {
+		cfg := baseTestConfig(suDSN)
+		_, err := suDB.ExecContext(ctx, "REVOKE SELECT ON schema_migrations FROM app_user")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_, err := suDB.ExecContext(context.Background(), "GRANT SELECT ON schema_migrations TO app_user")
+			Expect(err).NotTo(HaveOccurred(), "restore app_user's SELECT on schema_migrations")
+		})
+		before := schemaState()
+
+		_, err = buildSharedResources(ctx, cfg, requiredResources{db: true})
+		Expect(err).To(MatchError(ContainSubstring("Run `crosscodexd migrate`")))
+		Expect(schemaState()).To(Equal(before))
+	})
+
+	// The schema has a single migration, so the only state behind it is the
+	// one a full `migrate down` leaves: no version row at all.
+	It("refuses a schema behind this binary instead of migrating it", func() {
+		cfg := baseTestConfig(suDSN)
+		before := schemaState()
+		_, err := suDB.ExecContext(ctx, "DELETE FROM schema_migrations")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			_, err := suDB.ExecContext(context.Background(),
+				"INSERT INTO schema_migrations (version, dirty) VALUES ($1, $2)", before.version, before.dirty)
+			Expect(err).NotTo(HaveOccurred(), "restore the schema version")
+		})
+
+		_, err = buildSharedResources(ctx, cfg, requiredResources{db: true})
+		Expect(err).To(MatchError(ContainSubstring("Run `crosscodexd migrate`")))
+		var rows int
+		Expect(suDB.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&rows)).To(Succeed())
+		Expect(rows).To(BeZero(), "the daemon must not migrate")
+	})
+
+	It("refuses role all when the default tenant is deleted and says how to restore it", func() {
+		const tenantID = "deleted-default"
+		hardDelete, err := dbtest.HardDeleteTenantSQL(tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = suDB.ExecContext(ctx, hardDelete)
+		Expect(err).NotTo(HaveOccurred(), "remove a leftover tenant row")
+		DeferCleanup(func() {
+			_, err := suDB.ExecContext(context.Background(), hardDelete)
+			Expect(err).NotTo(HaveOccurred(), "remove the test tenant")
+		})
+
+		cfg := baseTestConfig(suDSN)
+		cfg.Role = config.RoleAll
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Server.Addr = "127.0.0.1:0"
+		cfg.Tenants.DefaultTenant = tenantID
+		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
+		// A superuser UPDATE soft-deletes it: delete_tenant needs a signed
+		// attestation, and the row state is all enter_tenant reads.
+		_, err = suDB.ExecContext(ctx, "UPDATE tenants SET status = 'deleted', deleted_at = now(), deleted_by = 'test' WHERE tenant_id = $1", tenantID)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = bootstrap(ctx, cfg)
+		Expect(err).To(MatchError(ContainSubstring(`default tenant "deleted-default" is deleted. Restore it with crosscodexd admin tenant restore --tenant deleted-default --by <operator> --reason <text>, or set tenants.default_tenant to an active tenant`)))
+
+		var status string
+		Expect(suDB.QueryRowContext(ctx, "SELECT status FROM tenants WHERE tenant_id = $1", tenantID).Scan(&status)).To(Succeed())
+		Expect(status).To(Equal("deleted"), "the daemon must not restore the tenant")
+	})
+
+	It("refuses role all when the default tenant was never provisioned", func() {
+		const tenantID = "never-provisioned"
+		hardDelete, err := dbtest.HardDeleteTenantSQL(tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = suDB.ExecContext(ctx, hardDelete)
+		Expect(err).NotTo(HaveOccurred(), "remove a leftover tenant row")
+
+		cfg := baseTestConfig(suDSN)
+		cfg.Role = config.RoleAll
+		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Server.Addr = "127.0.0.1:0"
+		cfg.Tenants.DefaultTenant = tenantID
+		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+
+		_, err = bootstrap(ctx, cfg)
+		Expect(err).To(MatchError(ContainSubstring(`default tenant "never-provisioned" does not exist. Run ` + "`crosscodexd migrate`")))
+
+		var n int
+		Expect(suDB.QueryRowContext(ctx, "SELECT count(*) FROM tenants WHERE tenant_id = $1", tenantID).Scan(&n)).To(Succeed())
+		Expect(n).To(BeZero(), "the daemon must not provision the tenant")
 	})
 })

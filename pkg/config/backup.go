@@ -11,9 +11,9 @@ import (
 // BackupConfig configures `crosscodexd admin backup`. An empty
 // Destination.Backend disables backup; every backup command then fails closed.
 type BackupConfig struct {
-	// DSN is a postgres:// URL for backup_user (LOGIN REPLICATION, migration
-	// 006). WAL-G streams base backups over it and the objects step reads
-	// tenant IDs with it. Never logged.
+	// DSN is a postgres:// URL for backup_user (LOGIN REPLICATION). WAL-G
+	// streams base backups over it and the objects step reads tenant IDs
+	// with it. Never logged.
 	DSN         string                  `yaml:"dsn" json:"dsn"`
 	Destination BackupDestinationConfig `yaml:"destination" json:"destination"`
 	MaxAge      BackupMaxAgeConfig      `yaml:"max_age" json:"max_age"`

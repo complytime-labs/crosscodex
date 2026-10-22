@@ -47,6 +47,14 @@ Which roles use it:
 - **`graph`** and **`pipeline`** — both start a dedicated listener on `health.addr`, backed by a `dbPingCheck` closure (defined locally in `bootstrap.go`): it calls the app Postgres pool's `Health(ctx)` and fails the probe if the pool reports not connected.
 - **`gateway`** and **`all`** — do *not* use the dedicated listener. `internal/gateway.Server` already serves its own built-in `/healthz`. For `all`, `bootstrap` explicitly sets `rt.healthServer = nil` after wiring graph/worker/gateway, because the gateway's `/healthz` already covers process liveness for every co-located service in that process. `internal/pipeline.Server`'s own RPC listener has no `/healthz` of its own — every RPC on it requires mTLS, so health checks go through the separate dedicated listener above instead of carving an unauthenticated path out of the RPC listener.
 
+## Database startup checks
+
+Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Database Migrations](migrations.md#crosscodexd-migrate)). At startup the daemon refuses to run when:
+
+- `database.dsn`, `database.graph_dsn` or, for role `all` and `admin retention scan` when it is set, `database.purge_dsn` connects as a superuser, a `BYPASSRLS` role, a table owner, or a member of one (`pkg/db.CheckRestrictedRole`).
+- the schema is not at the latest embedded migration version, or the last migration failed (`pkg/db.CheckSchemaVersion`, on the `database.dsn` connection).
+- role `all` finds no `tenants` row for `tenants.default_tenant`. `crosscodexd migrate` provisions it.
+
 ## Fail-closed preconditions for `pipeline` / `all`
 
 `buildPipelineService` in `cmd/crosscodexd/bootstrap.go` refuses to construct a `pipeline.Service` unless three things are configured, returning an error immediately rather than starting in a partially-usable state. This applies to the `pipeline` role directly, and to `all` (which calls `buildPipelineService` as part of its startup sequence):

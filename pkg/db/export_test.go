@@ -258,3 +258,10 @@ func ExportNewRecordingPool() (Pool, func() []string) {
 	execs := &[]string{}
 	return &recordingPool{tx: &recordingTx{execs: execs}}, func() []string { return *execs }
 }
+
+// ExportIdentityEventsWithPageSize runs a.ExportIdentityEvents with
+// pageSize events per page instead of the default, to cross page
+// boundaries with few events.
+func ExportIdentityEventsWithPageSize(ctx context.Context, a *TenantAdmin, pageSize int, fn func(IdentityEvent) error) error {
+	return a.exportIdentityEvents(ctx, pageSize, fn)
+}

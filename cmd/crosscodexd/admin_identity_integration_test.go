@@ -11,7 +11,9 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	. "github.com/onsi/ginkgo/v2"
@@ -179,6 +181,81 @@ var _ = Describe("admin identity commands against a real database", Ordered, fun
 		}
 		Expect(rows.Err()).NotTo(HaveOccurred())
 		Expect(actions).To(Equal([]string{"reviewer add", "reviewer delete", "reviewer hide", "reviewer trace", "tenant delete", "tenant restore"}))
+	})
+
+	It("exports the audit log to a 0600 JSONL file with the stored bytes, leaving no partial file", func() {
+		dir := GinkgoT().TempDir()
+		out := filepath.Join(dir, "audit.jsonl")
+		code, stdout, stderr := run("identity", "export", "--out", out)
+		Expect(code).To(Equal(0), stderr)
+		Expect(stdout).To(MatchRegexp(`^exported [0-9]+ identity events to ` + regexp.QuoteMeta(out) + `\n$`))
+		entries, err := os.ReadDir(dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(entries).To(HaveLen(1), "no .partial file is left behind")
+		info, err := os.Stat(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+
+		// want is this tenant's events as stored, read as the superuser.
+		type event struct {
+			EventID           int64  `json:"event_id"`
+			OccurredAt        string `json:"occurred_at"`
+			Action            string `json:"action"`
+			Kind              string `json:"kind"`
+			TenantID          string `json:"tenant_id"`
+			IdentityID        string `json:"identity_id"`
+			Actor             string `json:"actor"`
+			DBUser            string `json:"db_user"`
+			Reason            string `json:"reason"`
+			Request           []byte `json:"request"`
+			Attestation       []byte `json:"attestation"`
+			AttestationSHA256 string `json:"attestation_sha256"`
+		}
+		rows, err := suDB.QueryContext(ctx, `SELECT event_id, action, kind, identity_id, actor, db_user, reason, request,
+			attestation, attestation_sha256 FROM identity_events WHERE tenant_id = $1 ORDER BY event_id`, tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { Expect(rows.Close()).To(Succeed()) }()
+		var want []event
+		for rows.Next() {
+			e := event{TenantID: tenantID}
+			Expect(rows.Scan(&e.EventID, &e.Action, &e.Kind, &e.IdentityID, &e.Actor, &e.DBUser, &e.Reason, &e.Request,
+				&e.Attestation, &e.AttestationSHA256)).To(Succeed())
+			want = append(want, e)
+		}
+		Expect(rows.Err()).NotTo(HaveOccurred())
+		Expect(want).NotTo(BeEmpty())
+
+		body, err := os.ReadFile(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(body).To(HaveSuffix("\n"))
+		var got []event
+		var last int64
+		for _, line := range strings.Split(strings.TrimSuffix(string(body), "\n"), "\n") {
+			var e event
+			Expect(json.Unmarshal([]byte(line), &e)).To(Succeed(), line)
+			Expect(e.EventID).To(BeNumerically(">", last), "events are in event_id order")
+			last = e.EventID
+			Expect(e.OccurredAt).To(MatchRegexp(`Z$`))
+			attSum := sha256.Sum256(e.Attestation)
+			Expect(e.AttestationSHA256).To(Equal(hex.EncodeToString(attSum[:])))
+			if e.TenantID == tenantID {
+				e.OccurredAt = ""
+				got = append(got, e)
+			}
+		}
+		Expect(got).To(Equal(want))
+	})
+
+	It("refuses to overwrite an existing --out file, leaving it unchanged", func() {
+		out := filepath.Join(GinkgoT().TempDir(), "audit.jsonl")
+		Expect(os.WriteFile(out, []byte("earlier export\n"), 0o600)).To(Succeed())
+		code, stdout, stderr := run("identity", "export", "--out", out)
+		Expect(code).To(Equal(1))
+		Expect(stderr).To(ContainSubstring("already exists; nothing was written. Choose a new --out path"))
+		Expect(stdout).To(BeEmpty())
+		body, err := os.ReadFile(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(body)).To(Equal("earlier export\n"))
 	})
 
 	It("refuses to hide a tenant that is not deleted, with the fix, recording nothing", func() {

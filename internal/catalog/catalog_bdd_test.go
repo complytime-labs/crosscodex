@@ -5,6 +5,7 @@ package catalog_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
 
@@ -264,6 +266,16 @@ var _ = Describe("ListOptions", func() {
 	)
 })
 
+const storeTenant = "store-unit"
+
+var storeCtx = func() context.Context {
+	ctx, err := tenant.WithTenant(context.Background(), storeTenant)
+	if err != nil {
+		panic(err)
+	}
+	return ctx
+}()
+
 var _ = Describe("PGStore", func() {
 	Describe("UpsertCatalog", func() {
 		It("returns error when Begin fails", func() {
@@ -275,7 +287,7 @@ var _ = Describe("PGStore", func() {
 			}
 			store := catalog.NewPGStore(conn)
 
-			err := store.UpsertCatalog(context.Background(), catalog.CatalogRecord{CatalogID: "test"})
+			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "test", TenantID: storeTenant})
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, beginErr)).To(BeTrue())
 		})
@@ -287,26 +299,106 @@ var _ = Describe("PGStore", func() {
 			}
 			store := catalog.NewPGStore(conn)
 
-			err := store.UpsertCatalog(context.Background(), catalog.CatalogRecord{CatalogID: "cat-1"})
+			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tx.committed).To(BeTrue())
 		})
 
-		It("does not commit when Exec fails", func() {
-			execErr := errors.New("unique violation")
+		It("does not commit when the upsert fails", func() {
+			upsertErr := errors.New("unique violation")
 			tx := &mockTx{
-				execFn: func(context.Context, string, ...any) error { return execErr },
+				queryRowFn: func(context.Context, string, ...any) db.Row {
+					return &mockRow{scanFn: func(...any) error { return upsertErr }}
+				},
 			}
 			conn := &mockConn{
 				beginFn: func(context.Context) (db.Transaction, error) { return tx, nil },
 			}
 			store := catalog.NewPGStore(conn)
 
-			err := store.UpsertCatalog(context.Background(), catalog.CatalogRecord{CatalogID: "cat-1"})
+			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
 			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, execErr)).To(BeTrue())
+			Expect(errors.Is(err, upsertErr)).To(BeTrue())
 			Expect(tx.committed).To(BeFalse())
 		})
+
+		It("refuses and does not commit when the catalog ID belongs to another tenant", func() {
+			// ON CONFLICT ... WHERE catalogs.tenant_id = EXCLUDED.tenant_id
+			// updates nothing for another tenant's row, so RETURNING is empty.
+			tx := &mockTx{
+				queryRowFn: func(context.Context, string, ...any) db.Row {
+					return &mockRow{scanFn: func(...any) error { return sql.ErrNoRows }}
+				},
+			}
+			conn := &mockConn{
+				beginFn: func(context.Context) (db.Transaction, error) { return tx, nil },
+			}
+			store := catalog.NewPGStore(conn)
+
+			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
+			Expect(err).To(MatchError(ContainSubstring("belongs to another tenant")))
+			Expect(err).To(MatchError(ContainSubstring("nothing was written")))
+			Expect(tx.committed).To(BeFalse())
+		})
+	})
+
+	Describe("tenant scoping", func() {
+		// Begin must never run: a store call without a tenant, or with a
+		// record for another tenant, is refused before touching the database.
+		noBegin := func() *mockConn {
+			return &mockConn{beginFn: func(context.Context) (db.Transaction, error) {
+				Fail("Begin must not be called")
+				return nil, nil
+			}}
+		}
+
+		DescribeTable("refuses every method when the context has no tenant",
+			func(call func(catalog.Store, context.Context) error) {
+				err := call(catalog.NewPGStore(noBegin()), context.Background())
+				Expect(errors.Is(err, tenant.ErrNoTenant)).To(BeTrue(), "got %v", err)
+			},
+			Entry("UpsertCatalog", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertCatalog(ctx, catalog.CatalogRecord{CatalogID: "c", TenantID: storeTenant})
+			}),
+			Entry("GetCatalog", func(s catalog.Store, ctx context.Context) error {
+				_, err := s.GetCatalog(ctx, "c")
+				return err
+			}),
+			Entry("ListCatalogs", func(s catalog.Store, ctx context.Context) error {
+				_, _, err := s.ListCatalogs(ctx, catalog.ListOptions{})
+				return err
+			}),
+			Entry("UpsertControls", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertControls(ctx, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1"}})
+			}),
+			Entry("GetControl", func(s catalog.Store, ctx context.Context) error {
+				_, err := s.GetControl(ctx, "c1")
+				return err
+			}),
+			Entry("SearchControls", func(s catalog.Store, ctx context.Context) error {
+				_, _, err := s.SearchControls(ctx, catalog.SearchQuery{Query: "q"})
+				return err
+			}),
+		)
+
+		DescribeTable("refuses a record whose tenant differs from the context tenant",
+			func(call func(catalog.Store, context.Context) error) {
+				err := call(catalog.NewPGStore(noBegin()), storeCtx)
+				Expect(err).To(MatchError(ContainSubstring(`does not match the request tenant "store-unit"`)))
+			},
+			Entry("UpsertCatalog", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertCatalog(ctx, catalog.CatalogRecord{CatalogID: "c", TenantID: "other-tenant"})
+			}),
+			Entry("UpsertCatalog with an empty tenant", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertCatalog(ctx, catalog.CatalogRecord{CatalogID: "c"})
+			}),
+			Entry("UpsertControls when any record differs", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertControls(ctx, []catalog.ControlRecord{
+					{TenantID: storeTenant, ControlID: "c1"},
+					{TenantID: "other-tenant", ControlID: "c2"},
+				})
+			}),
+		)
 	})
 
 	Describe("UpsertControls", func() {
@@ -319,8 +411,8 @@ var _ = Describe("PGStore", func() {
 			}
 			store := catalog.NewPGStore(conn)
 
-			Expect(store.UpsertControls(context.Background(), nil)).To(Succeed())
-			Expect(store.UpsertControls(context.Background(), []catalog.ControlRecord{})).To(Succeed())
+			Expect(store.UpsertControls(storeCtx, nil)).To(Succeed())
+			Expect(store.UpsertControls(storeCtx, []catalog.ControlRecord{})).To(Succeed())
 		})
 
 		It("returns error when Begin fails", func() {
@@ -330,7 +422,7 @@ var _ = Describe("PGStore", func() {
 			}
 			store := catalog.NewPGStore(conn)
 
-			err := store.UpsertControls(context.Background(), []catalog.ControlRecord{{ControlID: "c1"}})
+			err := store.UpsertControls(storeCtx, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1"}})
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, beginErr)).To(BeTrue())
 		})
@@ -343,13 +435,33 @@ var _ = Describe("PGStore", func() {
 			store := catalog.NewPGStore(conn)
 
 			ctrl := catalog.ControlRecord{
+				TenantID:  storeTenant,
 				ControlID: "ctrl-1",
 				CatalogID: "cat-1",
 				Title:     "Test Control",
 			}
-			err := store.UpsertControls(context.Background(), []catalog.ControlRecord{ctrl})
+			err := store.UpsertControls(storeCtx, []catalog.ControlRecord{ctrl})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tx.committed).To(BeTrue())
+		})
+
+		It("refuses the batch without writing when a catalog is not the tenant's", func() {
+			wrote := false
+			tx := &mockTx{
+				queryRowFn: func(context.Context, string, ...any) db.Row {
+					return &mockRow{scanFn: func(...any) error { return sql.ErrNoRows }}
+				},
+				execFn: func(context.Context, string, ...any) error { wrote = true; return nil },
+			}
+			conn := &mockConn{
+				beginFn: func(context.Context) (db.Transaction, error) { return tx, nil },
+			}
+			store := catalog.NewPGStore(conn)
+
+			err := store.UpsertControls(storeCtx, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1", CatalogID: "foreign"}})
+			Expect(err).To(MatchError(ContainSubstring(`catalog "foreign" is not a catalog of tenant "store-unit"`)))
+			Expect(wrote).To(BeFalse())
+			Expect(tx.committed).To(BeFalse())
 		})
 	})
 })

@@ -51,6 +51,8 @@ func appUserDSN(suDSN string) (string, error) {
 
 // setupPGStore runs migrations, ensures the app_user role, builds superuser and
 // app pools, provisions a unique tenant, and returns a tenant-scoped context.
+// The store's tenant and system pools are both app_user, as crosscodexd wires
+// them; the superuser pool is returned only for seeding and verification.
 // Pools are closed via DeferCleanup. Skips when TEST_DATABASE_DSN is unset.
 func setupPGStore() (*pipeline.PGStore, db.Pool, string, context.Context) {
 	ctx := context.Background()
@@ -100,7 +102,7 @@ func setupPGStore() (*pipeline.PGStore, db.Pool, string, context.Context) {
 	ctx, err = tenant.WithTenant(ctx, tenantID)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to set tenant context")
 
-	return pipeline.NewPGStore(tenantConn, suPool), suPool, tenantID, ctx
+	return pipeline.NewPGStore(tenantConn, appPool), suPool, tenantID, ctx
 }
 
 // newITJob builds a valid pending Job for the given tenant.
@@ -585,29 +587,58 @@ var _ = Describe("PGStore integration", func() {
 		}
 	})
 
-	It("GetResumableJobs returns running jobs but excludes completed ones", func() {
-		store, _, tenantID, ctx := setupPGStore()
+	// GetResumableJobs runs on the app_user system pool with no tenant
+	// entered, so RLS on jobs would hide every row; this proves the
+	// resumable_jobs() definer function reaches running jobs across tenants
+	// and still fails closed for a deleted tenant.
+	It("GetResumableJobs returns every live tenant's running jobs and nothing else", func() {
+		store, suPool, tenantA, ctxA := setupPGStore()
 
-		// One running job (should be returned) and one completed job (should not).
-		running := newITJob(tenantID)
-		running.Status = pipeline.JobStatusPending
-		Expect(store.CreateJob(ctx, running)).To(Succeed(), "CreateJob(running) failed")
-		Expect(store.UpdateJobStatus(ctx, running.JobID, pipeline.JobStatusRunning, nil)).To(Succeed(), "UpdateJobStatus(running) failed")
+		addTenant := func(prefix string) (string, context.Context) {
+			id := fmt.Sprintf("%s-%s", prefix, uuid.New().String())
+			Expect(db.EnsureTenant(ctxA, suPool, id, prefix)).To(Succeed(), "failed to ensure tenant %s", id)
+			ctx, err := tenant.WithTenant(context.Background(), id)
+			Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
+			return id, ctx
+		}
+		createJob := func(ctx context.Context, tenantID string, status pipeline.JobStatus) string {
+			job := newITJob(tenantID)
+			Expect(store.CreateJob(ctx, job)).To(Succeed(), "CreateJob(%s) failed", status)
+			Expect(store.UpdateJobStatus(ctx, job.JobID, status, nil)).To(Succeed(), "UpdateJobStatus(%s) failed", status)
+			return job.JobID
+		}
 
-		completed := newITJob(tenantID)
-		Expect(store.CreateJob(ctx, completed)).To(Succeed(), "CreateJob(completed) failed")
-		Expect(store.UpdateJobStatus(ctx, completed.JobID, pipeline.JobStatusCompleted, nil)).To(Succeed(), "UpdateJobStatus(completed) failed")
+		tenantB, ctxB := addTenant("pipeline-rb")
+		tenantDeleted, ctxDeleted := addTenant("pipeline-rd")
 
-		jobs, err := store.GetResumableJobs(ctx)
+		runningA := createJob(ctxA, tenantA, pipeline.JobStatusRunning)
+		runningB := createJob(ctxB, tenantB, pipeline.JobStatusRunning)
+		completedA := createJob(ctxA, tenantA, pipeline.JobStatusCompleted)
+		runningDeleted := createJob(ctxDeleted, tenantDeleted, pipeline.JobStatusRunning)
+
+		// Soft-deleted with a superuser UPDATE: delete_tenant needs a signed
+		// attestation, and resumable_jobs reads only the row state.
+		DeferCleanup(func() {
+			_ = suPool.Exec(context.Background(), "UPDATE tenants SET status = 'active', deleted_at = NULL, deleted_by = NULL WHERE tenant_id = $1", tenantDeleted)
+		})
+		Expect(suPool.Exec(ctxA, "UPDATE tenants SET status = 'deleted', deleted_at = now(), deleted_by = 'test' WHERE tenant_id = $1", tenantDeleted)).To(Succeed())
+
+		jobs, err := store.GetResumableJobs(context.Background())
 		Expect(err).NotTo(HaveOccurred(), "GetResumableJobs failed")
 
-		found := map[string]bool{}
+		found := map[string]*pipeline.Job{}
 		for _, j := range jobs {
-			found[j.JobID] = true
+			found[j.JobID] = j
 			Expect(j.Status).To(Equal(pipeline.JobStatusRunning), "GetResumableJobs returned job %s", j.JobID)
 		}
-		Expect(found[running.JobID]).To(BeTrue(), "GetResumableJobs missing the running job %s", running.JobID)
-		Expect(found[completed.JobID]).To(BeFalse(), "GetResumableJobs returned the completed job %s, want excluded", completed.JobID)
+		Expect(found).To(HaveKey(runningA), "GetResumableJobs missing tenant A's running job")
+		Expect(found[runningA].TenantID).To(Equal(tenantA))
+		Expect(found[runningA].CreatedBy).To(Equal("integration-test"))
+		assertJSONEqual("resumed job config", found[runningA].Config, []byte(`{}`))
+		Expect(found).To(HaveKey(runningB), "GetResumableJobs missing tenant B's running job")
+		Expect(found[runningB].TenantID).To(Equal(tenantB))
+		Expect(found).NotTo(HaveKey(completedA), "GetResumableJobs returned a completed job")
+		Expect(found).NotTo(HaveKey(runningDeleted), "GetResumableJobs returned a deleted tenant's running job")
 	})
 
 	It("ListJobs filters by status and paginates without overlap", func() {

@@ -6,6 +6,24 @@
 # via group_add so it can read the keys despite running as a different user
 # (postgres, nats=root, stunnel=nobody, crosscodexd=nonroot). This GID MUST
 # match CERT_GID in .taskfiles/deploy.yml (the deploy:certs task).
+#
+# Database roles: crosscodexd connects only as the restricted roles app_user
+# and graph_user, and refuses to start as a superuser or the schema owner.
+# The one-shot `migrate` service runs first as the `crosscodex` owner: it
+# applies migrations and sets each restricted role's password from the
+# password in that role's DSN below. Only `db` and `migrate` ever receive
+# POSTGRES_PASSWORD. The db's pg_hba.conf requires a scram-sha-256 password
+# and a valid client cert for every TCP login.
+
+# Restricted-role DSNs shared by `migrate` (which sets the passwords) and
+# `crosscodexd` (which logs in with them). The tenant_admin and backup_user
+# DSNs are optional; leave them unset in .env to skip those roles.
+x-role-dsns: &role-dsns
+  CROSSCODEX_DATABASE_DSN: postgres://app_user:${APP_USER_PASSWORD:?APP_USER_PASSWORD required}@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem
+  CROSSCODEX_DATABASE_GRAPH_DSN: postgres://graph_user:${GRAPH_USER_PASSWORD:?GRAPH_USER_PASSWORD required}@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem
+  CROSSCODEX_DATABASE_TENANT_ADMIN_DSN: ${CROSSCODEX_DATABASE_TENANT_ADMIN_DSN:-}
+  CROSSCODEX_BACKUP_DSN: ${CROSSCODEX_BACKUP_DSN:-}
+
 services:
   db:
     image: crosscodex-db:${TAG:-latest}
@@ -60,7 +78,11 @@ services:
   litellm:
     image: docker.io/litellm/litellm:1.87.1
     restart: unless-stopped
-    env_file: [.env]
+    # Only the keys litellm/config.yaml reads; .env also holds database
+    # passwords, which this third-party image must not receive.
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CROSSCODEX_LLM_API_KEY: ${CROSSCODEX_LLM_API_KEY:-}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     command:
@@ -100,18 +122,34 @@ services:
       timeout: 5s
       retries: 15
 
+  migrate:
+    image: crosscodexd:${TAG:-latest}
+    restart: "no"
+    group_add: ["10001"]
+    command: ["migrate"]
+    environment:
+      <<: *role-dsns
+      CROSSCODEX_DATABASE_MIGRATION_DSN: postgres://crosscodex:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem
+    volumes:
+      - crosscodex-certs:/certs:ro
+      - ./config.yaml:/etc/crosscodex/config.yaml:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
   crosscodexd:
     image: crosscodexd:${TAG:-latest}
     restart: unless-stopped
     group_add: ["10001"]
-    env_file: [.env]
+    # No env_file: the daemon gets only what it reads, never POSTGRES_PASSWORD.
     environment:
-      # The db's pg_hba.conf requires a scram-sha-256 password + a valid client cert
-      # (defense in depth). config.yaml's DSN carries only the client cert;
-      # pgx fills the missing password from PGPASSWORD (one value covers both
-      # database.dsn and database.graph_dsn). Reuse the single POSTGRES_PASSWORD
-      # source rather than embedding a secret in the committed config.yaml.
-      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+      <<: *role-dsns
+      CROSSCODEX_LLM_API_KEY: ${CROSSCODEX_LLM_API_KEY:-}
+      CROSSCODEX_LLM_DEFAULT_MODEL: ${CROSSCODEX_LLM_DEFAULT_MODEL:-}
+      CROSSCODEX_LLM_EMBEDDING_MODEL: ${CROSSCODEX_LLM_EMBEDDING_MODEL:-}
+      # S3 backup destination only (the AWS credential chain); empty otherwise.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     ports:
       # Published host port is overridable so an isolated stack (e.g. the
       # ephemeral smoke stack) can run alongside a production stack on 50051.
@@ -124,6 +162,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # podman-compose 1.x waits for migrate to stop but does not check its
+      # exit code. A failed migrate still keeps the daemon down: it refuses a
+      # schema not at the latest version, cannot log in without its role
+      # password, and (role all) refuses a missing default tenant.
+      migrate:
+        condition: service_completed_successfully
       nats:
         condition: service_healthy
       # crosscodexd reaches the LLM only through litellm-tls (stunnel on

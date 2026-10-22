@@ -20,8 +20,10 @@ import (
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
 
@@ -54,7 +56,6 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		// Build config on baseTestConfig + RoleAll overrides, mirroring
 		// e2e_integration_test.go's configureRole closure.
 		cfg := baseTestConfig(dsn)
-		cfg.Database.GraphDSN = provisionGraphUser(ctx, dsn)
 		cfg.Role = config.RoleAll
 		cfg.NATS = config.NATSConfig{
 			URL:      "", // embedded mode
@@ -83,6 +84,9 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		cfg.Health.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = tenantID
 		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+		// The daemon only checks the default tenant; crosscodexd migrate
+		// provisions it.
+		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		// Bootstrap with the deterministic LLM fake.
 		rt, err := bootstrap(ctx, cfg, WithLLMClient(deterministicLLMClient{}))
@@ -128,14 +132,22 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 			fmt.Sprintf("job should complete (error: %s)", getResp.Msg.GetJob().GetError().GetMessage()))
 
 		// --- Relational assertions ---
+		// The app pool connects as app_user, so the reads enter the tenant
+		// for RLS, as every app path does.
+		tenantCtx, err := tenant.WithTenant(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred(), "tenant context")
+		tx, err := db.NewTenantPool(rt.shared.appPool).Begin(tenantCtx)
+		Expect(err).NotTo(HaveOccurred(), "begin tenant transaction")
+		defer func() { _ = tx.Rollback() }()
+
 		// CatalogID is content-hash-derived, so read it first.
 		var catalogID string
-		Expect(rt.shared.appPool.QueryRow(ctx,
+		Expect(tx.QueryRow(tenantCtx,
 			"SELECT catalog_id FROM catalogs WHERE tenant_id = $1", tenantID).Scan(&catalogID)).
 			To(Succeed(), "read catalog_id")
 
 		var controlCount int
-		Expect(rt.shared.appPool.QueryRow(ctx,
+		Expect(tx.QueryRow(tenantCtx,
 			"SELECT count(*) FROM controls WHERE catalog_id = $1", catalogID).Scan(&controlCount)).
 			To(Succeed(), "count controls")
 		Expect(controlCount).To(Equal(3), "controls in relational DB")

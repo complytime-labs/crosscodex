@@ -187,18 +187,26 @@ type X509MatchConfig struct {
 
 // DatabaseConfig configures PostgreSQL connections.
 //
-// Four DSNs support the role security model (see pkg/db/doc.go):
-//   - DSN connects as app_user for relational data behind RLS.
+// Five DSNs support the role security model (see pkg/db/doc.go):
+//   - DSN connects as app_user for relational data behind RLS. The daemon
+//     refuses to run as any other kind of role (pkg/db.CheckRestrictedRole).
 //   - GraphDSN connects as graph_user for AGE cypher queries.
 //     graph_user owns per-tenant graph schemas but has no relational access.
 //   - PurgeDSN connects as purge_user (member of retention_purge), the only
 //     credential the delete-path immutability triggers accept for the
 //     sanctioned retention purge. Empty disables DB purge.
-//   - TenantAdminDSN connects as tenant_admin (migration 007) for
+//   - TenantAdminDSN connects as tenant_admin for
 //     `crosscodexd admin tenant`; the daemon never uses it. Global-only: a
 //     tenant cannot administer tenants. Empty makes those commands refuse.
+//   - MigrationDSN connects as the schema owner for `crosscodexd migrate`,
+//     which applies migrations, sets the restricted roles' passwords and
+//     provisions tenants.default_tenant. The daemon never uses it and refuses
+//     to run as an owner, superuser or BYPASSRLS role
+//     (pkg/db.CheckRestrictedRole). Global-only. Empty makes
+//     `crosscodexd migrate` refuse.
 type DatabaseConfig struct {
 	DSN            string   `yaml:"dsn" json:"dsn"`
+	MigrationDSN   string   `yaml:"migration_dsn" json:"migration_dsn"`
 	GraphDSN       string   `yaml:"graph_dsn" json:"graph_dsn"`
 	PurgeDSN       string   `yaml:"purge_dsn" json:"purge_dsn"`
 	TenantAdminDSN string   `yaml:"tenant_admin_dsn" json:"tenant_admin_dsn"`
