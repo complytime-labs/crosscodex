@@ -1,0 +1,21 @@
+.github/workflows/integration-fips.yml
+  s_5d02ede7813626::t_b9e630f30a2a52 42,53-55
+.github/workflows/ci.yml
+  s_5d02ede7813626::t_b9e630f30a2a52 91,117-119,141,159-161,189,197-199,247-249,277,296-298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f4f8b0d247da9e9b8d7678144d1af86cf276d7d5",
+  "prompts": {},
+  "sessions": {
+    "s_5d02ede7813626": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae276345-fb0b-40c2-b5d6-4a7357163f34",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
