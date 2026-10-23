@@ -550,6 +550,30 @@ var _ = Describe("SubmitDocument", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 	})
+
+	DescribeTable("rejects empty content before it reaches ingestion storage",
+		func(content []byte) {
+			convertCalls := 0
+			ing := &mockIngestion{
+				convertFn: func(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
+					convertCalls++
+					return connect.NewResponse(&pb.ConvertDocumentResponse{DocumentId: "doc-1"}), nil
+				},
+			}
+			svc := newTestService(gateway.WithIngestionBackend(ing))
+
+			_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source: &pb.SubmitDocumentRequest_Content{Content: content},
+			}))
+			Expect(err).To(HaveOccurred())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err.Error()).To(ContainSubstring("document is empty"))
+			Expect(err.Error()).To(ContainSubstring("Send the catalog file's contents"))
+			Expect(convertCalls).To(BeZero(), "empty content must not be handed to ingestion, which stores it")
+		},
+		Entry("nil content", nil),
+		Entry("zero-length content", []byte{}),
+	)
 })
 
 var _ = Describe("Graph handlers", func() {

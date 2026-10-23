@@ -254,6 +254,27 @@ var _ = Describe("Edge cases (green)", func() {
 		Expect(cats).To(BeEmpty())
 	})
 
+	It("#7 rejects a metadata-only upload as an empty document and stores nothing", func() {
+		store := sharedState.daemon.resources.storage
+		before, err := store.List(ctx, "")
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = importCatalog(ctx, sharedState.client, nil,
+			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "empty-upload")
+		Expect(err).To(HaveOccurred())
+		// Refused in the gateway (processDocument, internal/gateway/document.go)
+		// before ingestion writes a blob.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("document is empty"))
+
+		after, err := store.List(ctx, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(HaveLen(len(before)), "empty upload must not store a blob")
+		cats, err := listCatalogs(ctx, sharedState.client)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cats).To(BeEmpty())
+	})
+
 	It("rejects format=UNSPECIFIED when content is neither OSCAL nor parseable Gemara", func() {
 		_, err := importCatalog(ctx, sharedState.client, fixture("invalid.json"),
 			pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, "broken")
@@ -404,33 +425,6 @@ var _ = Describe("Bug records (Pending correct + active tripwire)", func() {
 		// UNSPECIFIED and the OSCAL sniff fails.
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
 		Expect(err.Error()).To(ContainSubstring("structurer not configured"))
-	})
-
-	// --- #7: metadata-only, zero-chunk upload ---
-	PIt("#7 a metadata-only upload returns a clear 'empty document' error", func() {
-		_, err := importCatalog(ctx, sharedState.client, nil,
-			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "empty-upload")
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(MatchRegexp("(?i)empty"))
-	})
-
-	It("#7 TRIPWIRE: metadata-only upload currently fails without an empty-doc message", func() {
-		// TRIPWIRE for bug #7: when this fails, empty uploads are handled
-		// explicitly — flip the PIt above and delete this. An empty upload is
-		// stored as an empty blob, then fails the OSCAL content-sniff, which now
-		// triggers format validation rejection. The error is clearer than the old
-		// "structurer not configured" leak but still doesn't specifically mention
-		// "empty" content.
-		_, err := importCatalog(ctx, sharedState.client, nil,
-			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "empty-upload")
-		Expect(err).To(HaveOccurred())
-		// Strict inverse of the PIt above: exactly one can pass. The PIt wants a
-		// message naming an "empty" condition; the current message is the format
-		// validation error (clearer than the old structurer leak but still not
-		// empty-specific).
-		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
-		Expect(err.Error()).To(ContainSubstring("format=CATALOG_FORMAT_OSCAL specified but content does not appear to be OSCAL JSON"))
-		Expect(err.Error()).NotTo(MatchRegexp("(?i)empty"))
 	})
 
 	// --- #3: edited re-import creates a new row instead of updating ---

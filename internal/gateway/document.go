@@ -62,6 +62,16 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		return nil, connect.NewError(connect.CodeUnavailable, errors.New("required backends not configured"))
 	}
 
+	// Ingestion stores what it receives, so an empty upload must be refused
+	// here or it leaves an empty blob behind and fails later with a misleading
+	// format error.
+	if src, ok := input.convertReq.Source.(*pb.ConvertDocumentRequest_Content); ok && len(src.Content) == 0 {
+		s.recordMetrics(ctx, input.rpcName, start, connect.CodeInvalidArgument)
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(
+			"document is empty: the upload contained no content bytes, so there is nothing to import. "+
+				"Send the catalog file's contents (for example, an OSCAL JSON catalog) with the request"))
+	}
+
 	identity := identityFromContext(ctx)
 	tc := buildTenantContext(identity)
 	input.convertReq.TenantContext = tc

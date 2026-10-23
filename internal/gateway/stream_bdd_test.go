@@ -267,6 +267,27 @@ var _ = Describe("StreamDocument transport-level validation", func() {
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeResourceExhausted))
 	})
 
+	It("rejects a metadata-only stream as an empty document", func() {
+		env := newStreamTestEnv(defaultIdentity(), stubBackends()...)
+		defer env.close()
+
+		stream := env.client.StreamDocument(context.Background())
+		err := stream.Send(&pb.StreamDocumentChunk{
+			Payload: &pb.StreamDocumentChunk_Metadata{
+				Metadata: &pb.StreamDocumentMetadata{
+					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+					CatalogName:   "empty-upload",
+				},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred(), "Send (metadata) failed")
+
+		_, err = stream.CloseAndReceive()
+		Expect(err).To(HaveOccurred(), "expected error for metadata-only upload, got nil")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("document is empty"))
+	})
+
 	It("rejects an empty stream", func() {
 		env := newStreamTestEnv(defaultIdentity(), stubBackends()...)
 		defer env.close()
