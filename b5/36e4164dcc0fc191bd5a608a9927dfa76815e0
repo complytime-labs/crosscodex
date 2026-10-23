@@ -1,0 +1,21 @@
+cmd/crosscodex/embedded_integration_suite_test.go
+  s_5d02ede7813626::t_7314a3bfad3dec 16
+  s_5d02ede7813626::t_ec4a76c1ff4552 27-30,38-43,51-52
+  s_5d02ede7813626::t_b71e2a7223fbea 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b536e4164dcc0fc191bd5a608a9927dfa76815e0",
+  "prompts": {},
+  "sessions": {
+    "s_5d02ede7813626": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae276345-fb0b-40c2-b5d6-4a7357163f34",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
