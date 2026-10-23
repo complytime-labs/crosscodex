@@ -54,7 +54,9 @@ jobs:
           GOTOOLCHAIN: auto
 
       - name: Archive reports
-        if: success() || failure()
+        # Skip when MegaLinter never ran (e.g. setup failed): reports-dir is
+        # then empty and upload-artifact fails with a misleading "path" error.
+        if: ${{ (success() || failure()) && steps.ml.outputs.reports-dir != '' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: megalinter-reports
