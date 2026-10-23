@@ -1,0 +1,19 @@
+.taskfiles/test.yml
+  s_5d02ede7813626::t_96287b4de814c5 77-81,83,85-86,90-98,100-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b67ee49b9de0f6d8afd95284480bb02e3f672532",
+  "prompts": {},
+  "sessions": {
+    "s_5d02ede7813626": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae276345-fb0b-40c2-b5d6-4a7357163f34",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
