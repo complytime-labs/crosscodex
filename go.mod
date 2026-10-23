@@ -2,8 +2,6 @@ module github.com/complytime-labs/crosscodex
 
 go 1.26.4
 
-toolchain go1.26.4
-
 require (
 	connectrpc.com/connect v1.21.1
 	connectrpc.com/otelconnect v0.12.0
