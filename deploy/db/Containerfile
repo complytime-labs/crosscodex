@@ -30,7 +30,11 @@ RUN apt-get update && \
 
 WORKDIR /tmp/pgvector-0.7.4
 
-RUN make && make install && \
+# OPTFLAGS="": pgvector defaults to -march=native, tuning the extension to the
+# build host's CPU. The image runs on other hosts, where those instructions
+# crash the server (pgvector README: "Illegal instruction"); CI hit this when
+# a cached image built on one runner ran on another.
+RUN make OPTFLAGS="" && make install && \
     sh /tmp/fetch-walg.sh /usr/local/bin && \
     rm /tmp/fetch-walg.sh && \
     apt-get purge -y build-essential curl postgresql-server-dev-16 && \
