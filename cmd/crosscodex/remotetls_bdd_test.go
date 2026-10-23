@@ -82,6 +82,20 @@ var _ = Describe("clientUsesTLS", func() {
 	})
 })
 
+var _ = Describe("tlsHTTPClient connection setup", func() {
+	It("bounds dial and TLS handshake like the plaintext client", func() {
+		httpClient, err := tlsHTTPClient(context.Background(), config.TLSConfig{Mode: "server-only"})
+		Expect(err).NotTo(HaveOccurred())
+		transport, ok := httpClient.Transport.(*http.Transport)
+		Expect(ok).To(BeTrue(), "tlsHTTPClient must use an *http.Transport")
+		defaults := http.DefaultTransport.(*http.Transport)
+		Expect(transport.TLSHandshakeTimeout).To(BeNumerically(">", 0), "a stalled server would hang the CLI forever")
+		Expect(transport.TLSHandshakeTimeout).To(Equal(defaults.TLSHandshakeTimeout))
+		Expect(transport.DialContext).NotTo(BeNil(), "dials must be bounded by a net.Dialer timeout")
+		Expect(transport.TLSClientConfig).NotTo(BeNil())
+	})
+})
+
 var _ = Describe("tlsHTTPClient (mutual TLS enforced)", func() {
 	var dir string
 
