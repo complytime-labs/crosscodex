@@ -7,10 +7,13 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
 var _ = Describe("Subscriber Event Handling", func() {
@@ -276,21 +279,33 @@ var _ = Describe("Subscriber Event Handling", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("skips embed materialization gracefully", func() {
-			resolver.data = []byte(`[]`)
-			event := map[string]string{
-				"analyzer": "embed",
-				"job_id":   "job-1",
-				"stage":    "completed",
-			}
-			eventData, _ := json.Marshal(event)
-			msg := &natsbus.Message{
-				Subject: "crosscodex.pipeline.test-tenant.job-1.stage.completed",
-				Data:    eventData,
-			}
-
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
+		// Regression (#216): the dispatch case must match the embedding
+		// analyzer's Name(), or its events fall through to "no handler".
+		It("routes embedding analyzer events to the embed handler", func() {
+			tp, err := telemetrytest.NewTestProvider()
 			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+			registry := graph.NewResolverRegistry()
+			registry.Register(resolver)
+			svc = graph.New(mockGraph, &mockVectorDB{}, nil,
+				graph.WithResolverRegistry(registry),
+				graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+
+			Expect(deliver("embedding", []any{})).To(Succeed())
+
+			span := telemetrytest.FindSpan(tp.GetSpans(), "graph.materialize.embedding")
+			Expect(span).NotTo(BeNil())
+			Expect(span.Status().Code).To(Equal(codes.Ok))
+
+			// Only a matched handler records duration; the default branch
+			// returns before recordMaterialize.
+			m := telemetrytest.FindMetric(tp.GetMetrics(), "graph.materialize.duration_ms")
+			Expect(m).NotTo(BeNil(), "materialize duration not recorded")
+			hist, ok := m.Data.(metricdata.Histogram[float64])
+			Expect(ok).To(BeTrue())
+			Expect(hist.DataPoints).To(HaveLen(1))
+			v, _ := hist.DataPoints[0].Attributes.Value("analyzer")
+			Expect(v.AsString()).To(Equal("embedding"))
 		})
 	})
 })
