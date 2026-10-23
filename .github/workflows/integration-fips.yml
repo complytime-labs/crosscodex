@@ -12,10 +12,6 @@ on:
         required: false
         type: boolean
         default: true
-    secrets:
-      GITHUB_TOKEN:
-        description: GitHub token for authenticated package pulls
-        required: true
 
 permissions:
   contents: read
@@ -43,7 +39,7 @@ jobs:
       - uses: ./.github/actions/integration-setup
         with:
           image-tar-path: /tmp/crosscodex-test-db.tar
-          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('deploy/db/**') }}
 
       - name: Run tests
         env:
@@ -54,6 +50,8 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+          # A tar here came from an exact cache hit; actions/cache only
+          # uploads on a miss, and podman save cannot overwrite an archive.
+          if [ ! -e /tmp/crosscodex-test-db.tar ] && podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
             podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
           fi

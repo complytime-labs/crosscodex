@@ -63,12 +63,23 @@ func clientUsesTLS(schemeTLS bool, cfg config.ClientConfig) bool {
 
 // tlsHTTPClient builds an *http.Client whose transport enforces the resolved
 // client TLS config (CA trust + client cert for mutual auth).
+//
+// Dial and TLS handshake use http.DefaultTransport's bounds, as the plaintext
+// client (http.DefaultClient) does; a zero-value Transport has no handshake
+// timeout, so a stalled server would hang the CLI. Only those two fields are
+// copied: cloning DefaultTransport would also turn on HTTP/2 and proxy
+// environment variables, which this path has never used.
 func tlsHTTPClient(ctx context.Context, cfg config.TLSConfig) (*http.Client, error) {
 	tc, err := tlsconfig.BuildTLSConfig(ctx, cfg, "")
 	if err != nil {
 		return nil, err
 	}
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: tc}}, nil
+	defaults := http.DefaultTransport.(*http.Transport)
+	return &http.Client{Transport: &http.Transport{
+		TLSClientConfig:     tc,
+		DialContext:         defaults.DialContext,
+		TLSHandshakeTimeout: defaults.TLSHandshakeTimeout,
+	}}, nil
 }
 
 // newTLSGatewayClient dials the gateway and admin services over https with the

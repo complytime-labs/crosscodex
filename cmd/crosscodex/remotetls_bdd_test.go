@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -82,6 +84,20 @@ var _ = Describe("clientUsesTLS", func() {
 	})
 })
 
+var _ = Describe("tlsHTTPClient connection setup", func() {
+	It("bounds dial and TLS handshake like the plaintext client", func() {
+		httpClient, err := tlsHTTPClient(context.Background(), config.TLSConfig{Mode: "server-only"})
+		Expect(err).NotTo(HaveOccurred())
+		transport, ok := httpClient.Transport.(*http.Transport)
+		Expect(ok).To(BeTrue(), "tlsHTTPClient must use an *http.Transport")
+		defaults := http.DefaultTransport.(*http.Transport)
+		Expect(transport.TLSHandshakeTimeout).To(BeNumerically(">", 0), "a stalled server would hang the CLI forever")
+		Expect(transport.TLSHandshakeTimeout).To(Equal(defaults.TLSHandshakeTimeout))
+		Expect(transport.DialContext).NotTo(BeNil(), "dials must be bounded by a net.Dialer timeout")
+		Expect(transport.TLSClientConfig).NotTo(BeNil())
+	})
+})
+
 var _ = Describe("tlsHTTPClient (mutual TLS enforced)", func() {
 	var dir string
 
@@ -115,12 +131,29 @@ var _ = Describe("tlsHTTPClient (mutual TLS enforced)", func() {
 		serverCert := mustLoadKeyPair(filepath.Join(dir, "server.pem"), filepath.Join(dir, "server-key.pem"))
 		srv.TLS = mustMutualServerTLS(serverCert, pool)
 		srv.StartTLS()
+		// httptest.Server.Close waits without limit for every server-side
+		// connection to finish. A connection stuck in the TLS handshake once
+		// hung CI for the whole 5m suite timeout, with nothing saying which
+		// goroutine was stuck. Fail fast with every goroutine's stack instead.
+		DeferCleanup(func() {
+			closed := make(chan struct{})
+			go func() {
+				srv.Close()
+				close(closed)
+			}()
+			select {
+			case <-closed:
+			case <-time.After(15 * time.Second):
+				buf := make([]byte, 1<<20)
+				buf = buf[:runtime.Stack(buf, true)]
+				Fail(fmt.Sprintf("httptest.Server.Close blocked for 15s waiting on a server connection. All goroutines:\n%s", buf))
+			}
+		})
 		return srv
 	}
 
 	It("connects when the client presents a CA-trusted client cert", func() {
 		srv := newServer()
-		defer srv.Close()
 		httpClient, err := tlsHTTPClient(context.Background(), config.TLSConfig{
 			Mode: "mutual",
 			CA:   filepath.Join(dir, "ca.pem"),
@@ -136,7 +169,6 @@ var _ = Describe("tlsHTTPClient (mutual TLS enforced)", func() {
 
 	It("is rejected when the client presents no client cert", func() {
 		srv := newServer()
-		defer srv.Close()
 		httpClient, err := tlsHTTPClient(context.Background(), config.TLSConfig{
 			Mode: "server-only",
 			CA:   filepath.Join(dir, "ca.pem"),

@@ -88,7 +88,7 @@ jobs:
       - uses: ./.github/actions/integration-setup
         with:
           image-tar-path: /tmp/crosscodex-test-db.tar
-          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('deploy/db/**') }}
 
       - name: Run database integration tests (db, graphdb, vectordb)
         run: task test:integration:db
@@ -114,7 +114,9 @@ jobs:
       - name: Save DB image for cache
         if: always()
         run: |
-          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+          # A tar here came from an exact cache hit; actions/cache only
+          # uploads on a miss, and podman save cannot overwrite an archive.
+          if [ ! -e /tmp/crosscodex-test-db.tar ] && podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
             podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
           fi
 
@@ -136,7 +138,7 @@ jobs:
       - uses: ./.github/actions/integration-setup
         with:
           image-tar-path: /tmp/crosscodex-test-db.tar
-          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('deploy/db/**') }}
 
       # The hermetic Venom suite runs host pg_isready/psql over TCP mTLS, which
       # ships with neither the runner image nor the shared actions above.
@@ -154,7 +156,9 @@ jobs:
       - name: Save DB image for cache
         if: always()
         run: |
-          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+          # A tar here came from an exact cache hit; actions/cache only
+          # uploads on a miss, and podman save cannot overwrite an archive.
+          if [ ! -e /tmp/crosscodex-test-db.tar ] && podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
             podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
           fi
 
@@ -163,8 +167,6 @@ jobs:
     uses: ./.github/workflows/integration-fips.yml
     with:
       test-task: task test:integration:nats
-    secrets:
-      GITHUB_TOKEN: ${{ github.token }}
 
   integration-grpc:
     needs: [build]
@@ -184,7 +186,7 @@ jobs:
       - uses: ./.github/actions/integration-setup
         with:
           image-tar-path: /tmp/crosscodex-test-db.tar
-          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('deploy/db/**') }}
 
       - name: Run gRPC integration tests
         run: task test:integration:grpc
@@ -192,7 +194,9 @@ jobs:
       - name: Save DB image for cache
         if: always()
         run: |
-          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+          # A tar here came from an exact cache hit; actions/cache only
+          # uploads on a miss, and podman save cannot overwrite an archive.
+          if [ ! -e /tmp/crosscodex-test-db.tar ] && podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
             podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
           fi
 
@@ -240,7 +244,9 @@ jobs:
       - name: Save Ollama image for cache
         if: always()
         run: |
-          if podman image inspect crosscodex-test-ollama:latest >/dev/null 2>&1; then
+          # A tar here came from an exact cache hit; actions/cache only
+          # uploads on a miss, and podman save cannot overwrite an archive.
+          if [ ! -e /tmp/crosscodex-test-ollama.tar ] && podman image inspect crosscodex-test-ollama:latest >/dev/null 2>&1; then
             podman save -o /tmp/crosscodex-test-ollama.tar crosscodex-test-ollama:latest
           fi
 
@@ -249,8 +255,6 @@ jobs:
     uses: ./.github/workflows/integration-fips.yml
     with:
       test-task: task test:integration:authn
-    secrets:
-      GITHUB_TOKEN: ${{ github.token }}
 
   stress-tests:
     needs: [build]
@@ -270,7 +274,7 @@ jobs:
       - uses: ./.github/actions/integration-setup
         with:
           image-tar-path: /tmp/crosscodex-test-db.tar
-          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('pkg/db/testdata/Containerfile', 'pkg/db/testdata/pg_hba.conf') }}
+          image-cache-key: db-image-${{ runner.os }}-${{ hashFiles('deploy/db/**') }}
 
       - name: Run in-process gateway stress tests (Layer 1, #112)
         run: task test:stress:unit
@@ -289,6 +293,8 @@ jobs:
       - name: Save DB image for cache
         if: always()
         run: |
-          if podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
+          # A tar here came from an exact cache hit; actions/cache only
+          # uploads on a miss, and podman save cannot overwrite an archive.
+          if [ ! -e /tmp/crosscodex-test-db.tar ] && podman image inspect crosscodex-test-db:latest >/dev/null 2>&1; then
             podman save -o /tmp/crosscodex-test-db.tar crosscodex-test-db:latest
           fi

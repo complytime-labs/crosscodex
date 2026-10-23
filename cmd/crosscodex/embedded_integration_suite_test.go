@@ -13,6 +13,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 )
@@ -23,9 +24,10 @@ import (
 // below register into that same suite via the BeforeSuite/Describe blocks.
 
 var (
-	suDSN       string
-	sharedState *cliState
-	sharedStop  func()
+	suDSN            string
+	sharedState      *cliState
+	sharedStop       func()
+	restoreTelemetry func()
 )
 
 var _ = BeforeSuite(func() {
@@ -33,12 +35,21 @@ var _ = BeforeSuite(func() {
 	if suDSN == "" {
 		Skip("TEST_DATABASE_DSN not set — run: task test:integration:embedded")
 	}
+	// startEmbeddedDaemon calls telemetry.Init, which must find a non-built-in
+	// slog handler (main installs one first). Wrapping the built-in handler
+	// makes the first log call deadlock on the log package's mutex; in CI
+	// that was net/http's "TLS handshake error" line in an unrelated spec.
+	restoreTelemetry = testspecs.IsolateTelemetryGlobals()
+	testspecs.RedirectLogsToGinkgo()
 	sharedState, sharedStop = startTestDaemon()
 })
 
 var _ = AfterSuite(func() {
 	if sharedStop != nil {
 		sharedStop()
+	}
+	if restoreTelemetry != nil {
+		restoreTelemetry()
 	}
 })
 

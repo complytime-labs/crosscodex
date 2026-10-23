@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Builder: matches go.mod (go 1.26.4).
+# Builder: matches go.mod (go 1.26.10).
 FROM golang:1.26 AS builder
 WORKDIR /src
 
