@@ -50,7 +50,7 @@ jobs:
           extra-env-var: "GOTOOLCHAIN"
         env:
           # Allow Go toolchain auto-upgrade when go.mod requires newer version
-          # MegaLinter ships with Go 1.26.3; go.mod requires 1.26.4 for security patches
+          # MegaLinter ships with Go 1.26.3; go.mod requires a newer patch for security fixes
           GOTOOLCHAIN: auto
 
       - name: Archive reports

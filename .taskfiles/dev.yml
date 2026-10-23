@@ -3,9 +3,10 @@ version: "3"
 vars:
   MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
   BUILD_DIR: '{{.BUILD_DIR | default (printf "%s/bin" .ROOT_DIR)}}'
-  # Minimum Go version -- pinned to address GO-2026-5037 (crypto/x509).
+  # Minimum Go version -- the floor for stdlib fixes govulncheck reports
+  # (go1.26.10 covers crypto/x509, crypto/tls, net/http, html/template).
   # Bump this when upgrading Go; deps:update re-applies it after go get -u.
-  GO_VERSION: "1.26.4"
+  GO_VERSION: "1.26.10"
 
 tasks:
   default:
@@ -132,9 +133,11 @@ tasks:
       - go get -u {{.ROOT_DIR}}/...
       - go mod tidy
       # Pin Go version after updates -- go get -u can regress the go directive
-      # to match the local toolchain. This ensures the vulnerability fix floor
-      # (GO-2026-5037: crypto/x509) is never downgraded.
-      - go mod edit -go={{.GO_VERSION}} -toolchain=go{{.GO_VERSION}}
+      # to match the local toolchain. This ensures the stdlib vulnerability fix
+      # floor (govulncheck) is never downgraded. No -toolchain: a toolchain
+      # line equal to the go line is untidy, and CI's -mod=readonly rejects it.
+      - go mod edit -go={{.GO_VERSION}}
+      - go mod tidy
 
   tidy:
     desc: Tidy dependencies (run after generate to avoid removing generated code deps)
