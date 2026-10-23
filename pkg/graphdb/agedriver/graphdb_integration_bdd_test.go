@@ -16,8 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/stdlib"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -1169,13 +1170,10 @@ var _ = Describe("Node creation lock", func() {
 	})
 
 	It("still sees a node committed during the lock wait when the session default is REPEATABLE READ", func() {
-		u, err := url.Parse(graphDSN)
+		connCfg, err := pgx.ParseConfig(graphDSN)
 		Expect(err).NotTo(HaveOccurred())
-		q := u.Query()
-		q.Set("default_transaction_isolation", "repeatable read")
-		u.RawQuery = q.Encode()
-		rrDB, err := sql.Open("pgx", u.String())
-		Expect(err).NotTo(HaveOccurred())
+		connCfg.RuntimeParams["default_transaction_isolation"] = "repeatable read"
+		rrDB := stdlib.OpenDB(*connCfg)
 		DeferCleanup(func() { _ = rrDB.Close() })
 		var level string
 		Expect(rrDB.QueryRowContext(ctx, "SHOW default_transaction_isolation").Scan(&level)).To(Succeed())
