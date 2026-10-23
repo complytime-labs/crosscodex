@@ -1,0 +1,16 @@
+internal/graph/subscriber_bdd_test.go
+  h_4db53f42b9be42 10-11,16,282-285,287-308
+internal/graph/subscriber_handlers.go
+  h_4db53f42b9be42 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "910c844c4573bd1b874c2c91b358acd1c0da5c67",
+  "prompts": {},
+  "humans": {
+    "h_4db53f42b9be42": {
+      "author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
