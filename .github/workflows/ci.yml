@@ -163,8 +163,6 @@ jobs:
     uses: ./.github/workflows/integration-fips.yml
     with:
       test-task: task test:integration:nats
-    secrets:
-      GITHUB_TOKEN: ${{ github.token }}
 
   integration-grpc:
     needs: [build]
@@ -249,8 +247,6 @@ jobs:
     uses: ./.github/workflows/integration-fips.yml
     with:
       test-task: task test:integration:authn
-    secrets:
-      GITHUB_TOKEN: ${{ github.token }}
 
   stress-tests:
     needs: [build]
