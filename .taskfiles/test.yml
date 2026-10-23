@@ -74,18 +74,31 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       # Go before 1.27 can fail a target with "context deadline exceeded" right
       # at -fuzztime even though nothing crashed (golang/go#75804: a race in
-      # the fuzz coordinator, fixed in go1.27). No crash input is written; rerun
-      # the target. The bump to go1.27 is deferred until Red Hat ships a Go 1.27
-      # toolchain, because FIPS=1 builds use Red Hat Go's OpenSSL FIPS module.
+      # the fuzz coordinator, fixed in go1.27). No crash input is written, so
+      # such a failure is rerun once. A real finding (crash or hung worker)
+      # always prints "Failing input written to" and is never rerun. The bump
+      # to go1.27 is deferred until Red Hat ships a Go 1.27 toolchain, because
+      # FIPS=1 builds use Red Hat Go's OpenSSL FIPS module.
       - |
+        set -o pipefail
         failed=0
+        log=$(mktemp)
+        trap 'rm -f "$log"' EXIT
         for pkg in $(go list ./pkg/... ./internal/... ./cmd/...); do
           fuzz_funcs=$(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
           for func in $fuzz_funcs; do
-            echo "==> Fuzzing $func in $pkg ({{.FUZZ_TIME}})"
-            if ! go test "$pkg" -run '^$' -fuzz "^${func}$" -fuzztime={{.FUZZ_TIME}} -timeout={{.FUZZ_TIMEOUT}}; then
+            for attempt in 1 2; do
+              echo "==> Fuzzing $func in $pkg ({{.FUZZ_TIME}}, attempt $attempt)"
+              if go test "$pkg" -run '^$' -fuzz "^${func}$" -fuzztime={{.FUZZ_TIME}} -timeout={{.FUZZ_TIMEOUT}} 2>&1 | tee "$log"; then
+                break
+              fi
+              if [ "$attempt" = 1 ] && grep -q 'context deadline exceeded' "$log" && ! grep -q 'Failing input written to' "$log"; then
+                echo "==> $func failed at -fuzztime with no failing input (golang/go#75804); rerunning once"
+                continue
+              fi
               failed=1
-            fi
+              break
+            done
           done
         done
         exit $failed
