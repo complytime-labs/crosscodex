@@ -1,0 +1,25 @@
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_b95273645e25c5::t_957fa3882c3766 257-277
+internal/gateway/gateway_bdd_test.go
+  s_b95273645e25c5::t_5b898fa6be182f 553-576
+internal/gateway/document.go
+  s_b95273645e25c5::t_e1efb79d32516d 65-74
+internal/gateway/stream_bdd_test.go
+  s_b95273645e25c5::t_4ec9cf9865de6b 270-290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6cbffa6888fc9a974729290969993eddb8960d5",
+  "prompts": {},
+  "sessions": {
+    "s_b95273645e25c5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9a7b570-56b7-4fb8-bc51-3ce244f3a6fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
