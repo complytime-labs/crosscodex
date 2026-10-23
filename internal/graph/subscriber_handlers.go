@@ -38,7 +38,7 @@ func (s *Service) materialize(ctx context.Context, tenantID, analyzer, jobID str
 		err = s.materializeArtifacts(ctx, tenantID, jobID, data)
 	case "classify":
 		err = s.materializeClassify(ctx, tenantID, jobID, data)
-	case "embed":
+	case "embedding":
 		err = s.materializeEmbed(ctx, tenantID, jobID, data)
 	default:
 		s.logger.InfoContext(ctx, "no graph handler for analyzer", "analyzer", analyzer)
