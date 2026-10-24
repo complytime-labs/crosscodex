@@ -69,6 +69,30 @@ func setRolePassword(ctx context.Context, adminDB *sql.DB, role, password string
 // suPool is the superuser pool for test setup operations.
 var suPool db.Pool
 
+// suPoolMaxConns caps suPool, so a spec can hold every connection at once.
+const suPoolMaxConns = 5
+
+// suPoolBackendPIDs holds every suPool connection at once and returns the
+// PostgreSQL backend PID behind each.
+func suPoolBackendPIDs(ctx context.Context) map[int]bool {
+	txs := make([]db.Transaction, 0, suPoolMaxConns)
+	defer func() {
+		for _, tx := range txs {
+			_ = tx.Rollback()
+		}
+	}()
+	pids := make(map[int]bool, suPoolMaxConns)
+	for range suPoolMaxConns {
+		tx, err := suPool.Begin(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		txs = append(txs, tx)
+		var pid int
+		Expect(tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&pid)).To(Succeed())
+		pids[pid] = true
+	}
+	return pids
+}
+
 var _ = SynchronizedBeforeSuite(func() []byte {
 	// Runs on node 1 only: migrate + set role passwords.
 	dsn := os.Getenv("TEST_DATABASE_DSN")
@@ -109,13 +133,18 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	suDSN, appUserPassword, graphUserPassword, tenantAdminPassword = setup.DSN, setup.AppUserPassword, setup.GraphUserPassword, setup.TenantAdminPassword
 
 	var err error
-	suPool, err = db.NewPool(db.PoolConfig{
-		DSN:          suDSN,
-		MaxOpenConns: 5,
-		Extensions:   []string{"age", "vector"},
-	})
+	suPool, err = newSuperuserPool()
 	Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
 })
+
+// newSuperuserPool opens suPool; the Down/Up spec replaces it mid-suite.
+func newSuperuserPool() (db.Pool, error) {
+	return db.NewPool(db.PoolConfig{
+		DSN:          suDSN,
+		MaxOpenConns: suPoolMaxConns,
+		Extensions:   []string{"age", "vector"},
+	})
+}
 
 var _ = AfterSuite(func() {
 	if suPool != nil {
@@ -410,6 +439,9 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 				DELETE FROM identity_events;
 				COMMIT;`)).To(Succeed())
 
+			ctx := context.Background()
+			before := suPoolBackendPIDs(ctx)
+
 			Expect(migrator.Down(context.Background())).To(Succeed())
 
 			version, dirty, err := migrator.Version(context.Background())
@@ -424,16 +456,31 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 			Expect(db.LatestMigrationVersion()).To(Equal(version), "the schema is at the latest embedded migration")
 			Expect(dirty).To(BeFalse())
 
+			// Replace suPool so no later spec reuses a backend from before
+			// the round trip. Its DDL can overflow PostgreSQL's shared
+			// invalidation queue for backends already lagging behind it,
+			// which resets their caches. Apache AGE 1.5.0 then fails that
+			// backend's next statement with "label (relation) cache
+			// corrupted" if it ever ran drop_graph, as
+			// dbtest.HardDeleteTenantSQL does in other files' cleanup
+			// (apache/age#2245; no PG16 release has the fix yet).
+			Expect(suPool.Close()).To(Succeed(), "failed to close superuser pool")
+			suPool, err = newSuperuserPool()
+			Expect(err).NotTo(HaveOccurred(), "failed to recreate superuser pool")
+
 			// Restore role passwords wiped by the Down/Up round trip so
 			// later specs' appUserConn()/graphUserConn() can still
 			// authenticate (mirrors SynchronizedBeforeSuite).
-			ctx := context.Background()
 			adminDB, err := sql.Open("pgx", suDSN)
 			Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
 			defer adminDB.Close()
 			Expect(setRolePassword(ctx, adminDB, "app_user", appUserPassword)).To(Succeed(), "failed to restore app_user password")
 			Expect(setRolePassword(ctx, adminDB, "graph_user", graphUserPassword)).To(Succeed(), "failed to restore graph_user password")
 			Expect(setRolePassword(ctx, adminDB, "tenant_admin", tenantAdminPassword)).To(Succeed(), "failed to restore tenant_admin password")
+
+			for pid := range suPoolBackendPIDs(ctx) {
+				Expect(before).NotTo(HaveKey(pid), "suPool still uses backend %d from before the Down/Up round trip", pid)
+			}
 		})
 
 		It("refuses the teardown while identity_events holds audit records, leaving them in place", func() {
