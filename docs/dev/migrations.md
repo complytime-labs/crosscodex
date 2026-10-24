@@ -200,6 +200,23 @@ If a migration file was edited accidentally:
 
 Never force-apply a modified migration by resetting the version in `schema_migrations`. That trades one inconsistency for another.
 
+## Known Issue: AGE 1.5.0 Label Cache After `drop_graph`
+
+The database image is pinned to Apache AGE 1.5.0 (`deploy/db/Containerfile`), which has a cache bug ([apache/age#2245](https://github.com/apache/age/issues/2245)). After a PostgreSQL session runs `ag_catalog.drop_graph`, AGE keeps label-cache entries in that session that it cannot remove one by one. If the session's caches are later reset as a whole, its next statement fails with:
+
+```text
+ERROR: label (relation) cache corrupted (SQLSTATE XX000)
+```
+
+The caches are reset that way when a burst of DDL in other sessions overflows PostgreSQL's shared invalidation queue while the session sits idle or inside a transaction. A migration `Down`/`Up` round trip produces such a burst. Whether a particular session is reset depends on how far behind it already was; earlier DDL, such as tenant provisioning (each tenant insert creates a graph), leaves idle sessions further behind. The failure is therefore intermittent.
+
+Consequences:
+
+- **Daemon code:** only test code calls `drop_graph` today. Code that adds a graph drop (for example a tenant purge) must not return that session to a long-lived pool; close the connection afterwards.
+- **Integration tests:** `dbtest.HardDeleteTenantSQL` runs `drop_graph` on the suite's shared superuser pool, and the "runs Up, Down, and Up again" spec in `pkg/db/db_integration_bdd_test.go` replaces that pool after its round trip. A new spec that runs a large burst of DDL against a shared pool needs the same treatment.
+
+The fix ([apache/age#2248](https://github.com/apache/age/pull/2248)) is merged and backported to AGE's PG16 branch, but `release_PG16_1.6.0`, the newest PG16 image, predates it. Once the image moves to a release that includes it, remove the pool replacement from that spec and this section.
+
 ## Security Notes
 
 - Migrations run as the schema owner (`database.migration_dsn`), which owns all tables and bypasses RLS. This is intentional: the owner is the only role with DDL privileges, and only `crosscodexd migrate` uses it. The daemon refuses an owner, superuser or `BYPASSRLS` connection (`db.CheckRestrictedRole`).

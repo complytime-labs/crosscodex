@@ -1,0 +1,85 @@
+name: Fuzz (nightly)
+
+# Fuzzes every target. PRs fuzz only the packages they change (ci.yml), so
+# this run is what finds crashes reachable through unchanged packages.
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    # Headroom over the fuzz step's own limit for setup and crash upload.
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ github.token }}
+
+      # 72 targets x (2m fuzz + build) is about 3h. go test disables -timeout
+      # while fuzzing, so this step limit is the only bound on a wedged run.
+      # It is set on the step, not only the job: a step timeout fails the
+      # step, so the failure() steps below still collect crashes and report.
+      - name: Fuzz all targets
+        timeout-minutes: 270
+        run: task test:fuzz FUZZ_TIME=2m
+
+      # go test writes each failing input to <pkg>/testdata/fuzz/<FuncName>/.
+      # Only untracked files there are new; committed ones are the corpus.
+      - name: Collect crash inputs
+        if: failure()
+        run: |
+          # The default run shell lacks pipefail; a failed git ls-files would
+          # otherwise upload nothing without failing the step.
+          set -o pipefail
+          mkdir -p .test-output/fuzz-crashers
+          git ls-files -z --others --exclude-standard -- ':(glob)**/testdata/fuzz/**' \
+            | xargs -0 -r cp --parents -t .test-output/fuzz-crashers
+
+      - name: Upload crash inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashers
+          path: .test-output/fuzz-crashers
+          if-no-files-found: ignore
+
+  # Separate job so the issues:write token never shares a runner with the
+  # fuzzed code. Reuses one open issue instead of filing one per night.
+  report:
+    needs: fuzz
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open or update the fuzz failure issue
+        run: |
+          title="Nightly fuzz run failed"
+          body="Nightly fuzzing failed: $RUN_URL
+
+          Crash inputs, if any, are in the run's \`fuzz-crashers\` artifact. Reproduce with \`go test ./<pkg> -run '<FuncName>/<file>'\` after copying the input into \`<pkg>/testdata/fuzz/<FuncName>/\`, and commit it with the fix so it runs as a regression test. Later failures are added here as comments; close this issue by hand once a nightly run passes."
+          number=$(gh issue list --state open --search "in:title \"$title\"" --json number,title \
+            --jq 'map(select(.title == "Nightly fuzz run failed")) | .[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

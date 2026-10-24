@@ -394,6 +394,13 @@ Run `task --list` for all available commands including integration tests and dev
 | **Unit**        | Ginkgo/Gomega (BDD)     | Available (`task test:unit`)            |
 | **Integration** | Go testing + containers | Available (`task test:integration:all`) |
 | **E2E**         | Venom                   | Available (`task test:e2e`)             |
+| **Fuzz**        | Go native fuzzing       | Available (`task test:fuzz`)            |
+
+#### Fuzz Tests
+
+`task test:fuzz` fuzzes every `Fuzz*` target for `FUZZ_TIME` each (default `10s`). It runs one worker per CPU core, so expect it to occupy the machine. Narrow it with `PKGS`, for example `task test:fuzz PKGS=./pkg/backup FUZZ_TIME=1m`.
+
+`task test` already replays every target's seed corpus and committed `testdata/fuzz/` inputs, so known crashers are regression-tested on every run. In CI, pull requests fuzz only the packages whose Go files they change (30s per target). The nightly `Fuzz (nightly)` workflow fuzzes every target for 2m each, uploads any new crash inputs as the `fuzz-crashers` artifact, and (scheduled runs only) opens or comments on a "Nightly fuzz run failed" issue, which is closed by hand once a run passes. GitHub disables scheduled workflows in public repositories after 60 days without repository activity; re-enable it from the Actions tab.
 
 #### Stress Tests (#112)
 

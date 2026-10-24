@@ -70,6 +70,10 @@ tasks:
     vars:
       FUZZ_TIME: '{{.FUZZ_TIME | default "10s"}}'
       FUZZ_TIMEOUT: '{{.FUZZ_TIMEOUT | default "2m"}}'
+      PKGS: '{{.PKGS | default "./pkg/... ./internal/... ./cmd/..."}}'
+    deps:
+      - :dev:deps
+      - :dev:generate
     cmds:
       - mkdir -p {{.TEST_DIR}}
       # Go before 1.27 can fail a target with "context deadline exceeded" right
@@ -84,9 +88,19 @@ tasks:
         failed=0
         log=$(mktemp)
         trap 'rm -f "$log"' EXIT
-        for pkg in $(go list ./pkg/... ./internal/... ./cmd/...); do
-          fuzz_funcs=$(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
+        pkgs=$(go list {{.PKGS}}) || exit 1
+        fuzzed=0
+        for pkg in $pkgs; do
+          # A package whose tests fail to compile must fail the run, not
+          # silently drop its targets.
+          if ! listing=$(go test -list '^Fuzz' "$pkg"); then
+            echo "==> cannot list fuzz targets in $pkg; fix the build error above"
+            failed=1
+            continue
+          fi
+          fuzz_funcs=$(printf '%s\n' "$listing" | grep '^Fuzz' || true)
           for func in $fuzz_funcs; do
+            fuzzed=$((fuzzed + 1))
             for attempt in 1 2; do
               echo "==> Fuzzing $func in $pkg ({{.FUZZ_TIME}}, attempt $attempt)"
               if go test "$pkg" -run '^$' -fuzz "^${func}$" -fuzztime={{.FUZZ_TIME}} -timeout={{.FUZZ_TIMEOUT}} 2>&1 | tee "$log"; then
@@ -101,6 +115,7 @@ tasks:
             done
           done
         done
+        echo "==> Fuzzed $fuzzed target(s)"
         exit $failed
 
   property:
