@@ -113,6 +113,8 @@ func (s *stubIngestion) ConvertDocument(_ context.Context, _ *connect.Request[pb
 	return connect.NewResponse(&pb.ConvertDocumentResponse{DocumentId: "doc-stub"}), nil
 }
 
+func (s *stubIngestion) DiscardDocument(context.Context, string) error { return nil }
+
 type stubCatalog struct{}
 
 func (s *stubCatalog) ParseCatalog(_ context.Context, _ *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
