@@ -1,0 +1,32 @@
+cmd/crosscodex/project.go
+  s_b5a9791f42d015::t_5b4aee3399e127 221
+cmd/crosscodex/connect_bdd_test.go
+  s_b5a9791f42d015::t_a1ba28b41dec8a 4-5,9,12-14,17-40,42-71
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_b5a9791f42d015::t_a1ba28b41dec8a 43,178,184,482,487
+internal/gateway/admin_pool.go
+  s_b5a9791f42d015::t_f280a718de9677 5,8,28-30,32,35-38,41-49
+cmd/crosscodex/connect.go
+  s_b5a9791f42d015::t_338555a48be7dc 10,90-91,96,104,208,212-224,226-227,236,245-247,250-268
+docs/dev/service-runtime.md
+  s_b5a9791f42d015::t_6f2cf8a4f80be3 51
+  s_b5a9791f42d015::t_7ec40715c0fcf7 50
+internal/gateway/admin_pool_bdd_test.go
+  s_b5a9791f42d015::t_98b7248df3c18b 49-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4171c50dbfe0a8f76aaaa2eadc6ddd9d5f849c19",
+  "prompts": {},
+  "sessions": {
+    "s_b5a9791f42d015": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9164e169-8e9d-4b35-b565-a9baa9924747",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
