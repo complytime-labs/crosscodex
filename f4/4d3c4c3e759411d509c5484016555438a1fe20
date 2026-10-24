@@ -1,0 +1,26 @@
+cmd/crosscodex/connect.go
+  h_4db53f42b9be42 10,90-91,96,104,208,212-224,226-227,236,245-247,250-268
+cmd/crosscodex/connect_bdd_test.go
+  h_4db53f42b9be42 4-5,9,12-14,17-40,42-71
+cmd/crosscodex/embedded_integration_bdd_test.go
+  h_4db53f42b9be42 43,178,184,482,487
+cmd/crosscodex/project.go
+  h_4db53f42b9be42 221
+docs/dev/service-runtime.md
+  h_4db53f42b9be42 50-51
+internal/gateway/admin_pool.go
+  h_4db53f42b9be42 5,8,28-30,32,35-38,41-49
+internal/gateway/admin_pool_bdd_test.go
+  h_4db53f42b9be42 49-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f44d3c4c3e759411d509c5484016555438a1fe20",
+  "prompts": {},
+  "humans": {
+    "h_4db53f42b9be42": {
+      "author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
