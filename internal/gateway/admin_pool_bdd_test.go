@@ -46,4 +46,33 @@ var _ = Describe("PoolAdminBackend", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Msg.Status).To(Equal(pb.HealthStatus_HEALTH_STATUS_UNHEALTHY))
 	})
+
+	DescribeTable("names the database as a dependency",
+		func(pool *fakeHealthPool, want pb.HealthStatus) {
+			backend := gateway.NewPoolAdminBackend(pool)
+			resp, err := backend.HealthCheck(context.Background(), connect.NewRequest(&pb.HealthCheckRequest{}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.Services).To(HaveKey("database"))
+			dep := resp.Msg.Services["database"]
+			Expect(dep.ServiceName).To(Equal("database"))
+			Expect(dep.Status).To(Equal(want))
+			Expect(dep.Message).NotTo(BeEmpty())
+			Expect(dep.LastCheck).NotTo(BeNil())
+		},
+		Entry("connected", &fakeHealthPool{status: &db.HealthStatus{Connected: true}}, pb.HealthStatus_HEALTH_STATUS_HEALTHY),
+		Entry("disconnected", &fakeHealthPool{status: &db.HealthStatus{Connected: false}}, pb.HealthStatus_HEALTH_STATUS_UNHEALTHY),
+		Entry("health check error", &fakeHealthPool{err: errors.New("connection refused")}, pb.HealthStatus_HEALTH_STATUS_UNHEALTHY),
+	)
+
+	It("withholds connection details from the unhealthy message (CWE-209)", func() {
+		driverErr := errors.New(`pool not ready: dial tcp 10.0.0.7:5432: password authentication failed for user "crosscodex_app"`)
+		backend := gateway.NewPoolAdminBackend(&fakeHealthPool{err: driverErr})
+		resp, err := backend.HealthCheck(context.Background(), connect.NewRequest(&pb.HealthCheckRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		msg := resp.Msg.Services["database"].GetMessage()
+		Expect(msg).To(Equal("database unreachable"))
+		for _, secret := range []string{"10.0.0.7", "5432", "crosscodex_app", "password", "dial tcp"} {
+			Expect(msg).NotTo(ContainSubstring(secret))
+		}
+	})
 })

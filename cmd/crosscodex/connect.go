@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -86,12 +87,13 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 	} else {
 		state.client, state.adminClient = connectClient(hostPort)
 	}
-	if healthCheck(ctx, state.client) {
+	healthErr := healthCheck(ctx, state.client)
+	if healthErr == nil {
 		return nil
 	}
 
 	if explicitEndpoint {
-		return fmt.Errorf("cannot reach crosscodexd at %s\n\n  Is the daemon running? Check with:\n    crosscodex version\n\n  Or start it manually:\n    crosscodexd", endpoint)
+		return fmt.Errorf("crosscodexd at %s failed its health check: %w\n\n  Is the daemon running? Check with:\n    crosscodex version\n\n  Or start it manually:\n    crosscodexd", endpoint, healthErr)
 	}
 
 	stateDir := xdgStateDir()
@@ -99,7 +101,7 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 	if port, alive := readPIDFile(pidPath); alive && port > 0 {
 		ep := fmt.Sprintf("localhost:%d", port)
 		state.client, state.adminClient = connectClient(ep)
-		if healthCheck(ctx, state.client) {
+		if healthCheck(ctx, state.client) == nil {
 			return nil
 		}
 	}
@@ -203,23 +205,26 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	}
 
 	// Connect with mTLS
+	var lastErr error
 	for i := range healthRetries {
 		time.Sleep(healthBaseBackoff * time.Duration(1<<i))
 		client, adminClient, err := connectClientWithTLS(srvAddr, paths)
-		if err == nil {
-			state.client = client
-			state.adminClient = adminClient
-			if healthCheck(ctx, state.client) {
-				state.daemon = &embeddedDaemon{
-					server:            srv,
-					port:              port,
-					pidFile:           pidPath,
-					resources:         resources,
-					shutdownTelemetry: shutdownTelemetry,
-				}
-				started = true
-				return nil
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		state.client = client
+		state.adminClient = adminClient
+		if lastErr = healthCheck(ctx, state.client); lastErr == nil {
+			state.daemon = &embeddedDaemon{
+				server:            srv,
+				port:              port,
+				pidFile:           pidPath,
+				resources:         resources,
+				shutdownTelemetry: shutdownTelemetry,
 			}
+			started = true
+			return nil
 		}
 	}
 
@@ -228,7 +233,7 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	_ = srv.Shutdown(shutdownCtx)
 	resources.close()
 	os.Remove(pidPath)
-	return fmt.Errorf("embedded daemon started but failed health check after %d retries", healthRetries)
+	return fmt.Errorf("embedded daemon started but failed health check after %d retries: %w", healthRetries, lastErr)
 }
 
 func connectClient(endpoint string) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient) {
@@ -237,11 +242,30 @@ func connectClient(endpoint string) (crosscodexv1connect.GatewayServiceClient, c
 		crosscodexv1connect.NewAdminServiceClient(http.DefaultClient, baseURL)
 }
 
-func healthCheck(ctx context.Context, client crosscodexv1connect.GatewayServiceClient) bool {
+// healthCheck fails closed: any status other than HEALTHY is an error that
+// names each dependency the daemon reports as not healthy.
+func healthCheck(ctx context.Context, client crosscodexv1connect.GatewayServiceClient) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_, err := client.Health(ctx, connectrpc.NewRequest(&pb.HealthRequest{}))
-	return err == nil
+	resp, err := client.Health(ctx, connectrpc.NewRequest(&pb.HealthRequest{}))
+	if err != nil {
+		return fmt.Errorf("health check: %w", err)
+	}
+	status := resp.Msg.GetStatus()
+	if status == pb.HealthStatus_HEALTH_STATUS_HEALTHY {
+		return nil
+	}
+	var failing []string
+	for name, dep := range resp.Msg.GetServices() {
+		if dep.GetStatus() != pb.HealthStatus_HEALTH_STATUS_HEALTHY {
+			failing = append(failing, name+": "+dep.GetMessage())
+		}
+	}
+	if len(failing) == 0 {
+		return fmt.Errorf("daemon reports %s", status)
+	}
+	slices.Sort(failing)
+	return fmt.Errorf("daemon reports %s (%s)", status, strings.Join(failing, "; "))
 }
 
 func disconnect(state *cliState) {
