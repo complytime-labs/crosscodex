@@ -1,14 +1,74 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 
+	connectrpc "connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 )
 
+// fakeHealthClient answers Health with a fixed response or error; every
+// other GatewayServiceClient method panics through the nil embed.
+type fakeHealthClient struct {
+	crosscodexv1connect.GatewayServiceClient
+	resp *pb.HealthCheckResponse
+	err  error
+}
+
+func (f *fakeHealthClient) Health(context.Context, *connectrpc.Request[pb.HealthRequest]) (*connectrpc.Response[pb.HealthCheckResponse], error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return connectrpc.NewResponse(f.resp), nil
+}
+
+func dependencyHealth(status pb.HealthStatus, message string) *pb.HealthCheckResponse {
+	return &pb.HealthCheckResponse{
+		Status: status,
+		Services: map[string]*pb.ServiceHealth{
+			"database": {ServiceName: "database", Status: status, Message: message},
+		},
+	}
+}
+
 var _ = Describe("Connection Management", func() {
+	Describe("healthCheck", func() {
+		It("passes only when the daemon reports HEALTHY", func() {
+			client := &fakeHealthClient{resp: dependencyHealth(pb.HealthStatus_HEALTH_STATUS_HEALTHY, "database reachable")}
+			Expect(healthCheck(context.Background(), client)).To(Succeed())
+		})
+
+		DescribeTable("fails closed on any other status and names the failing dependency",
+			func(status pb.HealthStatus) {
+				client := &fakeHealthClient{resp: dependencyHealth(status, "database unreachable")}
+				err := healthCheck(context.Background(), client)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("database: database unreachable"))
+			},
+			Entry("unhealthy", pb.HealthStatus_HEALTH_STATUS_UNHEALTHY),
+			Entry("degraded", pb.HealthStatus_HEALTH_STATUS_DEGRADED),
+			Entry("unspecified", pb.HealthStatus_HEALTH_STATUS_UNSPECIFIED),
+		)
+
+		It("fails closed on a non-healthy status with no dependency detail", func() {
+			client := &fakeHealthClient{resp: &pb.HealthCheckResponse{Status: pb.HealthStatus_HEALTH_STATUS_UNHEALTHY}}
+			err := healthCheck(context.Background(), client)
+			Expect(err).To(MatchError(ContainSubstring("HEALTH_STATUS_UNHEALTHY")))
+		})
+
+		It("fails when the Health RPC errors", func() {
+			client := &fakeHealthClient{err: connectrpc.NewError(connectrpc.CodeUnavailable, errors.New("connection refused"))}
+			Expect(healthCheck(context.Background(), client)).To(MatchError(ContainSubstring("connection refused")))
+		})
+	})
+
 	Describe("xdgStateDir", func() {
 		It("uses XDG_STATE_HOME when set", func() {
 			original := os.Getenv("XDG_STATE_HOME")

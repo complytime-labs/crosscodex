@@ -218,7 +218,7 @@ func runProjectStatus(cmd *cobra.Command, state *cliState) error {
 		healthy = false
 		connectedEndpoint = resolveEndpoint(endpoint, os.Getenv("CROSSCODEX_ENDPOINT"), "")
 	} else {
-		healthy = healthCheck(ctx, state.client)
+		healthy = healthCheck(ctx, state.client) == nil
 		if healthy {
 			status = "connected"
 		} else {

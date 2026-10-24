@@ -47,6 +47,8 @@ Which roles use it:
 - **`graph`** and **`pipeline`** — both start a dedicated listener on `health.addr`, backed by a `dbPingCheck` closure (defined locally in `bootstrap.go`): it calls the app Postgres pool's `Health(ctx)` and fails the probe if the pool reports not connected.
 - **`gateway`** and **`all`** — do *not* use the dedicated listener. `internal/gateway.Server` already serves its own built-in `/healthz`. For `all`, `bootstrap` explicitly sets `rt.healthServer = nil` after wiring graph/worker/gateway, because the gateway's `/healthz` already covers process liveness for every co-located service in that process. `internal/pipeline.Server`'s own RPC listener has no `/healthz` of its own — every RPC on it requires mTLS, so health checks go through the separate dedicated listener above instead of carving an unauthenticated path out of the RPC listener.
 
+Separately from `/healthz`, the gateway's `Health` RPC delegates to its `AdminBackend`. `gateway.PoolAdminBackend` (used by the embedded daemon and the `all` and `gateway` roles) pings the app pool and reports it as the `database` entry in `HealthCheckResponse.services`, with a fixed `database reachable` / `database unreachable` message. The driver error is logged by the daemon and never returned (CWE-209). The CLI's connection gate (`healthCheck` in `cmd/crosscodex/connect.go`) fails closed: any overall status other than `HEALTHY` is an error that names each non-healthy dependency, so a daemon that answers but can't reach its database is never treated as usable.
+
 ## Database startup checks
 
 Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Database Migrations](migrations.md#crosscodexd-migrate)). At startup the daemon refuses to run when:

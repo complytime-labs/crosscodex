@@ -40,7 +40,7 @@ var _ = Describe("Embedded daemon startup (S1/S3)", func() {
 	})
 
 	It("is healthy over mTLS", func() {
-		Expect(healthCheck(ctx, sharedState.client)).To(BeTrue())
+		Expect(healthCheck(ctx, sharedState.client)).To(Succeed())
 	})
 
 	It("has RLS enabled with policies on the tenant-scoped catalog tables", func() {
@@ -175,13 +175,13 @@ var _ = Describe("Graceful shutdown (S4)", func() {
 		pidFile := state.daemon.pidFile
 		client := state.client
 
-		Expect(healthCheck(ctx, client)).To(BeTrue())
+		Expect(healthCheck(ctx, client)).To(Succeed())
 
 		state.daemon.stop()
 		state.daemon = nil // prevent double-stop in cleanup
 
 		Expect(pidFile).NotTo(BeAnExistingFile())
-		Expect(healthCheck(ctx, client)).To(BeFalse(), "old client should fail after shutdown")
+		Expect(healthCheck(ctx, client)).NotTo(Succeed(), "old client should fail after shutdown")
 
 		var one int
 		err := pool.QueryRow(ctx, "SELECT 1").Scan(&one)
@@ -479,24 +479,12 @@ var _ = Describe("Bug records (Pending correct + active tripwire)", func() {
 })
 
 var _ = Describe("Bug record #4 — startup health vs DB reachability", func() {
-	PIt("#4 health reflects database reachability", func() {
+	It("#4 health reflects database reachability", func() {
 		ctx := context.Background()
 		state, cleanup := startTestDaemon()
 		defer cleanup()
 		state.daemon.resources.dbPool.Close()
-		// Correct: with the DB pool closed, health should report unhealthy.
-		Expect(healthCheck(ctx, state.client)).To(BeFalse())
-	})
-
-	It("#4 TRIPWIRE: health stays green after the DB pool is closed", func() {
-		// TRIPWIRE for bug #4: when this fails, the health gate touches the DB —
-		// flip the PIt above and delete this. Gate uses the gateway Health RPC,
-		// not gateway.PoolAdminBackend.HealthCheck: healthCheck (cmd/crosscodex/connect.go).
-		ctx := context.Background()
-		state, cleanup := startTestDaemon()
-		defer cleanup()
-		state.daemon.resources.dbPool.Close()
-		Expect(healthCheck(ctx, state.client)).To(BeTrue()) // PIN: confirm health ignores the closed pool
+		Expect(healthCheck(ctx, state.client)).To(MatchError(ContainSubstring("database: database unreachable")))
 	})
 })
 
