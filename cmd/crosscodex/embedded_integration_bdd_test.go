@@ -464,7 +464,7 @@ var _ = Describe("Bug records (Pending correct + active tripwire)", func() {
 	})
 
 	// --- #6: failed parse leaves an orphan blob ---
-	PIt("#6 a failed parse leaves no orphan blob in storage", func() {
+	It("#6 a failed parse leaves no orphan blob in storage", func() {
 		store := sharedState.daemon.resources.storage
 		before, err := store.List(ctx, "")
 		Expect(err).NotTo(HaveOccurred())
@@ -475,20 +475,6 @@ var _ = Describe("Bug records (Pending correct + active tripwire)", func() {
 		after, err := store.List(ctx, "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(HaveLen(len(before)), "failed import must not leak a blob")
-	})
-
-	It("#6 TRIPWIRE: a failed parse currently leaves a blob behind", func() {
-		// TRIPWIRE for bug #6: when this fails, failed imports clean up their
-		// blob — flip the PIt above and delete this. Blob Put precedes parse in
-		// localIngestionBackend.ConvertDocument (cmd/crosscodex/embedded.go).
-		store := sharedState.daemon.resources.storage
-		before, err := store.List(ctx, "")
-		Expect(err).NotTo(HaveOccurred())
-		_, _ = importCatalog(ctx, sharedState.client, fixture("invalid.json"),
-			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "orphan")
-		after, err := store.List(ctx, "")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(len(after)).To(BeNumerically(">", len(before))) // PIN: confirm the leak is observable
 	})
 })
 

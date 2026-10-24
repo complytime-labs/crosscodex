@@ -30,6 +30,8 @@ func (hashIngestion) ConvertDocument(_ context.Context, req *connect.Request[pb.
 	}), nil
 }
 
+func (hashIngestion) DiscardDocument(context.Context, string) error { return nil }
+
 func sha256hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
@@ -300,6 +302,8 @@ func (slowIngestion) ConvertDocument(ctx context.Context, _ *connect.Request[pb.
 	return nil, connect.NewError(connect.CodeDeadlineExceeded, ctx.Err())
 }
 
+func (slowIngestion) DiscardDocument(context.Context, string) error { return nil }
+
 type failOnMarkerIngestion struct{ marker string }
 
 func (f failOnMarkerIngestion) ConvertDocument(_ context.Context, req *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
@@ -309,6 +313,8 @@ func (f failOnMarkerIngestion) ConvertDocument(_ context.Context, req *connect.R
 	}
 	return connect.NewResponse(&pb.ConvertDocumentResponse{DocumentId: sha256hex(content)}), nil
 }
+
+func (failOnMarkerIngestion) DiscardDocument(context.Context, string) error { return nil }
 
 func BenchmarkStreamDocument10MB(b *testing.B) {
 	env := newStreamTestEnv(defaultIdentity(),

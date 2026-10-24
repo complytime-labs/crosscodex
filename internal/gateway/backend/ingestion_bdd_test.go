@@ -58,4 +58,31 @@ var _ = Describe("PassthroughIngestion", func() {
 		}))
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
 	})
+
+	It("discards a stored document so a rejected import leaves no blob", func() {
+		st, err := storage.NewLocal(GinkgoT().TempDir(), "test")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(st.Close)
+		b := NewPassthroughIngestion(st)
+		ctx := context.Background()
+		resp, err := b.ConvertDocument(ctx, connect.NewRequest(&pb.ConvertDocumentRequest{
+			Source: &pb.ConvertDocumentRequest_Content{Content: []byte("hello")},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(b.DiscardDocument(ctx, resp.Msg.GetDocumentId())).To(Succeed())
+
+		exists, err := st.Exists(ctx, resp.Msg.GetDocumentId())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(exists).To(BeFalse())
+	})
+
+	It("reports a storage failure when discarding", func() {
+		st, err := storage.NewLocal(GinkgoT().TempDir(), "test")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Close()).To(Succeed())
+
+		err = NewPassthroughIngestion(st).DiscardDocument(context.Background(), "documents/x.json")
+		Expect(err).To(MatchError(ContainSubstring("discard document documents/x.json")))
+	})
 })

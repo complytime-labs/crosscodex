@@ -98,6 +98,13 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 
 	parseResp, err := s.catalog.ParseCatalog(ctx, connect.NewRequest(parseReq))
 	if err != nil {
+		if catalogRejected(err) {
+			// WithoutCancel: a client that disconnected must not strand the blob.
+			if discardErr := s.ingestion.DiscardDocument(context.WithoutCancel(ctx), docID); discardErr != nil {
+				s.logger.Warn("discard rejected document failed; blob left in storage",
+					"document_id", docID, "error", discardErr)
+			}
+		}
 		s.recordMetrics(ctx, input.rpcName, start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -153,4 +160,17 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		DocumentId: docID,
 		Status:     jobResp.Msg.GetStatus(),
 	}), nil
+}
+
+// catalogRejected reports whether ParseCatalog refused the document itself,
+// which it does before persisting anything, so no catalog row can reference
+// the stored blob. Any other failure (Internal, Unavailable, ...) may follow a
+// persisted catalog row that points at the blob, so the blob is kept.
+func catalogRejected(err error) bool {
+	switch connect.CodeOf(err) {
+	case connect.CodeInvalidArgument, connect.CodeFailedPrecondition, connect.CodeUnimplemented:
+		return true
+	default:
+		return false
+	}
 }

@@ -44,3 +44,11 @@ func (b *PassthroughIngestion) ConvertDocument(ctx context.Context, req *connect
 		Status:     pb.JobStatus_JOB_STATUS_COMPLETED,
 	}), nil
 }
+
+// DiscardDocument deletes a document stored by ConvertDocument.
+func (b *PassthroughIngestion) DiscardDocument(ctx context.Context, documentID string) error {
+	if err := b.storage.Delete(ctx, documentID); err != nil {
+		return fmt.Errorf("discard document %s: %w", documentID, err)
+	}
+	return nil
+}

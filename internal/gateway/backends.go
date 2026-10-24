@@ -9,6 +9,10 @@ import (
 
 type IngestionBackend interface {
 	ConvertDocument(ctx context.Context, req *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error)
+	// DiscardDocument removes a document that ConvertDocument stored. The
+	// gateway calls it when the catalog rejects the document, so a failed
+	// import leaves no blob behind.
+	DiscardDocument(ctx context.Context, documentID string) error
 }
 
 type CatalogBackend interface {

@@ -42,6 +42,7 @@ var _ gateway.AdminBackend = (*mockAdmin)(nil)
 
 type mockIngestion struct {
 	convertFn func(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error)
+	discardFn func(context.Context, string) error
 }
 
 func (m *mockIngestion) ConvertDocument(ctx context.Context, req *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
@@ -49,6 +50,13 @@ func (m *mockIngestion) ConvertDocument(ctx context.Context, req *connect.Reques
 		return m.convertFn(ctx, req)
 	}
 	return connect.NewResponse(&pb.ConvertDocumentResponse{DocumentId: "doc-1"}), nil
+}
+
+func (m *mockIngestion) DiscardDocument(ctx context.Context, documentID string) error {
+	if m.discardFn != nil {
+		return m.discardFn(ctx, documentID)
+	}
+	return nil
 }
 
 type mockCatalog struct {
@@ -549,6 +557,82 @@ var _ = Describe("SubmitDocument", func() {
 		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{}))
 		Expect(err).To(HaveOccurred())
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+	})
+
+	DescribeTable("discards the stored document only when the catalog rejected it",
+		func(parseCode connect.Code, wantDiscard bool) {
+			var discarded []string
+			ing := &mockIngestion{
+				discardFn: func(_ context.Context, documentID string) error {
+					discarded = append(discarded, documentID)
+					return nil
+				},
+			}
+			cat := &mockCatalog{
+				parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+					return nil, connect.NewError(parseCode, errors.New("parse failed"))
+				},
+			}
+			svc := newTestService(gateway.WithIngestionBackend(ing), gateway.WithCatalogBackend(cat))
+
+			_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source: &pb.SubmitDocumentRequest_Content{Content: []byte("not a catalog")},
+			}))
+			Expect(connect.CodeOf(err)).To(Equal(parseCode))
+			if wantDiscard {
+				Expect(discarded).To(Equal([]string{"doc-1"}))
+			} else {
+				Expect(discarded).To(BeEmpty(), "the catalog may reference the blob after an uncertain failure")
+			}
+		},
+		Entry("invalid content", connect.CodeInvalidArgument, true),
+		Entry("unsupported format", connect.CodeFailedPrecondition, true),
+		Entry("unimplemented format", connect.CodeUnimplemented, true),
+		Entry("internal error after possible persistence", connect.CodeInternal, false),
+		Entry("catalog unreachable", connect.CodeUnavailable, false),
+	)
+
+	It("returns the parse error when discarding the document also fails", func() {
+		ing := &mockIngestion{
+			discardFn: func(context.Context, string) error { return errors.New("storage down") },
+		}
+		cat := &mockCatalog{
+			parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("parse OSCAL: bad json"))
+			},
+		}
+		svc := newTestService(gateway.WithIngestionBackend(ing), gateway.WithCatalogBackend(cat))
+
+		_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("not a catalog")},
+		}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("parse OSCAL: bad json"))
+		Expect(err.Error()).NotTo(ContainSubstring("storage down"))
+	})
+
+	It("discards the document even when the request context is already cancelled", func() {
+		discardCtxErr := errors.New("discard not called")
+		ing := &mockIngestion{
+			discardFn: func(ctx context.Context, _ string) error {
+				discardCtxErr = ctx.Err()
+				return nil
+			},
+		}
+		ctx, cancel := context.WithCancel(userCtx("user-a"))
+		cat := &mockCatalog{
+			parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				cancel()
+				return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("parse failed"))
+			},
+		}
+		svc := newTestService(gateway.WithIngestionBackend(ing), gateway.WithCatalogBackend(cat))
+
+		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("not a catalog")},
+		}))
+		Expect(err).To(HaveOccurred())
+		Expect(discardCtxErr).NotTo(HaveOccurred(), "a client disconnect must not strand the blob")
 	})
 
 	DescribeTable("rejects empty content before it reaches ingestion storage",
