@@ -5,6 +5,34 @@
 // this neutral package instead of on each other.
 package results
 
+// RequiresAnalyzer and RelationshipAnalyzer are the names of the requires and
+// relationship analyzers: the analyzer_name of that analyzer's
+// analysis_results row and of the vote_summaries rows of its pairs.
+const (
+	RequiresAnalyzer     = "requires"
+	RelationshipAnalyzer = "relationship"
+)
+
+// SemanticMatchContributionTypeKey and SemanticMatchUnanimousKey are
+// SemanticMatchResult.Properties keys. The relationship analyzer writes them;
+// the pipeline reads them to build synthesis inputs. The contribution type is
+// the CONTRIBUTES_TO sub-classification ("INTEGRAL_TO", "EXAMPLE_OF", or ""
+// when there is none); unanimity is strconv.FormatBool output.
+const (
+	SemanticMatchContributionTypeKey = "contribution_type"
+	SemanticMatchUnanimousKey        = "unanimous"
+)
+
+// SemanticMatchEdgeLabel is the graph edge label for relationship analyzer
+// results. The graph subscriber writes it; readers filter on it.
+const SemanticMatchEdgeLabel = "SEMANTIC_MATCH"
+
+// SemanticMatchEdgeIDKind is the first graphdb.DerivedID part of a
+// SEMANTIC_MATCH edge ID: DerivedID(SemanticMatchEdgeIDKind, jobID, src, tgt).
+// The mappings API derives mapping_id the same way, so a mapping and its edge
+// share an ID.
+const SemanticMatchEdgeIDKind = "semantic-match"
+
 // RequiresResult is one consensus-computed prerequisite pair from the
 // requires analyzer.
 type RequiresResult struct {

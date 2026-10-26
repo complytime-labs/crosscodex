@@ -44,8 +44,9 @@ type Store interface {
 	GetCompletedAnalysisResults(ctx context.Context, jobID string, analyzerNames []string) (map[string]*analyzer.Output, error)
 
 	// WriteVoteSummaries upserts vote_summaries rows for the given job's
-	// requires/relationship pairs, with viability=0 pending synthesis's
-	// update. Idempotent: a pair already present (e.g. from a prior process
+	// requires/relationship contributions, one row per (source, target,
+	// contribution type), with viability=0 pending synthesis's update.
+	// Idempotent: a row already present (e.g. from a prior process
 	// invocation before a restart) is left untouched.
 	WriteVoteSummaries(ctx context.Context, tenantID, jobID string, pairs []VoteSummaryPair) error
 }

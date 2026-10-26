@@ -33,7 +33,7 @@ var dbAggregateQueries = map[DataClass]string{
 	ClassJobResults: `SELECT json_build_object(
   'job',                     (SELECT row_to_json(j) FROM jobs j WHERE j.job_id = $1),
   'job_stages',              COALESCE((SELECT json_agg(row_to_json(s) ORDER BY s.stage_name)              FROM job_stages s              WHERE s.job_id = $1), '[]'::json),
-  'vote_summaries',          COALESCE((SELECT json_agg(row_to_json(v) ORDER BY v.source_id, v.target_id)  FROM vote_summaries v          WHERE v.job_id = $1), '[]'::json),
+  'vote_summaries',          COALESCE((SELECT json_agg(row_to_json(v) ORDER BY v.source_id, v.target_id, v.analyzer_name) FROM vote_summaries v WHERE v.job_id = $1), '[]'::json),
   'analysis_results',        COALESCE((SELECT json_agg(row_to_json(a) ORDER BY a.analyzer_name)           FROM analysis_results a        WHERE a.job_id = $1), '[]'::json),
   'relationship_candidates', COALESCE((SELECT json_agg(row_to_json(r) ORDER BY r.source_id, r.target_id)  FROM relationship_candidates r WHERE r.job_id = $1), '[]'::json),
   'requires_candidates',     COALESCE((SELECT json_agg(row_to_json(rq) ORDER BY rq.source_id, rq.target_id) FROM requires_candidates rq WHERE rq.job_id = $1), '[]'::json)

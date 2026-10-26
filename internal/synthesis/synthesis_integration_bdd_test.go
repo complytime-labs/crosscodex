@@ -125,17 +125,18 @@ func setupSynthJob(tenantID, jobID, status string) {
 	Expect(err).NotTo(HaveOccurred(), "setupSynthJob: "+jobID)
 }
 
-// setupVoteSummaries inserts vote_summary rows via superuser.
-func setupVoteSummaries(tenantID, jobID string, pairs [][2]string) {
+// setupVoteSummaries inserts one vote_summaries row per pair for the given
+// analyzer via superuser.
+func setupVoteSummaries(tenantID, jobID, analyzerName string, pairs [][2]string) {
 	ctx := context.Background()
 	for _, pair := range pairs {
 		err := intSuPool.Exec(ctx,
 			`INSERT INTO vote_summaries
-			   (job_id, source_id, target_id, consensus, confidence, viability, tenant_id)
-			 VALUES ($1, $2, $3, 'EQUIVALENT', 0.9, 0.0, $4)
-			 ON CONFLICT (job_id, source_id, target_id) DO NOTHING`,
-			jobID, pair[0], pair[1], tenantID)
-		Expect(err).NotTo(HaveOccurred(), "setupVoteSummaries: "+pair[0]+"->"+pair[1])
+			   (job_id, source_id, target_id, analyzer_name, consensus, confidence, viability, tenant_id)
+			 VALUES ($1, $2, $3, $4, 'EQUIVALENT', 0.9, 0.0, $5)
+			 ON CONFLICT (job_id, source_id, target_id, analyzer_name) DO NOTHING`,
+			jobID, pair[0], pair[1], analyzerName, tenantID)
+		Expect(err).NotTo(HaveOccurred(), "setupVoteSummaries: "+pair[0]+"->"+pair[1]+" ("+analyzerName+")")
 	}
 }
 
@@ -171,8 +172,9 @@ func defaultSynthCfg() config.SynthesisConfig {
 	}
 }
 
-// buildInputs builds SynthesisInput slices from source/target pairs.
-func buildInputs(pairs [][2]string, relationship, contribution string, confidence float64) []synthesis.SynthesisInput {
+// buildInputs builds SynthesisInput slices from source/target pairs produced
+// by the named analyzer, with no CONTRIBUTES_TO sub-classification.
+func buildInputs(pairs [][2]string, relationship, analyzerName string, confidence float64) []synthesis.SynthesisInput {
 	inputs := make([]synthesis.SynthesisInput, len(pairs))
 	for i, pair := range pairs {
 		inputs[i] = synthesis.SynthesisInput{
@@ -183,7 +185,7 @@ func buildInputs(pairs [][2]string, relationship, contribution string, confidenc
 			SimilarityVar:         5.0,
 			SimilarityCount:       3,
 			ConsensusRelationship: relationship,
-			ContributionType:      contribution,
+			Analyzer:              analyzerName,
 			ConfidenceFraction:    confidence,
 			Unanimous:             true,
 		}
@@ -210,7 +212,7 @@ var _ = Describe("Service.Execute — persistViability integration", Ordered, fu
 
 		BeforeAll(func() {
 			setupSynthJob(intTenantID, jobID, "pending")
-			setupVoteSummaries(intTenantID, jobID, [][2]string{
+			setupVoteSummaries(intTenantID, jobID, "relationship", [][2]string{
 				{"ctrl-A", "ctrl-X"},
 				{"ctrl-A", "ctrl-Y"},
 				{"ctrl-B", "ctrl-X"},
@@ -227,7 +229,7 @@ var _ = Describe("Service.Execute — persistViability integration", Ordered, fu
 				{"ctrl-A", "ctrl-X"},
 				{"ctrl-A", "ctrl-Y"},
 				{"ctrl-B", "ctrl-X"},
-			}, "EQUIVALENT", "INTEGRAL_TO", 0.9)
+			}, "EQUIVALENT", "relationship", 0.9)
 
 			result, err := svc.Execute(ctx, jobID, inputs, nil)
 			Expect(err).NotTo(HaveOccurred())
@@ -260,6 +262,132 @@ var _ = Describe("Service.Execute — persistViability integration", Ordered, fu
 		})
 	})
 
+	Context("when one pair has both a requires and a relationship contribution", func() {
+		const jobID = "synth-int-job-both-contributions"
+
+		BeforeAll(func() {
+			setupSynthJob(intTenantID, jobID, "pending")
+			setupVoteSummaries(intTenantID, jobID, "requires", [][2]string{{"ctrl-D", "ctrl-W"}})
+			setupVoteSummaries(intTenantID, jobID, "relationship", [][2]string{{"ctrl-D", "ctrl-W"}})
+		})
+
+		It("succeeds and writes each contribution's own viability to its own row", func() {
+			ctx, err := tenant.WithTenant(context.Background(), intTenantID)
+			Expect(err).NotTo(HaveOccurred())
+			conn := newAppTenantConnection()
+			svc := synthesis.New(conn, defaultSynthCfg(), []string{"EQUIVALENT"})
+
+			// Distinct similarity scores give the two contributions distinct
+			// viabilities, so a row receiving the other contribution's value
+			// is detectable.
+			requiresInput := buildInputs([][2]string{{"ctrl-D", "ctrl-W"}}, synthesis.ConsensusRequires, "requires", 0.9)[0]
+			requiresInput.SimilarityScore = 60.0
+			relationshipInput := buildInputs([][2]string{{"ctrl-D", "ctrl-W"}}, "EQUIVALENT", "relationship", 0.9)[0]
+			relationshipInput.SimilarityScore = 90.0
+
+			result, err := svc.Execute(ctx, jobID, []synthesis.SynthesisInput{requiresInput, relationshipInput}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Rows).To(HaveLen(2))
+
+			want := make(map[string]float64, len(result.Rows))
+			for _, r := range result.Rows {
+				want[r.Analyzer] = r.ViabilityWeight
+			}
+			Expect(want).To(HaveLen(2))
+			Expect(want["requires"]).NotTo(Equal(want["relationship"]),
+				"fixture must give the contributions different viabilities")
+
+			rows, queryErr := intSuPool.Query(context.Background(),
+				"SELECT analyzer_name, viability FROM vote_summaries WHERE job_id = $1 AND source_id = $2 AND target_id = $3",
+				jobID, "ctrl-D", "ctrl-W")
+			Expect(queryErr).NotTo(HaveOccurred())
+			defer rows.Close()
+			got := make(map[string]float64)
+			for rows.Next() {
+				var contribution string
+				var viability float64
+				Expect(rows.Scan(&contribution, &viability)).To(Succeed())
+				got[contribution] = viability
+			}
+			Expect(rows.Err()).NotTo(HaveOccurred())
+			Expect(got).To(Equal(want))
+		})
+	})
+
+	Context("when relationship pairs differ only in their contribution type", func() {
+		const jobID = "synth-int-job-integral-to"
+
+		BeforeAll(func() {
+			setupSynthJob(intTenantID, jobID, "pending")
+			setupVoteSummaries(intTenantID, jobID, "relationship", [][2]string{
+				{"ctrl-F", "ctrl-U"},
+				{"ctrl-G", "ctrl-U"},
+			})
+		})
+
+		It("persists the IntegralToFactor-weighted viability for INTEGRAL_TO only", func() {
+			ctx, err := tenant.WithTenant(context.Background(), intTenantID)
+			Expect(err).NotTo(HaveOccurred())
+			conn := newAppTenantConnection()
+			svc := synthesis.New(conn, defaultSynthCfg(), []string{"CONTRIBUTES_TO"})
+
+			inputs := buildInputs([][2]string{{"ctrl-F", "ctrl-U"}, {"ctrl-G", "ctrl-U"}}, "CONTRIBUTES_TO", "relationship", 0.9)
+			inputs[0].ContributionType = "INTEGRAL_TO"
+			inputs[1].ContributionType = "EXAMPLE_OF"
+
+			_, err = svc.Execute(ctx, jobID, inputs, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			viability := func(sourceID string) float64 {
+				var v float64
+				Expect(intSuPool.QueryRow(context.Background(),
+					"SELECT viability FROM vote_summaries WHERE job_id = $1 AND source_id = $2 AND target_id = 'ctrl-U' AND analyzer_name = 'relationship'",
+					jobID, sourceID).Scan(&v)).To(Succeed())
+				return v
+			}
+			// Unclassified controls on both sides: type and level factors are
+			// 1, so viability is the similarity score times the contribution
+			// factor (IntegralToFactor 1.1 in defaultSynthCfg).
+			Expect(viability("ctrl-G")).To(Equal(75.0), "EXAMPLE_OF gets no contribution factor")
+			Expect(viability("ctrl-F")).To(Equal(82.5), "INTEGRAL_TO gets IntegralToFactor")
+		})
+	})
+
+	Context("when a synthesis row's contribution has no vote_summaries row", func() {
+		const jobID = "synth-int-job-missing-contribution"
+
+		BeforeAll(func() {
+			setupSynthJob(intTenantID, jobID, "pending")
+			// Only the requires row exists; the relationship input has no row.
+			setupVoteSummaries(intTenantID, jobID, "requires", [][2]string{{"ctrl-E", "ctrl-V"}})
+		})
+
+		It("returns an actionable ErrDBNoRowsAffected and leaves the existing row unchanged", func() {
+			ctx, err := tenant.WithTenant(context.Background(), intTenantID)
+			Expect(err).NotTo(HaveOccurred())
+			conn := newAppTenantConnection()
+			svc := synthesis.New(conn, defaultSynthCfg(), []string{"EQUIVALENT"})
+
+			inputs := append(
+				buildInputs([][2]string{{"ctrl-E", "ctrl-V"}}, synthesis.ConsensusRequires, "requires", 0.9),
+				buildInputs([][2]string{{"ctrl-E", "ctrl-V"}}, "EQUIVALENT", "relationship", 0.9)...,
+			)
+
+			_, err = svc.Execute(ctx, jobID, inputs, nil)
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, synthesis.ErrDBNoRowsAffected)).To(BeTrue(),
+				"expected ErrDBNoRowsAffected, got: %v", err)
+			Expect(err.Error()).To(ContainSubstring("expected 2 viability updates, got 1"))
+			Expect(err.Error()).To(ContainSubstring("transaction rolled back"))
+
+			var viability float64
+			Expect(intSuPool.QueryRow(context.Background(),
+				"SELECT viability FROM vote_summaries WHERE job_id = $1 AND source_id = $2 AND target_id = $3 AND analyzer_name = 'requires'",
+				jobID, "ctrl-E", "ctrl-V").Scan(&viability)).To(Succeed())
+			Expect(viability).To(Equal(0.0), "the matched row's update must be rolled back")
+		})
+	})
+
 	Context("when vote_summaries rows do not exist for the given job", func() {
 		const jobID = "synth-int-job-missing-rows"
 
@@ -276,7 +404,7 @@ var _ = Describe("Service.Execute — persistViability integration", Ordered, fu
 
 			inputs := buildInputs([][2]string{
 				{"ctrl-MISSING", "ctrl-ALSO-MISSING"},
-			}, "EQUIVALENT", "INTEGRAL_TO", 0.9)
+			}, "EQUIVALENT", "relationship", 0.9)
 
 			_, err = svc.Execute(ctx, jobID, inputs, nil)
 			Expect(err).To(HaveOccurred())
@@ -290,7 +418,7 @@ var _ = Describe("Service.Execute — persistViability integration", Ordered, fu
 
 		BeforeAll(func() {
 			setupSynthJob(intTenantID, jobID, "completed")
-			setupVoteSummaries(intTenantID, jobID, [][2]string{
+			setupVoteSummaries(intTenantID, jobID, "relationship", [][2]string{
 				{"ctrl-C", "ctrl-Z"},
 			})
 		})
@@ -303,7 +431,7 @@ var _ = Describe("Service.Execute — persistViability integration", Ordered, fu
 
 			inputs := buildInputs([][2]string{
 				{"ctrl-C", "ctrl-Z"},
-			}, "EQUIVALENT", "INTEGRAL_TO", 0.9)
+			}, "EQUIVALENT", "relationship", 0.9)
 
 			_, err = svc.Execute(ctx, jobID, inputs, nil)
 			Expect(err).To(HaveOccurred())
@@ -330,7 +458,7 @@ var _ = Describe("Service.Execute — persistViability integration", Ordered, fu
 			setupSynthTenant(otherTenantID, "Other Tenant")
 			// Job and rows belong to otherTenantID.
 			setupSynthJob(otherTenantID, jobID, "pending")
-			setupVoteSummaries(otherTenantID, jobID, [][2]string{
+			setupVoteSummaries(otherTenantID, jobID, "relationship", [][2]string{
 				{"ctrl-RLS", "ctrl-OTHER"},
 			})
 		})
@@ -344,7 +472,7 @@ var _ = Describe("Service.Execute — persistViability integration", Ordered, fu
 
 			inputs := buildInputs([][2]string{
 				{"ctrl-RLS", "ctrl-OTHER"},
-			}, "EQUIVALENT", "INTEGRAL_TO", 0.9)
+			}, "EQUIVALENT", "relationship", 0.9)
 
 			_, err = svc.Execute(ctx, jobID, inputs, nil)
 			Expect(err).To(HaveOccurred())

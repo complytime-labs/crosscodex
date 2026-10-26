@@ -326,15 +326,26 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON job_stages TO app_user;
 
 -- ---------------------------------------------------------------------------
 
+-- vote_summaries holds one row per analyzer contribution to a (source, target)
+-- pair, not one row per pair. analyzer_name names the analyzer that produced
+-- the row, as in analysis_results.analyzer_name ('requires' or 'relationship'
+-- today); a pair both analyzers report has two rows. Synthesis ranks one row
+-- per contribution and writes each row's viability back to the row of the
+-- same analyzer, so the key must include it: a per-pair key would make two
+-- synthesis rows target one table row. There is no DEFAULT, so a writer that
+-- omits the analyzer fails. The only CHECK forbids the empty string, which
+-- would otherwise pass NOT NULL and key a nameless contribution; there is no
+-- list of allowed values, because analyzers are extensible.
 CREATE TABLE IF NOT EXISTS vote_summaries (
-    job_id     TEXT NOT NULL REFERENCES jobs(job_id),
-    source_id  TEXT NOT NULL,
-    target_id  TEXT NOT NULL,
-    consensus  TEXT NOT NULL,
-    confidence DOUBLE PRECISION NOT NULL,
-    viability  DOUBLE PRECISION NOT NULL,
-    tenant_id  TEXT NOT NULL REFERENCES tenants(tenant_id),
-    PRIMARY KEY (job_id, source_id, target_id)
+    job_id            TEXT NOT NULL REFERENCES jobs(job_id),
+    source_id         TEXT NOT NULL,
+    target_id         TEXT NOT NULL,
+    analyzer_name     TEXT NOT NULL CHECK (analyzer_name <> ''),
+    consensus         TEXT NOT NULL,
+    confidence        DOUBLE PRECISION NOT NULL,
+    viability         DOUBLE PRECISION NOT NULL,
+    tenant_id         TEXT NOT NULL REFERENCES tenants(tenant_id),
+    PRIMARY KEY (job_id, source_id, target_id, analyzer_name)
 );
 
 ALTER TABLE vote_summaries ENABLE ROW LEVEL SECURITY;

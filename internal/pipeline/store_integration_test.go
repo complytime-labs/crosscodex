@@ -500,8 +500,9 @@ var _ = Describe("PGStore integration", func() {
 		Expect(store.CreateJob(ctx, job)).To(Succeed(), "CreateJob failed")
 
 		pairs := []pipeline.VoteSummaryPair{
-			{SourceID: "AC-1", TargetID: "AC-2", Consensus: "requires", Confidence: 0.9},
-			{SourceID: "AC-3", TargetID: "AC-4", Consensus: "supports", Confidence: 0.8},
+			{SourceID: "AC-1", TargetID: "AC-2", Analyzer: "requires", Consensus: "requires", Confidence: 0.9},
+			{SourceID: "AC-1", TargetID: "AC-2", Analyzer: "relationship", Consensus: "supports", Confidence: 0.7},
+			{SourceID: "AC-3", TargetID: "AC-4", Analyzer: "relationship", Consensus: "supports", Confidence: 0.8},
 		}
 
 		// First write: both rows must land with viability=0.
@@ -512,12 +513,12 @@ var _ = Describe("PGStore integration", func() {
 		// assert the rows physically committed with the expected content —
 		// mirrors the CompleteAnalysisStage spec's readback approach.
 		type row struct {
-			sourceID, targetID, consensus string
-			confidence, viability         float64
+			sourceID, targetID, contributionType, consensus string
+			confidence, viability                           float64
 		}
 		readRows := func() []row {
 			rows, err := suPool.Query(ctx,
-				"SELECT source_id, target_id, consensus, confidence, viability FROM vote_summaries WHERE tenant_id = $1 AND job_id = $2 ORDER BY source_id",
+				"SELECT source_id, target_id, analyzer_name, consensus, confidence, viability FROM vote_summaries WHERE tenant_id = $1 AND job_id = $2 ORDER BY source_id, analyzer_name",
 				tenantID, job.JobID)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred(), "querying vote_summaries failed")
 			defer rows.Close()
@@ -525,7 +526,7 @@ var _ = Describe("PGStore integration", func() {
 			var got []row
 			for rows.Next() {
 				var r row
-				ExpectWithOffset(1, rows.Scan(&r.sourceID, &r.targetID, &r.consensus, &r.confidence, &r.viability)).To(Succeed(), "scanning vote_summaries row failed")
+				ExpectWithOffset(1, rows.Scan(&r.sourceID, &r.targetID, &r.contributionType, &r.consensus, &r.confidence, &r.viability)).To(Succeed(), "scanning vote_summaries row failed")
 				got = append(got, r)
 			}
 			ExpectWithOffset(1, rows.Err()).NotTo(HaveOccurred(), "iterating vote_summaries rows failed")
@@ -533,10 +534,11 @@ var _ = Describe("PGStore integration", func() {
 		}
 
 		got := readRows()
-		Expect(got).To(HaveLen(2), "vote_summaries row count after first write (rows=%+v)", got)
+		Expect(got).To(HaveLen(3), "vote_summaries row count after first write: one row per contribution (rows=%+v)", got)
 		want := []row{
-			{sourceID: "AC-1", targetID: "AC-2", consensus: "requires", confidence: 0.9, viability: 0},
-			{sourceID: "AC-3", targetID: "AC-4", consensus: "supports", confidence: 0.8, viability: 0},
+			{sourceID: "AC-1", targetID: "AC-2", contributionType: "relationship", consensus: "supports", confidence: 0.7, viability: 0},
+			{sourceID: "AC-1", targetID: "AC-2", contributionType: "requires", consensus: "requires", confidence: 0.9, viability: 0},
+			{sourceID: "AC-3", targetID: "AC-4", contributionType: "relationship", consensus: "supports", confidence: 0.8, viability: 0},
 		}
 		Expect(got).To(Equal(want), "vote_summaries rows after first write")
 
@@ -547,7 +549,7 @@ var _ = Describe("PGStore integration", func() {
 		Expect(store.WriteVoteSummaries(ctx, tenantID, job.JobID, pairs)).To(Succeed(), "WriteVoteSummaries (second write, same pairs) failed")
 
 		gotAfterRetry := readRows()
-		Expect(gotAfterRetry).To(HaveLen(2), "vote_summaries row count after second write (no duplicates; rows=%+v)", gotAfterRetry)
+		Expect(gotAfterRetry).To(HaveLen(3), "vote_summaries row count after second write (no duplicates; rows=%+v)", gotAfterRetry)
 		Expect(gotAfterRetry).To(Equal(want), "vote_summaries rows after second write must be unchanged")
 	})
 

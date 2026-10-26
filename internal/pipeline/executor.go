@@ -485,7 +485,12 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 		}
 	}
 
-	inputs, classifications := buildSynthesisInputs(classifyResults, requiresResults, relResults, similarityByModel)
+	inputs, classifications, err := buildSynthesisInputs(classifyResults, requiresResults, relResults, similarityByModel)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("runSynthesis: %w", err)
+	}
 
 	synthResult, err := s.synthesis.Execute(ctx, jobID, inputs, classifications)
 	if err != nil {

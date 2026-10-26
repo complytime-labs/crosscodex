@@ -1,10 +1,13 @@
 package pipeline
 
 import (
+	"fmt"
 	"sort"
+	"strconv"
 
 	"gonum.org/v1/gonum/stat"
 
+	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 )
@@ -42,14 +45,20 @@ type similarityMatrix struct {
 // classifications from persisted classify/requires/relationship results and
 // per-model embedding similarity matrices, per the durable-pipeline design's
 // §5.1 table. A pair present in both requiresResults and relResults
-// contributes two distinct rows (different ContributionType), matching
+// contributes two distinct rows (different Analyzer), matching
 // Ranker.Rank's per-row (not per-pair) contract.
+//
+// Relationship rows take ContributionType and Unanimous from the properties
+// the relationship analyzer persists with every result. A missing or
+// unrecognised value is corrupt persisted output and returns an error with
+// no inputs, like unparseable result data, rather than ranking the pair with
+// a guessed value.
 func buildSynthesisInputs(
 	classifyResults []results.ClassifyResult,
 	requiresResults []results.RequiresResult,
 	relResults []results.SemanticMatchResult,
 	similarityByModel map[string]similarityMatrix,
-) ([]synthesis.SynthesisInput, map[string]synthesis.Classification) {
+) ([]synthesis.SynthesisInput, map[string]synthesis.Classification, error) {
 	classifications := make(map[string]synthesis.Classification, len(classifyResults))
 	for _, c := range classifyResults {
 		classifications[c.ControlID] = synthesis.Classification{Type: c.Type, Level: c.Level}
@@ -110,12 +119,16 @@ func buildSynthesisInputs(
 			SimilarityVar:         variance,
 			SimilarityCount:       count,
 			ConsensusRelationship: synthesis.ConsensusRequires,
-			ContributionType:      "requires",
+			Analyzer:              results.RequiresAnalyzer,
 			ConfidenceFraction:    r.Confidence,
 			Unanimous:             r.Unanimous,
 		})
 	}
 	for _, r := range relResults {
+		contributionType, unanimous, err := relationshipProperties(r)
+		if err != nil {
+			return nil, nil, err
+		}
 		mean, median, variance, count := similarityStats(r.SourceID, r.TargetID)
 		inputs = append(inputs, synthesis.SynthesisInput{
 			SourceID:              r.SourceID,
@@ -125,10 +138,44 @@ func buildSynthesisInputs(
 			SimilarityVar:         variance,
 			SimilarityCount:       count,
 			ConsensusRelationship: r.RelationshipType,
-			ContributionType:      "relationship",
+			Analyzer:              results.RelationshipAnalyzer,
+			ContributionType:      contributionType,
 			ConfidenceFraction:    r.Confidence,
-			Unanimous:             true,
+			Unanimous:             unanimous,
 		})
 	}
-	return inputs, classifications
+	return inputs, classifications, nil
+}
+
+// relationshipProperties reads the contribution type and unanimity the
+// relationship analyzer persists in a result's Properties. The contribution
+// type must be a canonical relationship.ContributionType string ("" included,
+// for a relationship that is not CONTRIBUTES_TO); unanimity must parse with
+// strconv.ParseBool.
+func relationshipProperties(r results.SemanticMatchResult) (string, bool, error) {
+	corrupt := func(what string) error {
+		return fmt.Errorf("buildSynthesisInputs: relationship result for pair %s--%s %s, so the persisted analysis result is corrupt. "+
+			"Synthesis cannot weight the pair without it; create a new job to re-run the analysis instead of resuming this one",
+			r.SourceID, r.TargetID, what)
+	}
+
+	contributionType, ok := r.Properties[results.SemanticMatchContributionTypeKey]
+	if !ok {
+		return "", false, corrupt(fmt.Sprintf("has no %q property", results.SemanticMatchContributionTypeKey))
+	}
+	if relationship.ParseContributionType(contributionType).String() != contributionType {
+		return "", false, corrupt(fmt.Sprintf("has unknown %q %q (want %q, %q or empty)",
+			results.SemanticMatchContributionTypeKey, contributionType,
+			relationship.ContribIntegralTo.String(), relationship.ContribExampleOf.String()))
+	}
+
+	rawUnanimous, ok := r.Properties[results.SemanticMatchUnanimousKey]
+	if !ok {
+		return "", false, corrupt(fmt.Sprintf("has no %q property", results.SemanticMatchUnanimousKey))
+	}
+	unanimous, err := strconv.ParseBool(rawUnanimous)
+	if err != nil {
+		return "", false, corrupt(fmt.Sprintf("has non-boolean %q %q", results.SemanticMatchUnanimousKey, rawUnanimous))
+	}
+	return contributionType, unanimous, nil
 }

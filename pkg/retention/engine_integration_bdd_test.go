@@ -212,8 +212,8 @@ func integSeedJobChildren(tenantID, jobID string) {
 		jobID, tenantID,
 	)).To(Succeed(), "insert job_stage")
 	Expect(tx.Exec(ctx,
-		`INSERT INTO vote_summaries (job_id, source_id, target_id, consensus, confidence, viability, tenant_id)
-		 VALUES ($1, 'src-1', 'tgt-1', 'accept', 0.9, 0.8, $2)`,
+		`INSERT INTO vote_summaries (job_id, source_id, target_id, analyzer_name, consensus, confidence, viability, tenant_id)
+		 VALUES ($1, 'src-1', 'tgt-1', 'relationship', 'accept', 0.9, 0.8, $2)`,
 		jobID, tenantID,
 	)).To(Succeed(), "insert vote_summary")
 	Expect(tx.Exec(ctx,

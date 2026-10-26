@@ -16,7 +16,9 @@ var ErrInvalidJobID = errors.New("synthesis: invalid job ID")
 // ErrDBUpdate indicates the database update failed.
 var ErrDBUpdate = errors.New("synthesis: database update failed")
 
-// ErrDBNoRowsAffected indicates no vote_summaries rows were updated.
+// ErrDBNoRowsAffected indicates fewer vote_summaries rows were updated than
+// there are synthesis rows: some (source, target, contribution type) had no
+// row to update.
 var ErrDBNoRowsAffected = errors.New("synthesis: no rows affected by viability update")
 
 // ErrImmutabilityViolation indicates the database immutability trigger
