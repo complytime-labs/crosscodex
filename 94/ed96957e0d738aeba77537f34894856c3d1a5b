@@ -1,0 +1,23 @@
+pkg/natsbus/natsbus_bdd_test.go
+  s_77c8f6ddbfd45e::t_b19fd4101f37c1 578-616
+pkg/natsbus/subjects.go
+  s_77c8f6ddbfd45e::t_b19fd4101f37c1 74-83
+pkg/natsbus/natsbus_property_test.go
+  s_77c8f6ddbfd45e::t_b19fd4101f37c1 103-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94ed96957e0d738aeba77537f34894856c3d1a5b",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
