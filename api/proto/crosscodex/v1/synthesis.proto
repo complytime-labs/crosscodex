@@ -21,9 +21,6 @@ service SynthesisService {
   // List syntheses
   rpc ListSyntheses(ListSynthesesRequest) returns (ListSynthesesResponse);
 
-  // Get ranked mappings for controls
-  rpc GetMappings(GetMappingsRequest) returns (GetMappingsResponse);
-
   // Get quality metrics
   rpc GetQualityMetrics(GetQualityMetricsRequest)
       returns (GetQualityMetricsResponse);
@@ -86,19 +83,6 @@ message ListSynthesesRequest {
 
 message ListSynthesesResponse {
   repeated Synthesis syntheses = 1;
-  PageInfo page_info = 2;
-}
-
-message GetMappingsRequest {
-  TenantContext tenant_context = 1;
-  string synthesis_id = 2;
-  string control_id = 3;      // Optional filter
-  float min_confidence = 4;   // Optional filter
-  ListOptions options = 5;
-}
-
-message GetMappingsResponse {
-  repeated ControlMapping mappings = 1;
   PageInfo page_info = 2;
 }
 
