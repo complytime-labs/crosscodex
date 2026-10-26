@@ -1,0 +1,64 @@
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_5d30fea2594b5a::t_83d41343283199 22,103,115
+pkg/retention/collector_bdd_test.go
+  s_5d30fea2594b5a::t_4058f4371df1b7 15
+  s_5d30fea2594b5a::t_795de328a94e89 29-34,120,123,134,136,151,153,164,166
+pkg/storage/storagetest/storagetest_property_test.go
+  s_5d30fea2594b5a::t_b0616eb86f807b 1-115
+pkg/retention/engine_integration_bdd_test.go
+  s_5d30fea2594b5a::t_6d04d8c136354c 93,703
+pkg/retention/purge_bdd_test.go
+  s_5d30fea2594b5a::t_4058f4371df1b7 13
+  s_5d30fea2594b5a::t_795de328a94e89 105-107,109
+internal/pipeline/pipeline_integration_test.go
+  s_5d30fea2594b5a::t_131d9507f71f5d 21
+  s_5d30fea2594b5a::t_be6a5462e7a488 37,60
+internal/analyzer/artifacts/materializer_bdd_test.go
+  s_5d30fea2594b5a::t_a01388a4fb2f36 4,21,117,122-126,191-192,311,337,359,390,404,412,668,687,691-694
+pkg/storage/storagetest/storagetest_bdd_test.go
+  s_5d30fea2594b5a::t_b0616eb86f807b 1-344
+internal/catalog/catalog_bdd_test.go
+  s_5d30fea2594b5a::t_f09480f32312f6 12,25,341,358,364,421,451
+internal/gateway/backend/ingestion_bdd_test.go
+  s_5d30fea2594b5a::t_83d41343283199 12,17,25,31
+internal/pipeline/service_bdd_test.go
+  s_5d30fea2594b5a::t_131d9507f71f5d 25
+  s_5d30fea2594b5a::t_be6a5462e7a488 109,185,386,436,506,704,754,781
+pkg/storage/storagetest/doc.go
+  s_5d30fea2594b5a::t_b55c1ab0b3e69e 1-14,18-58
+  s_5d30fea2594b5a::t_ee1ad1904179a9 15-17
+pkg/storage/storagetest/fake.go
+  s_5d30fea2594b5a::t_b55c1ab0b3e69e 1-193
+internal/analyzer/relationship/materializer_bdd_test.go
+  s_5d30fea2594b5a::t_996b51732f0877 4,22,58,74,81,185,226-229
+internal/analyzer/relationship/integration_bdd_test.go
+  s_5d30fea2594b5a::t_996b51732f0877 6,22,231,249
+internal/pipeline/executor_bdd_test.go
+  s_5d30fea2594b5a::t_131d9507f71f5d 29
+  s_5d30fea2594b5a::t_be6a5462e7a488 354,373
+internal/catalog/rpc_errors_bdd_test.go
+  s_5d30fea2594b5a::t_f09480f32312f6 11,21,54-55
+pkg/retention/archive_bdd_test.go
+  s_5d30fea2594b5a::t_6d04d8c136354c 14,17-23,41-43,49-51,59,63,72,80,86,94,97,107,113,119,124
+internal/analyzer/embedding/embedding_bdd_test.go
+  s_5d30fea2594b5a::t_996b51732f0877 22,495,506
+internal/pipeline/production_registry_bdd_test.go
+  s_5d30fea2594b5a::t_131d9507f71f5d 20
+  s_5d30fea2594b5a::t_be6a5462e7a488 84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f70fb415bddd813d788830a64331db7f32c3b745",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
