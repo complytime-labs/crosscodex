@@ -1,0 +1,25 @@
+internal/testspecs/deterministic_llm.go
+  s_5d30fea2594b5a::t_571a2b7641be68 10,37-48,55-57,100-102
+internal/testspecs/deterministic_llm_test.go
+  s_5d30fea2594b5a::t_571a2b7641be68 30,67,77,90,105,120-130,142
+pkg/llmclient/llmclienttest/llmclienttest_bdd_test.go
+  s_5d30fea2594b5a::t_571a2b7641be68 115,118-119,123,125,128,130,134-135
+pkg/llmclient/llmclienttest/fake.go
+  s_5d30fea2594b5a::t_571a2b7641be68 50-52,81-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59230c8e9c0ef05c7ac9b896312ee692bdf73d8a",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
