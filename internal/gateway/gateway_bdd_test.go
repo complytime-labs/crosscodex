@@ -579,7 +579,7 @@ var _ = Describe("SubmitDocument", func() {
 	})
 
 	DescribeTable("discards the stored document only when the catalog rejected it",
-		func(parseCode connect.Code, wantDiscard bool) {
+		func(parseCode connect.Code, parseMsg string, wantDiscard bool) {
 			var discarded []string
 			ing := &mockIngestion{
 				discardFn: func(_ context.Context, documentID string) error {
@@ -589,7 +589,7 @@ var _ = Describe("SubmitDocument", func() {
 			}
 			cat := &mockCatalog{
 				parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
-					return nil, connect.NewError(parseCode, errors.New("parse failed"))
+					return nil, connect.NewError(parseCode, errors.New(parseMsg))
 				},
 			}
 			svc := newTestService(gateway.WithIngestionBackend(ing), gateway.WithCatalogBackend(cat))
@@ -604,11 +604,15 @@ var _ = Describe("SubmitDocument", func() {
 				Expect(discarded).To(BeEmpty(), "the catalog may reference the blob after an uncertain failure")
 			}
 		},
-		Entry("invalid content", connect.CodeInvalidArgument, true),
-		Entry("unsupported format", connect.CodeFailedPrecondition, true),
-		Entry("unimplemented format", connect.CodeUnimplemented, true),
-		Entry("internal error after possible persistence", connect.CodeInternal, false),
-		Entry("catalog unreachable", connect.CodeUnavailable, false),
+		Entry("invalid content", connect.CodeInvalidArgument, "parse failed", true),
+		Entry("unsupported format", connect.CodeFailedPrecondition, "parse failed", true),
+		Entry("unimplemented format", connect.CodeUnimplemented, "parse failed", true),
+		Entry("internal error after possible persistence", connect.CodeInternal, "parse failed", false),
+		Entry("catalog unreachable", connect.CodeUnavailable, "parse failed", false),
+		Entry("catalog stored but graph projection not queued, so its rows reference the document",
+			connect.CodeUnavailable,
+			"catalog 0123456789abcdef was stored but its graph projection could not be queued: the event bus is unavailable. Re-import the same document to retry",
+			false),
 	)
 
 	It("returns the parse error when discarding the document also fails", func() {

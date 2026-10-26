@@ -282,6 +282,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 				Expect(edge.Label).To(Equal("PARENT_OF"))
 				Expect(edge.SourceID).To(Equal(nodeID("ac")))
 				Expect(edge.TargetID).To(Equal(nodeID(child)))
+				Expect(edge.ValidFrom.IsZero()).To(BeFalse(), "edge %s has zero ValidFrom", edge.ID)
 			}
 		})
 

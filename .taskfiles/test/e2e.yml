@@ -64,6 +64,7 @@ tasks:
           fi
       - >
         venom run {{.ROOT_DIR}}/test/e2e/ingest-to-age.venom.yml
+        --lib-dir {{.ROOT_DIR}}/test/e2e/lib
         --output-dir {{.TEST_DIR}}
         --var root={{.ROOT_DIR}}
         --var ca_cert={{.TEST_DIR}}/certs/ca.pem
@@ -144,6 +145,7 @@ tasks:
           fi
       - >
         venom run {{.ROOT_DIR}}/test/e2e/ingest-to-age-llm.venom.yml
+        --lib-dir {{.ROOT_DIR}}/test/e2e/lib
         --output-dir {{.TEST_DIR}}
         --var root={{.ROOT_DIR}}
         --var ca_cert={{.TEST_DIR}}/certs/ca.pem

@@ -80,23 +80,23 @@ testcases:
           - result.code ShouldEqual 0
           - result.systemout ShouldEqual "JOB_STATUS_COMPLETED"
 
-      - type: exec
-        script: |
-          DSN="postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.ca_cert}}&sslcert={{.client_cert}}&sslkey={{.client_key}}"
-          PGOPTIONS='-c search_path=ag_catalog,public' psql "$DSN" -tAc \
-            "SELECT count(*) FROM cypher('crosscodex_e2e', \$\$ MATCH (n:Control) RETURN n \$\$) AS (v agtype);"
+      - type: age-count
+        ca_cert: "{{.ca_cert}}"
+        client_cert: "{{.client_cert}}"
+        client_key: "{{.client_key}}"
+        cypher: "MATCH (n:Control) RETURN n"
+        expected: "3"
         assertions:
-          - result.code ShouldEqual 0
-          - result.systemout ShouldEqual "3"
+          - result.count ShouldEqual "3"
 
-      - type: exec
-        script: |
-          DSN="postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.ca_cert}}&sslcert={{.client_cert}}&sslkey={{.client_key}}"
-          PGOPTIONS='-c search_path=ag_catalog,public' psql "$DSN" -tAc \
-            "SELECT count(*) FROM cypher('crosscodex_e2e', \$\$ MATCH ()-[r:PARENT_OF]->() RETURN r \$\$) AS (v agtype);"
+      - type: age-count
+        ca_cert: "{{.ca_cert}}"
+        client_cert: "{{.client_cert}}"
+        client_key: "{{.client_key}}"
+        cypher: "MATCH ()-[r:PARENT_OF]->() RETURN r"
+        expected: "2"
         assertions:
-          - result.code ShouldEqual 0
-          - result.systemout ShouldEqual "2"
+          - result.count ShouldEqual "2"
 
       - type: exec
         script: |

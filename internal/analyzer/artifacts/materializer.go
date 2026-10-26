@@ -272,8 +272,9 @@ func (m *GraphMaterializer) checkArtifacts(ctx context.Context, tenantID string,
 			if _, err := m.graph.GetNode(ctx, tenantID, p.controlID); err != nil {
 				if errors.Is(err, graphdb.ErrNodeNotFound) {
 					return nil, fmt.Errorf("materializer: cannot materialize artifacts for control %s: the control does not "+
-						"exist in the tenant graph, so nothing was written. Catalog ingest creates control nodes; "+
-						"import the catalog first, then re-run this job: %w", p.controlID, err)
+						"exist in the tenant graph, so nothing was written. The graph role projects Control nodes from the "+
+						"catalog parsed event; check its catalog projection logs or re-import the catalog, then re-run "+
+						"this job: %w", p.controlID, err)
 				}
 				return nil, fmt.Errorf("materializer: checking control %s exists "+
 					"(retry once the graph is reachable; re-running the job is safe): %w", p.controlID, err)

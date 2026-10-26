@@ -303,7 +303,6 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer))),
 		catalog.WithStore(catalog.NewPGStore(dbpkg.NewTenantPool(shared.appPool))),
 		catalog.WithStorage(storageProvider),
-		catalog.WithGraphDB(shared.graphDB_),
 		catalog.WithVectorDB(shared.vectorDB),
 		catalog.WithBus(shared.natsClient),
 		catalog.WithLogger(slog.Default()),
