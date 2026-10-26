@@ -1,0 +1,27 @@
+cmd/crosscodexd/healthcheck_bdd_test.go
+  s_77c8f6ddbfd45e::t_0f9d267df07d9c 6,12-14,17-28,73-86
+deploy/README.md
+  s_77c8f6ddbfd45e::t_0bf57fabb1803e 374
+docs/dev/service-runtime.md
+  s_77c8f6ddbfd45e::t_be381c803f1a21 48,50
+internal/gateway/server.go
+  s_77c8f6ddbfd45e::t_8a92d5d36e7851 116-120
+internal/gateway/server_bdd_test.go
+  s_77c8f6ddbfd45e::t_930f3d355cfafa 8,76-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd31085f1d1bb64a6f5f59a069085d38a2f3bad8",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
