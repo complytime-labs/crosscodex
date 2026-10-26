@@ -1,0 +1,22 @@
+pkg/attestation/attestation_property_test.go
+  s_5d30fea2594b5a::t_318aeb90915fc2 53,55,61
+  s_5d30fea2594b5a::t_558b71596787d2 51-52,54,58-60,62
+pkg/graphdb/memdriver/memdriver_bdd_test.go
+  s_5d30fea2594b5a::t_aca3a0de5f5fb5 300-302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e3de2c14d69cdcc52d224df8615f8bafcf3777e",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
