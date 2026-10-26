@@ -1,0 +1,87 @@
+cmd/crosscodex/results.go
+  s_474050e579134e::t_666ee3e248285d 4,7,10,12-13,17,20,45,49-53,55,59-60,62-63,67-68,70-71,76-77,79,88,91,94,99-208,214-215,220-222,224-228,230,235-237,239-243,251-261,266,275,294,302,311,370-371,373,375,377,383-384,399
+internal/results/service.go
+  s_474050e579134e::t_666ee3e248285d 1-337
+internal/results/cursor.go
+  s_474050e579134e::t_666ee3e248285d 1-46
+internal/gateway/gateway_property_bdd_test.go
+  s_474050e579134e::t_666ee3e248285d 199-202
+internal/results/types.go
+  s_474050e579134e::t_666ee3e248285d 1-85
+internal/gateway/service.go
+  s_474050e579134e::t_666ee3e248285d 27,100-101
+  s_474050e579134e::t_c8397080fe48be 102-103
+internal/results/results_suite_test.go
+  s_474050e579134e::t_666ee3e248285d 1-13
+internal/gateway/gateway_bdd_test.go
+  s_474050e579134e::t_666ee3e248285d 145-163,713-723,725,728-732,734-756,759-761,763-767,770-774,776-780,783-788,791-846
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_474050e579134e::t_666ee3e248285d 1-79
+api/proto/crosscodex/v1/gateway.proto
+  s_474050e579134e::t_666ee3e248285d 90,98-105,186
+internal/gateway/mappings.go
+  s_474050e579134e::t_666ee3e248285d 1-104
+internal/results/cursor_bdd_test.go
+  s_474050e579134e::t_666ee3e248285d 1-37
+api/proto/crosscodex/v1/graph.proto
+  s_474050e579134e::t_666ee3e248285d 87
+internal/analyzer/relationship/materializer.go
+  s_474050e579134e::t_666ee3e248285d 17,147
+.taskfiles/test/integration.yml
+  s_474050e579134e::t_666ee3e248285d 121,239
+internal/graph/subscriber_handlers.go
+  s_474050e579134e::t_666ee3e248285d 66-67,80
+cmd/crosscodex/results_bdd_test.go
+  s_474050e579134e::t_666ee3e248285d 5-7,9-10,12,15-17,20-275
+  s_474050e579134e::t_bcc9c50e6352ff 276
+docs/dev/service-runtime.md
+  s_474050e579134e::t_666ee3e248285d 40-57
+cmd/crosscodex/embedded.go
+  s_474050e579134e::t_666ee3e248285d 24,529-536,551
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_474050e579134e::t_666ee3e248285d 318-339
+cmd/crosscodexd/bootstrap_bdd_test.go
+  s_474050e579134e::t_666ee3e248285d 38-47
+cmd/crosscodexd/results_e2e_test.go
+  s_474050e579134e::t_666ee3e248285d 1-224
+internal/results/doc.go
+  s_474050e579134e::t_666ee3e248285d 1-6
+cmd/crosscodexd/bootstrap.go
+  s_474050e579134e::t_666ee3e248285d 23,254-256,321-322,686-701,710
+internal/results/service_bdd_test.go
+  s_474050e579134e::t_666ee3e248285d 1-367
+README.md
+  s_474050e579134e::t_666ee3e248285d 100-127
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_474050e579134e::t_666ee3e248285d 56,228-264
+internal/gateway/backends.go
+  s_474050e579134e::t_666ee3e248285d 39-45
+internal/results/store_pg_integration_bdd_test.go
+  s_474050e579134e::t_666ee3e248285d 1-401
+internal/results/results_fuzz_test.go
+  s_474050e579134e::t_666ee3e248285d 1-26
+internal/results/results_property_test.go
+  s_474050e579134e::t_666ee3e248285d 1-27
+api/proto/crosscodex/v1/synthesis.proto
+  s_474050e579134e::t_666ee3e248285d 189-220
+docs/dev/design-principles.md
+  s_474050e579134e::t_666ee3e248285d 36
+internal/results/store_pg.go
+  s_474050e579134e::t_666ee3e248285d 1-305
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6df7a012329b634216260985e5fa1e0efa062d8",
+  "prompts": {},
+  "sessions": {
+    "s_474050e579134e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c9d73c5-2668-4020-9b86-cbbb515cc1ef",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
