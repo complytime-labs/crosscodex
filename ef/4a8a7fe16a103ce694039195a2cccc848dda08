@@ -1,0 +1,88 @@
+pkg/retention/purge_bdd_test.go
+  s_5d30fea2594b5a::t_958661aa82e976 79,84,104
+  s_5d30fea2594b5a::t_fc746b3bff9678 12,80-82,85,105-107
+  s_5d30fea2594b5a::t_7327a4cc6a5f72 17-25,63-64,69-76,87,91-92,96-101,109,113-114,116-117,121-122,124-125,129-130,132-133
+internal/graph/resolver_bdd_test.go
+  s_5d30fea2594b5a::t_92e76849ebda65 15,106-107,109,112,118,128-129,131,134,140-141,159-160
+internal/gateway/tenant_status_bdd_test.go
+  s_5d30fea2594b5a::t_e75cdf2e0037d1 19,154-157,165-166
+  s_5d30fea2594b5a::t_c5483366b2dca4 158-161,170-172
+pkg/retention/collector_bdd_test.go
+  s_5d30fea2594b5a::t_7327a4cc6a5f72 13,18-19,21-26,50,53,63,65,77,79,88,99,102,115,117
+internal/pipeline/relationship_candidates_test.go
+  s_5d30fea2594b5a::t_4c7adac24ccff5 44-47
+  s_5d30fea2594b5a::t_78cc07cedfe17d 122
+  s_5d30fea2594b5a::t_31daa76c330b32 150
+  s_5d30fea2594b5a::t_e02ebe3ae8634e 12
+  s_5d30fea2594b5a::t_16a0f7a978b332 23,29,39-40,50,67-68,72,95,106-107,111,120-121,125,134-135,139,148-149,152,154
+  s_5d30fea2594b5a::t_05af470d028203 69,136
+internal/pipeline/requires_candidates_test.go
+  s_5d30fea2594b5a::t_31daa76c330b32 234
+  s_5d30fea2594b5a::t_e02ebe3ae8634e 15
+  s_5d30fea2594b5a::t_05af470d028203 103,212
+  s_5d30fea2594b5a::t_78cc07cedfe17d 176
+  s_5d30fea2594b5a::t_4c7adac24ccff5 70-73,193-195
+  s_5d30fea2594b5a::t_16a0f7a978b332 25,31,61-62,66,76,98-99,102,106,129,140-141,145,154-155,158,162,171-172,175,179,188-189,192,198,207-208,211,215,229-230,233,236,238
+pkg/db/dbtest/doc.go
+  s_5d30fea2594b5a::t_29a35bd38ebdd6 1-16
+pkg/db/dbtest/fake_property_test.go
+  s_5d30fea2594b5a::t_9381abd2ffd62c 19
+  s_5d30fea2594b5a::t_d6dbd68c510949 1-18,20-63
+internal/pipeline/candidate_readers_bdd_test.go
+  s_5d30fea2594b5a::t_e02ebe3ae8634e 13
+  s_5d30fea2594b5a::t_16a0f7a978b332 18,24-25,35-36,40,47-48,53,60-61,64,67,70,78-79,82-83,86,95,101-102,112-113,117,127-128,135
+  s_5d30fea2594b5a::t_4c7adac24ccff5 129-132
+  s_5d30fea2594b5a::t_78cc07cedfe17d 49
+  s_5d30fea2594b5a::t_31daa76c330b32 50
+  s_5d30fea2594b5a::t_05af470d028203 62,80
+pkg/db/dbtest/fake.go
+  s_5d30fea2594b5a::t_1b57d5d31afd7f 367,371-380
+  s_5d30fea2594b5a::t_f4a44ff2d46452 1-366,368-370,381-391
+internal/pipeline/catalog_controls_reader_bdd_test.go
+  s_5d30fea2594b5a::t_16a0f7a978b332 19-20,28,48
+  s_5d30fea2594b5a::t_e02ebe3ae8634e 11
+  s_5d30fea2594b5a::t_4c7adac24ccff5 21-25
+internal/synthesis/synthesis_bdd_test.go
+  s_5d30fea2594b5a::t_39b608d98c304e 718,765-766,771,773,983,1001,1023,1034,1051,1055-1057
+  s_5d30fea2594b5a::t_8f10f2d1bd0726 19
+internal/pipeline/candidate_writer_test.go
+  s_5d30fea2594b5a::t_16a0f7a978b332 28-29,35,55-56,62,89,102-103,107,119,140-141,147,170-171,176,192-193,199,224,237-238,242,254
+  s_5d30fea2594b5a::t_605e884d4703ac 115,250
+  s_5d30fea2594b5a::t_e02ebe3ae8634e 15
+internal/catalog/catalog_bdd_test.go
+  s_5d30fea2594b5a::t_3f1e667f578a26 22,210-211,223-225,227,232,237-238,240,246,252-253,255,261,268-269,326-327,340-341,351-354,356,367,371-372,374,379-380
+internal/graph/controls_reader_bdd_test.go
+  s_5d30fea2594b5a::t_92e76849ebda65 14,29,32,34,47-48,56,74-75,90,177
+  s_5d30fea2594b5a::t_23b9d06ca4250c 22-26,42,85,91,93-96
+internal/pipeline/production_registry_bdd_test.go
+  s_5d30fea2594b5a::t_dc9389d41d4ee2 115-123,207
+  s_5d30fea2594b5a::t_e02ebe3ae8634e 18
+internal/synthesis/testhelpers_test.go
+  s_5d30fea2594b5a::t_39b608d98c304e 11,14-21,24-28,31-35,37,40-43,46,49,51-54,56
+pkg/retention/archive_bdd_test.go
+  s_5d30fea2594b5a::t_fc746b3bff9678 12,80-87,109,122,130,144,157,171
+pkg/db/dbtest/fake_bdd_test.go
+  s_5d30fea2594b5a::t_bfcb8f4f74407c 1-245,248-305
+  s_5d30fea2594b5a::t_54b479d49df80a 246-247
+internal/pipeline/store_bdd_test.go
+  s_5d30fea2594b5a::t_605e884d4703ac 627
+  s_5d30fea2594b5a::t_bebbd7a378bb64 673
+  s_5d30fea2594b5a::t_e02ebe3ae8634e 14
+  s_5d30fea2594b5a::t_16a0f7a978b332 579,585,595-596,601,614-615,622,632-633,643,651-652,659,672,674,676
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef4a8a7fe16a103ce694039195a2cccc848dda08",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
