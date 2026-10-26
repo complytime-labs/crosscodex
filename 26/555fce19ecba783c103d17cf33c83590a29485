@@ -1,0 +1,21 @@
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_77c8f6ddbfd45e::t_381749df713342 254,292-294,296-299,301-302,306,308-309,311,323
+test/e2e/lib/age-count.yml
+  s_77c8f6ddbfd45e::t_5e551a9a5c0f1d 5-10,26-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26555fce19ecba783c103d17cf33c83590a29485",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
