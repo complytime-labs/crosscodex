@@ -100,6 +100,9 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					{"FeedbackSubject", func() (string, error) {
 						return natsbus.FeedbackSubject(tenantID, jobID)
 					}},
+					{"CatalogParsedSubject", func() (string, error) {
+						return natsbus.CatalogParsedSubject(tenantID, jobID)
+					}},
 				}
 
 				for _, b := range builders {

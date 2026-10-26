@@ -575,6 +575,45 @@ var _ = Describe("NATSBus System", Ordered, func() {
 				}),
 			)
 		})
+
+		Context("when building CatalogParsedSubject", func() {
+			type catalogCase struct {
+				tenant    string
+				catalogID string
+				want      string
+				wantErr   error
+			}
+
+			DescribeTable("validates inputs and constructs catalog parsed subjects correctly",
+				func(tc catalogCase) {
+					got, err := natsbus.CatalogParsedSubject(tc.tenant, tc.catalogID)
+					if tc.wantErr != nil {
+						Expect(err).To(HaveOccurred())
+						Expect(errors.Is(err, tc.wantErr)).To(BeTrue())
+						Expect(got).To(BeEmpty())
+					} else {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(got).To(Equal(tc.want))
+					}
+				},
+				Entry("valid catalog", catalogCase{
+					tenant: "acme-corp", catalogID: "0123456789abcdef",
+					want: "crosscodex.catalog.acme-corp.0123456789abcdef.parsed",
+				}),
+				Entry("empty catalog ID", catalogCase{
+					tenant: "acme-corp", catalogID: "", wantErr: natsbus.ErrInvalidSubject,
+				}),
+				Entry("catalog ID with wildcard", catalogCase{
+					tenant: "acme-corp", catalogID: "cat>", wantErr: natsbus.ErrInvalidSubject,
+				}),
+				Entry("catalog ID with dot", catalogCase{
+					tenant: "acme-corp", catalogID: "cat.x", wantErr: natsbus.ErrInvalidSubject,
+				}),
+				Entry("invalid tenant", catalogCase{
+					tenant: "a.b", catalogID: "0123456789abcdef", wantErr: natsbus.ErrInvalidSubject,
+				}),
+			)
+		})
 	})
 
 	Describe("Provenance Edge Cases", func() {

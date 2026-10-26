@@ -41,9 +41,13 @@ type Service struct {
 	materializeLatency metric.Float64Histogram
 	edgesSkipped       metric.Int64Counter
 
+	// controls feeds the catalog subscription; nil leaves it unsubscribed.
+	controls ControlsReader
+
 	// subscriber lifecycle (used in Task 4)
-	mu  sync.Mutex
-	sub natsbus.Subscription
+	mu         sync.Mutex
+	sub        natsbus.Subscription
+	catalogSub natsbus.Subscription
 }
 
 // New creates a Graph Service.
