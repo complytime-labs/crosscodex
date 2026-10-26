@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -21,7 +22,6 @@ import (
 )
 
 const (
-	edgeLabel         = "SEMANTIC_MATCH"
 	determinationType = "llm_panel"
 	storagePrefix     = "analysis/relationship/"
 )
@@ -144,7 +144,7 @@ func (m *GraphMaterializer) Materialize(ctx context.Context, tenantID, jobID str
 		// different payload, so neither writer silently keeps the other's edge.
 		edge := graphdb.Edge{
 			ID:                graphdb.DerivedID("semantic-match-rebuild", jobID, pair.SourceControlID, pair.TargetControlID),
-			Label:             edgeLabel,
+			Label:             results.SemanticMatchEdgeLabel,
 			DeterminedBy:      jobID,
 			DeterminationType: determinationType,
 			Confidence:        pair.Consensus.ConfidenceFraction,

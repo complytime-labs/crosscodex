@@ -84,7 +84,7 @@ message Edge {
   string source_node_id = 3;
   string target_node_id = 4;
   RelationshipType relationship_type = 5;
-  string label = 6;  // "MAPS_TO", "REQUIRES", "IMPLEMENTS"
+  string label = 6;  // "SEMANTIC_MATCH", "REQUIRES", "PARENT_OF", "DEMANDS"
   map<string, string> properties = 7;
   TemporalAttributes temporal = 8;
   AuditMetadata audit = 9;

@@ -315,6 +315,28 @@ var _ = Describe("Edge cases (green)", func() {
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound))
 	})
 
+	It("ListJobMappings with an unknown job id returns NotFound, proving the mappings backend is attached", func() {
+		_, err := sharedState.client.ListJobMappings(ctx, connectrpc.NewRequest(&pb.ListJobMappingsRequest{
+			JobId: "00000000-0000-0000-0000-000000000000",
+		}))
+		Expect(err).To(HaveOccurred())
+		// CodeUnavailable ("mappings backend not configured") would mean
+		// gateway.WithMappingsBackend is missing from the embedded service.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound), "got: %v", err)
+	})
+
+	It("results summary for an unknown job fails with not-found through the CLI", func() {
+		cmd := newResultsCmd(sharedState)
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"summary", "00000000-0000-0000-0000-000000000000"})
+		err := cmd.ExecuteContext(ctx)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("not found"))
+		Expect(err.Error()).NotTo(ContainSubstring("mappings backend not configured"))
+		Expect(err.Error()).NotTo(ContainSubstring("control_id is required"))
+	})
+
 	It("#19 GetCatalog with an empty id returns InvalidArgument", func() {
 		_, err := getCatalog(ctx, sharedState.client, "")
 		Expect(err).To(HaveOccurred())

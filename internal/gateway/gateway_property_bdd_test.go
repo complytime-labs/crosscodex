@@ -196,6 +196,10 @@ var _ = Describe("Gateway Property Tests", func() {
 					_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
 					return err
 				}},
+				{"ListJobMappings", func() error {
+					_, err := svc.ListJobMappings(ctx, connect.NewRequest(&pb.ListJobMappingsRequest{JobId: "job-1"}))
+					return err
+				}},
 				{"SubmitVote", func() error {
 					_, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: "map-1"}))
 					return err

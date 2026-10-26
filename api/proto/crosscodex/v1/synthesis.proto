@@ -186,3 +186,35 @@ message DiagnosticEntry {
   string message = 3;
   double value = 4;
 }
+
+// MappingStage selects which pipeline stage's mappings ListMappings reads.
+enum MappingStage {
+  MAPPING_STAGE_UNSPECIFIED = 0;  // Treated as SYNTHESIZED
+  MAPPING_STAGE_SYNTHESIZED = 1;  // After synthesis confidence threshold and per-control cap
+  MAPPING_STAGE_ANALYZER = 2;     // Raw relationship analyzer consensus; no viability
+}
+
+// ListJobMappingsRequest lists mappings. The gateway's ListJobMappings requires
+// job_id; the gateway's GetControlMappings sends control_id without job_id to
+// list synthesized mappings across all of the tenant's jobs.
+message ListJobMappingsRequest {
+  // Set by the gateway from the authenticated identity; a client value is
+  // overwritten.
+  TenantContext tenant_context = 1;
+  string job_id = 2;
+  MappingStage stage = 3;
+  float min_confidence = 4;      // Inclusive lower bound in [0, 1]
+  bool include_non_viable = 5;   // SYNTHESIZED only: include pairs synthesis filtered out
+  // Empty means every type except NO_RELATIONSHIP.
+  repeated RelationshipType relationship_types = 6;
+  string control_id = 7;         // Optional: matches source or target
+  Pagination pagination = 8;     // page_size default 50, max 1000
+}
+
+// ListJobMappingsResponse returns one page of mappings ordered by job, source,
+// target. ControlMapping.viability_score and is_viable are meaningful only for
+// SYNTHESIZED; ANALYZER mappings report is_viable = false.
+message ListJobMappingsResponse {
+  repeated ControlMapping mappings = 1;
+  PageInfo page_info = 2;
+}

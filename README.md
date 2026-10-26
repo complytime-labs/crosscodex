@@ -97,6 +97,34 @@ crosscodex catalog list
 crosscodex catalog inspect <catalog-id>
 ```
 
+### 8. Read a job's mappings
+
+Once a job has completed, read its control mappings. Both commands take the job ID and the same filters:
+
+```sh
+# Count mappings by relationship type
+crosscodex results summary <job-id>
+
+# Export viable synthesized mappings as proto JSON (enum names, all fields)
+crosscodex results export <job-id> --output mappings.json
+
+# Export one control's high-confidence EQUIVALENT mappings as CSV
+crosscodex results export <job-id> --format csv --control <control-id> --type equivalent --min-confidence 0.8
+```
+
+| Flag | Applies to | Meaning |
+|------|------------|---------|
+| `--stage synthesized\|analyzer` | both | `synthesized` (default) is the output after synthesis's confidence threshold and per-control cap, with a viability score per mapping. `analyzer` is the raw relationship analyzer consensus, with no viability. |
+| `--min-confidence <0-1>` | both | Only mappings at or above this confidence. |
+| `--type <type>` | both | Only this relationship type; repeat for several. Case-insensitive. `NO_RELATIONSHIP` is excluded unless named here. |
+| `--control <id>` | both | Only mappings whose source or target is this control. |
+| `--include-non-viable` | both | Also return pairs synthesis filtered out (`synthesized` stage only). By default only viable mappings are returned. |
+| `--format json\|csv` | `export` | Output format (default `json`). |
+| `--output <file>` | `export` | Write to a file instead of stdout. |
+| `--json` | `summary` | Structured output. |
+
+A job that is still pending or running returns an error saying mappings are available once it completes. A failed or cancelled job never produces mappings; start a new job. An unknown job ID returns not found. `mapping_id` equals the ID of the mapping's `SEMANTIC_MATCH` graph edge. `REQUIRES` is not a mapping and is not returned.
+
 Run `crosscodex --help` to see all available commands, or `crosscodex <command> --help` for command-specific usage.
 
 ## Architecture

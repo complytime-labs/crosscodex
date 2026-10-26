@@ -63,8 +63,8 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 
 	for _, r := range matches {
 		edge := graphdb.Edge{
-			ID:        graphdb.DerivedID("semantic-match", jobID, r.SourceID, r.TargetID),
-			Label:     "SEMANTIC_MATCH",
+			ID:        graphdb.DerivedID(results.SemanticMatchEdgeIDKind, jobID, r.SourceID, r.TargetID),
+			Label:     results.SemanticMatchEdgeLabel,
 			ValidFrom: time.Now().UTC(),
 			Properties: map[string]any{
 				"relationship_type": r.RelationshipType,
@@ -77,7 +77,7 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 		}
 
 		err := s.graph.CreateEdge(ctx, tenantID, r.SourceID, r.TargetID, edge)
-		if err != nil && !isNodeExists(err) && !s.skipMissingEndpoint(ctx, tenantID, "relationship", "SEMANTIC_MATCH", r.SourceID, r.TargetID, err) {
+		if err != nil && !isNodeExists(err) && !s.skipMissingEndpoint(ctx, tenantID, "relationship", results.SemanticMatchEdgeLabel, r.SourceID, r.TargetID, err) {
 			return fmt.Errorf("create SEMANTIC_MATCH edge %s->%s: %w", r.SourceID, r.TargetID, err)
 		}
 	}

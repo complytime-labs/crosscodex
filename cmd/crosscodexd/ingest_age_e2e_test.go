@@ -53,37 +53,7 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		// in e2e_integration_test.go and pipeline_role_integration_test.go.
 		tenantID := fmt.Sprintf("all-role-e2e-%s", uuid.New().String())
 
-		// Build config on baseTestConfig + RoleAll overrides, mirroring
-		// e2e_integration_test.go's configureRole closure.
-		cfg := baseTestConfig(dsn)
-		cfg.Role = config.RoleAll
-		cfg.NATS = config.NATSConfig{
-			URL:      "", // embedded mode
-			Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
-		}
-		cfg.TLS = testServerTLS()
-		cfg.LLM = config.LLMConfig{
-			GatewayURL:     "http://127.0.0.1:0", // non-empty dummy
-			DefaultModel:   e2eModel,
-			EmbeddingModel: e2eModel,
-		}
-		cfg.Analysis = e2eAnalysisConfig()
-		cfg.Prompt = config.PromptConfig{
-			Layers: config.PromptLayerConfig{
-				Enabled: true,
-				Order:   []config.PromptLayerEntry{{ID: "embedded"}},
-			},
-		}
-		cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
-		cfg.Attestation = config.AttestationConfig{
-			PrivateKeyPath: testAttestationPrivateKeyPath,
-			PublicKeyPath:  testAttestationPublicKeyPath,
-			ExpiryDuration: 168 * time.Hour,
-		}
-		cfg.Server.Addr = "127.0.0.1:0"
-		cfg.Health.Addr = "127.0.0.1:0"
-		cfg.Tenants.DefaultTenant = tenantID
-		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+		cfg := allRoleTestConfig(dsn, tenantID)
 		// The daemon only checks the default tenant; crosscodexd migrate
 		// provisions it.
 		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
@@ -255,3 +225,40 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		}, 10*time.Second, 200*time.Millisecond).Should(Succeed(), "bootstrap-wired telemetry scopes")
 	})
 })
+
+// allRoleTestConfig builds a RoleAll config on baseTestConfig: embedded NATS,
+// mTLS, the deterministic analysis setup, and ephemeral listener ports, with
+// tenantID as the default tenant. Callers still provision the tenant with
+// migrateDatabase before bootstrap.
+func allRoleTestConfig(dsn, tenantID string) *config.Config {
+	cfg := baseTestConfig(dsn)
+	cfg.Role = config.RoleAll
+	cfg.NATS = config.NATSConfig{
+		URL:      "", // embedded mode
+		Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
+	}
+	cfg.TLS = testServerTLS()
+	cfg.LLM = config.LLMConfig{
+		GatewayURL:     "http://127.0.0.1:0", // non-empty dummy
+		DefaultModel:   e2eModel,
+		EmbeddingModel: e2eModel,
+	}
+	cfg.Analysis = e2eAnalysisConfig()
+	cfg.Prompt = config.PromptConfig{
+		Layers: config.PromptLayerConfig{
+			Enabled: true,
+			Order:   []config.PromptLayerEntry{{ID: "embedded"}},
+		},
+	}
+	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
+	cfg.Attestation = config.AttestationConfig{
+		PrivateKeyPath: testAttestationPrivateKeyPath,
+		PublicKeyPath:  testAttestationPublicKeyPath,
+		ExpiryDuration: 168 * time.Hour,
+	}
+	cfg.Server.Addr = "127.0.0.1:0"
+	cfg.Health.Addr = "127.0.0.1:0"
+	cfg.Tenants.DefaultTenant = tenantID
+	cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+	return cfg
+}

@@ -35,4 +35,14 @@ var _ = Describe("attachAllGateway config guards", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("storage.objects.base_path must be set"))
 	})
+
+	It("fails closed before building anything when the graph service is not built", func() {
+		cfg := &config.Config{}
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Storage.Objects.BasePath = "/tmp/does-not-matter"
+
+		err := attachAllGateway(context.Background(), cfg, &sharedResources{}, &runtime{}, nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("graph service is not built"))
+	})
 })

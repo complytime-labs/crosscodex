@@ -21,6 +21,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
+	"github.com/complytime-labs/crosscodex/internal/results"
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
@@ -525,6 +526,14 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		pipeline.WithStoreTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()))
 	localPipeline := &localPipelineBackend{store: pipelineStore}
 
+	resultsTracer, resultsMeter := telemetry.Instrumentation("internal/results")
+	mappings := results.NewService(
+		results.NewPGStore(tenantConn,
+			results.WithStoreTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider())),
+		results.WithLogger(logger),
+		results.WithTelemetry(resultsTracer, resultsMeter),
+	)
+
 	// Create auth registry
 	registry, err := embeddedAuthRegistry()
 	if err != nil {
@@ -539,6 +548,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		gateway.WithCatalogBackend(catalogSvc),
 		gateway.WithIngestionBackend(localIngestion),
 		gateway.WithPipelineBackend(localPipeline),
+		gateway.WithMappingsBackend(mappings),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(pool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(logger),

@@ -87,11 +87,19 @@ service GatewayService {
   }
 
   // Get control mappings
-  // INTERNAL: graph.Traverse (outbound from control node)
+  // INTERNAL: MappingsBackend.ListMappings (synthesized, all jobs)
   rpc GetControlMappings(GetControlMappingsRequest)
       returns (GetControlMappingsResponse) {
     option (google.api.http) = {
       get: "/v1/controls/{control_id}/mappings"
+    };
+  }
+
+  // List a job's mappings by stage, confidence, relationship type and control
+  // INTERNAL: MappingsBackend.ListMappings
+  rpc ListJobMappings(ListJobMappingsRequest) returns (ListJobMappingsResponse) {
+    option (google.api.http) = {
+      get: "/v1/jobs/{job_id}/mappings"
     };
   }
 
@@ -175,6 +183,7 @@ message GetControlMappingsRequest {
   // TenantContext from auth
   string control_id = 1;
   float min_confidence = 2;
+  // Max mappings returned (0 = 50, max 1000); no further pages — use ListJobMappings to page
   int32 limit = 3;
 }
 

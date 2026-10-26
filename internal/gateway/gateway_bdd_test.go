@@ -142,6 +142,25 @@ func (m *mockPipeline) CancelJob(ctx context.Context, req *connect.Request[pb.Ca
 	return connect.NewResponse(&pb.CancelJobResponse{Cancelled: true}), nil
 }
 
+// mockMappings records the request it receives and returns a configured
+// response or error.
+type mockMappings struct {
+	got  *pb.ListJobMappingsRequest
+	resp *pb.ListJobMappingsResponse
+	err  error
+}
+
+func (m *mockMappings) ListMappings(_ context.Context, req *connect.Request[pb.ListJobMappingsRequest]) (*connect.Response[pb.ListJobMappingsResponse], error) {
+	m.got = req.Msg
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.resp != nil {
+		return connect.NewResponse(m.resp), nil
+	}
+	return connect.NewResponse(&pb.ListJobMappingsResponse{}), nil
+}
+
 type mockGraph struct {
 	traverseFn         func(context.Context, *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error)
 	queryFn            func(context.Context, *connect.Request[pb.QueryRequest]) (*connect.Response[pb.QueryResponse], error)
@@ -691,71 +710,140 @@ var _ = Describe("Graph handlers", func() {
 		})
 	})
 
+	Context("ListJobMappings", func() {
+		It("returns Unauthenticated without an identity", func() {
+			svc := newTestService(gateway.WithMappingsBackend(&mockMappings{}))
+			_, err := svc.ListJobMappings(context.Background(), connect.NewRequest(&pb.ListJobMappingsRequest{JobId: "job-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+		})
+
+		It("returns InvalidArgument for empty job_id without calling the backend", func() {
+			m := &mockMappings{}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			_, err := svc.ListJobMappings(userCtx("user-a"), connect.NewRequest(&pb.ListJobMappingsRequest{}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(m.got).To(BeNil())
+		})
+
+		It("returns Unavailable when the mappings backend is nil", func() {
+			svc := newTestService()
+			_, err := svc.ListJobMappings(userCtx("user-a"), connect.NewRequest(&pb.ListJobMappingsRequest{JobId: "job-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+		})
+
+		It("overwrites a client-supplied tenant_context with the identity's tenant", func() {
+			m := &mockMappings{}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			_, err := svc.ListJobMappings(userCtx("user-a"), connect.NewRequest(&pb.ListJobMappingsRequest{
+				JobId:         "job-1",
+				TenantContext: &pb.TenantContext{TenantId: "tenant-evil"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(m.got.GetTenantContext().GetTenantId()).To(Equal("tenant-a"))
+			Expect(m.got.GetJobId()).To(Equal("job-1"))
+		})
+
+		It("passes backend errors through with their code", func() {
+			m := &mockMappings{err: connect.NewError(connect.CodeNotFound, errors.New("job not found"))}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			_, err := svc.ListJobMappings(userCtx("user-a"), connect.NewRequest(&pb.ListJobMappingsRequest{JobId: "job-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+		})
+
+		It("returns the backend's mappings", func() {
+			m := &mockMappings{resp: &pb.ListJobMappingsResponse{Mappings: []*pb.ControlMapping{{MappingId: "m1"}}}}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			resp, err := svc.ListJobMappings(userCtx("user-a"), connect.NewRequest(&pb.ListJobMappingsRequest{JobId: "job-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetMappings()).To(HaveLen(1))
+			Expect(resp.Msg.GetMappings()[0].GetMappingId()).To(Equal("m1"))
+		})
+	})
+
 	Context("GetControlMappings", func() {
 		It("returns InvalidArgument for empty control_id", func() {
-			svc := newTestService()
-			ctx := userCtx("user-a")
-			_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: ""}))
-			Expect(err).To(HaveOccurred())
+			svc := newTestService(gateway.WithMappingsBackend(&mockMappings{}))
+			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{}))
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
-		It("returns mappings from traverse results", func() {
-			graph := &mockGraph{
-				traverseFn: func(_ context.Context, _ *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error) {
-					return connect.NewResponse(&pb.TraverseResponse{
-						Edges: []*pb.Edge{
-							{
-								EdgeId:           "edge-1",
-								SourceNodeId:     "ctrl-source",
-								TargetNodeId:     "ctrl-target",
-								Label:            "maps_to",
-								RelationshipType: pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT,
-							},
-						},
-					}), nil
-				},
-			}
-			svc := newTestService(gateway.WithGraphBackend(graph))
-
-			ctx := userCtx("user-a")
-			resp, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-source"}))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resp.Msg.GetMappings()).To(HaveLen(1))
-
-			m := resp.Msg.GetMappings()[0]
-			Expect(m.GetMappingId()).To(Equal("edge-1"))
-			Expect(m.GetSourceControlId()).To(Equal("ctrl-source"))
-			Expect(m.GetTargetControlId()).To(Equal("ctrl-target"))
+		It("returns Unavailable when the mappings backend is nil", func() {
+			svc := newTestService()
+			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
 		})
 
-		It("propagates pagination limit to traverse request", func() {
-			var capturedReq *pb.TraverseRequest
-			graph := &mockGraph{
-				traverseFn: func(_ context.Context, req *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error) {
-					capturedReq = req.Msg
-					return connect.NewResponse(&pb.TraverseResponse{}), nil
-				},
-			}
-			svc := newTestService(gateway.WithGraphBackend(graph))
-
-			ctx := userCtx("user-a")
-			_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{
-				ControlId: "ctrl-1",
-				Limit:     5,
+		It("translates the request to a synthesized, all-jobs mappings query", func() {
+			m := &mockMappings{}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{
+				ControlId: "ctrl-1", MinConfidence: 0.7, Limit: 5,
 			}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(capturedReq).NotTo(BeNil())
-			Expect(capturedReq.GetOptions()).NotTo(BeNil())
-			Expect(capturedReq.GetOptions().GetPagination().GetPageSize()).To(Equal(int32(5)))
+			Expect(m.got.GetTenantContext().GetTenantId()).To(Equal("tenant-a"))
+			Expect(m.got.GetStage()).To(Equal(pb.MappingStage_MAPPING_STAGE_SYNTHESIZED))
+			Expect(m.got.GetJobId()).To(BeEmpty())
+			Expect(m.got.GetControlId()).To(Equal("ctrl-1"))
+			Expect(m.got.GetMinConfidence()).To(BeNumerically("~", 0.7, 1e-6))
+			Expect(m.got.GetPagination().GetPageSize()).To(Equal(int32(5)))
 		})
 
-		It("returns Unavailable when graph backend is nil", func() {
-			svc := newTestService(gateway.WithGraphBackend(nil))
-			ctx := userCtx("user-a")
-			_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
-			Expect(err).To(HaveOccurred())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+		It("sends no pagination when limit is zero", func() {
+			m := &mockMappings{}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(m.got.GetPagination()).To(BeNil())
+		})
+
+		It("returns the backend's mappings and page info", func() {
+			m := &mockMappings{resp: &pb.ListJobMappingsResponse{
+				Mappings: []*pb.ControlMapping{{MappingId: "m1"}},
+				PageInfo: &pb.PageInfo{NextPageToken: "next"},
+			}}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			resp, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetMappings()).To(HaveLen(1))
+			Expect(resp.Msg.GetPageInfo().GetNextPageToken()).To(BeEmpty(), "the request has no page_token field, so a next token would be unusable")
+		})
+
+		It("keeps the total count when clearing the next page token", func() {
+			m := &mockMappings{resp: &pb.ListJobMappingsResponse{
+				PageInfo: &pb.PageInfo{NextPageToken: "next", TotalCount: 42},
+			}}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			resp, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetPageInfo().GetTotalCount()).To(Equal(int64(42)))
+		})
+
+		DescribeTable("rejects an out-of-range limit before calling the backend",
+			func(limit int32) {
+				m := &mockMappings{}
+				svc := newTestService(gateway.WithMappingsBackend(m))
+				_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1", Limit: limit}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(err.Error()).To(ContainSubstring("limit must be between 0 and 1000"))
+				Expect(m.got).To(BeNil())
+			},
+			Entry("above the maximum", int32(1001)),
+			Entry("negative", int32(-1)),
+		)
+
+		It("accepts the maximum limit", func() {
+			m := &mockMappings{}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1", Limit: 1000}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(m.got.GetPagination().GetPageSize()).To(Equal(int32(1000)))
+		})
+
+		It("passes backend errors through with their code", func() {
+			m := &mockMappings{err: connect.NewError(connect.CodeInternal, errors.New("boom"))}
+			svc := newTestService(gateway.WithMappingsBackend(m))
+			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
 		})
 	})
 

@@ -24,6 +24,7 @@ type Service struct {
 	catalog       CatalogBackend
 	pipeline      PipelineBackend
 	graph         GraphBackend
+	mappings      MappingsBackend
 	feedback      FeedbackBackend
 	admin         AdminBackend
 	attestor      attestation.Generator
@@ -94,6 +95,10 @@ func WithPipelineBackend(b PipelineBackend) ServiceOption {
 
 func WithGraphBackend(b GraphBackend) ServiceOption {
 	return func(s *Service) { s.graph = b }
+}
+
+func WithMappingsBackend(b MappingsBackend) ServiceOption {
+	return func(s *Service) { s.mappings = b }
 }
 
 func WithFeedbackBackend(b FeedbackBackend) ServiceOption {
