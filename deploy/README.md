@@ -371,6 +371,7 @@ The single-host compose stack is suitable for evaluation and small-scale product
 If `task deploy:up` times out waiting for `/healthz`:
 
 1. Check recent logs: `task deploy:logs -- crosscodexd`
+   `/healthz` returns 503 until every dependency the gateway reports (currently the database) is healthy. In the JSON body `status` fields are numeric enum values; `services.database.message` carries the reason (`database unreachable`). To read it, run `curl -s --cacert deploy/certs/ca.pem https://localhost:50051/healthz`.
 2. Verify the `.env` file is populated (especially `POSTGRES_PASSWORD`, `APP_USER_PASSWORD`, `GRAPH_USER_PASSWORD` and `CROSSCODEX_LLM_API_KEY`), and that `migrate` succeeded: `task deploy:logs -- migrate`
 3. Ensure no other service is bound to port 50051 on the host: `ss -lntp | grep 50051`
 4. Verify the certs volume exists and is populated: `podman volume inspect crosscodex-certs` (or `docker volume inspect`)
