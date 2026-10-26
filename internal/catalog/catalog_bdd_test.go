@@ -125,18 +125,6 @@ func (m *mockParser) FindControl(items []oscal.ControlItem, controlID string) (*
 	return nil, oscal.ErrControlNotFound
 }
 
-type mockStructurer struct {
-	items []oscal.ControlItem
-	err   error
-}
-
-func (m *mockStructurer) Structure(_ context.Context, _ oscal.StructuredDoc, _ oscal.StructureOptions) ([]oscal.ControlItem, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.items, nil
-}
-
 type mockStore struct {
 	catalogRecords   map[string]*catalog.CatalogRecord
 	controlRecords   map[string]*catalog.ControlRecord
@@ -577,30 +565,50 @@ var _ = Describe("Service", func() {
 		})
 
 		Context("with non-OSCAL document", func() {
-			It("returns Unimplemented", func() {
-				items := []oscal.ControlItem{
-					{ID: "req-1", Title: "Requirement 1", Text: "Must do X", Class: oscal.ClassRequirement},
-				}
+			DescribeTable("rejects it as an unsupported format, advises a fix and stores nothing",
+				func(format crosscodexv1.CatalogFormat, content, advice, wrongAdvice string) {
+					svc = catalog.NewService(
+						catalog.WithParser(&mockParser{}),
+						catalog.WithStore(ms),
+						catalog.WithStorage(stg),
+					)
 
-				svc = catalog.NewService(
-					catalog.WithStructurer(&mockStructurer{items: items}),
-					catalog.WithStore(ms),
-					catalog.WithStorage(stg),
-				)
+					stg.data["doc-2"] = []byte(content)
 
-				stg.data["doc-2"] = []byte(`{"document":{"title":"test"}}`)
+					req := &crosscodexv1.ParseCatalogRequest{
+						TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+						DocumentId:    "doc-2",
+						CatalogName:   "Non-OSCAL Catalog",
+						Format:        format,
+					}
 
-				req := &crosscodexv1.ParseCatalogRequest{
-					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
-					DocumentId:    "doc-2",
-					CatalogName:   "Non-OSCAL Catalog",
-				}
-
-				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(req))
-				Expect(err).To(HaveOccurred())
-				connectErr := err.(*connect.Error)
-				Expect(connectErr.Code()).To(Equal(connect.CodeUnimplemented))
-			})
+					_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(req))
+					Expect(err).To(HaveOccurred())
+					Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+					Expect(err.Error()).To(ContainSubstring("unsupported catalog format"))
+					Expect(err.Error()).To(ContainSubstring("Only OSCAL JSON catalogs can be imported"))
+					Expect(err.Error()).To(ContainSubstring(advice))
+					Expect(err.Error()).NotTo(ContainSubstring(wrongAdvice))
+					Expect(err.Error()).NotTo(ContainSubstring("structurer"))
+					Expect(ms.catalogRecords).To(BeEmpty())
+					Expect(ms.controlRecords).To(BeEmpty())
+				},
+				Entry("JSON without the OSCAL root key",
+					crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+					`{"document":{"title":"test"}}`, `no top-level "catalog" object`, "not valid JSON"),
+				Entry("a JSON array",
+					crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+					`[{"catalog":{}}]`, `no top-level "catalog" object`, "not valid JSON"),
+				Entry("plain text",
+					crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+					"AC-1 Access Control Policy\nDevelop a policy.", "not valid JSON", "no top-level"),
+				Entry("truncated OSCAL JSON",
+					crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED,
+					`{"catalog":{"uuid":"x","metadata":{`, "fix the JSON syntax", "no top-level"),
+				Entry("a declared Gemara catalog",
+					crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA,
+					"AC-1 Access Control Policy", "Gemara catalogs cannot be imported yet", "not valid JSON"),
+			)
 		})
 	})
 

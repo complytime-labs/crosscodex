@@ -275,13 +275,17 @@ var _ = Describe("Edge cases (green)", func() {
 		Expect(cats).To(BeEmpty())
 	})
 
-	It("rejects format=UNSPECIFIED when content is neither OSCAL nor parseable Gemara", func() {
+	It("rejects format=UNSPECIFIED truncated OSCAL JSON with advice to fix the syntax", func() {
 		_, err := importCatalog(ctx, sharedState.client, fixture("invalid.json"),
 			pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, "broken")
 		Expect(err).To(HaveOccurred())
-		// Auto-detection fails to identify it as OSCAL, routes to unconfigured structurer.
-		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
-		Expect(err.Error()).To(ContainSubstring("structurer not configured"))
+		// Auto-detection can't parse it as JSON, so it is not detected as OSCAL.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("not valid JSON"))
+		Expect(err.Error()).To(ContainSubstring("fix the JSON syntax"))
+		cats, err := listCatalogs(ctx, sharedState.client)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cats).To(BeEmpty())
 	})
 
 	It("auto-detects OSCAL format when format=UNSPECIFIED and persists it correctly", func() {
@@ -398,33 +402,18 @@ var _ = Describe("Bug records (Pending correct + active tripwire)", func() {
 		truncateCatalogs(ctx, sharedState.daemon.resources.dbPool)
 	})
 
-	// --- #2: non-OSCAL structuring not implemented ---
-	PIt("#2 non-OSCAL input produces a catalog or a clear 'raw unsupported' error", func() {
-		_, err := importCatalog(ctx, sharedState.client, fixture("no-catalog-key.json"),
-			pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, "raw")
-		// Correct behavior: either success, or a clearly-worded unsupported
-		// error — NOT a bare Unimplemented and NOT the current FailedPrecondition
-		// "structurer not configured" leak. Both accepted outcomes are encoded
-		// so promoting this spec does not spuriously fail on the clear-error fix.
-		if err != nil {
-			Expect(connectrpc.CodeOf(err)).NotTo(Equal(connectrpc.CodeUnimplemented))
-			Expect(connectrpc.CodeOf(err)).NotTo(Equal(connectrpc.CodeFailedPrecondition))
-			Expect(err.Error()).NotTo(ContainSubstring("structurer not configured"))
-		}
-	})
-
-	It("#2 TRIPWIRE: non-OSCAL input currently returns FailedPrecondition", func() {
-		// TRIPWIRE for bug #2: when this fails, non-OSCAL structuring works —
-		// flip the PIt above to active and delete this. See the unconfigured-structurer
-		// branch in ParseCatalog (internal/catalog/service.go).
+	// --- #2: non-OSCAL input leaked "structurer not configured" ---
+	It("#2 non-OSCAL input produces a catalog or a clear 'raw unsupported' error", func() {
 		_, err := importCatalog(ctx, sharedState.client, fixture("no-catalog-key.json"),
 			pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, "raw")
 		Expect(err).To(HaveOccurred())
-		// Observed: the ParseCatalog structurer branch (internal/catalog/service.go) returns
-		// CodeFailedPrecondition "structurer not configured" when format is
-		// UNSPECIFIED and the OSCAL sniff fails.
-		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
-		Expect(err.Error()).To(ContainSubstring("structurer not configured"))
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("unsupported catalog format"))
+		Expect(err.Error()).To(ContainSubstring("Only OSCAL JSON catalogs can be imported"))
+		Expect(err.Error()).NotTo(ContainSubstring("structurer"))
+		cats, err := listCatalogs(ctx, sharedState.client)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cats).To(BeEmpty())
 	})
 
 	// --- #3: edited re-import creates a new row instead of updating ---

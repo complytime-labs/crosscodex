@@ -33,7 +33,6 @@ import (
 // It orchestrates parsing, persistence, graph construction, embeddings, and search.
 type Service struct {
 	parser            oscal.Parser
-	structurer        oscal.Structurer
 	assembler         oscal.Assembler
 	store             Store
 	graph             graphdb.GraphDB
@@ -55,7 +54,7 @@ type ServiceOption func(*Service)
 
 // NewService creates a new CatalogService with the given options.
 // Required: WithParser, WithStore, WithStorage.
-// Optional: WithStructurer, WithAssembler, WithGraphDB, WithVectorDB, WithEmbedder, WithBus, WithTracer, WithMeter, WithLogger.
+// Optional: WithAssembler, WithGraphDB, WithVectorDB, WithEmbedder, WithBus, WithTracer, WithMeter, WithLogger.
 func NewService(opts ...ServiceOption) *Service {
 	s := &Service{
 		logger: slog.Default(),
@@ -95,13 +94,6 @@ func NewService(opts ...ServiceOption) *Service {
 func WithParser(p oscal.Parser) ServiceOption {
 	return func(s *Service) {
 		s.parser = p
-	}
-}
-
-// WithStructurer sets the structurer for non-OSCAL content.
-func WithStructurer(st oscal.Structurer) ServiceOption {
-	return func(s *Service) {
-		s.structurer = st
 	}
 }
 
@@ -285,13 +277,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("parse OSCAL: %v", err))
 		}
 	} else {
-		// Structure via Structurer
-		if s.structurer == nil {
-			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("structurer not configured"))
-		}
-		// For structurer, we need a StructuredDoc - for now, just fail gracefully
-		// In a real implementation, we'd parse the document into sections first
-		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("non-OSCAL structuring not yet implemented in service layer"))
+		return nil, connect.NewError(connect.CodeInvalidArgument, unsupportedFormatError(req.Msg.GetFormat(), data))
 	}
 
 	// Validate items
@@ -720,6 +706,27 @@ func isOSCALJSON(data []byte) bool {
 	}
 	_, ok := obj[OSCALRootKey]
 	return ok
+}
+
+// unsupportedFormatError explains why a document that failed OSCAL detection
+// cannot be imported. Only OSCAL JSON is supported, so the advice depends on
+// what was sent: a declared Gemara catalog, bytes that are not valid JSON
+// (including a damaged OSCAL file), or valid JSON without the OSCAL root key.
+func unsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) error {
+	const supported = "Only OSCAL JSON catalogs can be imported"
+	if format == crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA {
+		return fmt.Errorf("unsupported catalog format: Gemara catalogs cannot be imported yet. "+
+			"%s; convert the document to an OSCAL catalog and import it with format OSCAL", supported)
+	}
+	// RawMessage validates the syntax without building the document tree.
+	var raw json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("unsupported catalog format: the document is not valid JSON (%v). "+
+			"%s; if this is an OSCAL catalog, fix the JSON syntax, otherwise convert it to an "+
+			"OSCAL catalog, then import it again", err, supported)
+	}
+	return fmt.Errorf("unsupported catalog format: the document is JSON but has no top-level %q object. "+
+		"%s; convert the document to an OSCAL catalog and import it again", OSCALRootKey, supported)
 }
 
 // validateItems checks for duplicate IDs and self-referential parents within the import.
