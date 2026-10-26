@@ -265,9 +265,12 @@ var _ = Describe("bootstrap with role=gateway", func() {
 		// attachGateway now requires a mutual-TLS pipeline-client identity to
 		// reach a standalone pipeline role; without it, construction fails closed.
 		cfg.TLS = testClientTLS()
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		rt, err := bootstrap(ctx, cfg)
 		Expect(err).NotTo(HaveOccurred(), "bootstrap failed")
@@ -472,6 +475,9 @@ var _ = Describe("bootstrap with role=all", func() {
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+		// Catalog import authenticates by client certificate, so the gateway
+		// refuses to start without a mutual-TLS gateway-server listener.
+		cfg.TLS = testServerTLS()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -629,60 +635,79 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 		Expect(rows).To(BeZero(), "the daemon must not migrate")
 	})
 
-	It("refuses role all when the default tenant is deleted and says how to restore it", func() {
-		const tenantID = "deleted-default"
-		hardDelete, err := dbtest.HardDeleteTenantSQL(tenantID)
-		Expect(err).NotTo(HaveOccurred())
-		_, err = suDB.ExecContext(ctx, hardDelete)
-		Expect(err).NotTo(HaveOccurred(), "remove a leftover tenant row")
-		DeferCleanup(func() {
-			_, err := suDB.ExecContext(context.Background(), hardDelete)
-			Expect(err).NotTo(HaveOccurred(), "remove the test tenant")
-		})
-
+	// defaultTenantConfig configures a gateway-serving role so bootstrap
+	// reaches the default-tenant check: role all needs its pipeline settings
+	// and a mutual-TLS gateway-server listener, role gateway a pipeline
+	// endpoint and a mutual-TLS identity serving both.
+	defaultTenantConfig := func(role, tenantID string) *config.Config {
 		cfg := baseTestConfig(suDSN)
-		cfg.Role = config.RoleAll
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.Role = role
 		cfg.Server.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = tenantID
-		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
-		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
-		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
-		// A superuser UPDATE soft-deletes it: delete_tenant needs a signed
-		// attestation, and the row state is all enter_tenant reads.
-		_, err = suDB.ExecContext(ctx, "UPDATE tenants SET status = 'deleted', deleted_at = now(), deleted_by = 'test' WHERE tenant_id = $1", tenantID)
-		Expect(err).NotTo(HaveOccurred())
+		switch role {
+		case config.RoleAll:
+			cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+			cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+			cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+			cfg.TLS = testServerTLS()
+		case config.RoleGateway:
+			cfg.Pipeline.Endpoint = "127.0.0.1:0" // construction only -- no call is made
+			cfg.TLS = testClientTLS()
+		default:
+			Fail("defaultTenantConfig: unsupported role " + role)
+		}
+		return cfg
+	}
 
-		_, err = bootstrap(ctx, cfg)
-		Expect(err).To(MatchError(ContainSubstring(`default tenant "deleted-default" is deleted. Restore it with crosscodexd admin tenant restore --tenant deleted-default --by <operator> --reason <text>, or set tenants.default_tenant to an active tenant`)))
+	DescribeTable("refuses a deleted default tenant and says how to restore it",
+		func(role string) {
+			const tenantID = "deleted-default"
+			hardDelete, err := dbtest.HardDeleteTenantSQL(tenantID)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = suDB.ExecContext(ctx, hardDelete)
+			Expect(err).NotTo(HaveOccurred(), "remove a leftover tenant row")
+			DeferCleanup(func() {
+				_, err := suDB.ExecContext(context.Background(), hardDelete)
+				Expect(err).NotTo(HaveOccurred(), "remove the test tenant")
+			})
 
-		var status string
-		Expect(suDB.QueryRowContext(ctx, "SELECT status FROM tenants WHERE tenant_id = $1", tenantID).Scan(&status)).To(Succeed())
-		Expect(status).To(Equal("deleted"), "the daemon must not restore the tenant")
-	})
+			cfg := defaultTenantConfig(role, tenantID)
+			Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
+			// A superuser UPDATE soft-deletes it: delete_tenant needs a signed
+			// attestation, and the row state is all enter_tenant reads.
+			_, err = suDB.ExecContext(ctx, "UPDATE tenants SET status = 'deleted', deleted_at = now(), deleted_by = 'test' WHERE tenant_id = $1", tenantID)
+			Expect(err).NotTo(HaveOccurred())
 
-	It("refuses role all when the default tenant was never provisioned", func() {
-		const tenantID = "never-provisioned"
-		hardDelete, err := dbtest.HardDeleteTenantSQL(tenantID)
-		Expect(err).NotTo(HaveOccurred())
-		_, err = suDB.ExecContext(ctx, hardDelete)
-		Expect(err).NotTo(HaveOccurred(), "remove a leftover tenant row")
+			_, err = bootstrap(ctx, cfg)
+			Expect(err).To(MatchError(ContainSubstring(`default tenant "deleted-default" is deleted. Restore it with crosscodexd admin tenant restore --tenant deleted-default --by <operator> --reason <text>, or set tenants.default_tenant to an active tenant`)))
 
-		cfg := baseTestConfig(suDSN)
-		cfg.Role = config.RoleAll
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
-		cfg.Server.Addr = "127.0.0.1:0"
-		cfg.Tenants.DefaultTenant = tenantID
-		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
-		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
-		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+			var status string
+			Expect(suDB.QueryRowContext(ctx, "SELECT status FROM tenants WHERE tenant_id = $1", tenantID).Scan(&status)).To(Succeed())
+			Expect(status).To(Equal("deleted"), "the daemon must not restore the tenant")
+		},
+		Entry("role all", config.RoleAll),
+		Entry("role gateway", config.RoleGateway),
+	)
 
-		_, err = bootstrap(ctx, cfg)
-		Expect(err).To(MatchError(ContainSubstring(`default tenant "never-provisioned" does not exist. Run ` + "`crosscodexd migrate`")))
+	DescribeTable("refuses a default tenant that was never provisioned",
+		func(role string) {
+			const tenantID = "never-provisioned"
+			hardDelete, err := dbtest.HardDeleteTenantSQL(tenantID)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = suDB.ExecContext(ctx, hardDelete)
+			Expect(err).NotTo(HaveOccurred(), "remove a leftover tenant row")
 
-		var n int
-		Expect(suDB.QueryRowContext(ctx, "SELECT count(*) FROM tenants WHERE tenant_id = $1", tenantID).Scan(&n)).To(Succeed())
-		Expect(n).To(BeZero(), "the daemon must not provision the tenant")
-	})
+			cfg := defaultTenantConfig(role, tenantID)
+
+			_, err = bootstrap(ctx, cfg)
+			Expect(err).To(MatchError(ContainSubstring(`default tenant "never-provisioned" does not exist. Run ` + "`crosscodexd migrate`")))
+
+			var n int
+			Expect(suDB.QueryRowContext(ctx, "SELECT count(*) FROM tenants WHERE tenant_id = $1", tenantID).Scan(&n)).To(Succeed())
+			Expect(n).To(BeZero(), "the daemon must not provision the tenant")
+		},
+		Entry("role all", config.RoleAll),
+		Entry("role gateway", config.RoleGateway),
+	)
 })

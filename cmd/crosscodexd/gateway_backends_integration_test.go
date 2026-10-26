@@ -27,9 +27,9 @@ func gatewayClient(ctx context.Context, rt *runtime) crosscodexv1connect.Gateway
 	return crosscodexv1connect.NewGatewayServiceClient(httpClient, "https://"+rt.gatewayServer.Addr())
 }
 
-// The standalone gateway role is not covered: attachGatewayServer wires no
-// authn registry, so every authenticated RPC answers Unauthenticated before
-// reaching a backend.
+// The standalone gateway role is not covered here. It gets its mappings
+// backend from the same buildIngestGateway as role all and attaches no graph
+// backend.
 //
 // An unwired backend answers CodeUnavailable ("... backend not configured").
 // A wired one reaches its store, so an unknown job is CodeNotFound.

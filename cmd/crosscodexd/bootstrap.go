@@ -218,7 +218,7 @@ func bootstrap(ctx context.Context, cfg *config.Config, opts ...ResourceOption) 
 	return rt, nil
 }
 
-// noopAuditEmitter satisfies authn.AuditEmitter for the all-in-one role.
+// noopAuditEmitter satisfies authn.AuditEmitter for allTenantAuthRegistry.
 type noopAuditEmitter struct{}
 
 func (noopAuditEmitter) EmitAuthEvent(_ context.Context, _ *authn.AuthEvent) error { return nil }
@@ -226,7 +226,7 @@ func (noopAuditEmitter) EmitAuthEvent(_ context.Context, _ *authn.AuthEvent) err
 // allTenantAuthRegistry builds a single-tenant X.509 registry that maps any
 // valid client certificate to cfg.Tenants.DefaultTenant. This mirrors the
 // embedded CLI's single-node identity model and is what SubmitDocument needs
-// to resolve a tenant for the "all" role.
+// to resolve a tenant for both gateway-serving roles (all and gateway).
 func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
 	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 		SingleTenant:  true,
@@ -239,20 +239,31 @@ func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
 	return authn.NewRegistry(noopAuditEmitter{}, []authn.Authenticator{x509Auth}, authn.WithTelemetry(tracer, meter))
 }
 
-// attachAllGateway wires a fully-featured gateway for the all-in-one role:
-// authn, pass-through ingestion, catalog (with graph writes), the in-process
-// pipeline, and admin. It refuses a default tenant that `crosscodexd migrate`
-// has not provisioned, and ensures the tenant's AGE graph exists, so document
-// submission has a tenant and a graph to write into.
-func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, backendPipeline gateway.PipelineBackend) error {
+// buildIngestGateway builds the gateway.Service that serves catalog import for
+// role (all or gateway): single-tenant X.509 authn, pass-through ingestion
+// into local storage, and a catalog service that persists controls and
+// publishes them for graph projection. It holds no graph credentials; the
+// graph role projects Control nodes. Refuses a default tenant that
+// `crosscodexd migrate` has not provisioned or that is deleted. extra
+// appends role-specific backends (role all adds graph queries).
+func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, shared *sharedResources, pipelineBackend gateway.PipelineBackend, extra ...gateway.ServiceOption) (*gateway.Service, error) {
 	if cfg.Tenants.DefaultTenant == "" {
-		return errors.New("all role: tenants.default_tenant must be set")
+		return nil, fmt.Errorf("%s role: tenants.default_tenant must be set", role)
 	}
 	if cfg.Storage.Objects.BasePath == "" {
-		return errors.New("all role: storage.objects.base_path must be set")
+		return nil, fmt.Errorf("%s role: storage.objects.base_path must be set", role)
 	}
-	if rt.graphService == nil {
-		return errors.New("attach gateway: graph service is not built; attachGraph must run before attachAllGateway so the gateway can serve graph queries")
+	// Catalog import resolves the caller's tenant from its X.509 client
+	// certificate. Resolve the same "gateway-server" target gateway.NewServer
+	// listens with: without a client CA (tls.mode off or server-only) the
+	// listener never verifies a client cert, so every import would fail
+	// Unauthenticated at request time instead of here.
+	resolvedTLS, err := tlsconfig.BuildTLSConfig(ctx, cfg.TLS, "gateway-server")
+	if err != nil {
+		return nil, fmt.Errorf("%s role: resolve gateway-server TLS config: %w", role, err)
+	}
+	if resolvedTLS == nil || resolvedTLS.ClientCAs == nil {
+		return nil, fmt.Errorf(`%s role: catalog import authenticates clients by X.509 certificate, so tls.mode (or tls.targets.gateway-server.mode) must be "mutual" with a CA configured`, role)
 	}
 
 	// The default tenant is provisioned by `crosscodexd migrate` (as the
@@ -260,41 +271,36 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	// deleted tenant.
 	tctx, err := tenant.WithTenant(ctx, cfg.Tenants.DefaultTenant)
 	if err != nil {
-		return fmt.Errorf("all role: tenants.default_tenant: %w", err)
+		return nil, fmt.Errorf("%s role: tenants.default_tenant: %w", role, err)
 	}
 	tx, err := dbpkg.NewTenantPool(shared.appPool).Begin(tctx)
 	if dbpkg.IsPgErrorCode(err, "42501") {
-		return fmt.Errorf("default tenant %q is deleted. Restore it with crosscodexd admin tenant restore --tenant %s --by <operator> --reason <text>, or set tenants.default_tenant to an active tenant: %w",
-			cfg.Tenants.DefaultTenant, cfg.Tenants.DefaultTenant, err)
+		return nil, fmt.Errorf("%s role: default tenant %q is deleted. Restore it with crosscodexd admin tenant restore --tenant %s --by <operator> --reason <text>, or set tenants.default_tenant to an active tenant: %w",
+			role, cfg.Tenants.DefaultTenant, cfg.Tenants.DefaultTenant, err)
 	}
 	if err != nil {
-		return fmt.Errorf("check default tenant %q: %w", cfg.Tenants.DefaultTenant, err)
+		return nil, fmt.Errorf("%s role: check default tenant %q: %w", role, cfg.Tenants.DefaultTenant, err)
 	}
 	var found int
 	err = tx.QueryRow(tctx, "SELECT 1 FROM tenants WHERE tenant_id = $1", cfg.Tenants.DefaultTenant).Scan(&found)
 	_ = tx.Rollback()
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("default tenant %q does not exist. Run `crosscodexd migrate`, which provisions tenants.default_tenant, then start crosscodexd again", cfg.Tenants.DefaultTenant)
+		return nil, fmt.Errorf("%s role: default tenant %q does not exist. Run `crosscodexd migrate`, which provisions tenants.default_tenant, then start crosscodexd again", role, cfg.Tenants.DefaultTenant)
 	}
 	if err != nil {
-		return fmt.Errorf("check default tenant %q: %w", cfg.Tenants.DefaultTenant, err)
-	}
-	// The tenants insert trigger created the tenant's AGE graph; graph_user
-	// cannot create one, so CreateGraph only confirms it exists.
-	if err := shared.graphDB_.CreateGraph(ctx, cfg.Tenants.DefaultTenant); err != nil {
-		return fmt.Errorf("provision tenant graph: %w", err)
+		return nil, fmt.Errorf("%s role: check default tenant %q: %w", role, cfg.Tenants.DefaultTenant, err)
 	}
 
 	registry, err := allTenantAuthRegistry(cfg.Tenants.DefaultTenant)
 	if err != nil {
-		return fmt.Errorf("create auth registry: %w", err)
+		return nil, fmt.Errorf("create auth registry: %w", err)
 	}
 
 	storageTracer, storageMeter := telemetry.Instrumentation("pkg/storage")
 	storageProvider, err := storage.NewLocal(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant,
 		storage.WithLocalTelemetry(storageTracer, storageMeter))
 	if err != nil {
-		return fmt.Errorf("create storage provider: %w", err)
+		return nil, fmt.Errorf("create storage provider: %w", err)
 	}
 
 	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
@@ -303,7 +309,6 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer))),
 		catalog.WithStore(catalog.NewPGStore(dbpkg.NewTenantPool(shared.appPool))),
 		catalog.WithStorage(storageProvider),
-		catalog.WithVectorDB(shared.vectorDB),
 		catalog.WithBus(shared.natsClient),
 		catalog.WithLogger(slog.Default()),
 		catalog.WithTracer(catalogTracer),
@@ -312,18 +317,40 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	ingestion := backend.NewPassthroughIngestion(storageProvider)
 
 	gatewayTracer, gatewayMeter := telemetry.Instrumentation("internal/gateway")
-	gatewaySvc := gateway.NewService(
+	opts := []gateway.ServiceOption{
 		gateway.WithAuthn(registry),
 		gateway.WithIngestionBackend(ingestion),
 		gateway.WithCatalogBackend(catalogSvc),
-		gateway.WithPipelineBackend(backendPipeline),
+		gateway.WithPipelineBackend(pipelineBackend),
 		gateway.WithMappingsBackend(newMappingsBackend(shared)),
-		gateway.WithGraphBackend(rt.graphService),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(slog.Default()),
 		gateway.WithTelemetry(gatewayTracer, gatewayMeter),
-	)
+	}
+	return gateway.NewService(append(opts, extra...)...), nil
+}
+
+// attachAllGateway wires the all-in-one role's gateway: buildIngestGateway's
+// authn, pass-through ingestion and catalog import, the in-process pipeline,
+// and retention admin. It also confirms the default tenant's AGE graph exists
+// so the co-located graph role can project into it.
+func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, backendPipeline gateway.PipelineBackend) error {
+	if rt.graphService == nil {
+		return errors.New("attach gateway: graph service is not built; attachGraph must run before attachAllGateway so the gateway can serve graph queries")
+	}
+	gatewaySvc, err := buildIngestGateway(ctx, config.RoleAll, cfg, shared, backendPipeline,
+		gateway.WithGraphBackend(rt.graphService))
+	if err != nil {
+		return err
+	}
+	// The tenants insert trigger created the tenant's AGE graph; graph_user
+	// cannot create one, so CreateGraph only confirms it exists for the
+	// co-located graph role to project into. Only role all holds graph
+	// credentials here; the standalone gateway role does not.
+	if err := shared.graphDB_.CreateGraph(ctx, cfg.Tenants.DefaultTenant); err != nil {
+		return fmt.Errorf("provision tenant graph: %w", err)
+	}
 
 	adminSvc, purgePool, err := buildRetentionAdmin(ctx, cfg, shared, slog.Default())
 	if err != nil {
@@ -699,18 +726,31 @@ func newMappingsBackend(shared *sharedResources) *results.Service {
 	)
 }
 
-// attachGatewayServer wires the gateway HTTP server into rt using the
-// given PipelineBackend, which may be an in-process pipeline.Service
-// (RoleAll) or a network Connect client (attachGateway, standalone role).
-func attachGatewayServer(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, pipelineBackend gateway.PipelineBackend) error {
-	tracer, meter := telemetry.Instrumentation("internal/gateway")
-	gatewaySvc := gateway.NewService(
-		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
-		gateway.WithPipelineBackend(pipelineBackend),
-		gateway.WithMappingsBackend(newMappingsBackend(shared)),
-		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
-		gateway.WithTelemetry(tracer, meter),
-	)
+// attachGateway wires the standalone gateway role: buildIngestGateway's
+// authn, pass-through ingestion and catalog import, with a PipelineBackend
+// that is a Connect client reaching a separately-deployed pipeline role over
+// the network. Catalog import persists controls and publishes them over NATS
+// for the graph role to project, so this role holds no graph credentials.
+// Fails closed if cfg.Pipeline.Endpoint isn't configured -- there is no
+// in-process pipeline.Service to fall back to once gateway and pipeline are
+// split into independent roles.
+func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime) error {
+	if cfg.Pipeline.Endpoint == "" {
+		return errors.New("gateway role: pipeline.endpoint must be set to reach a standalone pipeline role")
+	}
+
+	// Built before buildIngestGateway's config checks, which need it as an
+	// argument. Construction only resolves TLS material and never dials, so
+	// a later refusal discards nothing but an unused client.
+	pipelineBackend, err := gateway.NewConnectPipelineBackend(ctx, cfg.Pipeline.Endpoint, cfg.TLS)
+	if err != nil {
+		return fmt.Errorf("create pipeline backend: %w", err)
+	}
+
+	gatewaySvc, err := buildIngestGateway(ctx, config.RoleGateway, cfg, shared, pipelineBackend)
+	if err != nil {
+		return err
+	}
 
 	server, err := gateway.NewServer(ctx, gateway.ServerConfig{
 		TenantStatus: gateway.NewPoolTenantStatus(shared.appPool),
@@ -723,22 +763,4 @@ func attachGatewayServer(ctx context.Context, cfg *config.Config, shared *shared
 	}
 	rt.gatewayServer = server
 	return nil
-}
-
-// attachGateway wires the standalone gateway role: an HTTP server whose
-// PipelineBackend is a Connect client reaching a separately-deployed
-// pipeline role over the network. Fails closed if cfg.Pipeline.Endpoint
-// isn't configured -- there is no in-process pipeline.Service to fall back
-// to once gateway and pipeline are split into independent roles.
-func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime) error {
-	if cfg.Pipeline.Endpoint == "" {
-		return errors.New("gateway role: pipeline.endpoint must be set to reach a standalone pipeline role")
-	}
-
-	pipelineBackend, err := gateway.NewConnectPipelineBackend(ctx, cfg.Pipeline.Endpoint, cfg.TLS)
-	if err != nil {
-		return fmt.Errorf("create pipeline backend: %w", err)
-	}
-
-	return attachGatewayServer(ctx, cfg, shared, rt, pipelineBackend)
 }

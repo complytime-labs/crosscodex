@@ -21,10 +21,37 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 	"github.com/google/uuid"
 )
+
+// splitRoleConfig builds the config shared by the pipeline and worker roles
+// of a split deployment: one external NATS server, the deterministic LLM
+// wiring, and the given default tenant.
+func splitRoleConfig(dsn, natsURL, tenantID, role string) *config.Config {
+	cfg := baseTestConfig(dsn)
+	cfg.Role = role
+	cfg.NATS = config.NATSConfig{URL: natsURL}
+	cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: e2eModel, EmbeddingModel: e2eModel}
+	cfg.Analysis = e2eAnalysisConfig()
+	cfg.Prompt = config.PromptConfig{
+		Layers: config.PromptLayerConfig{
+			Enabled: true,
+			Order:   []config.PromptLayerEntry{{ID: "embedded"}},
+		},
+	}
+	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
+	cfg.Attestation = config.AttestationConfig{
+		PrivateKeyPath: testAttestationPrivateKeyPath,
+		PublicKeyPath:  testAttestationPublicKeyPath,
+		ExpiryDuration: 168 * time.Hour,
+	}
+	cfg.Tenants.DefaultTenant = tenantID
+	cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+	return cfg
+}
 
 // This suite contributes to the shared Ginkgo run tree driven by
 // TestCrosscodexdIntegrationBDD in bootstrap_integration_test.go -- see
@@ -42,30 +69,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		tenantID := fmt.Sprintf("split-e2e-%s", uuid.New().String())
 		fakeLLM := deterministicLLMClient{}
 
-		configureRole := func(role string) *config.Config {
-			cfg := baseTestConfig(dsn)
-			cfg.Role = role
-			cfg.NATS = config.NATSConfig{URL: natsURL}
-			cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: e2eModel, EmbeddingModel: e2eModel}
-			cfg.Analysis = e2eAnalysisConfig()
-			cfg.Prompt = config.PromptConfig{
-				Layers: config.PromptLayerConfig{
-					Enabled: true,
-					Order:   []config.PromptLayerEntry{{ID: "embedded"}},
-				},
-			}
-			cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
-			cfg.Attestation = config.AttestationConfig{
-				PrivateKeyPath: testAttestationPrivateKeyPath,
-				PublicKeyPath:  testAttestationPublicKeyPath,
-				ExpiryDuration: 168 * time.Hour,
-			}
-			cfg.Tenants.DefaultTenant = tenantID
-			cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
-			return cfg
-		}
-
-		pipelineCfg := configureRole(config.RolePipeline)
+		pipelineCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RolePipeline)
 		pipelineCfg.Pipeline.Addr = "127.0.0.1:0"
 		pipelineCfg.Health.Addr = "127.0.0.1:0"
 		// This test dials the pipeline role over the network, so both sides
@@ -73,7 +77,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		// the gateway/client below presents the client cert. Both trust one CA.
 		pipelineCfg.TLS = testServerTLS()
 
-		workerCfg := configureRole(config.RoleWorker)
+		workerCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RoleWorker)
 
 		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
@@ -90,11 +94,21 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		Expect(workerRT.start(ctx)).To(Succeed(), "start worker role")
 		defer func() { _ = workerRT.stop(context.Background()) }()
 
+		// The gateway role refuses a default tenant migrate has not
+		// provisioned, so provision it before bootstrapping the gateway.
+		suPool, err := db.NewPool(db.PoolConfig{DSN: dsn, MaxOpenConns: 5, Extensions: []string{"age", "vector"}})
+		Expect(err).NotTo(HaveOccurred())
+		defer suPool.Close()
+		Expect(db.EnsureTenant(ctx, suPool, tenantID, "crosscodexd split e2e")).To(Succeed())
+
 		gwCfg := baseTestConfig(dsn)
 		gwCfg.Role = config.RoleGateway
 		gwCfg.Server.Addr = "127.0.0.1:0"
 		gwCfg.Pipeline.Endpoint = pipelineAddr
 		gwCfg.TLS = testClientTLS()
+		gwCfg.NATS = config.NATSConfig{URL: natsURL}
+		gwCfg.Tenants.DefaultTenant = tenantID
+		gwCfg.Storage.Objects.BasePath = GinkgoT().TempDir()
 
 		gwRT, err := bootstrap(ctx, gwCfg)
 		Expect(err).NotTo(HaveOccurred(), "bootstrap gateway role pointed at the standalone pipeline role")
@@ -105,11 +119,6 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		Expect(gwRT.pipelineService).To(BeNil(),
 			"a standalone gateway role must not build an in-process pipeline.Service anymore")
 		Expect(gwRT.gatewayServer).NotTo(BeNil())
-
-		suPool, err := db.NewPool(db.PoolConfig{DSN: dsn, MaxOpenConns: 5, Extensions: []string{"age", "vector"}})
-		Expect(err).NotTo(HaveOccurred())
-		defer suPool.Close()
-		Expect(db.EnsureTenant(ctx, suPool, tenantID, "crosscodexd split e2e")).To(Succeed())
 
 		catalogID := "cat-" + uuid.New().String()
 		Expect(suPool.Exec(ctx, `
@@ -171,6 +180,148 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		} else {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
 		}
+	})
+
+	It("imports an OSCAL catalog through a standalone gateway and completes its job with separate pipeline, worker and graph roles", func() {
+		dsn := os.Getenv("TEST_DATABASE_DSN")
+		if dsn == "" {
+			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+		}
+
+		ctx := context.Background()
+		natsURL := startSharedTestNATS(GinkgoT())
+		tenantID := fmt.Sprintf("split-import-%s", uuid.New().String())
+		fakeLLM := deterministicLLMClient{}
+
+		pipelineCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RolePipeline)
+		pipelineCfg.Pipeline.Addr = "127.0.0.1:0"
+		pipelineCfg.Health.Addr = "127.0.0.1:0"
+		pipelineCfg.TLS = testServerTLS()
+
+		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
+		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
+		defer pipelineRT.close()
+		Expect(pipelineRT.start(ctx)).To(Succeed(), "start pipeline role")
+		defer func() { _ = pipelineRT.stop(context.Background()) }()
+
+		workerRT, err := bootstrap(ctx, splitRoleConfig(dsn, natsURL, tenantID, config.RoleWorker), WithLLMClient(fakeLLM))
+		Expect(err).NotTo(HaveOccurred(), "bootstrap worker role")
+		defer workerRT.close()
+		Expect(workerRT.start(ctx)).To(Succeed(), "start worker role")
+		defer func() { _ = workerRT.stop(context.Background()) }()
+
+		// The graph role is the only Control-node writer: catalog ingest in
+		// the gateway publishes the parsed catalog and stops there.
+		graphCfg := baseTestConfig(dsn)
+		graphCfg.Role = config.RoleGraph
+		graphCfg.NATS = config.NATSConfig{URL: natsURL}
+		graphCfg.Health.Addr = "127.0.0.1:0"
+
+		graphRT, err := bootstrap(ctx, graphCfg)
+		Expect(err).NotTo(HaveOccurred(), "bootstrap graph role")
+		defer graphRT.close()
+		Expect(graphRT.start(ctx)).To(Succeed(), "start graph role")
+		defer func() { _ = graphRT.stop(context.Background()) }()
+
+		// The gateway role refuses a default tenant migrate has not
+		// provisioned, so provision it before bootstrapping the gateway.
+		suPool, err := db.NewPool(db.PoolConfig{DSN: dsn, MaxOpenConns: 5, Extensions: []string{"age", "vector"}})
+		Expect(err).NotTo(HaveOccurred())
+		defer suPool.Close()
+		Expect(db.EnsureTenant(ctx, suPool, tenantID, "crosscodexd split import e2e")).To(Succeed())
+
+		// Mirrors deploy/config.yaml: the global identity is the daemon's
+		// client cert (used to dial the pipeline role via pipeline-client),
+		// and the gateway-server target swaps in the server cert for the
+		// listener, inheriting mutual mode and the CA from the global config.
+		gwCfg := baseTestConfig(dsn)
+		gwCfg.Role = config.RoleGateway
+		gwCfg.Server.Addr = "127.0.0.1:0"
+		gwCfg.Pipeline.Endpoint = pipelineRT.pipelineServer.Addr()
+		gwCfg.TLS = testClientTLS()
+		gwCfg.TLS.Targets = map[string]config.TLSOverride{
+			"gateway-server": {Cert: testTLSServerCertPath, Key: testTLSServerKeyPath},
+		}
+		gwCfg.NATS = config.NATSConfig{URL: natsURL}
+		gwCfg.Tenants.DefaultTenant = tenantID
+		gwCfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+
+		gwRT, err := bootstrap(ctx, gwCfg)
+		Expect(err).NotTo(HaveOccurred(), "bootstrap gateway role")
+		defer gwRT.close()
+		Expect(gwRT.start(ctx)).To(Succeed(), "start gateway role")
+		defer func() { _ = gwRT.stop(context.Background()) }()
+		Expect(gwRT.shared.graphDB_).To(BeNil(), "the gateway role must hold no graph credentials")
+
+		clientTLS, err := tlsconfig.BuildTLSConfig(ctx, testClientTLS(), "gateway-client")
+		Expect(err).NotTo(HaveOccurred(), "build client TLS config")
+		client := crosscodexv1connect.NewGatewayServiceClient(
+			&http.Client{Transport: &http.Transport{TLSClientConfig: clientTLS}},
+			"https://"+gwRT.gatewayServer.Addr(),
+		)
+
+		doc, err := os.ReadFile(e2eCatalogFixture)
+		Expect(err).NotTo(HaveOccurred(), "read e2e catalog fixture")
+		submitResp, err := client.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source:        &pb.SubmitDocumentRequest_Content{Content: doc},
+			CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+			CatalogName:   "split-import",
+		}))
+		Expect(err).NotTo(HaveOccurred(), "SubmitDocument through the standalone gateway")
+		jobID := submitResp.Msg.GetJobId()
+		Expect(jobID).NotTo(BeEmpty(), "job id")
+		Expect(submitResp.Msg.GetDocumentId()).NotTo(BeEmpty(), "document id")
+
+		// SubmitDocumentResponse carries no catalog_id; it is content-hash
+		// derived, so read it back. Reads enter the tenant for RLS as app_user.
+		tenantCtx, err := tenant.WithTenant(ctx, tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		tx, err := db.NewTenantPool(gwRT.shared.appPool).Begin(tenantCtx)
+		Expect(err).NotTo(HaveOccurred(), "begin tenant transaction")
+		var catalogID string
+		Expect(tx.QueryRow(tenantCtx,
+			"SELECT catalog_id FROM catalogs WHERE tenant_id = $1", tenantID).Scan(&catalogID)).
+			To(Succeed(), "read catalog_id")
+		var controlCount int
+		Expect(tx.QueryRow(tenantCtx,
+			"SELECT count(*) FROM controls WHERE catalog_id = $1", catalogID).Scan(&controlCount)).
+			To(Succeed(), "count controls")
+		Expect(tx.Rollback()).To(Succeed())
+		Expect(controlCount).To(Equal(3), "controls in relational DB")
+
+		// A transport, auth or TLS error is reported as the failure rather
+		// than masked as a status, and a FAILED job stops the poll at once.
+		Eventually(func(inner Gomega) {
+			getResp, err := client.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: jobID}))
+			inner.Expect(err).NotTo(HaveOccurred(), "GetJob through the standalone gateway")
+			job := getResp.Msg.GetJob()
+			if job.GetStatus() == pb.JobStatus_JOB_STATUS_FAILED {
+				StopTrying(fmt.Sprintf("job %s failed: %s", jobID, job.GetError().GetMessage())).Now()
+			}
+			inner.Expect(job.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_COMPLETED), "job status")
+		}, 60*time.Second, 500*time.Millisecond).Should(Succeed(), "job completes")
+
+		// The graph role projects Control nodes asynchronously from the
+		// catalog-parsed event, so poll. Node IDs are "<catalogID>/<item ID>".
+		// The tenant is unique to this spec, so the counts are exact.
+		g := graphRT.shared.graphDB_
+		parentID := catalogID + "/ac-2"
+		childA, childB := catalogID+"/ac-2.a", catalogID+"/ac-2.b"
+		Eventually(func(inner Gomega) {
+			for _, nodeID := range []string{parentID, childA, childB} {
+				n, err := g.GetNode(ctx, tenantID, nodeID)
+				inner.Expect(err).NotTo(HaveOccurred(), "GetNode %s", nodeID)
+				inner.Expect(n).NotTo(BeNil(), "node %s exists", nodeID)
+				inner.Expect(n.Label).To(Equal("Control"), "node %s label", nodeID)
+			}
+			parentOf, err := g.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{EdgeLabel: "PARENT_OF"})
+			inner.Expect(err).NotTo(HaveOccurred(), "query PARENT_OF")
+			pairs := make([]string, 0, len(parentOf))
+			for _, r := range parentOf {
+				pairs = append(pairs, r.Source.ID+" -> "+r.Target.ID)
+			}
+			inner.Expect(pairs).To(ConsistOf(parentID+" -> "+childA, parentID+" -> "+childB), "PARENT_OF edges")
+		}, 60*time.Second, 500*time.Millisecond).Should(Succeed(), "graph role projects the imported catalog")
 	})
 
 	It("rejects a client presenting no certificate, and a valid-cert client with no tenant header", func() {

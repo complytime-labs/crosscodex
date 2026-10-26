@@ -24,8 +24,8 @@ var _ = Describe("resourcesForRole", func() {
 			config.RoleWorker, requiredResources{nats: true, llm: true}),
 		Entry("pipeline needs db, nats, and llm",
 			config.RolePipeline, requiredResources{db: true, nats: true, llm: true}),
-		Entry("gateway needs only db, once pipeline is decoupled",
-			config.RoleGateway, requiredResources{db: true}),
+		Entry("gateway needs db and nats to persist and publish imported catalogs, but no graph credentials",
+			config.RoleGateway, requiredResources{db: true, nats: true}),
 		Entry("all needs everything",
 			config.RoleAll, requiredResources{db: true, graph: true, nats: true, llm: true}),
 	)

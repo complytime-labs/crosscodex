@@ -15,10 +15,10 @@ This document covers how `crosscodexd` picks a service role at startup, what eac
 | Role                    | What it runs                                                                                                                                                | Notes                                                                                                                                                                                          |
 |-------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `all` (default)         | Graph service + LLM worker + gateway (HTTP server + in-process pipeline service)                                                                            | Everything in one process, no network hop between gateway and pipeline; see `attachGraph`, `attachWorker`, `buildPipelineService`, and `attachAllGateway` in `cmd/crosscodexd/bootstrap.go` |
-| `gateway`               | Gateway HTTP server (`internal/gateway.Server`), whose pipeline backend is a Connect client reaching a separately-deployed `pipeline` role over the network | Requires `pipeline.endpoint`; enforces the fail-closed precondition below                                                                                                                      |
+| `gateway`               | Gateway HTTP server (`internal/gateway.Server`). Serves catalog import itself (X.509 authn, ingestion, catalog service) and forwards jobs to a separately-deployed `pipeline` role over a Connect client | Requires `pipeline.endpoint`; enforces the fail-closed preconditions below; see [Catalog import in a split deployment](#catalog-import-in-a-split-deployment)                                                                                                                      |
 | `pipeline`              | A production `pipeline.Service` behind its own Connect RPC listener (`internal/pipeline.Server`), dispatching analyzer work to workers over NATS            | Requires `pipeline.addr`; enforces the fail-closed preconditions below                                                                                                                         |
 | `worker`                | LLM worker (`internal/worker.Worker`) consuming tasks from the NATS queue group                                                                             | No Postgres connection is opened for this role — a worker replica scales horizontally without database credentials                                                                             |
-| `graph`                 | Graph-materialization service (`internal/graph.Service`), subscribing to NATS and writing to the AGE-backed graph database                                  |                                                                                                                                                                                                |
+| `graph`                 | Graph-materialization service (`internal/graph.Service`), subscribing to NATS and writing to the AGE-backed graph database. Also projects Control nodes and PARENT_OF edges from catalog parsed events |                                                                                                                                                                                                |
 | `analysis`, `synthesis` | Alias for `pipeline`                                                                                                                                        | See [Aliases](#aliases-analysis-synthesis) below                                                                                                                                               |
 
 `config.ResolveRole` validates a requested role name against `config.CanonicalRoles` (`all`, `gateway`, `pipeline`, `worker`, `graph`) and the alias map, returning an error listing every accepted value if the input matches neither.
@@ -43,11 +43,11 @@ Three ways to set the role, in precedence order (highest first):
 
 | Role | Mappings backend (`ListJobMappings`, `GetControlMappings`) | Graph backend (`QueryGraph`, `FindSimilar`) |
 |------|------|------|
-| `all` | `results.Service` via `newMappingsBackend`, in `attachAllGateway` | `rt.graphService`, which `attachGraph` builds first |
-| `gateway` | `results.Service` via `newMappingsBackend`, in `attachGatewayServer` | not attached |
+| `all` | `results.Service` via `newMappingsBackend`, in `buildIngestGateway` | `rt.graphService`, which `attachGraph` builds first; `attachAllGateway` passes it to `buildIngestGateway` |
+| `gateway` | `results.Service` via `newMappingsBackend`, in `buildIngestGateway` | not attached |
 | embedded CLI daemon (`cmd/crosscodex/embedded.go`) | `results.Service` over its tenant connection | not attached |
 
-The feedback backend (`SubmitVote`, `GetReviewQueue`) is not implemented in any role; both RPCs return `Unavailable`. The standalone `gateway` role has no authn registry yet (#213).
+The feedback backend (`SubmitVote`, `GetReviewQueue`) is not implemented in any role; both RPCs return `Unavailable`.
 
 ### Mappings read path
 
@@ -73,7 +73,7 @@ Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Da
 
 - `database.dsn`, `database.graph_dsn` or, for role `all` and `admin retention scan` when it is set, `database.purge_dsn` connects as a superuser, a `BYPASSRLS` role, a table owner, or a member of one (`pkg/db.CheckRestrictedRole`).
 - the schema is not at the latest embedded migration version, or the last migration failed (`pkg/db.CheckSchemaVersion`, on the `database.dsn` connection).
-- role `all` finds no `tenants` row for `tenants.default_tenant`. `crosscodexd migrate` provisions it.
+- role `all` or `gateway` finds no `tenants` row for `tenants.default_tenant`, or finds it deleted. `crosscodexd migrate` provisions it.
 
 ## Fail-closed preconditions for `pipeline` / `all`
 
@@ -90,8 +90,36 @@ Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Da
   - **Pipeline endpoint** — `pipeline.endpoint` (where its Connect client dials to reach a separately-deployed `pipeline` role) must be set. `attachGateway` fails closed if unset.
   - **Mutual TLS for client** — `gateway.NewConnectPipelineBackend` resolves the `pipeline-client` TLS target and fails closed unless it yields a config that both presents a client certificate and carries a CA to verify the pipeline's server certificate.
   - **Why mutual TLS is required** — This mirrors the `pipeline` server-side precondition. Because the pipeline listener enforces `RequireAndVerifyClientCert` and has no plaintext fallback, a client that couldn't present a certificate would only fail at the first RPC. Both halves of the split refuse to start without genuine mutual TLS rather than degrading to cleartext.
-  - **No pipeline service preconditions** — A standalone `gateway` role needs *none* of the three `buildPipelineService` preconditions above: it no longer constructs a `pipeline.Service` itself, only a network client to one.
+  - **Catalog import preconditions** — the gateway serves catalog import itself, so `buildIngestGateway` (shared with `all`) refuses to start unless:
+    - `tenants.default_tenant` is set (`gateway role: tenants.default_tenant must be set`);
+    - `storage.objects.base_path` is set (`gateway role: storage.objects.base_path must be set`). Uploaded documents are stored here, on the gateway's own filesystem;
+    - the `gateway-server` TLS target resolves to `mutual` mode with a CA (`gateway role: catalog import authenticates clients by X.509 certificate, so tls.mode (or tls.targets.gateway-server.mode) must be "mutual" with a CA configured`), because the listener otherwise never verifies a client certificate;
+    - the default tenant exists (`gateway role: default tenant "<id>" does not exist. Run crosscodexd migrate ...`) and is not deleted (`gateway role: default tenant "<id>" is deleted. Restore it with crosscodexd admin tenant restore ...`).
+  - **Resources** — Postgres (`database.dsn`) and NATS. The gateway holds no graph or vector credentials.
+  - **No pipeline service preconditions** — it does not need the attestation key paths from `buildPipelineService`; it constructs no `pipeline.Service`, only a network client to one.
 - **`all`** needs neither `pipeline.addr` nor `pipeline.endpoint` — it wires `pipeline.Service` directly into the gateway's `PipelineBackend` in-process, with no listener or client involved.
+
+## Catalog import in a split deployment
+
+With `gateway`, `pipeline`, `worker` and `graph` running as separate processes, a catalog import flows through two roles:
+
+1. A client uploads the document to the `gateway` role. The gateway owns ingestion: it authenticates the client certificate, stores the uploaded blob under its own `storage.objects.base_path`, parses the document and upserts the `controls` rows in Postgres. It never writes the graph.
+2. After upserting a non-empty control set, the catalog service publishes `crosscodex.catalog.<tenant_id>.<catalog_id>.parsed` (`natsbus.CatalogParsedSubject`). If publishing fails, the import fails with `CodeUnavailable` and a message to re-import the same document; the rows and blob stay.
+3. The `graph` role subscribes (queue group `graph-materializer`, `internal/graph/catalog_projection.go`), reads the tenant's `controls` rows under RLS and upserts the Control nodes (`UpsertNode`) and PARENT_OF edges. The event payload is ignored; the subject supplies the tenant and catalog. A malformed subject is dropped. A PARENT_OF edge whose parent node is missing is skipped and counted (`graph.materialize.edges_skipped.total`). Zero stored controls, a reader error or a write error is logged and counted as `graph.events.total` `status=error`.
+4. Job starts are forwarded to the `pipeline` role as described in [Tenant propagation](#tenant-propagation-between-gateway-and-a-standalone-pipeline-role).
+
+Operational consequences:
+
+- **Eventual consistency.** Control nodes appear after the import returns. Analysis edges that arrive before their Control nodes exist are skipped and counted, not retried. Re-importing the catalog repairs both.
+- **Start the graph role before importing.** The subscription is core NATS: an event published while no graph role is subscribed is lost. Deploy at least one graph role and start it first. Re-import to recover a lost event.
+- **Storage.** Because the gateway writes uploaded blobs under its own `storage.objects.base_path`, that path is separate from the pipeline role's unless the two roles share a filesystem.
+- Role `all` runs the same ingestion path and additionally confirms the tenant graph exists at startup (`CreateGraph`).
+
+### Client certificate trust (known limitation)
+
+Catalog import runs in single-tenant mode: any client certificate signed by the `gateway-server` CA authenticates as `admin` of `tenants.default_tenant`. The `auth.x509_mappings` config field exists in `pkg/config` but the daemon does not read it, so there is no way to map certificates to other tenants or roles. This is a limitation of the current implementation, not a configured policy.
+
+`pkg/tlsconfig` uses the target's CA as both the root pool and the client CA pool (`ClientCAs`) for a `mutual` server target, and `tls.targets.<target>.ca` overrides the global CA for that target. In a split deployment the inter-service CA also signs service identities such as `pipeline-client`, so by default those certificates would authenticate as admin at the gateway. Give `gateway-server` a dedicated client CA through `tls.targets.gateway-server.ca`, separate from the inter-service CA.
 
 ## Tenant propagation between gateway and a standalone pipeline role
 
