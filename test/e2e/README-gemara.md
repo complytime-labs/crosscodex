@@ -2,13 +2,11 @@
 
 ## Status
 
-**NOT IMPLEMENTED** - Gemara structuring is not yet implemented in the service layer.
+**NOT IMPLEMENTED** - Gemara structuring is not implemented in the service layer.
 
-See `internal/catalog/service.go:257`:
-```go
-return nil, connect.NewError(connect.CodeUnimplemented, 
-    errors.New("non-OSCAL structuring not yet implemented in service layer"))
-```
+`ParseCatalog` (`internal/catalog/service.go`) rejects any document that is not
+an OSCAL JSON catalog, including one declared as `CATALOG_FORMAT_GEMARA`, with
+`InvalidArgument` "unsupported catalog format" (built by `unsupportedFormatError`).
 
 ## Test Fixture
 

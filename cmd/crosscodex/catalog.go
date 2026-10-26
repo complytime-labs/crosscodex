@@ -36,8 +36,11 @@ func newCatalogImportCmd(state *cliState) *cobra.Command {
 		Long: `Import a compliance catalog from a local file.
 
 Supported formats:
-  - OSCAL JSON (.json)
-  - Raw documents (with --raw flag)`,
+  - OSCAL JSON catalogs (.json)
+
+With --raw the server detects the format from the content instead of
+assuming OSCAL. Only OSCAL JSON is accepted today; other documents are
+rejected as an unsupported catalog format.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
 			raw, _ := cmd.Flags().GetBool("raw")
@@ -117,11 +120,11 @@ Supported formats:
 		usage: "crosscodex catalog import <file>",
 		examples: []string{
 			"crosscodex catalog import nist-800-53.json",
-			"crosscodex catalog import --raw custom-controls.txt",
+			"crosscodex catalog import --raw nist-800-53.json",
 		},
 	})
 
-	cmd.Flags().Bool("raw", false, "Import as raw document (no OSCAL parsing)")
+	cmd.Flags().Bool("raw", false, "Let the server detect the format instead of assuming OSCAL")
 
 	return cmd
 }
