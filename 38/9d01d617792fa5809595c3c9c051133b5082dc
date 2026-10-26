@@ -1,0 +1,25 @@
+pkg/db/dbtest/doc.go
+  s_5d30fea2594b5a::t_f2f0fb6f3b399a 14
+pkg/db/dbtest/fake_bdd_test.go
+  s_5d30fea2594b5a::t_c2877957bbcbab 21-24,240-247,297
+pkg/db/dbtest/fake.go
+  s_5d30fea2594b5a::t_f2f0fb6f3b399a 354-357
+internal/pipeline/helpers_test.go
+  s_5d30fea2594b5a::t_f2f0fb6f3b399a 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "389d01d617792fa5809595c3c9c051133b5082dc",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
