@@ -1,0 +1,73 @@
+pkg/db/migrations/001_initial_schema.up.sql
+  s_474050e579134e::t_da1acc658975a2 329-338,340-348
+internal/pipeline/vote_summaries.go
+  s_474050e579134e::t_da1acc658975a2 8,15-20,24,29-39,41-53,55,61-65,70,76-80,111-113,116-117
+pkg/retention/archive.go
+  s_474050e579134e::t_da1acc658975a2 36
+internal/synthesis/synthesis_integration_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 128-130,135-139,175-177,188,215,232,265-390,407,421,434,461,475
+internal/pipeline/store.go
+  s_474050e579134e::t_da1acc658975a2 47-49
+internal/pipeline/store_integration_test.go
+  s_474050e579134e::t_da1acc658975a2 503-505,516-517,521,529,537,539-541,552
+internal/pipeline/synthesis_inputs_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 10-19,23-24,29-30,35-39,43-45,47,50-86,88-91,93,102-103,118-119,128-129
+pkg/analyzer/results/results_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 10,20-40
+pkg/db/db_integration_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 1193-1194,1227-1228,1239-1285
+  s_474050e579134e::t_0e6b03a8c60e2c 1286
+internal/pipeline/synthesis_inputs.go
+  s_474050e579134e::t_da1acc658975a2 4,6,10,48,50-55,61,122,128-131,141-142,144,147-180
+pkg/retention/engine_integration_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 215-216
+internal/synthesis/service.go
+  s_474050e579134e::t_da1acc658975a2 300-304,322,327,333-335,337
+internal/pipeline/executor_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 1477-1481,1515-1519
+internal/pipeline/executor.go
+  s_474050e579134e::t_da1acc658975a2 488-493
+internal/pipeline/service_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 6,49-60,423-478
+  s_474050e579134e::t_81ebd5d7680c63 479-481
+internal/pipeline/store_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 46,54,374,377
+internal/pipeline/vote_summaries_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 9,15,31-38,47-55,57-79
+internal/analyzer/relationship/relationship.go
+  s_474050e579134e::t_da1acc658975a2 377-379
+internal/synthesis/ranker.go
+  s_474050e579134e::t_da1acc658975a2 73
+cmd/crosscodexd/e2e_integration_test.go
+  s_474050e579134e::t_da1acc658975a2 68
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_474050e579134e::t_da1acc658975a2 73
+internal/synthesis/errors.go
+  s_474050e579134e::t_da1acc658975a2 19-21
+internal/synthesis/synthesis_bdd_test.go
+  s_474050e579134e::t_da1acc658975a2 797-798
+internal/synthesis/doc.go
+  s_474050e579134e::t_da1acc658975a2 27-30
+internal/synthesis/types.go
+  s_474050e579134e::t_da1acc658975a2 20-28,66-73
+pkg/analyzer/results/results.go
+  s_474050e579134e::t_da1acc658975a2 8-35
+pkg/analyzer/results/results_property_test.go
+  s_474050e579134e::t_da1acc658975a2 1-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e161a4575d04823db6db76c5283c363cb48cf3d4",
+  "prompts": {},
+  "sessions": {
+    "s_474050e579134e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c9d73c5-2668-4020-9b86-cbbb515cc1ef",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
