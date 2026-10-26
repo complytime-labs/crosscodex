@@ -1,0 +1,27 @@
+docs/dev/telemetry.md
+  s_77c8f6ddbfd45e::t_49eaf1b9a91fca 182-184
+docs/dev/service-runtime.md
+  s_77c8f6ddbfd45e::t_85145b6a57dad9 18,21,58,75-81,84-87,89-103
+  s_77c8f6ddbfd45e::t_2d2248a4f72a8c 88,104
+  s_77c8f6ddbfd45e::t_4d7a3bb4c2fcf5 105
+docs/dev/design-principles.md
+  s_77c8f6ddbfd45e::t_2d2248a4f72a8c 31,36,96,241
+README.md
+  s_77c8f6ddbfd45e::t_7a8554f22510c3 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7731606d2756167761a22b0d5255ad627bad1f8",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
