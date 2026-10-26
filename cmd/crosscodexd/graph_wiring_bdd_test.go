@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -15,7 +16,24 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 )
+
+// subjectRecordingBus records QueueSubscribe subjects; every other
+// natsbus.Client method is left nil and panics if called.
+type subjectRecordingBus struct {
+	natsbus.Client
+	subjects []string
+}
+
+func (b *subjectRecordingBus) QueueSubscribe(_ context.Context, subject, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
+	b.subjects = append(b.subjects, subject)
+	return drainableSubscription{}, nil
+}
+
+type drainableSubscription struct{ natsbus.Subscription }
+
+func (drainableSubscription) Drain() error { return nil }
 
 // attachGraph only constructs values, so it runs here against memdriver to
 // prove graph.max_bulk_edges reaches the graph service it builds.
@@ -65,5 +83,17 @@ var _ = Describe("attachGraph config wiring", func() {
 		resp, err := bulk(7)
 		Expect(err).NotTo(HaveOccurred(), "a request at the configured limit is accepted")
 		Expect(resp.Msg.GetCreatedCount()).To(Equal(int32(7)))
+	})
+
+	It("subscribes the graph service to catalog parsed events", func() {
+		bus := &subjectRecordingBus{}
+		rt := &runtime{}
+		Expect(attachGraph(&config.Config{}, &sharedResources{graphDB_: memdriver.New(), natsClient: bus}, rt)).To(Succeed())
+
+		ctx := context.Background()
+		Expect(rt.graphService.Start(ctx)).To(Succeed())
+		DeferCleanup(func() { _ = rt.graphService.Stop(context.Background()) })
+		Expect(bus.subjects).To(ContainElement("crosscodex.catalog.*.*.parsed"),
+			"attachGraph must give the graph service a ControlsReader so it projects catalog controls")
 	})
 })

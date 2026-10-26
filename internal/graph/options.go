@@ -65,3 +65,11 @@ func WithResolverRegistry(registry *ResolverRegistry) Option {
 		s.resolvers = registry
 	}
 }
+
+// WithControlsReader sets the reader the catalog subscription uses to project
+// a parsed catalog's controls into Control nodes. Wired by cmd/crosscodexd
+// attachGraph from the app tenant pool; without it the graph role does not
+// subscribe to catalog events.
+func WithControlsReader(r ControlsReader) Option {
+	return func(s *Service) { s.controls = r }
+}

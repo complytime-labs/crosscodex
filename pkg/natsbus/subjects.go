@@ -71,6 +71,16 @@ func FeedbackSubject(tenantID, edgeID string) (string, error) {
 		"feedback", tenantID, edgeID)
 }
 
+// CatalogParsedSubject builds the subject catalog ingest publishes after it
+// has persisted a catalog's controls; the graph role projects them into
+// Control nodes.
+//
+//	crosscodex.catalog.{tenant_id}.{catalog_id}.parsed
+func CatalogParsedSubject(tenantID, catalogID string) (string, error) {
+	return buildSubject(tenantID, catalogID, "catalog ID",
+		"catalog", tenantID, catalogID, "parsed")
+}
+
 // validateTenant validates a tenant ID using pkg/tenant and wraps
 // the error as ErrInvalidSubject.
 func validateTenant(tenantID string) error {

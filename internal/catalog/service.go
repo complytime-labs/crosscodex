@@ -16,7 +16,6 @@ import (
 	"connectrpc.com/connect"
 	crosscodexv1 "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
-	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -30,12 +29,12 @@ import (
 )
 
 // Service implements the CatalogService Connect interface.
-// It orchestrates parsing, persistence, graph construction, embeddings, and search.
+// It orchestrates parsing, persistence, embeddings, and search, and announces
+// stored catalogs so the graph role can project them.
 type Service struct {
 	parser            oscal.Parser
 	assembler         oscal.Assembler
 	store             Store
-	graph             graphdb.GraphDB
 	vectors           vectordb.VectorDB
 	embedder          oscal.Embedder
 	bus               natsbus.Client
@@ -54,7 +53,7 @@ type ServiceOption func(*Service)
 
 // NewService creates a new CatalogService with the given options.
 // Required: WithParser, WithStore, WithStorage.
-// Optional: WithAssembler, WithGraphDB, WithVectorDB, WithEmbedder, WithBus, WithTracer, WithMeter, WithLogger.
+// Optional: WithAssembler, WithVectorDB, WithEmbedder, WithBus, WithTracer, WithMeter, WithLogger.
 func NewService(opts ...ServiceOption) *Service {
 	s := &Service{
 		logger: slog.Default(),
@@ -108,13 +107,6 @@ func WithAssembler(a oscal.Assembler) ServiceOption {
 func WithStore(st Store) ServiceOption {
 	return func(s *Service) {
 		s.store = st
-	}
-}
-
-// WithGraphDB sets the graph database.
-func WithGraphDB(g graphdb.GraphDB) ServiceOption {
-	return func(s *Service) {
-		s.graph = g
 	}
 }
 
@@ -183,7 +175,12 @@ func (s *Service) internalError(ctx context.Context, method string, err error) *
 		"internal catalog error; the server logged the cause under trace %s. Retry the request, and if it keeps failing, give that trace ID to an operator", traceID))
 }
 
-// ParseCatalog parses a catalog document from object storage, persists controls, builds graph, generates embeddings.
+// ParseCatalog parses a catalog document from object storage, persists its
+// controls, and generates embeddings. It does not write the graph: once a
+// non-empty control set is stored it publishes the catalog parsed event, and
+// the graph role projects Control nodes from the stored rows. A failed publish
+// fails the import with CodeUnavailable so the caller re-imports rather than
+// leaving controls that never reach the graph.
 func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crosscodexv1.ParseCatalogRequest]) (*connect.Response[crosscodexv1.ParseCatalogResponse], error) {
 	start := time.Now()
 
@@ -338,51 +335,14 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		if err := s.store.UpsertControls(ctx, controlRecords); err != nil {
 			return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store controls: %w", err))
 		}
-	}
 
-	// Build graph if configured. Every node is written before any edge, so a
-	// child listed ahead of its parent still gets its PARENT_OF edge.
-	if s.graph != nil {
-		now := time.Now().UTC()
-		for _, item := range items {
-			node := graphdb.Node{
-				ID:        fmt.Sprintf("%s/%s", catalogID, item.ID),
-				Label:     "Control",
-				ValidFrom: now,
-				Properties: map[string]interface{}{
-					"tenant_id":  tenantID,
-					"catalog_id": catalogID,
-					"identifier": item.ID,
-					"title":      item.Title,
-					"statement":  item.Text,
-					"class":      item.Class,
-				},
-			}
-
-			// Upsert, not create: the control row was just upserted and is
-			// authoritative, so a re-import must refresh the graph node too.
-			if _, err := s.graph.UpsertNode(ctx, tenantID, node); err != nil {
-				s.logger.Warn("upsert graph node failed", "control_id", item.ID, "error", err)
-			}
-		}
-
-		for _, item := range items {
-			if item.ParentID == "" {
-				continue
-			}
-			sourceID := fmt.Sprintf("%s/%s", catalogID, item.ParentID)
-			targetID := fmt.Sprintf("%s/%s", catalogID, item.ID)
-			edge := graphdb.Edge{
-				ID:        graphdb.DerivedID("parent-of", sourceID, targetID),
-				Label:     "PARENT_OF",
-				ValidFrom: now,
-			}
-
-			// The edge ID is derived, so ErrEdgeExists means a re-import
-			// found the edge it would have written.
-			err := s.graph.CreateEdge(ctx, tenantID, sourceID, targetID, edge)
-			if err != nil && !errors.Is(err, graphdb.ErrEdgeExists) {
-				s.logger.Warn("create graph edge failed", "from", item.ParentID, "to", item.ID, "error", err)
+		// The graph role treats an empty projection as an error, so a catalog
+		// with no controls is never announced.
+		if s.bus != nil && len(items) > 0 {
+			if err := s.publishParsed(ctx, tenantID, catalogID, len(items)); err != nil {
+				s.logger.ErrorContext(ctx, "queue catalog graph projection failed", "catalog_id", catalogID, "error", err)
+				return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+					"catalog %s was stored but its graph projection could not be queued: the event bus is unavailable. Re-import the same document to retry", catalogID))
 			}
 		}
 	}
@@ -442,6 +402,28 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		CatalogId: catalogID,
 		Status:    crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
 	}), nil
+}
+
+// publishParsed tells the graph role that catalogID's controls are stored and
+// ready to project. The subscriber reads tenant and catalog from the subject
+// and content from Postgres; the payload is informational.
+func (s *Service) publishParsed(ctx context.Context, tenantID, catalogID string, controlCount int) error {
+	subject, err := natsbus.CatalogParsedSubject(tenantID, catalogID)
+	if err != nil {
+		return fmt.Errorf("build catalog parsed subject: %w", err)
+	}
+	payload, err := json.Marshal(struct {
+		CatalogID    string `json:"catalog_id"`
+		ControlCount int    `json:"control_count"`
+		Timestamp    string `json:"timestamp"`
+	}{catalogID, controlCount, time.Now().UTC().Format(time.RFC3339)})
+	if err != nil {
+		return fmt.Errorf("encode catalog parsed event: %w", err)
+	}
+	if err := s.bus.Publish(ctx, subject, payload); err != nil {
+		return fmt.Errorf("publish %s: %w", subject, err)
+	}
+	return nil
 }
 
 // GetCatalog retrieves catalog metadata by ID.

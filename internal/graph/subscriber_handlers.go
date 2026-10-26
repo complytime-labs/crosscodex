@@ -235,9 +235,10 @@ func (s *Service) skipMissingEndpoint(ctx context.Context, tenantID, analyzer, l
 		attribute.String("error.message", err.Error()),
 	))
 	s.logger.WarnContext(ctx, "skipped graph edge: an endpoint node does not exist in the tenant graph, "+
-		"usually because catalog ingest did not write that control (check the catalog ingest logs) or the analyzer "+
+		"usually because the graph role has not projected that control from the catalog parsed event (check the "+
+		"graph role's catalog projection logs) or the analyzer "+
 		"emitted an ID that matches no Control node. The edge stays absent until it is rewritten: after fixing the cause, "+
-		"re-import the tenant's catalog, which rewrites the controls and queues a fresh analysis.",
+		"re-import the tenant's catalog, which rewrites the controls, republishes the catalog parsed event and queues a fresh analysis.",
 		"tenant", tenantID, "analyzer", analyzer, "edge.label", label,
 		"source_id", sourceID, "target_id", targetID, "error", err)
 	return true

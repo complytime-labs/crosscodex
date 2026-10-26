@@ -209,6 +209,7 @@ func (f *fakeTenantConnection) Exec(_ context.Context, _ string, _ ...any) error
 func (f *fakeTenantConnection) Close() error { return nil }
 
 type fakeTransaction struct {
+	queryFunc    func(ctx context.Context, query string, args ...any) (db.Rows, error)
 	queryRowFunc func(ctx context.Context, query string, args ...any) db.Row
 	commitFunc   func() error
 	rollbackFunc func() error
@@ -237,7 +238,10 @@ func (f *fakeTransaction) Rollback() error {
 	return nil
 }
 
-func (f *fakeTransaction) Query(_ context.Context, _ string, _ ...any) (db.Rows, error) {
+func (f *fakeTransaction) Query(ctx context.Context, query string, args ...any) (db.Rows, error) {
+	if f.queryFunc != nil {
+		return f.queryFunc(ctx, query, args...)
+	}
 	return nil, errors.New("not implemented")
 }
 

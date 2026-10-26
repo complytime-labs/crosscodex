@@ -696,7 +696,8 @@ var _ = Describe("GraphMaterializer", func() {
 		err = m.Materialize(ctx, tenantID, "job-1")
 		Expect(err).To(MatchError(graphdb.ErrNodeNotFound))
 		Expect(err.Error()).To(ContainSubstring("control ac-2"))
-		Expect(err.Error()).To(ContainSubstring("import the catalog first"))
+		Expect(err.Error()).To(ContainSubstring("The graph role projects Control nodes from the catalog parsed event"))
+		Expect(err.Error()).To(ContainSubstring("re-import the catalog, then re-run this job"))
 
 		expectNothingWritten(
 			artifacts.ExportArtifactID("ac-1", artifacts.ConsensusArtifact{Name: "access control policy", Type: artifacts.ArtifactPolicy}),

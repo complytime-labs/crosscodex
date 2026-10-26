@@ -117,6 +117,10 @@ func run(roleFlag string) int {
 		}
 		cfg.Role = canonical
 	}
+	if err := config.RequireSharedNATS(cfg.Role, cfg.NATS.URL); err != nil {
+		fmt.Fprintf(os.Stderr, "role: %v\n", err)
+		return 1
+	}
 
 	// Install a stderr handler before telemetry.Init wraps the default.
 	// Wrapping slog's built-in handler instead would deadlock on the first

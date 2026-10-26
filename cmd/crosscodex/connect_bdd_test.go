@@ -198,3 +198,19 @@ var _ = Describe("Connection Management", func() {
 		})
 	})
 })
+
+// crosscodexd's split-role NATS check must not leak into config loading: the
+// CLI shares the daemon's configuration and starts its embedded daemon as
+// role all regardless of the configured role.
+var _ = Describe("loadConfig with a split role and no nats.url", func() {
+	It("loads, so local commands are not blocked", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		GinkgoT().Setenv("CROSSCODEX_ROLE", "gateway")
+		GinkgoT().Setenv("CROSSCODEX_NATS_URL", "")
+
+		state := &cliState{}
+		Expect(loadConfig(state, "")).To(Succeed())
+		Expect(state.fullCfg.Role).To(Equal("gateway"))
+		Expect(state.cfg).NotTo(BeNil())
+	})
+})

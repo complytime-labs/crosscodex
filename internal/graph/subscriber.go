@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -21,7 +22,8 @@ const (
 	queueGroup        = "graph-materializer"
 )
 
-// Start begins consuming pipeline stage completion events.
+// Start begins consuming pipeline stage completion events and, when a
+// ControlsReader is set, catalog parsed events.
 func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -34,12 +36,26 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("graph subscriber start: %w", err)
 	}
+	subjects := []string{subscriberSubject}
+
+	if s.controls != nil {
+		catalogSub, err := s.bus.QueueSubscribe(ctx, catalogSubject, queueGroup, s.handleCatalogEvent)
+		if err != nil {
+			if uerr := sub.Unsubscribe(); uerr != nil {
+				err = errors.Join(err, fmt.Errorf("unsubscribe pipeline events: %w", uerr))
+			}
+			return fmt.Errorf("graph subscriber start: catalog events: %w", err)
+		}
+		s.catalogSub = catalogSub
+		subjects = append(subjects, catalogSubject)
+	}
+
 	s.sub = sub
-	s.logger.InfoContext(ctx, "graph subscriber started", "subject", subscriberSubject, "queue", queueGroup)
+	s.logger.InfoContext(ctx, "graph subscriber started", "subjects", subjects, "queue", queueGroup)
 	return nil
 }
 
-// Stop drains the NATS subscription and waits for in-flight work.
+// Stop drains the NATS subscriptions and waits for in-flight work.
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -48,10 +64,20 @@ func (s *Service) Stop(ctx context.Context) error {
 		return ErrNotStarted
 	}
 
+	var errs []error
+	if s.catalogSub != nil {
+		if err := s.catalogSub.Drain(); err != nil {
+			errs = append(errs, fmt.Errorf("catalog events: %w", err))
+		}
+	}
 	if err := s.sub.Drain(); err != nil {
-		return fmt.Errorf("graph subscriber stop: %w", err)
+		errs = append(errs, fmt.Errorf("pipeline events: %w", err))
 	}
 	s.sub = nil
+	s.catalogSub = nil
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("graph subscriber stop: %w", err)
+	}
 	s.logger.InfoContext(ctx, "graph subscriber stopped")
 	return nil
 }

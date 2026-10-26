@@ -1,0 +1,45 @@
+executor: age-count
+# Polls the e2e tenant's AGE graph until a Cypher pattern matches the
+# expected number of rows. The graph role projects catalog controls
+# asynchronously from the catalog-parsed event, so a read immediately after
+# SubmitDocument (or even after the job completes) can see fewer rows than
+# expected. The tenant graph itself already exists (crosscodexd migrate's
+# tenants insert trigger creates it), and AGE returns zero rows rather than
+# an error for a MATCH on a label nothing has created yet, so only a count
+# mismatch is retried: any psql failure (connection, auth, Cypher error)
+# fails the step immediately. On timeout the last count is printed and the
+# step fails.
+input:
+  ca_cert: ""
+  client_cert: ""
+  client_key: ""
+  cypher: ""
+  expected: ""
+  attempts: "30"
+
+steps:
+  - type: exec
+    script: |
+      DSN="postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=verify-full&sslrootcert={{.input.ca_cert}}&sslcert={{.input.client_cert}}&sslkey={{.input.client_key}}"
+      for i in $(seq 1 {{.input.attempts}}); do
+        count=$(PGOPTIONS='-c search_path=ag_catalog,public' psql "$DSN" -tAc \
+          "SELECT count(*) FROM cypher('crosscodex_e2e', \$\$ {{.input.cypher}} \$\$) AS (v agtype);") || {
+          echo "psql exited $? running: {{.input.cypher}}" >&2
+          exit 1
+        }
+        if [ "$count" = "{{.input.expected}}" ]; then
+          echo "$count"
+          exit 0
+        fi
+        sleep 1
+      done
+      echo "$count"
+      exit 1
+    assertions:
+      - result.code ShouldEqual 0
+    vars:
+      count:
+        from: result.systemout
+
+output:
+  count: "{{.count}}"

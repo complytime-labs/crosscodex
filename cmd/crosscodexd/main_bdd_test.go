@@ -62,6 +62,7 @@ var _ = Describe("run telemetry initialization", func() {
 	runWithEnv := func(env map[string]string) (int, string) {
 		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
 		GinkgoT().Setenv("CROSSCODEX_DATABASE_DSN", "postgres://u:p@127.0.0.1:1/x?sslmode=disable")
+		GinkgoT().Setenv("CROSSCODEX_NATS_URL", "nats://127.0.0.1:1")
 		for k, v := range env {
 			GinkgoT().Setenv(k, v)
 		}
@@ -132,6 +133,48 @@ var _ = Describe("run telemetry initialization", func() {
 		Expect(stderr).NotTo(ContainSubstring("bootstrap:"),
 			"an invalid observability config must stop the daemon before it touches the database")
 		Expect(otel.GetTextMapPropagator().Fields()).To(BeEmpty())
+	})
+})
+
+// crosscodexd checks the effective role -- the --role flag, else the
+// configured role -- once, before bootstrap, so a split role never starts
+// its own private embedded NATS server.
+var _ = Describe("run without a shared NATS server", func() {
+	BeforeEach(func() {
+		DeferCleanup(testspecs.IsolateTelemetryGlobals())
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		GinkgoT().Setenv("CROSSCODEX_DATABASE_DSN", "postgres://u:p@127.0.0.1:1/x?sslmode=disable")
+		GinkgoT().Setenv("CROSSCODEX_NATS_URL", "")
+	})
+
+	DescribeTable("refuses a split role before bootstrapping any resource",
+		func(envRole, roleFlag, canonical string) {
+			GinkgoT().Setenv("CROSSCODEX_ROLE", envRole)
+			code, stderr := captureStderr(func() int { return run(roleFlag) })
+
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring(`role "` + canonical + `" requires nats.url`))
+			Expect(stderr).To(ContainSubstring("CROSSCODEX_NATS_URL"))
+			Expect(stderr).NotTo(ContainSubstring("bootstrap:"),
+				"the role/NATS check must stop the daemon before it opens any resource")
+		},
+		Entry("--role gateway", config.RoleAll, config.RoleGateway, config.RoleGateway),
+		Entry("--role pipeline", config.RoleAll, config.RolePipeline, config.RolePipeline),
+		Entry("--role worker", config.RoleAll, config.RoleWorker, config.RoleWorker),
+		Entry("--role graph", config.RoleAll, config.RoleGraph, config.RoleGraph),
+		Entry("--role analysis (alias)", config.RoleAll, "analysis", config.RolePipeline),
+		Entry("CROSSCODEX_ROLE=worker, no flag", config.RoleWorker, "", config.RoleWorker),
+		Entry("CROSSCODEX_ROLE=synthesis (alias), no flag", "synthesis", "", config.RolePipeline),
+	)
+
+	It("lets --role all override a configured split role and run embedded", func() {
+		GinkgoT().Setenv("CROSSCODEX_ROLE", config.RoleGateway)
+		code, stderr := captureStderr(func() int { return run(config.RoleAll) })
+
+		Expect(code).To(Equal(1))
+		Expect(stderr).NotTo(ContainSubstring("requires nats.url"))
+		Expect(stderr).To(ContainSubstring("bootstrap:"),
+			"role all passes the check and fails later, on the unreachable database")
 	})
 })
 

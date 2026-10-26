@@ -193,11 +193,17 @@ func (m *mockNATSClient) Close() error { return nil }
 
 // mockSubscription is a test double for natsbus.Subscription.
 type mockSubscription struct {
-	drainFunc func() error
+	drainFunc    func() error
+	drained      bool
+	unsubscribed bool
 }
 
-func (m *mockSubscription) Unsubscribe() error { return nil }
+func (m *mockSubscription) Unsubscribe() error {
+	m.unsubscribed = true
+	return nil
+}
 func (m *mockSubscription) Drain() error {
+	m.drained = true
 	if m.drainFunc != nil {
 		return m.drainFunc()
 	}
