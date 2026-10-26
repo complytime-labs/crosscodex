@@ -1,0 +1,25 @@
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_77c8f6ddbfd45e::t_e2969e40df0ed9 478-480,639-641,653
+cmd/crosscodexd/bootstrap_bdd_test.go
+  s_77c8f6ddbfd45e::t_15fd2ae69dd294 14-17,19,24,53-88
+  s_77c8f6ddbfd45e::t_14268647ecdf45 89-90
+cmd/crosscodexd/bootstrap.go
+  s_77c8f6ddbfd45e::t_e2969e40df0ed9 718-720
+  s_77c8f6ddbfd45e::t_4728c92bd6d6a9 254-265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c72220719cbe012610b3d4af44ee265886034ee6",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
