@@ -4,7 +4,9 @@ package gateway_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
 
@@ -72,6 +74,87 @@ var _ = Describe("Server", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Msg.Status).To(Equal(pb.HealthStatus_HEALTH_STATUS_HEALTHY))
 		Expect(checker.calls).To(BeZero())
+	})
+
+	Describe("GET /healthz", func() {
+		// /healthz is the container readiness probe (crosscodexd healthcheck
+		// checks only the status code), so anything short of HEALTHY must be
+		// a non-200 or the orchestrator reports a daemon without its
+		// database as healthy.
+		getHealthz := func(admin gateway.AdminBackend) (int, string) {
+			srv, err := gateway.NewServer(context.Background(), gateway.ServerConfig{
+				Addr:         "127.0.0.1:0",
+				Service:      gateway.NewService(gateway.WithAdminBackend(admin)),
+				TenantStatus: &fakeTenantStatus{active: true},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(srv.Start()).To(Succeed())
+			DeferCleanup(func() { _ = srv.Shutdown(context.Background()) })
+
+			resp, err := http.Get("http://" + srv.Addr() + "/healthz")
+			Expect(err).NotTo(HaveOccurred())
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+			return resp.StatusCode, string(body)
+		}
+
+		withStatus := func(status pb.HealthStatus) gateway.AdminBackend {
+			return &mockAdmin{healthCheckFn: func(context.Context, *connect.Request[pb.HealthCheckRequest]) (*connect.Response[pb.HealthCheckResponse], error) {
+				return connect.NewResponse(&pb.HealthCheckResponse{
+					Status: status,
+					Services: map[string]*pb.ServiceHealth{
+						"database": {ServiceName: "database", Status: status, Message: "dependency message"},
+					},
+				}), nil
+			}}
+		}
+
+		DescribeTable("maps the overall health status to the HTTP status code",
+			func(admin gateway.AdminBackend, wantCode int) {
+				code, _ := getHealthz(admin)
+				Expect(code).To(Equal(wantCode))
+			},
+			Entry("HEALTHY", withStatus(pb.HealthStatus_HEALTH_STATUS_HEALTHY), http.StatusOK),
+			Entry("DEGRADED", withStatus(pb.HealthStatus_HEALTH_STATUS_DEGRADED), http.StatusServiceUnavailable),
+			Entry("UNHEALTHY", withStatus(pb.HealthStatus_HEALTH_STATUS_UNHEALTHY), http.StatusServiceUnavailable),
+			Entry("UNSPECIFIED", withStatus(pb.HealthStatus_HEALTH_STATUS_UNSPECIFIED), http.StatusServiceUnavailable),
+			Entry("backend error", &mockAdmin{healthCheckFn: func(context.Context, *connect.Request[pb.HealthCheckRequest]) (*connect.Response[pb.HealthCheckResponse], error) {
+				return nil, connect.NewError(connect.CodeUnavailable, errors.New("backend down"))
+			}}, http.StatusServiceUnavailable),
+		)
+
+		It("keeps the per-dependency JSON body on a 503", func() {
+			code, body := getHealthz(withStatus(pb.HealthStatus_HEALTH_STATUS_UNHEALTHY))
+			Expect(code).To(Equal(http.StatusServiceUnavailable))
+			Expect(body).To(ContainSubstring(`"service_name":"database"`))
+			Expect(body).To(ContainSubstring(`"message":"dependency message"`))
+		})
+
+		It("returns 503 through PoolAdminBackend when the database is unreachable, without leaking the driver error", func() {
+			code, body := getHealthz(gateway.NewPoolAdminBackend(&fakeHealthPool{err: errors.New("dial tcp 10.0.0.5:5432: connection refused")}))
+			Expect(code).To(Equal(http.StatusServiceUnavailable))
+			Expect(body).To(ContainSubstring("database unreachable"))
+			Expect(body).NotTo(ContainSubstring("10.0.0.5"))
+		})
+
+		It("withholds a backend error from the unauthenticated body (CWE-209)", func() {
+			code, body := getHealthz(&mockAdmin{healthCheckFn: func(context.Context, *connect.Request[pb.HealthCheckRequest]) (*connect.Response[pb.HealthCheckResponse], error) {
+				return nil, errors.New("dial tcp 10.0.0.5:5432: password authentication failed for user app_user")
+			}})
+			Expect(code).To(Equal(http.StatusServiceUnavailable))
+			Expect(json.Valid([]byte(body))).To(BeTrue(), "body is not valid JSON: %s", body)
+			Expect(body).To(MatchJSON(`{"status":"unhealthy"}`))
+			for _, leak := range []string{"10.0.0.5", "5432", "password", "app_user", "dial tcp"} {
+				Expect(body).NotTo(ContainSubstring(leak))
+			}
+		})
+
+		It("returns 503 through PoolAdminBackend when the pool reports not connected", func() {
+			code, body := getHealthz(gateway.NewPoolAdminBackend(&fakeHealthPool{status: &db.HealthStatus{Connected: false}}))
+			Expect(code).To(Equal(http.StatusServiceUnavailable))
+			Expect(body).To(ContainSubstring("database unreachable"))
+		})
 	})
 
 	Describe("tenant status wiring over mTLS", func() {

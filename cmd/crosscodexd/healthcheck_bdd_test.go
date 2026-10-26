@@ -3,12 +3,28 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/complytime-labs/crosscodex/internal/gateway"
+	"github.com/complytime-labs/crosscodex/pkg/db"
 )
+
+// unreachablePool is a db.Pool whose health check fails the way a
+// stopped PostgreSQL does.
+type unreachablePool struct{ db.Pool }
+
+func (unreachablePool) Health(context.Context) (*db.HealthStatus, error) {
+	return nil, errors.New("connection refused")
+}
+
+type activeTenants struct{}
+
+func (activeTenants) TenantActive(context.Context, string) (bool, error) { return true, nil }
 
 var _ = Describe("healthcheckAddr", func() {
 	It("builds an https localhost URL from a bare port", func() {
@@ -53,5 +69,19 @@ var _ = Describe("probeHealthURL", func() {
 		closed.Close()
 		tlsCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // test-only
 		Expect(probeHealthURL(context.Background(), url, tlsCfg)).To(HaveOccurred())
+	})
+
+	It("fails against a gateway that cannot reach its database", func() {
+		srv, err := gateway.NewServer(context.Background(), gateway.ServerConfig{
+			Addr:         "127.0.0.1:0",
+			Service:      gateway.NewService(gateway.WithAdminBackend(gateway.NewPoolAdminBackend(unreachablePool{}))),
+			TenantStatus: activeTenants{},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(srv.Start()).To(Succeed())
+		DeferCleanup(func() { _ = srv.Shutdown(context.Background()) })
+
+		err = probeHealthURL(context.Background(), "http://"+srv.Addr()+"/healthz", nil)
+		Expect(err).To(MatchError(ContainSubstring("unhealthy status 503")))
 	})
 })

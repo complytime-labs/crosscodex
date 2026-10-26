@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -107,12 +108,20 @@ func versionHandler(w http.ResponseWriter, _ *http.Request) {
 func healthzHandler(svc *Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resp, err := svc.Health(r.Context(), connect.NewRequest(&pb.HealthRequest{}))
+		w.Header().Set("Content-Type", "application/json")
 		if err != nil {
+			// /healthz needs no client cert, so the backend error (which can
+			// carry hosts, ports and roles) is logged, never returned (CWE-209).
+			slog.WarnContext(r.Context(), "healthz: health check failed", "error", err)
 			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintf(w, `{"status":"unhealthy","error":%q}`, err.Error())
+			_, _ = io.WriteString(w, `{"status":"unhealthy"}`)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
+		// Probes read only the status code, so anything short of HEALTHY
+		// (DEGRADED, UNHEALTHY, UNSPECIFIED) is a 503: fail closed.
+		if resp.Msg.GetStatus() != pb.HealthStatus_HEALTH_STATUS_HEALTHY {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
 		_ = json.NewEncoder(w).Encode(resp.Msg)
 	}
 }
