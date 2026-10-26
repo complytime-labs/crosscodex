@@ -1,0 +1,26 @@
+internal/gateway/gateway_bdd_test.go
+  s_77c8f6ddbfd45e::t_368274f29315f6 563,573,588-596
+internal/analyzer/artifacts/materializer.go
+  s_77c8f6ddbfd45e::t_abc4d2e86f0ed4 275-277
+internal/analyzer/artifacts/materializer_bdd_test.go
+  s_77c8f6ddbfd45e::t_1f76d3d9d7da22 700
+  s_77c8f6ddbfd45e::t_f507124212e579 699
+internal/graph/catalog_projection_bdd_test.go
+  s_77c8f6ddbfd45e::t_1f76d3d9d7da22 285
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c8a8358e5e2c9c880b25d102e96822941c438c7",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
