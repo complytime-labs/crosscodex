@@ -1,0 +1,19 @@
+internal/graph/controls_reader_bdd_test.go
+  s_77c8f6ddbfd45e::t_d313b17d9b2bd1 209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1222333f07cd9620f9ade8e8cb334bb25799362b",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
