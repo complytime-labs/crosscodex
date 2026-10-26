@@ -43,7 +43,7 @@ type fakeStore struct {
 	writeVoteSummErr   error
 
 	analysisResults map[string]map[string][]byte                      // jobID -> analyzerName -> resultData
-	voteSummaries   map[string]map[[2]string]pipeline.VoteSummaryPair // jobID -> (sourceID, targetID) -> pair
+	voteSummaries   map[string]map[[3]string]pipeline.VoteSummaryPair // jobID -> (sourceID, targetID, contributionType) -> row
 }
 
 func newFakeStore() *fakeStore {
@@ -51,7 +51,7 @@ func newFakeStore() *fakeStore {
 		jobs:            make(map[string]*pipeline.Job),
 		stages:          make(map[string][]*pipeline.Stage),
 		analysisResults: make(map[string]map[string][]byte),
-		voteSummaries:   make(map[string]map[[2]string]pipeline.VoteSummaryPair),
+		voteSummaries:   make(map[string]map[[3]string]pipeline.VoteSummaryPair),
 	}
 }
 
@@ -371,10 +371,10 @@ func (f *fakeStore) WriteVoteSummaries(ctx context.Context, tenantID, jobID stri
 	}
 
 	if f.voteSummaries[jobID] == nil {
-		f.voteSummaries[jobID] = make(map[[2]string]pipeline.VoteSummaryPair)
+		f.voteSummaries[jobID] = make(map[[3]string]pipeline.VoteSummaryPair)
 	}
 	for _, p := range pairs {
-		key := [2]string{p.SourceID, p.TargetID}
+		key := [3]string{p.SourceID, p.TargetID, p.Analyzer}
 		if _, exists := f.voteSummaries[jobID][key]; exists {
 			continue // ON CONFLICT DO NOTHING: leave the existing row untouched.
 		}

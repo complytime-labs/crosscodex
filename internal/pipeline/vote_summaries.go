@@ -5,65 +5,83 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-// VoteSummaryPair is one row to insert into vote_summaries: a
-// (source, target) pair the requires and/or relationship analyzer produced a
-// result for, with an initial viability of 0 pending synthesis's update.
+// VoteSummaryPair is one row to insert into vote_summaries: one analyzer's
+// contribution to a (source, target) pair, with an initial viability of 0
+// pending synthesis's update. Analyzer is the vote_summaries.analyzer_name:
+// the analyzer that produced the result ("requires" or "relationship"). It
+// matches the analyzer of the synthesis row that buildSynthesisInputs builds
+// from the same result, which is how synthesis finds the row to update.
 type VoteSummaryPair struct {
 	SourceID   string
 	TargetID   string
+	Analyzer   string
 	Consensus  string
 	Confidence float64
 }
 
-// buildVoteSummaryPairs merges the persisted requires and relationship
-// results for a job into one row per distinct (source, target) pair —
-// vote_summaries' primary key is (job_id, source_id, target_id), so a pair
-// present in both analyzers' output must collapse to a single row.
-// Relationship's RelationshipType wins as the Consensus label when both are
-// present (it is the more specific classification); Confidence likewise
-// prefers relationship's when both are present.
+// buildVoteSummaryPairs builds one vote_summaries row per persisted requires
+// and relationship result for a job. A pair both analyzers produced keeps
+// both rows: buildSynthesisInputs emits one synthesis row per contribution
+// and synthesis updates one vote_summaries row per synthesis row, so the
+// rows are keyed by (source, target, analyzer). Requires rows carry
+// synthesis.ConsensusRequires as Consensus; relationship rows carry their
+// RelationshipType.
+//
+// One analyzer listing the same pair twice is corrupt persisted output: its
+// rows would collide on the key and synthesis would rank the pair twice.
+// That is an error, like unparseable result data, rather than a silent pick.
 func buildVoteSummaryPairs(outputs map[string]*analyzer.Output) ([]VoteSummaryPair, error) {
-	byPair := make(map[[2]string]VoteSummaryPair)
-	var order [][2]string
+	var pairs []VoteSummaryPair
+	seen := make(map[[3]string]struct{})
+	add := func(p VoteSummaryPair) error {
+		key := [3]string{p.SourceID, p.TargetID, p.Analyzer}
+		if _, dup := seen[key]; dup {
+			return fmt.Errorf("buildVoteSummaryPairs: %s results list pair %s--%s more than once, so the persisted analysis result is corrupt. "+
+				"Synthesis cannot rank a pair twice; create a new job to re-run the analysis instead of resuming this one",
+				p.Analyzer, p.SourceID, p.TargetID)
+		}
+		seen[key] = struct{}{}
+		pairs = append(pairs, p)
+		return nil
+	}
 
-	if out, ok := outputs["requires"]; ok && len(out.ResultData) > 0 {
+	if out, ok := outputs[results.RequiresAnalyzer]; ok && len(out.ResultData) > 0 {
 		var reqResults []results.RequiresResult
 		if err := json.Unmarshal(out.ResultData, &reqResults); err != nil {
 			return nil, fmt.Errorf("buildVoteSummaryPairs: unmarshaling requires results: %w", err)
 		}
 		for _, r := range reqResults {
-			key := [2]string{r.SourceID, r.TargetID}
-			if _, exists := byPair[key]; !exists {
-				order = append(order, key)
+			if err := add(VoteSummaryPair{
+				SourceID: r.SourceID, TargetID: r.TargetID, Analyzer: results.RequiresAnalyzer,
+				Consensus: synthesis.ConsensusRequires, Confidence: r.Confidence,
+			}); err != nil {
+				return nil, err
 			}
-			byPair[key] = VoteSummaryPair{SourceID: r.SourceID, TargetID: r.TargetID, Consensus: "requires", Confidence: r.Confidence}
 		}
 	}
 
-	if out, ok := outputs["relationship"]; ok && len(out.ResultData) > 0 {
+	if out, ok := outputs[results.RelationshipAnalyzer]; ok && len(out.ResultData) > 0 {
 		var relResults []results.SemanticMatchResult
 		if err := json.Unmarshal(out.ResultData, &relResults); err != nil {
 			return nil, fmt.Errorf("buildVoteSummaryPairs: unmarshaling relationship results: %w", err)
 		}
 		for _, r := range relResults {
-			key := [2]string{r.SourceID, r.TargetID}
-			if _, exists := byPair[key]; !exists {
-				order = append(order, key)
+			if err := add(VoteSummaryPair{
+				SourceID: r.SourceID, TargetID: r.TargetID, Analyzer: results.RelationshipAnalyzer,
+				Consensus: r.RelationshipType, Confidence: r.Confidence,
+			}); err != nil {
+				return nil, err
 			}
-			byPair[key] = VoteSummaryPair{SourceID: r.SourceID, TargetID: r.TargetID, Consensus: r.RelationshipType, Confidence: r.Confidence}
 		}
 	}
 
-	pairs := make([]VoteSummaryPair, len(order))
-	for i, key := range order {
-		pairs[i] = byPair[key]
-	}
 	return pairs, nil
 }
 
@@ -90,13 +108,13 @@ func writeVoteSummaries(ctx context.Context, conn db.TenantConnection, tenantID,
 	}
 
 	query := `
-		INSERT INTO vote_summaries (job_id, source_id, target_id, consensus, confidence, viability, tenant_id)
-		VALUES ($1, $2, $3, $4, $5, 0, $6)
-		ON CONFLICT (job_id, source_id, target_id) DO NOTHING
+		INSERT INTO vote_summaries (job_id, source_id, target_id, analyzer_name, consensus, confidence, viability, tenant_id)
+		VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+		ON CONFLICT (job_id, source_id, target_id, analyzer_name) DO NOTHING
 	`
 	for _, p := range pairs {
-		if err := tx.Exec(ctx, query, jobID, p.SourceID, p.TargetID, p.Consensus, p.Confidence, tenantID); err != nil {
-			return fmt.Errorf("writeVoteSummaries: inserting %s--%s: %w", p.SourceID, p.TargetID, err)
+		if err := tx.Exec(ctx, query, jobID, p.SourceID, p.TargetID, p.Analyzer, p.Consensus, p.Confidence, tenantID); err != nil {
+			return fmt.Errorf("writeVoteSummaries: inserting %s--%s (%s): %w", p.SourceID, p.TargetID, p.Analyzer, err)
 		}
 	}
 

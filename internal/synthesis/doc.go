@@ -24,5 +24,8 @@
 // # Database
 //
 // The Service writes to the `vote_summaries` table, updating the `viability`
-// column within a single transaction per Execute call.
+// column within a single transaction per Execute call. vote_summaries holds
+// one row per analyzer contribution to a (source, target) pair, keyed by
+// analyzer_name, and each SynthesisRow updates the row whose analyzer_name
+// equals its Analyzer.
 package synthesis

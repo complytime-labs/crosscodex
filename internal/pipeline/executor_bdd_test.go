@@ -1474,7 +1474,11 @@ var _ = Describe("Executor", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.CompleteAnalysisStage(ctx, jobID, "requires", requiresJSON)).To(Succeed())
 			relJSON, err := json.Marshal([]results.SemanticMatchResult{
-				{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "supports", Confidence: 0.8},
+				{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "supports", Confidence: 0.8,
+					Properties: map[string]string{
+						results.SemanticMatchContributionTypeKey: "",
+						results.SemanticMatchUnanimousKey:        "true",
+					}},
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.CompleteAnalysisStage(ctx, jobID, "relationship", relJSON)).To(Succeed())
@@ -1508,8 +1512,11 @@ var _ = Describe("Executor", func() {
 			store.mu.Lock()
 			pairs := store.voteSummaries[jobID]
 			store.mu.Unlock()
-			Expect(pairs).To(HaveKey([2]string{"AC-1", "AC-2"}))
-			Expect(pairs[[2]string{"AC-1", "AC-2"}].Consensus).To(Equal("supports"))
+			Expect(pairs).To(HaveLen(2), "one row per contribution: requires and relationship")
+			Expect(pairs).To(HaveKey([3]string{"AC-1", "AC-2", "requires"}))
+			Expect(pairs[[3]string{"AC-1", "AC-2", "requires"}].Consensus).To(Equal("requires"))
+			Expect(pairs).To(HaveKey([3]string{"AC-1", "AC-2", "relationship"}))
+			Expect(pairs[[3]string{"AC-1", "AC-2", "relationship"}].Consensus).To(Equal("supports"))
 		})
 	})
 

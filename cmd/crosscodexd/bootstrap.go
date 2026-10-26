@@ -20,6 +20,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
+	"github.com/complytime-labs/crosscodex/internal/results"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/internal/worker"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
@@ -250,6 +251,9 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	if cfg.Storage.Objects.BasePath == "" {
 		return errors.New("all role: storage.objects.base_path must be set")
 	}
+	if rt.graphService == nil {
+		return errors.New("attach gateway: graph service is not built; attachGraph must run before attachAllGateway so the gateway can serve graph queries")
+	}
 
 	// The default tenant is provisioned by `crosscodexd migrate` (as the
 	// schema owner); the daemon only checks it. enter_tenant refuses a
@@ -314,6 +318,8 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		gateway.WithIngestionBackend(ingestion),
 		gateway.WithCatalogBackend(catalogSvc),
 		gateway.WithPipelineBackend(backendPipeline),
+		gateway.WithMappingsBackend(newMappingsBackend(shared)),
+		gateway.WithGraphBackend(rt.graphService),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(slog.Default()),
@@ -677,6 +683,22 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 	return nil
 }
 
+// Compile-time proof that the results service can back the gateway. It lives
+// here, the composition root, because internal/results must not import
+// internal/gateway.
+var _ gateway.MappingsBackend = (*results.Service)(nil)
+
+// newMappingsBackend builds the mappings reader both gateway wirings share.
+func newMappingsBackend(shared *sharedResources) *results.Service {
+	tracer, meter := telemetry.Instrumentation("internal/results")
+	return results.NewService(
+		results.NewPGStore(dbpkg.NewTenantPool(shared.appPool),
+			results.WithStoreTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider())),
+		results.WithLogger(slog.Default()),
+		results.WithTelemetry(tracer, meter),
+	)
+}
+
 // attachGatewayServer wires the gateway HTTP server into rt using the
 // given PipelineBackend, which may be an in-process pipeline.Service
 // (RoleAll) or a network Connect client (attachGateway, standalone role).
@@ -685,6 +707,7 @@ func attachGatewayServer(ctx context.Context, cfg *config.Config, shared *shared
 	gatewaySvc := gateway.NewService(
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
 		gateway.WithPipelineBackend(pipelineBackend),
+		gateway.WithMappingsBackend(newMappingsBackend(shared)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithTelemetry(tracer, meter),
 	)

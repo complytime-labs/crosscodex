@@ -1190,8 +1190,8 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 						"job-imm-vote-c-1", "imm-vote-c")
 					Expect(err).NotTo(HaveOccurred())
 					_, err = tx.ExecContext(context.Background(),
-						"INSERT INTO vote_summaries (job_id, source_id, target_id, consensus, confidence, viability, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
-						"job-imm-vote-c-1", "src-1", "tgt-1", "agree", 0.95, 0.90, "imm-vote-c")
+						"INSERT INTO vote_summaries (job_id, source_id, target_id, analyzer_name, consensus, confidence, viability, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING",
+						"job-imm-vote-c-1", "src-1", "tgt-1", "relationship", "agree", 0.95, 0.90, "imm-vote-c")
 					Expect(err).NotTo(HaveOccurred())
 				})
 
@@ -1224,8 +1224,8 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 						"job-imm-vote-p-1", "imm-vote-p")
 					Expect(err).NotTo(HaveOccurred())
 					_, err = tx.ExecContext(context.Background(),
-						"INSERT INTO vote_summaries (job_id, source_id, target_id, consensus, confidence, viability, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
-						"job-imm-vote-p-1", "src-1", "tgt-1", "agree", 0.9, 0.8, "imm-vote-p")
+						"INSERT INTO vote_summaries (job_id, source_id, target_id, analyzer_name, consensus, confidence, viability, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING",
+						"job-imm-vote-p-1", "src-1", "tgt-1", "relationship", "agree", 0.9, 0.8, "imm-vote-p")
 					Expect(err).NotTo(HaveOccurred())
 				})
 
@@ -1234,6 +1234,54 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 						"UPDATE vote_summaries SET confidence = 0.75 WHERE job_id = $1 AND source_id = $2 AND target_id = $3",
 						"job-imm-vote-p-1", "src-1", "tgt-1")
 					Expect(err).NotTo(HaveOccurred())
+				})
+			})
+
+			It("keys rows by contribution and refuses a row without one or with an empty one", func() {
+				setupTenant("imm-vote-k", "Imm VoteK Corp")
+				conn := appUserConn()
+				insert := "INSERT INTO vote_summaries (job_id, source_id, target_id, analyzer_name, consensus, confidence, viability, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+
+				execAsTenant(conn, "imm-vote-k", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'pending', 'setup') ON CONFLICT DO NOTHING",
+						"job-imm-vote-k-1", "imm-vote-k")
+					Expect(err).NotTo(HaveOccurred())
+					_, err = tx.ExecContext(context.Background(), insert,
+						"job-imm-vote-k-1", "src-1", "tgt-1", "requires", "requires", 0.9, 0, "imm-vote-k")
+					Expect(err).NotTo(HaveOccurred())
+					_, err = tx.ExecContext(context.Background(), insert,
+						"job-imm-vote-k-1", "src-1", "tgt-1", "relationship", "agree", 0.8, 0, "imm-vote-k")
+					Expect(err).NotTo(HaveOccurred(), "a pair holds one row per contribution")
+				})
+
+				expectErrorAsTenant(conn, "imm-vote-k", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(), insert,
+						"job-imm-vote-k-1", "src-1", "tgt-1", "relationship", "agree", 0.5, 0, "imm-vote-k")
+					Expect(err).To(HaveOccurred(), "a second row for the same contribution must be refused")
+					Expect(err.Error()).To(ContainSubstring("vote_summaries_pkey"))
+				})
+
+				expectErrorAsTenant(conn, "imm-vote-k", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO vote_summaries (job_id, source_id, target_id, consensus, confidence, viability, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+						"job-imm-vote-k-1", "src-2", "tgt-2", "agree", 0.8, 0, "imm-vote-k")
+					Expect(err).To(HaveOccurred(), "a writer that omits analyzer_name must fail")
+					Expect(err.Error()).To(ContainSubstring("analyzer_name"))
+				})
+
+				expectErrorAsTenant(conn, "imm-vote-k", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(), insert,
+						"job-imm-vote-k-1", "src-3", "tgt-3", "", "agree", 0.8, 0, "imm-vote-k")
+					Expect(err).To(HaveOccurred(), "an empty analyzer_name must be refused")
+					Expect(err.Error()).To(ContainSubstring("analyzer_name"))
+				})
+
+				execAsTenant(conn, "imm-vote-k", func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT count(*) FROM vote_summaries WHERE job_id = $1", "job-imm-vote-k-1").Scan(&count)).To(Succeed())
+					Expect(count).To(Equal(2), "the refused inserts must leave the two original rows unchanged")
 				})
 			})
 		})

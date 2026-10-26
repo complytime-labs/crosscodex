@@ -297,7 +297,11 @@ func validateInputs(inputs []SynthesisInput) error {
 }
 
 // persistViability writes viability weights to the database within a single
-// transaction using a batch UNNEST update to avoid N+1 round-trips.
+// transaction using a batch UNNEST update to avoid N+1 round-trips. Each row
+// updates the vote_summaries row of its own (source, target, analyzer), so a
+// pair with both a requires and a relationship row gets each contribution's
+// viability; every row must match exactly one table row or the transaction
+// rolls back.
 func (s *Service) persistViability(ctx context.Context, span trace.Span, rows []SynthesisRow, jobID, tenantID string) (int, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -315,19 +319,22 @@ func (s *Service) persistViability(ctx context.Context, span trace.Span, rows []
 	viabilities := make([]float64, len(rows))
 	sourceIDs := make([]string, len(rows))
 	targetIDs := make([]string, len(rows))
+	analyzerNames := make([]string, len(rows))
 	for i := range rows {
 		viabilities[i] = rows[i].ViabilityWeight
 		sourceIDs[i] = rows[i].SourceID
 		targetIDs[i] = rows[i].TargetID
+		analyzerNames[i] = rows[i].Analyzer
 	}
 
 	queryRows, queryErr := tx.Query(ctx,
 		`UPDATE vote_summaries AS vs
 		 SET viability = u.viability
-		 FROM UNNEST($1::float8[], $2::text[], $3::text[]) AS u(viability, source_id, target_id)
-		 WHERE vs.job_id = $4 AND vs.source_id = u.source_id AND vs.target_id = u.target_id AND vs.tenant_id = $5
+		 FROM UNNEST($1::float8[], $2::text[], $3::text[], $4::text[]) AS u(viability, source_id, target_id, analyzer_name)
+		 WHERE vs.job_id = $5 AND vs.source_id = u.source_id AND vs.target_id = u.target_id
+		   AND vs.analyzer_name = u.analyzer_name AND vs.tenant_id = $6
 		 RETURNING vs.source_id`,
-		viabilities, sourceIDs, targetIDs, jobID, tenantID,
+		viabilities, sourceIDs, targetIDs, analyzerNames, jobID, tenantID,
 	)
 	if queryErr != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {

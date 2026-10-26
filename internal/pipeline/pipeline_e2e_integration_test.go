@@ -70,8 +70,7 @@ func (deterministicLLMClient) Complete(_ context.Context, req *llmclient.Complet
 	case "relationship":
 		// relationship.Aggregate omits NO_RELATIONSHIP pairs, so the
 		// relationship analyzer produces an (empty) result row and populates no
-		// vote_summaries rows — keeping vote_summaries rows == requires pairs so
-		// synthesis's persistViability count guard holds.
+		// vote_summaries rows; only the requires contribution reaches synthesis.
 		content = "RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH"
 	case "artifacts":
 		// artifacts.ParseResponse treats "ARTIFACTS: NONE" as the empty

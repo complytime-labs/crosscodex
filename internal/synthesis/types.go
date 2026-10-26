@@ -17,8 +17,15 @@ type SynthesisRow struct {
 	ConsensusRelationship string
 	ConfidenceFraction    float64
 	Unanimous             bool // true when all panel votes agreed on ConsensusRelationship
-	ContributionType      string
-	ViabilityWeight       float64 // final weighted viability score in [0, score], see ComputeViabilityWeight
+	// Analyzer is the analyzer that produced the row ("requires" or
+	// "relationship"). With SourceID and TargetID it identifies the
+	// vote_summaries row (analyzer_name) that receives ViabilityWeight.
+	Analyzer string
+	// ContributionType is the CONTRIBUTES_TO sub-classification
+	// ("INTEGRAL_TO", "EXAMPLE_OF", or "" for none); INTEGRAL_TO applies
+	// ViabilityConfig.IntegralToFactor.
+	ContributionType string
+	ViabilityWeight  float64 // final weighted viability score in [0, score], see ComputeViabilityWeight
 }
 
 // Classification holds type and level labels for a control.
@@ -56,9 +63,14 @@ type SynthesisInput struct {
 	SimilarityVar         float64
 	SimilarityCount       int
 	ConsensusRelationship string
-	ContributionType      string
-	ConfidenceFraction    float64
-	Unanimous             bool
+	// Analyzer is the analyzer that produced the input; see
+	// SynthesisRow.Analyzer.
+	Analyzer string
+	// ContributionType is the CONTRIBUTES_TO sub-classification; see
+	// SynthesisRow.ContributionType.
+	ContributionType   string
+	ConfidenceFraction float64
+	Unanimous          bool
 }
 
 // DiagnosticSeverity indicates the severity of a quality diagnostic.

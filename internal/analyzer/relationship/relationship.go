@@ -374,9 +374,9 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, taskResults []anal
 			RelationshipType: c.Relationship.String(),
 			Confidence:       c.ConfidenceFraction,
 			Properties: map[string]string{
-				"contribution_type": c.ContributionType.String(),
-				"unanimous":         strconv.FormatBool(c.Unanimous),
-				"valid_vote_count":  strconv.Itoa(c.ValidVoteCount),
+				results.SemanticMatchContributionTypeKey: c.ContributionType.String(),
+				results.SemanticMatchUnanimousKey:        strconv.FormatBool(c.Unanimous),
+				"valid_vote_count":                       strconv.Itoa(c.ValidVoteCount),
 			},
 		})
 	}

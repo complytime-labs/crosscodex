@@ -36,6 +36,13 @@ type GraphBackend interface {
 	SimilaritySearch(ctx context.Context, req *connect.Request[pb.SimilaritySearchRequest]) (*connect.Response[pb.SimilaritySearchResponse], error)
 }
 
+// MappingsBackend lists control mappings from the stored pipeline results. The
+// gateway sets the request's tenant_context from the authenticated identity
+// before calling it.
+type MappingsBackend interface {
+	ListMappings(ctx context.Context, req *connect.Request[pb.ListJobMappingsRequest]) (*connect.Response[pb.ListJobMappingsResponse], error)
+}
+
 // TenantStatusChecker reports whether a tenant may make requests. The auth
 // interceptor refuses every non-health request from a tenant it reports
 // inactive (suspended or not provisioned).

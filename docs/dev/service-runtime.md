@@ -37,6 +37,24 @@ Three ways to set the role, in precedence order (highest first):
 
 `cmd/crosscodexd/main.go`'s `effectiveRole(flagRole, cfgRole string) string` implements this: it returns `flagRole` if non-empty, otherwise `cfgRole` (which has already had the config-file/env/default layers merged and validated by the time `main` sees it). If the flag differs from the already-resolved config role, `main` re-resolves it through `config.ResolveRole` so a flag-supplied alias (e.g. `--role pipeline`) is canonicalized the same way the config loader would.
 
+## Gateway backends by role
+
+`gateway.NewService` serves only the backends it is given; an RPC whose backend is absent returns `Unavailable`.
+
+| Role | Mappings backend (`ListJobMappings`, `GetControlMappings`) | Graph backend (`QueryGraph`, `FindSimilar`) |
+|------|------|------|
+| `all` | `results.Service` via `newMappingsBackend`, in `attachAllGateway` | `rt.graphService`, which `attachGraph` builds first |
+| `gateway` | `results.Service` via `newMappingsBackend`, in `attachGatewayServer` | not attached |
+| embedded CLI daemon (`cmd/crosscodex/embedded.go`) | `results.Service` over its tenant connection | not attached |
+
+The feedback backend (`SubmitVote`, `GetReviewQueue`) is not implemented in any role; both RPCs return `Unavailable`. The standalone `gateway` role has no authn registry yet (#213).
+
+### Mappings read path
+
+Mappings come from PostgreSQL, not the graph. `internal/results.PGStore` reads `vote_summaries` (rows with analyzer name `relationship`, for the `synthesized` stage) and `analysis_results` (analyzer `relationship`, for the `analyzer` stage) in one tenant transaction on the restricted application role, so RLS confines the read to the caller's tenant. `vote_summaries` holds one row per analyzer contribution (primary key `job_id, source_id, target_id, analyzer_name`), so a pair with both `requires` and `relationship` results does not collide.
+
+`results.Service` implements `gateway.MappingsBackend`; the assertion lives in `cmd/crosscodexd/bootstrap.go` because `internal/results` must not import `internal/gateway`. Storage sits behind the `results.Reader` interface (`ListMappings(ctx, Filter) (Page, error)`). `PGStore` is the only implementation; a different store replaces only the `Reader` passed to `results.NewService`. An implementation must confine reads to the tenant in `ctx` and return `ErrJobNotFound`, `*JobNotCompletedError` and `ErrInvalidPageToken` for the corresponding cases, which `Service` maps to Connect errors. `GetControlMappings` uses the same reader at the synthesized stage across the tenant's completed jobs; it rejects `limit` outside 0..1000 and returns no `next_page_token` (the request has no `page_token`), so callers wanting more page through `ListJobMappings`.
+
 ## Health checks
 
 The `health.addr` config field (`pkg/config.HealthConfig.Addr`, default `:9091` from `pkg/config/defaults.go`) configures a dedicated `GET /healthz` HTTP listener, built by `newHealthServer` in `cmd/crosscodexd/health.go`.

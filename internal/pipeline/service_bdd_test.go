@@ -3,6 +3,7 @@ package pipeline_test
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"time"
 
 	"connectrpc.com/connect"
@@ -43,6 +44,18 @@ func (b *blockingSynthesis) Execute(ctx context.Context, jobID string, inputs []
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// recordingSynthesis counts Execute calls, so a spec can assert synthesis
+// never ran.
+type recordingSynthesis struct {
+	calls atomic.Int32
+}
+
+func (r *recordingSynthesis) Execute(ctx context.Context, jobID string, inputs []synthesis.SynthesisInput,
+	classifications map[string]synthesis.Classification) (*synthesis.ExecuteResult, error) {
+	r.calls.Add(1)
+	return &synthesis.ExecuteResult{}, nil
 }
 
 type fakeAttestor struct{}
@@ -404,6 +417,65 @@ var _ = Describe("Service", func() {
 			cancelResp, err := blockingSvc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: jobID}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cancelResp.Msg.Cancelled).To(BeTrue())
+		})
+	})
+
+	Describe("synthesis over a corrupt relationship result", func() {
+		It("fails the job without running synthesis", func() {
+			synth := &recordingSynthesis{}
+			corruptSvc := pipeline.New(
+				store,
+				nil,
+				registry,
+				synth,
+				&fakeAttestor{},
+				pipelineattestation.NewConverter(),
+				&fakeNATSClient{},
+				newExecutorFakeStorage(),
+				config.PipelineConfig{
+					MaxConcurrentJobs: 10,
+					StageTimeout:      time.Hour,
+				},
+				config.AttestationConfig{Enabled: false},
+				nil,
+			)
+			DeferCleanup(func() { Expect(corruptSvc.Stop(context.Background())).To(Succeed()) })
+
+			now := time.Now()
+			configBytes, err := json.Marshal(&pb.JobConfig{
+				Source:        &pb.JobConfig_DocumentContent{DocumentContent: []byte("test")},
+				CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+				CatalogName:   "test-catalog",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-corrupt-rel", TenantID: "test-tenant", Status: pipeline.JobStatusFailed,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, "job-corrupt-rel",
+				[]string{"candidate_generation", "relationship", "synthesis", "graph"})).To(Succeed())
+			Expect(store.UpdateStageStatus(ctx, "job-corrupt-rel", "candidate_generation", pipeline.StageStatusCompleted)).To(Succeed())
+			// A relationship result whose contribution type is not one the
+			// analyzer writes.
+			Expect(store.CompleteAnalysisStage(ctx, "job-corrupt-rel", "relationship", []byte(
+				`[{"source_id":"AC-1","target_id":"AC-2","relationship_type":"CONTRIBUTES_TO","confidence":0.9,`+
+					`"properties":{"contribution_type":"BOGUS","unanimous":"true"}}]`))).To(Succeed())
+			Expect(store.UpdateStageStatus(ctx, "job-corrupt-rel", "synthesis", pipeline.StageStatusFailed)).To(Succeed())
+
+			_, err = corruptSvc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{
+				JobId:            "job-corrupt-rel",
+				RetryFromFailure: true,
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() pipeline.JobStatus {
+				j, err := store.GetJob(ctx, "job-corrupt-rel")
+				if err != nil {
+					return ""
+				}
+				return j.Status
+			}, "2s", "20ms").Should(Equal(pipeline.JobStatusFailed))
+			Expect(synth.calls.Load()).To(BeZero(), "no synthesis inputs, so no viability is written")
 		})
 	})
 

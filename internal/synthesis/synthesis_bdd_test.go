@@ -794,6 +794,8 @@ var _ = Describe("Service", func() {
 			Expect(capturedQueries[0]).To(ContainSubstring("UPDATE vote_summaries"))
 			Expect(capturedQueries[0]).To(ContainSubstring("UNNEST"))
 			Expect(capturedQueries[0]).To(ContainSubstring("RETURNING"))
+			Expect(capturedQueries[0]).To(ContainSubstring("vs.analyzer_name = u.analyzer_name"),
+				"each row must update only its own contribution's vote_summaries row")
 		})
 	})
 

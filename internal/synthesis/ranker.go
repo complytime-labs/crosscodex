@@ -70,6 +70,7 @@ func (r *Ranker) Rank(ctx context.Context, jobID string, inputs []SynthesisInput
 			ConsensusRelationship: inp.ConsensusRelationship,
 			ConfidenceFraction:    inp.ConfidenceFraction,
 			Unanimous:             inp.Unanimous,
+			Analyzer:              inp.Analyzer,
 			ContributionType:      inp.ContributionType,
 			ViabilityWeight:       ComputeViabilityWeight(inp.SimilarityScore, srcType, tgtType, srcLevel, tgtLevel, inp.ContributionType, r.cfg),
 		}
