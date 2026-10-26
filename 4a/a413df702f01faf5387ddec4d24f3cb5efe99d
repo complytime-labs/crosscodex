@@ -1,0 +1,26 @@
+README.md
+  h_4db53f42b9be42 216
+cmd/crosscodex/connect_bdd_test.go
+  h_4db53f42b9be42 201-216
+cmd/crosscodexd/main.go
+  h_4db53f42b9be42 120-123
+cmd/crosscodexd/main_bdd_test.go
+  h_4db53f42b9be42 65,139-180
+docs/dev/service-runtime.md
+  h_4db53f42b9be42 38-42,108
+pkg/config/role.go
+  h_4db53f42b9be42 47-74
+pkg/config/role_bdd_test.go
+  h_4db53f42b9be42 89-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4aa413df702f01faf5387ddec4d24f3cb5efe99d",
+  "prompts": {},
+  "humans": {
+    "h_4db53f42b9be42": {
+      "author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
