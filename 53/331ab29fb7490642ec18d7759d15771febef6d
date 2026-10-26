@@ -1,0 +1,36 @@
+cmd/crosscodexd/graph_wiring_bdd_test.go
+  s_77c8f6ddbfd45e::t_879f32ab9eb9d5 6,19,22-37,87-97
+  s_77c8f6ddbfd45e::t_92219363b6edd7 98
+internal/graph/catalog_projection_bdd_test.go
+  s_77c8f6ddbfd45e::t_93c211adc4f061 54-63,138,141,144-150,153,164-165,240-241,343,387-430
+  s_77c8f6ddbfd45e::t_8c082508466350 344-345
+  s_77c8f6ddbfd45e::t_e6c5ebccbd0503 431
+cmd/crosscodexd/bootstrap.go
+  s_77c8f6ddbfd45e::t_a3dd6647006a0b 516-517
+internal/graph/graph_fuzz_test.go
+  s_77c8f6ddbfd45e::t_8c082508466350 1-42
+internal/graph/catalog_projection.go
+  s_77c8f6ddbfd45e::t_a3dd6647006a0b 56,68-69,119-120,123-124
+internal/graph/export_test.go
+  s_77c8f6ddbfd45e::t_8c082508466350 22
+internal/graph/controls_reader_bdd_test.go
+  s_77c8f6ddbfd45e::t_93c211adc4f061 116,122,124-127
+internal/graph/testhelpers_test.go
+  s_77c8f6ddbfd45e::t_93c211adc4f061 197,206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53331ab29fb7490642ec18d7759d15771febef6d",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
