@@ -1,0 +1,32 @@
+pkg/retention/retentiontest/doc.go
+  s_5d30fea2594b5a::t_49774e147ff6f8 1-65
+pkg/retention/retentiontest/retentiontest_property_test.go
+  s_5d30fea2594b5a::t_390c1e82a20b39 1-129
+pkg/retention/retentiontest/fake.go
+  s_5d30fea2594b5a::t_d6335b1c21e88e 102,105,107
+  s_5d30fea2594b5a::t_49774e147ff6f8 1-101,103-104,106,108-200
+internal/admin/service_bdd_test.go
+  s_5d30fea2594b5a::t_f679e8aebb6a7e 17,58,63,108,189-193,205-208,221,228-233,237
+pkg/retention/engine_bdd_test.go
+  s_5d30fea2594b5a::t_3cefe9e4a9f897 13-14
+  s_5d30fea2594b5a::t_cb1608ef59d6b1 88,96-98,124,216,247,273
+pkg/retention/retentiontest/retentiontest_bdd_test.go
+  s_5d30fea2594b5a::t_390c1e82a20b39 1-60,65-227,229-399
+  s_5d30fea2594b5a::t_789ae6e1c23d83 61-64,228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f762f0aaafa25c1c06cea64286e90f3bf01ea37",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
