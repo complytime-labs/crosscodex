@@ -1,0 +1,67 @@
+pkg/llmclient/llmclienttest/doc.go
+  s_5d30fea2594b5a::t_de0ae87c812ecd 1-30
+pkg/llmclient/llmclienttest/fake.go
+  s_5d30fea2594b5a::t_c6ee43497218b8 1-78
+pkg/llmclient/llmclienttest/deterministic.go
+  s_5d30fea2594b5a::t_c6ee43497218b8 1-98
+internal/analyzer/artifacts/adjudicate_integration_bdd_test.go
+  s_5d30fea2594b5a::t_411aee973ea2a6 74
+  s_5d30fea2594b5a::t_6cdf8aedfffbf3 21,69
+internal/analyzer/classify/classify_integration_bdd_test.go
+  s_5d30fea2594b5a::t_43658e2f45c2a0 17,115
+  s_5d30fea2594b5a::t_3de2af0b958cc4 48,91,123,164
+internal/worker/worker_bdd_test.go
+  s_5d30fea2594b5a::t_9caa6c63efe514 16,36-55,63,69,174,180
+  s_5d30fea2594b5a::t_136677bd4a0a97 287-289
+internal/analyzer/artifacts/adjudicate_bdd_test.go
+  s_5d30fea2594b5a::t_6cdf8aedfffbf3 28,43,53,399-405,417-419,537-538,543-545
+  s_5d30fea2594b5a::t_b18913c6807829 145,159,167,182,187,202,207,217,234,243,245,264,269,281,286,312,320,333,343,359,364,379,386,427,432,447,450,460,483,487,504-505,523-524,528,534,551,574,598,722,725,741,752,763,771,865,877,885,906,913
+internal/analyzer/classify/classify_bdd_test.go
+  s_5d30fea2594b5a::t_3de2af0b958cc4 167-168,196
+  s_5d30fea2594b5a::t_43658e2f45c2a0 20,165,170-178,187
+internal/pipeline/production_registry_bdd_test.go
+  s_5d30fea2594b5a::t_136677bd4a0a97 19,107
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_5d30fea2594b5a::t_54f3ae5ca57dd5 25
+  s_5d30fea2594b5a::t_17acdb0add8d49 63
+cmd/crosscodexd/results_e2e_test.go
+  s_5d30fea2594b5a::t_17acdb0add8d49 26,32,34,38,132
+pkg/llmclient/llmclienttest/llmclienttest_bdd_test.go
+  s_5d30fea2594b5a::t_de0ae87c812ecd 1-230
+internal/analyzer/artifacts/adjudicate_helpers_test.go
+  s_5d30fea2594b5a::t_6cdf8aedfffbf3 12-22
+cmd/crosscodexd/e2e_integration_test.go
+  s_5d30fea2594b5a::t_17acdb0add8d49 19,133
+internal/analyzer/embedding/embedding_bdd_test.go
+  s_5d30fea2594b5a::t_0b43b3667e8913 22,45,47-49,530,541
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_5d30fea2594b5a::t_17acdb0add8d49 31,222
+pkg/llmclient/llmclienttest/llmclienttest_property_test.go
+  s_5d30fea2594b5a::t_c6ee43497218b8 1-71
+internal/worker/handler_bdd_test.go
+  s_5d30fea2594b5a::t_9caa6c63efe514 23,34,39,81,103,139,255,352-353,357
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_5d30fea2594b5a::t_54f3ae5ca57dd5 25
+  s_5d30fea2594b5a::t_17acdb0add8d49 71,195,359
+internal/analyzer/embedding/embedding_integration_bdd_test.go
+  s_5d30fea2594b5a::t_0b43b3667e8913 24,111,219-233,235,237-241
+internal/analyzer/artifacts/adjudicate_queue_bdd_test.go
+  s_5d30fea2594b5a::t_b18913c6807829 42,88,92,102,197,200,241,249,273,276,281,297,354,364
+  s_5d30fea2594b5a::t_34d3caf8fce8b5 340,343,346,350
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e26f56550a50521f675280a4d6b12eea4a3a941f",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
