@@ -1,0 +1,24 @@
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_77c8f6ddbfd45e::t_3b1d41e087973a 30-55
+  s_77c8f6ddbfd45e::t_79e9ef5da02356 24
+  s_77c8f6ddbfd45e::t_977279b7e79d28 72,80
+  s_77c8f6ddbfd45e::t_fc903de30e6666 185-222,224-323
+  s_77c8f6ddbfd45e::t_269d5464854433 223
+  s_77c8f6ddbfd45e::t_4af7ce01bafc9d 324-325
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8475aaeb031ab7191d57ba838d563c7b474a40ed",
+  "prompts": {},
+  "sessions": {
+    "s_77c8f6ddbfd45e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b3871586-85ce-4911-93d1-4586eff63043",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
