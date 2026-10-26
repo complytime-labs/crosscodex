@@ -35,7 +35,11 @@ Three ways to set the role, in precedence order (highest first):
 2. **`CROSSCODEX_ROLE` environment variable / `role` config field** — the `role` key in `pkg/config`'s layered config (file, then env overlay under the `CROSSCODEX` prefix, so `CROSSCODEX_ROLE=worker`).
 3. **Default** — `all`, set in the embedded config defaults (`pkg/config/defaults.go`: `role: all`).
 
-`cmd/crosscodexd/main.go`'s `effectiveRole(flagRole, cfgRole string) string` implements this: it returns `flagRole` if non-empty, otherwise `cfgRole` (which has already had the config-file/env/default layers merged and validated by the time `main` sees it). If the flag differs from the already-resolved config role, `main` re-resolves it through `config.ResolveRole` so a flag-supplied alias (e.g. `--role pipeline`) is canonicalized the same way the config loader would.
+`cmd/crosscodexd/main.go`'s `effectiveRole(flagRole, cfgRole string) string` implements this: it returns `flagRole` if non-empty, otherwise `cfgRole` (which has already had the config-file/env/default layers merged and validated by the time `main` sees it). If the flag differs from the already-resolved config role, `main` re-resolves it through `config.ResolveRole` so a flag-supplied alias (e.g. `--role pipeline`) is canonicalized the same way the config loader would. `main` then applies the shared-NATS check below to the resulting effective role.
+
+## Shared NATS server for split roles
+
+Split roles (`gateway`, `pipeline`, `worker`, `graph`, and the `analysis`/`synthesis` aliases) reach each other only over NATS, so every one of them must set the same `nats.url` (`CROSSCODEX_NATS_URL`). An empty `nats.url`, the default, makes `pkg/natsbus` start a private embedded NATS server inside the process: each split role would boot and report healthy while no import, job or task crossed to another role. `crosscodexd`'s `main` refuses that by calling `config.RequireSharedNATS` once, on the effective role (the `--role` flag, else the configured role), before `bootstrap` opens any resource. So `CROSSCODEX_ROLE=gateway crosscodexd --role all` still starts as `all`. Config loading does not apply the check: the `crosscodex` CLI, `crosscodexd healthcheck` and the `admin` subcommands load the same configuration without starting a role. The error names the role, says why the embedded server cannot work, and points at `nats.url` / `CROSSCODEX_NATS_URL` or setting the role to `all` (`--role all` or `CROSSCODEX_ROLE=all`). Only role `all`, a single process, may run with an empty `nats.url`.
 
 ## Gateway backends by role
 
@@ -101,7 +105,7 @@ Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Da
 
 ## Catalog import in a split deployment
 
-With `gateway`, `pipeline`, `worker` and `graph` running as separate processes, a catalog import flows through two roles:
+With `gateway`, `pipeline`, `worker` and `graph` running as separate processes, a catalog import flows through two roles. Both must point `nats.url` at the same NATS server; startup refuses a split role with an empty `nats.url` (see [Shared NATS server for split roles](#shared-nats-server-for-split-roles)):
 
 1. A client uploads the document to the `gateway` role. The gateway owns ingestion: it authenticates the client certificate, stores the uploaded blob under its own `storage.objects.base_path`, parses the document and upserts the `controls` rows in Postgres. It never writes the graph.
 2. After upserting a non-empty control set, the catalog service publishes `crosscodex.catalog.<tenant_id>.<catalog_id>.parsed` (`natsbus.CatalogParsedSubject`). If publishing fails, the import fails with `CodeUnavailable` and a message to re-import the same document; the rows and blob stay.

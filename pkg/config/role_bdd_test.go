@@ -86,3 +86,63 @@ var _ = Describe("Config.Role and Config.Health defaults", func() {
 		Entry("synthesis alias", "synthesis"),
 	)
 })
+
+// Loading configuration must not enforce the split-role NATS requirement:
+// the crosscodex CLI, crosscodexd healthcheck and the admin subcommands all
+// load the same config and never start a role. crosscodexd enforces it once,
+// on the effective role, after its --role flag is applied.
+var _ = Describe("Config.Role and nats.url", func() {
+	It("defaults nats.url to empty (embedded) for the default role all", func() {
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Role).To(Equal(config.RoleAll))
+		Expect(cfg.NATS.URL).To(BeEmpty())
+	})
+
+	DescribeTable("loads a split role with an empty nats.url",
+		func(role string) {
+			GinkgoT().Setenv("CROSSCODEX_ROLE", role)
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Role).To(Equal(role))
+			Expect(cfg.NATS.URL).To(BeEmpty())
+		},
+		Entry("gateway", config.RoleGateway),
+		Entry("pipeline", config.RolePipeline),
+		Entry("worker", config.RoleWorker),
+		Entry("graph", config.RoleGraph),
+	)
+
+	It("loads a split role with nats.url set", func() {
+		GinkgoT().Setenv("CROSSCODEX_ROLE", config.RoleWorker)
+		GinkgoT().Setenv("CROSSCODEX_NATS_URL", "nats://nats.example.com:4222")
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.NATS.URL).To(Equal("nats://nats.example.com:4222"))
+	})
+})
+
+var _ = Describe("RequireSharedNATS", func() {
+	DescribeTable("rejects every split role with an empty URL",
+		func(role string) {
+			err := config.RequireSharedNATS(role, "")
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring(`role "` + role + `" requires nats.url`))
+			Expect(err.Error()).To(ContainSubstring("CROSSCODEX_NATS_URL"))
+			Expect(err.Error()).To(ContainSubstring("set the role to all (--role all or CROSSCODEX_ROLE=all)"))
+		},
+		Entry("gateway", config.RoleGateway),
+		Entry("pipeline", config.RolePipeline),
+		Entry("worker", config.RoleWorker),
+		Entry("graph", config.RoleGraph),
+	)
+
+	DescribeTable("accepts",
+		func(role, url string) {
+			Expect(config.RequireSharedNATS(role, url)).To(Succeed())
+		},
+		Entry("role all with an empty URL", config.RoleAll, ""),
+		Entry("role all with a URL", config.RoleAll, "nats://nats:4222"),
+		Entry("a split role with a URL", config.RoleWorker, "nats://nats:4222"),
+	)
+})
