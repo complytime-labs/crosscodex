@@ -1,0 +1,51 @@
+internal/gateway/document.go
+  s_5d30fea2594b5a::t_04605c6430c716 82,109,134
+internal/gateway/backend_errors_bdd_test.go
+  s_5d30fea2594b5a::t_a03c3a96fde49c 257-291
+  s_5d30fea2594b5a::t_75b21e110cb405 91-98
+internal/gateway/stream.go
+  s_5d30fea2594b5a::t_996aed20621da4 47,49
+internal/gateway/mappings.go
+  s_5d30fea2594b5a::t_04605c6430c716 42,89
+internal/gateway/export_test.go
+  s_5d30fea2594b5a::t_9ea7bae32a2647 16
+internal/gateway/catalog.go
+  s_5d30fea2594b5a::t_04605c6430c716 33,66,98,131
+internal/gateway/helpers.go
+  s_5d30fea2594b5a::t_04605c6430c716 52
+  s_5d30fea2594b5a::t_5132984fa27212 35-51,53-57,59,61-62,65,67,70
+  s_5d30fea2594b5a::t_c0f63dfa7755ba 60
+internal/gateway/jobs.go
+  s_5d30fea2594b5a::t_04605c6430c716 39,76,122,139
+internal/gateway/stream_bdd_test.go
+  s_5d30fea2594b5a::t_cd2bd03d8957ec 272-297
+internal/gateway/auth_interceptor.go
+  s_5d30fea2594b5a::t_8446a359989f70 91-94,137
+docs/dev/design-principles.md
+  s_5d30fea2594b5a::t_95f7b54606f56f 186
+internal/gateway/tenant_status_bdd_test.go
+  s_5d30fea2594b5a::t_b272b9189449cb 21
+  s_5d30fea2594b5a::t_35c8c814c1e5b5 139-160
+internal/gateway/feedback.go
+  s_5d30fea2594b5a::t_04605c6430c716 42,95
+internal/gateway/graph.go
+  s_5d30fea2594b5a::t_04605c6430c716 50,93
+internal/gateway/health.go
+  s_5d30fea2594b5a::t_04605c6430c716 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f9bab17750f996777d7071b63ac81515f8a66b3",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
