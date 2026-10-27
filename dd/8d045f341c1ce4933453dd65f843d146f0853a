@@ -1,0 +1,23 @@
+pkg/llmclient/llmclient_bdd_test.go
+  s_5d30fea2594b5a::t_1bc4baabda66fe 1469,1471
+pkg/telemetry/telemetry_integration_bdd_test.go
+  s_5d30fea2594b5a::t_1bc4baabda66fe 68,79,96,103-104
+internal/synthesis/synthesis_bdd_test.go
+  s_5d30fea2594b5a::t_1bc4baabda66fe 472,811,813
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd8d045f341c1ce4933453dd65f843d146f0853a",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
