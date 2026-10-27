@@ -1,0 +1,27 @@
+pkg/config/helpers_test.go
+  s_5d30fea2594b5a::t_28cc18f87874e8 1-5,7-43
+  s_5d30fea2594b5a::t_a8f3277c6e8b6f 6
+pkg/config/config_bdd_test.go
+  s_5d30fea2594b5a::t_a8f3277c6e8b6f 1321-1328,1335-1340,1348
+  s_5d30fea2594b5a::t_28cc18f87874e8 1718,1728,1736,1746,1756,1783,1792,1801,1812,1822,1830,1838,1851,1864,1878,1884,1891,1900,1909,1916,1925,1934,1941,1948,2112,2122,2131,2141,2151,2157,2167,2173,2179,2235,2249,2260,2274,2287,2301,2311,2325,2338,2348,2361,2371,2380,2390,2399,2409,2418,2428,2437,2447,2453,2463,2469,2480,2487,2497,2507,2793,2797,2812,2834,2872,2881,2893,2904,2916,2927,2940,2955,2964,2974,2990
+pkg/config/config_prompt_bdd_test.go
+  s_5d30fea2594b5a::t_28cc18f87874e8 38,49,60,71,83,95
+pkg/config/config_property_test.go
+  s_5d30fea2594b5a::t_a8f3277c6e8b6f 318-324,336-342,355-361
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59e898d399c14af540349fba4e58e193164a46f7",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
