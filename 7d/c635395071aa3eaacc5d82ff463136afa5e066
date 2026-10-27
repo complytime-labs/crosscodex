@@ -1,0 +1,31 @@
+AGENTS.md
+  s_8af7370bebd464::t_9a2cdb78cc41c6 38-39,50-56,72-73
+internal/gateway/helpers.go
+  s_8af7370bebd464::t_9b79bcfea2a40f 49
+pkg/analyzer/analyzertest/doc.go
+  s_8af7370bebd464::t_89d86b0d283d95 41
+pkg/db/dbtest/doc.go
+  s_8af7370bebd464::t_8d43f018cbd221 32-36
+pkg/prompt/prompttest/doc.go
+  s_8af7370bebd464::t_ea0b62b07fa148 36
+pkg/retention/retentiontest/doc.go
+  s_8af7370bebd464::t_e212767442e545 77-78
+pkg/vectordb/vectordbtest/doc.go
+  s_8af7370bebd464::t_bc48be4a68fdd3 52-54,58-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7dc635395071aa3eaacc5d82ff463136afa5e066",
+  "prompts": {},
+  "sessions": {
+    "s_8af7370bebd464": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e1cef6bb-b00a-40b0-b585-21df85895915",
+        "model": "unknown"
+      },
+      "human_author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
