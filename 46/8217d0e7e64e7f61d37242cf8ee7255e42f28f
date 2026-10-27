@@ -1,0 +1,19 @@
+pkg/db/enter_tenant_bdd_test.go
+  s_5d30fea2594b5a::t_468d0ef2f3ad0e 53,59-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "468217d0e7e64e7f61d37242cf8ee7255e42f28f",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
