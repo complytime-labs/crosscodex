@@ -1,0 +1,32 @@
+pkg/prompt/prompttest/doc.go
+  s_5d30fea2594b5a::t_0a7776666baf1b 36
+pkg/retention/retentiontest/doc.go
+  s_5d30fea2594b5a::t_0a7776666baf1b 77-78
+pkg/vectordb/vectordbtest/doc.go
+  s_5d30fea2594b5a::t_0a7776666baf1b 58-59
+  s_5d30fea2594b5a::t_34c78a94ad1980 52-54
+AGENTS.md
+  s_5d30fea2594b5a::t_0a7776666baf1b 52
+internal/gateway/helpers.go
+  s_5d30fea2594b5a::t_0a7776666baf1b 49
+pkg/analyzer/analyzertest/doc.go
+  s_5d30fea2594b5a::t_0a7776666baf1b 41
+pkg/db/dbtest/doc.go
+  s_5d30fea2594b5a::t_34c78a94ad1980 32-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26a1720c4d8cae99cc6ecbd2a951ff75d38e7207",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
