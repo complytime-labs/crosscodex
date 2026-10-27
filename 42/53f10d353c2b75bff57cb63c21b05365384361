@@ -1,0 +1,25 @@
+internal/analyzer/relationship/relationship_bdd_test.go
+  s_5d30fea2594b5a::t_cd9e768afc441c 136-162
+internal/analyzer/classify/classify_bdd_test.go
+  s_5d30fea2594b5a::t_14f3694fbeb76c 610-614,616,618-624,626-637
+pkg/prompt/prompt_bdd_test.go
+  s_5d30fea2594b5a::t_1c089220a811f6 710-713,718,723,725-726,728,732-741
+internal/analyzer/classify/parser_bdd_test.go
+  s_5d30fea2594b5a::t_1d16a70223e113 11-17,19,40,47-64,67-70,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4253f10d353c2b75bff57cb63c21b05365384361",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
