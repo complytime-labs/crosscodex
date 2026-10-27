@@ -1,0 +1,75 @@
+internal/analyzer/artifacts/verdictstore_integration_bdd_test.go
+  s_5d30fea2594b5a::t_98e4c1746fd60b 55,57,60
+  s_5d30fea2594b5a::t_c4798cdaec7a69 49
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_5d30fea2594b5a::t_27d967625d4447 154,159,572,575
+pkg/graphdb/agedriver/bulk_integration_bdd_test.go
+  s_5d30fea2594b5a::t_2d246b8a1dfa68 21
+  s_5d30fea2594b5a::t_27d967625d4447 158
+internal/catalog/catalog_integration_bdd_test.go
+  s_5d30fea2594b5a::t_c4798cdaec7a69 63
+  s_5d30fea2594b5a::t_98e4c1746fd60b 98-100
+internal/pipeline/candidate_generation_integration_test.go
+  s_5d30fea2594b5a::t_c4798cdaec7a69 80
+  s_5d30fea2594b5a::t_98e4c1746fd60b 92
+pkg/retention/hold_store_integration_bdd_test.go
+  s_5d30fea2594b5a::t_743ae97f9517dc 44-45,47
+  s_5d30fea2594b5a::t_c4798cdaec7a69 42
+pkg/retention/engine_integration_bdd_test.go
+  s_5d30fea2594b5a::t_c4798cdaec7a69 444
+  s_5d30fea2594b5a::t_743ae97f9517dc 446-447,449
+pkg/graphdb/agedriver/labels_integration_bdd_test.go
+  s_5d30fea2594b5a::t_2d246b8a1dfa68 21
+  s_5d30fea2594b5a::t_27d967625d4447 148
+internal/results/store_pg_integration_bdd_test.go
+  s_5d30fea2594b5a::t_98e4c1746fd60b 52,54
+  s_5d30fea2594b5a::t_c4798cdaec7a69 46
+pkg/db/resumable_jobs_integration_bdd_test.go
+  s_5d30fea2594b5a::t_27d967625d4447 30,33
+pkg/graphdb/agedriver/query_integration_bdd_test.go
+  s_5d30fea2594b5a::t_2d246b8a1dfa68 17
+  s_5d30fea2594b5a::t_27d967625d4447 65
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_5d30fea2594b5a::t_743ae97f9517dc 126,132-134
+pkg/db/retention_schema_integration_bdd_test.go
+  s_5d30fea2594b5a::t_743ae97f9517dc 37-41
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_5d30fea2594b5a::t_c4798cdaec7a69 105
+  s_5d30fea2594b5a::t_98e4c1746fd60b 117
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_5d30fea2594b5a::t_27d967625d4447 126,535-536,933,946,978,1042,1183,1187,1212
+internal/pipeline/store_integration_test.go
+  s_5d30fea2594b5a::t_c4798cdaec7a69 54,121,183,282,403
+  s_5d30fea2594b5a::t_98e4c1746fd60b 64,131,193,292,413
+internal/synthesis/synthesis_integration_bdd_test.go
+  s_5d30fea2594b5a::t_c4798cdaec7a69 58
+  s_5d30fea2594b5a::t_743ae97f9517dc 126-127,129
+internal/graph/controls_reader_integration_bdd_test.go
+  s_5d30fea2594b5a::t_98e4c1746fd60b 57,80-81
+pkg/db/catalog_tenant_fk_integration_bdd_test.go
+  s_5d30fea2594b5a::t_27d967625d4447 28-29
+pkg/graphdb/agedriver/commit_integration_bdd_test.go
+  s_5d30fea2594b5a::t_27d967625d4447 100
+  s_5d30fea2594b5a::t_2d246b8a1dfa68 20
+pkg/db/db_integration_bdd_test.go
+  s_5d30fea2594b5a::t_27d967625d4447 1115,1615-1616
+pkg/graphdb/agedriver/edges_requires_integration_bdd_test.go
+  s_5d30fea2594b5a::t_27d967625d4447 22,119,164,211,265-266,345,395
+  s_5d30fea2594b5a::t_2d246b8a1dfa68 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b47de2b2e4254236c128d664b1f21e5287e6b464",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
