@@ -44,8 +44,9 @@ func (s *Service) StreamDocument(ctx context.Context, stream *connect.ClientStre
 		}
 	}
 	if err := stream.Err(); err != nil {
+		err = s.publicError(ctx, "StreamDocument", err)
 		s.recordMetrics(ctx, "StreamDocument", start, connect.CodeOf(err))
-		return nil, connect.NewError(connect.CodeUnknown, fmt.Errorf("stream error: %w", err))
+		return nil, err
 	}
 
 	if meta == nil {

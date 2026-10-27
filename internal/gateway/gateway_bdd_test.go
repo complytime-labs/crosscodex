@@ -433,7 +433,9 @@ var _ = Describe("SubmitDocument", func() {
 		Expect(resp.Msg.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
 	})
 
-	DescribeTable("returns the backend error when a chained backend fails",
+	// A plain backend error is withheld as Internal; backend_errors_bdd_test.go
+	// covers the message, the log and the pass-through of actionable codes.
+	DescribeTable("fails with Internal when a chained backend fails internally",
 		func(opt gateway.ServiceOption, wantCode connect.Code) {
 			svc := newTestService(opt)
 
@@ -447,7 +449,7 @@ var _ = Describe("SubmitDocument", func() {
 			convertFn: func(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
 				return nil, errors.New("ingestion failure")
 			},
-		}), connect.CodeUnknown),
+		}), connect.CodeInternal),
 		Entry("catalog backend fails", gateway.WithCatalogBackend(&mockCatalog{
 			parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
 				return nil, connect.NewError(connect.CodeInternal, errors.New("catalog unavailable"))
@@ -640,7 +642,6 @@ var _ = Describe("Graph handlers", func() {
 	})
 
 	Context("GetControlMappings", func() {
-
 		It("returns Unavailable when the mappings backend is nil", func() {
 			svc := newTestService()
 			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
@@ -856,6 +857,8 @@ var _ = Describe("Required request arguments", func() {
 		func(ctx context.Context, call func(context.Context, *gateway.Service) error) {
 			// Every backend method an argument-taking RPC could reach records its
 			// name, so any entry fails if validation stops short-circuiting.
+			// mockMappings has no hook to record from; it keeps the request in
+			// got, which is checked after the call.
 			var reached []string
 			record := func(name string) { reached = append(reached, name) }
 			mappings := &mockMappings{}
@@ -923,7 +926,9 @@ var _ = Describe("Required request arguments", func() {
 			_, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: ""}))
 			return err
 		}),
-		Entry("empty cypher on QueryGraph", adminCtx(), func(ctx context.Context, svc *gateway.Service) error {
+		// QueryGraph checks the admin role before validating arguments, so only
+		// an admin reaches the cypher check.
+		Entry("empty cypher on QueryGraph (admin: RBAC precedes validation)", adminCtx(), func(ctx context.Context, svc *gateway.Service) error {
 			_, err := svc.QueryGraph(ctx, connect.NewRequest(&pb.QueryGraphRequest{Cypher: ""}))
 			return err
 		}),

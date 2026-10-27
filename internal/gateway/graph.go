@@ -47,6 +47,7 @@ func (s *Service) QueryGraph(ctx context.Context, req *connect.Request[pb.QueryG
 
 	queryResp, err := s.graph.Query(ctx, connect.NewRequest(queryReq))
 	if err != nil {
+		err = s.publicError(ctx, "QueryGraph", err)
 		s.recordMetrics(ctx, "QueryGraph", start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -89,6 +90,7 @@ func (s *Service) FindSimilar(ctx context.Context, req *connect.Request[pb.FindS
 
 	searchResp, err := s.graph.SimilaritySearch(ctx, connect.NewRequest(searchReq))
 	if err != nil {
+		err = s.publicError(ctx, "FindSimilar", err)
 		s.recordMetrics(ctx, "FindSimilar", start, connect.CodeOf(err))
 		return nil, err
 	}

@@ -39,6 +39,7 @@ func (s *Service) ListJobMappings(ctx context.Context, req *connect.Request[pb.L
 
 	resp, err := s.mappings.ListMappings(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "ListJobMappings", err)
 		s.recordMetrics(ctx, "ListJobMappings", start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -85,6 +86,7 @@ func (s *Service) GetControlMappings(ctx context.Context, req *connect.Request[p
 
 	resp, err := s.mappings.ListMappings(ctx, connect.NewRequest(listReq))
 	if err != nil {
+		err = s.publicError(ctx, "GetControlMappings", err)
 		s.recordMetrics(ctx, "GetControlMappings", start, connect.CodeOf(err))
 		return nil, err
 	}

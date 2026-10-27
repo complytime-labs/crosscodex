@@ -30,6 +30,7 @@ func (s *Service) ListCatalogs(ctx context.Context, req *connect.Request[pb.List
 
 	resp, err := s.catalog.ListCatalogs(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "ListCatalogs", err)
 		s.recordMetrics(ctx, "ListCatalogs", start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -62,6 +63,7 @@ func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[pb.GetCat
 
 	resp, err := s.catalog.GetCatalog(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "GetCatalog", err)
 		s.recordMetrics(ctx, "GetCatalog", start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -93,6 +95,7 @@ func (s *Service) SearchControls(ctx context.Context, req *connect.Request[pb.Se
 
 	resp, err := s.catalog.SearchControls(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "SearchControls", err)
 		s.recordMetrics(ctx, "SearchControls", start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -125,6 +128,7 @@ func (s *Service) GetControl(ctx context.Context, req *connect.Request[pb.GetCon
 
 	resp, err := s.catalog.GetControl(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "GetControl", err)
 		s.recordMetrics(ctx, "GetControl", start, connect.CodeOf(err))
 		return nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 
@@ -125,11 +126,77 @@ var _ = Describe("RPC error messages", func() {
 		}
 	})
 
-	It("keeps a not-found message, which the client can act on, and does not log it", func() {
-		calls := rpcs(errors.New("catalog not found: cat-1"))
-		err := calls["GetCatalog"](rpcCtx(true))
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
-		Expect(message(err)).To(Equal("catalog not found: cat-1"))
-		Expect(logs.String()).To(BeEmpty())
+	DescribeTable("answers a store not-found sentinel with a fixed NotFound message, and does not log it",
+		func(method string, err error, want string) {
+			got := rpcs(err)[method](rpcCtx(true))
+			Expect(connect.CodeOf(got)).To(Equal(connect.CodeNotFound))
+			Expect(message(got)).To(Equal(want))
+			Expect(logs.String()).To(BeEmpty())
+		},
+		Entry("GetCatalog", "GetCatalog", fmt.Errorf("%w: cat-1", catalog.ErrCatalogNotFound),
+			`catalog "cat-1" not found. List catalogs to find a valid catalog_id`),
+		Entry("GetControl", "GetControl", fmt.Errorf("%w: cat-1/ac-1", catalog.ErrControlNotFound),
+			`control "cat-1/ac-1" not found. Search controls to find a valid control_id`),
+	)
+
+	// Classification is by sentinel, not by text: a driver message that
+	// happens to say "not found" is still internal detail.
+	DescribeTable("hides a store error that only says \"not found\" in its text",
+		func(method string) {
+			got := rpcs(errors.New(`relation "catalogs" not found in schema crosscodex_internal`))[method](rpcCtx(true))
+			Expect(connect.CodeOf(got)).To(Equal(connect.CodeInternal))
+			Expect(message(got)).NotTo(ContainSubstring("crosscodex_internal"))
+			Expect(logs.String()).To(ContainSubstring("crosscodex_internal"))
+		},
+		Entry("GetCatalog", "GetCatalog"),
+		Entry("GetControl", "GetControl"),
+	)
+
+	// A schema that cannot load is the server's misconfiguration, and its
+	// error names the schema's path, so it is not the caller's invalid input.
+	It("hides an OSCAL schema load failure as Internal instead of InvalidArgument", func() {
+		stg := &storagetest.Fake{}
+		Expect(stg.Put(context.Background(), "doc-1", strings.NewReader(`{"catalog":{"uuid":"test-uuid"}}`))).To(Succeed())
+		logs = &bytes.Buffer{}
+		svc := catalog.NewService(
+			catalog.WithParser(&mockParser{err: fmt.Errorf("failed to load OSCAL schema at /etc/crosscodex/private/schema.json: %w", oscal.ErrSchemaLoad)}),
+			catalog.WithStorage(stg),
+			catalog.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+		)
+		_, err := svc.ParseCatalog(rpcCtx(true), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{TenantContext: tc, DocumentId: "doc-1", CatalogName: "C"}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+		Expect(message(err)).NotTo(ContainSubstring("/etc/crosscodex"))
+		Expect(strings.Count(logs.String(), "/etc/crosscodex/private")).To(Equal(1))
+	})
+
+	Describe("ParseCatalog document read", func() {
+		parse := func(stg *storagetest.Fake) error {
+			logs = &bytes.Buffer{}
+			svc := catalog.NewService(
+				catalog.WithParser(&mockParser{}),
+				catalog.WithStorage(stg),
+				catalog.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+			)
+			_, err := svc.ParseCatalog(rpcCtx(true), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{TenantContext: tc, DocumentId: "doc-9", CatalogName: "C"}))
+			return err
+		}
+
+		It("answers a missing document with a fixed NotFound message", func() {
+			err := parse(&storagetest.Fake{})
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+			Expect(message(err)).To(Equal(`document "doc-9" not found in storage. Submit the document again`))
+			Expect(logs.String()).To(BeEmpty())
+		})
+
+		It("hides any other storage failure as Internal instead of NotFound", func() {
+			const storageDetail = "open /var/lib/crosscodex/objects/tenant-1/doc-9: permission denied"
+			err := parse(&storagetest.Fake{GetFunc: func(context.Context, string) (io.ReadCloser, error) {
+				return nil, errors.New(storageDetail)
+			}})
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+			Expect(message(err)).NotTo(ContainSubstring("/var/lib"))
+			Expect(message(err)).To(ContainSubstring(traceID.String()))
+			Expect(strings.Count(logs.String(), "/var/lib/crosscodex")).To(Equal(1))
+		})
 	})
 })

@@ -39,6 +39,7 @@ func (s *Service) SubmitVote(ctx context.Context, req *connect.Request[pb.Submit
 
 	resp, err := s.feedback.SubmitVote(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "SubmitVote", err)
 		s.recordMetrics(ctx, "SubmitVote", start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -91,6 +92,7 @@ func (s *Service) GetReviewQueue(ctx context.Context, req *connect.Request[pb.Ge
 
 	resp, err := s.feedback.GetReviewQueue(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "GetReviewQueue", err)
 		s.recordMetrics(ctx, "GetReviewQueue", start, connect.CodeOf(err))
 		return nil, err
 	}

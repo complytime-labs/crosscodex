@@ -560,12 +560,12 @@ var _ = Describe("PGStore Integration", func() {
 				Expect(pageInfo.TotalCount).To(Equal(int64(1)), "total count must not include other tenants")
 
 				_, err = store.GetCatalog(ctx, s.catalogB)
-				Expect(err).To(MatchError(ContainSubstring("catalog not found")))
+				Expect(err).To(MatchError(catalog.ErrCatalogNotFound))
 				own, err := store.GetCatalog(s.ctx(s.tenantB), s.catalogB)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(own.ControlCount).To(Equal(int64(1)), "control count must not include another tenant's controls")
 				_, err = store.GetControl(ctx, s.controlB)
-				Expect(err).To(MatchError(ContainSubstring("control not found")))
+				Expect(err).To(MatchError(catalog.ErrControlNotFound))
 
 				found, pageInfo, err := store.SearchControls(ctx, catalog.SearchQuery{Query: "sentinel"})
 				Expect(err).NotTo(HaveOccurred())

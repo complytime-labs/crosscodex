@@ -3,9 +3,11 @@
 package gateway_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -18,6 +20,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // fakeTenantStatus is a TenantStatusChecker with a fixed answer.
@@ -130,6 +133,37 @@ var _ = Describe("auth interceptor tenant status check", func() {
 			Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant resume --tenant acme"))
 			Expect(reached).To(BeFalse())
 			Expect(authFailureReasons()).To(Equal([]string{"tenant_inactive"}))
+		},
+		Entry("unary", func() error { return callUnary() }),
+		Entry("streaming", func() error { return callStream() }),
+	)
+
+	// The tenant ID comes from the client's certificate, and the validation
+	// text holds only that ID and the format rule, so the holder gets it.
+	DescribeTable("refuses a certificate whose tenant ID is malformed, naming the rule",
+		func(call func() error) {
+			reg, err := authn.NewRegistry(nil, []authn.Authenticator{
+				fixedIdentity{id: &authn.Identity{Subject: "alice", TenantID: "Bad_Tenant", Method: authn.AuthMethodMTLS}},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			logs := &bytes.Buffer{}
+			svc = gateway.NewService(
+				gateway.WithAuthn(reg),
+				gateway.WithTelemetry(tp.TracerProvider().Tracer("test"), tp.MeterProvider().Meter("test")),
+				gateway.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+			)
+			checker.active = true
+
+			err = call()
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+			Expect(err.Error()).To(ContainSubstring(`tenant ID "Bad_Tenant" is invalid: it must be ` + tenant.IDRule))
+			Expect(err.Error()).To(ContainSubstring("Ask an operator to issue a client certificate for a valid tenant ID"))
+			Expect(reached).To(BeFalse())
+			Expect(checker.calls).To(BeZero())
+			Expect(authFailureReasons()).To(Equal([]string{"invalid_tenant"}))
+			Expect(logs.String()).To(ContainSubstring("level=WARN"))
+			Expect(logs.String()).To(ContainSubstring("subject=alice"))
+			Expect(logs.String()).To(ContainSubstring(`tenant ID \"Bad_Tenant\" is invalid`))
 		},
 		Entry("unary", func() error { return callUnary() }),
 		Entry("streaming", func() error { return callStream() }),

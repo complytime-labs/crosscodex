@@ -28,7 +28,7 @@ func (s *Service) Health(ctx context.Context, req *connect.Request[pb.HealthRequ
 		Service: req.Msg.GetService(),
 	}))
 	if err != nil {
-		return nil, err
+		return nil, s.publicError(ctx, "Health", err)
 	}
 
 	s.recordMetrics(ctx, "Health", start, connect.Code(0))
