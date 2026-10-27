@@ -1,0 +1,24 @@
+internal/gateway/gateway_bdd_test.go
+  s_5d30fea2594b5a::t_2b2ae384cf9985 437,439-444,446-447,452,457,462
+  s_5d30fea2594b5a::t_274d45ea62c402 43-50,86,90,94,98,128,164,168,172,188
+  s_5d30fea2594b5a::t_70a0ab5e8dbed5 218-232,317,327,337,393,403,413
+  s_5d30fea2594b5a::t_b6ce3b3f721dce 438,445,451,456,461
+  s_5d30fea2594b5a::t_79dae65d6359a1 856-864,867-905
+  s_5d30fea2594b5a::t_f8871b6099e2d1 855
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f4b357d62da1bf62128c8a2874c8525a06e3cd5",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
