@@ -1,0 +1,43 @@
+cmd/crosscodex/config_get_bdd_test.go
+  s_5d30fea2594b5a::t_e24ed2278d1708 96,99
+  s_5d30fea2594b5a::t_aa71840ef6d301 83,89,91-92,98,103,112
+cmd/crosscodex/main_bdd_test.go
+  s_5d30fea2594b5a::t_d38f9cf39cc7d2 474-475
+  s_5d30fea2594b5a::t_aa71840ef6d301 48,50,61,63,81,88,90-92,98,100-101,105,116,122,124-125,143,152,159,167,183-184,191,215,223,228,239,241-242,246,255,265,276,292,294-295,299,301,402,409,416,418,425,469
+cmd/crosscodex/prompt_bdd_test.go
+  s_5d30fea2594b5a::t_aa71840ef6d301 11,20,27,33,42,51
+cmd/crosscodex/results_bdd_test.go
+  s_5d30fea2594b5a::t_a461854a868ac7 57,59,62,71-72,90-92,107-108,114,133,141-144,147-149,157-158,164,175-177,185-186,190,202-203,213-215,227,242-243,248,261,270
+  s_5d30fea2594b5a::t_924d995746e1e3 204-206
+  s_5d30fea2594b5a::t_d38f9cf39cc7d2 319-320
+  s_5d30fea2594b5a::t_142eddd8f48a86 14
+  s_5d30fea2594b5a::t_aa71840ef6d301 292,294,307,331,333,343,349
+cmd/crosscodex/admin_bdd_test.go
+  s_5d30fea2594b5a::t_dac0e1faa48481 199-200
+  s_5d30fea2594b5a::t_924d995746e1e3 100,118,133,147,163,183,209,222,235,245,255,275,294,306,331
+  s_5d30fea2594b5a::t_ba469b5911a67a 101,119,122,148,164,167,210,223,226,256,260-261,276,295,298,314,316
+  s_5d30fea2594b5a::t_36651114f97261 103-106,150-152,190-191,278-281,307-308,313
+  s_5d30fea2594b5a::t_632797fad9d01a 277
+cmd/crosscodex/completion_bdd_test.go
+  s_5d30fea2594b5a::t_aa71840ef6d301 49,51-52,79
+cmd/crosscodex/helpers_test.go
+  s_5d30fea2594b5a::t_aa71840ef6d301 3-4,6-11
+cmd/crosscodex/remotetls_bdd_test.go
+  s_5d30fea2594b5a::t_9b957cd29a3fc1 194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1823cb05cdd3d2f0efca259174fd8220c8d663a",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
