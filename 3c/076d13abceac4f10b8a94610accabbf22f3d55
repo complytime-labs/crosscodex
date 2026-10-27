@@ -1,0 +1,21 @@
+pkg/analyzer/candidate/builtin/level_bdd_test.go
+  s_5d30fea2594b5a::t_50896ed64d2048 203-204,206-209,234,236-241
+internal/analyzer/embedding/embedding_bdd_test.go
+  s_5d30fea2594b5a::t_ff4c0025fe14be 598-618,621-632,635-639,642-645,647-649,898-902,904-905,907-913,915-926
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c076d13abceac4f10b8a94610accabbf22f3d55",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
