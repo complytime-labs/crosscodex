@@ -1,0 +1,40 @@
+pkg/retention/collector_bdd_test.go
+  s_5d30fea2594b5a::t_4860f5a340efc0 129,131-156
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_5d30fea2594b5a::t_6dac62fd273d1e 669-670,673-676,698-699,702-705,709-710,713-717,918-921,923-924,937-944
+  s_5d30fea2594b5a::t_7448b202703c30 17,823-834,922,925
+pkg/storage/storage_integration_bdd_test.go
+  s_5d30fea2594b5a::t_3507f78aab3236 92-93,101,106,115
+  s_5d30fea2594b5a::t_40c944a9271098 185-200
+pkg/retention/hold_bdd_test.go
+  s_5d30fea2594b5a::t_f4dadedf84dd37 84-100
+pkg/storage/storage_bdd_test.go
+  s_5d30fea2594b5a::t_d9db2100c22915 1002-1009
+  s_5d30fea2594b5a::t_9bbd3f28f7165c 1112-1115,1117-1124
+pkg/storage/storage_property_test.go
+  s_5d30fea2594b5a::t_32ad8346b7e314 21-23,26-28,30-45
+pkg/retention/purge_bdd_test.go
+  s_5d30fea2594b5a::t_d7d0035ba9cd99 93-104
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_5d30fea2594b5a::t_abf7cf5e3e1f6c 131-141,256,280,309,383,441,487,656,738
+  s_5d30fea2594b5a::t_665a4f10781293 265,285
+pkg/retention/archive_bdd_test.go
+  s_5d30fea2594b5a::t_c1dd48cbb8797a 48,50-52,54-59,61-65,81,83-101
+  s_5d30fea2594b5a::t_74f92f9da14fcf 49,53,60,82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b27d2069bcc75100776da7ce0ba50db4803c1422",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
