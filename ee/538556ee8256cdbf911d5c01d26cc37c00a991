@@ -1,0 +1,19 @@
+pkg/authn/authn_bdd_test.go
+  s_5d30fea2594b5a::t_688edc95959c25 249-276,988-991,994-997,999-1006,1008-1014
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee538556ee8256cdbf911d5c01d26cc37c00a991",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
