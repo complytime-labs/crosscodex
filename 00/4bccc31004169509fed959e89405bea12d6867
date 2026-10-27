@@ -1,0 +1,21 @@
+internal/gateway/tenant_status_bdd_test.go
+  s_5d30fea2594b5a::t_d8e79e3a757fa0 6,10,149-154,163-166
+internal/gateway/auth_interceptor.go
+  s_5d30fea2594b5a::t_66c132c7c16e93 94-95,139-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "004bccc31004169509fed959e89405bea12d6867",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
