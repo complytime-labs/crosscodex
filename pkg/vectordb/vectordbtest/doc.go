@@ -49,14 +49,14 @@
 //     wrapping ErrUnscripted that names the field to set. A fake never
 //     panics.
 //   - A Fake records only what some spec asserts on, through a method that
-//     returns a deep copy (Fake.Stored: the tenant and embeddings of every
-//     accepted StoreEmbedding or StoreBatch call, in call order; a
-//     StoreEmbedding call is one entry with one embedding).
+//     returns a copy (see Gaps for Metadata) (Fake.Stored: the tenant and
+//     embeddings of every accepted StoreEmbedding or StoreBatch call, in call
+//     order; a StoreEmbedding call is one entry with one embedding).
 //   - The zero value is ready to use. Set the exported fields before the
 //     first call: method calls are safe for concurrent use, writes to the
 //     exported fields are not.
-//   - A Func cannot call the default behavior (calling the same method from
-//     inside it recurses). To observe calls and keep the default behavior,
+//   - A Func cannot call the default behavior: calling the same method from
+//     inside it recurses. To observe calls and keep the default behavior,
 //     embed *Fake and override the method.
 //
 // Production code must not import this package.

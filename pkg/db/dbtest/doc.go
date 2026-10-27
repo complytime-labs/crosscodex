@@ -29,6 +29,11 @@
 //     inside it recurses. To observe calls and keep the default behavior,
 //     embed *Tx or *Conn and override the method.
 //
+// Gaps: Tx and Conn do no input validation (for example, no use-after-Commit
+// check, so a spec cannot rely on the fake to reject a call on a finished
+// transaction). Row and Rows reject unsupported Scan destinations with an
+// error; the list is on Row.
+//
 // # Role credentials
 //
 // Helpers for integration tests and test provisioning tools, so no fixed

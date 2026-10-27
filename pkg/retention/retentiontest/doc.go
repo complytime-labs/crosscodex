@@ -74,8 +74,8 @@
 //   - The zero value is ready to use. Set the exported fields before the first
 //     call: method calls are safe for concurrent use, writes to the exported
 //     fields are not.
-//   - A Func cannot call the default behavior (calling the same method from
-//     inside it recurses). To observe calls and keep the default behavior,
+//   - A Func cannot call the default behavior: calling the same method from
+//     inside it recurses. To observe calls and keep the default behavior,
 //     embed *Fake and override the method.
 //
 // Production code must not import this package.

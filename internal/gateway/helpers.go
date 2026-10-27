@@ -46,7 +46,7 @@ func (s *Service) startHandlerSpan(ctx context.Context, method string, identity 
 // the caller can act on (invalid input, missing or conflicting resources,
 // refused access, exhausted quota, its own cancellation, an unsupported
 // feature) pass through unchanged. Every other error is logged here, once, and
-// replaced by a fixed message pointing at the trace. Transient codes
+// replaced by a fixed message naming a server-generated error reference. Transient codes
 // (Unavailable, DeadlineExceeded, Aborted) keep their code so client retry
 // logic still works; Unknown, Internal, DataLoss and plain errors become
 // CodeInternal.

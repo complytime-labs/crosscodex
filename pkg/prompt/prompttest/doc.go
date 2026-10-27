@@ -33,7 +33,7 @@
 //   - The zero value is ready to use. Set the exported fields before the
 //     first call: method calls are safe for concurrent use, writes to the
 //     exported fields are not.
-//   - A Func cannot call the default behavior (there is none to call). To
+//   - A Func cannot call the default behavior there is none to call. To
 //     observe calls on top of different behavior, embed *Fake and override
 //     the method.
 //
