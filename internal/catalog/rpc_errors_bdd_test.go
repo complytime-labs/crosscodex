@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -17,6 +18,7 @@ import (
 	crosscodexv1 "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 )
 
 // failingStore fails every call with err, standing in for a database error.
@@ -49,8 +51,8 @@ var _ = Describe("RPC error messages", func() {
 
 	// rpcs calls every catalog RPC that forwards a store error.
 	rpcs := func(err error) map[string]func(context.Context) error {
-		stg := newMockStorage()
-		stg.data["doc-1"] = []byte(`{"catalog":{"uuid":"test-uuid"}}`)
+		stg := &storagetest.Fake{}
+		Expect(stg.Put(context.Background(), "doc-1", strings.NewReader(`{"catalog":{"uuid":"test-uuid"}}`))).To(Succeed())
 		logs = &bytes.Buffer{}
 		svc := catalog.NewService(
 			catalog.WithParser(&mockParser{items: []oscal.ControlItem{{ID: "ac-1", Title: "Policy", Text: "Develop policy", Class: oscal.ClassRequirement}}}),

@@ -17,8 +17,9 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
-	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -39,41 +40,6 @@ func (l *callLog) snapshot() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]string(nil), l.calls...)
-}
-
-// recordingBus embeds a nil natsbus.Client and overrides only Publish; any
-// other method panics, which flags an unexpected bus call. Publishing to a
-// subject that starts with failOn returns an error instead of recording.
-type recordingBus struct {
-	natsbus.Client
-	log       *callLog
-	mu        sync.Mutex
-	published map[string][]byte
-	failOn    string
-}
-
-func (b *recordingBus) Publish(_ context.Context, subject string, data []byte) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.failOn != "" && strings.HasPrefix(subject, b.failOn) {
-		return errors.New("nats: connection closed")
-	}
-	if b.published == nil {
-		b.published = map[string][]byte{}
-	}
-	b.published[subject] = data
-	b.log.add("publish " + subject)
-	return nil
-}
-
-func (b *recordingBus) subjects() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	out := make([]string, 0, len(b.published))
-	for s := range b.published {
-		out = append(out, s)
-	}
-	return out
 }
 
 // editingParser returns the wrapped parser's items passed through edit, when
@@ -119,29 +85,6 @@ func (m *memStore) SearchControls(context.Context, SearchQuery) ([]ControlRecord
 	return nil, PageInfo{}, nil
 }
 
-// memStorage is a minimal storage.Provider backed by a byte slice.
-type memStorage struct{ data []byte }
-
-func (m *memStorage) Put(_ context.Context, _ string, r io.Reader) error {
-	b, err := io.ReadAll(r)
-	m.data = b
-	return err
-}
-func (m *memStorage) Get(context.Context, string) (io.ReadCloser, error) {
-	return io.NopCloser(bytes.NewReader(m.data)), nil
-}
-func (m *memStorage) Delete(context.Context, string) error         { return nil }
-func (m *memStorage) Exists(context.Context, string) (bool, error) { return true, nil }
-func (m *memStorage) List(context.Context, string) ([]storage.ObjectMetadata, error) {
-	return nil, nil
-}
-func (m *memStorage) Stat(context.Context, string) (*storage.ObjectMetadata, error) {
-	return nil, nil
-}
-func (m *memStorage) Close() error { return nil }
-
-var _ storage.Provider = (*memStorage)(nil)
-
 var _ = Describe("ParseCatalog parsed event", func() {
 	const (
 		tenantID = "e2e"
@@ -157,8 +100,9 @@ var _ = Describe("ParseCatalog parsed event", func() {
 		ctx    context.Context
 		log    *callLog
 		store  *memStore
-		st     *memStorage
-		bus    *recordingBus
+		st     *storagetest.Fake
+		bus    *natsbustest.Fake
+		failOn string
 		parser *editingParser
 	)
 
@@ -168,11 +112,27 @@ var _ = Describe("ParseCatalog parsed event", func() {
 		Expect(err).NotTo(HaveOccurred())
 		log = &callLog{}
 		store = &memStore{log: log}
-		st = &memStorage{}
+		st = &storagetest.Fake{}
 		// Pre-store the document so ParseCatalog's storage.Get returns it.
 		Expect(st.Put(ctx, "doc", bytes.NewReader([]byte(oscalDoc)))).To(Succeed())
-		bus = &recordingBus{log: log}
+		// Publishing to a subject starting with failOn fails; every other
+		// publish is logged in order with the store writes. The Fake's other
+		// methods keep their defaults (PublishWithHeaders, Subscribe,
+		// QueueSubscribe and Close succeed), so the AfterEach below asserts
+		// the service never subscribed.
+		failOn = ""
+		bus = &natsbustest.Fake{PublishFunc: func(_ context.Context, subject string, _ []byte) error {
+			if failOn != "" && strings.HasPrefix(subject, failOn) {
+				return errors.New("nats: connection closed")
+			}
+			log.add("publish " + subject)
+			return nil
+		}}
 		parser = &editingParser{Parser: oscal.NewParser("")}
+	})
+
+	AfterEach(func() {
+		Expect(bus.Subscriptions()).To(BeEmpty(), "ParseCatalog must only publish, never subscribe")
 	})
 
 	newService := func(opts ...ServiceOption) *Service {
@@ -182,6 +142,14 @@ var _ = Describe("ParseCatalog parsed event", func() {
 			WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		}
 		return NewService(append(base, opts...)...)
+	}
+
+	publishedSubjects := func() []string {
+		var out []string
+		for _, p := range bus.Published() {
+			out = append(out, p.Subject)
+		}
+		return out
 	}
 
 	parse := func(svc *Service) (*connect.Response[pb.ParseCatalogResponse], error) {
@@ -200,13 +168,15 @@ var _ = Describe("ParseCatalog parsed event", func() {
 
 		subject, err := natsbus.CatalogParsedSubject(tenantID, catalogID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(bus.subjects()).To(ConsistOf(subject, "audit.catalog.parsed"))
+		Expect(publishedSubjects()).To(ConsistOf(subject, "audit.catalog.parsed"))
 
 		var payload struct {
 			CatalogID    string `json:"catalog_id"`
 			ControlCount int    `json:"control_count"`
 		}
-		Expect(json.Unmarshal(bus.published[subject], &payload)).To(Succeed())
+		at := slices.IndexFunc(bus.Published(), func(p natsbustest.Publication) bool { return p.Subject == subject })
+		Expect(at).To(BeNumerically(">=", 0))
+		Expect(json.Unmarshal(bus.Published()[at].Data, &payload)).To(Succeed())
 		Expect(payload.CatalogID).To(Equal(catalogID))
 		Expect(payload.ControlCount).To(Equal(len(store.controls)))
 		Expect(payload.ControlCount).To(Equal(3))
@@ -226,7 +196,7 @@ var _ = Describe("ParseCatalog parsed event", func() {
 	})
 
 	It("fails the import with a retryable, actionable error when the parsed event cannot be published, leaving the stored rows in place", func() {
-		bus.failOn = "crosscodex.catalog."
+		failOn = "crosscodex.catalog."
 		resp, err := parse(newService(WithStore(store), WithBus(bus)))
 
 		Expect(resp).To(BeNil())
@@ -244,7 +214,8 @@ var _ = Describe("ParseCatalog parsed event", func() {
 		for _, c := range store.controls {
 			Expect(c.CatalogID).To(Equal(catalogID))
 		}
-		Expect(bus.subjects()).To(BeEmpty(), "nothing reached the bus")
+		Expect(publishedSubjects()).To(ConsistOf(HavePrefix("crosscodex.catalog.")), "only the failed parsed-event attempt reached the bus, not the audit event")
+		Expect(log.snapshot()).NotTo(ContainElement(HavePrefix("publish ")), "no publish succeeded")
 	})
 
 	It("succeeds without publishing when no bus is configured", func() {
@@ -257,7 +228,7 @@ var _ = Describe("ParseCatalog parsed event", func() {
 	It("does not publish the parsed event when no store is configured, because no rows exist to project", func() {
 		_, err := parse(newService(WithBus(bus)))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(bus.subjects()).To(ConsistOf("audit.catalog.parsed"))
+		Expect(publishedSubjects()).To(ConsistOf("audit.catalog.parsed"))
 	})
 
 	It("does not publish the parsed event for a catalog with no controls, because the graph role rejects an empty projection", func() {
@@ -265,6 +236,6 @@ var _ = Describe("ParseCatalog parsed event", func() {
 		_, err := parse(newService(WithStore(store), WithBus(bus)))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(store.controls).To(BeEmpty())
-		Expect(bus.subjects()).To(ConsistOf("audit.catalog.parsed"))
+		Expect(publishedSubjects()).To(ConsistOf("audit.catalog.parsed"))
 	})
 })

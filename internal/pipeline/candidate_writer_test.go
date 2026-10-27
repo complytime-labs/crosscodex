@@ -12,6 +12,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
 var _ = Describe("WriteRequiresCandidates", func() {
@@ -24,15 +25,14 @@ var _ = Describe("WriteRequiresCandidates", func() {
 	It("upserts each pair with its provenance", func() {
 		var execCalls []string
 		var execArgs [][]any
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				execCalls = append(execCalls, query)
 				execArgs = append(execArgs, args)
 				return nil
 			},
-			commitFunc: func() error { return nil },
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 
 		pairs := []requires.RequiresPair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", AggregateScore: 0.8,
@@ -52,15 +52,14 @@ var _ = Describe("WriteRequiresCandidates", func() {
 	It("upsert-writes idempotently: second write for the same pair replaces the first", func() {
 		var execCalls []string
 		var execArgs [][]any
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				execCalls = append(execCalls, query)
 				execArgs = append(execArgs, args)
 				return nil
 			},
-			commitFunc: func() error { return nil },
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 
 		firstPairs := []requires.RequiresPair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", AggregateScore: 0.4,
@@ -87,7 +86,7 @@ var _ = Describe("WriteRequiresCandidates", func() {
 	})
 
 	It("propagates a begin-transaction error", func() {
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) {
+		mockDB := &dbtest.Conn{BeginFunc: func(ctx context.Context) (db.Transaction, error) {
 			return nil, errors.New("connection failed")
 		}}
 
@@ -100,17 +99,12 @@ var _ = Describe("WriteRequiresCandidates", func() {
 	})
 
 	It("propagates an exec error and does not commit", func() {
-		committed := false
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				return errors.New("exec failed")
 			},
-			commitFunc: func() error {
-				committed = true
-				return nil
-			},
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 
 		err := pipeline.WriteRequiresCandidates(ctx, mockDB, "tenant-1", "job-1", []requires.RequiresPair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", AggregateScore: 0.5,
@@ -118,11 +112,11 @@ var _ = Describe("WriteRequiresCandidates", func() {
 
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("exec failed"))
-		Expect(committed).To(BeFalse())
+		Expect(mockTx.Commits()).To(Equal(0))
 	})
 
 	It("validates the tenant ID", func() {
-		mockDB := &mockTenantConnection{}
+		mockDB := &dbtest.Conn{}
 
 		err := pipeline.WriteRequiresCandidates(ctx, mockDB, "", "job-1", []requires.RequiresPair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", AggregateScore: 0.5,
@@ -130,6 +124,7 @@ var _ = Describe("WriteRequiresCandidates", func() {
 
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("tenant"))
+		Expect(mockDB.Begins()).To(BeZero(), "the tenant must be refused before any transaction starts")
 	})
 })
 
@@ -143,15 +138,14 @@ var _ = Describe("WriteRelationshipCandidates", func() {
 	It("upserts each pair with its provenance", func() {
 		var execCalls []string
 		var execArgs [][]any
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				execCalls = append(execCalls, query)
 				execArgs = append(execArgs, args)
 				return nil
 			},
-			commitFunc: func() error { return nil },
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 
 		pairs := []relationship.CandidatePair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", SimilarityScore: 0.8,
@@ -174,14 +168,13 @@ var _ = Describe("WriteRelationshipCandidates", func() {
 
 	It("defaults to an empty JSON array when no provenance is supplied for a pair", func() {
 		var execArgs [][]any
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				execArgs = append(execArgs, args)
 				return nil
 			},
-			commitFunc: func() error { return nil },
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 
 		pairs := []relationship.CandidatePair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", SimilarityScore: 0.8,
@@ -197,15 +190,14 @@ var _ = Describe("WriteRelationshipCandidates", func() {
 	It("upsert-writes idempotently: second write for the same pair replaces the first", func() {
 		var execCalls []string
 		var execArgs [][]any
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				execCalls = append(execCalls, query)
 				execArgs = append(execArgs, args)
 				return nil
 			},
-			commitFunc: func() error { return nil },
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 
 		firstPairs := []relationship.CandidatePair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", SimilarityScore: 0.4,
@@ -230,7 +222,7 @@ var _ = Describe("WriteRelationshipCandidates", func() {
 	})
 
 	It("propagates a begin-transaction error", func() {
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) {
+		mockDB := &dbtest.Conn{BeginFunc: func(ctx context.Context) (db.Transaction, error) {
 			return nil, errors.New("connection failed")
 		}}
 
@@ -243,17 +235,12 @@ var _ = Describe("WriteRelationshipCandidates", func() {
 	})
 
 	It("propagates an exec error and does not commit", func() {
-		committed := false
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				return errors.New("exec failed")
 			},
-			commitFunc: func() error {
-				committed = true
-				return nil
-			},
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 
 		err := pipeline.WriteRelationshipCandidates(ctx, mockDB, "tenant-1", "job-1", []relationship.CandidatePair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", SimilarityScore: 0.5,
@@ -261,11 +248,11 @@ var _ = Describe("WriteRelationshipCandidates", func() {
 
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("exec failed"))
-		Expect(committed).To(BeFalse())
+		Expect(mockTx.Commits()).To(Equal(0))
 	})
 
 	It("validates the tenant ID", func() {
-		mockDB := &mockTenantConnection{}
+		mockDB := &dbtest.Conn{}
 
 		err := pipeline.WriteRelationshipCandidates(ctx, mockDB, "", "job-1", []relationship.CandidatePair{{
 			SourceControlID: "AC-1", TargetControlID: "AC-2", SimilarityScore: 0.5,
@@ -273,5 +260,6 @@ var _ = Describe("WriteRelationshipCandidates", func() {
 
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("tenant"))
+		Expect(mockDB.Begins()).To(BeZero(), "the tenant must be refused before any transaction starts")
 	})
 })

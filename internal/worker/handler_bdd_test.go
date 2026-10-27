@@ -20,7 +20,9 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/worker"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -30,12 +32,12 @@ var _ = Describe("Handler", func() {
 	var (
 		bus     natsbus.Client
 		cleanup func()
-		llm     *stubLLMClient
+		llm     *llmclienttest.Fake
 	)
 
 	BeforeEach(func() {
 		bus, cleanup = testspecs.SetupTestNATS()
-		llm = &stubLLMClient{}
+		llm = newStubLLM()
 	})
 
 	AfterEach(func() {
@@ -77,7 +79,7 @@ var _ = Describe("Handler", func() {
 
 	Describe("LLM call failure", func() {
 		It("publishes error result with X-Error header", func() {
-			llm.completeFunc = func(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+			llm.CompleteFunc = func(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
 				return nil, errors.New("gateway timeout")
 			}
 
@@ -99,7 +101,7 @@ var _ = Describe("Handler", func() {
 	Describe("Default model resolution", func() {
 		It("uses tenant default model when payload model is empty", func() {
 			var receivedModel string
-			llm.completeFunc = func(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+			llm.CompleteFunc = func(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
 				receivedModel = req.Model
 				return &llmclient.CompletionResponse{
 					Model:   req.Model,
@@ -135,7 +137,7 @@ var _ = Describe("Handler", func() {
 	Describe("Default embedding model resolution", func() {
 		It("uses tenant embedding model when payload model is empty", func() {
 			var receivedModel string
-			llm.embedFunc = func(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+			llm.EmbedFunc = func(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
 				receivedModel = req.Model
 				return &llmclient.EmbeddingResponse{
 					Data:  []llmclient.EmbeddingData{{Embedding: []float32{0.1, 0.2, 0.3}}},
@@ -251,7 +253,7 @@ var _ = Describe("Handler", func() {
 
 	Describe("Embedding LLM failure", func() {
 		It("publishes llm_error for embedding failures", func() {
-			llm.embedFunc = func(_ context.Context, _ *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+			llm.EmbedFunc = func(_ context.Context, _ *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
 				return nil, errors.New("embedding service unavailable")
 			}
 
@@ -318,42 +320,24 @@ var _ = Describe("Handler", func() {
 	})
 })
 
-// publishSpyBus embeds natsbus.Client (nil; the tenant-validation handler
-// path returns before touching the bus, so no other method is ever called)
-// to record whether a rejected tenant's message ever reached a publish call.
-type publishSpyBus struct {
-	natsbus.Client
-	published bool
-}
-
-func (b *publishSpyBus) Publish(_ context.Context, _ string, _ []byte) error {
-	b.published = true
-	return nil
-}
-
-func (b *publishSpyBus) PublishWithHeaders(_ context.Context, _ string, _ []byte, _ map[string][]string) error {
-	b.published = true
-	return nil
-}
-
 var _ = Describe("Handler tenant validation", func() {
 	var (
 		logs      *bytes.Buffer
 		w         *worker.Worker
-		bus       *publishSpyBus
+		bus       *natsbustest.Fake
 		llmCalled bool
 	)
 
 	BeforeEach(func() {
 		logs = &bytes.Buffer{}
-		bus = &publishSpyBus{}
+		bus = &natsbustest.Fake{}
 		llmCalled = false
-		stubLLM := &stubLLMClient{
-			completeFunc: func(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+		stubLLM := &llmclienttest.Fake{
+			CompleteFunc: func(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
 				llmCalled = true
 				return nil, errors.New("LLM must not be called for a rejected tenant")
 			},
-			embedFunc: func(_ context.Context, _ *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+			EmbedFunc: func(_ context.Context, _ *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
 				llmCalled = true
 				return nil, errors.New("LLM must not be called for a rejected tenant")
 			},
@@ -365,12 +349,17 @@ var _ = Describe("Handler tenant validation", func() {
 	DescribeTable("discards the task and logs the tenant ID rule",
 		func(tenantID, wantMsg string) {
 			msg := &natsbus.Message{Metadata: natsbus.MessageMetadata{TenantID: tenantID}}
-			Expect(worker.ExportHandleMessage(w, context.Background(), msg)).To(Succeed())
+			// The ctx carries a valid tenant so a regressed publish would be
+			// accepted and recorded by the Fake, not rejected unrecorded.
+			ctx, err := tenant.WithTenant(context.Background(), "tenant-a")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(worker.ExportHandleMessage(w, ctx, msg)).To(Succeed())
 			Expect(logs.String()).To(ContainSubstring(wantMsg))
 			Expect(logs.String()).To(ContainSubstring(natsbus.HeaderTenantID))
 			Expect(logs.String()).To(ContainSubstring(tenant.IDRule))
 			Expect(llmCalled).To(BeFalse(), "a rejected tenant must never reach the LLM client")
-			Expect(bus.published).To(BeFalse(), "a rejected tenant must never publish a result")
+			Expect(bus.Published()).To(BeEmpty(), "a rejected tenant must never publish a result")
+			Expect(bus.Subscriptions()).To(BeEmpty(), "handling a message must not subscribe")
 		},
 		Entry("missing tenant ID", "", "message missing tenant ID"),
 		Entry("53-character tenant ID", "a"+strings.Repeat("b", 52), "invalid tenant ID"),

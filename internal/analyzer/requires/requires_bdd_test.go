@@ -17,6 +17,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/prompt/prompttest"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -30,38 +31,13 @@ func (m *mockCandidateProvider) Candidates(_ context.Context, _, _ string) ([]re
 	return m.pairs, m.err
 }
 
-// mockPromptRegistry returns a pre-configured prompt spec.
-type mockPromptRegistry struct {
-	spec *prompt.PromptSpec
-	err  error
-}
-
-func (m *mockPromptRegistry) Resolve(_ context.Context, _ string) (*prompt.PromptSpec, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.spec, nil
-}
-
-func (m *mockPromptRegistry) Render(_ context.Context, _ string, _ map[string]string) (*prompt.ResolvedPrompt, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *mockPromptRegistry) List(_ context.Context) ([]string, error) {
-	return []string{"requires"}, nil
-}
-
-func (m *mockPromptRegistry) Layers(_ context.Context, _ string) ([]prompt.LayerInfo, error) {
-	return nil, nil
-}
-
 var _ = Describe("RequiresAnalyzer", func() {
 	var (
 		a          *requires.RequiresAnalyzer
 		ctx        context.Context
 		cfg        config.RequiresConfig
 		candidates *mockCandidateProvider
-		prompts    *mockPromptRegistry
+		prompts    *prompttest.Fake
 	)
 
 	defaultSpec := &prompt.PromptSpec{
@@ -85,7 +61,9 @@ var _ = Describe("RequiresAnalyzer", func() {
 			SamplingTemperature: 0.3,
 		}
 		candidates = &mockCandidateProvider{}
-		prompts = &mockPromptRegistry{spec: defaultSpec}
+		prompts = &prompttest.Fake{
+			ResolveFunc: func(context.Context, string) (*prompt.PromptSpec, error) { return defaultSpec, nil },
+		}
 		a = requires.New(nil, prompts, candidates, cfg)
 	})
 
@@ -142,7 +120,9 @@ var _ = Describe("RequiresAnalyzer", func() {
 			candidates.pairs = []requires.RequiresPair{
 				{SourceControlID: "AC-1", TargetControlID: "AC-2", AggregateScore: 0.8},
 			}
-			prompts.err = fmt.Errorf("prompt not found")
+			prompts.ResolveFunc = func(context.Context, string) (*prompt.PromptSpec, error) {
+				return nil, fmt.Errorf("prompt not found")
+			}
 			a = requires.New(nil, prompts, candidates, cfg)
 
 			control := &pb.Control{ControlId: "AC-1", Statement: "test"}

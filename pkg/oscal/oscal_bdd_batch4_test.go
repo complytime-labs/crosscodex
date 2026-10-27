@@ -15,32 +15,13 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/prompt/prompttest"
 )
 
 // testCompleter implements oscal.Completer for testing.
 type testCompleter struct {
 	response string
 	err      error
-}
-
-// failingRegistry implements prompt.Registry but always fails on Render.
-// Used to test the fallback path when registry.Render returns an error.
-type failingRegistry struct{}
-
-func (f *failingRegistry) Resolve(_ context.Context, _ string) (*prompt.PromptSpec, error) {
-	return nil, errors.New("intentional test failure")
-}
-
-func (f *failingRegistry) Render(_ context.Context, _ string, _ map[string]string) (*prompt.ResolvedPrompt, error) {
-	return nil, errors.New("intentional test failure")
-}
-
-func (f *failingRegistry) List(_ context.Context) ([]string, error) {
-	return nil, errors.New("intentional test failure")
-}
-
-func (f *failingRegistry) Layers(_ context.Context, _ string) ([]prompt.LayerInfo, error) {
-	return nil, errors.New("intentional test failure")
 }
 
 func (tc *testCompleter) Complete(_ context.Context, _ []oscal.Message) (string, error) {
@@ -500,7 +481,11 @@ var _ = Describe("TierLLMDetect", func() {
 			}
 			opts := oscal.StructureOptions{ChunkChars: 1000}
 			completer := &testCompleter{response: `(\d+)\.\s+(.+)`}
-			failReg := &failingRegistry{}
+			failReg := &prompttest.Fake{
+				RenderFunc: func(context.Context, string, map[string]string) (*prompt.ResolvedPrompt, error) {
+					return nil, errors.New("intentional test failure")
+				},
+			}
 			items, ok := oscal.TierLLMDetect(doc, opts, completer, failReg)
 			Expect(ok).To(BeTrue())
 			Expect(items).To(HaveLen(3))
@@ -635,7 +620,11 @@ var _ = Describe("TierLLMExtract", func() {
 			completer := &testCompleter{
 				response: `[{"id": "r-1", "title": "Fallback", "text": "Fallback req"}]`,
 			}
-			failReg := &failingRegistry{}
+			failReg := &prompttest.Fake{
+				RenderFunc: func(context.Context, string, map[string]string) (*prompt.ResolvedPrompt, error) {
+					return nil, errors.New("intentional test failure")
+				},
+			}
 			items, ok := oscal.TierLLMExtract(doc, opts, completer, failReg)
 			Expect(ok).To(BeTrue())
 			Expect(items).To(HaveLen(1))

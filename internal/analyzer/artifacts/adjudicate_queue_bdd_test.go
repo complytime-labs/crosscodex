@@ -32,14 +32,10 @@ var _ = Describe("Adjudicator queue", func() {
 		Expect(out.Outcome).To(Equal(artifacts.DecideApplied))
 	}
 
-	noLLM := func(*llmclient.CompletionRequest) (string, error) {
-		return "", errors.New("the LLM must not be called")
-	}
-
 	Describe("recovery", func() {
 		It("projects a decided verdict an earlier run left unprojected, before leasing", func() {
 			decide(artifacts.VerdictConfirmed)
-			f.llm.reply = noLLM
+			f.llm.CompleteFunc = nil
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 1}))
@@ -47,6 +43,7 @@ var _ = Describe("Adjudicator queue", func() {
 			Expect(f.liveSameAs()[0].Edge.DeterminationType).To(Equal("llm_panel"))
 			Expect(f.candidateSuperseded()).To(BeTrue())
 			Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeTrue())
+			Expect(f.llm.CompleteRequests()).To(BeEmpty(), "recovery never reaches the LLM")
 		})
 
 		It("re-projects idempotently when the edge already exists", func() {
@@ -85,11 +82,11 @@ var _ = Describe("Adjudicator queue", func() {
 
 		It("re-projects without leasing a due pair or calling the LLM", func() {
 			f.opts.Reproject = true
-			f.llm.reply = noLLM
+			f.llm.CompleteFunc = nil
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{}))
-			Expect(f.llm.calls).To(BeEmpty())
+			Expect(f.llm.CompleteRequests()).To(BeEmpty())
 			row := f.store.row(adjTenant, f.key)
 			Expect(row.status).To(Equal(artifacts.VerdictPending), "the due pair waits for a normal run")
 			Expect(row.leasedUntil).To(BeZero())
@@ -99,7 +96,7 @@ var _ = Describe("Adjudicator queue", func() {
 			decide(artifacts.VerdictConfirmed)
 			f.opts.Reproject = true
 			f.store.err["ResetProjection"] = errors.New("db down")
-			f.llm.reply = noLLM
+			f.llm.CompleteFunc = nil
 			res, err := f.run()
 			Expect(err).To(MatchError(ContainSubstring("reset projection: db down")))
 			Expect(res).To(Equal(artifacts.AdjudicateResult{}))
@@ -107,6 +104,7 @@ var _ = Describe("Adjudicator queue", func() {
 			for _, r := range f.liveSameAs() {
 				Expect(r.Edge.DeterminationType).NotTo(Equal("llm_panel"), "no llm_panel edge is written")
 			}
+			Expect(f.llm.CompleteRequests()).To(BeEmpty())
 		})
 
 		It("marks a confirmation whose groups are gone as orphaned instead of failing", func() {
@@ -194,10 +192,10 @@ var _ = Describe("Adjudicator queue", func() {
 				once           sync.Once
 				recoveredFirst bool
 			)
-			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			f.llm.CompleteFunc = replying(func(*llmclient.CompletionRequest) (string, error) {
 				once.Do(func() { recoveredFirst = f.store.row(adjTenant, f.key).graphApplied })
 				return answer("NO"), nil
-			}
+			})
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Recovered: 1, Leased: 1, Rejected: 1}))
@@ -238,7 +236,7 @@ var _ = Describe("Adjudicator queue", func() {
 					HighGroupID: fmt.Sprintf("b-%03d-b", i), CandidateEdgeID: fmt.Sprintf("b-edge-%03d", i)})
 			}
 			Expect(f.store.Enqueue(f.ctx, adjTenant, cands, f.now)).To(Succeed())
-			f.llm.reply = sayAll("NO")
+			f.llm.CompleteFunc = replying(sayAll("NO"))
 		})
 
 		It("sends at most MaxPairs pairs to the panel per run", func() {
@@ -246,7 +244,7 @@ var _ = Describe("Adjudicator queue", func() {
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.Leased).To(Equal(3))
-			Expect(f.llm.callCount()).To(Equal(3 * len(f.cfg.Models)))
+			Expect(f.llm.CompleteRequests()).To(HaveLen(3 * len(f.cfg.Models)))
 		})
 
 		It("leases across several batches until the queue is empty", func() {
@@ -270,15 +268,15 @@ var _ = Describe("Adjudicator queue", func() {
 			// from re-leasing the skipped ones.
 			f.opts.MaxPairs = 4
 			var advance sync.Once // the panel's calls run concurrently
-			f.llm.reply = func(*llmclient.CompletionRequest) (string, error) {
+			f.llm.CompleteFunc = replying(func(*llmclient.CompletionRequest) (string, error) {
 				advance.Do(func() { f.now = f.now.Add(16 * time.Minute) }) // past the 15-minute lease
 				return answer("NO"), nil
-			}
+			})
 
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 4, Rejected: 1, Expired: 3}))
-			Expect(f.llm.callCount()).To(Equal(len(f.cfg.Models)), "only the first pair reaches the panel")
+			Expect(f.llm.CompleteRequests()).To(HaveLen(len(f.cfg.Models)), "only the first pair reaches the panel")
 			c, err := f.store.Counts(f.ctx, adjTenant, f.now)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(c.Pending).To(Equal(3))
@@ -294,13 +292,14 @@ var _ = Describe("Adjudicator queue", func() {
 	Describe("dry run", func() {
 		It("reports the queue without leasing, calling the LLM or writing", func() {
 			f.opts.DryRun = true
-			f.llm.reply = noLLM
+			f.llm.CompleteFunc = nil
 			res, err := f.run()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res).To(Equal(artifacts.AdjudicateResult{Pending: 1, Due: 1}))
 			r := f.store.row(adjTenant, f.key)
 			Expect(r.leasedUntil.IsZero()).To(BeTrue())
 			Expect(f.candidateSuperseded()).To(BeFalse())
+			Expect(f.llm.CompleteRequests()).To(BeEmpty())
 		})
 
 		It("needs no LLM client", func() {
@@ -337,21 +336,21 @@ var _ = Describe("Adjudicator queue", func() {
 				Expect(r.leasedUntil).To(BeZero())
 			}),
 		Entry("Lease", "Lease", "lease pairs",
-			func() { f.llm.reply = noLLM },
+			func() { f.llm.CompleteFunc = nil },
 			func() {
 				Expect(f.store.row(adjTenant, f.key).leasedUntil).To(BeZero())
-				Expect(f.llm.callCount()).To(BeZero())
+				Expect(f.llm.CompleteRequests()).To(BeEmpty())
 			}),
 		Entry("Unprojected", "Unprojected", "load unprojected verdicts",
-			func() { decide(artifacts.VerdictConfirmed); f.llm.reply = noLLM },
+			func() { decide(artifacts.VerdictConfirmed); f.llm.CompleteFunc = nil },
 			func() {
 				Expect(f.store.row(adjTenant, f.key).graphApplied).To(BeFalse())
 				Expect(f.candidateSuperseded()).To(BeFalse())
-				Expect(f.llm.callCount()).To(BeZero())
+				Expect(f.llm.CompleteRequests()).To(BeEmpty())
 			}),
 		Entry("RecordFailure", "RecordFailure", "record failure",
 			func() {
-				f.llm.reply = func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") }
+				f.llm.CompleteFunc = replying(func(*llmclient.CompletionRequest) (string, error) { return "", errors.New("down") })
 			},
 			func() {
 				r := f.store.row(adjTenant, f.key)
@@ -361,7 +360,7 @@ var _ = Describe("Adjudicator queue", func() {
 			}),
 		Entry("RecordDissent", "RecordDissent", "record dissent",
 			func() {
-				f.llm.reply = humanRejectsMidPanel(f)
+				f.llm.CompleteFunc = replying(humanRejectsMidPanel(f))
 			},
 			func() {
 				r := f.store.row(adjTenant, f.key)

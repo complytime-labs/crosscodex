@@ -17,6 +17,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -31,8 +33,8 @@ var _ = Describe("Pipeline Integration", func() {
 		synth     *fakeSynthesisExecutor
 		attestor  *fakeAttestation
 		converter *pipelineattestation.Converter
-		bus       *fakeNATSClient
-		storage   *executorFakeStorage
+		bus       *natsbustest.Fake
+		storage   *storagetest.Fake
 		tenantID  string
 		jobID     string
 
@@ -54,33 +56,25 @@ var _ = Describe("Pipeline Integration", func() {
 		}
 		attestor = &fakeAttestation{}
 		converter = pipelineattestation.NewConverter()
-		bus = &fakeNATSClient{}
-		storage = newExecutorFakeStorage()
+		bus = &natsbustest.Fake{}
+		storage = &storagetest.Fake{}
 
 		// Register stub analyzers with dependencies: alpha -> beta -> gamma.
 		// Registered as Analyzer[*pb.Control] (matching production analyzer
 		// registration) and exercised against a catalog-backed job below, so
 		// GenerateWork actually runs once per catalog control instead of being
 		// skipped as a zero-task, document-backed job.
-		alpha := &stubControlAnalyzer{
-			name: "alpha",
-			genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-				return []analyzer.Task{{TaskID: "alpha-task-1", Payload: &emptypb.Empty{}}}, nil
-			},
+		alpha := newControlStub("alpha")
+		alpha.GenerateWorkFunc = func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			return []analyzer.Task{{TaskID: "alpha-task-1", Payload: &emptypb.Empty{}}}, nil
 		}
-		beta := &stubControlAnalyzer{
-			name: "beta",
-			deps: []string{"alpha"},
-			genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-				return []analyzer.Task{{TaskID: "beta-task-1", Payload: &emptypb.Empty{}}}, nil
-			},
+		beta := newControlStub("beta", "alpha")
+		beta.GenerateWorkFunc = func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			return []analyzer.Task{{TaskID: "beta-task-1", Payload: &emptypb.Empty{}}}, nil
 		}
-		gamma := &stubControlAnalyzer{
-			name: "gamma",
-			deps: []string{"beta"},
-			genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-				return []analyzer.Task{{TaskID: "gamma-task-1", Payload: &emptypb.Empty{}}}, nil
-			},
+		gamma := newControlStub("gamma", "beta")
+		gamma.GenerateWorkFunc = func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			return []analyzer.Task{{TaskID: "gamma-task-1", Payload: &emptypb.Empty{}}}, nil
 		}
 
 		Expect(analyzer.Register[*pb.Control](registry, alpha)).To(Succeed())
@@ -177,7 +171,7 @@ var _ = Describe("Pipeline Integration", func() {
 
 			// Verify NATS events published.
 			// Expect at least: running, completed events.
-			Expect(bus.publishCount()).To(BeNumerically(">=", 2))
+			Expect(len(bus.Published())).To(BeNumerically(">=", 2))
 
 			// Verify attestation layout created.
 			Expect(len(attestor.layoutCalls)).To(BeNumerically(">=", 1))

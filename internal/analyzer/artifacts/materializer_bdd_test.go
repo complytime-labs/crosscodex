@@ -1,12 +1,11 @@
 package artifacts_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"slices"
 	"strings"
 	"time"
 
@@ -19,7 +18,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
-	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -91,25 +90,6 @@ func (f failingWrite) CreateEdge(ctx context.Context, tenantID, sourceID, target
 	return f.GraphDB.CreateEdge(ctx, tenantID, sourceID, targetID, edge)
 }
 
-// fakeStorage serves pre-loaded ControlResult JSON files.
-type fakeStorage struct {
-	storage.Provider
-	files map[string][]byte
-}
-
-// List returns matching keys sorted, as the local and S3 providers do, so
-// specs that depend on file order are deterministic.
-func (f *fakeStorage) List(_ context.Context, prefix string) ([]storage.ObjectMetadata, error) {
-	var result []storage.ObjectMetadata
-	for key := range f.files {
-		if strings.HasPrefix(key, prefix) {
-			result = append(result, storage.ObjectMetadata{Key: key})
-		}
-	}
-	slices.SortFunc(result, func(a, b storage.ObjectMetadata) int { return strings.Compare(a.Key, b.Key) })
-	return result, nil
-}
-
 // counterByAttr sums the data points of the int64 counter name whose
 // attribute key equals value.
 func counterByAttr(tp *telemetrytest.TestProvider, name, key, value string) int64 {
@@ -128,24 +108,21 @@ func counterByAttr(tp *telemetrytest.TestProvider, name, key, value string) int6
 	return total
 }
 
-func (f *fakeStorage) Get(_ context.Context, key string) (io.ReadCloser, error) {
-	data, ok := f.files[key]
-	if !ok {
-		return nil, fmt.Errorf("not found: %s", key)
-	}
-	return io.NopCloser(strings.NewReader(string(data))), nil
-}
-
 var _ = Describe("GraphMaterializer", func() {
 	const tenantID = "test-tenant"
 
 	var (
 		ctx   context.Context
 		graph graphdb.GraphDB
-		store *fakeStorage
+		store *storagetest.Fake
 		cfg   config.ArtifactsConfig
 		m     *artifacts.GraphMaterializer
 	)
+
+	// putFile stores data at key, replacing any object already there.
+	putFile := func(key string, data []byte) {
+		Expect(store.Put(ctx, key, bytes.NewReader(data))).To(Succeed())
+	}
 
 	// newGraph returns a memdriver graph holding the control the fixture's
 	// artifacts hang off, as catalog ingest would have created it.
@@ -211,11 +188,8 @@ var _ = Describe("GraphMaterializer", func() {
 		crJSON, err := json.Marshal(cr)
 		Expect(err).NotTo(HaveOccurred())
 
-		store = &fakeStorage{
-			files: map[string][]byte{
-				"test-tenant/analysis/artifacts/job-1/ac-1.json": crJSON,
-			},
-		}
+		store = &storagetest.Fake{}
+		putFile("test-tenant/analysis/artifacts/job-1/ac-1.json", crJSON)
 
 		m = artifacts.NewGraphMaterializer(graph, store, cfg)
 	})
@@ -334,7 +308,7 @@ var _ = Describe("GraphMaterializer", func() {
 			changed.Description = "revised wording"
 			crJSON, err := json.Marshal(artifacts.ControlResult{ControlID: "ac-1", Artifacts: []artifacts.ConsensusArtifact{changed}})
 			Expect(err).NotTo(HaveOccurred())
-			store.files["test-tenant/analysis/artifacts/job-2/ac-1.json"] = crJSON
+			putFile("test-tenant/analysis/artifacts/job-2/ac-1.json", crJSON)
 
 			err = m.Materialize(ctx, tenantID, "job-2")
 			Expect(err).To(MatchError(graphdb.ErrNodeExists))
@@ -360,7 +334,7 @@ var _ = Describe("GraphMaterializer", func() {
 			Expect(m.Materialize(ctx, tenantID, "job-1")).To(Succeed())
 			before, err := graph.GetNode(ctx, tenantID, artID)
 			Expect(err).NotTo(HaveOccurred())
-			store.files["test-tenant/analysis/artifacts/job-2/ac-1.json"] = store.files["test-tenant/analysis/artifacts/job-1/ac-1.json"]
+			putFile("test-tenant/analysis/artifacts/job-2/ac-1.json", store.Objects()["test-tenant/analysis/artifacts/job-1/ac-1.json"])
 
 			Expect(m.Materialize(ctx, tenantID, "job-2")).To(Succeed())
 
@@ -382,7 +356,7 @@ var _ = Describe("GraphMaterializer", func() {
 			drifted.Description = "revised wording"
 			crJSON, err := json.Marshal(artifacts.ControlResult{ControlID: "ac-1", Artifacts: []artifacts.ConsensusArtifact{drifted}})
 			Expect(err).NotTo(HaveOccurred())
-			store.files["test-tenant/analysis/artifacts/job-1/ac-1.json"] = crJSON
+			putFile("test-tenant/analysis/artifacts/job-1/ac-1.json", crJSON)
 
 			err = m.Materialize(ctx, tenantID, "job-1")
 			Expect(err).To(MatchError(graphdb.ErrNodeExists))
@@ -413,7 +387,7 @@ var _ = Describe("GraphMaterializer", func() {
 				Artifacts: []artifacts.ConsensusArtifact{fresh, policyArtifact},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			store.files["test-tenant/analysis/artifacts/job-2/ac-1.json"] = crJSON
+			putFile("test-tenant/analysis/artifacts/job-2/ac-1.json", crJSON)
 
 			err = m.Materialize(ctx, tenantID, "job-2")
 			Expect(err).To(MatchError(graphdb.ErrNodeExists))
@@ -427,7 +401,7 @@ var _ = Describe("GraphMaterializer", func() {
 			cited.Properties = map[string]string{"CITATION": "a"}
 			crJSON, err := json.Marshal(artifacts.ControlResult{ControlID: "ac-1", Artifacts: []artifacts.ConsensusArtifact{cited}})
 			Expect(err).NotTo(HaveOccurred())
-			store.files["test-tenant/analysis/artifacts/job-1/ac-1.json"] = crJSON
+			putFile("test-tenant/analysis/artifacts/job-1/ac-1.json", crJSON)
 			Expect(m.Materialize(ctx, tenantID, "job-1")).To(Succeed())
 			before, err := graph.GetNode(ctx, tenantID, artID)
 			Expect(err).NotTo(HaveOccurred())
@@ -435,7 +409,7 @@ var _ = Describe("GraphMaterializer", func() {
 			cited.Properties = map[string]string{"CITATION": "b"}
 			crJSON, err = json.Marshal(artifacts.ControlResult{ControlID: "ac-1", Artifacts: []artifacts.ConsensusArtifact{cited}})
 			Expect(err).NotTo(HaveOccurred())
-			store.files["test-tenant/analysis/artifacts/job-2/ac-1.json"] = crJSON
+			putFile("test-tenant/analysis/artifacts/job-2/ac-1.json", crJSON)
 
 			err = m.Materialize(ctx, tenantID, "job-2")
 			Expect(err).To(MatchError(graphdb.ErrNodeExists))
@@ -691,7 +665,7 @@ var _ = Describe("GraphMaterializer", func() {
 			Artifacts: []artifacts.ConsensusArtifact{{Name: "audit log", Type: artifacts.ArtifactRecord, Confidence: 1.0}},
 		})
 		Expect(err).NotTo(HaveOccurred())
-		store.files["test-tenant/analysis/artifacts/job-1/ac-2.json"] = crJSON
+		putFile("test-tenant/analysis/artifacts/job-1/ac-2.json", crJSON)
 
 		err = m.Materialize(ctx, tenantID, "job-1")
 		Expect(err).To(MatchError(graphdb.ErrNodeNotFound))
@@ -710,14 +684,14 @@ var _ = Describe("GraphMaterializer", func() {
 		storeJob := func(cr artifacts.ControlResult) {
 			crJSON, err := json.Marshal(cr)
 			Expect(err).NotTo(HaveOccurred())
-			store.files = map[string][]byte{"test-tenant/analysis/artifacts/job-1/ac-1.json": crJSON}
+			putFile("test-tenant/analysis/artifacts/job-1/ac-1.json", crJSON)
 		}
 
 		It("writes nothing when an artifact has an unknown type", func() {
-			store.files = map[string][]byte{"test-tenant/analysis/artifacts/job-1/ac-1.json": []byte(
-				`{"control_id":"ac-1","artifacts":[` +
-					`{"name":"access control policy","type":0,"confidence":1},` +
-					`{"name":"mystery artifact","type":42,"confidence":1}]}`)}
+			putFile("test-tenant/analysis/artifacts/job-1/ac-1.json", []byte(
+				`{"control_id":"ac-1","artifacts":[`+
+					`{"name":"access control policy","type":0,"confidence":1},`+
+					`{"name":"mystery artifact","type":42,"confidence":1}]}`))
 
 			err := m.Materialize(ctx, tenantID, "job-1")
 			Expect(err).To(HaveOccurred())

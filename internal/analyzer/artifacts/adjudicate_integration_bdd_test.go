@@ -18,6 +18,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 )
 
 var _ = Describe("Adjudicate on Apache AGE", Ordered, func() {
@@ -65,17 +66,17 @@ var _ = Describe("Adjudicate on Apache AGE", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.NewMatches).To(Equal(2))
 
-		llm := &scriptedLLM{reply: func(req *llmclient.CompletionRequest) (string, error) {
+		llm := &llmclienttest.Fake{CompleteFunc: replying(func(req *llmclient.CompletionRequest) (string, error) {
 			if strings.Contains(req.Messages[len(req.Messages)-1].Content, "access") {
 				return answer("YES"), nil
 			}
 			return answer("NO"), nil
-		}}
+		})}
 		cfg := config.ArtifactAdjudicationConfig{Enabled: true, Models: []string{"m1"}, SamplesPerModel: 1,
 			MaxTokens: 200, ConsensusThreshold: 0.6, MaxErrorRate: 0, MaxAttempts: 3,
 			LeaseDuration: 15 * time.Minute, LeaseBatch: 10, PanelConcurrency: 4,
 			RetryBaseDelay: time.Minute, RetryMaxDelay: 24 * time.Hour}
-		adj = artifacts.NewAdjudicator(g, store, llm, &fixedPrompts{}, cfg)
+		adj = artifacts.NewAdjudicator(g, store, llm, newFixedPrompts(), cfg)
 		now := reconcileNow.Add(time.Hour)
 		opts = artifacts.AdjudicateOptions{MaxPairs: 10, Now: func() time.Time { return now }}
 	})

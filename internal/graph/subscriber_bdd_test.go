@@ -13,6 +13,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
@@ -313,11 +314,11 @@ var _ = Describe("Subscriber Event Handling", func() {
 var _ = Describe("Subscriber Lifecycle", func() {
 	var (
 		svc     *graph.Service
-		mockBus *mockNATSClient
+		mockBus *natsbustest.Fake
 	)
 
 	BeforeEach(func() {
-		mockBus = &mockNATSClient{}
+		mockBus = &natsbustest.Fake{}
 		svc = graph.New(&mockGraphDB{}, &mockVectorDB{}, mockBus)
 	})
 
@@ -340,10 +341,8 @@ var _ = Describe("Subscriber Lifecycle", func() {
 	})
 
 	It("propagates drain errors on stop", func() {
-		mockBus.queueSubscribeFunc = func(_ context.Context, _, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
-			return &mockSubscription{drainFunc: func() error {
-				return errors.New("drain failed")
-			}}, nil
+		mockBus.QueueSubscribeFunc = func(_ context.Context, _, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
+			return &natsbustest.Sub{DrainErr: errors.New("drain failed")}, nil
 		}
 		Expect(svc.Start(context.Background())).To(Succeed())
 		err := svc.Stop(context.Background())

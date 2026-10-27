@@ -3,6 +3,7 @@
 package relationship_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -114,12 +116,11 @@ var _ = Describe("Full Pipeline Flow", func() {
 		}
 
 		// Setup prompt registry with realistic templates matching relationship.yaml.
-		prompts := &mockPromptRegistry{
-			spec: &prompt.PromptSpec{
-				Name:    "relationship",
-				Version: "1.0.0",
-				Templates: prompt.TemplateSet{
-					System: `You are a compliance analyst classifying the relationship between two
+		prompts := specRegistry(&prompt.PromptSpec{
+			Name:    "relationship",
+			Version: "1.0.0",
+			Templates: prompt.TemplateSet{
+				System: `You are a compliance analyst classifying the relationship between two
 requirements from different frameworks.
 
 ${classification_guidance}
@@ -132,7 +133,7 @@ CONTRIBUTION_TYPE: <INTEGRAL_TO|EXAMPLE_OF|N/A>  (only when RELATIONSHIP is CONT
 JUSTIFICATION: <one to two sentences explaining your reasoning, including subject domains identified>
 CONFIDENCE: <HIGH|MEDIUM|LOW>
 `,
-					User: `SOURCE FRAMEWORK: ${source_framework}
+				User: `SOURCE FRAMEWORK: ${source_framework}
 TARGET FRAMEWORK: ${target_framework}
 
 ${few_shot_examples}
@@ -151,9 +152,8 @@ ${target_text}
 
 Classify the NIST IR 8477 relationship FROM the source TO the target.
 `,
-				},
 			},
-		}
+		})
 
 		// Config: 2 models, 1 sample each.
 		cfg := config.RelationshipConfig{
@@ -226,7 +226,7 @@ Classify the NIST IR 8477 relationship FROM the source TO the target.
 		}
 
 		// Step 5: Compute consensus and store pair results.
-		store := newMockStorage()
+		store := &storagetest.Fake{}
 		for pairKey, votes := range pairVotes {
 			consensus := relationship.ComputeConsensus(votes)
 			parts := strings.SplitN(pairKey, "--", 2)
@@ -244,7 +244,7 @@ Classify the NIST IR 8477 relationship FROM the source TO the target.
 			Expect(err).NotTo(HaveOccurred())
 
 			storageKey := fmt.Sprintf("test-tenant/analysis/relationship/job-1/%s.json", pairKey)
-			store.data[storageKey] = data
+			Expect(store.Put(ctx, storageKey, bytes.NewReader(data))).To(Succeed())
 		}
 
 		// Step 7-8: Create GraphMaterializer and materialize.
@@ -286,16 +286,14 @@ var _ = Describe("Aggregate with Realistic Data", func() {
 		ctx := testspecs.SetupTenantContext("test-tenant")
 
 		candidates := &mockCandidateProvider{}
-		prompts := &mockPromptRegistry{
-			spec: &prompt.PromptSpec{
-				Name:    "relationship",
-				Version: "1.0.0",
-				Templates: prompt.TemplateSet{
-					System: "System: ${classification_guidance} ${relationship_definitions}",
-					User:   "User: ${source_text} ${target_text} ${source_id} ${target_id} ${source_framework} ${target_framework} ${source_type} ${source_level} ${source_ancestor} ${target_type} ${target_level} ${target_ancestor} ${few_shot_examples}",
-				},
+		prompts := specRegistry(&prompt.PromptSpec{
+			Name:    "relationship",
+			Version: "1.0.0",
+			Templates: prompt.TemplateSet{
+				System: "System: ${classification_guidance} ${relationship_definitions}",
+				User:   "User: ${source_text} ${target_text} ${source_id} ${target_id} ${source_framework} ${target_framework} ${source_type} ${source_level} ${source_ancestor} ${target_type} ${target_level} ${target_ancestor} ${few_shot_examples}",
 			},
-		}
+		})
 
 		cfg := config.RelationshipConfig{
 			Enabled:         true,

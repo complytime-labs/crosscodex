@@ -17,6 +17,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
+	"github.com/complytime-labs/crosscodex/pkg/retention/retentiontest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -243,5 +244,45 @@ var _ = Describe("retention_holds RLS", Ordered, func() {
 			Scope: retention.HoldScope{TenantID: "tenant-a"},
 		})
 		Expect(err).To(HaveOccurred())
+	})
+})
+
+// The Postgres store must pass the same contract retentiontest.Fake does, as
+// the restricted app_user role under row-level security. Seeding and cleanup
+// use a superuser connection, the privileged path that can write global
+// (tenant-less) holds and any timestamps.
+var _ = Describe("pgHoldStore contract", func() {
+	retentiontest.HoldStoreContract(func(token string) retentiontest.HoldStoreEnv {
+		admin, err := sql.Open("pgx", os.Getenv("TEST_DATABASE_DSN"))
+		Expect(err).NotTo(HaveOccurred(), "open superuser connection")
+		DeferCleanup(func() {
+			_, err := admin.ExecContext(context.Background(),
+				"DELETE FROM public.retention_holds WHERE name LIKE '%' || $1", token)
+			Expect(err).NotTo(HaveOccurred(), "delete this spec's holds")
+			Expect(admin.Close()).To(Succeed())
+		})
+		return retentiontest.HoldStoreEnv{
+			// The retention pool, as cmd/crosscodexd/bootstrap.go builds the store.
+			Store: retention.NewPgHoldStore(db.NewRetentionTenantPool(holdIntegPool)),
+			Seed: func(h retention.Hold) {
+				var tenantID *string
+				if h.Scope.TenantID != "" {
+					tenantID = &h.Scope.TenantID
+				}
+				var jobID, releasedBy *string
+				if h.Scope.JobID != "" {
+					jobID = &h.Scope.JobID
+				}
+				if h.ReleasedBy != "" {
+					releasedBy = &h.ReleasedBy
+				}
+				_, err := admin.ExecContext(context.Background(), `
+					INSERT INTO public.retention_holds
+						(name, tenant_id, created_before, job_id, created_at, created_by, expires_at, released_at, released_by)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+					h.Name, tenantID, h.Scope.CreatedBefore, jobID, h.CreatedAt, h.CreatedBy, h.ExpiresAt, h.ReleasedAt, releasedBy)
+				Expect(err).NotTo(HaveOccurred(), "seed hold %q", h.Name)
+			},
+		}
 	})
 })

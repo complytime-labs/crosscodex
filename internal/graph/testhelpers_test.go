@@ -9,7 +9,6 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
-	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
 
@@ -162,50 +161,6 @@ func (m *mockVectorDB) FindSimilar(ctx context.Context, tenantID string, query v
 func (m *mockVectorDB) DeleteByModel(ctx context.Context, tenantID, catalogID, model string) error {
 	if m.deleteByModelFunc != nil {
 		return m.deleteByModelFunc(ctx, tenantID, catalogID, model)
-	}
-	return nil
-}
-
-// mockNATSClient is a test double for natsbus.Client.
-type mockNATSClient struct {
-	queueSubscribeFunc func(ctx context.Context, subject, queue string, handler natsbus.MessageHandler) (natsbus.Subscription, error)
-}
-
-func (m *mockNATSClient) Publish(_ context.Context, _ string, _ []byte) error { return nil }
-func (m *mockNATSClient) PublishWithHeaders(_ context.Context, _ string, _ []byte, _ map[string][]string) error {
-	return nil
-}
-func (m *mockNATSClient) Subscribe(_ context.Context, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
-	return nil, nil
-}
-func (m *mockNATSClient) QueueSubscribe(ctx context.Context, subject, queue string, handler natsbus.MessageHandler) (natsbus.Subscription, error) {
-	if m.queueSubscribeFunc != nil {
-		return m.queueSubscribeFunc(ctx, subject, queue, handler)
-	}
-	return &mockSubscription{}, nil
-}
-func (m *mockNATSClient) CreateStream(_ context.Context, _ natsbus.StreamConfig) error { return nil }
-func (m *mockNATSClient) DeleteStream(_ context.Context, _ string) error               { return nil }
-func (m *mockNATSClient) AuditStreamRetention(_ context.Context) (map[string]time.Duration, error) {
-	return nil, nil
-}
-func (m *mockNATSClient) Close() error { return nil }
-
-// mockSubscription is a test double for natsbus.Subscription.
-type mockSubscription struct {
-	drainFunc    func() error
-	drained      bool
-	unsubscribed bool
-}
-
-func (m *mockSubscription) Unsubscribe() error {
-	m.unsubscribed = true
-	return nil
-}
-func (m *mockSubscription) Drain() error {
-	m.drained = true
-	if m.drainFunc != nil {
-		return m.drainFunc()
 	}
 	return nil
 }

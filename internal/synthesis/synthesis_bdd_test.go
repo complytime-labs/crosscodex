@@ -16,6 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -714,7 +715,7 @@ var _ = Describe("Service", func() {
 	var (
 		cfg             config.SynthesisConfig
 		actionableTypes []string
-		mockDB          *mockConnection
+		mockDB          *dbtest.Conn
 		svc             *synthesis.Service
 		ctx             context.Context
 	)
@@ -761,26 +762,15 @@ var _ = Describe("Service", func() {
 
 			_, err := svc.Execute(ctx, "job-commit", inputs, nil)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(mockDB.tx.committed).To(BeTrue())
-			Expect(mockDB.tx.rollbackCount).To(Equal(0))
+			Expect(mockDB.Tx.Commits()).To(Equal(1))
+			Expect(mockDB.Tx.Rollbacks()).To(Equal(0))
 		})
 
 		It("persists viability weights via a single batch UPDATE with RETURNING", func() {
 			var capturedQueries []string
-			mockDB.tx.queryFunc = func(_ context.Context, query string, args ...any) (db.Rows, error) {
+			mockDB.Tx.QueryFunc = func(_ context.Context, query string, args ...any) (db.Rows, error) {
 				capturedQueries = append(capturedQueries, query)
-				// Return one row per input (args[0] is []float64 viabilities).
-				var count int
-				if len(args) > 0 {
-					if v, ok := args[0].([]float64); ok {
-						count = len(v)
-					}
-				}
-				ids := make([]string, count)
-				for i := range ids {
-					ids[i] = "matched"
-				}
-				return &mockRows{sourceIDs: ids}, nil
+				return sourceIDRows("matched", args), nil
 			}
 
 			inputs := []synthesis.SynthesisInput{
@@ -990,7 +980,7 @@ var _ = Describe("Service", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, synthesis.ErrDBUpdate)).To(BeTrue())
 			Expect(result).To(BeNil())
-			Expect(mockDB.tx.rollbackCount).To(Equal(1))
+			Expect(mockDB.Tx.Rollbacks()).To(Equal(1))
 			// Part 3: data unchanged after failure
 			Expect(inputs).To(Equal(inputsBefore))
 		})
@@ -1008,7 +998,7 @@ var _ = Describe("Service", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, synthesis.ErrDBNoRowsAffected)).To(BeTrue())
 			Expect(result).To(BeNil())
-			Expect(mockDB.tx.rollbackCount).To(Equal(1))
+			Expect(mockDB.Tx.Rollbacks()).To(Equal(1))
 			// Part 3: data unchanged after failure
 			Expect(inputs).To(Equal(inputsBefore))
 		})
@@ -1030,7 +1020,7 @@ var _ = Describe("Service", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, synthesis.ErrImmutabilityViolation)).To(BeTrue())
 			Expect(result).To(BeNil())
-			Expect(mockDB.tx.rollbackCount).To(Equal(1))
+			Expect(mockDB.Tx.Rollbacks()).To(Equal(1))
 			// Part 3: data unchanged after failure
 			Expect(inputs).To(Equal(inputsBefore))
 		})
@@ -1041,7 +1031,7 @@ var _ = Describe("Service", func() {
 		})
 
 		It("returns ErrDBUpdate when tx.Commit() fails", func() {
-			mockDB.tx.commitErr = errors.New("disk full")
+			mockDB.Tx.CommitErr = errors.New("disk full")
 			svc = synthesis.New(mockDB, cfg, actionableTypes,
 				synthesis.WithLogger(testspecs.GinkgoLogger()))
 
@@ -1058,11 +1048,13 @@ var _ = Describe("Service", func() {
 			// Verify inputs are unmodified (3-part negative test rule: data unchanged).
 			Expect(inputs).To(Equal(inputsBefore))
 			// Commit failure does NOT trigger rollback (commit is the final step).
-			Expect(mockDB.tx.rollbackCount).To(Equal(0))
+			Expect(mockDB.Tx.Rollbacks()).To(Equal(0))
 		})
 
 		It("rolls back on Begin failure", func() {
-			mockDB.beginErr = errors.New("cannot begin transaction")
+			mockDB.BeginFunc = func(context.Context) (db.Transaction, error) {
+				return nil, errors.New("cannot begin transaction")
+			}
 			svc = synthesis.New(mockDB, cfg, actionableTypes,
 				synthesis.WithLogger(testspecs.GinkgoLogger()))
 
@@ -1239,8 +1231,6 @@ var _ = Describe("Service", func() {
 			r1, err := svc.Execute(ctx, "job-hash-1", inputs, classifications)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Reset mock state for second call
-			mockDB.tx.committed = false
 			r2, err := svc.Execute(ctx, "job-hash-2", inputs, classifications)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1348,8 +1338,6 @@ var _ = Describe("Service", func() {
 			r1, err := svc.Execute(ctx, "job-hash-diff-1", inputsA, nil)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Reset mock state
-			mockDB.tx.committed = false
 			r2, err := svc.Execute(ctx, "job-hash-diff-2", inputsB, nil)
 			Expect(err).NotTo(HaveOccurred())
 

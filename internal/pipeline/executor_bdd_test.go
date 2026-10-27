@@ -1,12 +1,11 @@
 package pipeline_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,89 +21,15 @@ import (
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/analyzertest"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
-	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
-
-// fakeNATSClient records publishes for test assertions.
-type fakeNATSClient struct {
-	mu         sync.Mutex
-	publishes  []fakePublish
-	publishErr error
-}
-
-type fakePublish struct {
-	subject string
-	payload []byte
-}
-
-func (f *fakeNATSClient) Publish(_ context.Context, subject string, data []byte) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.publishErr != nil {
-		return f.publishErr
-	}
-	f.publishes = append(f.publishes, fakePublish{subject: subject, payload: data})
-	return nil
-}
-
-func (f *fakeNATSClient) PublishWithHeaders(_ context.Context, subject string, data []byte, headers map[string][]string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.publishErr != nil {
-		return f.publishErr
-	}
-	f.publishes = append(f.publishes, fakePublish{subject: subject, payload: data})
-	return nil
-}
-
-func (f *fakeNATSClient) Subscribe(_ context.Context, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
-	return nil, errors.New("Subscribe not implemented in fakeNATSClient")
-}
-
-func (f *fakeNATSClient) QueueSubscribe(_ context.Context, _, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
-	return nil, errors.New("QueueSubscribe not implemented in fakeNATSClient")
-}
-
-func (f *fakeNATSClient) CreateStream(_ context.Context, _ natsbus.StreamConfig) error {
-	return errors.New("CreateStream not implemented in fakeNATSClient")
-}
-
-func (f *fakeNATSClient) DeleteStream(_ context.Context, _ string) error {
-	return errors.New("DeleteStream not implemented in fakeNATSClient")
-}
-
-func (f *fakeNATSClient) AuditStreamRetention(_ context.Context) (map[string]time.Duration, error) {
-	return nil, errors.New("AuditStreamRetention not implemented in fakeNATSClient")
-}
-
-func (f *fakeNATSClient) Close() error {
-	return nil
-}
-
-func (f *fakeNATSClient) publishCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.publishes)
-}
-
-// hasPublish reports whether a message was published to subject. It reads the
-// recorded publishes under the lock so callers (e.g. Eventually polls) do not
-// race the async executeJob goroutine that appends via Publish.
-func (f *fakeNATSClient) hasPublish(subject string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, pub := range f.publishes {
-		if pub.subject == subject {
-			return true
-		}
-	}
-	return false
-}
 
 // fakeSynthesisExecutor records Execute calls.
 type fakeSynthesisExecutor struct {
@@ -221,140 +146,42 @@ func (f *fakeAttestation) linkCount() int {
 	return len(f.linkCalls)
 }
 
-// executorFakeStorage implements storage.Provider for executor tests.
-type executorFakeStorage struct {
-	mu      sync.Mutex
-	objects map[string][]byte
-	putErr  error
-	getErr  error
-}
-
-func newExecutorFakeStorage() *executorFakeStorage {
-	return &executorFakeStorage{
-		objects: make(map[string][]byte),
+// newStubOf returns an analyzertest.Stub whose unscripted behavior suits
+// pipeline specs: GenerateWork yields no tasks and Aggregate yields a bare
+// Output naming the analyzer. Metadata is an empty map rather than nil to
+// match the Output shape the pre-migration stubs returned (internal/analysis
+// engine.go also tolerates nil, so this is shape-preservation, not a
+// requirement). Specs assign GenerateWorkFunc / AggregateFunc to override.
+func newStubOf[T proto.Message](name string, schema proto.Message, deps ...string) *analyzertest.Stub[T] {
+	return &analyzertest.Stub[T]{
+		AnalyzerName: name,
+		Dependencies: deps,
+		Schema:       schema,
+		GenerateWorkFunc: func(context.Context, T, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			return nil, nil
+		},
+		AggregateFunc: func(context.Context, []analyzer.TaskResult) (*analyzer.Output, error) {
+			return &analyzer.Output{AnalyzerName: name, Metadata: map[string]string{}}, nil
+		},
 	}
 }
 
-func (f *executorFakeStorage) Put(ctx context.Context, key string, data io.Reader) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.putErr != nil {
-		return f.putErr
-	}
-	buf := new(bytes.Buffer)
-	if _, err := buf.ReadFrom(data); err != nil {
-		return err
-	}
-	f.objects[key] = buf.Bytes()
-	return nil
+// newStub creates an analyzer.Analyzer[*emptypb.Empty] that generates no tasks.
+func newStub(name string, deps ...string) *analyzertest.Stub[*emptypb.Empty] {
+	return newStubOf[*emptypb.Empty](name, &emptypb.Empty{}, deps...)
 }
 
-func (f *executorFakeStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.getErr != nil {
-		return nil, f.getErr
-	}
-	data, exists := f.objects[key]
-	if !exists {
-		return nil, errors.New("object not found")
-	}
-	return io.NopCloser(bytes.NewReader(data)), nil
-}
-
-func (f *executorFakeStorage) Delete(ctx context.Context, key string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.objects, key)
-	return nil
-}
-
-func (f *executorFakeStorage) List(ctx context.Context, prefix string) ([]storage.ObjectMetadata, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var result []storage.ObjectMetadata
-	for k := range f.objects {
-		result = append(result, storage.ObjectMetadata{Key: k})
-	}
-	return result, nil
-}
-
-func (f *executorFakeStorage) Exists(ctx context.Context, key string) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	_, exists := f.objects[key]
-	return exists, nil
-}
-
-func (f *executorFakeStorage) Stat(ctx context.Context, key string) (*storage.ObjectMetadata, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	data, exists := f.objects[key]
-	if !exists {
-		return nil, errors.New("object not found")
-	}
-	return &storage.ObjectMetadata{Key: key, Size: int64(len(data))}, nil
-}
-
-func (f *executorFakeStorage) Close() error {
-	return nil
-}
-
-// stubAnalyzer implements analyzer.Analyzer[*emptypb.Empty] for executor tests.
-type stubAnalyzer struct {
-	name        string
-	deps        []string
-	genWorkFn   func(ctx context.Context, input *emptypb.Empty, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error)
-	aggregateFn func(ctx context.Context, taskResults []analyzer.TaskResult) (*analyzer.Output, error)
-}
-
-func (s *stubAnalyzer) Name() string        { return s.name }
-func (s *stubAnalyzer) DependsOn() []string { return s.deps }
-
-func (s *stubAnalyzer) GenerateWork(ctx context.Context, input *emptypb.Empty, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-	if s.genWorkFn != nil {
-		return s.genWorkFn(ctx, input, cfg)
-	}
-	return nil, nil
-}
-
-func (s *stubAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer.TaskResult) (*analyzer.Output, error) {
-	if s.aggregateFn != nil {
-		return s.aggregateFn(ctx, taskResults)
-	}
-	return &analyzer.Output{AnalyzerName: s.name, Metadata: map[string]string{}}, nil
-}
-
-func (s *stubAnalyzer) ResultSchema() proto.Message { return &emptypb.Empty{} }
-
-// stubControlAnalyzer implements analyzer.Analyzer[*pb.Control], the generic
-// type every production analyzer (classify/embedding/artifacts/requires/
+// newControlStub creates an analyzer.Analyzer[*pb.Control], the generic type
+// every production analyzer (classify/embedding/artifacts/requires/
 // relationship) is registered as. Needed wherever a test analyzer must
 // participate in Controls fan-out (per-control GenerateWork calls) or receive
 // the candidate-dependent pass's placeholder *pb.Control Input — both call
 // GenerateWorkFromProto with a *pb.Control, which fails the registeredWrapper
-// type assertion against stubAnalyzer's *emptypb.Empty.
-type stubControlAnalyzer struct {
-	name      string
-	deps      []string
-	genWorkFn func(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error)
+// type assertion against newStub's *emptypb.Empty. It generates no tasks until
+// a spec assigns GenerateWorkFunc.
+func newControlStub(name string, deps ...string) *analyzertest.Stub[*pb.Control] {
+	return newStubOf[*pb.Control](name, &pb.Control{}, deps...)
 }
-
-func (s *stubControlAnalyzer) Name() string        { return s.name }
-func (s *stubControlAnalyzer) DependsOn() []string { return s.deps }
-
-func (s *stubControlAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-	if s.genWorkFn != nil {
-		return s.genWorkFn(ctx, input, cfg)
-	}
-	return nil, nil
-}
-
-func (s *stubControlAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer.TaskResult) (*analyzer.Output, error) {
-	return &analyzer.Output{AnalyzerName: s.name, Metadata: map[string]string{}}, nil
-}
-
-func (s *stubControlAnalyzer) ResultSchema() proto.Message { return &pb.Control{} }
 
 // fakeCatalogControlsReader implements pipeline.CatalogControlsReader,
 // recording each call's (tenantID, catalogID) and returning a fixed control
@@ -490,10 +317,15 @@ func registerTwoPassAnalyzers(reg *analyzer.Registry) {
 			return []analyzer.Task{{TaskID: name + "-task", Payload: &emptypb.Empty{}}}, nil
 		}
 	}
-	Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "classify", genWorkFn: mkControl("classify")})).To(Succeed())
-	Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "embedding", deps: []string{"classify"}, genWorkFn: mkControl("embedding")})).To(Succeed())
-	Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "requires", deps: []string{"embedding"}, genWorkFn: mkControl("requires")})).To(Succeed())
-	Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "relationship", deps: []string{"embedding"}, genWorkFn: mkControl("relationship")})).To(Succeed())
+	stub := func(name string, deps ...string) *analyzertest.Stub[*pb.Control] {
+		s := newControlStub(name, deps...)
+		s.GenerateWorkFunc = mkControl(name)
+		return s
+	}
+	Expect(analyzer.Register[*pb.Control](reg, stub("classify"))).To(Succeed())
+	Expect(analyzer.Register[*pb.Control](reg, stub("embedding", "classify"))).To(Succeed())
+	Expect(analyzer.Register[*pb.Control](reg, stub("requires", "embedding"))).To(Succeed())
+	Expect(analyzer.Register[*pb.Control](reg, stub("relationship", "embedding"))).To(Succeed())
 }
 
 var _ = Describe("Executor", func() {
@@ -505,8 +337,8 @@ var _ = Describe("Executor", func() {
 		synth     *fakeSynthesisExecutor
 		attestor  *fakeAttestation
 		converter *pipelineattestation.Converter
-		bus       *fakeNATSClient
-		storage   *executorFakeStorage
+		bus       *natsbustest.Fake
+		storage   *storagetest.Fake
 		svc       *pipeline.Service
 		tenantID  string
 		jobID     string
@@ -524,12 +356,12 @@ var _ = Describe("Executor", func() {
 		synth = &fakeSynthesisExecutor{}
 		attestor = &fakeAttestation{}
 		converter = pipelineattestation.NewConverter()
-		bus = &fakeNATSClient{}
-		storage = newExecutorFakeStorage()
+		bus = &natsbustest.Fake{}
+		storage = &storagetest.Fake{}
 
 		// Register stub analyzers.
-		a1 := &stubAnalyzer{name: "analyzer-a"}
-		a2 := &stubAnalyzer{name: "analyzer-b", deps: []string{"analyzer-a"}}
+		a1 := newStub("analyzer-a")
+		a2 := newStub("analyzer-b", "analyzer-a")
 
 		Expect(analyzer.Register[*emptypb.Empty](registry, a1)).To(Succeed())
 		Expect(analyzer.Register[*emptypb.Empty](registry, a2)).To(Succeed())
@@ -643,7 +475,8 @@ var _ = Describe("Executor", func() {
 			Expect(synth.execCount()).To(Equal(1))
 
 			// Verify NATS events published (running, stage events, completed).
-			Expect(bus.publishCount()).To(BeNumerically(">", 0))
+			Expect(bus.Published()).NotTo(BeEmpty())
+			Expect(bus.Subscriptions()).To(BeEmpty(), "job execution only publishes")
 		})
 
 		It("skips completed stages on resume", func() {
@@ -697,8 +530,10 @@ var _ = Describe("Executor", func() {
 			genWork := func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 				return []analyzer.Task{{TaskID: "t1", Payload: &emptypb.Empty{}}}, nil
 			}
-			fa1 := &stubControlAnalyzer{name: "analyzer-a", genWorkFn: genWork}
-			fa2 := &stubControlAnalyzer{name: "analyzer-b", deps: []string{"analyzer-a"}, genWorkFn: genWork}
+			fa1 := newControlStub("analyzer-a")
+			fa1.GenerateWorkFunc = genWork
+			fa2 := newControlStub("analyzer-b", "analyzer-a")
+			fa2.GenerateWorkFunc = genWork
 			Expect(analyzer.Register[*pb.Control](failRegistry, fa1)).To(Succeed())
 			Expect(analyzer.Register[*pb.Control](failRegistry, fa2)).To(Succeed())
 
@@ -796,7 +631,8 @@ var _ = Describe("Executor", func() {
 
 			// Verify state events published.
 			// Expect at least: running, synthesis.started, synthesis.completed, graph.started, graph.completed, completed.
-			Expect(bus.publishCount()).To(BeNumerically(">=", 6))
+			Expect(len(bus.Published())).To(BeNumerically(">=", 6))
+			Expect(bus.Subscriptions()).To(BeEmpty(), "job execution only publishes")
 		})
 
 		It("completes job even when attestation finalization fails", func() {
@@ -1116,7 +952,9 @@ var _ = Describe("Executor", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() bool {
-				return bus.hasPublish(expectedSubject)
+				return slices.ContainsFunc(bus.Published(), func(p natsbustest.Publication) bool {
+					return p.Subject == expectedSubject
+				})
 			}, "1s", "50ms").Should(BeTrue())
 		})
 	})
@@ -1409,23 +1247,19 @@ var _ = Describe("Executor", func() {
 			// allOutputs so runSynthesis's later persistViability call finds
 			// rows to update.
 			reg := analyzer.NewRegistry()
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "classify"})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "embedding", deps: []string{"classify"}})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "artifacts"})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{
-				name: "requires",
-				deps: []string{"embedding"},
-				genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return []analyzer.Task{{TaskID: "requires-task", Payload: &emptypb.Empty{}}}, nil
-				},
-			})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{
-				name: "relationship",
-				deps: []string{"embedding"},
-				genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return []analyzer.Task{{TaskID: "relationship-task", Payload: &emptypb.Empty{}}}, nil
-				},
-			})).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](reg, newControlStub("classify"))).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](reg, newControlStub("embedding", "classify"))).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](reg, newControlStub("artifacts"))).To(Succeed())
+			requiresStub := newControlStub("requires", "embedding")
+			requiresStub.GenerateWorkFunc = func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return []analyzer.Task{{TaskID: "requires-task", Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, requiresStub)).To(Succeed())
+			relationshipStub := newControlStub("relationship", "embedding")
+			relationshipStub.GenerateWorkFunc = func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return []analyzer.Task{{TaskID: "relationship-task", Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, relationshipStub)).To(Succeed())
 
 			resumeDispatcher := &executorTestDispatcher{}
 			collector := &executorTestCollector{}
@@ -1531,16 +1365,15 @@ var _ = Describe("Executor", func() {
 			var calls []call
 
 			reg := analyzer.NewRegistry()
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{
-				name: "classify",
-				genWorkFn: func(ctx context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					catalogID, ok := analyzer.CatalogIDFromContext(ctx)
-					mu.Lock()
-					calls = append(calls, call{controlID: input.GetControlId(), catalogID: catalogID, ok: ok})
-					mu.Unlock()
-					return []analyzer.Task{{TaskID: input.GetControlId() + "-task", Payload: &emptypb.Empty{}}}, nil
-				},
-			})).To(Succeed())
+			classifyStub := newControlStub("classify")
+			classifyStub.GenerateWorkFunc = func(ctx context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				catalogID, ok := analyzer.CatalogIDFromContext(ctx)
+				mu.Lock()
+				calls = append(calls, call{controlID: input.GetControlId(), catalogID: catalogID, ok: ok})
+				mu.Unlock()
+				return []analyzer.Task{{TaskID: input.GetControlId() + "-task", Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, classifyStub)).To(Succeed())
 
 			dispatcher := &executorTestDispatcher{}
 			collector := &executorTestCollector{}
@@ -1621,10 +1454,15 @@ var _ = Describe("Executor", func() {
 			// a document-backed job would leave Controls empty and correctly
 			// produce zero tasks for them instead.
 			reg := analyzer.NewRegistry()
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "classify", genWorkFn: captureControl("classify")})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "embedding", deps: []string{"classify"}, genWorkFn: captureControl("embedding")})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "requires", deps: []string{"embedding"}, genWorkFn: captureControl("requires")})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{name: "relationship", deps: []string{"embedding"}, genWorkFn: captureControl("relationship")})).To(Succeed())
+			stub := func(name string, deps ...string) *analyzertest.Stub[*pb.Control] {
+				s := newControlStub(name, deps...)
+				s.GenerateWorkFunc = captureControl(name)
+				return s
+			}
+			Expect(analyzer.Register[*pb.Control](reg, stub("classify"))).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](reg, stub("embedding", "classify"))).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](reg, stub("requires", "embedding"))).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](reg, stub("relationship", "embedding"))).To(Succeed())
 
 			dispatcher := &executorTestDispatcher{}
 			collector := &executorTestCollector{}
@@ -1691,35 +1529,30 @@ var _ = Describe("Executor", func() {
 			var classifyCalls, requiresCalls, relationshipCalls []controlCall
 
 			reg := analyzer.NewRegistry()
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					mu.Lock()
-					classifyCalls = append(classifyCalls, controlCall{controlID: input.GetControlId()})
-					mu.Unlock()
-					return []analyzer.Task{{TaskID: "classify-" + input.GetControlId(), Payload: &emptypb.Empty{}}}, nil
-				},
-			})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{
-				name: "requires",
-				deps: []string{"classify"},
-				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					mu.Lock()
-					requiresCalls = append(requiresCalls, controlCall{controlID: input.GetControlId()})
-					mu.Unlock()
-					return []analyzer.Task{{TaskID: "requires-task", Payload: &emptypb.Empty{}}}, nil
-				},
-			})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{
-				name: "relationship",
-				deps: []string{"classify"},
-				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					mu.Lock()
-					relationshipCalls = append(relationshipCalls, controlCall{controlID: input.GetControlId()})
-					mu.Unlock()
-					return []analyzer.Task{{TaskID: "relationship-task", Payload: &emptypb.Empty{}}}, nil
-				},
-			})).To(Succeed())
+			classifyStub := newControlStub("classify")
+			classifyStub.GenerateWorkFunc = func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				mu.Lock()
+				classifyCalls = append(classifyCalls, controlCall{controlID: input.GetControlId()})
+				mu.Unlock()
+				return []analyzer.Task{{TaskID: "classify-" + input.GetControlId(), Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, classifyStub)).To(Succeed())
+			requiresStub := newControlStub("requires", "classify")
+			requiresStub.GenerateWorkFunc = func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				mu.Lock()
+				requiresCalls = append(requiresCalls, controlCall{controlID: input.GetControlId()})
+				mu.Unlock()
+				return []analyzer.Task{{TaskID: "requires-task", Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, requiresStub)).To(Succeed())
+			relationshipStub := newControlStub("relationship", "classify")
+			relationshipStub.GenerateWorkFunc = func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				mu.Lock()
+				relationshipCalls = append(relationshipCalls, controlCall{controlID: input.GetControlId()})
+				mu.Unlock()
+				return []analyzer.Task{{TaskID: "relationship-task", Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, relationshipStub)).To(Succeed())
 
 			dispatcher := &executorTestDispatcher{}
 			collector := &executorTestCollector{}
@@ -1799,26 +1632,23 @@ var _ = Describe("Executor", func() {
 			// never invoked, and the analyzer completes with a zero-task
 			// output instead.
 			reg := analyzer.NewRegistry()
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					mu.Lock()
-					classifyCalls++
-					mu.Unlock()
-					return []analyzer.Task{{TaskID: "classify-task", Payload: &emptypb.Empty{}}}, nil
-				},
-			})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](reg, &stubControlAnalyzer{
-				name: "requires",
-				deps: []string{"classify"},
-				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					mu.Lock()
-					requiresCalls++
-					requiresControlID = input.GetControlId()
-					mu.Unlock()
-					return []analyzer.Task{{TaskID: "requires-task", Payload: &emptypb.Empty{}}}, nil
-				},
-			})).To(Succeed())
+			classifyStub := newControlStub("classify")
+			classifyStub.GenerateWorkFunc = func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				mu.Lock()
+				classifyCalls++
+				mu.Unlock()
+				return []analyzer.Task{{TaskID: "classify-task", Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, classifyStub)).To(Succeed())
+			requiresStub := newControlStub("requires", "classify")
+			requiresStub.GenerateWorkFunc = func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				mu.Lock()
+				requiresCalls++
+				requiresControlID = input.GetControlId()
+				mu.Unlock()
+				return []analyzer.Task{{TaskID: "requires-task", Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, requiresStub)).To(Succeed())
 
 			dispatcher := &executorTestDispatcher{}
 			collector := &executorTestCollector{}

@@ -3,7 +3,6 @@ package relationship_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -15,6 +14,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/prompt/prompttest"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -28,29 +28,11 @@ func (m *mockCandidateProvider) Candidates(_ context.Context, _, _ string) ([]re
 	return m.pairs, m.err
 }
 
-// mockPromptRegistry returns a pre-configured prompt spec.
-type mockPromptRegistry struct {
-	spec *prompt.PromptSpec
-	err  error
-}
-
-func (m *mockPromptRegistry) Resolve(_ context.Context, _ string) (*prompt.PromptSpec, error) {
-	if m.err != nil {
-		return nil, m.err
+// specRegistry returns a prompttest.Fake whose Resolve yields spec.
+func specRegistry(spec *prompt.PromptSpec) *prompttest.Fake {
+	return &prompttest.Fake{
+		ResolveFunc: func(context.Context, string) (*prompt.PromptSpec, error) { return spec, nil },
 	}
-	return m.spec, nil
-}
-
-func (m *mockPromptRegistry) Render(_ context.Context, _ string, _ map[string]string) (*prompt.ResolvedPrompt, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *mockPromptRegistry) List(_ context.Context) ([]string, error) {
-	return []string{"relationship"}, nil
-}
-
-func (m *mockPromptRegistry) Layers(_ context.Context, _ string) ([]prompt.LayerInfo, error) {
-	return nil, nil
 }
 
 var _ = Describe("RelationshipAnalyzer", func() {
@@ -59,7 +41,7 @@ var _ = Describe("RelationshipAnalyzer", func() {
 		ctx        context.Context
 		cfg        config.RelationshipConfig
 		candidates *mockCandidateProvider
-		prompts    *mockPromptRegistry
+		prompts    *prompttest.Fake
 	)
 
 	defaultSpec := &prompt.PromptSpec{
@@ -85,7 +67,7 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			ActionableTypes:     []string{"EQUIVALENT", "SUPERSET_OF"},
 		}
 		candidates = &mockCandidateProvider{}
-		prompts = &mockPromptRegistry{spec: defaultSpec}
+		prompts = specRegistry(defaultSpec)
 		a = relationship.New(nil, prompts, candidates, cfg)
 	})
 

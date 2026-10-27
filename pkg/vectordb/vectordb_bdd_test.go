@@ -220,13 +220,6 @@ var _ = Describe("VectorDB System", Ordered, func() {
 			})
 		})
 
-		Context("when verifying VectorDB interface can be implemented by any type", func() {
-			It("allows custom implementations that satisfy the VectorDB contract", func() {
-				// Compile-time check that testVectorDBImpl satisfies VectorDB
-				var _ vectordb.VectorDB = (*testVectorDBImpl)(nil)
-			})
-		})
-
 		Context("when enforcing tenant isolation on Index methods", func() {
 			var store *vectordb.PgVectorStore
 
@@ -447,26 +440,6 @@ var _ = Describe("VectorDB System", Ordered, func() {
 		})
 	})
 })
-
-// testVectorDBImpl is a minimal VectorDB implementation for compile-time
-// interface verification, ported from interface_test.go.
-type testVectorDBImpl struct{}
-
-func (db *testVectorDBImpl) StoreEmbedding(_ context.Context, _ string, _ vectordb.Embedding) error {
-	return nil
-}
-
-func (db *testVectorDBImpl) StoreBatch(_ context.Context, _ string, _ []vectordb.Embedding) error {
-	return nil
-}
-
-func (db *testVectorDBImpl) FindSimilar(_ context.Context, _ string, _ vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
-	return nil, nil
-}
-
-func (db *testVectorDBImpl) DeleteByModel(_ context.Context, _, _, _ string) error {
-	return nil
-}
 
 var _ = Describe("Telemetry Wiring", func() {
 	Context("when PgVectorStore is created without telemetry", func() {

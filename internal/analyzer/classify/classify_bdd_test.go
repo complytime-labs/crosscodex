@@ -17,6 +17,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -161,36 +162,27 @@ var _ = Describe("Result", func() {
 	})
 })
 
-// --- Mock LLM client for analyzer tests ---
+// --- Scripted LLM client for analyzer tests ---
 
-type mockLLMClient struct {
-	completeFunc func(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error)
-}
+// cannedClassificationText is the classification every scripted client returns.
+const cannedClassificationText = "Technical|Operational"
 
-func (m *mockLLMClient) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	if m.completeFunc != nil {
-		return m.completeFunc(ctx, req)
-	}
+// cannedClassification is a Fake.CompleteFunc that answers every Complete call
+// with cannedClassificationText.
+func cannedClassification(context.Context, *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
 	return &llmclient.CompletionResponse{
 		Choices: []llmclient.CompletionChoice{{
-			Message: llmclient.ChatMessage{Role: "assistant", Content: "Technical|Operational"},
+			Message: llmclient.ChatMessage{Role: "assistant", Content: cannedClassificationText},
 		}},
 	}, nil
 }
-
-func (m *mockLLMClient) Embed(_ context.Context, _ *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockLLMClient) Health(_ context.Context) error { return nil }
-func (m *mockLLMClient) Close() error                   { return nil }
 
 // --- ClassifyAnalyzer tests ---
 
 var _ = Describe("ClassifyAnalyzer", func() {
 	var (
 		a          *classify.ClassifyAnalyzer
-		mockClient *mockLLMClient
+		mockClient *llmclienttest.Fake
 		prompts    prompt.Registry
 		cfg        config.ClassificationConfig
 		ctx        context.Context
@@ -199,7 +191,7 @@ var _ = Describe("ClassifyAnalyzer", func() {
 	BeforeEach(func() {
 		ctx = testspecs.SetupTenantContext("test-tenant")
 
-		mockClient = &mockLLMClient{}
+		mockClient = &llmclienttest.Fake{CompleteFunc: cannedClassification}
 
 		var err error
 		prompts, err = prompt.NewRegistry(config.PromptConfig{

@@ -11,58 +11,27 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-// fakeRows is a minimal test double for db.Rows over a fixed set of rows,
-// each a slice of string column values.
-type fakeRows struct {
-	rows    [][]string
-	next    int
-	scanErr error
-	iterErr error
-	closed  bool
-}
-
-func (r *fakeRows) Next() bool {
-	if r.next >= len(r.rows) {
-		return false
-	}
-	r.next++
-	return true
-}
-
-func (r *fakeRows) Scan(dest ...any) error {
-	if r.scanErr != nil {
-		return r.scanErr
-	}
-	row := r.rows[r.next-1]
-	Expect(dest).To(HaveLen(len(row)))
-	for i, v := range row {
-		*dest[i].(*string) = v
-	}
-	return nil
-}
-
-func (r *fakeRows) Close() error {
-	r.closed = true
-	return nil
-}
-
-func (r *fakeRows) Err() error { return r.iterErr }
-
 var _ = Describe("PGControlsReader", func() {
 	const catalogID = "0123456789abcdef"
 
+	controlRows := [][]any{
+		{catalogID + "/ac", catalogID, "ac", "Access Control", "", "family", ""},
+		{catalogID + "/ac-1", catalogID, "ac-1", "Policy", "Develop a policy.", "SP800-53", "ac"},
+	}
+
 	var (
 		ctx       context.Context
-		rows      *fakeRows
+		rows      *dbtest.FakeRows
 		queryErr  error
 		gotArgs   []any
-		tx        *fakeTransaction
+		tx        *dbtest.Tx
 		beginErr  error
-		conn      *fakeTenantConnection
+		conn      *dbtest.Conn
 		beginSeen bool
 	)
 
@@ -70,16 +39,13 @@ var _ = Describe("PGControlsReader", func() {
 		var err error
 		ctx, err = tenant.WithTenant(context.Background(), "tenant-a")
 		Expect(err).NotTo(HaveOccurred())
-		rows = &fakeRows{rows: [][]string{
-			{catalogID + "/ac", catalogID, "ac", "Access Control", "", "family", ""},
-			{catalogID + "/ac-1", catalogID, "ac-1", "Policy", "Develop a policy.", "SP800-53", "ac"},
-		}}
+		rows = dbtest.Rows(nil, controlRows...)
 		queryErr = nil
 		gotArgs = nil
 		beginErr = nil
 		beginSeen = false
-		tx = &fakeTransaction{
-			queryFunc: func(_ context.Context, _ string, args ...any) (db.Rows, error) {
+		tx = &dbtest.Tx{
+			QueryFunc: func(_ context.Context, _ string, args ...any) (db.Rows, error) {
 				gotArgs = args
 				if queryErr != nil {
 					return nil, queryErr
@@ -87,7 +53,7 @@ var _ = Describe("PGControlsReader", func() {
 				return rows, nil
 			},
 		}
-		conn = &fakeTenantConnection{beginFunc: func(context.Context) (db.Transaction, error) {
+		conn = &dbtest.Conn{BeginFunc: func(context.Context) (db.Transaction, error) {
 			beginSeen = true
 			if beginErr != nil {
 				return nil, beginErr
@@ -105,8 +71,8 @@ var _ = Describe("PGControlsReader", func() {
 				Statement: "Develop a policy.", Class: "SP800-53", ParentID: "ac"},
 		}))
 		Expect(gotArgs).To(Equal([]any{catalogID, "tenant-a"}), "query must bind catalog_id and the ctx tenant_id")
-		Expect(rows.closed).To(BeTrue())
-		Expect(tx.committed).To(BeTrue())
+		Expect(rows.Closed()).To(BeTrue())
+		Expect(tx.Commits()).To(Equal(1))
 	})
 
 	It("refuses a ctx without a tenant before touching the connection", func() {
@@ -116,18 +82,18 @@ var _ = Describe("PGControlsReader", func() {
 	})
 
 	DescribeTable("wraps database failures with the catalog ID and rolls back",
-		func(setup func(), want error, txStarted bool) {
+		func(setup func(), want error, rollbacks int) {
 			setup()
 			_, err := graph.NewPGControlsReader(conn).ListCatalogControls(ctx, catalogID)
 			Expect(errors.Is(err, want)).To(BeTrue(), "got %v", err)
 			Expect(err.Error()).To(ContainSubstring(catalogID))
-			Expect(tx.committed).To(BeFalse())
-			Expect(tx.rolledBack).To(Equal(txStarted))
+			Expect(tx.Commits()).To(Equal(0))
+			Expect(tx.Rollbacks()).To(Equal(rollbacks))
 		},
-		Entry("begin", func() { beginErr = db.ErrTenantRequired }, db.ErrTenantRequired, false),
-		Entry("query", func() { queryErr = errQueryFailed }, errQueryFailed, true),
-		Entry("scan", func() { rows.scanErr = errQueryFailed }, errQueryFailed, true),
-		Entry("iteration", func() { rows.iterErr = errQueryFailed }, errQueryFailed, true),
+		Entry("begin", func() { beginErr = db.ErrTenantRequired }, db.ErrTenantRequired, 0),
+		Entry("query", func() { queryErr = errQueryFailed }, errQueryFailed, 1),
+		Entry("scan", func() { rows.ScanErr = errQueryFailed }, errQueryFailed, 1),
+		Entry("iteration", func() { rows = dbtest.Rows(errQueryFailed, controlRows...) }, errQueryFailed, 1),
 	)
 
 	Context("with telemetry", func() {
@@ -208,7 +174,7 @@ var _ = Describe("PGControlsReader", func() {
 			},
 			Entry("no tenant", func() {}, context.Background),
 			Entry("query", func() { queryErr = errQueryFailed }, func() context.Context { return ctx }),
-			Entry("scan", func() { rows.scanErr = errQueryFailed }, func() context.Context { return ctx }),
+			Entry("scan", func() { rows.ScanErr = errQueryFailed }, func() context.Context { return ctx }),
 		)
 	})
 })

@@ -19,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/analyzertest"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -41,89 +42,46 @@ var _ = AfterSuite(func() {
 
 // --- Engine test fakes ---
 
-// stubAnalyzer implements analyzer.Analyzer[*emptypb.Empty] for engine tests.
-type stubAnalyzer struct {
-	name        string
-	deps        []string
-	genWorkFn   func(ctx context.Context, input *emptypb.Empty, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error)
-	aggregateFn func(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error)
-}
-
-func (s *stubAnalyzer) Name() string        { return s.name }
-func (s *stubAnalyzer) DependsOn() []string { return s.deps }
-
-func (s *stubAnalyzer) GenerateWork(ctx context.Context, input *emptypb.Empty, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-	if s.genWorkFn != nil {
-		return s.genWorkFn(ctx, input, cfg)
-	}
-	return nil, nil
-}
-
-func (s *stubAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-	if s.aggregateFn != nil {
-		return s.aggregateFn(ctx, results)
-	}
-	return &analyzer.Output{AnalyzerName: s.name, Metadata: map[string]string{}}, nil
-}
-
-func (s *stubAnalyzer) ResultSchema() proto.Message { return &emptypb.Empty{} }
-
-// newStub creates a stub analyzer with the given name and dependencies.
-func newStub(name string, deps ...string) *stubAnalyzer {
-	return &stubAnalyzer{name: name, deps: deps}
-}
-
-// newStubWithTasks creates a stub analyzer that generates the specified tasks.
-func newStubWithTasks(name string, tasks []analyzer.Task, deps ...string) *stubAnalyzer {
-	return &stubAnalyzer{
-		name: name,
-		deps: deps,
-		genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-			return tasks, nil
+// newStubOf returns an analyzertest.Stub whose unscripted behavior suits engine
+// specs: GenerateWork yields no tasks and Aggregate yields a bare Output
+// naming the analyzer. Metadata is an empty map rather than nil to match the
+// Output shape the pre-migration stubs returned (engine.go also tolerates nil
+// and creates the map when flagging partial results, so this is
+// shape-preservation, not a requirement). Specs override GenerateWorkFunc /
+// AggregateFunc.
+func newStubOf[T proto.Message](name string, schema proto.Message, deps ...string) *analyzertest.Stub[T] {
+	return &analyzertest.Stub[T]{
+		AnalyzerName: name,
+		Dependencies: deps,
+		Schema:       schema,
+		GenerateWorkFunc: func(context.Context, T, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			return nil, nil
+		},
+		AggregateFunc: func(context.Context, []analyzer.TaskResult) (*analyzer.Output, error) {
+			return &analyzer.Output{AnalyzerName: name, Metadata: map[string]string{}}, nil
 		},
 	}
 }
 
-// controlMockAnalyzer implements analyzer.Analyzer[*pb.Control] for
-// per-control fan-out tests. It records every control it was called with
-// and every catalog ID its Aggregate observed via context.
-type controlMockAnalyzer struct {
-	name        string
-	genWorkFn   func(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error)
-	aggregateFn func(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error)
-
-	mu           sync.Mutex
-	genWorkCalls []*pb.Control
+// newStub creates an analyzer.Analyzer[*emptypb.Empty] with the given name and
+// dependencies.
+func newStub(name string, deps ...string) *analyzertest.Stub[*emptypb.Empty] {
+	return newStubOf[*emptypb.Empty](name, &emptypb.Empty{}, deps...)
 }
 
-func (m *controlMockAnalyzer) Name() string        { return m.name }
-func (m *controlMockAnalyzer) DependsOn() []string { return nil }
-
-func (m *controlMockAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-	m.mu.Lock()
-	m.genWorkCalls = append(m.genWorkCalls, input)
-	m.mu.Unlock()
-	if m.genWorkFn != nil {
-		return m.genWorkFn(ctx, input, cfg)
+// newStubWithTasks creates a stub analyzer that generates the specified tasks.
+func newStubWithTasks(name string, tasks []analyzer.Task, deps ...string) *analyzertest.Stub[*emptypb.Empty] {
+	s := newStub(name, deps...)
+	s.GenerateWorkFunc = func(context.Context, *emptypb.Empty, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+		return tasks, nil
 	}
-	return nil, nil
+	return s
 }
 
-func (m *controlMockAnalyzer) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-	if m.aggregateFn != nil {
-		return m.aggregateFn(ctx, results)
-	}
-	return &analyzer.Output{AnalyzerName: m.name, Metadata: map[string]string{}}, nil
-}
-
-func (m *controlMockAnalyzer) ResultSchema() proto.Message { return &pb.Control{} }
-
-func (m *controlMockAnalyzer) calls() []*pb.Control {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]*pb.Control, len(m.genWorkCalls))
-	copy(out, m.genWorkCalls)
-	return out
+// newControlStub creates an analyzer.Analyzer[*pb.Control] for per-control
+// fan-out specs. Its Inputs() are the controls GenerateWork was called with.
+func newControlStub(name string) *analyzertest.Stub[*pb.Control] {
+	return newStubOf[*pb.Control](name, &pb.Control{})
 }
 
 // engineTestDispatcher records Dispatch calls for engine test assertions.
@@ -332,19 +290,15 @@ var _ = Describe("Engine", func() {
 			// Two independent analyzers at level 0.
 			var callOrder atomic.Int64
 
-			stubA := &stubAnalyzer{
-				name: "artifacts",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					callOrder.Add(1)
-					return makeTasks("artifacts", 1), nil
-				},
+			stubA := newStub("artifacts")
+			stubA.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				callOrder.Add(1)
+				return makeTasks("artifacts", 1), nil
 			}
-			stubB := &stubAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					callOrder.Add(1)
-					return makeTasks("classify", 1), nil
-				},
+			stubB := newStub("classify")
+			stubB.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				callOrder.Add(1)
+				return makeTasks("classify", 1), nil
 			}
 
 			Expect(analyzer.Register[*emptypb.Empty](registry, stubA)).To(Succeed())
@@ -452,11 +406,9 @@ var _ = Describe("Engine", func() {
 		})
 
 		It("marks analyzer as failed and skips dependents on GenerateWork error", func() {
-			failingStub := &stubAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return nil, fmt.Errorf("model unavailable")
-				},
+			failingStub := newStub("classify")
+			failingStub.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return nil, fmt.Errorf("model unavailable")
 			}
 			Expect(analyzer.Register[*emptypb.Empty](registry, failingStub)).To(Succeed())
 			Expect(analyzer.Register[*emptypb.Empty](registry,
@@ -527,14 +479,12 @@ var _ = Describe("Engine", func() {
 
 		It("marks analyzer as failed and skips dependents on Aggregate error", func() {
 			tasks := makeTasks("classify", 1)
-			failingStub := &stubAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return tasks, nil
-				},
-				aggregateFn: func(_ context.Context, _ []analyzer.TaskResult) (*analyzer.Output, error) {
-					return nil, fmt.Errorf("aggregation logic error")
-				},
+			failingStub := newStub("classify")
+			failingStub.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return tasks, nil
+			}
+			failingStub.AggregateFunc = func(_ context.Context, _ []analyzer.TaskResult) (*analyzer.Output, error) {
+				return nil, fmt.Errorf("aggregation logic error")
 			}
 			Expect(analyzer.Register[*emptypb.Empty](registry, failingStub)).To(Succeed())
 			Expect(analyzer.Register[*emptypb.Empty](registry,
@@ -599,7 +549,7 @@ var _ = Describe("Engine", func() {
 		})
 
 		It("handles zero tasks from GenerateWork by skipping dispatch", func() {
-			// Stub that returns zero tasks (default genWorkFn returns nil).
+			// Stub that returns zero tasks (newStubOf defaults GenerateWorkFunc to no tasks).
 			stub := newStub("classify")
 			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
 
@@ -703,11 +653,9 @@ var _ = Describe("Engine", func() {
 		)
 
 		It("returns actionable error with analyzer context for GenerateWork failure", func() {
-			failing := &stubAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return nil, fmt.Errorf("model not found")
-				},
+			failing := newStub("classify")
+			failing.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return nil, fmt.Errorf("model not found")
 			}
 			Expect(analyzer.Register[*emptypb.Empty](registry, failing)).To(Succeed())
 
@@ -773,11 +721,9 @@ var _ = Describe("Engine", func() {
 	Describe("Dependency gating", func() {
 
 		It("skips analyzer when a dependency failed", func() {
-			failing := &stubAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return nil, fmt.Errorf("forced failure")
-				},
+			failing := newStub("classify")
+			failing.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return nil, fmt.Errorf("forced failure")
 			}
 			Expect(analyzer.Register[*emptypb.Empty](registry, failing)).To(Succeed())
 			Expect(analyzer.Register[*emptypb.Empty](registry,
@@ -845,12 +791,10 @@ var _ = Describe("Engine", func() {
 		It("passes per-analyzer config to GenerateWorkFromProto", func() {
 			var receivedCfg analyzer.AnalyzerConfig
 
-			configStub := &stubAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					receivedCfg = cfg
-					return makeTasks("classify", 1), nil
-				},
+			configStub := newStub("classify")
+			configStub.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				receivedCfg = cfg
+				return makeTasks("classify", 1), nil
 			}
 			Expect(analyzer.Register[*emptypb.Empty](registry, configStub)).To(Succeed())
 
@@ -954,16 +898,14 @@ var _ = Describe("Engine", func() {
 	Describe("Per-control fan-out", func() {
 
 		It("calls GenerateWork once per control and concatenates tasks into a single dispatch/collect", func() {
-			mock := &controlMockAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					payload, _ := structpb.NewStruct(map[string]interface{}{"control": input.GetControlId()})
-					return []analyzer.Task{{
-						TaskID:   "mock-" + input.GetControlId(),
-						TaskType: "classify",
-						Payload:  payload,
-					}}, nil
-				},
+			mock := newControlStub("classify")
+			mock.GenerateWorkFunc = func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				payload, _ := structpb.NewStruct(map[string]interface{}{"control": input.GetControlId()})
+				return []analyzer.Task{{
+					TaskID:   "mock-" + input.GetControlId(),
+					TaskType: "classify",
+					Payload:  payload,
+				}}, nil
 			}
 			Expect(analyzer.Register[*pb.Control](registry, mock)).To(Succeed())
 
@@ -982,7 +924,7 @@ var _ = Describe("Engine", func() {
 			Expect(result.Completed).To(ConsistOf("classify"))
 			Expect(result.Failed).To(BeEmpty())
 
-			calls := mock.calls()
+			calls := mock.Inputs()
 			Expect(calls).To(HaveLen(2))
 			Expect([]string{calls[0].GetControlId(), calls[1].GetControlId()}).To(ConsistOf("AC-1", "AC-2"))
 
@@ -994,14 +936,12 @@ var _ = Describe("Engine", func() {
 		})
 
 		It("fails the analyzer without dispatching when a per-control GenerateWork call errors", func() {
-			mock := &controlMockAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					if input.GetControlId() == "AC-2" {
-						return nil, fmt.Errorf("model unavailable for AC-2")
-					}
-					return []analyzer.Task{{TaskID: "mock-" + input.GetControlId(), TaskType: "classify"}}, nil
-				},
+			mock := newControlStub("classify")
+			mock.GenerateWorkFunc = func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				if input.GetControlId() == "AC-2" {
+					return nil, fmt.Errorf("model unavailable for AC-2")
+				}
+				return []analyzer.Task{{TaskID: "mock-" + input.GetControlId(), TaskType: "classify"}}, nil
 			}
 			Expect(analyzer.Register[*pb.Control](registry, mock)).To(Succeed())
 
@@ -1026,15 +966,13 @@ var _ = Describe("Engine", func() {
 			var observedCatalogID string
 			var observedOK bool
 
-			mock := &controlMockAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return []analyzer.Task{{TaskID: "mock-" + input.GetControlId(), TaskType: "classify"}}, nil
-				},
-				aggregateFn: func(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-					observedCatalogID, observedOK = analyzer.CatalogIDFromContext(ctx)
-					return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
-				},
+			mock := newControlStub("classify")
+			mock.GenerateWorkFunc = func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return []analyzer.Task{{TaskID: "mock-" + input.GetControlId(), TaskType: "classify"}}, nil
+			}
+			mock.AggregateFunc = func(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+				observedCatalogID, observedOK = analyzer.CatalogIDFromContext(ctx)
+				return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
 			}
 			Expect(analyzer.Register[*pb.Control](registry, mock)).To(Succeed())
 
@@ -1073,18 +1011,16 @@ var _ = Describe("Engine", func() {
 			}
 
 			var aggregated []analyzer.TaskResult
-			stub := &stubAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return []analyzer.Task{
-						{TaskID: "normal-1", TaskType: "classify", Payload: normalPayload},
-						{TaskID: "skip-1", TaskType: "classify", Payload: preBuilt, PreBuiltResult: true},
-					}, nil
-				},
-				aggregateFn: func(_ context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-					aggregated = results
-					return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
-				},
+			stub := newStub("classify")
+			stub.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return []analyzer.Task{
+					{TaskID: "normal-1", TaskType: "classify", Payload: normalPayload},
+					{TaskID: "skip-1", TaskType: "classify", Payload: preBuilt, PreBuiltResult: true},
+				}, nil
+			}
+			stub.AggregateFunc = func(_ context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+				aggregated = results
+				return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
 			}
 			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
 
@@ -1127,17 +1063,15 @@ var _ = Describe("Engine", func() {
 			preBuilt := &pb.AnalysisResult{ResultId: "only-prebuilt"}
 
 			var aggregated []analyzer.TaskResult
-			stub := &stubAnalyzer{
-				name: "classify",
-				genWorkFn: func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					return []analyzer.Task{
-						{TaskID: "skip-only", TaskType: "classify", Payload: preBuilt, PreBuiltResult: true},
-					}, nil
-				},
-				aggregateFn: func(_ context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-					aggregated = results
-					return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
-				},
+			stub := newStub("classify")
+			stub.GenerateWorkFunc = func(_ context.Context, _ *emptypb.Empty, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return []analyzer.Task{
+					{TaskID: "skip-only", TaskType: "classify", Payload: preBuilt, PreBuiltResult: true},
+				}, nil
+			}
+			stub.AggregateFunc = func(_ context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+				aggregated = results
+				return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
 			}
 			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
 

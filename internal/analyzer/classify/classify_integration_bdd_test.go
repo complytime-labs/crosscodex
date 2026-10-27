@@ -3,8 +3,6 @@
 package classify_test
 
 import (
-	"context"
-	"errors"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -16,7 +14,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
-	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 )
 
@@ -47,7 +45,7 @@ var _ = Describe("Classify Infrastructure Integration", func() {
 		It("produces a task with well-formed payload for a requirement control", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 
-			mock := &cannedClassifyClient{response: "Technical|Operational"}
+			mock := &llmclienttest.Fake{CompleteFunc: cannedClassification}
 			a := classify.New(mock, reg, cfg)
 
 			control := &pb.Control{
@@ -90,7 +88,7 @@ var _ = Describe("Classify Infrastructure Integration", func() {
 		It("auto-skips section controls without calling LLM", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 
-			mock := &cannedClassifyClient{response: "Technical|Operational"}
+			mock := &llmclienttest.Fake{CompleteFunc: cannedClassification}
 			a := classify.New(mock, reg, cfg)
 
 			section := &pb.Control{
@@ -114,7 +112,7 @@ var _ = Describe("Classify Infrastructure Integration", func() {
 			Expect(result.Attributes["level"]).To(Equal("None"))
 
 			// LLM should not have been called.
-			Expect(mock.callCount).To(Equal(0))
+			Expect(mock.CompleteRequests()).To(BeEmpty())
 		})
 	})
 
@@ -122,7 +120,7 @@ var _ = Describe("Classify Infrastructure Integration", func() {
 		It("processes classify tasks through the full pipeline with canned responses", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 
-			mock := &cannedClassifyClient{response: "Technical|Operational"}
+			mock := &llmclienttest.Fake{CompleteFunc: cannedClassification}
 			a := classify.New(mock, reg, cfg)
 
 			controls := []*pb.Control{
@@ -163,7 +161,7 @@ var _ = Describe("Classify Infrastructure Integration", func() {
 						})
 					} else {
 						// Requirement — simulate LLM call with canned response.
-						parsed, err := classify.ParseClassification(mock.response)
+						parsed, err := classify.ParseClassification(cannedClassificationText)
 						Expect(err).NotTo(HaveOccurred())
 
 						allResults = append(allResults, analyzer.TaskResult{
@@ -195,30 +193,3 @@ var _ = Describe("Classify Infrastructure Integration", func() {
 		})
 	})
 })
-
-// cannedClassifyClient returns a fixed response for every Complete call.
-type cannedClassifyClient struct {
-	response  string
-	callCount int
-}
-
-func (c *cannedClassifyClient) Complete(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	c.callCount++
-	return &llmclient.CompletionResponse{
-		ID:    "test-id",
-		Model: "test-model",
-		Choices: []llmclient.CompletionChoice{{
-			Index:        0,
-			Message:      llmclient.ChatMessage{Role: "assistant", Content: c.response},
-			FinishReason: "stop",
-		}},
-		Usage: llmclient.TokenUsage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
-	}, nil
-}
-
-func (c *cannedClassifyClient) Embed(_ context.Context, _ *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	return nil, errors.New("classify does not use embeddings")
-}
-
-func (c *cannedClassifyClient) Health(_ context.Context) error { return nil }
-func (c *cannedClassifyClient) Close() error                   { return nil }

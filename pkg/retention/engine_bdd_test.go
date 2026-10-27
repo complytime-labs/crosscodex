@@ -10,6 +10,8 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
+	"github.com/complytime-labs/crosscodex/pkg/retention/retentiontest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // --- Engine test fakes (all names prefixed engineFake to avoid redeclaration) ---
@@ -20,24 +22,6 @@ type engineFakeCollector struct {
 
 func (f *engineFakeCollector) Collect(_ context.Context, _ retention.Policy, _ time.Time) ([]retention.Candidate, error) {
 	return f.candidates, nil
-}
-
-// engineFakeHoldStore implements the full HoldStore interface. Only Active is
-// exercised by the Engine; the unused methods return zero values, which is
-// acceptable for a test double.
-type engineFakeHoldStore struct {
-	active []retention.Hold
-}
-
-func (f *engineFakeHoldStore) Active(_ context.Context, _ time.Time) ([]retention.Hold, error) {
-	return f.active, nil
-}
-func (f *engineFakeHoldStore) Create(_ context.Context, h retention.Hold) (retention.Hold, error) {
-	return h, nil
-}
-func (f *engineFakeHoldStore) Release(_ context.Context, _, _ string) error { return nil }
-func (f *engineFakeHoldStore) List(_ context.Context) ([]retention.Hold, error) {
-	return nil, nil
 }
 
 // engineFakeArchiver records successful Archive calls. Entries in errFor (keyed
@@ -101,7 +85,7 @@ var _ = Describe("Engine.Scan", func() {
 		now       time.Time
 		c1, c2    retention.Candidate
 		collector *engineFakeCollector
-		holds     *engineFakeHoldStore
+		holds     *retentiontest.Fake
 		archiver  *engineFakeArchiver
 		purger    *engineFakePurger
 		publisher *engineFakeAuditPublisher
@@ -109,7 +93,9 @@ var _ = Describe("Engine.Scan", func() {
 	)
 
 	BeforeEach(func() {
-		ctx = context.Background()
+		var err error
+		ctx, err = tenant.WithTenant(context.Background(), "tenant1")
+		Expect(err).NotTo(HaveOccurred())
 		now = time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		c1 = retention.Candidate{
@@ -127,7 +113,7 @@ var _ = Describe("Engine.Scan", func() {
 
 		// Hold with a JobID scope that covers c2 but not c1.
 		holdC2 := retention.Hold{
-			ID:   "hold-1",
+			ID:   "seeded-hold-c2",
 			Name: "legal-hold-c2",
 			Scope: retention.HoldScope{
 				JobID: "job-c2",
@@ -135,7 +121,7 @@ var _ = Describe("Engine.Scan", func() {
 		}
 
 		collector = &engineFakeCollector{candidates: []retention.Candidate{c1, c2}}
-		holds = &engineFakeHoldStore{active: []retention.Hold{holdC2}}
+		holds = &retentiontest.Fake{Seed: []retention.Hold{holdC2}}
 		archiver = &engineFakeArchiver{}
 		purger = &engineFakePurger{}
 		publisher = &engineFakeAuditPublisher{}
@@ -227,7 +213,7 @@ var _ = Describe("Engine.Scan", func() {
 			CreatedAt: now.Add(-2 * 365 * 24 * time.Hour),
 		}
 		objCollector := &engineFakeCollector{candidates: []retention.Candidate{objCandidate}}
-		objHolds := &engineFakeHoldStore{}
+		objHolds := &retentiontest.Fake{}
 		objArchiver := &engineFakeArchiver{}
 		objPurger := &engineFakePurger{}
 		objPublisher := &engineFakeAuditPublisher{}
@@ -258,7 +244,7 @@ var _ = Describe("Engine.Scan", func() {
 		// Use only c1 (no holds in this sub-scenario) — rebuild engine with
 		// a collector that yields only c1 so tallies are unambiguous.
 		c1Only := &engineFakeCollector{candidates: []retention.Candidate{c1}}
-		noHolds := &engineFakeHoldStore{}
+		noHolds := &retentiontest.Fake{}
 		localEng := retention.NewEngine(
 			[]retention.Collector{c1Only}, noHolds,
 			archiver, purger, publisher, retention.Policy{}, &fakeScanLock{},
@@ -284,7 +270,7 @@ var _ = Describe("Engine.Scan", func() {
 		purger.orderLog = &log
 		// Use only c1 so the log has exactly two entries.
 		c1Only := &engineFakeCollector{candidates: []retention.Candidate{c1}}
-		noHolds := &engineFakeHoldStore{}
+		noHolds := &retentiontest.Fake{}
 		orderedEng := retention.NewEngine(
 			[]retention.Collector{c1Only}, noHolds,
 			archiver, purger, publisher, retention.Policy{}, &fakeScanLock{},

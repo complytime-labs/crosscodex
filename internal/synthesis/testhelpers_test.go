@@ -4,194 +4,56 @@ package synthesis_test
 
 import (
 	"context"
-	"sync"
 
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
-// ---------------------------------------------------------------------------
-// Mock DB types for Service tests
-// ---------------------------------------------------------------------------
-
-// mockRow implements db.Row for test assertions.
-type mockRow struct {
-	scanFunc func(dest ...any) error
-}
-
-func (r *mockRow) Scan(dest ...any) error {
-	if r.scanFunc != nil {
-		return r.scanFunc(dest...)
-	}
-	return nil
-}
-
-// mockTransaction implements db.Transaction for test assertions.
-type mockTransaction struct {
-	mu            sync.Mutex
-	committed     bool
-	rollbackCount int
-	execFunc      func(ctx context.Context, query string, args ...any) error
-	queryFunc     func(ctx context.Context, query string, args ...any) (db.Rows, error)
-	queryRowFn    func(ctx context.Context, query string, args ...any) db.Row
-	commitErr     error
-	rollbackErr   error
-}
-
-func (t *mockTransaction) Commit() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.committed = true
-	return t.commitErr
-}
-
-func (t *mockTransaction) Rollback() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.rollbackCount++
-	return t.rollbackErr
-}
-
-func (t *mockTransaction) Exec(ctx context.Context, query string, args ...any) error {
-	if t.execFunc != nil {
-		return t.execFunc(ctx, query, args...)
-	}
-	return nil
-}
-
-func (t *mockTransaction) Query(ctx context.Context, query string, args ...any) (db.Rows, error) {
-	if t.queryFunc != nil {
-		return t.queryFunc(ctx, query, args...)
-	}
-	return nil, nil
-}
-
-func (t *mockTransaction) QueryRow(ctx context.Context, query string, args ...any) db.Row {
-	if t.queryRowFn != nil {
-		return t.queryRowFn(ctx, query, args...)
-	}
-	// Default: return a row that writes a dummy source_id into the scan dest
-	return &mockRow{
-		scanFunc: func(dest ...any) error {
-			if len(dest) > 0 {
-				if p, ok := dest[0].(*string); ok {
-					*p = "ok"
-				}
-			}
-			return nil
-		},
-	}
-}
-
-// mockConnection implements db.Connection for test assertions.
-type mockConnection struct {
-	tx       *mockTransaction
-	beginErr error
-}
-
-func (c *mockConnection) Begin(_ context.Context) (db.Transaction, error) {
-	if c.beginErr != nil {
-		return nil, c.beginErr
-	}
-	return c.tx, nil
-}
-
-func (c *mockConnection) Query(_ context.Context, _ string, _ ...any) (db.Rows, error) {
-	return nil, nil
-}
-
-func (c *mockConnection) QueryRow(_ context.Context, _ string, _ ...any) db.Row {
-	return &mockRow{}
-}
-
-func (c *mockConnection) Exec(_ context.Context, _ string, _ ...any) error {
-	return nil
-}
-
-func (c *mockConnection) Close() error {
-	return nil
-}
-
-// mockRows implements db.Rows for test assertions.
-// sourceIDs is the list of source_id values returned by Next()/Scan() calls.
-// queryErr is returned by Err() after iteration completes, if non-nil.
-type mockRows struct {
-	sourceIDs []string
-	pos       int
-	queryErr  error
-	closed    bool
-}
-
-func (r *mockRows) Next() bool {
-	return r.pos < len(r.sourceIDs)
-}
-
-func (r *mockRows) Scan(dest ...any) error {
-	if r.pos >= len(r.sourceIDs) {
-		return nil
-	}
-	if len(dest) > 0 {
-		if p, ok := dest[0].(*string); ok {
-			*p = r.sourceIDs[r.pos]
+// sourceIDRows returns one RETURNING source_id row holding id per element of
+// args[0], the []float64 viabilities the batch UPDATE binds first, simulating
+// an UNNEST UPDATE...RETURNING that matched every input row.
+func sourceIDRows(id string, args []any) *dbtest.FakeRows {
+	var count int
+	if len(args) > 0 {
+		if viabilities, ok := args[0].([]float64); ok {
+			count = len(viabilities)
 		}
 	}
-	r.pos++
-	return nil
-}
-
-func (r *mockRows) Close() error {
-	r.closed = true
-	return nil
-}
-
-func (r *mockRows) Err() error {
-	return r.queryErr
-}
-
-// newSuccessMockDB creates a mock connection that succeeds for all DB operations.
-// Query returns one source_id row per input row in the batch, simulating a
-// successful UNNEST UPDATE...RETURNING.
-func newSuccessMockDB() *mockConnection {
-	tx := &mockTransaction{
-		queryFunc: func(_ context.Context, _ string, args ...any) (db.Rows, error) {
-			// args[0] is []float64 viabilities — one per input row.
-			// Return one source_id "ok" per element to simulate full match.
-			var count int
-			if len(args) > 0 {
-				if viabilities, ok := args[0].([]float64); ok {
-					count = len(viabilities)
-				}
-			}
-			ids := make([]string, count)
-			for i := range ids {
-				ids[i] = "ok"
-			}
-			return &mockRows{sourceIDs: ids}, nil
-		},
+	rows := make([][]any, count)
+	for i := range rows {
+		rows[i] = []any{id}
 	}
-	return &mockConnection{tx: tx}
+	return dbtest.Rows(nil, rows...)
 }
 
-// newErrorMockDB creates a mock connection whose Query returns the given error.
-func newErrorMockDB(err error) *mockConnection {
-	tx := &mockTransaction{
-		queryFunc: func(_ context.Context, _ string, _ ...any) (db.Rows, error) {
+// newSuccessMockDB creates a fake connection that succeeds for all DB operations.
+func newSuccessMockDB() *dbtest.Conn {
+	return &dbtest.Conn{Tx: &dbtest.Tx{
+		QueryFunc: func(_ context.Context, _ string, args ...any) (db.Rows, error) {
+			return sourceIDRows("ok", args), nil
+		},
+	}}
+}
+
+// newErrorMockDB creates a fake connection whose Query returns the given error.
+func newErrorMockDB(err error) *dbtest.Conn {
+	return &dbtest.Conn{Tx: &dbtest.Tx{
+		QueryFunc: func(_ context.Context, _ string, _ ...any) (db.Rows, error) {
 			return nil, err
 		},
-	}
-	return &mockConnection{tx: tx}
+	}}
 }
 
-// newNoRowsMockDB creates a mock connection whose Query returns 0 rows,
+// newNoRowsMockDB creates a fake connection whose Query returns 0 rows,
 // simulating a case where no vote_summaries rows matched the update criteria.
-func newNoRowsMockDB() *mockConnection {
-	tx := &mockTransaction{
-		queryFunc: func(_ context.Context, _ string, _ ...any) (db.Rows, error) {
-			return &mockRows{sourceIDs: []string{}}, nil
+func newNoRowsMockDB() *dbtest.Conn {
+	return &dbtest.Conn{Tx: &dbtest.Tx{
+		QueryFunc: func(_ context.Context, _ string, _ ...any) (db.Rows, error) {
+			return dbtest.Rows(nil), nil
 		},
-	}
-	return &mockConnection{tx: tx}
+	}}
 }
 
 // defaultViabilityConfig returns a ViabilityConfig with spec defaults.

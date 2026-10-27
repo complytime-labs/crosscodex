@@ -2,8 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
-	"io"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -16,137 +14,13 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
-	"github.com/complytime-labs/crosscodex/pkg/llmclient"
-	"github.com/complytime-labs/crosscodex/pkg/prompt"
-	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
+	"github.com/complytime-labs/crosscodex/pkg/prompt/prompttest"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
-	"github.com/complytime-labs/crosscodex/pkg/vectordb"
+	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
 )
-
-// fakeLLMClient is a minimal no-op llmclient.Client for constructor wiring
-// tests that never invoke Complete/Embed.
-type fakeLLMClient struct{}
-
-func (f *fakeLLMClient) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	return nil, nil
-}
-
-func (f *fakeLLMClient) Embed(ctx context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	return nil, nil
-}
-
-func (f *fakeLLMClient) Health(ctx context.Context) error { return nil }
-
-func (f *fakeLLMClient) Close() error { return nil }
-
-// fakeVectorDB is a minimal no-op vectordb.VectorDB for constructor wiring
-// tests that never invoke embedding storage or search.
-type fakeVectorDB struct{}
-
-func (f *fakeVectorDB) StoreEmbedding(ctx context.Context, tenant string, embedding vectordb.Embedding) error {
-	return nil
-}
-
-func (f *fakeVectorDB) StoreBatch(ctx context.Context, tenant string, embeddings []vectordb.Embedding) error {
-	return nil
-}
-
-func (f *fakeVectorDB) FindSimilar(ctx context.Context, tenant string, query vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
-	return nil, nil
-}
-
-func (f *fakeVectorDB) DeleteByModel(ctx context.Context, tenant, catalogID, model string) error {
-	return nil
-}
-
-// fakeStorage is a minimal no-op storage.Provider for constructor wiring
-// tests that never read or write objects.
-type fakeStorage struct{}
-
-func (f *fakeStorage) Get(ctx context.Context, key string) (io.ReadCloser, error) { return nil, nil }
-
-func (f *fakeStorage) Put(ctx context.Context, key string, data io.Reader) error { return nil }
-
-func (f *fakeStorage) Delete(ctx context.Context, key string) error { return nil }
-
-func (f *fakeStorage) List(ctx context.Context, prefix string) ([]storage.ObjectMetadata, error) {
-	return nil, nil
-}
-
-func (f *fakeStorage) Exists(ctx context.Context, key string) (bool, error) { return false, nil }
-
-func (f *fakeStorage) Stat(ctx context.Context, key string) (*storage.ObjectMetadata, error) {
-	return nil, nil
-}
-
-func (f *fakeStorage) Close() error { return nil }
-
-// fakePromptRegistry is a minimal no-op prompt.Registry for constructor
-// wiring tests that never resolve or render prompts.
-type fakePromptRegistry struct{}
-
-func (f *fakePromptRegistry) Resolve(ctx context.Context, name string) (*prompt.PromptSpec, error) {
-	return nil, nil
-}
-
-func (f *fakePromptRegistry) Render(ctx context.Context, name string, vars map[string]string) (*prompt.ResolvedPrompt, error) {
-	return nil, nil
-}
-
-func (f *fakePromptRegistry) List(ctx context.Context) ([]string, error) { return nil, nil }
-
-func (f *fakePromptRegistry) Layers(ctx context.Context, name string) ([]prompt.LayerInfo, error) {
-	return nil, nil
-}
-
-// fakeTenantConn is a minimal db.TenantConnection for constructor wiring
-// tests. Begin returns a fakeCandidateTx so that the requires/relationship
-// candidate providers' Candidates() query can run to completion (zero rows)
-// without a real database, exercising their query span.
-type fakeTenantConn struct{}
-
-func (f *fakeTenantConn) Begin(ctx context.Context) (db.Transaction, error) {
-	return &fakeCandidateTx{}, nil
-}
-
-func (f *fakeTenantConn) Query(ctx context.Context, query string, args ...any) (db.Rows, error) {
-	return nil, nil
-}
-
-func (f *fakeTenantConn) QueryRow(ctx context.Context, query string, args ...any) db.Row {
-	return nil
-}
-
-func (f *fakeTenantConn) Exec(ctx context.Context, query string, args ...any) error { return nil }
-
-func (f *fakeTenantConn) Close() error { return nil }
-
-// fakeCandidateTx is a minimal db.Transaction returning zero rows from
-// Query, letting RequiresCandidateProvider/RelationshipCandidateProvider's
-// Candidates() reach a successful empty result instead of panicking on a
-// nil transaction.
-type fakeCandidateTx struct{}
-
-func (f *fakeCandidateTx) Commit() error   { return nil }
-func (f *fakeCandidateTx) Rollback() error { return nil }
-
-func (f *fakeCandidateTx) Query(ctx context.Context, query string, args ...any) (db.Rows, error) {
-	return &fakeEmptyRows{}, nil
-}
-
-func (f *fakeCandidateTx) QueryRow(ctx context.Context, query string, args ...any) db.Row {
-	return nil
-}
-
-func (f *fakeCandidateTx) Exec(ctx context.Context, query string, args ...any) error { return nil }
-
-// fakeEmptyRows is a db.Rows with no rows.
-type fakeEmptyRows struct{}
-
-func (f *fakeEmptyRows) Next() bool             { return false }
-func (f *fakeEmptyRows) Scan(dest ...any) error { return fmt.Errorf("fakeEmptyRows: no current row") }
-func (f *fakeEmptyRows) Close() error           { return nil }
-func (f *fakeEmptyRows) Err() error             { return nil }
 
 // validAnalysisConfig returns a minimal config.AnalysisConfig that satisfies
 // every analyzer's construction-time validation.
@@ -161,7 +35,15 @@ func validAnalysisConfig() config.AnalysisConfig {
 }
 
 func newProductionRegistryForTest(tp trace.TracerProvider, mp metric.MeterProvider) (*analyzer.Registry, error) {
-	return NewProductionRegistry(&fakeLLMClient{}, &fakeVectorDB{}, &fakeStorage{}, &fakePromptRegistry{}, &fakeTenantConn{}, validAnalysisConfig(), tp, mp)
+	// Every transaction enters the tenant and queries zero rows, so the
+	// requires/relationship candidate providers' Candidates() reaches a
+	// successful empty result without a real database, exercising their
+	// query span.
+	conn := &dbtest.Conn{Tx: &dbtest.Tx{
+		ExecFunc:  func(context.Context, string, ...any) error { return nil },
+		QueryFunc: func(context.Context, string, ...any) (db.Rows, error) { return dbtest.Rows(nil), nil },
+	}}
+	return NewProductionRegistry(&llmclienttest.Fake{}, &vectordbtest.Fake{}, &storagetest.Fake{}, &prompttest.Fake{}, conn, validAnalysisConfig(), tp, mp)
 }
 
 var _ = Describe("NewProductionRegistry", func() {
@@ -245,7 +127,7 @@ var _ = Describe("NewProductionRegistry", func() {
 				// Zero candidate pairs is itself a successful outcome (see
 				// requires.GenerateWork / relationship.GenerateWork): both
 				// return (nil, nil) once Candidates() succeeds with an empty
-				// result, which is exactly what fakeCandidateTx produces.
+				// result, which is exactly what the dbtest.Tx above produces.
 				_, err = a.GenerateWorkFromProto(ctx, &pb.Control{}, cfg)
 				Expect(err).NotTo(HaveOccurred())
 

@@ -90,7 +90,7 @@ func (c *integCaptureAudit) actions() []string {
 	return out
 }
 
-// The corruptingProvider used by the corrupting-archive spec is defined in
+// The newCorruptingProvider fake used by the corrupting-archive spec is defined in
 // archive_bdd_test.go (same package): it accepts every Put but returns mangled
 // bytes on Get, so the Archiver's read-back hash never matches and archival
 // fails with ErrArchiveVerify.
@@ -700,7 +700,7 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		const jobID = "job-e2e-corrupt-1"
 
 		kit := newIntegKit(tid, func(_ storage.Provider) storage.Provider {
-			return &corruptingProvider{}
+			return newCorruptingProvider()
 		})
 		ctx, err := tenant.WithTenant(context.Background(), tid)
 		Expect(err).NotTo(HaveOccurred())

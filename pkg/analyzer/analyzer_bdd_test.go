@@ -20,6 +20,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/analyzertest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
 
@@ -30,42 +31,25 @@ func TestAnalyzerBDD(t *testing.T) {
 
 // --- Mock analyzer for testing ---
 
-// mockAnalyzer implements analyzer.Analyzer[T] for testing.
-type mockAnalyzer[T proto.Message] struct {
-	name      string
-	deps      []string
-	genWork   func(ctx context.Context, input T, config analyzer.AnalyzerConfig) ([]analyzer.Task, error)
-	aggregate func(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error)
-	schema    proto.Message
-}
-
-func (m *mockAnalyzer[T]) Name() string        { return m.name }
-func (m *mockAnalyzer[T]) DependsOn() []string { return m.deps }
-func (m *mockAnalyzer[T]) GenerateWork(ctx context.Context, input T, config analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-	if m.genWork != nil {
-		return m.genWork(ctx, input, config)
+// newMockOf returns an analyzertest.Stub with the defaults these specs rely
+// on: no tasks, an Output naming the analyzer, and an emptypb schema.
+func newMockOf[T proto.Message](name string, deps ...string) *analyzertest.Stub[T] {
+	return &analyzertest.Stub[T]{
+		AnalyzerName: name,
+		Dependencies: deps,
+		Schema:       &emptypb.Empty{},
+		GenerateWorkFunc: func(context.Context, T, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			return nil, nil
+		},
+		AggregateFunc: func(context.Context, []analyzer.TaskResult) (*analyzer.Output, error) {
+			return &analyzer.Output{AnalyzerName: name}, nil
+		},
 	}
-	return nil, nil
-}
-func (m *mockAnalyzer[T]) Aggregate(ctx context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-	if m.aggregate != nil {
-		return m.aggregate(ctx, results)
-	}
-	return &analyzer.Output{AnalyzerName: m.name}, nil
-}
-func (m *mockAnalyzer[T]) ResultSchema() proto.Message {
-	if m.schema != nil {
-		return m.schema
-	}
-	return &emptypb.Empty{}
 }
 
 // newMock creates a simple mock analyzer with the given name and dependencies.
-func newMock(name string, deps ...string) *mockAnalyzer[*emptypb.Empty] {
-	return &mockAnalyzer[*emptypb.Empty]{
-		name: name,
-		deps: deps,
-	}
+func newMock(name string, deps ...string) *analyzertest.Stub[*emptypb.Empty] {
+	return newMockOf[*emptypb.Empty](name, deps...)
 }
 
 // registerBuiltinGraph registers the 5 built-in analyzer types into a registry.
@@ -233,13 +217,11 @@ var _ = Describe("Analyzer Package", func() {
 
 		It("passes through GenerateWork with correct proto type", func() {
 			called := false
-			mock := &mockAnalyzer[*wrapperspb.StringValue]{
-				name: "typed",
-				genWork: func(_ context.Context, input *wrapperspb.StringValue, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-					Expect(input.GetValue()).To(Equal("test-control"))
-					called = true
-					return []analyzer.Task{{TaskID: "t1", TaskType: "typed"}}, nil
-				},
+			mock := newMockOf[*wrapperspb.StringValue]("typed")
+			mock.GenerateWorkFunc = func(_ context.Context, input *wrapperspb.StringValue, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				Expect(input.GetValue()).To(Equal("test-control"))
+				called = true
+				return []analyzer.Task{{TaskID: "t1", TaskType: "typed"}}, nil
 			}
 			Expect(analyzer.Register[*wrapperspb.StringValue](reg, mock)).To(Succeed())
 
@@ -257,7 +239,7 @@ var _ = Describe("Analyzer Package", func() {
 		})
 
 		It("reports InputType as the proto full name", func() {
-			mock := &mockAnalyzer[*wrapperspb.StringValue]{name: "typed"}
+			mock := newMockOf[*wrapperspb.StringValue]("typed")
 			Expect(analyzer.Register[*wrapperspb.StringValue](reg, mock)).To(Succeed())
 
 			a, err := reg.Get("typed")
@@ -271,14 +253,12 @@ var _ = Describe("Analyzer Package", func() {
 				AnalyzerName: "aggregator",
 				Data:         mergedResult,
 			}
-			mock := &mockAnalyzer[*emptypb.Empty]{
-				name: "aggregator",
-				aggregate: func(_ context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
-					Expect(results).To(HaveLen(2))
-					Expect(results[0].TaskID).To(Equal("t1"))
-					Expect(results[1].TaskID).To(Equal("t2"))
-					return expectedOutput, nil
-				},
+			mock := newMock("aggregator")
+			mock.AggregateFunc = func(_ context.Context, results []analyzer.TaskResult) (*analyzer.Output, error) {
+				Expect(results).To(HaveLen(2))
+				Expect(results[0].TaskID).To(Equal("t1"))
+				Expect(results[1].TaskID).To(Equal("t2"))
+				return expectedOutput, nil
 			}
 			Expect(analyzer.Register[*emptypb.Empty](reg, mock)).To(Succeed())
 
@@ -297,10 +277,8 @@ var _ = Describe("Analyzer Package", func() {
 
 		It("delegates ResultSchema through the registered wrapper", func() {
 			expectedSchema := wrapperspb.String("schema-value")
-			mock := &mockAnalyzer[*wrapperspb.StringValue]{
-				name:   "with-schema",
-				schema: expectedSchema,
-			}
+			mock := newMockOf[*wrapperspb.StringValue]("with-schema")
+			mock.Schema = expectedSchema
 			Expect(analyzer.Register[*wrapperspb.StringValue](reg, mock)).To(Succeed())
 
 			a, err := reg.Get("with-schema")
@@ -557,7 +535,7 @@ var _ = Describe("Analyzer Package", func() {
 	Describe("Wrong Proto Type Handling", func() {
 		It("returns an actionable error when GenerateWorkFromProto receives wrong type", func() {
 			reg := analyzer.NewRegistry()
-			mock := &mockAnalyzer[*wrapperspb.StringValue]{name: "typed"}
+			mock := newMockOf[*wrapperspb.StringValue]("typed")
 			Expect(analyzer.Register[*wrapperspb.StringValue](reg, mock)).To(Succeed())
 
 			a, err := reg.Get("typed")
@@ -570,6 +548,9 @@ var _ = Describe("Analyzer Package", func() {
 				analyzer.AnalyzerConfig{},
 			)
 			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, analyzertest.ErrUnscripted)).To(BeFalse(), "the wrapper's type check must reject before the stub runs")
+			Expect(mock.Inputs()).To(BeEmpty())
+			Expect(err.Error()).To(ContainSubstring("expected input type"))
 			Expect(err.Error()).To(ContainSubstring("typed"))
 			Expect(err.Error()).To(ContainSubstring("StringValue"))
 		})

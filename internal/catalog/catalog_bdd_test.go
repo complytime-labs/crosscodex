@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -19,8 +20,9 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
-	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
@@ -37,68 +39,6 @@ var _ = BeforeSuite(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 // ---------------------------------------------------------------------------
 
 var _ catalog.Store = (*catalog.PGStore)(nil)
-
-// ---------------------------------------------------------------------------
-// Mock types implementing db interfaces for store unit testing
-// ---------------------------------------------------------------------------
-
-type mockConn struct {
-	beginFn func(ctx context.Context) (db.Transaction, error)
-}
-
-func (m *mockConn) Begin(ctx context.Context) (db.Transaction, error) { return m.beginFn(ctx) }
-func (m *mockConn) Query(_ context.Context, _ string, _ ...any) (db.Rows, error) {
-	return nil, errors.New("mockConn.Query not implemented")
-}
-func (m *mockConn) QueryRow(_ context.Context, _ string, _ ...any) db.Row {
-	return &mockRow{scanFn: func(...any) error { return errors.New("mockConn.QueryRow not implemented") }}
-}
-func (m *mockConn) Exec(_ context.Context, _ string, _ ...any) error {
-	return errors.New("mockConn.Exec not implemented")
-}
-func (m *mockConn) Close() error { return nil }
-
-type mockTx struct {
-	committed  bool
-	rolledBack bool
-	execFn     func(ctx context.Context, query string, args ...any) error
-	queryFn    func(ctx context.Context, query string, args ...any) (db.Rows, error)
-	queryRowFn func(ctx context.Context, query string, args ...any) db.Row
-}
-
-func (m *mockTx) Commit() error   { m.committed = true; return nil }
-func (m *mockTx) Rollback() error { m.rolledBack = true; return nil }
-func (m *mockTx) Exec(ctx context.Context, query string, args ...any) error {
-	if m.execFn != nil {
-		return m.execFn(ctx, query, args...)
-	}
-	return nil
-}
-func (m *mockTx) Query(ctx context.Context, query string, args ...any) (db.Rows, error) {
-	if m.queryFn != nil {
-		return m.queryFn(ctx, query, args...)
-	}
-	return &emptyRows{}, nil
-}
-func (m *mockTx) QueryRow(ctx context.Context, query string, args ...any) db.Row {
-	if m.queryRowFn != nil {
-		return m.queryRowFn(ctx, query, args...)
-	}
-	return &mockRow{scanFn: func(...any) error { return nil }}
-}
-
-type mockRow struct {
-	scanFn func(dest ...any) error
-}
-
-func (m *mockRow) Scan(dest ...any) error { return m.scanFn(dest...) }
-
-type emptyRows struct{}
-
-func (e *emptyRows) Next() bool          { return false }
-func (e *emptyRows) Scan(_ ...any) error { return nil }
-func (e *emptyRows) Close() error        { return nil }
-func (e *emptyRows) Err() error          { return nil }
 
 // ---------------------------------------------------------------------------
 // Mock types for service unit testing
@@ -181,60 +121,6 @@ func (m *mockStore) SearchControls(_ context.Context, _ catalog.SearchQuery) ([]
 	return nil, catalog.PageInfo{}, nil
 }
 
-type mockStorage struct {
-	data map[string][]byte
-}
-
-func newMockStorage() *mockStorage {
-	return &mockStorage{
-		data: make(map[string][]byte),
-	}
-}
-
-func (m *mockStorage) Get(_ context.Context, path string) (io.ReadCloser, error) {
-	data, ok := m.data[path]
-	if !ok {
-		return nil, io.ErrUnexpectedEOF
-	}
-	return io.NopCloser(bytes.NewReader(data)), nil
-}
-
-func (m *mockStorage) Put(_ context.Context, path string, reader io.Reader) error {
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return err
-	}
-	m.data[path] = data
-	return nil
-}
-
-func (m *mockStorage) Delete(_ context.Context, path string) error {
-	delete(m.data, path)
-	return nil
-}
-
-func (m *mockStorage) List(_ context.Context, _ string) ([]storage.ObjectMetadata, error) {
-	return nil, nil
-}
-
-func (m *mockStorage) Close() error { return nil }
-
-func (m *mockStorage) Exists(_ context.Context, path string) (bool, error) {
-	_, ok := m.data[path]
-	return ok, nil
-}
-
-func (m *mockStorage) Stat(_ context.Context, key string) (*storage.ObjectMetadata, error) {
-	data, ok := m.data[key]
-	if !ok {
-		return nil, io.ErrUnexpectedEOF
-	}
-	return &storage.ObjectMetadata{
-		Key:  key,
-		Size: int64(len(data)),
-	}, nil
-}
-
 // ===========================================================================
 // Store Specs (from store_test.go)
 // ===========================================================================
@@ -268,8 +154,8 @@ var _ = Describe("PGStore", func() {
 	Describe("UpsertCatalog", func() {
 		It("returns error when Begin fails", func() {
 			beginErr := errors.New("connection refused")
-			conn := &mockConn{
-				beginFn: func(context.Context) (db.Transaction, error) {
+			conn := &dbtest.Conn{
+				BeginFunc: func(context.Context) (db.Transaction, error) {
 					return nil, beginErr
 				},
 			}
@@ -281,60 +167,53 @@ var _ = Describe("PGStore", func() {
 		})
 
 		It("commits on success", func() {
-			tx := &mockTx{}
-			conn := &mockConn{
-				beginFn: func(context.Context) (db.Transaction, error) { return tx, nil },
+			// RETURNING catalog_id yields the row: the catalog is this tenant's.
+			tx := &dbtest.Tx{
+				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(nil, "cat-1") },
 			}
+			conn := &dbtest.Conn{Tx: tx}
 			store := catalog.NewPGStore(conn)
 
 			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(tx.committed).To(BeTrue())
+			Expect(tx.Commits()).To(Equal(1))
 		})
 
 		It("does not commit when the upsert fails", func() {
 			upsertErr := errors.New("unique violation")
-			tx := &mockTx{
-				queryRowFn: func(context.Context, string, ...any) db.Row {
-					return &mockRow{scanFn: func(...any) error { return upsertErr }}
-				},
+			tx := &dbtest.Tx{
+				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(upsertErr) },
 			}
-			conn := &mockConn{
-				beginFn: func(context.Context) (db.Transaction, error) { return tx, nil },
-			}
+			conn := &dbtest.Conn{Tx: tx}
 			store := catalog.NewPGStore(conn)
 
 			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, upsertErr)).To(BeTrue())
-			Expect(tx.committed).To(BeFalse())
+			Expect(tx.Commits()).To(Equal(0))
 		})
 
 		It("refuses and does not commit when the catalog ID belongs to another tenant", func() {
 			// ON CONFLICT ... WHERE catalogs.tenant_id = EXCLUDED.tenant_id
 			// updates nothing for another tenant's row, so RETURNING is empty.
-			tx := &mockTx{
-				queryRowFn: func(context.Context, string, ...any) db.Row {
-					return &mockRow{scanFn: func(...any) error { return sql.ErrNoRows }}
-				},
+			tx := &dbtest.Tx{
+				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(sql.ErrNoRows) },
 			}
-			conn := &mockConn{
-				beginFn: func(context.Context) (db.Transaction, error) { return tx, nil },
-			}
+			conn := &dbtest.Conn{Tx: tx}
 			store := catalog.NewPGStore(conn)
 
 			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
 			Expect(err).To(MatchError(ContainSubstring("belongs to another tenant")))
 			Expect(err).To(MatchError(ContainSubstring("nothing was written")))
-			Expect(tx.committed).To(BeFalse())
+			Expect(tx.Commits()).To(Equal(0))
 		})
 	})
 
 	Describe("tenant scoping", func() {
 		// Begin must never run: a store call without a tenant, or with a
 		// record for another tenant, is refused before touching the database.
-		noBegin := func() *mockConn {
-			return &mockConn{beginFn: func(context.Context) (db.Transaction, error) {
+		noBegin := func() *dbtest.Conn {
+			return &dbtest.Conn{BeginFunc: func(context.Context) (db.Transaction, error) {
 				Fail("Begin must not be called")
 				return nil, nil
 			}}
@@ -391,8 +270,8 @@ var _ = Describe("PGStore", func() {
 
 	Describe("UpsertControls", func() {
 		It("succeeds without calling Begin for empty slice", func() {
-			conn := &mockConn{
-				beginFn: func(context.Context) (db.Transaction, error) {
+			conn := &dbtest.Conn{
+				BeginFunc: func(context.Context) (db.Transaction, error) {
 					Fail("Begin should not be called for empty controls slice")
 					return nil, nil
 				},
@@ -405,8 +284,8 @@ var _ = Describe("PGStore", func() {
 
 		It("returns error when Begin fails", func() {
 			beginErr := errors.New("pool exhausted")
-			conn := &mockConn{
-				beginFn: func(context.Context) (db.Transaction, error) { return nil, beginErr },
+			conn := &dbtest.Conn{
+				BeginFunc: func(context.Context) (db.Transaction, error) { return nil, beginErr },
 			}
 			store := catalog.NewPGStore(conn)
 
@@ -416,10 +295,12 @@ var _ = Describe("PGStore", func() {
 		})
 
 		It("commits on success", func() {
-			tx := &mockTx{}
-			conn := &mockConn{
-				beginFn: func(context.Context) (db.Transaction, error) { return tx, nil },
+			// The ownership check finds the catalog, then the upsert runs.
+			tx := &dbtest.Tx{
+				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(nil, 1) },
+				ExecFunc:     func(context.Context, string, ...any) error { return nil },
 			}
+			conn := &dbtest.Conn{Tx: tx}
 			store := catalog.NewPGStore(conn)
 
 			ctrl := catalog.ControlRecord{
@@ -430,26 +311,20 @@ var _ = Describe("PGStore", func() {
 			}
 			err := store.UpsertControls(storeCtx, []catalog.ControlRecord{ctrl})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(tx.committed).To(BeTrue())
+			Expect(tx.Commits()).To(Equal(1))
 		})
 
 		It("refuses the batch without writing when a catalog is not the tenant's", func() {
-			wrote := false
-			tx := &mockTx{
-				queryRowFn: func(context.Context, string, ...any) db.Row {
-					return &mockRow{scanFn: func(...any) error { return sql.ErrNoRows }}
-				},
-				execFn: func(context.Context, string, ...any) error { wrote = true; return nil },
+			tx := &dbtest.Tx{
+				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(sql.ErrNoRows) },
 			}
-			conn := &mockConn{
-				beginFn: func(context.Context) (db.Transaction, error) { return tx, nil },
-			}
+			conn := &dbtest.Conn{Tx: tx}
 			store := catalog.NewPGStore(conn)
 
 			err := store.UpsertControls(storeCtx, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1", CatalogID: "foreign"}})
 			Expect(err).To(MatchError(ContainSubstring(`catalog "foreign" is not a catalog of tenant "store-unit"`)))
-			Expect(wrote).To(BeFalse())
-			Expect(tx.committed).To(BeFalse())
+			Expect(tx.Execs()).To(BeEmpty())
+			Expect(tx.Commits()).To(Equal(0))
 		})
 	})
 })
@@ -463,7 +338,7 @@ var _ = Describe("Service", func() {
 		It("creates a service with the given options", func() {
 			parser := &mockParser{}
 			store := newMockStore()
-			stg := newMockStorage()
+			stg := &storagetest.Fake{}
 
 			svc := catalog.NewService(
 				catalog.WithParser(parser),
@@ -480,13 +355,13 @@ var _ = Describe("Service", func() {
 	Describe("ParseCatalog", func() {
 		var (
 			svc *catalog.Service
-			stg *mockStorage
+			stg *storagetest.Fake
 			ms  *mockStore
 		)
 
 		BeforeEach(func() {
 			ms = newMockStore()
-			stg = newMockStorage()
+			stg = &storagetest.Fake{}
 		})
 
 		Context("validation", func() {
@@ -543,7 +418,7 @@ var _ = Describe("Service", func() {
 					},
 				}
 				oscalData, _ := json.Marshal(oscalDoc)
-				stg.data["doc-1"] = oscalData
+				Expect(stg.Put(context.Background(), "doc-1", bytes.NewReader(oscalData))).To(Succeed())
 
 				req := &crosscodexv1.ParseCatalogRequest{
 					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
@@ -573,7 +448,7 @@ var _ = Describe("Service", func() {
 						catalog.WithStorage(stg),
 					)
 
-					stg.data["doc-2"] = []byte(content)
+					Expect(stg.Put(context.Background(), "doc-2", strings.NewReader(content))).To(Succeed())
 
 					req := &crosscodexv1.ParseCatalogRequest{
 						TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
