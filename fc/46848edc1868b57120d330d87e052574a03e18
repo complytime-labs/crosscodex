@@ -1,0 +1,21 @@
+pkg/telemetry/telemetry_bdd_test.go
+  s_5d30fea2594b5a::t_679f19c260cd33 97-98,111-122,129-130,138-139,143-147,150-153,156-159,162-164
+pkg/telemetry/telemetry_integration_bdd_test.go
+  s_5d30fea2594b5a::t_36fb906acdcd72 67-69,71,73,79,82,96,102-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc46848edc1868b57120d330d87e052574a03e18",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
