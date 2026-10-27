@@ -1,0 +1,19 @@
+pkg/attestation/attestation_bdd_test.go
+  s_5d30fea2594b5a::t_f3676bca0efdad 811-815,817-824,858-860,862,872-873,875-889,892
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35a92bc1950f4222b74fd34091ae4fd5a22f1c5d",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
