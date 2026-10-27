@@ -1,0 +1,25 @@
+.github/workflows/fuzz-nightly.yml
+  s_87d7f3c05f095b::t_cb6962587b04fa 3-4
+.github/workflows/ci.yml
+  s_87d7f3c05f095b::t_cb6962587b04fa 49-52
+README.md
+  s_87d7f3c05f095b::t_cb6962587b04fa 431
+AGENTS.md
+  s_87d7f3c05f095b::t_cb6962587b04fa 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "70e22e1393d0bf4aef595e5bea5e126440417da3",
+  "prompts": {},
+  "sessions": {
+    "s_87d7f3c05f095b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "410a30b9-e60c-4f61-a6b4-8970329f554a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
