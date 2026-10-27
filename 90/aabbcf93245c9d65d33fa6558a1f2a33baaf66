@@ -1,0 +1,29 @@
+internal/gateway/server_bdd_test.go
+  s_5d30fea2594b5a::t_1a97ac9a378b85 6,10,12,15,245-319
+  s_5d30fea2594b5a::t_3c6e85f4dca408 320
+internal/gateway/helpers.go
+  s_5d30fea2594b5a::t_093835b6ba0a6e 45-48,57-58,60,75-105
+  s_5d30fea2594b5a::t_210c7941dcb3cf 106
+internal/gateway/server.go
+  s_5d30fea2594b5a::t_093835b6ba0a6e 34-36,77-78,82
+docs/dev/design-principles.md
+  s_5d30fea2594b5a::t_c2808390b07eaf 186
+internal/gateway/backend_errors_bdd_test.go
+  s_5d30fea2594b5a::t_ffbe05af95e5c1 21,259-270,297
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90aabbcf93245c9d65d33fa6558a1f2a33baaf66",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
