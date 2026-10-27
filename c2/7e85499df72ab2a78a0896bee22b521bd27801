@@ -1,0 +1,27 @@
+pkg/retention/retentiontest/doc.go
+  s_5d30fea2594b5a::t_2a47779a888d96 71
+pkg/retention/hold_store_integration_bdd_test.go
+  s_5d30fea2594b5a::t_2a47779a888d96 265-266
+pkg/vectordb/vectordbtest/doc.go
+  s_5d30fea2594b5a::t_2a47779a888d96 28-37
+pkg/retention/retentiontest/contract.go
+  s_5d30fea2594b5a::t_2a47779a888d96 35-36,92-94
+  s_5d30fea2594b5a::t_5d602f865c71e9 74
+  s_5d30fea2594b5a::t_11f82e49ea1a35 149,151,156-157,160-161,163,167,288,298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c27e85499df72ab2a78a0896bee22b521bd27801",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
