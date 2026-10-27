@@ -1,0 +1,42 @@
+internal/gateway/document.go
+  s_5d30fea2594b5a::t_273d74abc316eb 82,109,134
+internal/gateway/catalog.go
+  s_5d30fea2594b5a::t_273d74abc316eb 33,66,98,131
+internal/gateway/health.go
+  s_5d30fea2594b5a::t_273d74abc316eb 31
+internal/gateway/gateway_bdd_test.go
+  s_5d30fea2594b5a::t_3d029f121b6193 452
+  s_5d30fea2594b5a::t_099bfbf591a094 436-438
+internal/gateway/backend_errors_bdd_test.go
+  s_5d30fea2594b5a::t_498cf4327a6f00 1-11,13-249
+  s_5d30fea2594b5a::t_a62f29553f3c8e 12
+internal/gateway/helpers.go
+  s_5d30fea2594b5a::t_c9686645ca8708 35-60
+  s_5d30fea2594b5a::t_9223ac757dabd1 5-7
+internal/gateway/mappings.go
+  s_5d30fea2594b5a::t_273d74abc316eb 42,89
+docs/dev/design-principles.md
+  s_5d30fea2594b5a::t_5b785957106d2f 186-187
+internal/gateway/jobs.go
+  s_5d30fea2594b5a::t_273d74abc316eb 39,76,122,139
+internal/gateway/feedback.go
+  s_5d30fea2594b5a::t_273d74abc316eb 42,95
+internal/gateway/graph.go
+  s_5d30fea2594b5a::t_273d74abc316eb 50,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0632280b8b399cf69caf1af5d905918a562aacd6",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
