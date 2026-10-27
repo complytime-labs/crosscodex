@@ -1,0 +1,23 @@
+internal/analysis/engine_property_test.go
+  s_5d30fea2594b5a::t_c8a9e68ca7fb09 12-19,24,37,50
+pkg/analyzer/analyzer_property_test.go
+  s_5d30fea2594b5a::t_c8a9e68ca7fb09 5,18-55,112,150
+internal/admin/service_bdd_test.go
+  s_5d30fea2594b5a::t_e32ec5f1c5f595 147-149,152-159,163-169,171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04a65564ccf9c414e9b395e82fd9a1609cc31f31",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
