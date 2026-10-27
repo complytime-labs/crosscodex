@@ -1,0 +1,22 @@
+AGENTS.md
+  s_5d30fea2594b5a::t_c4c56944dd428b 50-55
+  s_5d30fea2594b5a::t_433a46fc5d8e02 72-73
+  s_5d30fea2594b5a::t_7e54344a038b94 38-39
+  s_5d30fea2594b5a::t_0bc0725a757d8a 56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f33abd76d58141e5baeb66014cdbcd9031ee6abb",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
