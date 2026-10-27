@@ -1,0 +1,30 @@
+internal/catalog/catalog_bdd_test.go
+  s_5d30fea2594b5a::t_621fa3a4216c3d 18
+  s_5d30fea2594b5a::t_21d7bb50ef562a 638,640-649
+internal/graph/subscriber_bdd_test.go
+  s_5d30fea2594b5a::t_f9454f4e706bf0 67-84
+internal/graph/read_bdd_test.go
+  s_5d30fea2594b5a::t_726f554ba471f4 33-107,109
+internal/graph/write_bdd_test.go
+  s_5d30fea2594b5a::t_1ee067d4301404 36-93,95,511,686
+internal/pipeline/candidate_generation_bdd_test.go
+  s_5d30fea2594b5a::t_707e67f9a4978a 195-211
+internal/catalog/catalog_integration_bdd_test.go
+  s_5d30fea2594b5a::t_f43db93e850bda 152-164,426-428,465-469,472-479,682-683,941-942
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "01e08e9ac12f2e4702ee68c2975d18b6f87620e0",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
