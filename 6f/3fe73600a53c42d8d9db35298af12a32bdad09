@@ -1,0 +1,23 @@
+cmd/crosscodexd/migrate_integration_test.go
+  s_5d30fea2594b5a::t_ed8f05eaaf7112 27-30
+internal/analysis/collector.go
+  s_5d30fea2594b5a::t_ed8f05eaaf7112 186
+pkg/natsbus/natsbustest/doc.go
+  s_5d30fea2594b5a::t_ed8f05eaaf7112 32-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f3fe73600a53c42d8d9db35298af12a32bdad09",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
