@@ -1,0 +1,20 @@
+internal/pipeline/store_integration_test.go
+  s_5d30fea2594b5a::t_fa317ca551cdac 109
+  s_5d30fea2594b5a::t_096fc1aeed6bf7 132,192,274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc670bf256adcaa622e333cb30a587df563f9bc8",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
