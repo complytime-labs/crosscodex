@@ -1,0 +1,22 @@
+pkg/config/config_bdd_test.go
+  s_5d30fea2594b5a::t_04b1d7f56c2e37 1320-1323,1809,1815,1841-1848,1894-1899
+  s_5d30fea2594b5a::t_907010cf244076 1800-1803
+pkg/config/database_dsn_bdd_test.go
+  s_5d30fea2594b5a::t_d33e6c6ccb7508 14-16,33,37-40,51-54,57,65,67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de613b572c5e6db5ab72b51ff50c178702d410fc",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
