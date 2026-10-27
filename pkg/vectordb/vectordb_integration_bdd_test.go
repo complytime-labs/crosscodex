@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"testing"
 
@@ -43,16 +42,6 @@ var tenantCatalog = map[string]string{
 	"tenant-1":    "tenant-1-catalog",
 	"tenant-2":    "tenant-2-catalog",
 	deletedTenant: deletedTenant + "-catalog",
-}
-
-// appUserDSN returns dsn with its credentials replaced by app_user's.
-func appUserDSN(dsn string) string {
-	u, err := url.Parse(dsn)
-	Expect(err).NotTo(HaveOccurred(), "bad TEST_DATABASE_DSN")
-	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	u.User = url.UserPassword("app_user", pw)
-	return u.String()
 }
 
 // openAppUser opens an app_user connection closed at the end of the spec.
@@ -136,15 +125,16 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-	Expect(adminPool.Exec(ctx, stmt)).To(Succeed(), "failed to set app_user password")
+	Expect(dbtest.SetRolePassword(ctx, testDSN, "app_user", appPassword)).To(Succeed(), "failed to set app_user password")
 
 	return []byte(testDSN)
 }, func(data []byte) {
 	testDSN = string(data)
 	if testDSN != "" {
-		appDSN = appUserDSN(testDSN)
+		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "app_user password")
+		appDSN, err = dbtest.RoleDSN(testDSN, "app_user", appPassword)
+		Expect(err).NotTo(HaveOccurred(), "app_user DSN")
 	}
 })
 

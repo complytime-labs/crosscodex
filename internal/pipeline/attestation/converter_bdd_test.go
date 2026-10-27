@@ -10,6 +10,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/analyzertest"
 	pkgattestation "github.com/complytime-labs/crosscodex/pkg/attestation"
 
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
@@ -22,27 +23,11 @@ func TestConverterBDD(t *testing.T) {
 
 var _ = BeforeSuite(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 
-// stubAnalyzer implements analyzer.Analyzer[proto.Message] for testing.
-type stubAnalyzer struct {
-	name string
-	deps []string
-}
-
-func (s *stubAnalyzer) Name() string        { return s.name }
-func (s *stubAnalyzer) DependsOn() []string { return s.deps }
-func (s *stubAnalyzer) GenerateWork(_ context.Context, _ proto.Message, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
-	return nil, nil
-}
-func (s *stubAnalyzer) Aggregate(_ context.Context, _ []analyzer.TaskResult) (*analyzer.Output, error) {
-	return nil, nil
-}
-func (s *stubAnalyzer) ResultSchema() proto.Message { return nil }
-
-func buildDAG(analyzers ...*stubAnalyzer) *analyzer.DAG {
+func buildDAG(analyzers ...*analyzertest.Stub[proto.Message]) *analyzer.DAG {
 	reg := analyzer.NewRegistry()
 	for _, a := range analyzers {
 		err := analyzer.Register[proto.Message](reg, a)
-		Expect(err).NotTo(HaveOccurred(), "register %s", a.name)
+		Expect(err).NotTo(HaveOccurred(), "register %s", a.AnalyzerName)
 	}
 	dag, err := reg.BuildDAG(context.Background())
 	Expect(err).NotTo(HaveOccurred(), "build DAG")
@@ -51,7 +36,7 @@ func buildDAG(analyzers ...*stubAnalyzer) *analyzer.DAG {
 
 var _ = Describe("Converter", func() {
 	DescribeTable("Convert",
-		func(analyzers []*stubAnalyzer, wantSteps int, checkFunc func(pkgattestation.LayoutOptions)) {
+		func(analyzers []*analyzertest.Stub[proto.Message], wantSteps int, checkFunc func(pkgattestation.LayoutOptions)) {
 			var dag *analyzer.DAG
 			if len(analyzers) == 0 {
 				reg := analyzer.NewRegistry()
@@ -75,7 +60,7 @@ var _ = Describe("Converter", func() {
 			nil, 0, nil,
 		),
 		Entry("single analyzer with no deps",
-			[]*stubAnalyzer{{name: "ingestion", deps: nil}},
+			[]*analyzertest.Stub[proto.Message]{{AnalyzerName: "ingestion"}},
 			1,
 			func(opts pkgattestation.LayoutOptions) {
 				s := opts.Steps[0]
@@ -86,9 +71,9 @@ var _ = Describe("Converter", func() {
 			},
 		),
 		Entry("two analyzers with dependency",
-			[]*stubAnalyzer{
-				{name: "ingestion", deps: nil},
-				{name: "analysis", deps: []string{"ingestion"}},
+			[]*analyzertest.Stub[proto.Message]{
+				{AnalyzerName: "ingestion"},
+				{AnalyzerName: "analysis", Dependencies: []string{"ingestion"}},
 			},
 			2,
 			func(opts pkgattestation.LayoutOptions) {
@@ -105,10 +90,10 @@ var _ = Describe("Converter", func() {
 			},
 		),
 		Entry("multi-level DAG preserves level ordering",
-			[]*stubAnalyzer{
-				{name: "ingestion", deps: nil},
-				{name: "analysis", deps: []string{"ingestion"}},
-				{name: "synthesis", deps: []string{"analysis"}},
+			[]*analyzertest.Stub[proto.Message]{
+				{AnalyzerName: "ingestion"},
+				{AnalyzerName: "analysis", Dependencies: []string{"ingestion"}},
+				{AnalyzerName: "synthesis", Dependencies: []string{"analysis"}},
 			},
 			3,
 			func(opts pkgattestation.LayoutOptions) {
@@ -132,7 +117,7 @@ var _ = Describe("Converter", func() {
 			},
 		),
 		Entry("ExpiresIn is zero (caller responsibility)",
-			[]*stubAnalyzer{{name: "step-a", deps: nil}},
+			[]*analyzertest.Stub[proto.Message]{{AnalyzerName: "step-a"}},
 			1,
 			func(opts pkgattestation.LayoutOptions) {
 				Expect(opts.ExpiresIn).To(BeZero())

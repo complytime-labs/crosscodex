@@ -112,33 +112,28 @@ var _ = Describe("UnaryServerInterceptor", func() {
 		Expect(captured).To(Equal("alice"))
 	})
 
-	It("fails closed when the tenant header is missing", func() {
-		interceptor := connectutil.UnaryServerInterceptor()
-		req := connect.NewRequest(&pb.HealthRequest{})
+	DescribeTable("fails closed with Unauthenticated, without calling the handler",
+		func(tenantHeader string) {
+			interceptor := connectutil.UnaryServerInterceptor()
+			req := connect.NewRequest(&pb.HealthRequest{})
+			// "" means the header is absent (not set to an empty value), so the
+			// missing-header and malformed-header paths are both exercised.
+			if tenantHeader != "" {
+				req.Header().Set(connectutil.MetadataKeyTenantID, tenantHeader)
+			}
 
-		called := false
-		next := func(ctx context.Context, r connect.AnyRequest) (connect.AnyResponse, error) {
-			called = true
-			return connect.NewResponse(&pb.HealthCheckResponse{}), nil
-		}
+			called := false
+			next := func(ctx context.Context, r connect.AnyRequest) (connect.AnyResponse, error) {
+				called = true
+				return connect.NewResponse(&pb.HealthCheckResponse{}), nil
+			}
 
-		_, err := interceptor.WrapUnary(next)(context.Background(), req)
-		Expect(err).To(HaveOccurred())
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
-		Expect(called).To(BeFalse())
-	})
-
-	It("fails closed when the tenant header is malformed", func() {
-		interceptor := connectutil.UnaryServerInterceptor()
-		req := connect.NewRequest(&pb.HealthRequest{})
-		req.Header().Set(connectutil.MetadataKeyTenantID, "Not A Valid Tenant!!")
-
-		next := func(ctx context.Context, r connect.AnyRequest) (connect.AnyResponse, error) {
-			return connect.NewResponse(&pb.HealthCheckResponse{}), nil
-		}
-
-		_, err := interceptor.WrapUnary(next)(context.Background(), req)
-		Expect(err).To(HaveOccurred())
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
-	})
+			_, err := interceptor.WrapUnary(next)(context.Background(), req)
+			Expect(err).To(HaveOccurred())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+			Expect(called).To(BeFalse())
+		},
+		Entry("the tenant header is missing", ""),
+		Entry("the tenant header is malformed", "Not A Valid Tenant!!"),
+	)
 })

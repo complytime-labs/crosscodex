@@ -4,12 +4,10 @@ package agedriver_test
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -76,18 +74,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// lives in the repository.
 	password, err := dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "failed to generate graph_user password")
-	stmt, err := dbtest.AlterRolePasswordSQL("graph_user", password)
-	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE graph_user")
-	adminDB, err := sql.Open("pgx", dsn)
-	Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-	_, err = adminDB.ExecContext(ctx, stmt)
-	Expect(err).NotTo(HaveOccurred(), "failed to set graph_user password")
-	Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+	Expect(dbtest.SetRolePassword(ctx, dsn, "graph_user", password)).To(Succeed(), "failed to set graph_user password")
 
-	u, err := url.Parse(dsn)
-	Expect(err).NotTo(HaveOccurred(), "failed to parse DSN")
-	u.User = url.UserPassword("graph_user", password)
-	data, err := json.Marshal(suiteDSNs{Superuser: dsn, GraphUser: u.String()})
+	graphDSN, err := dbtest.RoleDSN(dsn, "graph_user", password)
+	Expect(err).NotTo(HaveOccurred(), "graph_user DSN")
+	data, err := json.Marshal(suiteDSNs{Superuser: dsn, GraphUser: graphDSN})
 	Expect(err).NotTo(HaveOccurred(), "failed to encode suite DSNs")
 	return data
 }, func(data []byte) {
@@ -121,11 +112,15 @@ func setupTenant(tenantID string) {
 	Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("setupTenant(%q)", tenantID))
 }
 
-func testID(prefix string) string {
-	b := make([]byte, 4)
-	_, err := rand.Read(b)
-	Expect(err).NotTo(HaveOccurred(), "testID rand")
-	return fmt.Sprintf("%s-%x", prefix, b)
+// newTenantClient registers a fresh tenant (removed again by DeferCleanup)
+// and returns an agedriver client on the shared test database with its ID.
+func newTenantClient(prefix string) (graphdb.GraphDB, string) {
+	tenantID := dbtest.TestID(prefix)
+	setupTenant(tenantID)
+	DeferCleanup(func() { cleanupTenant(tenantID) })
+	client, err := agedriver.New(testDB)
+	Expect(err).NotTo(HaveOccurred())
+	return client, tenantID
 }
 
 func cleanupTenant(tenantID string) {
@@ -242,12 +237,8 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 		}
 
 		It("refuses CreateNode with an actionable error and leaves the graph unchanged", func() {
-			tenantID := testID("graphdb-deleted")
-			setupTenant(tenantID)
-			DeferCleanup(func() { cleanupTenant(tenantID) })
+			client, tenantID := newTenantClient("graphdb-deleted")
 			ctx := context.Background()
-			client, err := agedriver.New(testDB)
-			Expect(err).NotTo(HaveOccurred())
 			node := func(id string) graphdb.Node {
 				return graphdb.Node{ID: id, Label: "Requirement", ValidFrom: time.Now().UTC().Truncate(time.Microsecond),
 					CreatedBy: "test-job", CreationMethod: "import"}
@@ -255,7 +246,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			Expect(client.CreateNode(ctx, tenantID, node("kept"))).To(Succeed())
 
 			setDeleted(tenantID, true)
-			err = client.CreateNode(ctx, tenantID, node("refused"))
+			err := client.CreateNode(ctx, tenantID, node("refused"))
 			Expect(err).To(HaveOccurred())
 			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
 			Expect(err.Error()).To(ContainSubstring("admin tenant restore"))
@@ -270,16 +261,12 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 		})
 
 		It("refuses a node under a never-used label without creating the label", func() {
-			tenantID := testID("graphdb-deleted-label")
-			setupTenant(tenantID)
-			DeferCleanup(func() { cleanupTenant(tenantID) })
+			client, tenantID := newTenantClient("graphdb-deleted-label")
 			ctx := context.Background()
-			client, err := agedriver.New(testDB)
-			Expect(err).NotTo(HaveOccurred())
 			const label = "NeverUsedLabel"
 
 			setDeleted(tenantID, true)
-			err = client.CreateNode(ctx, tenantID, graphdb.Node{ID: "refused", Label: label,
+			err := client.CreateNode(ctx, tenantID, graphdb.Node{ID: "refused", Label: label,
 				ValidFrom: time.Now().UTC().Truncate(time.Microsecond), CreatedBy: "test-job", CreationMethod: "import"})
 			Expect(err).To(HaveOccurred())
 			Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "want insufficient_privilege, got %v", err)
@@ -303,12 +290,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 
 	Describe("Edge Operations", func() {
 		It("creates an edge and round-trips all temporal/provenance attributes", func() {
-			tenantID := testID("graphdb-edge")
-			setupTenant(tenantID)
-			DeferCleanup(func() { cleanupTenant(tenantID) })
-
-			client, err := agedriver.New(testDB)
-			Expect(err).NotTo(HaveOccurred())
+			client, tenantID := newTenantClient("graphdb-edge")
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -382,12 +364,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 	Describe("Temporal Queries", func() {
 		Context("QueryAsOf", func() {
 			It("returns edges valid at the specified point in time", func() {
-				tenantID := testID("graphdb-asof")
-				setupTenant(tenantID)
-				DeferCleanup(func() { cleanupTenant(tenantID) })
-
-				client, err := agedriver.New(testDB)
-				Expect(err).NotTo(HaveOccurred())
+				client, tenantID := newTenantClient("graphdb-asof")
 				ctx := context.Background()
 
 				baseTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -445,12 +422,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 
 		Context("current state queries", func() {
 			It("returns only current edges (valid_to IS NULL)", func() {
-				tenantID := testID("graphdb-temporal")
-				setupTenant(tenantID)
-				DeferCleanup(func() { cleanupTenant(tenantID) })
-
-				client, err := agedriver.New(testDB)
-				Expect(err).NotTo(HaveOccurred())
+				client, tenantID := newTenantClient("graphdb-temporal")
 				ctx := context.Background()
 				now := time.Now().UTC().Truncate(time.Microsecond)
 
@@ -496,12 +468,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 
 	Describe("Edge Versioning", func() {
 		It("supersedes old edges and supports historical queries", func() {
-			tenantID := testID("graphdb-edgever")
-			setupTenant(tenantID)
-			DeferCleanup(func() { cleanupTenant(tenantID) })
-
-			client, err := agedriver.New(testDB)
-			Expect(err).NotTo(HaveOccurred())
+			client, tenantID := newTenantClient("graphdb-edgever")
 			ctx := context.Background()
 			baseTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -557,8 +524,8 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 
 	Describe("Tenant Isolation", func() {
 		It("isolates graph data between tenants", func() {
-			tenantA := testID("graphdb-iso-a")
-			tenantB := testID("graphdb-iso-b")
+			tenantA := dbtest.TestID("graphdb-iso-a")
+			tenantB := dbtest.TestID("graphdb-iso-b")
 			setupTenant(tenantA)
 			setupTenant(tenantB)
 			DeferCleanup(func() {
@@ -670,13 +637,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			tenantID = testID("graphdb-execq")
-			setupTenant(tenantID)
-			DeferCleanup(func() { cleanupTenant(tenantID) })
-
-			var err error
-			client, err = agedriver.New(testDB)
-			Expect(err).NotTo(HaveOccurred())
+			client, tenantID = newTenantClient("graphdb-execq")
 			ctx = context.Background()
 
 			Expect(client.CreateGraph(ctx, tenantID)).To(Succeed())
@@ -758,13 +719,7 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 		)
 
 		BeforeEach(func() {
-			tenantID = testID("graphdb-getedge")
-			setupTenant(tenantID)
-			DeferCleanup(func() { cleanupTenant(tenantID) })
-
-			var err error
-			client, err = agedriver.New(testDB)
-			Expect(err).NotTo(HaveOccurred())
+			client, tenantID = newTenantClient("graphdb-getedge")
 			ctx = context.Background()
 
 			Expect(client.CreateGraph(ctx, tenantID)).To(Succeed())
@@ -967,7 +922,7 @@ var _ = Describe("CreateGraph for a missing graph", func() {
 	}
 
 	It("is refused for the restricted graph_user, which relies on the tenant trigger to create graphs", func() {
-		tenantID := testID("nograph")
+		tenantID := dbtest.TestID("nograph")
 		su, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { _ = su.Close() })
@@ -980,7 +935,7 @@ var _ = Describe("CreateGraph for a missing graph", func() {
 	})
 
 	It("succeeds for every one of several concurrent first-time calls by a role that may create graphs", func() {
-		tenantID := testID("newgraph")
+		tenantID := dbtest.TestID("newgraph")
 		gn := agedriver.GraphName(tenantID)
 		su, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred())
@@ -1012,7 +967,7 @@ var _ = Describe("CreateGraph for a missing graph", func() {
 	})
 
 	It("waits for a concurrent creator holding the graph lock, then returns nil instead of failing on the duplicate", func() {
-		tenantID := testID("lockgraph")
+		tenantID := dbtest.TestID("lockgraph")
 		gn := agedriver.GraphName(tenantID)
 		su, err := sql.Open("pgx", suDSN)
 		Expect(err).NotTo(HaveOccurred())
@@ -1076,7 +1031,7 @@ var _ = Describe("Node creation lock", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		tenantID = testID("lock")
+		tenantID = dbtest.TestID("lock")
 		setupTenant(tenantID)
 		DeferCleanup(func() { cleanupTenant(tenantID) })
 		gn = agedriver.GraphName(tenantID)
@@ -1217,11 +1172,11 @@ var _ = Describe("Node creation lock", func() {
 // ---------------------------------------------------------------------------
 
 var _ = Describe("GraphDB contract (agedriver)", testspecs.GraphDBContractBehavior(func() (graphdb.GraphDB, string, string) {
-	tenantID := testID("contract")
+	tenantID := dbtest.TestID("contract")
 	setupTenant(tenantID)
 	DeferCleanup(func() { cleanupTenant(tenantID) })
 
-	otherID := testID("contract-other")
+	otherID := dbtest.TestID("contract-other")
 	setupTenant(otherID)
 	DeferCleanup(func() { cleanupTenant(otherID) })
 
@@ -1246,7 +1201,7 @@ var _ = Describe("Graphs written before #148 (agedriver)", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		tenantID = testID("legacy")
+		tenantID = dbtest.TestID("legacy")
 		setupTenant(tenantID)
 		DeferCleanup(func() { cleanupTenant(tenantID) })
 		var err error

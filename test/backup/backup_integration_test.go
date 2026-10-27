@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -312,10 +311,10 @@ func destinationSpecs(dest string) func() {
 		BeforeAll(func() {
 			pw, err := dbtest.NewRolePassword()
 			Expect(err).NotTo(HaveOccurred())
-			s = &stack{dest: dest, backupDSN: (&url.URL{
-				Scheme: "postgres", User: url.UserPassword("backup_user", pw), Host: "db:5432", Path: "/crosscodex_test",
-				RawQuery: "sslmode=verify-full&sslrootcert=/admin-certs/ca.pem&sslcert=/admin-certs/client.pem&sslkey=/admin-certs/client-key.pem",
-			}).String()}
+			backupDSN, err := dbtest.RoleDSN("postgres://db:5432/crosscodex_test?sslmode=verify-full&sslrootcert=/admin-certs/ca.pem&sslcert=/admin-certs/client.pem&sslkey=/admin-certs/client-key.pem",
+				"backup_user", pw)
+			Expect(err).NotTo(HaveOccurred())
+			s = &stack{dest: dest, backupDSN: backupDSN}
 			_, _ = s.compose("down", "-v") // leftovers from an interrupted run
 			DeferCleanup(func() { _, _ = s.compose("down", "-v") })
 
@@ -340,10 +339,7 @@ func destinationSpecs(dest string) func() {
 				Fail(err.Error())
 			}
 			Expect(m.Close()).To(Succeed())
-			stmt, err := dbtest.AlterRolePasswordSQL("backup_user", pw)
-			Expect(err).NotTo(HaveOccurred())
-			_, err = db.Exec(stmt)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(dbtest.SetRolePassword(ctx, suDSN, "backup_user", pw)).To(Succeed())
 
 			// natsbus.New creates the audit streams exactly as the daemon does.
 			bus, err := natsbus.New(config.NATSConfig{URL: natsURL, TLS: true, Streams: config.NATSStreamsConfig{

@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -61,15 +60,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
 	Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
 
-	adminDB, err := sql.Open("pgx", suDSN)
-	Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
 	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-	_, err = adminDB.ExecContext(ctx, stmt)
-	Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
-	Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+	Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "failed to set app_user password")
 
 	return []byte(suDSN)
 }, func(data []byte) {
@@ -104,12 +97,11 @@ var _ = SynchronizedAfterSuite(func() {
 // ---------------------------------------------------------------------------
 
 func appUserDSN() string {
-	u, err := url.Parse(suDSN)
-	Expect(err).NotTo(HaveOccurred(), "bad suDSN")
-	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	u.User = url.UserPassword("app_user", pw)
-	return u.String()
+	dsn, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
+	Expect(err).NotTo(HaveOccurred(), "app_user DSN")
+	return dsn
 }
 
 func appUserConn() *sql.DB {
@@ -147,6 +139,19 @@ func setupCatalog(conn *sql.DB, tenantID, catalogID, name string) {
 		catalogID, tenantID, name)
 	Expect(err).NotTo(HaveOccurred(), "insert catalog")
 	Expect(tx.Commit()).To(Succeed(), "commit")
+}
+
+// ftsControl returns a plain compliance-requirement control, ID'd
+// "<catalogID>/<identifier>", for the full-text-search specs.
+func ftsControl(tenantID, catalogID, identifier, title, statement string) catalog.ControlRecord {
+	return catalog.ControlRecord{
+		TenantID: tenantID, ControlID: fmt.Sprintf("%s/%s", catalogID, identifier),
+		CatalogID: catalogID, Identifier: identifier,
+		Title:     title,
+		Statement: statement,
+		Class:     "compliance-requirement", Props: map[string]string{},
+		CreatedAt: time.Now().UTC(),
+	}
 }
 
 // twoTenants is one catalog with one control under each of two fresh tenants.
@@ -410,30 +415,9 @@ var _ = Describe("PGStore Integration", func() {
 			setupCatalog(rawConn, tenantID, catalogID, "FTS Catalog")
 
 			controls := []catalog.ControlRecord{
-				{
-					TenantID: tenantID, ControlID: fmt.Sprintf("%s/ac-1", catalogID),
-					CatalogID: catalogID, Identifier: "ac-1",
-					Title:     "Access Control Policy",
-					Statement: "Develop, document, and disseminate an access control policy.",
-					Class:     "compliance-requirement", Props: map[string]string{},
-					CreatedAt: time.Now().UTC(),
-				},
-				{
-					TenantID: tenantID, ControlID: fmt.Sprintf("%s/au-1", catalogID),
-					CatalogID: catalogID, Identifier: "au-1",
-					Title:     "Audit Policy",
-					Statement: "Develop, document, and disseminate an audit and accountability policy.",
-					Class:     "compliance-requirement", Props: map[string]string{},
-					CreatedAt: time.Now().UTC(),
-				},
-				{
-					TenantID: tenantID, ControlID: fmt.Sprintf("%s/si-1", catalogID),
-					CatalogID: catalogID, Identifier: "si-1",
-					Title:     "System and Information Integrity Policy",
-					Statement: "Develop system integrity procedures for malicious code protection.",
-					Class:     "compliance-requirement", Props: map[string]string{},
-					CreatedAt: time.Now().UTC(),
-				},
+				ftsControl(tenantID, catalogID, "ac-1", "Access Control Policy", "Develop, document, and disseminate an access control policy."),
+				ftsControl(tenantID, catalogID, "au-1", "Audit Policy", "Develop, document, and disseminate an audit and accountability policy."),
+				ftsControl(tenantID, catalogID, "si-1", "System and Information Integrity Policy", "Develop system integrity procedures for malicious code protection."),
 			}
 
 			conn := tenantConn()
@@ -470,29 +454,21 @@ var _ = Describe("PGStore Integration", func() {
 			})
 		})
 
-		It("matches 'malicious code' to si-1 only", func() {
-			execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
-				var count int
-				err := tx.QueryRowContext(context.Background(), `
+		DescribeTable("counts the controls matching a term within the catalog",
+			func(term string, wantCount int) {
+				execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
+					var count int
+					err := tx.QueryRowContext(context.Background(), `
 					SELECT COUNT(*) FROM controls
 					WHERE search_vector @@ plainto_tsquery('english', $1)
-					  AND catalog_id = $2`, "malicious code", catalogID).Scan(&count)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(count).To(Equal(1))
-			})
-		})
-
-		It("returns 0 results for nonexistent term", func() {
-			execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
-				var count int
-				err := tx.QueryRowContext(context.Background(), `
-					SELECT COUNT(*) FROM controls
-					WHERE search_vector @@ plainto_tsquery('english', $1)
-					  AND catalog_id = $2`, "xyznonexistent", catalogID).Scan(&count)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(count).To(Equal(0))
-			})
-		})
+					  AND catalog_id = $2`, term, catalogID).Scan(&count)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(count).To(Equal(wantCount))
+				})
+			},
+			Entry("'malicious code' matches si-1 only", "malicious code", 1),
+			Entry("a nonexistent term matches nothing", "xyznonexistent", 0),
+		)
 	})
 
 	Describe("TenantIsolation", func() {
@@ -584,12 +560,12 @@ var _ = Describe("PGStore Integration", func() {
 				Expect(pageInfo.TotalCount).To(Equal(int64(1)), "total count must not include other tenants")
 
 				_, err = store.GetCatalog(ctx, s.catalogB)
-				Expect(err).To(MatchError(ContainSubstring("catalog not found")))
+				Expect(err).To(MatchError(catalog.ErrCatalogNotFound))
 				own, err := store.GetCatalog(s.ctx(s.tenantB), s.catalogB)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(own.ControlCount).To(Equal(int64(1)), "control count must not include another tenant's controls")
 				_, err = store.GetControl(ctx, s.controlB)
-				Expect(err).To(MatchError(ContainSubstring("control not found")))
+				Expect(err).To(MatchError(catalog.ErrControlNotFound))
 
 				found, pageInfo, err := store.SearchControls(ctx, catalog.SearchQuery{Query: "sentinel"})
 				Expect(err).NotTo(HaveOccurred())
@@ -695,22 +671,8 @@ var _ = Describe("PGStore Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			controls := []catalog.ControlRecord{
-				{
-					TenantID: tenantID, ControlID: fmt.Sprintf("%s/ac-1", catalogID),
-					CatalogID: catalogID, Identifier: "ac-1",
-					Title:     "Access Control Policy",
-					Statement: "Develop and disseminate an access control policy.",
-					Class:     "compliance-requirement", Props: map[string]string{},
-					CreatedAt: time.Now().UTC(),
-				},
-				{
-					TenantID: tenantID, ControlID: fmt.Sprintf("%s/au-1", catalogID),
-					CatalogID: catalogID, Identifier: "au-1",
-					Title:     "Audit Policy",
-					Statement: "Maintain audit logs for all system events.",
-					Class:     "compliance-requirement", Props: map[string]string{},
-					CreatedAt: time.Now().UTC(),
-				},
+				ftsControl(tenantID, catalogID, "ac-1", "Access Control Policy", "Develop and disseminate an access control policy."),
+				ftsControl(tenantID, catalogID, "au-1", "Audit Policy", "Maintain audit logs for all system events."),
 			}
 
 			Expect(store.UpsertControls(ctx, controls)).To(Succeed())
@@ -968,22 +930,8 @@ var _ = Describe("PGStore Integration", func() {
 			setupCatalog(rawConn, tenantID, catalogID, "Weight Catalog")
 
 			controls := []catalog.ControlRecord{
-				{
-					TenantID: tenantID, ControlID: fmt.Sprintf("%s/title-match", catalogID),
-					CatalogID: catalogID, Identifier: "title-match",
-					Title:     "Encryption Policy",
-					Statement: "Implement data protection measures.",
-					Class:     "compliance-requirement", Props: map[string]string{},
-					CreatedAt: time.Now().UTC(),
-				},
-				{
-					TenantID: tenantID, ControlID: fmt.Sprintf("%s/body-match", catalogID),
-					CatalogID: catalogID, Identifier: "body-match",
-					Title:     "Data Protection",
-					Statement: "Apply encryption to all data at rest and in transit.",
-					Class:     "compliance-requirement", Props: map[string]string{},
-					CreatedAt: time.Now().UTC(),
-				},
+				ftsControl(tenantID, catalogID, "title-match", "Encryption Policy", "Implement data protection measures."),
+				ftsControl(tenantID, catalogID, "body-match", "Data Protection", "Apply encryption to all data at rest and in transit."),
 			}
 
 			conn := tenantConn()

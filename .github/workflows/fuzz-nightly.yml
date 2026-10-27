@@ -1,7 +1,7 @@
 name: Fuzz (nightly)
 
-# Fuzzes every target. PRs fuzz only the packages they change (ci.yml), so
-# this run is what finds crashes reachable through unchanged packages.
+# Fuzzes every target. This is the only workflow that fuzzes: ci.yml
+# deliberately skips fuzzing on PRs and pushes because it is too slow there.
 on:
   schedule:
     - cron: "23 4 * * *"

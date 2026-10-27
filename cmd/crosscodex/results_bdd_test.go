@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +11,7 @@ import (
 	connectrpc "connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
@@ -54,19 +54,12 @@ func mapping(id string, rt pb.RelationshipType) *pb.ControlMapping {
 }
 
 var _ = Describe("Results mappings via ListJobMappings", func() {
-	var (
-		stdout bytes.Buffer
-		fake   *fakeMappingsClient
-	)
+	var fake *fakeMappingsClient
 
-	run := func(args ...string) error {
-		stdout.Reset()
+	newCmd := func() *cobra.Command {
 		cmd := newResultsCmd(&cliState{client: fake})
 		cmd.PersistentFlags().Bool("json", false, "output as JSON") // root-level in production
-		cmd.SetOut(&stdout)
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs(args)
-		return cmd.Execute()
+		return cmd
 	}
 
 	BeforeEach(func() {
@@ -75,7 +68,8 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 
 	DescribeTable("sends the job id and server defaults",
 		func(sub string) {
-			Expect(run(sub, "job-1")).To(Succeed())
+			_, _, err := execute(newCmd(), sub, "job-1")
+			Expect(err).NotTo(HaveOccurred())
 			Expect(fake.calls).To(HaveLen(1))
 			req := fake.calls[0]
 			Expect(req.GetJobId()).To(Equal("job-1"))
@@ -93,8 +87,9 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 
 	DescribeTable("maps flags onto the request",
 		func(sub string) {
-			Expect(run(sub, "job-1", "--stage", "synthesized", "--min-confidence", "0.5",
-				"--type", "equivalent", "--type", "SUBSET_OF", "--control", "AC-1", "--include-non-viable")).To(Succeed())
+			_, _, err := execute(newCmd(), sub, "job-1", "--stage", "synthesized", "--min-confidence", "0.5",
+				"--type", "equivalent", "--type", "SUBSET_OF", "--control", "AC-1", "--include-non-viable")
+			Expect(err).NotTo(HaveOccurred())
 			req := fake.calls[0]
 			Expect(req.GetMinConfidence()).To(BeNumerically("~", 0.5, 1e-6))
 			Expect(req.GetRelationshipTypes()).To(Equal([]pb.RelationshipType{
@@ -109,13 +104,14 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 	)
 
 	It("selects the analyzer stage", func() {
-		Expect(run("summary", "job-1", "--stage", "analyzer")).To(Succeed())
+		_, _, err := execute(newCmd(), "summary", "job-1", "--stage", "analyzer")
+		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.calls[0].GetStage()).To(Equal(pb.MappingStage_MAPPING_STAGE_ANALYZER))
 	})
 
 	DescribeTable("rejects invalid flags with an actionable error and never calls the server",
 		func(sub string, want string, args ...string) {
-			err := run(append([]string{sub, "job-1"}, args...)...)
+			_, _, err := execute(newCmd(), append([]string{sub, "job-1"}, args...)...)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(want))
 			Expect(fake.calls).To(BeEmpty())
@@ -134,7 +130,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 
 	It("stops when the server repeats the page token it was given", func() {
 		fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("tok"), mappingsPage("tok"), mappingsPage("tok")}
-		err := run("export", "job-1")
+		_, _, err := execute(newCmd(), "export", "job-1")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring(`list mappings for job job-1: server returned page token "tok" again`))
 		Expect(err.Error()).To(ContainSubstring("crosscodexd bug"))
@@ -142,13 +138,15 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 	})
 
 	It("reports the canonical stage name for mixed-case --stage", func() {
-		Expect(run("summary", "job-1", "--stage", "Analyzer")).To(Succeed())
-		Expect(stdout.String()).To(ContainSubstring("(analyzer mappings)"))
-		Expect(stdout.String()).NotTo(ContainSubstring("Analyzer"))
+		stdout, _, err := execute(newCmd(), "summary", "job-1", "--stage", "Analyzer")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(ContainSubstring("(analyzer mappings)"))
+		Expect(stdout).NotTo(ContainSubstring("Analyzer"))
 
 		fake.pages = append(fake.pages, mappingsPage(""))
-		Expect(run("--json", "summary", "job-1", "--stage", "ANALYZER")).To(Succeed())
-		Expect(stdout.String()).To(ContainSubstring(`"stage": "analyzer"`))
+		stdout, _, err = execute(newCmd(), "--json", "summary", "job-1", "--stage", "ANALYZER")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(ContainSubstring(`"stage": "analyzer"`))
 	})
 
 	It("exports JSON with enum names and unset fields present", func() {
@@ -156,13 +154,14 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		fake.pages = []*pb.ListJobMappingsResponse{
 			mappingsPage("", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT), nonViable),
 		}
-		Expect(run("export", "job-1", "--format", "json")).To(Succeed())
+		stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+		Expect(err).NotTo(HaveOccurred())
 
 		var out struct {
 			JobID    string           `json:"job_id"`
 			Mappings []map[string]any `json:"mappings"`
 		}
-		Expect(json.Unmarshal(stdout.Bytes(), &out)).To(Succeed(), "export output is valid JSON: %s", stdout.String())
+		Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "export output is valid JSON: %s", stdout)
 		Expect(out.JobID).To(Equal("job-1"))
 		Expect(out.Mappings).To(HaveLen(2))
 		Expect(out.Mappings[0]).To(HaveKeyWithValue("relationshipType", "RELATIONSHIP_TYPE_EQUIVALENT"))
@@ -173,8 +172,9 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 	})
 
 	It("exports an empty mapping list as an empty JSON array", func() {
-		Expect(run("export", "job-1", "--format", "json")).To(Succeed())
-		Expect(stdout.String()).To(MatchJSON(`{"job_id": "job-1", "mappings": []}`))
+		stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(MatchJSON(`{"job_id": "job-1", "mappings": []}`))
 	})
 
 	It("pages until the server returns no next token", func() {
@@ -182,11 +182,12 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			mappingsPage("tok-2", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)),
 			mappingsPage("", mapping("b", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)),
 		}
-		Expect(run("export", "job-1", "--format", "csv")).To(Succeed())
+		stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
+		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.calls).To(HaveLen(2))
 		Expect(fake.calls[0].GetPagination().GetPageToken()).To(BeEmpty())
 		Expect(fake.calls[1].GetPagination().GetPageToken()).To(Equal("tok-2"))
-		lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+		lines := strings.Split(strings.TrimSpace(stdout), "\n")
 		Expect(lines).To(HaveLen(3))
 		Expect(lines[0]).To(Equal("mapping_id,source_control_id,target_control_id,relationship_type,confidence,viability_score,is_viable"))
 		Expect(lines[1]).To(HavePrefix("a,s-a,t-a,RELATIONSHIP_TYPE_EQUIVALENT,0.900,0.800,true"))
@@ -198,19 +199,20 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			mappingsPage("t", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF), mapping("b", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)),
 			mappingsPage("", mapping("c", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)),
 		}
-		Expect(run("summary", "job-1")).To(Succeed())
-		out := stdout.String()
-		Expect(out).To(ContainSubstring("Total mappings: 3"))
-		eq := strings.Index(out, "RELATIONSHIP_TYPE_EQUIVALENT")
-		sub := strings.Index(out, "RELATIONSHIP_TYPE_SUBSET_OF")
+		stdout, _, err := execute(newCmd(), "summary", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(ContainSubstring("Total mappings: 3"))
+		eq := strings.Index(stdout, "RELATIONSHIP_TYPE_EQUIVALENT")
+		sub := strings.Index(stdout, "RELATIONSHIP_TYPE_SUBSET_OF")
 		Expect(eq).To(BeNumerically(">=", 0))
 		Expect(eq).To(BeNumerically("<", sub))
 	})
 
 	It("keeps the summary JSON shape and adds the stage", func() {
 		fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))}
-		Expect(run("--json", "summary", "job-1")).To(Succeed())
-		Expect(stdout.String()).To(And(
+		stdout, _, err := execute(newCmd(), "--json", "summary", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(And(
 			ContainSubstring(`"job_id": "job-1"`),
 			ContainSubstring(`"total": 1`),
 			ContainSubstring(`"mapping_count": 1`),
@@ -222,7 +224,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 	DescribeTable("surfaces server errors with the job id and the server message",
 		func(args ...string) {
 			fake.err = connectrpc.NewError(connectrpc.CodeNotFound, errors.New("job not found: check the id"))
-			err := run(args...)
+			_, _, err := execute(newCmd(), args...)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("list mappings for job job-1"))
 			Expect(err.Error()).To(ContainSubstring("job not found: check the id"))
@@ -237,12 +239,13 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			mappingsPage("t", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)),
 			mappingsPage("", mapping("b", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)),
 		}
-		Expect(run("debug", "job-1", "ctrl-1")).To(Succeed())
+		stdout, _, err := execute(newCmd(), "debug", "job-1", "ctrl-1")
+		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.calls).To(HaveLen(2))
 		Expect(fake.calls[0].GetJobId()).To(Equal("job-1"))
 		Expect(fake.calls[0].GetControlId()).To(Equal("ctrl-1"))
 		Expect(fake.calls[0].GetStage()).To(Equal(pb.MappingStage_MAPPING_STAGE_SYNTHESIZED))
-		Expect(stdout.String()).To(And(
+		Expect(stdout).To(And(
 			ContainSubstring("Debug for job job-1, control ctrl-1"),
 			ContainSubstring("Found 2 mapping(s)"),
 		))
@@ -255,7 +258,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			mappingsPage("A", mapping("c", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)),
 			mappingsPage("", mapping("d", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)),
 		}
-		err := run("summary", "job-1")
+		_, _, err := execute(newCmd(), "summary", "job-1")
 		Expect(err).To(MatchError(ContainSubstring("again; stopping to avoid an endless loop")))
 		Expect(fake.calls).To(HaveLen(3))
 	})
@@ -264,7 +267,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		It("rejects an unknown format before fetching or touching the output file", func() {
 			path := filepath.Join(GinkgoT().TempDir(), "out.json")
 			Expect(os.WriteFile(path, []byte("precious"), 0o600)).To(Succeed())
-			err := run("export", "job-1", "--format", "xml", "--output", path)
+			_, _, err := execute(newCmd(), "export", "job-1", "--format", "xml", "--output", path)
 			Expect(err).To(MatchError(And(ContainSubstring(`"xml"`), ContainSubstring("json"), ContainSubstring("csv"))))
 			Expect(fake.calls).To(BeEmpty())
 			got, readErr := os.ReadFile(path)
@@ -275,37 +278,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 })
 
 var _ = Describe("Results Commands", func() {
-	var (
-		stdout bytes.Buffer
-		stderr bytes.Buffer
-	)
-
-	BeforeEach(func() {
-		stdout.Reset()
-		stderr.Reset()
-	})
-
 	Describe("results summary", func() {
-		It("requires a job-id argument", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "summary"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("job-id"))
-		})
-
-		It("includes usage examples in error message", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "summary"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("results summary"))
-		})
-
 		It("supports 'sum' alias", func() {
 			cmd := newRootCmd()
 			resultsCmd, _, err := cmd.Find([]string{"results", "sum"})
@@ -315,25 +288,10 @@ var _ = Describe("Results Commands", func() {
 	})
 
 	Describe("results export", func() {
-		It("requires a job-id argument", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "export"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("job-id"))
-		})
-
 		It("has --format flag", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "export", "--help"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "results", "export", "--help")
 			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).To(ContainSubstring("--format"))
+			Expect(stdout).To(ContainSubstring("--format"))
 		})
 
 		It("supports 'dump' alias", func() {
@@ -344,83 +302,25 @@ var _ = Describe("Results Commands", func() {
 		})
 	})
 
-	Describe("results query", func() {
-		It("requires a cypher query argument", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "query"})
-			err := cmd.Execute()
+	DescribeTable("errors when a required argument is missing",
+		func(args []string, wantSubstr string) {
+			_, _, err := execute(newRootCmd(), args...)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("cypher"))
-		})
-
-		It("includes usage examples in error message", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "query"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("MATCH"))
-		})
-	})
-
-	Describe("results debug", func() {
-		It("requires job-id and control-id arguments", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "debug"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("job-id"))
-		})
-
-		It("requires control-id when only job-id provided", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "debug", "job123"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("control-id"))
-		})
-	})
-
-	Describe("results review", func() {
-		It("requires a job-id argument", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "review"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("job-id"))
-		})
-	})
+			Expect(err.Error()).To(ContainSubstring(wantSubstr))
+		},
+		Entry("summary requires a job-id", []string{"results", "summary"}, "job-id"),
+		Entry("summary error includes usage examples", []string{"results", "summary"}, "results summary"),
+		Entry("export requires a job-id", []string{"results", "export"}, "job-id"),
+		Entry("query requires a cypher query", []string{"results", "query"}, "cypher"),
+		Entry("query error includes usage examples", []string{"results", "query"}, "MATCH"),
+		Entry("debug requires a job-id and control-id", []string{"results", "debug"}, "job-id"),
+		Entry("debug requires a control-id when only job-id is given", []string{"results", "debug", "job123"}, "control-id"),
+		Entry("review requires a job-id", []string{"results", "review"}, "job-id"),
+		Entry("verify requires a bundle-file", []string{"results", "verify"}, "bundle"),
+		Entry("verify error includes usage examples", []string{"results", "verify"}, "results verify"),
+	)
 
 	Describe("results verify", func() {
-		It("requires a bundle-file argument", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "verify"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("bundle"))
-		})
-
-		It("includes usage examples in error message", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "verify"})
-			err := cmd.Execute()
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("results verify"))
-		})
-
 		It("validates valid JSON bundle without public key", func() {
 			tmpFile, err := os.CreateTemp("", "test-bundle-*.json")
 			Expect(err).NotTo(HaveOccurred())
@@ -428,14 +328,9 @@ var _ = Describe("Results Commands", func() {
 			Expect(os.WriteFile(tmpFile.Name(), []byte(`{"payloadType": "application/vnd.in-toto+json", "payload": "test"}`), 0o644)).To(Succeed())
 			tmpFile.Close()
 
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "verify", tmpFile.Name()})
-			err = cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "results", "verify", tmpFile.Name())
 			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).To(ContainSubstring("Structure valid"))
+			Expect(stdout).To(ContainSubstring("Structure valid"))
 		})
 
 		It("rejects invalid JSON bundle", func() {
@@ -445,21 +340,13 @@ var _ = Describe("Results Commands", func() {
 			Expect(os.WriteFile(tmpFile.Name(), []byte("not json"), 0o644)).To(Succeed())
 			tmpFile.Close()
 
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "verify", tmpFile.Name()})
-			err = cmd.Execute()
+			_, _, err = execute(newRootCmd(), "results", "verify", tmpFile.Name())
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("not valid JSON"))
 		})
 
 		It("errors when bundle file does not exist", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"results", "verify", "/nonexistent/bundle.json"})
-			err := cmd.Execute()
+			_, _, err := execute(newRootCmd(), "results", "verify", "/nonexistent/bundle.json")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("read bundle file"))
 		})

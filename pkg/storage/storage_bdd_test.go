@@ -468,25 +468,6 @@ var _ = Describe("Storage System", Ordered, func() {
 				Expect(err).To(MatchError(storage.ErrInvalidKey))
 			})
 		})
-
-		Context("when enforcing tenant prefix isolation on S3", func() {
-			It("rejects empty tenant ID on S3 constructor", func() {
-				_, err := storage.NewS3("bucket", "")
-				Expect(err).To(MatchError(tenant.ErrInvalidTenant))
-			})
-
-			It("rejects empty bucket name", func() {
-				_, err := storage.NewS3("", "test-tenant")
-				Expect(err).To(MatchError(storage.ErrBucketRequired))
-			})
-		})
-
-		Context("when enforcing tenant validation on local constructor", func() {
-			It("rejects empty tenant ID", func() {
-				_, err := storage.NewLocal(GinkgoT().TempDir(), "")
-				Expect(err).To(MatchError(tenant.ErrInvalidTenant))
-			})
-		})
 	})
 
 	Describe("Factory Configuration Behaviors", func() {
@@ -1018,17 +999,14 @@ var _ = Describe("Storage System", Ordered, func() {
 	})
 
 	Describe("S3 Provider Edge Cases", func() {
-		Context("when validating S3 constructor inputs", func() {
-			It("rejects empty tenant ID", func() {
-				_, err := storage.NewS3("bucket", "")
-				Expect(err).To(MatchError(tenant.ErrInvalidTenant))
-			})
-
-			It("rejects empty bucket name", func() {
-				_, err := storage.NewS3("", "test-tenant")
-				Expect(err).To(MatchError(storage.ErrBucketRequired))
-			})
-		})
+		DescribeTable("rejects invalid S3 constructor inputs",
+			func(bucket, tenantID string, wantErr error) {
+				_, err := storage.NewS3(bucket, tenantID)
+				Expect(err).To(MatchError(wantErr))
+			},
+			Entry("an empty tenant ID", "bucket", "", tenant.ErrInvalidTenant),
+			Entry("an empty bucket name", "", "test-tenant", storage.ErrBucketRequired),
+		)
 
 		Context("when enforcing tenant prefix isolation on S3 (mock)", func() {
 			It("isolates data between tenants sharing the same bucket", func() {
@@ -1131,25 +1109,19 @@ var _ = Describe("Storage System", Ordered, func() {
 			Expect(got).To(Equal("GLACIER_IR"))
 		})
 
-		It("propagates GLACIER_IR to PutObjectInput.StorageClass", func() {
-			mock := &storageclassMockS3{}
-			p := storage.ExportNewS3WithClientAndStorageClass(mock, "archive-bucket", "acme-corp", "GLACIER_IR")
+		DescribeTable("sets PutObjectInput.StorageClass from the provider's storage class",
+			func(bucket, storageClass string) {
+				mock := &storageclassMockS3{}
+				p := storage.ExportNewS3WithClientAndStorageClass(mock, bucket, "acme-corp", storageClass)
 
-			err := p.Put(context.Background(), "objects/test.json", bytes.NewReader([]byte("payload")))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mock.lastPutInput).NotTo(BeNil())
-			Expect(string(mock.lastPutInput.StorageClass)).To(Equal("GLACIER_IR"))
-		})
-
-		It("omits StorageClass from PutObjectInput when storage class is empty", func() {
-			mock := &storageclassMockS3{}
-			p := storage.ExportNewS3WithClientAndStorageClass(mock, "primary-bucket", "acme-corp", "")
-
-			err := p.Put(context.Background(), "objects/test.json", bytes.NewReader([]byte("payload")))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(mock.lastPutInput).NotTo(BeNil())
-			Expect(string(mock.lastPutInput.StorageClass)).To(Equal(""))
-		})
+				err := p.Put(context.Background(), "objects/test.json", bytes.NewReader([]byte("payload")))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(mock.lastPutInput).NotTo(BeNil())
+				Expect(string(mock.lastPutInput.StorageClass)).To(Equal(storageClass))
+			},
+			Entry("GLACIER_IR is propagated", "archive-bucket", "GLACIER_IR"),
+			Entry("an empty class is omitted", "primary-bucket", ""),
+		)
 	})
 
 	Describe("NewArchiveFromConfig", func() {

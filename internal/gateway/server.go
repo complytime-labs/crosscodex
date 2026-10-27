@@ -31,7 +31,9 @@ type ServerConfig struct {
 	DrainTimeout time.Duration
 	Service      *Service
 	// Admin, when non-nil, mounts the AdminService (retention/legal-hold RPCs)
-	// on the same mux with the same interceptors as the GatewayService.
+	// on the same mux with the same interceptors as the GatewayService, plus
+	// the gateway's error policy (publicError), which Service's handlers
+	// apply themselves.
 	Admin crosscodexv1connect.AdminServiceHandler
 	// TenantStatus is required: the auth interceptor refuses every
 	// non-health request from a tenant it reports inactive. Nil fails
@@ -72,9 +74,12 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
 	if cfg.Admin != nil {
+		// internal/admin returns raw store errors, so the mount applies the
+		// gateway's error policy; the second option chains it innermost.
 		adminPath, adminHandler := crosscodexv1connect.NewAdminServiceHandler(
 			cfg.Admin,
 			connect.WithInterceptors(interceptors...),
+			connect.WithInterceptors(publicErrorInterceptor{service: cfg.Service}),
 		)
 		mux.Handle(adminPath, adminHandler)
 	}

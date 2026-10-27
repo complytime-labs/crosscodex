@@ -269,6 +269,32 @@ var _ = Describe("StreamDocument transport-level validation", func() {
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeResourceExhausted))
 	})
 
+	// A receive error is the client's own transport failure; it keeps the
+	// code Connect gave it instead of becoming an Unknown that echoes it.
+	It("keeps the code of a stream receive error the client can act on", func() {
+		path, handler := crosscodexv1connect.NewGatewayServiceHandler(
+			NewService(stubBackends()...),
+			connect.WithInterceptors(&testAuthInterceptor{identity: defaultIdentity()}),
+			connect.WithReadMaxBytes(64),
+		)
+		mux := http.NewServeMux()
+		mux.Handle(path, handler)
+		server := httptest.NewServer(mux)
+		defer server.Close()
+		client := crosscodexv1connect.NewGatewayServiceClient(server.Client(), server.URL)
+
+		stream := client.StreamDocument(context.Background())
+		if err := stream.Send(&pb.StreamDocumentChunk{
+			Payload: &pb.StreamDocumentChunk_Chunk{Chunk: make([]byte, 128)},
+		}); err != nil {
+			GinkgoWriter.Printf("Send (oversized message) returned transport error (expected): %v\n", err)
+		}
+
+		_, err := stream.CloseAndReceive()
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeResourceExhausted))
+		Expect(err.Error()).NotTo(ContainSubstring("stream error"))
+	})
+
 	It("rejects a metadata-only stream as an empty document", func() {
 		env := newStreamTestEnv(defaultIdentity(), stubBackends()...)
 		defer env.close()

@@ -27,10 +27,10 @@ var _ = Describe("resumable_jobs", Ordered, func() {
 	BeforeAll(func() {
 		ctx = context.Background()
 		appConn = appUserConn()
-		tenantA, tenantB = testID("resume-a"), testID("resume-b")
+		tenantA, tenantB = dbtest.TestID("resume-a"), dbtest.TestID("resume-b")
 		setupTenant(tenantA, "Resume A")
 		setupTenant(tenantB, "Resume B")
-		runningA, runningB, completedA = testID("job-ra"), testID("job-rb"), testID("job-ca")
+		runningA, runningB, completedA = dbtest.TestID("job-ra"), dbtest.TestID("job-rb"), dbtest.TestID("job-ca")
 		for _, j := range []struct{ id, tenant, status string }{
 			{runningA, tenantA, "running"},
 			{runningB, tenantB, "running"},

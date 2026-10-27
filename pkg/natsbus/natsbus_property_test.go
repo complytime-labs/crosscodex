@@ -28,39 +28,22 @@ func safeTokenGen() *rapid.Generator[string] {
 var _ = Describe("Property Specifications", Ordered, func() {
 
 	Context("validateToken — NATS subject injection prevention", func() {
-		It("rejects tokens containing the dot delimiter", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				// Inject at least one dot into an otherwise valid token
-				prefix := rapid.StringN(0, 10, -1).Draw(t, "prefix")
-				suffix := rapid.StringN(0, 10, -1).Draw(t, "suffix")
-				token := prefix + "." + suffix
-				err := natsbus.ValidateToken(token, "test")
-				Expect(err).To(HaveOccurred(),
-					"validateToken accepted token with dot: %q", token)
-			})
-		})
-
-		It("rejects tokens containing the star wildcard", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				prefix := rapid.StringN(0, 10, -1).Draw(t, "prefix")
-				suffix := rapid.StringN(0, 10, -1).Draw(t, "suffix")
-				token := prefix + "*" + suffix
-				err := natsbus.ValidateToken(token, "test")
-				Expect(err).To(HaveOccurred(),
-					"validateToken accepted token with star: %q", token)
-			})
-		})
-
-		It("rejects tokens containing the gt wildcard", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				prefix := rapid.StringN(0, 10, -1).Draw(t, "prefix")
-				suffix := rapid.StringN(0, 10, -1).Draw(t, "suffix")
-				token := prefix + ">" + suffix
-				err := natsbus.ValidateToken(token, "test")
-				Expect(err).To(HaveOccurred(),
-					"validateToken accepted token with gt: %q", token)
-			})
-		})
+		DescribeTable("rejects tokens containing a NATS delimiter or wildcard",
+			func(delimiter string) {
+				rapid.Check(GinkgoT(), func(t *rapid.T) {
+					// Inject the delimiter into an otherwise arbitrary token
+					prefix := rapid.StringN(0, 10, -1).Draw(t, "prefix")
+					suffix := rapid.StringN(0, 10, -1).Draw(t, "suffix")
+					token := prefix + delimiter + suffix
+					if err := natsbus.ValidateToken(token, "test"); err == nil {
+						t.Fatalf("validateToken accepted token with %s: %q", delimiter, token)
+					}
+				})
+			},
+			Entry("dot delimiter", "."),
+			Entry("star wildcard", "*"),
+			Entry("gt wildcard", ">"),
+		)
 
 		It("rejects empty tokens", func() {
 			err := natsbus.ValidateToken("", "test")

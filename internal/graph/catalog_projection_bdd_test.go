@@ -15,6 +15,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -61,36 +62,6 @@ func (edgeFailingGraph) CreateEdge(context.Context, string, string, string, grap
 	return errors.New("connection reset by peer")
 }
 
-// subscribingBus records every QueueSubscribe by subject.
-type subscribingBus struct {
-	handlers map[string]natsbus.MessageHandler
-	queues   map[string]string
-	subs     map[string]*mockSubscription
-	failOn   string
-}
-
-func newSubscribingBus() *subscribingBus {
-	b := &subscribingBus{
-		handlers: map[string]natsbus.MessageHandler{},
-		queues:   map[string]string{},
-		subs:     map[string]*mockSubscription{},
-	}
-	return b
-}
-
-func (b *subscribingBus) client() *mockNATSClient {
-	return &mockNATSClient{queueSubscribeFunc: func(_ context.Context, subject, queue string, handler natsbus.MessageHandler) (natsbus.Subscription, error) {
-		if subject == b.failOn {
-			return nil, errors.New("nats: connection closed")
-		}
-		b.handlers[subject] = handler
-		b.queues[subject] = queue
-		sub := &mockSubscription{}
-		b.subs[subject] = sub
-		return sub, nil
-	}}
-}
-
 var _ = Describe("Catalog parsed event projection", func() {
 	const (
 		tenantID  = "test-tenant"
@@ -103,7 +74,8 @@ var _ = Describe("Catalog parsed event projection", func() {
 		mem    graphdb.GraphDB
 		gdb    graphdb.GraphDB
 		reader *fakeControlsReader
-		bus    *subscribingBus
+		bus    *natsbustest.Fake
+		failOn string
 		tp     *telemetrytest.TestProvider
 		logs   *bytes.Buffer
 		svc    *graph.Service
@@ -127,7 +99,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 	}
 
 	build := func() {
-		svc = graph.New(gdb, &mockVectorDB{}, bus.client(),
+		svc = graph.New(gdb, &mockVectorDB{}, bus,
 			graph.WithControlsReader(reader),
 			graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
 			graph.WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
@@ -135,10 +107,24 @@ var _ = Describe("Catalog parsed event projection", func() {
 		DeferCleanup(func() { _ = svc.Stop(context.Background()) })
 	}
 
+	// subFor returns the most recent subscription to subject, or nil.
+	subFor := func(subject string) *natsbustest.Sub {
+		subs := bus.Subscriptions()
+		for i := len(subs) - 1; i >= 0; i-- {
+			if subs[i].Subject == subject {
+				return subs[i]
+			}
+		}
+		return nil
+	}
+
+	// deliverPayload calls the catalog handler directly, not through
+	// Fake.Deliver, because the malformed-subject specs feed it subjects the
+	// broker would never route to the wildcard subscription.
 	deliverPayload := func(subj string, data []byte) error {
-		handler := bus.handlers[catalogWildcard]
-		Expect(handler).NotTo(BeNil(), "no handler subscribed to %s", catalogWildcard)
-		return handler(ctx, &natsbus.Message{Subject: subj, Data: data})
+		sub := subFor(catalogWildcard)
+		Expect(sub).NotTo(BeNil(), "no handler subscribed to %s", catalogWildcard)
+		return sub.Handle(&natsbus.Message{Subject: subj, Data: data})
 	}
 
 	deliver := func(subj string) error {
@@ -192,7 +178,14 @@ var _ = Describe("Catalog parsed event projection", func() {
 		Expect(mem.CreateGraph(ctx, tenantID)).To(Succeed())
 		gdb = mem
 		reader = &fakeControlsReader{controls: fixture()}
-		bus = newSubscribingBus()
+		failOn = ""
+		bus = &natsbustest.Fake{QueueSubscribeFunc: func(_ context.Context, subject, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
+			if subject == failOn {
+				return nil, errors.New("nats: connection closed")
+			}
+			// (nil, nil) succeeds with the Sub the Fake recorded for this call.
+			return nil, nil
+		}}
 
 		var err error
 		tp, err = telemetrytest.NewTestProvider()
@@ -204,47 +197,47 @@ var _ = Describe("Catalog parsed event projection", func() {
 	Describe("subscription", func() {
 		It("subscribes to catalog parsed events in the materializer queue group when a reader is set", func() {
 			build()
-			Expect(bus.handlers).To(HaveKey(pipelineSubject))
-			Expect(bus.handlers).To(HaveKey(catalogWildcard))
-			Expect(bus.queues[catalogWildcard]).To(Equal("graph-materializer"))
+			Expect(subFor(pipelineSubject)).NotTo(BeNil())
+			Expect(subFor(catalogWildcard)).NotTo(BeNil())
+			Expect(subFor(catalogWildcard).Queue).To(Equal("graph-materializer"))
 		})
 
 		It("does not subscribe to catalog events without a reader", func() {
-			svc = graph.New(gdb, &mockVectorDB{}, bus.client())
+			svc = graph.New(gdb, &mockVectorDB{}, bus)
 			Expect(svc.Start(ctx)).To(Succeed())
-			Expect(bus.handlers).To(HaveLen(1))
-			Expect(bus.handlers).To(HaveKey(pipelineSubject))
+			Expect(bus.Subscriptions()).To(HaveLen(1))
+			Expect(subFor(pipelineSubject)).NotTo(BeNil())
 			Expect(svc.Stop(ctx)).To(Succeed())
 		})
 
 		It("fails Start, releasing the pipeline subscription, when the catalog subscribe fails", func() {
-			bus.failOn = catalogWildcard
-			svc = graph.New(gdb, &mockVectorDB{}, bus.client(), graph.WithControlsReader(reader))
+			failOn = catalogWildcard
+			svc = graph.New(gdb, &mockVectorDB{}, bus, graph.WithControlsReader(reader))
 
 			err := svc.Start(ctx)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("catalog events"))
-			Expect(bus.subs[pipelineSubject].unsubscribed).To(BeTrue())
+			Expect(subFor(pipelineSubject).Unsubscribed()).To(BeTrue())
 			Expect(svc.Stop(ctx)).To(MatchError(graph.ErrNotStarted))
 
 			By("starting cleanly once the bus recovers")
-			bus.failOn = ""
+			failOn = ""
 			Expect(svc.Start(ctx)).To(Succeed())
-			Expect(bus.handlers).To(HaveKey(catalogWildcard))
+			Expect(subFor(catalogWildcard)).NotTo(BeNil())
 			Expect(svc.Stop(ctx)).To(Succeed())
 		})
 
 		It("drains both subscriptions on Stop", func() {
 			build()
 			Expect(svc.Stop(ctx)).To(Succeed())
-			Expect(bus.subs[pipelineSubject].drained).To(BeTrue())
-			Expect(bus.subs[catalogWildcard].drained).To(BeTrue())
+			Expect(subFor(pipelineSubject).Drained()).To(BeTrue())
+			Expect(subFor(catalogWildcard).Drained()).To(BeTrue())
 			Expect(svc.Stop(ctx)).To(MatchError(graph.ErrNotStarted))
 		})
 
 		It("reports a catalog drain failure on Stop", func() {
 			build()
-			bus.subs[catalogWildcard].drainFunc = func() error { return errors.New("drain failed") }
+			subFor(catalogWildcard).DrainErr = errors.New("drain failed")
 			err := svc.Stop(ctx)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("drain failed"))

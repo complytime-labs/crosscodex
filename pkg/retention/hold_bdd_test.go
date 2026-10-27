@@ -81,31 +81,21 @@ var _ = Describe("Hold.Covers", func() {
 var _ = Describe("HoldChecker.Held", func() {
 	before := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	It("returns false when there are no holds", func() {
-		checker := retention.NewHoldChecker(nil)
-		c := retention.Candidate{TenantID: "t1", CreatedAt: before.Add(-time.Hour)}
-		Expect(checker.Held(c)).To(BeFalse())
-	})
-
-	It("returns true when any hold covers the candidate", func() {
-		h := retention.Hold{Scope: retention.HoldScope{TenantID: "t1"}}
-		checker := retention.NewHoldChecker([]retention.Hold{h})
-		c := retention.Candidate{TenantID: "t1", CreatedAt: before}
-		Expect(checker.Held(c)).To(BeTrue())
-	})
-
-	It("returns false when no hold covers the candidate", func() {
-		h := retention.Hold{Scope: retention.HoldScope{TenantID: "t1"}}
-		checker := retention.NewHoldChecker([]retention.Hold{h})
-		c := retention.Candidate{TenantID: "t2", CreatedAt: before}
-		Expect(checker.Held(c)).To(BeFalse())
-	})
-
-	It("returns true when the second hold in the list covers the candidate", func() {
-		h1 := retention.Hold{Scope: retention.HoldScope{TenantID: "t1"}}
-		h2 := retention.Hold{Scope: retention.HoldScope{TenantID: "t2"}}
-		checker := retention.NewHoldChecker([]retention.Hold{h1, h2})
-		c := retention.Candidate{TenantID: "t2", CreatedAt: before}
-		Expect(checker.Held(c)).To(BeTrue())
-	})
+	DescribeTable("reports whether any hold covers the candidate",
+		func(holds []retention.Hold, c retention.Candidate, wantHeld bool) {
+			Expect(retention.NewHoldChecker(holds).Held(c)).To(Equal(wantHeld))
+		},
+		Entry("not held when there are no holds",
+			nil,
+			retention.Candidate{TenantID: "t1", CreatedAt: before.Add(-time.Hour)}, false),
+		Entry("held when any hold covers the candidate",
+			[]retention.Hold{{Scope: retention.HoldScope{TenantID: "t1"}}},
+			retention.Candidate{TenantID: "t1", CreatedAt: before}, true),
+		Entry("not held when no hold covers the candidate",
+			[]retention.Hold{{Scope: retention.HoldScope{TenantID: "t1"}}},
+			retention.Candidate{TenantID: "t2", CreatedAt: before}, false),
+		Entry("held when the second hold in the list covers the candidate",
+			[]retention.Hold{{Scope: retention.HoldScope{TenantID: "t1"}}, {Scope: retention.HoldScope{TenantID: "t2"}}},
+			retention.Candidate{TenantID: "t2", CreatedAt: before}, true),
+	)
 })

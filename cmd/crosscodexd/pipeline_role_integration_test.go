@@ -19,6 +19,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
@@ -67,7 +68,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		ctx := context.Background()
 		natsURL := startSharedTestNATS(GinkgoT())
 		tenantID := fmt.Sprintf("split-e2e-%s", uuid.New().String())
-		fakeLLM := deterministicLLMClient{}
+		fakeLLM := testspecs.DeterministicLLM{EmbeddingDim: e2eEmbeddingDim}
 
 		pipelineCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RolePipeline)
 		pipelineCfg.Pipeline.Addr = "127.0.0.1:0"
@@ -191,7 +192,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		ctx := context.Background()
 		natsURL := startSharedTestNATS(GinkgoT())
 		tenantID := fmt.Sprintf("split-import-%s", uuid.New().String())
-		fakeLLM := deterministicLLMClient{}
+		fakeLLM := testspecs.DeterministicLLM{EmbeddingDim: e2eEmbeddingDim}
 
 		pipelineCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RolePipeline)
 		pipelineCfg.Pipeline.Addr = "127.0.0.1:0"
@@ -355,7 +356,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		// checks below exercise the TLS boundary rather than plaintext.
 		cfg.TLS = testServerTLS()
 
-		rt, err := bootstrap(ctx, cfg, WithLLMClient(deterministicLLMClient{}))
+		rt, err := bootstrap(ctx, cfg, WithLLMClient(testspecs.DeterministicLLM{EmbeddingDim: e2eEmbeddingDim}))
 		Expect(err).NotTo(HaveOccurred())
 		defer rt.close()
 		Expect(rt.start(ctx)).To(Succeed())

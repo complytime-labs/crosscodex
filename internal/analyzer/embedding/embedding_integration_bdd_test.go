@@ -5,7 +5,6 @@ package embedding_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"math"
 	"os"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -108,10 +108,7 @@ var _ = Describe("Embedding Infrastructure Integration", Ordered, func() {
 			"nist-800-53/SI-3": normalizeVec(testVec(0, 0, 0, 0, 1, 0, 0, 0)),
 		}
 
-		mock := &cannedEmbedClient{
-			vectors: mockVectors,
-			dim:     dim,
-		}
+		mock := &llmclienttest.Fake{EmbedFunc: embeddingsByControlID(mockVectors, dim)}
 
 		embCfg := config.EmbeddingConfig{
 			Enabled:   true,
@@ -219,39 +216,31 @@ var _ = Describe("Embedding Infrastructure Integration", Ordered, func() {
 	})
 })
 
-// cannedEmbedClient returns pre-defined embedding vectors keyed by control ID.
-// It matches control IDs by searching for them within the prepared text,
-// since prepareText() prepends ancestor context like "[Title] statement".
-type cannedEmbedClient struct {
-	vectors map[string][]float32
-	dim     int
-}
-
-func (c *cannedEmbedClient) Complete(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	return nil, errors.New("embedding client does not support completions")
-}
-
-func (c *cannedEmbedClient) Embed(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	var data []llmclient.EmbeddingData
-	for i, text := range req.Input {
-		vec := make([]float32, c.dim)
-		for id, v := range c.vectors {
-			if strings.Contains(text, id) {
-				vec = v
-				break
+// embeddingsByControlID returns a Fake.EmbedFunc that answers with
+// pre-defined embedding vectors keyed by control ID. It matches control IDs by
+// searching for them within the prepared text, since prepareText() prepends
+// ancestor context like "[Title] statement". An input matching no ID gets a
+// zero vector of width dim.
+func embeddingsByControlID(vectors map[string][]float32, dim int) func(context.Context, *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+	return func(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+		var data []llmclient.EmbeddingData
+		for i, text := range req.Input {
+			vec := make([]float32, dim)
+			for id, v := range vectors {
+				if strings.Contains(text, id) {
+					vec = v
+					break
+				}
 			}
+			data = append(data, llmclient.EmbeddingData{Index: i, Embedding: vec})
 		}
-		data = append(data, llmclient.EmbeddingData{Index: i, Embedding: vec})
+		return &llmclient.EmbeddingResponse{
+			Data:  data,
+			Model: "test-embed",
+			Usage: llmclient.EmbeddingUsage{PromptTokens: len(req.Input) * 10, TotalTokens: len(req.Input) * 10},
+		}, nil
 	}
-	return &llmclient.EmbeddingResponse{
-		Data:  data,
-		Model: "test-embed",
-		Usage: llmclient.EmbeddingUsage{PromptTokens: len(req.Input) * 10, TotalTokens: len(req.Input) * 10},
-	}, nil
 }
-
-func (c *cannedEmbedClient) Health(_ context.Context) error { return nil }
-func (c *cannedEmbedClient) Close() error                   { return nil }
 
 // pgvectorDim is the embedding width this test generates. The embeddings
 // column is dimensionless and accepts any width.

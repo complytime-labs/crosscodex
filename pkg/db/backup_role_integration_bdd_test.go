@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/url"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,14 +28,11 @@ var _ = Describe("backup_user role", Ordered, func() {
 		}
 		pw, err := dbtest.NewRolePassword()
 		Expect(err).NotTo(HaveOccurred())
-		stmt, err := dbtest.AlterRolePasswordSQL("backup_user", pw)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(suPool.Exec(ctx, stmt)).To(Succeed(), "set backup_user password")
+		Expect(dbtest.SetRolePassword(ctx, suDSN, "backup_user", pw)).To(Succeed(), "set backup_user password")
 
-		u, err := url.Parse(suDSN)
+		backupDSN, err := dbtest.RoleDSN(suDSN, "backup_user", pw)
 		Expect(err).NotTo(HaveOccurred())
-		u.User = url.UserPassword("backup_user", pw)
-		backupConn, err = sql.Open("pgx", u.String())
+		backupConn, err = sql.Open("pgx", backupDSN)
 		Expect(err).NotTo(HaveOccurred())
 
 		for _, t := range tenants {

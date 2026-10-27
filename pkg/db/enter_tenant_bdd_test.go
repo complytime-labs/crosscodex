@@ -50,13 +50,15 @@ var _ = Describe("tenant scoping", func() {
 			filepath.Join("pkg", "retention", "archive.go"): 1,
 			filepath.Join("pkg", "db", "tenant_pool.go"):    1,
 		}
-		skipDirs := map[string]bool{".worktrees": true, "vendor": true, ".git": true, "node_modules": true}
+		skipDirs := map[string]bool{"vendor": true, "node_modules": true}
 		var offenders []string
 		Expect(filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() && skipDirs[d.Name()] {
+			// Dot-directories (.git, .worktrees, .go-tmp, .test-output, ...) hold no
+			// source under test, and .go-tmp churns during concurrent builds.
+			if d.IsDir() && path != root && (skipDirs[d.Name()] || strings.HasPrefix(d.Name(), ".")) {
 				return filepath.SkipDir
 			}
 			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {

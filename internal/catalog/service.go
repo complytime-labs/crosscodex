@@ -217,7 +217,13 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 
 	reader, err := s.storage.Get(ctx, req.Msg.GetDocumentId())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("document not found: %v", err))
+		// Only a missing object is the caller's to act on; any other storage
+		// error can carry a filesystem path or an S3 SDK message (CWE-209).
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
+				"document %q not found in storage. Submit the document again", req.Msg.GetDocumentId()))
+		}
+		return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("get document: %w", err))
 	}
 	defer reader.Close()
 
@@ -271,6 +277,11 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		}
 		items, err = s.parser.Parse(ctx, bytes.NewReader(data))
 		if err != nil {
+			// A schema that cannot load is server misconfiguration whose error
+			// names the schema's path; only a parse failure is the caller's.
+			if errors.Is(err, oscal.ErrSchemaLoad) {
+				return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("parse OSCAL: %w", err))
+			}
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("parse OSCAL: %v", err))
 		}
 	} else {
@@ -455,8 +466,9 @@ func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[crosscode
 
 	record, err := s.store.GetCatalog(ctx, req.Msg.GetCatalogId())
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
+		if errors.Is(err, ErrCatalogNotFound) {
+			return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
+				"catalog %q not found. List catalogs to find a valid catalog_id", req.Msg.GetCatalogId()))
 		}
 		return nil, s.internalError(ctx, "GetCatalog", fmt.Errorf("get catalog: %w", err))
 	}
@@ -559,8 +571,9 @@ func (s *Service) GetControl(ctx context.Context, req *connect.Request[crosscode
 
 	record, err := s.store.GetControl(ctx, req.Msg.GetControlId())
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
+		if errors.Is(err, ErrControlNotFound) {
+			return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf(
+				"control %q not found. Search controls to find a valid control_id", req.Msg.GetControlId()))
 		}
 		return nil, s.internalError(ctx, "GetControl", fmt.Errorf("get control: %w", err))
 	}

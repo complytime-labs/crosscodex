@@ -21,6 +21,49 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
+// hardDeleteTenants removes each test tenant and everything it owns as the
+// superuser; an AfterAll body. It is a no-op when the suite was skipped.
+func hardDeleteTenants(ids ...string) {
+	if suPool == nil {
+		return
+	}
+	for _, id := range ids {
+		stmt, err := dbtest.HardDeleteTenantSQL(id)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(suPool.Exec(context.Background(), stmt)).To(Succeed())
+	}
+}
+
+// expectNotExecutableByPublic asserts PUBLIC holds no EXECUTE on the
+// function with the given regprocedure signature.
+func expectNotExecutableByPublic(signature string) {
+	var ok bool
+	Expect(suPool.QueryRow(context.Background(), "SELECT has_function_privilege('public', $1, 'EXECUTE')", signature).Scan(&ok)).To(Succeed())
+	Expect(ok).To(BeFalse(), "PUBLIC must not hold EXECUTE on %s", signature)
+}
+
+// expectDefinersWithPinnedSearchPath asserts that each named public function
+// exists and is SECURITY DEFINER with search_path pinned.
+func expectDefinersWithPinnedSearchPath(names ...string) {
+	rows, err := suPool.Query(context.Background(), `
+		SELECT proname, prosecdef, coalesce(array_to_string(proconfig, ';'), '')
+		FROM pg_proc
+		WHERE pronamespace = 'public'::regnamespace AND proname = ANY($1)`, names)
+	Expect(err).NotTo(HaveOccurred())
+	defer rows.Close()
+	var found []string
+	for rows.Next() {
+		var name, config string
+		var definer bool
+		Expect(rows.Scan(&name, &definer, &config)).To(Succeed())
+		Expect(definer).To(BeTrue(), name)
+		Expect(config).To(Equal("search_path=pg_catalog, public, pg_temp"), name)
+		found = append(found, name)
+	}
+	Expect(rows.Err()).NotTo(HaveOccurred())
+	Expect(found).To(ConsistOf(names))
+}
+
 // Judgements are permanent (#195): artifact_pair_verdicts
 // rows and the tenants they belong to are never hard-deleted. app_user is
 // refused by privileges; the superuser table owner is refused by triggers. The suite entry
@@ -66,13 +109,7 @@ var _ = Describe("Judgements are never deleted", Ordered, func() {
 			VALUES ($1, 'k', 'a', 'b', 'e', 0.5, '{}', 'x', now(), now())`, tenantID)).To(Succeed())
 	})
 
-	AfterAll(func() {
-		if suPool != nil {
-			stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(suPool.Exec(ctx, stmt)).To(Succeed())
-		}
-	})
+	AfterAll(func() { hardDeleteTenants(tenantID) })
 
 	DescribeTable("app_user is refused",
 		func(stmt, wantCode, wantMsg string) {
@@ -256,22 +293,9 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 		setupTenant(deletedID, "Lifecycle Deleted")
 	})
 
-	AfterAll(func() {
-		if suPool != nil {
-			for _, id := range []string{liveID, deletedID} {
-				stmt, err := dbtest.HardDeleteTenantSQL(id)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(suPool.Exec(ctx, stmt)).To(Succeed())
-			}
-		}
-	})
+	AfterAll(func() { hardDeleteTenants(liveID, deletedID) })
 
-	DescribeTable("new functions are not executable by PUBLIC",
-		func(signature string) {
-			var ok bool
-			Expect(suPool.QueryRow(ctx, "SELECT has_function_privilege('public', $1, 'EXECUTE')", signature).Scan(&ok)).To(Succeed())
-			Expect(ok).To(BeFalse(), "PUBLIC must not hold EXECUTE on %s", signature)
-		},
+	DescribeTable("new functions are not executable by PUBLIC", expectNotExecutableByPublic,
 		Entry(nil, "public.record_identity_event(text, text, text, text, text, text, text, bytea, bytea)"),
 		Entry(nil, "public.delete_tenant(text, text, text, bytea, bytea)"),
 		Entry(nil, "public.restore_tenant(text, text, text, bytea, bytea)"),
@@ -283,27 +307,8 @@ var _ = Describe("Tenant lifecycle", Ordered, func() {
 	)
 
 	It("declares every definer function with a pinned search_path", func() {
-		rows, err := suPool.Query(ctx, `
-			SELECT proname, prosecdef, coalesce(array_to_string(proconfig, ';'), '')
-			FROM pg_proc
-			WHERE pronamespace = 'public'::regnamespace
-			  AND proname IN ('delete_tenant', 'restore_tenant', 'hide_tenant', 'unhide_tenant',
-			                  'list_tenants', 'set_tenant_status', 'provision_tenant', 'enter_tenant',
-			                  'list_retention_tenants')
-			ORDER BY proname`)
-		Expect(err).NotTo(HaveOccurred())
-		defer rows.Close()
-		var names []string
-		for rows.Next() {
-			var name, config string
-			var definer bool
-			Expect(rows.Scan(&name, &definer, &config)).To(Succeed())
-			Expect(definer).To(BeTrue(), name)
-			Expect(config).To(Equal("search_path=pg_catalog, public, pg_temp"), name)
-			names = append(names, name)
-		}
-		Expect(rows.Err()).NotTo(HaveOccurred())
-		Expect(names).To(HaveLen(9))
+		expectDefinersWithPinnedSearchPath("delete_tenant", "restore_tenant", "hide_tenant", "unhide_tenant",
+			"list_tenants", "set_tenant_status", "provision_tenant", "enter_tenant", "list_retention_tenants")
 	})
 
 	DescribeTable("reserves the 'hidden-' tenant ID prefix for pseudonyms",
@@ -811,22 +816,9 @@ var _ = Describe("Reviewer registry", Ordered, func() {
 			otherID, stranger)).To(Succeed())
 	})
 
-	AfterAll(func() {
-		if suPool != nil {
-			for _, id := range []string{tenantID, otherID, goneID} {
-				stmt, err := dbtest.HardDeleteTenantSQL(id)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(suPool.Exec(ctx, stmt)).To(Succeed())
-			}
-		}
-	})
+	AfterAll(func() { hardDeleteTenants(tenantID, otherID, goneID) })
 
-	DescribeTable("new functions are not executable by PUBLIC",
-		func(signature string) {
-			var ok bool
-			Expect(suPool.QueryRow(ctx, "SELECT has_function_privilege('public', $1, 'EXECUTE')", signature).Scan(&ok)).To(Succeed())
-			Expect(ok).To(BeFalse(), "PUBLIC must not hold EXECUTE on %s", signature)
-		},
+	DescribeTable("new functions are not executable by PUBLIC", expectNotExecutableByPublic,
 		Entry(nil, "public.add_reviewer(text, text, text, text, bytea, bytea)"),
 		Entry(nil, "public.delete_reviewer(text, text, text, text, bytea, bytea)"),
 		Entry(nil, "public.restore_reviewer(text, text, text, text, bytea, bytea)"),
@@ -838,25 +830,8 @@ var _ = Describe("Reviewer registry", Ordered, func() {
 	)
 
 	It("declares every reviewer function SECURITY DEFINER with a pinned search_path", func() {
-		rows, err := suPool.Query(ctx, `
-			SELECT proname, prosecdef, coalesce(array_to_string(proconfig, ';'), '')
-			FROM pg_proc
-			WHERE pronamespace = 'public'::regnamespace
-			  AND proname IN ('add_reviewer', 'delete_reviewer', 'restore_reviewer', 'hide_reviewer',
-			                  'unhide_reviewer', 'list_reviewers', 'trace_pseudonym', 'require_active_reviewer')`)
-		Expect(err).NotTo(HaveOccurred())
-		defer rows.Close()
-		var names []string
-		for rows.Next() {
-			var name, config string
-			var definer bool
-			Expect(rows.Scan(&name, &definer, &config)).To(Succeed())
-			Expect(definer).To(BeTrue(), name)
-			Expect(config).To(Equal("search_path=pg_catalog, public, pg_temp"), name)
-			names = append(names, name)
-		}
-		Expect(rows.Err()).NotTo(HaveOccurred())
-		Expect(names).To(HaveLen(8))
+		expectDefinersWithPinnedSearchPath("add_reviewer", "delete_reviewer", "restore_reviewer", "hide_reviewer",
+			"unhide_reviewer", "list_reviewers", "trace_pseudonym", "require_active_reviewer")
 	})
 
 	It("adds a reviewer and records a signed event", func() {
@@ -1322,13 +1297,7 @@ var _ = Describe("TenantAdmin identity API", Ordered, func() {
 		setupTenant(tenantID, "Identity API")
 	})
 
-	AfterAll(func() {
-		if suPool != nil {
-			stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(suPool.Exec(ctx, stmt)).To(Succeed())
-		}
-	})
+	AfterAll(func() { hardDeleteTenants(tenantID) })
 
 	It("adds, deletes, hides, traces, unhides and restores a reviewer", func() {
 		created, err := admin.AddReviewer(ctx, tenantID, rita, actor, reason, sign("add", db.IdentityKindReviewer, tenantID, rita))
@@ -1559,13 +1528,7 @@ var _ = Describe("Identity audit log export", Ordered, func() {
 			signedRequest(gen, "restore", db.IdentityKindTenant, tenantID, tenantID, actor, reason))).To(Succeed())
 	})
 
-	AfterAll(func() {
-		if suPool != nil {
-			stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(suPool.Exec(ctx, stmt)).To(Succeed())
-		}
-	})
+	AfterAll(func() { hardDeleteTenants(tenantID) })
 
 	It("returns every event in event_id order with the stored bytes intact", func() {
 		var got []db.IdentityEvent
@@ -1646,10 +1609,7 @@ var _ = Describe("Identity audit log export", Ordered, func() {
 	)
 
 	It("is not executable by PUBLIC", func() {
-		var ok bool
-		Expect(suPool.QueryRow(ctx, "SELECT has_function_privilege('public', 'public.export_identity_events(bigint, integer)', 'EXECUTE')").
-			Scan(&ok)).To(Succeed())
-		Expect(ok).To(BeFalse())
+		expectNotExecutableByPublic("public.export_identity_events(bigint, integer)")
 	})
 
 	It("is a stable definer function with a pinned search_path", func() {

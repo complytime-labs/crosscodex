@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 
@@ -47,49 +46,35 @@ type stubAdminClient struct {
 	listCalls int
 }
 
-func (s *stubAdminClient) ScanRetention(_ context.Context, req *connectrpc.Request[pb.ScanRetentionRequest]) (*connectrpc.Response[pb.ScanRetentionResponse], error) {
-	s.scanCalls++
-	s.scanReq = req.Msg
-	if s.scanErr != nil {
-		return nil, s.scanErr
+// stubRPC is the shared body of every stubAdminClient method: it counts the
+// call, records the request message, then returns err if set, else resp.
+func stubRPC[Req, Resp any](calls *int, got **Req, err error, resp *Resp, req *connectrpc.Request[Req]) (*connectrpc.Response[Resp], error) {
+	*calls++
+	*got = req.Msg
+	if err != nil {
+		return nil, err
 	}
-	return connectrpc.NewResponse(s.scanResp), nil
+	return connectrpc.NewResponse(resp), nil
+}
+
+func (s *stubAdminClient) ScanRetention(_ context.Context, req *connectrpc.Request[pb.ScanRetentionRequest]) (*connectrpc.Response[pb.ScanRetentionResponse], error) {
+	return stubRPC(&s.scanCalls, &s.scanReq, s.scanErr, s.scanResp, req)
 }
 
 func (s *stubAdminClient) GetRetentionStats(_ context.Context, req *connectrpc.Request[pb.GetRetentionStatsRequest]) (*connectrpc.Response[pb.GetRetentionStatsResponse], error) {
-	s.statsCalls++
-	s.statsReq = req.Msg
-	if s.statsErr != nil {
-		return nil, s.statsErr
-	}
-	return connectrpc.NewResponse(s.statsResp), nil
+	return stubRPC(&s.statsCalls, &s.statsReq, s.statsErr, s.statsResp, req)
 }
 
 func (s *stubAdminClient) CreateHold(_ context.Context, req *connectrpc.Request[pb.CreateHoldRequest]) (*connectrpc.Response[pb.CreateHoldResponse], error) {
-	s.createCalls++
-	s.createReq = req.Msg
-	if s.createErr != nil {
-		return nil, s.createErr
-	}
-	return connectrpc.NewResponse(s.createResp), nil
+	return stubRPC(&s.createCalls, &s.createReq, s.createErr, s.createResp, req)
 }
 
 func (s *stubAdminClient) ReleaseHold(_ context.Context, req *connectrpc.Request[pb.ReleaseHoldRequest]) (*connectrpc.Response[pb.ReleaseHoldResponse], error) {
-	s.releaseCalls++
-	s.releaseReq = req.Msg
-	if s.releaseErr != nil {
-		return nil, s.releaseErr
-	}
-	return connectrpc.NewResponse(s.releaseResp), nil
+	return stubRPC(&s.releaseCalls, &s.releaseReq, s.releaseErr, s.releaseResp, req)
 }
 
 func (s *stubAdminClient) ListHolds(_ context.Context, req *connectrpc.Request[pb.ListHoldsRequest]) (*connectrpc.Response[pb.ListHoldsResponse], error) {
-	s.listCalls++
-	s.listReq = req.Msg
-	if s.listErr != nil {
-		return nil, s.listErr
-	}
-	return connectrpc.NewResponse(s.listResp), nil
+	return stubRPC(&s.listCalls, &s.listReq, s.listErr, s.listResp, req)
 }
 
 // newAdminTestRoot wires newAdminCmd under a minimal root that provides the
@@ -105,16 +90,6 @@ func newAdminTestRoot(state *cliState) *cobra.Command {
 }
 
 var _ = Describe("Admin Commands", func() {
-	var (
-		stdout bytes.Buffer
-		stderr bytes.Buffer
-	)
-
-	BeforeEach(func() {
-		stdout.Reset()
-		stderr.Reset()
-	})
-
 	Describe("admin retention scan", func() {
 		It("renders the retention report counters", func() {
 			stub := &stubAdminClient{
@@ -122,18 +97,13 @@ var _ = Describe("Admin Commands", func() {
 					Report: &pb.RetentionReport{Scanned: 3, Purged: 1},
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "retention", "scan", "--dry-run", "--tenant", "acme"})
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "retention", "scan", "--dry-run", "--tenant", "acme")
+			Expect(err).NotTo(HaveOccurred())
 
-			Expect(root.Execute()).To(Succeed())
-
-			out := stdout.String()
-			Expect(out).To(ContainSubstring("scanned"))
-			Expect(out).To(ContainSubstring("3"))
-			Expect(out).To(ContainSubstring("purged"))
-			Expect(out).To(ContainSubstring("1"))
+			Expect(stdout).To(ContainSubstring("scanned"))
+			Expect(stdout).To(ContainSubstring("3"))
+			Expect(stdout).To(ContainSubstring("purged"))
+			Expect(stdout).To(ContainSubstring("1"))
 
 			Expect(stub.scanReq.GetDryRun()).To(BeTrue())
 			Expect(stub.scanReq.GetTenantContext().GetTenantId()).To(Equal("acme"))
@@ -145,15 +115,11 @@ var _ = Describe("Admin Commands", func() {
 					Report: &pb.RetentionReport{Scanned: 3, Purged: 1},
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "retention", "scan", "--tenant", "acme", "--json"})
-
-			Expect(root.Execute()).To(Succeed())
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "retention", "scan", "--tenant", "acme", "--json")
+			Expect(err).NotTo(HaveOccurred())
 
 			var payload map[string]any
-			Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(Succeed())
+			Expect(json.Unmarshal([]byte(stdout), &payload)).To(Succeed())
 			report, ok := payload["report"].(map[string]any)
 			Expect(ok).To(BeTrue())
 			Expect(report["scanned"]).To(BeEquivalentTo(3))
@@ -164,12 +130,7 @@ var _ = Describe("Admin Commands", func() {
 			stub := &stubAdminClient{
 				scanResp: &pb.ScanRetentionResponse{Report: &pb.RetentionReport{}},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "retention", "scan"})
-
-			err := root.Execute()
+			_, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "retention", "scan")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("tenant"))
 		})
@@ -183,17 +144,12 @@ var _ = Describe("Admin Commands", func() {
 					ActiveHolds: 4,
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "retention", "stats", "--tenant", "acme"})
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "retention", "stats", "--tenant", "acme")
+			Expect(err).NotTo(HaveOccurred())
 
-			Expect(root.Execute()).To(Succeed())
-
-			out := stdout.String()
-			Expect(out).To(ContainSubstring("scanned"))
-			Expect(out).To(ContainSubstring("7"))
-			Expect(out).To(ContainSubstring("Active holds: 4"))
+			Expect(stdout).To(ContainSubstring("scanned"))
+			Expect(stdout).To(ContainSubstring("7"))
+			Expect(stdout).To(ContainSubstring("Active holds: 4"))
 			Expect(stub.statsReq.GetTenantContext().GetTenantId()).To(Equal("acme"))
 		})
 
@@ -204,15 +160,11 @@ var _ = Describe("Admin Commands", func() {
 					ActiveHolds: 4,
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "retention", "stats", "--tenant", "acme", "--json"})
-
-			Expect(root.Execute()).To(Succeed())
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "retention", "stats", "--tenant", "acme", "--json")
+			Expect(err).NotTo(HaveOccurred())
 
 			var payload map[string]any
-			Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(Succeed())
+			Expect(json.Unmarshal([]byte(stdout), &payload)).To(Succeed())
 			Expect(payload["active_holds"]).To(BeEquivalentTo(4))
 			eligible, ok := payload["eligible"].(map[string]any)
 			Expect(ok).To(BeTrue())
@@ -228,19 +180,15 @@ var _ = Describe("Admin Commands", func() {
 					Hold: &pb.Hold{Id: "hold_123", Name: "litigation"},
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}),
 				"admin", "hold", "create",
 				"--tenant", "acme",
 				"--name", "litigation",
 				"--job", "job_9",
 				"--created-before", "2026-01-02T15:04:05Z",
 				"--expires-at", "2026-12-31T00:00:00Z",
-			})
-
-			Expect(root.Execute()).To(Succeed())
+			)
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(stub.createReq.GetName()).To(Equal("litigation"))
 			Expect(stub.createReq.GetTenantContext().GetTenantId()).To(Equal("acme"))
@@ -248,9 +196,8 @@ var _ = Describe("Admin Commands", func() {
 			Expect(stub.createReq.GetScope().GetCreatedBefore()).NotTo(BeNil())
 			Expect(stub.createReq.GetExpiresAt()).NotTo(BeNil())
 
-			out := stdout.String()
-			Expect(out).To(ContainSubstring("hold_123"))
-			Expect(out).To(ContainSubstring("litigation"))
+			Expect(stdout).To(ContainSubstring("hold_123"))
+			Expect(stdout).To(ContainSubstring("litigation"))
 		})
 
 		It("leaves optional timestamps unset when the flags are omitted", func() {
@@ -259,12 +206,8 @@ var _ = Describe("Admin Commands", func() {
 					Hold: &pb.Hold{Id: "hold_123", Name: "litigation"},
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "hold", "create", "--tenant", "acme", "--name", "litigation"})
-
-			Expect(root.Execute()).To(Succeed())
+			_, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "hold", "create", "--tenant", "acme", "--name", "litigation")
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(stub.createReq.GetScope().GetCreatedBefore()).To(BeNil())
 			Expect(stub.createReq.GetExpiresAt()).To(BeNil())
@@ -276,15 +219,11 @@ var _ = Describe("Admin Commands", func() {
 					Hold: &pb.Hold{Id: "hold_123", Name: "litigation"},
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "hold", "create", "--tenant", "acme", "--name", "litigation", "--json"})
-
-			Expect(root.Execute()).To(Succeed())
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "hold", "create", "--tenant", "acme", "--name", "litigation", "--json")
+			Expect(err).NotTo(HaveOccurred())
 
 			var payload map[string]any
-			Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(Succeed())
+			Expect(json.Unmarshal([]byte(stdout), &payload)).To(Succeed())
 			Expect(payload["id"]).To(Equal("hold_123"))
 			Expect(payload["name"]).To(Equal("litigation"))
 		})
@@ -293,12 +232,7 @@ var _ = Describe("Admin Commands", func() {
 			stub := &stubAdminClient{
 				createResp: &pb.CreateHoldResponse{Hold: &pb.Hold{}},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "hold", "create", "--tenant", "acme", "--name", "x", "--created-before", "not-a-time"})
-
-			err := root.Execute()
+			_, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "hold", "create", "--tenant", "acme", "--name", "x", "--created-before", "not-a-time")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("created-before"))
 			Expect(stub.createCalls).To(Equal(0))
@@ -308,12 +242,7 @@ var _ = Describe("Admin Commands", func() {
 			stub := &stubAdminClient{
 				createResp: &pb.CreateHoldResponse{Hold: &pb.Hold{}},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "hold", "create", "--tenant", "acme", "--name", "x", "--expires-at", "not-a-time"})
-
-			err := root.Execute()
+			_, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "hold", "create", "--tenant", "acme", "--name", "x", "--expires-at", "not-a-time")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("expires-at"))
 			Expect(stub.createCalls).To(Equal(0))
@@ -323,17 +252,13 @@ var _ = Describe("Admin Commands", func() {
 	Describe("admin hold release", func() {
 		It("sends name and tenant and renders a confirmation", func() {
 			stub := &stubAdminClient{releaseResp: &pb.ReleaseHoldResponse{}}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "hold", "release", "--tenant", "acme", "--name", "litigation"})
-
-			Expect(root.Execute()).To(Succeed())
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "hold", "release", "--tenant", "acme", "--name", "litigation")
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(stub.releaseReq.GetName()).To(Equal("litigation"))
 			Expect(stub.releaseReq.GetTenantContext().GetTenantId()).To(Equal("acme"))
-			Expect(stdout.String()).To(ContainSubstring("litigation"))
-			Expect(stdout.String()).To(ContainSubstring("released"))
+			Expect(stdout).To(ContainSubstring("litigation"))
+			Expect(stdout).To(ContainSubstring("released"))
 		})
 	})
 
@@ -347,18 +272,13 @@ var _ = Describe("Admin Commands", func() {
 					},
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "hold", "list", "--tenant", "acme"})
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "hold", "list", "--tenant", "acme")
+			Expect(err).NotTo(HaveOccurred())
 
-			Expect(root.Execute()).To(Succeed())
-
-			out := stdout.String()
-			Expect(out).To(ContainSubstring("hold_1"))
-			Expect(out).To(ContainSubstring("alpha"))
-			Expect(out).To(ContainSubstring("hold_2"))
-			Expect(out).To(ContainSubstring("beta"))
+			Expect(stdout).To(ContainSubstring("hold_1"))
+			Expect(stdout).To(ContainSubstring("alpha"))
+			Expect(stdout).To(ContainSubstring("hold_2"))
+			Expect(stdout).To(ContainSubstring("beta"))
 			Expect(stub.listReq.GetTenantContext().GetTenantId()).To(Equal("acme"))
 		})
 
@@ -371,15 +291,11 @@ var _ = Describe("Admin Commands", func() {
 					},
 				},
 			}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "hold", "list", "--tenant", "acme", "--json"})
-
-			Expect(root.Execute()).To(Succeed())
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "hold", "list", "--tenant", "acme", "--json")
+			Expect(err).NotTo(HaveOccurred())
 
 			var payload []map[string]any
-			Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(Succeed())
+			Expect(json.Unmarshal([]byte(stdout), &payload)).To(Succeed())
 			Expect(payload).To(HaveLen(2))
 			Expect(payload[0]["id"]).To(Equal("hold_1"))
 			Expect(payload[1]["name"]).To(Equal("beta"))
@@ -387,24 +303,17 @@ var _ = Describe("Admin Commands", func() {
 
 		It("reports no holds and emits an empty JSON array when empty", func() {
 			stub := &stubAdminClient{listResp: &pb.ListHoldsResponse{}}
-			root := newAdminTestRoot(&cliState{adminClient: stub})
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"admin", "hold", "list", "--tenant", "acme"})
+			stdout, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), "admin", "hold", "list", "--tenant", "acme")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).To(ContainSubstring("No holds found"))
 
-			Expect(root.Execute()).To(Succeed())
-			Expect(stdout.String()).To(ContainSubstring("No holds found"))
-
-			stdout.Reset()
 			jsonStub := &stubAdminClient{listResp: &pb.ListHoldsResponse{}}
 			jsonRoot := newAdminTestRoot(&cliState{adminClient: jsonStub})
-			jsonRoot.SetOut(&stdout)
-			jsonRoot.SetErr(&stderr)
-			jsonRoot.SetArgs([]string{"admin", "hold", "list", "--tenant", "acme", "--json"})
 
-			Expect(jsonRoot.Execute()).To(Succeed())
+			stdout, _, err = execute(jsonRoot, "admin", "hold", "list", "--tenant", "acme", "--json")
+			Expect(err).NotTo(HaveOccurred())
 			var payload []any
-			Expect(json.Unmarshal(stdout.Bytes(), &payload)).To(Succeed())
+			Expect(json.Unmarshal([]byte(stdout), &payload)).To(Succeed())
 			Expect(payload).To(BeEmpty())
 		})
 	})
@@ -419,12 +328,7 @@ var _ = Describe("Admin Commands", func() {
 					releaseResp: &pb.ReleaseHoldResponse{},
 					listResp:    &pb.ListHoldsResponse{},
 				}
-				root := newAdminTestRoot(&cliState{adminClient: stub})
-				root.SetOut(&stdout)
-				root.SetErr(&stderr)
-				root.SetArgs(args)
-
-				err := root.Execute()
+				_, _, err := execute(newAdminTestRoot(&cliState{adminClient: stub}), args...)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("tenant"))
 				Expect(calls(stub)).To(Equal(0))

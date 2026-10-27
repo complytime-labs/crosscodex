@@ -13,6 +13,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/worker"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 )
@@ -32,48 +33,40 @@ var _ = AfterSuite(func() {
 	restoreLogs()
 })
 
-// stubLLMClient implements llmclient.Client for testing.
-type stubLLMClient struct {
-	completeFunc func(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error)
-	embedFunc    func(ctx context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error)
-}
-
-func (s *stubLLMClient) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	if s.completeFunc != nil {
-		return s.completeFunc(ctx, req)
+// newStubLLM returns a Fake whose Complete answers "ok" and whose Embed
+// returns one 2-dimension vector, so specs that do not care about the LLM
+// output run the handler end to end. A spec that does care overrides
+// CompleteFunc or EmbedFunc.
+func newStubLLM() *llmclienttest.Fake {
+	return &llmclienttest.Fake{
+		CompleteFunc: func(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+			return &llmclient.CompletionResponse{
+				Model:   req.Model,
+				Choices: []llmclient.CompletionChoice{{Message: llmclient.ChatMessage{Content: "ok"}}},
+				Usage:   llmclient.TokenUsage{TotalTokens: 10},
+			}, nil
+		},
+		EmbedFunc: func(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+			return &llmclient.EmbeddingResponse{
+				Data:  []llmclient.EmbeddingData{{Embedding: []float32{0.1, 0.2}}},
+				Model: req.Model,
+				Usage: llmclient.EmbeddingUsage{TotalTokens: 5},
+			}, nil
+		},
 	}
-	return &llmclient.CompletionResponse{
-		Model:   req.Model,
-		Choices: []llmclient.CompletionChoice{{Message: llmclient.ChatMessage{Content: "ok"}}},
-		Usage:   llmclient.TokenUsage{TotalTokens: 10},
-	}, nil
 }
-
-func (s *stubLLMClient) Embed(ctx context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	if s.embedFunc != nil {
-		return s.embedFunc(ctx, req)
-	}
-	return &llmclient.EmbeddingResponse{
-		Data:  []llmclient.EmbeddingData{{Embedding: []float32{0.1, 0.2}}},
-		Model: req.Model,
-		Usage: llmclient.EmbeddingUsage{TotalTokens: 5},
-	}, nil
-}
-
-func (s *stubLLMClient) Health(_ context.Context) error { return nil }
-func (s *stubLLMClient) Close() error                   { return nil }
 
 var _ = Describe("Worker Lifecycle", func() {
 	var (
 		bus     natsbus.Client
 		cleanup func()
-		llm     *stubLLMClient
+		llm     *llmclienttest.Fake
 		w       *worker.Worker
 	)
 
 	BeforeEach(func() {
 		bus, cleanup = testspecs.SetupTestNATS()
-		llm = &stubLLMClient{}
+		llm = newStubLLM()
 		w = worker.New(bus, llm, worker.WorkerConfig{
 			QueueGroup: "test-workers",
 			LLM: config.LLMConfig{
@@ -178,13 +171,13 @@ var _ = Describe("WithTelemetry", func() {
 	var (
 		bus     natsbus.Client
 		cleanup func()
-		llm     *stubLLMClient
+		llm     *llmclienttest.Fake
 		tp      *telemetrytest.TestProvider
 	)
 
 	BeforeEach(func() {
 		bus, cleanup = testspecs.SetupTestNATS()
-		llm = &stubLLMClient{}
+		llm = newStubLLM()
 
 		var err error
 		tp, err = telemetrytest.NewTestProvider()
@@ -291,10 +284,9 @@ var _ = Describe("WithTelemetry", func() {
 	})
 
 	It("records worker.errors metric on LLM failure", func() {
-		failingLLM := &stubLLMClient{
-			completeFunc: func(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-				return nil, errors.New("simulated LLM failure")
-			},
+		failingLLM := newStubLLM()
+		failingLLM.CompleteFunc = func(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+			return nil, errors.New("simulated LLM failure")
 		}
 		w := worker.New(bus, failingLLM, worker.WorkerConfig{
 			QueueGroup: "test-workers",

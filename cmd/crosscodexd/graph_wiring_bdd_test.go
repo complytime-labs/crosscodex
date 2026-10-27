@@ -16,24 +16,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
-	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 )
-
-// subjectRecordingBus records QueueSubscribe subjects; every other
-// natsbus.Client method is left nil and panics if called.
-type subjectRecordingBus struct {
-	natsbus.Client
-	subjects []string
-}
-
-func (b *subjectRecordingBus) QueueSubscribe(_ context.Context, subject, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
-	b.subjects = append(b.subjects, subject)
-	return drainableSubscription{}, nil
-}
-
-type drainableSubscription struct{ natsbus.Subscription }
-
-func (drainableSubscription) Drain() error { return nil }
 
 // attachGraph only constructs values, so it runs here against memdriver to
 // prove graph.max_bulk_edges reaches the graph service it builds.
@@ -86,14 +70,23 @@ var _ = Describe("attachGraph config wiring", func() {
 	})
 
 	It("subscribes the graph service to catalog parsed events", func() {
-		bus := &subjectRecordingBus{}
+		bus := &natsbustest.Fake{}
 		rt := &runtime{}
 		Expect(attachGraph(&config.Config{}, &sharedResources{graphDB_: memdriver.New(), natsClient: bus}, rt)).To(Succeed())
 
 		ctx := context.Background()
 		Expect(rt.graphService.Start(ctx)).To(Succeed())
 		DeferCleanup(func() { _ = rt.graphService.Stop(context.Background()) })
-		Expect(bus.subjects).To(ContainElement("crosscodex.catalog.*.*.parsed"),
-			"attachGraph must give the graph service a ControlsReader so it projects catalog controls")
+		type subscription struct{ Subject, Queue string }
+		var got []subscription
+		for _, sub := range bus.Subscriptions() {
+			got = append(got, subscription{sub.Subject, sub.Queue})
+		}
+		// Exact set: an unexpected subscription or publish must fail here.
+		Expect(got).To(ConsistOf(
+			subscription{"crosscodex.pipeline.*.*.stage.completed", "graph-materializer"},
+			subscription{"crosscodex.catalog.*.*.parsed", "graph-materializer"},
+		), "attachGraph must give the graph service a ControlsReader so it projects catalog controls")
+		Expect(bus.Published()).To(BeEmpty())
 	})
 })

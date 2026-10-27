@@ -232,18 +232,6 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 			})
 		})
 
-		Context("when mode is invalid", func() {
-			It("returns ErrInvalidMode", func() {
-				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
-					Mode: "invalid",
-					Cert: certPath(),
-					Key:  keyPath(),
-				}, "")
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, tlsconfig.ErrInvalidMode)).To(BeTrue())
-			})
-		})
-
 		Context("when target overrides mode to off", func() {
 			It("returns nil, nil for that target", func() {
 				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
@@ -266,28 +254,6 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 	// =================================================================
 
 	Describe("Error Handling", func() {
-		Context("when key is specified without cert", func() {
-			It("returns ErrMissingCert", func() {
-				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
-					Mode: "server-only",
-					Key:  keyPath(),
-				}, "")
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, tlsconfig.ErrMissingCert)).To(BeTrue())
-			})
-		})
-
-		Context("when cert is specified without key", func() {
-			It("returns ErrMissingKey", func() {
-				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
-					Mode: "server-only",
-					Cert: certPath(),
-				}, "")
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, tlsconfig.ErrMissingKey)).To(BeTrue())
-			})
-		})
-
 		Context("when neither cert nor key is specified", func() {
 			It("succeeds with an empty tls.Config (client-side usage)", func() {
 				tlsCfg, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
@@ -301,17 +267,51 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 			})
 		})
 
-		Context("when CA is missing for mutual mode", func() {
-			It("returns ErrMissingCA", func() {
-				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
-					Mode: "mutual",
+		DescribeTable("returns the matching sentinel error",
+			func(build func() config.TLSConfig, wantErr error) {
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), build(), "")
+				Expect(err).To(MatchError(wantErr))
+			},
+			Entry("when mode is invalid returns ErrInvalidMode", func() config.TLSConfig {
+				return config.TLSConfig{Mode: "invalid", Cert: certPath(), Key: keyPath()}
+			}, tlsconfig.ErrInvalidMode),
+			Entry("when key is specified without cert returns ErrMissingCert", func() config.TLSConfig {
+				return config.TLSConfig{Mode: "server-only", Key: keyPath()}
+			}, tlsconfig.ErrMissingCert),
+			Entry("when cert is specified without key returns ErrMissingKey", func() config.TLSConfig {
+				return config.TLSConfig{Mode: "server-only", Cert: certPath()}
+			}, tlsconfig.ErrMissingKey),
+			Entry("when CA is missing for mutual mode returns ErrMissingCA", func() config.TLSConfig {
+				return config.TLSConfig{Mode: "mutual", Cert: certPath(), Key: keyPath()}
+			}, tlsconfig.ErrMissingCA),
+			Entry("when CA file contains no valid certs returns ErrInvalidCertificate", func() config.TLSConfig {
+				badCA := filepath.Join(GinkgoT().TempDir(), "bad-ca.pem")
+				Expect(os.WriteFile(badCA, []byte("not a cert"), 0o644)).To(Succeed())
+				return config.TLSConfig{Mode: "server-only", CA: badCA, Cert: certPath(), Key: keyPath()}
+			}, tlsconfig.ErrInvalidCertificate),
+		)
+
+		DescribeTable("error names the target and the offending path",
+			func(build func() config.TLSConfig, target, wantPath string) {
+				_, err := tlsconfig.BuildTLSConfig(context.Background(), build(), target)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(target))
+				Expect(err.Error()).To(ContainSubstring(wantPath))
+			},
+			Entry("when CA file does not exist", func() config.TLSConfig {
+				return config.TLSConfig{Mode: "server-only", CA: "/nonexistent/ca.pem", Cert: certPath(), Key: keyPath()}
+			}, "myservice", "/nonexistent/ca.pem"),
+			Entry("when target override cert path does not exist, without falling back to global cert", func() config.TLSConfig {
+				return config.TLSConfig{
+					Mode: "server-only",
 					Cert: certPath(),
 					Key:  keyPath(),
-				}, "")
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, tlsconfig.ErrMissingCA)).To(BeTrue())
-			})
-		})
+					Targets: map[string]config.TLSOverride{
+						"nats": {Cert: "/nonexistent/override.pem"},
+					},
+				}
+			}, "nats", "/nonexistent/override.pem"),
+		)
 
 		Context("when cert file does not exist", func() {
 			It("returns ErrCertificateLoadFailed with file path", func() {
@@ -324,54 +324,6 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 				Expect(errors.Is(err, tlsconfig.ErrCertificateLoadFailed)).To(BeTrue())
 				Expect(err.Error()).To(ContainSubstring("myservice"))
 				Expect(err.Error()).To(ContainSubstring("/nonexistent/cert.pem"))
-			})
-		})
-
-		Context("when CA file does not exist", func() {
-			It("returns an error with the file path", func() {
-				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
-					Mode: "server-only",
-					CA:   "/nonexistent/ca.pem",
-					Cert: certPath(),
-					Key:  keyPath(),
-				}, "myservice")
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("/nonexistent/ca.pem"))
-				Expect(err.Error()).To(ContainSubstring("myservice"))
-			})
-		})
-
-		Context("when CA file contains no valid certs", func() {
-			It("returns ErrInvalidCertificate", func() {
-				badCA := filepath.Join(GinkgoT().TempDir(), "bad-ca.pem")
-				Expect(os.WriteFile(badCA, []byte("not a cert"), 0o644)).To(Succeed())
-
-				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
-					Mode: "server-only",
-					CA:   badCA,
-					Cert: certPath(),
-					Key:  keyPath(),
-				}, "")
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, tlsconfig.ErrInvalidCertificate)).To(BeTrue())
-			})
-		})
-
-		Context("when target override cert path does not exist", func() {
-			It("fails without falling back to global cert", func() {
-				_, err := tlsconfig.BuildTLSConfig(context.Background(), config.TLSConfig{
-					Mode: "server-only",
-					Cert: certPath(),
-					Key:  keyPath(),
-					Targets: map[string]config.TLSOverride{
-						"nats": {
-							Cert: "/nonexistent/nats.pem",
-						},
-					},
-				}, "nats")
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("nats"))
-				Expect(err.Error()).To(ContainSubstring("/nonexistent/nats.pem"))
 			})
 		})
 
@@ -550,41 +502,33 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 	// =================================================================
 
 	Describe("Certificate Reload Callbacks", func() {
-		Context("GetCertificate callback", func() {
-			It("returns a valid certificate from disk", func() {
-				fn := tlsconfig.MakeGetCertificate(certPath(), keyPath())
-
-				cert, err := fn(nil)
+		DescribeTable("returns a valid certificate from disk",
+			func(load func() (*tls.Certificate, error)) {
+				cert, err := load()
 				Expect(err).NotTo(HaveOccurred())
 				Expect(cert).NotTo(BeNil())
-			})
+			},
+			Entry("GetCertificate callback", func() (*tls.Certificate, error) {
+				return tlsconfig.MakeGetCertificate(certPath(), keyPath())(nil)
+			}),
+			Entry("GetClientCertificate callback", func() (*tls.Certificate, error) {
+				return tlsconfig.MakeGetClientCertificate(clientCert(), clientKey())(nil)
+			}),
+		)
 
-			It("returns an error for missing files", func() {
-				fn := tlsconfig.MakeGetCertificate("/nonexistent/cert.pem", "/nonexistent/key.pem")
-
-				_, err := fn(nil)
+		DescribeTable("returns an error naming the path for missing files",
+			func(load func() (*tls.Certificate, error), wantPath string) {
+				_, err := load()
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("/nonexistent/cert.pem"))
-			})
-		})
-
-		Context("GetClientCertificate callback", func() {
-			It("returns a valid certificate from disk", func() {
-				fn := tlsconfig.MakeGetClientCertificate(clientCert(), clientKey())
-
-				cert, err := fn(nil)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(cert).NotTo(BeNil())
-			})
-
-			It("returns an error for missing files", func() {
-				fn := tlsconfig.MakeGetClientCertificate("/nonexistent/client.pem", "/nonexistent/client-key.pem")
-
-				_, err := fn(nil)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("/nonexistent/client.pem"))
-			})
-		})
+				Expect(err.Error()).To(ContainSubstring(wantPath))
+			},
+			Entry("GetCertificate callback", func() (*tls.Certificate, error) {
+				return tlsconfig.MakeGetCertificate("/nonexistent/cert.pem", "/nonexistent/key.pem")(nil)
+			}, "/nonexistent/cert.pem"),
+			Entry("GetClientCertificate callback", func() (*tls.Certificate, error) {
+				return tlsconfig.MakeGetClientCertificate("/nonexistent/client.pem", "/nonexistent/client-key.pem")(nil)
+			}, "/nonexistent/client.pem"),
+		)
 
 		Context("reload detects cert changes on disk", func() {
 			It("loads different certs after file replacement", func() {
@@ -969,47 +913,30 @@ var _ = Describe("TLSConfig System", Ordered, func() {
 				Expect(fipsAttr.AsBool()).To(BeFalse())
 			})
 
-			It("emits tls.LoadCertificate child span", func() {
-				testTP.Reset()
-				r := tlsconfig.Resolver{Tracer: testTracer, Meter: testMeter}
-				cfg := config.TLSConfig{
-					Mode: "server-only",
-					Cert: certPath(),
-					Key:  keyPath(),
-					CA:   caPath(),
-				}
-				_, err := r.BuildTLSConfig(context.Background(), cfg, "")
-				Expect(err).NotTo(HaveOccurred())
+			DescribeTable("emits a child span carrying the loaded path",
+				func(mode, spanName, pathAttr string, wantPath func() string) {
+					testTP.Reset()
+					r := tlsconfig.Resolver{Tracer: testTracer, Meter: testMeter}
+					cfg := config.TLSConfig{
+						Mode: mode,
+						Cert: certPath(),
+						Key:  keyPath(),
+						CA:   caPath(),
+					}
+					_, err := r.BuildTLSConfig(context.Background(), cfg, "")
+					Expect(err).NotTo(HaveOccurred())
 
-				spans := testTP.GetSpans()
-				certSpan := telemetrytest.FindSpan(spans, "tls.LoadCertificate")
-				Expect(certSpan).NotTo(BeNil(), "expected tls.LoadCertificate span")
+					spans := testTP.GetSpans()
+					childSpan := telemetrytest.FindSpan(spans, spanName)
+					Expect(childSpan).NotTo(BeNil(), "expected "+spanName+" span")
 
-				certPathAttr, ok := telemetrytest.SpanAttribute(certSpan, "cert.path")
-				Expect(ok).To(BeTrue())
-				Expect(certPathAttr.AsString()).To(Equal(certPath()))
-			})
-
-			It("emits tls.LoadCA child span when CA configured", func() {
-				testTP.Reset()
-				r := tlsconfig.Resolver{Tracer: testTracer, Meter: testMeter}
-				cfg := config.TLSConfig{
-					Mode: "mutual",
-					Cert: certPath(),
-					Key:  keyPath(),
-					CA:   caPath(),
-				}
-				_, err := r.BuildTLSConfig(context.Background(), cfg, "")
-				Expect(err).NotTo(HaveOccurred())
-
-				spans := testTP.GetSpans()
-				caSpan := telemetrytest.FindSpan(spans, "tls.LoadCA")
-				Expect(caSpan).NotTo(BeNil(), "expected tls.LoadCA span")
-
-				caPathAttr, ok := telemetrytest.SpanAttribute(caSpan, "ca.path")
-				Expect(ok).To(BeTrue())
-				Expect(caPathAttr.AsString()).To(Equal(caPath()))
-			})
+					pathValue, ok := telemetrytest.SpanAttribute(childSpan, pathAttr)
+					Expect(ok).To(BeTrue())
+					Expect(pathValue.AsString()).To(Equal(wantPath()))
+				},
+				Entry("emits tls.LoadCertificate child span", "server-only", "tls.LoadCertificate", "cert.path", certPath),
+				Entry("emits tls.LoadCA child span when CA configured", "mutual", "tls.LoadCA", "ca.path", caPath),
+			)
 
 			It("records tlsconfig.build.total counter", func() {
 				testTP.Reset()

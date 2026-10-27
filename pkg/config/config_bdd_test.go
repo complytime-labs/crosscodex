@@ -1317,74 +1317,31 @@ logging:
 	})
 
 	Describe("internal: validate", func() {
+		It("validConfig passes validation", func() {
+			Expect(config.ExportValidateConfig(validConfig())).To(Succeed())
+		})
+
 		It("accepts a valid config", func() {
-			cfg := &config.Config{
-				LLM: config.LLMConfig{
-					GatewayURL: "http://localhost:4000", // DevSkim: ignore DS162092 -- test fixture
-					Timeout:    30,
-				},
-				Storage: config.StorageConfig{
-					Objects: config.ObjectStorageConfig{Backend: "local"},
-				},
-				TLS: config.TLSConfig{Mode: "off"},
-				Database: config.DatabaseConfig{
-					DSN:     "postgres://localhost:5432/crosscodex", // DevSkim: ignore DS162092 -- test fixture
-					SSLMode: "prefer",
-				},
-				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
-				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
-				Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-				Analysis: config.AnalysisConfig{
-					Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-					Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-					Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-					Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
-					ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-				},
-				Synthesis: config.SynthesisConfig{
-					ConfidenceThreshold:   0.5,
-					MaxMappingsPerControl: 10,
-					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-				},
-				Backup: config.BackupConfig{
-					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-				},
+			cfg := validConfig()
+			cfg.LLM = config.LLMConfig{
+				GatewayURL: "http://localhost:4000", // DevSkim: ignore DS162092 -- test fixture
+				Timeout:    30,
+			}
+			cfg.Database = config.DatabaseConfig{
+				DSN:     "postgres://localhost:5432/crosscodex", // DevSkim: ignore DS162092 -- test fixture
+				SSLMode: "prefer",
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
 		})
 
 		It("accepts mutual TLS with all required fields", func() {
-			cfg := &config.Config{
-				TLS: config.TLSConfig{
-					Mode: "mutual",
-					CA:   "/etc/ca.crt",
-					Cert: "/etc/server.crt",
-					Key:  "/etc/server.key",
-				},
-				Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-				Logging:     config.LoggingConfig{Level: "info", Format: "text"},
-				Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
-				Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-				Analysis: config.AnalysisConfig{
-					Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-					Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-					Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-					Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
-					ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-				},
-				Synthesis: config.SynthesisConfig{
-					ConfidenceThreshold:   0.5,
-					MaxMappingsPerControl: 10,
-					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-				},
-				Backup: config.BackupConfig{
-					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-				},
+			cfg := validConfig()
+			cfg.TLS = config.TLSConfig{
+				Mode: "mutual",
+				CA:   "/etc/ca.crt",
+				Cert: "/etc/server.crt",
+				Key:  "/etc/server.key",
 			}
 
 			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
@@ -1392,21 +1349,7 @@ logging:
 
 		DescribeTable("rejects invalid configurations",
 			func(modify func(*config.Config)) {
-				cfg := &config.Config{
-					TLS:         config.TLSConfig{Mode: "off"},
-					Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-					Logging:     config.LoggingConfig{Level: "info", Format: "text"},
-					Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
-					Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-					Analysis: config.AnalysisConfig{
-						Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-						Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-						Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-						Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-						Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
-						ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-					},
-				}
+				cfg := validConfig()
 				modify(cfg)
 
 				err := config.ExportValidateConfig(cfg)
@@ -1774,44 +1717,9 @@ logging:
 	})
 
 	Describe("LLM Gateway Validation", func() {
-		// validBase returns a Config with all sections valid so tests
-		// can mutate just the LLM fields and reach LLM validation.
-		validBase := func() *config.Config {
-			return &config.Config{
-				TLS:     config.TLSConfig{Mode: "off"},
-				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-				Logging: config.LoggingConfig{Level: "info", Format: "text"},
-				Attestation: config.AttestationConfig{
-					Enabled:        true,
-					ExpiryDuration: 8760 * time.Hour,
-				},
-				Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-				Analysis: config.AnalysisConfig{
-					Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-					Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-					Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-					Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
-					ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-				},
-				Synthesis: config.SynthesisConfig{
-					ConfidenceThreshold:   0.5,
-					MaxMappingsPerControl: 10,
-					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-				},
-				Backup: config.BackupConfig{
-					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-				},
-				LLM: config.LLMConfig{
-					Timeout:    30,
-					MaxRetries: 3,
-				},
-			}
-		}
 
 		It("rejects gateway_mode=true without gateway_url", func() {
-			cfg := validBase()
+			cfg := validConfig()
 			cfg.LLM.GatewayMode = true
 			cfg.LLM.GatewayURL = ""
 			err := config.ExportValidateConfig(cfg)
@@ -1821,7 +1729,7 @@ logging:
 		})
 
 		It("accepts gateway_mode=true with gateway_url set", func() {
-			cfg := validBase()
+			cfg := validConfig()
 			cfg.LLM.GatewayMode = true
 			cfg.LLM.GatewayURL = "http://litellm:4000"
 			err := config.ExportValidateConfig(cfg)
@@ -1829,7 +1737,7 @@ logging:
 		})
 
 		It("auto-zeros max_retries when gateway_mode=true", func() {
-			cfg := validBase()
+			cfg := validConfig()
 			cfg.LLM.GatewayMode = true
 			cfg.LLM.GatewayURL = "http://litellm:4000"
 			cfg.LLM.MaxRetries = 3
@@ -1839,7 +1747,7 @@ logging:
 		})
 
 		It("preserves max_retries=0 when gateway_mode=true", func() {
-			cfg := validBase()
+			cfg := validConfig()
 			cfg.LLM.GatewayMode = true
 			cfg.LLM.GatewayURL = "http://litellm:4000"
 			cfg.LLM.MaxRetries = 0
@@ -1849,7 +1757,7 @@ logging:
 		})
 
 		It("preserves max_retries when gateway_mode=false", func() {
-			cfg := validBase()
+			cfg := validConfig()
 			cfg.LLM.GatewayMode = false
 			cfg.LLM.MaxRetries = 3
 			err := config.ExportValidateConfig(cfg)
@@ -1874,250 +1782,119 @@ logging:
 	})
 
 	Describe("Attestation Validation", func() {
-		// validBase returns a Config with all sections valid, including
-		// a known-good AttestationConfig so tests can mutate just the
-		// attestation fields and reach attestation validation.
-		validBase := func() *config.Config {
-			return &config.Config{
-				TLS:     config.TLSConfig{Mode: "off"},
-				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-				Logging: config.LoggingConfig{Level: "info", Format: "text"},
-				Attestation: config.AttestationConfig{
-					Enabled:           true,
-					ExpiryDuration:    8760 * time.Hour,
-					IncludeByProducts: true,
-				},
-				Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-				Analysis: config.AnalysisConfig{
-					Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-					Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-					Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-					Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
-					ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-				},
-				Synthesis: config.SynthesisConfig{
-					ConfidenceThreshold:   0.5,
-					MaxMappingsPerControl: 10,
-					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-				},
-				Backup: config.BackupConfig{
-					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-				},
-			}
-		}
 
-		It("rejects non-positive expiry duration", func() {
-			cfg := validBase()
-			cfg.Attestation.ExpiryDuration = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("attestation.expiry_duration"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
+		DescribeTable("rejects invalid attestation values",
+			func(mutate func(*config.Config), field, msg string) {
+				cfg := validConfig()
+				mutate(cfg)
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(field))
+				Expect(err.Error()).To(ContainSubstring(msg))
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			},
+			Entry("rejects private_key_path without public_key_path", func(c *config.Config) {
+				c.Attestation.PrivateKeyPath = "/path/to/key.pem"
+				c.Attestation.PublicKeyPath = ""
+			}, "attestation.private_key_path", "both be set or both empty"),
+			Entry("rejects public_key_path without private_key_path", func(c *config.Config) {
+				c.Attestation.PublicKeyPath = "/path/to/pub.pem"
+				c.Attestation.PrivateKeyPath = ""
+			}, "attestation.public_key_path", "both be set or both empty"),
+			Entry("rejects per-tenant non-positive expiry duration", func(c *config.Config) {
+				badExpiry := -1 * time.Hour
+				c.Attestation.TenantOverrides = map[string]config.AttestationOverride{
+					"tenant-x": {ExpiryDuration: &badExpiry},
+				}
+			}, "attestation.tenant_overrides.tenant-x.expiry_duration", "must be positive"),
+			Entry("rejects per-tenant private_key_path without public_key_path", func(c *config.Config) {
+				privPath := "/path/to/tenant-key.pem"
+				c.Attestation.TenantOverrides = map[string]config.AttestationOverride{
+					"tenant-y": {PrivateKeyPath: &privPath},
+				}
+			}, "attestation.tenant_overrides.tenant-y.private_key_path", "both be set or both empty"),
+			Entry("rejects non-positive expiry duration", func(c *config.Config) {
+				c.Attestation.ExpiryDuration = 0
+			}, "attestation.expiry_duration", "must be positive"),
+			Entry("rejects negative expiry duration", func(c *config.Config) {
+				c.Attestation.ExpiryDuration = -1 * time.Hour
+			}, "attestation.expiry_duration", "must be positive"),
+		)
 
-		It("rejects negative expiry duration", func() {
-			cfg := validBase()
-			cfg.Attestation.ExpiryDuration = -1 * time.Hour
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("attestation.expiry_duration"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
+		DescribeTable("accepts valid attestation values",
+			func(mutate func(*config.Config)) {
+				cfg := validConfig()
+				mutate(cfg)
+				Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+			},
+			Entry("passes when both paths empty (ephemeral mode)", func(c *config.Config) {
+				c.Attestation.PrivateKeyPath = ""
+				c.Attestation.PublicKeyPath = ""
+			}),
+			Entry("passes when both paths set", func(c *config.Config) {
+				c.Attestation.PrivateKeyPath = "/path/to/key.pem"
+				c.Attestation.PublicKeyPath = "/path/to/pub.pem"
+			}),
+			Entry("accepts per-tenant overrides with both key paths set", func(c *config.Config) {
+				privPath := "/path/to/tenant-key.pem"
+				pubPath := "/path/to/tenant-pub.pem"
+				c.Attestation.TenantOverrides = map[string]config.AttestationOverride{
+					"tenant-z": {PrivateKeyPath: &privPath, PublicKeyPath: &pubPath},
+				}
+			}),
+		)
 
-		It("rejects private_key_path without public_key_path", func() {
-			cfg := validBase()
-			cfg.Attestation.PrivateKeyPath = "/path/to/key.pem"
-			cfg.Attestation.PublicKeyPath = ""
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("attestation.private_key_path"))
-			Expect(err.Error()).To(ContainSubstring("both be set or both empty"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects public_key_path without private_key_path", func() {
-			cfg := validBase()
-			cfg.Attestation.PublicKeyPath = "/path/to/pub.pem"
-			cfg.Attestation.PrivateKeyPath = ""
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("both be set or both empty"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("passes when both paths empty (ephemeral mode)", func() {
-			cfg := validBase()
-			cfg.Attestation.PrivateKeyPath = ""
-			cfg.Attestation.PublicKeyPath = ""
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("passes when both paths set", func() {
-			cfg := validBase()
-			cfg.Attestation.PrivateKeyPath = "/path/to/key.pem"
-			cfg.Attestation.PublicKeyPath = "/path/to/pub.pem"
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("rejects per-tenant non-positive expiry duration", func() {
-			cfg := validBase()
-			badExpiry := -1 * time.Hour
-			cfg.Attestation.TenantOverrides = map[string]config.AttestationOverride{
-				"tenant-x": {ExpiryDuration: &badExpiry},
-			}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tenant-x"))
-			Expect(err.Error()).To(ContainSubstring("expiry_duration"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects per-tenant private_key_path without public_key_path", func() {
-			cfg := validBase()
-			privPath := "/path/to/tenant-key.pem"
-			cfg.Attestation.TenantOverrides = map[string]config.AttestationOverride{
-				"tenant-y": {PrivateKeyPath: &privPath},
-			}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tenant-y"))
-			Expect(err.Error()).To(ContainSubstring("both be set or both empty"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts per-tenant overrides with both key paths set", func() {
-			cfg := validBase()
-			privPath := "/path/to/tenant-key.pem"
-			pubPath := "/path/to/tenant-pub.pem"
-			cfg.Attestation.TenantOverrides = map[string]config.AttestationOverride{
-				"tenant-z": {PrivateKeyPath: &privPath, PublicKeyPath: &pubPath},
-			}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).NotTo(HaveOccurred())
-		})
 	})
 
 	Describe("Pipeline Validation", func() {
-		// validBase returns a Config with all sections valid, including
-		// a known-good PipelineConfig so tests can mutate just the
-		// pipeline fields and reach pipeline validation.
-		validBase := func() *config.Config {
-			return &config.Config{
-				TLS:     config.TLSConfig{Mode: "off"},
-				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-				Logging: config.LoggingConfig{Level: "info", Format: "text"},
-				Attestation: config.AttestationConfig{
-					Enabled:           true,
-					ExpiryDuration:    8760 * time.Hour,
-					IncludeByProducts: true,
-				},
-				Pipeline: config.PipelineConfig{
-					MaxConcurrentJobs: 10,
-					StageTimeout:      5 * time.Minute,
-				},
-				Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-				Analysis: config.AnalysisConfig{
-					Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-					Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-					Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-					Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-					Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
-					ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-				},
-				Synthesis: config.SynthesisConfig{
-					ConfidenceThreshold:   0.5,
-					MaxMappingsPerControl: 10,
-					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-				},
-				Backup: config.BackupConfig{
-					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-				},
-			}
-		}
 
-		It("passes valid config", func() {
-			cfg := validBase()
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).NotTo(HaveOccurred())
-		})
+		DescribeTable("rejects invalid pipeline values",
+			func(mutate func(*config.Config), field, msg string) {
+				cfg := validConfig()
+				mutate(cfg)
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(field))
+				Expect(err.Error()).To(ContainSubstring(msg))
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			},
+			Entry("rejects negative MaxConcurrentJobs", func(c *config.Config) {
+				c.Pipeline.MaxConcurrentJobs = -1
+			}, "pipeline.max_concurrent_jobs", "must be in range [0, 100]"),
+			Entry("rejects MaxConcurrentJobs > 100", func(c *config.Config) {
+				c.Pipeline.MaxConcurrentJobs = 101
+			}, "pipeline.max_concurrent_jobs", "must be in range [0, 100]"),
+			Entry("rejects StageTimeout > 2h", func(c *config.Config) {
+				c.Pipeline.StageTimeout = 3 * time.Hour
+			}, "pipeline.stage_timeout", "must be in range [0, 2h]"),
+			Entry("rejects negative StageTimeout", func(c *config.Config) {
+				c.Pipeline.StageTimeout = -1 * time.Minute
+			}, "pipeline.stage_timeout", "must be in range [0, 2h]"),
+			Entry("rejects StageTimeout just above upper boundary (2h1s)", func(c *config.Config) {
+				c.Pipeline.StageTimeout = 2*time.Hour + time.Second
+			}, "pipeline.stage_timeout", "must be in range [0, 2h]"),
+		)
 
-		It("passes zero MaxConcurrentJobs (default)", func() {
-			cfg := validBase()
-			cfg.Pipeline.MaxConcurrentJobs = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).NotTo(HaveOccurred())
-		})
+		DescribeTable("accepts valid pipeline values",
+			func(mutate func(*config.Config)) {
+				cfg := validConfig()
+				mutate(cfg)
+				Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+			},
+			Entry("passes zero MaxConcurrentJobs (default)", func(c *config.Config) {
+				c.Pipeline.MaxConcurrentJobs = 0
+			}),
+			Entry("passes zero StageTimeout (default)", func(c *config.Config) {
+				c.Pipeline.StageTimeout = 0
+			}),
+			Entry("accepts MaxConcurrentJobs at upper boundary (100)", func(c *config.Config) {
+				c.Pipeline.MaxConcurrentJobs = 100
+			}),
+			Entry("accepts StageTimeout at upper boundary (2h)", func(c *config.Config) {
+				c.Pipeline.StageTimeout = 2 * time.Hour
+			}),
+		)
 
-		It("rejects negative MaxConcurrentJobs", func() {
-			cfg := validBase()
-			cfg.Pipeline.MaxConcurrentJobs = -1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("pipeline.max_concurrent_jobs"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects MaxConcurrentJobs > 100", func() {
-			cfg := validBase()
-			cfg.Pipeline.MaxConcurrentJobs = 101
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("pipeline.max_concurrent_jobs"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("passes zero StageTimeout (default)", func() {
-			cfg := validBase()
-			cfg.Pipeline.StageTimeout = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("rejects StageTimeout > 2h", func() {
-			cfg := validBase()
-			cfg.Pipeline.StageTimeout = 3 * time.Hour
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("pipeline.stage_timeout"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative StageTimeout", func() {
-			cfg := validBase()
-			cfg.Pipeline.StageTimeout = -1 * time.Minute
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("pipeline.stage_timeout"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts MaxConcurrentJobs at upper boundary (100)", func() {
-			cfg := validBase()
-			cfg.Pipeline.MaxConcurrentJobs = 100
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("accepts StageTimeout at upper boundary (2h)", func() {
-			cfg := validBase()
-			cfg.Pipeline.StageTimeout = 2 * time.Hour
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("rejects StageTimeout just above upper boundary (2h1s)", func() {
-			cfg := validBase()
-			cfg.Pipeline.StageTimeout = 2*time.Hour + time.Second
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("pipeline.stage_timeout"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
 	})
 
 	Describe("AttestationConfig.ForTenant", func() {
@@ -2236,54 +2013,6 @@ logging:
 	})
 
 	Describe("AnalysisConfig validation", func() {
-		// analysisBase returns a Config with all sections valid so tests
-		// can mutate just the analysis fields and reach analysis validation.
-		analysisBase := func() *config.Config {
-			return &config.Config{
-				TLS:     config.TLSConfig{Mode: "off"},
-				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-				Logging: config.LoggingConfig{Level: "info", Format: "text"},
-				Attestation: config.AttestationConfig{
-					Enabled:        true,
-					ExpiryDuration: 8760 * time.Hour,
-				},
-				Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-				Analysis: config.AnalysisConfig{
-					Engine: config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-					Classification: config.ClassificationConfig{
-						Enabled:       true,
-						MaxTextLength: 2000,
-						Temperature:   0.0,
-						MaxTokens:     20,
-					},
-					Embedding: config.EmbeddingConfig{
-						Enabled:   true,
-						Models:    []string{"snowflake-arctic-embed2"},
-						MaxChars:  1500,
-						BatchSize: 50,
-					},
-					Relationship: config.RelationshipConfig{
-						TopK:                20,
-						MaxSourceChars:      1500,
-						MaxTargetChars:      800,
-						MaxTokens:           300,
-						SamplesPerModel:     1,
-						SamplingTemperature: 0.3,
-					},
-					Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
-					ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-				},
-				Synthesis: config.SynthesisConfig{
-					ConfidenceThreshold:   0.5,
-					MaxMappingsPerControl: 10,
-					Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-					Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-				},
-				Backup: config.BackupConfig{
-					MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-				},
-			}
-		}
 
 		It("has correct default values from compiled defaults", func() {
 			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
@@ -2322,77 +2051,131 @@ logging:
 			Expect(daemon.Analysis.Classification.MaxTokens).To(Equal(20))
 		})
 
-		It("rejects max_text_length of zero", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Classification.MaxTextLength = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.classification.max_text_length"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
+		DescribeTable("rejects invalid analysis values",
+			func(mutate func(*config.Config), field, msg string) {
+				cfg := validConfig()
+				mutate(cfg)
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(field))
+				Expect(err.Error()).To(ContainSubstring(msg))
+				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			},
+			Entry("rejects max_text_length of zero", func(c *config.Config) {
+				c.Analysis.Classification.MaxTextLength = 0
+			}, "analysis.classification.max_text_length", "must be positive"),
+			Entry("rejects max_tokens of zero", func(c *config.Config) {
+				c.Analysis.Classification.MaxTokens = 0
+			}, "analysis.classification.max_tokens", "must be positive"),
+			Entry("rejects negative temperature", func(c *config.Config) {
+				c.Analysis.Classification.Temperature = -0.1
+			}, "analysis.classification.temperature", "must be non-negative"),
+			Entry("rejects temperature above 2.0", func(c *config.Config) {
+				c.Analysis.Classification.Temperature = 2.1
+			}, "analysis.classification.temperature", "must not exceed 2.0"),
+			Entry("rejects negative max_chars", func(c *config.Config) {
+				c.Analysis.Embedding.MaxChars = -1
+			}, "analysis.embedding.max_chars", "must be non-negative"),
+			Entry("rejects batch_size of zero", func(c *config.Config) {
+				c.Analysis.Embedding.BatchSize = 0
+			}, "analysis.embedding.batch_size", "must be positive"),
+			Entry("rejects empty models when enabled", func(c *config.Config) {
+				c.Analysis.Embedding.Models = []string{}
+			}, "analysis.embedding.models", "must not be empty when enabled"),
+			Entry("rejects top_k of zero", func(c *config.Config) {
+				c.Analysis.Relationship.TopK = 0
+			}, "analysis.relationship.top_k", "must be positive"),
+			Entry("rejects max_source_chars of zero", func(c *config.Config) {
+				c.Analysis.Relationship.MaxSourceChars = 0
+			}, "analysis.relationship.max_source_chars", "must be positive"),
+			Entry("rejects max_target_chars of zero", func(c *config.Config) {
+				c.Analysis.Relationship.MaxTargetChars = 0
+			}, "analysis.relationship.max_target_chars", "must be positive"),
+			Entry("rejects max_tokens of zero for relationship", func(c *config.Config) {
+				c.Analysis.Relationship.MaxTokens = 0
+			}, "analysis.relationship.max_tokens", "must be positive"),
+			Entry("rejects samples_per_model of zero", func(c *config.Config) {
+				c.Analysis.Relationship.SamplesPerModel = 0
+			}, "analysis.relationship.samples_per_model", "must be positive"),
+			Entry("rejects negative sampling_temperature", func(c *config.Config) {
+				c.Analysis.Relationship.SamplingTemperature = -0.1
+			}, "analysis.relationship.sampling_temperature", "must be non-negative"),
+			Entry("rejects sampling_temperature above 2.0", func(c *config.Config) {
+				c.Analysis.Relationship.SamplingTemperature = 2.1
+			}, "analysis.relationship.sampling_temperature", "must not exceed 2.0"),
+			Entry("rejects empty models when relationship enabled", func(c *config.Config) {
+				c.Analysis.Relationship.Enabled = true
+				c.Analysis.Relationship.Models = []string{}
+			}, "analysis.relationship.models", "must not be empty when enabled"),
+			Entry("rejects invalid actionable_types", func(c *config.Config) {
+				c.Analysis.Relationship.ActionableTypes = []string{"EQUIVALENT", "BOGUS"}
+			}, "analysis.relationship.actionable_types", `invalid type "BOGUS"`),
+			Entry("rejects negative max_text_length", func(c *config.Config) {
+				c.Analysis.Classification.MaxTextLength = -1
+			}, "analysis.classification.max_text_length", "must be positive"),
+			Entry("rejects negative batch_size", func(c *config.Config) {
+				c.Analysis.Embedding.BatchSize = -1
+			}, "analysis.embedding.batch_size", "must be positive"),
+			Entry("rejects negative top_k", func(c *config.Config) {
+				c.Analysis.Relationship.TopK = -5
+			}, "analysis.relationship.top_k", "must be positive"),
+			Entry("rejects negative max_source_chars", func(c *config.Config) {
+				c.Analysis.Relationship.MaxSourceChars = -1
+			}, "analysis.relationship.max_source_chars", "must be positive"),
+			Entry("rejects negative max_target_chars", func(c *config.Config) {
+				c.Analysis.Relationship.MaxTargetChars = -1
+			}, "analysis.relationship.max_target_chars", "must be positive"),
+			Entry("rejects negative max_tokens for relationship", func(c *config.Config) {
+				c.Analysis.Relationship.MaxTokens = -1
+			}, "analysis.relationship.max_tokens", "must be positive"),
+			Entry("rejects negative samples_per_model", func(c *config.Config) {
+				c.Analysis.Relationship.SamplesPerModel = -1
+			}, "analysis.relationship.samples_per_model", "must be positive"),
+		)
 
-		It("rejects negative max_text_length", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Classification.MaxTextLength = -1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.classification.max_text_length"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects max_tokens of zero", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Classification.MaxTokens = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.classification.max_tokens"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative temperature", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Classification.Temperature = -0.1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.classification.temperature"))
-			Expect(err.Error()).To(ContainSubstring("must be non-negative"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts zero temperature", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Classification.Temperature = 0.0
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("rejects temperature above 2.0", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Classification.Temperature = 2.1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.classification.temperature"))
-			Expect(err.Error()).To(ContainSubstring("must not exceed 2.0"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts temperature of 2.0", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Classification.Temperature = 2.0
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("accepts temperature of 1.0", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Classification.Temperature = 1.0
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("accepts valid analysis config", func() {
-			cfg := analysisBase()
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
+		DescribeTable("accepts boundary analysis values",
+			func(mutate func(*config.Config)) {
+				cfg := validConfig()
+				mutate(cfg)
+				Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+			},
+			Entry("accepts zero temperature", func(c *config.Config) {
+				c.Analysis.Classification.Temperature = 0.0
+			}),
+			Entry("accepts temperature of 2.0", func(c *config.Config) {
+				c.Analysis.Classification.Temperature = 2.0
+			}),
+			Entry("accepts temperature of 1.0", func(c *config.Config) {
+				c.Analysis.Classification.Temperature = 1.0
+			}),
+			Entry("accepts max_chars of zero (no truncation)", func(c *config.Config) {
+				c.Analysis.Embedding.MaxChars = 0
+			}),
+			Entry("accepts empty models when disabled", func(c *config.Config) {
+				c.Analysis.Embedding.Enabled = false
+				c.Analysis.Embedding.Models = []string{}
+			}),
+			Entry("accepts zero sampling_temperature", func(c *config.Config) {
+				c.Analysis.Relationship.SamplingTemperature = 0.0
+			}),
+			Entry("accepts sampling_temperature of 2.0", func(c *config.Config) {
+				c.Analysis.Relationship.SamplingTemperature = 2.0
+			}),
+			Entry("accepts empty models when relationship disabled", func(c *config.Config) {
+				c.Analysis.Relationship.Enabled = false
+				c.Analysis.Relationship.Models = []string{}
+			}),
+			Entry("accepts all valid actionable_types", func(c *config.Config) {
+				c.Analysis.Relationship.ActionableTypes = []string{
+					"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF",
+					"CONTRIBUTES_TO", "COMPLEMENTS", "PARTIAL",
+					"CONFLICTS_WITH", "NO_RELATIONSHIP",
+				}
+			}),
+			Entry("accepts empty actionable_types", func(c *config.Config) {
+				c.Analysis.Relationship.ActionableTypes = []string{}
+			}),
+		)
 
 		It("has correct embedding default values from compiled defaults", func() {
 			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
@@ -2445,121 +2228,8 @@ logging:
 			Expect(daemon.Analysis.Relationship.SamplesPerModel).To(Equal(1))
 		})
 
-		It("rejects negative max_chars", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = true
-			cfg.Analysis.Embedding.Models = []string{"model-a"}
-			cfg.Analysis.Embedding.MaxChars = -1
-			cfg.Analysis.Embedding.BatchSize = 50
-			cfg.Analysis.Relationship.TopK = 20
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.embedding.max_chars"))
-			Expect(err.Error()).To(ContainSubstring("must be non-negative"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts max_chars of zero (no truncation)", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = true
-			cfg.Analysis.Embedding.Models = []string{"model-a"}
-			cfg.Analysis.Embedding.MaxChars = 0
-			cfg.Analysis.Embedding.BatchSize = 50
-			cfg.Analysis.Relationship.TopK = 20
-			cfg.Analysis.Candidates.EmbedModel = "model-a"
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("rejects batch_size of zero", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = true
-			cfg.Analysis.Embedding.Models = []string{"model-a"}
-			cfg.Analysis.Embedding.MaxChars = 1500
-			cfg.Analysis.Embedding.BatchSize = 0
-			cfg.Analysis.Relationship.TopK = 20
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.embedding.batch_size"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative batch_size", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = true
-			cfg.Analysis.Embedding.Models = []string{"model-a"}
-			cfg.Analysis.Embedding.MaxChars = 1500
-			cfg.Analysis.Embedding.BatchSize = -1
-			cfg.Analysis.Relationship.TopK = 20
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.embedding.batch_size"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects empty models when enabled", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = true
-			cfg.Analysis.Embedding.Models = []string{}
-			cfg.Analysis.Embedding.MaxChars = 1500
-			cfg.Analysis.Embedding.BatchSize = 50
-			cfg.Analysis.Relationship.TopK = 20
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.embedding.models"))
-			Expect(err.Error()).To(ContainSubstring("must not be empty when enabled"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts empty models when disabled", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = false
-			cfg.Analysis.Embedding.Models = []string{}
-			cfg.Analysis.Embedding.MaxChars = 1500
-			cfg.Analysis.Embedding.BatchSize = 50
-			cfg.Analysis.Relationship.TopK = 20
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("rejects top_k of zero", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = true
-			cfg.Analysis.Embedding.Models = []string{"model-a"}
-			cfg.Analysis.Embedding.MaxChars = 1500
-			cfg.Analysis.Embedding.BatchSize = 50
-			cfg.Analysis.Relationship.TopK = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.top_k"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative top_k", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = true
-			cfg.Analysis.Embedding.Models = []string{"model-a"}
-			cfg.Analysis.Embedding.MaxChars = 1500
-			cfg.Analysis.Embedding.BatchSize = 50
-			cfg.Analysis.Relationship.TopK = -5
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.top_k"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts valid embedding and relationship config", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Embedding.Enabled = true
-			cfg.Analysis.Embedding.Models = []string{"snowflake-arctic-embed2"}
-			cfg.Analysis.Embedding.MaxChars = 1500
-			cfg.Analysis.Embedding.BatchSize = 50
-			cfg.Analysis.Relationship.TopK = 20
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
 		It("rejects candidates.embed_model not present in embedding.models", func() {
-			cfg := analysisBase()
+			cfg := validConfig()
 			cfg.Analysis.Embedding.Enabled = true
 			cfg.Analysis.Embedding.Models = []string{"model-a"}
 			cfg.Analysis.Candidates.EmbedModel = "model-b"
@@ -2571,157 +2241,6 @@ logging:
 			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 		})
 
-		It("rejects max_source_chars of zero", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.MaxSourceChars = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_source_chars"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative max_source_chars", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.MaxSourceChars = -1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_source_chars"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects max_target_chars of zero", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.MaxTargetChars = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_target_chars"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative max_target_chars", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.MaxTargetChars = -1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_target_chars"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects max_tokens of zero for relationship", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.MaxTokens = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_tokens"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative max_tokens for relationship", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.MaxTokens = -1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.max_tokens"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects samples_per_model of zero", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.SamplesPerModel = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.samples_per_model"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative samples_per_model", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.SamplesPerModel = -1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.samples_per_model"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects negative sampling_temperature", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.SamplingTemperature = -0.1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.sampling_temperature"))
-			Expect(err.Error()).To(ContainSubstring("must be non-negative"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts zero sampling_temperature", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.SamplingTemperature = 0.0
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("rejects sampling_temperature above 2.0", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.SamplingTemperature = 2.1
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.sampling_temperature"))
-			Expect(err.Error()).To(ContainSubstring("must not exceed 2.0"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts sampling_temperature of 2.0", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.SamplingTemperature = 2.0
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("rejects empty models when relationship enabled", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.Enabled = true
-			cfg.Analysis.Relationship.Models = []string{}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.models"))
-			Expect(err.Error()).To(ContainSubstring("must not be empty when enabled"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts empty models when relationship disabled", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.Enabled = false
-			cfg.Analysis.Relationship.Models = []string{}
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("rejects invalid actionable_types", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.ActionableTypes = []string{"EQUIVALENT", "BOGUS"}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("analysis.relationship.actionable_types"))
-			Expect(err.Error()).To(ContainSubstring("BOGUS"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("accepts all valid actionable_types", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.ActionableTypes = []string{
-				"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF",
-				"CONTRIBUTES_TO", "COMPLEMENTS", "PARTIAL",
-				"CONFLICTS_WITH", "NO_RELATIONSHIP",
-			}
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
-
-		It("accepts empty actionable_types", func() {
-			cfg := analysisBase()
-			cfg.Analysis.Relationship.ActionableTypes = []string{}
-			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
-		})
 	})
 })
 
@@ -2979,34 +2498,6 @@ var _ = Describe("WorkerConfig", func() {
 })
 
 var _ = Describe("SynthesisConfig validation", func() {
-	// synthesisBase returns a Config with all sections valid so tests
-	// can mutate just the synthesis fields and reach synthesis validation.
-	synthesisBase := func() *config.Config {
-		return &config.Config{
-			TLS:         config.TLSConfig{Mode: "off"},
-			Storage:     config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-			Logging:     config.LoggingConfig{Level: "info", Format: "text"},
-			Attestation: config.AttestationConfig{ExpiryDuration: 8760 * time.Hour},
-			Graph:       config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-			Analysis: config.AnalysisConfig{
-				Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-				Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-				Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-				Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-				Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
-				ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-			},
-			Synthesis: config.SynthesisConfig{
-				Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-				Assessment:            config.AssessmentConfig{IQRGood: 20.0, IQRPoor: 10.0, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-				ConfidenceThreshold:   0.5,
-				MaxMappingsPerControl: 10,
-			},
-			Backup: config.BackupConfig{
-				MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-			},
-		}
-	}
 
 	float64Ptr := func(v float64) *float64 { return &v }
 	intPtr := func(v int) *int { return &v }
@@ -3031,12 +2522,8 @@ var _ = Describe("SynthesisConfig validation", func() {
 		Expect(cfg.Synthesis.MaxMappingsPerControl).To(Equal(10))
 	})
 
-	It("synthesisBase passes validation", func() {
-		Expect(config.ExportValidateConfig(synthesisBase())).To(Succeed())
-	})
-
 	It("valid per-tenant override passes validation", func() {
-		cfg := synthesisBase()
+		cfg := validConfig()
 		cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
 			"acme-corp": {
 				ConfidenceThreshold:   float64Ptr(0.7),
@@ -3048,153 +2535,160 @@ var _ = Describe("SynthesisConfig validation", func() {
 		Expect(config.ExportValidateConfig(cfg)).To(Succeed())
 	})
 
-	Describe("global viability factor rejection", func() {
-		DescribeTable("rejects factors outside (0, 2]",
-			func(mutate func(*config.Config), substr string) {
-				cfg := synthesisBase()
-				mutate(cfg)
-				err := config.ExportValidateConfig(cfg)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring(substr))
-				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+	DescribeTable("rejects invalid synthesis values",
+		func(mutate func(*config.Config), field, msg string) {
+			cfg := validConfig()
+			mutate(cfg)
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(field))
+			Expect(err.Error()).To(ContainSubstring(msg))
+			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+		},
+		Entry("global: zero TypeMismatchFactor",
+			func(c *config.Config) { c.Synthesis.Viability.TypeMismatchFactor = 0 },
+			"synthesis.viability.type_mismatch_factor", "must be in range (0, 2]"),
+		Entry("global: negative SkipLevelFactor",
+			func(c *config.Config) { c.Synthesis.Viability.SkipLevelFactor = -0.1 },
+			"synthesis.viability.skip_level_factor", "must be in range (0, 2]"),
+		Entry("global: IntegralToFactor > 2",
+			func(c *config.Config) { c.Synthesis.Viability.IntegralToFactor = 2.1 },
+			"synthesis.viability.integral_to_factor", "must be in range (0, 2]"),
+		Entry("global: IQRGood = 0",
+			func(c *config.Config) { c.Synthesis.Assessment.IQRGood = 0 },
+			"synthesis.assessment.iqr_good", "must be positive"),
+		Entry("global: IQRPoor = -1",
+			func(c *config.Config) { c.Synthesis.Assessment.IQRPoor = -1 },
+			"synthesis.assessment.iqr_poor", "must be positive"),
+		Entry("global: IQRGood <= IQRPoor",
+			func(c *config.Config) { c.Synthesis.Assessment.IQRGood = 10.0; c.Synthesis.Assessment.IQRPoor = 10.0 },
+			"synthesis.assessment.iqr_good", "must be greater than iqr_poor"),
+		Entry("global: NoRelHigh out of range",
+			func(c *config.Config) { c.Synthesis.Assessment.NoRelHigh = 1.5 },
+			"synthesis.assessment.no_rel_high", "must be in range [0, 1]"),
+		Entry("global: NoRelLow out of range",
+			func(c *config.Config) { c.Synthesis.Assessment.NoRelLow = -0.1 },
+			"synthesis.assessment.no_rel_low", "must be in range [0, 1]"),
+		Entry("global: NoRelHigh <= NoRelLow",
+			func(c *config.Config) { c.Synthesis.Assessment.NoRelHigh = 0.5; c.Synthesis.Assessment.NoRelLow = 0.5 },
+			"synthesis.assessment.no_rel_high", "must be greater than no_rel_low"),
+		Entry("global: ContestedWarn out of range",
+			func(c *config.Config) { c.Synthesis.Assessment.ContestedWarn = 2.0 },
+			"synthesis.assessment.contested_warn", "must be in range [0, 1]"),
+		Entry("global: ActionableWarn out of range",
+			func(c *config.Config) { c.Synthesis.Assessment.ActionableWarn = -0.5 },
+			"synthesis.assessment.actionable_warn", "must be in range [0, 1]"),
+		Entry("global: ConfidenceThreshold out of [0, 1]",
+			func(c *config.Config) { c.Synthesis.ConfidenceThreshold = 1.5 },
+			"synthesis.confidence_threshold", "must be in range [0, 1]"),
+		Entry("global: MaxMappingsPerControl of zero",
+			func(c *config.Config) { c.Synthesis.MaxMappingsPerControl = 0 },
+			"synthesis.max_mappings_per_control", "must be positive"),
+		Entry("tenant_overrides: invalid tenant ID key",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{"INVALID": {}}
 			},
-			Entry("zero TypeMismatchFactor",
-				func(c *config.Config) { c.Synthesis.Viability.TypeMismatchFactor = 0 },
-				"synthesis.viability.type_mismatch_factor"),
-			Entry("negative SkipLevelFactor",
-				func(c *config.Config) { c.Synthesis.Viability.SkipLevelFactor = -0.1 },
-				"synthesis.viability.skip_level_factor"),
-			Entry("IntegralToFactor > 2",
-				func(c *config.Config) { c.Synthesis.Viability.IntegralToFactor = 2.1 },
-				"synthesis.viability.integral_to_factor"),
-		)
-	})
-
-	Describe("assessment rejection", func() {
-		DescribeTable("rejects invalid assessment values",
-			func(mutate func(*config.Config), substrs ...string) {
-				cfg := synthesisBase()
-				mutate(cfg)
-				err := config.ExportValidateConfig(cfg)
-				Expect(err).To(HaveOccurred())
-				for _, s := range substrs {
-					Expect(err.Error()).To(ContainSubstring(s))
+			"synthesis.tenant_overrides key", "is not a valid tenant ID"),
+		Entry("tenant_overrides: ConfidenceThreshold out of range",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {ConfidenceThreshold: float64Ptr(-1.0)},
 				}
-				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 			},
-			Entry("IQRGood = 0",
-				func(c *config.Config) { c.Synthesis.Assessment.IQRGood = 0 },
-				"synthesis.assessment.iqr_good", "must be positive"),
-			Entry("IQRPoor = -1",
-				func(c *config.Config) { c.Synthesis.Assessment.IQRPoor = -1 },
-				"synthesis.assessment.iqr_poor", "must be positive"),
-			Entry("IQRGood <= IQRPoor",
-				func(c *config.Config) { c.Synthesis.Assessment.IQRGood = 10.0; c.Synthesis.Assessment.IQRPoor = 10.0 },
-				"must be greater than iqr_poor"),
-			Entry("NoRelHigh out of range",
-				func(c *config.Config) { c.Synthesis.Assessment.NoRelHigh = 1.5 },
-				"synthesis.assessment.no_rel_high", "must be in range [0, 1]"),
-			Entry("NoRelLow out of range",
-				func(c *config.Config) { c.Synthesis.Assessment.NoRelLow = -0.1 },
-				"synthesis.assessment.no_rel_low"),
-			Entry("NoRelHigh <= NoRelLow",
-				func(c *config.Config) { c.Synthesis.Assessment.NoRelHigh = 0.5; c.Synthesis.Assessment.NoRelLow = 0.5 },
-				"must be greater than no_rel_low"),
-			Entry("ContestedWarn out of range",
-				func(c *config.Config) { c.Synthesis.Assessment.ContestedWarn = 2.0 },
-				"synthesis.assessment.contested_warn"),
-			Entry("ActionableWarn out of range",
-				func(c *config.Config) { c.Synthesis.Assessment.ActionableWarn = -0.5 },
-				"synthesis.assessment.actionable_warn"),
-		)
-	})
-
-	Describe("global scalar rejection", func() {
-		It("rejects ConfidenceThreshold out of [0, 1]", func() {
-			cfg := synthesisBase()
-			cfg.Synthesis.ConfidenceThreshold = 1.5
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("synthesis.confidence_threshold"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects MaxMappingsPerControl of zero", func() {
-			cfg := synthesisBase()
-			cfg.Synthesis.MaxMappingsPerControl = 0
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("synthesis.max_mappings_per_control"))
-			Expect(err.Error()).To(ContainSubstring("must be positive"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-	})
-
-	Describe("tenant override rejection", func() {
-		It("rejects invalid tenant ID key", func() {
-			cfg := synthesisBase()
-			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
-				"INVALID": {},
-			}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("synthesis.tenant_overrides key"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects per-tenant ConfidenceThreshold out of range", func() {
-			cfg := synthesisBase()
-			bad := -1.0
-			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
-				"acme-corp": {ConfidenceThreshold: &bad},
-			}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tenant_overrides.acme-corp.confidence_threshold"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects per-tenant MaxMappingsPerControl of zero", func() {
-			cfg := synthesisBase()
-			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
-				"acme-corp": {MaxMappingsPerControl: intPtr(0)},
-			}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tenant_overrides.acme-corp.max_mappings_per_control"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects per-tenant Viability with zero TypeMismatchFactor", func() {
-			cfg := synthesisBase()
-			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
-				"acme-corp": {
-					Viability: &config.ViabilityConfig{TypeMismatchFactor: 0, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-				},
-			}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tenant_overrides.acme-corp.viability.type_mismatch_factor"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-
-		It("rejects per-tenant Assessment with IQRGood <= IQRPoor", func() {
-			cfg := synthesisBase()
-			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
-				"acme-corp": {
-					Assessment: &config.AssessmentConfig{IQRGood: 10.0, IQRPoor: 10.0, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-				},
-			}
-			err := config.ExportValidateConfig(cfg)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tenant_overrides.acme-corp.assessment.iqr_good"))
-			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
-		})
-	})
+			"synthesis.tenant_overrides.acme-corp.confidence_threshold", "must be in range [0, 1]"),
+		Entry("tenant_overrides: MaxMappingsPerControl of zero",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {MaxMappingsPerControl: intPtr(0)},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.max_mappings_per_control", "must be positive"),
+		Entry("tenant_overrides: Viability with zero TypeMismatchFactor",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {
+						Viability: &config.ViabilityConfig{TypeMismatchFactor: 0, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
+					},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.viability.type_mismatch_factor", "must be in range (0, 2]"),
+		Entry("tenant_overrides: Assessment with IQRGood <= IQRPoor",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {
+						Assessment: &config.AssessmentConfig{IQRGood: 10.0, IQRPoor: 10.0, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
+					},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.assessment.iqr_good", "must be greater than iqr_poor"),
+		Entry("tenant_overrides: Viability with negative SkipLevelFactor",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Viability: &config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: -0.1, IntegralToFactor: 1.1}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.viability.skip_level_factor", "must be in range (0, 2]"),
+		Entry("tenant_overrides: Viability with IntegralToFactor > 2",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Viability: &config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 2.1}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.viability.integral_to_factor", "must be in range (0, 2]"),
+		Entry("tenant_overrides: Assessment with IQRGood = 0",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Assessment: &config.AssessmentConfig{IQRGood: 0, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.assessment.iqr_good", "must be positive"),
+		Entry("tenant_overrides: Assessment with IQRPoor = -1",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Assessment: &config.AssessmentConfig{IQRGood: 20, IQRPoor: -1, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.assessment.iqr_poor", "must be positive"),
+		Entry("tenant_overrides: Assessment with NoRelHigh out of range",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Assessment: &config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 1.5, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.assessment.no_rel_high", "must be in range [0, 1]"),
+		Entry("tenant_overrides: Assessment with NoRelLow out of range",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Assessment: &config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: -0.1, ContestedWarn: 0.20, ActionableWarn: 0.30}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.assessment.no_rel_low", "must be in range [0, 1]"),
+		Entry("tenant_overrides: Assessment with NoRelHigh <= NoRelLow",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Assessment: &config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.5, NoRelLow: 0.5, ContestedWarn: 0.20, ActionableWarn: 0.30}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.assessment.no_rel_high", "must be greater than no_rel_low"),
+		Entry("tenant_overrides: Assessment with ContestedWarn out of range",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Assessment: &config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 2.0, ActionableWarn: 0.30}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.assessment.contested_warn", "must be in range [0, 1]"),
+		Entry("tenant_overrides: Assessment with ActionableWarn out of range",
+			func(c *config.Config) {
+				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
+					"acme-corp": {Assessment: &config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: -0.5}},
+				}
+			},
+			"synthesis.tenant_overrides.acme-corp.assessment.actionable_warn", "must be in range [0, 1]"),
+	)
 
 	Describe("ForTenant resolution", func() {
 		It("returns global values when no overrides exist", func() {
-			cfg := synthesisBase()
+			cfg := validConfig()
 			tc := cfg.Synthesis.ForTenant("some-tenant")
 			Expect(tc.ConfidenceThreshold).To(Equal(0.5))
 			Expect(tc.MaxMappingsPerControl).To(Equal(10))
@@ -3203,7 +2697,7 @@ var _ = Describe("SynthesisConfig validation", func() {
 		})
 
 		It("returns global values for missing tenant ID", func() {
-			cfg := synthesisBase()
+			cfg := validConfig()
 			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
 				"other-tenant": {ConfidenceThreshold: float64Ptr(0.9)},
 			}
@@ -3213,7 +2707,7 @@ var _ = Describe("SynthesisConfig validation", func() {
 		})
 
 		It("overrides specific scalar fields", func() {
-			cfg := synthesisBase()
+			cfg := validConfig()
 			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
 				"acme-corp": {
 					ConfidenceThreshold:   float64Ptr(0.8),
@@ -3229,7 +2723,7 @@ var _ = Describe("SynthesisConfig validation", func() {
 		})
 
 		It("replaces entire Viability struct when overridden", func() {
-			cfg := synthesisBase()
+			cfg := validConfig()
 			cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{
 				"acme-corp": {
 					Viability: &config.ViabilityConfig{TypeMismatchFactor: 0.5, SkipLevelFactor: 0.4, IntegralToFactor: 1.5},

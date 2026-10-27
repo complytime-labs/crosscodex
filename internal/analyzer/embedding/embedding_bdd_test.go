@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -19,10 +18,13 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
-	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
+	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -41,19 +43,11 @@ var _ = AfterSuite(func() {
 	restoreLogs()
 })
 
-// --- Mock LLM client for embedding tests ---
-type mockLLMClient struct {
-	embedFunc func(ctx context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error)
-}
+// --- Scripted LLM client for embedding tests ---
 
-func (m *mockLLMClient) Complete(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockLLMClient) Embed(ctx context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	if m.embedFunc != nil {
-		return m.embedFunc(ctx, req)
-	}
+// fixedThreeDimEmbeddings is a Fake.EmbedFunc that returns the 3-dimension
+// vector {0.1, 0.2, 0.3} for every input.
+func fixedThreeDimEmbeddings(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
 	data := make([]llmclient.EmbeddingData, len(req.Input))
 	for i := range req.Input {
 		data[i] = llmclient.EmbeddingData{
@@ -63,69 +57,6 @@ func (m *mockLLMClient) Embed(ctx context.Context, req *llmclient.EmbeddingReque
 	}
 	return &llmclient.EmbeddingResponse{Data: data, Model: req.Model}, nil
 }
-
-func (m *mockLLMClient) Health(_ context.Context) error { return nil }
-func (m *mockLLMClient) Close() error                   { return nil }
-
-// --- Mock VectorDB for embedding tests ---
-type mockVectorDB struct {
-	storedBatches [][]vectordb.Embedding
-	storedTenants []string
-}
-
-func (m *mockVectorDB) StoreEmbedding(_ context.Context, _ string, _ vectordb.Embedding) error {
-	return nil
-}
-
-func (m *mockVectorDB) StoreBatch(_ context.Context, tenantID string, batch []vectordb.Embedding) error {
-	m.storedBatches = append(m.storedBatches, batch)
-	m.storedTenants = append(m.storedTenants, tenantID)
-	return nil
-}
-
-func (m *mockVectorDB) FindSimilar(_ context.Context, _ string, _ vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
-	return nil, nil
-}
-
-func (m *mockVectorDB) DeleteByModel(_ context.Context, _, _, _ string) error {
-	return nil
-}
-
-// --- Mock storage for embedding tests ---
-type mockStorage struct {
-	stored map[string][]byte
-}
-
-func newMockStorage() *mockStorage {
-	return &mockStorage{stored: make(map[string][]byte)}
-}
-
-func (m *mockStorage) Get(_ context.Context, _ string) (io.ReadCloser, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockStorage) Put(_ context.Context, key string, r io.Reader) error {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return err
-	}
-	m.stored[key] = data
-	return nil
-}
-
-func (m *mockStorage) Delete(_ context.Context, _ string) error { return nil }
-
-func (m *mockStorage) List(_ context.Context, _ string) ([]storage.ObjectMetadata, error) {
-	return nil, nil
-}
-
-func (m *mockStorage) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
-
-func (m *mockStorage) Stat(_ context.Context, _ string) (*storage.ObjectMetadata, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockStorage) Close() error { return nil }
 
 var _ = Describe("Text Preparation", func() {
 	Describe("cleanForEmbedding", func() {
@@ -537,9 +468,9 @@ var _ = Describe("Cosine Similarity", func() {
 var _ = Describe("EmbeddingAnalyzer", func() {
 	var (
 		a          *embedding.EmbeddingAnalyzer
-		mockClient *mockLLMClient
-		mockVec    *mockVectorDB
-		mockStore  *mockStorage
+		mockClient *llmclienttest.Fake
+		mockVec    *vectordbtest.Fake
+		mockStore  *storagetest.Fake
 		cfg        config.EmbeddingConfig
 		relCfg     config.RelationshipConfig
 		ctx        context.Context
@@ -548,9 +479,9 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 	BeforeEach(func() {
 		ctx = testspecs.SetupTenantContext("test-tenant")
 
-		mockClient = &mockLLMClient{}
-		mockVec = &mockVectorDB{}
-		mockStore = newMockStorage()
+		mockClient = &llmclienttest.Fake{EmbedFunc: fixedThreeDimEmbeddings}
+		mockVec = &vectordbtest.Fake{}
+		mockStore = &storagetest.Fake{}
 
 		cfg = config.EmbeddingConfig{
 			Enabled:   true,
@@ -665,80 +596,60 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 	})
 
 	Describe("Aggregate", func() {
-		It("counts embedded, skipped, and errors", func() {
-			results := []analyzer.TaskResult{
-				{
-					TaskID:   "embedding-ctrl-1-test-model",
-					TaskType: "embedding",
-					Result: &pb.AnalysisResult{
-						ResultId: "embedding-ctrl-1-test-model",
-						Attributes: map[string]string{
-							"control_id": "ctrl-1",
-							"model":      "test-model",
-						},
+		mixedResults := []analyzer.TaskResult{
+			{
+				TaskID:   "embedding-ctrl-1-test-model",
+				TaskType: "embedding",
+				Result: &pb.AnalysisResult{
+					ResultId: "embedding-ctrl-1-test-model",
+					Attributes: map[string]string{
+						"control_id": "ctrl-1",
+						"model":      "test-model",
 					},
 				},
-				{
-					TaskID:   "embedding-ctrl-2-test-model",
-					TaskType: "embedding",
-					Result: &pb.AnalysisResult{
-						ResultId:   "embedding-ctrl-2-test-model",
-						Attributes: map[string]string{"skipped": "true"},
-					},
+			},
+			{
+				TaskID:   "embedding-ctrl-2-test-model",
+				TaskType: "embedding",
+				Result: &pb.AnalysisResult{
+					ResultId:   "embedding-ctrl-2-test-model",
+					Attributes: map[string]string{"skipped": "true"},
 				},
-				{
-					TaskID:   "embedding-ctrl-3-test-model",
-					TaskType: "embedding",
-					Error:    errors.New("llm timeout"),
-				},
-			}
+			},
+			{
+				TaskID:   "embedding-ctrl-3-test-model",
+				TaskType: "embedding",
+				Error:    errors.New("llm timeout"),
+			},
+		}
 
-			output, err := a.Aggregate(ctx, results)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(output.AnalyzerName).To(Equal("embedding"))
-			Expect(output.Metadata["total_count"]).To(Equal("3"))
-			Expect(output.Metadata["skipped_count"]).To(Equal("1"))
-			Expect(output.Metadata["error_count"]).To(Equal("1"))
-			Expect(output.Metadata["embedded_count"]).To(Equal("1"))
-		})
-
-		Context("with empty results", func() {
-			It("returns zero counts", func() {
-				output, err := a.Aggregate(ctx, []analyzer.TaskResult{})
+		DescribeTable("reports result counts in metadata",
+			func(results []analyzer.TaskResult, total, embedded, skipped, errored string) {
+				output, err := a.Aggregate(ctx, results)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(output.AnalyzerName).To(Equal("embedding"))
-				Expect(output.Metadata["total_count"]).To(Equal("0"))
-				Expect(output.Metadata["embedded_count"]).To(Equal("0"))
-				Expect(output.Metadata["skipped_count"]).To(Equal("0"))
-				Expect(output.Metadata["error_count"]).To(Equal("0"))
-			})
-		})
-
-		Context("with all errors", func() {
-			It("counts all as errors", func() {
-				results := []analyzer.TaskResult{
+				Expect(output.Metadata["total_count"]).To(Equal(total))
+				Expect(output.Metadata["embedded_count"]).To(Equal(embedded))
+				Expect(output.Metadata["skipped_count"]).To(Equal(skipped))
+				Expect(output.Metadata["error_count"]).To(Equal(errored))
+			},
+			Entry("counts embedded, skipped, and errors",
+				mixedResults,
+				"3", "1", "1", "1"),
+			Entry("with empty results returns zero counts",
+				[]analyzer.TaskResult{}, "0", "0", "0", "0"),
+			Entry("with all errors counts all as errors",
+				[]analyzer.TaskResult{
 					{TaskID: "t1", Error: errors.New("fail")},
 					{TaskID: "t2", Error: errors.New("fail")},
-				}
-				output, err := a.Aggregate(ctx, results)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output.Metadata["total_count"]).To(Equal("2"))
-				Expect(output.Metadata["embedded_count"]).To(Equal("0"))
-				Expect(output.Metadata["error_count"]).To(Equal("2"))
-			})
-		})
-
-		Context("with wrong result type", func() {
-			It("counts as error", func() {
-				results := []analyzer.TaskResult{
+				},
+				"2", "0", "0", "2"),
+			Entry("with wrong result type counts as error",
+				[]analyzer.TaskResult{
 					{TaskID: "t1", Result: &structpb.Struct{}},
-				}
-				output, err := a.Aggregate(ctx, results)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output.Metadata["total_count"]).To(Equal("1"))
-				Expect(output.Metadata["error_count"]).To(Equal("1"))
-			})
-		})
+				},
+				"1", "0", "0", "1"),
+		)
 
 		Context("persisting embedding vectors", func() {
 			var embedCfg config.EmbeddingConfig
@@ -784,9 +695,9 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				_, err = a.Aggregate(aggCtx, results)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(mockVec.storedBatches).To(HaveLen(1))
-				Expect(mockVec.storedTenants).To(Equal([]string{"tenant-a"}))
-				Expect(mockVec.storedBatches[0]).To(ConsistOf(
+				Expect(mockVec.Stored()).To(HaveLen(1))
+				Expect(mockVec.Stored()[0].Tenant).To(Equal("tenant-a"))
+				Expect(mockVec.Stored()[0].Embeddings).To(ConsistOf(
 					vectordb.Embedding{CatalogID: "cat-1", ControlID: "AC-1", Model: "modelA", Vector: []float32{0.1, 0.2, 0.3}},
 					vectordb.Embedding{CatalogID: "cat-1", ControlID: "AC-2", Model: "modelA", Vector: []float32{0.4, 0.5, 0.6}},
 				))
@@ -815,8 +726,8 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				_, err = a.Aggregate(aggCtx, results)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(mockVec.storedBatches).To(HaveLen(1))
-				Expect(mockVec.storedBatches[0]).To(ConsistOf(
+				Expect(mockVec.Stored()).To(HaveLen(1))
+				Expect(mockVec.Stored()[0].Embeddings).To(ConsistOf(
 					vectordb.Embedding{CatalogID: "cat-1", ControlID: "AC-1", Model: "modelA", Vector: []float32{0.1, 0.2, 0.3}},
 				))
 			})
@@ -860,7 +771,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				_, err = a.Aggregate(aggCtx, results)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("catalog ID required"))
-				Expect(mockVec.storedBatches).To(BeEmpty())
+				Expect(mockVec.Stored()).To(BeEmpty())
 			})
 		})
 
@@ -987,53 +898,42 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 	})
 
 	Describe("metrics integration", func() {
-		It("records skipped counter for section controls", func() {
-			tp, err := telemetrytest.NewTestProvider()
-			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = tp.Shutdown(ctx) }()
+		DescribeTable("records one GenerateWork operation",
+			func(controlID, statement, class, wantResult string) {
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				defer func() { _ = tp.Shutdown(ctx) }()
 
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
-				embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+				a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
+					embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
-			control := &pb.Control{
-				ControlId: "nist-800-53/AC",
-				Statement: "ACCESS CONTROL",
-				Parts:     map[string]string{"class": "compliance-section"},
-			}
-			_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
-			Expect(err).NotTo(HaveOccurred())
+				control := &pb.Control{
+					ControlId: controlID,
+					Statement: statement,
+					Parts:     map[string]string{"class": class},
+				}
+				_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
 
-			rm := tp.GetMetrics()
-			counterMetric := telemetrytest.FindMetric(rm, "embedding.operations.total")
-			Expect(counterMetric).NotTo(BeNil(), "expected embedding.operations.total metric")
-			count, err := telemetrytest.CounterValue(counterMetric)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(count).To(Equal(int64(1)))
-		})
+				rm := tp.GetMetrics()
+				counterMetric := telemetrytest.FindMetric(rm, "embedding.operations.total")
+				Expect(counterMetric).NotTo(BeNil(), "expected embedding.operations.total metric")
+				count, err := telemetrytest.CounterValue(counterMetric)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(Equal(int64(1)))
 
-		It("records pending counter for requirement controls", func() {
-			tp, err := telemetrytest.NewTestProvider()
-			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = tp.Shutdown(ctx) }()
-
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
-				embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
-
-			control := &pb.Control{
-				ControlId: "nist-800-53/AC-1",
-				Statement: "The organization shall define access control policy.",
-				Parts:     map[string]string{"class": "compliance-requirement"},
-			}
-			_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
-			Expect(err).NotTo(HaveOccurred())
-
-			rm := tp.GetMetrics()
-			counterMetric := telemetrytest.FindMetric(rm, "embedding.operations.total")
-			Expect(counterMetric).NotTo(BeNil(), "expected embedding.operations.total metric")
-			count, err := telemetrytest.CounterValue(counterMetric)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(count).To(Equal(int64(1)))
-		})
+				sum, ok := counterMetric.Data.(metricdata.Sum[int64])
+				Expect(ok).To(BeTrue(), "expected Sum[int64] data type")
+				Expect(sum.DataPoints).To(HaveLen(1))
+				resultAttr, ok := sum.DataPoints[0].Attributes.Value("embedding.result")
+				Expect(ok).To(BeTrue(), "expected embedding.result attribute")
+				Expect(resultAttr.AsString()).To(Equal(wantResult))
+			},
+			Entry("section control (skip path) is counted as skipped",
+				"nist-800-53/AC", "ACCESS CONTROL", "compliance-section", "skipped"),
+			Entry("requirement control (LLM path) is counted as pending",
+				"nist-800-53/AC-1", "The organization shall define access control policy.", "compliance-requirement", "pending"),
+		)
 
 		It("records embedded and error counters in Aggregate", func() {
 			tp, err := telemetrytest.NewTestProvider()

@@ -5,8 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
-	"math/rand"
 	"os"
 	"time"
 
@@ -16,9 +14,9 @@ import (
 	. "github.com/onsi/gomega"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
-	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/google/uuid"
 )
@@ -35,77 +33,6 @@ const e2eModel = "e2e-test-model"
 // reproduced here rather than imported since it's a test-local value in that
 // package, not an exported production value.
 const e2eEmbeddingDim = 2000
-
-// deterministicLLMClient is a hermetic fake llmclient.Client, copied
-// verbatim from internal/pipeline/pipeline_e2e_integration_test.go. Embed
-// returns deterministic vectors seeded from each input's fnv hash. Complete
-// returns one canned, parseable response per analyzer, routed by the prompt
-// name the worker forwards from the task payload.
-//
-// Rationale for injecting this at the Go level rather than mocking the LLM
-// gateway over HTTP: llmclient.CompletionRequest.PromptName (pkg/llmclient/
-// types.go) is `json:"-"`, so it is never serialized in the outgoing HTTP
-// request -- an HTTP-level mock would have to content-sniff raw prompt text
-// to know which analyzer is calling, which is both fragile and unprecedented
-// elsewhere in this codebase.
-type deterministicLLMClient struct{}
-
-var _ llmclient.Client = deterministicLLMClient{}
-
-func (deterministicLLMClient) Complete(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	var content string
-	switch req.PromptName {
-	case "classify":
-		// ParseClassification expects "Type|Level".
-		content = "Technical|Operational"
-	case "requires":
-		// requires.ParseResponse keys on "REQUIRES: YES|NO"; a single YES vote
-		// with HIGH confidence clears the consensus threshold.
-		content = "REQUIRES: YES\nJUSTIFICATION: prerequisite control\nCONFIDENCE: HIGH"
-	case "relationship":
-		// relationship.Aggregate omits NO_RELATIONSHIP pairs, so the
-		// relationship analyzer produces an (empty) result row and populates no
-		// vote_summaries rows; only the requires contribution reaches synthesis.
-		content = "RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH"
-	case "artifacts":
-		// artifacts.ParseResponse treats "ARTIFACTS: NONE" as the empty
-		// sentinel -- a valid, parseable "no artifacts" result.
-		content = "ARTIFACTS: NONE"
-	default:
-		return nil, fmt.Errorf("deterministicLLMClient: unexpected prompt name %q", req.PromptName)
-	}
-
-	return &llmclient.CompletionResponse{
-		Model: req.Model,
-		Choices: []llmclient.CompletionChoice{
-			{
-				Index:        0,
-				Message:      llmclient.ChatMessage{Role: "assistant", Content: content},
-				FinishReason: "stop",
-			},
-		},
-	}, nil
-}
-
-func (deterministicLLMClient) Embed(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	data := make([]llmclient.EmbeddingData, len(req.Input))
-	for i, text := range req.Input {
-		h := fnv.New64a()
-		if _, err := h.Write([]byte(text)); err != nil {
-			return nil, fmt.Errorf("deterministicLLMClient: hashing input: %w", err)
-		}
-		rng := rand.New(rand.NewSource(int64(h.Sum64())))
-		vec := make([]float32, e2eEmbeddingDim)
-		for j := range vec {
-			vec[j] = float32(rng.NormFloat64())
-		}
-		data[i] = llmclient.EmbeddingData{Index: i, Embedding: vec}
-	}
-	return &llmclient.EmbeddingResponse{Data: data, Model: req.Model}, nil
-}
-
-func (deterministicLLMClient) Health(_ context.Context) error { return nil }
-func (deterministicLLMClient) Close() error                   { return nil }
 
 // startSharedTestNATS starts a real, standalone NATS server (JetStream
 // enabled) on a random localhost port, mirroring pkg/natsbus's own embedded
@@ -203,7 +130,7 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 		ctx := context.Background()
 		natsURL := startSharedTestNATS(GinkgoT())
 		tenantID := fmt.Sprintf("crosscodexd-e2e-%s", uuid.New().String())
-		fakeLLM := deterministicLLMClient{}
+		fakeLLM := testspecs.DeterministicLLM{EmbeddingDim: e2eEmbeddingDim}
 
 		configureRole := func(role string) *config.Config {
 			cfg := baseTestConfig(dsn)

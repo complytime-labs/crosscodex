@@ -31,21 +31,24 @@ func drawViabilityConfig(t *rapid.T) config.ViabilityConfig {
 	}
 }
 
-// defaultAssessmentConfig returns an AssessmentConfig with spec defaults.
-//
-// This file has no build tag (property specs run under every tag set), so
-// this helper lives here rather than in testhelpers_test.go (tagged
-// !integration): that keeps it reachable when the "integration" build tag
-// excludes the rest of the mock/BDD helpers.
-func defaultAssessmentConfig() config.AssessmentConfig {
-	return config.AssessmentConfig{
-		IQRGood:        20.0,
-		IQRPoor:        10.0,
-		NoRelHigh:      0.97,
-		NoRelLow:       0.80,
-		ContestedWarn:  0.20,
-		ActionableWarn: 0.30,
+// genRows draws between minRows and 20 SynthesisRows with viability weights in
+// [minViability, 100]. Draw labels are stable so rapid shrinking and replay
+// behave identically across specs.
+func genRows(t *rapid.T, minRows int, minViability float64) []synthesis.SynthesisRow {
+	n := rapid.IntRange(minRows, 20).Draw(t, "rowCount")
+	rows := make([]synthesis.SynthesisRow, n)
+	for i := range rows {
+		rows[i] = synthesis.SynthesisRow{
+			SourceID:              fmt.Sprintf("src-%d", i),
+			TargetID:              fmt.Sprintf("tgt-%d", i),
+			SimilarityMean:        rapid.Float64Range(0, 100).Draw(t, fmt.Sprintf("sim-%d", i)),
+			ViabilityWeight:       rapid.Float64Range(minViability, 100).Draw(t, fmt.Sprintf("vw-%d", i)),
+			ConsensusRelationship: relationshipGen.Draw(t, fmt.Sprintf("rel-%d", i)),
+			ConfidenceFraction:    rapid.Float64Range(0, 1).Draw(t, fmt.Sprintf("conf-%d", i)),
+			Unanimous:             rapid.Bool().Draw(t, fmt.Sprintf("unan-%d", i)),
+		}
 	}
+	return rows
 }
 
 var _ = Describe("Property Specifications", Ordered, func() {
@@ -203,21 +206,10 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	Context("Assessor — diagnostic count", func() {
 		It("always produces exactly 4 diagnostics for non-empty input or 0 for empty", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				n := rapid.IntRange(0, 20).Draw(t, "rowCount")
-				rows := make([]synthesis.SynthesisRow, n)
-				for i := range rows {
-					rows[i] = synthesis.SynthesisRow{
-						SourceID:              fmt.Sprintf("src-%d", i),
-						TargetID:              fmt.Sprintf("tgt-%d", i),
-						SimilarityMean:        rapid.Float64Range(0, 100).Draw(t, fmt.Sprintf("sim-%d", i)),
-						ViabilityWeight:       rapid.Float64Range(0, 100).Draw(t, fmt.Sprintf("vw-%d", i)),
-						ConsensusRelationship: relationshipGen.Draw(t, fmt.Sprintf("rel-%d", i)),
-						ConfidenceFraction:    rapid.Float64Range(0, 1).Draw(t, fmt.Sprintf("conf-%d", i)),
-						Unanimous:             rapid.Bool().Draw(t, fmt.Sprintf("unan-%d", i)),
-					}
-				}
+				rows := genRows(t, 0, 0)
+				n := len(rows)
 
-				cfg := defaultAssessmentConfig()
+				cfg := synthesis.ExportDefaultAssessmentConfig()
 				actionableTypes := []string{"EQUIVALENT", "SUBSET_OF", "SUPERSET_OF"}
 				assessor := synthesis.NewAssessor(cfg, actionableTypes)
 				report := assessor.Assess(context.Background(), rows)
@@ -242,21 +234,8 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	Context("Assessor — relationship count sum", func() {
 		It("sum of all RelationshipCounts values equals TotalPairs", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				n := rapid.IntRange(1, 20).Draw(t, "rowCount")
-				rows := make([]synthesis.SynthesisRow, n)
-				for i := range rows {
-					rows[i] = synthesis.SynthesisRow{
-						SourceID:              fmt.Sprintf("src-%d", i),
-						TargetID:              fmt.Sprintf("tgt-%d", i),
-						SimilarityMean:        rapid.Float64Range(0, 100).Draw(t, fmt.Sprintf("sim-%d", i)),
-						ViabilityWeight:       rapid.Float64Range(0, 100).Draw(t, fmt.Sprintf("vw-%d", i)),
-						ConsensusRelationship: relationshipGen.Draw(t, fmt.Sprintf("rel-%d", i)),
-						ConfidenceFraction:    rapid.Float64Range(0, 1).Draw(t, fmt.Sprintf("conf-%d", i)),
-						Unanimous:             rapid.Bool().Draw(t, fmt.Sprintf("unan-%d", i)),
-					}
-				}
-
-				cfg := defaultAssessmentConfig()
+				rows := genRows(t, 1, 0)
+				cfg := synthesis.ExportDefaultAssessmentConfig()
 				assessor := synthesis.NewAssessor(cfg, []string{"EQUIVALENT"})
 				report := assessor.Assess(context.Background(), rows)
 
@@ -278,21 +257,9 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	Context("Assessor — ViablePairs bounded", func() {
 		It("ViablePairs <= TotalPairs always holds", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				n := rapid.IntRange(0, 20).Draw(t, "rowCount")
-				rows := make([]synthesis.SynthesisRow, n)
-				for i := range rows {
-					rows[i] = synthesis.SynthesisRow{
-						SourceID:              fmt.Sprintf("src-%d", i),
-						TargetID:              fmt.Sprintf("tgt-%d", i),
-						SimilarityMean:        rapid.Float64Range(0, 100).Draw(t, fmt.Sprintf("sim-%d", i)),
-						ViabilityWeight:       rapid.Float64Range(-10, 100).Draw(t, fmt.Sprintf("vw-%d", i)),
-						ConsensusRelationship: relationshipGen.Draw(t, fmt.Sprintf("rel-%d", i)),
-						ConfidenceFraction:    rapid.Float64Range(0, 1).Draw(t, fmt.Sprintf("conf-%d", i)),
-						Unanimous:             rapid.Bool().Draw(t, fmt.Sprintf("unan-%d", i)),
-					}
-				}
+				rows := genRows(t, 0, -10)
 
-				cfg := defaultAssessmentConfig()
+				cfg := synthesis.ExportDefaultAssessmentConfig()
 				assessor := synthesis.NewAssessor(cfg, []string{"EQUIVALENT"})
 				report := assessor.Assess(context.Background(), rows)
 
@@ -310,21 +277,9 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	Context("Assessor — no negative output values", func() {
 		It("ViablePairs, AvgConfidence, and AvgViability are non-negative for valid inputs", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				n := rapid.IntRange(1, 20).Draw(t, "rowCount")
-				rows := make([]synthesis.SynthesisRow, n)
-				for i := range rows {
-					rows[i] = synthesis.SynthesisRow{
-						SourceID:              fmt.Sprintf("src-%d", i),
-						TargetID:              fmt.Sprintf("tgt-%d", i),
-						SimilarityMean:        rapid.Float64Range(0, 100).Draw(t, fmt.Sprintf("sim-%d", i)),
-						ViabilityWeight:       rapid.Float64Range(0, 100).Draw(t, fmt.Sprintf("vw-%d", i)),
-						ConsensusRelationship: relationshipGen.Draw(t, fmt.Sprintf("rel-%d", i)),
-						ConfidenceFraction:    rapid.Float64Range(0, 1).Draw(t, fmt.Sprintf("conf-%d", i)),
-						Unanimous:             rapid.Bool().Draw(t, fmt.Sprintf("unan-%d", i)),
-					}
-				}
+				rows := genRows(t, 1, 0)
 
-				cfg := defaultAssessmentConfig()
+				cfg := synthesis.ExportDefaultAssessmentConfig()
 				assessor := synthesis.NewAssessor(cfg, []string{"EQUIVALENT"})
 				report := assessor.Assess(context.Background(), rows)
 

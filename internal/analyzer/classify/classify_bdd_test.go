@@ -17,6 +17,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -161,36 +162,27 @@ var _ = Describe("Result", func() {
 	})
 })
 
-// --- Mock LLM client for analyzer tests ---
+// --- Scripted LLM client for analyzer tests ---
 
-type mockLLMClient struct {
-	completeFunc func(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error)
-}
+// cannedClassificationText is the classification every scripted client returns.
+const cannedClassificationText = "Technical|Operational"
 
-func (m *mockLLMClient) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	if m.completeFunc != nil {
-		return m.completeFunc(ctx, req)
-	}
+// cannedClassification is a Fake.CompleteFunc that answers every Complete call
+// with cannedClassificationText.
+func cannedClassification(context.Context, *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
 	return &llmclient.CompletionResponse{
 		Choices: []llmclient.CompletionChoice{{
-			Message: llmclient.ChatMessage{Role: "assistant", Content: "Technical|Operational"},
+			Message: llmclient.ChatMessage{Role: "assistant", Content: cannedClassificationText},
 		}},
 	}, nil
 }
-
-func (m *mockLLMClient) Embed(_ context.Context, _ *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockLLMClient) Health(_ context.Context) error { return nil }
-func (m *mockLLMClient) Close() error                   { return nil }
 
 // --- ClassifyAnalyzer tests ---
 
 var _ = Describe("ClassifyAnalyzer", func() {
 	var (
 		a          *classify.ClassifyAnalyzer
-		mockClient *mockLLMClient
+		mockClient *llmclienttest.Fake
 		prompts    prompt.Registry
 		cfg        config.ClassificationConfig
 		ctx        context.Context
@@ -199,7 +191,7 @@ var _ = Describe("ClassifyAnalyzer", func() {
 	BeforeEach(func() {
 		ctx = testspecs.SetupTenantContext("test-tenant")
 
-		mockClient = &mockLLMClient{}
+		mockClient = &llmclienttest.Fake{CompleteFunc: cannedClassification}
 
 		var err error
 		prompts, err = prompt.NewRegistry(config.PromptConfig{
@@ -615,51 +607,41 @@ var _ = Describe("ClassifyAnalyzer", func() {
 			Expect(hist.DataPoints[0].Count).To(Equal(uint64(1)))
 		})
 
-		It("records skipped counter for section controls", func() {
-			tp, err := telemetrytest.NewTestProvider()
-			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = tp.Shutdown(ctx) }()
+		DescribeTable("records one GenerateWork operation",
+			func(controlID, statement, class, wantResult string) {
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				defer func() { _ = tp.Shutdown(ctx) }()
 
-			a = classify.New(mockClient, prompts, cfg, classify.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+				a = classify.New(mockClient, prompts, cfg, classify.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
-			control := &pb.Control{
-				ControlId: "nist-800-53/AC",
-				Statement: "ACCESS CONTROL",
-				Parts:     map[string]string{"class": "compliance-section"},
-			}
-			_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
-			Expect(err).NotTo(HaveOccurred())
+				control := &pb.Control{
+					ControlId: controlID,
+					Statement: statement,
+					Parts:     map[string]string{"class": class},
+				}
+				_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
 
-			rm := tp.GetMetrics()
-			counterMetric := telemetrytest.FindMetric(rm, "classify.operations.total")
-			Expect(counterMetric).NotTo(BeNil(), "expected classify.operations.total metric")
-			count, err := telemetrytest.CounterValue(counterMetric)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(count).To(Equal(int64(1)))
-		})
+				rm := tp.GetMetrics()
+				counterMetric := telemetrytest.FindMetric(rm, "classify.operations.total")
+				Expect(counterMetric).NotTo(BeNil(), "expected classify.operations.total metric")
+				count, err := telemetrytest.CounterValue(counterMetric)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(Equal(int64(1)))
 
-		It("records pending counter for requirement controls", func() {
-			tp, err := telemetrytest.NewTestProvider()
-			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = tp.Shutdown(ctx) }()
-
-			a = classify.New(mockClient, prompts, cfg, classify.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
-
-			control := &pb.Control{
-				ControlId: "nist-800-53/AC-1",
-				Statement: "The organization shall define access control policy.",
-				Parts:     map[string]string{"class": "compliance-requirement"},
-			}
-			_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
-			Expect(err).NotTo(HaveOccurred())
-
-			rm := tp.GetMetrics()
-			counterMetric := telemetrytest.FindMetric(rm, "classify.operations.total")
-			Expect(counterMetric).NotTo(BeNil(), "expected classify.operations.total metric")
-			count, err := telemetrytest.CounterValue(counterMetric)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(count).To(Equal(int64(1)))
-		})
+				sum, ok := counterMetric.Data.(metricdata.Sum[int64])
+				Expect(ok).To(BeTrue(), "expected Sum[int64] data type")
+				Expect(sum.DataPoints).To(HaveLen(1))
+				resultAttr, ok := sum.DataPoints[0].Attributes.Value("classify.result")
+				Expect(ok).To(BeTrue(), "expected classify.result attribute")
+				Expect(resultAttr.AsString()).To(Equal(wantResult))
+			},
+			Entry("section control (skip path) is counted as skipped",
+				"nist-800-53/AC", "ACCESS CONTROL", "compliance-section", "skipped"),
+			Entry("requirement control (LLM path) is counted as pending",
+				"nist-800-53/AC-1", "The organization shall define access control policy.", "compliance-requirement", "pending"),
+		)
 
 		It("records classified and error counters in Aggregate", func() {
 			tp, err := telemetrytest.NewTestProvider()

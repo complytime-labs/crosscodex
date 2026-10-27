@@ -8,7 +8,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -57,9 +56,7 @@ var _ = Describe("PGControlsReader tenant isolation", Ordered, func() {
 
 		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-		Expect(suPool.Exec(ctx, stmt)).To(Succeed(), "failed to set app_user password")
+		Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "failed to set app_user password")
 
 		// Seed as the superuser. catalog_id is globally unique and each
 		// controls row references its catalog's (catalog_id, tenant_id), so
@@ -82,10 +79,8 @@ var _ = Describe("PGControlsReader tenant isolation", Ordered, func() {
 		seedControl(tenantA, catalogA, "ac-1", "Policy and Procedures", "Develop a policy.", "SP800-53", "ac")
 		seedControl(tenantB, catalogB, "ac", "Tenant B Access Control", "", "family", "")
 
-		u, err := url.Parse(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "bad TEST_DATABASE_DSN")
-		u.User = url.UserPassword("app_user", appPassword)
-		appDSN := u.String()
+		appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
+		Expect(err).NotTo(HaveOccurred(), "app_user DSN")
 
 		roleDB, err := sql.Open("pgx", appDSN)
 		Expect(err).NotTo(HaveOccurred())

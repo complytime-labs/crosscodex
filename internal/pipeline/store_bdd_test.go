@@ -11,7 +11,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
-	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -576,13 +576,13 @@ var _ = Describe("PGStore compile-time check", func() {
 
 var _ = Describe("CompleteAnalysisStage", func() {
 	var (
-		mockDB *mockTenantConnection
+		mockDB *dbtest.Conn
 		store  *pipeline.PGStore
 		ctx    context.Context
 	)
 
 	BeforeEach(func() {
-		mockDB = &mockTenantConnection{}
+		mockDB = &dbtest.Conn{}
 		store = pipeline.NewPGStore(mockDB, nil)
 
 		var err error
@@ -592,14 +592,13 @@ var _ = Describe("CompleteAnalysisStage", func() {
 
 	It("upserts analysis_results and marks the stage completed in one transaction", func() {
 		var queries []string
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				queries = append(queries, query)
 				return nil
 			},
-			commitFunc: func() error { return nil },
 		}
-		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+		mockDB.Tx = mockTx
 
 		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
 		Expect(err).NotTo(HaveOccurred())
@@ -612,31 +611,26 @@ var _ = Describe("CompleteAnalysisStage", func() {
 	})
 
 	It("rolls back and returns an error when the upsert fails", func() {
-		rolledBack := false
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				if strings.Contains(query, "analysis_results") {
 					return errors.New("insert failed")
 				}
 				return nil
 			},
-			rollbackFunc: func() error {
-				rolledBack = true
-				return nil
-			},
 		}
-		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+		mockDB.Tx = mockTx
 
 		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("upserting result"))
-		Expect(rolledBack).To(BeTrue())
+		Expect(mockTx.Rollbacks()).To(Equal(1))
 	})
 
 	It("does not update job_stages when the upsert fails", func() {
 		var stageUpdated bool
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				if strings.Contains(query, "analysis_results") {
 					return errors.New("insert failed")
 				}
@@ -646,7 +640,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 				return nil
 			},
 		}
-		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+		mockDB.Tx = mockTx
 
 		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
 		Expect(err).To(HaveOccurred())
@@ -654,15 +648,15 @@ var _ = Describe("CompleteAnalysisStage", func() {
 	})
 
 	It("returns an error when the job_stages update fails", func() {
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error {
+		mockTx := &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
 				if strings.Contains(query, "job_stages") {
 					return errors.New("update failed")
 				}
 				return nil
 			},
 		}
-		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+		mockDB.Tx = mockTx
 
 		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
 		Expect(err).To(HaveOccurred())
@@ -675,13 +669,11 @@ var _ = Describe("CompleteAnalysisStage", func() {
 	})
 
 	It("returns an error when commit fails", func() {
-		mockTx := &mockTransaction{
-			execFunc: func(ctx context.Context, query string, args ...any) error { return nil },
-			commitFunc: func() error {
-				return errors.New("commit failed")
-			},
+		mockTx := &dbtest.Tx{
+			ExecFunc:  acceptExec,
+			CommitErr: errors.New("commit failed"),
 		}
-		mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }
+		mockDB.Tx = mockTx
 
 		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
 		Expect(err).To(HaveOccurred())

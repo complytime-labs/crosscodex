@@ -62,47 +62,26 @@ var _ = Describe("UnaryServerInterceptor", func() {
 		Expect(tenant.UserFromContext(resultCtx)).To(Equal("alice"))
 	})
 
-	It("rejects requests with no metadata", func() {
-		_, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{}, stubHandler)
-		Expect(err).To(HaveOccurred())
+	DescribeTable("rejects the request with a gRPC status code",
+		func(ctx context.Context, wantCode codes.Code) {
+			_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, stubHandler)
+			Expect(err).To(HaveOccurred())
 
-		st, ok := status.FromError(err)
-		Expect(ok).To(BeTrue())
-		Expect(st.Code()).To(Equal(codes.Unauthenticated))
-	})
-
-	It("rejects requests with empty tenant metadata", func() {
-		md := metadata.Pairs(grpcutil.MetadataKeyTenantID, "")
-		ctx := metadata.NewIncomingContext(context.Background(), md)
-
-		_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, stubHandler)
-		Expect(err).To(HaveOccurred())
-
-		st, _ := status.FromError(err)
-		Expect(st.Code()).To(Equal(codes.Unauthenticated))
-	})
-
-	It("rejects requests with malformed tenant ID", func() {
-		md := metadata.Pairs(grpcutil.MetadataKeyTenantID, "BAD!TENANT")
-		ctx := metadata.NewIncomingContext(context.Background(), md)
-
-		_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, stubHandler)
-		Expect(err).To(HaveOccurred())
-
-		st, _ := status.FromError(err)
-		Expect(st.Code()).To(Equal(codes.InvalidArgument))
-	})
-
-	It("rejects requests when metadata exists but tenant key is absent", func() {
-		md := metadata.Pairs("x-other-key", "value")
-		ctx := metadata.NewIncomingContext(context.Background(), md)
-
-		_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, stubHandler)
-		Expect(err).To(HaveOccurred())
-
-		st, _ := status.FromError(err)
-		Expect(st.Code()).To(Equal(codes.Unauthenticated))
-	})
+			st, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(st.Code()).To(Equal(wantCode))
+		},
+		Entry("no metadata", context.Background(), codes.Unauthenticated),
+		Entry("empty tenant metadata",
+			metadata.NewIncomingContext(context.Background(), metadata.Pairs(grpcutil.MetadataKeyTenantID, "")),
+			codes.Unauthenticated),
+		Entry("malformed tenant ID",
+			metadata.NewIncomingContext(context.Background(), metadata.Pairs(grpcutil.MetadataKeyTenantID, "BAD!TENANT")),
+			codes.InvalidArgument),
+		Entry("metadata present but tenant key absent",
+			metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-other-key", "value")),
+			codes.Unauthenticated),
+	)
 })
 
 var _ = Describe("UnaryClientInterceptor", func() {

@@ -36,6 +36,7 @@ func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequ
 
 	resp, err := s.pipeline.GetJob(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "GetJob", err)
 		s.recordMetrics(ctx, "GetJob", start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -72,6 +73,7 @@ func (s *Service) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobs
 
 	resp, err := s.pipeline.ListJobs(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "ListJobs", err)
 		s.recordMetrics(ctx, "ListJobs", start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -117,6 +119,7 @@ func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJ
 			JobId:         req.Msg.GetJobId(),
 		}))
 		if err != nil {
+			err = s.publicError(ctx, "CancelJob", err)
 			s.recordMetrics(ctx, "CancelJob", start, connect.CodeOf(err))
 			return nil, err
 		}
@@ -133,6 +136,7 @@ func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJ
 
 	resp, err := s.pipeline.CancelJob(ctx, req)
 	if err != nil {
+		err = s.publicError(ctx, "CancelJob", err)
 		s.recordMetrics(ctx, "CancelJob", start, connect.CodeOf(err))
 		return nil, err
 	}

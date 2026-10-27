@@ -3,9 +3,11 @@
 package gateway_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -16,7 +18,9 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // fakeTenantStatus is a TenantStatusChecker with a fixed answer.
@@ -134,6 +138,37 @@ var _ = Describe("auth interceptor tenant status check", func() {
 		Entry("streaming", func() error { return callStream() }),
 	)
 
+	// The tenant ID comes from the client's certificate, and the validation
+	// text holds only that ID and the format rule, so the holder gets it.
+	DescribeTable("refuses a certificate whose tenant ID is malformed, naming the rule",
+		func(call func() error) {
+			reg, err := authn.NewRegistry(nil, []authn.Authenticator{
+				fixedIdentity{id: &authn.Identity{Subject: "alice", TenantID: "Bad_Tenant", Method: authn.AuthMethodMTLS}},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			logs := &bytes.Buffer{}
+			svc = gateway.NewService(
+				gateway.WithAuthn(reg),
+				gateway.WithTelemetry(tp.TracerProvider().Tracer("test"), tp.MeterProvider().Meter("test")),
+				gateway.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+			)
+			checker.active = true
+
+			err = call()
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+			Expect(err.Error()).To(ContainSubstring(`tenant ID "Bad_Tenant" is invalid: it must be ` + tenant.IDRule))
+			Expect(err.Error()).To(ContainSubstring("Ask an operator to issue a client certificate for a valid tenant ID"))
+			Expect(reached).To(BeFalse())
+			Expect(checker.calls).To(BeZero())
+			Expect(authFailureReasons()).To(Equal([]string{"invalid_tenant"}))
+			Expect(logs.String()).To(ContainSubstring("level=WARN"))
+			Expect(logs.String()).To(ContainSubstring("subject=alice"))
+			Expect(logs.String()).To(ContainSubstring(`tenant ID \"Bad_Tenant\" is invalid`))
+		},
+		Entry("unary", func() error { return callUnary() }),
+		Entry("streaming", func() error { return callStream() }),
+	)
+
 	DescribeTable("fails closed without leaking detail when the check errors",
 		func(call func() error) {
 			checker.err = errors.New("dial tcp db-internal.example:5432: connection refused")
@@ -148,45 +183,27 @@ var _ = Describe("auth interceptor tenant status check", func() {
 	)
 })
 
-// scanRow is a db.Row that scans a fixed bool or fails.
-type scanRow struct {
-	active bool
-	err    error
-}
-
-func (r scanRow) Scan(dest ...any) error {
-	if r.err != nil {
-		return r.err
-	}
-	*dest[0].(*bool) = r.active
-	return nil
-}
-
-// statusConn is a db.Connection whose QueryRow answers tenant_is_active.
-type statusConn struct {
-	db.Connection
-	row   scanRow
-	query string
-	args  []any
-}
-
-func (c *statusConn) QueryRow(_ context.Context, query string, args ...any) db.Row {
-	c.query, c.args = query, args
-	return c.row
-}
-
 var _ = Describe("NewPoolTenantStatus", func() {
 	It("asks tenant_is_active for the tenant", func() {
-		conn := &statusConn{row: scanRow{active: true}}
+		var (
+			query string
+			args  []any
+		)
+		conn := &dbtest.Conn{QueryRowFunc: func(_ context.Context, q string, a ...any) db.Row {
+			query, args = q, a
+			return dbtest.Row(nil, true)
+		}}
 		active, err := gateway.NewPoolTenantStatus(conn).TenantActive(context.Background(), "acme")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(active).To(BeTrue())
-		Expect(conn.query).To(ContainSubstring("tenant_is_active"))
-		Expect(conn.args).To(Equal([]any{"acme"}))
+		Expect(query).To(ContainSubstring("tenant_is_active"))
+		Expect(args).To(Equal([]any{"acme"}))
 	})
 
 	It("returns the query error", func() {
-		conn := &statusConn{row: scanRow{err: errors.New("boom")}}
+		conn := &dbtest.Conn{QueryRowFunc: func(context.Context, string, ...any) db.Row {
+			return dbtest.Row(errors.New("boom"))
+		}}
 		_, err := gateway.NewPoolTenantStatus(conn).TenantActive(context.Background(), "acme")
 		Expect(err).To(MatchError(ContainSubstring("boom")))
 	})

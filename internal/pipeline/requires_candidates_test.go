@@ -12,6 +12,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
 func TestRequiresCandidates(t *testing.T) {
@@ -21,13 +22,13 @@ func TestRequiresCandidates(t *testing.T) {
 
 var _ = Describe("RequiresCandidateProvider", func() {
 	var (
-		mockDB   *mockTenantConnection
+		mockDB   *dbtest.Conn
 		provider *pipeline.RequiresCandidateProvider
 		ctx      context.Context
 	)
 
 	BeforeEach(func() {
-		mockDB = &mockTenantConnection{}
+		mockDB = &dbtest.Conn{}
 		provider = pipeline.NewRequiresCandidateProvider(mockDB)
 		ctx = context.Background()
 	})
@@ -57,28 +58,19 @@ var _ = Describe("RequiresCandidateProvider", func() {
 			provJSON1, _ := json.Marshal(provenance1)
 			provJSON2, _ := json.Marshal(provenance2)
 
-			mockTx := &mockTransaction{
-				execFunc: func(ctx context.Context, query string, args ...any) error {
-					// SET LOCAL app.current_tenant
-					return nil
-				},
-				queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+			mockTx := &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
 					Expect(args).To(HaveLen(2))
 					Expect(args[0]).To(Equal(tenantID))
 					Expect(args[1]).To(Equal(jobID))
-					return &mockRows{
-						rows: [][]any{
-							{"ctrl-001", "ctrl-002", 0.9, provJSON1},
-							{"ctrl-001", "ctrl-003", 0.7, provJSON2},
-						},
-						cursor: 0,
-					}, nil
+					return dbtest.Rows(nil,
+						[]any{"ctrl-001", "ctrl-002", 0.9, provJSON1},
+						[]any{"ctrl-001", "ctrl-003", 0.7, provJSON2},
+					), nil
 				},
-				commitFunc: func() error { return nil },
 			}
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
-				return mockTx, nil
-			}
+			mockDB.Tx = mockTx
 
 			pairs, err := provider.Candidates(ctx, tenantID, jobID)
 
@@ -100,18 +92,13 @@ var _ = Describe("RequiresCandidateProvider", func() {
 		})
 
 		It("returns empty slice when no candidates exist", func() {
-			mockTx := &mockTransaction{
-				execFunc: func(ctx context.Context, query string, args ...any) error {
-					return nil
+			mockTx := &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+					return dbtest.Rows(nil), nil
 				},
-				queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-					return &mockRows{rows: [][]any{}, cursor: 0}, nil
-				},
-				commitFunc: func() error { return nil },
 			}
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
-				return mockTx, nil
-			}
+			mockDB.Tx = mockTx
 
 			pairs, err := provider.Candidates(ctx, "tenant-1", "job-456")
 
@@ -134,7 +121,7 @@ var _ = Describe("RequiresCandidateProvider", func() {
 		})
 
 		It("handles transaction begin errors", func() {
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
+			mockDB.BeginFunc = func(ctx context.Context) (db.Transaction, error) {
 				return nil, errors.New("connection failed")
 			}
 
@@ -145,14 +132,12 @@ var _ = Describe("RequiresCandidateProvider", func() {
 		})
 
 		It("handles tenant setting errors", func() {
-			mockTx := &mockTransaction{
-				execFunc: func(ctx context.Context, query string, args ...any) error {
+			mockTx := &dbtest.Tx{
+				ExecFunc: func(ctx context.Context, query string, args ...any) error {
 					return errors.New("SET LOCAL failed")
 				},
 			}
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
-				return mockTx, nil
-			}
+			mockDB.Tx = mockTx
 
 			_, err := provider.Candidates(ctx, "tenant-1", "job-123")
 
@@ -161,17 +146,13 @@ var _ = Describe("RequiresCandidateProvider", func() {
 		})
 
 		It("handles query errors", func() {
-			mockTx := &mockTransaction{
-				execFunc: func(ctx context.Context, query string, args ...any) error {
-					return nil
-				},
-				queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+			mockTx := &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
 					return nil, errors.New("query failed")
 				},
 			}
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
-				return mockTx, nil
-			}
+			mockDB.Tx = mockTx
 
 			_, err := provider.Candidates(ctx, "tenant-1", "job-123")
 
@@ -180,20 +161,13 @@ var _ = Describe("RequiresCandidateProvider", func() {
 		})
 
 		It("handles scan errors", func() {
-			mockTx := &mockTransaction{
-				execFunc: func(ctx context.Context, query string, args ...any) error {
-					return nil
-				},
-				queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-					return &mockRows{
-						rows:   [][]any{{"invalid", "data"}}, // Wrong number of columns
-						cursor: 0,
-					}, nil
+			mockTx := &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+					return dbtest.Rows(nil, []any{"invalid", "data"}), nil // Wrong number of columns
 				},
 			}
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
-				return mockTx, nil
-			}
+			mockDB.Tx = mockTx
 
 			_, err := provider.Candidates(ctx, "tenant-1", "job-123")
 
@@ -202,22 +176,15 @@ var _ = Describe("RequiresCandidateProvider", func() {
 		})
 
 		It("handles invalid JSON in provenance", func() {
-			mockTx := &mockTransaction{
-				execFunc: func(ctx context.Context, query string, args ...any) error {
-					return nil
-				},
-				queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-					return &mockRows{
-						rows: [][]any{
-							{"ctrl-001", "ctrl-002", 0.9, []byte("invalid json")},
-						},
-						cursor: 0,
-					}, nil
+			mockTx := &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+					return dbtest.Rows(nil,
+						[]any{"ctrl-001", "ctrl-002", 0.9, []byte("invalid json")},
+					), nil
 				},
 			}
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
-				return mockTx, nil
-			}
+			mockDB.Tx = mockTx
 
 			_, err := provider.Candidates(ctx, "tenant-1", "job-123")
 
@@ -226,21 +193,13 @@ var _ = Describe("RequiresCandidateProvider", func() {
 		})
 
 		It("handles rows.Err() failures", func() {
-			mockTx := &mockTransaction{
-				execFunc: func(ctx context.Context, query string, args ...any) error {
-					return nil
-				},
-				queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-					return &mockRows{
-						rows:    [][]any{},
-						cursor:  0,
-						rowsErr: errors.New("iteration error"),
-					}, nil
+			mockTx := &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+					return dbtest.Rows(errors.New("iteration error")), nil
 				},
 			}
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
-				return mockTx, nil
-			}
+			mockDB.Tx = mockTx
 
 			_, err := provider.Candidates(ctx, "tenant-1", "job-123")
 
@@ -254,23 +213,14 @@ var _ = Describe("RequiresCandidateProvider", func() {
 			}
 			provJSON, _ := json.Marshal(provenance)
 
-			mockTx := &mockTransaction{
-				execFunc: func(ctx context.Context, query string, args ...any) error {
-					return nil
+			mockTx := &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+					return dbtest.Rows(nil, []any{"ctrl-001", "ctrl-002", 0.5, provJSON}), nil
 				},
-				queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-					return &mockRows{
-						rows:   [][]any{{"ctrl-001", "ctrl-002", 0.5, provJSON}},
-						cursor: 0,
-					}, nil
-				},
-				commitFunc: func() error {
-					return errors.New("commit failed")
-				},
+				CommitErr: errors.New("commit failed"),
 			}
-			mockDB.beginFunc = func(ctx context.Context) (db.Transaction, error) {
-				return mockTx, nil
-			}
+			mockDB.Tx = mockTx
 
 			_, err := provider.Candidates(ctx, "tenant-1", "job-123")
 
@@ -279,120 +229,3 @@ var _ = Describe("RequiresCandidateProvider", func() {
 		})
 	})
 })
-
-// Mock implementations
-
-type mockTenantConnection struct {
-	beginFunc func(ctx context.Context) (db.Transaction, error)
-}
-
-func (m *mockTenantConnection) Begin(ctx context.Context) (db.Transaction, error) {
-	if m.beginFunc != nil {
-		return m.beginFunc(ctx)
-	}
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockTenantConnection) Query(ctx context.Context, query string, args ...any) (db.Rows, error) {
-	return nil, errors.New("Query not allowed on TenantConnection outside transaction")
-}
-
-func (m *mockTenantConnection) QueryRow(ctx context.Context, query string, args ...any) db.Row {
-	panic("QueryRow not allowed on TenantConnection outside transaction")
-}
-
-func (m *mockTenantConnection) Exec(ctx context.Context, query string, args ...any) error {
-	return errors.New("Exec not allowed on TenantConnection outside transaction")
-}
-
-func (m *mockTenantConnection) Close() error {
-	return nil
-}
-
-type mockTransaction struct {
-	execFunc     func(ctx context.Context, query string, args ...any) error
-	queryFunc    func(ctx context.Context, query string, args ...any) (db.Rows, error)
-	queryRowFunc func(ctx context.Context, query string, args ...any) db.Row
-	commitFunc   func() error
-	rollbackFunc func() error
-}
-
-func (m *mockTransaction) Commit() error {
-	if m.commitFunc != nil {
-		return m.commitFunc()
-	}
-	return nil
-}
-
-func (m *mockTransaction) Rollback() error {
-	if m.rollbackFunc != nil {
-		return m.rollbackFunc()
-	}
-	return nil
-}
-
-func (m *mockTransaction) Query(ctx context.Context, query string, args ...any) (db.Rows, error) {
-	if m.queryFunc != nil {
-		return m.queryFunc(ctx, query, args...)
-	}
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockTransaction) QueryRow(ctx context.Context, query string, args ...any) db.Row {
-	if m.queryRowFunc != nil {
-		return m.queryRowFunc(ctx, query, args...)
-	}
-	panic("not implemented")
-}
-
-func (m *mockTransaction) Exec(ctx context.Context, query string, args ...any) error {
-	if m.execFunc != nil {
-		return m.execFunc(ctx, query, args...)
-	}
-	return errors.New("not implemented")
-}
-
-type mockRows struct {
-	rows    [][]any
-	cursor  int
-	rowsErr error
-}
-
-func (m *mockRows) Next() bool {
-	if m.cursor < len(m.rows) {
-		m.cursor++
-		return true
-	}
-	return false
-}
-
-func (m *mockRows) Scan(dest ...any) error {
-	if m.cursor == 0 || m.cursor > len(m.rows) {
-		return errors.New("no current row")
-	}
-	row := m.rows[m.cursor-1]
-	if len(row) != len(dest) {
-		return errors.New("column count mismatch")
-	}
-	for i, val := range row {
-		switch d := dest[i].(type) {
-		case *string:
-			*d = val.(string)
-		case *float64:
-			*d = val.(float64)
-		case *[]byte:
-			*d = val.([]byte)
-		default:
-			return errors.New("unsupported scan type")
-		}
-	}
-	return nil
-}
-
-func (m *mockRows) Close() error {
-	return nil
-}
-
-func (m *mockRows) Err() error {
-	return m.rowsErr
-}

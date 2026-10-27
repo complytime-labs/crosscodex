@@ -94,16 +94,8 @@ var _ = Describe("Telemetry System", Ordered, func() {
 			})
 		})
 
-		Context("when tracing endpoint is set but metrics endpoint is empty", func() {
-			It("creates tracing provider and no-op metrics", func() {
-				cfg := config.ObservabilityConfig{
-					Endpoint: "",
-					Protocol: "grpc",
-					Tracing: config.ObservabilityTracingConfig{
-						Endpoint:   "localhost:4317",
-						SampleRate: 1.0,
-					},
-				}
+		DescribeTable("when only one signal endpoint is set",
+			func(cfg config.ObservabilityConfig) {
 				shutdown, err := telemetry.Init(context.Background(), cfg,
 					telemetry.WithServiceName("test-svc"),
 				)
@@ -116,31 +108,26 @@ var _ = Describe("Telemetry System", Ordered, func() {
 				// Shutdown may return an error from the exporter trying to connect;
 				// in unit tests without a collector, we only verify it doesn't panic.
 				_ = shutdown(shutdownCtx)
-			})
-		})
-
-		Context("when metrics endpoint is set but tracing endpoint is empty", func() {
-			It("creates metrics provider and no-op tracing", func() {
-				cfg := config.ObservabilityConfig{
+			},
+			Entry("creates tracing provider and no-op metrics when metrics endpoint is empty",
+				config.ObservabilityConfig{
+					Endpoint: "",
+					Protocol: "grpc",
+					Tracing: config.ObservabilityTracingConfig{
+						Endpoint:   "localhost:4317",
+						SampleRate: 1.0,
+					},
+				}),
+			Entry("creates metrics provider and no-op tracing when tracing endpoint is empty",
+				config.ObservabilityConfig{
 					Endpoint: "",
 					Protocol: "grpc",
 					Metrics: config.ObservabilityMetricsConfig{
 						Endpoint: "localhost:4317",
 						Interval: "10s",
 					},
-				}
-				shutdown, err := telemetry.Init(context.Background(), cfg,
-					telemetry.WithServiceName("test-svc"),
-				)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(shutdown).NotTo(BeNil())
-
-				By("shutdown completes (exporter may fail to connect)")
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-				defer cancel()
-				_ = shutdown(shutdownCtx)
-			})
-		})
+				}),
+		)
 	})
 
 	// =================================================================
@@ -148,60 +135,33 @@ var _ = Describe("Telemetry System", Ordered, func() {
 	// =================================================================
 
 	Describe("Configuration Validation", func() {
-		Context("when protocol is invalid", func() {
-			It("returns ErrInvalidConfig", func() {
-				cfg := config.ObservabilityConfig{
-					Endpoint: "localhost:4317",
-					Protocol: "websocket",
-				}
+		DescribeTable("returns ErrInvalidConfig",
+			func(cfg config.ObservabilityConfig) {
 				_, err := telemetry.Init(context.Background(), cfg)
 				Expect(err).To(HaveOccurred())
 				Expect(errors.Is(err, telemetry.ErrInvalidConfig)).To(BeTrue())
-			})
-		})
-
-		Context("when sample rate is out of range", func() {
-			It("returns ErrInvalidConfig for negative rate", func() {
-				cfg := config.ObservabilityConfig{
+			},
+			Entry("when protocol is invalid",
+				config.ObservabilityConfig{Endpoint: "localhost:4317", Protocol: "websocket"}),
+			Entry("when sample rate is negative",
+				config.ObservabilityConfig{
 					Endpoint: "localhost:4317",
 					Protocol: "grpc",
-					Tracing: config.ObservabilityTracingConfig{
-						SampleRate: -0.1,
-					},
-				}
-				_, err := telemetry.Init(context.Background(), cfg)
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, telemetry.ErrInvalidConfig)).To(BeTrue())
-			})
-
-			It("returns ErrInvalidConfig for rate above 1.0", func() {
-				cfg := config.ObservabilityConfig{
+					Tracing:  config.ObservabilityTracingConfig{SampleRate: -0.1},
+				}),
+			Entry("when sample rate is above 1.0",
+				config.ObservabilityConfig{
 					Endpoint: "localhost:4317",
 					Protocol: "grpc",
-					Tracing: config.ObservabilityTracingConfig{
-						SampleRate: 1.1,
-					},
-				}
-				_, err := telemetry.Init(context.Background(), cfg)
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, telemetry.ErrInvalidConfig)).To(BeTrue())
-			})
-		})
-
-		Context("when metrics interval is unparseable", func() {
-			It("returns ErrInvalidConfig", func() {
-				cfg := config.ObservabilityConfig{
+					Tracing:  config.ObservabilityTracingConfig{SampleRate: 1.1},
+				}),
+			Entry("when metrics interval is unparseable",
+				config.ObservabilityConfig{
 					Endpoint: "localhost:4317",
 					Protocol: "grpc",
-					Metrics: config.ObservabilityMetricsConfig{
-						Interval: "not-a-duration",
-					},
-				}
-				_, err := telemetry.Init(context.Background(), cfg)
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, telemetry.ErrInvalidConfig)).To(BeTrue())
-			})
-		})
+					Metrics:  config.ObservabilityMetricsConfig{Interval: "not-a-duration"},
+				}),
+		)
 	})
 
 	// =================================================================

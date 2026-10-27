@@ -21,6 +21,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -103,8 +105,8 @@ var _ = Describe("Service", func() {
 			&fakeSynthesis{},
 			&fakeAttestor{},
 			pipelineattestation.NewConverter(),
-			&fakeNATSClient{},
-			newExecutorFakeStorage(),
+			&natsbustest.Fake{},
+			&storagetest.Fake{},
 			cfg,
 			attCfg,
 			nil,
@@ -149,11 +151,11 @@ var _ = Describe("Service", func() {
 			// Register a DAG whose topological order places the candidate-dependent
 			// analyzers (requires/relationship) after the pre-candidate ones.
 			orderingRegistry := analyzer.NewRegistry()
-			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, &stubAnalyzer{name: "classify"})).To(Succeed())
-			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, &stubAnalyzer{name: "embedding", deps: []string{"classify"}})).To(Succeed())
-			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, &stubAnalyzer{name: "artifacts", deps: []string{"classify"}})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](orderingRegistry, &stubControlAnalyzer{name: "requires", deps: []string{"embedding"}})).To(Succeed())
-			Expect(analyzer.Register[*pb.Control](orderingRegistry, &stubControlAnalyzer{name: "relationship", deps: []string{"embedding"}})).To(Succeed())
+			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, newStub("classify"))).To(Succeed())
+			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, newStub("embedding", "classify"))).To(Succeed())
+			Expect(analyzer.Register[*emptypb.Empty](orderingRegistry, newStub("artifacts", "classify"))).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](orderingRegistry, newControlStub("requires", "embedding"))).To(Succeed())
+			Expect(analyzer.Register[*pb.Control](orderingRegistry, newControlStub("relationship", "embedding"))).To(Succeed())
 
 			// A real engine avoids a nil-engine panic in the async executeJob;
 			// the stub analyzers generate no work, so the job completes quickly.
@@ -179,8 +181,8 @@ var _ = Describe("Service", func() {
 				&fakeSynthesis{},
 				&fakeAttestor{},
 				pipelineattestation.NewConverter(),
-				&fakeNATSClient{},
-				newExecutorFakeStorage(),
+				&natsbustest.Fake{},
+				&storagetest.Fake{},
 				config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour},
 				config.AttestationConfig{Enabled: false},
 				nil,
@@ -380,8 +382,8 @@ var _ = Describe("Service", func() {
 				blocker,
 				&fakeAttestor{},
 				pipelineattestation.NewConverter(),
-				&fakeNATSClient{},
-				newExecutorFakeStorage(),
+				&natsbustest.Fake{},
+				&storagetest.Fake{},
 				config.PipelineConfig{
 					MaxConcurrentJobs: 10,
 					StageTimeout:      time.Hour,
@@ -430,8 +432,8 @@ var _ = Describe("Service", func() {
 				synth,
 				&fakeAttestor{},
 				pipelineattestation.NewConverter(),
-				&fakeNATSClient{},
-				newExecutorFakeStorage(),
+				&natsbustest.Fake{},
+				&storagetest.Fake{},
 				config.PipelineConfig{
 					MaxConcurrentJobs: 10,
 					StageTimeout:      time.Hour,
@@ -500,8 +502,8 @@ var _ = Describe("Service", func() {
 				blocker,
 				&fakeAttestor{},
 				pipelineattestation.NewConverter(),
-				&fakeNATSClient{},
-				newExecutorFakeStorage(),
+				&natsbustest.Fake{},
+				&storagetest.Fake{},
 				config.PipelineConfig{
 					MaxConcurrentJobs: 10,
 					StageTimeout:      time.Hour,
@@ -698,8 +700,8 @@ var _ = Describe("Service", func() {
 				blocker,
 				&fakeAttestor{},
 				pipelineattestation.NewConverter(),
-				&fakeNATSClient{},
-				newExecutorFakeStorage(),
+				&natsbustest.Fake{},
+				&storagetest.Fake{},
 				config.PipelineConfig{
 					MaxConcurrentJobs: 10,
 					StageTimeout:      time.Hour,
@@ -748,8 +750,8 @@ var _ = Describe("Service", func() {
 				unblocked,
 				&fakeAttestor{},
 				pipelineattestation.NewConverter(),
-				&fakeNATSClient{},
-				newExecutorFakeStorage(),
+				&natsbustest.Fake{},
+				&storagetest.Fake{},
 				config.PipelineConfig{
 					MaxConcurrentJobs: 1,
 					StageTimeout:      time.Hour,
@@ -775,8 +777,8 @@ var _ = Describe("Service", func() {
 				blocker,
 				&fakeAttestor{},
 				pipelineattestation.NewConverter(),
-				&fakeNATSClient{},
-				newExecutorFakeStorage(),
+				&natsbustest.Fake{},
+				&storagetest.Fake{},
 				config.PipelineConfig{
 					MaxConcurrentJobs: 1,
 					StageTimeout:      time.Hour,

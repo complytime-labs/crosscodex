@@ -8,6 +8,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -15,19 +16,16 @@ var _ = Describe("PGCatalogControlsReader", func() {
 	It("returns controls ordered by ID with ancestor title and class", func() {
 		// Query column order matches pgCatalogControlsReader.Controls's SELECT:
 		// control_id, identifier, title, statement, class, parent_id, props.
-		mockTx := &mockTransaction{
-			queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-				return &mockRows{
-					rows: [][]any{
-						{"AC-1", "ac-1", "Access Control", "stmt-1", "", "", []byte(`{}`)},
-						{"AC-1_smt.a", "ac-1.a", "", "stmt-1a", "", "AC-1", []byte(`{}`)},
-						{"SECTION-1", "sec-1", "Overview", "", "compliance-section", "", []byte(`{}`)},
-					},
-					cursor: 0,
-				}, nil
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				return dbtest.Rows(nil,
+					[]any{"AC-1", "ac-1", "Access Control", "stmt-1", "", "", []byte(`{}`)},
+					[]any{"AC-1_smt.a", "ac-1.a", "", "stmt-1a", "", "AC-1", []byte(`{}`)},
+					[]any{"SECTION-1", "sec-1", "Overview", "", "compliance-section", "", []byte(`{}`)},
+				), nil
 			},
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGCatalogControlsReader(mockDB)
 
 		ctx, err := tenant.WithTenant(context.Background(), "tenant-a")
@@ -47,8 +45,10 @@ var _ = Describe("PGCatalogControlsReader", func() {
 	})
 
 	It("validates the tenant ID", func() {
-		reader := pipeline.NewPGCatalogControlsReader(&mockTenantConnection{})
+		conn := &dbtest.Conn{}
+		reader := pipeline.NewPGCatalogControlsReader(conn)
 		_, err := reader.Controls(context.Background(), "BAD TENANT", "cat-1")
 		Expect(err).To(HaveOccurred(), "expected error for invalid tenant ID")
+		Expect(conn.Begins()).To(BeZero(), "the tenant must be refused before any transaction starts")
 	})
 })

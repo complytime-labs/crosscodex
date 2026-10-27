@@ -88,7 +88,12 @@ func (i *connectAuthInterceptor) WrapUnary(next connect.UnaryFunc) connect.Unary
 
 		ctx, err = tenant.WithTenant(ctx, identity.TenantID)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("invalid tenant: %w", err))
+			// The tenant ID comes from the client's own certificate, and the
+			// validation error holds only that ID and the format rule, so the
+			// holder gets the actionable text.
+			i.service.recordAuthFailure(ctx, "invalid_tenant")
+			i.service.logger.WarnContext(ctx, "client certificate names an invalid tenant ID", "subject", identity.Subject, "error", err)
+			return nil, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("%w. Ask an operator to issue a client certificate for a valid tenant ID", err))
 		}
 		ctx = tenant.WithUser(ctx, identity.Subject)
 		if err := i.checkTenantActive(ctx, identity.TenantID); err != nil {
@@ -131,7 +136,9 @@ func (i *connectAuthInterceptor) WrapStreamingHandler(next connect.StreamingHand
 
 		ctx, err = tenant.WithTenant(ctx, identity.TenantID)
 		if err != nil {
-			return connect.NewError(connect.CodeInternal, fmt.Errorf("invalid tenant: %w", err))
+			i.service.recordAuthFailure(ctx, "invalid_tenant")
+			i.service.logger.WarnContext(ctx, "client certificate names an invalid tenant ID", "subject", identity.Subject, "error", err)
+			return connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("%w. Ask an operator to issue a client certificate for a valid tenant ID", err))
 		}
 		ctx = tenant.WithUser(ctx, identity.Subject)
 		if err := i.checkTenantActive(ctx, identity.TenantID); err != nil {

@@ -14,6 +14,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/types"
 	"go.opentelemetry.io/otel/codes"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -665,19 +666,14 @@ var _ = Describe("GraphDB System", Ordered, func() {
 			})
 		})
 
-		Context("when handling malformed vertex input", func() {
-			It("rejects input missing the ::vertex suffix", func() {
-				raw := `{"id": 1, "label": "X", "properties": {}}`
+		DescribeTable("rejects a malformed vertex",
+			func(raw string) {
 				_, err := agedriver.ParseAGVertex(raw)
 				Expect(err).To(HaveOccurred())
-			})
-
-			It("rejects invalid JSON body", func() {
-				raw := `{bad json}::vertex`
-				_, err := agedriver.ParseAGVertex(raw)
-				Expect(err).To(HaveOccurred())
-			})
-		})
+			},
+			Entry("input missing the ::vertex suffix", `{"id": 1, "label": "X", "properties": {}}`),
+			Entry("invalid JSON body", `{bad json}::vertex`),
+		)
 	})
 
 	Describe("AGType Edge Parsing Edge Cases", func() {
@@ -699,41 +695,26 @@ var _ = Describe("GraphDB System", Ordered, func() {
 			})
 		})
 
-		Context("when handling malformed edge input", func() {
-			It("rejects input missing the ::edge suffix", func() {
-				raw := `{"id": 1, "label": "X", "start_id": 1, "end_id": 2, "properties": {}}`
+		DescribeTable("rejects a malformed edge",
+			func(raw string) {
 				_, err := agedriver.ParseAGEdge(raw)
 				Expect(err).To(HaveOccurred())
-			})
-
-			It("rejects invalid JSON body", func() {
-				raw := `not json::edge`
-				_, err := agedriver.ParseAGEdge(raw)
-				Expect(err).To(HaveOccurred())
-			})
-		})
+			},
+			Entry("input missing the ::edge suffix", `{"id": 1, "label": "X", "start_id": 1, "end_id": 2, "properties": {}}`),
+			Entry("invalid JSON body", `not json::edge`),
+		)
 	})
 
 	Describe("AGType Path Parsing Edge Cases", func() {
-		Context("when handling malformed path input", func() {
-			It("rejects input missing the ::path suffix", func() {
-				raw := `[{"id": 1, "label": "X", "properties": {}}::vertex]`
+		DescribeTable("rejects a malformed path",
+			func(raw string) {
 				_, err := agedriver.ParseAGPath(raw)
 				Expect(err).To(HaveOccurred())
-			})
-
-			It("rejects a non-array path body", func() {
-				raw := `{"id": 1}::path`
-				_, err := agedriver.ParseAGPath(raw)
-				Expect(err).To(HaveOccurred())
-			})
-
-			It("rejects elements with unknown type suffixes", func() {
-				raw := `[{"id": 1}::unknown]::path`
-				_, err := agedriver.ParseAGPath(raw)
-				Expect(err).To(HaveOccurred())
-			})
-		})
+			},
+			Entry("input missing the ::path suffix", `[{"id": 1, "label": "X", "properties": {}}::vertex]`),
+			Entry("non-array body", `{"id": 1}::path`),
+			Entry("element with an unknown type suffix", `[{"id": 1}::unknown]::path`),
+		)
 	})
 
 	Describe("AGType Path Element Splitting Edge Cases", func() {
@@ -839,34 +820,18 @@ var _ = Describe("GraphDB System", Ordered, func() {
 			Expect(newErr).NotTo(HaveOccurred())
 		})
 
-		Context("when validating edge creation inputs", func() {
-			It("rejects an edge with empty label", func() {
-				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
-				err := client.CreateEdge(nil, "test-tenant", "a", "b", graphdb.Edge{ValidFrom: validFrom}) //nolint:staticcheck
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(Equal("create edge: label is required"))
-			})
+		validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
 
-			It("rejects an edge with empty source", func() {
-				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
-				err := client.CreateEdge(nil, "test-tenant", "", "b", graphdb.Edge{Label: "R", ValidFrom: validFrom}) //nolint:staticcheck
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(Equal("create edge: source and target are required"))
-			})
-
-			It("rejects an edge with empty target", func() {
-				validFrom, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
-				err := client.CreateEdge(nil, "test-tenant", "a", "", graphdb.Edge{Label: "R", ValidFrom: validFrom}) //nolint:staticcheck
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(Equal("create edge: source and target are required"))
-			})
-
-			It("rejects an edge with zero valid_from", func() {
-				err := client.CreateEdge(nil, "test-tenant", "a", "b", graphdb.Edge{Label: "R"}) //nolint:staticcheck
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(Equal("create edge: valid_from is required"))
-			})
-		})
+		DescribeTable("rejects invalid edge creation inputs with an actionable message",
+			func(source, target string, edge graphdb.Edge, wantMsg string) {
+				err := client.CreateEdge(nil, "test-tenant", source, target, edge) //nolint:staticcheck
+				Expect(err).To(MatchError(wantMsg))
+			},
+			Entry("an edge with empty label", "a", "b", graphdb.Edge{ValidFrom: validFrom}, "create edge: label is required"),
+			Entry("an edge with empty source", "", "b", graphdb.Edge{Label: "R", ValidFrom: validFrom}, "create edge: source and target are required"),
+			Entry("an edge with empty target", "a", "", graphdb.Edge{Label: "R", ValidFrom: validFrom}, "create edge: source and target are required"),
+			Entry("an edge with zero valid_from", "a", "b", graphdb.Edge{Label: "R"}, "create edge: valid_from is required"),
+		)
 	})
 
 	Describe("Node Property Serialization Edge Cases", func() {
@@ -950,18 +915,14 @@ var _ = Describe("GraphDB System", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		Context("when validating input parameters", func() {
-			It("rejects empty tenant", func() {
-				_, err := client.GetNode(context.Background(), "", "node-1")
-				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
-			})
-
-			It("rejects empty nodeID", func() {
-				_, err := client.GetNode(context.Background(), "tenant-a", "")
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("node_id is required"))
-			})
-		})
+		DescribeTable("rejects invalid input parameters",
+			func(tenant, id string, want types.GomegaMatcher) {
+				_, err := client.GetNode(context.Background(), tenant, id)
+				Expect(err).To(want)
+			},
+			Entry("an empty tenant", "", "node-1", MatchError(graphdb.ErrTenantRequired)),
+			Entry("an empty nodeID", "tenant-a", "", MatchError(ContainSubstring("node_id is required"))),
+		)
 	})
 
 	Describe("GetEdge", func() {
@@ -973,18 +934,14 @@ var _ = Describe("GraphDB System", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		Context("when validating input parameters", func() {
-			It("rejects empty tenant", func() {
-				_, err := client.GetEdge(context.Background(), "", "edge-1")
-				Expect(err).To(MatchError(graphdb.ErrTenantRequired))
-			})
-
-			It("rejects empty edgeID", func() {
-				_, err := client.GetEdge(context.Background(), "tenant-a", "")
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("edge_id is required"))
-			})
-		})
+		DescribeTable("rejects invalid input parameters",
+			func(tenant, id string, want types.GomegaMatcher) {
+				_, err := client.GetEdge(context.Background(), tenant, id)
+				Expect(err).To(want)
+			},
+			Entry("an empty tenant", "", "edge-1", MatchError(graphdb.ErrTenantRequired)),
+			Entry("an empty edgeID", "tenant-a", "", MatchError(ContainSubstring("edge_id is required"))),
+		)
 	})
 
 	Describe("BulkCreateEdges", func() {

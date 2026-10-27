@@ -12,6 +12,14 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
+// ErrCatalogNotFound and ErrControlNotFound are wrapped by Store lookups for
+// a row that does not exist or that row-level security hides from the
+// current tenant. Callers classify with errors.Is, never by message text.
+var (
+	ErrCatalogNotFound = errors.New("catalog not found")
+	ErrControlNotFound = errors.New("control not found")
+)
+
 // Store interface for catalog and control persistence.
 type Store interface {
 	UpsertCatalog(ctx context.Context, catalog CatalogRecord) error
@@ -219,7 +227,7 @@ func (s *PGStore) GetCatalog(ctx context.Context, catalogID string) (*CatalogRec
 		&rec.ControlCount,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("catalog not found: %s", catalogID)
+		return nil, fmt.Errorf("%w: %s", ErrCatalogNotFound, catalogID)
 	}
 	if err != nil {
 		return nil, err
@@ -456,7 +464,7 @@ func (s *PGStore) GetControl(ctx context.Context, controlID string) (*ControlRec
 		&rec.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("control not found: %s", controlID)
+		return nil, fmt.Errorf("%w: %s", ErrControlNotFound, controlID)
 	}
 	if err != nil {
 		return nil, err

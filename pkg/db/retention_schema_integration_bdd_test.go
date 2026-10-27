@@ -5,8 +5,6 @@ package db_test
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"net/url"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -38,12 +36,11 @@ var _ = Describe("Retention Schema", Ordered, func() {
 		// Scoped here to avoid touching the shared harness.
 		purgePassword, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
 		Expect(err).NotTo(HaveOccurred(), "purge_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("purge_user", purgePassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE purge_user")
-		err = suPool.Exec(context.Background(), stmt)
-		Expect(err).NotTo(HaveOccurred(), "set purge_user password")
+		Expect(dbtest.SetRolePassword(context.Background(), suDSN, "purge_user", purgePassword)).To(Succeed(), "set purge_user password")
 
-		purgeConn, err = sql.Open("pgx", purgeUserDSN())
+		purgeDSN, err := dbtest.RoleDSN(suDSN, "purge_user", purgePassword)
+		Expect(err).NotTo(HaveOccurred(), "purge_user DSN")
+		purgeConn, err = sql.Open("pgx", purgeDSN)
 		Expect(err).NotTo(HaveOccurred(), "open purge_user connection")
 	})
 
@@ -181,18 +178,3 @@ var _ = Describe("Retention Schema", Ordered, func() {
 		})
 	})
 })
-
-// purgeUserDSN builds a DSN for purge_user by swapping credentials in suDSN.
-// Scoped here so the shared harness is not modified (Ruling H).
-func purgeUserDSN() string {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		panic(fmt.Sprintf("bad suDSN: %v", err))
-	}
-	pw, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
-	if err != nil {
-		panic(fmt.Sprintf("purge_user password: %v", err))
-	}
-	u.User = url.UserPassword("purge_user", pw)
-	return u.String()
-}

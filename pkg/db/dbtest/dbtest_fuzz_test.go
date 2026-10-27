@@ -1,6 +1,8 @@
 package dbtest_test
 
 import (
+	"encoding/hex"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -52,6 +54,46 @@ func FuzzHardDeleteTenantSQL(f *testing.F) {
 		}
 		if !strings.Contains(stmt, "'"+id+"'") {
 			t.Fatalf("statement does not quote the accepted ID %q", id)
+		}
+	})
+}
+
+func FuzzRoleDSN(f *testing.F) {
+	const pw = "0123456789abcdef"
+	f.Add("postgres://postgres:secret@db:5432/crosscodex_test?sslmode=verify-full", pw) // valid
+	f.Add("postgresql:///crosscodex?host=/run/postgresql", pw)                          // valid, no host
+	f.Add("", pw)                                                                       // empty DSN
+	f.Add("postgres://su:secret@db:5432/x", "")                                         // empty password
+	f.Add("postgres://su:secret@db:5432/x", "ab@cd")                                    // userinfo-smuggling password
+	f.Add("host=db user=su password=secret", pw)                                        // keyword/value DSN
+	f.Add("postgres:secret@db/x", pw)                                                   // opaque
+	f.Add("postgres://su:secret@db:port/x", pw)                                         // invalid port
+	f.Add("postgres://evil@db/x?user=postgres#frag", pw)                                // userinfo smuggled in the query
+
+	f.Fuzz(func(t *testing.T, dsn, password string) {
+		out, err := dbtest.RoleDSN(dsn, "app_user", password)
+		if err != nil {
+			return
+		}
+		if _, decodeErr := hex.DecodeString(password); password == "" || decodeErr != nil {
+			t.Fatalf("accepted non-hex password %q", password)
+		}
+		in, err := url.Parse(dsn)
+		if err != nil {
+			t.Fatalf("accepted unparsable DSN %q", dsn)
+		}
+		u, err := url.Parse(out)
+		if err != nil {
+			t.Fatalf("returned unparsable DSN %q for %q: %v", out, dsn, err)
+		}
+		if u.Scheme != in.Scheme || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+			t.Fatalf("scheme %q from input scheme %q", u.Scheme, in.Scheme)
+		}
+		if got, _ := u.User.Password(); u.User.Username() != "app_user" || got != password {
+			t.Fatalf("output %q does not authenticate as app_user with the given password", out)
+		}
+		if u.Host != in.Host || u.Path != in.Path || u.RawQuery != in.RawQuery {
+			t.Fatalf("RoleDSN changed more than the userinfo: %q -> %q", dsn, out)
 		}
 	})
 }

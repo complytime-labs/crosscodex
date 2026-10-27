@@ -14,50 +14,13 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
+	"github.com/complytime-labs/crosscodex/pkg/retention/retentiontest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 func TestAdmin(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Admin Service Suite")
-}
-
-// stubHoldStore is a minimal in-memory retention.HoldStore for handler tests.
-type stubHoldStore struct {
-	active       []retention.Hold
-	all          []retention.Hold
-	createErr    error
-	releaseErr   error
-	releasedName string
-	releasedBy   string
-	createdHold  retention.Hold
-}
-
-func (s *stubHoldStore) Create(_ context.Context, h retention.Hold) (retention.Hold, error) {
-	if s.createErr != nil {
-		return retention.Hold{}, s.createErr
-	}
-	s.createdHold = h
-	h.ID = "hold-1"
-	h.CreatedAt = time.Unix(1000, 0).UTC()
-	return h, nil
-}
-
-func (s *stubHoldStore) Release(_ context.Context, name, releasedBy string) error {
-	if s.releaseErr != nil {
-		return s.releaseErr
-	}
-	s.releasedName = name
-	s.releasedBy = releasedBy
-	return nil
-}
-
-func (s *stubHoldStore) List(_ context.Context) ([]retention.Hold, error) {
-	return s.all, nil
-}
-
-func (s *stubHoldStore) Active(_ context.Context, _ time.Time) ([]retention.Hold, error) {
-	return s.active, nil
 }
 
 // stubDriftSource is a minimal audit-stream drift source for handler tests.
@@ -92,12 +55,12 @@ func adminCtx(tenantID string, roles ...string) context.Context {
 }
 
 var _ = Describe("Admin retention RPCs RBAC", func() {
-	var holds *stubHoldStore
+	var holds *retentiontest.Fake
 	var drift *stubDriftSource
 	var svc *Service
 
 	BeforeEach(func() {
-		holds = &stubHoldStore{}
+		holds = &retentiontest.Fake{}
 		drift = &stubDriftSource{}
 		svc = newTestService(holds, drift)
 	})
@@ -142,7 +105,7 @@ var _ = Describe("Admin retention RPCs RBAC", func() {
 
 	Describe("GetRetentionStats", func() {
 		It("returns eligible report and active hold count for an admin", func() {
-			holds.active = []retention.Hold{{Name: "h1"}, {Name: "h2"}}
+			holds.Seed = []retention.Hold{{Name: "h1"}, {Name: "h2"}}
 			ctx := adminCtx("tenant-a", authn.RoleAdmin)
 			resp, err := svc.GetRetentionStats(ctx, connect.NewRequest(&pb.GetRetentionStatsRequest{
 				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
@@ -181,26 +144,31 @@ var _ = Describe("Admin retention RPCs RBAC", func() {
 		})
 	})
 
-	Describe("ApplyRetentionPolicy", func() {
-		It("rejects a nil policy with InvalidArgument", func() {
-			ctx := adminCtx("tenant-a", authn.RoleAdmin)
-			resp, err := svc.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
-				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
-			}))
+	DescribeTable("rejects an invalid admin request with InvalidArgument and no response",
+		func(call func(context.Context, *Service) (any, error)) {
+			resp, err := call(adminCtx("tenant-a", authn.RoleAdmin), svc)
 			Expect(resp).To(BeNil())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects an invalid tier string with InvalidArgument", func() {
-			ctx := adminCtx("tenant-a", authn.RoleAdmin)
-			resp, err := svc.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+		},
+		Entry("ApplyRetentionPolicy with a nil policy", func(ctx context.Context, s *Service) (any, error) {
+			return s.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
+			}))
+		}),
+		Entry("ApplyRetentionPolicy with an invalid tier string", func(ctx context.Context, s *Service) (any, error) {
+			return s.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
 				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
 				Policy:        &pb.RetentionPolicy{JobResults: "not-a-duration"},
 			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
+		}),
+		Entry("CreateHold with an empty name", func(ctx context.Context, s *Service) (any, error) {
+			return s.CreateHold(ctx, connect.NewRequest(&pb.CreateHoldRequest{
+				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
+			}))
+		}),
+	)
 
+	Describe("ApplyRetentionPolicy", func() {
 		It("runs a scan with the supplied policy for an admin", func() {
 			ctx := adminCtx("tenant-a", authn.RoleAdmin)
 			resp, err := svc.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
@@ -223,7 +191,11 @@ var _ = Describe("Admin retention RPCs RBAC", func() {
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetHold().GetName()).To(Equal("audit-hold"))
-			Expect(holds.createdHold.CreatedBy).To(Equal("admin-user"))
+			stored, err := holds.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored).To(HaveLen(1))
+			Expect(stored[0].Name).To(Equal("audit-hold"))
+			Expect(stored[0].CreatedBy).To(Equal("admin-user"))
 		})
 
 		It("forces the hold scope to the resolved tenant, ignoring a caller-supplied tenant", func() {
@@ -235,31 +207,30 @@ var _ = Describe("Admin retention RPCs RBAC", func() {
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetHold().GetScope().GetTenantId()).To(Equal("tenant-a"))
-			Expect(holds.createdHold.Scope.TenantID).To(Equal("tenant-a"))
-		})
-
-		It("rejects a create with an empty name", func() {
-			ctx := adminCtx("tenant-a", authn.RoleAdmin)
-			resp, err := svc.CreateHold(ctx, connect.NewRequest(&pb.CreateHoldRequest{
-				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			stored, err := holds.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored).To(HaveLen(1))
+			Expect(stored[0].Scope.TenantID).To(Equal("tenant-a"))
 		})
 
 		It("releases a hold by name stamped with the caller subject", func() {
+			holds.Seed = []retention.Hold{{ID: "seeded", Name: "audit-hold", Scope: retention.HoldScope{TenantID: "tenant-a"}}}
 			ctx := adminCtx("tenant-a", authn.RoleAdmin)
 			_, err := svc.ReleaseHold(ctx, connect.NewRequest(&pb.ReleaseHoldRequest{
 				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
 				Name:          "audit-hold",
 			}))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(holds.releasedName).To(Equal("audit-hold"))
-			Expect(holds.releasedBy).To(Equal("admin-user"))
+			stored, err := holds.List(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored).To(HaveLen(1))
+			Expect(stored[0].Name).To(Equal("audit-hold"))
+			Expect(stored[0].ReleasedAt).NotTo(BeNil())
+			Expect(stored[0].ReleasedBy).To(Equal("admin-user"))
 		})
 
 		It("lists holds mapped to proto", func() {
-			holds.all = []retention.Hold{{ID: "1", Name: "h1", CreatedAt: time.Unix(1, 0).UTC()}}
+			holds.Seed = []retention.Hold{{ID: "1", Name: "h1", CreatedAt: time.Unix(1, 0).UTC()}}
 			ctx := adminCtx("tenant-a", authn.RoleAdmin)
 			resp, err := svc.ListHolds(ctx, connect.NewRequest(&pb.ListHoldsRequest{
 				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},

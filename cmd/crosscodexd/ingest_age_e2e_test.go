@@ -59,7 +59,7 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		// Bootstrap with the deterministic LLM fake.
-		rt, err := bootstrap(ctx, cfg, WithLLMClient(deterministicLLMClient{}))
+		rt, err := bootstrap(ctx, cfg, WithLLMClient(testspecs.DeterministicLLM{EmbeddingDim: e2eEmbeddingDim}))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap all role")
 		defer rt.close()
 

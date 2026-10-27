@@ -40,6 +40,14 @@ var _ gateway.AdminBackend = (*mockAdmin)(nil)
 // Mock backend implementations
 // ---------------------------------------------------------------------------
 
+// orDefault calls fn when the spec scripted it, otherwise returns an empty response.
+func orDefault[Q, R any](fn func(context.Context, *connect.Request[Q]) (*connect.Response[R], error), ctx context.Context, req *connect.Request[Q]) (*connect.Response[R], error) {
+	if fn != nil {
+		return fn(ctx, req)
+	}
+	return connect.NewResponse(new(R)), nil
+}
+
 type mockIngestion struct {
 	convertFn func(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error)
 	discardFn func(context.Context, string) error
@@ -75,31 +83,19 @@ func (m *mockCatalog) ParseCatalog(ctx context.Context, req *connect.Request[pb.
 }
 
 func (m *mockCatalog) ListCatalogs(ctx context.Context, req *connect.Request[pb.ListCatalogsRequest]) (*connect.Response[pb.ListCatalogsResponse], error) {
-	if m.listCatalogsFn != nil {
-		return m.listCatalogsFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.ListCatalogsResponse{}), nil
+	return orDefault(m.listCatalogsFn, ctx, req)
 }
 
 func (m *mockCatalog) GetCatalog(ctx context.Context, req *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error) {
-	if m.getCatalogFn != nil {
-		return m.getCatalogFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.GetCatalogResponse{}), nil
+	return orDefault(m.getCatalogFn, ctx, req)
 }
 
 func (m *mockCatalog) SearchControls(ctx context.Context, req *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error) {
-	if m.searchControlsFn != nil {
-		return m.searchControlsFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.SearchControlsResponse{}), nil
+	return orDefault(m.searchControlsFn, ctx, req)
 }
 
 func (m *mockCatalog) GetControl(ctx context.Context, req *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error) {
-	if m.getControlFn != nil {
-		return m.getControlFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.GetControlResponse{}), nil
+	return orDefault(m.getControlFn, ctx, req)
 }
 
 type mockPipeline struct {
@@ -129,10 +125,7 @@ func (m *mockPipeline) GetJob(ctx context.Context, req *connect.Request[pb.GetJo
 }
 
 func (m *mockPipeline) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {
-	if m.listJobsFn != nil {
-		return m.listJobsFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.ListJobsResponse{}), nil
+	return orDefault(m.listJobsFn, ctx, req)
 }
 
 func (m *mockPipeline) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error) {
@@ -168,24 +161,15 @@ type mockGraph struct {
 }
 
 func (m *mockGraph) Traverse(ctx context.Context, req *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error) {
-	if m.traverseFn != nil {
-		return m.traverseFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.TraverseResponse{}), nil
+	return orDefault(m.traverseFn, ctx, req)
 }
 
 func (m *mockGraph) Query(ctx context.Context, req *connect.Request[pb.QueryRequest]) (*connect.Response[pb.QueryResponse], error) {
-	if m.queryFn != nil {
-		return m.queryFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.QueryResponse{}), nil
+	return orDefault(m.queryFn, ctx, req)
 }
 
 func (m *mockGraph) SimilaritySearch(ctx context.Context, req *connect.Request[pb.SimilaritySearchRequest]) (*connect.Response[pb.SimilaritySearchResponse], error) {
-	if m.similaritySearchFn != nil {
-		return m.similaritySearchFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.SimilaritySearchResponse{}), nil
+	return orDefault(m.similaritySearchFn, ctx, req)
 }
 
 type mockFeedback struct {
@@ -201,10 +185,7 @@ func (m *mockFeedback) SubmitVote(ctx context.Context, req *connect.Request[pb.S
 }
 
 func (m *mockFeedback) GetReviewQueue(ctx context.Context, req *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
-	if m.getReviewQueueFn != nil {
-		return m.getReviewQueueFn(ctx, req)
-	}
-	return connect.NewResponse(&pb.GetReviewQueueResponse{}), nil
+	return orDefault(m.getReviewQueueFn, ctx, req)
 }
 
 type mockAdmin struct {
@@ -232,6 +213,21 @@ func newTestService(opts ...gateway.ServiceOption) *gateway.Service {
 		gateway.WithAdminBackend(&mockAdmin{}),
 	}
 	return gateway.NewService(append(defaults, opts...)...)
+}
+
+// ownedJobBackend returns a pipeline mock whose GetJob reports job-1 as
+// created by createdBy, for ownership-check specs.
+func ownedJobBackend(createdBy string) *mockPipeline {
+	return &mockPipeline{
+		getJobFn: func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+			return connect.NewResponse(&pb.GetJobResponse{
+				Job: &pb.PipelineJob{
+					JobId: "job-1",
+					Audit: &pb.AuditMetadata{CreatedBy: createdBy},
+				},
+			}), nil
+		},
+	}
 }
 
 func ctxWithIdentity(subject, tenantID string, roles []string) context.Context {
@@ -293,30 +289,6 @@ var _ = Describe("Catalog handlers", func() {
 		Expect(captured.GetTenantId()).To(Equal("real-tenant"))
 	})
 
-	It("returns InvalidArgument for empty catalog_id on GetCatalog", func() {
-		svc := newTestService()
-		ctx := userCtx("user-1")
-		_, err := svc.GetCatalog(ctx, connect.NewRequest(&pb.GetCatalogRequest{CatalogId: ""}))
-		Expect(err).To(HaveOccurred())
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-	})
-
-	It("returns InvalidArgument for empty control_id on GetControl", func() {
-		svc := newTestService()
-		ctx := userCtx("user-1")
-		_, err := svc.GetControl(ctx, connect.NewRequest(&pb.GetControlRequest{ControlId: ""}))
-		Expect(err).To(HaveOccurred())
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-	})
-
-	It("returns InvalidArgument for empty query on SearchControls", func() {
-		svc := newTestService()
-		ctx := userCtx("user-1")
-		_, err := svc.SearchControls(ctx, connect.NewRequest(&pb.SearchControlsRequest{Query: ""}))
-		Expect(err).To(HaveOccurred())
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-	})
-
 	It("returns Unauthenticated when no identity in context", func() {
 		svc := newTestService()
 		_, err := svc.ListCatalogs(context.Background(), connect.NewRequest(&pb.ListCatalogsRequest{}))
@@ -342,16 +314,7 @@ var _ = Describe("Catalog handlers", func() {
 var _ = Describe("Job handlers", func() {
 	Context("GetJob", func() {
 		It("returns job to its owner", func() {
-			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
-					return connect.NewResponse(&pb.GetJobResponse{
-						Job: &pb.PipelineJob{
-							JobId: "job-1",
-							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
-						},
-					}), nil
-				},
-			}
+			pipeline := ownedJobBackend("user-a")
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-a")
@@ -361,16 +324,7 @@ var _ = Describe("Job handlers", func() {
 		})
 
 		It("returns PermissionDenied when non-owner non-admin accesses job", func() {
-			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
-					return connect.NewResponse(&pb.GetJobResponse{
-						Job: &pb.PipelineJob{
-							JobId: "job-1",
-							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
-						},
-					}), nil
-				},
-			}
+			pipeline := ownedJobBackend("user-a")
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-b")
@@ -380,29 +334,12 @@ var _ = Describe("Job handlers", func() {
 		})
 
 		It("allows admin to access any job", func() {
-			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
-					return connect.NewResponse(&pb.GetJobResponse{
-						Job: &pb.PipelineJob{
-							JobId: "job-1",
-							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
-						},
-					}), nil
-				},
-			}
+			pipeline := ownedJobBackend("user-a")
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			resp, err := svc.GetJob(adminCtx(), connect.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetJob().GetJobId()).To(Equal("job-1"))
-		})
-
-		It("returns InvalidArgument for empty job_id", func() {
-			svc := newTestService()
-			ctx := userCtx("user-a")
-			_, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: ""}))
-			Expect(err).To(HaveOccurred())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 
@@ -452,16 +389,7 @@ var _ = Describe("Job handlers", func() {
 
 	Context("CancelJob", func() {
 		It("allows owner to cancel own job", func() {
-			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
-					return connect.NewResponse(&pb.GetJobResponse{
-						Job: &pb.PipelineJob{
-							JobId: "job-1",
-							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
-						},
-					}), nil
-				},
-			}
+			pipeline := ownedJobBackend("user-a")
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-a")
@@ -471,16 +399,7 @@ var _ = Describe("Job handlers", func() {
 		})
 
 		It("returns PermissionDenied for non-owner", func() {
-			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
-					return connect.NewResponse(&pb.GetJobResponse{
-						Job: &pb.PipelineJob{
-							JobId: "job-1",
-							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
-						},
-					}), nil
-				},
-			}
+			pipeline := ownedJobBackend("user-a")
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			ctx := userCtx("user-b")
@@ -490,16 +409,7 @@ var _ = Describe("Job handlers", func() {
 		})
 
 		It("allows admin to cancel any job", func() {
-			pipeline := &mockPipeline{
-				getJobFn: func(_ context.Context, _ *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
-					return connect.NewResponse(&pb.GetJobResponse{
-						Job: &pb.PipelineJob{
-							JobId: "job-1",
-							Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
-						},
-					}), nil
-				},
-			}
+			pipeline := ownedJobBackend("user-a")
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
 
 			resp, err := svc.CancelJob(adminCtx(), connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
@@ -523,52 +433,34 @@ var _ = Describe("SubmitDocument", func() {
 		Expect(resp.Msg.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
 	})
 
-	It("returns error when ingestion backend fails", func() {
-		ing := &mockIngestion{
+	// A plain backend error is withheld as Internal; backend_errors_bdd_test.go
+	// covers the message, the log and the pass-through of actionable codes.
+	DescribeTable("fails with Internal when a chained backend fails internally",
+		func(opt gateway.ServiceOption, wantCode connect.Code) {
+			svc := newTestService(opt)
+
+			_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
+			}))
+			Expect(err).To(HaveOccurred())
+			Expect(connect.CodeOf(err)).To(Equal(wantCode))
+		},
+		Entry("ingestion backend fails", gateway.WithIngestionBackend(&mockIngestion{
 			convertFn: func(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
 				return nil, errors.New("ingestion failure")
 			},
-		}
-		svc := newTestService(gateway.WithIngestionBackend(ing))
-
-		ctx := userCtx("user-a")
-		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
-			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
-		}))
-		Expect(err).To(HaveOccurred())
-	})
-
-	It("returns error when catalog backend fails", func() {
-		cat := &mockCatalog{
+		}), connect.CodeInternal),
+		Entry("catalog backend fails", gateway.WithCatalogBackend(&mockCatalog{
 			parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
 				return nil, connect.NewError(connect.CodeInternal, errors.New("catalog unavailable"))
 			},
-		}
-		svc := newTestService(gateway.WithCatalogBackend(cat))
-
-		ctx := userCtx("user-a")
-		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
-			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
-		}))
-		Expect(err).To(HaveOccurred())
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
-	})
-
-	It("returns error when pipeline backend fails", func() {
-		pipeline := &mockPipeline{
+		}), connect.CodeInternal),
+		Entry("pipeline backend fails", gateway.WithPipelineBackend(&mockPipeline{
 			createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
 				return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline unavailable"))
 			},
-		}
-		svc := newTestService(gateway.WithPipelineBackend(pipeline))
-
-		ctx := userCtx("user-a")
-		_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
-			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
-		}))
-		Expect(err).To(HaveOccurred())
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
-	})
+		}), connect.CodeInternal),
+	)
 
 	It("returns error when no source provided", func() {
 		svc := newTestService()
@@ -705,13 +597,6 @@ var _ = Describe("Graph handlers", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetResponse().GetRowCount()).To(Equal(int32(1)))
 		})
-
-		It("returns InvalidArgument for empty cypher", func() {
-			svc := newTestService()
-			_, err := svc.QueryGraph(adminCtx(), connect.NewRequest(&pb.QueryGraphRequest{Cypher: ""}))
-			Expect(err).To(HaveOccurred())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
 	})
 
 	Context("ListJobMappings", func() {
@@ -719,14 +604,6 @@ var _ = Describe("Graph handlers", func() {
 			svc := newTestService(gateway.WithMappingsBackend(&mockMappings{}))
 			_, err := svc.ListJobMappings(context.Background(), connect.NewRequest(&pb.ListJobMappingsRequest{JobId: "job-1"}))
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
-		})
-
-		It("returns InvalidArgument for empty job_id without calling the backend", func() {
-			m := &mockMappings{}
-			svc := newTestService(gateway.WithMappingsBackend(m))
-			_, err := svc.ListJobMappings(userCtx("user-a"), connect.NewRequest(&pb.ListJobMappingsRequest{}))
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-			Expect(m.got).To(BeNil())
 		})
 
 		It("returns Unavailable when the mappings backend is nil", func() {
@@ -765,12 +642,6 @@ var _ = Describe("Graph handlers", func() {
 	})
 
 	Context("GetControlMappings", func() {
-		It("returns InvalidArgument for empty control_id", func() {
-			svc := newTestService(gateway.WithMappingsBackend(&mockMappings{}))
-			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{}))
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
 		It("returns Unavailable when the mappings backend is nil", func() {
 			svc := newTestService()
 			_, err := svc.GetControlMappings(userCtx("user-a"), connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ctrl-1"}))
@@ -858,14 +729,6 @@ var _ = Describe("Graph handlers", func() {
 			resp, err := svc.FindSimilar(ctx, connect.NewRequest(&pb.FindSimilarRequest{ControlId: "ctrl-1"}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
-		})
-
-		It("returns InvalidArgument for empty control_id", func() {
-			svc := newTestService()
-			ctx := userCtx("user-a")
-			_, err := svc.FindSimilar(ctx, connect.NewRequest(&pb.FindSimilarRequest{ControlId: ""}))
-			Expect(err).To(HaveOccurred())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 	})
 })
@@ -986,13 +849,104 @@ var _ = Describe("Feedback handlers", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetVoteId()).To(Equal("vote-1"))
 		})
+	})
+})
 
-		It("returns InvalidArgument for empty mapping_id", func() {
-			svc := newTestService()
-			ctx := userCtx("user-a")
-			_, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: ""}))
+var _ = Describe("Required request arguments", func() {
+	DescribeTable("returns InvalidArgument for a missing argument",
+		func(ctx context.Context, call func(context.Context, *gateway.Service) error) {
+			// Every backend method an argument-taking RPC could reach records its
+			// name, so any entry fails if validation stops short-circuiting.
+			// mockMappings has no hook to record from; it keeps the request in
+			// got, which is checked after the call.
+			var reached []string
+			record := func(name string) { reached = append(reached, name) }
+			mappings := &mockMappings{}
+			svc := newTestService(
+				gateway.WithMappingsBackend(mappings),
+				gateway.WithCatalogBackend(&mockCatalog{
+					getCatalogFn: func(context.Context, *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error) {
+						record("GetCatalog")
+						return nil, errors.New("backend reached")
+					},
+					getControlFn: func(context.Context, *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error) {
+						record("GetControl")
+						return nil, errors.New("backend reached")
+					},
+					searchControlsFn: func(context.Context, *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error) {
+						record("SearchControls")
+						return nil, errors.New("backend reached")
+					},
+				}),
+				gateway.WithPipelineBackend(&mockPipeline{
+					getJobFn: func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+						record("GetJob")
+						return nil, errors.New("backend reached")
+					},
+				}),
+				gateway.WithGraphBackend(&mockGraph{
+					queryFn: func(context.Context, *connect.Request[pb.QueryRequest]) (*connect.Response[pb.QueryResponse], error) {
+						record("Query")
+						return nil, errors.New("backend reached")
+					},
+					similaritySearchFn: func(context.Context, *connect.Request[pb.SimilaritySearchRequest]) (*connect.Response[pb.SimilaritySearchResponse], error) {
+						record("SimilaritySearch")
+						return nil, errors.New("backend reached")
+					},
+				}),
+				gateway.WithFeedbackBackend(&mockFeedback{
+					submitVoteFn: func(context.Context, *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error) {
+						record("SubmitVote")
+						return nil, errors.New("backend reached")
+					},
+				}),
+			)
+
+			err := call(ctx, svc)
 			Expect(err).To(HaveOccurred())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-	})
+			if mappings.got != nil {
+				record("ListMappings")
+			}
+			Expect(reached).To(BeEmpty(), "validation must reject the request before any backend call")
+		},
+		Entry("empty catalog_id on GetCatalog", userCtx("user-1"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.GetCatalog(ctx, connect.NewRequest(&pb.GetCatalogRequest{CatalogId: ""}))
+			return err
+		}),
+		Entry("empty control_id on GetControl", userCtx("user-1"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.GetControl(ctx, connect.NewRequest(&pb.GetControlRequest{ControlId: ""}))
+			return err
+		}),
+		Entry("empty query on SearchControls", userCtx("user-1"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.SearchControls(ctx, connect.NewRequest(&pb.SearchControlsRequest{Query: ""}))
+			return err
+		}),
+		Entry("empty job_id on GetJob", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: ""}))
+			return err
+		}),
+		// QueryGraph checks the admin role before validating arguments, so only
+		// an admin reaches the cypher check.
+		Entry("empty cypher on QueryGraph (admin: RBAC precedes validation)", adminCtx(), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.QueryGraph(ctx, connect.NewRequest(&pb.QueryGraphRequest{Cypher: ""}))
+			return err
+		}),
+		Entry("empty job_id on ListJobMappings", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.ListJobMappings(ctx, connect.NewRequest(&pb.ListJobMappingsRequest{}))
+			return err
+		}),
+		Entry("empty control_id on GetControlMappings", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{}))
+			return err
+		}),
+		Entry("empty control_id on FindSimilar", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.FindSimilar(ctx, connect.NewRequest(&pb.FindSimilarRequest{ControlId: ""}))
+			return err
+		}),
+		Entry("empty mapping_id on SubmitVote", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: ""}))
+			return err
+		}),
+	)
 })

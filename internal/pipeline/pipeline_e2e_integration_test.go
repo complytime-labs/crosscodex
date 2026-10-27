@@ -10,8 +10,6 @@ import (
 	crand "crypto/rand"
 	"database/sql"
 	"fmt"
-	"hash/fnv"
-	"math/rand"
 	"os"
 	"time"
 
@@ -25,12 +23,12 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/internal/worker"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
-	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -45,72 +43,6 @@ import (
 // the pipeline writes and the similarity matrix the candidate generator reads
 // agree on one model.
 const e2eModel = "e2e-test-model"
-
-// deterministicLLMClient is a hermetic fake llmclient.Client for the
-// end-to-end test. Embed returns 2000-dimension vectors deterministically
-// seeded from each input's fnv hash (identical text always yields the identical
-// vector, so two controls with identical prepared text embed to cosine
-// similarity 1.0 -> a stable candidate pair). Complete returns one canned,
-// parseable response per analyzer, routed by the prompt name the worker
-// forwards from the task payload.
-type deterministicLLMClient struct{}
-
-var _ llmclient.Client = deterministicLLMClient{}
-
-func (deterministicLLMClient) Complete(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	var content string
-	switch req.PromptName {
-	case "classify":
-		// ParseClassification expects "Type|Level".
-		content = "Technical|Operational"
-	case "requires":
-		// requires.ParseResponse keys on "REQUIRES: YES|NO"; a single YES vote
-		// with HIGH confidence clears the consensus threshold.
-		content = "REQUIRES: YES\nJUSTIFICATION: prerequisite control\nCONFIDENCE: HIGH"
-	case "relationship":
-		// relationship.Aggregate omits NO_RELATIONSHIP pairs, so the
-		// relationship analyzer produces an (empty) result row and populates no
-		// vote_summaries rows; only the requires contribution reaches synthesis.
-		content = "RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH"
-	case "artifacts":
-		// artifacts.ParseResponse treats "ARTIFACTS: NONE" as the empty
-		// sentinel — a valid, parseable "no artifacts" result.
-		content = "ARTIFACTS: NONE"
-	default:
-		return nil, fmt.Errorf("deterministicLLMClient: unexpected prompt name %q", req.PromptName)
-	}
-
-	return &llmclient.CompletionResponse{
-		Model: req.Model,
-		Choices: []llmclient.CompletionChoice{
-			{
-				Index:        0,
-				Message:      llmclient.ChatMessage{Role: "assistant", Content: content},
-				FinishReason: "stop",
-			},
-		},
-	}, nil
-}
-
-func (deterministicLLMClient) Embed(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
-	data := make([]llmclient.EmbeddingData, len(req.Input))
-	for i, text := range req.Input {
-		h := fnv.New64a()
-		if _, err := h.Write([]byte(text)); err != nil {
-			return nil, fmt.Errorf("deterministicLLMClient: hashing input: %w", err)
-		}
-		rng := rand.New(rand.NewSource(int64(h.Sum64())))
-		vec := make([]float32, embeddingDim)
-		for j := range vec {
-			vec[j] = float32(rng.NormFloat64())
-		}
-		data[i] = llmclient.EmbeddingData{Index: i, Embedding: vec}
-	}
-	return &llmclient.EmbeddingResponse{Data: data, Model: req.Model}, nil
-}
-
-func (deterministicLLMClient) Health(_ context.Context) error { return nil }
-func (deterministicLLMClient) Close() error                   { return nil }
 
 // e2eKeyProvider is an ephemeral ECDSA P-256 key provider for the attestation
 // generator, mirroring pkg/attestation's test double. Attestation failures are
@@ -170,15 +102,9 @@ var _ = Describe("Pipeline end-to-end", func() {
 		Expect(migrator.Close()).To(Succeed(), "close migrator")
 
 		// Ensure app_user password (idempotent).
-		adminDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "open admin connection")
 		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-		_, err = adminDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "set app_user password")
-		Expect(adminDB.Close()).To(Succeed(), "close admin connection")
+		Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "set app_user password")
 
 		// Superuser pool for RLS-bypassing seed writes and verification reads.
 		suPool, err := db.NewPool(db.PoolConfig{
@@ -190,7 +116,7 @@ var _ = Describe("Pipeline end-to-end", func() {
 		defer suPool.Close()
 
 		// app_user pool -> tenant-scoped connection (RLS enforced).
-		appDSN, err := candidateITAppUserDSN(suDSN)
+		appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
 		Expect(err).NotTo(HaveOccurred(), "build app_user DSN")
 		appPool, err := db.NewPool(db.PoolConfig{DSN: appDSN, MaxOpenConns: 4})
 		Expect(err).NotTo(HaveOccurred(), "create app_user pool")
@@ -287,7 +213,7 @@ var _ = Describe("Pipeline end-to-end", func() {
 			},
 		}
 
-		fakeLLM := deterministicLLMClient{}
+		fakeLLM := testspecs.DeterministicLLM{EmbeddingDim: embeddingDim}
 
 		// Embedded-only prompt layer: the built-in defaults provide classify,
 		// artifacts, requires, and relationship prompts. Restricting the stack to

@@ -3,7 +3,6 @@ package relationship_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -15,6 +14,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/prompt/prompttest"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -28,29 +28,11 @@ func (m *mockCandidateProvider) Candidates(_ context.Context, _, _ string) ([]re
 	return m.pairs, m.err
 }
 
-// mockPromptRegistry returns a pre-configured prompt spec.
-type mockPromptRegistry struct {
-	spec *prompt.PromptSpec
-	err  error
-}
-
-func (m *mockPromptRegistry) Resolve(_ context.Context, _ string) (*prompt.PromptSpec, error) {
-	if m.err != nil {
-		return nil, m.err
+// specRegistry returns a prompttest.Fake whose Resolve yields spec.
+func specRegistry(spec *prompt.PromptSpec) *prompttest.Fake {
+	return &prompttest.Fake{
+		ResolveFunc: func(context.Context, string) (*prompt.PromptSpec, error) { return spec, nil },
 	}
-	return m.spec, nil
-}
-
-func (m *mockPromptRegistry) Render(_ context.Context, _ string, _ map[string]string) (*prompt.ResolvedPrompt, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *mockPromptRegistry) List(_ context.Context) ([]string, error) {
-	return []string{"relationship"}, nil
-}
-
-func (m *mockPromptRegistry) Layers(_ context.Context, _ string) ([]prompt.LayerInfo, error) {
-	return nil, nil
 }
 
 var _ = Describe("RelationshipAnalyzer", func() {
@@ -59,7 +41,7 @@ var _ = Describe("RelationshipAnalyzer", func() {
 		ctx        context.Context
 		cfg        config.RelationshipConfig
 		candidates *mockCandidateProvider
-		prompts    *mockPromptRegistry
+		prompts    *prompttest.Fake
 	)
 
 	defaultSpec := &prompt.PromptSpec{
@@ -85,7 +67,7 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			ActionableTypes:     []string{"EQUIVALENT", "SUPERSET_OF"},
 		}
 		candidates = &mockCandidateProvider{}
-		prompts = &mockPromptRegistry{spec: defaultSpec}
+		prompts = specRegistry(defaultSpec)
 		a = relationship.New(nil, prompts, candidates, cfg)
 	})
 
@@ -151,53 +133,33 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			Expect(tasks[0].TaskID).To(Equal("relationship-AC-1--IT-3.2-qwen3:8b-s0"))
 		})
 
-		It("forces temperature to 0.0 when SamplesPerModel == 1", func() {
-			candidates.pairs = []relationship.CandidatePair{
-				{SourceControlID: "AC-1", TargetControlID: "IT-3.2", SimilarityScore: 87.3},
-			}
-			cfg.SamplesPerModel = 1
-			cfg.SamplingTemperature = 0.7
-			a = relationship.New(nil, prompts, candidates, cfg)
+		DescribeTable("sets the task temperature from SamplesPerModel",
+			func(samples int, temp, wantTemp float64) {
+				candidates.pairs = []relationship.CandidatePair{
+					{SourceControlID: "AC-1", TargetControlID: "IT-3.2", SimilarityScore: 87.3},
+				}
+				cfg.SamplesPerModel = samples
+				cfg.SamplingTemperature = temp
+				a = relationship.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
-			})
-			Expect(err).NotTo(HaveOccurred())
-			payload, ok := tasks[0].Payload.(*structpb.Struct)
-			Expect(ok).To(BeTrue())
-			Expect(payload.Fields["temperature"].GetNumberValue()).To(Equal(0.0))
-			Expect(payload.Fields).To(HaveKey("messages"))
-			msgsList := payload.Fields["messages"].GetListValue()
-			Expect(msgsList).NotTo(BeNil())
-			Expect(msgsList.Values).To(HaveLen(2))
-			Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
-			Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
-		})
-
-		It("uses SamplingTemperature when SamplesPerModel > 1", func() {
-			candidates.pairs = []relationship.CandidatePair{
-				{SourceControlID: "AC-1", TargetControlID: "IT-3.2", SimilarityScore: 87.3},
-			}
-			cfg.SamplesPerModel = 3
-			cfg.SamplingTemperature = 0.7
-			a = relationship.New(nil, prompts, candidates, cfg)
-
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
-			})
-			Expect(err).NotTo(HaveOccurred())
-			payload, ok := tasks[0].Payload.(*structpb.Struct)
-			Expect(ok).To(BeTrue())
-			Expect(payload.Fields["temperature"].GetNumberValue()).To(Equal(0.7))
-			Expect(payload.Fields).To(HaveKey("messages"))
-			msgsList := payload.Fields["messages"].GetListValue()
-			Expect(msgsList).NotTo(BeNil())
-			Expect(msgsList.Values).To(HaveLen(2))
-			Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
-			Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
-		})
+				control := &pb.Control{ControlId: "AC-1", Statement: "test"}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
+					Parameters: map[string]string{"job_id": "job-1"},
+				})
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok := tasks[0].Payload.(*structpb.Struct)
+				Expect(ok).To(BeTrue())
+				Expect(payload.Fields["temperature"].GetNumberValue()).To(Equal(wantTemp))
+				Expect(payload.Fields).To(HaveKey("messages"))
+				msgsList := payload.Fields["messages"].GetListValue()
+				Expect(msgsList).NotTo(BeNil())
+				Expect(msgsList.Values).To(HaveLen(2))
+				Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
+				Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
+			},
+			Entry("forces temperature to 0.0 when SamplesPerModel == 1", 1, 0.7, 0.0),
+			Entry("uses SamplingTemperature when SamplesPerModel > 1", 3, 0.7, 0.7),
+		)
 	})
 
 	Context("Aggregate", func() {

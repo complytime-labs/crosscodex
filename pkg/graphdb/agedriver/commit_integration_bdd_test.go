@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
@@ -96,7 +97,7 @@ var _ = Describe("Commit failure telemetry", func() {
 	)
 
 	BeforeEach(func() {
-		tenantID = testID("commit-fail")
+		tenantID = dbtest.TestID("commit-fail")
 		setupTenant(tenantID)
 		DeferCleanup(func() { cleanupTenant(tenantID) })
 

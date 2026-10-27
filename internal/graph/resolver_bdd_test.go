@@ -12,6 +12,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -102,26 +103,19 @@ var _ = Describe("PGResolver tenant scoping", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		var capturedArgs []any
-		tx := &fakeTransaction{
-			queryRowFunc: func(_ context.Context, _ string, args ...any) db.Row {
+		tx := &dbtest.Tx{
+			QueryRowFunc: func(_ context.Context, _ string, args ...any) db.Row {
 				capturedArgs = args
-				return &fakeRow{scanFunc: func(dest ...any) error {
-					*dest[0].(*[]byte) = []byte(`[]`)
-					return nil
-				}}
+				return dbtest.Row(nil, []byte(`[]`))
 			},
 		}
-		conn := &fakeTenantConnection{
-			beginFunc: func(_ context.Context) (db.Transaction, error) {
-				return tx, nil
-			},
-		}
+		conn := &dbtest.Conn{Tx: tx}
 		r := graph.NewPGResolver(conn)
 
 		data, err := r.Resolve(ctx, graph.ResourceRef{URI: "pg://results/job-1/requires"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(data).To(Equal([]byte(`[]`)))
-		Expect(tx.committed).To(BeTrue())
+		Expect(tx.Commits()).To(Equal(1))
 		Expect(capturedArgs).To(HaveLen(3), "query must bind job_id, analyzer_name, and tenant_id")
 		Expect(capturedArgs[2]).To(Equal("tenant-a"), "third bound arg must be the tenant_id from context")
 	})
@@ -131,26 +125,20 @@ var _ = Describe("PGResolver tenant scoping", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		var capturedArgs []any
-		tx := &fakeTransaction{
-			queryRowFunc: func(_ context.Context, _ string, args ...any) db.Row {
+		tx := &dbtest.Tx{
+			QueryRowFunc: func(_ context.Context, _ string, args ...any) db.Row {
 				capturedArgs = args
-				return &fakeRow{scanFunc: func(_ ...any) error {
-					return sql.ErrNoRows
-				}}
+				return dbtest.Row(sql.ErrNoRows)
 			},
 		}
-		conn := &fakeTenantConnection{
-			beginFunc: func(_ context.Context) (db.Transaction, error) {
-				return tx, nil
-			},
-		}
+		conn := &dbtest.Conn{Tx: tx}
 		r := graph.NewPGResolver(conn)
 
 		_, err = r.Resolve(ctx, graph.ResourceRef{URI: "pg://results/job-1/requires"})
 		Expect(err).To(HaveOccurred())
 		Expect(errors.Is(err, sql.ErrNoRows)).To(BeTrue())
-		Expect(tx.committed).To(BeFalse())
-		Expect(tx.rolledBack).To(BeTrue())
+		Expect(tx.Commits()).To(Equal(0))
+		Expect(tx.Rollbacks()).To(Equal(1))
 		Expect(capturedArgs).To(HaveLen(3), "query must bind job_id, analyzer_name, and tenant_id")
 		Expect(capturedArgs[2]).To(Equal("tenant-b"), "third bound arg must be the tenant_id from context")
 	})
@@ -168,8 +156,8 @@ var _ = Describe("PGResolver tenant scoping", func() {
 		ctx, err := tenant.WithTenant(context.Background(), "tenant-a")
 		Expect(err).NotTo(HaveOccurred())
 
-		conn := &fakeTenantConnection{
-			beginFunc: func(_ context.Context) (db.Transaction, error) {
+		conn := &dbtest.Conn{
+			BeginFunc: func(_ context.Context) (db.Transaction, error) {
 				return nil, db.ErrTenantRequired
 			},
 		}
@@ -179,88 +167,3 @@ var _ = Describe("PGResolver tenant scoping", func() {
 		Expect(errors.Is(err, db.ErrTenantRequired)).To(BeTrue())
 	})
 })
-
-// fakeTenantConnection is a package-local minimal test double for
-// db.TenantConnection. internal/graph cannot import internal/pipeline's
-// test-only mocks, so this mirrors the shape used there.
-type fakeTenantConnection struct {
-	beginFunc func(ctx context.Context) (db.Transaction, error)
-}
-
-func (f *fakeTenantConnection) Begin(ctx context.Context) (db.Transaction, error) {
-	if f.beginFunc != nil {
-		return f.beginFunc(ctx)
-	}
-	return nil, errors.New("not implemented")
-}
-
-func (f *fakeTenantConnection) Query(_ context.Context, _ string, _ ...any) (db.Rows, error) {
-	return nil, errors.New("Query not allowed on TenantConnection outside transaction")
-}
-
-func (f *fakeTenantConnection) QueryRow(_ context.Context, _ string, _ ...any) db.Row {
-	panic("QueryRow not allowed on TenantConnection outside transaction")
-}
-
-func (f *fakeTenantConnection) Exec(_ context.Context, _ string, _ ...any) error {
-	return errors.New("Exec not allowed on TenantConnection outside transaction")
-}
-
-func (f *fakeTenantConnection) Close() error { return nil }
-
-type fakeTransaction struct {
-	queryFunc    func(ctx context.Context, query string, args ...any) (db.Rows, error)
-	queryRowFunc func(ctx context.Context, query string, args ...any) db.Row
-	commitFunc   func() error
-	rollbackFunc func() error
-	committed    bool
-	rolledBack   bool
-}
-
-func (f *fakeTransaction) Commit() error {
-	f.committed = true
-	if f.commitFunc != nil {
-		return f.commitFunc()
-	}
-	return nil
-}
-
-func (f *fakeTransaction) Rollback() error {
-	if f.committed {
-		// Mirrors real driver behavior: Rollback after a successful
-		// Commit is a no-op, not a second rollback.
-		return nil
-	}
-	f.rolledBack = true
-	if f.rollbackFunc != nil {
-		return f.rollbackFunc()
-	}
-	return nil
-}
-
-func (f *fakeTransaction) Query(ctx context.Context, query string, args ...any) (db.Rows, error) {
-	if f.queryFunc != nil {
-		return f.queryFunc(ctx, query, args...)
-	}
-	return nil, errors.New("not implemented")
-}
-
-func (f *fakeTransaction) QueryRow(ctx context.Context, query string, args ...any) db.Row {
-	if f.queryRowFunc != nil {
-		return f.queryRowFunc(ctx, query, args...)
-	}
-	panic("not implemented")
-}
-
-func (f *fakeTransaction) Exec(_ context.Context, _ string, _ ...any) error {
-	return errors.New("not implemented")
-}
-
-// fakeRow is a minimal test double for db.Row.
-type fakeRow struct {
-	scanFunc func(dest ...any) error
-}
-
-func (r *fakeRow) Scan(dest ...any) error {
-	return r.scanFunc(dest...)
-}

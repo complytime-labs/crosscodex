@@ -10,18 +10,21 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 )
 
 var _ = Describe("PGControlsReader", func() {
 	It("validates the tenant ID", func() {
-		reader := pipeline.NewPGControlsReader(&mockTenantConnection{})
+		conn := &dbtest.Conn{}
+		reader := pipeline.NewPGControlsReader(conn)
 		_, err := reader.ControlData(context.Background(), "", "catalog-1", "job-1")
 		Expect(err).To(HaveOccurred(), "expected error for empty tenant ID")
+		Expect(conn.Begins()).To(BeZero(), "the tenant must be refused before any transaction starts")
 	})
 
 	It("returns an error when Begin fails", func() {
-		mockDB := &mockTenantConnection{
-			beginFunc: func(ctx context.Context) (db.Transaction, error) {
+		mockDB := &dbtest.Conn{
+			BeginFunc: func(ctx context.Context) (db.Transaction, error) {
 				return nil, errors.New("connection refused")
 			},
 		}
@@ -31,43 +34,42 @@ var _ = Describe("PGControlsReader", func() {
 	})
 
 	It("returns an error when Query fails", func() {
-		mockTx := &mockTransaction{
-			queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
 				return nil, errors.New("query failed")
 			},
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGControlsReader(mockDB)
 		_, err := reader.ControlData(context.Background(), "tenant-1", "catalog-1", "job-1")
 		Expect(err).To(HaveOccurred(), "expected error when Query fails")
 	})
 
 	It("returns an error on column-count mismatch during scan", func() {
-		mockTx := &mockTransaction{
-			queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-				// Wrong column count triggers mockRows.Scan's "column count mismatch".
-				return &mockRows{rows: [][]any{{"AC-1", "title-only"}}, cursor: 0}, nil
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				// Wrong column count makes dbtest.Rows' Scan fail.
+				return dbtest.Rows(nil, []any{"AC-1", "title-only"}), nil
 			},
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGControlsReader(mockDB)
 		_, err := reader.ControlData(context.Background(), "tenant-1", "catalog-1", "job-1")
 		Expect(err).To(HaveOccurred(), "expected error on column-count mismatch during scan")
 	})
 
 	It("tolerates sql.ErrNoRows from the classify lookup", func() {
-		mockTx := &mockTransaction{
-			queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-				return &mockRows{rows: [][]any{}, cursor: 0}, nil
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				return dbtest.Rows(nil), nil
 			},
-			queryRowFunc: func(ctx context.Context, query string, args ...any) db.Row {
+			QueryRowFunc: func(ctx context.Context, query string, args ...any) db.Row {
 				// pgControlsReader.ControlData tolerates this via errors.Is(err,
 				// sql.ErrNoRows); a plain errors.New would not satisfy that check.
-				return errRow{err: sql.ErrNoRows}
+				return dbtest.Row(sql.ErrNoRows)
 			},
-			commitFunc: func() error { return nil },
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGControlsReader(mockDB)
 		data, err := reader.ControlData(context.Background(), "tenant-1", "catalog-1", "job-1")
 		Expect(err).NotTo(HaveOccurred(), "expected no-classify-yet to be tolerated (empty Type/Level)")
@@ -75,15 +77,15 @@ var _ = Describe("PGControlsReader", func() {
 	})
 
 	It("returns an error on malformed classify JSON", func() {
-		mockTx := &mockTransaction{
-			queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-				return &mockRows{rows: [][]any{}, cursor: 0}, nil
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				return dbtest.Rows(nil), nil
 			},
-			queryRowFunc: func(ctx context.Context, query string, args ...any) db.Row {
-				return okRow{data: []byte("not json")}
+			QueryRowFunc: func(ctx context.Context, query string, args ...any) db.Row {
+				return dbtest.Row(nil, []byte("not json"))
 			},
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGControlsReader(mockDB)
 		_, err := reader.ControlData(context.Background(), "tenant-1", "catalog-1", "job-1")
 		Expect(err).To(HaveOccurred(), "expected error on malformed classify JSON")
@@ -92,14 +94,16 @@ var _ = Describe("PGControlsReader", func() {
 
 var _ = Describe("PGEmbeddingsReader", func() {
 	It("validates the tenant ID", func() {
-		reader := pipeline.NewPGEmbeddingsReader(&mockTenantConnection{})
+		conn := &dbtest.Conn{}
+		reader := pipeline.NewPGEmbeddingsReader(conn)
 		_, _, err := reader.SimilarityMatrix(context.Background(), "", "catalog-1", "model-1")
 		Expect(err).To(HaveOccurred(), "expected error for empty tenant ID")
+		Expect(conn.Begins()).To(BeZero(), "the tenant must be refused before any transaction starts")
 	})
 
 	It("returns an error when Begin fails", func() {
-		mockDB := &mockTenantConnection{
-			beginFunc: func(ctx context.Context) (db.Transaction, error) {
+		mockDB := &dbtest.Conn{
+			BeginFunc: func(ctx context.Context) (db.Transaction, error) {
 				return nil, errors.New("connection refused")
 			},
 		}
@@ -109,12 +113,12 @@ var _ = Describe("PGEmbeddingsReader", func() {
 	})
 
 	It("returns an error when Query fails", func() {
-		mockTx := &mockTransaction{
-			queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
 				return nil, errors.New("query failed")
 			},
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGEmbeddingsReader(mockDB)
 		_, _, err := reader.SimilarityMatrix(context.Background(), "tenant-1", "catalog-1", "model-1")
 		Expect(err).To(HaveOccurred(), "expected error when Query fails")
@@ -124,19 +128,15 @@ var _ = Describe("PGEmbeddingsReader", func() {
 		// Deliberately asymmetric so a transposition bug (values[ti][si] instead
 		// of values[si][ti]) or an id-index mixup would fail these assertions --
 		// a symmetric fixture cannot distinguish correct assembly from transposed.
-		mockTx := &mockTransaction{
-			queryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-				return &mockRows{
-					rows: [][]any{
-						{"ctrl-001", "ctrl-002", 90.0},
-						{"ctrl-002", "ctrl-001", 70.0},
-					},
-					cursor: 0,
-				}, nil
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				return dbtest.Rows(nil,
+					[]any{"ctrl-001", "ctrl-002", 90.0},
+					[]any{"ctrl-002", "ctrl-001", 70.0},
+				), nil
 			},
-			commitFunc: func() error { return nil },
 		}
-		mockDB := &mockTenantConnection{beginFunc: func(ctx context.Context) (db.Transaction, error) { return mockTx, nil }}
+		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGEmbeddingsReader(mockDB)
 		ids, values, err := reader.SimilarityMatrix(context.Background(), "tenant-1", "catalog-1", "model-1")
 		Expect(err).NotTo(HaveOccurred())
@@ -155,24 +155,3 @@ var _ = Describe("PGEmbeddingsReader", func() {
 		Expect(values[idx["ctrl-002"]][idx["ctrl-001"]]).To(BeNumerically("==", 70.0))
 	})
 })
-
-// errRow and okRow are minimal db.Row test doubles for QueryRow-based reads.
-// db.Row (pkg/db/types.go) declares exactly one method, Scan(dest ...any)
-// error, so these satisfy it directly.
-
-type errRow struct{ err error }
-
-func (r errRow) Scan(dest ...any) error { return r.err }
-
-type okRow struct{ data []byte }
-
-func (r okRow) Scan(dest ...any) error {
-	if len(dest) != 1 {
-		return errors.New("expected 1 scan target")
-	}
-	if p, ok := dest[0].(*[]byte); ok {
-		*p = r.data
-		return nil
-	}
-	return errors.New("unsupported scan target")
-}

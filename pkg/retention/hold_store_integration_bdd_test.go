@@ -5,8 +5,6 @@ package retention_test
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"net/url"
 	"os"
 	"time"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
+	"github.com/complytime-labs/crosscodex/pkg/retention/retentiontest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -40,18 +39,14 @@ var _ = BeforeSuite(func() {
 
 	// Set the app_user password so pool authentication works.
 	// This mirrors the SynchronizedBeforeSuite in pkg/db/db_integration_bdd_test.go.
-	adminDB, err := sql.Open("pgx", suDSN)
-	Expect(err).NotTo(HaveOccurred(), "open admin connection")
 	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-	_, err = adminDB.ExecContext(ctx, stmt)
-	Expect(err).NotTo(HaveOccurred(), "set app_user password")
-	Expect(adminDB.Close()).To(Succeed(), "close admin connection")
+	Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "set app_user password")
 
+	appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
+	Expect(err).NotTo(HaveOccurred(), "app_user DSN")
 	holdIntegPool, err = db.NewPool(db.PoolConfig{
-		DSN:          holdAppUserDSN(suDSN),
+		DSN:          appDSN,
 		MaxOpenConns: 3,
 	})
 	Expect(err).NotTo(HaveOccurred(), "create app_user integration pool")
@@ -62,21 +57,6 @@ var _ = AfterSuite(func() {
 		holdIntegPool.Close() //nolint:errcheck
 	}
 })
-
-// holdAppUserDSN rewrites the superuser DSN to use app_user credentials.
-// All TLS parameters are preserved since only the userinfo component changes.
-func holdAppUserDSN(suDSN string) string {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		panic(fmt.Sprintf("bad TEST_DATABASE_DSN: %v", err))
-	}
-	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	if err != nil {
-		panic(fmt.Sprintf("app_user password: %v", err))
-	}
-	u.User = url.UserPassword("app_user", pw)
-	return u.String()
-}
 
 var _ = Describe("pgHoldStore", Ordered, func() {
 	var store retention.HoldStore
@@ -243,5 +223,45 @@ var _ = Describe("retention_holds RLS", Ordered, func() {
 			Scope: retention.HoldScope{TenantID: "tenant-a"},
 		})
 		Expect(err).To(HaveOccurred())
+	})
+})
+
+// The Postgres store must pass the same contract retentiontest.Fake does, as
+// the restricted app_user role under row-level security. Seeding and cleanup
+// use a superuser connection, the privileged path that can write global
+// (tenant-less) holds and any timestamps.
+var _ = Describe("pgHoldStore contract", func() {
+	retentiontest.HoldStoreContract(func(token string) retentiontest.HoldStoreEnv {
+		admin, err := sql.Open("pgx", os.Getenv("TEST_DATABASE_DSN"))
+		Expect(err).NotTo(HaveOccurred(), "open superuser connection")
+		DeferCleanup(func() {
+			_, err := admin.ExecContext(context.Background(),
+				"DELETE FROM public.retention_holds WHERE name LIKE '%' || $1", token)
+			Expect(err).NotTo(HaveOccurred(), "delete this spec's holds")
+			Expect(admin.Close()).To(Succeed())
+		})
+		return retentiontest.HoldStoreEnv{
+			// The retention pool, as cmd/crosscodexd/bootstrap.go builds the store.
+			Store: retention.NewPgHoldStore(db.NewRetentionTenantPool(holdIntegPool)),
+			Seed: func(h retention.Hold) {
+				var tenantID *string
+				if h.Scope.TenantID != "" {
+					tenantID = &h.Scope.TenantID
+				}
+				var jobID, releasedBy *string
+				if h.Scope.JobID != "" {
+					jobID = &h.Scope.JobID
+				}
+				if h.ReleasedBy != "" {
+					releasedBy = &h.ReleasedBy
+				}
+				_, err := admin.ExecContext(context.Background(), `
+					INSERT INTO public.retention_holds
+						(name, tenant_id, created_before, job_id, created_at, created_by, expires_at, released_at, released_by)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+					h.Name, tenantID, h.Scope.CreatedBefore, jobID, h.CreatedAt, h.CreatedBy, h.ExpiresAt, h.ReleasedAt, releasedBy)
+				Expect(err).NotTo(HaveOccurred(), "seed hold %q", h.Name)
+			},
+		}
 	})
 })

@@ -9,13 +9,19 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 )
 
+// drawBackoffInputs draws a retry attempt (0..10) and a base delay of
+// minBaseMs..5000 milliseconds.
+func drawBackoffInputs(t *rapid.T, minBaseMs int) (int, time.Duration) {
+	baseMs := rapid.IntRange(minBaseMs, 5000).Draw(t, "baseMs")
+	attempt := rapid.IntRange(0, 10).Draw(t, "attempt")
+	return attempt, time.Duration(baseMs) * time.Millisecond
+}
+
 var _ = Describe("Property Specifications", Ordered, func() {
 	Context("computeBackoff — bounded exponential with jitter", func() {
 		It("never exceeds base * 2^attempt * 1.25", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				baseMs := rapid.IntRange(100, 5000).Draw(t, "baseMs")
-				attempt := rapid.IntRange(0, 10).Draw(t, "attempt")
-				base := time.Duration(baseMs) * time.Millisecond
+				attempt, base := drawBackoffInputs(t, 100)
 
 				result := analysis.ExportComputeBackoff(attempt, base)
 
@@ -28,9 +34,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 
 		It("never goes below base * 2^attempt * 0.75", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				baseMs := rapid.IntRange(100, 5000).Draw(t, "baseMs")
-				attempt := rapid.IntRange(0, 10).Draw(t, "attempt")
-				base := time.Duration(baseMs) * time.Millisecond
+				attempt, base := drawBackoffInputs(t, 100)
 
 				result := analysis.ExportComputeBackoff(attempt, base)
 
@@ -43,9 +47,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 
 		It("is always non-negative", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				baseMs := rapid.IntRange(0, 5000).Draw(t, "baseMs")
-				attempt := rapid.IntRange(0, 10).Draw(t, "attempt")
-				base := time.Duration(baseMs) * time.Millisecond
+				attempt, base := drawBackoffInputs(t, 0)
 
 				result := analysis.ExportComputeBackoff(attempt, base)
 				if result < 0 {

@@ -4,10 +4,8 @@ package pipeline
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 
@@ -33,22 +31,6 @@ func vectorLiteral(dim int, val float64) string {
 		parts[i] = fmt.Sprintf("%g", val)
 	}
 	return "[" + strings.Join(parts, ",") + "]"
-}
-
-// candidateITAppUserDSN swaps userinfo to app_user and this run's app_user
-// password, mirroring store_integration_test.go's appUserDSN (renamed to
-// avoid a redeclaration with that file, which shares this test binary).
-func candidateITAppUserDSN(suDSN string) (string, error) {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		return "", err
-	}
-	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	if err != nil {
-		return "", err
-	}
-	u.User = url.UserPassword("app_user", pw)
-	return u.String(), nil
 }
 
 // countCandidates counts rows for a job in the given candidate table through
@@ -95,15 +77,9 @@ var _ = Describe("CandidateGenerator integration", func() {
 		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
 
 		// Ensure app_user password (idempotent).
-		adminDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
 		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-		_, err = adminDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
-		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+		Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "failed to set app_user password")
 
 		// Superuser pool for RLS-bypassing seed writes.
 		suPool, err := db.NewPool(db.PoolConfig{
@@ -115,7 +91,7 @@ var _ = Describe("CandidateGenerator integration", func() {
 		defer suPool.Close()
 
 		// app_user pool -> tenant-scoped connection (RLS enforced).
-		appDSN, err := candidateITAppUserDSN(suDSN)
+		appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
 		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
 		appPool, err := db.NewPool(db.PoolConfig{DSN: appDSN, MaxOpenConns: 2})
 		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")

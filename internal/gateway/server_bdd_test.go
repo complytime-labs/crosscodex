@@ -3,12 +3,16 @@
 package gateway_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -236,5 +240,80 @@ var _ = Describe("Server", func() {
 			Entry("unary", listCatalogs, connect.CodeUnavailable, "catalog backend not configured"),
 			Entry("client streaming", streamDocument, connect.CodeInvalidArgument, "metadata"),
 		)
+	})
+})
+
+// fakeAdminService answers ListHolds with a fixed error; every other
+// AdminService RPC is the generated Unimplemented stub.
+type fakeAdminService struct {
+	crosscodexv1connect.UnimplementedAdminServiceHandler
+	err error
+}
+
+func (f *fakeAdminService) ListHolds(context.Context, *connect.Request[pb.ListHoldsRequest]) (*connect.Response[pb.ListHoldsResponse], error) {
+	return nil, f.err
+}
+
+var _ = Describe("Server error boundary", func() {
+	const secret = "pq: password authentication failed for user secret_admin"
+
+	var logs *bytes.Buffer
+
+	// start serves svc and admin over plain HTTP and returns the base URL.
+	start := func(svc *gateway.Service, admin crosscodexv1connect.AdminServiceHandler) string {
+		srv, err := gateway.NewServer(context.Background(), gateway.ServerConfig{
+			Addr:         "127.0.0.1:0",
+			Service:      svc,
+			Admin:        admin,
+			TenantStatus: &fakeTenantStatus{active: true},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(srv.Start()).To(Succeed())
+		DeferCleanup(func() { _ = srv.Shutdown(context.Background()) })
+		return "http://" + srv.Addr()
+	}
+
+	BeforeEach(func() { logs = &bytes.Buffer{} })
+
+	// AdminService is served by internal/admin, which does not sanitize its
+	// errors, so the mount applies the gateway's boundary policy itself.
+	DescribeTable("withholds an AdminService error the caller cannot act on",
+		func(adminErr error) {
+			url := start(gateway.NewService(gateway.WithLogger(slog.New(slog.NewTextHandler(logs, nil)))), &fakeAdminService{err: adminErr})
+			client := crosscodexv1connect.NewAdminServiceClient(http.DefaultClient, url)
+			_, err := client.ListHolds(context.Background(), connect.NewRequest(&pb.ListHoldsRequest{}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+			Expect(err.Error()).NotTo(ContainSubstring("secret_admin"))
+			Expect(err.Error()).To(MatchRegexp(`the server logged the cause under error reference [0-9a-f]{32}\. Retry the request, and if it keeps failing, give that reference to an operator`))
+			Expect(strings.Count(logs.String(), "secret_admin")).To(Equal(1), "the full error must be logged exactly once")
+			Expect(logs.String()).To(ContainSubstring("method=" + crosscodexv1connect.AdminServiceListHoldsProcedure))
+		},
+		Entry("plain error", errors.New("list holds: "+secret)),
+		Entry("Internal wrapping a store error", connect.NewError(connect.CodeInternal, fmt.Errorf("list holds: %w", errors.New(secret)))),
+	)
+
+	It("passes an AdminService error the caller can act on through unchanged", func() {
+		url := start(gateway.NewService(gateway.WithLogger(slog.New(slog.NewTextHandler(logs, nil)))),
+			&fakeAdminService{err: connect.NewError(connect.CodeInvalidArgument, errors.New("hold_id is required"))})
+		client := crosscodexv1connect.NewAdminServiceClient(http.DefaultClient, url)
+		_, err := client.ListHolds(context.Background(), connect.NewRequest(&pb.ListHoldsRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("hold_id is required"))
+		Expect(logs.String()).To(BeEmpty())
+	})
+
+	It("logs a GatewayService handler's withheld error only once", func() {
+		svc := gateway.NewService(
+			gateway.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+			gateway.WithAdminBackend(&mockAdmin{healthCheckFn: func(context.Context, *connect.Request[pb.HealthCheckRequest]) (*connect.Response[pb.HealthCheckResponse], error) {
+				return nil, errors.New(secret)
+			}}),
+		)
+		url := start(svc, &fakeAdminService{})
+		client := crosscodexv1connect.NewGatewayServiceClient(http.DefaultClient, url)
+		_, err := client.Health(context.Background(), connect.NewRequest(&pb.HealthRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+		Expect(err.Error()).NotTo(ContainSubstring("secret_admin"))
+		Expect(strings.Count(logs.String(), "secret_admin")).To(Equal(1))
 	})
 })

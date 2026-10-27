@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 )
@@ -18,7 +19,7 @@ import (
 var _ = Describe("RequiresEdge", func() {
 	Describe("CreateRequiresEdge", func() {
 		It("creates a REQUIRES edge with full consensus metadata", func() {
-			tenantID := testID("requires-edge")
+			tenantID := dbtest.TestID("requires-edge")
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
@@ -115,7 +116,7 @@ var _ = Describe("RequiresEdge", func() {
 		})
 
 		It("validates required fields", func() {
-			tenantID := testID("requires-edge-validation")
+			tenantID := dbtest.TestID("requires-edge-validation")
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
@@ -160,7 +161,7 @@ var _ = Describe("RequiresEdge", func() {
 		})
 
 		It("handles optional fields correctly", func() {
-			tenantID := testID("requires-edge-optional")
+			tenantID := dbtest.TestID("requires-edge-optional")
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
@@ -207,7 +208,7 @@ var _ = Describe("RequiresEdge", func() {
 		})
 
 		It("supports multiple models in consensus", func() {
-			tenantID := testID("requires-edge-multimodel")
+			tenantID := dbtest.TestID("requires-edge-multimodel")
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
@@ -261,8 +262,8 @@ var _ = Describe("RequiresEdge", func() {
 		})
 
 		It("isolates edges per tenant", func() {
-			tenant1 := testID("requires-tenant-1")
-			tenant2 := testID("requires-tenant-2")
+			tenant1 := dbtest.TestID("requires-tenant-1")
+			tenant2 := dbtest.TestID("requires-tenant-2")
 			setupTenant(tenant1)
 			setupTenant(tenant2)
 			DeferCleanup(func() {
@@ -341,7 +342,7 @@ var _ = Describe("RequiresEdge", func() {
 		})
 
 		It("preserves high-precision confidence values", func() {
-			tenantID := testID("requires-precision")
+			tenantID := dbtest.TestID("requires-precision")
 			setupTenant(tenantID)
 			DeferCleanup(func() { cleanupTenant(tenantID) })
 
@@ -391,7 +392,7 @@ var _ = Describe("RequiresEdge", func() {
 
 		DescribeTable("writes the REQUIRES property map in a fixed order with every value escaped",
 			func(reqEdge graphdb.RequiresEdge, wantProps func(ts string) string) {
-				tenantID := testID("requires-edge-sql")
+				tenantID := dbtest.TestID("requires-edge-sql")
 				setupTenant(tenantID)
 				DeferCleanup(func() { cleanupTenant(tenantID) })
 

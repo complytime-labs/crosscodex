@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 )
@@ -154,7 +155,7 @@ var _ = Describe("BulkCreateEdges (agedriver batched checks)", func() {
 	}
 
 	BeforeEach(func() {
-		tenantID = testID("bulk-edges")
+		tenantID = dbtest.TestID("bulk-edges")
 		setupTenant(tenantID)
 		DeferCleanup(func() { cleanupTenant(tenantID) })
 

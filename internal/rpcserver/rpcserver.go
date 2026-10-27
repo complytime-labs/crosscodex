@@ -8,7 +8,6 @@ package rpcserver
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -35,11 +34,7 @@ func (i *recoveryInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFun
 	return func(ctx context.Context, req connect.AnyRequest) (resp connect.AnyResponse, err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				i.logger.ErrorContext(ctx, "panic in handler",
-					"procedure", req.Spec().Procedure,
-					"panic", fmt.Sprintf("%v", r),
-				)
-				err = connect.NewError(connect.CodeInternal, errors.New("internal server error"))
+				err = i.recovered(ctx, req.Spec().Procedure, r)
 			}
 		}()
 		return next(ctx, req)
@@ -54,15 +49,27 @@ func (i *recoveryInterceptor) WrapStreamingHandler(next connect.StreamingHandler
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) (err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				i.logger.ErrorContext(ctx, "panic in handler",
-					"procedure", conn.Spec().Procedure,
-					"panic", fmt.Sprintf("%v", r),
-				)
-				err = connect.NewError(connect.CodeInternal, errors.New("internal server error"))
+				err = i.recovered(ctx, conn.Spec().Procedure, r)
 			}
 		}()
 		return next(ctx, conn)
 	}
+}
+
+// recovered logs a recovered panic under a fresh error reference, with the
+// local trace ID when there is one, and returns the opaque error the client
+// gets. The panic value can hold any internal detail, so it stays in the log
+// (CWE-209).
+func (i *recoveryInterceptor) recovered(ctx context.Context, procedure string, r any) error {
+	ref := NewErrorReference()
+	i.logger.ErrorContext(ctx, "panic in handler",
+		"procedure", procedure,
+		"error_ref", ref,
+		"trace_id", LocalTraceID(ctx),
+		"panic", fmt.Sprintf("%v", r),
+	)
+	return connect.NewError(connect.CodeInternal, fmt.Errorf(
+		"internal server error; the server logged the cause under error reference %s. Retry the request, and if it keeps failing, give that reference to an operator", ref))
 }
 
 // Listen opens a TCP listener on addr and resolves the TLS config for the

@@ -2,6 +2,7 @@ package analyzer_test
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -13,6 +14,43 @@ import (
 
 // Suite bootstrap lives in analyzer_bdd_test.go (TestAnalyzerBDD).
 // This file only registers Describe nodes; Ginkgo collects them automatically.
+
+// drawDAG draws 1..maxNodes uniquely named nodes (names match
+// [a-z][a-z0-9]{0,nameTail}) and an acyclic edge set: each node depends on at
+// most maxDeps distinct nodes that sort before it, so no cycle can form.
+func drawDAG(t *rapid.T, maxNodes, nameTail, maxDeps int) (map[string]analyzer.RegisteredAnalyzer, map[string][]string) {
+	count := rapid.IntRange(1, maxNodes).Draw(t, "nodeCount")
+	nameSet := make(map[string]bool)
+	for len(nameSet) < count {
+		n := rapid.StringMatching(fmt.Sprintf(`[a-z][a-z0-9]{0,%d}`, nameTail)).Draw(t, "nodeName")
+		nameSet[n] = true
+	}
+	names := make([]string, 0, count)
+	for n := range nameSet {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	nodes := make(map[string]analyzer.RegisteredAnalyzer, count)
+	edges := make(map[string][]string, count)
+	for _, n := range names {
+		nodes[n] = nil // kahnSort only uses map keys
+	}
+	for i := 1; i < count; i++ {
+		numDeps := rapid.IntRange(0, min(i, maxDeps)).Draw(t, "numDeps")
+		var deps []string
+		used := make(map[int]bool)
+		for d := 0; d < numDeps; d++ {
+			idx := rapid.IntRange(0, i-1).Draw(t, "depIdx")
+			if !used[idx] {
+				used[idx] = true
+				deps = append(deps, names[idx])
+			}
+		}
+		edges[names[i]] = deps
+	}
+	return nodes, edges
+}
 
 var _ = Describe("Property Specifications", func() {
 
@@ -70,40 +108,9 @@ var _ = Describe("Property Specifications", func() {
 		Context("when given a valid DAG", func() {
 			It("places every dependency before its dependent in the topological order", func() {
 				rapid.Check(GinkgoT(), func(t *rapid.T) {
-					// Generate 1-15 unique sorted node names.
-					count := rapid.IntRange(1, 15).Draw(t, "nodeCount")
-					nameSet := make(map[string]bool)
-					for len(nameSet) < count {
-						n := rapid.StringMatching(`[a-z][a-z0-9]{0,7}`).Draw(t, "nodeName")
-						nameSet[n] = true
-					}
-					names := make([]string, 0, count)
-					for n := range nameSet {
-						names = append(names, n)
-					}
-					sort.Strings(names)
-
-					// Build a DAG: only add edges from later to earlier names (forward
-					// index -> lower index) to guarantee acyclicity.
-					nodes := make(map[string]analyzer.RegisteredAnalyzer, count)
-					edges := make(map[string][]string, count)
-					for _, n := range names {
-						nodes[n] = nil // kahnSort only uses map keys
-					}
-					for i := 1; i < count; i++ {
-						// Each node may depend on 0..i earlier nodes.
-						numDeps := rapid.IntRange(0, min(i, 3)).Draw(t, "numDeps")
-						var deps []string
-						used := make(map[int]bool)
-						for d := 0; d < numDeps; d++ {
-							idx := rapid.IntRange(0, i-1).Draw(t, "depIdx")
-							if !used[idx] {
-								used[idx] = true
-								deps = append(deps, names[idx])
-							}
-						}
-						edges[names[i]] = deps
-					}
+					// maxNodes=15, nameTail=7, maxDeps=3
+					nodes, edges := drawDAG(t, 15, 7, 3)
+					count := len(nodes)
 
 					levels, order := analyzer.ExportKahnSort(nodes, edges)
 
@@ -141,36 +148,8 @@ var _ = Describe("Property Specifications", func() {
 		Context("when given the same input twice", func() {
 			It("produces identical output (determinism)", func() {
 				rapid.Check(GinkgoT(), func(t *rapid.T) {
-					count := rapid.IntRange(1, 10).Draw(t, "nodeCount")
-					nameSet := make(map[string]bool)
-					for len(nameSet) < count {
-						n := rapid.StringMatching(`[a-z][a-z0-9]{0,5}`).Draw(t, "nodeName")
-						nameSet[n] = true
-					}
-					names := make([]string, 0, count)
-					for n := range nameSet {
-						names = append(names, n)
-					}
-					sort.Strings(names)
-
-					nodes := make(map[string]analyzer.RegisteredAnalyzer, count)
-					edges := make(map[string][]string, count)
-					for _, n := range names {
-						nodes[n] = nil
-					}
-					for i := 1; i < count; i++ {
-						numDeps := rapid.IntRange(0, min(i, 2)).Draw(t, "numDeps")
-						var deps []string
-						used := make(map[int]bool)
-						for d := 0; d < numDeps; d++ {
-							idx := rapid.IntRange(0, i-1).Draw(t, "depIdx")
-							if !used[idx] {
-								used[idx] = true
-								deps = append(deps, names[idx])
-							}
-						}
-						edges[names[i]] = deps
-					}
+					// maxNodes=10, nameTail=5, maxDeps=2
+					nodes, edges := drawDAG(t, 10, 5, 2)
 
 					levels1, order1 := analyzer.ExportKahnSort(nodes, edges)
 					levels2, order2 := analyzer.ExportKahnSort(nodes, edges)

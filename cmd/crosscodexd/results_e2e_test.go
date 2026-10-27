@@ -21,6 +21,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
@@ -28,13 +29,13 @@ import (
 
 // equivalentRelationshipLLMClient answers the relationship prompt with
 // EQUIVALENT so the analyzer and synthesis stages produce mappings to read
-// back. Every other prompt keeps deterministicLLMClient's answers.
+// back. Every other prompt keeps testspecs.DeterministicLLM's answers.
 type equivalentRelationshipLLMClient struct {
-	deterministicLLMClient
+	testspecs.DeterministicLLM
 }
 
 func (c equivalentRelationshipLLMClient) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
-	resp, err := c.deterministicLLMClient.Complete(ctx, req)
+	resp, err := c.DeterministicLLM.Complete(ctx, req)
 	if err != nil || req.PromptName != "relationship" {
 		return resp, err
 	}
@@ -128,7 +129,7 @@ var _ = Describe("crosscodex results: mappings read back from a completed all-ro
 		cfg := allRoleTestConfig(dsn, tenantID)
 		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
-		rt, err := bootstrap(ctx, cfg, WithLLMClient(equivalentRelationshipLLMClient{}))
+		rt, err := bootstrap(ctx, cfg, WithLLMClient(equivalentRelationshipLLMClient{DeterministicLLM: testspecs.DeterministicLLM{EmbeddingDim: e2eEmbeddingDim}}))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap all role")
 		DeferCleanup(rt.close)
 		Expect(rt.start(ctx)).To(Succeed(), "start all role")

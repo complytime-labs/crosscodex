@@ -139,56 +139,56 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration_nats
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-nats
           COVERAGE: integration-nats-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
       - task: run-ginkgo
         vars:
           TAGS: integration_authn
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-authn
           COVERAGE: integration-authn-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/authn/..."
       - task: run-ginkgo
         vars:
           TAGS: integration_grpc
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-grpc
           COVERAGE: integration-grpc-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/internal/testgrpc/..."
       - task: run-ginkgo
         vars:
           TAGS: integration_telemetry
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-telemetry
           COVERAGE: integration-telemetry-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/telemetry/..."
       - task: run-ginkgo
         vars:
           TAGS: integration_telemetry
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-jaeger-smoke
           COVERAGE: integration-jaeger-smoke-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-trace-propagation
           COVERAGE: integration-trace-propagation-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-attestation
           COVERAGE: integration-attestation-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-nats-embedded
           COVERAGE: integration-nats-embedded-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
@@ -202,7 +202,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration_worker
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-worker
           COVERAGE: integration-worker-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/internal/worker/..."
@@ -215,7 +215,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration_worker
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-worker
           COVERAGE: integration-worker-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/internal/worker/..."
@@ -269,7 +269,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-synthesis
           COVERAGE: integration-synthesis-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/internal/synthesis/..."
@@ -287,7 +287,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-pipeline-e2e
           COVERAGE: integration-pipeline-e2e-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/internal/pipeline/..."
@@ -323,7 +323,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration_nats
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-nats
           COVERAGE: integration-nats-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
@@ -359,7 +359,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration_authn
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-authn
           COVERAGE: integration-authn-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/authn/..."
@@ -377,7 +377,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration_grpc
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-grpc
           COVERAGE: integration-grpc-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/internal/testgrpc/..."
@@ -395,14 +395,14 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration_telemetry
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-telemetry
           COVERAGE: integration-telemetry-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/telemetry/..."
       - task: run-ginkgo
         vars:
           TAGS: integration_telemetry
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-jaeger-smoke
           COVERAGE: integration-jaeger-smoke-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
@@ -433,7 +433,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-trace-propagation
           COVERAGE: integration-trace-propagation-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
@@ -446,7 +446,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-attestation
           COVERAGE: integration-attestation-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
@@ -459,7 +459,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 120s
+          TIMEOUT: 300s
           REPORT: integration-nats-embedded
           COVERAGE: integration-nats-embedded-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
@@ -568,6 +568,8 @@ tasks:
     cmds:
       # --keep-going runs every suite after a failure; ginkgoleaf runs even
       # when ginkgo fails, and the step exits non-zero if either step fails.
+      # --timeout also covers compiling the suite with --race and coverage,
+      # which alone can exceed 120s on a slow CI runner; 300s is the floor.
       - |
         status=0
         go run github.com/onsi/ginkgo/v2/ginkgo run -v --keep-going --race --tags {{.TAGS}} --timeout {{.TIMEOUT}} --coverprofile {{.COVERAGE}} --output-dir {{.TEST_DIR}} --json-report={{.REPORT}}.json {{.PACKAGES}} || status=$?

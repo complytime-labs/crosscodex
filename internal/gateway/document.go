@@ -79,6 +79,7 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 	// Step 1: Convert document to markdown
 	convertResp, err := s.ingestion.ConvertDocument(ctx, connect.NewRequest(input.convertReq))
 	if err != nil {
+		err = s.publicError(ctx, input.rpcName, err)
 		s.recordMetrics(ctx, input.rpcName, start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -105,6 +106,7 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 					"document_id", docID, "error", discardErr)
 			}
 		}
+		err = s.publicError(ctx, input.rpcName, err)
 		s.recordMetrics(ctx, input.rpcName, start, connect.CodeOf(err))
 		return nil, err
 	}
@@ -129,6 +131,7 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 
 	jobResp, err := s.pipeline.CreateJob(ctx, connect.NewRequest(jobReq))
 	if err != nil {
+		err = s.publicError(ctx, input.rpcName, err)
 		s.recordMetrics(ctx, input.rpcName, start, connect.CodeOf(err))
 		return nil, err
 	}

@@ -1,12 +1,12 @@
 package relationship_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -49,74 +50,12 @@ func newControlGraph(ctx context.Context, tenantID string, controlIDs ...string)
 	return g
 }
 
-// mockStorage stores data in memory keyed by path.
-type mockStorage struct {
-	data map[string][]byte
-	err  error
-}
-
-func newMockStorage() *mockStorage {
-	return &mockStorage{data: make(map[string][]byte)}
-}
-
-func (m *mockStorage) Get(_ context.Context, key string) (io.ReadCloser, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	d, ok := m.data[key]
-	if !ok {
-		return nil, fmt.Errorf("key not found: %s", key)
-	}
-	return io.NopCloser(strings.NewReader(string(d))), nil
-}
-
-func (m *mockStorage) Put(_ context.Context, key string, data io.Reader) error {
-	if m.err != nil {
-		return m.err
-	}
-	b, err := io.ReadAll(data)
-	if err != nil {
-		return err
-	}
-	m.data[key] = b
-	return nil
-}
-
-func (m *mockStorage) Delete(_ context.Context, _ string) error { return nil }
-
-// List returns matching keys sorted, as the local and S3 providers do, so
-// specs that depend on file order are deterministic.
-func (m *mockStorage) List(_ context.Context, prefix string) ([]storage.ObjectMetadata, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	var out []storage.ObjectMetadata
-	for k := range m.data {
-		if strings.HasPrefix(k, prefix) {
-			out = append(out, storage.ObjectMetadata{Key: k})
-		}
-	}
-	slices.SortFunc(out, func(a, b storage.ObjectMetadata) int { return strings.Compare(a.Key, b.Key) })
-	return out, nil
-}
-func (m *mockStorage) Exists(_ context.Context, key string) (bool, error) {
-	_, ok := m.data[key]
-	return ok, nil
-}
-func (m *mockStorage) Stat(_ context.Context, key string) (*storage.ObjectMetadata, error) {
-	if _, ok := m.data[key]; ok {
-		return &storage.ObjectMetadata{Key: key}, nil
-	}
-	return nil, fmt.Errorf("not found")
-}
-func (m *mockStorage) Close() error { return nil }
-
 var _ = Describe("GraphMaterializer", func() {
 	const tenantID = "test-tenant"
 
 	var (
 		graph graphdb.GraphDB
-		store *mockStorage
+		store *storagetest.Fake
 		mat   *relationship.GraphMaterializer
 		ctx   context.Context
 	)
@@ -132,14 +71,14 @@ var _ = Describe("GraphMaterializer", func() {
 			data, err := json.Marshal(p)
 			Expect(err).NotTo(HaveOccurred())
 			key := fmt.Sprintf("%s/analysis/relationship/%s/%s--%s.json", tenantID, jobID, p.SourceControlID, p.TargetControlID)
-			store.data[key] = data
+			Expect(store.Put(ctx, key, bytes.NewReader(data))).To(Succeed())
 		}
 	}
 
 	BeforeEach(func() {
 		ctx = testspecs.SetupTenantContext(tenantID)
 		graph = newControlGraph(ctx, tenantID, "AC-1", "IT-3.2", "AC-2", "IT-4.1")
-		store = newMockStorage()
+		store = &storagetest.Fake{}
 		mat = relationship.NewGraphMaterializer(graph, store, config.RelationshipConfig{})
 	})
 
@@ -243,7 +182,7 @@ var _ = Describe("GraphMaterializer", func() {
 		})
 
 		It("fails on corrupt JSON", func() {
-			store.data["test-tenant/analysis/relationship/job-bad/corrupt.json"] = []byte("{not json")
+			Expect(store.Put(ctx, "test-tenant/analysis/relationship/job-bad/corrupt.json", strings.NewReader("{not json"))).To(Succeed())
 			err := mat.Materialize(ctx, tenantID, "job-bad")
 			Expect(err).To(MatchError(ContainSubstring("parsing")))
 			Expect(matches()).To(BeEmpty())
@@ -284,7 +223,10 @@ var _ = Describe("GraphMaterializer", func() {
 		})
 
 		It("propagates storage errors", func() {
-			store.err = fmt.Errorf("storage unavailable")
+			errUnavailable := fmt.Errorf("storage unavailable")
+			store.GetFunc = func(context.Context, string) (io.ReadCloser, error) { return nil, errUnavailable }
+			store.PutFunc = func(context.Context, string, io.Reader) error { return errUnavailable }
+			store.ListFunc = func(context.Context, string) ([]storage.ObjectMetadata, error) { return nil, errUnavailable }
 			err := mat.Materialize(ctx, tenantID, "job-1")
 			Expect(err).To(MatchError(ContainSubstring("storage unavailable")))
 			Expect(matches()).To(BeEmpty())

@@ -784,27 +784,19 @@ var _ = Describe("Decompose", func() {
 			Expect(result[0].ParentID).To(BeEmpty())
 		})
 
-		Context("ID derivation", func() {
-			It("strips _smt and _stmt suffixes", func() {
+		DescribeTable("ID derivation",
+			func(controlID string, itemIDs, wantIDs []string) {
 				ctrl := oscalTypes.Control{
-					ID:    "ac-2",
-					Title: "Account Management",
+					ID:    controlID,
+					Title: "Title",
 					Parts: &[]oscalTypes.Part{
 						{
-							ID:    "ac-2_smt",
+							ID:    controlID + "_smt",
 							Name:  "statement",
-							Prose: "The organization shall:",
+							Prose: "The system shall:",
 							Parts: &[]oscalTypes.Part{
-								{
-									ID:    "ac-2_smt.a",
-									Name:  "item",
-									Prose: "First item",
-								},
-								{
-									ID:    "ac-2_stmt.b",
-									Name:  "item",
-									Prose: "Second item",
-								},
+								{ID: itemIDs[0], Name: "item", Prose: "First item"},
+								{ID: itemIDs[1], Name: "item", Prose: "Second item"},
 							},
 						},
 					},
@@ -813,42 +805,16 @@ var _ = Describe("Decompose", func() {
 				params := make(map[string]string)
 				result := oscal.DecomposeStatements(ctrl, "access-control", params)
 
-				Expect(result[1].ID).To(Equal("ac-2.a"))
-				Expect(result[2].ID).To(Equal("ac-2.b"))
-			})
-
-			It("uses fallback ID when part ID is empty or non-standard", func() {
-				ctrl := oscalTypes.Control{
-					ID:    "ac-4",
-					Title: "Information Flow Enforcement",
-					Parts: &[]oscalTypes.Part{
-						{
-							ID:    "ac-4_smt",
-							Name:  "statement",
-							Prose: "The system enforces:",
-							Parts: &[]oscalTypes.Part{
-								{
-									ID:    "",
-									Name:  "item",
-									Prose: "First item",
-								},
-								{
-									ID:    "custom-id",
-									Name:  "item",
-									Prose: "Second item",
-								},
-							},
-						},
-					},
-				}
-
-				params := make(map[string]string)
-				result := oscal.DecomposeStatements(ctrl, "access-control", params)
-
-				Expect(result[1].ID).To(Equal("ac-4.1"))
-				Expect(result[2].ID).To(Equal("ac-4.2"))
-			})
-		})
+				// result[0] is the statement itself; items follow.
+				Expect(result).To(HaveLen(len(wantIDs) + 1))
+				Expect(result[1].ID).To(Equal(wantIDs[0]))
+				Expect(result[2].ID).To(Equal(wantIDs[1]))
+			},
+			Entry("strips _smt and _stmt suffixes",
+				"ac-2", []string{"ac-2_smt.a", "ac-2_stmt.b"}, []string{"ac-2.a", "ac-2.b"}),
+			Entry("uses fallback ID when part ID is empty or non-standard",
+				"ac-4", []string{"", "custom-id"}, []string{"ac-4.1", "ac-4.2"}),
+		)
 	})
 
 	Describe("DecomposeText", func() {

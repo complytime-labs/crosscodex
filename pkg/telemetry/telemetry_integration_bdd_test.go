@@ -64,29 +64,22 @@ func assertServiceInJaeger(queryURL, serviceName string) {
 
 var _ = Describe("Telemetry Integration", Ordered, func() {
 
-	Describe("OTLP gRPC Export", func() {
-		var (
-			endpoint string
-			queryURL string
-		)
-
-		BeforeEach(func() {
-			endpoint = os.Getenv("TEST_OTLP_GRPC_ENDPOINT")
+	DescribeTable("OTLP export to Jaeger",
+		func(protocol, endpointEnv string) {
+			endpoint := os.Getenv(endpointEnv)
 			if endpoint == "" {
-				Skip("TEST_OTLP_GRPC_ENDPOINT not set")
+				Skip(endpointEnv + " not set")
 			}
-			queryURL = os.Getenv("TEST_JAEGER_QUERY_URL")
+			queryURL := os.Getenv("TEST_JAEGER_QUERY_URL")
 			if queryURL == "" {
 				Skip("TEST_JAEGER_QUERY_URL not set")
 			}
-		})
 
-		It("exports traces to Jaeger via gRPC", func() {
 			ctx := context.Background()
-			serviceName := fmt.Sprintf("test-grpc-%d", time.Now().UnixNano())
+			serviceName := fmt.Sprintf("test-%s-%d", protocol, time.Now().UnixNano())
 
 			cfg := config.ObservabilityConfig{
-				Protocol: "grpc",
+				Protocol: protocol,
 				Tracing: config.ObservabilityTracingConfig{
 					Endpoint:   endpoint,
 					SampleRate: 1.0,
@@ -106,53 +99,10 @@ var _ = Describe("Telemetry Integration", Ordered, func() {
 			Expect(shutdown(ctx)).To(Succeed())
 
 			assertServiceInJaeger(queryURL, serviceName)
-		})
-	})
-
-	Describe("OTLP HTTP Export", func() {
-		var (
-			endpoint string
-			queryURL string
-		)
-
-		BeforeEach(func() {
-			endpoint = os.Getenv("TEST_OTLP_HTTP_ENDPOINT")
-			if endpoint == "" {
-				Skip("TEST_OTLP_HTTP_ENDPOINT not set")
-			}
-			queryURL = os.Getenv("TEST_JAEGER_QUERY_URL")
-			if queryURL == "" {
-				Skip("TEST_JAEGER_QUERY_URL not set")
-			}
-		})
-
-		It("exports traces to Jaeger via HTTP", func() {
-			ctx := context.Background()
-			serviceName := fmt.Sprintf("test-http-%d", time.Now().UnixNano())
-
-			cfg := config.ObservabilityConfig{
-				Protocol: "http",
-				Tracing: config.ObservabilityTracingConfig{
-					Endpoint:   endpoint,
-					SampleRate: 1.0,
-				},
-			}
-
-			shutdown, err := telemetry.Init(ctx, cfg,
-				telemetry.WithServiceName(serviceName),
-				telemetry.WithServiceVersion("test"),
-			)
-			Expect(err).NotTo(HaveOccurred())
-
-			tracer := otel.GetTracerProvider().Tracer("integration-test")
-			_, span := tracer.Start(ctx, "test-http-operation")
-			span.End()
-
-			Expect(shutdown(ctx)).To(Succeed())
-
-			assertServiceInJaeger(queryURL, serviceName)
-		})
-	})
+		},
+		Entry("exports traces to Jaeger via gRPC", "grpc", "TEST_OTLP_GRPC_ENDPOINT"),
+		Entry("exports traces to Jaeger via HTTP", "http", "TEST_OTLP_HTTP_ENDPOINT"),
+	)
 
 	Describe("Slog Trace ID Correlation", func() {
 		BeforeEach(func() {
