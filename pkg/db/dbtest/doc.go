@@ -35,7 +35,9 @@
 // role password lives in the repository. Generate one per run with
 // NewRolePassword, or read the per-run value the integration Taskfile
 // generates with RolePassword, and set it with the statement
-// AlterRolePasswordSQL builds.
+// AlterRolePasswordSQL builds; SetRolePassword runs it as the superuser.
+// RoleDSN rewrites the superuser DSN to log in as that role. TestID names
+// per-run fixtures.
 //
 // Production code must not import this package.
 package dbtest

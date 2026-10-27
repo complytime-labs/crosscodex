@@ -24,6 +24,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -595,80 +596,60 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 	})
 
 	Describe("Aggregate", func() {
-		It("counts embedded, skipped, and errors", func() {
-			results := []analyzer.TaskResult{
-				{
-					TaskID:   "embedding-ctrl-1-test-model",
-					TaskType: "embedding",
-					Result: &pb.AnalysisResult{
-						ResultId: "embedding-ctrl-1-test-model",
-						Attributes: map[string]string{
-							"control_id": "ctrl-1",
-							"model":      "test-model",
-						},
+		mixedResults := []analyzer.TaskResult{
+			{
+				TaskID:   "embedding-ctrl-1-test-model",
+				TaskType: "embedding",
+				Result: &pb.AnalysisResult{
+					ResultId: "embedding-ctrl-1-test-model",
+					Attributes: map[string]string{
+						"control_id": "ctrl-1",
+						"model":      "test-model",
 					},
 				},
-				{
-					TaskID:   "embedding-ctrl-2-test-model",
-					TaskType: "embedding",
-					Result: &pb.AnalysisResult{
-						ResultId:   "embedding-ctrl-2-test-model",
-						Attributes: map[string]string{"skipped": "true"},
-					},
+			},
+			{
+				TaskID:   "embedding-ctrl-2-test-model",
+				TaskType: "embedding",
+				Result: &pb.AnalysisResult{
+					ResultId:   "embedding-ctrl-2-test-model",
+					Attributes: map[string]string{"skipped": "true"},
 				},
-				{
-					TaskID:   "embedding-ctrl-3-test-model",
-					TaskType: "embedding",
-					Error:    errors.New("llm timeout"),
-				},
-			}
+			},
+			{
+				TaskID:   "embedding-ctrl-3-test-model",
+				TaskType: "embedding",
+				Error:    errors.New("llm timeout"),
+			},
+		}
 
-			output, err := a.Aggregate(ctx, results)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(output.AnalyzerName).To(Equal("embedding"))
-			Expect(output.Metadata["total_count"]).To(Equal("3"))
-			Expect(output.Metadata["skipped_count"]).To(Equal("1"))
-			Expect(output.Metadata["error_count"]).To(Equal("1"))
-			Expect(output.Metadata["embedded_count"]).To(Equal("1"))
-		})
-
-		Context("with empty results", func() {
-			It("returns zero counts", func() {
-				output, err := a.Aggregate(ctx, []analyzer.TaskResult{})
+		DescribeTable("reports result counts in metadata",
+			func(results []analyzer.TaskResult, total, embedded, skipped, errored string) {
+				output, err := a.Aggregate(ctx, results)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(output.AnalyzerName).To(Equal("embedding"))
-				Expect(output.Metadata["total_count"]).To(Equal("0"))
-				Expect(output.Metadata["embedded_count"]).To(Equal("0"))
-				Expect(output.Metadata["skipped_count"]).To(Equal("0"))
-				Expect(output.Metadata["error_count"]).To(Equal("0"))
-			})
-		})
-
-		Context("with all errors", func() {
-			It("counts all as errors", func() {
-				results := []analyzer.TaskResult{
+				Expect(output.Metadata["total_count"]).To(Equal(total))
+				Expect(output.Metadata["embedded_count"]).To(Equal(embedded))
+				Expect(output.Metadata["skipped_count"]).To(Equal(skipped))
+				Expect(output.Metadata["error_count"]).To(Equal(errored))
+			},
+			Entry("counts embedded, skipped, and errors",
+				mixedResults,
+				"3", "1", "1", "1"),
+			Entry("with empty results returns zero counts",
+				[]analyzer.TaskResult{}, "0", "0", "0", "0"),
+			Entry("with all errors counts all as errors",
+				[]analyzer.TaskResult{
 					{TaskID: "t1", Error: errors.New("fail")},
 					{TaskID: "t2", Error: errors.New("fail")},
-				}
-				output, err := a.Aggregate(ctx, results)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output.Metadata["total_count"]).To(Equal("2"))
-				Expect(output.Metadata["embedded_count"]).To(Equal("0"))
-				Expect(output.Metadata["error_count"]).To(Equal("2"))
-			})
-		})
-
-		Context("with wrong result type", func() {
-			It("counts as error", func() {
-				results := []analyzer.TaskResult{
+				},
+				"2", "0", "0", "2"),
+			Entry("with wrong result type counts as error",
+				[]analyzer.TaskResult{
 					{TaskID: "t1", Result: &structpb.Struct{}},
-				}
-				output, err := a.Aggregate(ctx, results)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(output.Metadata["total_count"]).To(Equal("1"))
-				Expect(output.Metadata["error_count"]).To(Equal("1"))
-			})
-		})
+				},
+				"1", "0", "0", "1"),
+		)
 
 		Context("persisting embedding vectors", func() {
 			var embedCfg config.EmbeddingConfig
@@ -917,53 +898,42 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 	})
 
 	Describe("metrics integration", func() {
-		It("records skipped counter for section controls", func() {
-			tp, err := telemetrytest.NewTestProvider()
-			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = tp.Shutdown(ctx) }()
+		DescribeTable("records one GenerateWork operation",
+			func(controlID, statement, class, wantResult string) {
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				defer func() { _ = tp.Shutdown(ctx) }()
 
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
-				embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+				a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
+					embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
-			control := &pb.Control{
-				ControlId: "nist-800-53/AC",
-				Statement: "ACCESS CONTROL",
-				Parts:     map[string]string{"class": "compliance-section"},
-			}
-			_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
-			Expect(err).NotTo(HaveOccurred())
+				control := &pb.Control{
+					ControlId: controlID,
+					Statement: statement,
+					Parts:     map[string]string{"class": class},
+				}
+				_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
 
-			rm := tp.GetMetrics()
-			counterMetric := telemetrytest.FindMetric(rm, "embedding.operations.total")
-			Expect(counterMetric).NotTo(BeNil(), "expected embedding.operations.total metric")
-			count, err := telemetrytest.CounterValue(counterMetric)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(count).To(Equal(int64(1)))
-		})
+				rm := tp.GetMetrics()
+				counterMetric := telemetrytest.FindMetric(rm, "embedding.operations.total")
+				Expect(counterMetric).NotTo(BeNil(), "expected embedding.operations.total metric")
+				count, err := telemetrytest.CounterValue(counterMetric)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(Equal(int64(1)))
 
-		It("records pending counter for requirement controls", func() {
-			tp, err := telemetrytest.NewTestProvider()
-			Expect(err).NotTo(HaveOccurred())
-			defer func() { _ = tp.Shutdown(ctx) }()
-
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
-				embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
-
-			control := &pb.Control{
-				ControlId: "nist-800-53/AC-1",
-				Statement: "The organization shall define access control policy.",
-				Parts:     map[string]string{"class": "compliance-requirement"},
-			}
-			_, err = a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
-			Expect(err).NotTo(HaveOccurred())
-
-			rm := tp.GetMetrics()
-			counterMetric := telemetrytest.FindMetric(rm, "embedding.operations.total")
-			Expect(counterMetric).NotTo(BeNil(), "expected embedding.operations.total metric")
-			count, err := telemetrytest.CounterValue(counterMetric)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(count).To(Equal(int64(1)))
-		})
+				sum, ok := counterMetric.Data.(metricdata.Sum[int64])
+				Expect(ok).To(BeTrue(), "expected Sum[int64] data type")
+				Expect(sum.DataPoints).To(HaveLen(1))
+				resultAttr, ok := sum.DataPoints[0].Attributes.Value("embedding.result")
+				Expect(ok).To(BeTrue(), "expected embedding.result attribute")
+				Expect(resultAttr.AsString()).To(Equal(wantResult))
+			},
+			Entry("section control (skip path) is counted as skipped",
+				"nist-800-53/AC", "ACCESS CONTROL", "compliance-section", "skipped"),
+			Entry("requirement control (LLM path) is counted as pending",
+				"nist-800-53/AC-1", "The organization shall define access control policy.", "compliance-requirement", "pending"),
+		)
 
 		It("records embedded and error counters in Aggregate", func() {
 			tp, err := telemetrytest.NewTestProvider()

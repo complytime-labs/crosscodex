@@ -133,53 +133,33 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			Expect(tasks[0].TaskID).To(Equal("relationship-AC-1--IT-3.2-qwen3:8b-s0"))
 		})
 
-		It("forces temperature to 0.0 when SamplesPerModel == 1", func() {
-			candidates.pairs = []relationship.CandidatePair{
-				{SourceControlID: "AC-1", TargetControlID: "IT-3.2", SimilarityScore: 87.3},
-			}
-			cfg.SamplesPerModel = 1
-			cfg.SamplingTemperature = 0.7
-			a = relationship.New(nil, prompts, candidates, cfg)
+		DescribeTable("sets the task temperature from SamplesPerModel",
+			func(samples int, temp, wantTemp float64) {
+				candidates.pairs = []relationship.CandidatePair{
+					{SourceControlID: "AC-1", TargetControlID: "IT-3.2", SimilarityScore: 87.3},
+				}
+				cfg.SamplesPerModel = samples
+				cfg.SamplingTemperature = temp
+				a = relationship.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
-			})
-			Expect(err).NotTo(HaveOccurred())
-			payload, ok := tasks[0].Payload.(*structpb.Struct)
-			Expect(ok).To(BeTrue())
-			Expect(payload.Fields["temperature"].GetNumberValue()).To(Equal(0.0))
-			Expect(payload.Fields).To(HaveKey("messages"))
-			msgsList := payload.Fields["messages"].GetListValue()
-			Expect(msgsList).NotTo(BeNil())
-			Expect(msgsList.Values).To(HaveLen(2))
-			Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
-			Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
-		})
-
-		It("uses SamplingTemperature when SamplesPerModel > 1", func() {
-			candidates.pairs = []relationship.CandidatePair{
-				{SourceControlID: "AC-1", TargetControlID: "IT-3.2", SimilarityScore: 87.3},
-			}
-			cfg.SamplesPerModel = 3
-			cfg.SamplingTemperature = 0.7
-			a = relationship.New(nil, prompts, candidates, cfg)
-
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
-			})
-			Expect(err).NotTo(HaveOccurred())
-			payload, ok := tasks[0].Payload.(*structpb.Struct)
-			Expect(ok).To(BeTrue())
-			Expect(payload.Fields["temperature"].GetNumberValue()).To(Equal(0.7))
-			Expect(payload.Fields).To(HaveKey("messages"))
-			msgsList := payload.Fields["messages"].GetListValue()
-			Expect(msgsList).NotTo(BeNil())
-			Expect(msgsList.Values).To(HaveLen(2))
-			Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
-			Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
-		})
+				control := &pb.Control{ControlId: "AC-1", Statement: "test"}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
+					Parameters: map[string]string{"job_id": "job-1"},
+				})
+				Expect(err).NotTo(HaveOccurred())
+				payload, ok := tasks[0].Payload.(*structpb.Struct)
+				Expect(ok).To(BeTrue())
+				Expect(payload.Fields["temperature"].GetNumberValue()).To(Equal(wantTemp))
+				Expect(payload.Fields).To(HaveKey("messages"))
+				msgsList := payload.Fields["messages"].GetListValue()
+				Expect(msgsList).NotTo(BeNil())
+				Expect(msgsList.Values).To(HaveLen(2))
+				Expect(msgsList.Values[0].GetStructValue().Fields["role"].GetStringValue()).To(Equal("system"))
+				Expect(msgsList.Values[1].GetStructValue().Fields["role"].GetStringValue()).To(Equal("user"))
+			},
+			Entry("forces temperature to 0.0 when SamplesPerModel == 1", 1, 0.7, 0.0),
+			Entry("uses SamplingTemperature when SamplesPerModel > 1", 3, 0.7, 0.7),
+		)
 	})
 
 	Context("Aggregate", func() {

@@ -22,6 +22,15 @@ func TestTestCertsBDD(t *testing.T) {
 	RunSpecs(t, "TestCerts BDD Suite")
 }
 
+// parseCert decodes and parses a single PEM-encoded certificate.
+func parseCert(pemBytes []byte) *x509.Certificate {
+	block, _ := pem.Decode(pemBytes)
+	Expect(block).NotTo(BeNil())
+	cert, err := x509.ParseCertificate(block.Bytes)
+	Expect(err).NotTo(HaveOccurred())
+	return cert
+}
+
 // Redirect slog output to GinkgoWriter so log noise only appears on failure.
 var _ = BeforeSuite(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 
@@ -70,10 +79,7 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 		Context("when inspecting the CA certificate", func() {
 			It("is marked as a certificate authority with the correct CN", func() {
 				By("parsing the CA certificate from PEM")
-				caBlock, _ := pem.Decode(pki.CACert)
-				Expect(caBlock).NotTo(BeNil())
-				caCert, err := x509.ParseCertificate(caBlock.Bytes)
-				Expect(err).NotTo(HaveOccurred())
+				caCert := parseCert(pki.CACert)
 
 				By("verifying IsCA is true")
 				Expect(caCert.IsCA).To(BeTrue())
@@ -86,10 +92,7 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 		Context("when inspecting the server certificate", func() {
 			It("is a leaf certificate with localhost SANs", func() {
 				By("parsing the server certificate from PEM")
-				srvBlock, _ := pem.Decode(pki.ServerCert)
-				Expect(srvBlock).NotTo(BeNil())
-				srvCert, err := x509.ParseCertificate(srvBlock.Bytes)
-				Expect(err).NotTo(HaveOccurred())
+				srvCert := parseCert(pki.ServerCert)
 
 				By("verifying it is not a CA")
 				Expect(srvCert.IsCA).To(BeFalse())
@@ -123,10 +126,7 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 		Context("when inspecting the client certificate", func() {
 			It("is a leaf certificate with the correct CN", func() {
 				By("parsing the client certificate from PEM")
-				cliBlock, _ := pem.Decode(pki.ClientCert)
-				Expect(cliBlock).NotTo(BeNil())
-				cliCert, err := x509.ParseCertificate(cliBlock.Bytes)
-				Expect(err).NotTo(HaveOccurred())
+				cliCert := parseCert(pki.ClientCert)
 
 				By("verifying it is not a CA")
 				Expect(cliCert.IsCA).To(BeFalse())
@@ -139,28 +139,19 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 		Context("when verifying CA trust chain", func() {
 			It("signs both server and client certificates with the CA", func() {
 				By("parsing the CA certificate")
-				caBlock, _ := pem.Decode(pki.CACert)
-				Expect(caBlock).NotTo(BeNil())
-				caCert, err := x509.ParseCertificate(caBlock.Bytes)
-				Expect(err).NotTo(HaveOccurred())
+				caCert := parseCert(pki.CACert)
 
 				pool := x509.NewCertPool()
 				pool.AddCert(caCert)
 
 				By("verifying the server certificate against the CA")
-				srvBlock, _ := pem.Decode(pki.ServerCert)
-				Expect(srvBlock).NotTo(BeNil())
-				srvCert, err := x509.ParseCertificate(srvBlock.Bytes)
-				Expect(err).NotTo(HaveOccurred())
+				srvCert := parseCert(pki.ServerCert)
 
-				_, err = srvCert.Verify(x509.VerifyOptions{Roots: pool})
+				_, err := srvCert.Verify(x509.VerifyOptions{Roots: pool})
 				Expect(err).NotTo(HaveOccurred(), "server cert should be signed by the CA")
 
 				By("verifying the client certificate against the CA")
-				cliBlock, _ := pem.Decode(pki.ClientCert)
-				Expect(cliBlock).NotTo(BeNil())
-				cliCert, err := x509.ParseCertificate(cliBlock.Bytes)
-				Expect(err).NotTo(HaveOccurred())
+				cliCert := parseCert(pki.ClientCert)
 
 				_, err = cliCert.Verify(x509.VerifyOptions{
 					Roots:     pool,
@@ -240,74 +231,33 @@ var _ = Describe("TestCerts PKI Generation", Ordered, func() {
 			})
 		})
 
-		Context("when the CA cert is missing", func() {
-			It("returns an actionable error", func() {
+		DescribeTable("returns an actionable error naming the offending file or failure",
+			func(damage func(dir string), wantSubstr string) {
 				pki, err := testcerts.Generate()
 				Expect(err).NotTo(HaveOccurred())
 
 				dir := GinkgoT().TempDir()
 				Expect(pki.WriteToDir(dir)).To(Succeed())
+				damage(dir)
+
+				err = testcerts.VerifyDir(dir)
+				Expect(err).To(MatchError(ContainSubstring(wantSubstr)))
+			},
+			Entry("the CA cert is missing", func(dir string) {
 				Expect(os.Remove(filepath.Join(dir, "ca.pem"))).To(Succeed())
-
-				err = testcerts.VerifyDir(dir)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("ca.pem"))
-			})
-		})
-
-		Context("when a leaf cert is corrupt", func() {
-			It("returns an actionable error mentioning the file", func() {
-				pki, err := testcerts.Generate()
-				Expect(err).NotTo(HaveOccurred())
-
-				dir := GinkgoT().TempDir()
-				Expect(pki.WriteToDir(dir)).To(Succeed())
-
-				By("corrupting server.pem")
+			}, "ca.pem"),
+			Entry("a leaf cert is corrupt", func(dir string) {
 				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), []byte("not a cert"), 0o644)).To(Succeed())
-
-				err = testcerts.VerifyDir(dir)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("server.pem"))
-			})
-		})
-
-		Context("when server cert is signed by a different CA", func() {
-			It("returns a CA chain verification error", func() {
-				By("generating two independent PKIs")
-				pki1, err := testcerts.Generate()
-				Expect(err).NotTo(HaveOccurred())
-				pki2, err := testcerts.Generate()
-				Expect(err).NotTo(HaveOccurred())
-
-				dir := GinkgoT().TempDir()
-				Expect(pki1.WriteToDir(dir)).To(Succeed())
-
-				By("replacing server cert with one from a different CA")
-				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), pki2.ServerCert, 0o644)).To(Succeed())
-
-				err = testcerts.VerifyDir(dir)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("CA chain verification failed"))
-			})
-		})
-
-		Context("when a key file is corrupt", func() {
-			It("returns an actionable error mentioning the key file", func() {
-				pki, err := testcerts.Generate()
-				Expect(err).NotTo(HaveOccurred())
-
-				dir := GinkgoT().TempDir()
-				Expect(pki.WriteToDir(dir)).To(Succeed())
-
-				By("corrupting client-key.pem")
+			}, "server.pem"),
+			Entry("a key file is corrupt", func(dir string) {
 				Expect(os.WriteFile(filepath.Join(dir, "client-key.pem"), []byte("not a key"), 0o600)).To(Succeed())
-
-				err = testcerts.VerifyDir(dir)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("client-key.pem"))
-			})
-		})
+			}, "client-key.pem"),
+			Entry("the server cert is signed by a different CA", func(dir string) {
+				other, err := testcerts.Generate()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(os.WriteFile(filepath.Join(dir, "server.pem"), other.ServerCert, 0o644)).To(Succeed())
+			}, "CA chain verification failed"),
+		)
 	})
 
 	// =================================================================

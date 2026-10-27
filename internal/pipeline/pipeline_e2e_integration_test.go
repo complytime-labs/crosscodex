@@ -102,15 +102,9 @@ var _ = Describe("Pipeline end-to-end", func() {
 		Expect(migrator.Close()).To(Succeed(), "close migrator")
 
 		// Ensure app_user password (idempotent).
-		adminDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "open admin connection")
 		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-		_, err = adminDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "set app_user password")
-		Expect(adminDB.Close()).To(Succeed(), "close admin connection")
+		Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "set app_user password")
 
 		// Superuser pool for RLS-bypassing seed writes and verification reads.
 		suPool, err := db.NewPool(db.PoolConfig{
@@ -122,7 +116,7 @@ var _ = Describe("Pipeline end-to-end", func() {
 		defer suPool.Close()
 
 		// app_user pool -> tenant-scoped connection (RLS enforced).
-		appDSN, err := candidateITAppUserDSN(suDSN)
+		appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
 		Expect(err).NotTo(HaveOccurred(), "build app_user DSN")
 		appPool, err := db.NewPool(db.PoolConfig{DSN: appDSN, MaxOpenConns: 4})
 		Expect(err).NotTo(HaveOccurred(), "create app_user pool")

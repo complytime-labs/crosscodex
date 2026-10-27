@@ -315,29 +315,13 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	Context("validate — gateway_mode=true always requires gateway_url", func() {
 		It("rejects every config where gateway_mode is true and gateway_url is empty", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				cfg := &config.Config{
-					TLS:     config.TLSConfig{Mode: "off"},
-					Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-					Logging: config.LoggingConfig{Level: "info", Format: "text"},
-					Attestation: config.AttestationConfig{
-						Enabled:        true,
-						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
-					},
-					Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-					Analysis: config.AnalysisConfig{
-						Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-						Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-						Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
-						Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-						Candidates:           config.CandidateConfig{EmbedModel: "m"},
-						ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-					},
-					LLM: config.LLMConfig{
-						GatewayMode: true,
-						GatewayURL:  "",
-						Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
-						MaxRetries:  rapid.IntRange(0, 10).Draw(t, "maxRetries"),
-					},
+				cfg := validConfig()
+				cfg.Attestation.ExpiryDuration = time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour
+				cfg.LLM = config.LLMConfig{
+					GatewayMode: true,
+					GatewayURL:  "",
+					Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
+					MaxRetries:  rapid.IntRange(0, 10).Draw(t, "maxRetries"),
 				}
 				err := config.ExportValidateConfig(cfg)
 				Expect(err).To(HaveOccurred(),
@@ -349,38 +333,13 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		It("accepts every config where gateway_mode is true and gateway_url is non-empty", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				url := rapid.StringMatching(`https?://[a-z]{3,10}:\d{4}`).Draw(t, "url")
-				cfg := &config.Config{
-					TLS:     config.TLSConfig{Mode: "off"},
-					Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-					Logging: config.LoggingConfig{Level: "info", Format: "text"},
-					Attestation: config.AttestationConfig{
-						Enabled:        true,
-						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
-					},
-					Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-					Analysis: config.AnalysisConfig{
-						Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-						Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-						Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
-						Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-						Candidates:           config.CandidateConfig{EmbedModel: "m"},
-						ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-					},
-					Synthesis: config.SynthesisConfig{
-						ConfidenceThreshold:   0.5,
-						MaxMappingsPerControl: 10,
-						Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-						Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-					},
-					Backup: config.BackupConfig{
-						MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-					},
-					LLM: config.LLMConfig{
-						GatewayMode: true,
-						GatewayURL:  url,
-						Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
-						MaxRetries:  rapid.IntRange(0, 10).Draw(t, "maxRetries"),
-					},
+				cfg := validConfig()
+				cfg.Attestation.ExpiryDuration = time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour
+				cfg.LLM = config.LLMConfig{
+					GatewayMode: true,
+					GatewayURL:  url,
+					Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
+					MaxRetries:  rapid.IntRange(0, 10).Draw(t, "maxRetries"),
 				}
 				err := config.ExportValidateConfig(cfg)
 				Expect(err).NotTo(HaveOccurred(),
@@ -393,38 +352,13 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		It("sets max_retries to 0 after validation when gateway_mode is true", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				retries := rapid.IntRange(1, 100).Draw(t, "retries")
-				cfg := &config.Config{
-					TLS:     config.TLSConfig{Mode: "off"},
-					Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
-					Logging: config.LoggingConfig{Level: "info", Format: "text"},
-					Attestation: config.AttestationConfig{
-						Enabled:        true,
-						ExpiryDuration: time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour,
-					},
-					Graph: config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
-					Analysis: config.AnalysisConfig{
-						Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
-						Classification:       config.ClassificationConfig{MaxTextLength: 2000, MaxTokens: 20},
-						Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 1500, BatchSize: 50},
-						Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
-						Candidates:           config.CandidateConfig{EmbedModel: "m"},
-						ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
-					},
-					Synthesis: config.SynthesisConfig{
-						ConfidenceThreshold:   0.5,
-						MaxMappingsPerControl: 10,
-						Viability:             config.ViabilityConfig{TypeMismatchFactor: 0.8, SkipLevelFactor: 0.7, IntegralToFactor: 1.1},
-						Assessment:            config.AssessmentConfig{IQRGood: 20, IQRPoor: 10, NoRelHigh: 0.97, NoRelLow: 0.80, ContestedWarn: 0.20, ActionableWarn: 0.30},
-					},
-					Backup: config.BackupConfig{
-						MaxAge: config.BackupMaxAgeConfig{Postgres: 26 * time.Hour, Objects: 26 * time.Hour, NATS: 26 * time.Hour},
-					},
-					LLM: config.LLMConfig{
-						GatewayMode: true,
-						GatewayURL:  "http://litellm:4000",
-						Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
-						MaxRetries:  retries,
-					},
+				cfg := validConfig()
+				cfg.Attestation.ExpiryDuration = time.Duration(rapid.IntRange(1, 8760).Draw(t, "hours")) * time.Hour
+				cfg.LLM = config.LLMConfig{
+					GatewayMode: true,
+					GatewayURL:  "http://litellm:4000",
+					Timeout:     rapid.IntRange(0, 300).Draw(t, "timeout"),
+					MaxRetries:  retries,
 				}
 				err := config.ExportValidateConfig(cfg)
 				Expect(err).NotTo(HaveOccurred())

@@ -61,26 +61,6 @@ var _ = Describe("dbCollector", func() {
 		Expect(got[0].Class).To(Equal(retention.ClassJobResults))
 		Expect(got[0].TenantID).To(Equal("tenant-a"))
 	})
-
-	It("returns empty slice when no jobs are expired", func() {
-		now := time.Now()
-		fake := collectorConn([][]any{
-			{"job-new", "t1", now.Add(-1 * time.Hour)},
-		})
-		p, _ := retention.NewPolicy(config.RetentionConfig{Defaults: config.RetentionTiers{JobResults: "7y"}})
-		got, err := retention.NewDBCollector(fake).Collect(context.Background(), p, now)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(BeEmpty())
-	})
-
-	It("returns empty slice when there are no rows", func() {
-		now := time.Now()
-		fake := collectorConn(nil)
-		p, _ := retention.NewPolicy(config.RetentionConfig{Defaults: config.RetentionTiers{JobResults: "7y"}})
-		got, err := retention.NewDBCollector(fake).Collect(context.Background(), p, now)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(BeEmpty())
-	})
 })
 
 var _ = Describe("catalogCollector", func() {
@@ -98,17 +78,6 @@ var _ = Describe("catalogCollector", func() {
 		Expect(got[0].Store).To(Equal(retention.StorePostgres))
 		Expect(got[0].Class).To(Equal(retention.ClassCatalogs))
 		Expect(got[0].TenantID).To(Equal("t1"))
-	})
-
-	It("returns empty slice when no catalogs are expired", func() {
-		now := time.Now()
-		fake := collectorConn([][]any{
-			{"cat-new", "t1", now.Add(-1 * time.Hour)},
-		})
-		p, _ := retention.NewPolicy(config.RetentionConfig{Defaults: config.RetentionTiers{Catalogs: "7y"}})
-		got, err := retention.NewCatalogCollector(fake).Collect(context.Background(), p, now)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(BeEmpty())
 	})
 })
 
@@ -157,16 +126,39 @@ var _ = Describe("objectCollector", func() {
 		Expect(got).To(HaveLen(1))
 		Expect(got[0].CreatedAt).To(Equal(time.Unix(ts.Unix(), 0).UTC()))
 	})
+})
 
-	It("returns empty slice when no objects are expired", func() {
-		now := time.Now()
-		newTS := now.Add(-1 * time.Hour).Unix()
-		prov := listingProvider([]storage.ObjectMetadata{
-			{Key: "attestation/new.json", Size: 128, LastModified: newTS},
-		})
-		p, _ := retention.NewPolicy(config.RetentionConfig{Defaults: config.RetentionTiers{Attestation: "7y"}})
-		got, err := retention.NewObjectCollector(prov, retention.ClassAttestation, "t1").Collect(context.Background(), p, now)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(BeEmpty())
-	})
+var _ = Describe("collectors with nothing expired", func() {
+	now := time.Now()
+	recent := now.Add(-1 * time.Hour)
+
+	DescribeTable("return an empty slice",
+		func(newCollector func() retention.Collector, tiers config.RetentionTiers) {
+			p, _ := retention.NewPolicy(config.RetentionConfig{Defaults: tiers})
+			got, err := newCollector().Collect(context.Background(), p, now)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(BeEmpty())
+		},
+		Entry("the DB collector when no jobs are expired",
+			func() retention.Collector {
+				return retention.NewDBCollector(collectorConn([][]any{{"job-new", "t1", recent}}))
+			},
+			config.RetentionTiers{JobResults: "7y"}),
+		Entry("the DB collector when there are no rows",
+			func() retention.Collector { return retention.NewDBCollector(collectorConn(nil)) },
+			config.RetentionTiers{JobResults: "7y"}),
+		Entry("the catalog collector when no catalogs are expired",
+			func() retention.Collector {
+				return retention.NewCatalogCollector(collectorConn([][]any{{"cat-new", "t1", recent}}))
+			},
+			config.RetentionTiers{Catalogs: "7y"}),
+		Entry("the object collector when no objects are expired",
+			func() retention.Collector {
+				prov := listingProvider([]storage.ObjectMetadata{
+					{Key: "attestation/new.json", Size: 128, LastModified: recent.Unix()},
+				})
+				return retention.NewObjectCollector(prov, retention.ClassAttestation, "t1")
+			},
+			config.RetentionTiers{Attestation: "7y"}),
+	)
 })

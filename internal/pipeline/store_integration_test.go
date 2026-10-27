@@ -4,11 +4,9 @@ package pipeline_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"time"
 
@@ -35,20 +33,6 @@ func assertJSONEqual(label string, got, want []byte) {
 	ExpectWithOffset(1, gotVal).To(Equal(wantVal), "%s result_data: got %s, want %s", label, got, want)
 }
 
-// appUserDSN swaps userinfo to app_user and this run's app_user password
-func appUserDSN(suDSN string) (string, error) {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		return "", err
-	}
-	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	if err != nil {
-		return "", err
-	}
-	u.User = url.UserPassword("app_user", pw)
-	return u.String(), nil
-}
-
 // setupPGStore runs migrations, ensures the app_user role, builds superuser and
 // app pools, provisions a unique tenant, and returns a tenant-scoped context.
 // The store's tenant and system pools are both app_user, as crosscodexd wires
@@ -67,15 +51,9 @@ func setupPGStore() (*pipeline.PGStore, db.Pool, string, context.Context) {
 	ExpectWithOffset(1, migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
 	ExpectWithOffset(1, migrator.Close()).To(Succeed(), "failed to close migrator")
 
-	adminDB, err := sql.Open("pgx", suDSN)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to open admin connection")
 	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-	_, err = adminDB.ExecContext(ctx, stmt)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to set app_user password")
-	ExpectWithOffset(1, adminDB.Close()).To(Succeed(), "failed to close admin connection")
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "app_user password")
+	ExpectWithOffset(1, dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "failed to set app_user password")
 
 	suPool, err := db.NewPool(db.PoolConfig{
 		DSN:          suDSN,
@@ -85,7 +63,7 @@ func setupPGStore() (*pipeline.PGStore, db.Pool, string, context.Context) {
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to create superuser pool")
 	DeferCleanup(func() { suPool.Close() })
 
-	appDSN, err := appUserDSN(suDSN)
+	appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to build app_user DSN")
 	appPool, err := db.NewPool(db.PoolConfig{
 		DSN:          appDSN,
@@ -130,54 +108,7 @@ func stagesByName(stages []*pipeline.Stage) map[string]*pipeline.Stage {
 
 var _ = Describe("PGStore integration", func() {
 	It("creates a job and round-trips it via GetJob", func() {
-		ctx := context.Background()
-
-		suDSN := os.Getenv("TEST_DATABASE_DSN")
-		if suDSN == "" {
-			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-		}
-
-		migrator, err := db.NewMigrator(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
-		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
-		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
-
-		adminDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-		_, err = adminDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
-		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
-
-		suPool, err := db.NewPool(db.PoolConfig{
-			DSN:          suDSN,
-			MaxOpenConns: 5,
-			Extensions:   []string{"age", "vector"},
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
-		defer suPool.Close()
-
-		appDSN, err := appUserDSN(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
-		appPool, err := db.NewPool(db.PoolConfig{
-			DSN:          appDSN,
-			MaxOpenConns: 2,
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
-		defer appPool.Close()
-
-		tenantConn := db.NewTenantPool(appPool)
-
-		tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-		Expect(db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
-
-		ctx, err = tenant.WithTenant(ctx, tenantID)
-		Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
-
-		store := pipeline.NewPGStore(tenantConn, suPool)
+		store, _, tenantID, ctx := setupPGStore()
 
 		now := time.Now().UTC()
 		job := &pipeline.Job{
@@ -200,54 +131,7 @@ var _ = Describe("PGStore integration", func() {
 	})
 
 	It("CompleteAnalysisStage upserts analysis_results and completes the stage", func() {
-		ctx := context.Background()
-
-		suDSN := os.Getenv("TEST_DATABASE_DSN")
-		if suDSN == "" {
-			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-		}
-
-		migrator, err := db.NewMigrator(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
-		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
-		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
-
-		adminDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-		_, err = adminDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
-		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
-
-		suPool, err := db.NewPool(db.PoolConfig{
-			DSN:          suDSN,
-			MaxOpenConns: 5,
-			Extensions:   []string{"age", "vector"},
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
-		defer suPool.Close()
-
-		appDSN, err := appUserDSN(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
-		appPool, err := db.NewPool(db.PoolConfig{
-			DSN:          appDSN,
-			MaxOpenConns: 2,
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
-		defer appPool.Close()
-
-		tenantConn := db.NewTenantPool(appPool)
-
-		tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-		Expect(db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
-
-		ctx, err = tenant.WithTenant(ctx, tenantID)
-		Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
-
-		store := pipeline.NewPGStore(tenantConn, suPool)
+		store, suPool, tenantID, ctx := setupPGStore()
 
 		now := time.Now().UTC()
 		job := &pipeline.Job{
@@ -307,54 +191,7 @@ var _ = Describe("PGStore integration", func() {
 	})
 
 	It("GetCompletedAnalysisResults returns only completed analyzers, scoped per tenant", func() {
-		ctx := context.Background()
-
-		suDSN := os.Getenv("TEST_DATABASE_DSN")
-		if suDSN == "" {
-			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-		}
-
-		migrator, err := db.NewMigrator(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
-		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
-		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
-
-		adminDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-		_, err = adminDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
-		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
-
-		suPool, err := db.NewPool(db.PoolConfig{
-			DSN:          suDSN,
-			MaxOpenConns: 5,
-			Extensions:   []string{"age", "vector"},
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
-		defer suPool.Close()
-
-		appDSN, err := appUserDSN(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
-		appPool, err := db.NewPool(db.PoolConfig{
-			DSN:          appDSN,
-			MaxOpenConns: 2,
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
-		defer appPool.Close()
-
-		tenantConn := db.NewTenantPool(appPool)
-
-		tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-		Expect(db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
-
-		ctx, err = tenant.WithTenant(ctx, tenantID)
-		Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
-
-		store := pipeline.NewPGStore(tenantConn, suPool)
+		store, suPool, tenantID, ctx := setupPGStore()
 
 		now := time.Now().UTC()
 		job := &pipeline.Job{
@@ -436,54 +273,7 @@ var _ = Describe("PGStore integration", func() {
 	})
 
 	It("WriteVoteSummaries writes rows once and leaves them unchanged on retry", func() {
-		ctx := context.Background()
-
-		suDSN := os.Getenv("TEST_DATABASE_DSN")
-		if suDSN == "" {
-			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-		}
-
-		migrator, err := db.NewMigrator(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
-		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
-		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
-
-		adminDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-		_, err = adminDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
-		Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
-
-		suPool, err := db.NewPool(db.PoolConfig{
-			DSN:          suDSN,
-			MaxOpenConns: 5,
-			Extensions:   []string{"age", "vector"},
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
-		defer suPool.Close()
-
-		appDSN, err := appUserDSN(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
-		appPool, err := db.NewPool(db.PoolConfig{
-			DSN:          appDSN,
-			MaxOpenConns: 2,
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
-		defer appPool.Close()
-
-		tenantConn := db.NewTenantPool(appPool)
-
-		tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
-		Expect(db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
-
-		ctx, err = tenant.WithTenant(ctx, tenantID)
-		Expect(err).NotTo(HaveOccurred(), "failed to set tenant context")
-
-		store := pipeline.NewPGStore(tenantConn, suPool)
+		store, suPool, tenantID, ctx := setupPGStore()
 
 		// vote_summaries.job_id has a foreign key to jobs(job_id), so a job must
 		// exist before writing vote_summaries rows.

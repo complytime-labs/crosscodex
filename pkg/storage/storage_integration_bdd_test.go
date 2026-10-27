@@ -89,7 +89,8 @@ func ensureBucket(endpoint, accessKey, secretKey, bucket string) error {
 	return nil
 }
 
-// newIntegrationProvider creates a Provider connected to the RustFS container.
+// newIntegrationProvider creates a Provider connected to the RustFS container
+// and closes it when the calling spec ends.
 func newIntegrationProvider(tenantID string) storage.Provider {
 	p, err := storage.NewS3(testBucket, tenantID,
 		storage.WithEndpoint(testEndpoint),
@@ -97,11 +98,12 @@ func newIntegrationProvider(tenantID string) storage.Provider {
 		storage.WithCredentials(testAccessKey, testSecretKey),
 	)
 	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = p.Close() })
 	return p
 }
 
 // newIntegrationProviderWithTelemetry creates a Provider with OpenTelemetry
-// tracing and metrics enabled.
+// tracing and metrics enabled, and closes it when the calling spec ends.
 func newIntegrationProviderWithTelemetry(tenantID string, tracer trace.Tracer, meter metric.Meter) storage.Provider {
 	p, err := storage.NewS3(testBucket, tenantID,
 		storage.WithEndpoint(testEndpoint),
@@ -110,6 +112,7 @@ func newIntegrationProviderWithTelemetry(tenantID string, tracer trace.Tracer, m
 		storage.WithS3Telemetry(tracer, meter),
 	)
 	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = p.Close() })
 	return p
 }
 
@@ -154,7 +157,6 @@ var _ = Describe("S3 Integration", func() {
 	Context("Put then Get", func() {
 		It("should store and retrieve an object", func() {
 			p := newIntegrationProvider("integ-put-get")
-			DeferCleanup(func() { _ = p.Close() })
 
 			ctx := context.Background()
 			key := "put-get/file.json"
@@ -169,7 +171,6 @@ var _ = Describe("S3 Integration", func() {
 	Context("Put overwrite", func() {
 		It("should overwrite an existing object", func() {
 			p := newIntegrationProvider("integ-overwrite")
-			DeferCleanup(func() { _ = p.Close() })
 
 			ctx := context.Background()
 			key := "overwrite/file.json"
@@ -181,21 +182,26 @@ var _ = Describe("S3 Integration", func() {
 		})
 	})
 
-	Context("Get missing", func() {
-		It("should return ErrNotFound for a nonexistent key", func() {
-			p := newIntegrationProvider("integ-get-missing")
-			DeferCleanup(func() { _ = p.Close() })
+	DescribeTable("a nonexistent key returns ErrNotFound",
+		func(tenantID string, call func(storage.Provider, string) error) {
+			p := newIntegrationProvider(tenantID)
 
-			_, err := p.Get(context.Background(), "no-such-key/missing.json")
-			Expect(errors.Is(err, storage.ErrNotFound)).To(BeTrue(),
-				"expected ErrNotFound, got: %v", err)
-		})
-	})
+			err := call(p, "no-such-key/missing.json")
+			Expect(err).To(MatchError(storage.ErrNotFound))
+		},
+		Entry("Get", "integ-get-missing", func(p storage.Provider, key string) error {
+			_, err := p.Get(context.Background(), key)
+			return err
+		}),
+		Entry("Stat", "integ-stat-missing", func(p storage.Provider, key string) error {
+			_, err := p.Stat(context.Background(), key)
+			return err
+		}),
+	)
 
 	Context("Delete existing", func() {
 		It("should delete an object and return ErrNotFound on subsequent Get", func() {
 			p := newIntegrationProvider("integ-del-exist")
-			DeferCleanup(func() { _ = p.Close() })
 
 			ctx := context.Background()
 			key := "del-exist/file.json"
@@ -213,7 +219,6 @@ var _ = Describe("S3 Integration", func() {
 	Context("Delete missing", func() {
 		It("should succeed when deleting a nonexistent key", func() {
 			p := newIntegrationProvider("integ-del-missing")
-			DeferCleanup(func() { _ = p.Close() })
 
 			err := p.Delete(context.Background(), "no-such-key/missing.json")
 			Expect(err).NotTo(HaveOccurred())
@@ -223,7 +228,6 @@ var _ = Describe("S3 Integration", func() {
 	Context("List with prefix", func() {
 		It("should list only objects matching the prefix", func() {
 			p := newIntegrationProvider("integ-list-prefix")
-			DeferCleanup(func() { _ = p.Close() })
 
 			ctx := context.Background()
 			files := []string{"docs/a.json", "docs/b.json", "other/c.json"}
@@ -240,7 +244,6 @@ var _ = Describe("S3 Integration", func() {
 	Context("List empty", func() {
 		It("should return an empty list for a nonexistent prefix", func() {
 			p := newIntegrationProvider("integ-list-empty")
-			DeferCleanup(func() { _ = p.Close() })
 
 			list, err := p.List(context.Background(), "nonexistent-prefix/")
 			Expect(err).NotTo(HaveOccurred())
@@ -251,7 +254,6 @@ var _ = Describe("S3 Integration", func() {
 	Context("Exists found", func() {
 		It("should return true for an existing key", func() {
 			p := newIntegrationProvider("integ-exists-found")
-			DeferCleanup(func() { _ = p.Close() })
 
 			ctx := context.Background()
 			key := "exists-found/file.json"
@@ -268,7 +270,6 @@ var _ = Describe("S3 Integration", func() {
 	Context("Exists not found", func() {
 		It("should return false for a nonexistent key", func() {
 			p := newIntegrationProvider("integ-exists-nf")
-			DeferCleanup(func() { _ = p.Close() })
 
 			ok, err := p.Exists(context.Background(), "no-such-key/missing.json")
 			Expect(err).NotTo(HaveOccurred())
@@ -279,7 +280,6 @@ var _ = Describe("S3 Integration", func() {
 	Context("Stat existing", func() {
 		It("should return correct metadata for an existing object", func() {
 			p := newIntegrationProvider("integ-stat-exist")
-			DeferCleanup(func() { _ = p.Close() })
 
 			ctx := context.Background()
 			key := "stat-exist/file.json"
@@ -296,23 +296,10 @@ var _ = Describe("S3 Integration", func() {
 		})
 	})
 
-	Context("Stat missing", func() {
-		It("should return ErrNotFound for a nonexistent key", func() {
-			p := newIntegrationProvider("integ-stat-missing")
-			DeferCleanup(func() { _ = p.Close() })
-
-			_, err := p.Stat(context.Background(), "no-such-key/missing.json")
-			Expect(errors.Is(err, storage.ErrNotFound)).To(BeTrue(),
-				"expected ErrNotFound, got: %v", err)
-		})
-	})
-
 	Context("Tenant isolation", func() {
 		It("should prevent tenants from seeing each other's objects", func() {
 			pA := newIntegrationProvider("integ-iso-alpha")
-			DeferCleanup(func() { _ = pA.Close() })
 			pB := newIntegrationProvider("integ-iso-beta")
-			DeferCleanup(func() { _ = pB.Close() })
 
 			ctx := context.Background()
 			key := "isolation/shared.json"
@@ -346,7 +333,6 @@ var _ = Describe("S3 Integration", func() {
 			meter := tp.MeterProvider().Meter("storage-integration-test")
 
 			p := newIntegrationProviderWithTelemetry("integ-telemetry", tracer, meter)
-			DeferCleanup(func() { _ = p.Close() })
 
 			key := "telemetry-crud.json"
 			data := []byte(`{"telemetry":"test"}`)

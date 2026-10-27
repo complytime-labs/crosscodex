@@ -144,26 +144,31 @@ var _ = Describe("Admin retention RPCs RBAC", func() {
 		})
 	})
 
-	Describe("ApplyRetentionPolicy", func() {
-		It("rejects a nil policy with InvalidArgument", func() {
-			ctx := adminCtx("tenant-a", authn.RoleAdmin)
-			resp, err := svc.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
-				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
-			}))
+	DescribeTable("rejects an invalid admin request with InvalidArgument and no response",
+		func(call func(context.Context, *Service) (any, error)) {
+			resp, err := call(adminCtx("tenant-a", authn.RoleAdmin), svc)
 			Expect(resp).To(BeNil())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects an invalid tier string with InvalidArgument", func() {
-			ctx := adminCtx("tenant-a", authn.RoleAdmin)
-			resp, err := svc.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+		},
+		Entry("ApplyRetentionPolicy with a nil policy", func(ctx context.Context, s *Service) (any, error) {
+			return s.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
+			}))
+		}),
+		Entry("ApplyRetentionPolicy with an invalid tier string", func(ctx context.Context, s *Service) (any, error) {
+			return s.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
 				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
 				Policy:        &pb.RetentionPolicy{JobResults: "not-a-duration"},
 			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
+		}),
+		Entry("CreateHold with an empty name", func(ctx context.Context, s *Service) (any, error) {
+			return s.CreateHold(ctx, connect.NewRequest(&pb.CreateHoldRequest{
+				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
+			}))
+		}),
+	)
 
+	Describe("ApplyRetentionPolicy", func() {
 		It("runs a scan with the supplied policy for an admin", func() {
 			ctx := adminCtx("tenant-a", authn.RoleAdmin)
 			resp, err := svc.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
@@ -206,15 +211,6 @@ var _ = Describe("Admin retention RPCs RBAC", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(stored).To(HaveLen(1))
 			Expect(stored[0].Scope.TenantID).To(Equal("tenant-a"))
-		})
-
-		It("rejects a create with an empty name", func() {
-			ctx := adminCtx("tenant-a", authn.RoleAdmin)
-			resp, err := svc.CreateHold(ctx, connect.NewRequest(&pb.CreateHoldRequest{
-				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
 		})
 
 		It("releases a hold by name stamped with the caller subject", func() {

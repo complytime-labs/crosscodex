@@ -1,10 +1,12 @@
 package dbtest
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 
 	"github.com/jackc/pgx/v5"
@@ -55,6 +57,52 @@ func AlterRolePasswordSQL(role, password string) (string, error) {
 		return "", fmt.Errorf("set %s password: %w", role, err)
 	}
 	return fmt.Sprintf("ALTER ROLE %s WITH PASSWORD '%s'", pgx.Identifier{role}.Sanitize(), password), nil
+}
+
+// RoleDSN returns dsn with its userinfo replaced by role and password. The
+// password must be hex, as NewRolePassword and RolePassword return. dsn must
+// be a postgres:// or postgresql:// URL; the host, port, database and query
+// (TLS parameters included) are kept. Errors never contain dsn, which
+// usually carries the superuser's password, or password.
+func RoleDSN(dsn, role, password string) (string, error) {
+	if err := checkHex(password); err != nil {
+		return "", fmt.Errorf("build %s DSN: %w", role, err)
+	}
+	u, err := url.Parse(dsn)
+	// An opaque URL (postgres:x@host) parses, but String drops its userinfo.
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Opaque != "" {
+		return "", fmt.Errorf("build %s DSN: the DSN passed to RoleDSN is not a postgres://user:password@host:port/dbname URL (it is not echoed, because it carries credentials); pass the suite's database DSN", role)
+	}
+	u.User = url.UserPassword(role, password)
+	return u.String(), nil
+}
+
+// SetRolePassword connects to adminDSN, which must authenticate as a role
+// allowed to ALTER ROLE (the integration superuser), and sets role's password
+// with the statement AlterRolePasswordSQL builds, so that
+// RoleDSN(dsn, role, password) authenticates afterwards.
+func SetRolePassword(ctx context.Context, adminDSN, role, password string) error {
+	stmt, err := AlterRolePasswordSQL(role, password)
+	if err != nil {
+		return err
+	}
+	conn, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		return fmt.Errorf("set %s password: connect as the admin role: %w", role, err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if _, err := conn.Exec(ctx, stmt); err != nil {
+		return fmt.Errorf("set %s password: %w", role, err)
+	}
+	return nil
+}
+
+// TestID returns prefix, a dash and 8 random hex characters, a unique
+// identifier for one integration fixture.
+func TestID(prefix string) string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b) // crypto/rand.Read never returns an error (Go 1.24+); it crashes instead.
+	return fmt.Sprintf("%s-%x", prefix, b)
 }
 
 func checkHex(password string) error {

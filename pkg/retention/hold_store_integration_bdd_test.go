@@ -5,8 +5,6 @@ package retention_test
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"net/url"
 	"os"
 	"time"
 
@@ -41,18 +39,14 @@ var _ = BeforeSuite(func() {
 
 	// Set the app_user password so pool authentication works.
 	// This mirrors the SynchronizedBeforeSuite in pkg/db/db_integration_bdd_test.go.
-	adminDB, err := sql.Open("pgx", suDSN)
-	Expect(err).NotTo(HaveOccurred(), "open admin connection")
 	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-	_, err = adminDB.ExecContext(ctx, stmt)
-	Expect(err).NotTo(HaveOccurred(), "set app_user password")
-	Expect(adminDB.Close()).To(Succeed(), "close admin connection")
+	Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "set app_user password")
 
+	appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
+	Expect(err).NotTo(HaveOccurred(), "app_user DSN")
 	holdIntegPool, err = db.NewPool(db.PoolConfig{
-		DSN:          holdAppUserDSN(suDSN),
+		DSN:          appDSN,
 		MaxOpenConns: 3,
 	})
 	Expect(err).NotTo(HaveOccurred(), "create app_user integration pool")
@@ -63,21 +57,6 @@ var _ = AfterSuite(func() {
 		holdIntegPool.Close() //nolint:errcheck
 	}
 })
-
-// holdAppUserDSN rewrites the superuser DSN to use app_user credentials.
-// All TLS parameters are preserved since only the userinfo component changes.
-func holdAppUserDSN(suDSN string) string {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		panic(fmt.Sprintf("bad TEST_DATABASE_DSN: %v", err))
-	}
-	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	if err != nil {
-		panic(fmt.Sprintf("app_user password: %v", err))
-	}
-	u.User = url.UserPassword("app_user", pw)
-	return u.String()
-}
 
 var _ = Describe("pgHoldStore", Ordered, func() {
 	var store retention.HoldStore

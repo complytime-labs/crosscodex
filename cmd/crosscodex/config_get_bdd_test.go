@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
@@ -10,16 +9,6 @@ import (
 )
 
 var _ = Describe("config get", func() {
-	var (
-		stdout bytes.Buffer
-		stderr bytes.Buffer
-	)
-
-	BeforeEach(func() {
-		stdout.Reset()
-		stderr.Reset()
-	})
-
 	Describe("getConfigValue", func() {
 		var cfg *config.Config
 
@@ -91,58 +80,36 @@ var _ = Describe("config get", func() {
 
 	Describe("command integration", func() {
 		It("requires a key argument", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"config", "get"})
-			err := cmd.Execute()
+			_, _, err := execute(newRootCmd(), "config", "get")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("key"))
 		})
 
 		It("returns a subtree as YAML", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"config", "get", "database"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "config", "get", "database")
 			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).To(ContainSubstring("dsn:"))
-			Expect(output).To(ContainSubstring("max_conns:"))
+			Expect(stdout).To(ContainSubstring("dsn:"))
+			Expect(stdout).To(ContainSubstring("max_conns:"))
 		})
 
 		It("returns a scalar value directly", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"config", "get", "cli.output"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "config", "get", "cli.output")
 			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).NotTo(BeEmpty())
-			Expect(output).NotTo(ContainSubstring("output:"))
+			Expect(stdout).NotTo(BeEmpty())
+			Expect(stdout).NotTo(ContainSubstring("output:"))
 		})
 
 		It("returns JSON when --json is set", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"config", "get", "database", "--json"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "config", "get", "database", "--json")
 			Expect(err).NotTo(HaveOccurred())
 			var result map[string]any
-			Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+			Expect(json.Unmarshal([]byte(stdout), &result)).To(Succeed())
 			Expect(result).To(HaveKey("dsn"))
 			Expect(result).To(HaveKey("max_conns"))
 		})
 
 		It("errors on a non-existent key", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"config", "get", "foo.bar.baz"})
-			err := cmd.Execute()
+			_, _, err := execute(newRootCmd(), "config", "get", "foo.bar.baz")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("not found"))
 		})

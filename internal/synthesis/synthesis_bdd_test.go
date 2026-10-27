@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"math"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -336,7 +338,7 @@ var _ = Describe("Assessor", func() {
 	)
 
 	BeforeEach(func() {
-		cfg = defaultAssessmentConfig()
+		cfg = synthesis.ExportDefaultAssessmentConfig()
 		ctx = context.Background()
 	})
 
@@ -409,71 +411,35 @@ var _ = Describe("Assessor", func() {
 			Expect(diag.Value).To(BeNumerically("~", 35.0, 1e-9))
 		})
 
-		It("IQR >= IQRGood → SeverityGood", func() {
-			// Use 8 values with wide spread: 0, 10, 20, 30, 70, 80, 90, 100
-			// Q1 index = 1.75 → lerp(10,20,0.75) = 17.5
-			// Q3 index = 5.25 → lerp(80,90,0.25) = 82.5
-			// IQR = 65.0 >= 20.0
-			assessor = synthesis.NewAssessor(cfg, []string{})
-			vals := []float64{0, 10, 20, 30, 70, 80, 90, 100}
-			rows := make([]synthesis.SynthesisRow, len(vals))
-			for i, v := range vals {
-				rows[i] = synthesis.SynthesisRow{
-					SourceID: "s", TargetID: "t", SimilarityMean: v,
-					ConsensusRelationship: "NO_RELATIONSHIP", ConfidenceFraction: 0.5, Unanimous: true,
+		DescribeTable("classifies embedding spread by IQR",
+			func(vals []float64, wantSeverity synthesis.DiagnosticSeverity, wantMsg string) {
+				assessor = synthesis.NewAssessor(cfg, []string{})
+
+				rows := make([]synthesis.SynthesisRow, len(vals))
+				for i, v := range vals {
+					rows[i] = synthesis.SynthesisRow{
+						SourceID: "s", TargetID: "t", SimilarityMean: v,
+						ConsensusRelationship: "NO_RELATIONSHIP", ConfidenceFraction: 0.5, Unanimous: true,
+					}
 				}
-			}
 
-			report := assessor.Assess(ctx, rows)
-			diag := findDiagnostic(report, "embedding_spread")
-			Expect(diag).NotTo(BeNil())
-			Expect(diag.Severity).To(Equal(synthesis.SeverityGood))
-			Expect(diag.Message).To(ContainSubstring("good embedding discrimination"))
-		})
-
-		It("IQR < IQRPoor → SeverityPoor", func() {
-			// Values clustered: 50, 51, 52, 53, 54, 55, 56, 57
-			// Q1 index = 1.75 → lerp(51,52,0.75) = 51.75
-			// Q3 index = 5.25 → lerp(55,56,0.25) = 55.25
-			// IQR = 3.5 < 10.0
-			assessor = synthesis.NewAssessor(cfg, []string{})
-			vals := []float64{50, 51, 52, 53, 54, 55, 56, 57}
-			rows := make([]synthesis.SynthesisRow, len(vals))
-			for i, v := range vals {
-				rows[i] = synthesis.SynthesisRow{
-					SourceID: "s", TargetID: "t", SimilarityMean: v,
-					ConsensusRelationship: "NO_RELATIONSHIP", ConfidenceFraction: 0.5, Unanimous: true,
-				}
-			}
-
-			report := assessor.Assess(ctx, rows)
-			diag := findDiagnostic(report, "embedding_spread")
-			Expect(diag).NotTo(BeNil())
-			Expect(diag.Severity).To(Equal(synthesis.SeverityPoor))
-			Expect(diag.Message).To(ContainSubstring("diluted averaged matrix"))
-		})
-
-		It("IQR between bounds → SeverityWarn", func() {
-			// Need IQR in [10, 20). Values: 40, 43, 46, 49, 52, 55, 58, 61
-			// Q1 index = 1.75 → lerp(43,46,0.75) = 45.25
-			// Q3 index = 5.25 → lerp(55,58,0.25) = 55.75
-			// IQR = 10.5 — in [10, 20)
-			assessor = synthesis.NewAssessor(cfg, []string{})
-			vals := []float64{40, 43, 46, 49, 52, 55, 58, 61}
-			rows := make([]synthesis.SynthesisRow, len(vals))
-			for i, v := range vals {
-				rows[i] = synthesis.SynthesisRow{
-					SourceID: "s", TargetID: "t", SimilarityMean: v,
-					ConsensusRelationship: "NO_RELATIONSHIP", ConfidenceFraction: 0.5, Unanimous: true,
-				}
-			}
-
-			report := assessor.Assess(ctx, rows)
-			diag := findDiagnostic(report, "embedding_spread")
-			Expect(diag).NotTo(BeNil())
-			Expect(diag.Severity).To(Equal(synthesis.SeverityWarn))
-			Expect(diag.Message).To(ContainSubstring("moderate embedding spread"))
-		})
+				report := assessor.Assess(ctx, rows)
+				diag := findDiagnostic(report, "embedding_spread")
+				Expect(diag).NotTo(BeNil())
+				Expect(diag.Severity).To(Equal(wantSeverity))
+				Expect(diag.Message).To(ContainSubstring(wantMsg))
+			},
+			// Wide spread: Q1 = lerp(10,20,0.75) = 17.5, Q3 = lerp(80,90,0.25) = 82.5,
+			// IQR = 65.0 >= IQRGood (20.0).
+			Entry("IQR >= IQRGood → SeverityGood",
+				[]float64{0, 10, 20, 30, 70, 80, 90, 100}, synthesis.SeverityGood, "good embedding discrimination"),
+			// Clustered: Q1 = 51.75, Q3 = 55.25, IQR = 3.5 < IQRPoor (10.0).
+			Entry("IQR < IQRPoor → SeverityPoor",
+				[]float64{50, 51, 52, 53, 54, 55, 56, 57}, synthesis.SeverityPoor, "diluted averaged matrix"),
+			// Q1 = 45.25, Q3 = 55.75, IQR = 10.5 in [10, 20).
+			Entry("IQR between bounds → SeverityWarn",
+				[]float64{40, 43, 46, 49, 52, 55, 58, 61}, synthesis.SeverityWarn, "moderate embedding spread"),
+		)
 
 		It("fewer than 4 rows → insufficient data", func() {
 			assessor = synthesis.NewAssessor(cfg, []string{})
@@ -493,111 +459,60 @@ var _ = Describe("Assessor", func() {
 	})
 
 	Context("NO_RELATIONSHIP rate", func() {
-		It("rate > NoRelHigh → SeverityPoor", func() {
-			// 49 out of 50 = 98% NO_RELATIONSHIP
-			assessor = synthesis.NewAssessor(cfg, []string{"EQUIVALENT"})
-			rows := make([]synthesis.SynthesisRow, 50)
-			for i := range rows {
-				rel := "NO_RELATIONSHIP"
-				if i == 0 {
-					rel = "EQUIVALENT"
+		DescribeTable("classifies the NO_RELATIONSHIP rate",
+			func(total, equivalent int, wantSeverity synthesis.DiagnosticSeverity, wantMsg string) {
+				assessor = synthesis.NewAssessor(cfg, []string{"EQUIVALENT"})
+				rows := make([]synthesis.SynthesisRow, total)
+				for i := range rows {
+					rel := "NO_RELATIONSHIP"
+					if i < equivalent {
+						rel = "EQUIVALENT"
+					}
+					rows[i] = synthesis.SynthesisRow{
+						SourceID: "s", TargetID: "t", SimilarityMean: float64(i % 100),
+						ConsensusRelationship: rel, ConfidenceFraction: 0.5, Unanimous: true,
+					}
 				}
-				rows[i] = synthesis.SynthesisRow{
-					SourceID: "s", TargetID: "t", SimilarityMean: float64(i),
-					ConsensusRelationship: rel, ConfidenceFraction: 0.5, Unanimous: true,
-				}
-			}
 
-			report := assessor.Assess(ctx, rows)
-			diag := findDiagnostic(report, "no_relationship_rate")
-			Expect(diag).NotTo(BeNil())
-			Expect(diag.Severity).To(Equal(synthesis.SeverityPoor))
-			Expect(diag.Message).To(ContainSubstring("top_k too low"))
-		})
-
-		It("rate < NoRelLow → SeverityWarn", func() {
-			// 7 out of 10 = 70% NO_RELATIONSHIP
-			assessor = synthesis.NewAssessor(cfg, []string{"EQUIVALENT"})
-			rows := make([]synthesis.SynthesisRow, 10)
-			for i := range rows {
-				rel := "NO_RELATIONSHIP"
-				if i < 3 {
-					rel = "EQUIVALENT"
-				}
-				rows[i] = synthesis.SynthesisRow{
-					SourceID: "s", TargetID: "t", SimilarityMean: float64(i * 10),
-					ConsensusRelationship: rel, ConfidenceFraction: 0.5, Unanimous: true,
-				}
-			}
-
-			report := assessor.Assess(ctx, rows)
-			diag := findDiagnostic(report, "no_relationship_rate")
-			Expect(diag).NotTo(BeNil())
-			Expect(diag.Severity).To(Equal(synthesis.SeverityWarn))
-			Expect(diag.Message).To(ContainSubstring("top_k too high"))
-		})
-
-		It("rate in range → SeverityGood", func() {
-			// 9 out of 10 = 90% NO_RELATIONSHIP — in [0.80, 0.97]
-			assessor = synthesis.NewAssessor(cfg, []string{"EQUIVALENT"})
-			rows := make([]synthesis.SynthesisRow, 10)
-			for i := range rows {
-				rel := "NO_RELATIONSHIP"
-				if i == 0 {
-					rel = "EQUIVALENT"
-				}
-				rows[i] = synthesis.SynthesisRow{
-					SourceID: "s", TargetID: "t", SimilarityMean: float64(i * 10),
-					ConsensusRelationship: rel, ConfidenceFraction: 0.5, Unanimous: true,
-				}
-			}
-
-			report := assessor.Assess(ctx, rows)
-			diag := findDiagnostic(report, "no_relationship_rate")
-			Expect(diag).NotTo(BeNil())
-			Expect(diag.Severity).To(Equal(synthesis.SeverityGood))
-			Expect(diag.Message).To(ContainSubstring("within expected range"))
-		})
+				report := assessor.Assess(ctx, rows)
+				diag := findDiagnostic(report, "no_relationship_rate")
+				Expect(diag).NotTo(BeNil())
+				Expect(diag.Severity).To(Equal(wantSeverity))
+				Expect(diag.Message).To(ContainSubstring(wantMsg))
+			},
+			// 49 of 50 = 98% NO_RELATIONSHIP
+			Entry("rate > NoRelHigh → SeverityPoor", 50, 1, synthesis.SeverityPoor, "top_k too low"),
+			// 7 of 10 = 70% NO_RELATIONSHIP
+			Entry("rate < NoRelLow → SeverityWarn", 10, 3, synthesis.SeverityWarn, "top_k too high"),
+			// 9 of 10 = 90% NO_RELATIONSHIP, in [0.80, 0.97]
+			Entry("rate in range → SeverityGood", 10, 1, synthesis.SeverityGood, "within expected range"),
+		)
 	})
 
 	Context("contested pairs", func() {
-		It("fraction > ContestedWarn → SeverityWarn", func() {
-			// 3 out of 10 = 30% non-unanimous
-			assessor = synthesis.NewAssessor(cfg, []string{})
-			rows := make([]synthesis.SynthesisRow, 10)
-			for i := range rows {
-				rows[i] = synthesis.SynthesisRow{
-					SourceID: "s", TargetID: "t", SimilarityMean: float64(i * 10),
-					ConsensusRelationship: "NO_RELATIONSHIP", ConfidenceFraction: 0.5,
-					Unanimous: i >= 3, // first 3 are non-unanimous
+		DescribeTable("classifies the contested fraction",
+			func(contested int, wantSeverity synthesis.DiagnosticSeverity, wantMsg string) {
+				assessor = synthesis.NewAssessor(cfg, []string{})
+				rows := make([]synthesis.SynthesisRow, 10)
+				for i := range rows {
+					rows[i] = synthesis.SynthesisRow{
+						SourceID: "s", TargetID: "t", SimilarityMean: float64(i * 10),
+						ConsensusRelationship: "NO_RELATIONSHIP", ConfidenceFraction: 0.5,
+						Unanimous: i >= contested, // first `contested` rows are non-unanimous
+					}
 				}
-			}
 
-			report := assessor.Assess(ctx, rows)
-			diag := findDiagnostic(report, "contested_pairs")
-			Expect(diag).NotTo(BeNil())
-			Expect(diag.Severity).To(Equal(synthesis.SeverityWarn))
-			Expect(diag.Message).To(ContainSubstring("contested (non-unanimous)"))
-		})
-
-		It("fraction within threshold → SeverityGood", func() {
-			// 1 out of 10 = 10% non-unanimous
-			assessor = synthesis.NewAssessor(cfg, []string{})
-			rows := make([]synthesis.SynthesisRow, 10)
-			for i := range rows {
-				rows[i] = synthesis.SynthesisRow{
-					SourceID: "s", TargetID: "t", SimilarityMean: float64(i * 10),
-					ConsensusRelationship: "NO_RELATIONSHIP", ConfidenceFraction: 0.5,
-					Unanimous: i >= 1, // only first is non-unanimous
-				}
-			}
-
-			report := assessor.Assess(ctx, rows)
-			diag := findDiagnostic(report, "contested_pairs")
-			Expect(diag).NotTo(BeNil())
-			Expect(diag.Severity).To(Equal(synthesis.SeverityGood))
-			Expect(diag.Message).To(ContainSubstring("contested"))
-		})
+				report := assessor.Assess(ctx, rows)
+				diag := findDiagnostic(report, "contested_pairs")
+				Expect(diag).NotTo(BeNil())
+				Expect(diag.Severity).To(Equal(wantSeverity))
+				Expect(diag.Message).To(ContainSubstring(wantMsg))
+			},
+			// 3 of 10 = 30% non-unanimous
+			Entry("fraction > ContestedWarn → SeverityWarn", 3, synthesis.SeverityWarn, "contested (non-unanimous)"),
+			// 1 of 10 = 10% non-unanimous
+			Entry("fraction within threshold → SeverityGood", 1, synthesis.SeverityGood, "contested"),
+		)
 	})
 
 	Context("actionable coverage", func() {
@@ -878,87 +793,35 @@ var _ = Describe("Service", func() {
 	// -----------------------------------------------------------------------
 
 	Context("input validation", func() {
-		It("returns ErrInvalidInput for empty SourceID", func() {
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: "", TargetID: "tgt-1", SimilarityScore: 50.0, ConfidenceFraction: 0.5},
-			}
-
-			result, err := svc.Execute(ctx, "job-1", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("SourceID"))
-			Expect(result).To(BeNil())
-		})
-
-		It("returns ErrInvalidInput for empty TargetID", func() {
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: "src-1", TargetID: "", SimilarityScore: 50.0, ConfidenceFraction: 0.5},
-			}
-
-			result, err := svc.Execute(ctx, "job-1", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("TargetID"))
-			Expect(result).To(BeNil())
-		})
-
-		It("returns ErrInvalidInput for NaN SimilarityScore", func() {
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: math.NaN(), ConfidenceFraction: 0.5},
-			}
-
-			result, err := svc.Execute(ctx, "job-1", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("SimilarityScore"))
-			Expect(result).To(BeNil())
-		})
-
-		It("returns ErrInvalidInput for +Inf SimilarityScore", func() {
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: math.Inf(1), ConfidenceFraction: 0.5},
-			}
-
-			result, err := svc.Execute(ctx, "job-1", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(result).To(BeNil())
-		})
-
-		It("returns ErrInvalidInput for negative SimilarityScore", func() {
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: -0.1, ConfidenceFraction: 0.5},
-			}
-
-			result, err := svc.Execute(ctx, "job-1", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(result).To(BeNil())
-		})
-
-		It("returns ErrInvalidInput for ConfidenceFraction > 1", func() {
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: 50.0, ConfidenceFraction: 1.01},
-			}
-
-			result, err := svc.Execute(ctx, "job-1", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("ConfidenceFraction"))
-			Expect(result).To(BeNil())
-		})
-
-		It("returns ErrInvalidInput for ConfidenceFraction < 0", func() {
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: 50.0, ConfidenceFraction: -0.1},
-			}
-
-			result, err := svc.Execute(ctx, "job-1", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("ConfidenceFraction"))
-			Expect(result).To(BeNil())
-		})
+		DescribeTable("returns ErrInvalidInput",
+			func(inputs []synthesis.SynthesisInput, wantMsg string) {
+				result, err := svc.Execute(ctx, "job-1", inputs, nil)
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
+				Expect(err.Error()).To(ContainSubstring(wantMsg))
+				Expect(result).To(BeNil())
+			},
+			Entry("for empty SourceID",
+				[]synthesis.SynthesisInput{{SourceID: "", TargetID: "tgt-1", SimilarityScore: 50.0, ConfidenceFraction: 0.5}}, "SourceID"),
+			Entry("for empty TargetID",
+				[]synthesis.SynthesisInput{{SourceID: "src-1", TargetID: "", SimilarityScore: 50.0, ConfidenceFraction: 0.5}}, "TargetID"),
+			Entry("for NaN SimilarityScore",
+				[]synthesis.SynthesisInput{{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: math.NaN(), ConfidenceFraction: 0.5}}, "SimilarityScore"),
+			Entry("for +Inf SimilarityScore",
+				[]synthesis.SynthesisInput{{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: math.Inf(1), ConfidenceFraction: 0.5}}, "invalid SimilarityScore"),
+			Entry("for negative SimilarityScore",
+				[]synthesis.SynthesisInput{{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: -0.1, ConfidenceFraction: 0.5}}, "negative SimilarityScore"),
+			Entry("for ConfidenceFraction > 1",
+				[]synthesis.SynthesisInput{{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: 50.0, ConfidenceFraction: 1.01}}, "ConfidenceFraction"),
+			Entry("for ConfidenceFraction < 0",
+				[]synthesis.SynthesisInput{{SourceID: "src-1", TargetID: "tgt-1", SimilarityScore: 50.0, ConfidenceFraction: -0.1}}, "ConfidenceFraction"),
+			Entry("when len(inputs) > 10000",
+				slices.Repeat([]synthesis.SynthesisInput{makeInput("src", "tgt", 50.0)}, 10001), "too many inputs"),
+			Entry("when SourceID exceeds 256 bytes",
+				[]synthesis.SynthesisInput{{SourceID: strings.Repeat("a", 257), TargetID: "tgt-1", SimilarityScore: 50.0, ConfidenceFraction: 0.5}}, "SourceID exceeds max length"),
+			Entry("when TargetID exceeds 256 bytes",
+				[]synthesis.SynthesisInput{{SourceID: "src-1", TargetID: strings.Repeat("b", 257), SimilarityScore: 50.0, ConfidenceFraction: 0.5}}, "TargetID exceeds max length"),
+		)
 	})
 
 	// -----------------------------------------------------------------------
@@ -1270,54 +1133,6 @@ var _ = Describe("Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(BeNil())
 			Expect(result.Report.ViablePairs).To(Equal(0))
-		})
-	})
-
-	// -----------------------------------------------------------------------
-	// validateInputs boundary limits
-	// -----------------------------------------------------------------------
-
-	Context("validateInputs boundary guards", func() {
-		It("returns ErrInvalidInput when len(inputs) > 10000", func() {
-			inputs := make([]synthesis.SynthesisInput, 10001)
-			for i := range inputs {
-				inputs[i] = makeInput("src", "tgt", 50.0)
-			}
-			result, err := svc.Execute(ctx, "job-too-many", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("too many inputs"))
-			Expect(result).To(BeNil())
-		})
-
-		It("returns ErrInvalidInput when SourceID exceeds 256 bytes", func() {
-			longID := make([]byte, 257)
-			for i := range longID {
-				longID[i] = 'a'
-			}
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: string(longID), TargetID: "tgt-1", SimilarityScore: 50.0, ConfidenceFraction: 0.5},
-			}
-			result, err := svc.Execute(ctx, "job-long-src", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("SourceID exceeds max length"))
-			Expect(result).To(BeNil())
-		})
-
-		It("returns ErrInvalidInput when TargetID exceeds 256 bytes", func() {
-			longID := make([]byte, 257)
-			for i := range longID {
-				longID[i] = 'b'
-			}
-			inputs := []synthesis.SynthesisInput{
-				{SourceID: "src-1", TargetID: string(longID), SimilarityScore: 50.0, ConfidenceFraction: 0.5},
-			}
-			result, err := svc.Execute(ctx, "job-long-tgt", inputs, nil)
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, synthesis.ErrInvalidInput)).To(BeTrue())
-			Expect(err.Error()).To(ContainSubstring("TargetID exceeds max length"))
-			Expect(result).To(BeNil())
 		})
 	})
 

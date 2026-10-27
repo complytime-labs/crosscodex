@@ -45,13 +45,24 @@ var _ = Describe("Archiver", func() {
 		Expect(a.Archive(ctx, retention.Candidate{Store: retention.StoreObject, Class: retention.ClassAttestation, ObjectKey: "k"})).To(Succeed())
 	})
 
-	It("returns ErrArchiveVerify when the archived object copy does not match", func() {
-		primary := &storagetest.Fake{}
-		Expect(primary.Put(ctx, "k", bytes.NewReader([]byte("evidence")))).To(Succeed())
-		a := retention.NewArchiver(nil, primary, newCorruptingProvider())
-		Expect(a.Archive(ctx, retention.Candidate{Store: retention.StoreObject, Class: retention.ClassAttestation, ObjectKey: "k"})).
-			To(MatchError(retention.ErrArchiveVerify))
-	})
+	DescribeTable("returns ErrArchiveVerify when the archived copy does not match",
+		func(newArchiver func() retention.Archiver, cand retention.Candidate) {
+			Expect(newArchiver().Archive(ctx, cand)).To(MatchError(retention.ErrArchiveVerify))
+		},
+		Entry("an object candidate",
+			func() retention.Archiver {
+				primary := &storagetest.Fake{}
+				Expect(primary.Put(ctx, "k", bytes.NewReader([]byte("evidence")))).To(Succeed())
+				return retention.NewArchiver(nil, primary, newCorruptingProvider())
+			},
+			retention.Candidate{Store: retention.StoreObject, Class: retention.ClassAttestation, ObjectKey: "k"}),
+		Entry("a DB candidate",
+			func() retention.Archiver {
+				conn := archiveJSONConn([]byte(`{"job":{"job_id":"job-old"},"job_stages":[],"vote_summaries":[],"analysis_results":[],"relationship_candidates":[]}`))
+				return retention.NewArchiver(conn, nil, newCorruptingProvider())
+			},
+			retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassJobResults, ID: "job-old"}),
+	)
 
 	It("serializes a DB job candidate and its children to the archive and verifies its hash", func() {
 		// The aggregate archive doc carries the parent job plus its FK-child sets.
@@ -67,24 +78,27 @@ var _ = Describe("Archiver", func() {
 		Expect(string(body)).To(ContainSubstring("requires_candidates"))
 	})
 
-	It("returns ErrArchiveVerify when the archived DB copy does not match", func() {
-		conn := archiveJSONConn([]byte(`{"job":{"job_id":"job-old"},"job_stages":[],"vote_summaries":[],"analysis_results":[],"relationship_candidates":[]}`))
-		a := retention.NewArchiver(conn, nil, newCorruptingProvider())
-		Expect(a.Archive(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassJobResults, ID: "job-old"})).
-			To(MatchError(retention.ErrArchiveVerify))
-	})
-
-	It("errors rather than archiving an empty doc when the parent job is absent", func() {
-		// row_to_json over a missing parent yields a NULL 'job' field.
-		conn := archiveJSONConn([]byte(`{"job":null,"job_stages":[],"vote_summaries":[],"analysis_results":[],"relationship_candidates":[]}`))
-		archive := &storagetest.Fake{}
-		a := retention.NewArchiver(conn, nil, archive)
-		err := a.Archive(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassJobResults, ID: "job-gone"})
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("parent job"))
-		Expect(err.Error()).To(ContainSubstring("job-gone"))
-		Expect(archive.Objects()).To(BeEmpty(), "no doc may be written when the parent is missing")
-	})
+	DescribeTable("errors rather than archiving an empty doc when the parent is absent",
+		func(class retention.DataClass, docJSON, id, wantParent string) {
+			conn := archiveJSONConn([]byte(docJSON))
+			archive := &storagetest.Fake{}
+			a := retention.NewArchiver(conn, nil, archive)
+			err := a.Archive(ctx, retention.Candidate{Store: retention.StorePostgres, Class: class, ID: id})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(wantParent))
+			Expect(err.Error()).To(ContainSubstring(id))
+			Expect(archive.Objects()).To(BeEmpty(), "no doc may be written when the parent is missing")
+		},
+		// row_to_json over a missing parent yields a NULL parent field.
+		Entry("a job",
+			retention.ClassJobResults,
+			`{"job":null,"job_stages":[],"vote_summaries":[],"analysis_results":[],"relationship_candidates":[]}`,
+			"job-gone", "parent job"),
+		Entry("a catalog",
+			retention.ClassCatalogs,
+			`{"catalog":null,"classifications":[],"controls":[]}`,
+			"cat-gone", "parent catalog"),
+	)
 
 	It("serializes a DB catalog candidate with its classifications and controls to the archive", func() {
 		// The catalog aggregate doc carries the parent catalog plus its
@@ -99,18 +113,6 @@ var _ = Describe("Archiver", func() {
 		Expect(string(body)).To(ContainSubstring("classifications"))
 		Expect(string(body)).To(ContainSubstring("controls"))
 		Expect(string(body)).NotTo(ContainSubstring("embeddings"))
-	})
-
-	It("errors rather than archiving an empty doc when the parent catalog is absent", func() {
-		// row_to_json over a missing parent yields a NULL 'catalog' field.
-		conn := archiveJSONConn([]byte(`{"catalog":null,"classifications":[],"controls":[]}`))
-		archive := &storagetest.Fake{}
-		a := retention.NewArchiver(conn, nil, archive)
-		err := a.Archive(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassCatalogs, ID: "cat-gone"})
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("parent catalog"))
-		Expect(err.Error()).To(ContainSubstring("cat-gone"))
-		Expect(archive.Objects()).To(BeEmpty(), "no doc may be written when the parent is missing")
 	})
 
 	It("errors for an unsupported DB archival class", func() {

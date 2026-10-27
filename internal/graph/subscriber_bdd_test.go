@@ -64,71 +64,24 @@ var _ = Describe("Subscriber Event Handling", func() {
 			return rels
 		}
 
-		It("skips events with unknown analyzers", func() {
-			event := map[string]string{
-				"analyzer": "unknown-analyzer",
-				"job_id":   "job-1",
-				"stage":    "completed",
-			}
-			data, _ := json.Marshal(event)
-			msg := &natsbus.Message{
-				Subject: "crosscodex.pipeline.test-tenant.job-1.stage.completed",
-				Data:    data,
-			}
-
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		It("rejects events with malformed subjects", func() {
-			msg := &natsbus.Message{
-				Subject: "bad.subject",
-				Data:    []byte(`{}`),
-			}
-
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
-			Expect(err).NotTo(HaveOccurred()) // nil return = don't redeliver
-		})
-
-		It("rejects events with invalid tenant IDs", func() {
-			event := map[string]string{
-				"analyzer": "relationship",
-				"job_id":   "job-1",
-				"stage":    "completed",
-			}
-			data, _ := json.Marshal(event)
-			msg := &natsbus.Message{
-				Subject: "crosscodex.pipeline.invalid!tenant.job-1.stage.completed",
-				Data:    data,
-			}
-
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
-			Expect(err).NotTo(HaveOccurred()) // nil return = don't redeliver
-		})
-
-		It("rejects events with malformed JSON", func() {
-			msg := &natsbus.Message{
-				Subject: "crosscodex.pipeline.test-tenant.job-1.stage.completed",
-				Data:    []byte(`{bad json`),
-			}
-
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
-			Expect(err).NotTo(HaveOccurred()) // nil return = don't redeliver
-		})
-
-		It("rejects events missing required fields", func() {
-			event := map[string]string{
-				"stage": "completed",
-			}
-			data, _ := json.Marshal(event)
-			msg := &natsbus.Message{
-				Subject: "crosscodex.pipeline.test-tenant.job-1.stage.completed",
-				Data:    data,
-			}
-
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
-			Expect(err).NotTo(HaveOccurred()) // nil return = don't redeliver
-		})
+		DescribeTable("returns nil, so the message is not redelivered, for an event it cannot process",
+			func(subject string, data string) {
+				err := graph.ExportHandleEvent(svc, context.Background(), &natsbus.Message{Subject: subject, Data: []byte(data)})
+				Expect(err).NotTo(HaveOccurred())
+			},
+			Entry("an unknown analyzer",
+				"crosscodex.pipeline.test-tenant.job-1.stage.completed",
+				`{"analyzer":"unknown-analyzer","job_id":"job-1","stage":"completed"}`),
+			Entry("a malformed subject",
+				"bad.subject", `{}`),
+			Entry("an invalid tenant ID in the subject",
+				"crosscodex.pipeline.invalid!tenant.job-1.stage.completed",
+				`{"analyzer":"relationship","job_id":"job-1","stage":"completed"}`),
+			Entry("malformed JSON",
+				"crosscodex.pipeline.test-tenant.job-1.stage.completed", `{bad json`),
+			Entry("missing required fields",
+				"crosscodex.pipeline.test-tenant.job-1.stage.completed", `{"stage":"completed"}`),
+		)
 
 		It("returns error when resolver fails", func() {
 			resolver.err = errors.New("resolution failed")

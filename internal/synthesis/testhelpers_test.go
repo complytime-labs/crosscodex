@@ -69,7 +69,7 @@ func defaultViabilityConfig() config.ViabilityConfig {
 func defaultSynthesisConfig() config.SynthesisConfig {
 	return config.SynthesisConfig{
 		Viability:             defaultViabilityConfig(),
-		Assessment:            defaultAssessmentConfig(),
+		Assessment:            synthesis.ExportDefaultAssessmentConfig(),
 		ConfidenceThreshold:   0.5,
 		MaxMappingsPerControl: 10,
 	}

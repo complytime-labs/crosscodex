@@ -4,10 +4,8 @@ package results_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 
 	"github.com/google/uuid"
@@ -46,23 +44,16 @@ func setupStore() storeEnv {
 	Expect(migrator.Close()).To(Succeed())
 
 	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	Expect(err).NotTo(HaveOccurred())
-	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-	Expect(err).NotTo(HaveOccurred())
-	adminDB, err := sql.Open("pgx", suDSN)
-	Expect(err).NotTo(HaveOccurred())
-	_, err = adminDB.ExecContext(ctx, stmt)
-	Expect(err).NotTo(HaveOccurred())
-	Expect(adminDB.Close()).To(Succeed())
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed())
 
 	su, err := db.NewPool(db.PoolConfig{DSN: suDSN, MaxOpenConns: 5, Extensions: []string{"age", "vector"}})
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(func() { su.Close() })
 
-	u, err := url.Parse(suDSN)
+	appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
 	Expect(err).NotTo(HaveOccurred())
-	u.User = url.UserPassword("app_user", appPassword)
-	appPool, err := db.NewPool(db.PoolConfig{DSN: u.String(), MaxOpenConns: 10})
+	appPool, err := db.NewPool(db.PoolConfig{DSN: appDSN, MaxOpenConns: 10})
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(func() { appPool.Close() })
 

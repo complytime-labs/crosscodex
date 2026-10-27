@@ -707,97 +707,38 @@ templates:
 		})
 	})
 
-	Context("Render with few-shot cmd: source (commands disabled)", func() {
-		BeforeEach(func() {
-			cfg.AllowCommands = false
-		})
-
-		It("returns ErrCommandDisabled", func() {
-			tmpDir, err := os.MkdirTemp("", "prompt-cmd-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
+	DescribeTable("Render rejects unusable few-shot sources",
+		func(allowCommands bool, promptName, source string, wantErr error) {
+			cfg.AllowCommands = allowCommands
+			tmpDir := GinkgoT().TempDir()
 
 			promptDir := filepath.Join(tmpDir, ".crosscodex", "prompts")
 			Expect(os.MkdirAll(promptDir, 0o755)).To(Succeed())
 
-			cmdYAML := `
-name: cmd-test
+			specYAML := "name: " + promptName + `
 version: 1.0.0
 templates:
   system: "test"
 few_shot_examples:
-  - source: "cmd:echo hello"
+  - source: "` + source + `"
 `
-			Expect(os.WriteFile(filepath.Join(promptDir, "cmd.yaml"),
-				[]byte(cmdYAML), 0o644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(promptDir, "spec.yaml"),
+				[]byte(specYAML), 0o644)).To(Succeed())
 
+			var err error
 			reg, err = prompt.NewRegistry(cfg, prompt.WithProjectDir(tmpDir))
 			Expect(err).NotTo(HaveOccurred())
 
-			_, err = reg.Render(context.Background(), "cmd-test", nil)
-			Expect(err).To(MatchError(prompt.ErrCommandDisabled))
-		})
-	})
-
-	Context("Render with few-shot cmd: source (commands enabled)", func() {
-		BeforeEach(func() {
-			cfg.AllowCommands = true
-		})
-
-		It("returns ErrCommandDisabled (not yet implemented)", func() {
-			tmpDir, err := os.MkdirTemp("", "prompt-cmd-enabled-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
-
-			promptDir := filepath.Join(tmpDir, ".crosscodex", "prompts")
-			Expect(os.MkdirAll(promptDir, 0o755)).To(Succeed())
-
-			cmdYAML := `
-name: cmd-enabled
-version: 1.0.0
-templates:
-  system: "test"
-few_shot_examples:
-  - source: "cmd:echo hello"
-`
-			Expect(os.WriteFile(filepath.Join(promptDir, "cmd.yaml"),
-				[]byte(cmdYAML), 0o644)).To(Succeed())
-
-			reg, err = prompt.NewRegistry(cfg, prompt.WithProjectDir(tmpDir))
-			Expect(err).NotTo(HaveOccurred())
-
-			_, err = reg.Render(context.Background(), "cmd-enabled", nil)
-			Expect(err).To(MatchError(prompt.ErrCommandDisabled))
-		})
-	})
-
-	Context("Render with unknown few-shot source protocol", func() {
-		It("returns ErrInvalidPromptSpec", func() {
-			tmpDir, err := os.MkdirTemp("", "prompt-unknown-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
-
-			promptDir := filepath.Join(tmpDir, ".crosscodex", "prompts")
-			Expect(os.MkdirAll(promptDir, 0o755)).To(Succeed())
-
-			unknownYAML := `
-name: unknown-source
-version: 1.0.0
-templates:
-  system: "test"
-few_shot_examples:
-  - source: "http://example.com/shots.json"
-`
-			Expect(os.WriteFile(filepath.Join(promptDir, "unknown.yaml"),
-				[]byte(unknownYAML), 0o644)).To(Succeed())
-
-			reg, err = prompt.NewRegistry(cfg, prompt.WithProjectDir(tmpDir))
-			Expect(err).NotTo(HaveOccurred())
-
-			_, err = reg.Render(context.Background(), "unknown-source", nil)
-			Expect(err).To(MatchError(prompt.ErrInvalidPromptSpec))
-		})
-	})
+			_, err = reg.Render(context.Background(), promptName, nil)
+			Expect(err).To(MatchError(wantErr))
+		},
+		Entry("cmd: source with commands disabled returns ErrCommandDisabled",
+			false, "cmd-test", "cmd:echo hello", prompt.ErrCommandDisabled),
+		Entry("cmd: source with commands enabled returns ErrCommandDisabled (not yet implemented)",
+			true, "cmd-enabled", "cmd:echo hello", prompt.ErrCommandDisabled),
+		Entry("unknown source protocol returns ErrInvalidPromptSpec",
+			false, "unknown-source", "http://example.com/shots.json", prompt.ErrInvalidPromptSpec),
+	)
 })
 
 var _ = Describe("LoadFewShotFile", func() {

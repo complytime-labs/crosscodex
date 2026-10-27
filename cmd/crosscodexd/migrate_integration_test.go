@@ -19,16 +19,21 @@ import (
 )
 
 // withRole returns dsn with its user rewritten to role, authenticating with
-// password; an empty password leaves the URL without one.
+// password; an empty password leaves the URL without one, which
+// dbtest.RoleDSN refuses, so that case alone is built here.
 func withRole(dsn, role, password string) string {
-	u, err := url.Parse(dsn)
-	Expect(err).NotTo(HaveOccurred(), "parse TEST_DATABASE_DSN")
 	if password == "" {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			// Never print err: a *url.Error embeds the DSN, password included.
+			Fail("TEST_DATABASE_DSN is not a valid URL; fix the suite's database DSN")
+		}
 		u.User = url.User(role)
-	} else {
-		u.User = url.UserPassword(role, password)
+		return u.String()
 	}
-	return u.String()
+	roleDSN, err := dbtest.RoleDSN(dsn, role, password)
+	Expect(err).NotTo(HaveOccurred())
+	return roleDSN
 }
 
 // pingAs reports whether dsn authenticates.

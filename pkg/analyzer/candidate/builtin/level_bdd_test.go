@@ -200,13 +200,13 @@ var _ = Describe("LevelGenerator", func() {
 			})
 		})
 
-		Context("when source has an unknown level", func() {
-			It("skips the source and returns no candidates", func() {
+		DescribeTable("when source has an unrecognised level",
+			func(level string) {
 				sources := map[string]*candidate.ControlData{
-					"UNK-1": {
-						ControlID: "UNK-1",
-						Text:      "Unknown level control",
-						Level:     "Unknown",
+					"SRC-1": {
+						ControlID: "SRC-1",
+						Text:      "Source control",
+						Level:     level,
 					},
 				}
 
@@ -231,46 +231,11 @@ var _ = Describe("LevelGenerator", func() {
 				candidates, err := gen.Generate(context.Background(), req)
 				Expect(err).NotTo(HaveOccurred())
 
-				// Unknown levels should be skipped
 				Expect(candidates).To(BeEmpty())
-			})
-		})
-
-		Context("when source has an empty level", func() {
-			It("skips the source and returns no candidates", func() {
-				sources := map[string]*candidate.ControlData{
-					"EMPTY-1": {
-						ControlID: "EMPTY-1",
-						Text:      "Control with empty level",
-						Level:     "",
-					},
-				}
-
-				targets := map[string]*candidate.ControlData{
-					"STRAT-1": {
-						ControlID: "STRAT-1",
-						Text:      "Strategic control",
-						Level:     "Strategic",
-					},
-				}
-
-				req := candidate.GenerateRequest{
-					TenantID:       "test-tenant",
-					JobID:          "test-job",
-					SourceControls: sources,
-					TargetControls: targets,
-					Parameters: map[string]interface{}{
-						"weight": 1.0,
-					},
-				}
-
-				candidates, err := gen.Generate(context.Background(), req)
-				Expect(err).NotTo(HaveOccurred())
-
-				// Empty levels should be skipped
-				Expect(candidates).To(BeEmpty())
-			})
-		})
+			},
+			Entry("skips an unknown level and returns no candidates", "Unknown"),
+			Entry("skips an empty level and returns no candidates", ""),
+		)
 
 		Context("when sources have mixed levels", func() {
 			It("correctly pairs each level upward only", func() {

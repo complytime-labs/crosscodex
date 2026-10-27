@@ -2,6 +2,8 @@ package dbtest_test
 
 import (
 	"encoding/hex"
+	"fmt"
+	"net/url"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -44,6 +46,35 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 			if got := strings.Count(stmt, "'crosscodex_"+id+"'"); got != 2 {
 				t.Fatalf("statement must quote the graph name for %q exactly twice, found %d", id, got)
+			}
+		})
+	})
+
+	It("RoleDSN carries exactly the role and its password and keeps every other part of the URL", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			in := &url.URL{
+				Scheme:   rapid.SampledFrom([]string{"postgres", "postgresql"}).Draw(t, "scheme"),
+				User:     url.UserPassword(rapid.String().Draw(t, "user"), rapid.String().Draw(t, "suPassword")),
+				Host:     fmt.Sprintf("%s:%d", rapid.StringMatching(`[a-z][a-z0-9.-]{0,20}`).Draw(t, "host"), rapid.IntRange(1, 65535).Draw(t, "port")),
+				Path:     "/" + rapid.StringMatching(`[a-z_]{1,20}`).Draw(t, "db"),
+				RawQuery: url.Values{"sslmode": {rapid.SampledFrom([]string{"disable", "require", "verify-full"}).Draw(t, "sslmode")}}.Encode(),
+			}
+			role := rapid.StringMatching(`[a-z_]{1,20}`).Draw(t, "role")
+			password := rapid.StringMatching(`([0-9a-f]{2}){1,32}`).Draw(t, "password")
+
+			dsn, err := dbtest.RoleDSN(in.String(), role, password)
+			if err != nil {
+				t.Fatalf("RoleDSN(%q) refused a postgres URL: %v", in.Redacted(), err)
+			}
+			out, err := url.Parse(dsn)
+			if err != nil {
+				t.Fatalf("RoleDSN returned an unparsable DSN: %v", err)
+			}
+			if got, _ := out.User.Password(); out.User.Username() != role || got != password {
+				t.Fatalf("userinfo is %q, want role %q with the given password", out.User.Username(), role)
+			}
+			if out.Scheme != in.Scheme || out.Host != in.Host || out.Path != in.Path || out.RawQuery != in.RawQuery {
+				t.Fatalf("RoleDSN changed more than the userinfo: %s -> %s", in.Redacted(), out.Redacted())
 			}
 		})
 	})

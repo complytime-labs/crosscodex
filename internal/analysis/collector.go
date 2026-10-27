@@ -183,6 +183,7 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 				// carries a tenant, but the dispatcher requires one. Use the
 				// tenant this collection was prepared for (the same one that
 				// built the result subject), not a message header.
+				// The error branch is unreachable: tenantID was validated when the result subject was built.
 				redispatchCtx, err := tenant.WithTenant(handlerCtx, tenantID)
 				if err != nil {
 					return fmt.Errorf("redispatch task %s: %w", taskID, err)

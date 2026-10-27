@@ -30,24 +30,80 @@ var _ = Describe("Read RPCs", func() {
 		svc = graph.New(mockGraph, mockVectors, nil)
 	})
 
+	Describe("invalid requests", func() {
+		tenantCtx := func() context.Context { return testspecs.SetupTenantContext("test-tenant") }
+		adminCtx := func() context.Context {
+			return graph.ExportContextWithIdentity(tenantCtx(), &authn.Identity{
+				Subject:  "admin@test.com",
+				TenantID: "test-tenant",
+				Roles:    []string{authn.RoleAdmin},
+			})
+		}
+		tc := &pb.TenantContext{TenantId: "test-tenant"}
+
+		DescribeTable("are rejected with the expected code and no response",
+			func(newCtx func() context.Context, call func(context.Context, *graph.Service) (any, error), wantCode connect.Code, wantMsg string) {
+				resp, err := call(newCtx(), svc)
+				Expect(resp).To(BeNil())
+				Expect(connect.CodeOf(err)).To(Equal(wantCode))
+				Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			},
+			Entry("GetNode without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.GetNode(ctx, connect.NewRequest(&pb.GetNodeRequest{}))
+				}, connect.CodeInvalidArgument, "tenant_context is required"),
+			Entry("GetNode without node_id", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.GetNode(ctx, connect.NewRequest(&pb.GetNodeRequest{TenantContext: tc}))
+				}, connect.CodeInvalidArgument, "node_id is required"),
+			Entry("GetEdge without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.GetEdge(ctx, connect.NewRequest(&pb.GetEdgeRequest{}))
+				}, connect.CodeInvalidArgument, "tenant_context is required"),
+			Entry("GetEdge without edge_id", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.GetEdge(ctx, connect.NewRequest(&pb.GetEdgeRequest{TenantContext: tc}))
+				}, connect.CodeInvalidArgument, "edge_id is required"),
+			Entry("Traverse without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.Traverse(ctx, connect.NewRequest(&pb.TraverseRequest{}))
+				}, connect.CodeInvalidArgument, "tenant_context is required"),
+			Entry("Traverse without start_node_id", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.Traverse(ctx, connect.NewRequest(&pb.TraverseRequest{TenantContext: tc}))
+				}, connect.CodeInvalidArgument, "start_node_id is required"),
+			Entry("Query without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.Query(ctx, connect.NewRequest(&pb.QueryRequest{}))
+				}, connect.CodeInvalidArgument, "tenant_context is required"),
+			Entry("Query from an unauthenticated caller", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.Query(ctx, connect.NewRequest(&pb.QueryRequest{TenantContext: tc, Cypher: "MATCH (n) RETURN n"}))
+				}, connect.CodeUnauthenticated, "not authenticated"),
+			Entry("Query without cypher", adminCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.Query(ctx, connect.NewRequest(&pb.QueryRequest{TenantContext: tc}))
+				}, connect.CodeInvalidArgument, "cypher is required"),
+			Entry("TemporalQuery without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.TemporalQuery(ctx, connect.NewRequest(&pb.TemporalQueryRequest{}))
+				}, connect.CodeInvalidArgument, "tenant_context is required"),
+			Entry("TemporalQuery from an unauthenticated caller", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.TemporalQuery(ctx, connect.NewRequest(&pb.TemporalQueryRequest{TenantContext: tc, Cypher: "MATCH (n) RETURN n"}))
+				}, connect.CodeUnauthenticated, "not authenticated"),
+			Entry("TemporalQuery without cypher", adminCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.TemporalQuery(ctx, connect.NewRequest(&pb.TemporalQueryRequest{TenantContext: tc}))
+				}, connect.CodeInvalidArgument, "cypher is required"),
+			Entry("TemporalQuery without as_of", adminCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.TemporalQuery(ctx, connect.NewRequest(&pb.TemporalQueryRequest{TenantContext: tc, Cypher: "MATCH (n) RETURN n"}))
+				}, connect.CodeInvalidArgument, "as_of is required"),
+		)
+	})
+
 	Describe("GetNode", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.GetNode(context.Background(), connect.NewRequest(&pb.GetNodeRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("tenant_context is required"))
-		})
-
-		It("rejects missing node_id", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.GetNode(ctx, connect.NewRequest(&pb.GetNodeRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("node_id is required"))
-		})
-
 		It("returns NotFound when node does not exist", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			svc := graph.New(newMemGraph(ctx, "test-tenant"), mockVectors, nil)
@@ -85,21 +141,6 @@ var _ = Describe("Read RPCs", func() {
 	})
 
 	Describe("GetEdge", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.GetEdge(context.Background(), connect.NewRequest(&pb.GetEdgeRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects missing edge_id", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.GetEdge(ctx, connect.NewRequest(&pb.GetEdgeRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
 		It("returns NotFound when edge does not exist", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			svc := graph.New(newMemGraph(ctx, "test-tenant"), mockVectors, nil)
@@ -137,21 +178,6 @@ var _ = Describe("Read RPCs", func() {
 	})
 
 	Describe("Traverse", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.Traverse(context.Background(), connect.NewRequest(&pb.TraverseRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects missing start_node_id", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.Traverse(ctx, connect.NewRequest(&pb.TraverseRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
 		It("rejects an undefined direction without calling the graph", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			called := false
@@ -285,37 +311,6 @@ var _ = Describe("Read RPCs", func() {
 	})
 
 	Describe("Query", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.Query(context.Background(), connect.NewRequest(&pb.QueryRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects non-admin callers", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.Query(ctx, connect.NewRequest(&pb.QueryRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				Cypher:        "MATCH (n) RETURN n",
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
-		})
-
-		It("rejects missing cypher query", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			ctx = graph.ExportContextWithIdentity(ctx, &authn.Identity{
-				Subject:  "admin@test.com",
-				TenantID: "test-tenant",
-				Roles:    []string{authn.RoleAdmin},
-			})
-
-			resp, err := svc.Query(ctx, connect.NewRequest(&pb.QueryRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
 		It("executes query for admin user", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			ctx = graph.ExportContextWithIdentity(ctx, &authn.Identity{
@@ -497,51 +492,20 @@ var _ = Describe("Read RPCs", func() {
 	})
 
 	Describe("TemporalQuery", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.TemporalQuery(context.Background(), connect.NewRequest(&pb.TemporalQueryRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects non-admin callers", func() {
+		It("rejects authenticated non-admin callers with PermissionDenied", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
+			ctx = graph.ExportContextWithIdentity(ctx, &authn.Identity{
+				Subject:  "user@test.com",
+				TenantID: "test-tenant",
+				Roles:    []string{"viewer"},
+			})
 			resp, err := svc.TemporalQuery(ctx, connect.NewRequest(&pb.TemporalQueryRequest{
 				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
 				Cypher:        "MATCH (n) RETURN n",
+				AsOf:          timestamppb.Now(),
 			}))
 			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
-		})
-
-		It("rejects missing cypher query", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			ctx = graph.ExportContextWithIdentity(ctx, &authn.Identity{
-				Subject:  "admin@test.com",
-				TenantID: "test-tenant",
-				Roles:    []string{authn.RoleAdmin},
-			})
-
-			resp, err := svc.TemporalQuery(ctx, connect.NewRequest(&pb.TemporalQueryRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects missing as_of timestamp", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			ctx = graph.ExportContextWithIdentity(ctx, &authn.Identity{
-				Subject:  "admin@test.com",
-				TenantID: "test-tenant",
-				Roles:    []string{authn.RoleAdmin},
-			})
-
-			resp, err := svc.TemporalQuery(ctx, connect.NewRequest(&pb.TemporalQueryRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				Cypher:        "MATCH (n) RETURN n",
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
 		})
 
 		It("executes temporal query for admin user", func() {

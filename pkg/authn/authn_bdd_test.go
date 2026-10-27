@@ -246,137 +246,34 @@ var _ = Describe("Authn Package", Ordered, func() {
 
 	Describe("Level 2: Certificate Field Matching", func() {
 
-		Describe("MatchCert with CN", func() {
-			It("matches exact CN", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					CN: "web.acme.internal",
-				})).To(BeTrue())
-			})
-
-			It("matches CN with wildcard", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					CN: "*.acme.internal",
-				})).To(BeTrue())
-			})
-
-			It("rejects non-matching CN", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					CN: "wrong.host",
-				})).To(BeFalse())
-			})
-		})
-
-		Describe("MatchCert with Organization", func() {
-			It("matches exact organization", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					Organization: "Acme Corp",
-				})).To(BeTrue())
-			})
-
-			It("matches organization with wildcard", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					Organization: "Acme*",
-				})).To(BeTrue())
-			})
-
-			It("rejects non-matching organization", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					Organization: "Globex*",
-				})).To(BeFalse())
-			})
-		})
-
-		Describe("MatchCert with OrgUnit", func() {
-			It("matches exact org unit", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					OrgUnit: "Engineering",
-				})).To(BeTrue())
-			})
-
-			It("rejects non-matching org unit", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					OrgUnit: "Sales",
-				})).To(BeFalse())
-			})
-
-			It("returns false when cert has no org unit", func() {
-				Expect(authn.MatchCert(bareCert, authn.X509Match{
-					OrgUnit: "Engineering",
-				})).To(BeFalse())
-			})
-		})
-
-		Describe("MatchCert with SANEmail", func() {
-			It("matches email SAN", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					SANEmail: "admin@acme.com",
-				})).To(BeTrue())
-			})
-
-			It("matches email SAN with wildcard", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					SANEmail: "*@acme.com",
-				})).To(BeTrue())
-			})
-
-			It("rejects non-matching email SAN", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					SANEmail: "user@other.com",
-				})).To(BeFalse())
-			})
-
-			It("returns false when cert has no emails", func() {
-				Expect(authn.MatchCert(bareCert, authn.X509Match{
-					SANEmail: "*@acme.com",
-				})).To(BeFalse())
-			})
-		})
-
-		Describe("MatchCert with SANDNS", func() {
-			It("matches DNS SAN", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					SANDNS: "web.acme.internal",
-				})).To(BeTrue())
-			})
-
-			It("matches DNS SAN with wildcard", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					SANDNS: "*.acme.internal",
-				})).To(BeTrue())
-			})
-
-			It("rejects non-matching DNS SAN", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					SANDNS: "*.globex.internal",
-				})).To(BeFalse())
-			})
-		})
-
-		Describe("MatchCert with SANURI", func() {
-			It("matches URI SAN with exact string", func() {
-				Expect(authn.MatchCert(uriCert, authn.X509Match{
-					SANURI: "spiffe://cluster.local/ns/prod/sa/worker",
-				})).To(BeTrue())
-			})
-
-			It("matches URI SAN with wildcard", func() {
-				Expect(authn.MatchCert(uriCert, authn.X509Match{
-					SANURI: "spiffe://cluster.local/*",
-				})).To(BeFalse()) // * does not cross / in filepath.Match
-			})
-
-			It("rejects non-matching URI SAN", func() {
-				Expect(authn.MatchCert(uriCert, authn.X509Match{
-					SANURI: "spiffe://other.local/ns/prod/sa/worker",
-				})).To(BeFalse())
-			})
-
-			It("returns false when cert has no URI SANs", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
-					SANURI: "spiffe://*",
-				})).To(BeFalse())
-			})
-		})
+		// Fixtures are assigned in BeforeAll, after the table tree is built, so
+		// entries pass pointers to the fixture variables and the body dereferences
+		// them at run time.
+		DescribeTable("MatchCert per field",
+			func(cert **x509.Certificate, m authn.X509Match, want bool) {
+				Expect(authn.MatchCert(*cert, m)).To(Equal(want))
+			},
+			Entry("CN: matches exact CN", &acmeCert, authn.X509Match{CN: "web.acme.internal"}, true),
+			Entry("CN: matches CN with wildcard", &acmeCert, authn.X509Match{CN: "*.acme.internal"}, true),
+			Entry("CN: rejects non-matching CN", &acmeCert, authn.X509Match{CN: "wrong.host"}, false),
+			Entry("Organization: matches exact organization", &acmeCert, authn.X509Match{Organization: "Acme Corp"}, true),
+			Entry("Organization: matches organization with wildcard", &acmeCert, authn.X509Match{Organization: "Acme*"}, true),
+			Entry("Organization: rejects non-matching organization", &acmeCert, authn.X509Match{Organization: "Globex*"}, false),
+			Entry("OrgUnit: matches exact org unit", &acmeCert, authn.X509Match{OrgUnit: "Engineering"}, true),
+			Entry("OrgUnit: rejects non-matching org unit", &acmeCert, authn.X509Match{OrgUnit: "Sales"}, false),
+			Entry("OrgUnit: returns false when cert has no org unit", &bareCert, authn.X509Match{OrgUnit: "Engineering"}, false),
+			Entry("SANEmail: matches email SAN", &acmeCert, authn.X509Match{SANEmail: "admin@acme.com"}, true),
+			Entry("SANEmail: matches email SAN with wildcard", &acmeCert, authn.X509Match{SANEmail: "*@acme.com"}, true),
+			Entry("SANEmail: rejects non-matching email SAN", &acmeCert, authn.X509Match{SANEmail: "user@other.com"}, false),
+			Entry("SANEmail: returns false when cert has no emails", &bareCert, authn.X509Match{SANEmail: "*@acme.com"}, false),
+			Entry("SANDNS: matches DNS SAN", &acmeCert, authn.X509Match{SANDNS: "web.acme.internal"}, true),
+			Entry("SANDNS: matches DNS SAN with wildcard", &acmeCert, authn.X509Match{SANDNS: "*.acme.internal"}, true),
+			Entry("SANDNS: rejects non-matching DNS SAN", &acmeCert, authn.X509Match{SANDNS: "*.globex.internal"}, false),
+			Entry("SANURI: matches URI SAN with exact string", &uriCert, authn.X509Match{SANURI: "spiffe://cluster.local/ns/prod/sa/worker"}, true),
+			Entry("SANURI: matches URI SAN with wildcard (* does not cross / in filepath.Match)", &uriCert, authn.X509Match{SANURI: "spiffe://cluster.local/*"}, false),
+			Entry("SANURI: rejects non-matching URI SAN", &uriCert, authn.X509Match{SANURI: "spiffe://other.local/ns/prod/sa/worker"}, false),
+			Entry("SANURI: returns false when cert has no URI SANs", &acmeCert, authn.X509Match{SANURI: "spiffe://*"}, false),
+		)
 
 		Describe("MatchCert with MatchAnyURI helper", func() {
 			It("matches against URI SAN string form", func() {
@@ -1088,51 +985,33 @@ var _ = Describe("Authn Package", Ordered, func() {
 
 	Describe("Level 6: Stub Authenticators", func() {
 
-		Describe("GSSAPIAuthenticator", func() {
-			var gssapi *authn.GSSAPIAuthenticator
-
-			BeforeEach(func() {
-				gssapi = authn.NewGSSAPIAuthenticator()
-			})
-
-			It("returns wrapped ErrUnsupportedMethod", func() {
-				_, err := gssapi.Authenticate(context.Background(), &authn.Request{})
+		// Both stubs are stateless, so entries construct them at tree-build time.
+		DescribeTable("returns wrapped ErrUnsupportedMethod",
+			func(auth authn.Authenticator) {
+				_, err := auth.Authenticate(context.Background(), &authn.Request{})
 				Expect(err).To(HaveOccurred())
 				Expect(errors.Is(err, authn.ErrUnsupportedMethod)).To(BeTrue())
-			})
+			},
+			Entry("GSSAPIAuthenticator", authn.NewGSSAPIAuthenticator()),
+			Entry("SAMLAuthenticator", authn.NewSAMLAuthenticator()),
+		)
 
-			It("includes GSSAPI in the error message", func() {
-				_, err := gssapi.Authenticate(context.Background(), &authn.Request{})
-				Expect(err.Error()).To(ContainSubstring("GSSAPI"))
-			})
+		DescribeTable("names the protocol in the error message",
+			func(auth authn.Authenticator, protocol string) {
+				_, err := auth.Authenticate(context.Background(), &authn.Request{})
+				Expect(err.Error()).To(ContainSubstring(protocol))
+			},
+			Entry("GSSAPIAuthenticator includes GSSAPI", authn.NewGSSAPIAuthenticator(), "GSSAPI"),
+			Entry("SAMLAuthenticator includes SAML", authn.NewSAMLAuthenticator(), "SAML"),
+		)
 
-			It("reports Kerberos as supported method", func() {
-				Expect(gssapi.SupportedMethods()).To(Equal([]authn.AuthMethod{authn.AuthMethodKerberos}))
-			})
-		})
-
-		Describe("SAMLAuthenticator", func() {
-			var saml *authn.SAMLAuthenticator
-
-			BeforeEach(func() {
-				saml = authn.NewSAMLAuthenticator()
-			})
-
-			It("returns wrapped ErrUnsupportedMethod", func() {
-				_, err := saml.Authenticate(context.Background(), &authn.Request{})
-				Expect(err).To(HaveOccurred())
-				Expect(errors.Is(err, authn.ErrUnsupportedMethod)).To(BeTrue())
-			})
-
-			It("includes SAML in the error message", func() {
-				_, err := saml.Authenticate(context.Background(), &authn.Request{})
-				Expect(err.Error()).To(ContainSubstring("SAML"))
-			})
-
-			It("reports SAML as supported method", func() {
-				Expect(saml.SupportedMethods()).To(Equal([]authn.AuthMethod{authn.AuthMethodSAML}))
-			})
-		})
+		DescribeTable("reports its supported method",
+			func(auth authn.Authenticator, want authn.AuthMethod) {
+				Expect(auth.SupportedMethods()).To(Equal([]authn.AuthMethod{want}))
+			},
+			Entry("GSSAPIAuthenticator reports Kerberos as supported method", authn.NewGSSAPIAuthenticator(), authn.AuthMethodKerberos),
+			Entry("SAMLAuthenticator reports SAML as supported method", authn.NewSAMLAuthenticator(), authn.AuthMethodSAML),
+		)
 	})
 })
 

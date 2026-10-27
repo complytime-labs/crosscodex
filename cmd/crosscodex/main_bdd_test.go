@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -22,16 +21,6 @@ func TestMainBDD(t *testing.T) {
 }
 
 var _ = Describe("Root Command", func() {
-	var (
-		stdout bytes.Buffer
-		stderr bytes.Buffer
-	)
-
-	BeforeEach(func() {
-		stdout.Reset()
-		stderr.Reset()
-	})
-
 	Describe("newRootCmd", func() {
 		It("creates a command with the correct name", func() {
 			cmd := newRootCmd()
@@ -56,12 +45,9 @@ var _ = Describe("Root Command", func() {
 			tmpHome := GinkgoT().TempDir()
 			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"--debug", "config", "show"})
+			_, _, err := execute(newRootCmd(), "--debug", "config", "show")
 
-			Expect(cmd.Execute()).To(Succeed())
+			Expect(err).NotTo(HaveOccurred())
 			Expect(slog.Default().Enabled(context.Background(), slog.LevelDebug)).To(BeTrue())
 		})
 
@@ -72,12 +58,9 @@ var _ = Describe("Root Command", func() {
 			tmpHome := GinkgoT().TempDir()
 			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"config", "show"})
+			_, _, err := execute(newRootCmd(), "config", "show")
 
-			Expect(cmd.Execute()).To(Succeed())
+			Expect(err).NotTo(HaveOccurred())
 			Expect(slog.Default().Enabled(context.Background(), slog.LevelDebug)).To(BeFalse())
 			Expect(slog.Default().Enabled(context.Background(), slog.LevelWarn)).To(BeTrue())
 			Expect(slog.Default().Enabled(context.Background(), slog.LevelInfo)).To(BeFalse())
@@ -95,52 +78,34 @@ var _ = Describe("Root Command", func() {
 		})
 
 		It("rejects --json and --plain together", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"--json", "--plain", "version"})
-			err := cmd.Execute()
+			_, _, err := execute(newRootCmd(), "--json", "--plain", "version")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("json"))
 			Expect(err.Error()).To(ContainSubstring("plain"))
 		})
 
 		It("shows help with command groups when invoked bare", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"--help"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "--help")
 			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).To(ContainSubstring("Project Commands"))
-			Expect(output).To(ContainSubstring("Analysis Commands"))
-			Expect(output).To(ContainSubstring("Get started"))
+			Expect(stdout).To(ContainSubstring("Project Commands"))
+			Expect(stdout).To(ContainSubstring("Analysis Commands"))
+			Expect(stdout).To(ContainSubstring("Get started"))
 		})
 	})
 
 	Describe("Version Command", func() {
 		It("outputs version information in human format", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"version"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "version")
 			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).To(ContainSubstring("crosscodex"))
-			Expect(output).To(ContainSubstring("go"))
+			Expect(stdout).To(ContainSubstring("crosscodex"))
+			Expect(stdout).To(ContainSubstring("go"))
 		})
 
 		It("outputs version information in JSON format", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"version", "--json"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "version", "--json")
 			Expect(err).NotTo(HaveOccurred())
 			var result map[string]any
-			Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+			Expect(json.Unmarshal([]byte(stdout), &result)).To(Succeed())
 			Expect(result).To(HaveKey("version"))
 			Expect(result).To(HaveKey("go_version"))
 			Expect(result).To(HaveKey("os"))
@@ -148,25 +113,16 @@ var _ = Describe("Root Command", func() {
 		})
 
 		It("is accessible via --version on root", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"--version"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "--version")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(stdout.String()).To(ContainSubstring("crosscodex"))
+			Expect(stdout).To(ContainSubstring("crosscodex"))
 		})
 
 		It("is accessible via alias 'ver'", func() {
-			cmd := newRootCmd()
-			cmd.SetOut(&stdout)
-			cmd.SetErr(&stderr)
-			cmd.SetArgs([]string{"ver"})
-			err := cmd.Execute()
+			stdout, _, err := execute(newRootCmd(), "ver")
 			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).To(ContainSubstring("crosscodex"))
-			Expect(output).To(ContainSubstring("go"))
+			Expect(stdout).To(ContainSubstring("crosscodex"))
+			Expect(stdout).To(ContainSubstring("go"))
 		})
 
 		Describe("Project Commands", func() {
@@ -184,11 +140,7 @@ var _ = Describe("Root Command", func() {
 
 			Describe("project init", func() {
 				It("creates .crosscodex directory structure", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"project", "init", "--dir", tmpDir})
-					err := cmd.Execute()
+					_, _, err := execute(newRootCmd(), "project", "init", "--dir", tmpDir)
 					Expect(err).NotTo(HaveOccurred())
 
 					Expect(filepath.Join(tmpDir, ".crosscodex", "config.yaml")).To(BeAnExistingFile())
@@ -197,22 +149,14 @@ var _ = Describe("Root Command", func() {
 
 				It("errors when .crosscodex already exists", func() {
 					Expect(os.MkdirAll(filepath.Join(tmpDir, ".crosscodex"), 0o755)).To(Succeed())
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"project", "init", "--dir", tmpDir})
-					err := cmd.Execute()
+					_, _, err := execute(newRootCmd(), "project", "init", "--dir", tmpDir)
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("already exists"))
 				})
 
 				It("overwrites with --force", func() {
 					Expect(os.MkdirAll(filepath.Join(tmpDir, ".crosscodex"), 0o755)).To(Succeed())
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"project", "init", "--dir", tmpDir, "--force"})
-					err := cmd.Execute()
+					_, _, err := execute(newRootCmd(), "project", "init", "--dir", tmpDir, "--force")
 					Expect(err).NotTo(HaveOccurred())
 					Expect(filepath.Join(tmpDir, ".crosscodex", "config.yaml")).To(BeAnExistingFile())
 				})
@@ -220,14 +164,10 @@ var _ = Describe("Root Command", func() {
 
 			Describe("project config", func() {
 				It("outputs resolved config as JSON", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"project", "config", "--json"})
-					err := cmd.Execute()
+					stdout, _, err := execute(newRootCmd(), "project", "config", "--json")
 					Expect(err).NotTo(HaveOccurred())
 					var result map[string]any
-					Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+					Expect(json.Unmarshal([]byte(stdout), &result)).To(Succeed())
 				})
 			})
 
@@ -240,24 +180,17 @@ var _ = Describe("Root Command", func() {
 					Expect(os.Chdir(tmp)).To(Succeed())
 					DeferCleanup(func() { Expect(os.Chdir(origDir)).To(Succeed()) })
 
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"project", "list"})
-					Expect(cmd.Execute()).To(Succeed())
-					Expect(stdout.String()).To(ContainSubstring("No CrossCodex projects"))
+					stdout, _, err := execute(newRootCmd(), "project", "list")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(stdout).To(ContainSubstring("No CrossCodex projects"))
 				})
 			})
 
 			Describe("project status", func() {
 				It("reports daemon status", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"project", "status"})
-					err := cmd.Execute()
+					stdout, _, err := execute(newRootCmd(), "project", "status")
 					Expect(err).NotTo(HaveOccurred())
-					Expect(stdout.String()).To(ContainSubstring("Daemon:"))
+					Expect(stdout).To(ContainSubstring("Daemon:"))
 				})
 			})
 		})
@@ -279,32 +212,23 @@ var _ = Describe("Root Command", func() {
 
 			Describe("config show", func() {
 				It("outputs full resolved config in human format", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "show"})
-					err := cmd.Execute()
+					stdout, _, err := execute(newRootCmd(), "config", "show")
 					Expect(err).NotTo(HaveOccurred())
-					output := stdout.String()
 					for _, section := range []string{
 						"llm:", "storage:", "tls:", "tenants:", "database:",
 						"nats:", "server:", "cli:", "logging:", "auth:",
 						"observability:", "catalog:", "attestation:", "prompt:",
 						"analysis:", "worker:", "pipeline:", "synthesis:",
 					} {
-						Expect(output).To(ContainSubstring(section), "missing section: "+section)
+						Expect(stdout).To(ContainSubstring(section), "missing section: "+section)
 					}
 				})
 
 				It("outputs full resolved config in JSON format", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "show", "--json"})
-					err := cmd.Execute()
+					stdout, _, err := execute(newRootCmd(), "config", "show", "--json")
 					Expect(err).NotTo(HaveOccurred())
 					var result map[string]any
-					Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+					Expect(json.Unmarshal([]byte(stdout), &result)).To(Succeed())
 					Expect(result).To(HaveKey("llm"))
 					Expect(result).To(HaveKey("database"))
 					Expect(result).To(HaveKey("server"))
@@ -312,36 +236,23 @@ var _ = Describe("Root Command", func() {
 				})
 
 				It("filters output with --section flag", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "show", "--section", "database"})
-					err := cmd.Execute()
+					stdout, _, err := execute(newRootCmd(), "config", "show", "--section", "database")
 					Expect(err).NotTo(HaveOccurred())
-					output := stdout.String()
-					Expect(output).To(ContainSubstring("dsn:"))
-					Expect(output).NotTo(ContainSubstring("nats:"))
+					Expect(stdout).To(ContainSubstring("dsn:"))
+					Expect(stdout).NotTo(ContainSubstring("nats:"))
 				})
 
 				It("filters output with --section flag in JSON format", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "show", "--section", "database", "--json"})
-					err := cmd.Execute()
+					stdout, _, err := execute(newRootCmd(), "config", "show", "--section", "database", "--json")
 					Expect(err).NotTo(HaveOccurred())
 					var result map[string]any
-					Expect(json.Unmarshal(stdout.Bytes(), &result)).To(Succeed())
+					Expect(json.Unmarshal([]byte(stdout), &result)).To(Succeed())
 					Expect(result).To(HaveKey("dsn"))
 					Expect(result).NotTo(HaveKey("llm"))
 				})
 
 				It("errors on unknown section", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "show", "--section", "nonexistent"})
-					err := cmd.Execute()
+					_, _, err := execute(newRootCmd(), "config", "show", "--section", "nonexistent")
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("unknown section"))
 				})
@@ -351,11 +262,7 @@ var _ = Describe("Root Command", func() {
 				It("writes a key-value pair to user config", func() {
 					userConfigPath := filepath.Join(tmpConfigDir, "crosscodex", "config.yaml")
 
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "set", "cli.output", "plain"})
-					err := cmd.Execute()
+					_, _, err := execute(newRootCmd(), "config", "set", "cli.output", "plain")
 					Expect(err).NotTo(HaveOccurred())
 
 					Expect(userConfigPath).To(BeAnExistingFile())
@@ -364,25 +271,15 @@ var _ = Describe("Root Command", func() {
 					Expect(string(data)).To(ContainSubstring("output: plain"))
 				})
 
-				It("errors when key is missing", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "set"})
-					err := cmd.Execute()
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("key"))
-				})
-
-				It("errors when value is missing", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "set", "cli.output"})
-					err := cmd.Execute()
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("value"))
-				})
+				DescribeTable("errors when a required argument is missing",
+					func(args []string, wantSubstr string) {
+						_, _, err := execute(newRootCmd(), args...)
+						Expect(err).To(HaveOccurred())
+						Expect(err.Error()).To(ContainSubstring(wantSubstr))
+					},
+					Entry("key", []string{"config", "set"}, "key"),
+					Entry("value", []string{"config", "set", "cli.output"}, "value"),
+				)
 			})
 
 			Describe("config profiles", func() {
@@ -392,26 +289,16 @@ var _ = Describe("Root Command", func() {
 					Expect(os.WriteFile(filepath.Join(profileDir, "dev.yaml"), []byte("cli:\n  output: json\n"), 0o644)).To(Succeed())
 					Expect(os.WriteFile(filepath.Join(profileDir, "prod.yaml"), []byte("cli:\n  output: plain\n"), 0o644)).To(Succeed())
 
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "profiles"})
-					err := cmd.Execute()
+					stdout, _, err := execute(newRootCmd(), "config", "profiles")
 					Expect(err).NotTo(HaveOccurred())
-					output := stdout.String()
-					Expect(output).To(ContainSubstring("dev"))
-					Expect(output).To(ContainSubstring("prod"))
+					Expect(stdout).To(ContainSubstring("dev"))
+					Expect(stdout).To(ContainSubstring("prod"))
 				})
 
 				It("reports when no profiles exist", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"config", "profiles"})
-					err := cmd.Execute()
+					stdout, _, err := execute(newRootCmd(), "config", "profiles")
 					Expect(err).NotTo(HaveOccurred())
-					output := stdout.String()
-					Expect(output).To(ContainSubstring("No profiles"))
+					Expect(stdout).To(ContainSubstring("No profiles"))
 				})
 			})
 
@@ -461,43 +348,6 @@ var _ = Describe("Root Command", func() {
 		})
 
 		Describe("Run Commands", func() {
-			Describe("run start", func() {
-				It("requires a file argument", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"run", "start"})
-					err := cmd.Execute()
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("file"))
-				})
-
-			})
-
-			Describe("run status", func() {
-				It("requires a job-id argument", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"run", "status"})
-					err := cmd.Execute()
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("job-id"))
-				})
-			})
-
-			Describe("run cancel", func() {
-				It("requires a job-id argument", func() {
-					cmd := newRootCmd()
-					cmd.SetOut(&stdout)
-					cmd.SetErr(&stderr)
-					cmd.SetArgs([]string{"run", "cancel"})
-					err := cmd.Execute()
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("job-id"))
-				})
-			})
-
 			Describe("aliases", func() {
 				It("supports 'run submit' as alias for start", func() {
 					cmd := newRootCmd()
@@ -549,66 +399,30 @@ var _ = Describe("Root Command", func() {
 
 			It("rejects invalid JSON", func() {
 				Expect(os.WriteFile(tmpFile, []byte("not json"), 0o644)).To(Succeed())
-				cmd := newRootCmd()
-				cmd.SetOut(&stdout)
-				cmd.SetErr(&stderr)
-				cmd.SetArgs([]string{"catalog", "validate", tmpFile})
-				err := cmd.Execute()
+				_, _, err := execute(newRootCmd(), "catalog", "validate", tmpFile)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("JSON"))
 			})
 
 			It("rejects JSON without catalog key", func() {
 				Expect(os.WriteFile(tmpFile, []byte(`{"foo": "bar"}`), 0o644)).To(Succeed())
-				cmd := newRootCmd()
-				cmd.SetOut(&stdout)
-				cmd.SetErr(&stderr)
-				cmd.SetArgs([]string{"catalog", "validate", tmpFile})
-				err := cmd.Execute()
+				_, _, err := execute(newRootCmd(), "catalog", "validate", tmpFile)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("catalog"))
 			})
 
 			It("accepts valid OSCAL catalog structure", func() {
 				Expect(os.WriteFile(tmpFile, []byte(`{"catalog": {"uuid": "test", "metadata": {"title": "Test"}}}`), 0o644)).To(Succeed())
-				cmd := newRootCmd()
-				cmd.SetOut(&stdout)
-				cmd.SetErr(&stderr)
-				cmd.SetArgs([]string{"catalog", "validate", tmpFile})
-				err := cmd.Execute()
+				stdout, _, err := execute(newRootCmd(), "catalog", "validate", tmpFile)
 				Expect(err).NotTo(HaveOccurred())
-				output := stdout.String()
-				Expect(output).To(ContainSubstring("valid"))
+				Expect(stdout).To(ContainSubstring("valid"))
 			})
 
-			It("requires a file argument", func() {
-				cmd := newRootCmd()
-				cmd.SetOut(&stdout)
-				cmd.SetErr(&stderr)
-				cmd.SetArgs([]string{"catalog", "validate"})
-				err := cmd.Execute()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("file"))
-			})
 		})
 
 		Describe("catalog import", func() {
-			It("requires a file argument", func() {
-				cmd := newRootCmd()
-				cmd.SetOut(&stdout)
-				cmd.SetErr(&stderr)
-				cmd.SetArgs([]string{"catalog", "import"})
-				err := cmd.Execute()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("file"))
-			})
-
 			It("errors when file does not exist or daemon unavailable", func() {
-				cmd := newRootCmd()
-				cmd.SetOut(&stdout)
-				cmd.SetErr(&stderr)
-				cmd.SetArgs([]string{"catalog", "import", "/nonexistent/path.json"})
-				err := cmd.Execute()
+				_, _, err := execute(newRootCmd(), "catalog", "import", "/nonexistent/path.json")
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(Or(
 					ContainSubstring("read file"),
@@ -616,18 +430,6 @@ var _ = Describe("Root Command", func() {
 					ContainSubstring("failed"),
 					ContainSubstring("database not configured"),
 				))
-			})
-		})
-
-		Describe("catalog inspect", func() {
-			It("requires a catalog ID argument", func() {
-				cmd := newRootCmd()
-				cmd.SetOut(&stdout)
-				cmd.SetErr(&stderr)
-				cmd.SetArgs([]string{"catalog", "inspect"})
-				err := cmd.Execute()
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("ID"))
 			})
 		})
 
@@ -661,4 +463,18 @@ var _ = Describe("Root Command", func() {
 			})
 		})
 	})
+
+	DescribeTable("errors when the positional argument is missing",
+		func(args []string, wantSubstr string) {
+			_, _, err := execute(newRootCmd(), args...)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(wantSubstr))
+		},
+		Entry("run start needs a file", []string{"run", "start"}, "file"),
+		Entry("run status needs a job-id", []string{"run", "status"}, "job-id"),
+		Entry("run cancel needs a job-id", []string{"run", "cancel"}, "job-id"),
+		Entry("catalog validate needs a file", []string{"catalog", "validate"}, "file"),
+		Entry("catalog import needs a file", []string{"catalog", "import"}, "file"),
+		Entry("catalog inspect needs a catalog ID", []string{"catalog", "inspect"}, "ID"),
+	)
 })

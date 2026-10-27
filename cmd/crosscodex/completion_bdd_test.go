@@ -1,25 +1,14 @@
 package main
 
 import (
-	"bytes"
-	"os"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/types"
 )
 
 var _ = Describe("Completion Command", func() {
-	var (
-		stdout bytes.Buffer
-		stderr bytes.Buffer
-	)
-
-	BeforeEach(func() {
-		stdout.Reset()
-		stderr.Reset()
-	})
-
 	Describe("completion command structure", func() {
 		It("creates a completion command with the correct name", func() {
 			cmd := newCompletionCmd()
@@ -55,156 +44,45 @@ var _ = Describe("Completion Command", func() {
 		})
 	})
 
-	Describe("bash completion", func() {
-		It("produces bash completion script", func() {
-			root := newRootCmd()
+	DescribeTable("produces a completion script",
+		func(shell string, wantScript types.GomegaMatcher) {
+			stdout, _, err := execute(newRootCmd(), "completion", shell)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).NotTo(BeEmpty())
+			Expect(stdout).To(wantScript)
+		},
+		Entry("bash", "bash", ContainSubstring("bash")),
+		Entry("zsh", "zsh", Or(ContainSubstring("zsh"), ContainSubstring("compdef"))),
+		Entry("fish", "fish", ContainSubstring("fish")),
+		Entry("powershell", "powershell", Or(ContainSubstring("PowerShell"), ContainSubstring("param"))),
+	)
+
+	DescribeTable("has an --install flag",
+		func(shell string) {
 			cmd := newCompletionCmd()
-			root.AddCommand(cmd)
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"completion", "bash"})
-			err := root.Execute()
+			shellCmd, _, err := cmd.Find([]string{shell})
 			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).NotTo(BeEmpty())
-			Expect(output).To(ContainSubstring("bash"))
-		})
+			Expect(shellCmd.Flags().Lookup("install")).NotTo(BeNil())
+		},
+		Entry("bash", "bash"),
+		Entry("zsh", "zsh"),
+		Entry("fish", "fish"),
+	)
 
-		It("has --install flag", func() {
-			cmd := newCompletionCmd()
-			bashCmd, _, err := cmd.Find([]string{"bash"})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(bashCmd.Flags().Lookup("install")).NotTo(BeNil())
-		})
+	// Fish resolves its target from XDG_CONFIG_HOME; bash and zsh ignore it.
+	DescribeTable("installs the script into the shell's standard location",
+		func(shell string, installedRelPath string) {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("HOME", tmpHome)
+			GinkgoT().Setenv("XDG_CONFIG_HOME", filepath.Join(tmpHome, ".config"))
 
-		It("installs to standard bash completion directory", func() {
-			tmpHome, err := os.MkdirTemp("", "crosscodex-bash-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpHome)
-			oldHome := os.Getenv("HOME")
-			os.Setenv("HOME", tmpHome)
-			defer os.Setenv("HOME", oldHome)
-
-			root := newRootCmd()
-			cmd := newCompletionCmd()
-			root.AddCommand(cmd)
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"completion", "bash", "--install"})
-			err = root.Execute()
+			_, _, err := execute(newRootCmd(), "completion", shell, "--install")
 			Expect(err).NotTo(HaveOccurred())
 
-			bashDir := filepath.Join(tmpHome, ".bash_completion.d")
-			bashFile := filepath.Join(bashDir, "crosscodex")
-			Expect(bashFile).To(BeAnExistingFile())
-		})
-	})
-
-	Describe("zsh completion", func() {
-		It("produces zsh completion script", func() {
-			root := newRootCmd()
-			cmd := newCompletionCmd()
-			root.AddCommand(cmd)
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"completion", "zsh"})
-			err := root.Execute()
-			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).NotTo(BeEmpty())
-			Expect(output).To(Or(ContainSubstring("zsh"), ContainSubstring("compdef")))
-		})
-
-		It("has --install flag", func() {
-			cmd := newCompletionCmd()
-			zshCmd, _, err := cmd.Find([]string{"zsh"})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(zshCmd.Flags().Lookup("install")).NotTo(BeNil())
-		})
-
-		It("installs to zfunc directory", func() {
-			tmpHome, err := os.MkdirTemp("", "crosscodex-zsh-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpHome)
-			oldHome := os.Getenv("HOME")
-			os.Setenv("HOME", tmpHome)
-			defer os.Setenv("HOME", oldHome)
-
-			root := newRootCmd()
-			cmd := newCompletionCmd()
-			root.AddCommand(cmd)
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"completion", "zsh", "--install"})
-			err = root.Execute()
-			Expect(err).NotTo(HaveOccurred())
-
-			zfuncFile := filepath.Join(tmpHome, ".zfunc", "_crosscodex")
-			Expect(zfuncFile).To(BeAnExistingFile())
-		})
-	})
-
-	Describe("fish completion", func() {
-		It("produces fish completion script", func() {
-			root := newRootCmd()
-			cmd := newCompletionCmd()
-			root.AddCommand(cmd)
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"completion", "fish"})
-			err := root.Execute()
-			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).NotTo(BeEmpty())
-			Expect(output).To(ContainSubstring("fish"))
-		})
-
-		It("has --install flag", func() {
-			cmd := newCompletionCmd()
-			fishCmd, _, err := cmd.Find([]string{"fish"})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(fishCmd.Flags().Lookup("install")).NotTo(BeNil())
-		})
-
-		It("installs to fish completions directory", func() {
-			tmpHome, err := os.MkdirTemp("", "crosscodex-fish-*")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.RemoveAll(tmpHome)
-			tmpConfig := filepath.Join(tmpHome, ".config")
-			oldHome := os.Getenv("HOME")
-			oldConfig := os.Getenv("XDG_CONFIG_HOME")
-			os.Setenv("HOME", tmpHome)
-			os.Setenv("XDG_CONFIG_HOME", tmpConfig)
-			defer os.Setenv("HOME", oldHome)
-			defer os.Setenv("XDG_CONFIG_HOME", oldConfig)
-
-			root := newRootCmd()
-			cmd := newCompletionCmd()
-			root.AddCommand(cmd)
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"completion", "fish", "--install"})
-			err = root.Execute()
-			Expect(err).NotTo(HaveOccurred())
-
-			fishFile := filepath.Join(tmpConfig, "fish", "completions", "crosscodex.fish")
-			Expect(fishFile).To(BeAnExistingFile())
-		})
-	})
-
-	Describe("powershell completion", func() {
-		It("produces powershell completion script", func() {
-			root := newRootCmd()
-			cmd := newCompletionCmd()
-			root.AddCommand(cmd)
-			root.SetOut(&stdout)
-			root.SetErr(&stderr)
-			root.SetArgs([]string{"completion", "powershell"})
-			err := root.Execute()
-			Expect(err).NotTo(HaveOccurred())
-			output := stdout.String()
-			Expect(output).NotTo(BeEmpty())
-			Expect(output).To(Or(ContainSubstring("PowerShell"), ContainSubstring("param")))
-		})
-	})
+			Expect(filepath.Join(tmpHome, installedRelPath)).To(BeAnExistingFile())
+		},
+		Entry("bash", "bash", filepath.Join(".bash_completion.d", "crosscodex")),
+		Entry("zsh", "zsh", filepath.Join(".zfunc", "_crosscodex")),
+		Entry("fish", "fish", filepath.Join(".config", "fish", "completions", "crosscodex.fish")),
+	)
 })

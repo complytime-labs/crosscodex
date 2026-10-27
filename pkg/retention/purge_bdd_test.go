@@ -90,29 +90,18 @@ var _ = Describe("Purger", func() {
 		Expect(tx.Commits()).To(Equal(1))
 	})
 
-	It("rolls back and returns an error for an unsupported DB class", func() {
-		tx := purgeTx("")
-		err := retention.NewPurger(&dbtest.Conn{Tx: tx}, nil).Purge(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassEmbeddings, ID: "e1", TenantID: "t1"})
-		Expect(err).To(HaveOccurred())
-		Expect(tx.Commits()).To(Equal(0))
-		Expect(tx.Rollbacks()).To(Equal(1))
-	})
-
-	It("rolls back when the delete fails", func() {
-		tx := purgeTx("DELETE")
-		err := retention.NewPurger(&dbtest.Conn{Tx: tx}, nil).Purge(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassJobResults, ID: "j", TenantID: "t1"})
-		Expect(err).To(HaveOccurred())
-		Expect(tx.Commits()).To(Equal(0))
-		Expect(tx.Rollbacks()).To(Equal(1))
-	})
-
-	It("rolls back when set_config fails", func() {
-		tx := purgeTx("set_config")
-		err := retention.NewPurger(&dbtest.Conn{Tx: tx}, nil).Purge(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassJobResults, ID: "j", TenantID: "t1"})
-		Expect(err).To(HaveOccurred())
-		Expect(tx.Commits()).To(Equal(0))
-		Expect(tx.Rollbacks()).To(Equal(1))
-	})
+	DescribeTable("rolls back and returns an error",
+		func(failOn string, class retention.DataClass) {
+			tx := purgeTx(failOn)
+			err := retention.NewPurger(&dbtest.Conn{Tx: tx}, nil).Purge(ctx, retention.Candidate{Store: retention.StorePostgres, Class: class, ID: "id", TenantID: "t1"})
+			Expect(err).To(HaveOccurred())
+			Expect(tx.Commits()).To(Equal(0))
+			Expect(tx.Rollbacks()).To(Equal(1))
+		},
+		Entry("for an unsupported DB class", "", retention.ClassEmbeddings),
+		Entry("when the delete fails", "DELETE", retention.ClassJobResults),
+		Entry("when set_config fails", "set_config", retention.ClassJobResults),
+	)
 
 	It("deletes an object candidate via the primary provider", func() {
 		prov := &deleteRecorder{Fake: &storagetest.Fake{}}

@@ -124,127 +124,57 @@ var _ = Describe("Requires Configuration", func() {
 			})
 		})
 
-		DescribeTable("consensus threshold validation",
-			func(threshold float64, shouldErr bool) {
+		DescribeTable("rejects numeric values outside their range",
+			func(mutate func(*config.RequiresConfig), field, msg string) {
 				cfg := validRequires()
-				cfg.ConsensusThreshold = threshold
+				mutate(&cfg)
 
 				err := cfg.Validate()
-				if shouldErr {
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("consensus_threshold"))
-				} else {
-					Expect(err).NotTo(HaveOccurred())
-				}
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(field))
+				Expect(err.Error()).To(ContainSubstring(msg))
 			},
-			Entry("below range", 0.4, true),
-			Entry("min valid", 0.5, false),
-			Entry("mid valid", 0.7, false),
-			Entry("max valid", 1.0, false),
-			Entry("above range", 1.1, true),
+			Entry("consensus threshold below range", func(c *config.RequiresConfig) { c.ConsensusThreshold = 0.4 }, "analysis.requires.consensus_threshold", "must be in range [0.5, 1.0]"),
+			Entry("consensus threshold above range", func(c *config.RequiresConfig) { c.ConsensusThreshold = 1.1 }, "analysis.requires.consensus_threshold", "must be in range [0.5, 1.0]"),
+			Entry("max error rate below range", func(c *config.RequiresConfig) { c.MaxErrorRate = -0.1 }, "analysis.requires.max_error_rate", "must be in range [0.0, 1.0]"),
+			Entry("max error rate above range", func(c *config.RequiresConfig) { c.MaxErrorRate = 1.1 }, "analysis.requires.max_error_rate", "must be in range [0.0, 1.0]"),
+			Entry("sampling temperature below range", func(c *config.RequiresConfig) { c.SamplingTemperature = -0.1 }, "analysis.requires.sampling_temperature", "must be in range [0.0, 2.0]"),
+			Entry("sampling temperature above range", func(c *config.RequiresConfig) { c.SamplingTemperature = 2.1 }, "analysis.requires.sampling_temperature", "must be in range [0.0, 2.0]"),
 		)
 
-		DescribeTable("max error rate validation",
-			func(errRate float64, shouldErr bool) {
+		DescribeTable("accepts numeric values at and inside range bounds",
+			func(mutate func(*config.RequiresConfig)) {
 				cfg := validRequires()
-				cfg.MaxErrorRate = errRate
+				mutate(&cfg)
 
-				err := cfg.Validate()
-				if shouldErr {
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("max_error_rate"))
-				} else {
-					Expect(err).NotTo(HaveOccurred())
-				}
+				Expect(cfg.Validate()).To(Succeed())
 			},
-			Entry("below range", -0.1, true),
-			Entry("min valid", 0.0, false),
-			Entry("mid valid", 0.5, false),
-			Entry("max valid", 1.0, false),
-			Entry("above range", 1.1, true),
+			Entry("consensus threshold min valid", func(c *config.RequiresConfig) { c.ConsensusThreshold = 0.5 }),
+			Entry("consensus threshold mid valid", func(c *config.RequiresConfig) { c.ConsensusThreshold = 0.7 }),
+			Entry("consensus threshold max valid", func(c *config.RequiresConfig) { c.ConsensusThreshold = 1.0 }),
+			Entry("max error rate min valid", func(c *config.RequiresConfig) { c.MaxErrorRate = 0.0 }),
+			Entry("max error rate mid valid", func(c *config.RequiresConfig) { c.MaxErrorRate = 0.5 }),
+			Entry("max error rate max valid", func(c *config.RequiresConfig) { c.MaxErrorRate = 1.0 }),
+			Entry("sampling temperature min valid", func(c *config.RequiresConfig) { c.SamplingTemperature = 0.0 }),
+			Entry("sampling temperature mid valid", func(c *config.RequiresConfig) { c.SamplingTemperature = 1.0 }),
+			Entry("sampling temperature max valid", func(c *config.RequiresConfig) { c.SamplingTemperature = 2.0 }),
 		)
 
 		DescribeTable("required fields when enabled",
-			func(cfg config.RequiresConfig, wantErr string) {
+			func(mutate func(*config.RequiresConfig), field, msg string) {
+				cfg := validRequires()
+				mutate(&cfg)
+
 				err := cfg.Validate()
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring(wantErr))
+				Expect(err.Error()).To(ContainSubstring(field))
+				Expect(err.Error()).To(ContainSubstring(msg))
 			},
-			Entry("empty models", config.RequiresConfig{
-				Enabled:             true,
-				Models:              []string{},
-				SamplesPerModel:     3,
-				ConsensusThreshold:  0.6,
-				MaxErrorRate:        0.2,
-				MaxSourceChars:      1000,
-				MaxTargetChars:      1000,
-				SamplingTemperature: 0.7,
-				MaxTokens:           500,
-			}, "models must not be empty"),
-			Entry("zero samples per model", config.RequiresConfig{
-				Enabled:             true,
-				Models:              []string{"model-a"},
-				SamplesPerModel:     0,
-				ConsensusThreshold:  0.6,
-				MaxErrorRate:        0.2,
-				MaxSourceChars:      1000,
-				MaxTargetChars:      1000,
-				SamplingTemperature: 0.7,
-				MaxTokens:           500,
-			}, "must be positive"),
-			Entry("zero max tokens", config.RequiresConfig{
-				Enabled:             true,
-				Models:              []string{"model-a"},
-				SamplesPerModel:     3,
-				ConsensusThreshold:  0.6,
-				MaxErrorRate:        0.2,
-				MaxSourceChars:      1000,
-				MaxTargetChars:      1000,
-				SamplingTemperature: 0.7,
-				MaxTokens:           0,
-			}, "must be positive"),
-			Entry("zero max source chars", config.RequiresConfig{
-				Enabled:             true,
-				Models:              []string{"model-a"},
-				SamplesPerModel:     3,
-				ConsensusThreshold:  0.6,
-				MaxErrorRate:        0.2,
-				MaxSourceChars:      0,
-				MaxTargetChars:      1000,
-				SamplingTemperature: 0.7,
-				MaxTokens:           500,
-			}, "must be positive"),
-			Entry("zero max target chars", config.RequiresConfig{
-				Enabled:             true,
-				Models:              []string{"model-a"},
-				SamplesPerModel:     3,
-				ConsensusThreshold:  0.6,
-				MaxErrorRate:        0.2,
-				MaxSourceChars:      1000,
-				MaxTargetChars:      0,
-				SamplingTemperature: 0.7,
-				MaxTokens:           500,
-			}, "must be positive"),
-		)
-
-		DescribeTable("sampling temperature validation",
-			func(temp float64, shouldErr bool) {
-				cfg := validRequires()
-				cfg.SamplingTemperature = temp
-
-				err := cfg.Validate()
-				if shouldErr {
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("sampling_temperature"))
-				} else {
-					Expect(err).NotTo(HaveOccurred())
-				}
-			},
-			Entry("below range", -0.1, true),
-			Entry("min valid", 0.0, false),
-			Entry("mid valid", 1.0, false),
-			Entry("max valid", 2.0, false),
-			Entry("above range", 2.1, true),
+			Entry("empty models", func(c *config.RequiresConfig) { c.Models = []string{} }, "analysis.requires.models", "must not be empty"),
+			Entry("zero samples per model", func(c *config.RequiresConfig) { c.SamplesPerModel = 0 }, "analysis.requires.samples_per_model", "must be positive"),
+			Entry("zero max tokens", func(c *config.RequiresConfig) { c.MaxTokens = 0 }, "analysis.requires.max_tokens", "must be positive"),
+			Entry("zero max source chars", func(c *config.RequiresConfig) { c.MaxSourceChars = 0 }, "analysis.requires.max_source_chars", "must be positive"),
+			Entry("zero max target chars", func(c *config.RequiresConfig) { c.MaxTargetChars = 0 }, "analysis.requires.max_target_chars", "must be positive"),
 		)
 
 		It("skips validation when disabled", func() {

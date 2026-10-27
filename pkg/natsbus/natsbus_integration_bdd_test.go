@@ -4,8 +4,6 @@ package natsbus_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,78 +17,13 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
-	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
-
-// ---------------------------------------------------------------------------
-// Integration helpers (adapted from integration_helpers_test.go)
-// ---------------------------------------------------------------------------
-
-// defaultTestStreamsConfig returns the streams configuration shared by all
-// integration tests that create a NATSConfig inline.
-func defaultTestStreamsConfig() config.NATSStreamsConfig {
-	return config.NATSStreamsConfig{
-		AuditLLMRetention:    24 * time.Hour,
-		AuditEventsRetention: 24 * time.Hour,
-	}
-}
-
-// testTenantCtx creates a context with the given tenant ID for testing.
-func testTenantCtx(tenantID string) context.Context {
-	ctx, err := tenant.WithTenant(context.Background(), tenantID)
-	Expect(err).NotTo(HaveOccurred(), "testTenantCtx(%q)", tenantID)
-	return ctx
-}
-
-// subscribeOne sets up a buffered-channel subscriber on the given subject
-// and returns the channel.
-func subscribeOne(client natsbus.Client, ctx context.Context, subject string) <-chan *natsbus.Message {
-	received := make(chan *natsbus.Message, 1)
-	sub, err := client.Subscribe(ctx, subject, func(_ context.Context, msg *natsbus.Message) error {
-		received <- msg
-		return nil
-	})
-	Expect(err).NotTo(HaveOccurred(), "subscribe")
-	DeferCleanup(sub.Unsubscribe)
-	return received
-}
-
-// receiveOne waits up to timeout for a single message on ch.
-func receiveOne(ch <-chan *natsbus.Message, timeout time.Duration) *natsbus.Message {
-	var msg *natsbus.Message
-	Eventually(ch, timeout).Should(Receive(&msg))
-	return msg
-}
-
-// publishOrFail publishes a payload to the given subject.
-func publishOrFail(client natsbus.Client, ctx context.Context, subject string, payload []byte) {
-	Expect(client.Publish(ctx, subject, payload)).To(Succeed())
-}
-
-// assertProvenanceHeaders checks that all five required provenance headers
-// are present and that the content hash matches the payload.
-func assertProvenanceHeaders(msg *natsbus.Message, payload []byte, wantTenant string) {
-	Expect(msg.Metadata.TenantID).To(Equal(wantTenant))
-
-	h := sha256.Sum256(payload)
-	wantHash := hex.EncodeToString(h[:])
-	Expect(msg.Metadata.ContentHash).To(Equal(wantHash))
-
-	requiredHeaders := []string{"X-Trace-Id", "X-Span-Id", "X-Tenant-Id", "X-Timestamp", "X-Content-SHA256"}
-	for _, hdr := range requiredHeaders {
-		Expect(msg.Headers).To(HaveKey(hdr), "missing required header %s", hdr)
-	}
-
-	if ts, ok := msg.Headers["X-Timestamp"]; ok && len(ts) > 0 {
-		_, err := time.Parse(time.RFC3339Nano, ts[0])
-		Expect(err).NotTo(HaveOccurred(), "X-Timestamp %q not valid RFC3339Nano", ts[0])
-	}
-}
 
 // newEmbeddedClient creates an embedded NATS client for testing.
 func newEmbeddedClient() natsbus.Client {
@@ -139,17 +72,10 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 	Describe("Publish and Subscribe", func() {
 		It("should deliver a published message to a subscriber", func() {
 			client := newEmbeddedClient()
-			ctx := testTenantCtx("acme-corp")
-
-			subject, err := natsbus.WorkSubject("acme-corp", natsbus.TaskClassify, "job-001")
-			Expect(err).NotTo(HaveOccurred())
-
-			received := subscribeOne(client, ctx, subject)
 
 			payload := []byte(`{"task":"classify","control":"AC-1"}`)
-			publishOrFail(client, ctx, subject, payload)
+			subject, msg := publishAndReceive(client, "acme-corp", natsbus.TaskClassify, "job-001", payload)
 
-			msg := receiveOne(received, 5*time.Second)
 			Expect(msg.Subject).To(Equal(subject))
 			Expect(string(msg.Data)).To(Equal(string(payload)))
 		})
@@ -157,19 +83,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 
 	Describe("Provenance Round-Trip", func() {
 		It("should attach and verify provenance headers on delivered messages", func() {
-			client := newEmbeddedClient()
-			ctx := testTenantCtx("test-tenant")
-
-			subject, err := natsbus.WorkSubject("test-tenant", natsbus.TaskRelate, "job-prov")
-			Expect(err).NotTo(HaveOccurred())
-
-			received := subscribeOne(client, ctx, subject)
-
-			payload := []byte("provenance test data")
-			publishOrFail(client, ctx, subject, payload)
-
-			msg := receiveOne(received, 5*time.Second)
-			assertProvenanceHeaders(msg, payload, "test-tenant")
+			expectProvenanceRoundTrip(newEmbeddedClient(), "test-tenant", natsbus.TaskRelate, "job-prov", []byte("provenance test data"))
 		})
 	})
 
@@ -196,8 +110,9 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				DeferCleanup(sub.Unsubscribe)
 			}
 
-			// Small delay for subscriptions to propagate
-			time.Sleep(100 * time.Millisecond)
+			// No propagation delay needed: the subscriptions and the publishes
+			// share one connection, and NATS processes a connection's protocol
+			// operations (SUB before PUB) in order.
 
 			var wg sync.WaitGroup
 			wg.Add(1)
@@ -229,8 +144,8 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 		})
 	})
 
-	Describe("JetStream Audit Persistence", func() {
-		It("should persist audit messages to JetStream", func() {
+	Describe("Audit Subject Delivery", func() {
+		It("delivers audit-subject messages published after subscribing", func() {
 			client := newEmbeddedClient()
 			ctx := testTenantCtx("acme-corp")
 
@@ -238,15 +153,15 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			payload := []byte(`{"model":"gpt-4","prompt":"classify AC-1"}`)
+			// Only asserts that publishing to an audit subject succeeds; the
+			// message predates the subscription and its delivery is not checked.
 			publishOrFail(client, ctx, subject, payload)
 
-			// Give JetStream time to persist
-			time.Sleep(500 * time.Millisecond)
-
-			// Subscribe and verify the message was persisted in the audit stream
+			// This spec does not cover JetStream persistence (natsbus.Client has no
+			// stream-read API); it relies on same-connection ordering (SUB before
+			// the second PUB).
 			received := subscribeOne(client, ctx, subject)
 
-			// Publish another to trigger subscription
 			payload2 := []byte(`{"model":"gpt-4","prompt":"classify AC-2"}`)
 			publishOrFail(client, ctx, subject, payload2)
 
@@ -284,17 +199,15 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(subB.Unsubscribe)
 
-			time.Sleep(100 * time.Millisecond)
-
-			// Publish only to tenant A
+			// Publish only to tenant A. Both subscriptions share this connection,
+			// so they are registered before the publishes (no propagation delay).
 			for range 5 {
 				Expect(client.Publish(ctxA, subjectA, []byte("for A"))).To(Succeed())
 			}
 
-			time.Sleep(500 * time.Millisecond)
-
-			Expect(receivedByA.Load()).To(Equal(int64(5)))
-			Expect(receivedByB.Load()).To(Equal(int64(0)), "isolation violated: tenant B received messages meant for tenant A")
+			Eventually(receivedByA.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(5)))
+			Consistently(receivedByB.Load, 500*time.Millisecond, 10*time.Millisecond).Should(BeZero(),
+				"isolation violated: tenant B received messages meant for tenant A")
 		})
 	})
 
@@ -470,8 +383,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(sub.Unsubscribe)
 
-				// Small delay for subscription propagation.
-				time.Sleep(100 * time.Millisecond)
+				// No propagation delay: Subscribe and Publish share one connection.
 
 				payload := []byte(`{"task":"classify","control":"AC-1"}`)
 				publishOrFail(client, ctx, subject, payload)
@@ -484,10 +396,12 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				Expect(r.sc.IsValid()).To(BeTrue(), "subscriber SpanContext is not valid")
 
 				// Assert natsbus.process span exists with correct trace ID.
-				time.Sleep(100 * time.Millisecond) // allow span to flush
-				spans := tp.GetSpans()
-				processSpan := telemetrytest.FindSpan(spans, "natsbus.process")
-				Expect(processSpan).NotTo(BeNil(), "expected natsbus.process span")
+				// The span ends after the handler returns, so wait for it.
+				var processSpan sdktrace.ReadOnlySpan
+				Eventually(func() bool {
+					processSpan = telemetrytest.FindSpan(tp.GetSpans(), "natsbus.process")
+					return processSpan != nil
+				}, 5*time.Second, 10*time.Millisecond).Should(BeTrue(), "expected natsbus.process span")
 				Expect(processSpan.SpanContext().TraceID()).To(Equal(publisherTraceID))
 
 				subjectAttr, ok := telemetrytest.SpanAttribute(processSpan, "messaging.subject")
@@ -550,7 +464,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(sub.Unsubscribe)
 
-				time.Sleep(100 * time.Millisecond)
+				// No propagation delay: Subscribe and Publish share one connection.
 
 				payload := []byte(`{"task":"classify"}`)
 				for i := 0; i < messageCount; i++ {
@@ -559,8 +473,20 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 
 				Eventually(done, 5*time.Second).Should(BeClosed())
 
-				// Allow metrics to flush.
-				time.Sleep(100 * time.Millisecond)
+				// The handler signals done before wrapHandler records its metrics
+				// (counter first, histogram last), so wait for the histogram to reach
+				// messageCount; both instruments are then complete.
+				Eventually(func() uint64 {
+					m := telemetrytest.FindMetric(tp.GetMetrics(), "natsbus.process.duration_ms")
+					if m == nil {
+						return 0
+					}
+					c, err := telemetrytest.HistogramCount(m)
+					if err != nil {
+						return 0
+					}
+					return c
+				}, 5*time.Second, 10*time.Millisecond).Should(Equal(uint64(messageCount)))
 
 				rm := tp.GetMetrics()
 				counterMetric := telemetrytest.FindMetric(rm, "natsbus.process.total")
@@ -602,10 +528,10 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			return rawConn
 		}
 
-		// subscribeRejectingProvenance sets up a natsbus wrapHandler subscriber
-		// on a raw NATS connection. Returns a flag indicating whether the handler
-		// was called (should remain false for messages lacking provenance).
-		subscribeRejectingProvenance := func(rawConn *nats.Conn, subject string) *atomic.Bool {
+		// subscribeTrackingCalls sets up a natsbus wrapHandler subscriber on a
+		// raw NATS connection. Returns a flag indicating whether the handler was
+		// called (false for rejected messages, true for accepted ones).
+		subscribeTrackingCalls := func(rawConn *nats.Conn, subject string) *atomic.Bool {
 			var handlerCalled atomic.Bool
 			wrappedHandler := natsbus.ExportWrapHandler(rawConn, func(_ context.Context, _ *natsbus.Message) error {
 				handlerCalled.Store(true)
@@ -623,16 +549,14 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			It("should reject the message and not call the handler", func() {
 				rawConn := startRawNATSConn("nats-provenance-test")
 				subject := "crosscodex.work.test-tenant.classify.job-raw"
-				handlerCalled := subscribeRejectingProvenance(rawConn, subject)
+				handlerCalled := subscribeTrackingCalls(rawConn, subject)
 
 				// Publish a raw message with NO headers (no provenance).
 				Expect(rawConn.Publish(subject, []byte("raw payload without provenance"))).To(Succeed())
 				Expect(rawConn.Flush()).To(Succeed())
 
-				// Wait long enough for delivery.
-				time.Sleep(500 * time.Millisecond)
-
-				Expect(handlerCalled.Load()).To(BeFalse(),
+				// Handler must stay uncalled for the delivery window.
+				Consistently(handlerCalled.Load, 500*time.Millisecond, 10*time.Millisecond).Should(BeFalse(),
 					"handler was called for a message without provenance headers; expected rejection")
 			})
 		})
@@ -641,7 +565,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			It("should reject the message and not call the handler", func() {
 				rawConn := startRawNATSConn("nats-partial-provenance-test")
 				subject := "crosscodex.work.test-tenant.classify.job-partial"
-				handlerCalled := subscribeRejectingProvenance(rawConn, subject)
+				handlerCalled := subscribeTrackingCalls(rawConn, subject)
 
 				// Publish with only tenant header — missing the other 4 required headers.
 				msg := &nats.Msg{
@@ -652,9 +576,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				Expect(rawConn.PublishMsg(msg)).To(Succeed())
 				Expect(rawConn.Flush()).To(Succeed())
 
-				time.Sleep(500 * time.Millisecond)
-
-				Expect(handlerCalled.Load()).To(BeFalse(),
+				Consistently(handlerCalled.Load, 500*time.Millisecond, 10*time.Millisecond).Should(BeFalse(),
 					"handler was called for a message with partial provenance headers; expected rejection")
 			})
 		})
@@ -664,15 +586,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				rawConn := startRawNATSConn("nats-hash-mismatch-test")
 				subject := "crosscodex.work.test-tenant.classify.job-hash"
 
-				var handlerCalled atomic.Bool
-				wrappedHandler := natsbus.ExportWrapHandler(rawConn, func(_ context.Context, _ *natsbus.Message) error {
-					handlerCalled.Store(true)
-					return nil
-				})
-
-				sub, err := rawConn.Subscribe(subject, wrappedHandler)
-				Expect(err).NotTo(HaveOccurred())
-				DeferCleanup(func() { _ = sub.Unsubscribe() })
+				handlerCalled := subscribeTrackingCalls(rawConn, subject)
 
 				// Build a message with all 5 provenance headers but a wrong content hash.
 				payload := []byte("legitimate payload")
@@ -691,9 +605,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				Expect(rawConn.PublishMsg(msg)).To(Succeed())
 				Expect(rawConn.Flush()).To(Succeed())
 
-				time.Sleep(500 * time.Millisecond)
-
-				Expect(handlerCalled.Load()).To(BeFalse(),
+				Consistently(handlerCalled.Load, 500*time.Millisecond, 10*time.Millisecond).Should(BeFalse(),
 					"handler was called for a message with mismatched content hash; expected rejection")
 			})
 		})
@@ -703,15 +615,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				rawConn := startRawNATSConn("nats-hash-match-test")
 				subject := "crosscodex.work.test-tenant.classify.job-hash-ok"
 
-				var handlerCalled atomic.Bool
-				wrappedHandler := natsbus.ExportWrapHandler(rawConn, func(_ context.Context, _ *natsbus.Message) error {
-					handlerCalled.Store(true)
-					return nil
-				})
-
-				sub, err := rawConn.Subscribe(subject, wrappedHandler)
-				Expect(err).NotTo(HaveOccurred())
-				DeferCleanup(func() { _ = sub.Unsubscribe() })
+				handlerCalled := subscribeTrackingCalls(rawConn, subject)
 
 				payload := []byte("legitimate payload")
 				correctHash := natsbus.ContentHash(payload)
@@ -729,9 +633,7 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				Expect(rawConn.PublishMsg(msg)).To(Succeed())
 				Expect(rawConn.Flush()).To(Succeed())
 
-				time.Sleep(500 * time.Millisecond)
-
-				Expect(handlerCalled.Load()).To(BeTrue(),
+				Eventually(handlerCalled.Load, 5*time.Second, 10*time.Millisecond).Should(BeTrue(),
 					"handler was NOT called for a message with correct content hash; expected acceptance")
 			})
 		})

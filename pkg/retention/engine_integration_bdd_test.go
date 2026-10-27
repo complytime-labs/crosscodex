@@ -24,11 +24,9 @@ package retention_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"time"
 
@@ -54,21 +52,6 @@ var enginePurgePool db.Pool
 // RLS-scoped app_user role does not have — so provisioning is deliberately a
 // privileged operation (see pkg/db.EnsureTenant).
 var engineSuPool db.Pool
-
-// integPurgeUserDSN rewrites the superuser DSN to authenticate as purge_user,
-// preserving all TLS parameters (only the userinfo component changes).
-func integPurgeUserDSN(suDSN string) string {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		panic(fmt.Sprintf("bad TEST_DATABASE_DSN: %v", err))
-	}
-	pw, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
-	if err != nil {
-		panic(fmt.Sprintf("purge_user password: %v", err))
-	}
-	u.User = url.UserPassword("purge_user", pw)
-	return u.String()
-}
 
 // integCaptureAudit is an in-process AuditPublisher that records every emitted
 // record, so specs can assert the archive/purge audit trail without a live NATS
@@ -237,43 +220,35 @@ func integSeedJobChildren(tenantID, jobID string) {
 	Expect(tx.Commit()).To(Succeed(), "commit seed")
 }
 
+// queryIntAsTenant runs a single-int query as app_user inside tenantID's
+// RLS scope (through db.NewTenantPool, as the app does) and returns the value.
+func queryIntAsTenant(tenantID, query string, args ...any) int {
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	Expect(err).NotTo(HaveOccurred())
+	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
+	Expect(err).NotTo(HaveOccurred(), "begin app_user query tx")
+	defer func() { _ = tx.Rollback() }()
+	var n int
+	Expect(tx.QueryRow(ctx, query, args...).Scan(&n)).To(Succeed())
+	Expect(tx.Commit()).To(Succeed())
+	return n
+}
+
 // integCountRequiresCandidates returns the number of requires_candidates rows for
 // jobID, visible to tenantID as app_user. requires_candidates has no FK to jobs
 // (it is counted separately from the FK children) but is job-scoped by job_id.
 func integCountRequiresCandidates(tenantID, jobID string) int {
-	ctx, err := tenant.WithTenant(context.Background(), tenantID)
-	Expect(err).NotTo(HaveOccurred())
-	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
-	Expect(err).NotTo(HaveOccurred(), "begin requires-candidate-count tx")
-	defer func() { _ = tx.Rollback() }()
-	var n int
-	Expect(tx.QueryRow(ctx,
-		`SELECT count(*) FROM requires_candidates WHERE job_id = $1`,
-		jobID,
-	).Scan(&n)).To(Succeed())
-	Expect(tx.Commit()).To(Succeed())
-	return n
+	return queryIntAsTenant(tenantID, `SELECT count(*) FROM requires_candidates WHERE job_id = $1`, jobID)
 }
 
 // integCountJobChildren returns the total number of rows across the four FK-child
 // tables for jobID, visible to tenantID as app_user.
 func integCountJobChildren(tenantID, jobID string) int {
-	ctx, err := tenant.WithTenant(context.Background(), tenantID)
-	Expect(err).NotTo(HaveOccurred())
-	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
-	Expect(err).NotTo(HaveOccurred(), "begin child-count tx")
-	defer func() { _ = tx.Rollback() }()
-	var n int
-	Expect(tx.QueryRow(ctx,
-		`SELECT
+	return queryIntAsTenant(tenantID, `SELECT
 		   (SELECT count(*) FROM job_stages              WHERE job_id = $1)
 		 + (SELECT count(*) FROM vote_summaries          WHERE job_id = $1)
 		 + (SELECT count(*) FROM analysis_results        WHERE job_id = $1)
-		 + (SELECT count(*) FROM relationship_candidates WHERE job_id = $1)`,
-		jobID,
-	).Scan(&n)).To(Succeed())
-	Expect(tx.Commit()).To(Succeed())
-	return n
+		 + (SELECT count(*) FROM relationship_candidates WHERE job_id = $1)`, jobID)
 }
 
 // integPurgeTx begins a purge_user transaction scoped to tenantID with
@@ -313,15 +288,7 @@ func integPurgeJobChildren(tenantID, jobID string) {
 
 // integJobExists reports whether jobID is visible to tenantID as app_user.
 func integJobExists(tenantID, jobID string) bool {
-	ctx, err := tenant.WithTenant(context.Background(), tenantID)
-	Expect(err).NotTo(HaveOccurred())
-	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
-	Expect(err).NotTo(HaveOccurred(), "begin exists tx")
-	defer func() { _ = tx.Rollback() }()
-	var n int
-	Expect(tx.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE job_id = $1`, jobID).Scan(&n)).To(Succeed())
-	Expect(tx.Commit()).To(Succeed())
-	return n > 0
+	return queryIntAsTenant(tenantID, `SELECT count(*) FROM jobs WHERE job_id = $1`, jobID) > 0
 }
 
 // integPurgeJob deletes jobID for tenantID as purge_user. Best-effort cleanup:
@@ -400,34 +367,15 @@ func integSeedCatalogAggregate(tenantID, catalogID string) {
 // integCountCatalogDependents returns the total number of rows across the three
 // catalog dependent tables for catalogID, visible to tenantID as app_user.
 func integCountCatalogDependents(tenantID, catalogID string) int {
-	ctx, err := tenant.WithTenant(context.Background(), tenantID)
-	Expect(err).NotTo(HaveOccurred())
-	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
-	Expect(err).NotTo(HaveOccurred(), "begin dependent-count tx")
-	defer func() { _ = tx.Rollback() }()
-	var n int
-	Expect(tx.QueryRow(ctx,
-		`SELECT
+	return queryIntAsTenant(tenantID, `SELECT
 		   (SELECT count(*) FROM classifications WHERE catalog_id = $1)
 		 + (SELECT count(*) FROM embeddings      WHERE catalog_id = $1)
-		 + (SELECT count(*) FROM controls        WHERE catalog_id = $1)`,
-		catalogID,
-	).Scan(&n)).To(Succeed())
-	Expect(tx.Commit()).To(Succeed())
-	return n
+		 + (SELECT count(*) FROM controls        WHERE catalog_id = $1)`, catalogID)
 }
 
 // integCatalogExists reports whether catalogID is visible to tenantID as app_user.
 func integCatalogExists(tenantID, catalogID string) bool {
-	ctx, err := tenant.WithTenant(context.Background(), tenantID)
-	Expect(err).NotTo(HaveOccurred())
-	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
-	Expect(err).NotTo(HaveOccurred(), "begin catalog-exists tx")
-	defer func() { _ = tx.Rollback() }()
-	var n int
-	Expect(tx.QueryRow(ctx, `SELECT count(*) FROM catalogs WHERE catalog_id = $1`, catalogID).Scan(&n)).To(Succeed())
-	Expect(tx.Commit()).To(Succeed())
-	return n > 0
+	return queryIntAsTenant(tenantID, `SELECT count(*) FROM catalogs WHERE catalog_id = $1`, catalogID) > 0
 }
 
 // integPurgeCatalog deletes catalogID and its dependents for tenantID as
@@ -458,18 +406,14 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		// Set purge_user to this run's password so the engine can open its dedicated
 		// pool. Scoped here to avoid touching the shared BeforeSuite harness.
 		ctx := context.Background()
-		adminDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "open admin connection")
 		purgePassword, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
 		Expect(err).NotTo(HaveOccurred(), "purge_user password")
-		stmt, err := dbtest.AlterRolePasswordSQL("purge_user", purgePassword)
-		Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE purge_user")
-		_, err = adminDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "set purge_user password")
-		Expect(adminDB.Close()).To(Succeed())
+		Expect(dbtest.SetRolePassword(ctx, suDSN, "purge_user", purgePassword)).To(Succeed(), "set purge_user password")
 
+		purgeDSN, err := dbtest.RoleDSN(suDSN, "purge_user", purgePassword)
+		Expect(err).NotTo(HaveOccurred(), "purge_user DSN")
 		enginePurgePool, err = db.NewPool(db.PoolConfig{
-			DSN:          integPurgeUserDSN(suDSN),
+			DSN:          purgeDSN,
 			MaxOpenConns: 3,
 		})
 		Expect(err).NotTo(HaveOccurred(), "create purge_user pool")

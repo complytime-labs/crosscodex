@@ -4,9 +4,7 @@ package synthesis_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"net/url"
 	"os"
 	"testing"
 
@@ -57,15 +55,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
 	Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
 
-	adminDB, err := sql.Open("pgx", intSuDSN)
-	Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
 	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
 	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	stmt, err := dbtest.AlterRolePasswordSQL("app_user", appPassword)
-	Expect(err).NotTo(HaveOccurred(), "build ALTER ROLE app_user")
-	_, err = adminDB.ExecContext(ctx, stmt)
-	Expect(err).NotTo(HaveOccurred(), "failed to set app_user password")
-	Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+	Expect(dbtest.SetRolePassword(ctx, intSuDSN, "app_user", appPassword)).To(Succeed(), "failed to set app_user password")
 
 	return []byte(intSuDSN)
 }, func(data []byte) {
@@ -97,15 +89,6 @@ var _ = SynchronizedAfterSuite(func() {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-func synthAppUserDSN() string {
-	u, err := url.Parse(intSuDSN)
-	Expect(err).NotTo(HaveOccurred(), "bad intSuDSN")
-	pw, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	Expect(err).NotTo(HaveOccurred(), "app_user password")
-	u.User = url.UserPassword("app_user", pw)
-	return u.String()
-}
 
 // setupSynthTenant creates a tenant row via superuser (bypasses RLS).
 func setupSynthTenant(tenantID, displayName string) {
@@ -142,8 +125,12 @@ func setupVoteSummaries(tenantID, jobID, analyzerName string, pairs [][2]string)
 
 // newAppTenantConnection returns a TenantConnection using the restricted app_user role.
 func newAppTenantConnection() db.TenantConnection {
+	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	appDSN, err := dbtest.RoleDSN(intSuDSN, "app_user", appPassword)
+	Expect(err).NotTo(HaveOccurred(), "app_user DSN")
 	pool, err := db.NewPool(db.PoolConfig{
-		DSN:          synthAppUserDSN(),
+		DSN:          appDSN,
 		MaxOpenConns: 2,
 	})
 	Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")

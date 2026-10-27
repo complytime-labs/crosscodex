@@ -640,17 +640,15 @@ var _ = Describe("generateCatalogID", func() {
 		Expect(id1).To(Equal(id2))
 	})
 
-	It("produces different IDs for different content hashes", func() {
-		id1 := catalog.ExportGenerateCatalogID("hash1", "tenant1")
-		id3 := catalog.ExportGenerateCatalogID("hash2", "tenant1")
-		Expect(id1).NotTo(Equal(id3))
-	})
-
-	It("produces different IDs for different tenants", func() {
-		id1 := catalog.ExportGenerateCatalogID("hash1", "tenant1")
-		id4 := catalog.ExportGenerateCatalogID("hash1", "tenant2")
-		Expect(id1).NotTo(Equal(id4))
-	})
+	DescribeTable("produces different IDs when an input differs",
+		func(hash2, tenant2 string) {
+			id1 := catalog.ExportGenerateCatalogID("hash1", "tenant1")
+			id2 := catalog.ExportGenerateCatalogID(hash2, tenant2)
+			Expect(id2).NotTo(Equal(id1))
+		},
+		Entry("the content hash", "hash2", "tenant1"),
+		Entry("the tenant", "hash1", "tenant2"),
+	)
 
 	It("produces 16-character IDs", func() {
 		id := catalog.ExportGenerateCatalogID("hash1", "tenant1")

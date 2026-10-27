@@ -48,11 +48,18 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 
 		It("rejects RSA keys", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				bits := rapid.SampledFrom([]int{2048, 3072, 4096}).Draw(t, "rsa-bits")
+			// RSA keygen costs up to seconds per key, so generate one key per
+			// size up front rather than one per rapid iteration.
+			sizes := []int{2048, 3072, 4096}
+			keys := map[int]*rsa.PrivateKey{}
+			for _, bits := range sizes {
 				key, err := rsa.GenerateKey(rand.Reader, bits)
 				Expect(err).NotTo(HaveOccurred())
-				err = attestation.ValidateFIPSKey(&rsaSigner{key: key})
+				keys[bits] = key
+			}
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				bits := rapid.SampledFrom(sizes).Draw(t, "rsa-bits")
+				err := attestation.ValidateFIPSKey(&rsaSigner{key: keys[bits]})
 				Expect(err).To(HaveOccurred())
 				Expect(err).To(MatchError(attestation.ErrNonFIPSAlgorithm))
 			})

@@ -25,8 +25,8 @@ var _ = Describe("catalog tenant foreign keys", Ordered, func() {
 
 	BeforeAll(func() {
 		ctx = context.Background()
-		tenantA, tenantB = testID("catfk-a"), testID("catfk-b")
-		catalogA, catalogB = testID("catfk-cat-a"), testID("catfk-cat-b")
+		tenantA, tenantB = dbtest.TestID("catfk-a"), dbtest.TestID("catfk-b")
+		catalogA, catalogB = dbtest.TestID("catfk-cat-a"), dbtest.TestID("catfk-cat-b")
 		for _, t := range []struct{ tenantID, catalogID, name string }{
 			{tenantA, catalogA, "Catalog FK A"},
 			{tenantB, catalogB, "Catalog FK B"},

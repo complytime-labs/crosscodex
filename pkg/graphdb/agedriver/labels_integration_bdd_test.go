@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
@@ -144,7 +145,7 @@ var _ = Describe("Label indexes", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		tenantID = testID("labels")
+		tenantID = dbtest.TestID("labels")
 		setupTenant(tenantID)
 		DeferCleanup(func() { cleanupTenant(tenantID) })
 		gn = agedriver.GraphName(tenantID)

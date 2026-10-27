@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/agedriver"
 )
@@ -61,7 +62,7 @@ var _ = Describe("Relationship query property filters", func() {
 	)
 
 	BeforeEach(func() {
-		tenantID = testID("query-order")
+		tenantID = dbtest.TestID("query-order")
 		setupTenant(tenantID)
 		DeferCleanup(func() { cleanupTenant(tenantID) })
 

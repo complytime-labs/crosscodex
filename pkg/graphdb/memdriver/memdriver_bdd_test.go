@@ -297,7 +297,9 @@ var _ = Describe("memdriver", func() {
 				defer GinkgoRecover()
 				_, err := g.QueryRelationships(ctx, "tenant-a", graphdb.RelationshipQuery{})
 				Expect(err).NotTo(HaveOccurred())
-				_, err = g.Traverse(ctx, "tenant-a", graphdb.TraversalQuery{StartNode: "n0"})
+				// Bounded: unlimited depth enumerates every edge-simple path
+				// through this cyclic graph, which is exponential in edges.
+				_, err = g.Traverse(ctx, "tenant-a", graphdb.TraversalQuery{StartNode: "n0", MaxDepth: 3})
 				Expect(err).NotTo(HaveOccurred())
 				// "seed" is created before the goroutines start and is never
 				// deleted, so it is always findable regardless of how the

@@ -4,8 +4,6 @@ package natsbus_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"sync/atomic"
 	"time"
@@ -15,74 +13,8 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
-	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
-
-// ---------------------------------------------------------------------------
-// Integration helpers (duplicated for integration_nats build tag)
-// ---------------------------------------------------------------------------
-
-// extDefaultTestStreamsConfig returns the streams configuration shared by
-// external integration tests.
-func extDefaultTestStreamsConfig() config.NATSStreamsConfig {
-	return config.NATSStreamsConfig{
-		AuditLLMRetention:    24 * time.Hour,
-		AuditEventsRetention: 24 * time.Hour,
-	}
-}
-
-// extTestTenantCtx creates a context with the given tenant ID for testing.
-func extTestTenantCtx(tenantID string) context.Context {
-	ctx, err := tenant.WithTenant(context.Background(), tenantID)
-	Expect(err).NotTo(HaveOccurred(), "extTestTenantCtx(%q)", tenantID)
-	return ctx
-}
-
-// extSubscribeOne sets up a buffered-channel subscriber on the given subject
-// and returns the channel.
-func extSubscribeOne(client natsbus.Client, ctx context.Context, subject string) <-chan *natsbus.Message {
-	received := make(chan *natsbus.Message, 1)
-	sub, err := client.Subscribe(ctx, subject, func(_ context.Context, msg *natsbus.Message) error {
-		received <- msg
-		return nil
-	})
-	Expect(err).NotTo(HaveOccurred(), "subscribe")
-	DeferCleanup(sub.Unsubscribe)
-	return received
-}
-
-// extReceiveOne waits up to timeout for a single message on ch.
-func extReceiveOne(ch <-chan *natsbus.Message, timeout time.Duration) *natsbus.Message {
-	var msg *natsbus.Message
-	Eventually(ch, timeout).Should(Receive(&msg))
-	return msg
-}
-
-// extPublishOrFail publishes a payload to the given subject.
-func extPublishOrFail(client natsbus.Client, ctx context.Context, subject string, payload []byte) {
-	Expect(client.Publish(ctx, subject, payload)).To(Succeed())
-}
-
-// extAssertProvenanceHeaders checks that all five required provenance headers
-// are present and that the content hash matches the payload.
-func extAssertProvenanceHeaders(msg *natsbus.Message, payload []byte, wantTenant string) {
-	Expect(msg.Metadata.TenantID).To(Equal(wantTenant))
-
-	h := sha256.Sum256(payload)
-	wantHash := hex.EncodeToString(h[:])
-	Expect(msg.Metadata.ContentHash).To(Equal(wantHash))
-
-	requiredHeaders := []string{"X-Trace-Id", "X-Span-Id", "X-Tenant-Id", "X-Timestamp", "X-Content-SHA256"}
-	for _, hdr := range requiredHeaders {
-		Expect(msg.Headers).To(HaveKey(hdr), "missing required header %s", hdr)
-	}
-
-	if ts, ok := msg.Headers["X-Timestamp"]; ok && len(ts) > 0 {
-		_, err := time.Parse(time.RFC3339Nano, ts[0])
-		Expect(err).NotTo(HaveOccurred(), "X-Timestamp %q not valid RFC3339Nano", ts[0])
-	}
-}
 
 // ---------------------------------------------------------------------------
 // External NATS client factory
@@ -117,7 +49,7 @@ func newExternalClient() natsbus.Client {
 	cfg := config.NATSConfig{
 		URL:     natsURL,
 		TLS:     true,
-		Streams: extDefaultTestStreamsConfig(),
+		Streams: defaultTestStreamsConfig(),
 	}
 
 	client, err := natsbus.New(cfg, natsbus.WithTLSConfig(tlsCfg))
@@ -143,43 +75,24 @@ var _ = Describe("External NATS Integration", Ordered, func() {
 	Describe("TLS Connection", func() {
 		It("should publish and receive a message over TLS", func() {
 			client := newExternalClient()
-			ctx := extTestTenantCtx("acme-corp")
-
-			subject, err := natsbus.WorkSubject("acme-corp", natsbus.TaskClassify, "ext-tls-001")
-			Expect(err).NotTo(HaveOccurred())
-
-			received := extSubscribeOne(client, ctx, subject)
 
 			payload := []byte(`{"test":"tls"}`)
-			extPublishOrFail(client, ctx, subject, payload)
+			_, msg := publishAndReceive(client, "acme-corp", natsbus.TaskClassify, "ext-tls-001", payload)
 
-			msg := extReceiveOne(received, 5*time.Second)
 			Expect(string(msg.Data)).To(Equal(string(payload)))
 		})
 	})
 
 	Describe("Provenance Headers", func() {
 		It("should attach and verify provenance headers on external NATS messages", func() {
-			client := newExternalClient()
-			ctx := extTestTenantCtx("test-tenant")
-
-			subject, err := natsbus.WorkSubject("test-tenant", natsbus.TaskEmbed, "ext-prov-001")
-			Expect(err).NotTo(HaveOccurred())
-
-			received := extSubscribeOne(client, ctx, subject)
-
-			payload := []byte("external provenance test")
-			extPublishOrFail(client, ctx, subject, payload)
-
-			msg := extReceiveOne(received, 5*time.Second)
-			extAssertProvenanceHeaders(msg, payload, "test-tenant")
+			expectProvenanceRoundTrip(newExternalClient(), "test-tenant", natsbus.TaskEmbed, "ext-prov-001", []byte("external provenance test"))
 		})
 	})
 
 	Describe("Queue Group", func() {
 		It("should deliver all messages through a queue group on external NATS", func() {
 			client := newExternalClient()
-			ctx := extTestTenantCtx("acme-corp")
+			ctx := testTenantCtx("acme-corp")
 
 			subject, err := natsbus.WorkSubject("acme-corp", natsbus.TaskRelate, "ext-queue-001")
 			Expect(err).NotTo(HaveOccurred())
@@ -194,7 +107,8 @@ var _ = Describe("External NATS Integration", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(sub.Unsubscribe)
 
-			time.Sleep(100 * time.Millisecond)
+			// No propagation delay: the queue subscription and the publishes share
+			// one connection, and NATS processes a connection's operations in order.
 
 			for range numMessages {
 				Expect(client.Publish(ctx, subject, []byte("work"))).To(Succeed())
@@ -204,25 +118,27 @@ var _ = Describe("External NATS Integration", Ordered, func() {
 		})
 	})
 
-	Describe("JetStream Audit", func() {
-		It("should persist and deliver audit messages on external NATS", func() {
+	Describe("Audit Subject Delivery", func() {
+		It("delivers audit-subject messages published after subscribing on external NATS", func() {
 			client := newExternalClient()
-			ctx := extTestTenantCtx("acme-corp")
+			ctx := testTenantCtx("acme-corp")
 
 			subject, err := natsbus.AuditSubject("acme-corp", natsbus.AuditDecisions, "ext-audit-001")
 			Expect(err).NotTo(HaveOccurred())
 
 			payload := []byte(`{"decision":"approved","control":"AC-1"}`)
-			extPublishOrFail(client, ctx, subject, payload)
+			// Only asserts that publishing to an audit subject succeeds; the
+			// message predates the subscription and its delivery is not checked.
+			publishOrFail(client, ctx, subject, payload)
 
-			// Verify stream exists (audit stream should have been created on startup)
-			received := extSubscribeOne(client, ctx, subject)
+			// This spec does not cover JetStream persistence (natsbus.Client has no
+			// stream-read API); it relies on same-connection ordering.
+			received := subscribeOne(client, ctx, subject)
 
-			// Publish another to verify the stream is working
 			payload2 := []byte(`{"decision":"denied","control":"AC-2"}`)
-			extPublishOrFail(client, ctx, subject, payload2)
+			publishOrFail(client, ctx, subject, payload2)
 
-			msg := extReceiveOne(received, 5*time.Second)
+			msg := receiveOne(received, 5*time.Second)
 			Expect(string(msg.Data)).To(Equal(string(payload2)))
 		})
 	})

@@ -20,18 +20,6 @@ func defaultViabilityCfg() config.ViabilityConfig {
 	}
 }
 
-// defaultAssessmentCfg provides a valid AssessmentConfig for fuzz tests.
-func defaultAssessmentCfg() config.AssessmentConfig {
-	return config.AssessmentConfig{
-		IQRGood:        20.0,
-		IQRPoor:        10.0,
-		NoRelHigh:      0.97,
-		NoRelLow:       0.80,
-		ContestedWarn:  0.20,
-		ActionableWarn: 0.30,
-	}
-}
-
 // FuzzComputeViability verifies ComputeViability never panics on arbitrary
 // float64 scores and string type/level inputs.
 func FuzzComputeViability(f *testing.F) {
@@ -114,7 +102,7 @@ func FuzzAssess(f *testing.F) {
 	f.Add(50.0, 0.5, 0.001, "CONTRIBUTES_TO", true)
 	f.Add(999999.0, 999999.0, 999999.0, "INTEGRAL_TO", false)
 
-	assessor := NewAssessor(defaultAssessmentCfg(), []string{
+	assessor := NewAssessor(ExportDefaultAssessmentConfig(), []string{
 		"EQUIVALENT", "SUBSET_OF", "SUPERSET_OF", "INTERSECTS",
 		"COMPLEMENTS", "RELATED_TO", "CONTRIBUTES_TO",
 	})
@@ -167,7 +155,7 @@ func FuzzAssessMultiRow(f *testing.F) {
 	f.Add(10, 100.0, 80.0, 60.0, 40.0, "SUBSET_OF")
 	f.Add(4, -5.0, -10.0, -15.0, -20.0, "INTEGRAL_TO")
 
-	assessor := NewAssessor(defaultAssessmentCfg(), []string{
+	assessor := NewAssessor(ExportDefaultAssessmentConfig(), []string{
 		"EQUIVALENT", "SUBSET_OF", "SUPERSET_OF", "INTERSECTS",
 		"COMPLEMENTS", "RELATED_TO", "CONTRIBUTES_TO",
 	})

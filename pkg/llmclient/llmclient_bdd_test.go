@@ -1403,37 +1403,31 @@ var _ = Describe("Edge Cases", func() {
 		Expect(errStr).NotTo(ContainSubstring("code="))
 	})
 
-	It("returns error for nil CompletionRequest", func() {
-		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
+	DescribeTable("returns error for a nil request",
+		func(call func(context.Context, llmclient.Client) error) {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
 
-		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
-		client, err := llmclient.NewClient(cfg)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { client.Close() })
+			cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+			client, err := llmclient.NewClient(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { client.Close() })
 
-		ctx := testspecs.SetupTenantContext("test-tenant")
-		_, err = client.Complete(ctx, nil)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("nil"))
-	})
-
-	It("returns error for nil EmbeddingRequest", func() {
-		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-
-		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
-		client, err := llmclient.NewClient(cfg)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { client.Close() })
-
-		ctx := testspecs.SetupTenantContext("test-tenant")
-		_, err = client.Embed(ctx, nil)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("nil"))
-	})
+			ctx := testspecs.SetupTenantContext("test-tenant")
+			err = call(ctx, client)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("nil"))
+		},
+		Entry("for nil CompletionRequest", func(ctx context.Context, c llmclient.Client) error {
+			_, err := c.Complete(ctx, nil)
+			return err
+		}),
+		Entry("for nil EmbeddingRequest", func(ctx context.Context, c llmclient.Client) error {
+			_, err := c.Embed(ctx, nil)
+			return err
+		}),
+	)
 })
 
 // =====================================================
@@ -1442,35 +1436,41 @@ var _ = Describe("Edge Cases", func() {
 
 var _ = Describe("Gateway Mode", func() {
 
-	It("makes exactly one attempt when gateway_mode is true", func() {
-		var attempts atomic.Int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			attempts.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			fmt.Fprintf(w, `{"error":{"message":"rate limited","type":"rate_limit"}}`)
-		}))
-		DeferCleanup(srv.Close)
+	DescribeTable("makes exactly one attempt on an error status when gateway_mode is true",
+		func(status int, body string) {
+			var attempts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				attempts.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				fmt.Fprint(w, body)
+			}))
+			DeferCleanup(srv.Close)
 
-		cfg := config.LLMConfig{
-			GatewayURL:  srv.URL,
-			GatewayMode: true,
-			Timeout:     10,
-			MaxRetries:  3,
-		}
-		client, err := llmclient.NewClient(cfg)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { client.Close() })
+			cfg := config.LLMConfig{
+				GatewayURL:  srv.URL,
+				GatewayMode: true,
+				Timeout:     10,
+				MaxRetries:  3,
+			}
+			client, err := llmclient.NewClient(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { client.Close() })
 
-		ctx := testspecs.SetupTenantContext("test-tenant")
-		_, err = client.Complete(ctx, &llmclient.CompletionRequest{
-			Model:    "gpt-4",
-			Messages: []llmclient.ChatMessage{{Role: "user", Content: "Hi"}},
-			TenantID: "test-tenant",
-		})
-		Expect(err).To(HaveOccurred())
-		Expect(attempts.Load()).To(BeEquivalentTo(1))
-	})
+			ctx := testspecs.SetupTenantContext("test-tenant")
+			_, err = client.Complete(ctx, &llmclient.CompletionRequest{
+				Model:    "gpt-4",
+				Messages: []llmclient.ChatMessage{{Role: "user", Content: "Hi"}},
+				TenantID: "test-tenant",
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(attempts.Load()).To(BeEquivalentTo(1))
+		},
+		Entry("429 rate limited",
+			http.StatusTooManyRequests, `{"error":{"message":"rate limited","type":"rate_limit"}}`),
+		Entry("503 service unavailable",
+			http.StatusServiceUnavailable, `{"error":{"message":"service unavailable","type":"server_error"}}`),
+	)
 
 	It("returns success on first attempt when gateway_mode is true", func() {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1499,36 +1499,6 @@ var _ = Describe("Gateway Mode", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Choices).To(HaveLen(1))
 		Expect(resp.Choices[0].Message.Content).To(Equal("Hello from gateway mode."))
-	})
-
-	It("surfaces 5xx immediately without retry when gateway_mode is true", func() {
-		var attempts atomic.Int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			attempts.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintf(w, `{"error":{"message":"service unavailable","type":"server_error"}}`)
-		}))
-		DeferCleanup(srv.Close)
-
-		cfg := config.LLMConfig{
-			GatewayURL:  srv.URL,
-			GatewayMode: true,
-			Timeout:     10,
-			MaxRetries:  3,
-		}
-		client, err := llmclient.NewClient(cfg)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { client.Close() })
-
-		ctx := testspecs.SetupTenantContext("test-tenant")
-		_, err = client.Complete(ctx, &llmclient.CompletionRequest{
-			Model:    "gpt-4",
-			Messages: []llmclient.ChatMessage{{Role: "user", Content: "Hi"}},
-			TenantID: "test-tenant",
-		})
-		Expect(err).To(HaveOccurred())
-		Expect(attempts.Load()).To(BeEquivalentTo(1))
 	})
 
 	It("preserves telemetry instrumentation in gateway mode", func() {

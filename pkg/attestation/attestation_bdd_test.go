@@ -808,32 +808,25 @@ var _ = Describe("FIPS Enforcement", func() {
 		ctx = context.Background()
 	})
 
-	It("allows ECDSA P-256 key when FIPS mode enabled", func() {
-		kp := newMockKeyProvider()
-		gen, err := attestation.NewGenerator(kp, attestation.WithFIPSMode(true))
-		Expect(err).NotTo(HaveOccurred())
+	DescribeTable("accepts an ECDSA P-256 key",
+		func(fipsMode bool) {
+			kp := newMockKeyProvider()
+			gen, err := attestation.NewGenerator(kp, attestation.WithFIPSMode(fipsMode))
+			Expect(err).NotTo(HaveOccurred())
 
-		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
-		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
-		_, err = gen.CreateLink(ctx, "step", materials, products)
-		Expect(err).NotTo(HaveOccurred())
-	})
+			materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
+			products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
+			_, err = gen.CreateLink(ctx, "step", materials, products)
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("allows ECDSA P-256 key when FIPS mode enabled", true),
+		Entry("skips FIPS check when FIPS mode disabled", false),
+	)
 
 	It("rejects non-ECDSA key with ErrNonFIPSAlgorithm", func() {
 		err := attestation.ValidateFIPSKey(newEd25519Signer())
 		Expect(err).To(HaveOccurred())
 		Expect(errors.Is(err, attestation.ErrNonFIPSAlgorithm)).To(BeTrue())
-	})
-
-	It("skips FIPS check when FIPS mode disabled", func() {
-		kp := newMockKeyProvider()
-		gen, err := attestation.NewGenerator(kp, attestation.WithFIPSMode(false))
-		Expect(err).NotTo(HaveOccurred())
-
-		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
-		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
-		_, err = gen.CreateLink(ctx, "step", materials, products)
-		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("sets FIPSMode field via option", func() {
@@ -862,9 +855,11 @@ var _ = Describe("Enriched ByProducts", func() {
 		ctx = context.Background()
 	})
 
-	It("always includes trace_id regardless of includeByProducts flag", func() {
+	// verifiedByProducts creates and verifies a link from a generator built
+	// with the given includeByProducts flag and returns the verified ByProducts.
+	verifiedByProducts := func(includeByProducts bool) map[string]any {
 		kp := newMockKeyProvider()
-		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(false))
+		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(includeByProducts))
 		Expect(err).NotTo(HaveOccurred())
 
 		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
@@ -874,72 +869,30 @@ var _ = Describe("Enriched ByProducts", func() {
 
 		verified, err := gen.Verify(ctx, link.Raw)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(verified.ByProducts).To(HaveKey("trace_id"))
-	})
+		return verified.ByProducts
+	}
 
-	It("includes span_id when includeByProducts is true", func() {
-		kp := newMockKeyProvider()
-		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(true))
-		Expect(err).NotTo(HaveOccurred())
-
-		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
-		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
-		link, err := gen.CreateLink(ctx, "step", materials, products)
-		Expect(err).NotTo(HaveOccurred())
-
-		verified, err := gen.Verify(ctx, link.Raw)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(verified.ByProducts).To(HaveKey("span_id"))
-	})
+	DescribeTable("ByProducts key presence by includeByProducts flag",
+		func(includeByProducts bool, wantKeys, absentKeys []string) {
+			byProducts := verifiedByProducts(includeByProducts)
+			for _, k := range wantKeys {
+				Expect(byProducts).To(HaveKey(k))
+			}
+			for _, k := range absentKeys {
+				Expect(byProducts).NotTo(HaveKey(k))
+			}
+		},
+		Entry("always includes trace_id regardless of includeByProducts flag", false, []string{"trace_id"}, nil),
+		Entry("includes span_id when includeByProducts is true", true, []string{"span_id"}, nil),
+		Entry("includes hostname when includeByProducts is true", true, []string{"hostname"}, nil),
+		Entry("does not include span_id, timestamp or hostname when includeByProducts is false", false, nil, []string{"span_id", "timestamp", "hostname"}),
+	)
 
 	It("includes timestamp in RFC3339 format when includeByProducts is true", func() {
-		kp := newMockKeyProvider()
-		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(true))
-		Expect(err).NotTo(HaveOccurred())
-
-		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
-		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
-		link, err := gen.CreateLink(ctx, "step", materials, products)
-		Expect(err).NotTo(HaveOccurred())
-
-		verified, err := gen.Verify(ctx, link.Raw)
-		Expect(err).NotTo(HaveOccurred())
-		ts, ok := verified.ByProducts["timestamp"].(string)
+		ts, ok := verifiedByProducts(true)["timestamp"].(string)
 		Expect(ok).To(BeTrue())
 		_, parseErr := time.Parse(time.RFC3339, ts)
 		Expect(parseErr).NotTo(HaveOccurred())
-	})
-
-	It("includes hostname when includeByProducts is true", func() {
-		kp := newMockKeyProvider()
-		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(true))
-		Expect(err).NotTo(HaveOccurred())
-
-		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
-		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
-		link, err := gen.CreateLink(ctx, "step", materials, products)
-		Expect(err).NotTo(HaveOccurred())
-
-		verified, err := gen.Verify(ctx, link.Raw)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(verified.ByProducts).To(HaveKey("hostname"))
-	})
-
-	It("does not include span_id when includeByProducts is false", func() {
-		kp := newMockKeyProvider()
-		gen, err := attestation.NewGenerator(kp, attestation.WithIncludeByProducts(false))
-		Expect(err).NotTo(HaveOccurred())
-
-		materials := []attestation.Artifact{{URI: "in.txt", Digest: "aaa"}}
-		products := []attestation.Artifact{{URI: "out.txt", Digest: "bbb"}}
-		link, err := gen.CreateLink(ctx, "step", materials, products)
-		Expect(err).NotTo(HaveOccurred())
-
-		verified, err := gen.Verify(ctx, link.Raw)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(verified.ByProducts).NotTo(HaveKey("span_id"))
-		Expect(verified.ByProducts).NotTo(HaveKey("timestamp"))
-		Expect(verified.ByProducts).NotTo(HaveKey("hostname"))
 	})
 
 	It("merges caller-supplied byproducts via WithByProducts", func() {

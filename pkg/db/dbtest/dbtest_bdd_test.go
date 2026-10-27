@@ -1,6 +1,8 @@
 package dbtest_test
 
 import (
+	"context"
+	"net/url"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -91,4 +93,91 @@ var _ = Describe("HardDeleteTenantSQL", func() {
 		Entry("quote injection", "a'; DROP TABLE tenants; --"),
 		Entry("uppercase", "Acme"),
 	)
+})
+
+var _ = Describe("RoleDSN", func() {
+	const rolePassword = "0123456789abcdef"
+
+	It("replaces the userinfo and keeps the host, port, database and query", func() {
+		dsn, err := dbtest.RoleDSN(
+			"postgres://postgres:su-secret@db.example:5433/crosscodex_test?sslmode=verify-full&sslrootcert=%2Fcerts%2Fca.pem",
+			"app_user", rolePassword)
+		Expect(err).NotTo(HaveOccurred())
+		u, err := url.Parse(dsn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(u.User.Username()).To(Equal("app_user"))
+		password, set := u.User.Password()
+		Expect(set).To(BeTrue())
+		Expect(password).To(Equal(rolePassword))
+		Expect(u.Scheme).To(Equal("postgres"))
+		Expect(u.Host).To(Equal("db.example:5433"))
+		Expect(u.Path).To(Equal("/crosscodex_test"))
+		Expect(u.Query()).To(Equal(url.Values{"sslmode": {"verify-full"}, "sslrootcert": {"/certs/ca.pem"}}))
+		Expect(dsn).NotTo(ContainSubstring("su-secret"))
+	})
+
+	It("accepts a postgresql:// URL with no host, as a Unix-socket DSN has", func() {
+		dsn, err := dbtest.RoleDSN("postgresql:///crosscodex?host=/run/postgresql", "app_user", rolePassword)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(dsn).To(Equal("postgresql://app_user:" + rolePassword + "@/crosscodex?host=/run/postgresql"))
+	})
+
+	DescribeTable("refuses a password that is not hex without echoing it or the DSN, naming the role and the fix",
+		func(password string) {
+			dsn, err := dbtest.RoleDSN("postgres://postgres:su-secret@db:5432/x", "purge_user", password)
+			Expect(dsn).To(BeEmpty())
+			Expect(err).To(MatchError(ContainSubstring("build purge_user DSN")))
+			Expect(err).To(MatchError(ContainSubstring("dbtest.NewRolePassword")))
+			Expect(err.Error()).NotTo(ContainSubstring("su-secret"))
+			if password != "" {
+				Expect(err.Error()).NotTo(ContainSubstring(password))
+			}
+		},
+		Entry("empty", ""),
+		Entry("a single quote", "ab'cd"),
+		Entry("odd-length hex", "abc"),
+		Entry("userinfo smuggling", "x@evil:5432/"),
+	)
+
+	DescribeTable("refuses a DSN that is not a postgres URL without echoing it or the password",
+		func(input string) {
+			dsn, err := dbtest.RoleDSN(input, "app_user", rolePassword)
+			Expect(dsn).To(BeEmpty())
+			Expect(err).To(MatchError(ContainSubstring("build app_user DSN: the DSN passed to RoleDSN")))
+			Expect(err).To(MatchError(ContainSubstring("postgres://user:password@host:port/dbname")))
+			Expect(err.Error()).NotTo(ContainSubstring("s3cret"))
+			Expect(err.Error()).NotTo(ContainSubstring(rolePassword))
+		},
+		Entry("an invalid port", "postgres://su:s3cret@db:port/x"),
+		Entry("an invalid escape in the password", "postgres://su:s3cret%zz@db:5432/x"),
+		Entry("a control character", "postgres://su:s3cret@db:5432/x\x7f"),
+		Entry("a keyword/value DSN", "host=db user=su password=s3cret dbname=x"),
+		Entry("an opaque URL, whose userinfo String drops", "postgres:s3cret@db/x"),
+		Entry("another scheme", "s3cret://su:s3cret@db:5432/x"),
+		Entry("empty", ""),
+	)
+})
+
+var _ = Describe("SetRolePassword", func() {
+	It("refuses a non-hex password before connecting, naming the role and the fix", func() {
+		err := dbtest.SetRolePassword(context.Background(), "postgres://su:s3cret@127.0.0.1:1/x", "purge_user", "ab'cd")
+		Expect(err).To(MatchError(ContainSubstring("set purge_user password")))
+		Expect(err).To(MatchError(ContainSubstring("dbtest.NewRolePassword")))
+		Expect(err.Error()).NotTo(ContainSubstring("connect"))
+	})
+
+	It("reports a failed admin connection without the admin password", func() {
+		err := dbtest.SetRolePassword(context.Background(), "postgres://su:s3cret@127.0.0.1:1/x?connect_timeout=2", "app_user", "00ff")
+		Expect(err).To(MatchError(ContainSubstring("set app_user password: connect as the admin role")))
+		Expect(err.Error()).NotTo(ContainSubstring("s3cret"))
+	})
+})
+
+var _ = Describe("TestID", func() {
+	It("returns the prefix, a dash and 8 hex characters, fresh on every call", func() {
+		a, b := dbtest.TestID("commit-fail"), dbtest.TestID("commit-fail")
+		Expect(a).To(MatchRegexp(`^commit-fail-[0-9a-f]{8}$`))
+		Expect(b).To(MatchRegexp(`^commit-fail-[0-9a-f]{8}$`))
+		Expect(b).NotTo(Equal(a))
+	})
 })

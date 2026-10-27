@@ -33,24 +33,63 @@ var _ = Describe("Write RPCs", func() {
 		svc = graph.New(mockGraph, mockVectors, nil)
 	})
 
+	Describe("invalid requests", func() {
+		tenantCtx := func() context.Context { return testspecs.SetupTenantContext("test-tenant") }
+		tc := &pb.TenantContext{TenantId: "test-tenant"}
+
+		DescribeTable("are rejected with InvalidArgument and no response",
+			func(newCtx func() context.Context, call func(context.Context, *graph.Service) (any, error), wantMsg string) {
+				resp, err := call(newCtx(), svc)
+				Expect(resp).To(BeNil())
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			},
+			Entry("CreateNode without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{}))
+				}, "tenant_context is required"),
+			Entry("CreateNode without label", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{TenantContext: tc}))
+				}, "label is required"),
+			Entry("CreateEdge without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{}))
+				}, "tenant_context is required"),
+			Entry("CreateEdge without source_node_id", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
+						TenantContext: tc, TargetNodeId: "node-2", Label: "maps_to",
+					}))
+				}, "source_node_id and target_node_id are required"),
+			Entry("CreateEdge without target_node_id", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
+						TenantContext: tc, SourceNodeId: "node-1", Label: "maps_to",
+					}))
+				}, "source_node_id and target_node_id are required"),
+			Entry("CreateEdge without label", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
+						TenantContext: tc, SourceNodeId: "node-1", TargetNodeId: "node-2",
+					}))
+				}, "label is required"),
+			Entry("BulkCreateEdges without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{}))
+				}, "tenant_context is required"),
+			Entry("SupersedeFact without tenant context", context.Background,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{}))
+				}, "tenant_context is required"),
+			Entry("SupersedeFact without node_id or edge_id", tenantCtx,
+				func(ctx context.Context, s *graph.Service) (any, error) {
+					return s.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{TenantContext: tc}))
+				}, "node_id or edge_id is required"),
+		)
+	})
+
 	Describe("CreateNode", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.CreateNode(context.Background(), connect.NewRequest(&pb.CreateNodeRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("tenant_context is required"))
-		})
-
-		It("rejects missing label", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.CreateNode(ctx, connect.NewRequest(&pb.CreateNodeRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("label is required"))
-		})
-
 		It("creates a node with generated ID", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			db := newMemGraph(ctx, "test-tenant")
@@ -126,47 +165,6 @@ var _ = Describe("Write RPCs", func() {
 	})
 
 	Describe("CreateEdge", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.CreateEdge(context.Background(), connect.NewRequest(&pb.CreateEdgeRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects missing source_node_id", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				TargetNodeId:  "node-2",
-				Label:         "maps_to",
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("source_node_id and target_node_id are required"))
-		})
-
-		It("rejects missing target_node_id", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				SourceNodeId:  "node-1",
-				Label:         "maps_to",
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects missing label", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.CreateEdge(ctx, connect.NewRequest(&pb.CreateEdgeRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				SourceNodeId:  "node-1",
-				TargetNodeId:  "node-2",
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("label is required"))
-		})
-
 		It("creates an edge with generated ID", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			db := newMemGraph(ctx, "test-tenant", "node-1", "node-2")
@@ -234,12 +232,6 @@ var _ = Describe("Write RPCs", func() {
 	})
 
 	Describe("BulkCreateEdges", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.BulkCreateEdges(context.Background(), connect.NewRequest(&pb.BulkCreateEdgesRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
 		It("handles empty edge list", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			resp, err := svc.BulkCreateEdges(ctx, connect.NewRequest(&pb.BulkCreateEdgesRequest{
@@ -385,22 +377,6 @@ var _ = Describe("Write RPCs", func() {
 	})
 
 	Describe("SupersedeFact", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.SupersedeFact(context.Background(), connect.NewRequest(&pb.SupersedeFactRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("rejects missing target", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.SupersedeFact(ctx, connect.NewRequest(&pb.SupersedeFactRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-			Expect(err.Error()).To(ContainSubstring("node_id or edge_id is required"))
-		})
-
 		It("supersedes a node by ID", func() {
 			ctx := testspecs.SetupTenantContext("test-tenant")
 			db := newMemGraph(ctx, "test-tenant", "node-1")
@@ -529,11 +505,7 @@ var _ = Describe("Edge confidence validation", func() {
 
 	BeforeEach(func() {
 		ctx = testspecs.SetupTenantContext(tenantID)
-		db = memdriver.New()
-		Expect(db.CreateGraph(ctx, tenantID)).To(Succeed())
-		for _, id := range []string{"a", "b"} {
-			Expect(db.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Control", ValidFrom: time.Now()})).To(Succeed())
-		}
+		db = newMemGraph(ctx, tenantID, "a", "b")
 		svc = graph.New(db, &mockVectorDB{}, nil)
 	})
 
@@ -708,11 +680,7 @@ var _ = Describe("BulkCreateEdges error details", func() {
 
 	BeforeEach(func() {
 		ctx = testspecs.SetupTenantContext(tenantID)
-		db = memdriver.New()
-		Expect(db.CreateGraph(ctx, tenantID)).To(Succeed())
-		for _, id := range []string{"a", "b"} {
-			Expect(db.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Control", ValidFrom: time.Now()})).To(Succeed())
-		}
+		db = newMemGraph(ctx, tenantID, "a", "b")
 		svc = graph.New(db, &mockVectorDB{}, nil)
 	})
 

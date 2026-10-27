@@ -192,31 +192,23 @@ var _ = Describe("CandidateGenerator", func() {
 		Expect(writer.requiresCalled && writer.relationshipCalled).To(BeTrue(), "writers should be invoked when coverage meets the threshold exactly")
 	})
 
-	It("wraps a controls-reader error and writes nothing", func() {
-		writer := &fakeCandidateWriter{}
-		gen := pipeline.NewCandidateGenerator(
-			fakeControlsReader{err: errCandidateBoom},
-			fakeEmbeddingsReader{},
-			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
-		)
-		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
-		Expect(errors.Is(err, errCandidateBoom)).To(BeTrue(), "expected wrapped controls-reader error, got %v", err)
-		Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse(), "no candidates should be written when the controls reader fails")
-	})
-
-	It("wraps an embeddings-reader error and writes nothing", func() {
-		writer := &fakeCandidateWriter{}
-		gen := pipeline.NewCandidateGenerator(
-			fakeControlsReader{controls: threeControls},
-			fakeEmbeddingsReader{err: errCandidateBoom},
-			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
-		)
-		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
-		Expect(errors.Is(err, errCandidateBoom)).To(BeTrue(), "expected wrapped embeddings-reader error, got %v", err)
-		Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse(), "no candidates should be written when the embeddings reader fails")
-	})
+	DescribeTable("wraps a reader error and writes nothing",
+		func(controls pipeline.ControlsReader, embeddings pipeline.EmbeddingsReader) {
+			writer := &fakeCandidateWriter{}
+			gen := pipeline.NewCandidateGenerator(
+				controls, embeddings,
+				candidate.NewRegistry(), writer,
+				config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
+			)
+			err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
+			Expect(err).To(MatchError(errCandidateBoom))
+			Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse(), "no candidates should be written when a reader fails")
+		},
+		Entry("the controls reader fails",
+			fakeControlsReader{err: errCandidateBoom}, fakeEmbeddingsReader{}),
+		Entry("the embeddings reader fails",
+			fakeControlsReader{controls: threeControls}, fakeEmbeddingsReader{err: errCandidateBoom}),
+	)
 
 	It("stops at WriteRequires error without attempting WriteRelationship", func() {
 		// Zero-control catalog reaches the writers with empty sets (coverage check

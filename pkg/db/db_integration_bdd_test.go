@@ -4,12 +4,10 @@ package db_test
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"testing"
 
@@ -55,17 +53,6 @@ type suiteSetup struct {
 	TenantAdminPassword string `json:"tenant_admin_password"`
 }
 
-// setRolePassword sets role's password to password with the statement
-// dbtest.AlterRolePasswordSQL builds, which refuses a non-hex password.
-func setRolePassword(ctx context.Context, adminDB *sql.DB, role, password string) error {
-	stmt, err := dbtest.AlterRolePasswordSQL(role, password)
-	if err != nil {
-		return err
-	}
-	_, err = adminDB.ExecContext(ctx, stmt)
-	return err
-}
-
 // suPool is the superuser pool for test setup operations.
 var suPool db.Pool
 
@@ -109,8 +96,6 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
 
 	// Set passwords for application roles.
-	adminDB, err := sql.Open("pgx", dsn)
-	Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
 	appPassword, err := dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "generate app_user password")
 	graphPassword, err := dbtest.NewRolePassword()
@@ -118,10 +103,9 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	adminPassword, err := dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "generate tenant_admin password")
 	setup := suiteSetup{DSN: dsn, AppUserPassword: appPassword, GraphUserPassword: graphPassword, TenantAdminPassword: adminPassword}
-	Expect(setRolePassword(ctx, adminDB, "app_user", setup.AppUserPassword)).To(Succeed(), "failed to set app_user password")
-	Expect(setRolePassword(ctx, adminDB, "graph_user", setup.GraphUserPassword)).To(Succeed(), "failed to set graph_user password")
-	Expect(setRolePassword(ctx, adminDB, "tenant_admin", setup.TenantAdminPassword)).To(Succeed(), "failed to set tenant_admin password")
-	Expect(adminDB.Close()).To(Succeed(), "failed to close admin connection")
+	Expect(dbtest.SetRolePassword(ctx, dsn, "app_user", setup.AppUserPassword)).To(Succeed(), "failed to set app_user password")
+	Expect(dbtest.SetRolePassword(ctx, dsn, "graph_user", setup.GraphUserPassword)).To(Succeed(), "failed to set graph_user password")
+	Expect(dbtest.SetRolePassword(ctx, dsn, "tenant_admin", setup.TenantAdminPassword)).To(Succeed(), "failed to set tenant_admin password")
 
 	data, err := json.Marshal(setup)
 	Expect(err).NotTo(HaveOccurred(), "failed to encode suite setup")
@@ -157,12 +141,9 @@ var _ = AfterSuite(func() {
 // ---------------------------------------------------------------------------
 
 func appUserDSN() string {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		panic(fmt.Sprintf("bad suDSN: %v", err))
-	}
-	u.User = url.UserPassword("app_user", appUserPassword)
-	return u.String()
+	dsn, err := dbtest.RoleDSN(suDSN, "app_user", appUserPassword)
+	Expect(err).NotTo(HaveOccurred(), "app_user DSN")
+	return dsn
 }
 
 func appUserConn() *sql.DB {
@@ -173,12 +154,9 @@ func appUserConn() *sql.DB {
 }
 
 func graphUserDSN() string {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		panic(fmt.Sprintf("bad suDSN: %v", err))
-	}
-	u.User = url.UserPassword("graph_user", graphUserPassword)
-	return u.String()
+	dsn, err := dbtest.RoleDSN(suDSN, "graph_user", graphUserPassword)
+	Expect(err).NotTo(HaveOccurred(), "graph_user DSN")
+	return dsn
 }
 
 func graphUserConn() *sql.DB {
@@ -189,12 +167,9 @@ func graphUserConn() *sql.DB {
 }
 
 func tenantAdminDSN() string {
-	u, err := url.Parse(suDSN)
-	if err != nil {
-		panic(fmt.Sprintf("bad suDSN: %v", err))
-	}
-	u.User = url.UserPassword("tenant_admin", tenantAdminPassword)
-	return u.String()
+	dsn, err := dbtest.RoleDSN(suDSN, "tenant_admin", tenantAdminPassword)
+	Expect(err).NotTo(HaveOccurred(), "tenant_admin DSN")
+	return dsn
 }
 
 func tenantAdminConn() *sql.DB {
@@ -222,24 +197,11 @@ func execAsTenant(conn *sql.DB, tenantID string, fn func(tx *sql.Tx)) {
 }
 
 func execAsTenantUser(conn *sql.DB, tenantID, userID string, fn func(tx *sql.Tx)) {
-	ctx := context.Background()
-	tx, err := conn.BeginTx(ctx, nil)
-	Expect(err).NotTo(HaveOccurred(), "BeginTx")
-	defer tx.Rollback() //nolint:errcheck
-
-	_, err = tx.ExecContext(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID)
-	Expect(err).NotTo(HaveOccurred(), "set_config tenant")
-	_, err = tx.ExecContext(ctx, "SELECT set_config('app.current_user', $1, true)", userID)
-	Expect(err).NotTo(HaveOccurred(), "set_config user")
-	fn(tx)
-	Expect(tx.Commit()).To(Succeed(), "Commit")
-}
-
-func testID(prefix string) string {
-	b := make([]byte, 4)
-	_, err := rand.Read(b)
-	Expect(err).NotTo(HaveOccurred(), "testID rand")
-	return fmt.Sprintf("%s-%x", prefix, b)
+	execAsTenant(conn, tenantID, func(tx *sql.Tx) {
+		_, err := tx.ExecContext(context.Background(), "SELECT set_config('app.current_user', $1, true)", userID)
+		Expect(err).NotTo(HaveOccurred(), "set_config user")
+		fn(tx)
+	})
 }
 
 func cleanupJobs(jobIDs ...string) {
@@ -293,6 +255,35 @@ func expectErrorAsTenant(conn *sql.DB, tenantID string, fn func(tx *sql.Tx)) {
 	_, err = tx.ExecContext(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenantID)
 	Expect(err).NotTo(HaveOccurred(), "set_config tenant")
 	fn(tx)
+}
+
+// expectCompletedJobWriteBlocked seeds a completed job as app_user, then
+// asserts the immutability trigger refuses stmt ($1 is the job ID) with an
+// error naming the completed status and that the job is still there,
+// still completed.
+func expectCompletedJobWriteBlocked(tenantID, displayName, jobID, stmt string) {
+	setupTenant(tenantID, displayName)
+	conn := appUserConn()
+
+	execAsTenant(conn, tenantID, func(tx *sql.Tx) {
+		_, err := tx.ExecContext(context.Background(),
+			"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'completed', 'setup') ON CONFLICT DO NOTHING",
+			jobID, tenantID)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	expectErrorAsTenant(conn, tenantID, func(tx *sql.Tx) {
+		_, err := tx.ExecContext(context.Background(), stmt, jobID)
+		Expect(err).To(HaveOccurred(), "%q on a completed job should be blocked", stmt)
+		Expect(err.Error()).To(ContainSubstring("completed"))
+	})
+
+	execAsTenant(conn, tenantID, func(tx *sql.Tx) {
+		var status string
+		Expect(tx.QueryRowContext(context.Background(),
+			"SELECT status FROM jobs WHERE job_id = $1", jobID).Scan(&status)).To(Succeed())
+		Expect(status).To(Equal("completed"), "the refused write must leave the job unchanged")
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -471,12 +462,9 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 			// Restore role passwords wiped by the Down/Up round trip so
 			// later specs' appUserConn()/graphUserConn() can still
 			// authenticate (mirrors SynchronizedBeforeSuite).
-			adminDB, err := sql.Open("pgx", suDSN)
-			Expect(err).NotTo(HaveOccurred(), "failed to open admin connection")
-			defer adminDB.Close()
-			Expect(setRolePassword(ctx, adminDB, "app_user", appUserPassword)).To(Succeed(), "failed to restore app_user password")
-			Expect(setRolePassword(ctx, adminDB, "graph_user", graphUserPassword)).To(Succeed(), "failed to restore graph_user password")
-			Expect(setRolePassword(ctx, adminDB, "tenant_admin", tenantAdminPassword)).To(Succeed(), "failed to restore tenant_admin password")
+			Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appUserPassword)).To(Succeed(), "failed to restore app_user password")
+			Expect(dbtest.SetRolePassword(ctx, suDSN, "graph_user", graphUserPassword)).To(Succeed(), "failed to restore graph_user password")
+			Expect(dbtest.SetRolePassword(ctx, suDSN, "tenant_admin", tenantAdminPassword)).To(Succeed(), "failed to restore tenant_admin password")
 
 			for pid := range suPoolBackendPIDs(ctx) {
 				Expect(before).NotTo(HaveKey(pid), "suPool still uses backend %d from before the Down/Up round trip", pid)
@@ -1060,43 +1048,12 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 
 	Describe("Immutability Triggers", func() {
 		Context("completed jobs", func() {
-			It("blocks UPDATE of a completed job", func() {
-				setupTenant("imm-update", "Imm Update Corp")
-				conn := appUserConn()
-
-				execAsTenant(conn, "imm-update", func(tx *sql.Tx) {
-					_, err := tx.ExecContext(context.Background(),
-						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'completed', 'setup') ON CONFLICT DO NOTHING",
-						"job-imm-upd-1", "imm-update")
-					Expect(err).NotTo(HaveOccurred())
-				})
-
-				expectErrorAsTenant(conn, "imm-update", func(tx *sql.Tx) {
-					_, err := tx.ExecContext(context.Background(),
-						"UPDATE jobs SET config = '{\"retry\": true}' WHERE job_id = $1", "job-imm-upd-1")
-					Expect(err).To(HaveOccurred(), "update of completed job should be blocked")
-					Expect(err.Error()).To(ContainSubstring("completed"))
-				})
-			})
-
-			It("blocks DELETE of a completed job", func() {
-				setupTenant("imm-del", "Imm Delete Corp")
-				conn := appUserConn()
-
-				execAsTenant(conn, "imm-del", func(tx *sql.Tx) {
-					_, err := tx.ExecContext(context.Background(),
-						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'completed', 'setup') ON CONFLICT DO NOTHING",
-						"job-imm-del-1", "imm-del")
-					Expect(err).NotTo(HaveOccurred())
-				})
-
-				expectErrorAsTenant(conn, "imm-del", func(tx *sql.Tx) {
-					_, err := tx.ExecContext(context.Background(),
-						"DELETE FROM jobs WHERE job_id = $1", "job-imm-del-1")
-					Expect(err).To(HaveOccurred(), "delete of completed job should be blocked")
-					Expect(err.Error()).To(ContainSubstring("completed"))
-				})
-			})
+			DescribeTable("blocks writes to a completed job", expectCompletedJobWriteBlocked,
+				Entry("UPDATE", "imm-update", "Imm Update Corp", "job-imm-upd-1",
+					`UPDATE jobs SET config = '{"retry": true}' WHERE job_id = $1`),
+				Entry("DELETE", "imm-del", "Imm Delete Corp", "job-imm-del-1",
+					"DELETE FROM jobs WHERE job_id = $1"),
+			)
 		})
 
 		Context("pending jobs", func() {
@@ -1120,7 +1077,7 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 
 			It("allows transition from pending to completed", func() {
 				setupTenant("imm-trans", "Imm Transition Corp")
-				jobID := testID("job-imm-trans")
+				jobID := dbtest.TestID("job-imm-trans")
 				DeferCleanup(func() { cleanupJobs(jobID) })
 				conn := appUserConn()
 
@@ -1363,32 +1320,12 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 	// ===================================================================
 
 	Describe("Threat Model - Tired Admin", func() {
-		It("blocks resetting a completed job to pending", func() {
-			setupTenant("tired-reset", "Tired Reset Corp")
-			conn := appUserConn()
-
-			execAsTenant(conn, "tired-reset", func(tx *sql.Tx) {
-				_, err := tx.ExecContext(context.Background(),
-					"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'completed', 'setup') ON CONFLICT DO NOTHING",
-					"job-tired-reset-1", "tired-reset")
-				Expect(err).NotTo(HaveOccurred())
-			})
-
-			expectErrorAsTenant(conn, "tired-reset", func(tx *sql.Tx) {
-				_, err := tx.ExecContext(context.Background(),
-					"UPDATE jobs SET status = 'pending' WHERE job_id = $1", "job-tired-reset-1")
-				Expect(err).To(HaveOccurred(), "resetting completed job to pending should be blocked")
-				Expect(err.Error()).To(ContainSubstring("completed"))
-			})
-
-			// Verify status unchanged.
-			execAsTenant(conn, "tired-reset", func(tx *sql.Tx) {
-				var status string
-				Expect(tx.QueryRowContext(context.Background(),
-					"SELECT status FROM jobs WHERE job_id = $1", "job-tired-reset-1").Scan(&status)).To(Succeed())
-				Expect(status).To(Equal("completed"))
-			})
-		})
+		DescribeTable("blocks a manual fix of a completed job", expectCompletedJobWriteBlocked,
+			Entry("resetting it to pending", "tired-reset", "Tired Reset Corp", "job-tired-reset-1",
+				"UPDATE jobs SET status = 'pending' WHERE job_id = $1"),
+			Entry("DELETE-and-reinsert", "tired-reinst", "Tired Reinsert Corp", "job-tired-reinst-1",
+				"DELETE FROM jobs WHERE job_id = $1"),
+		)
 
 		It("fails bulk config update when any job is completed", func() {
 			setupTenant("tired-bulk", "Tired Bulk Corp")
@@ -1409,25 +1346,6 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 				_, err := tx.ExecContext(context.Background(),
 					"UPDATE jobs SET config = '{\"global\": true}'")
 				Expect(err).To(HaveOccurred(), "bulk config update should fail when any job is completed")
-			})
-		})
-
-		It("blocks DELETE-and-reinsert of a completed job", func() {
-			setupTenant("tired-reinst", "Tired Reinsert Corp")
-			conn := appUserConn()
-
-			execAsTenant(conn, "tired-reinst", func(tx *sql.Tx) {
-				_, err := tx.ExecContext(context.Background(),
-					"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'completed', 'setup') ON CONFLICT DO NOTHING",
-					"job-tired-reinst-1", "tired-reinst")
-				Expect(err).NotTo(HaveOccurred())
-			})
-
-			expectErrorAsTenant(conn, "tired-reinst", func(tx *sql.Tx) {
-				_, err := tx.ExecContext(context.Background(),
-					"DELETE FROM jobs WHERE job_id = $1", "job-tired-reinst-1")
-				Expect(err).To(HaveOccurred(), "delete of completed job should be blocked")
-				Expect(err.Error()).To(ContainSubstring("completed"))
 			})
 		})
 
@@ -1620,8 +1538,8 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 			setupTenant(tenantA, "Context Prop Alpha")
 			setupTenant(tenantB, "Context Prop Bravo")
 
-			jobA := testID("ctx-prop-a")
-			jobB := testID("ctx-prop-b")
+			jobA := dbtest.TestID("ctx-prop-a")
+			jobB := dbtest.TestID("ctx-prop-b")
 			DeferCleanup(func() { cleanupJobs(jobA, jobB) })
 
 			pool, err := db.NewPool(db.PoolConfig{
@@ -1700,17 +1618,13 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 	})
 
 	// ===================================================================
-	// setRolePassword guard (the helper interpolates the password)
+	// dbtest.SetRolePassword guard (it interpolates the password)
 	// ===================================================================
 
-	Describe("setRolePassword", func() {
+	Describe("dbtest.SetRolePassword", func() {
 		DescribeTable("refuses a non-hex password without running ALTER ROLE",
 			func(password, want string) {
-				adminDB, err := sql.Open("pgx", suDSN)
-				Expect(err).NotTo(HaveOccurred())
-				DeferCleanup(adminDB.Close)
-
-				err = setRolePassword(context.Background(), adminDB, "app_user", password)
+				err := dbtest.SetRolePassword(context.Background(), suDSN, "app_user", password)
 				Expect(err).To(MatchError(ContainSubstring(want)))
 				Expect(err.Error()).To(ContainSubstring("dbtest.NewRolePassword"))
 

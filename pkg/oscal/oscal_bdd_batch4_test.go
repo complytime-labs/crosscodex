@@ -180,45 +180,18 @@ var _ = Describe("TierPattern", func() {
 })
 
 var _ = Describe("TierRegex", func() {
-	Context("when SectionPattern is empty", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "some text"}
-			opts := oscal.StructureOptions{SectionPattern: ""}
-			items, ok := oscal.TierRegex(doc, opts)
+	DescribeTable("returns false and nil items",
+		func(rawText, pattern string) {
+			doc := oscal.StructuredDoc{RawText: rawText}
+			items, ok := oscal.TierRegex(doc, oscal.StructureOptions{SectionPattern: pattern})
 			Expect(ok).To(BeFalse())
 			Expect(items).To(BeNil())
-		})
-	})
-
-	Context("when regex is invalid", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "some text"}
-			opts := oscal.StructureOptions{SectionPattern: "[invalid(regex"}
-			items, ok := oscal.TierRegex(doc, opts)
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
-		})
-	})
-
-	Context("when no matches found", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "no matches here"}
-			opts := oscal.StructureOptions{SectionPattern: `^SECTION:\s*(.+)`}
-			items, ok := oscal.TierRegex(doc, opts)
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
-		})
-	})
-
-	Context("when pattern is oversized", func() {
-		It("rejects patterns exceeding 512 characters", func() {
-			doc := oscal.StructuredDoc{RawText: "1.1 First\n1.2 Second\n"}
-			longPattern := strings.Repeat("a", 513)
-			items, ok := oscal.TierRegex(doc, oscal.StructureOptions{SectionPattern: longPattern})
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
-		})
-	})
+		},
+		Entry("when SectionPattern is empty", "some text", ""),
+		Entry("when regex is invalid", "some text", "[invalid(regex"),
+		Entry("when no matches found", "no matches here", `^SECTION:\s*(.+)`),
+		Entry("when pattern exceeds 512 characters", "1.1 First\n1.2 Second\n", strings.Repeat("a", 513)),
+	)
 
 	Context("with two capture groups (ID and text)", func() {
 		It("extracts ID from first group and text from second", func() {
@@ -401,26 +374,20 @@ var _ = Describe("TierTable", func() {
 })
 
 var _ = Describe("TierLLMDetect", func() {
-	Context("when completer is nil", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "some text"}
-			opts := oscal.StructureOptions{}
-			items, ok := oscal.TierLLMDetect(doc, opts, nil, nil)
+	DescribeTable("returns false and nil items",
+		func(rawText string, opts oscal.StructureOptions, completer oscal.Completer) {
+			items, ok := oscal.TierLLMDetect(oscal.StructuredDoc{RawText: rawText}, opts, completer, nil)
 			Expect(ok).To(BeFalse())
 			Expect(items).To(BeNil())
-		})
-	})
-
-	Context("when SkipLLM is true", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "some text"}
-			opts := oscal.StructureOptions{SkipLLM: true}
-			completer := &testCompleter{response: `\d+\.\s+(.+)`}
-			items, ok := oscal.TierLLMDetect(doc, opts, completer, nil)
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
-		})
-	})
+		},
+		Entry("when completer is nil", "some text", oscal.StructureOptions{}, nil),
+		Entry("when SkipLLM is true", "some text", oscal.StructureOptions{SkipLLM: true},
+			&testCompleter{response: `\d+\.\s+(.+)`}),
+		Entry("when the LLM returns 'none'", "unstructured text", oscal.StructureOptions{},
+			&testCompleter{response: "none"}),
+		Entry("when the completer returns an error", "1.1 First section\n1.2 Second section\n", oscal.StructureOptions{},
+			&testCompleter{err: errors.New("LLM unavailable")}),
+	)
 
 	Context("when the LLM returns a valid pattern", func() {
 		It("detects items using the returned regex", func() {
@@ -433,28 +400,6 @@ var _ = Describe("TierLLMDetect", func() {
 			Expect(ok).To(BeTrue())
 			Expect(items).To(HaveLen(3))
 			Expect(items[0].ID).To(Equal("1"))
-		})
-	})
-
-	Context("when the LLM returns 'none'", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "unstructured text"}
-			opts := oscal.StructureOptions{}
-			completer := &testCompleter{response: "none"}
-			items, ok := oscal.TierLLMDetect(doc, opts, completer, nil)
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
-		})
-	})
-
-	Context("when the completer returns an error", func() {
-		It("returns false and nil items", func() {
-			completer := &testCompleter{err: errors.New("LLM unavailable")}
-			doc := oscal.StructuredDoc{RawText: "1.1 First section\n1.2 Second section\n"}
-			opts := oscal.StructureOptions{}
-			items, ok := oscal.TierLLMDetect(doc, opts, completer, nil)
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
 		})
 	})
 
@@ -494,26 +439,21 @@ var _ = Describe("TierLLMDetect", func() {
 })
 
 var _ = Describe("TierLLMExtract", func() {
-	Context("when completer is nil", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "some text"}
-			opts := oscal.StructureOptions{}
-			items, ok := oscal.TierLLMExtract(doc, opts, nil, nil)
+	DescribeTable("returns false and nil items",
+		func(rawText string, opts oscal.StructureOptions, completer oscal.Completer) {
+			items, ok := oscal.TierLLMExtract(oscal.StructuredDoc{RawText: rawText}, opts, completer, nil)
 			Expect(ok).To(BeFalse())
 			Expect(items).To(BeNil())
-		})
-	})
-
-	Context("when SkipLLM is true", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "some text"}
-			opts := oscal.StructureOptions{SkipLLM: true}
-			completer := &testCompleter{response: `[]`}
-			items, ok := oscal.TierLLMExtract(doc, opts, completer, nil)
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
-		})
-	})
+		},
+		Entry("when completer is nil", "some text", oscal.StructureOptions{}, nil),
+		Entry("when SkipLLM is true", "some text", oscal.StructureOptions{SkipLLM: true},
+			&testCompleter{response: `[]`}),
+		Entry("when the LLM returns invalid JSON", "Text", oscal.StructureOptions{},
+			&testCompleter{response: "not json"}),
+		Entry("when the completer returns an error for all chunks", "some text that is chunked",
+			oscal.StructureOptions{ChunkChars: 10},
+			&testCompleter{err: errors.New("LLM unavailable")}),
+	)
 
 	Context("when the LLM returns valid JSON", func() {
 		It("extracts items with correct fields and Class", func() {
@@ -531,28 +471,6 @@ var _ = Describe("TierLLMExtract", func() {
 			Expect(items[0].Title).To(Equal("First"))
 			Expect(items[0].Text).To(Equal("First requirement text"))
 			Expect(items[0].Class).To(Equal(oscal.ClassRequirement))
-		})
-	})
-
-	Context("when the LLM returns invalid JSON", func() {
-		It("returns false and nil items", func() {
-			doc := oscal.StructuredDoc{RawText: "Text"}
-			opts := oscal.StructureOptions{}
-			completer := &testCompleter{response: "not json"}
-			items, ok := oscal.TierLLMExtract(doc, opts, completer, nil)
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
-		})
-	})
-
-	Context("when the completer returns an error for all chunks", func() {
-		It("returns false and nil items", func() {
-			completer := &testCompleter{err: errors.New("LLM unavailable")}
-			doc := oscal.StructuredDoc{RawText: "some text that is chunked"}
-			opts := oscal.StructureOptions{ChunkChars: 10}
-			items, ok := oscal.TierLLMExtract(doc, opts, completer, nil)
-			Expect(ok).To(BeFalse())
-			Expect(items).To(BeNil())
 		})
 	})
 

@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -82,16 +81,12 @@ var _ = Describe("admin identity commands against a real database", Ordered, fun
 
 		password, err := dbtest.NewRolePassword()
 		Expect(err).NotTo(HaveOccurred())
-		stmt, err := dbtest.AlterRolePasswordSQL("tenant_admin", password)
+		Expect(dbtest.SetRolePassword(ctx, dsn, "tenant_admin", password)).To(Succeed(), "set tenant_admin password")
+		adminDSN, err := dbtest.RoleDSN(dsn, "tenant_admin", password)
 		Expect(err).NotTo(HaveOccurred())
-		_, err = suDB.ExecContext(ctx, stmt)
-		Expect(err).NotTo(HaveOccurred(), "set tenant_admin password")
-		u, err := url.Parse(dsn)
-		Expect(err).NotTo(HaveOccurred())
-		u.User = url.UserPassword("tenant_admin", password)
 
 		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
-		GinkgoT().Setenv("CROSSCODEX_DATABASE_TENANT_ADMIN_DSN", u.String())
+		GinkgoT().Setenv("CROSSCODEX_DATABASE_TENANT_ADMIN_DSN", adminDSN)
 		GinkgoT().Setenv("CROSSCODEX_ATTESTATION_PRIVATE_KEY_PATH", testAttestationPrivateKeyPath)
 		GinkgoT().Setenv("CROSSCODEX_ATTESTATION_PUBLIC_KEY_PATH", testAttestationPublicKeyPath)
 	})

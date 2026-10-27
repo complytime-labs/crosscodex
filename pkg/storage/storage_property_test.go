@@ -18,48 +18,31 @@ import (
 
 var _ = Describe("Property Specifications", Ordered, func() {
 	Context("ValidateKey — path traversal prevention", func() {
-		It("rejects keys containing dot-dot path segments", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
+		// joined draws two lowercase words and places sep between them.
+		joined := func(sep string) func(*rapid.T) string {
+			return func(t *rapid.T) string {
 				prefix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "prefix")
 				suffix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "suffix")
-				key := prefix + "/../" + suffix
-				err := storage.ValidateKey(key)
-				Expect(err).To(HaveOccurred(),
-					"ValidateKey accepted path-traversal key %q", key)
-			})
-		})
+				return prefix + sep + suffix
+			}
+		}
 
-		It("rejects keys starting with /", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				rest := rapid.StringMatching(`[a-z0-9/._-]{1,50}`).Draw(t, "rest")
-				key := "/" + rest
-				err := storage.ValidateKey(key)
-				Expect(err).To(HaveOccurred(),
-					"ValidateKey accepted absolute key %q", key)
-			})
-		})
-
-		It("rejects keys containing null bytes", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				prefix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "prefix")
-				suffix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "suffix")
-				key := prefix + "\x00" + suffix
-				err := storage.ValidateKey(key)
-				Expect(err).To(HaveOccurred(),
-					"ValidateKey accepted null-byte key %q", key)
-			})
-		})
-
-		It("rejects keys containing backslashes", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				prefix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "prefix")
-				suffix := rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "suffix")
-				key := prefix + `\` + suffix
-				err := storage.ValidateKey(key)
-				Expect(err).To(HaveOccurred(),
-					"ValidateKey accepted backslash key %q", key)
-			})
-		})
+		DescribeTable("rejects every generated key with a forbidden form",
+			func(genKey func(*rapid.T) string, what string) {
+				rapid.Check(GinkgoT(), func(t *rapid.T) {
+					key := genKey(t)
+					if err := storage.ValidateKey(key); err == nil {
+						t.Fatalf("ValidateKey accepted %s key %q", what, key)
+					}
+				})
+			},
+			Entry("dot-dot path segments", joined("/../"), "path-traversal"),
+			Entry("a leading slash", func(t *rapid.T) string {
+				return "/" + rapid.StringMatching(`[a-z0-9/._-]{1,50}`).Draw(t, "rest")
+			}, "absolute"),
+			Entry("null bytes", joined("\x00"), "null-byte"),
+			Entry("backslashes", joined(`\`), "backslash"),
+		)
 	})
 
 	Context("ContentHash — determinism", func() {

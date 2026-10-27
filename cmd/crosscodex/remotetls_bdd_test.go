@@ -191,7 +191,7 @@ func mustCertPool(caPEM []byte) *x509.CertPool {
 // mustLoadKeyPair loads a certificate and key pair and fails the test on error.
 func mustLoadKeyPair(certPath, keyPath string) tls.Certificate {
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	Expect(err).To(Succeed())
+	Expect(err).NotTo(HaveOccurred())
 	return cert
 }
 

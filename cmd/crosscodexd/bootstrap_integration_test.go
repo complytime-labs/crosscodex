@@ -152,11 +152,13 @@ var _ = BeforeEach(func() { DeferCleanup(testspecs.RedirectLogsToGinkgo()) })
 // tenant, because the daemon only checks that it exists.
 func baseTestConfig(suDSN string) *config.Config {
 	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
+	Expect(err).NotTo(HaveOccurred(), "app_user password")
+	appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
 	Expect(err).NotTo(HaveOccurred())
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{
 			MigrationDSN: suDSN,
-			DSN:          withRole(suDSN, "app_user", appPassword),
+			DSN:          appDSN,
 			GraphDSN:     withRole(suDSN, "graph_user", testGraphUserPassword),
 			Extensions:   []string{"age", "vector"},
 		},
@@ -281,47 +283,31 @@ var _ = Describe("bootstrap with role=gateway", func() {
 		Expect(rt.pipelineServer).To(BeNil(), "a standalone gateway role must not own a pipeline listener")
 	})
 
-	It("fails closed when pipeline.endpoint is not configured", func() {
-		dsn := os.Getenv("TEST_DATABASE_DSN")
-		if dsn == "" {
-			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-		}
+	DescribeTable("fails closed on an invalid standalone-gateway pipeline.endpoint setup",
+		func(endpoint, wantSubstr string) {
+			dsn := os.Getenv("TEST_DATABASE_DSN")
+			if dsn == "" {
+				Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+			}
 
-		cfg := baseTestConfig(dsn)
-		cfg.Role = config.RoleGateway
-		cfg.Server.Addr = "127.0.0.1:0"
-		cfg.Pipeline.Endpoint = ""
+			// No cfg.TLS: the standalone pipeline listener enforces mTLS with no
+			// plaintext fallback, so a gateway that can't present a client cert must
+			// fail closed at construction rather than only at the first RPC. This is
+			// the client-side mirror of attachPipeline's server-side precondition.
+			cfg := baseTestConfig(dsn)
+			cfg.Role = config.RoleGateway
+			cfg.Server.Addr = "127.0.0.1:0"
+			cfg.Pipeline.Endpoint = endpoint
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 
-		_, err := bootstrap(ctx, cfg)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("pipeline.endpoint"))
-	})
-
-	It("fails closed when pipeline.endpoint is set but TLS is not mutual", func() {
-		dsn := os.Getenv("TEST_DATABASE_DSN")
-		if dsn == "" {
-			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-		}
-
-		cfg := baseTestConfig(dsn)
-		cfg.Role = config.RoleGateway
-		cfg.Server.Addr = "127.0.0.1:0"
-		cfg.Pipeline.Endpoint = "127.0.0.1:0"
-		// No cfg.TLS: the standalone pipeline listener enforces mTLS with no
-		// plaintext fallback, so a gateway that can't present a client cert must
-		// fail closed at construction rather than only at the first RPC. This is
-		// the client-side mirror of attachPipeline's server-side precondition.
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		_, err := bootstrap(ctx, cfg)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("mutual TLS"))
-	})
+			_, err := bootstrap(ctx, cfg)
+			Expect(err).To(MatchError(ContainSubstring(wantSubstr)))
+		},
+		Entry("pipeline.endpoint is not configured", "", "pipeline.endpoint"),
+		Entry("pipeline.endpoint is set but TLS is not mutual", "127.0.0.1:0", "mutual TLS"),
+	)
 })
 
 var _ = Describe("bootstrap with role=pipeline", func() {
@@ -586,9 +572,11 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 
 	It("accepts purge_user as database.purge_dsn", func() {
 		purgePassword, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "purge_user password")
+		purgeDSN, err := dbtest.RoleDSN(suDSN, "purge_user", purgePassword)
 		Expect(err).NotTo(HaveOccurred())
 		cfg := baseTestConfig(suDSN)
-		cfg.Database.PurgeDSN = withRole(suDSN, "purge_user", purgePassword)
+		cfg.Database.PurgeDSN = purgeDSN
 		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "set purge_user's password")
 		res, err := buildSharedResources(ctx, cfg, requiredResources{db: true})
 		Expect(err).NotTo(HaveOccurred())
