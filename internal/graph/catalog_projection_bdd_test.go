@@ -124,7 +124,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 	deliverPayload := func(subj string, data []byte) error {
 		sub := subFor(catalogWildcard)
 		Expect(sub).NotTo(BeNil(), "no handler subscribed to %s", catalogWildcard)
-		return sub.Handle(ctx, &natsbus.Message{Subject: subj, Data: data})
+		return sub.Handle(&natsbus.Message{Subject: subj, Data: data})
 	}
 
 	deliver := func(subj string) error {

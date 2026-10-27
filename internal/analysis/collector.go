@@ -179,6 +179,15 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 			retryCount := retryCounts[taskID]
 			if retryCount < req.MaxRetries {
 				// Retry: redispatch and keep in pending
+				// The handler context comes from the NATS client and never
+				// carries a tenant, but the dispatcher requires one. Use the
+				// tenant this collection was prepared for (the same one that
+				// built the result subject), not a message header.
+				redispatchCtx, err := tenant.WithTenant(handlerCtx, tenantID)
+				if err != nil {
+					return fmt.Errorf("redispatch task %s: %w", taskID, err)
+				}
+
 				retryCounts[taskID] = retryCount + 1
 
 				if c.retriedCounter != nil {
@@ -206,7 +215,7 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 
 					select {
 					case <-timer.C:
-						if err := req.Dispatcher.Redispatch(handlerCtx, *t, req.TaskType, req.JobID, retry+1); err != nil {
+						if err := req.Dispatcher.Redispatch(redispatchCtx, *t, req.TaskType, req.JobID, retry+1); err != nil {
 							c.logger.Error("redispatch failed", "task_id", t.TaskID, "error", err)
 							// On redispatch failure, mark as failed
 							mu.Lock()

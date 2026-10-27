@@ -181,8 +181,8 @@ var _ = Describe("Fake", func() {
 		It("accepts a nil handler and never panics delivering to it", func() {
 			_, err := fake.Subscribe(ctx, "a", nil)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(fake.Deliver(ctx, &natsbus.Message{Subject: "a"})).To(Succeed())
-			Expect(fake.Subscriptions()[0].Handle(ctx, &natsbus.Message{Subject: "a"})).To(HaveOccurred())
+			Expect(fake.Deliver(&natsbus.Message{Subject: "a"})).To(Succeed())
+			Expect(fake.Subscriptions()[0].Handle(&natsbus.Message{Subject: "a"})).To(HaveOccurred())
 		})
 	})
 
@@ -198,7 +198,7 @@ var _ = Describe("Fake", func() {
 			func(pattern, subject string, want bool) {
 				_, err := fake.Subscribe(ctx, pattern, record(&seen, &mu, nil))
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fake.Deliver(ctx, &natsbus.Message{Subject: subject})).To(Succeed())
+				Expect(fake.Deliver(&natsbus.Message{Subject: subject})).To(Succeed())
 				if want {
 					Expect(seen).To(Equal([]string{subject}))
 				} else {
@@ -232,22 +232,36 @@ var _ = Describe("Fake", func() {
 
 			Expect(s1.Unsubscribe()).To(Succeed())
 			Expect(s3.Drain()).To(Succeed())
-			Expect(fake.Deliver(ctx, &natsbus.Message{Subject: "a"})).To(Succeed())
+			Expect(fake.Deliver(&natsbus.Message{Subject: "a"})).To(Succeed())
 			Expect(seen).To(HaveLen(1))
 		})
 
-		It("passes the context and message to the handler", func() {
-			var gotCtx context.Context
+		It("passes the message to the handler", func() {
 			var gotMsg *natsbus.Message
-			_, _ = fake.Subscribe(ctx, "a", func(c context.Context, m *natsbus.Message) error {
-				gotCtx, gotMsg = c, m
+			_, _ = fake.Subscribe(ctx, "a", func(_ context.Context, m *natsbus.Message) error {
+				gotMsg = m
 				return nil
 			})
 			msg := &natsbus.Message{Subject: "a", Data: []byte("d")}
-			Expect(fake.Deliver(ctx, msg)).To(Succeed())
-			Expect(gotCtx).To(BeIdenticalTo(ctx))
+			Expect(fake.Deliver(msg)).To(Succeed())
 			Expect(gotMsg).To(BeIdenticalTo(msg))
 		})
+
+		DescribeTable("gives the handler a context without the subscriber's tenant, as the real client does",
+			func(deliver func(*natsbustest.Fake, *natsbus.Message) error) {
+				// ctx carries tenant-a; production handler contexts never do.
+				var handlerErr error
+				_, _ = fake.Subscribe(ctx, "a", func(c context.Context, _ *natsbus.Message) error {
+					_, handlerErr = tenant.FromContext(c)
+					return nil
+				})
+				Expect(deliver(fake, &natsbus.Message{Subject: "a",
+					Metadata: natsbus.MessageMetadata{TenantID: "tenant-a"}})).To(Succeed())
+				Expect(handlerErr).To(MatchError(tenant.ErrNoTenant))
+			},
+			Entry("Deliver", func(f *natsbustest.Fake, m *natsbus.Message) error { return f.Deliver(m) }),
+			Entry("Sub.Handle", func(f *natsbustest.Fake, m *natsbus.Message) error { return f.Subscriptions()[0].Handle(m) }),
+		)
 
 		It("joins every handler error and still calls every handler", func() {
 			errOther := errors.New("other")
@@ -255,27 +269,27 @@ var _ = Describe("Fake", func() {
 			_, _ = fake.Subscribe(ctx, "a", record(&seen, &mu, nil))
 			_, _ = fake.Subscribe(ctx, "a", record(&seen, &mu, errOther))
 
-			err := fake.Deliver(ctx, &natsbus.Message{Subject: "a"})
+			err := fake.Deliver(&natsbus.Message{Subject: "a"})
 			Expect(err).To(MatchError(errScripted))
 			Expect(err).To(MatchError(errOther))
 			Expect(seen).To(HaveLen(3))
 		})
 
 		It("returns nil when no subscription matches", func() {
-			Expect(fake.Deliver(ctx, &natsbus.Message{Subject: "a"})).To(Succeed())
+			Expect(fake.Deliver(&natsbus.Message{Subject: "a"})).To(Succeed())
 		})
 
 		It("returns an error for a nil message instead of panicking", func() {
 			_, _ = fake.Subscribe(ctx, "a", record(&seen, &mu, nil))
-			Expect(fake.Deliver(ctx, nil)).To(HaveOccurred())
+			Expect(fake.Deliver(nil)).To(HaveOccurred())
 			Expect(seen).To(BeEmpty())
 		})
 
 		It("lets a handler call back into the fake", func() {
-			_, _ = fake.Subscribe(ctx, "a", func(c context.Context, _ *natsbus.Message) error {
-				return fake.Publish(c, "reply", []byte("r"))
+			_, _ = fake.Subscribe(ctx, "a", func(context.Context, *natsbus.Message) error {
+				return fake.Publish(ctx, "reply", []byte("r"))
 			})
-			Expect(fake.Deliver(ctx, &natsbus.Message{Subject: "a"})).To(Succeed())
+			Expect(fake.Deliver(&natsbus.Message{Subject: "a"})).To(Succeed())
 			Expect(fake.Published()).To(HaveLen(1))
 		})
 	})
@@ -312,7 +326,7 @@ var _ = Describe("Fake", func() {
 			sub, _ := fake.Subscribe(ctx, "a.b", record(&seen, &mu, errScripted))
 			Expect(sub.Unsubscribe()).To(Succeed())
 
-			err := fake.Subscriptions()[0].Handle(ctx, &natsbus.Message{Subject: "totally.different"})
+			err := fake.Subscriptions()[0].Handle(&natsbus.Message{Subject: "totally.different"})
 			Expect(err).To(MatchError(errScripted))
 			Expect(seen).To(Equal([]string{"totally.different"}))
 		})
@@ -321,7 +335,7 @@ var _ = Describe("Fake", func() {
 			var s natsbustest.Sub
 			Expect(s.Unsubscribe()).To(Succeed())
 			Expect(s.Drain()).To(Succeed())
-			Expect(s.Handle(ctx, &natsbus.Message{})).To(HaveOccurred())
+			Expect(s.Handle(&natsbus.Message{})).To(HaveOccurred())
 		})
 	})
 
@@ -411,7 +425,7 @@ var _ = Describe("Fake", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fake.Publish(ctx, "a", []byte("x"))).To(Succeed())
 				Expect(fake.PublishWithHeaders(ctx, "a", []byte("y"), map[string][]string{"K": {"v"}})).To(Succeed())
-				Expect(fake.Deliver(ctx, &natsbus.Message{Subject: "a"})).To(Succeed())
+				Expect(fake.Deliver(&natsbus.Message{Subject: "a"})).To(Succeed())
 				_ = fake.Published()
 				for _, s := range fake.Subscriptions() {
 					_ = s.Drained()

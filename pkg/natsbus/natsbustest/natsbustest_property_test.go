@@ -141,7 +141,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				}
 			}
 
-			if err := fake.Deliver(ctx, &natsbus.Message{Subject: subject}); err != nil {
+			if err := fake.Deliver(&natsbus.Message{Subject: subject}); err != nil {
 				t.Fatalf("deliver: %v", err)
 			}
 			if live[source] && !reached[source] {

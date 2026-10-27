@@ -211,11 +211,15 @@ func (f *Fake) Subscriptions() []*Sub {
 }
 
 // Deliver calls, synchronously and in subscription order, the handler of every
-// live Sub whose subject pattern matches msg.Subject, passing ctx and msg to
-// each (they are not copied). It calls every handler even when some fail and
-// returns their errors joined with errors.Join. Deliver ignores Close and
-// skips subscriptions with a nil handler. It returns an error for a nil msg.
-func (f *Fake) Deliver(ctx context.Context, msg *natsbus.Message) error {
+// live Sub whose subject pattern matches msg.Subject, passing msg to each (it
+// is not copied). Like the real client, whose handler context is built from
+// context.Background(), handlers get a context that carries none of the
+// values (tenant, user, trace) of any caller context; the tenant reaches a
+// handler only through msg.Metadata.TenantID. Deliver calls every handler
+// even when some fail and returns their errors joined with errors.Join. It
+// ignores Close and skips subscriptions with a nil handler, and returns an
+// error for a nil msg.
+func (f *Fake) Deliver(msg *natsbus.Message) error {
 	if msg == nil {
 		return errors.New("natsbustest: Deliver called with a nil message")
 	}
@@ -228,7 +232,7 @@ func (f *Fake) Deliver(ctx context.Context, msg *natsbus.Message) error {
 		if s.handler == nil || !s.live() || !server.SubjectMatchesFilter(msg.Subject, s.Subject) {
 			continue
 		}
-		errs = append(errs, s.handler(ctx, msg))
+		errs = append(errs, s.handler(context.Background(), msg))
 	}
 	return errors.Join(errs...)
 }
@@ -335,12 +339,13 @@ func (s *Sub) live() bool {
 }
 
 // Handle calls this Sub's handler directly with msg, bypassing subject
-// matching and liveness, and returns the handler's error. Use it to feed a
+// matching and liveness, and returns the handler's error. As in Fake.Deliver,
+// the handler gets a context without caller values. Use it to feed a
 // handler a subject the broker would never route to it. It returns an error
 // when the Sub has no handler.
-func (s *Sub) Handle(ctx context.Context, msg *natsbus.Message) error {
+func (s *Sub) Handle(msg *natsbus.Message) error {
 	if s.handler == nil {
 		return errors.New("natsbustest: Sub has no handler")
 	}
-	return s.handler(ctx, msg)
+	return s.handler(context.Background(), msg)
 }

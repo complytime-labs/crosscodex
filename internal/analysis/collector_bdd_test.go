@@ -47,7 +47,7 @@ func (f *fakeDispatcher) Redispatch(ctx context.Context, task analyzer.Task, tas
 // deliverResult simulates a worker publishing a result message on the subject
 // the collector most recently subscribed to. It delivers nothing when the
 // collector has not subscribed yet.
-func deliverResult(ctx context.Context, bus *natsbustest.Fake, taskID string, result proto.Message, errorMsg string) {
+func deliverResult(bus *natsbustest.Fake, taskID string, result proto.Message, errorMsg string) {
 	subs := bus.Subscriptions()
 	if len(subs) == 0 {
 		return
@@ -67,7 +67,7 @@ func deliverResult(ctx context.Context, bus *natsbustest.Fake, taskID string, re
 		headers["X-Error"] = []string{errorMsg}
 	}
 
-	_ = bus.Deliver(ctx, &natsbus.Message{
+	_ = bus.Deliver(&natsbus.Message{
 		Subject: subs[len(subs)-1].Subject,
 		Data:    data,
 		Headers: headers,
@@ -115,9 +115,9 @@ var _ = Describe("NATSCollector", func() {
 			go func() {
 				time.Sleep(10 * time.Millisecond)
 				payload1, _ := structpb.NewStruct(map[string]interface{}{"result": "1"})
-				deliverResult(ctx, fakeNATS, "t-1", payload1, "")
+				deliverResult(fakeNATS, "t-1", payload1, "")
 				payload2, _ := structpb.NewStruct(map[string]interface{}{"result": "2"})
-				deliverResult(ctx, fakeNATS, "t-2", payload2, "")
+				deliverResult(fakeNATS, "t-2", payload2, "")
 			}()
 
 			handle, err := collector.PrepareCollect(ctx, req)
@@ -146,11 +146,11 @@ var _ = Describe("NATSCollector", func() {
 			go func() {
 				time.Sleep(10 * time.Millisecond)
 				// First attempt: error
-				deliverResult(ctx, fakeNATS, "t-1", nil, "worker error")
+				deliverResult(fakeNATS, "t-1", nil, "worker error")
 				time.Sleep(20 * time.Millisecond)
 				// Second attempt: success
 				payload, _ := structpb.NewStruct(map[string]interface{}{"result": "ok"})
-				deliverResult(ctx, fakeNATS, "t-1", payload, "")
+				deliverResult(fakeNATS, "t-1", payload, "")
 			}()
 
 			handle, err := collector.PrepareCollect(ctx, req)
@@ -167,6 +167,48 @@ var _ = Describe("NATSCollector", func() {
 			Expect(redispatches).To(HaveLen(1))
 			Expect(redispatches[0].taskID).To(Equal("t-1"))
 			Expect(redispatches[0].retryCount).To(Equal(1))
+		})
+
+		It("redispatches under the collection's tenant when the NATS handler context carries none", func() {
+			// The real client builds the handler context from
+			// context.Background(), so the tenant is never in it. The real
+			// dispatcher, unlike fakeDispatcher, refuses a tenantless context.
+			dispatchBus := &natsbustest.Fake{}
+			tasks := []analyzer.Task{
+				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
+			}
+			req := analysis.CollectRequest{
+				TaskType:    natsbus.TaskClassify,
+				JobID:       "job-1",
+				ExpectedIDs: []string{"t-1"},
+				Tasks:       tasks,
+				Timeout:     1 * time.Second,
+				MaxRetries:  2,
+				Backoff:     1 * time.Millisecond,
+				Dispatcher:  analysis.NewNATSDispatcher(dispatchBus),
+			}
+
+			go func() {
+				time.Sleep(10 * time.Millisecond)
+				deliverResult(fakeNATS, "t-1", nil, "worker error")
+				time.Sleep(20 * time.Millisecond)
+				payload, _ := structpb.NewStruct(map[string]interface{}{"result": "ok"})
+				deliverResult(fakeNATS, "t-1", payload, "")
+			}()
+
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			results, err := collector.AwaitResults(ctx, handle)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveLen(1))
+			Expect(results[0].Error).NotTo(HaveOccurred(), "a retry must not fail the task")
+
+			wantSubject, err := natsbus.WorkSubject("test-tenant", natsbus.TaskClassify, "job-1")
+			Expect(err).NotTo(HaveOccurred())
+			published := dispatchBus.Published()
+			Expect(published).To(HaveLen(1))
+			Expect(published[0].Subject).To(Equal(wantSubject))
+			Expect(published[0].Headers[analysis.ExportHeaderRetryCount]).To(Equal([]string{"1"}))
 		})
 
 		It("records failure when retries exhausted", func() {
@@ -187,10 +229,10 @@ var _ = Describe("NATSCollector", func() {
 			go func() {
 				time.Sleep(10 * time.Millisecond)
 				// First attempt: error
-				deliverResult(ctx, fakeNATS, "t-1", nil, "worker error")
+				deliverResult(fakeNATS, "t-1", nil, "worker error")
 				time.Sleep(20 * time.Millisecond)
 				// Second attempt: error (exhausted)
-				deliverResult(ctx, fakeNATS, "t-1", nil, "worker error")
+				deliverResult(fakeNATS, "t-1", nil, "worker error")
 			}()
 
 			handle, err := collector.PrepareCollect(ctx, req)
@@ -221,7 +263,7 @@ var _ = Describe("NATSCollector", func() {
 			go func() {
 				time.Sleep(10 * time.Millisecond)
 				payload, _ := structpb.NewStruct(map[string]interface{}{"result": "1"})
-				deliverResult(ctx, fakeNATS, "t-1", payload, "")
+				deliverResult(fakeNATS, "t-1", payload, "")
 				// t-2 never arrives
 			}()
 
@@ -281,10 +323,10 @@ var _ = Describe("NATSCollector", func() {
 				time.Sleep(10 * time.Millisecond)
 				// Unknown task ID
 				payload, _ := structpb.NewStruct(map[string]interface{}{"result": "unknown"})
-				deliverResult(ctx, fakeNATS, "t-999", payload, "")
+				deliverResult(fakeNATS, "t-999", payload, "")
 				// Expected task ID
 				payload2, _ := structpb.NewStruct(map[string]interface{}{"result": "ok"})
-				deliverResult(ctx, fakeNATS, "t-1", payload2, "")
+				deliverResult(fakeNATS, "t-1", payload2, "")
 			}()
 
 			handle, err := collector.PrepareCollect(ctx, req)

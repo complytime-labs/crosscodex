@@ -27,7 +27,9 @@
 //
 // Fake.Deliver hands a message to the handler of every live subscription
 // whose subject matches the message subject, synchronously, in subscription
-// order. A subscription is live until Unsubscribe or Drain is called on it.
+// order. Handlers receive a context built from context.Background(), as in
+// the real client: the tenant arrives in msg.Metadata.TenantID, never in the
+// context, so a handler that needs a tenant context must build it itself. A subscription is live until Unsubscribe or Drain is called on it.
 // Matching is delegated to nats-server's server.SubjectMatchesFilter, so it
 // follows NATS rules exactly: "*" matches one token and a trailing ">" matches
 // one or more tokens.
