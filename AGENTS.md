@@ -8,7 +8,7 @@ Use `task` for everything; never run raw `go build` / `go test`.
 
 - `task dev:deps`, `task generate` (buf; output in gitignored `api/gen/`), `task build`, `task lint`, `task check` (lint, then unit tests, then `test:race`, sequentially)
 - `task test:unit`, `task test:property`, `task test:race` (`pkg/graphdb` with the race detector), `task test:integration:<name>` (see `task --list`)
-- Fuzzing is human-only: agents never run `task test:fuzz` or `go test -fuzz` in any form. It fuzzes every target with a worker per core and saturates the machine. When a change needs fuzzing, ask the human to run it and name the targets. CI fuzzes a PR's changed packages (`task test:fuzz PKGS=... FUZZ_TIME=30s`); `fuzz-nightly.yml` fuzzes every target.
+- Fuzzing is human-only: agents never run `task test:fuzz` or `go test -fuzz` in any form. It fuzzes every target with a worker per core and saturates the machine. When a change needs fuzzing, ask the human to run it and name the targets. CI deliberately doesn't fuzz PRs or pushes (too slow); only `fuzz-nightly.yml` fuzzes, every target.
 - `FIPS=1` on any build/test task enables BoringCrypto FIPS mode.
 - Proto changes: from `api/proto`, `go tool buf lint` and `go tool buf breaking --against '../../.git#branch=main,subdir=api/proto'` must introduce no new failures. No task or CI job runs these (`task dev:lint:proto` is protolint), and `buf lint` already has violations in `gateway.proto`.
 

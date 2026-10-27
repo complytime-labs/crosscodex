@@ -22,9 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Depth 2 gives the PR merge commit's base (HEAD^1) for the
-          # changed-package fuzz step.
-          fetch-depth: 2
           persist-credentials: false
 
       - uses: ./.github/actions/go-setup
@@ -49,24 +46,10 @@ jobs:
         if: matrix.fips == ''
         run: task test:race GINKGOLEAF_FORMAT=github
 
-      # PRs fuzz only packages whose Go files changed; fuzz-nightly.yml fuzzes
-      # every target. Every target's seed corpus and committed crash inputs
-      # still run as regression tests in the Test step above.
-      - name: Fuzz tests (changed packages)
-        if: matrix.fips == '' && github.event_name == 'pull_request'
-        run: |
-          # The default run shell is `bash -e` without pipefail; without it a
-          # failed git diff yields an empty list and silently skips fuzzing.
-          set -o pipefail
-          pkgs=$(git diff --name-only --diff-filter=d HEAD^1 HEAD -- \
-              ':(glob)pkg/**/*.go' ':(glob)internal/**/*.go' ':(glob)cmd/**/*.go' \
-              ':(exclude,glob)**/testdata/**' \
-            | xargs -r dirname | sort -u | sed 's|^|./|' | tr '\n' ' ')
-          if [ -z "$pkgs" ]; then
-            echo "No Go package changes; skipping fuzzing (fuzz-nightly.yml covers all targets)."
-            exit 0
-          fi
-          task test:fuzz FUZZ_TIME=30s PKGS="$pkgs"
+      # No fuzzing on PRs or pushes, deliberately: even scoped to changed
+      # packages it took too long for a PR workflow. fuzz-nightly.yml fuzzes
+      # every target; the Test step above replays every seed corpus and
+      # committed crash input as regression tests.
 
   integration-tests:
     needs: [build]
