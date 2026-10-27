@@ -1,0 +1,24 @@
+internal/rpcserver/errorref_bdd_test.go
+  s_5d30fea2594b5a::t_081eb8460b079c 1-92
+internal/rpcserver/rpcserver.go
+  s_5d30fea2594b5a::t_797cbf421c9bcd 37,52,59-72
+  s_5d30fea2594b5a::t_daf34142ed751b 73-74
+internal/rpcserver/errorref.go
+  s_5d30fea2594b5a::t_cfb453da7d2c46 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd03cf9d739861cd71d8cc5706e0abc3bad5017f",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
