@@ -1,0 +1,19 @@
+pkg/natsbus/natsbus_property_test.go
+  s_5d30fea2594b5a::t_6c28b145fcb443 31-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64b5e46a0251cba44a2261352d4dd4d607f4011e",
+  "prompts": {},
+  "sessions": {
+    "s_5d30fea2594b5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b724b1c-d206-497c-a8cc-49674eb79696",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
