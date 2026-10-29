@@ -1,0 +1,23 @@
+.taskfiles/deploy.yml
+  s_94a6fdb547ea3d::t_f17149f7dbd850 44-50,212-215,254,258-259,269,274-277,283,292-295,298
+deploy/compose.gateway-litellm.yaml
+  s_94a6fdb547ea3d::t_39ec8da42f3211 1-59
+deploy/compose.yaml
+  s_94a6fdb547ea3d::t_55a8b559448b77 7-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "936f7f1de8797753ad0f232665278382ef0d1a07",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
