@@ -1,0 +1,33 @@
+deploy/praxis/config.models.yaml
+  s_94a6fdb547ea3d::t_ec77b0cf3a28e6 5-7
+  s_94a6fdb547ea3d::t_fde03df6c93a3a 47-116
+  s_94a6fdb547ea3d::t_d88971643d2283 167-172
+  s_94a6fdb547ea3d::t_df815bf62e36d3 148-156
+deploy/praxis/config.yaml
+  s_94a6fdb547ea3d::t_7c3da6bc8e1885 120-125
+  s_94a6fdb547ea3d::t_5616a6d826803e 46-79
+  s_94a6fdb547ea3d::t_45a7aa9cb98950 18-20
+  s_94a6fdb547ea3d::t_e83977d0aea507 101-109
+deploy/praxis/config.offline.yaml.tmpl
+  s_94a6fdb547ea3d::t_c14b541ff5216e 10-11
+  s_94a6fdb547ea3d::t_687ccbf7c8c52f 6-9,32-65,95-100
+test/deploy/smoke_up.sh
+  s_94a6fdb547ea3d::t_db3dfcfa664a22 246-248,251-252,255-261,265-267
+  s_94a6fdb547ea3d::t_cd1ba7827114b1 249-250,253-254,262-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f87870ae4390e790d0f0f71f8ec6379db0bd5966",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
