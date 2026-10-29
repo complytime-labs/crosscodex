@@ -1,0 +1,53 @@
+test/e2e/stubgateway/main.go
+  s_94a6fdb547ea3d::t_229ba0906bf25c 1-29
+pkg/llmclient/client.go
+  s_94a6fdb547ea3d::t_322fe997c5c05c 28-30,60
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_94a6fdb547ea3d::t_8c2af62eb293d7 242
+test/e2e/run-daemon.sh
+  s_94a6fdb547ea3d::t_9d65e2f83b6977 27-37,59-67,75-79,115-141,147-158
+  s_94a6fdb547ea3d::t_3baba4c894ae00 159
+README.md
+  s_94a6fdb547ea3d::t_a947a048e067ee 263
+cmd/crosscodexd/llm_gateway_probe_bdd_test.go
+  s_94a6fdb547ea3d::t_f31d840f6719e5 1-56,58-60,62-146,159-180,182-199,201-209,211-230,235-236
+  s_94a6fdb547ea3d::t_45b9503cf88519 231-234
+  s_94a6fdb547ea3d::t_ca479e89a7aa76 57,61,181,200,210
+  s_94a6fdb547ea3d::t_da039ffa70c1c3 147-158
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_94a6fdb547ea3d::t_8c2af62eb293d7 239-240,322,352,376,402,428,457,637
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_94a6fdb547ea3d::t_8c2af62eb293d7 49
+cmd/crosscodexd/e2e_integration_test.go
+  s_94a6fdb547ea3d::t_8c2af62eb293d7 141-144
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_94a6fdb547ea3d::t_8c2af62eb293d7 38,341
+cmd/crosscodexd/resources.go
+  s_94a6fdb547ea3d::t_a1f44263ed8bb2 116-118
+  s_94a6fdb547ea3d::t_915bfba6918765 9-11,230-233,242-264,266-284
+  s_94a6fdb547ea3d::t_445bcc501c279a 265
+  s_94a6fdb547ea3d::t_6bcd7f06a5a903 285
+test/e2e/crosscodexd.e2e.yaml
+  s_94a6fdb547ea3d::t_f40ddd25910628 10-12
+cmd/crosscodexd/resources_bdd_test.go
+  s_94a6fdb547ea3d::t_000feb5fcf451c 5-6,18-27
+  s_94a6fdb547ea3d::t_5b4e63da560220 28
+cmd/crosscodexd/telemetry_wiring_bdd_test.go
+  s_94a6fdb547ea3d::t_000feb5fcf451c 74-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bbb46dd39b170c4a29281e12f66a1020f3e99da1",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
