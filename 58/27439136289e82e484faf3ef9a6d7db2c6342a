@@ -1,0 +1,25 @@
+deploy/compose.backup.yaml
+  s_94a6fdb547ea3d::t_cf779b8950acab 2-4
+deploy/README.md
+  s_94a6fdb547ea3d::t_49ebbd879e1ec6 158,164
+.taskfiles/deploy.yml
+  s_94a6fdb547ea3d::t_cf779b8950acab 295-297
+deploy/config.yaml
+  s_94a6fdb547ea3d::t_cf779b8950acab 57-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5827439136289e82e484faf3ef9a6d7db2c6342a",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
