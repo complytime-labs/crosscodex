@@ -1,0 +1,41 @@
+.taskfiles/test/integration.yml
+  s_94a6fdb547ea3d::t_7c0e175218d37d 415-422
+.taskfiles/deploy.yml
+  s_94a6fdb547ea3d::t_b6cdccd092c3f2 281
+  s_94a6fdb547ea3d::t_2466f0c582f92f 384-385
+  s_94a6fdb547ea3d::t_fbe0c9421f5ad3 272-273
+  s_94a6fdb547ea3d::t_4c41e19367764b 93-98
+  s_94a6fdb547ea3d::t_9d92b3b6ccfd03 274,277
+  s_94a6fdb547ea3d::t_663dffa9b47431 53
+  s_94a6fdb547ea3d::t_a08977605045f1 47-52,54-77
+  s_94a6fdb547ea3d::t_476ffb85eb87cf 348,354-360
+  s_94a6fdb547ea3d::t_fb9046c4a3c965 400-401
+  s_94a6fdb547ea3d::t_d1f8ffa96d9cea 369-371
+  s_94a6fdb547ea3d::t_0a04f7c775fde8 249-271,275-276,278-280,282
+  s_94a6fdb547ea3d::t_1e0a512e1d1783 342-344
+  s_94a6fdb547ea3d::t_b7ca5715f419f0 416-419,421
+  s_94a6fdb547ea3d::t_8bde9361ca604b 442-443
+deploy/.env.example
+  s_94a6fdb547ea3d::t_fa02ab40dd32bc 34,42-44
+  s_94a6fdb547ea3d::t_681c39b4ba06f4 37-41
+  s_94a6fdb547ea3d::t_7967f5309d1abb 35-36
+test/deploy/smoke_up.sh
+  s_94a6fdb547ea3d::t_1d2573f242b529 52-55,57
+  s_94a6fdb547ea3d::t_e4ad32d7a095be 65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bfbbfe701a66249255123fba8f85f613e1fb74f7",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
