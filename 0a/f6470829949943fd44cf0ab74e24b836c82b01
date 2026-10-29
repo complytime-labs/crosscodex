@@ -1,0 +1,24 @@
+cmd/crosscodexd/llm_gateway_probe_bdd_test.go
+  s_94a6fdb547ea3d::t_79773886ed16a8 16,160-207,265
+cmd/crosscodexd/resources.go
+  s_94a6fdb547ea3d::t_8b78e271c49701 246-251,255-256,258-261,263-264,274-277,279-282,285-289,297-309
+  s_94a6fdb547ea3d::t_893ffb9ec63446 272
+test/e2e/run-daemon.sh
+  s_94a6fdb547ea3d::t_173a1c0fa6ce3b 64,136,154-158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0af6470829949943fd44cf0ab74e24b836c82b01",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
