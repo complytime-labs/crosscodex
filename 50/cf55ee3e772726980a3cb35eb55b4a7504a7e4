@@ -1,0 +1,23 @@
+scripts/check-praxis-compose.sh
+  s_94a6fdb547ea3d::t_8743c30df81094 1-43
+.taskfiles/deploy.yml
+  s_94a6fdb547ea3d::t_8743c30df81094 70,74,252-261,263,335-336
+deploy/.env.example
+  s_94a6fdb547ea3d::t_7ded311f2805d2 39-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50cf55ee3e772726980a3cb35eb55b4a7504a7e4",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
