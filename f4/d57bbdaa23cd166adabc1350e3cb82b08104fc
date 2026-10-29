@@ -1,0 +1,50 @@
+deploy/litellm/config.offline.yaml.tmpl
+  s_94a6fdb547ea3d::t_6985d7e9b4acd5 4
+deploy/compose.offline-praxis.yaml
+  s_94a6fdb547ea3d::t_f6f469f9145780 1-35
+scripts/generate-llm-gateway-config.sh
+  s_94a6fdb547ea3d::t_d5069dbc72143c 1-4,6-56
+  s_94a6fdb547ea3d::t_6985d7e9b4acd5 5
+.taskfiles/test/e2e.yml
+  s_94a6fdb547ea3d::t_6985d7e9b4acd5 117
+.taskfiles/test/integration.yml
+  s_94a6fdb547ea3d::t_6985d7e9b4acd5 496,552,555
+.taskfiles/deploy.yml
+  s_94a6fdb547ea3d::t_f56fe094837148 348-350,352
+  s_94a6fdb547ea3d::t_093d33628ecb59 370-375
+  s_94a6fdb547ea3d::t_7a7fe576ab8375 383-387
+  s_94a6fdb547ea3d::t_7402390edcd816 84-88
+  s_94a6fdb547ea3d::t_c4fc3efa7fe24e 364-365
+  s_94a6fdb547ea3d::t_5a982b40b6e617 72-74
+  s_94a6fdb547ea3d::t_0f9bff74a65156 316-321
+  s_94a6fdb547ea3d::t_7fcb91279e1a44 89-90
+  s_94a6fdb547ea3d::t_ed25d05bc0d2ed 332-337
+test/deploy/smoke_up.sh
+  s_94a6fdb547ea3d::t_9eb91faed519e9 87-91
+  s_94a6fdb547ea3d::t_10d1c3b97b79c5 80
+  s_94a6fdb547ea3d::t_ad022cd920a763 16-17
+  s_94a6fdb547ea3d::t_d53cfa991865c2 48-59
+  s_94a6fdb547ea3d::t_3ebf59bb78020b 81-83
+  s_94a6fdb547ea3d::t_aa7e49719ff201 106-110
+  s_94a6fdb547ea3d::t_9cd81062c48b63 129-144
+  s_94a6fdb547ea3d::t_57aa0bbc1b1787 237
+  s_94a6fdb547ea3d::t_cb11930ac02670 174-227
+deploy/praxis/config.offline.yaml.tmpl
+  s_94a6fdb547ea3d::t_a28e492f347e1c 1-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f4d57bbdaa23cd166adabc1350e3cb82b08104fc",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
