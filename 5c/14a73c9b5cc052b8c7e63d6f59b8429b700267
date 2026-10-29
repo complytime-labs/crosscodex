@@ -1,0 +1,23 @@
+test/deploy/smoke_up.sh
+  s_94a6fdb547ea3d::t_8a831710e28943 16-18,48-49,100-101,182,186,203-205,209-218,227-232,234-239
+.taskfiles/deploy.yml
+  s_94a6fdb547ea3d::t_8a831710e28943 365
+scripts/generate-llm-gateway-config.sh
+  s_94a6fdb547ea3d::t_8a831710e28943 34-35,58-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c14a73c9b5cc052b8c7e63d6f59b8429b700267",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
