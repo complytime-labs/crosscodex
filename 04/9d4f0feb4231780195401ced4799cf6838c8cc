@@ -1,0 +1,27 @@
+deploy/compose.gateway-praxis.yaml
+  s_94a6fdb547ea3d::t_303245ad6592dd 10-11,14-16,20-40
+deploy/compose.gateway-praxis-models.yaml
+  s_94a6fdb547ea3d::t_303245ad6592dd 7-10
+deploy/praxis/config.yaml
+  s_94a6fdb547ea3d::t_52cc4f424d88b2 21-22,71-81,85-86,88-91
+deploy/praxis/config.models.yaml
+  s_94a6fdb547ea3d::t_303245ad6592dd 13-15,19-21
+  s_94a6fdb547ea3d::t_52cc4f424d88b2 82-92,96-97,99-102
+  s_94a6fdb547ea3d::t_69d1f3c39bb5d3 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "049d4f0feb4231780195401ced4799cf6838c8cc",
+  "prompts": {},
+  "sessions": {
+    "s_94a6fdb547ea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48350ede-ddcf-4847-9568-a79bf0b091b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
