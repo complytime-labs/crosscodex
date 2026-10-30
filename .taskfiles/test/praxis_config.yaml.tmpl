@@ -1,0 +1,89 @@
+# Praxis AI config for CrossCodex integration tests (LLM_GATEWAY=praxis).
+#
+# This file is a template. Rendered at compose-up time by
+# 'task test:integration:compose-up' (PROFILE=llm-praxis), which substitutes
+# the Ollama chat/embed model names. Plain HTTP on :14001 like the LiteLLM test
+# service; mTLS is covered by the deploy smoke test (task deploy:smoke
+# LLM_GATEWAY=praxis). Only the local baked Ollama is supported.
+#
+# Same chat aliases as litellm_config.yaml.tmpl, all backed by one small model.
+#
+# Like deploy/praxis/config.models.yaml (production opt-in), this config serves
+# GET /v1/models so llmclient.Health (the "gateway health check" spec) can run.
+# That needs a second cluster selector (the conditional router) before
+# load_balancer, which Praxis only accepts with the
+# conflicting_cluster_selectors pipeline-check override below. The default
+# production config (deploy/praxis/config.yaml) does not set it.
+admin:
+  metrics_address: "127.0.0.1:9901"
+body_limits:
+  max_request_bytes: 10485760
+  max_response_bytes: 52428800
+listeners:
+  - name: gateway
+    address: "0.0.0.0:14001"
+    filter_chains: [gateway]
+filter_chains:
+  - name: gateway
+    filters:
+      - filter: router
+        conditions:
+          - when:
+              path: /v1/models
+              methods: [GET]
+        routes:
+          - path: /v1/models
+            cluster: ollama
+      - filter: model_to_provider
+        models:
+          - model: small
+            upstream: ollama
+            target_model: "OLLAMA_CHAT_MODEL"
+            paths: [/v1/chat/completions]
+          - model: medium
+            upstream: ollama
+            target_model: "OLLAMA_CHAT_MODEL"
+            paths: [/v1/chat/completions]
+          - model: large
+            upstream: ollama
+            target_model: "OLLAMA_CHAT_MODEL"
+            paths: [/v1/chat/completions]
+          - model: judge
+            upstream: ollama
+            target_model: "OLLAMA_CHAT_MODEL"
+            paths: [/v1/chat/completions]
+          - model: embed
+            upstream: ollama
+            target_model: "OLLAMA_EMBED_MODEL"
+            paths: [/v1/embeddings]
+      - filter: credential_injection
+        clusters:
+          - name: ollama
+            header: Authorization
+            value: "sk-unused"
+            header_prefix: "Bearer "
+      - filter: load_balancer
+        clusters:
+          - name: ollama
+            endpoints: ["ollama:11434"]
+            # "ollama" resolves to a private compose-network IP, which Praxis
+            # refuses at request time (502) unless the name is trusted here.
+            trusted_private_endpoints: [ollama]
+            # Mirrors the retry_policy in deploy/praxis/config.yaml; see the
+            # rationale there. The gateway-mode client does not retry, so
+            # Praxis replays POSTs (allow_non_idempotent), but only outcomes
+            # Ollama did not process: 429/503 and connection failures.
+            # request_timeout_ms only stops new retries; it does not abort an
+            # attempt in flight.
+            retry_policy:
+              max_retries: 2
+              retriable_status_codes: [429, 503]
+              retriable_conditions: [connect_failure]
+              allow_non_idempotent: true
+              backoff:
+                base_interval_ms: 1000
+                max_interval_ms: 4000
+              request_timeout_ms: 25000
+insecure_options:
+  skip_pipeline_checks:
+    conflicting_cluster_selectors: true

@@ -25,15 +25,15 @@ var _ = Describe("Embedding LLM Integration", func() {
 	)
 
 	BeforeEach(func() {
-		litellmURL := os.Getenv("TEST_LITELLM_URL")
+		gatewayURL := os.Getenv("TEST_LLM_GATEWAY_URL")
 		embedModel := os.Getenv("TEST_LLM_EMBED_MODEL")
-		if litellmURL == "" || embedModel == "" {
-			Skip("TEST_LITELLM_URL or TEST_LLM_EMBED_MODEL not set — run: task test:integration:llm")
+		if gatewayURL == "" || embedModel == "" {
+			Skip("TEST_LLM_GATEWAY_URL or TEST_LLM_EMBED_MODEL not set — run: task test:integration:llm")
 		}
 
 		var err error
 		client, err = llmclient.NewClient(config.LLMConfig{
-			GatewayURL:     litellmURL,
+			GatewayURL:     gatewayURL,
 			GatewayMode:    true,
 			EmbeddingModel: embedModel,
 			MaxRetries:     0,

@@ -37,16 +37,16 @@ const (
 
 var (
 	integrationOllamaHost string
-	integrationChatModel  string // Model name for tests (may be a LiteLLM alias in full-stack mode).
-	integrationEmbedModel string // Embed model name for tests (may be a LiteLLM alias in full-stack mode).
+	integrationChatModel  string // Model name for tests (may be a gateway alias in full-stack mode).
+	integrationEmbedModel string // Embed model name for tests (may be a gateway alias in full-stack mode).
 
 	// Actual Ollama model names for direct-connect tests.
 	// In full-stack mode these differ from chatModel/embedModel (which are aliases).
 	integrationOllamaChatModel  string
 	integrationOllamaEmbedModel string
 
-	// Full-stack mode (LiteLLM + Ollama + Jaeger).
-	integrationLitellmURL     string
+	// Full-stack mode (LLM gateway + Ollama + Jaeger).
+	integrationGatewayURL     string
 	integrationOtlpEndpoint   string
 	integrationJaegerQueryURL string
 )
@@ -137,7 +137,7 @@ func pullModelIntegration(host, model string) error {
 }
 
 // newIntegrationTestClient creates a configured llmclient.Client pointing at the Ollama instance.
-// Uses actual Ollama model names (not LiteLLM aliases) for direct-connect tests.
+// Uses actual Ollama model names (not gateway aliases) for direct-connect tests.
 func newIntegrationTestClient(opts ...llmclient.Option) llmclient.Client {
 	cfg := config.LLMConfig{
 		GatewayURL:     integrationOllamaHost,
@@ -152,14 +152,15 @@ func newIntegrationTestClient(opts ...llmclient.Option) llmclient.Client {
 	return c
 }
 
-// newIntegrationGatewayClient creates a llmclient.Client pointing at the LiteLLM proxy
-// with gateway_mode enabled. For full-stack integration tests only.
+// newIntegrationGatewayClient creates a llmclient.Client that points at the LLM gateway
+// (LiteLLM or Praxis, per LLM_GATEWAY) with gateway_mode enabled. For full-stack integration
+// tests only.
 func newIntegrationGatewayClient(opts ...llmclient.Option) llmclient.Client {
-	if integrationLitellmURL == "" {
-		Skip("TEST_LITELLM_URL not set; skipping gateway mode test")
+	if integrationGatewayURL == "" {
+		Skip("TEST_LLM_GATEWAY_URL not set; skipping gateway mode test")
 	}
 	cfg := config.LLMConfig{
-		GatewayURL:     integrationLitellmURL,
+		GatewayURL:     integrationGatewayURL,
 		GatewayMode:    true,
 		DefaultModel:   integrationChatModel,
 		EmbeddingModel: integrationEmbedModel,
@@ -187,12 +188,12 @@ func (e *integrationCaptureEmitter) EmitLLMAudit(_ context.Context, event *llmcl
 
 var _ = Describe("LLM Client Integration", Ordered, func() {
 	BeforeAll(func() {
-		integrationLitellmURL = os.Getenv("TEST_LITELLM_URL")
+		integrationGatewayURL = os.Getenv("TEST_LLM_GATEWAY_URL")
 		integrationOtlpEndpoint = os.Getenv("TEST_OTLP_GRPC_ENDPOINT")
 		integrationJaegerQueryURL = os.Getenv("TEST_JAEGER_QUERY_URL")
 
-		if integrationLitellmURL != "" {
-			// Full-stack mode: LiteLLM + Ollama + Jaeger.
+		if integrationGatewayURL != "" {
+			// Full-stack mode: LLM gateway + Ollama + Jaeger.
 			integrationOllamaHost = os.Getenv("TEST_OLLAMA_HOST")
 			if integrationOllamaHost == "" {
 				integrationOllamaHost = "http://localhost:11434"
@@ -200,8 +201,8 @@ var _ = Describe("LLM Client Integration", Ordered, func() {
 		} else {
 			integrationOllamaHost = os.Getenv("OLLAMA_HOST")
 			if integrationOllamaHost == "" {
-				Skip("Neither TEST_LITELLM_URL nor OLLAMA_HOST set — skipping llmclient integration tests. " +
-					"Set OLLAMA_HOST for direct-connect tests, or TEST_LITELLM_URL for full-stack tests.")
+				Skip("Neither TEST_LLM_GATEWAY_URL nor OLLAMA_HOST set — skipping llmclient integration tests. " +
+					"Set OLLAMA_HOST for direct-connect tests, or TEST_LLM_GATEWAY_URL for full-stack tests.")
 			}
 		}
 
@@ -219,9 +220,9 @@ var _ = Describe("LLM Client Integration", Ordered, func() {
 			integrationEmbedModel = integrationDefaultEmbedModel
 		}
 
-		// In full-stack mode, chatModel/embedModel are LiteLLM aliases (e.g. "small").
+		// In full-stack mode, chatModel/embedModel are gateway aliases (e.g. "small").
 		// Direct-connect tests talk to Ollama and need actual model names.
-		if integrationLitellmURL != "" {
+		if integrationGatewayURL != "" {
 			integrationOllamaChatModel = "llama3.2:1b"
 			integrationOllamaEmbedModel = "granite-embedding:30m"
 		} else {
@@ -229,13 +230,13 @@ var _ = Describe("LLM Client Integration", Ordered, func() {
 			integrationOllamaEmbedModel = integrationEmbedModel
 		}
 
-		// Verify Ollama is reachable (probe directly, not through LiteLLM).
+		// Verify Ollama is reachable (probe directly, not through the gateway).
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		Expect(probeOllamaIntegration(ctx, integrationOllamaHost)).To(Succeed(),
 			"Ollama probe failed at %s", integrationOllamaHost)
 
-		// Pull actual Ollama model names (not LiteLLM aliases).
+		// Pull actual Ollama model names (not gateway aliases).
 		Expect(ensureModelIntegration(integrationOllamaHost, integrationOllamaChatModel)).To(Succeed(),
 			"Failed to ensure chat model %q", integrationOllamaChatModel)
 		Expect(ensureModelIntegration(integrationOllamaHost, integrationOllamaEmbedModel)).To(Succeed(),
@@ -395,22 +396,22 @@ var _ = Describe("LLM Client Integration", Ordered, func() {
 		})
 	})
 
-	Context("Full-stack Gateway Mode Tests (LiteLLM + Ollama + Jaeger)", func() {
+	Context("Full-stack Gateway Mode Tests (LLM gateway + Ollama + Jaeger)", func() {
 		It("should pass gateway health check", func() {
 			client := newIntegrationGatewayClient()
 			Expect(client.Health(context.Background())).To(Succeed())
 		})
 
 		It("should route through model aliases", func() {
-			if integrationLitellmURL == "" {
-				Skip("TEST_LITELLM_URL not set; skipping gateway mode test")
+			if integrationGatewayURL == "" {
+				Skip("TEST_LLM_GATEWAY_URL not set; skipping gateway mode test")
 			}
 
 			aliases := []string{"small", "medium", "large", "judge"}
 			for _, alias := range aliases {
 				By(fmt.Sprintf("testing alias %q", alias))
 				cfg := config.LLMConfig{
-					GatewayURL:     integrationLitellmURL,
+					GatewayURL:     integrationGatewayURL,
 					GatewayMode:    true,
 					DefaultModel:   alias,
 					EmbeddingModel: integrationEmbedModel,
@@ -451,12 +452,12 @@ var _ = Describe("LLM Client Integration", Ordered, func() {
 		})
 
 		It("should not retry in gateway mode", func() {
-			if integrationLitellmURL == "" {
-				Skip("TEST_LITELLM_URL not set; skipping gateway mode test")
+			if integrationGatewayURL == "" {
+				Skip("TEST_LLM_GATEWAY_URL not set; skipping gateway mode test")
 			}
 
 			cfg := config.LLMConfig{
-				GatewayURL:     integrationLitellmURL,
+				GatewayURL:     integrationGatewayURL,
 				GatewayMode:    true,
 				DefaultModel:   "nonexistent-model-xyz",
 				EmbeddingModel: integrationEmbedModel,
@@ -485,8 +486,8 @@ var _ = Describe("LLM Client Integration", Ordered, func() {
 		})
 
 		It("should export telemetry to Jaeger", func() {
-			if integrationLitellmURL == "" {
-				Skip("TEST_LITELLM_URL not set; skipping gateway mode test")
+			if integrationGatewayURL == "" {
+				Skip("TEST_LLM_GATEWAY_URL not set; skipping gateway mode test")
 			}
 			if integrationOtlpEndpoint == "" {
 				Skip("TEST_OTLP_GRPC_ENDPOINT not set; skipping telemetry export test")
@@ -595,12 +596,12 @@ var _ = Describe("LLM Client Integration", Ordered, func() {
 		})
 
 		It("should enforce model allow-list in gateway mode", func() {
-			if integrationLitellmURL == "" {
-				Skip("TEST_LITELLM_URL not set; skipping gateway mode test")
+			if integrationGatewayURL == "" {
+				Skip("TEST_LLM_GATEWAY_URL not set; skipping gateway mode test")
 			}
 
 			cfg := config.LLMConfig{
-				GatewayURL:     integrationLitellmURL,
+				GatewayURL:     integrationGatewayURL,
 				GatewayMode:    true,
 				DefaultModel:   integrationChatModel,
 				EmbeddingModel: integrationEmbedModel,

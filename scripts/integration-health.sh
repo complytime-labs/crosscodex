@@ -5,7 +5,7 @@
 # so we probe the published ports from the host instead.
 #
 # Usage: integration-health.sh <profile> <container-engine> [ollama-host]
-#   profile:          db|storage|nats|authn|grpc|telemetry|llm|all
+#   profile:          db|storage|nats|authn|grpc|telemetry|llm|llm-praxis|all
 #   container-engine: podman|docker
 #   ollama-host:      Ollama base URL (default: http://localhost:11434)
 set -euo pipefail
@@ -94,6 +94,13 @@ llm)
 	verify_ollama_from_container
 	wait_for "jaeger" wget -qO- http://localhost:16686/ 2>/dev/null
 	;;
+llm-praxis)
+	wait_for_ollama
+	# GET /v1/models is routed to Ollama by the test config, so a 200 proves
+	# Praxis is up and reaches its upstream.
+	wait_for "praxis" curl -sf http://localhost:14001/v1/models
+	wait_for "jaeger" wget -qO- http://localhost:16686/ 2>/dev/null
+	;;
 all)
 	wait_for_ollama
 	wait_for "postgres" "${ENGINE}" exec crosscodex-test-db pg_isready -U postgres
@@ -106,7 +113,7 @@ all)
 	verify_ollama_from_container
 	;;
 *)
-	echo "ERROR: Unknown profile '${PROFILE}'. Expected: db|storage|nats|authn|grpc|telemetry|llm|all"
+	echo "ERROR: Unknown profile '${PROFILE}'. Expected: db|storage|nats|authn|grpc|telemetry|llm|llm-praxis|all"
 	exit 1
 	;;
 esac

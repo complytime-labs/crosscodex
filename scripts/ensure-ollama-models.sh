@@ -2,7 +2,7 @@
 # ensure-ollama-models.sh — Pull required Ollama models if not already present.
 #
 # Usage: ensure-ollama-models.sh <profile> <ollama-host> <chat-model> <embed-model>
-#   profile:     llm|all (no-op for other profiles)
+#   profile:     llm|llm-praxis|all (no-op for other profiles)
 #   ollama-host: Ollama base URL (e.g. http://localhost:11434)
 #   chat-model:  Chat model name (e.g. llama3.2:1b)
 #   embed-model: Embedding model name (e.g. nomic-embed-text)
@@ -15,7 +15,7 @@ EMBED_MODEL="${4:?Usage: ensure-ollama-models.sh <profile> <ollama-host> <chat-m
 
 # No-op for profiles that don't include Ollama.
 case "${PROFILE}" in
-llm | all) ;;
+llm | llm-praxis | all) ;;
 *) exit 0 ;;
 esac
 

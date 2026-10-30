@@ -128,7 +128,7 @@ services:
       retries: 15
 
   ollama:
-    profiles: [llm, all]
+    profiles: [llm, llm-praxis, all]
     image: crosscodex-test-ollama:latest
     container_name: crosscodex-test-ollama
     ports:
@@ -160,8 +160,25 @@ services:
       retries: 30
       start_period: 15s
 
+  praxis:
+    # LLM_GATEWAY=praxis alternative to litellm for `task test:integration:llm`.
+    profiles: [llm-praxis]
+    image: ghcr.io/praxis-proxy/ai:0.8.0@sha256:f38f429ac97101a18f2c00e0cb7a5ed65090f5534261fa14aa1d105086f332cf
+    container_name: crosscodex-test-praxis
+    ports:
+      - "14001:14001"
+    volumes:
+      - ../.test-output/praxis_config.yaml:/etc/praxis/praxis.yaml:ro
+    command: ["-c", "/etc/praxis/praxis.yaml"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9901/healthy >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
   jaeger:
-    profiles: [telemetry, llm, all]
+    profiles: [telemetry, llm, llm-praxis, all]
     image: docker.io/jaegertracing/jaeger:2.19.0
     container_name: crosscodex-test-jaeger
     ports:
