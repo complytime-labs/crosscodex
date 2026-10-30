@@ -1,0 +1,16 @@
+README.md
+  h_4db53f42b9be42 213,263
+deploy/README.md
+  h_4db53f42b9be42 26-29,46,135-136,141-187,212,221,273,276,292-294,308,314,322-323,330,336,344,350-351,373,376-378,386-388,391,394-395,409,436-448,450
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bec3dd71ced9788f32cda183a3d9eb9363c942b8",
+  "prompts": {},
+  "humans": {
+    "h_4db53f42b9be42": {
+      "author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
