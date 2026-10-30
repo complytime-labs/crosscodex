@@ -138,11 +138,10 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 			// External mode: both runtimes dial the one shared server started
 			// above instead of each starting their own embedded instance.
 			cfg.NATS = config.NATSConfig{URL: natsURL}
-			// GatewayURL only needs to be non-empty so buildSharedResources'
-			// llmclient.NewClient(cfg.LLM) call succeeds; the real client it
-			// constructs is immediately replaced by WithLLMClient(fakeLLM)
-			// below, so nothing ever dials this address.
-			cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: e2eModel, EmbeddingModel: e2eModel}
+			// The real client buildSharedResources constructs is replaced by
+			// WithLLMClient(fakeLLM) below, but its startup probe still dials
+			// GatewayURL, so it must answer.
+			cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: e2eModel, EmbeddingModel: e2eModel}
 			cfg.Analysis = e2eAnalysisConfig()
 			// Embedded-only prompt layer: built-in defaults provide classify,
 			// artifacts, requires, and relationship prompts. Restricting the

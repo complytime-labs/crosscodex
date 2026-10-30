@@ -7,7 +7,9 @@ server:
   workers: 4
 
 llm:
-  gateway_url: "http://127.0.0.1:0"
+  # Tier A runs no LLM analysis, but the daemon refuses to start unless the
+  # gateway answers; run-daemon.sh serves test/e2e/stubgateway here.
+  gateway_url: "http://127.0.0.1:18444"
   default_model: "test-model"
   embedding_model: "test-model"
 

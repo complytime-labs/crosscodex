@@ -25,6 +25,9 @@ import (
 // maxResponseSize is the maximum allowed LLM gateway response body size (10 MB).
 const maxResponseSize = 10 * 1024 * 1024
 
+// DefaultTimeout bounds each gateway request when llm.timeout is zero.
+const DefaultTimeout = 30 * time.Second
+
 type client struct {
 	cfg        config.LLMConfig
 	httpClient *http.Client
@@ -54,7 +57,7 @@ func NewClient(cfg config.LLMConfig, opts ...Option) (Client, error) {
 
 	timeout := time.Duration(cfg.Timeout) * time.Second
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = DefaultTimeout
 	}
 
 	c := &client{

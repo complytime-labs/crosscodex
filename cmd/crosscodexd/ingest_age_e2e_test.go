@@ -239,7 +239,7 @@ func allRoleTestConfig(dsn, tenantID string) *config.Config {
 	}
 	cfg.TLS = testServerTLS()
 	cfg.LLM = config.LLMConfig{
-		GatewayURL:     "http://127.0.0.1:0", // non-empty dummy
+		GatewayURL:     reachableLLMGatewayURL(),
 		DefaultModel:   e2eModel,
 		EmbeddingModel: e2eModel,
 	}
