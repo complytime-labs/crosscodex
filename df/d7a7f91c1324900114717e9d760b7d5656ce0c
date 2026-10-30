@@ -1,0 +1,31 @@
+test/tooling/deploy-preconditions.venom.yml
+  s_f25bc7056df6db::t_14129f88aabc7c 1-43
+.taskfiles/deploy.yml
+  s_f25bc7056df6db::t_3ff8bd66d65632 334-336,376-381
+deploy/README.md
+  s_1cda8338af3fae::t_ba87e2b4f53b74 212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dfd7a7f91c1324900114717e9d760b7d5656ce0c",
+  "prompts": {},
+  "sessions": {
+    "s_1cda8338af3fae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae109da0a14f92279",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_f25bc7056df6db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "025e01ef-ea01-46ad-8be9-42805248863e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
