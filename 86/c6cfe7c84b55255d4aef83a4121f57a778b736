@@ -1,0 +1,19 @@
+cmd/crosscodex/embedded.go
+  s_40007cd4cf2229::t_059b205f8c01c6 171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86c6cfe7c84b55255d4aef83a4121f57a778b736",
+  "prompts": {},
+  "sessions": {
+    "s_40007cd4cf2229": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57b7cf40-692f-43a3-985e-d4b372fc87ee",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
