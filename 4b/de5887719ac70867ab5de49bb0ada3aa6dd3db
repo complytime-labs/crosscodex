@@ -1,0 +1,23 @@
+README.md
+  s_f25bc7056df6db::t_26884d7a246fa1 481-488
+.github/workflows/ci.yml
+  s_f25bc7056df6db::t_3c3551bdf322c7 154-158
+AGENTS.md
+  s_f25bc7056df6db::t_b39e75b8d59ad5 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4bde5887719ac70867ab5de49bb0ada3aa6dd3db",
+  "prompts": {},
+  "sessions": {
+    "s_f25bc7056df6db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "025e01ef-ea01-46ad-8be9-42805248863e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
