@@ -1,0 +1,143 @@
+# Praxis AI gateway config for the CrossCodex production stack
+# (LLM_GATEWAY=praxis). Praxis terminates mTLS itself, so there is no stunnel
+# sidecar on this path. Validate edits with:
+#   podman run --rm -e OPENAI_API_KEY=x -v ./config.yaml:/etc/praxis/p.yaml:ro,z \
+#     -v <certs-dir>:/certs:ro,z <image> -t -c /etc/praxis/p.yaml
+#
+# Inbound auth is the client certificate alone (client_cert_mode: require).
+# Praxis has no stable bearer-key filter, so the CROSSCODEX_LLM_API_KEY the
+# daemon sends is not checked; credential_injection replaces it with the
+# provider key before the upstream hop.
+#
+# GET /v1/models is not served by this (default) config. Serving it beside
+# model_to_provider needs a second cluster selector, which Praxis only accepts
+# with insecure_options.skip_pipeline_checks.conflicting_cluster_selectors.
+# Nothing in the daemon calls it (only llmclient.Health, used by tests).
+# Operators who need it opt in with PRAXIS_MODELS_ENDPOINT=true, which starts
+# Praxis on config.models.yaml instead. Keep the two files in sync: they may
+# differ only in this header, the /v1/models handling (router filter, the
+# method gate's GET /v1/models exemption and its 405 detail text, the
+# body-refusing static_response filters and the query-dropping url_rewrite)
+# and insecure_options.
+#
+# An unmapped model or path selects no cluster and gets HTTP 500 (Praxis
+# v0.8.0), the load_balancer's "no cluster set" error; it never reaches the
+# provider.
+admin:
+  # /healthy for the compose healthcheck; loopback only.
+  metrics_address: "127.0.0.1:9901"
+body_limits:
+  max_request_bytes: 10485760
+  max_response_bytes: 52428800
+listeners:
+  - name: gateway
+    address: "0.0.0.0:4443"
+    tls:
+      certificates:
+        - cert_path: /certs/server.pem
+          key_path: /certs/server-key.pem
+      client_ca:
+        ca_path: /certs/ca.pem
+      client_cert_mode: require
+      min_version: tls12
+    filter_chains: [gateway]
+filter_chains:
+  - name: gateway
+    filters:
+      # Only POST reaches the provider. Any other method is answered here and
+      # never forwarded (GET /v1/chat/completions would list stored
+      # completions with the provider key). The method match ignores case, so
+      # "post" also passes; harmless, since only POST bodies are mapped.
+      - filter: static_response
+        conditions:
+          - unless:
+              methods: [POST]
+        status: 405
+        headers:
+          - name: Allow
+            value: POST
+          - name: Content-Type
+            value: application/problem+json
+        body: '{"type":"about:blank","title":"Method Not Allowed","status":405,"detail":"This gateway forwards only POST /v1/chat/completions and POST /v1/embeddings."}'
+      # Client headers that must not reach the provider. Praxis has no
+      # request-header allowlist, so this is a denylist: a header not named
+      # or prefixed here is forwarded. The prefix strips cover every spelling:
+      # openai-* lets a caller pick the billed org/project, x-forwarded-*
+      # forges client identity. What they strip lands in filter metadata,
+      # which nothing reads. credential_injection still sets Authorization.
+      - filter: identity_header_guard
+        prefix: "openai-"
+        metadata_namespace: stripped_openai
+      - filter: identity_header_guard
+        prefix: "x-forwarded-"
+        metadata_namespace: stripped_forwarded
+      - filter: headers
+        request_remove:
+          - Cookie
+          - Forwarded
+          - X-Real-IP
+          - x-api-key
+          - api-key
+      # Public model names the daemon requests (CROSSCODEX_LLM_*_MODEL) mapped
+      # to provider models. Same names as deploy/litellm/config.yaml.
+      - filter: model_to_provider
+        models:
+          - model: default
+            upstream: openai
+            target_model: gpt-4o-mini
+            paths: [/v1/chat/completions]
+          - model: embed
+            upstream: openai
+            target_model: text-embedding-3-small
+            paths: [/v1/embeddings]
+      - filter: credential_injection
+        clusters:
+          - name: openai
+            header: Authorization
+            env_var: OPENAI_API_KEY
+            header_prefix: "Bearer "
+      - filter: load_balancer
+        clusters:
+          - name: openai
+            # Praxis (Pingora) replays any request, POST included, that fails
+            # on a reused pooled connection before response headers, outside
+            # retry_policy, so a POST can bill twice. Closing idle upstream
+            # connections after 1 ms (the minimum) keeps most requests off
+            # pooled connections, at about one TCP+TLS handshake per request.
+            # This fix is partial: under concurrent load a request arriving
+            # within 1 ms of another's response can still reuse that
+            # connection and be replayed.
+            idle_timeout_ms: 1
+            endpoints: ["api.openai.com:443"]
+            # Sets Host; without it OpenAI's edge answers 403.
+            http:
+              authority: api.openai.com
+            tls:
+              sni: api.openai.com
+            # crosscodexd runs gateway_mode (no client retry) and Praxis
+            # retries no POST by default, hence allow_non_idempotent. Only
+            # outcomes where the provider did not process the request are
+            # retried: 429/503 rejections and connection failures before the
+            # request was sent. retry_policy does not retry resets or other
+            # 5xx, because a replayed POST the provider may have processed
+            # can bill twice. Praxis still replays requests that fail on a
+            # stale pooled connection, outside retry_policy; see the
+            # idle_timeout_ms comment on the openai cluster in
+            # deploy/praxis/config.yaml.
+            # Backoff is full jitter: a random wait of up to 1 s, then up to
+            # 2 s (the 4 s cap applies only from a third retry), so a retry
+            # can fire almost at once. Praxis v0.8.0 ignores Retry-After.
+            # request_timeout_ms only stops new retries once elapsed; it does
+            # not abort an attempt in flight, so a retry started just before
+            # 25 s can outlive the daemon's llm.timeout (default 30 s,
+            # pkg/llmclient/client.go). Keep it below that timeout.
+            # Bodies over 64 KiB are not replayed.
+            retry_policy:
+              max_retries: 2
+              retriable_status_codes: [429, 503]
+              retriable_conditions: [connect_failure]
+              allow_non_idempotent: true
+              backoff:
+                base_interval_ms: 1000
+                max_interval_ms: 4000
+              request_timeout_ms: 25000

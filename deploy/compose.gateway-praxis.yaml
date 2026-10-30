@@ -1,0 +1,58 @@
+# LLM gateway fragment: Praxis AI (spike; see deploy/README.md "LLM gateway").
+# Loaded on top of compose.yaml by every deploy:* task when LLM_GATEWAY=praxis.
+# Praxis terminates mTLS on :4443 itself (client certificate required), so
+# there is no sidecar. Compose merges depends_on and environment maps across
+# -f files, so this fragment adds to the daemon without restating it.
+services:
+  praxis:
+    image: ghcr.io/praxis-proxy/ai:0.8.0@sha256:f38f429ac97101a18f2c00e0cb7a5ed65090f5534261fa14aa1d105086f332cf
+    restart: unless-stopped
+    # Runs as praxis (uid 100); joins the cert GID to read server-key.pem
+    # (0640), the only key it needs.
+    group_add: ["10001"]
+    # Only the provider key; .env also holds database passwords, which this
+    # third-party image must not receive. An empty value passes startup (only
+    # an unset variable is rejected), so Praxis would send an empty bearer and
+    # every provider call fails with 401.
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      # Praxis is a third-party image, so it gets only these three files, not
+      # the whole PKI volume: ca-key.pem (the CA key) and client-key.pem (the
+      # daemon's NATS identity) must stay out of it.
+      - type: volume
+        source: crosscodex-certs
+        target: /certs/ca.pem
+        read_only: true
+        volume:
+          subpath: ca.pem
+      - type: volume
+        source: crosscodex-certs
+        target: /certs/server.pem
+        read_only: true
+        volume:
+          subpath: server.pem
+      - type: volume
+        source: crosscodex-certs
+        target: /certs/server-key.pem
+        read_only: true
+        volume:
+          subpath: server-key.pem
+      - ./praxis/config.yaml:/etc/praxis/praxis.yaml:ro
+    command: ["-c", "/etc/praxis/praxis.yaml"]
+    healthcheck:
+      # The image has busybox wget but no curl; /healthy is on the loopback
+      # admin listener (admin.metrics_address in praxis/config.yaml).
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9901/healthy >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  crosscodexd:
+    environment:
+      # Overrides llm.gateway_url (config.yaml points at litellm:4443).
+      CROSSCODEX_LLM_GATEWAY_URL: https://praxis:4443
+    depends_on:
+      praxis:
+        condition: service_healthy

@@ -44,7 +44,7 @@ func main() {
 	bundle, err := pki.GenerateDevPKI(
 		pki.WithOrganization("CrossCodex"),
 		pki.WithValidDuration(3650*24*time.Hour),
-		pki.WithDNSNames("localhost", "db", "nats", "litellm", "crosscodexd"),
+		pki.WithDNSNames("localhost", "db", "nats", "litellm", "praxis", "crosscodexd"),
 		pki.WithIPs(net.IPv4(127, 0, 0, 1)),
 	)
 	if err != nil {

@@ -1,0 +1,117 @@
+# Offline Praxis AI config for the deploy SMOKE stack (template).
+#
+# Do not edit for local overrides. Rendered at smoke bring-up by
+# scripts/generate-llm-gateway-config.sh (called from test/deploy/smoke_up.sh
+# when LLM_GATEWAY=praxis), which substitutes the Ollama chat/embed model names.
+# Mirrors deploy/praxis/config.yaml (same listener, mTLS, method gate, header
+# strips, aliases, credential replacement, retry policy) but routes to the
+# local baked Ollama, so the smoke test needs no real API key. It omits
+# idle_timeout_ms: that guards against replayed POSTs billing twice at a paid
+# provider, which does not apply to the local Ollama. Only the local Ollama is
+# supported on the Praxis path (smoke_up.sh rejects a non-default OLLAMA_HOST).
+admin:
+  metrics_address: "127.0.0.1:9901"
+body_limits:
+  max_request_bytes: 10485760
+  max_response_bytes: 52428800
+listeners:
+  - name: gateway
+    address: "0.0.0.0:4443"
+    tls:
+      certificates:
+        - cert_path: /certs/server.pem
+          key_path: /certs/server-key.pem
+      client_ca:
+        ca_path: /certs/ca.pem
+      client_cert_mode: require
+      min_version: tls12
+    filter_chains: [gateway]
+filter_chains:
+  - name: gateway
+    filters:
+      # Only POST reaches the provider. Any other method is answered here and
+      # never forwarded (GET /v1/chat/completions would list stored
+      # completions with the provider key). The method match ignores case, so
+      # "post" also passes; harmless, since only POST bodies are mapped.
+      - filter: static_response
+        conditions:
+          - unless:
+              methods: [POST]
+        status: 405
+        headers:
+          - name: Allow
+            value: POST
+          - name: Content-Type
+            value: application/problem+json
+        body: '{"type":"about:blank","title":"Method Not Allowed","status":405,"detail":"This gateway forwards only POST /v1/chat/completions and POST /v1/embeddings."}'
+      # Client headers that must not reach the provider. Praxis has no
+      # request-header allowlist, so this is a denylist: a header not named
+      # or prefixed here is forwarded. The prefix strips cover every spelling:
+      # openai-* lets a caller pick the billed org/project, x-forwarded-*
+      # forges client identity. What they strip lands in filter metadata,
+      # which nothing reads. credential_injection still sets Authorization.
+      - filter: identity_header_guard
+        prefix: "openai-"
+        metadata_namespace: stripped_openai
+      - filter: identity_header_guard
+        prefix: "x-forwarded-"
+        metadata_namespace: stripped_forwarded
+      - filter: headers
+        request_remove:
+          - Cookie
+          - Forwarded
+          - X-Real-IP
+          - x-api-key
+          - api-key
+      - filter: model_to_provider
+        models:
+          - model: default
+            upstream: ollama
+            target_model: "OLLAMA_CHAT_MODEL"
+            paths: [/v1/chat/completions]
+          - model: embed
+            upstream: ollama
+            target_model: "OLLAMA_EMBED_MODEL"
+            paths: [/v1/embeddings]
+      # Replaces the daemon's CROSSCODEX_LLM_API_KEY as production does; Ollama
+      # ignores the value.
+      - filter: credential_injection
+        clusters:
+          - name: ollama
+            header: Authorization
+            value: "sk-unused"
+            header_prefix: "Bearer "
+      - filter: load_balancer
+        clusters:
+          - name: ollama
+            endpoints: ["ollama:11434"]
+            # "ollama" resolves to a private compose-network IP, which Praxis
+            # refuses at request time (502) unless the name is trusted here.
+            trusted_private_endpoints: [ollama]
+            # crosscodexd runs gateway_mode (no client retry) and Praxis
+            # retries no POST by default, hence allow_non_idempotent. Only
+            # outcomes where the provider did not process the request are
+            # retried: 429/503 rejections and connection failures before the
+            # request was sent. retry_policy does not retry resets or other
+            # 5xx, because a replayed POST the provider may have processed
+            # can bill twice. Praxis still replays requests that fail on a
+            # stale pooled connection, outside retry_policy; see the
+            # idle_timeout_ms comment on the openai cluster in
+            # deploy/praxis/config.yaml.
+            # Backoff is full jitter: a random wait of up to 1 s, then up to
+            # 2 s (the 4 s cap applies only from a third retry), so a retry
+            # can fire almost at once. Praxis v0.8.0 ignores Retry-After.
+            # request_timeout_ms only stops new retries once elapsed; it does
+            # not abort an attempt in flight, so a retry started just before
+            # 25 s can outlive the daemon's llm.timeout (default 30 s,
+            # pkg/llmclient/client.go). Keep it below that timeout.
+            # Bodies over 64 KiB are not replayed.
+            retry_policy:
+              max_retries: 2
+              retriable_status_codes: [429, 503]
+              retriable_conditions: [connect_failure]
+              allow_non_idempotent: true
+              backoff:
+                base_interval_ms: 1000
+                max_interval_ms: 4000
+              request_timeout_ms: 25000

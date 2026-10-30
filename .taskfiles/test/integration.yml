@@ -493,7 +493,7 @@ tasks:
           done
         fi
       - task: '{{if eq .NEEDS_CERTS "true"}}prepare-cert-volume{{else}}ensure-deps{{end}}'
-      - task: generate-litellm-config
+      - task: generate-llm-gateway-config
         vars:
           PROFILE: "{{.PROFILE}}"
       # Pre-build the Ollama image (with baked-in models) for local runs.
@@ -549,10 +549,10 @@ tasks:
           {{.CONTAINER_ENGINE}} rm -f "$c" 2>/dev/null || true
         done
 
-  generate-litellm-config:
+  generate-llm-gateway-config:
     internal: true
     cmds:
-      - bash "{{.ROOT_DIR}}/scripts/generate-litellm-config.sh" "{{.PROFILE}}" "{{.TASKFILE_DIR}}/litellm_config.yaml.tmpl" "{{.ROOT_DIR}}/.test-output/litellm_config.yaml" "{{.OLLAMA_HOST}}" "{{.OLLAMA_CHAT_MODEL}}" "{{.OLLAMA_EMBED_MODEL}}"
+      - bash "{{.ROOT_DIR}}/scripts/generate-llm-gateway-config.sh" "{{.PROFILE}}" "{{.TASKFILE_DIR}}/litellm_config.yaml.tmpl" "{{.ROOT_DIR}}/.test-output/litellm_config.yaml" "{{.OLLAMA_HOST}}" "{{.OLLAMA_CHAT_MODEL}}" "{{.OLLAMA_EMBED_MODEL}}"
 
   ensure-ollama-models:
     internal: true
