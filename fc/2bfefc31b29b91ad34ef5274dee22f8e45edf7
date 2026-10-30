@@ -1,0 +1,21 @@
+internal/analyzer/requires/requires_bdd_test.go
+  s_e0ff893d05d043::t_7e49f116ddb955 334,541,556,559,577-578
+pkg/prompt/defaults/requires.yaml
+  s_e0ff893d05d043::t_6b846e77263cc6 2,25,31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc2bfefc31b29b91ad34ef5274dee22f8e45edf7",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
