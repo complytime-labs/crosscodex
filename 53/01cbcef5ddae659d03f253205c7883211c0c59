@@ -1,0 +1,27 @@
+pkg/analyzer/candidate/builtin/semantic.go
+  s_e0ff893d05d043::t_bf0007b394aae2 128-130
+pkg/analyzer/candidate/generator.go
+  s_e0ff893d05d043::t_bf0007b394aae2 13-15
+pkg/analyzer/candidate/builtin/keyword.go
+  s_e0ff893d05d043::t_bf0007b394aae2 119-121
+pkg/analyzer/candidate/builtin/keyword_bdd_test.go
+  s_e0ff893d05d043::t_31638f003d5766 261-287
+pkg/analyzer/candidate/builtin/semantic_bdd_test.go
+  s_e0ff893d05d043::t_c5a4d343441b2d 34-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5301cbcef5ddae659d03f253205c7883211c0c59",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
