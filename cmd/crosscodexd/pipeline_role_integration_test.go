@@ -35,7 +35,7 @@ func splitRoleConfig(dsn, natsURL, tenantID, role string) *config.Config {
 	cfg := baseTestConfig(dsn)
 	cfg.Role = role
 	cfg.NATS = config.NATSConfig{URL: natsURL}
-	cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: e2eModel, EmbeddingModel: e2eModel}
+	cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: e2eModel, EmbeddingModel: e2eModel}
 	cfg.Analysis = e2eAnalysisConfig()
 	cfg.Prompt = config.PromptConfig{
 		Layers: config.PromptLayerConfig{
@@ -338,7 +338,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{URL: natsURL}
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: e2eModel, EmbeddingModel: e2eModel}
+		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: e2eModel, EmbeddingModel: e2eModel}
 		cfg.Analysis = e2eAnalysisConfig()
 		cfg.Prompt = config.PromptConfig{
 			Layers: config.PromptLayerConfig{Enabled: true, Order: []config.PromptLayerEntry{{ID: "embedded"}}},

@@ -41,7 +41,40 @@ vars:
           echo "MISSING"
           ;;
       esac
-  COMPOSE_FILE: "{{.ROOT_DIR}}/deploy/compose.yaml"
+  # LLM gateway between crosscodexd and the model provider: litellm (default;
+  # LiteLLM behind a stunnel mTLS sidecar) or praxis (Praxis AI terminating
+  # mTLS itself; spike, see deploy/README.md). Selects the compose fragment
+  # deploy:up and deploy:logs load on top of compose.yaml.
+  # Praxis only: PRAXIS_MODELS_ENDPOINT serves GET /v1/models (false by
+  # default; true starts Praxis on deploy/praxis/config.models.yaml, which sets
+  # a pipeline-check override; see its header). No effect with litellm, which
+  # always serves the endpoint.
+  #
+  # Both resolve as: a CLI var, then the process env, then an LLM_GATEWAY= /
+  # PRAXIS_MODELS_ENDPOINT= line in deploy/.env (so a later plain
+  # `task deploy:up` keeps the deployed gateway), then the default. Only those
+  # two keys are read from deploy/.env; `dotenv:` would load every secret in
+  # it into the task env.
+  #
+  # The resolved values live in DEPLOY_*, not in vars named LLM_GATEWAY /
+  # PRAXIS_MODELS_ENDPOINT, because go-task merges the global vars of every
+  # included Taskfile into one namespace and evaluates them twice (the second
+  # pass sees the first pass's result). A global of either name, here or in
+  # any other included Taskfile, would therefore hide the deploy/.env value
+  # and the raw CLI/env value the smoke path needs. Tasks alias DEPLOY_* back
+  # to the knob names in their own vars so requires.enum reports the name the
+  # operator sets, including for a bad value in deploy/.env.
+  LLM_GATEWAY_DOTENV:
+    sh: |
+      f="{{.ROOT_DIR}}/deploy/.env"
+      if [ -f "$f" ]; then sed -nE 's/^(export[[:space:]]+)?LLM_GATEWAY=//p' "$f" | tail -n 1; fi
+  PRAXIS_MODELS_ENDPOINT_DOTENV:
+    sh: |
+      f="{{.ROOT_DIR}}/deploy/.env"
+      if [ -f "$f" ]; then sed -nE 's/^(export[[:space:]]+)?PRAXIS_MODELS_ENDPOINT=//p' "$f" | tail -n 1; fi
+  DEPLOY_LLM_GATEWAY: '{{.LLM_GATEWAY | default .LLM_GATEWAY_DOTENV | default "litellm"}}'
+  DEPLOY_PRAXIS_MODELS_ENDPOINT: '{{.PRAXIS_MODELS_ENDPOINT | default .PRAXIS_MODELS_ENDPOINT_DOTENV | default "false"}}'
+  COMPOSE_FILES: '-f {{.ROOT_DIR}}/deploy/compose.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-{{.DEPLOY_LLM_GATEWAY}}.yaml{{if and (eq .DEPLOY_LLM_GATEWAY "praxis") (eq .DEPLOY_PRAXIS_MODELS_ENDPOINT "true")}} -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis-models.yaml{{end}}'
   # Deploy identity knobs. Override via environment for an isolated stack (the
   # ephemeral smoke stack sets all three plus COMPOSE_PROJECT_NAME); the
   # defaults reproduce the production stack. CERTS_VOLUME and GATEWAY_PORT are
@@ -57,8 +90,17 @@ vars:
   # the deploy:* tasks read. SMOKE_CERTS_DIR is a fixed .test-output path (not an
   # mktemp) so smoke:down can remove the same dir smoke:up created.
   SMOKE_PROJECT: '{{.SMOKE_PROJECT | default "crosscodex-smoke"}}'
+  # The smoke stack's gateway: the CLI var or env, else litellm. Deliberately
+  # ignores deploy/.env, so an operator's persisted praxis choice does not
+  # change what `task deploy:smoke` tests. The smoke tasks alias it to
+  # LLM_GATEWAY and export it, and the process env beats deploy/.env in the
+  # child `task deploy:up` that smoke_up.sh runs.
+  SMOKE_LLM_GATEWAY: '{{.LLM_GATEWAY | default "litellm"}}'
   SMOKE_CERTS_VOLUME: '{{.SMOKE_CERTS_VOLUME | default "crosscodex-smoke-certs"}}'
   SMOKE_GATEWAY_PORT: '{{.SMOKE_GATEWAY_PORT | default "50151"}}'
+  # Host-loopback port compose.offline-praxis.yaml publishes praxis's mTLS
+  # listener on, for smoke_up.sh's direct gateway probes (LLM_GATEWAY=praxis).
+  SMOKE_PRAXIS_PORT: '{{.SMOKE_PRAXIS_PORT | default "54443"}}'
   SMOKE_CERTS_DIR: '{{.SMOKE_CERTS_DIR | default (printf "%s/.test-output/deploy-smoke/certs" .ROOT_DIR)}}'
   # Opt-in fast build path. LOCAL=1 builds the Go binaries on the host and copies
   # them into thin distroless images (deploy/Dockerfile.local), skipping the
@@ -68,12 +110,13 @@ vars:
   # global var through every deploy:* task that depends on build.
   LOCAL: '{{.LOCAL | default ""}}'
   # Generic compose-overlay knob so an isolated stack can layer an overlay onto
-  # the production compose.yaml without deploy:up/down knowing anything smoke-
-  # specific. Empty (the default) reproduces the production stack exactly. The
-  # smoke path exports COMPOSE_OVERLAY: compose.offline.yaml for a local baked
-  # Ollama, or compose.offline-remote.yaml for a remote OLLAMA_HOST. go-task
-  # reads exported env vars as vars, so smoke_up.sh's child `task deploy:up`
-  # picks this up.
+  # compose.yaml plus the gateway fragment (COMPOSE_FILES) without deploy:up/down
+  # knowing anything smoke-specific. Empty (the default) reproduces the
+  # production stack exactly. The smoke path exports COMPOSE_OVERLAY:
+  # compose.offline.yaml (LiteLLM) or compose.offline-praxis.yaml (Praxis) for a
+  # local baked Ollama, or compose.offline-remote.yaml (LiteLLM only) for a
+  # remote OLLAMA_HOST. go-task reads exported env vars as vars, so
+  # smoke_up.sh's child `task deploy:up` picks this up.
   COMPOSE_OVERLAY: '{{.COMPOSE_OVERLAY | default ""}}'
 
 tasks:
@@ -203,6 +246,27 @@ tasks:
 
   up:
     desc: Bring up the production stack and wait for the gateway to be healthy
+    vars:
+      LLM_GATEWAY: "{{.DEPLOY_LLM_GATEWAY}}"
+      PRAXIS_MODELS_ENDPOINT: "{{.DEPLOY_PRAXIS_MODELS_ENDPOINT}}"
+      # Fail closed on compose tools that ignore volume subpath; the check and
+      # its rationale live in scripts/check-praxis-compose.sh. This is a
+      # dynamic var, not a precondition, because go-task evaluates task vars
+      # before deps (build, certs) but runs preconditions after them, and
+      # requires cannot run a shell check. Its output is unused; a non-zero
+      # exit aborts the task. It runs before requires validates the gateway
+      # value, so the template runs the script only for the exact value praxis
+      # and the unvalidated value never reaches a shell; any other value
+      # falls through to requires.enum. COMPOSE_CMD is safe to pass: it is
+      # one of a fixed set of strings chosen by the COMPOSE_CMD var above.
+      PRAXIS_SUBPATH_GUARD:
+        sh: '{{if eq .LLM_GATEWAY "praxis"}}bash "{{.ROOT_DIR}}/scripts/check-praxis-compose.sh" "{{.COMPOSE_CMD}}"{{else}}true{{end}}'
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
+        - name: PRAXIS_MODELS_ENDPOINT
+          enum: ["false", "true"]
     deps: [build, certs]
     dir: "{{.ROOT_DIR}}/deploy"
     # Export the identity knobs so the compose subprocess resolves the same
@@ -241,12 +305,12 @@ tasks:
           test -z "${bad}" || { echo "deploy/.env has database passwords that are not URL-safe:${bad}" >&2; exit 1; }
         msg: "deploy/.env database passwords may contain only A-Z a-z 0-9 . _ ~ - because compose.yaml embeds them in postgres:// URLs (see stderr for names). Generate each with: openssl rand -hex 24"
     cmds:
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} up -d --build"
+      - "{{.COMPOSE_CMD}} {{.COMPOSE_FILES}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} up -d --build"
       - |
         echo "Waiting for gateway /healthz ..."
         # 150 x 2s = 300s. Covers the worst-case cold start of the full chain:
-        # litellm (start_period 15s + 30 x 5s = 165s) then crosscodexd
-        # (start_period 20s + 20 x 5s = 100s), with margin.
+        # the LLM gateway (litellm: start_period 15s + 30 x 5s = 165s) then
+        # crosscodexd (start_period 20s + 20 x 5s = 100s), with margin.
         for i in $(seq 1 150); do
           if curl -sf --cacert {{.CERTS_DIR}}/ca.pem https://localhost:{{.GATEWAY_PORT}}/healthz >/dev/null; then
             echo "Gateway healthy at https://localhost:{{.GATEWAY_PORT}}"
@@ -256,17 +320,27 @@ tasks:
           sleep 2
         done
         echo "Gateway did not become healthy in time; recent logs:" >&2
-        {{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} logs --tail=50 crosscodexd >&2
+        # Include the LLM gateway's services: when it crash-loops, crosscodexd
+        # (gated on it being healthy) never starts and logs nothing.
+        {{.COMPOSE_CMD}} {{.COMPOSE_FILES}} logs --tail=50 crosscodexd {{if eq .LLM_GATEWAY "praxis"}}praxis{{else}}litellm litellm-tls{{end}} >&2
         exit 1
 
   down:
-    desc: Stop the stack (pass VOLUMES=1 to also drop data + cert volumes)
+    desc: Stop the stack, whichever LLM gateway it runs (pass VOLUMES=1 to also drop data + cert volumes)
     dir: "{{.ROOT_DIR}}/deploy"
     env:
       CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
     cmds:
-      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
+      # podman-compose prints "no container ... found" for the gateway that
+      # isn't running; that is expected and harmless.
+      # Load every gateway fragment, not just LLM_GATEWAY's, so compose knows
+      # both gateways' services and removes whichever exist; teardown therefore
+      # ignores LLM_GATEWAY and PRAXIS_MODELS_ENDPOINT. Not --remove-orphans:
+      # the production project is named after the directory ("deploy"), so it
+      # would also delete unrelated containers in any project named "deploy",
+      # such as the backup sidecars or a stack run from another deploy/ dir.
+      - '{{.COMPOSE_CMD}} -f {{.ROOT_DIR}}/deploy/compose.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-litellm.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis-models.yaml {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
       # compose's own `down --volumes` does NOT remove `external` volumes, so
       # the cert volume must be dropped explicitly. This keeps VOLUMES=1 a true
       # full teardown and guarantees the next `up` reloads a freshly generated
@@ -275,12 +349,27 @@ tasks:
 
   logs:
     desc: Tail stack logs
+    vars:
+      LLM_GATEWAY: "{{.DEPLOY_LLM_GATEWAY}}"
+      PRAXIS_MODELS_ENDPOINT: "{{.DEPLOY_PRAXIS_MODELS_ENDPOINT}}"
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
+        - name: PRAXIS_MODELS_ENDPOINT
+          enum: ["false", "true"]
     dir: "{{.ROOT_DIR}}/deploy"
     cmds:
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} logs -f {{.CLI_ARGS}}"
+      - "{{.COMPOSE_CMD}} {{.COMPOSE_FILES}} logs -f {{.CLI_ARGS}}"
 
   smoke:
     desc: Container-driven smoke test (up, catalog round-trip over mTLS, then teardown regardless of outcome; LOCAL=1 for the fast host-build path)
+    vars:
+      LLM_GATEWAY: "{{.SMOKE_LLM_GATEWAY}}"
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
     cmds:
       # Deferred so the stack is always torn down, whether smoke:up passes,
       # fails, or is interrupted. Registered before smoke:up runs; deferred cmds
@@ -291,6 +380,12 @@ tasks:
 
   smoke:up:
     desc: Bring up the isolated smoke stack and run the catalog round-trip (leaves the stack running for debugging)
+    vars:
+      LLM_GATEWAY: "{{.SMOKE_LLM_GATEWAY}}"
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
     # Export the smoke isolation identity so the script's child `task deploy:up`
     # and compose.yaml resolve the smoke project, cert volume, gateway port, and
     # PKI dir (go-task reads env vars as vars; CROSSCODEX_* feed the CERTS_VOLUME
@@ -301,8 +396,15 @@ tasks:
       CROSSCODEX_CERTS_VOLUME: "{{.SMOKE_CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.SMOKE_GATEWAY_PORT}}"
       CERTS_DIR: "{{.SMOKE_CERTS_DIR}}"
+      # Gateway under test; smoke_up.sh exports it to its child deploy:up,
+      # where the process env beats deploy/.env. PRAXIS_MODELS_ENDPOINT is
+      # pinned the same way (CLI or env, else false) so a value persisted in
+      # deploy/.env cannot change the smoke stack either.
+      LLM_GATEWAY: "{{.LLM_GATEWAY}}"
+      PRAXIS_MODELS_ENDPOINT: '{{.PRAXIS_MODELS_ENDPOINT | default "false"}}'
+      SMOKE_PRAXIS_PORT: "{{.SMOKE_PRAXIS_PORT}}"
       # Offline LLM provider identity. Exported so smoke_up.sh renders the
-      # LiteLLM config and (for a remote host) probes/pulls against the same
+      # gateway config and (for a remote host) probes/pulls against the same
       # values. Defaults resolve to the local baked-model Ollama container;
       # override with `task deploy:smoke:up OLLAMA_HOST=http://host:11434`.
       OLLAMA_HOST: "{{.OLLAMA_HOST}}"
@@ -314,12 +416,18 @@ tasks:
     cmds:
       # Pass LOCAL through the script's environment so its child `task deploy:up`
       # picks it up as a var (go-task reads env vars as vars). smoke_up.sh
-      # additionally exports COMPOSE_OVERLAY (the offline or offline-remote
-      # overlay, chosen by OLLAMA_HOST) for that child task.
+      # additionally exports COMPOSE_OVERLAY (the gateway's offline overlay or
+      # offline-remote, chosen by LLM_GATEWAY and OLLAMA_HOST) for that child task.
       - LOCAL="{{.LOCAL}}" COMPOSE_CMD="{{.COMPOSE_CMD}}" bash {{.ROOT_DIR}}/test/deploy/smoke_up.sh
 
   smoke:down:
-    desc: Tear down the isolated smoke stack, dropping its data + cert volumes and throwaway PKI
+    desc: Tear down the isolated smoke stack, dropping its data + cert volumes and throwaway PKI (pass the same LLM_GATEWAY as smoke:up)
+    vars:
+      LLM_GATEWAY: "{{.SMOKE_LLM_GATEWAY}}"
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
     # Same isolation identity as smoke:up so deploy:down and the volume removal
     # act on the smoke stack, not the production one.
     env:
@@ -327,9 +435,10 @@ tasks:
       CROSSCODEX_CERTS_VOLUME: "{{.SMOKE_CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.SMOKE_GATEWAY_PORT}}"
       CERTS_DIR: "{{.SMOKE_CERTS_DIR}}"
-      # Load the offline overlay so `deploy:down` also removes the ollama service
-      # the smoke stack added; the base compose.yaml alone does not know it.
-      COMPOSE_OVERLAY: "{{.ROOT_DIR}}/deploy/compose.offline.yaml"
+      # Load the gateway's offline overlay so `deploy:down` also removes the
+      # ollama service the smoke stack added; the base files alone do not know it.
+      COMPOSE_OVERLAY: '{{.ROOT_DIR}}/deploy/{{if eq .LLM_GATEWAY "praxis"}}compose.offline-praxis.yaml{{else}}compose.offline.yaml{{end}}'
+      SMOKE_PRAXIS_PORT: "{{.SMOKE_PRAXIS_PORT}}"
     cmds:
       - task deploy:down VOLUMES=1
       - rm -rf {{.SMOKE_CERTS_DIR}}

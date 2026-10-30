@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.opentelemetry.io/otel"
@@ -110,7 +113,9 @@ func (r *sharedResources) close() {
 // holds only for the restricted app_user and graph_user roles, and refuses a
 // schema not at the version this binary needs.
 // The LLM client publishes an audit event for every call to NATS, so need.llm
-// without need.nats is refused rather than run unaudited.
+// without need.nats is refused rather than run unaudited. With need.llm it
+// also refuses an LLM gateway it can't reach (see probeLLMGateway), even when
+// a ResourceOption replaces the client.
 func buildSharedResources(ctx context.Context, cfg *config.Config, need requiredResources, opts ...ResourceOption) (*sharedResources, error) {
 	if need.llm && !need.nats {
 		return nil, errors.New("cannot open the LLM client without NATS: LLM audit events are published to NATS, and an LLM call must not go unaudited. Have the caller request the nats resource alongside llm")
@@ -222,6 +227,10 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 			return nil, fmt.Errorf("create LLM client: %w", err)
 		}
 		res.llmClient = llmClient
+		if err := probeLLMGateway(ctx, cfg.LLM, httpClient); err != nil {
+			res.close()
+			return nil, err
+		}
 	}
 
 	for _, opt := range opts {
@@ -229,4 +238,72 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 	}
 
 	return res, nil
+}
+
+// probeLLMGateway sends one GET to the LLM gateway's base URL so the daemon
+// refuses to start, rather than starting healthy and failing every LLM call,
+// when the gateway can't be reached. Any HTTP response counts as reachable,
+// whatever its status: LiteLLM's own status for / or Praxis's 405 for a
+// non-POST. A redirect is such a response and is not followed, because
+// following it would touch another host or scheme than the one configured.
+// Only a transport error fails: DNS, connect, TLS verification, an mTLS
+// rejection or a timeout. llmclient.Health isn't used because its
+// GET /v1/models isn't served by the default Praxis config.
+//
+// httpClient is the TLS client from llmHTTPClient, or nil for the default
+// client. The probe sends no API key and is bounded by llm.timeout, with
+// llmclient's default when that is zero. The error never carries the URL's
+// password or query, which may hold credentials.
+func probeLLMGateway(ctx context.Context, llm config.LLMConfig, httpClient *http.Client) error {
+	// The client is shared with llmclient, so change the redirect policy on a copy.
+	probe := http.Client{}
+	if httpClient != nil {
+		probe = *httpClient
+	}
+	probe.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	timeout := time.Duration(llm.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = llmclient.DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// NewRequestWithContext's error quotes the raw URL, so it is not wrapped.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, llm.GatewayURL, http.NoBody)
+	if err != nil {
+		return errInvalidGatewayURL()
+	}
+	resp, err := probe.Do(req)
+	if err == nil {
+		// The status is irrelevant and the body unread, so a close
+		// error can't change the outcome.
+		_ = resp.Body.Close()
+		return nil
+	}
+
+	shownURL := redactURL(req.URL)
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		// *url.Error repeats the request URL, query included.
+		urlErr.URL = shownURL
+	}
+	return fmt.Errorf("cannot reach LLM gateway %s: %w. crosscodexd refuses to start because every LLM call would fail. "+
+		"Check that the gateway service is running (with compose, include its fragment, e.g. -f deploy/compose.gateway-litellm.yaml "+
+		"or -f deploy/compose.gateway-praxis.yaml), that its TLS certificate names the gateway host (after switching LLM_GATEWAY, "+
+		"regenerate the certificates as the \"LLM gateway\" section of deploy/README.md describes), and that llm.gateway_url is right",
+		shownURL, err)
+}
+
+// errInvalidGatewayURL is deliberately free of the configured value, which may hold a password.
+func errInvalidGatewayURL() error {
+	return errors.New("llm.gateway_url is not a valid URL. crosscodexd refuses to start because every LLM call would fail. " +
+		"Set llm.gateway_url to an absolute http:// or https:// URL such as https://llm-gateway:4000")
+}
+
+// redactURL renders u without its password, query or fragment.
+func redactURL(u *url.URL) string {
+	c := *u
+	c.RawQuery, c.ForceQuery, c.Fragment, c.RawFragment = "", false, "", ""
+	return c.Redacted()
 }

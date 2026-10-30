@@ -71,9 +71,9 @@ var _ = Describe("bootstrap telemetry wiring", func() {
 		cfg.NATS.Embedded.StoreDir = GinkgoT().TempDir()
 		cfg.NATS.Streams.AuditLLMRetention = 90 * 24 * time.Hour
 		cfg.NATS.Streams.AuditEventsRetention = 30 * 24 * time.Hour
-		// llmclient.NewClient runs before WithLLMClient replaces its result,
-		// so it needs a gateway URL; the fake client means it is never dialed.
-		cfg.LLM.GatewayURL = "http://127.0.0.1:1"
+		// The startup probe dials the gateway even though WithLLMClient
+		// replaces the real client, so it must answer.
+		cfg.LLM.GatewayURL = reachableLLMGatewayURL()
 		cfg.Health.Addr = "127.0.0.1:0"
 
 		rt, err := bootstrap(ctx, cfg, WithLLMClient(fixedEmbeddingLLMClient{}))

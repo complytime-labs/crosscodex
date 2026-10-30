@@ -13,7 +13,10 @@
 #   * CROSSCODEX_CERTS_VOLUME — own PKI volume, generated fresh.
 #   * CROSSCODEX_GATEWAY_PORT — own published host port (production keeps 50051).
 #   * CERTS_DIR               — throwaway host dir for the smoke PKI.
-# All four are consumed by deploy/compose.yaml and the deploy:* tasks; the
+#   * SMOKE_PRAXIS_PORT       — host-loopback port for Praxis's mTLS listener
+#                               (LLM_GATEWAY=praxis only).
+# All five are consumed by deploy/compose.yaml plus the LLM gateway fragment
+# (compose.gateway-<LLM_GATEWAY>.yaml) and by the deploy:* tasks; the
 # defaults reproduce the production stack, so only the smoke test overrides them.
 # The `deploy:smoke:*` tasks export these from the SMOKE_* taskfile vars; the
 # defaults below only apply when this script is run directly.
@@ -42,7 +45,24 @@ fi
 : "${CROSSCODEX_CERTS_VOLUME:=crosscodex-smoke-certs}"
 : "${CROSSCODEX_GATEWAY_PORT:=50151}"
 : "${CERTS_DIR:=${OUT_DIR}/certs}"
-export COMPOSE_PROJECT_NAME CROSSCODEX_CERTS_VOLUME CROSSCODEX_GATEWAY_PORT CERTS_DIR
+: "${SMOKE_PRAXIS_PORT:=54443}"
+export COMPOSE_PROJECT_NAME CROSSCODEX_CERTS_VOLUME CROSSCODEX_GATEWAY_PORT CERTS_DIR SMOKE_PRAXIS_PORT
+
+# LLM gateway under test (litellm default, or praxis). Exported so the child
+# `task deploy:up` loads the matching compose.gateway-<gw>.yaml fragment: the
+# process env beats deploy/.env there, so an operator's persisted gateway
+# choice cannot change the smoke stack. PRAXIS_MODELS_ENDPOINT is pinned the
+# same way.
+: "${LLM_GATEWAY:=litellm}"
+: "${PRAXIS_MODELS_ENDPOINT:=false}"
+case "${LLM_GATEWAY}" in
+litellm | praxis) ;;
+*)
+	echo "ERROR: LLM_GATEWAY=${LLM_GATEWAY} is not supported. Use litellm or praxis." >&2
+	exit 1
+	;;
+esac
+export LLM_GATEWAY PRAXIS_MODELS_ENDPOINT
 
 # Offline LLM provider: back the smoke stack with a local Ollama instead of a
 # real OpenAI key, mirroring the integration stack. The deploy:smoke:up task
@@ -64,20 +84,25 @@ esac
 export OLLAMA_HOST OLLAMA_CHAT_MODEL OLLAMA_EMBED_MODEL
 
 if [ "${OLLAMA_HOST}" = "http://localhost:11434" ]; then
-	# Local (default): the overlay runs a baked-model Ollama container that LiteLLM
-	# depends on. Build that image first. This mirrors the internal
-	# `test:integration:build-ollama-image` task (same image, Containerfile, and
-	# image-inspect idempotency guard); that task is internal and so cannot be
-	# invoked from the CLI here. The guard skips the multi-minute build when the
-	# image already exists.
-	export COMPOSE_OVERLAY="${ROOT_DIR}/deploy/compose.offline.yaml"
+	# Local (default): the gateway's offline overlay runs a baked-model Ollama
+	# container that the gateway depends on. Build that image first. This
+	# mirrors the internal `test:integration:build-ollama-image` task (same
+	# image, Containerfile, and image-inspect idempotency guard); that task is
+	# internal and so cannot be invoked from the CLI here. The guard skips the
+	# multi-minute build when the image already exists.
+	if [ "${LLM_GATEWAY}" = "praxis" ]; then
+		export COMPOSE_OVERLAY="${ROOT_DIR}/deploy/compose.offline-praxis.yaml"
+	else
+		export COMPOSE_OVERLAY="${ROOT_DIR}/deploy/compose.offline.yaml"
+	fi
 	: "${CONTAINER_ENGINE:=podman}"
 	if ! "${CONTAINER_ENGINE}" image inspect crosscodex-test-ollama:latest >/dev/null 2>&1; then
 		echo "Building baked-model Ollama image (crosscodex-test-ollama:latest) ..."
 		"${CONTAINER_ENGINE}" build -t crosscodex-test-ollama:latest \
 			-f "${ROOT_DIR}/test/ollama/Containerfile" "${ROOT_DIR}/test/ollama"
 	fi
-	# The generator maps this sentinel to the compose service name (ollama:11434).
+	# The compose service name ollama:11434 serves this path: the generator maps
+	# this sentinel to it for LiteLLM, and the Praxis template hardcodes it.
 	render_host="${OLLAMA_HOST}"
 else
 	# External Ollama (any non-default OLLAMA_HOST): use the overlay that only
@@ -85,6 +110,11 @@ else
 	# immediately. Probe and pull from the HOST against the address as given --
 	# these run in the host netns, where a loopback override is reachable -- so a
 	# down provider or missing model fails fast here, not at the 120s catalog poll.
+	if [ "${LLM_GATEWAY}" = "praxis" ]; then
+		echo "ERROR: LLM_GATEWAY=praxis supports only the local baked Ollama (OLLAMA_HOST=${OLLAMA_HOST} was given)." >&2
+		echo "The Praxis spike has no remote-Ollama overlay. Unset OLLAMA_HOST, or use LLM_GATEWAY=litellm for a remote Ollama." >&2
+		exit 1
+	fi
 	export COMPOSE_OVERLAY="${ROOT_DIR}/deploy/compose.offline-remote.yaml"
 	echo "Probing Ollama at ${OLLAMA_HOST} ..."
 	if ! curl -sf --connect-timeout 5 --max-time 10 "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1; then
@@ -103,13 +133,22 @@ else
 	fi
 fi
 
-# Render the offline LiteLLM config the overlay mounts, using render_host -- the
-# address LiteLLM (a container) uses to reach Ollama: the compose service name on
-# the baked path, or the host-gateway-translated override for an external host.
-# Written to OUT_DIR, which the overlay bind-mounts.
-bash "${ROOT_DIR}/scripts/generate-litellm-config.sh" all \
-	"${ROOT_DIR}/deploy/litellm/config.offline.yaml.tmpl" \
-	"${OUT_DIR}/litellm_config.yaml" \
+# Render the offline gateway config the overlay mounts, using render_host -- the
+# address the gateway (a container) uses to reach Ollama: the compose service
+# name on the baked path, or the host-gateway-translated override for an
+# external host (LiteLLM only). Written to OUT_DIR, which the overlay bind-mounts.
+case "${LLM_GATEWAY}" in
+praxis)
+	gateway_template="${ROOT_DIR}/deploy/praxis/config.offline.yaml.tmpl"
+	gateway_config="${OUT_DIR}/praxis_config.yaml"
+	;;
+litellm)
+	gateway_template="${ROOT_DIR}/deploy/litellm/config.offline.yaml.tmpl"
+	gateway_config="${OUT_DIR}/litellm_config.yaml"
+	;;
+esac
+bash "${ROOT_DIR}/scripts/generate-llm-gateway-config.sh" all \
+	"${gateway_template}" "${gateway_config}" \
 	"${render_host}" "${OLLAMA_CHAT_MODEL}" "${OLLAMA_EMBED_MODEL}"
 
 task deploy:up
@@ -139,6 +178,99 @@ run_cli() {
 		"$@"
 }
 
+# Praxis path only: probe the gateway's mTLS listener directly (published on
+# host loopback by compose.offline-praxis.yaml). The positive probe runs first,
+# so a refused connection in the negative probes means the TLS handshake was
+# rejected, not that the port is down.
+if [ "${LLM_GATEWAY}" = "praxis" ]; then
+	praxis_url="https://localhost:${SMOKE_PRAXIS_PORT}"
+	embed_body='{"model":"embed","input":["smoke probe"]}'
+
+	echo "Praxis probe: trusted client certificate is accepted ..."
+	if ! curl -sSf --max-time 30 --cacert "${CERTS_DIR}/ca.pem" \
+		--cert "${CERTS_DIR}/client.pem" --key "${CERTS_DIR}/client-key.pem" \
+		-H 'Content-Type: application/json' -d "${embed_body}" \
+		"${praxis_url}/v1/embeddings" >/dev/null; then
+		echo "FAIL: Praxis rejected a request with the trusted client certificate." >&2
+		exit 1
+	fi
+
+	echo "Praxis probe: no client certificate is refused ..."
+	if curl -s --max-time 10 --cacert "${CERTS_DIR}/ca.pem" \
+		-H 'Content-Type: application/json' -d "${embed_body}" \
+		"${praxis_url}/v1/embeddings" >/dev/null 2>&1; then
+		echo "FAIL: Praxis served a client that presented no certificate (mTLS not enforced)." >&2
+		exit 1
+	fi
+
+	echo "Praxis probe: certificate from an untrusted CA is refused ..."
+	# A second run of the deploy PKI generator mints an unrelated CA. It lives
+	# under CERTS_DIR so deploy:smoke:down removes it with the smoke PKI.
+	untrusted_dir="${CERTS_DIR}/untrusted"
+	rm -rf "${untrusted_dir}"
+	mkdir -p "${untrusted_dir}"
+	go run "${ROOT_DIR}/deploy/certs/gen.go" "${untrusted_dir}" >/dev/null
+	# curl cannot tell a bad client cert file apart from a server refusal, so
+	# verify the files exist first. With them present and the trusted probe
+	# above passing, a refusal here is attributed to the untrusted CA.
+	for f in client.pem client-key.pem; do
+		if [ ! -s "${untrusted_dir}/${f}" ]; then
+			echo "FAIL: untrusted-CA probe setup: ${untrusted_dir}/${f} is missing or empty." >&2
+			echo "Check that 'go run deploy/certs/gen.go ${untrusted_dir}' writes a client certificate and key." >&2
+			exit 1
+		fi
+	done
+	if curl -s --max-time 10 --cacert "${CERTS_DIR}/ca.pem" \
+		--cert "${untrusted_dir}/client.pem" --key "${untrusted_dir}/client-key.pem" \
+		-H 'Content-Type: application/json' -d "${embed_body}" \
+		"${praxis_url}/v1/embeddings" >/dev/null 2>&1; then
+		echo "FAIL: Praxis served a client certificate from an untrusted CA." >&2
+		exit 1
+	fi
+
+	# Ask for a model Ollama really serves (the raw chat model name) but that is
+	# not a Praxis alias. If Praxis forwarded unmapped models, Ollama would answer
+	# 200, so a non-2xx here is Praxis's routing refusal, not an upstream one.
+	echo "Praxis probe: unmapped model (${OLLAMA_CHAT_MODEL}) is rejected ..."
+	unmapped_body="$(printf '{"model":"%s","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' "${OLLAMA_CHAT_MODEL}")"
+	if ! code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --cacert "${CERTS_DIR}/ca.pem" \
+		--cert "${CERTS_DIR}/client.pem" --key "${CERTS_DIR}/client-key.pem" \
+		-H 'Content-Type: application/json' -d "${unmapped_body}" \
+		"${praxis_url}/v1/chat/completions")"; then
+		echo "FAIL: the unmapped-model request to ${praxis_url} did not complete (curl error above)." >&2
+		echo "The trusted probe succeeded, so check whether the praxis container is still running." >&2
+		exit 1
+	fi
+	case "${code}" in
+	2??)
+		echo "FAIL: Praxis forwarded an unmapped model (HTTP ${code})." >&2
+		exit 1
+		;;
+	esac
+	unmapped_code="${code}"
+
+	# The body names a mapped model, so without the method gate Praxis would
+	# route this GET to Ollama like a POST. Requiring the gate's own problem
+	# detail as well as 405 keeps an upstream 405 from passing the probe.
+	echo "Praxis probe: GET on a mapped path is refused with 405 ..."
+	mapped_body='{"model":"default","messages":[{"role":"user","content":"hi"}],"max_tokens":1}'
+	get_out="${OUT_DIR}/praxis-get-probe.json"
+	if ! code="$(curl -sS -o "${get_out}" -w '%{http_code}' --max-time 30 --cacert "${CERTS_DIR}/ca.pem" \
+		--cert "${CERTS_DIR}/client.pem" --key "${CERTS_DIR}/client-key.pem" \
+		-X GET -H 'Content-Type: application/json' -d "${mapped_body}" \
+		"${praxis_url}/v1/chat/completions")"; then
+		echo "FAIL: the GET request to ${praxis_url}/v1/chat/completions did not complete (curl error above)." >&2
+		echo "The trusted probe succeeded, so check whether the praxis container is still running." >&2
+		exit 1
+	fi
+	if [ "${code}" != "405" ] || ! grep -q 'This gateway forwards only POST' "${get_out}"; then
+		echo "FAIL: GET /v1/chat/completions got HTTP ${code} without the method gate's 405 (body in ${get_out})." >&2
+		echo "Check that the static_response method gate (unless: methods: [POST]) precedes model_to_provider in deploy/praxis/config.offline.yaml.tmpl." >&2
+		exit 1
+	fi
+	echo "Praxis probes passed (unmapped model got HTTP ${unmapped_code}, GET got HTTP ${code})."
+fi
+
 # Assert the import took effect (not just that the CLI exited 0): the gateway
 # must acknowledge the submission. --plain disables color so the "Job ID:" line
 # parses cleanly below.
@@ -148,7 +280,7 @@ grep -q "Document submitted successfully" "${OUT_DIR}/import.log"
 # Recover the async analysis job id the import enqueued. Gating on this job's
 # terminal status is what makes the smoke test exercise the LLM path: the catalog
 # row + controls persist during parse regardless of embeddings, so a `list` check
-# alone passes against a broken LiteLLM/Ollama. The FULL_ANALYSIS job, by
+# alone passes against a broken LLM gateway/Ollama. The FULL_ANALYSIS job, by
 # contrast, FAILs on insufficient embedding coverage (<80%), so only a working
 # embed path drives it to COMPLETED.
 JOB_ID="$(sed -n 's/^Job ID: //p' "${OUT_DIR}/import.log" | head -n1)"

@@ -1,0 +1,13 @@
+# Opt-in LLM gateway fragment: makes Praxis serve GET /v1/models. Loaded after
+# compose.gateway-praxis.yaml by the deploy:* tasks when LLM_GATEWAY=praxis and
+# PRAXIS_MODELS_ENDPOINT=true. See praxis/config.models.yaml for the
+# pipeline-check override that this enables.
+services:
+  praxis:
+    # Volume lists append across -f files, so this is mounted at a different
+    # path and the command replaced outright (command replaces, not appends);
+    # that keeps the override independent of merge semantics. The default
+    # config stays mounted, unused, at /etc/praxis/praxis.yaml: expected.
+    volumes:
+      - ./praxis/config.models.yaml:/etc/praxis/praxis-models.yaml:ro
+    command: ["-c", "/etc/praxis/praxis-models.yaml"]

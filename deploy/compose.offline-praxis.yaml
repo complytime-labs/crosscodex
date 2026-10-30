@@ -1,0 +1,35 @@
+# Offline overlay for the deploy SMOKE stack with LLM_GATEWAY=praxis. Applied on
+# top of compose.yaml + compose.gateway-praxis.yaml only by the smoke path
+# (test/deploy/smoke_up.sh exports COMPOSE_OVERLAY); production never loads it.
+#
+# Adds the local baked-model Ollama (same service as compose.offline.yaml, which
+# is LiteLLM-specific) and points praxis at the rendered offline config. It also
+# publishes praxis's mTLS listener on host loopback so smoke_up.sh can probe
+# it directly with and without a client certificate.
+services:
+  ollama:
+    # Baked-model image from the integration stack (llama3.2:1b +
+    # granite-embedding:30m), built from test/ollama/Containerfile by
+    # smoke_up.sh.
+    image: crosscodex-test-ollama:latest
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  praxis:
+    depends_on:
+      ollama:
+        condition: service_healthy
+    # Distinct target: overlay volume lists concatenate, so reusing
+    # /etc/praxis/praxis.yaml would collide with the base mount. The command
+    # override (replaced, not merged) selects this file.
+    volumes:
+      - ../.test-output/deploy-smoke/praxis_config.yaml:/etc/praxis/praxis.offline.yaml:ro
+    command: ["-c", "/etc/praxis/praxis.offline.yaml"]
+    ports:
+      # Loopback only: the probes run on the host; nothing else may reach it.
+      - "127.0.0.1:${SMOKE_PRAXIS_PORT:?SMOKE_PRAXIS_PORT required}:4443"

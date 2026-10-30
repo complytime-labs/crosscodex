@@ -1,6 +1,7 @@
 # Backups (issue #36): WAL archiving on db, a shared backup volume, and the
-# db-restore one-shot (profile "restore"). Use with the base file:
-#   docker compose -f compose.yaml -f compose.backup.yaml up -d
+# db-restore one-shot (profile "restore"). Use with the base file and the
+# LLM gateway fragment you run (compose.gateway-praxis.yaml for praxis):
+#   docker compose -f compose.yaml -f compose.gateway-litellm.yaml -f compose.backup.yaml up -d
 # Needs backup.env (copy backup.env.example) and CROSSCODEX_BACKUP_DSN in .env.
 # Procedures: README.md, "Backups".
 #

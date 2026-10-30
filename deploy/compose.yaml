@@ -4,8 +4,13 @@
 # Cert keys in the shared crosscodex-certs volume are owned root:10001, mode
 # 0640 (group-read only). Every service that mounts the volume joins GID 10001
 # via group_add so it can read the keys despite running as a different user
-# (postgres, nats=root, stunnel=nobody, crosscodexd=nonroot). This GID MUST
-# match CERT_GID in .taskfiles/deploy.yml (the deploy:certs task).
+# (postgres, nats=root, stunnel=nobody, praxis=praxis, crosscodexd=nonroot).
+# This GID MUST match CERT_GID in .taskfiles/deploy.yml (the deploy:certs task).
+#
+# The LLM gateway is not defined here: each deploy:* task also loads
+# compose.gateway-${LLM_GATEWAY}.yaml (litellm by default, or praxis). Running
+# compose by hand needs both files, e.g.
+#   podman-compose -f compose.yaml -f compose.gateway-litellm.yaml up -d
 #
 # Database roles: crosscodexd connects only as the restricted roles app_user
 # and graph_user, and refuses to start as a superuser or the schema owner.
@@ -75,53 +80,6 @@ services:
       timeout: 5s
       retries: 15
 
-  litellm:
-    image: docker.io/litellm/litellm:1.87.1
-    restart: unless-stopped
-    # Only the keys litellm/config.yaml reads; .env also holds database
-    # passwords, which this third-party image must not receive.
-    environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      CROSSCODEX_LLM_API_KEY: ${CROSSCODEX_LLM_API_KEY:-}
-    volumes:
-      - ./litellm/config.yaml:/app/config.yaml:ro
-    command:
-      ["--config", "/app/config.yaml", "--port", "4000", "--host", "127.0.0.1"]
-    healthcheck:
-      # Use /health/liveliness, not /health: /health is auth-gated when a
-      # master_key is set (returns 401 unauthenticated) and makes live calls to
-      # every configured provider. liveliness is unauthenticated, cheap, and
-      # confirms the proxy is serving. Probing /health leaves the container
-      # permanently unhealthy, stalling litellm-tls and crosscodexd.
-      test:
-        [
-          "CMD-SHELL",
-          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:4000/health/liveliness'')"',
-        ]
-      interval: 5s
-      timeout: 10s
-      retries: 30
-      start_period: 15s
-
-  litellm-tls:
-    image: crosscodex-litellm-tls:${TAG:-latest}
-    restart: unless-stopped
-    build:
-      context: ./litellm
-      dockerfile: Containerfile
-    group_add: ["10001"]
-    network_mode: "service:litellm"
-    volumes:
-      - crosscodex-certs:/certs:ro
-    depends_on:
-      litellm:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 4443 || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 15
-
   migrate:
     image: crosscodexd:${TAG:-latest}
     restart: "no"
@@ -169,11 +127,6 @@ services:
       migrate:
         condition: service_completed_successfully
       nats:
-        condition: service_healthy
-      # crosscodexd reaches the LLM only through litellm-tls (stunnel on
-      # litellm:4443); litellm-tls being healthy transitively guarantees
-      # litellm is up, so gate the daemon on the TLS front, not the backend.
-      litellm-tls:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "/crosscodexd", "healthcheck"]

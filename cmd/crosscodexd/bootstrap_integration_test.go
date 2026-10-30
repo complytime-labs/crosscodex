@@ -236,9 +236,8 @@ var _ = Describe("bootstrap with role=worker", func() {
 
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RoleWorker
-		// GatewayURL only needs to be non-empty: llmclient.NewClient stores it
-		// without dialing out, so no live LLM gateway is required here.
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		// The startup probe needs a gateway that answers; no LLM call is made.
+		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -320,7 +319,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
@@ -350,7 +349,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = ""
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
@@ -374,7 +373,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
 		cfg.Attestation.PrivateKeyPath = ""
@@ -400,7 +399,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
@@ -426,7 +425,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
@@ -455,7 +454,7 @@ var _ = Describe("bootstrap with role=all", func() {
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RoleAll
 		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
-		cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Server.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
@@ -635,7 +634,7 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
 		switch role {
 		case config.RoleAll:
-			cfg.LLM = config.LLMConfig{GatewayURL: "http://127.0.0.1:0", DefaultModel: "test-model", EmbeddingModel: "test-model"}
+			cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 			cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 			cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 			cfg.TLS = testServerTLS()

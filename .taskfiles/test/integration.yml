@@ -83,7 +83,9 @@ env:
   TEST_OTLP_GRPC_ENDPOINT: "localhost:14317"
   TEST_OTLP_HTTP_ENDPOINT: "localhost:14318"
   TEST_JAEGER_QUERY_URL: "http://localhost:16686"
-  TEST_LITELLM_URL: "http://localhost:14000"
+  # LiteLLM test service (`llm` and `all` profiles). Only the `llm` task
+  # overrides it, per LLM_GATEWAY, through run-ginkgo's LLM_GATEWAY_URL var.
+  TEST_LLM_GATEWAY_URL: "http://localhost:14000"
   TEST_OLLAMA_HOST: "{{.OLLAMA_HOST}}"
   TEST_LLM_CHAT_MODEL: "small"
   TEST_LLM_EMBED_MODEL: "embed"
@@ -408,14 +410,29 @@ tasks:
           PACKAGES: "{{.ROOT_DIR}}/test/integration/..."
 
   llm:
-    desc: Run LLM integration tests (LiteLLM + Ollama + Jaeger full stack, analyzers)
+    desc: Run LLM integration tests (LLM gateway + Ollama + Jaeger full stack, analyzers; LLM_GATEWAY=litellm|praxis)
     deps: [ensure-deps]
+    vars:
+      # LLM gateway for this task only: litellm (default) or praxis (spike;
+      # local baked Ollama only). Every other suite (e.g. `all`, e2e,
+      # `embedded`) ignores it, even when exported, and always uses litellm.
+      # Task-scoped, not global: included Taskfiles share one global var
+      # namespace, and a global default here would hide deploy/.env's
+      # LLM_GATEWAY from the deploy:* tasks (see .taskfiles/deploy.yml).
+      LLM_GATEWAY: '{{.LLM_GATEWAY | default "litellm"}}'
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
+    preconditions:
+      - sh: '[ "{{.LLM_GATEWAY}}" != "praxis" ] || [ "{{.OLLAMA_HOST}}" = "http://localhost:11434" ]'
+        msg: "LLM_GATEWAY=praxis supports only the local baked Ollama (OLLAMA_HOST={{.OLLAMA_HOST}}). Unset OLLAMA_HOST, or use LLM_GATEWAY=litellm for a remote Ollama."
     cmds:
       - task: compose-up
-        vars: { PROFILE: llm }
+        vars: { PROFILE: '{{if eq .LLM_GATEWAY "praxis"}}llm-praxis{{else}}llm{{end}}' }
       - defer:
           task: compose-down
-          vars: { PROFILE: llm }
+          vars: { PROFILE: '{{if eq .LLM_GATEWAY "praxis"}}llm-praxis{{else}}llm{{end}}' }
       - mkdir -p {{.TEST_DIR}}
       - task: run-ginkgo
         vars:
@@ -423,6 +440,7 @@ tasks:
           TIMEOUT: 600s
           REPORT: integration-llm
           COVERAGE: integration-llm-coverage.out
+          LLM_GATEWAY_URL: '{{if eq .LLM_GATEWAY "praxis"}}http://localhost:14001{{else}}http://localhost:14000{{end}}'
           PACKAGES: "{{.ROOT_DIR}}/pkg/llmclient/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/relationship/..."
 
   trace-propagation:
@@ -493,7 +511,7 @@ tasks:
           done
         fi
       - task: '{{if eq .NEEDS_CERTS "true"}}prepare-cert-volume{{else}}ensure-deps{{end}}'
-      - task: generate-litellm-config
+      - task: generate-llm-gateway-config
         vars:
           PROFILE: "{{.PROFILE}}"
       # Pre-build the Ollama image (with baked-in models) for local runs.
@@ -507,6 +525,8 @@ tasks:
         _extra_compose=""
         if [ "{{.OLLAMA_HOST}}" != "http://localhost:11434" ]; then
           case "{{.PROFILE}}" in
+            # llm-praxis is absent on purpose: Praxis supports only the local
+            # Ollama (the `llm` precondition). Add it here if that is lifted.
             llm|all)
               _scale="--scale ollama=0"
               _extra_compose="-f {{.ROOT_DIR}}/test/compose.host-network.yaml"
@@ -549,10 +569,13 @@ tasks:
           {{.CONTAINER_ENGINE}} rm -f "$c" 2>/dev/null || true
         done
 
-  generate-litellm-config:
+  generate-llm-gateway-config:
     internal: true
+    vars:
+      GATEWAY_TEMPLATE: '{{if eq .PROFILE "llm-praxis"}}praxis_config.yaml.tmpl{{else}}litellm_config.yaml.tmpl{{end}}'
+      GATEWAY_CONFIG: '{{if eq .PROFILE "llm-praxis"}}praxis_config.yaml{{else}}litellm_config.yaml{{end}}'
     cmds:
-      - bash "{{.ROOT_DIR}}/scripts/generate-litellm-config.sh" "{{.PROFILE}}" "{{.TASKFILE_DIR}}/litellm_config.yaml.tmpl" "{{.ROOT_DIR}}/.test-output/litellm_config.yaml" "{{.OLLAMA_HOST}}" "{{.OLLAMA_CHAT_MODEL}}" "{{.OLLAMA_EMBED_MODEL}}"
+      - bash "{{.ROOT_DIR}}/scripts/generate-llm-gateway-config.sh" "{{.PROFILE}}" "{{.TASKFILE_DIR}}/{{.GATEWAY_TEMPLATE}}" "{{.ROOT_DIR}}/.test-output/{{.GATEWAY_CONFIG}}" "{{.OLLAMA_HOST}}" "{{.OLLAMA_CHAT_MODEL}}" "{{.OLLAMA_EMBED_MODEL}}"
 
   ensure-ollama-models:
     internal: true
@@ -570,7 +593,9 @@ tasks:
       # when ginkgo fails, and the step exits non-zero if either step fails.
       # --timeout also covers compiling the suite with --race and coverage,
       # which alone can exceed 120s on a slow CI runner; 300s is the floor.
+      # LLM_GATEWAY_URL (optional) overrides the global TEST_LLM_GATEWAY_URL.
       - |
+        {{if .LLM_GATEWAY_URL}}export TEST_LLM_GATEWAY_URL="{{.LLM_GATEWAY_URL}}"{{end}}
         status=0
         go run github.com/onsi/ginkgo/v2/ginkgo run -v --keep-going --race --tags {{.TAGS}} --timeout {{.TIMEOUT}} --coverprofile {{.COVERAGE}} --output-dir {{.TEST_DIR}} --json-report={{.REPORT}}.json {{.PACKAGES}} || status=$?
         go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/{{.REPORT}}.json -format {{.GINKGOLEAF_FORMAT}} -exit-code || status=$?

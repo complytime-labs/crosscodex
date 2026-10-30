@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"time"
 
@@ -12,6 +14,17 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 )
+
+// reachableLLMGatewayURL starts a plain-HTTP stand-in for the LLM gateway,
+// answering every request with 404, and returns its URL. buildSharedResources
+// refuses to start when it can't reach llm.gateway_url, even when
+// WithLLMClient replaces the real client, so every spec that builds the llm
+// resource needs a gateway that answers. The server closes when the spec ends.
+func reachableLLMGatewayURL() string {
+	gw := httptest.NewServer(http.NotFoundHandler())
+	DeferCleanup(gw.Close)
+	return gw.URL
+}
 
 var _ = Describe("resourcesForRole", func() {
 	DescribeTable("declares exactly the shared resources each role needs",

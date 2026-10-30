@@ -54,6 +54,8 @@ tenants:
   enabled: false
   default_tenant: default
 llm:
+  # LLM_GATEWAY=praxis overrides this via CROSSCODEX_LLM_GATEWAY_URL
+  # (compose.gateway-praxis.yaml).
   gateway_url: "https://litellm:4443"
   gateway_mode: true
   # default_model and embedding_model are populated by the CROSSCODEX_LLM_*
