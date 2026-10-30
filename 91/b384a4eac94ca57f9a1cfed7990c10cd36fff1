@@ -1,0 +1,19 @@
+test/tooling/stop-daemon.venom.yml
+  s_f25bc7056df6db::t_1177a5c5412c90 25,30,42,44,50,52,80,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91b384a4eac94ca57f9a1cfed7990c10cd36fff1",
+  "prompts": {},
+  "sessions": {
+    "s_f25bc7056df6db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "025e01ef-ea01-46ad-8be9-42805248863e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
