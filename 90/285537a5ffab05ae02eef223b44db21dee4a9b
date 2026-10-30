@@ -1,0 +1,53 @@
+internal/pipeline/candidate_generation_integration_test.go
+  s_40007cd4cf2229::t_6ee20cc6ba3976 177
+internal/pipeline/executor_bdd_test.go
+  s_40007cd4cf2229::t_2d7091808bdda0 399,434,484,561,595,637,671,714,760,819,858,899,983,1270,1387,1475,1567,1661,1734
+  s_40007cd4cf2229::t_a44b11feb161fd 462,507,580,614,656,690,733,779,838,877,918
+  s_40007cd4cf2229::t_7c2839f43ce0bf 331-334,1141-1143,1147,1151-1160,1172,1174-1179
+  s_40007cd4cf2229::t_847be52a942364 1601,1608,1691
+internal/gateway/document.go
+  s_40007cd4cf2229::t_f184ed8821659a 124
+internal/pipeline/executor.go
+  s_40007cd4cf2229::t_da757c994f6ba0 346,355-358
+  s_40007cd4cf2229::t_e97bf484b120dc 470-473
+  s_40007cd4cf2229::t_4a3e345e66ed64 167-175,244-250,252,257
+  s_40007cd4cf2229::t_aba0ea40bbdac9 359
+internal/pipeline/store_bdd_test.go
+  s_40007cd4cf2229::t_26a7de942085a2 150-153
+internal/pipeline/pipeline_integration_test.go
+  s_40007cd4cf2229::t_6ee20cc6ba3976 126,194
+cmd/crosscodexd/e2e_integration_test.go
+  s_40007cd4cf2229::t_6ee20cc6ba3976 225
+api/proto/crosscodex/v1/pipeline.proto
+  s_40007cd4cf2229::t_cd0618f92bf021 56-58,62-64
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_40007cd4cf2229::t_6ee20cc6ba3976 154
+internal/pipeline/candidate_generation.go
+  s_40007cd4cf2229::t_f184ed8821659a 15-19,26-29,31-32,34,37,90,95
+internal/pipeline/service_bdd_test.go
+  s_40007cd4cf2229::t_a1f99e1d06b280 122,186,238,267-282,396,441,510,574,600,634,688,759
+internal/pipeline/service_impl.go
+  s_40007cd4cf2229::t_f184ed8821659a 49-53
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_40007cd4cf2229::t_6ee20cc6ba3976 298
+internal/gateway/gateway_bdd_test.go
+  s_40007cd4cf2229::t_157c0b5fdc66f9 810
+internal/pipeline/candidate_generation_bdd_test.go
+  s_40007cd4cf2229::t_1161af9050d9ca 83,89-90,94,100,106-109,123,150,168,188,201,221,234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90285537a5ffab05ae02eef223b44db21dee4a9b",
+  "prompts": {},
+  "sessions": {
+    "s_40007cd4cf2229": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "57b7cf40-692f-43a3-985e-d4b372fc87ee",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
