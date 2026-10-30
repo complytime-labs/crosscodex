@@ -210,7 +210,7 @@ flowchart TD
 ### Deployment Modes
 
 - **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. Run `crosscodexd migrate` before starting `crosscodexd` against a database. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
-- **Production (compose)** -- Single-host production stack with full mutual TLS across all services (PostgreSQL, NATS, LiteLLM, CrossCodex gateway). One-command bring-up via `task deploy:up` after populating `deploy/.env` and generating certificates with `task deploy:certs`. The LiteLLM gateway runs behind a stunnel sidecar to provide end-to-end mTLS. See [deploy/README.md](deploy/README.md) for setup, first-use CLI commands, and operations.
+- **Production (compose)** -- Single-host production stack with full mutual TLS across all services (PostgreSQL, NATS, the LLM gateway, CrossCodex gateway). One-command bring-up via `task deploy:up` after populating `deploy/.env` and generating certificates with `task deploy:certs`. The default LiteLLM gateway runs behind a stunnel sidecar to provide end-to-end mTLS; `LLM_GATEWAY=praxis` selects Praxis AI instead (spike). See [deploy/README.md](deploy/README.md) for setup, first-use CLI commands, and operations.
 - **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage. Multi-host deployment and FIPS 140 container images tracked in issue [#17](https://github.com/complytime-labs/crosscodex/issues/17).
 
 See [Service Runtime Guide](docs/dev/service-runtime.md) for the `--role` flag, role precedence, health-check wiring, the shared `nats.url` every split role must set, and gateway startup preconditions.
@@ -260,7 +260,7 @@ Values merge in ascending priority (last wins):
 ```yaml
 # LLM Gateway
 llm:
-  gateway_url: "http://localhost:4000"
+  gateway_url: "http://localhost:4000"  # roles pipeline, worker and all refuse to start if this doesn't answer
   default_model: "qwen3:8b"
   timeout: 30
 
