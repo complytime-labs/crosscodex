@@ -1,0 +1,33 @@
+pkg/analyzer/candidate/builtin/level.go
+  s_e0ff893d05d043::t_ce93957cbea113 55,61-63
+pkg/analyzer/candidate/builtin/parameters.go
+  s_e0ff893d05d043::t_ce93957cbea113 1-64
+pkg/analyzer/candidate/builtin/semantic.go
+  s_e0ff893d05d043::t_ce93957cbea113 71-76,81-83,85-87,89-91
+internal/pipeline/candidate_registry.go
+  s_e0ff893d05d043::t_d4f2aebd8169d4 6,52-61
+  s_e0ff893d05d043::t_2a7658e0b90a5d 4,21-23,67-83
+pkg/analyzer/candidate/builtin/keyword.go
+  s_e0ff893d05d043::t_ce93957cbea113 67,89-91
+internal/pipeline/candidate_registry_test.go
+  s_e0ff893d05d043::t_ebf618b71436bd 66-160
+pkg/analyzer/candidate/builtin/parameters_bdd_test.go
+  s_e0ff893d05d043::t_c79855156181c7 73,75,77
+  s_e0ff893d05d043::t_477e9041de62e9 1-72,74,76,78-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "686ee40cb1e81f118257b2c5033a4bbd79f3cb78",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
