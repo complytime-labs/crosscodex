@@ -41,7 +41,13 @@ vars:
           echo "MISSING"
           ;;
       esac
-  COMPOSE_FILE: "{{.ROOT_DIR}}/deploy/compose.yaml"
+  # LLM gateway between crosscodexd and the model provider: litellm (default;
+  # LiteLLM behind a stunnel mTLS sidecar) or praxis (Praxis AI terminating
+  # mTLS itself; spike, see deploy/README.md). Selects the compose fragment
+  # every compose invocation below loads on top of compose.yaml. Tasks that run
+  # compose validate it with requires.enum before any dep (build, certs) runs.
+  LLM_GATEWAY: '{{.LLM_GATEWAY | default "litellm"}}'
+  COMPOSE_FILES: "-f {{.ROOT_DIR}}/deploy/compose.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-{{.LLM_GATEWAY}}.yaml"
   # Deploy identity knobs. Override via environment for an isolated stack (the
   # ephemeral smoke stack sets all three plus COMPOSE_PROJECT_NAME); the
   # defaults reproduce the production stack. CERTS_VOLUME and GATEWAY_PORT are
@@ -203,6 +209,10 @@ tasks:
 
   up:
     desc: Bring up the production stack and wait for the gateway to be healthy
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
     deps: [build, certs]
     dir: "{{.ROOT_DIR}}/deploy"
     # Export the identity knobs so the compose subprocess resolves the same
@@ -241,12 +251,12 @@ tasks:
           test -z "${bad}" || { echo "deploy/.env has database passwords that are not URL-safe:${bad}" >&2; exit 1; }
         msg: "deploy/.env database passwords may contain only A-Z a-z 0-9 . _ ~ - because compose.yaml embeds them in postgres:// URLs (see stderr for names). Generate each with: openssl rand -hex 24"
     cmds:
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} up -d --build"
+      - "{{.COMPOSE_CMD}} {{.COMPOSE_FILES}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} up -d --build"
       - |
         echo "Waiting for gateway /healthz ..."
         # 150 x 2s = 300s. Covers the worst-case cold start of the full chain:
-        # litellm (start_period 15s + 30 x 5s = 165s) then crosscodexd
-        # (start_period 20s + 20 x 5s = 100s), with margin.
+        # the LLM gateway (litellm: start_period 15s + 30 x 5s = 165s) then
+        # crosscodexd (start_period 20s + 20 x 5s = 100s), with margin.
         for i in $(seq 1 150); do
           if curl -sf --cacert {{.CERTS_DIR}}/ca.pem https://localhost:{{.GATEWAY_PORT}}/healthz >/dev/null; then
             echo "Gateway healthy at https://localhost:{{.GATEWAY_PORT}}"
@@ -256,17 +266,21 @@ tasks:
           sleep 2
         done
         echo "Gateway did not become healthy in time; recent logs:" >&2
-        {{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} logs --tail=50 crosscodexd >&2
+        {{.COMPOSE_CMD}} {{.COMPOSE_FILES}} logs --tail=50 crosscodexd >&2
         exit 1
 
   down:
     desc: Stop the stack (pass VOLUMES=1 to also drop data + cert volumes)
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
     dir: "{{.ROOT_DIR}}/deploy"
     env:
       CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
     cmds:
-      - '{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
+      - '{{.COMPOSE_CMD}} {{.COMPOSE_FILES}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
       # compose's own `down --volumes` does NOT remove `external` volumes, so
       # the cert volume must be dropped explicitly. This keeps VOLUMES=1 a true
       # full teardown and guarantees the next `up` reloads a freshly generated
@@ -275,9 +289,13 @@ tasks:
 
   logs:
     desc: Tail stack logs
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm, praxis]
     dir: "{{.ROOT_DIR}}/deploy"
     cmds:
-      - "{{.COMPOSE_CMD}} -f {{.COMPOSE_FILE}} logs -f {{.CLI_ARGS}}"
+      - "{{.COMPOSE_CMD}} {{.COMPOSE_FILES}} logs -f {{.CLI_ARGS}}"
 
   smoke:
     desc: Container-driven smoke test (up, catalog round-trip over mTLS, then teardown regardless of outcome; LOCAL=1 for the fast host-build path)
