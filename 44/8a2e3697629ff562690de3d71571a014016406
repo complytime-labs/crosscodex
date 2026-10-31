@@ -1,0 +1,21 @@
+README.md
+  s_e0ff893d05d043::t_985da695ee2713 89-93,171,671,678-680,687,690
+docs/dev/attestation.md
+  s_e0ff893d05d043::t_985da695ee2713 50,206,208-213,215-217,269-270,273,276,284,287-289,309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "448a2e3697629ff562690de3d71571a014016406",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
