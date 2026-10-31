@@ -1,0 +1,23 @@
+internal/pipeline/catalog_readers_integration_test.go
+  s_20930006a1ba43::t_b39b47dfa37449 111-138
+internal/pipeline/candidate_readers_bdd_test.go
+  s_20930006a1ba43::t_b39b47dfa37449 115-147
+internal/pipeline/candidate_readers.go
+  s_20930006a1ba43::t_9d4e3ce443a579 133-142,162-163,166-167,183,191-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "483b4d7ad2c59e4514e06e274d8111cfe0f04d60",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
