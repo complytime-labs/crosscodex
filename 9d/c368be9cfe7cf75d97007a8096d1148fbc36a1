@@ -1,0 +1,35 @@
+cmd/crosscodex/config_edit_bdd_test.go
+  s_e0ff893d05d043::t_1c7a24e3549fde 1-208
+cmd/crosscodex/config_edit.go
+  s_e0ff893d05d043::t_6d7b7117efcc56 1-471
+cmd/crosscodex/main.go
+  s_e0ff893d05d043::t_acd4fcf2bae440 24-26,29-33,64-69
+cmd/crosscodex/main_bdd_test.go
+  s_e0ff893d05d043::t_1c7a24e3549fde 421,424-425
+cmd/crosscodex/connect.go
+  s_e0ff893d05d043::t_acd4fcf2bae440 332-335,340-344,362
+README.md
+  s_e0ff893d05d043::t_31bb2df2090931 52-53
+deploy/README.md
+  s_e0ff893d05d043::t_31bb2df2090931 129-130
+cmd/crosscodex/config.go
+  s_e0ff893d05d043::t_9a9e7fb0a3d02f 26,40,84,167-170
+  s_e0ff893d05d043::t_b7edc56c82dce7 34-36,73-74
+  s_e0ff893d05d043::t_acd4fcf2bae440 37,75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9dc368be9cfe7cf75d97007a8096d1148fbc36a1",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
