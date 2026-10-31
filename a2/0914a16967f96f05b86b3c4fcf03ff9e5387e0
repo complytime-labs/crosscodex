@@ -1,0 +1,41 @@
+internal/pipeline/candidate_generation.go
+  s_20930006a1ba43::t_ae00cc26a64da4 17
+  s_20930006a1ba43::t_18d1071e3e6d23 20
+  s_20930006a1ba43::t_e21290bef97709 84,89,113,135
+internal/pipeline/executor.go
+  s_20930006a1ba43::t_e21290bef97709 259,261-262,359,406,555,557,875-876,878,880,882-886
+  s_20930006a1ba43::t_ae00cc26a64da4 27
+pkg/jobconfig/jobconfig_property_test.go
+  s_20930006a1ba43::t_2f0ee1321ce989 1-46
+pkg/jobconfig/jobconfig_bdd_test.go
+  s_20930006a1ba43::t_2f0ee1321ce989 1-58
+pkg/jobconfig/jobconfig_suite_test.go
+  s_20930006a1ba43::t_2f0ee1321ce989 1-13
+internal/pipeline/service_impl.go
+  s_20930006a1ba43::t_e21290bef97709 359
+pkg/jobconfig/jobconfig.go
+  s_20930006a1ba43::t_03f0a7cb957d96 1-58
+internal/pipeline/stages.go
+  s_20930006a1ba43::t_e21290bef97709 84,86
+internal/pipeline/service_bdd_test.go
+  s_20930006a1ba43::t_06ae129fef219f 1128,1152
+pkg/jobconfig/jobconfig_fuzz_test.go
+  s_20930006a1ba43::t_2f0ee1321ce989 1-11,14-15,18-36
+  s_20930006a1ba43::t_3717e50ba6c225 12-13,16-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a20914a16967f96f05b86b3c4fcf03ff9e5387e0",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
