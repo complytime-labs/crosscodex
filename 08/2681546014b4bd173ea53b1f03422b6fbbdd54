@@ -1,0 +1,27 @@
+pkg/config/references.go
+  s_e0ff893d05d043::t_4166ae66b28696 61-65,93-95,98-99,123-126,128-129
+pkg/config/knownkeys_bdd_test.go
+  s_e0ff893d05d043::t_53bf7ca38dab6b 109-114
+pkg/config/config_fuzz_test.go
+  s_e0ff893d05d043::t_53bf7ca38dab6b 176-177,207-280
+pkg/config/knownkeys.go
+  s_e0ff893d05d043::t_4166ae66b28696 152
+pkg/config/merge_keys_bdd_test.go
+  s_e0ff893d05d043::t_53bf7ca38dab6b 21,31-36,59-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "082681546014b4bd173ea53b1f03422b6fbbdd54",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
