@@ -1,0 +1,61 @@
+internal/analysis/collector_bdd_test.go
+  s_e0ff893d05d043::t_451f90c6f7766a 132,164,210,249,284,322,327,380,490,515,542,578,603,625
+  s_e0ff893d05d043::t_f2bd9900fec496 423-485
+  s_e0ff893d05d043::t_3f61cb21492578 127-131,133-135,159-163,165-167,205-209,211-213,244-248,250-252,279-283,285-287,537-541,543-545,573-577,579-581,620-624,626-628
+internal/analysis/engine.go
+  s_e0ff893d05d043::t_3f61cb21492578 33-36,371-374
+  s_e0ff893d05d043::t_32b2cc702c1dbe 31-32,375-379
+internal/analysis/doc.go
+  s_e0ff893d05d043::t_e52e413582bf72 52-56,59-67
+README.md
+  s_e0ff893d05d043::t_7702d62aaeaa43 38-42,320-323,383-384
+  s_e0ff893d05d043::t_5b41923a938c51 385
+pkg/natsbus/subjects.go
+  s_e0ff893d05d043::t_e52e413582bf72 27-29
+internal/analysis/collector.go
+  s_e0ff893d05d043::t_32b2cc702c1dbe 115-125,348-352,403-415
+  s_e0ff893d05d043::t_870fafafc9b023 416
+pkg/config/defaults.go
+  s_e0ff893d05d043::t_32b2cc702c1dbe 183
+internal/analysis/errors.go
+  s_e0ff893d05d043::t_32b2cc702c1dbe 11-12
+internal/analysis/engine_bdd_test.go
+  s_e0ff893d05d043::t_f2bd9900fec496 455-469,478
+docs/dev/design-principles.md
+  s_e0ff893d05d043::t_e52e413582bf72 177
+pkg/config/config_bdd_test.go
+  s_e0ff893d05d043::t_1a51cf5d0ba704 822-824,828-829,1872-1874,1877-1880,1892-1893,1898-1899
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_e0ff893d05d043::t_d9f7d2a96cb27c 246-247
+cmd/crosscodexd/bootstrap.go
+  s_e0ff893d05d043::t_d9f7d2a96cb27c 631-632
+docs/dev/audit-streams.md
+  s_e0ff893d05d043::t_e52e413582bf72 118
+docs/dev/telemetry.md
+  s_e0ff893d05d043::t_1bb93f54d7958d 170,198
+internal/analysis/options.go
+  s_e0ff893d05d043::t_32b2cc702c1dbe 5,50-57
+  s_e0ff893d05d043::t_e4ecc4d51fc392 58-60
+pkg/config/types.go
+  s_e0ff893d05d043::t_e52e413582bf72 446-450,452-454
+  s_e0ff893d05d043::t_93cb48c62e1213 772-781,800-801
+internal/analysis/types.go
+  s_e0ff893d05d043::t_3f61cb21492578 75-76
+  s_e0ff893d05d043::t_32b2cc702c1dbe 66-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d562051a62a73212c5c137bf41eb57e0bc8613e",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
