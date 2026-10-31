@@ -1,0 +1,25 @@
+pkg/db/role_check_integration_bdd_test.go
+  s_e0ff893d05d043::t_36ac3b5a486ae3 75-89
+docs/dev/migrations.md
+  s_e0ff893d05d043::t_a2578f8e0e51ed 29
+  s_e0ff893d05d043::t_e2c504cecc59ea 82
+pkg/db/role_check.go
+  s_e0ff893d05d043::t_0bd20384f2f0ee 47-48,70-82,86-94
+  s_e0ff893d05d043::t_c0d1e243c1b9e2 95-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7db635b9610f0ed755651984973fdcb9c283b50b",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
