@@ -1,0 +1,20 @@
+internal/pipeline/catalog_readers_integration_test.go
+  s_20930006a1ba43::t_e16a6aefdf2e11 39
+  s_20930006a1ba43::t_ed8bc15b6eb51f 8,18-22,27,32-38,40-63,65-68,81-83,86-90,98,100-103,120-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e5294d0966967fe10c7149a961b7bb96d570d6e",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
