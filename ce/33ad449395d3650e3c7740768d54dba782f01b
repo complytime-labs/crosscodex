@@ -1,0 +1,21 @@
+AGENTS.md
+  s_e0ff893d05d043::t_64549d30592b63 10
+.taskfiles/test.yml
+  s_e0ff893d05d043::t_64549d30592b63 53-55,61-64,68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ce33ad449395d3650e3c7740768d54dba782f01b",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
