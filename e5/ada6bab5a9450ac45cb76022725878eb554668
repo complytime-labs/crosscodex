@@ -1,0 +1,21 @@
+internal/analyzer/embedding/embedding.go
+  s_e0ff893d05d043::t_66c6097f98500b 86-87,105-112
+internal/analyzer/embedding/embedding_bdd_test.go
+  s_e0ff893d05d043::t_a159a96f9bf92f 584-605,956-957
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e5ada6bab5a9450ac45cb76022725878eb554668",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
