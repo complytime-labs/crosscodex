@@ -1,0 +1,22 @@
+pkg/config/errors.go
+  s_e0ff893d05d043::t_b7eb336e6ef874 3-6,29-112
+pkg/config/field_errors_bdd_test.go
+  s_e0ff893d05d043::t_7c75e6527176aa 1-36,38-56
+  s_e0ff893d05d043::t_b7eb336e6ef874 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e95aff981a6e4ea1154013d5723d66ecb0929cf",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
