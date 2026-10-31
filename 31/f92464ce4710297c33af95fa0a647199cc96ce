@@ -1,0 +1,23 @@
+docs/dev/service-runtime.md
+  s_e0ff893d05d043::t_3c34aa9b55cf8e 86,103
+README.md
+  s_e0ff893d05d043::t_c15bfe2a1def93 81-92,168,357-368,665-685,687,689
+docs/dev/attestation.md
+  s_e0ff893d05d043::t_48c9bc432fbeea 54-55,61-63,99-103,110-111,119-121,124-125,129-130,135-137,139,206,208-214,222-230,260-281,300-302,308-309,313-314
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "31f92464ce4710297c33af95fa0a647199cc96ce",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
