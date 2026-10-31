@@ -1,0 +1,24 @@
+cmd/crosscodex/config_edit_bdd_test.go
+  s_e0ff893d05d043::t_a6bb8290f5b1ce 204-250
+cmd/crosscodex/config_edit.go
+  s_e0ff893d05d043::t_c38b419d141729 175-177,438-439,441,504,516-568
+  s_e0ff893d05d043::t_8be691519095c8 32-34,569-570
+README.md
+  s_e0ff893d05d043::t_7778c8c15019d2 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36c138943739d71e42df5843f43fd8e462533815",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
