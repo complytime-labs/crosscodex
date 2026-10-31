@@ -1,0 +1,19 @@
+AGENTS.md
+  s_20930006a1ba43::t_5fccdb47373a3c 5-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3fa31a1d03fbb0999472be07b15dd894885010c9",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
