@@ -1,0 +1,25 @@
+internal/analyzer/embedding/embedding_bdd_test.go
+  s_e0ff893d05d043::t_5b769812394090 492,549,695,726,755,776,806,833,853,882,898,926,964,1008
+internal/analyzer/embedding/embedding_integration_bdd_test.go
+  s_e0ff893d05d043::t_5b769812394090 120
+internal/analyzer/embedding/embedding_llm_integration_bdd_test.go
+  s_e0ff893d05d043::t_5b769812394090 63
+internal/pipeline/production_registry.go
+  s_e0ff893d05d043::t_5b769812394090 77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f1474c41da564d41364d17e873ff126383a735f",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
