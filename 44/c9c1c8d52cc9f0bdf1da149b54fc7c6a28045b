@@ -1,0 +1,37 @@
+internal/pipeline/executor.go
+  s_e0ff893d05d043::t_441e56b84d8569 196,720,724,730
+  s_e0ff893d05d043::t_ec6b7803aa2170 46-49,53-68
+cmd/crosscodex/embedded_bdd_test.go
+  s_e0ff893d05d043::t_6cd2aca98fc72c 230-258
+internal/pipeline/executor_bdd_test.go
+  s_e0ff893d05d043::t_288f989c45ee9e 1256-1263
+  s_e0ff893d05d043::t_baa11585e847cb 1224-1231
+internal/pipeline/service.go
+  s_e0ff893d05d043::t_022ec158c14a0b 53-58,66-69,73,102
+internal/pipeline/service_bdd_test.go
+  s_e0ff893d05d043::t_c1d9e83b98f6b5 11,540-541,552,577
+  s_e0ff893d05d043::t_754581d071b8fe 536-539,542-551,554-559,563-576,578-594,599,607-636
+  s_e0ff893d05d043::t_629c5c46875903 553,560-562
+  s_e0ff893d05d043::t_497ffbca809926 595-598,600-606
+cmd/crosscodex/embedded.go
+  s_e0ff893d05d043::t_8f54e0eb330a94 160-161,265-272
+internal/pipeline/service_impl.go
+  s_e0ff893d05d043::t_022ec158c14a0b 104-105,109,268-271,273,276-277,311-316,382-383,387,427-428,432,524-525,535,718-748
+  s_e0ff893d05d043::t_7949e6deb27daf 749
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44c9c1c8d52cc9f0bdf1da149b54fc7c6a28045b",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
