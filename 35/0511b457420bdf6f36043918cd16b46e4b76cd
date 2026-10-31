@@ -1,0 +1,24 @@
+pkg/config/knownkeys.go
+  s_e0ff893d05d043::t_77cb32d1ef4b69 222-232,238-239
+  s_e0ff893d05d043::t_12af21f40ff64a 206-208
+pkg/config/export_test.go
+  s_e0ff893d05d043::t_22af7205246b4b 25
+pkg/config/knownkeys_bdd_test.go
+  s_e0ff893d05d043::t_22af7205246b4b 4,6,9-10,29-45,47-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "350511b457420bdf6f36043918cd16b46e4b76cd",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
