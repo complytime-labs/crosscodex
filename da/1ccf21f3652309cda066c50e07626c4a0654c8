@@ -1,0 +1,33 @@
+pkg/config/envbind.go
+  s_e0ff893d05d043::t_01be0cd4ac5e17 22-24,50-52,64,153-157,160
+pkg/config/config_fuzz_test.go
+  s_e0ff893d05d043::t_673ca1bd1bb00d 195-198,216-218,229-230,234-235,248
+cmd/crosscodex/config_edit_bdd_test.go
+  s_e0ff893d05d043::t_85706a27dfed6c 6,177-180
+  s_e0ff893d05d043::t_333d306e027031 173-176
+pkg/config/knownkeys.go
+  s_e0ff893d05d043::t_7b309523b4d0da 34-35,37-38,41-65,90-94,115-116,122-125,128-131,137,143-145,147-149,153-174,180-190,201-203,254
+  s_e0ff893d05d043::t_673ca1bd1bb00d 175-179
+pkg/config/loader.go
+  s_e0ff893d05d043::t_01be0cd4ac5e17 30,32,40-45,48-51,54-63,72-76,79,88,90-107,109,113-116,118-132,223,243-246,257-258,274-276,286,294,297
+pkg/config/types_check_bdd_test.go
+  s_e0ff893d05d043::t_4c3fe1867e5c0f 1-89
+pkg/config/errors.go
+  s_e0ff893d05d043::t_78361eb50e7478 27-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da1ccf21f3652309cda066c50e07626c4a0654c8",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
