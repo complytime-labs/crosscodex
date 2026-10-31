@@ -1,0 +1,32 @@
+docs/dev/audit-streams.md
+  s_e0ff893d05d043::t_ab236b8a249f23 27,137,139
+internal/worker/abandoned.go
+  s_e0ff893d05d043::t_ab236b8a249f23 19-21,29-31
+pkg/natsbus/natsbus_fuzz_test.go
+  s_e0ff893d05d043::t_9528a5b997d77b 4-5,80-83,99-128
+  s_e0ff893d05d043::t_adf9b585bad21a 129-130
+pkg/natsbus/jobid_bdd_test.go
+  s_e0ff893d05d043::t_beca1d4dcd920c 1-101
+pkg/natsbus/errors.go
+  s_e0ff893d05d043::t_3be047a79a51a4 22-26
+pkg/natsbus/subjects.go
+  s_e0ff893d05d043::t_aeb4193aa59d27 43-45,47,51-52,61,69,77,85,93,101,111,149-150,169,206-218
+  s_e0ff893d05d043::t_3be047a79a51a4 35-42
+  s_e0ff893d05d043::t_c152826632326e 219-221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e115c6923cc522d85221b0aab331cab90dc4da18",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
