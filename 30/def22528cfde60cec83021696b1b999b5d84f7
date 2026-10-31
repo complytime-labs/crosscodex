@@ -1,0 +1,41 @@
+pkg/config/provenance.go
+  s_e0ff893d05d043::t_8fef84dcd3a6e1 54,56-59
+  s_e0ff893d05d043::t_6a0f535ba1f7f0 3-7,55,60-80
+pkg/config/loader.go
+  s_e0ff893d05d043::t_8fef84dcd3a6e1 82
+pkg/config/knownkeys.go
+  s_e0ff893d05d043::t_6a0f535ba1f7f0 179-180,276-277
+pkg/config/paths.go
+  s_e0ff893d05d043::t_6a0f535ba1f7f0 40-68
+cmd/crosscodex/config_edit_bdd_test.go
+  s_e0ff893d05d043::t_7140e1c0ebc17f 4-6,343-435
+pkg/config/errors.go
+  s_e0ff893d05d043::t_8fef84dcd3a6e1 51-53
+  s_e0ff893d05d043::t_6a0f535ba1f7f0 49-50,55-57
+pkg/config/field_source_bdd_test.go
+  s_e0ff893d05d043::t_26496cc434e094 1-73
+cmd/crosscodex/config_edit.go
+  s_e0ff893d05d043::t_8fef84dcd3a6e1 241,262-295,303-305,317-332
+  s_e0ff893d05d043::t_c24774a953fe76 333
+pkg/config/backup.go
+  s_e0ff893d05d043::t_6a0f535ba1f7f0 86,88,104
+pkg/config/validate.go
+  s_e0ff893d05d043::t_6a0f535ba1f7f0 35,53-60,70-74
+  s_e0ff893d05d043::t_8b288174dee524 75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30def22528cfde60cec83021696b1b999b5d84f7",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
