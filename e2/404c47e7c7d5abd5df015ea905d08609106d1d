@@ -1,0 +1,27 @@
+pkg/natsbus/natsbus_bdd_test.go
+  s_e0ff893d05d043::t_312d06095b9340 4,10,16,834-878
+pkg/natsbus/export_test.go
+  s_e0ff893d05d043::t_312d06095b9340 124-133
+pkg/natsbus/natsbustest/fake.go
+  s_e0ff893d05d043::t_2387336b684d20 150-151
+pkg/natsbus/client.go
+  s_e0ff893d05d043::t_2387336b684d20 552-559
+docs/dev/audit-streams.md
+  s_e0ff893d05d043::t_da352f662a7363 117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2404c47e7c7d5abd5df015ea905d08609106d1d",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
