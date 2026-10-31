@@ -1,0 +1,69 @@
+internal/worker/worker_bdd_test.go
+  s_e0ff893d05d043::t_b668136a727737 76,109,201,219,257,299,333
+internal/worker/handler_bdd_test.go
+  s_e0ff893d05d043::t_b668136a727737 56,125,161,301-302,348,393
+internal/worker/abandon_bdd_test.go
+  s_e0ff893d05d043::t_20a813e164e659 1-13,15-20,22-39,41-51,53-279
+  s_e0ff893d05d043::t_8b159509495adb 14,21,40,52
+internal/worker/worker.go
+  s_e0ff893d05d043::t_f0b71e1f7b24bd 5,9,37-49,63,68-73,82-93,96-98,103,107,112-113,127-133,135-137
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_e0ff893d05d043::t_fffe210102e487 251
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_e0ff893d05d043::t_fffe210102e487 46
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_e0ff893d05d043::t_fffe210102e487 171-173
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_e0ff893d05d043::t_647ec07ddee5ae 284
+internal/worker/worker_fuzz_test.go
+  s_e0ff893d05d043::t_ba75b4af7bbfae 4-5,7,11-13,102-137
+  s_e0ff893d05d043::t_83495f4c40f002 138-139
+cmd/crosscodexd/bootstrap.go
+  s_e0ff893d05d043::t_1a03dac9ba7b14 534-535
+internal/worker/abandoned.go
+  s_e0ff893d05d043::t_a3246c2a3cf977 1-3,6-8,14-99,178
+  s_e0ff893d05d043::t_35e0a0925d3312 4-5,9-13,100-177
+internal/worker/errors.go
+  s_e0ff893d05d043::t_f0b71e1f7b24bd 27-30
+internal/worker/options.go
+  s_e0ff893d05d043::t_f0b71e1f7b24bd 5,51-64,69-76
+  s_e0ff893d05d043::t_355fbaa712ce84 77-79
+pkg/config/types.go
+  s_e0ff893d05d043::t_5828c7847de485 780-782
+docs/dev/audit-streams.md
+  s_e0ff893d05d043::t_121b01e3ed56f3 135-140,143-144
+  s_e0ff893d05d043::t_d7ea1a9032600c 141-142
+internal/worker/doc.go
+  s_e0ff893d05d043::t_48aa4a1aa8c931 6-25,36-37,63
+  s_e0ff893d05d043::t_423b5d4f1d8e01 45-46
+cmd/crosscodexd/telemetry_wiring_bdd_test.go
+  s_e0ff893d05d043::t_d1455eaa5c55f1 78-79
+README.md
+  s_e0ff893d05d043::t_7786d1d9143938 42
+cmd/crosscodexd/e2e_integration_test.go
+  s_e0ff893d05d043::t_fffe210102e487 156
+internal/worker/handler.go
+  s_e0ff893d05d043::t_35e0a0925d3312 29-31,80-82
+  s_e0ff893d05d043::t_f2d53342842489 83
+docs/dev/telemetry.md
+  s_e0ff893d05d043::t_121b01e3ed56f3 199-201
+internal/worker/abandoned_property_test.go
+  s_e0ff893d05d043::t_b37b504466dd0c 4,27,34-36,38-42,44-45,47-50,53-55
+  s_e0ff893d05d043::t_2a0e7770ed4a78 1-3,5-26,28-33,37,43,46,51-52,56-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1243defe13fd5e892efc7e9a3ce4ab8686a19fbb",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
