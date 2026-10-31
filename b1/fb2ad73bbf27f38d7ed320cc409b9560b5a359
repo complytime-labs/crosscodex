@@ -1,0 +1,30 @@
+pkg/config/backup.go
+  s_e0ff893d05d043::t_fc9a8b8c6a2362 87-88,103-104
+pkg/config/knownkeys_bdd_test.go
+  s_e0ff893d05d043::t_3a95bdc258540e 129-162
+pkg/config/field_errors_bdd_test.go
+  s_e0ff893d05d043::t_3a95bdc258540e 53
+pkg/config/loader.go
+  s_e0ff893d05d043::t_fc9a8b8c6a2362 54
+pkg/config/validate.go
+  s_e0ff893d05d043::t_fc9a8b8c6a2362 173
+pkg/config/errors.go
+  s_e0ff893d05d043::t_fc9a8b8c6a2362 6,79-82,90,93,109-110
+  s_e0ff893d05d043::t_5e66005ad68c41 111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b1fb2ad73bbf27f38d7ed320cc409b9560b5a359",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
