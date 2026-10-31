@@ -1,0 +1,28 @@
+cmd/crosscodex/config_edit_bdd_test.go
+  s_e0ff893d05d043::t_a4777985ed4296 120-138,140,146-176,178-181
+  s_e0ff893d05d043::t_892c179c2405a2 139,141-145,177
+cmd/crosscodex/config_edit.go
+  s_e0ff893d05d043::t_727e7c4dc3243b 183
+  s_e0ff893d05d043::t_4d207665bfc795 11,64,70,109,115,137-138,146,151,160,163,168,175,180,184-185,188-196,236-242,245-252,260,262-263,265,270,273-308
+  s_e0ff893d05d043::t_c88764f5a952c8 142
+README.md
+  s_e0ff893d05d043::t_894d3007faed57 54
+deploy/README.md
+  s_e0ff893d05d043::t_4e9f84c42b829f 129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f24ca4da5e773b03bfbd1539729f445b0f6c1cf8",
+  "prompts": {},
+  "sessions": {
+    "s_e0ff893d05d043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "93105cb0-d9df-43ff-90c7-96b4d28ba30e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
