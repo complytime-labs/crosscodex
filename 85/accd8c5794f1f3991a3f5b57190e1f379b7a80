@@ -1,0 +1,30 @@
+internal/pipeline/service_bdd_test.go
+  s_20930006a1ba43::t_8841943a56bdb3 30,183,223,289,341,549,830,1366,1435
+  s_20930006a1ba43::t_ee40448e295e48 385-418
+cmd/crosscodexd/e2e_integration_test.go
+  s_20930006a1ba43::t_8841943a56bdb3 226
+internal/pipeline/executor_bdd_test.go
+  s_20930006a1ba43::t_8841943a56bdb3 1553
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_20930006a1ba43::t_8841943a56bdb3 301
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_20930006a1ba43::t_8841943a56bdb3 155
+internal/pipeline/service_impl.go
+  s_20930006a1ba43::t_dfaac51e0e37e2 54-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85accd8c5794f1f3991a3f5b57190e1f379b7a80",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
