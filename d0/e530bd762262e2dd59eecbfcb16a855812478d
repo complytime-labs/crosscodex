@@ -1,0 +1,40 @@
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_20930006a1ba43::t_19a0a8570051d6 191
+internal/pipeline/errors.go
+  s_20930006a1ba43::t_8ac1ec0be1f957 6
+  s_20930006a1ba43::t_e7f2ecfcfb78cd 3-4,7,88,94-105
+  s_20930006a1ba43::t_6b72d398121fa5 5,106-107
+docs/dev/design-principles.md
+  s_20930006a1ba43::t_43a1c0ee2b94e2 122,124
+internal/pipeline/service_impl.go
+  s_20930006a1ba43::t_a4966660ede27c 859-862,872-873
+  s_20930006a1ba43::t_93be7c574bc603 396-399,402-409
+  s_20930006a1ba43::t_67072035d390f3 874
+README.md
+  s_20930006a1ba43::t_962f4ed800a0a2 104,111
+  s_20930006a1ba43::t_b1cd15e58d8c1b 192
+internal/pipeline/executor_bdd_test.go
+  s_20930006a1ba43::t_3cbb3fe8dbbea3 550,887,1090,1210,1299,1343,1393,1723,2403-2437
+internal/pipeline/service_bdd_test.go
+  s_20930006a1ba43::t_df59771685a343 1308,1323-1325,1336-1341,1343-1344,1364-1378,1380-1400,1405-1416,1418-1423,1425-1442,1634-1658
+  s_20930006a1ba43::t_bb0db51b485df0 152-159
+  s_20930006a1ba43::t_531c769cc13651 1659
+internal/pipeline/executor.go
+  s_20930006a1ba43::t_cc8d7ce92e2882 377-385,389,438,963,966-969
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0e530bd762262e2dd59eecbfcb16a855812478d",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
