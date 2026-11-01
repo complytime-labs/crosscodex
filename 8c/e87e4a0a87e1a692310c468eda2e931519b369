@@ -1,0 +1,29 @@
+go.mod
+  s_20930006a1ba43::t_57bb52b85be547 40
+internal/analyzer/promptvalue_bdd_test.go
+  s_20930006a1ba43::t_49e64d441f20ac 32,42-45,56-59
+internal/analyzer/analyzer_fuzz_test.go
+  s_20930006a1ba43::t_c6612eace52926 14-15,32-34,54-55,81-82
+README.md
+  s_20930006a1ba43::t_5438a06358b659 80
+internal/analyzer/promptvalue.go
+  s_20930006a1ba43::t_57bb52b85be547 8-9,60,64,76-86
+docs/dev/design-principles.md
+  s_20930006a1ba43::t_2889e98496f3bd 61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ce87e4a0a87e1a692310c468eda2e931519b369",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
