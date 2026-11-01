@@ -1,0 +1,23 @@
+cmd/crosscodex/jobcatalogs.go
+  s_20930006a1ba43::t_16e3a53a26b0dd 33-36,38-41,48,63-66,69,84,87,89-90,93-96,104,106,109,117-119,138
+cmd/crosscodex/run.go
+  s_20930006a1ba43::t_16e3a53a26b0dd 149
+cmd/crosscodex/run_bdd_test.go
+  s_20930006a1ba43::t_79b3d8a64e713c 226-228,234,241-243,408-424,427-442,444,446
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f87733519cf0f53228948dc15fbc811b9fa3daa",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
