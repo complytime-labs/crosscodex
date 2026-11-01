@@ -1,0 +1,37 @@
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_20930006a1ba43::t_6b6e6e3c7ff23c 87
+internal/graph/subscriber_handlers.go
+  s_20930006a1ba43::t_6b6e6e3c7ff23c 249
+internal/gateway/backend_errors_bdd_test.go
+  s_20930006a1ba43::t_94aec160e0f344 235,243
+internal/gateway/analysis.go
+  s_20930006a1ba43::t_02005ded155dfd 16-19,27-29,31-33,36,40-51,59-61,64,70-87,93-95,111-114,116
+internal/gateway/analysis_bdd_test.go
+  s_20930006a1ba43::t_6f637d710d2bbe 186-189,201-203,207-208,211-214
+  s_20930006a1ba43::t_94aec160e0f344 16,20-31,34-35,38-40,42,46-52,55,64,71-72,79,84-85,89-90,92,94-98,101-104,106-132,135-155,159,168-185,204,215-217,225,234,243
+  s_20930006a1ba43::t_d325a99c1d0623 190-200,205-206,209-210
+cmd/crosscodexd/results_e2e_test.go
+  s_20930006a1ba43::t_6b6e6e3c7ff23c 156
+test/deploy/smoke_up.sh
+  s_20930006a1ba43::t_6b6e6e3c7ff23c 292
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_20930006a1ba43::t_6b6e6e3c7ff23c 282
+test/e2e/ingest-to-age-llm.venom.yml
+  s_20930006a1ba43::t_6b6e6e3c7ff23c 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "92fb38feabcf9aceeb71bc146462a9dc56f1ff26",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
