@@ -1,0 +1,32 @@
+cmd/crosscodex/jobcatalogs.go
+  s_20930006a1ba43::t_59d74d26b8b573 1-140
+cmd/crosscodex/run_bdd_test.go
+  s_20930006a1ba43::t_0e729084c8b453 226-229,232-235,242-253,319-380,382-423
+  s_20930006a1ba43::t_2c4e135580b677 381
+  s_20930006a1ba43::t_b254cfcc3573cf 424
+cmd/crosscodex/results_bdd_test.go
+  s_20930006a1ba43::t_8df94127d34369 184,199-201,206-258,260-270,272-273,275-278,281-282
+  s_20930006a1ba43::t_52009e00797776 259
+  s_20930006a1ba43::t_597c18fe3b371d 271,274,279-280
+  s_20930006a1ba43::t_83fa2b82c8062a 283-284
+cmd/crosscodex/run.go
+  s_20930006a1ba43::t_4b4f9a9674e80b 125-129,149-152,169-173,203
+cmd/crosscodex/results.go
+  s_20930006a1ba43::t_6ae1d45d7b0cc3 13,20,56,189-193,195,202,205-207,211,214,219-242,251-257,271,305-314,319,326-327,330,332,340,431
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cab43db554a0d8b2387131bd63f4f4b46a03e693",
+  "prompts": {},
+  "sessions": {
+    "s_20930006a1ba43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ff1f2e8-1e99-4926-9915-340ba480be46",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
