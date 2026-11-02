@@ -1,0 +1,21 @@
+internal/pipeline/executor.go
+  s_9009ab9b9169f3::t_c8b4d6741491bf 535-536,538-540
+internal/pipeline/attest_cache_bdd_test.go
+  s_9009ab9b9169f3::t_e9ba94284ecf43 86,96-97,104,128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "622982ed33d94c404e01510f4cbd069bd7eb69d6",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
