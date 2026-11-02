@@ -1,0 +1,23 @@
+.taskfiles/test/integration.yml
+  s_9009ab9b9169f3::t_4100d9ce4a3040 123,241,279-295
+  s_9009ab9b9169f3::t_6155e1b76fa554 296
+pkg/resultcache/pgstore/pgstore_integration_bdd_test.go
+  s_9009ab9b9169f3::t_2cb1d63ab1adf7 191
+  s_9009ab9b9169f3::t_bf7c2b9e3fda6e 1-190,192-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b208947024aee4daa61ca7197bd25472f44d3a4",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
