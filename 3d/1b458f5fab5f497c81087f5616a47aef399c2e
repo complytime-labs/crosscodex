@@ -1,0 +1,25 @@
+docs/dev/design-principles.md
+  s_9009ab9b9169f3::t_7fa51382f7a008 131,143-183
+  s_9009ab9b9169f3::t_35010cc2f6adc4 184
+docs/dev/attestation.md
+  s_9009ab9b9169f3::t_7fa51382f7a008 263-269
+README.md
+  s_9009ab9b9169f3::t_1d8e41e87558c4 97-101,103-106,196-213,220,390-391,505-508
+  s_9009ab9b9169f3::t_c41cb66be14b9d 102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d1b458f5fab5f497c81087f5616a47aef399c2e",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
