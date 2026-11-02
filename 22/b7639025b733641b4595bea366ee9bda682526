@@ -1,0 +1,73 @@
+internal/analyzer/embedding/embedding.go
+  s_9009ab9b9169f3::t_6f26d56b03d628 194-211
+  s_9009ab9b9169f3::t_f96a0c6ada7395 6
+  s_9009ab9b9169f3::t_93c46dd1fa8d2b 212-213
+internal/analyzer/classify/classify.go
+  s_9009ab9b9169f3::t_6f26d56b03d628 228-238
+  s_9009ab9b9169f3::t_f96a0c6ada7395 6
+  s_9009ab9b9169f3::t_0617600de7739a 239-240
+internal/analyzer/artifacts/cache_bdd_test.go
+  s_9009ab9b9169f3::t_a552fe81183d06 85-97
+  s_9009ab9b9169f3::t_d887bacddb5ccc 8-9
+pkg/resultcache/resultcache.go
+  s_9009ab9b9169f3::t_e5b97087881358 173-175
+internal/analyzer/requires/cache_bdd_test.go
+  s_9009ab9b9169f3::t_d887bacddb5ccc 8-9
+  s_9009ab9b9169f3::t_a552fe81183d06 90-102
+pkg/analyzer/analyzertest/analyzertest_bdd_test.go
+  s_9009ab9b9169f3::t_d887bacddb5ccc 13
+  s_9009ab9b9169f3::t_a552fe81183d06 293-311
+  s_9009ab9b9169f3::t_7c46c2626104dd 312
+pkg/analyzer/analyzertest/cacheable.go
+  s_9009ab9b9169f3::t_159b1e9ab7a5df 7,29-32,45-51
+  s_9009ab9b9169f3::t_98ee4316e58708 52
+pkg/analyzer/analyzertest/doc.go
+  s_9009ab9b9169f3::t_159b1e9ab7a5df 51-52
+internal/analysis/engine.go
+  s_9009ab9b9169f3::t_e5b97087881358 55
+internal/analyzer/classify/cache_bdd_test.go
+  s_9009ab9b9169f3::t_a552fe81183d06 89-100
+  s_9009ab9b9169f3::t_d887bacddb5ccc 6-7
+  s_9009ab9b9169f3::t_b4ad7a376b159c 101
+internal/analysis/options.go
+  s_9009ab9b9169f3::t_e5b97087881358 45-47
+internal/analyzer/relationship/relationship.go
+  s_9009ab9b9169f3::t_f96a0c6ada7395 6
+  s_9009ab9b9169f3::t_6f26d56b03d628 337-348
+  s_9009ab9b9169f3::t_55b93db911b8bd 349-350
+pkg/analyzer/cacheable.go
+  s_9009ab9b9169f3::t_159b1e9ab7a5df 3-7,50-56
+internal/analysis/cache_bdd_test.go
+  s_9009ab9b9169f3::t_44d48e87e83970 7,14-15,296-299,332-336,342-369,560-589,673,766
+internal/analysis/cache.go
+  s_9009ab9b9169f3::t_e5b97087881358 81,83,230,471-477,492-503,511,523,530-536
+  s_9009ab9b9169f3::t_797e30940ba483 537-539
+internal/analyzer/artifacts/artifacts.go
+  s_9009ab9b9169f3::t_f96a0c6ada7395 6
+  s_9009ab9b9169f3::t_6f26d56b03d628 249-260
+  s_9009ab9b9169f3::t_612da3eea2b378 261-262
+internal/analyzer/embedding/cache_bdd_test.go
+  s_9009ab9b9169f3::t_d887bacddb5ccc 6-7
+  s_9009ab9b9169f3::t_a552fe81183d06 66-81
+internal/analyzer/requires/requires.go
+  s_9009ab9b9169f3::t_6f26d56b03d628 333-346
+internal/analyzer/relationship/cache_bdd_test.go
+  s_9009ab9b9169f3::t_d887bacddb5ccc 6-7
+  s_9009ab9b9169f3::t_a552fe81183d06 88-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "22b7639025b733641b4595bea366ee9bda682526",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
