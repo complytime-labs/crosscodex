@@ -1,0 +1,40 @@
+internal/worker/payload.go
+  s_9009ab9b9169f3::t_a06639fcef6665 20-22
+pkg/llmclient/llmclient_property_test.go
+  s_9009ab9b9169f3::t_bf002abdfbe270 8,136-183
+  s_9009ab9b9169f3::t_0bac035e98a00c 184
+internal/analyzer/artifacts/cache_bdd_test.go
+  s_9009ab9b9169f3::t_e8b3f1806e2c35 39,67
+pkg/llmclient/messages.go
+  s_9009ab9b9169f3::t_a06639fcef6665 1-48
+pkg/llmclient/errors.go
+  s_9009ab9b9169f3::t_a06639fcef6665 15-18
+internal/analyzer/requires/cache_bdd_test.go
+  s_9009ab9b9169f3::t_e8b3f1806e2c35 38,71
+internal/analyzer/cacheidentity.go
+  s_9009ab9b9169f3::t_a06639fcef6665 94-95
+  s_9009ab9b9169f3::t_bf002abdfbe270 83-84
+pkg/llmclient/llmclient_fuzz_test.go
+  s_9009ab9b9169f3::t_bf002abdfbe270 6-7,81-117
+  s_9009ab9b9169f3::t_67de94df785455 118-119
+pkg/llmclient/messages_bdd_test.go
+  s_9009ab9b9169f3::t_ad3c3e76c1e3c8 1-58
+internal/analyzer/relationship/cache_bdd_test.go
+  s_9009ab9b9169f3::t_e8b3f1806e2c35 34,69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0154e8f610d54af7ee0f7755064ba72b0161ee88",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
