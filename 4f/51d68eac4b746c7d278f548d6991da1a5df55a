@@ -1,0 +1,86 @@
+README.md
+  s_9009ab9b9169f3::t_5d988c29057c5c 196-197,210,392
+pkg/resultcache/resultcache_bdd_test.go
+  s_9009ab9b9169f3::t_d466faaf6ce6e3 46-47,49,51,55-60,62-75,79-82
+  s_9009ab9b9169f3::t_8cd23b376580a7 389
+pkg/llmclient/llmclient_bdd_test.go
+  s_9009ab9b9169f3::t_fa8c55ef2d5b55 704-763
+docs/dev/design-principles.md
+  s_9009ab9b9169f3::t_5d988c29057c5c 147
+internal/testspecs/deterministic_llm.go
+  s_9009ab9b9169f3::t_fff3c77bcb1980 32-35,78,89-90,128
+internal/analyzer/cacheidentity_bdd_test.go
+  s_9009ab9b9169f3::t_f8bb70d46640f5 41
+internal/analyzer/artifacts/cache_bdd_test.go
+  s_9009ab9b9169f3::t_f8bb70d46640f5 46
+internal/analyzer/embedding/cache_bdd_test.go
+  s_9009ab9b9169f3::t_f8bb70d46640f5 39,57
+internal/analyzer/requires/cache_bdd_test.go
+  s_9009ab9b9169f3::t_f8bb70d46640f5 45
+internal/pipeline/result_cache_bdd_test.go
+  s_9009ab9b9169f3::t_0c23a1768eaebb 299-342
+internal/analysis/cache.go
+  s_9009ab9b9169f3::t_dba7ea0e710aea 246,302-303
+  s_9009ab9b9169f3::t_eceafdad236e21 518-521,545-548
+  s_9009ab9b9169f3::t_93e065eaddb5bf 549-550
+pkg/resultcache/resultcache.go
+  s_9009ab9b9169f3::t_8729a8b093d6fb 59,90-93,102,111,152-156
+internal/analyzer/classify/cache_bdd_test.go
+  s_9009ab9b9169f3::t_f8bb70d46640f5 54,78
+internal/pipeline/result_cache.go
+  s_9009ab9b9169f3::t_26d3b2f6aa678e 27-28,31-33,53-58,133,153-160,162,180-182,206,209,222,225
+internal/analysis/cache_bdd_test.go
+  s_9009ab9b9169f3::t_24f5b3ac0dab69 4
+  s_9009ab9b9169f3::t_bbca6910daf014 727-729
+  s_9009ab9b9169f3::t_3754e33def13a1 708-726,730-742
+  s_9009ab9b9169f3::t_f8bb70d46640f5 480,490
+internal/pipeline/cache_summary_bdd_test.go
+  s_9009ab9b9169f3::t_8b0fabfc700e8f 167,209
+internal/pipeline/cache_summary.go
+  s_9009ab9b9169f3::t_8cb191a5796804 180-181
+internal/analysis/types.go
+  s_9009ab9b9169f3::t_eceafdad236e21 70-73
+internal/testspecs/deterministic_llm_test.go
+  s_9009ab9b9169f3::t_60a241e0c900eb 70-84
+cmd/crosscodex/cachestatus.go
+  s_9009ab9b9169f3::t_8cb191a5796804 78-80,96-98,136,162-163
+pkg/resultcache/pgstore/pgstore_bdd_test.go
+  s_9009ab9b9169f3::t_8cd23b376580a7 341,378
+pkg/llmclient/types.go
+  s_9009ab9b9169f3::t_e0bb500992b589 28-34,73-75,97-99
+internal/worker/payload.go
+  s_9009ab9b9169f3::t_4ff01b3bed8e28 75,81-87,105,110-114
+pkg/llmclient/client.go
+  s_9009ab9b9169f3::t_9e3dbe95df5be3 135,193,244-246,267,274,295,300,302,314,319,321
+  s_9009ab9b9169f3::t_e0bb500992b589 124-125,182-183
+docs/dev/attestation.md
+  s_9009ab9b9169f3::t_61137caf6e32fa 296
+internal/analyzer/relationship/cache_bdd_test.go
+  s_9009ab9b9169f3::t_f8bb70d46640f5 43
+pkg/resultcache/resultcache_property_test.go
+  s_9009ab9b9169f3::t_d466faaf6ce6e3 17-19,32-36,47,68,70-72,74-81,100
+pkg/config/types.go
+  s_9009ab9b9169f3::t_5d988c29057c5c 55-59
+cmd/crosscodex/cachestatus_bdd_test.go
+  s_9009ab9b9169f3::t_7ff42aec542b35 5,38-42,82-88
+api/proto/crosscodex/v1/pipeline.proto
+  s_9009ab9b9169f3::t_7971bc08001752 202-203,208-209,212-216
+internal/worker/payload_bdd_test.go
+  s_9009ab9b9169f3::t_ceeb1b24d6c085 252-281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f51d68eac4b746c7d278f548d6991da1a5df55a",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
