@@ -1,0 +1,36 @@
+internal/analyzer/cacheidentity_bdd_test.go
+  s_9009ab9b9169f3::t_e84bc7853bf149 8,11,21-26,28-42,44-45,56,61,66-73,75-76,78-81,85-95,98,102-113
+internal/analyzer/classify/cache_bdd_test.go
+  s_9009ab9b9169f3::t_6fcf10f8c5c551 18,23-30,67-86
+internal/analyzer/embedding/cache_bdd_test.go
+  s_9009ab9b9169f3::t_6fcf10f8c5c551 46-63
+internal/analyzer/cacheidentity.go
+  s_9009ab9b9169f3::t_e84bc7853bf149 46-47
+  s_9009ab9b9169f3::t_9e30b7f49c8542 9,15-16,19-28,30-32,50-54,81-117
+  s_9009ab9b9169f3::t_46d69cbe583566 118
+internal/analyzer/requires/cache_bdd_test.go
+  s_9009ab9b9169f3::t_cce00b2739f82b 24,27-32,34,36,46-51,66-84
+  s_9009ab9b9169f3::t_2344e27cc3f0fa 85
+internal/analyzer/relationship/cache_bdd_test.go
+  s_9009ab9b9169f3::t_cce00b2739f82b 21,23-28,30,32,44-49,64-82
+  s_9009ab9b9169f3::t_4c2bbc9413783f 83
+internal/analyzer/artifacts/cache_bdd_test.go
+  s_9009ab9b9169f3::t_4372ac1b3f5af6 24,26-31,35,47,62-79
+  s_9009ab9b9169f3::t_23890fc0ae206e 80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2658850d28765963bbca4813f553185984f8545b",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
