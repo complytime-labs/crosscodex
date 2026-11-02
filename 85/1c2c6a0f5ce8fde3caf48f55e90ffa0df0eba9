@@ -1,0 +1,28 @@
+pkg/retention/archive.go
+  s_9009ab9b9169f3::t_88a3b8a440459d 32-34,42-44
+pkg/retention/purge_bdd_test.go
+  s_9009ab9b9169f3::t_1c4d638f354d92 50,57-62,82,87-91
+pkg/retention/engine_integration_bdd_test.go
+  s_9009ab9b9169f3::t_13783bf0ab4bf5 31,282,307-309,396,404-430,674-767
+  s_9009ab9b9169f3::t_1a602123976fe1 768
+pkg/retention/purge.go
+  s_9009ab9b9169f3::t_88a3b8a440459d 40-41,53-59,68-71
+docs/dev/retention.md
+  s_9009ab9b9169f3::t_c01475d225ef0f 90-94,99-101,107-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "851c2c6a0f5ce8fde3caf48f55e90ffa0df0eba9",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
