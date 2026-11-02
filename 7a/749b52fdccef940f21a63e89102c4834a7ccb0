@@ -1,0 +1,57 @@
+pkg/db/role_check.go
+  s_9009ab9b9169f3::t_2df83b234189cc 114-115
+pkg/resultcache/resultcachetest/doc.go
+  s_9009ab9b9169f3::t_7d0ef1c8a7c7c4 26-32
+pkg/db/migrations/001_initial_schema.up.sql
+  s_9009ab9b9169f3::t_9e4894d2fa3636 740-746,790,798,803-804,821,834,836
+  s_9009ab9b9169f3::t_2df83b234189cc 805-806
+pkg/resultcache/resultcachetest/fake.go
+  s_9009ab9b9169f3::t_36bece139986a8 38-39,43-44,52,120-121,141-147,150-153,183,216,219,223-225,231-234,239,241,247
+pkg/resultcache/resultcachetest/resultcachetest_bdd_test.go
+  s_9009ab9b9169f3::t_87e2c0579e41ee 51,70,75,85,92
+pkg/resultcache/pgstore/pgstore_property_test.go
+  s_9009ab9b9169f3::t_49d39459b029b1 23,38
+pkg/db/role_check_integration_bdd_test.go
+  s_9009ab9b9169f3::t_2df83b234189cc 102-103
+pkg/resultcache/pgstore/pgstore_bdd_test.go
+  s_9009ab9b9169f3::t_49d39459b029b1 89-94,222
+  s_9009ab9b9169f3::t_a32784bb4a20b2 27-28,30,64,96,109,111,115,119,122-125,131-135,148,152-153,167,174-175,178,184,187,197,207,220,240,298-299
+pkg/resultcache/resultcache_bdd_test.go
+  s_9009ab9b9169f3::t_5a20ebc30fcfd5 27-28,30,36,128-131,159-160,181-183,185-186,189-191,196-203,268,270,281,294
+pkg/resultcache/pgstore/pgstore.go
+  s_9009ab9b9169f3::t_f543c0de225180 30-35,39-40,52-53,57-59,62-63,66,69,193-194,203-206,216-221,248,288,292,318,324-327,334,350
+pkg/resultcache/resultcachetest/resultcachetest_property_test.go
+  s_9009ab9b9169f3::t_2cda2f7657fa44 15,34,53
+pkg/resultcache/pgstore/pgstore_integration_bdd_test.go
+  s_9009ab9b9169f3::t_8cc8bb4ffe04a1 117-118,161,163,242-243,251,273-290,294,306,313,330,345,362-363,368,381-382
+pkg/resultcache/resultcache.go
+  s_9009ab9b9169f3::t_198e06b1066c27 155-156,182,245-246,250,265,299-304,307-312,316-318,320-322,395-396,398,421,424,453,465-468,474-496
+  s_9009ab9b9169f3::t_a5ebc9763e79be 497
+pkg/resultcache/doc.go
+  s_9009ab9b9169f3::t_c4de3a649b31b5 19-25
+pkg/resultcache/resultcachetest/contract.go
+  s_9009ab9b9169f3::t_9b7b6e6c6f17f2 41,183,288
+  s_9009ab9b9169f3::t_850592da0ca4e0 55-60,63,75-76,80,119,122,142-143,161,200,214,223-224,232-233,245,250,257,264,279,300,326,329,332,432-433,438,457,461
+  s_9009ab9b9169f3::t_238e00f20277b3 45-46,336-428
+  s_9009ab9b9169f3::t_a7fe6bd54841fe 429
+pkg/retention/engine_integration_bdd_test.go
+  s_9009ab9b9169f3::t_8cc8bb4ffe04a1 444-447
+pkg/retention/archive.go
+  s_9009ab9b9169f3::t_e2753c6139e7f9 43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a749b52fdccef940f21a63e89102c4834a7ccb0",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
