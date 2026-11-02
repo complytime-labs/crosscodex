@@ -1,0 +1,32 @@
+internal/pipeline/errors.go
+  s_9009ab9b9169f3::t_5614d82c3a81ec 107-108
+  s_9009ab9b9169f3::t_7f159243cd2680 66-68
+internal/pipeline/service_impl.go
+  s_9009ab9b9169f3::t_5614d82c3a81ec 412,419
+  s_9009ab9b9169f3::t_6546bcb53d5aab 413-416
+  s_9009ab9b9169f3::t_35776e8311fb3a 18
+pkg/db/migrations/001_initial_schema.up.sql
+  s_9009ab9b9169f3::t_7f159243cd2680 282-283
+pkg/jobconfig/jobconfig.go
+  s_9009ab9b9169f3::t_c21d853c38db04 102-103
+  s_9009ab9b9169f3::t_55b80174eaaa67 87-89
+internal/pipeline/service_bdd_test.go
+  s_9009ab9b9169f3::t_547e20efc6d3ee 1347-1348,1427-1428,1441-1467
+  s_9009ab9b9169f3::t_83887a1dc512da 1468-1469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6fe4d789274e0879449d3adbf97daf70d3ba5abc",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
