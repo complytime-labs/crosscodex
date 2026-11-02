@@ -1,0 +1,26 @@
+pkg/db/role_check.go
+  s_9009ab9b9169f3::t_a4d0f5383b303f 113-115
+pkg/db/migrations/001_initial_schema.down.sql
+  s_9009ab9b9169f3::t_67182cc4a3e168 68-70,90
+pkg/db/role_check_integration_bdd_test.go
+  s_9009ab9b9169f3::t_472c7600fd6615 90-105
+pkg/db/migrations/001_initial_schema.up.sql
+  s_9009ab9b9169f3::t_67182cc4a3e168 718-870,938-940
+  s_9009ab9b9169f3::t_06668e4b3aa812 282-286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e61756361414d04232a10f5456bcecb5e1089aac",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
