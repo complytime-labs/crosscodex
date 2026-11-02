@@ -1,0 +1,41 @@
+api/proto/crosscodex/v1/pipeline.proto
+  s_9009ab9b9169f3::t_96dd8805d63603 119-121,230-234
+internal/gateway/jobs.go
+  s_9009ab9b9169f3::t_968f6519f10af8 37-41,58-67
+  s_9009ab9b9169f3::t_39c2b30e9805df 68-69
+internal/pipeline/cache_summary.go
+  s_9009ab9b9169f3::t_1c7328e9505ca8 11-12,36-38,46-47,72-87,110,114-118,122-124,206-211,216,221,223,229-232,236,240,242-243
+  s_9009ab9b9169f3::t_968f6519f10af8 111-112
+cmd/crosscodex/run.go
+  s_9009ab9b9169f3::t_968f6519f10af8 153-154
+internal/pipeline/result_cache_e2e_integration_test.go
+  s_9009ab9b9169f3::t_bf9bf84c941a80 253
+cmd/crosscodex/run_bdd_test.go
+  s_9009ab9b9169f3::t_be3b57ce895f57 250-251,254-255,350-357
+  s_9009ab9b9169f3::t_068baca8c6c23d 358-359
+internal/gateway/gateway_bdd_test.go
+  s_9009ab9b9169f3::t_5a8c9fe38a2969 430-434
+  s_9009ab9b9169f3::t_be3b57ce895f57 272-306,425-429,435-445,500-509
+  s_9009ab9b9169f3::t_8a8b0d027c4441 8-9
+  s_9009ab9b9169f3::t_fa576ae6aaff77 510-512
+internal/pipeline/service_impl.go
+  s_9009ab9b9169f3::t_1c7328e9505ca8 236-242
+internal/pipeline/cache_summary_bdd_test.go
+  s_9009ab9b9169f3::t_7db50e5093f130 35-41,146,153,307,309-313,321-342,366,382
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7be4e779add0b924b40f876f1164ec836fdd00e",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
