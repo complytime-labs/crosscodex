@@ -1,0 +1,38 @@
+internal/pipeline/reporter_bdd_test.go
+  s_9009ab9b9169f3::t_a1bcba1ce65b12 278,283-287,292,294-298,301-302
+  s_9009ab9b9169f3::t_1bcf7924ac27d6 279-282,288-291,293,299-300,303
+  s_9009ab9b9169f3::t_fb1c8b98d818d5 304-305
+internal/pipeline/store.go
+  s_9009ab9b9169f3::t_5953388e3f82f1 24-26,30-32
+internal/pipeline/executor_bdd_test.go
+  s_9009ab9b9169f3::t_10e6b3a912b089 24,517-532,1140-1175,1180-1182,1827,1859-1862
+  s_9009ab9b9169f3::t_21e3f684bda370 1176-1179
+internal/pipeline/executor.go
+  s_9009ab9b9169f3::t_5953388e3f82f1 580-581,767-768,890
+README.md
+  s_9009ab9b9169f3::t_e3784cde2d702e 106
+internal/pipeline/reporter.go
+  s_9009ab9b9169f3::t_5953388e3f82f1 141,144,146
+  s_9009ab9b9169f3::t_1bcf7924ac27d6 142-143,145
+internal/pipeline/errors.go
+  s_9009ab9b9169f3::t_5953388e3f82f1 130-134,144-149
+  s_9009ab9b9169f3::t_259e885f8d0663 150
+internal/pipeline/result_cache.go
+  s_9009ab9b9169f3::t_5953388e3f82f1 246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f58d3d5fd27994542b8b36edbcbbce3dc28733e4",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
