@@ -1,0 +1,19 @@
+.taskfiles/test/integration.yml
+  s_1a3538f012a0e0::t_5536633fb605ae 120,238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e542c6019c8eb63107556e3ce31eafbf93616cc7",
+  "prompts": {},
+  "sessions": {
+    "s_1a3538f012a0e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d60a29ce-38f5-43b7-9c59-b7f924786abf",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
