@@ -1,0 +1,23 @@
+cmd/crosscodex/main_bdd_test.go
+  s_6db2b57b27fedb::t_0a66aaa1c2156f 585-595
+internal/catalog/service.go
+  s_6db2b57b27fedb::t_ec3faf236ca425 252,289,741,746
+cmd/crosscodex/catalog.go
+  s_6db2b57b27fedb::t_744b514e19e73f 12,272-273,276,278-279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7ed6d0a6d358e30d02e8ff53910f9c6285872a6",
+  "prompts": {},
+  "sessions": {
+    "s_6db2b57b27fedb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99db3f86-87c3-48d7-8787-19135d41d357",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
