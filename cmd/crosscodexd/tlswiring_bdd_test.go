@@ -6,12 +6,14 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 )
 
 var (
@@ -57,6 +59,18 @@ var _ = Describe("llmHTTPClient", func() {
 			Expect(tr.TLSClientConfig.GetClientCertificate).NotTo(BeNil())
 		})
 	})
+
+	DescribeTable("bounds every https request by a timeout",
+		func(configured int, want time.Duration) {
+			cfg.LLM.GatewayURL = "https://litellm:4443"
+			cfg.LLM.Timeout = configured
+			c, err := llmHTTPClient(context.Background(), cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(c.Timeout).To(Equal(want))
+		},
+		Entry("zero falls back to llmclient.DefaultTimeout", 0, llmclient.DefaultTimeout),
+		Entry("a configured value is used in seconds", 45, 45*time.Second),
+	)
 
 	When("the gateway URL is http", func() {
 		It("returns nil so the default plaintext client is used", func() {

@@ -262,7 +262,7 @@ Values merge in ascending priority (last wins):
 llm:
   gateway_url: "http://localhost:4000"  # roles pipeline, worker and all refuse to start if this doesn't answer
   default_model: "qwen3:8b"
-  timeout: 30
+  timeout: 30  # seconds per LLM request; 0 means the 30s default
 
 # Storage
 storage:

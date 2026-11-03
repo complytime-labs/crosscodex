@@ -43,7 +43,9 @@ type LLMConfig struct {
 	APIKeyRef      string   `yaml:"api_key_ref" json:"api_key_ref"`
 	AllowedModels  []string `yaml:"allowed_models" json:"allowed_models"`
 	MaxRetries     int      `yaml:"max_retries" json:"max_retries"`
-	Timeout        int      `yaml:"timeout" json:"timeout"`
+	// Timeout bounds each LLM gateway request, in seconds. Zero means
+	// llmclient.DefaultTimeout (30s) for both http and https gateways.
+	Timeout int `yaml:"timeout" json:"timeout"`
 	// TenantOverrides maps tenant IDs (must satisfy pkg/tenant.ValidateTenantID)
 	// to per-tenant LLM config overrides. Nil pointer fields inherit the global
 	// value. AllowedModels replaces (not merges with) the global list when
