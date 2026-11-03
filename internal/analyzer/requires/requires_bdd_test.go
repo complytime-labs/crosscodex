@@ -406,11 +406,34 @@ var _ = Describe("RequiresAnalyzer", func() {
 				Expect(block).To(ContainSubstring(field + ": " + want + "\n"))
 				Expect(user).NotTo(ContainSubstring(strings.Repeat("x", 300)))
 			},
-			Entry("a source catalog name", "source_framework", "source_metadata", "Framework"),
-			Entry("a target catalog name", "target_framework", "target_metadata", "Framework"),
+			Entry("a source catalog name", "source_framework_AC-1", "source_metadata", "Framework"),
+			Entry("a target catalog name", "target_framework_IT-3.2", "target_metadata", "Framework"),
 			Entry("a source ancestor title", "source_ancestor_AC-1", "source_metadata", "Control Domain"),
 			Entry("a target ancestor title", "target_ancestor_IT-3.2", "target_metadata", "Control Domain"),
 		)
+
+		// In a bidirectional crosswalk either end of a pair can belong to
+		// either catalog, so each end's framework is that control's own.
+		It("names each end's framework from that control's own parameter", func() {
+			_, user := renderedMessages(map[string]string{
+				"source_framework_AC-1":   "NIST SP 800-53",
+				"target_framework_IT-3.2": "CSF 2.0",
+				"source_framework_IT-3.2": "Wrong End",
+				"target_framework_AC-1":   "Wrong End",
+				"source_framework":        "Job Wide",
+				"target_framework":        "Job Wide",
+			})
+			Expect(user).To(ContainSubstring("<source_metadata>\nID: AC-1\nFramework: NIST SP 800-53\n"))
+			Expect(user).To(ContainSubstring("<target_metadata>\nID: IT-3.2\nFramework: CSF 2.0\n"))
+			Expect(user).NotTo(ContainSubstring("Wrong End"))
+			Expect(user).NotTo(ContainSubstring("Job Wide"))
+		})
+
+		It("never expands a placeholder in a catalog name", func() {
+			_, user := renderedMessages(map[string]string{"source_framework_AC-1": "Evil ${source_text}"})
+			Expect(user).To(ContainSubstring("Framework: Evil ${source_text}\n"))
+			Expect(strings.Count(user, "Enforce least privilege.")).To(Equal(1), "the ${source_text} in the name stayed literal")
+		})
 
 		It("hardens the control IDs it shows", func() {
 			candidates.pairs = []requires.RequiresPair{

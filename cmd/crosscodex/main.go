@@ -46,7 +46,7 @@ explore the results.
 Get started:
   crosscodex project init          Initialize a new project
   crosscodex catalog import        Import a compliance catalog
-  crosscodex run start             Start analysis of an imported catalog
+  crosscodex run start             Map an imported catalog's controls onto another catalog's
   crosscodex results summary       View analysis results`,
 		SilenceUsage:  true,
 		SilenceErrors: true,

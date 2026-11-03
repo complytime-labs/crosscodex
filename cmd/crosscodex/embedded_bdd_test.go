@@ -218,7 +218,7 @@ var _ = Describe("localPipelineBackend.CreateJob", func() {
 
 		_, err = b.CreateJob(ctx, connectrpc.NewRequest(&pb.CreateJobRequest{
 			JobType: pb.JobType_JOB_TYPE_FULL_ANALYSIS,
-			Config:  &pb.JobConfig{CatalogId: "cat-1"},
+			Config:  &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1"},
 		}))
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
 		Expect(err.Error()).To(ContainSubstring("crosscodexd"))

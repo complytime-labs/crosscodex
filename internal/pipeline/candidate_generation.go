@@ -86,7 +86,8 @@ func NewCandidateGenerator(controls ControlsReader, embeddings EmbeddingsReader,
 func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID string, jobConfig []byte) error {
 	cats, ok := jobconfig.ExtractCatalogs(jobConfig)
 	if !ok {
-		return fmt.Errorf("candidate generation: %w", ErrMissingCatalogID)
+		return fmt.Errorf("candidate generation: %w; start a new analysis: %s",
+			ErrMissingCatalogID, newJobCommand(&Job{JobID: jobID, Config: jobConfig}))
 	}
 
 	source, skipped, err := g.controlsWithText(ctx, tenantID, cats.SourceID, jobID)

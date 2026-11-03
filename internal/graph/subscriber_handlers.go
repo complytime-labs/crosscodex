@@ -246,7 +246,7 @@ func (s *Service) skipMissingEndpoint(ctx context.Context, tenantID, analyzer, l
 		"graph role's catalog projection logs) or the analyzer "+
 		"emitted an ID that matches no Control node. The edge stays absent until it is rewritten: after fixing the cause, "+
 		"re-import the tenant's catalog, which rewrites the controls and republishes the catalog parsed event, "+
-		"then start a new analysis of it with \"crosscodex run start --source <catalog-id>\".",
+		"then start a new analysis of it with \"crosscodex run start --source <catalog-id> --target <catalog-id>\".",
 		"tenant", tenantID, "analyzer", analyzer, "edge.label", label,
 		"source_id", sourceID, "target_id", targetID, "error", err)
 	return true

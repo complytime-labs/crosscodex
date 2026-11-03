@@ -242,14 +242,16 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 			"target_id":                short(pair.TargetControlID),
 			"source_text":              sourceText,
 			"target_text":              targetText,
-			"source_framework":         short(cfg.Parameters["source_framework"]),
-			"target_framework":         short(cfg.Parameters["target_framework"]),
-			"source_type":              short(cfg.Parameters["source_type_"+pair.SourceControlID]),
-			"source_level":             short(cfg.Parameters["source_level_"+pair.SourceControlID]),
-			"source_ancestor":          short(cfg.Parameters["source_ancestor_"+pair.SourceControlID]),
-			"target_type":              short(cfg.Parameters["target_type_"+pair.TargetControlID]),
-			"target_level":             short(cfg.Parameters["target_level_"+pair.TargetControlID]),
-			"target_ancestor":          short(cfg.Parameters["target_ancestor_"+pair.TargetControlID]),
+			// Keyed per control: in a bidirectional crosswalk either end of a
+			// pair can come from either catalog.
+			"source_framework": short(cfg.Parameters["source_framework_"+pair.SourceControlID]),
+			"target_framework": short(cfg.Parameters["target_framework_"+pair.TargetControlID]),
+			"source_type":      short(cfg.Parameters["source_type_"+pair.SourceControlID]),
+			"source_level":     short(cfg.Parameters["source_level_"+pair.SourceControlID]),
+			"source_ancestor":  short(cfg.Parameters["source_ancestor_"+pair.SourceControlID]),
+			"target_type":      short(cfg.Parameters["target_type_"+pair.TargetControlID]),
+			"target_level":     short(cfg.Parameters["target_level_"+pair.TargetControlID]),
+			"target_ancestor":  short(cfg.Parameters["target_ancestor_"+pair.TargetControlID]),
 		}
 
 		systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)

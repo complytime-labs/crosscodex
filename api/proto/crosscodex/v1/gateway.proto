@@ -220,8 +220,10 @@ message StartAnalysisRequest {
   // catalogs.
   string target_catalog_id = 4;
   // Also pair target controls with source controls (target to source), in
-  // addition to the default source to target. Doubles the pair analyzers'
-  // LLM calls. Rejected with InvalidArgument when target_catalog_id equals
+  // addition to the default source to target. The reverse direction's
+  // sources are the target's controls, so the pair analyzers' LLM calls
+  // scale with source plus target controls rather than source controls
+  // alone. Rejected with InvalidArgument when target_catalog_id equals
   // source_catalog_id: within one catalog, controls are already paired in
   // both directions.
   bool bidirectional = 5;

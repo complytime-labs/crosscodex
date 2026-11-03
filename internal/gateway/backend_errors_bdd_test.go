@@ -232,7 +232,7 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 				getCatalogFn: func(context.Context, *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error) {
 					return nil, err
 				},
-			}), gateway.WithPipelineBackend(&mockPipeline{})).StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: "cat-1"}))
+			}), gateway.WithPipelineBackend(&mockPipeline{})).StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: "cat-1", TargetCatalogId: "cat-1"}))
 			return e
 		})),
 		Entry("StartAnalysis pipeline step", "StartAnalysis", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
@@ -240,7 +240,7 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 				createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
 					return nil, err
 				},
-			})).StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: "cat-1"}))
+			})).StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: "cat-1", TargetCatalogId: "cat-1"}))
 			return e
 		})),
 		Entry("ListJobMappings", "ListJobMappings", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {

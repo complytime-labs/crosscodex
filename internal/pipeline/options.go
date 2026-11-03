@@ -49,10 +49,14 @@ func WithCatalogControlsReader(r CatalogControlsReader) Option {
 	}
 }
 
-// WithCatalogNameReader wires a CatalogNameReader so runAnalysis can give the
-// pair analyzers each control's catalog name as its framework. A nil (or
-// unset) reader leaves every framework parameter empty, as before
-// cross-catalog analysis.
+// WithCatalogNameReader wires a CatalogNameReader. CreateJob (and RetryJob's
+// new job) use it to confirm a job's catalogs are its tenant's and to record
+// their names and versions in the job's config; runAnalysis uses it to
+// confirm the catalogs still exist and, for a config stored before those
+// snapshots, to give the pair analyzers each control's catalog name as its
+// framework. Without one (nil or unset), CreateJob and RetryJob's new job
+// refuse every job (fail closed); runAnalysis, resuming a job already
+// stored, leaves every framework parameter empty.
 func WithCatalogNameReader(r CatalogNameReader) Option {
 	return func(s *Service) {
 		s.catalogNames = r

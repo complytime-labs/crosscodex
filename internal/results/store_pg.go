@@ -17,6 +17,7 @@ import (
 
 	analyzerresults "github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -155,8 +156,13 @@ func (s *PGStore) ListMappings(ctx context.Context, f Filter) (Page, error) {
 	var page Page
 	err := s.observe(ctx, "ListMappings", f.TenantID, func(ctx context.Context) error {
 		return s.inTx(ctx, f.TenantID, func(tx db.Transaction) error {
+			var analysis *JobAnalysis
 			if f.JobID != "" {
-				if err := requireCompleted(ctx, tx, f); err != nil {
+				config, err := requireCompleted(ctx, tx, f)
+				if err != nil {
+					return err
+				}
+				if analysis, err = readAnalysis(ctx, tx, f.TenantID, config); err != nil {
 					return err
 				}
 			}
@@ -174,6 +180,7 @@ func (s *PGStore) ListMappings(ctx context.Context, f Filter) (Page, error) {
 				return err
 			}
 			page = paginate(rows, f.PageSize)
+			page.Analysis = analysis
 			return nil
 		})
 	})
@@ -183,20 +190,65 @@ func (s *PGStore) ListMappings(ctx context.Context, f Filter) (Page, error) {
 	return page, nil
 }
 
-// requireCompleted fails unless f.JobID names a completed job of the tenant.
-func requireCompleted(ctx context.Context, tx db.Transaction, f Filter) error {
+// requireCompleted fails unless f.JobID names a completed job of the tenant,
+// and returns the job's stored config.
+func requireCompleted(ctx context.Context, tx db.Transaction, f Filter) ([]byte, error) {
 	var status string
-	err := tx.QueryRow(ctx, `SELECT status FROM jobs WHERE job_id = $1 AND tenant_id = $2`, f.JobID, f.TenantID).Scan(&status)
+	var config []byte
+	err := tx.QueryRow(ctx, `SELECT status, config FROM jobs WHERE job_id = $1 AND tenant_id = $2`, f.JobID, f.TenantID).Scan(&status, &config)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("list mappings: %w", ErrJobNotFound)
+		return nil, fmt.Errorf("list mappings: %w", ErrJobNotFound)
 	}
 	if err != nil {
-		return fmt.Errorf("list mappings: read job %s: %w", f.JobID, err)
+		return nil, fmt.Errorf("list mappings: read job %s: %w", f.JobID, err)
 	}
 	if status != jobStatusCompleted {
-		return &JobNotCompletedError{JobID: f.JobID, Status: status}
+		return nil, &JobNotCompletedError{JobID: f.JobID, Status: status}
 	}
-	return nil
+	return config, nil
+}
+
+// readAnalysis describes the catalogs a job's stored config names, or
+// returns nil when it names none. Each catalog's name and version are the
+// ones the job recorded at creation, so a later re-import under another name
+// does not relabel the job; a config stored before snapshots gets the
+// catalog's current ones. Whether the tenant still has the catalog comes
+// from its current row: one it does not have (deleted, purged, or another
+// tenant's) is not imported, and without a recorded label is reported by ID
+// only, since RLS and the tenant_id predicate both hide other tenants' rows.
+func readAnalysis(ctx context.Context, tx db.Transaction, tenantID string, config []byte) (*JobAnalysis, error) {
+	cats, ok := jobconfig.ExtractCatalogs(config)
+	if !ok {
+		return nil, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT catalog_id, name, version FROM catalogs WHERE tenant_id = $1 AND catalog_id = ANY($2::text[])`,
+		tenantID, cats.CatalogIDs())
+	if err != nil {
+		return nil, fmt.Errorf("list mappings: read the job's catalogs: %w", err)
+	}
+	found := make(map[string]CatalogSummary, 2)
+	for rows.Next() {
+		var c CatalogSummary
+		if err := rows.Scan(&c.ID, &c.Name, &c.Version); err != nil {
+			return nil, errors.Join(fmt.Errorf("list mappings: scan the job's catalog: %w", err), rows.Close())
+		}
+		c.Imported = true
+		found[c.ID] = c
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, fmt.Errorf("list mappings: read the job's catalogs: %w", err)
+	}
+	summary := func(id string) CatalogSummary {
+		c, ok := found[id]
+		if !ok {
+			c = CatalogSummary{ID: id}
+		}
+		if label := cats.LabelOf(id); label.Recorded {
+			c.Name, c.Version, c.Snapshot = label.Name, label.Version, true
+		}
+		return c
+	}
+	return &JobAnalysis{Source: summary(cats.SourceID), Target: summary(cats.TargetID), Bidirectional: cats.Bidirectional}, nil
 }
 
 // paginate trims rows fetched with one extra row to size and sets Next to

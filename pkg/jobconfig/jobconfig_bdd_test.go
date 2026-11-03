@@ -51,6 +51,51 @@ var _ = Describe("ExtractCatalogs", func() {
 		Entry("empty input", ``),
 	)
 
+	Describe("the catalog labels recorded at creation", func() {
+		csf := jobconfig.Label{Name: "CSF 2.0", Version: "2.0", Recorded: true}
+		sp := jobconfig.Label{Name: "NIST SP 800-53", Recorded: true}
+
+		DescribeTable("reads each side's snapshot",
+			func(stored string, wantSource, wantTarget jobconfig.Label) {
+				got, ok := jobconfig.ExtractCatalogs([]byte(stored))
+				Expect(ok).To(BeTrue())
+				Expect(got.SourceLabel).To(Equal(wantSource))
+				Expect(got.TargetLabel).To(Equal(wantTarget))
+			},
+			Entry("a crosswalk records both sides",
+				`{"catalog_id":"cat-a","target_catalog_id":"cat-b",`+
+					`"source_catalog":{"catalog_id":"cat-a","name":"CSF 2.0","version":"2.0"},`+
+					`"target_catalog":{"catalog_id":"cat-b","name":"NIST SP 800-53"}}`,
+				csf, sp),
+			Entry("within one catalog the target is the source's label",
+				`{"catalog_id":"cat-a","target_catalog_id":"cat-a","source_catalog":{"catalog_id":"cat-a","name":"CSF 2.0","version":"2.0"}}`,
+				csf, csf),
+			Entry("a config from before snapshots records none",
+				`{"catalog_id":"cat-a","target_catalog_id":"cat-b"}`,
+				jobconfig.Label{}, jobconfig.Label{}),
+			// Only CreateJob writes snapshots; one naming another catalog
+			// was not written by it and labels nothing.
+			Entry("a snapshot of another catalog is ignored",
+				`{"catalog_id":"cat-a","target_catalog_id":"cat-b",`+
+					`"source_catalog":{"catalog_id":"cat-b","name":"CSF 2.0"},"target_catalog":{"catalog_id":"cat-x","name":"NIST SP 800-53"}}`,
+				jobconfig.Label{}, jobconfig.Label{}),
+		)
+
+		It("refuses a snapshot that is not an object", func() {
+			_, ok := jobconfig.ExtractCatalogs([]byte(`{"catalog_id":"cat-a","source_catalog":"CSF 2.0"}`))
+			Expect(ok).To(BeFalse())
+		})
+
+		It("looks a label up by catalog ID", func() {
+			got, ok := jobconfig.ExtractCatalogs([]byte(`{"catalog_id":"cat-a","target_catalog_id":"cat-b",` +
+				`"source_catalog":{"catalog_id":"cat-a","name":"CSF 2.0","version":"2.0"}}`))
+			Expect(ok).To(BeTrue())
+			Expect(got.LabelOf("cat-a")).To(Equal(csf))
+			Expect(got.LabelOf("cat-b")).To(Equal(jobconfig.Label{}))
+			Expect(got.LabelOf("cat-other")).To(Equal(jobconfig.Label{}))
+		})
+	})
+
 	It("reports a crosswalk only when the target differs from the source", func() {
 		Expect(jobconfig.Catalogs{SourceID: "a", TargetID: "a"}.CrossCatalog()).To(BeFalse())
 		Expect(jobconfig.Catalogs{SourceID: "a", TargetID: "b"}.CrossCatalog()).To(BeTrue())

@@ -152,11 +152,13 @@ var _ = Describe("Catalog readers integration", func() {
 		Expect(err).NotTo(HaveOccurred())
 		reader := NewPGCatalogNameReader(idb.tenantConn)
 
-		name, err := reader.CatalogName(ctxA, tenantA, own)
+		snap, err := reader.CatalogSnapshot(ctxA, tenantA, own)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(name).To(Equal("CSF 2.0"))
+		Expect(snap.GetCatalogId()).To(Equal(own))
+		Expect(snap.GetName()).To(Equal("CSF 2.0"))
+		Expect(snap.GetVersion()).To(Equal("v1"))
 
-		_, err = reader.CatalogName(ctxA, tenantA, others)
+		_, err = reader.CatalogSnapshot(ctxA, tenantA, others)
 		Expect(err).To(MatchError(ErrCatalogNotFound), "tenant A read tenant B's catalog name")
 		Expect(err.Error()).NotTo(ContainSubstring("Secret Framework"))
 	})

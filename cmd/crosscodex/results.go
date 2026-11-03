@@ -10,12 +10,14 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -51,7 +53,7 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			mappings, err := listAllMappings(cmd.Context(), state.client, req)
+			mappings, _, err := listAllMappings(cmd.Context(), state.client, req)
 			if err != nil {
 				return err
 			}
@@ -184,28 +186,72 @@ func parseRelationshipType(name string) (pb.RelationshipType, error) {
 	return 0, fmt.Errorf("invalid --type %q: use one of %s", name, strings.Join(valid, ", "))
 }
 
-// listAllMappings reads every page of the request's result set. It mutates
-// req.Pagination to walk the page tokens.
-func listAllMappings(ctx context.Context, client crosscodexv1connect.GatewayServiceClient, req *pb.ListJobMappingsRequest) ([]*pb.ControlMapping, error) {
+// listAllMappings reads every page of the request's result set and returns
+// the mappings and the job's analysis, which the server sends on every page;
+// the first page's is kept. It mutates req.Pagination to walk the page
+// tokens.
+func listAllMappings(ctx context.Context, client crosscodexv1connect.GatewayServiceClient, req *pb.ListJobMappingsRequest) ([]*pb.ControlMapping, *pb.JobAnalysis, error) {
 	var all []*pb.ControlMapping
+	var analysis *pb.JobAnalysis
 	pageToken := ""
 	seen := map[string]bool{}
 	for {
 		req.Pagination = &pb.Pagination{PageSize: mappingPageSize, PageToken: pageToken}
 		resp, err := client.ListJobMappings(ctx, connectrpc.NewRequest(req))
 		if err != nil {
-			return nil, fmt.Errorf("list mappings for job %s: %w", req.GetJobId(), err)
+			return nil, nil, fmt.Errorf("list mappings for job %s: %w", req.GetJobId(), err)
 		}
 		all = append(all, resp.Msg.GetMappings()...)
+		if analysis == nil {
+			analysis = resp.Msg.GetAnalysis()
+		}
 		seen[pageToken] = true
 		pageToken = resp.Msg.GetPageInfo().GetNextPageToken()
 		if pageToken == "" {
-			return all, nil
+			return all, analysis, nil
 		}
 		if seen[pageToken] {
-			return nil, fmt.Errorf("list mappings for job %s: server returned page token %q again; stopping to avoid an endless loop. Report this as a crosscodexd bug", req.GetJobId(), pageToken)
+			return nil, nil, fmt.Errorf("list mappings for job %s: server returned page token %q again; stopping to avoid an endless loop. Report this as a crosscodexd bug", req.GetJobId(), pageToken)
 		}
 	}
+}
+
+// analysisColumns are the job-level CSV columns export appends to every row:
+// the job's catalogs and direction (ListJobMappingsResponse.analysis), not
+// the row's own.
+var analysisColumns = []string{
+	"job_source_catalog_id", "job_source_catalog_name", "job_source_catalog_version",
+	"job_target_catalog_id", "job_target_catalog_name", "job_target_catalog_version", "job_bidirectional",
+	"job_source_catalog_snapshot", "job_target_catalog_snapshot",
+}
+
+// analysisValues returns a's values for analysisColumns: all empty when the
+// response carries no analysis. Catalog IDs, names and versions are
+// uploader- or OSCAL-controlled, so each goes through csvCell.
+func analysisValues(a *pb.JobAnalysis) []string {
+	if a == nil {
+		return make([]string, len(analysisColumns))
+	}
+	s, t := a.GetSourceCatalog(), a.GetTargetCatalog()
+	return []string{
+		csvCell(s.GetCatalogId()), csvCell(s.GetName()), csvCell(s.GetVersion()),
+		csvCell(t.GetCatalogId()), csvCell(t.GetName()), csvCell(t.GetVersion()),
+		strconv.FormatBool(a.GetBidirectional()),
+		strconv.FormatBool(s.GetSnapshot()), strconv.FormatBool(t.GetSnapshot()),
+	}
+}
+
+// csvCell makes an uploader-derived value safe as a CSV cell. CSV is often
+// read on a terminal, so the value is cleaned to one line; a spreadsheet runs
+// a cell starting with = + - @ (or tab or CR, which cleaning already trims)
+// as a formula (CWE-1236), so such a value gets a leading single quote.
+// Server-generated cells (mapping IDs, numbers, enums) do not need it.
+func csvCell(s string) string {
+	s = intanalyzer.CleanDisplay(s, maxUntrustedDisplayBytes)
+	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+		return "'" + s
+	}
+	return s
 }
 
 // exportFormats lists the --format values export accepts.
@@ -216,7 +262,19 @@ func newResultsExportCmd(state *cliState) *cobra.Command {
 		Use:     "export <job-id>",
 		Aliases: []string{"dump"},
 		Short:   "Export mappings to JSON or CSV",
-		Long:    `Export a job's control mappings to JSON or CSV format.`,
+		Long: `Export a job's control mappings to JSON or CSV format.
+
+JSON wraps the mappings with the job's source and target catalogs (ID, name,
+version) and direction under "analysis". Names and versions are the ones the
+job recorded when it was created ("snapshot": true); a job created before
+those records shows the catalogs' current ones ("snapshot": false). CSV
+repeats them on every row in the job_source_catalog_*, job_target_catalog_*
+and job_bidirectional columns, with job_source_catalog_snapshot and
+job_target_catalog_snapshot saying which kind of label each side has: they
+describe the job, so in a bidirectional job a row's source control can
+belong to the job's target catalog. A CSV cell from a catalog
+(control and catalog IDs, names, versions) that would start with = + - or @
+gets a leading single quote, so a spreadsheet does not run it as a formula.`,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			jobID := args[0]
 			format, _ := cmd.Flags().GetString("format")
@@ -230,7 +288,7 @@ func newResultsExportCmd(state *cliState) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			mappings, err := listAllMappings(cmd.Context(), state.client, req)
+			mappings, analysis, err := listAllMappings(cmd.Context(), state.client, req)
 			if err != nil {
 				return err
 			}
@@ -264,29 +322,42 @@ func newResultsExportCmd(state *cliState) *cobra.Command {
 					}
 					raw[i] = b
 				}
+				// null when the response carries no analysis. JSON keeps the
+				// stored names; the encoder escapes their control characters.
+				analysisJSON := json.RawMessage("null")
+				if analysis != nil {
+					b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(analysis)
+					if err != nil {
+						return fmt.Errorf("encode the analysis of job %s as JSON: %w", jobID, err)
+					}
+					analysisJSON = b
+				}
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
 				return enc.Encode(map[string]any{
 					"job_id":   jobID,
+					"analysis": analysisJSON,
 					"mappings": raw,
 				})
 			case "csv":
 				w := csv.NewWriter(out)
 				defer w.Flush()
 
-				if err := w.Write([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}); err != nil {
+				header := append([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}, analysisColumns...)
+				if err := w.Write(header); err != nil {
 					return fmt.Errorf("write CSV header: %w", err)
 				}
+				jobValues := analysisValues(analysis)
 				for _, m := range mappings {
-					if err := w.Write([]string{
+					if err := w.Write(append([]string{
 						m.GetMappingId(),
-						m.GetSourceControlId(),
-						m.GetTargetControlId(),
+						csvCell(m.GetSourceControlId()),
+						csvCell(m.GetTargetControlId()),
 						m.GetRelationshipType().String(),
 						fmt.Sprintf("%.3f", m.GetConfidence()),
 						fmt.Sprintf("%.3f", m.GetViabilityScore()),
 						fmt.Sprintf("%t", m.GetIsViable()),
-					}); err != nil {
+					}, jobValues...)); err != nil {
 						return fmt.Errorf("write CSV row: %w", err)
 					}
 				}
@@ -377,7 +448,7 @@ func newResultsDebugCmd(state *cliState) *cobra.Command {
 				ControlId: controlID,
 				Stage:     pb.MappingStage_MAPPING_STAGE_SYNTHESIZED,
 			}
-			mappings, err := listAllMappings(cmd.Context(), state.client, req)
+			mappings, _, err := listAllMappings(cmd.Context(), state.client, req)
 			if err != nil {
 				return err
 			}

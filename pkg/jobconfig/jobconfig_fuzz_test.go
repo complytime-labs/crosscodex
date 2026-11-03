@@ -15,6 +15,7 @@ func FuzzExtractCatalogs(f *testing.F) {
 		`{"catalog_id":"cat-a","catalog_id":"cat-b"}`,                             // boundary: duplicate key
 		`{"catalog_id":"a\u0000b","target_catalog_id":"\u202e"}`,                  // attack: NUL and bidi override
 		`{"catalog_id":7}`, // invalid type
+		`{"catalog_id":"cat-a","target_catalog_id":"cat-b","source_catalog":{"catalog_id":"cat-b","name":"x"}}`, // boundary: snapshot of the other side
 	} {
 		f.Add([]byte(seed))
 	}
@@ -28,6 +29,9 @@ func FuzzExtractCatalogs(f *testing.F) {
 		}
 		if got.Bidirectional && !got.CrossCatalog() {
 			t.Fatalf("accepted %q as bidirectional within one catalog: %+v", stored, got)
+		}
+		if !got.CrossCatalog() && got.TargetLabel != got.SourceLabel {
+			t.Fatalf("accepted %q with two labels for one catalog: %+v", stored, got)
 		}
 	})
 }

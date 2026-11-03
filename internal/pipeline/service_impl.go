@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -26,6 +27,79 @@ func (s *Service) checkConcurrencyLimit() error {
 	runningCount := len(s.running)
 	if s.cfg.MaxConcurrentJobs > 0 && runningCount >= s.cfg.MaxConcurrentJobs {
 		return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("max concurrent jobs reached (%d)", s.cfg.MaxConcurrentJobs))
+	}
+	return nil
+}
+
+// validateJobConfig refuses a job config no job may be created from. It
+// guards every path that writes a new job row (CreateJob, and RetryJob's new
+// job), so a stored config always names its catalogs consistently. The
+// message is the caller's to act on.
+func validateJobConfig(cfg *pb.JobConfig) error {
+	source, target := cfg.GetCatalogId(), cfg.GetTargetCatalogId()
+	if source == "" {
+		return errors.New("config.catalog_id is required: an analysis job runs over an imported catalog. " +
+			"Import the catalog first, then start the analysis with its catalog_id")
+	}
+	if target == "" {
+		return fmt.Errorf("config.target_catalog_id is required: an analysis job maps the controls of config.catalog_id onto a target catalog. "+
+			"Set it to the catalog to map onto, or set it to config.catalog_id to analyse within one catalog "+
+			"(crosscodex run start --source %s --target %s)", source, source)
+	}
+	if cfg.GetBidirectional() && target == source {
+		return errors.New("config.bidirectional cannot be set when config.target_catalog_id equals config.catalog_id: " +
+			"an analysis within one catalog already pairs its controls in both directions. " +
+			"Unset bidirectional, or set target_catalog_id to a different catalog")
+	}
+	return nil
+}
+
+// snapshotTenantCatalogs refuses a job whose source or target is not a
+// catalog of tenantID, before any job row exists, and otherwise sets cfg's
+// source_catalog and target_catalog to each catalog's current name and
+// version, overwriting whatever the caller sent: the job keeps the labels it
+// was created under after a re-import renames a catalog. The gateway checks
+// the catalogs too, but CreateJob is the authoritative entry point and the
+// gateway is not its only caller. A missing catalog and another tenant's
+// catalog get one fixed message, built here rather than from the reader's
+// error, so the answer is no existence oracle. Without a reader nothing can
+// be confirmed, so every job is refused (fail closed). operation names what
+// is refused in every error ("create the job", "retry job X as a new job").
+func (s *Service) snapshotTenantCatalogs(ctx context.Context, tenantID, operation string, cfg *pb.JobConfig) error {
+	if s.catalogNames == nil {
+		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+			"cannot %s: no catalog reader is configured, so the pipeline cannot confirm that the job's catalogs "+
+				"are your tenant's. An operator must wire the catalog name reader (pipeline.WithCatalogNameReader)", operation))
+	}
+	type check struct {
+		field, id string
+		snapshot  **pb.CatalogSnapshot // the cfg field the catalog's label goes to
+	}
+	checks := []check{{"catalog_id", cfg.GetCatalogId(), &cfg.SourceCatalog}}
+	if cfg.GetTargetCatalogId() != cfg.GetCatalogId() {
+		checks = append(checks, check{"target_catalog_id", cfg.GetTargetCatalogId(), &cfg.TargetCatalog})
+	}
+	for _, c := range checks {
+		snap, err := s.catalogNames.CatalogSnapshot(ctx, tenantID, c.id)
+		switch {
+		case errors.Is(err, ErrCatalogNotFound):
+			return connect.NewError(connect.CodeNotFound, fmt.Errorf(
+				"cannot %s: config.%s %q is not a catalog of your tenant: no imported catalog has that ID. "+
+					"Import the catalog first, or run \"crosscodex catalog list\" to find the ID of an imported catalog", operation, c.field, c.id))
+		case err != nil:
+			// The cause (a database error) is withheld from the caller
+			// (CWE-209) and logged once here.
+			s.logger.ErrorContext(ctx, "catalog read failed", "operation", operation,
+				"tenant", tenantID, "field", c.field, "catalog_id", c.id, "error", err)
+			return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+				"cannot %s: whether config.%s %q is a catalog of your tenant could not be checked, "+
+					"because the catalog store could not be read. Retry the request; if it keeps failing, "+
+					"ask an operator to check the database", operation, c.field, c.id))
+		}
+		*c.snapshot = snap
+	}
+	if cfg.GetTargetCatalogId() == cfg.GetCatalogId() {
+		cfg.TargetCatalog = proto.Clone(cfg.GetSourceCatalog()).(*pb.CatalogSnapshot)
 	}
 	return nil
 }
@@ -46,10 +120,15 @@ func (s *Service) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJ
 	if req.Msg.Config == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("config is required"))
 	}
-	if req.Msg.Config.GetCatalogId() == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(
-			"config.catalog_id is required: an analysis job runs over an imported catalog. "+
-				"Import the catalog first, then start the analysis with its catalog_id"))
+	if err := validateJobConfig(req.Msg.Config); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// A copy, so recording the snapshot leaves the caller's message as sent.
+	cfg := proto.Clone(req.Msg.Config).(*pb.JobConfig)
+	if err := s.snapshotTenantCatalogs(ctx, tenantID, "create the job", cfg); err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return nil, err
 	}
 
 	dag, err := s.registry.BuildDAG(ctx)
@@ -61,7 +140,7 @@ func (s *Service) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJ
 
 	jobID := uuid.New().String()
 
-	configBytes, err := json.Marshal(req.Msg.Config)
+	configBytes, err := json.Marshal(cfg)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, err.Error())
@@ -314,10 +393,20 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 	}
 	defer release()
 
+	// The stored error message is the job's record of its failure and is
+	// quoted unchanged. A command in it may predate the current CLI (a job
+	// that failed before target_catalog_id names no --target), so the
+	// refusal ends with a command built from the job's config instead.
 	if refusal := retryRefusal(job.ErrorClass); refusal != "" && req.Msg.RetryFromFailure {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"cannot retry job %s from its failure: %s. It failed with: %s. Start a new job instead: %s",
-			job.JobID, refusal, job.ErrorMessage, newJobCommand(job)))
+			"cannot retry job %s from its failure: %s. It failed with (as recorded then; a command in it may predate this version): %s. %s",
+			job.JobID, refusal, job.ErrorMessage, retryRemedy(job)))
+	}
+	if job.ErrorClass == JobErrorEmptyTargetCatalog && !req.Msg.RetryFromFailure {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"cannot retry job %s as a new job: its target catalog has no control with a statement, "+
+				"and a new job with the same config reads the same catalog. %s",
+			job.JobID, retryRemedy(job)))
 	}
 
 	// Check concurrency limit before spawning retry job.
@@ -384,6 +473,23 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 
 		newJobID = req.Msg.JobId
 	} else {
+		cfg, err := retryJobConfig(job)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+		// The new job is created now, so it records the catalogs' labels
+		// now, and is confirmed to be over the tenant's catalogs as
+		// CreateJob confirms a job.
+		if err := s.snapshotTenantCatalogs(ctx, tenantID, fmt.Sprintf("retry job %s as a new job", job.JobID), cfg); err != nil {
+			span.RecordError(err)
+			span.SetStatus(otelcodes.Error, err.Error())
+			return nil, err
+		}
+		configBytes, err := json.Marshal(cfg)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("cannot retry job %s as a new job: its config could not be encoded: %w", job.JobID, err))
+		}
+
 		newJobID = uuid.New().String()
 
 		now := time.Now()
@@ -391,7 +497,7 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 			JobID:     newJobID,
 			TenantID:  tenantID,
 			Status:    JobStatusPending,
-			Config:    job.Config,
+			Config:    configBytes,
 			CreatedBy: JobCreator(ctx, tenantID),
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -745,4 +851,30 @@ func (s *Service) reserveRetry(job *Job) (func(), error) {
 		delete(s.retrying, job.JobID)
 		s.mu.Unlock()
 	}, nil
+}
+
+// retryJobConfig is the config of the new job RetryJob creates from job: its
+// stored config, validated as CreateJob validates a request's. A config
+// stored before target_catalog_id ran within its one catalog, so the new
+// job's config states that catalog as its target. A stored config that sets
+// bidirectional within one catalog runs without it on resume
+// (jobconfig.ExtractCatalogs), so the new job's config drops it too. The
+// caller records the new job's catalog snapshot.
+func retryJobConfig(job *Job) (*pb.JobConfig, error) {
+	var cfg pb.JobConfig
+	if err := json.Unmarshal(job.Config, &cfg); err != nil {
+		return nil, fmt.Errorf("cannot retry job %s as a new job: its stored config could not be read as a job config. "+
+			"Start a new job instead: %s", job.JobID, newJobCommand(job))
+	}
+	if cfg.GetTargetCatalogId() == "" {
+		cfg.TargetCatalogId = cfg.GetCatalogId()
+	}
+	if cfg.GetTargetCatalogId() == cfg.GetCatalogId() {
+		cfg.Bidirectional = false
+	}
+	if err := validateJobConfig(&cfg); err != nil {
+		return nil, fmt.Errorf("cannot retry job %s as a new job: its stored config is invalid: %w. "+
+			"Start a new job instead: %s", job.JobID, err, newJobCommand(job))
+	}
+	return &cfg, nil
 }

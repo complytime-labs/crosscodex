@@ -24,4 +24,8 @@ const (
 
 	// OSCALTitleKey is the title field within metadata
 	OSCALTitleKey = "title"
+
+	// OSCALVersionKey is the catalog's own version field within metadata
+	// (for example "5.1.1" for SP 800-53 Rev. 5.1.1).
+	OSCALVersionKey = "version"
 )

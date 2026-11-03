@@ -12,16 +12,19 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-// CatalogNameReader reads an imported catalog's name: the uploader's
-// catalog_name, or the OSCAL metadata title when none was given. The pair
-// analyzers show it as each control's framework.
+// CatalogNameReader reads an imported catalog's current label: its name (the
+// uploader's catalog_name, or the OSCAL metadata title when none was given)
+// and its OSCAL metadata.version. CreateJob records it in the job's config
+// as the job's snapshot; the pair analyzers show the name as each control's
+// framework.
 type CatalogNameReader interface {
-	CatalogName(ctx context.Context, tenantID, catalogID string) (string, error)
+	CatalogSnapshot(ctx context.Context, tenantID, catalogID string) (*pb.CatalogSnapshot, error)
 }
 
 type pgCatalogNameReader struct {
@@ -63,10 +66,10 @@ func NewPGCatalogNameReader(conn db.TenantConnection, opts ...PGCatalogNameReade
 	return r
 }
 
-// CatalogName reads catalogID's name for tenantID. It returns
-// ErrCatalogNotFound when the tenant has no such catalog: RLS and the
+// CatalogSnapshot reads catalogID's name and version for tenantID. It
+// returns ErrCatalogNotFound when the tenant has no such catalog: RLS and the
 // tenant_id predicate both hide other tenants' catalogs.
-func (r *pgCatalogNameReader) CatalogName(ctx context.Context, tenantID, catalogID string) (string, error) {
+func (r *pgCatalogNameReader) CatalogSnapshot(ctx context.Context, tenantID, catalogID string) (*pb.CatalogSnapshot, error) {
 	start := time.Now()
 	ctx, span := telemetry.StartSpan(r.tracer, ctx, "pipeline.catalogs.name")
 	defer span.End()
@@ -75,7 +78,7 @@ func (r *pgCatalogNameReader) CatalogName(ctx context.Context, tenantID, catalog
 		attribute.String("catalog.id", catalogID),
 	)
 
-	name, err := r.catalogName(ctx, span, tenantID, catalogID)
+	snap, err := r.catalogSnapshot(ctx, span, tenantID, catalogID)
 	status := "ok"
 	if err != nil {
 		status = "error"
@@ -91,32 +94,33 @@ func (r *pgCatalogNameReader) CatalogName(ctx context.Context, tenantID, catalog
 	if r.readLatency != nil {
 		r.readLatency.Record(ctx, float64(time.Since(start).Milliseconds()))
 	}
-	return name, err
+	return snap, err
 }
 
-// catalogName is CatalogName without its telemetry.
-func (r *pgCatalogNameReader) catalogName(ctx context.Context, span trace.Span, tenantID, catalogID string) (string, error) {
+// catalogSnapshot is CatalogSnapshot without its telemetry.
+func (r *pgCatalogNameReader) catalogSnapshot(ctx context.Context, span trace.Span, tenantID, catalogID string) (*pb.CatalogSnapshot, error) {
 	if err := tenant.ValidateTenantID(tenantID); err != nil {
-		return "", fmt.Errorf("pgCatalogNameReader.CatalogName: %w", err)
+		return nil, fmt.Errorf("pgCatalogNameReader.CatalogSnapshot: %w", err)
 	}
 	span.SetAttributes(attribute.String("tenant.id", tenantID))
 
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return "", fmt.Errorf("pgCatalogNameReader.CatalogName: beginning transaction: %w", err)
+		return nil, fmt.Errorf("pgCatalogNameReader.CatalogSnapshot: beginning transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var name string
-	err = tx.QueryRow(ctx, `SELECT name FROM catalogs WHERE tenant_id = $1 AND catalog_id = $2`, tenantID, catalogID).Scan(&name)
+	snap := &pb.CatalogSnapshot{CatalogId: catalogID}
+	err = tx.QueryRow(ctx, `SELECT name, version FROM catalogs WHERE tenant_id = $1 AND catalog_id = $2`, tenantID, catalogID).
+		Scan(&snap.Name, &snap.Version)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return "", fmt.Errorf("pgCatalogNameReader.CatalogName: catalog %s: %w", catalogID, ErrCatalogNotFound)
+		return nil, fmt.Errorf("pgCatalogNameReader.CatalogSnapshot: catalog %s: %w", catalogID, ErrCatalogNotFound)
 	case err != nil:
-		return "", fmt.Errorf("pgCatalogNameReader.CatalogName: reading catalog %s: %w", catalogID, err)
+		return nil, fmt.Errorf("pgCatalogNameReader.CatalogSnapshot: reading catalog %s: %w", catalogID, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("pgCatalogNameReader.CatalogName: commit failed: %w", err)
+		return nil, fmt.Errorf("pgCatalogNameReader.CatalogSnapshot: commit failed: %w", err)
 	}
-	return name, nil
+	return snap, nil
 }

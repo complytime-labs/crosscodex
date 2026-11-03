@@ -59,7 +59,7 @@ testcases:
           curl -sS --fail-with-body \
             --cacert {{.ca_cert}} --cert {{.client_cert}} --key {{.client_key}} \
             -H "Content-Type: application/json" \
-            -d "{\"sourceCatalogId\":\"{{.catalog_id}}\"}" \
+            -d "{\"sourceCatalogId\":\"{{.catalog_id}}\",\"targetCatalogId\":\"{{.catalog_id}}\"}" \
             {{.gateway_url}}/StartAnalysis
         assertions:
           - result.code ShouldEqual 0

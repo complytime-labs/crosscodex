@@ -223,6 +223,7 @@ var _ = Describe("CandidateGenerator", func() {
 		)
 		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{}`))
 		Expect(err).To(MatchError(pipeline.ErrMissingCatalogID))
+		Expect(err.Error()).To(ContainSubstring("start a new analysis: crosscodex run start --source <source-catalog-id> --target <target-catalog-id>"))
 		Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse())
 	})
 

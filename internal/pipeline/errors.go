@@ -1,6 +1,10 @@
 package pipeline
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
+)
 
 var ErrNotFound = errors.New("pipeline: not found")
 
@@ -49,6 +53,9 @@ const (
 	JobErrorAnalyzersChanged JobErrorClass = "analyzers_changed"
 	// JobErrorMissingCatalog is ErrMissingCatalogID.
 	JobErrorMissingCatalog JobErrorClass = "missing_catalog"
+	// JobErrorEmptyTargetCatalog is ErrEmptyTargetCatalog. Catalog IDs are
+	// content hashes, so a retry reads the same empty target.
+	JobErrorEmptyTargetCatalog JobErrorClass = "empty_target_catalog"
 )
 
 // ClassifyJobError returns the class of a job's failure err, by the
@@ -61,6 +68,8 @@ func ClassifyJobError(err error) JobErrorClass {
 		return JobErrorAnalyzersChanged
 	case errors.Is(err, ErrMissingCatalogID):
 		return JobErrorMissingCatalog
+	case errors.Is(err, ErrEmptyTargetCatalog):
+		return JobErrorEmptyTargetCatalog
 	default:
 		return JobErrorRetryable
 	}
@@ -75,11 +84,32 @@ func retryRefusal(class JobErrorClass) string {
 		return "the enabled analyzers changed since it was created, and a retry checks them again"
 	case JobErrorMissingCatalog:
 		return "its config names no catalog to analyse"
+	case JobErrorEmptyTargetCatalog:
+		return "its target catalog has no control with a statement, and a retry reads the same catalog"
 	default:
 		return ""
 	}
 }
 
+// retryRemedy is the sentence a refused retry of job ends with: the command
+// that starts the new job it needs, built from job's config rather than read
+// from its stored error message, which may predate the current CLI. A job
+// whose target has nothing to map onto needs another target: re-importing
+// the target with statements gives it a new catalog ID (IDs are content
+// hashes).
+func retryRemedy(job *Job) string {
+	if cats, ok := jobconfig.ExtractCatalogs(job.Config); ok && job.ErrorClass == JobErrorEmptyTargetCatalog {
+		return "Importing the target again with control statements gives it a new catalog ID, " +
+			"so start a new job with that catalog or another target: " + jobCommand(cats, cats.SourceID, "<catalog-id>")
+	}
+	return "Start a new job: " + newJobCommand(job)
+}
+
 // ErrCatalogNotFound reports that a catalog a job names is not a catalog of
 // the job's tenant: it was deleted or purged after the job was created.
 var ErrCatalogNotFound = errors.New("catalog not found for the tenant")
+
+// ErrEmptyTargetCatalog reports a job mapping a source catalog onto a target
+// catalog that has no control with a statement: nothing could be mapped onto
+// it, so the job fails before any analyzer spends LLM calls.
+var ErrEmptyTargetCatalog = errors.New("target catalog has no control with a statement")

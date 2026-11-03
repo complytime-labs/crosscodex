@@ -56,10 +56,35 @@ type Mapping struct {
 	HasViability bool
 }
 
+// JobAnalysis is the catalog selection of the job a page lists: what
+// produced its mappings.
+type JobAnalysis struct {
+	Source        CatalogSummary
+	Target        CatalogSummary // equals Source within one catalog
+	Bidirectional bool
+}
+
+// CatalogSummary identifies a catalog for display. Snapshot is true when
+// Name and Version are the ones the job recorded at creation; otherwise (a
+// job created before snapshots) they are the catalog's current ones. Imported
+// is false when the tenant no longer has the catalog; Name and Version are
+// then empty unless Snapshot is true.
+type CatalogSummary struct {
+	ID       string
+	Name     string
+	Version  string
+	Imported bool
+	Snapshot bool
+}
+
 // Page is one page of mappings. Next is nil on the last page.
 type Page struct {
 	Mappings []Mapping
 	Next     *Cursor
+	// Analysis is set when Filter.JobID names a job whose stored config names
+	// a catalog; it is read in the same tenant-scoped transaction as the
+	// mappings.
+	Analysis *JobAnalysis
 }
 
 // Reader lists mappings. Implementations confine reads to the tenant in ctx.

@@ -68,9 +68,30 @@ message JobConfig {
   // CreateJob rejects it when target_catalog_id equals catalog_id: within
   // one catalog, controls are already paired in both directions.
   bool bidirectional = 9;
+  // The source catalog's name and version when the job was created, so the
+  // job keeps showing (and prompting with) the label it ran under after the
+  // catalog is renamed by a re-import. Server-set: CreateJob, and RetryJob's
+  // new job, overwrite it from the catalog store; a client-supplied value is
+  // ignored. Absent in a config stored before snapshots.
+  CatalogSnapshot source_catalog = 10;
+  // The target catalog's name and version when the job was created; equal
+  // to source_catalog within one catalog. Server-set as source_catalog is; a
+  // client-supplied value is ignored.
+  CatalogSnapshot target_catalog = 11;
 
   reserved 1, 2, 4, 5;
   reserved "document_content", "document_uri", "catalog_format", "catalog_name";
+}
+
+// CatalogSnapshot is a catalog's label as recorded when a job was created.
+message CatalogSnapshot {
+  // The catalog the label belongs to: the JobConfig's catalog_id or
+  // target_catalog_id.
+  string catalog_id = 1;
+  // The uploader's catalog_name, or the OSCAL metadata title.
+  string name = 2;
+  // The OSCAL metadata.version; empty when import recorded none.
+  string version = 3;
 }
 
 message CreateJobResponse {

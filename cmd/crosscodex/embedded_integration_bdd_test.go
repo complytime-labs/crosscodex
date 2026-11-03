@@ -222,7 +222,7 @@ var _ = Describe("Import-only CLI and refused analysis (#212)", func() {
 		id := catalogs[0].GetCatalogId()
 		Expect(out).To(ContainSubstring("Catalog imported"))
 		Expect(out).To(ContainSubstring("Catalog ID: " + id))
-		Expect(out).To(ContainSubstring("Next: crosscodex run start --source " + id))
+		Expect(out).To(ContainSubstring("Next: crosscodex run start --source " + id + " --target <catalog-id>"))
 		Expect(out).NotTo(ContainSubstring("Job ID"))
 	})
 
@@ -241,7 +241,7 @@ var _ = Describe("Import-only CLI and refused analysis (#212)", func() {
 		Expect(err).NotTo(HaveOccurred())
 		beforeIDs, beforeTotal := listJobIDs()
 
-		_, err = runCLI(newRunCmd(sharedState), "start", "--source", resp.GetCatalogId())
+		_, err = runCLI(newRunCmd(sharedState), "start", "--source", resp.GetCatalogId(), "--target", resp.GetCatalogId())
 		Expect(err).To(HaveOccurred())
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
 		Expect(err.Error()).To(ContainSubstring("crosscodexd"))
