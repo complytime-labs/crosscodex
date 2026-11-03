@@ -1125,7 +1125,7 @@ var _ = Describe("Service", func() {
 
 		It("returns FailedPrecondition, saying what to do, when no stage has failed or been cancelled", func() {
 			now := time.Now()
-			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "cat-a", TargetCatalogId: "cat-b", Bidirectional: true})
 			job := &pipeline.Job{
 				JobID:     "job-retry-nofail",
 				TenantID:  "test-tenant",
@@ -1149,7 +1149,7 @@ var _ = Describe("Service", func() {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
 			Expect(err).To(MatchError(And(
 				ContainSubstring("cannot retry job job-retry-nofail from a failure: no stage failed or was cancelled"),
-				ContainSubstring("crosscodex run start --source test-catalog"),
+				ContainSubstring("crosscodex run start --source cat-a --target cat-b --bidirectional"),
 			)))
 			stages, err := store.GetStages(ctx, "job-retry-nofail")
 			Expect(err).NotTo(HaveOccurred())

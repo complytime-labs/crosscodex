@@ -79,3 +79,7 @@ func retryRefusal(class JobErrorClass) string {
 		return ""
 	}
 }
+
+// ErrCatalogNotFound reports that a catalog a job names is not a catalog of
+// the job's tenant: it was deleted or purged after the job was created.
+var ErrCatalogNotFound = errors.New("catalog not found for the tenant")

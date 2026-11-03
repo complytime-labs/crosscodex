@@ -80,14 +80,10 @@ func checkJobAnalyzers(job *Job, stages []*Stage, dagOrder []string) error {
 
 	// The job is failed, and a failed job is never resumed, so a new job
 	// is the only remedy; the settings only choose its analyzers.
-	catalogID, ok := ExtractCatalogID(job.Config)
-	if !ok {
-		catalogID = "<catalog-id>"
-	}
 	return fmt.Errorf("job %s cannot run: %s: %w. The job is marked failed and is not resumed. "+
-		"Start a new job with the analyzers enabled now: crosscodex run start --source %s. "+
+		"Start a new job with the analyzers enabled now: %s. "+
 		"To give the new job the analyzers this one was created with, first set %s",
-		job.JobID, strings.Join(changes, "; "), ErrAnalyzersChanged, catalogID, strings.Join(restore, " and "))
+		job.JobID, strings.Join(changes, "; "), ErrAnalyzersChanged, newJobCommand(job), strings.Join(restore, " and "))
 }
 
 // analyzerSetting names the setting that enables analyzer name, or says that

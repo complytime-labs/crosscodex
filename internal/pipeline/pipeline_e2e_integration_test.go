@@ -274,6 +274,7 @@ var _ = Describe("Pipeline end-to-end", func() {
 			store, engine, registry, synth, attestors, converter, bus, storageProvider,
 			pipelineCfg, candGen,
 			WithCatalogControlsReader(NewPGCatalogControlsReader(tenantConn)),
+			WithCatalogNameReader(NewPGCatalogNameReader(tenantConn)),
 			WithEmbeddingsReader(NewPGEmbeddingsReader(tenantConn)),
 			WithEmbeddingConfig(analysisConfig.Embedding),
 		)

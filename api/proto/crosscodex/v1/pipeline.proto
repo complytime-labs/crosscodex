@@ -53,12 +53,21 @@ message CreateJobRequest {
 }
 
 message JobConfig {
-  // The imported catalog to analyse. Required: CreateJob rejects a config
-  // without it. Import inputs (content, format, name) belong to upload.
+  // The imported catalog whose controls are mapped (the source of every
+  // pair). Required: CreateJob rejects a config without it. Import inputs
+  // (content, format, name) belong to upload.
   string catalog_id = 3;
+  // The imported catalog the source controls are mapped onto (the target of
+  // every pair). Required: CreateJob rejects a config without it. Equal to
+  // catalog_id for an analysis within one catalog. A stored config without
+  // it predates cross-catalog analysis and runs within catalog_id.
   string target_catalog_id = 6;
   SynthesisConfig synthesis_config = 7;
   map<string, string> options = 8;
+  // Also pair target controls with source controls (target to source).
+  // CreateJob rejects it when target_catalog_id equals catalog_id: within
+  // one catalog, controls are already paired in both directions.
+  bool bidirectional = 9;
 
   reserved 1, 2, 4, 5;
   reserved "document_content", "document_uri", "catalog_format", "catalog_name";

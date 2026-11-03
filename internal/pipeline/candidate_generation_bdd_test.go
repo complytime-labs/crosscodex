@@ -25,14 +25,19 @@ func (f fakeControlsReader) ControlData(_ context.Context, _, _, _ string) (map[
 	return f.controls, f.err
 }
 
-// fakeEmbeddingsReader is a narrow EmbeddingsReader test double.
+// fakeEmbeddingsReader is a narrow EmbeddingsReader test double. When
+// gotCatalogIDs is set it records the catalog list it was asked for.
 type fakeEmbeddingsReader struct {
-	ids    []string
-	values [][]float32
-	err    error
+	ids           []string
+	values        [][]float32
+	err           error
+	gotCatalogIDs *[]string
 }
 
-func (f fakeEmbeddingsReader) SimilarityMatrix(_ context.Context, _, _, _ string) ([]string, [][]float32, error) {
+func (f fakeEmbeddingsReader) SimilarityMatrix(_ context.Context, _ string, catalogIDs []string, _ string) ([]string, [][]float32, error) {
+	if f.gotCatalogIDs != nil {
+		*f.gotCatalogIDs = catalogIDs
+	}
 	return f.ids, f.values, f.err
 }
 
@@ -84,6 +89,47 @@ func (g requestCapturingGenerator) Generate(_ context.Context, req candidate.Gen
 	return nil, nil
 }
 
+// catalogControls is a ControlsReader serving each catalog's controls.
+type catalogControls map[string]map[string]*candidate.ControlData
+
+func (f catalogControls) ControlData(_ context.Context, _, catalogID, _ string) (map[string]*candidate.ControlData, error) {
+	return f[catalogID], nil
+}
+
+// allPairsGenerator proposes every source-target pair of distinct
+// controls, so a spec sees exactly which pairs the request allowed.
+type allPairsGenerator struct{}
+
+func (allPairsGenerator) Name() string { return "all-pairs" }
+
+func (allPairsGenerator) Generate(_ context.Context, req candidate.GenerateRequest) ([]candidate.Candidate, error) {
+	var out []candidate.Candidate
+	for s := range req.SourceControls {
+		for t := range req.TargetControls {
+			if s != t {
+				out = append(out, candidate.Candidate{SourceID: s, TargetID: t, Score: 1, Weight: 1, GeneratorID: "all-pairs"})
+			}
+		}
+	}
+	return out, nil
+}
+
+// crosswalkControls is a source catalog of two controls and a target
+// catalog of two, every control embedded.
+var crosswalkControls = catalogControls{
+	"cat-src": {"s1": {ControlID: "s1", Text: "source one"}, "s2": {ControlID: "s2", Text: "source two"}},
+	"cat-tgt": {"t1": {ControlID: "t1", Text: "target one"}, "t2": {ControlID: "t2", Text: "target two"}},
+}
+
+// writtenPairs returns the (source, target) pairs the writer received.
+func writtenPairs(w *fakeCandidateWriter) [][2]string {
+	pairs := make([][2]string, len(w.relationshipPairs))
+	for i, p := range w.relationshipPairs {
+		pairs[i] = [2]string{p.SourceControlID, p.TargetControlID}
+	}
+	return pairs
+}
+
 var threeControls = map[string]*candidate.ControlData{
 	"c1": {ControlID: "c1", Text: "control one"},
 	"c2": {ControlID: "c2", Text: "control two"},
@@ -93,6 +139,81 @@ var threeControls = map[string]*candidate.ControlData{
 var errCandidateBoom = errors.New("boom")
 
 var _ = Describe("CandidateGenerator", func() {
+	Describe("across two catalogs", func() {
+		var (
+			writer        *fakeCandidateWriter
+			gotCatalogIDs []string
+		)
+
+		generate := func(jobConfig string, controls catalogControls, embeddedIDs ...string) error {
+			registry := candidate.NewRegistry()
+			Expect(registry.Register(allPairsGenerator{})).To(Succeed())
+			writer = &fakeCandidateWriter{}
+			values := make([][]float32, len(embeddedIDs))
+			for i := range values {
+				values[i] = make([]float32, len(embeddedIDs))
+			}
+			gen := pipeline.NewCandidateGenerator(
+				controls,
+				fakeEmbeddingsReader{ids: embeddedIDs, values: values, gotCatalogIDs: &gotCatalogIDs},
+				registry, writer,
+				config.CandidateConfig{MinEmbeddingCoverage: 1.0}, "test-model",
+			)
+			return gen.Generate(context.Background(), "tenant-1", "job-1", []byte(jobConfig))
+		}
+
+		It("pairs only source controls with target controls", func() {
+			Expect(generate(`{"catalog_id":"cat-src","target_catalog_id":"cat-tgt"}`, crosswalkControls, "s1", "s2", "t1", "t2")).To(Succeed())
+			Expect(writtenPairs(writer)).To(ConsistOf(
+				[2]string{"s1", "t1"}, [2]string{"s1", "t2"}, [2]string{"s2", "t1"}, [2]string{"s2", "t2"},
+			))
+			Expect(writer.requiresPairs).To(HaveLen(4))
+		})
+
+		It("adds target-to-source pairs with bidirectional, and still no pair within one catalog", func() {
+			Expect(generate(`{"catalog_id":"cat-src","target_catalog_id":"cat-tgt","bidirectional":true}`, crosswalkControls, "s1", "s2", "t1", "t2")).To(Succeed())
+			Expect(writtenPairs(writer)).To(ConsistOf(
+				[2]string{"s1", "t1"}, [2]string{"s1", "t2"}, [2]string{"s2", "t1"}, [2]string{"s2", "t2"},
+				[2]string{"t1", "s1"}, [2]string{"t1", "s2"}, [2]string{"t2", "s1"}, [2]string{"t2", "s2"},
+			))
+		})
+
+		It("reads one similarity matrix over both catalogs, source first", func() {
+			Expect(generate(`{"catalog_id":"cat-src","target_catalog_id":"cat-tgt"}`, crosswalkControls, "s1", "s2", "t1", "t2")).To(Succeed())
+			Expect(gotCatalogIDs).To(Equal([]string{"cat-src", "cat-tgt"}))
+		})
+
+		DescribeTable("fails when one side's embedding coverage falls short, naming that catalog, and writes nothing",
+			func(embeddedIDs []string, want string) {
+				err := generate(`{"catalog_id":"cat-src","target_catalog_id":"cat-tgt"}`, crosswalkControls, embeddedIDs...)
+				Expect(err).To(MatchError(pipeline.ErrInsufficientEmbeddingCoverage))
+				Expect(err.Error()).To(ContainSubstring(want))
+				Expect(err.Error()).To(ContainSubstring("analysis.candidates.min_embedding_coverage"))
+				Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse())
+			},
+			Entry("the target", []string{"s1", "s2", "t1"}, "target catalog cat-tgt: 1 of 2 controls"),
+			Entry("the source", []string{"s1", "t1", "t2"}, "source catalog cat-src: 1 of 2 controls"),
+		)
+
+		It("pairs a catalog's controls with each other in both directions within one catalog", func() {
+			Expect(generate(`{"catalog_id":"cat-src","target_catalog_id":"cat-src"}`, crosswalkControls, "s1", "s2")).To(Succeed())
+			Expect(writtenPairs(writer)).To(ConsistOf([2]string{"s1", "s2"}, [2]string{"s2", "s1"}))
+			Expect(gotCatalogIDs).To(Equal([]string{"cat-src"}))
+		})
+	})
+
+	It("reads the similarity matrix of the job's one catalog within one catalog", func() {
+		var got []string
+		gen := pipeline.NewCandidateGenerator(
+			fakeControlsReader{controls: threeControls},
+			fakeEmbeddingsReader{ids: []string{"c1", "c2", "c3"}, values: [][]float32{{100, 0, 0}, {0, 100, 0}, {0, 0, 100}}, gotCatalogIDs: &got},
+			candidate.NewRegistry(), &fakeCandidateWriter{},
+			config.CandidateConfig{MinEmbeddingCoverage: 1.0}, "test-model",
+		)
+		Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1","target_catalog_id":"cat-1"}`))).To(Succeed())
+		Expect(got).To(Equal([]string{"cat-1"}))
+	})
+
 	It("fails a job config without catalog_id", func() {
 		writer := &fakeCandidateWriter{}
 		gen := pipeline.NewCandidateGenerator(
@@ -104,27 +225,6 @@ var _ = Describe("CandidateGenerator", func() {
 		Expect(err).To(MatchError(pipeline.ErrMissingCatalogID))
 		Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse())
 	})
-
-	It("extracts the catalog ID", func() {
-		jobConfig := []byte(`{"catalog_id":"catalog-123"}`)
-		id, ok := pipeline.ExtractCatalogID(jobConfig)
-		Expect(ok).To(BeTrue())
-		Expect(id).To(Equal("catalog-123"))
-	})
-
-	DescribeTable("ExtractCatalogID on configs without a catalog_id",
-		func(jobConfig string) {
-			id, ok := pipeline.ExtractCatalogID([]byte(jobConfig))
-			Expect(ok).To(BeFalse())
-			Expect(id).To(BeEmpty())
-		},
-		Entry("empty object", `{}`),
-		Entry("empty catalog id", `{"catalog_id":""}`),
-		Entry("non-string catalog id", `{"catalog_id":7}`),
-		Entry("pre-import-only oneof shape", `{"Source":{"CatalogId":"cat-1"}}`),
-		Entry("malformed json", `{not json`),
-		Entry("empty input", ``),
-	)
 
 	It("fails below the coverage threshold", func() {
 		// 3 controls, only 1 embedded -> 33% coverage < 0.8 default -> error, no candidates written.

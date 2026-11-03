@@ -93,10 +93,70 @@ var _ = Describe("PGControlsReader", func() {
 })
 
 var _ = Describe("PGEmbeddingsReader", func() {
+	It("restricts both sides of the join to the job's catalogs and the tenant", func() {
+		var gotQuery string
+		var gotArgs []any
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(_ context.Context, query string, args ...any) (db.Rows, error) {
+				gotQuery, gotArgs = query, args
+				return dbtest.Rows(nil), nil
+			},
+		}
+		reader := pipeline.NewPGEmbeddingsReader(&dbtest.Conn{Tx: mockTx})
+		_, _, err := reader.SimilarityMatrix(context.Background(), "tenant-1", []string{"cat-src", "cat-tgt"}, "model-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gotQuery).To(And(
+			ContainSubstring("a.tenant_id = $1 AND b.tenant_id = $1"),
+			ContainSubstring("a.catalog_id = ANY($2::text[]) AND b.catalog_id = ANY($2::text[])"),
+		))
+		Expect(gotArgs).To(Equal([]any{"tenant-1", []string{"cat-src", "cat-tgt"}, "model-1"}))
+	})
+
+	It("counts only embeddings filed under each control's current catalog, on both sides", func() {
+		var gotQuery string
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(_ context.Context, query string, _ ...any) (db.Rows, error) {
+				gotQuery = query
+				return dbtest.Rows(nil), nil
+			},
+		}
+		reader := pipeline.NewPGEmbeddingsReader(&dbtest.Conn{Tx: mockTx})
+		_, _, err := reader.SimilarityMatrix(context.Background(), "tenant-1", []string{"cat-src", "cat-tgt"}, "model-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gotQuery).To(And(
+			ContainSubstring("ca.tenant_id = a.tenant_id AND ca.control_id = a.control_id AND ca.catalog_id = a.catalog_id"),
+			ContainSubstring("cb.tenant_id = b.tenant_id AND cb.control_id = b.control_id AND cb.catalog_id = b.catalog_id"),
+		))
+	})
+
+	It("refuses a pair scanned twice instead of keeping either similarity", func() {
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(context.Context, string, ...any) (db.Rows, error) {
+				return dbtest.Rows(nil,
+					[]any{"ctrl-001", "ctrl-002", 90.0},
+					[]any{"ctrl-001", "ctrl-002", 40.0},
+				), nil
+			},
+		}
+		reader := pipeline.NewPGEmbeddingsReader(&dbtest.Conn{Tx: mockTx})
+		ids, values, err := reader.SimilarityMatrix(context.Background(), "tenant-1", []string{"catalog-1"}, "model-1")
+		Expect(err).To(MatchError(And(ContainSubstring("ctrl-001"), ContainSubstring("ctrl-002"), ContainSubstring("more than once"))))
+		Expect(ids).To(BeNil())
+		Expect(values).To(BeNil())
+	})
+
+	It("refuses an empty catalog list before any transaction starts", func() {
+		conn := &dbtest.Conn{}
+		reader := pipeline.NewPGEmbeddingsReader(conn)
+		_, _, err := reader.SimilarityMatrix(context.Background(), "tenant-1", nil, "model-1")
+		Expect(err).To(MatchError(ContainSubstring("no catalog IDs")))
+		Expect(conn.Begins()).To(BeZero())
+	})
+
 	It("validates the tenant ID", func() {
 		conn := &dbtest.Conn{}
 		reader := pipeline.NewPGEmbeddingsReader(conn)
-		_, _, err := reader.SimilarityMatrix(context.Background(), "", "catalog-1", "model-1")
+		_, _, err := reader.SimilarityMatrix(context.Background(), "", []string{"catalog-1"}, "model-1")
 		Expect(err).To(HaveOccurred(), "expected error for empty tenant ID")
 		Expect(conn.Begins()).To(BeZero(), "the tenant must be refused before any transaction starts")
 	})
@@ -108,7 +168,7 @@ var _ = Describe("PGEmbeddingsReader", func() {
 			},
 		}
 		reader := pipeline.NewPGEmbeddingsReader(mockDB)
-		_, _, err := reader.SimilarityMatrix(context.Background(), "tenant-1", "catalog-1", "model-1")
+		_, _, err := reader.SimilarityMatrix(context.Background(), "tenant-1", []string{"catalog-1"}, "model-1")
 		Expect(err).To(HaveOccurred(), "expected error when Begin fails")
 	})
 
@@ -120,7 +180,7 @@ var _ = Describe("PGEmbeddingsReader", func() {
 		}
 		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGEmbeddingsReader(mockDB)
-		_, _, err := reader.SimilarityMatrix(context.Background(), "tenant-1", "catalog-1", "model-1")
+		_, _, err := reader.SimilarityMatrix(context.Background(), "tenant-1", []string{"catalog-1"}, "model-1")
 		Expect(err).To(HaveOccurred(), "expected error when Query fails")
 	})
 
@@ -138,7 +198,7 @@ var _ = Describe("PGEmbeddingsReader", func() {
 		}
 		mockDB := &dbtest.Conn{Tx: mockTx}
 		reader := pipeline.NewPGEmbeddingsReader(mockDB)
-		ids, values, err := reader.SimilarityMatrix(context.Background(), "tenant-1", "catalog-1", "model-1")
+		ids, values, err := reader.SimilarityMatrix(context.Background(), "tenant-1", []string{"catalog-1"}, "model-1")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ids).To(HaveLen(2))
 		Expect(values).To(HaveLen(2))

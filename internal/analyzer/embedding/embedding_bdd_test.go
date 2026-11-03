@@ -722,6 +722,59 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				))
 			})
 
+			It("stores each embedding under its control's own catalog when one pass covers two catalogs", func() {
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg)
+
+				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
+				Expect(err).NotTo(HaveOccurred())
+				aggCtx = analyzer.WithCatalogID(aggCtx, "cat-src")
+				aggCtx = analyzer.WithControlCatalogs(aggCtx, map[string]string{"AC-1": "cat-src", "PR-1": "cat-tgt"})
+
+				_, err = a.Aggregate(aggCtx, []analyzer.TaskResult{
+					{TaskID: "embedding-AC-1-modelA", TaskType: "embedding", Result: buildEmbeddingPayload([]float32{0.1, 0.2, 0.3})},
+					{TaskID: "embedding-PR-1-modelA", TaskType: "embedding", Result: buildEmbeddingPayload([]float32{0.4, 0.5, 0.6})},
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(mockVec.Stored()).To(HaveLen(1))
+				Expect(mockVec.Stored()[0].Embeddings).To(ConsistOf(
+					vectordb.Embedding{CatalogID: "cat-src", ControlID: "AC-1", Model: "modelA", Vector: []float32{0.1, 0.2, 0.3}},
+					vectordb.Embedding{CatalogID: "cat-tgt", ControlID: "PR-1", Model: "modelA", Vector: []float32{0.4, 0.5, 0.6}},
+				))
+			})
+
+			It("refuses to file a control missing from the run's control-catalog map under the run's catalog", func() {
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg)
+
+				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
+				Expect(err).NotTo(HaveOccurred())
+				aggCtx = analyzer.WithCatalogID(aggCtx, "cat-src")
+				aggCtx = analyzer.WithControlCatalogs(aggCtx, map[string]string{"AC-1": "cat-src"})
+
+				_, err = a.Aggregate(aggCtx, []analyzer.TaskResult{
+					{TaskID: "embedding-AC-1-modelA", TaskType: "embedding", Result: buildEmbeddingPayload([]float32{0.1, 0.2, 0.3})},
+					{TaskID: "embedding-PR-1-modelA", TaskType: "embedding", Result: buildEmbeddingPayload([]float32{0.4, 0.5, 0.6})},
+				})
+				Expect(err).To(MatchError(And(ContainSubstring("control PR-1"), ContainSubstring("no catalog"))))
+				Expect(mockVec.Stored()).To(BeEmpty())
+			})
+
+			It("falls back to the run's catalog when the run records no per-control catalogs", func() {
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg)
+
+				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
+				Expect(err).NotTo(HaveOccurred())
+				aggCtx = analyzer.WithCatalogID(aggCtx, "cat-1")
+
+				_, err = a.Aggregate(aggCtx, []analyzer.TaskResult{
+					{TaskID: "embedding-AC-1-modelA", TaskType: "embedding", Result: buildEmbeddingPayload([]float32{0.1, 0.2, 0.3})},
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(mockVec.Stored()[0].Embeddings).To(ConsistOf(
+					vectordb.Embedding{CatalogID: "cat-1", ControlID: "AC-1", Model: "modelA", Vector: []float32{0.1, 0.2, 0.3}},
+				))
+			})
+
 			It("skips a TaskResult with a task-level error", func() {
 				a = embedding.New(mockClient, mockVec, mockStore, embedCfg)
 
@@ -790,6 +843,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				_, err = a.Aggregate(aggCtx, results)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("catalog ID required"))
+				Expect(err.Error()).To(ContainSubstring("control AC-1"))
 				Expect(mockVec.Stored()).To(BeEmpty())
 			})
 		})

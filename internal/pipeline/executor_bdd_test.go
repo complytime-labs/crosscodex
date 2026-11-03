@@ -1670,7 +1670,7 @@ var _ = Describe("Executor", func() {
 
 			j, err := store.GetJob(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(j.ErrorMessage).To(ContainSubstring("no catalog_id"))
+			Expect(j.ErrorMessage).To(ContainSubstring("no usable catalog_id"))
 			Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run start --source"))
 			Expect(stageStatus("classify")).To(Equal(pipeline.StageStatusPending))
 			Expect(stageStatus("synthesis")).To(Equal(pipeline.StageStatusPending))

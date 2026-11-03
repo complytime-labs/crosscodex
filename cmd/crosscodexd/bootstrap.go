@@ -643,7 +643,7 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 	}
 	candGen := pipeline.NewCandidateGenerator(
 		pipeline.NewPGControlsReader(tenantConn),
-		pipeline.NewPGEmbeddingsReader(tenantConn),
+		pipeline.NewPGEmbeddingsReader(tenantConn, pipeline.WithPGEmbeddingsReaderTelemetry(tp, mp)),
 		candRegistry,
 		pipeline.NewPGCandidateWriter(tenantConn),
 		cfg.Analysis.Candidates,
@@ -658,7 +658,8 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		store, engine, registry, synth, attestors, converter, shared.natsClient, storageProvider,
 		cfg.Pipeline, candGen,
 		pipeline.WithCatalogControlsReader(pipeline.NewPGCatalogControlsReader(tenantConn)),
-		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn)),
+		pipeline.WithCatalogNameReader(pipeline.NewPGCatalogNameReader(tenantConn, pipeline.WithPGCatalogNameReaderTelemetry(tp, mp))),
+		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn, pipeline.WithPGEmbeddingsReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
 		pipeline.WithTelemetry(tp, mp),
 	), nil

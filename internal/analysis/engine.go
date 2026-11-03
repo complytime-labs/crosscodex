@@ -275,10 +275,22 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			"analyzer", name, "error", err)
 	}
 
-	// Catalog ID is set once, before GenerateWork/Aggregate. Only
-	// embedding.Aggregate reads it; every other analyzer ignores it.
+	// Catalog IDs are set once, before GenerateWork/Aggregate. Only
+	// embedding.Aggregate reads them; every other analyzer ignores them.
+	// Each control's own catalog is recorded too: a job that maps one
+	// catalog onto another fans out the controls of both in one request,
+	// so req.CatalogID (the source) is not every control's catalog.
 	if req.CatalogID != "" {
 		ctx = analyzer.WithCatalogID(ctx, req.CatalogID)
+	}
+	if req.Controls != nil {
+		catalogs := make(map[string]string, len(req.Controls))
+		for _, c := range req.Controls {
+			if c.GetCatalogId() != "" {
+				catalogs[c.GetControlId()] = c.GetCatalogId()
+			}
+		}
+		ctx = analyzer.WithControlCatalogs(ctx, catalogs)
 	}
 
 	// Generate work items. When Controls is non-nil (per-control mode

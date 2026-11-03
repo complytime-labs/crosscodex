@@ -24,6 +24,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -255,10 +256,10 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 	defer span.End()
 	span.SetAttributes(attribute.String("job.id", job.JobID))
 
-	catalogID, ok := ExtractCatalogID(job.Config)
+	cats, ok := jobconfig.ExtractCatalogs(job.Config)
 	if !ok {
-		err := fmt.Errorf("job %s cannot run: %w. Analysis runs over an imported catalog; "+
-			"start a new analysis with \"crosscodex run start --source <catalog-id>\"", job.JobID, ErrMissingCatalogID)
+		err := fmt.Errorf("job %s cannot run: %w. Analysis runs over imported catalogs; "+
+			"start a new analysis with \"%s\"", job.JobID, ErrMissingCatalogID, newJobCommand(job))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return err
@@ -355,7 +356,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		if terr != nil {
 			return fmt.Errorf("runAnalysis: %w", terr)
 		}
-		fetched, err := s.catalogControls.Controls(ctx, tenantID, catalogID)
+		fetched, err := s.catalogControls.Controls(ctx, tenantID, cats.SourceID)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -402,7 +403,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		}
 		if perControl {
 			req.Controls = controls
-			req.CatalogID = catalogID
+			req.CatalogID = cats.SourceID
 		} else {
 			req.Input = &pb.Control{}
 		}
@@ -551,9 +552,9 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 	// synthesis proceeds with zero similarity stats (SimilarityCount=0 per
 	// pair).
 	similarityByModel := make(map[string]similarityMatrix)
-	if catalogID, ok := ExtractCatalogID(job.Config); ok && s.embeddingsReader != nil {
+	if cats, ok := jobconfig.ExtractCatalogs(job.Config); ok && s.embeddingsReader != nil {
 		for _, model := range s.embeddingConfig.Models {
-			ids, values, err := s.embeddingsReader.SimilarityMatrix(ctx, tenantID, catalogID, model)
+			ids, values, err := s.embeddingsReader.SimilarityMatrix(ctx, tenantID, cats.CatalogIDs(), model)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
@@ -871,13 +872,18 @@ func attestationKey(job *Job, name string) string {
 	return fmt.Sprintf("attestations/%s/%s/%s", job.TenantID, job.JobID, name)
 }
 
-// newJobCommand is the command that starts a new job over job's catalog.
+// newJobCommand is the command that starts a new job over job's catalogs,
+// in job's direction.
 func newJobCommand(job *Job) string {
-	catalogID, ok := ExtractCatalogID(job.Config)
+	cats, ok := jobconfig.ExtractCatalogs(job.Config)
 	if !ok {
-		catalogID = "<catalog-id>"
+		return "crosscodex run start --source <source-catalog-id> --target <target-catalog-id>"
 	}
-	return "crosscodex run start --source " + catalogID
+	cmd := "crosscodex run start --source " + cats.SourceID + " --target " + cats.TargetID
+	if cats.Bidirectional {
+		cmd += " --bidirectional"
+	}
+	return cmd
 }
 
 // retryHint names both ways to run a job again after a failure it can

@@ -354,13 +354,9 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 		resumeOnly := firstFailed == "" && (job.Status == JobStatusFailed || job.Status == JobStatusCancelled)
 
 		if firstFailed == "" && !resumeOnly {
-			catalogID, ok := ExtractCatalogID(job.Config)
-			if !ok {
-				catalogID = "<catalog-id>"
-			}
 			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 				"cannot retry job %s from a failure: no stage failed or was cancelled, so there is no stage to resume from. "+
-					"To analyse the catalog again, start a new job: crosscodex run start --source %s", req.Msg.JobId, catalogID))
+					"To analyse the catalogs again, start a new job: %s", req.Msg.JobId, newJobCommand(job)))
 		}
 
 		if !resumeOnly {

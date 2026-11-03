@@ -49,6 +49,16 @@ func WithCatalogControlsReader(r CatalogControlsReader) Option {
 	}
 }
 
+// WithCatalogNameReader wires a CatalogNameReader so runAnalysis can give the
+// pair analyzers each control's catalog name as its framework. A nil (or
+// unset) reader leaves every framework parameter empty, as before
+// cross-catalog analysis.
+func WithCatalogNameReader(r CatalogNameReader) Option {
+	return func(s *Service) {
+		s.catalogNames = r
+	}
+}
+
 // WithEmbeddingsReader wires an EmbeddingsReader so runSynthesis can read
 // per-model similarity matrices for the job's catalog. A nil (or unset)
 // reader leaves the similarity-matrix step a no-op, and synthesis proceeds

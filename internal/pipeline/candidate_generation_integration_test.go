@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -17,7 +16,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
-	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/google/uuid"
 )
@@ -65,38 +63,8 @@ var _ = Describe("CandidateGenerator integration", func() {
 	It("persists requires/relationship candidates for the owning tenant and isolates a second tenant via RLS", func() {
 		ctx := context.Background()
 
-		suDSN := os.Getenv("TEST_DATABASE_DSN")
-		if suDSN == "" {
-			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-		}
-
-		// Migrate (idempotent).
-		migrator, err := db.NewMigrator(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "failed to create migrator")
-		Expect(migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
-		Expect(migrator.Close()).To(Succeed(), "failed to close migrator")
-
-		// Ensure app_user password (idempotent).
-		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "failed to set app_user password")
-
-		// Superuser pool for RLS-bypassing seed writes.
-		suPool, err := db.NewPool(db.PoolConfig{
-			DSN:          suDSN,
-			MaxOpenConns: 5,
-			Extensions:   []string{"age", "vector"},
-		})
-		Expect(err).NotTo(HaveOccurred(), "failed to create superuser pool")
-		defer suPool.Close()
-
-		// app_user pool -> tenant-scoped connection (RLS enforced).
-		appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "failed to build app_user DSN")
-		appPool, err := db.NewPool(db.PoolConfig{DSN: appDSN, MaxOpenConns: 2})
-		Expect(err).NotTo(HaveOccurred(), "failed to create app_user pool")
-		defer appPool.Close()
-		tenantConn := db.NewTenantPool(appPool)
+		idb := openIntegrationDB(ctx, 2)
+		suPool, tenantConn := idb.suPool, idb.tenantConn
 
 		// Two tenants: the owner and an unrelated tenant used for the RLS check.
 		tenantA := fmt.Sprintf("cand-it-a-%s", uuid.New().String())

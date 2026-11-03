@@ -34,6 +34,7 @@ type Service struct {
 	synthesis        SynthesisExecutor
 	candidateGen     candidateGenerator
 	catalogControls  CatalogControlsReader
+	catalogNames     CatalogNameReader
 	embeddingsReader EmbeddingsReader
 	embeddingConfig  config.EmbeddingConfig
 	attestors        Attestors

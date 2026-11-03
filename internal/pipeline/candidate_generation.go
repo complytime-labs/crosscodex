@@ -14,32 +14,21 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/candidate"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 )
 
-// ErrMissingCatalogID indicates a job's stored config has no catalog_id.
+// ErrMissingCatalogID indicates a job's stored config has no usable catalog
+// selection: catalog_id is missing, empty or not a string, or a catalog field
+// or bidirectional has the wrong type (see jobconfig.ExtractCatalogs).
 // CreateJob refuses such configs, so the row predates import-only analysis
 // or was written outside CreateJob. The job fails instead of analysing zero
 // controls.
-var ErrMissingCatalogID = errors.New("job config has no catalog_id")
+var ErrMissingCatalogID = errors.New("job config has no usable catalog_id (missing, empty, or a catalog field of the wrong type)")
 
 // ErrInsufficientEmbeddingCoverage indicates fewer of the job's controls have
 // an embeddings row than CandidateConfig.MinEmbeddingCoverage requires. This
 // fails the stage loudly rather than silently producing near-empty candidates.
 var ErrInsufficientEmbeddingCoverage = errors.New("insufficient embedding coverage for candidate generation")
-
-// ExtractCatalogID reads catalog_id from a job's raw JSON config: the
-// pb.JobConfig that CreateJob stored with encoding/json, which writes the
-// generated json tag "catalog_id". Returns ok=false when the config is
-// malformed or has no non-empty string catalog_id.
-func ExtractCatalogID(jobConfig []byte) (catalogID string, ok bool) {
-	var cfg struct {
-		CatalogID string `json:"catalog_id"`
-	}
-	if err := json.Unmarshal(jobConfig, &cfg); err != nil || cfg.CatalogID == "" {
-		return "", false
-	}
-	return cfg.CatalogID, true
-}
 
 // ControlsReader reads a catalog's non-section controls, enriched with
 // classification (type/level) read from the classify analyzer's persisted
@@ -48,12 +37,12 @@ type ControlsReader interface {
 	ControlData(ctx context.Context, tenantID, catalogID, jobID string) (map[string]*candidate.ControlData, error)
 }
 
-// EmbeddingsReader reads a catalog's embedding vectors for one model and
-// returns the full pairwise cosine-similarity matrix, shaped for
-// candidate.GenerateRequest.EmbeddingMatrix. Similarity values are on the
-// [0, 100] scale the candidate generators expect.
+// EmbeddingsReader reads the embedding vectors of a job's catalogs for one
+// model and returns the full pairwise cosine-similarity matrix over all of
+// them, shaped for candidate.GenerateRequest.EmbeddingMatrix. Similarity
+// values are on the [0, 100] scale the candidate generators expect.
 type EmbeddingsReader interface {
-	SimilarityMatrix(ctx context.Context, tenantID, catalogID, model string) (ids []string, values [][]float32, err error)
+	SimilarityMatrix(ctx context.Context, tenantID string, catalogIDs []string, model string) (ids []string, values [][]float32, err error)
 }
 
 // CandidateWriter persists generated candidates for both consumers.
@@ -62,9 +51,9 @@ type CandidateWriter interface {
 	WriteRelationship(ctx context.Context, tenantID, jobID string, pairs []relationship.CandidatePair, provenance map[string][]byte) error
 }
 
-// CandidateGenerator orchestrates candidate generation for a job's catalog:
+// CandidateGenerator orchestrates candidate generation for a job's catalogs:
 // it reads the job's controls (enriched with classify results) and the
-// catalog's embeddings, verifies embedding coverage, runs the candidate
+// catalogs' embeddings, verifies embedding coverage, runs the candidate
 // registry, and persists results for both the requires and relationship
 // analyzers.
 type CandidateGenerator struct {
@@ -90,62 +79,54 @@ func NewCandidateGenerator(controls ControlsReader, embeddings EmbeddingsReader,
 	}
 }
 
-// Generate runs candidate generation for a single job. It returns
+// Generate runs candidate generation over a job's catalogs. It returns
 // ErrMissingCatalogID when the job config has no catalog_id and
-// ErrInsufficientEmbeddingCoverage when too few controls are embedded.
+// ErrInsufficientEmbeddingCoverage when too few of either catalog's
+// controls are embedded.
 func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID string, jobConfig []byte) error {
-	catalogID, ok := ExtractCatalogID(jobConfig)
+	cats, ok := jobconfig.ExtractCatalogs(jobConfig)
 	if !ok {
 		return fmt.Errorf("candidate generation: %w", ErrMissingCatalogID)
 	}
 
-	controlData, err := g.controls.ControlData(ctx, tenantID, catalogID, jobID)
+	source, skipped, err := g.controlsWithText(ctx, tenantID, cats.SourceID, jobID)
 	if err != nil {
-		return fmt.Errorf("candidate generation: reading controls: %w", err)
+		return err
 	}
-
-	// A control with no statement has no requirement text to compare: a pair
-	// containing it would fail the pair stages (they refuse blank prompts),
-	// and its embedding (the ancestor title only, if any) says nothing about
-	// the control. Leaving it out keeps it from becoming a candidate and from
-	// understating embedding coverage.
-	withText := make(map[string]*candidate.ControlData, len(controlData))
-	for id, c := range controlData {
-		if strings.TrimSpace(c.Text) != "" {
-			withText[id] = c
+	target := source
+	if cats.CrossCatalog() {
+		var targetSkipped int
+		target, targetSkipped, err = g.controlsWithText(ctx, tenantID, cats.TargetID, jobID)
+		if err != nil {
+			return err
 		}
+		skipped += targetSkipped
 	}
 	// If every control is blank the job succeeds with no candidates and the
 	// pair stages produce nothing; record the count on the active span so
 	// that outcome is visible.
-	if skipped := len(controlData) - len(withText); skipped > 0 {
+	if skipped > 0 {
 		trace.SpanFromContext(ctx).SetAttributes(attribute.Int("candidates.skipped_blank_statement", skipped))
 	}
-	controlData = withText
 
-	ids, values, err := g.embeddings.SimilarityMatrix(ctx, tenantID, catalogID, g.embedModel)
+	ids, values, err := g.embeddings.SimilarityMatrix(ctx, tenantID, cats.CatalogIDs(), g.embedModel)
 	if err != nil {
 		return fmt.Errorf("candidate generation: reading embeddings: %w", err)
 	}
-
-	// Coverage: fraction of non-section controls that have a statement and
-	// at least one embeddings row. Skip the check entirely for a zero-control catalog — a
-	// degenerate case, not a coverage failure, and it must not divide by zero.
 	embedded := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		embedded[id] = true
 	}
-	if len(controlData) > 0 {
-		covered := 0
-		for controlID := range controlData {
-			if embedded[controlID] {
-				covered++
-			}
+	if !cats.CrossCatalog() {
+		if err := g.checkCoverage("catalog "+cats.SourceID, source, embedded); err != nil {
+			return err
 		}
-		coverage := float64(covered) / float64(len(controlData))
-		if coverage < g.cfg.MinEmbeddingCoverage {
-			return fmt.Errorf("candidate generation: catalog %s coverage %.2f%% below minimum %.2f%%: %w",
-				catalogID, coverage*100, g.cfg.MinEmbeddingCoverage*100, ErrInsufficientEmbeddingCoverage)
+	} else {
+		if err := g.checkCoverage("source catalog "+cats.SourceID, source, embedded); err != nil {
+			return err
+		}
+		if err := g.checkCoverage("target catalog "+cats.TargetID, target, embedded); err != nil {
+			return err
 		}
 	}
 
@@ -156,16 +137,24 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 		Values [][]float32
 	}{IDs: ids, Values: values}
 
-	req := candidate.GenerateRequest{
-		TenantID:        tenantID,
-		JobID:           jobID,
-		SourceControls:  controlData,
-		TargetControls:  controlData,
-		EmbeddingMatrix: matrix,
+	// Pairs run source to target. Within one catalog source and target are
+	// the same control set, so the generators pair its controls in both
+	// directions. bidirectional adds target to source across catalogs.
+	requests := []candidate.GenerateRequest{{
+		TenantID: tenantID, JobID: jobID, SourceControls: source, TargetControls: target, EmbeddingMatrix: matrix,
+	}}
+	if cats.Bidirectional {
+		requests = append(requests, candidate.GenerateRequest{
+			TenantID: tenantID, JobID: jobID, SourceControls: target, TargetControls: source, EmbeddingMatrix: matrix,
+		})
 	}
-	candidates, err := g.registry.Generate(ctx, req, candidate.StrategyWeightedUnion)
-	if err != nil {
-		return fmt.Errorf("candidate generation: generating: %w", err)
+	var candidates []candidate.Candidate
+	for _, req := range requests {
+		got, err := g.registry.Generate(ctx, req, candidate.StrategyWeightedUnion)
+		if err != nil {
+			return fmt.Errorf("candidate generation: generating: %w", err)
+		}
+		candidates = append(candidates, got...)
 	}
 
 	// Both consumers receive the same candidate list, converted to their
@@ -206,6 +195,50 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 	}
 	if err := g.writer.WriteRelationship(ctx, tenantID, jobID, relationshipPairs, provenance); err != nil {
 		return fmt.Errorf("candidate generation: writing relationship candidates: %w", err)
+	}
+	return nil
+}
+
+// controlsWithText reads a catalog's controls and drops those without a
+// statement: such a control has no requirement text to compare, so a pair
+// containing it would fail the pair stages (they refuse blank prompts), and
+// its embedding (the ancestor title only, if any) says nothing about the
+// control. Leaving it out also keeps it from understating embedding
+// coverage. It returns how many controls it dropped.
+func (g *CandidateGenerator) controlsWithText(ctx context.Context, tenantID, catalogID, jobID string) (map[string]*candidate.ControlData, int, error) {
+	all, err := g.controls.ControlData(ctx, tenantID, catalogID, jobID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("candidate generation: reading controls of catalog %s: %w", catalogID, err)
+	}
+	withText := make(map[string]*candidate.ControlData, len(all))
+	for id, c := range all {
+		if strings.TrimSpace(c.Text) != "" {
+			withText[id] = c
+		}
+	}
+	return withText, len(all) - len(withText), nil
+}
+
+// checkCoverage fails when fewer of side's controls have an embedding than
+// CandidateConfig.MinEmbeddingCoverage requires. side names the catalog for
+// the error. A side with no controls is a degenerate case, not a coverage
+// failure, and must not divide by zero.
+func (g *CandidateGenerator) checkCoverage(side string, controls map[string]*candidate.ControlData, embedded map[string]bool) error {
+	if len(controls) == 0 {
+		return nil
+	}
+	covered := 0
+	for controlID := range controls {
+		if embedded[controlID] {
+			covered++
+		}
+	}
+	coverage := float64(covered) / float64(len(controls))
+	if coverage < g.cfg.MinEmbeddingCoverage {
+		return fmt.Errorf("candidate generation: %s: %d of %d controls with a statement (%.2f%%) have a %s embedding, "+
+			"below analysis.candidates.min_embedding_coverage (%.2f%%): %w. "+
+			"Once the embedding stage succeeds for those controls, resume the job: crosscodex run retry --from-failure <job-id>",
+			side, covered, len(controls), coverage*100, g.embedModel, g.cfg.MinEmbeddingCoverage*100, ErrInsufficientEmbeddingCoverage)
 	}
 	return nil
 }
