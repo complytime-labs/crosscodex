@@ -1,0 +1,23 @@
+internal/testcerts/ensure.go
+  s_6db2b57b27fedb::t_2db25d150659f1 1-204
+internal/testcerts/ensure_bdd_test.go
+  s_6db2b57b27fedb::t_00feadb8ca822f 7,9,102-302
+internal/testcerts/testcerts_bdd_test.go
+  s_6db2b57b27fedb::t_38bee222204306 8,22-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be936b72ba277bcc5bed9bf453dad26eb7ee1c49",
+  "prompts": {},
+  "sessions": {
+    "s_6db2b57b27fedb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99db3f86-87c3-48d7-8787-19135d41d357",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
