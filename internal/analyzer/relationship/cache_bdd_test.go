@@ -40,7 +40,7 @@ var _ = Describe("relationship result reuse", func() {
 			Expect(ok).To(BeTrue())
 			Expect(req.SourceControlID).To(Equal("AC-1"))
 			Expect(req.TargetControlID).To(Equal("IT-3"))
-			keys = append(keys, resultcache.Key("relationship", req.Identity, "observed", ""))
+			keys = append(keys, resultcache.Key("relationship", req.Identity, resultcache.ModelIdentity{Observed: "observed"}))
 		}
 		return keys
 	}

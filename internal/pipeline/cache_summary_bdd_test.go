@@ -164,7 +164,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 		return nil
 	}
 	enabled := resultcache.Stats{Mode: resultcache.ModeEnabled, Tasks: 3, Hits: 2, Dispatched: 1,
-		Models: map[string]resultcache.ModelIdentity{"default": {Observed: "qwen2.5:14b", Revision: "r1"}}}
+		Models: map[string]resultcache.ModelIdentity{"default": {Observed: "qwen2.5:14b", Deployment: "e96b0292", Revision: "r1"}}}
 	reuse := func() []resultcache.HitEntry {
 		digest := resultcache.ResultDigest([]byte("x"))
 		return []resultcache.HitEntry{
@@ -206,6 +206,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 		Expect(sums[0].GetModels()[0].GetAlias()).To(Equal("default"))
 		Expect(sums[0].GetModels()[0].GetObservedModel()).To(Equal("qwen2.5:14b"))
 		Expect(sums[0].GetModels()[0].GetRevision()).To(Equal("r1"))
+		Expect(sums[0].GetModels()[0].GetDeployment()).To(Equal("e96b0292"))
 		Expect(sums[1].GetAnalyzer()).To(Equal("embedding"))
 		Expect(sums[2].GetAnalyzer()).To(Equal("requires"))
 	})

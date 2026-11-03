@@ -44,7 +44,8 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 				metric.WithDescription("Results that could not be stored in the result cache"))
 			e.cachePutsRefused, _ = meter.Int64Counter("analysis.result_cache.puts_refused.total",
 				metric.WithDescription("Successful results not stored in the result cache (attribute reason: "+
-					"unusable_result, the analyzer would discard it; model_mismatch, another model than the probe observed answered)"))
+					"unusable_result, the analyzer would discard it; model_mismatch, another model than the probe observed answered; "+
+					"deployment_mismatch, another deployment than the probe reached answered)"))
 			e.cacheIntegrityFailures, _ = meter.Int64Counter("analysis.result_cache.integrity_failures.total",
 				metric.WithDescription("Cached results, checkpoints or stage records that failed an integrity check, "+
 					"and checkpoints signed by a key no longer trusted (attribute reason)"))

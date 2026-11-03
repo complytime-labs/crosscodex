@@ -199,15 +199,21 @@ message AnalyzerCacheSummary {
 }
 
 // AnalyzerCacheModel is the model the gateway reported for one alias in
-// one job, and the operator-declared revision (llm.model_revisions).
+// one job, the deployment that served it, and the operator-declared
+// revision (llm.model_revisions).
 message AnalyzerCacheModel {
   // The alias as the gateway receives it; a task's empty alias shows as the
   // tenant default it resolved to.
   string alias = 1;
-  // Empty when the gateway returned no model name; the alias was then not
-  // cached in this job.
+  // Empty when the alias was not cached in this job (the reason says why).
+  // A gateway that echoes the alias reports the alias here.
   string observed_model = 2;
   string revision = 3;
+  // The deployment ID the gateway sent with the probe's response (LiteLLM's
+  // x-litellm-model-id header, a hash of the deployment's settings that
+  // changes when the model behind the alias changes); empty when it sent
+  // none. Part of the cache key, like observed_model and revision.
+  string deployment = 4;
 }
 
 message JobProgress {

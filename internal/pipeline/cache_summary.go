@@ -177,7 +177,8 @@ func (s *Service) cacheSummaries(ctx context.Context, job *Job, stages []*Stage)
 		sum.Tasks, sum.Hits, sum.Dispatched = int64(v.Stats.Tasks), int64(v.Stats.Hits), int64(v.Stats.Dispatched)
 		for _, alias := range slices.Sorted(maps.Keys(v.Stats.Models)) {
 			m := v.Stats.Models[alias]
-			sum.Models = append(sum.Models, &pb.AnalyzerCacheModel{Alias: alias, ObservedModel: m.Observed, Revision: m.Revision})
+			sum.Models = append(sum.Models, &pb.AnalyzerCacheModel{Alias: alias, ObservedModel: m.Observed,
+				Deployment: m.Deployment, Revision: m.Revision})
 		}
 		for _, p := range v.ProducerJobIDs {
 			if slices.Contains(owned, p) {

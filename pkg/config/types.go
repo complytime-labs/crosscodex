@@ -52,9 +52,11 @@ type LLMConfig struct {
 	// ModelRevisions maps a model alias, as the gateway resolves it, to an
 	// operator-declared revision that is part of every result-cache key for
 	// the alias (analysis.result_cache). Change it to force misses when the
-	// gateway's model name cannot show a change, such as an Ollama re-pull
-	// of the same tag. Global-only: the alias mapping lives in the shared
-	// gateway, so tenants cannot remap it.
+	// gateway's model name and deployment ID cannot show a change, such as an
+	// Ollama re-pull of the same tag. An alias the gateway names only by
+	// itself, with no deployment ID, is cached only when it has a revision.
+	// Global-only: the alias mapping lives in the shared gateway, so tenants
+	// cannot remap it.
 	ModelRevisions map[string]string `yaml:"model_revisions" json:"model_revisions"`
 	// TenantOverrides maps tenant IDs (must satisfy pkg/tenant.ValidateTenantID)
 	// to per-tenant LLM config overrides. Nil pointer fields inherit the global

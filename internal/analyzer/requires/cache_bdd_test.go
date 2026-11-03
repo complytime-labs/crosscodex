@@ -42,7 +42,7 @@ var _ = Describe("requires result reuse", func() {
 		for _, t := range tasks {
 			req, ok := a.CacheIdentity(t)
 			Expect(ok).To(BeTrue())
-			keys = append(keys, resultcache.Key("requires", req.Identity, "observed", ""))
+			keys = append(keys, resultcache.Key("requires", req.Identity, resultcache.ModelIdentity{Observed: "observed"}))
 		}
 		return keys
 	}

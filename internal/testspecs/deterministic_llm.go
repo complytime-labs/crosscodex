@@ -29,6 +29,10 @@ var _ llmclient.Client = DeterministicLLM{}
 // in the outgoing HTTP request, so an httptest server would have to
 // content-sniff raw prompt text to know which analyzer is calling.
 //
+// Like a LiteLLM gateway, it answers with the requested alias as the model
+// and names a deployment per alias ("deterministic-" + the alias), so the
+// result cache's model probe caches the alias.
+//
 // EmbeddingDim must match the vector dimension of the store the pipeline
 // writes to. Health and Close return nil.
 type DeterministicLLM struct {
@@ -71,7 +75,7 @@ func (DeterministicLLM) Complete(_ context.Context, req *llmclient.CompletionReq
 		// vote_summaries rows; only the requires contribution reaches synthesis.
 		content = "RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH"
 	case resultcache.ProbePromptName:
-		// The per-job model probe reads only resp.Model.
+		// The per-job model probe reads only resp.Model and resp.Deployment.
 		content = "OK"
 	case "artifacts":
 		// artifacts.ParseResponse treats "ARTIFACTS: NONE" as the empty
@@ -82,7 +86,8 @@ func (DeterministicLLM) Complete(_ context.Context, req *llmclient.CompletionReq
 	}
 
 	return &llmclient.CompletionResponse{
-		Model: req.Model,
+		Model:      req.Model,
+		Deployment: "deterministic-" + req.Model,
 		Choices: []llmclient.CompletionChoice{
 			{
 				Index:        0,
@@ -120,7 +125,7 @@ func (d DeterministicLLM) Embed(_ context.Context, req *llmclient.EmbeddingReque
 		}
 		data[i] = llmclient.EmbeddingData{Index: i, Embedding: vec}
 	}
-	return &llmclient.EmbeddingResponse{Data: data, Model: req.Model}, nil
+	return &llmclient.EmbeddingResponse{Data: data, Model: req.Model, Deployment: "deterministic-" + req.Model}, nil
 }
 
 // Health returns nil.

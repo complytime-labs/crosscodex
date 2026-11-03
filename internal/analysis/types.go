@@ -67,6 +67,10 @@ type CacheModel struct {
 	// Observed is the probe's resp.Model; empty means the alias is neither
 	// looked up nor stored in this job, and Reason says why.
 	Observed string
+	// Deployment is the probe's deployment ID (llmclient.DeploymentHeader),
+	// or "" when the gateway sent none. A result is stored only when its
+	// call reported the same deployment.
+	Deployment string
 	// Revision is llm.model_revisions for Alias, or "".
 	Revision string
 	Reason   string

@@ -43,7 +43,7 @@ var _ = Describe("artifacts result reuse", func() {
 		for _, t := range tasks {
 			req, ok := a.CacheIdentity(t)
 			Expect(ok).To(BeTrue())
-			keys = append(keys, resultcache.Key("artifacts", req.Identity, "observed", ""))
+			keys = append(keys, resultcache.Key("artifacts", req.Identity, resultcache.ModelIdentity{Observed: "observed"}))
 		}
 		return keys
 	}

@@ -29,7 +29,8 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 			s.jobDuration, _ = meter.Float64Histogram("pipeline.job.duration_ms",
 				metric.WithDescription("Pipeline job duration"))
 			s.probeOps, _ = meter.Int64Counter("pipeline.result_cache.probes.total",
-				metric.WithDescription("Per-job model probes by kind and outcome (observed, empty, failed)"))
+				metric.WithDescription("Per-job model probes by kind and outcome (observed: the alias is cached; empty: no usable model name; "+
+					"uncached: no usable deployment ID, or only the alias named; failed)"))
 			s.probeDuration, _ = meter.Float64Histogram("pipeline.result_cache.probe.duration_ms",
 				metric.WithDescription("Per-job model probe duration"), metric.WithUnit("ms"))
 			s.checkpointOps, _ = meter.Int64Counter("pipeline.result_cache.checkpoints.total",

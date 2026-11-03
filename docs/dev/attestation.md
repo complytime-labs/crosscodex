@@ -293,7 +293,7 @@ An auditor can recompute the digest from the attempt's rows without the Go code 
    {"mode":"…","reason":"…","models":{…},"tasks":N,"hits":N,"dispatched":N}
    ```
 
-   - `models` maps each alias to `{"observed":"…","revision":"…"}`, with its keys sorted byte-wise.
+   - `models` maps each alias to `{"observed":"…","deployment":"…","revision":"…"}`, with its keys sorted byte-wise.
    - No models is `{}`, never `null`.
    - The counts are decimal integers.
    - No stats rows is `[]`.

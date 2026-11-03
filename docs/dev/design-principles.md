@@ -144,7 +144,7 @@ Every untrusted value a prompt renders (control IDs, statements, ancestor titles
 
 An analyzer's LLM results are reused per tenant across jobs (#243). This section is the design's trust model, which a change must preserve; code comments refer to it.
 
-- **Key.** The key is the exact request sent. `pkg/resultcache.Key` hashes the analyzer, the request identity read from the task payload (`analyzer.Cacheable`), the model the per-job probe observed, and `llm.model_revisions`. So prompt overrides, layers, limits and samples all change it. An analyzer that does not implement `analyzer.Cacheable` is never cached. Its stats say so.
+- **Key.** The key is the exact request sent. `pkg/resultcache.Key` hashes the analyzer, the request identity read from the task payload (`analyzer.Cacheable`), the model the per-job probe observed with its deployment ID (`llmclient.DeploymentHeader`), and `llm.model_revisions`. A probe that names only the alias and no deployment identifies no model, so the alias is cached only with a revision; a result whose call reports another model or deployment than the probe is not stored. So prompt overrides, layers, limits and samples all change it. An analyzer that does not implement `analyzer.Cacheable` is never cached. Its stats say so.
 - **Store.** `pkg/resultcache.Store` has two implementations: `pgstore` and the shared fake, both bound by `resultcachetest.StoreContract`.
   - `llm_result_cache` holds the results. `app_user` cannot delete from it; only retention removes rows.
   - `job_cache_entries` and `job_cache_stats` are each job's audit record. They are append-only, and their BEFORE INSERT triggers refuse rows for a job that is not running (the freeze).

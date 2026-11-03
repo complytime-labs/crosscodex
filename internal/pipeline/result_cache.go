@@ -24,12 +24,13 @@ import (
 )
 
 // modelProbeText is what the probe sends: a completion asks for one token
-// in reply, an embedding embeds it. Only resp.Model is read.
+// in reply, an embedding embeds it. Only resp.Model and resp.Deployment are
+// read.
 const modelProbeText = "crosscodex result cache model probe. Reply with OK."
 
-// maxObservedModelBytes bounds the model name a probe accepts from the
-// gateway. The name reaches every cache key and the tenant's run status, so
-// a longer or unprintable one leaves the alias uncached.
+// maxObservedModelBytes bounds the model name and the deployment ID a probe
+// accepts from the gateway. Both reach every cache key and the tenant's run
+// status, so a longer or unprintable one leaves the alias uncached.
 const maxObservedModelBytes = 256
 
 // errProbeNotWired reports WithResultCache with a nil probe client.
@@ -49,8 +50,12 @@ var errProbeNotWired = errors.New("pipeline: the result cache is wired without a
 // kind, the model behind every alias the cacheable analyzers declare. A
 // probe that fails stops the job before any analysis call: it returns a
 // StageError of ErrLLMUnavailable, recorded on the first analyzer of names
-// using the alias. A probe that names no usable model leaves that alias
-// uncached, with a fixed reason.
+// using the alias. A probe that names no usable model or deployment leaves
+// that alias uncached, with a fixed reason. So does one that names only the
+// alias as the model and no deployment, when llm.model_revisions has no
+// entry for the alias: a change of the model behind the alias would go
+// unnoticed (a LiteLLM gateway echoes the alias, and names the model behind
+// it only in its deployment header).
 func (s *Service) prepareResultCache(ctx context.Context, job *Job, cats jobconfig.Catalogs, exec *jobExecution,
 	names []string, controls []*pb.Control) (analysis.CacheSettings, error) {
 	if !s.cacheWired {
@@ -125,7 +130,7 @@ func (s *Service) prepareResultCache(ctx context.Context, job *Job, cats jobconf
 				settings.Models[use] = cm
 				continue
 			}
-			observed, err := s.probeModel(ctx, tenantID, job.JobID, key)
+			cm, err := s.probeModel(ctx, tenantID, job.JobID, key)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, "model probe failed")
@@ -136,17 +141,6 @@ func (s *Service) prepareResultCache(ctx context.Context, job *Job, cats jobconf
 					return analysis.CacheSettings{}, fmt.Errorf("result cache: probing alias %q stopped: %w", resolved, ctxErr)
 				}
 				return analysis.CacheSettings{}, s.llmUnavailable(ctx, job, name, resolved, tenantID, err)
-			}
-			cm := analysis.CacheModel{Alias: resolved, Revision: s.llmCfg.ModelRevisions[resolved]}
-			switch {
-			case observed == "":
-				cm.Reason = fmt.Sprintf("the model gateway returned no model name for alias %q, "+
-					"so its calls were neither looked up nor stored", resolved)
-			case !usableModelName(observed):
-				cm.Reason = fmt.Sprintf("the model gateway returned a model name for alias %q that is not printable text "+
-					"of at most %d bytes, so its calls were neither looked up nor stored", resolved, maxObservedModelBytes)
-			default:
-				cm.Observed = observed
 			}
 			probed[key] = cm
 			settings.Models[use] = cm
@@ -164,17 +158,22 @@ func usableModelName(name string) bool {
 		strings.IndexFunc(name, func(r rune) bool { return !unicode.IsPrint(r) }) < 0
 }
 
-// probeModel makes one minimal call for use and returns resp.Model.
-func (s *Service) probeModel(ctx context.Context, tenantID, jobID string, use analyzer.ModelUse) (_ string, err error) {
+// probeModel makes one minimal call for use, whose alias is resolved, and
+// returns the alias's model identity: Observed and Deployment set when the
+// alias is cached, a fixed Reason when it is not (the rules are on
+// prepareResultCache).
+func (s *Service) probeModel(ctx context.Context, tenantID, jobID string, use analyzer.ModelUse) (cm analysis.CacheModel, err error) {
 	start := time.Now()
-	var model string
+	var observed string
 	defer func() {
 		outcome := "observed"
 		switch {
 		case err != nil:
 			outcome = "failed"
-		case model == "" || !usableModelName(model):
+		case observed == "" || !usableModelName(observed):
 			outcome = "empty"
+		case cm.Observed == "":
+			outcome = "uncached"
 		}
 		attrs := metric.WithAttributes(attribute.String("tenant.id", tenantID), attribute.String("kind", string(use.Kind)),
 			attribute.String("outcome", outcome))
@@ -185,30 +184,50 @@ func (s *Service) probeModel(ctx context.Context, tenantID, jobID string, use an
 			s.probeDuration.Record(ctx, float64(time.Since(start).Milliseconds()), attrs)
 		}
 	}()
+	var deployment string
 	if use.Kind == analyzer.ModelEmbedding {
 		resp, err := s.probe.Embed(ctx, &llmclient.EmbeddingRequest{Model: use.Alias, Input: []string{modelProbeText},
 			TenantID: tenantID, JobID: jobID})
 		if err != nil {
-			return "", err
+			return analysis.CacheModel{}, err
 		}
-		model = resp.Model
-		return model, nil
+		observed, deployment = resp.Model, resp.Deployment
+	} else {
+		zero := 0.0
+		resp, err := s.probe.Complete(ctx, &llmclient.CompletionRequest{
+			Model:       use.Alias,
+			Messages:    []llmclient.ChatMessage{{Role: llmclient.RoleUser, Content: modelProbeText}},
+			MaxTokens:   1,
+			Temperature: &zero,
+			TenantID:    tenantID,
+			JobID:       jobID,
+			PromptName:  resultcache.ProbePromptName,
+		})
+		if err != nil {
+			return analysis.CacheModel{}, err
+		}
+		observed, deployment = resp.Model, resp.Deployment
 	}
-	zero := 0.0
-	resp, err := s.probe.Complete(ctx, &llmclient.CompletionRequest{
-		Model:       use.Alias,
-		Messages:    []llmclient.ChatMessage{{Role: llmclient.RoleUser, Content: modelProbeText}},
-		MaxTokens:   1,
-		Temperature: &zero,
-		TenantID:    tenantID,
-		JobID:       jobID,
-		PromptName:  resultcache.ProbePromptName,
-	})
-	if err != nil {
-		return "", err
+	cm = analysis.CacheModel{Alias: use.Alias, Revision: s.llmCfg.ModelRevisions[use.Alias]}
+	switch {
+	case observed == "":
+		cm.Reason = fmt.Sprintf("the model gateway returned no model name for alias %q, "+
+			"so its calls were neither looked up nor stored", use.Alias)
+	case !usableModelName(observed):
+		cm.Reason = fmt.Sprintf("the model gateway returned a model name for alias %q that is not printable text "+
+			"of at most %d bytes, so its calls were neither looked up nor stored", use.Alias, maxObservedModelBytes)
+	case !usableModelName(deployment):
+		cm.Reason = fmt.Sprintf("the model gateway returned a deployment ID for alias %q that is not printable text "+
+			"of at most %d bytes, so its calls were neither looked up nor stored", use.Alias, maxObservedModelBytes)
+	case observed == use.Alias && deployment == "" && cm.Revision == "":
+		cm.Reason = fmt.Sprintf("the model gateway named only the alias %q as the model and sent no deployment ID, "+
+			"so a change of the model behind the alias could not be detected and its calls were neither looked up "+
+			"nor stored. To cache them, set llm.model_revisions.%s and change it whenever the model behind the alias changes",
+			use.Alias, use.Alias)
+	default:
+		cm.Observed, cm.Deployment = observed, deployment
 	}
-	model = resp.Model
-	return model, nil
+	return cm, nil
 }
 
 // llmUnavailable logs a failed probe once, with its cause, marks

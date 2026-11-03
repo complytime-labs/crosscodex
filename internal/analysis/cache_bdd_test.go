@@ -1,6 +1,7 @@
 package analysis_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -476,7 +477,7 @@ func (r *cacheRig) producersOf() map[string]string {
 	keys := make([]string, 0, len(r.tasks))
 	for _, t := range r.tasks {
 		req, _ := identityOf(t)
-		keys = append(keys, resultcache.Key(cacheAnalyzer, req.Identity, observedModel, ""))
+		keys = append(keys, resultcache.Key(cacheAnalyzer, req.Identity, resultcache.ModelIdentity{Observed: observedModel}))
 	}
 	p, err := r.fake.Producers(r.ctx, cacheAnalyzer, keys)
 	Expect(err).NotTo(HaveOccurred())
@@ -486,7 +487,7 @@ func (r *cacheRig) producersOf() map[string]string {
 // keyOf is the key a task of the stub is stored under.
 func keyOf(t analyzer.Task) string {
 	req, _ := identityOf(t)
-	return resultcache.Key(cacheAnalyzer, req.Identity, observedModel, "")
+	return resultcache.Key(cacheAnalyzer, req.Identity, resultcache.ModelIdentity{Observed: observedModel})
 }
 
 // stageErr returns the stage's error as a StageError.
@@ -702,6 +703,73 @@ var _ = Describe("Result reuse", func() {
 			Expect(rig.store.storedEntries()).To(ConsistOf(HaveField("TaskID", rig.tasks[1].TaskID)))
 			Expect(rig.counted("analysis.result_cache.puts_refused.total", "model_mismatch")).To(BeEquivalentTo(1))
 			Expect(rig.logs).To(gbytes.Say(`response_model=fallback-model observed_model=qwen2.5:14b`))
+		})
+
+		DescribeTable("stores a result only when its deployment is the one the probe observed",
+			func(probed, answered string, stored bool) {
+				rig := newCacheRig("a")
+				rig.collector.resultsFn = func(req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+					r := answer(req.ExpectedIDs[0], observedModel)
+					if answered != "" {
+						r.Fields["deployment"] = structpb.NewStringValue(answered)
+					}
+					return []analyzer.TaskResult{{TaskID: req.ExpectedIDs[0], Result: r}}, nil
+				}
+				cache := rig.settings(resultcache.ModeEnabled)
+				cache.Models[defaultUse] = analysis.CacheModel{Alias: "default", Observed: observedModel, Deployment: probed}
+				res := rig.run("job-1", cache)
+				Expect(res.Completed).To(ConsistOf(cacheAnalyzer))
+				Expect(res.CacheStats[cacheAnalyzer].Models).To(Equal(map[string]resultcache.ModelIdentity{
+					"default": {Observed: observedModel, Deployment: probed}}))
+				if !stored {
+					Expect(rig.store.storedEntries()).To(BeEmpty())
+					Expect(rig.counted("analysis.result_cache.puts_refused.total", "deployment_mismatch")).To(BeEquivalentTo(1))
+					Expect(rig.counted("analysis.result_cache.puts_refused.total", "model_mismatch")).To(BeZero())
+					// slog's text handler quotes an empty value.
+					logged := func(v string) string { return cmp.Or(v, `""`) }
+					Expect(rig.logs).To(gbytes.Say(`only results of the deployment the probe reached are stored; ` +
+						`to cache every deployment, give each its own alias`))
+					Expect(rig.logs).To(gbytes.Say(`response_deployment=` + logged(answered) + ` deployment=` + logged(probed)))
+					return
+				}
+				req, _ := identityOf(rig.tasks[0])
+				Expect(rig.store.storedEntries()).To(ConsistOf(HaveField("CacheKey", resultcache.Key(cacheAnalyzer, req.Identity,
+					resultcache.ModelIdentity{Observed: observedModel, Deployment: probed}))))
+				Expect(rig.counted("analysis.result_cache.puts_refused.total", "")).To(BeZero())
+			},
+			Entry("the same deployment is stored under the key naming it", "e96b0292", "e96b0292", true),
+			Entry("another deployment is refused", "e96b0292", "0a1b2c3d", false),
+			Entry("no deployment where the probe saw one is refused", "e96b0292", "", false),
+			Entry("a deployment where the probe saw none is refused", "", "0a1b2c3d", false),
+		)
+
+		DescribeTable("logs a refused result's gateway-reported model and deployment cut to 256 bytes, saying it was cut",
+			func(field string) {
+				rig := newCacheRig("a")
+				long := strings.Repeat("x", 1000)
+				rig.collector.resultsFn = func(req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+					r := answer(req.ExpectedIDs[0], observedModel)
+					r.Fields[field] = structpb.NewStringValue(long)
+					return []analyzer.TaskResult{{TaskID: req.ExpectedIDs[0], Result: r}}, nil
+				}
+				rig.run("job-1", rig.settings(resultcache.ModeEnabled))
+				Expect(rig.store.storedEntries()).To(BeEmpty())
+				Expect(rig.logs.Contents()).To(ContainSubstring(strings.Repeat("x", 256) + "…(cut from 1000 bytes)"))
+				Expect(rig.logs.Contents()).NotTo(ContainSubstring(strings.Repeat("x", 257)))
+			},
+			Entry("model", "model"),
+			Entry("deployment", "deployment"),
+		)
+
+		It("cuts a logged value between characters, never inside one", func() {
+			rig := newCacheRig("a")
+			rig.collector.resultsFn = func(req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+				// 255 bytes, then a 3-byte character across the 256-byte bound.
+				return []analyzer.TaskResult{{TaskID: req.ExpectedIDs[0],
+					Result: answer(req.ExpectedIDs[0], strings.Repeat("x", 255)+"€tail")}}, nil
+			}
+			rig.run("job-1", rig.settings(resultcache.ModeEnabled))
+			Expect(rig.logs.Contents()).To(ContainSubstring("response_model=\"" + strings.Repeat("x", 255) + "…(cut from 262 bytes)\""))
 		})
 
 		It("loads each producer's checkpoints before the snapshot that uses them, batch by batch", func() {

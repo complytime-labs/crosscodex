@@ -36,7 +36,7 @@ var _ = Describe("embedding result reuse", func() {
 				req, ok := a().CacheIdentity(t)
 				Expect(ok).To(BeTrue())
 				Expect(req.Identity.Temperature).To(BeNil())
-				keys = append(keys, resultcache.Key("embedding", req.Identity, "observed", ""))
+				keys = append(keys, resultcache.Key("embedding", req.Identity, resultcache.ModelIdentity{Observed: "observed"}))
 			}
 			return keys
 		}
@@ -54,7 +54,7 @@ var _ = Describe("embedding result reuse", func() {
 			for _, t := range tasks {
 				req, ok := a().CacheIdentity(t)
 				Expect(ok).To(BeTrue())
-				keys = append(keys, resultcache.Key("embedding", req.Identity, "observed", ""))
+				keys = append(keys, resultcache.Key("embedding", req.Identity, resultcache.ModelIdentity{Observed: "observed"}))
 			}
 			return keys
 		}

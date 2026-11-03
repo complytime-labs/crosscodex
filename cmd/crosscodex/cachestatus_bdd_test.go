@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,6 +35,11 @@ var _ = Describe("run status result cache lines", func() {
 				Reason: `the model gateway returned no model name for alias "b"`,
 				Models: []*pb.AnalyzerCacheModel{{Alias: "a", ObservedModel: "m1", Revision: "r1"}, {Alias: "b"}}},
 			`0 of 4 reused, 4 sent to models a → m1 (revision r1), b → unknown; the model gateway returned no model name for alias "b"`),
+		Entry("a deployment, shortened to its first 8 characters, after the model and before the revision",
+			&pb.AnalyzerCacheSummary{Attestation: attested, Mode: pb.ResultCacheMode_RESULT_CACHE_MODE_ENABLED, Tasks: 2, Dispatched: 2,
+				Models: []*pb.AnalyzerCacheModel{{Alias: "default", ObservedModel: "default", Deployment: "e96b0292" + strings.Repeat("f", 56)},
+					{Alias: "b", ObservedModel: "m2", Deployment: "abc", Revision: "r1"}}},
+			"0 of 2 reused, 2 sent to models default → default (deployment e96b0292), b → m2 (deployment abc) (revision r1)"),
 		Entry("--no-cache",
 			&pb.AnalyzerCacheSummary{Attestation: attested, Mode: pb.ResultCacheMode_RESULT_CACHE_MODE_BYPASSED, Tasks: 5, Dispatched: 5, Models: qwen},
 			"cache bypassed (--no-cache): 5 of 5 sent to model default → qwen2.5:14b; results stored for later jobs"),
@@ -73,7 +79,13 @@ var _ = Describe("run status result cache lines", func() {
 			ProducerJobIds: []string{"job-a"}, OtherProducerJobs: 1}}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(data).To(MatchJSON(`[{"analyzer":"classify","attestation":"attested","mode":"enabled","reason":"","tasks":2,"hits":1,"dispatched":1,
-			"models":[{"alias":"default","observed_model":"qwen2.5:14b","revision":""}],"producer_job_ids":["job-a"],"other_producer_jobs":1}]`))
+			"models":[{"alias":"default","observed_model":"qwen2.5:14b","deployment":"","revision":""}],"producer_job_ids":["job-a"],"other_producer_jobs":1}]`))
+		long := "e96b0292" + strings.Repeat("f", 56)
+		data, err = json.Marshal(cacheToJSON([]*pb.AnalyzerCacheSummary{{Analyzer: "classify", Attestation: attested,
+			Mode: pb.ResultCacheMode_RESULT_CACHE_MODE_ENABLED, Models: []*pb.AnalyzerCacheModel{{Alias: "default", ObservedModel: "default", Deployment: long}}}}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(MatchJSON(`[{"analyzer":"classify","attestation":"attested","mode":"enabled","reason":"","tasks":0,"hits":0,"dispatched":0,
+			"models":[{"alias":"default","observed_model":"default","deployment":"` + long + `","revision":""}],"producer_job_ids":[],"other_producer_jobs":0}]`))
 		data, err = json.Marshal(cacheToJSON([]*pb.AnalyzerCacheSummary{{Analyzer: "requires",
 			Attestation: pb.ResultCacheAttestation_RESULT_CACHE_ATTESTATION_IN_PROGRESS}}))
 		Expect(err).NotTo(HaveOccurred())

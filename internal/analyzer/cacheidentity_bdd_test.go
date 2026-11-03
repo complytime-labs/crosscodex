@@ -38,7 +38,7 @@ var _ = Describe("PayloadCacheRequest", func() {
 	keyOf := func(task analyzer.Task) string {
 		req, ok := intanalyzer.PayloadCacheRequest(task, "source_control_id", "target_control_id")
 		Expect(ok).To(BeTrue())
-		return resultcache.Key("relationship", req.Identity, "observed", "")
+		return resultcache.Key("relationship", req.Identity, resultcache.ModelIdentity{Observed: "observed"})
 	}
 
 	It("reads a completion's alias, decoding parameters, sample and recomputed content hash, and its controls", func() {

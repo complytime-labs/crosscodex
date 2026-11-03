@@ -338,7 +338,7 @@ var _ = Describe("pgstore.Store", func() {
 			[]string{"t1"}, []string{strings.Repeat("a", 64)}, []string{"sha256:" + strings.Repeat("1", 64)}, []string{"job-1"}}))
 		Expect(execs[1].Query).To(ContainSubstring("INSERT INTO job_cache_stats"))
 		Expect(execs[1].Args).To(Equal([]any{"tenant-a", "job-2", "classify", attempt1, "enabled", "",
-			`{"default":{"observed":"qwen","revision":""}}`, 2, 1, 1}))
+			`{"default":{"observed":"qwen","deployment":"","revision":""}}`, 2, 1, 1}))
 		Expect(tx.Commits()).To(Equal(1))
 	})
 
@@ -375,7 +375,7 @@ var _ = Describe("pgstore.Store", func() {
 			}
 			Expect(query).To(ContainSubstring("ORDER BY seq"))
 			return dbtest.Rows(nil,
-				[]any{"enabled", "", `{"default":{"observed":"qwen","revision":""}}`, 2, 1, 1},
+				[]any{"enabled", "", `{"default":{"observed":"qwen","deployment":"","revision":""}}`, 2, 1, 1},
 				[]any{"disabled", "", `{}`, 1, 0, 1},
 			), nil
 		}

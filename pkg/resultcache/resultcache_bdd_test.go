@@ -43,34 +43,43 @@ func validRecord() resultcache.StageRecord {
 }
 
 var _ = Describe("Key", func() {
+	qwen := resultcache.ModelIdentity{Observed: "qwen2.5:14b"}
+
 	It("is the same 64-character lowercase hex SHA-256 for the same request", func() {
-		a := resultcache.Key("classify", baseIdentity(), "qwen2.5:14b", "")
+		a := resultcache.Key("classify", baseIdentity(), qwen)
 		Expect(a).To(MatchRegexp(`^[0-9a-f]{64}$`))
-		Expect(resultcache.Key("classify", baseIdentity(), "qwen2.5:14b", "")).To(Equal(a))
+		Expect(resultcache.Key("classify", baseIdentity(), qwen)).To(Equal(a))
 	})
 
 	DescribeTable("changes when any one component changes",
-		func(mutate func(name *string, id *resultcache.Identity, observed, revision *string)) {
-			name, id, observed, revision := "classify", baseIdentity(), "qwen2.5:14b", "r1"
-			before := resultcache.Key(name, id, observed, revision)
-			mutate(&name, &id, &observed, &revision)
-			Expect(resultcache.Key(name, id, observed, revision)).NotTo(Equal(before))
+		func(mutate func(name *string, id *resultcache.Identity, model *resultcache.ModelIdentity)) {
+			name, id := "classify", baseIdentity()
+			model := resultcache.ModelIdentity{Observed: "qwen2.5:14b", Deployment: "e96b0292", Revision: "r1"}
+			before := resultcache.Key(name, id, model)
+			mutate(&name, &id, &model)
+			Expect(resultcache.Key(name, id, model)).NotTo(Equal(before))
 		},
-		Entry("analyzer name", func(n *string, _ *resultcache.Identity, _, _ *string) { *n = "artifacts" }),
-		Entry("task type", func(_ *string, id *resultcache.Identity, _, _ *string) { id.TaskType = "artifacts" }),
-		Entry("model alias", func(_ *string, id *resultcache.Identity, _, _ *string) { id.ModelAlias = "other" }),
-		Entry("temperature", func(_ *string, id *resultcache.Identity, _, _ *string) { id.Temperature = temp(0.7) }),
-		Entry("temperature absent", func(_ *string, id *resultcache.Identity, _, _ *string) { id.Temperature = nil }),
-		Entry("max tokens", func(_ *string, id *resultcache.Identity, _, _ *string) { id.MaxTokens = 21 }),
-		Entry("sample index", func(_ *string, id *resultcache.Identity, _, _ *string) { id.Sample = 1 }),
-		Entry("content hash", func(_ *string, id *resultcache.Identity, _, _ *string) { id.ContentHash = strings.Repeat("b", 64) }),
-		Entry("observed model", func(_ *string, _ *resultcache.Identity, o, _ *string) { *o = "qwen2.5:32b" }),
-		Entry("declared revision", func(_ *string, _ *resultcache.Identity, _, r *string) { *r = "r2" }),
+		Entry("analyzer name", func(n *string, _ *resultcache.Identity, _ *resultcache.ModelIdentity) { *n = "artifacts" }),
+		Entry("task type", func(_ *string, id *resultcache.Identity, _ *resultcache.ModelIdentity) { id.TaskType = "artifacts" }),
+		Entry("model alias", func(_ *string, id *resultcache.Identity, _ *resultcache.ModelIdentity) { id.ModelAlias = "other" }),
+		Entry("temperature", func(_ *string, id *resultcache.Identity, _ *resultcache.ModelIdentity) { id.Temperature = temp(0.7) }),
+		Entry("temperature absent", func(_ *string, id *resultcache.Identity, _ *resultcache.ModelIdentity) { id.Temperature = nil }),
+		Entry("max tokens", func(_ *string, id *resultcache.Identity, _ *resultcache.ModelIdentity) { id.MaxTokens = 21 }),
+		Entry("sample index", func(_ *string, id *resultcache.Identity, _ *resultcache.ModelIdentity) { id.Sample = 1 }),
+		Entry("content hash", func(_ *string, id *resultcache.Identity, _ *resultcache.ModelIdentity) {
+			id.ContentHash = strings.Repeat("b", 64)
+		}),
+		Entry("observed model", func(_ *string, _ *resultcache.Identity, m *resultcache.ModelIdentity) { m.Observed = "qwen2.5:32b" }),
+		Entry("deployment", func(_ *string, _ *resultcache.Identity, m *resultcache.ModelIdentity) { m.Deployment = "0a1b2c3d" }),
+		Entry("deployment absent", func(_ *string, _ *resultcache.Identity, m *resultcache.ModelIdentity) { m.Deployment = "" }),
+		Entry("declared revision", func(_ *string, _ *resultcache.Identity, m *resultcache.ModelIdentity) { m.Revision = "r2" }),
 	)
 
 	It("keeps two fields from trading bytes", func() {
-		Expect(resultcache.Key("ab", resultcache.Identity{TaskType: "c"}, "", "")).
-			NotTo(Equal(resultcache.Key("a", resultcache.Identity{TaskType: "bc"}, "", "")))
+		Expect(resultcache.Key("ab", resultcache.Identity{TaskType: "c"}, resultcache.ModelIdentity{})).
+			NotTo(Equal(resultcache.Key("a", resultcache.Identity{TaskType: "bc"}, resultcache.ModelIdentity{})))
+		Expect(resultcache.Key("a", resultcache.Identity{}, resultcache.ModelIdentity{Observed: "mx", Deployment: "y"})).
+			NotTo(Equal(resultcache.Key("a", resultcache.Identity{}, resultcache.ModelIdentity{Observed: "m", Deployment: "xy"})))
 	})
 })
 
@@ -377,7 +386,7 @@ var _ = Describe("Manifest.Digest", func() {
 		doc := `{"tenant_id":"tenant-a","job_id":"job-1","analyzer":"classify","attempt":"` + attempt1 + `","entries":[` +
 			`{"task_id":"t1","role":"hit","cache_key":"` + strings.Repeat("1", 64) + `","result_digest":"sha256:` + strings.Repeat("1", 64) + `","producer_job_id":"job-0"},` +
 			`{"task_id":"t2","role":"write","cache_key":"` + strings.Repeat("2", 64) + `","result_digest":"sha256:` + strings.Repeat("2", 64) + `","producer_job_id":""}],` +
-			`"stats":[{"mode":"enabled","reason":"","models":{"default":{"observed":"qwen2.5:14b","revision":"r1"},"z":{"observed":"m2","revision":""}},"tasks":2,"hits":1,"dispatched":1},` +
+			`"stats":[{"mode":"enabled","reason":"","models":{"default":{"observed":"qwen2.5:14b","deployment":"","revision":"r1"},"z":{"observed":"m2","deployment":"","revision":""}},"tasks":2,"hits":1,"dispatched":1},` +
 			`{"mode":"skipped","reason":"a\u003cb\u003e\u0026c","models":{},"tasks":0,"hits":0,"dispatched":0}]}`
 		Expect(m.Digest()).To(Equal(sha(doc)))
 	})

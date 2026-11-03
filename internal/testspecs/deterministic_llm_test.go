@@ -67,6 +67,21 @@ var _ = Describe("DeterministicLLM", func() {
 		Expect(complete(resultcache.ProbePromptName)).To(Equal("OK"))
 	})
 
+	It("names one deployment per model, for completions and embeddings alike, as a LiteLLM gateway does", func() {
+		deployment := func(model string) (string, string) {
+			c, err := det.Complete(ctx, &llmclient.CompletionRequest{Model: model, TenantID: "tenant-a", PromptName: "classify"})
+			Expect(err).NotTo(HaveOccurred())
+			e, err := det.Embed(ctx, &llmclient.EmbeddingRequest{Model: model, TenantID: "tenant-a", Input: []string{"x"}})
+			Expect(err).NotTo(HaveOccurred())
+			return c.Deployment, e.Deployment
+		}
+		mc, me := deployment("m")
+		Expect(mc).NotTo(BeEmpty())
+		Expect(me).To(Equal(mc))
+		nc, _ := deployment("n")
+		Expect(nc).NotTo(Equal(mc))
+	})
+
 	DescribeTable("refuses an unknown PromptName, naming it",
 		func(prompt string) {
 			resp, err := det.Complete(ctx, &llmclient.CompletionRequest{TenantID: "tenant-a", PromptName: prompt})

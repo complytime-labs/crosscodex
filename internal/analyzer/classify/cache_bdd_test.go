@@ -51,7 +51,7 @@ var _ = Describe("classify result reuse", func() {
 			Expect(ok).To(BeTrue())
 			Expect(req.SourceControlID).To(Equal("nist/AC-1"))
 			Expect(req.TargetControlID).To(Equal("nist/AC-1"))
-			return resultcache.Key("classify", req.Identity, "qwen", "")
+			return resultcache.Key("classify", req.Identity, resultcache.ModelIdentity{Observed: "qwen"})
 		}
 		Expect(keyIn("job-1")).To(Equal(keyIn("job-2")))
 	})
@@ -75,7 +75,7 @@ var _ = Describe("classify result reuse", func() {
 				Expect(tasks).To(HaveLen(1))
 				req, ok := a.CacheIdentity(tasks[0])
 				Expect(ok).To(BeTrue())
-				return resultcache.Key("classify", req.Identity, "qwen", "")
+				return resultcache.Key("classify", req.Identity, resultcache.ModelIdentity{Observed: "qwen"})
 			}
 			changed := control()
 			edit(changed)

@@ -56,7 +56,7 @@ const ProbePromptName = "result-cache-probe"
 
 // keyVersion leads every key encoding, so a change to the encoding yields
 // new keys instead of colliding with keys of the old one.
-const keyVersion = "crosscodex.resultcache.v1"
+const keyVersion = "crosscodex.resultcache.v2"
 
 // Identity is what makes an LLM request that request, apart from the model
 // the gateway resolves its alias to. It holds no job-specific value (job
@@ -87,11 +87,10 @@ type Identity struct {
 }
 
 // Key returns the cache key of one LLM request: the lowercase hex SHA-256
-// of its canonical encoding. observedModel is the model the gateway
-// reported (the probe's resp.Model for a lookup, the producing call's for a
-// put); revision is llm.model_revisions for the alias, or "".
-func Key(analyzerName string, id Identity, observedModel, revision string) string {
-	sum := sha256.Sum256(encodeKey(analyzerName, id, observedModel, revision))
+// of its canonical encoding. model is the model behind the request's alias
+// as the job's probe observed it; every field of it is part of the key.
+func Key(analyzerName string, id Identity, model ModelIdentity) string {
+	sum := sha256.Sum256(encodeKey(analyzerName, id, model))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -100,7 +99,7 @@ func Key(analyzerName string, id Identity, observedModel, revision string) strin
 // order. The length prefixes make it injective, so two different requests
 // share a key only if SHA-256 collides. A nil temperature encodes as the
 // empty string, which strconv.FormatFloat never returns.
-func encodeKey(analyzerName string, id Identity, observedModel, revision string) []byte {
+func encodeKey(analyzerName string, id Identity, model ModelIdentity) []byte {
 	temperature := ""
 	if id.Temperature != nil {
 		temperature = strconv.FormatFloat(*id.Temperature, 'g', -1, 64)
@@ -109,7 +108,7 @@ func encodeKey(analyzerName string, id Identity, observedModel, revision string)
 	for _, field := range []string{
 		keyVersion, analyzerName, id.TaskType, id.ModelAlias, temperature,
 		strconv.FormatInt(id.MaxTokens, 10), strconv.FormatInt(id.Sample, 10),
-		id.ContentHash, observedModel, revision,
+		id.ContentHash, model.Observed, model.Deployment, model.Revision,
 	} {
 		var n [8]byte
 		binary.BigEndian.PutUint64(n[:], uint64(len(field)))
@@ -150,6 +149,11 @@ type ModelIdentity struct {
 	// Observed is the probe's resp.Model; empty when the gateway returned
 	// none, and the alias was then not cached in the job.
 	Observed string `json:"observed"`
+	// Deployment is the probe's llmclient deployment ID (LiteLLM's
+	// x-litellm-model-id), which changes when the model behind the alias
+	// changes even where Observed is only the alias; "" when the gateway
+	// sent none.
+	Deployment string `json:"deployment"`
 	// Revision is llm.model_revisions for the alias, or "".
 	Revision string `json:"revision"`
 }

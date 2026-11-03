@@ -75,7 +75,9 @@ func cacheProducers(s *pb.AnalyzerCacheSummary) string {
 	}
 }
 
-// cacheModels names each alias and the model the gateway reported for it.
+// cacheModels names each alias and the model the gateway reported for it,
+// with the first 8 characters of its deployment ID (enough to tell two
+// deployments apart; --json has the whole ID) and its revision.
 func cacheModels(models []*pb.AnalyzerCacheModel) string {
 	if len(models) == 0 {
 		return "the model"
@@ -91,6 +93,9 @@ func cacheModels(models []*pb.AnalyzerCacheModel) string {
 			observed = "unknown"
 		}
 		parts[i] = alias + " → " + observed
+		if d := []rune(intanalyzer.CleanDisplay(m.GetDeployment(), maxUntrustedDisplayBytes)); len(d) > 0 {
+			parts[i] += " (deployment " + string(d[:min(len(d), 8)]) + ")"
+		}
 		if r := intanalyzer.CleanDisplay(m.GetRevision(), maxUntrustedDisplayBytes); r != "" {
 			parts[i] += " (revision " + r + ")"
 		}
@@ -128,6 +133,7 @@ func writeCacheLines(w io.Writer, sums []*pb.AnalyzerCacheSummary, embedded bool
 type cacheModelJSON struct {
 	Alias         string `json:"alias"`
 	ObservedModel string `json:"observed_model"`
+	Deployment    string `json:"deployment"`
 	Revision      string `json:"revision"`
 }
 
@@ -153,7 +159,8 @@ func cacheToJSON(sums []*pb.AnalyzerCacheSummary) []cacheSummaryJSON {
 	for _, s := range sums {
 		models := make([]cacheModelJSON, 0, len(s.GetModels()))
 		for _, m := range s.GetModels() {
-			models = append(models, cacheModelJSON{Alias: m.GetAlias(), ObservedModel: m.GetObservedModel(), Revision: m.GetRevision()})
+			models = append(models, cacheModelJSON{Alias: m.GetAlias(), ObservedModel: m.GetObservedModel(),
+				Deployment: m.GetDeployment(), Revision: m.GetRevision()})
 		}
 		producers := s.GetProducerJobIds()
 		if producers == nil {

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -243,7 +244,7 @@ func (e *Engine) planCache(ctx context.Context, name string, ra analyzer.Registe
 			reasons = append(reasons, fmt.Sprintf("alias %q was not probed for this job", use.Alias))
 			continue
 		}
-		sc.stats.Models[cm.Alias] = resultcache.ModelIdentity{Observed: cm.Observed, Revision: cm.Revision}
+		sc.stats.Models[cm.Alias] = resultcache.ModelIdentity{Observed: cm.Observed, Deployment: cm.Deployment, Revision: cm.Revision}
 		if cm.Observed == "" {
 			reasons = append(reasons, cm.Reason)
 			continue
@@ -299,7 +300,8 @@ func (e *Engine) planCache(ctx context.Context, name string, ra analyzer.Registe
 			continue
 		}
 		sc.byTask[t.TaskID] = cachedTask{request: cr, model: cm, source: source, target: target,
-			lookupKey: resultcache.Key(name, cr.Identity, cm.Observed, cm.Revision)}
+			lookupKey: resultcache.Key(name, cr.Identity,
+				resultcache.ModelIdentity{Observed: cm.Observed, Deployment: cm.Deployment, Revision: cm.Revision})}
 	}
 	if uncataloged > 0 {
 		reasons = append(reasons, tasksNotCached(uncataloged, "no catalog is known for its controls"))
@@ -514,9 +516,10 @@ func keysOf(producers map[string]string, jobs []string) []string {
 
 // putResults stores every successful dispatched result of a cacheable task
 // that the analyzer would use, and records each write Put accepted. A
-// result is stored only when the model that answered is the alias's
-// observed model, under the key the job looks up: a gateway fallback's
-// result would otherwise be filed under a model this job's probe never saw.
+// result is stored only when the model and deployment that answered are the
+// alias's observed ones, under the key the job looks up: a gateway
+// fallback's result would otherwise be filed under a model this job's probe
+// never saw.
 // A refused or failed put is logged and counted and the stage goes on: its
 // results are valid, and the write is not in the record, so it is never
 // sealed.
@@ -537,7 +540,16 @@ func (e *Engine) putResults(ctx context.Context, sc *stageCache, results []analy
 		if respModel != ct.model.Observed {
 			e.putRefused(ctx, sc, r.TaskID, "model_mismatch",
 				"the gateway answered with another model than the job's probe observed for the alias, so the result is not stored",
-				"response_model", respModel, "observed_model", ct.model.Observed)
+				"response_model", boundLogged(respModel), "observed_model", ct.model.Observed)
+			continue
+		}
+		if respDeployment := s.GetFields()["deployment"].GetStringValue(); respDeployment != ct.model.Deployment {
+			e.putRefused(ctx, sc, r.TaskID, "deployment_mismatch",
+				"the gateway answered from another deployment than the job's probe reached for the alias, so the result is not "+
+					"stored and later jobs send this request to the model again. If the alias is load-balanced across several "+
+					"gateway deployments, only results of the deployment the probe reached are stored; to cache every deployment, "+
+					"give each its own alias",
+				"response_deployment", boundLogged(respDeployment), "deployment", ct.model.Deployment)
 			continue
 		}
 		if err := sc.analyzer.CacheableResult(s); err != nil {
@@ -570,6 +582,24 @@ func (e *Engine) putResults(ctx context.Context, sc *stageCache, results []analy
 			e.cachePuts.Add(ctx, 1, sc.attrs)
 		}
 	}
+}
+
+// maxLoggedBytes bounds a gateway-reported value putResults logs: the
+// probe's own model names and deployment IDs are at most 256 bytes
+// (internal/pipeline maxObservedModelBytes), so a longer one is cut.
+const maxLoggedBytes = 256
+
+// boundLogged returns v cut to at most maxLoggedBytes bytes, between
+// characters, marked with its original length when cut.
+func boundLogged(v string) string {
+	if len(v) <= maxLoggedBytes {
+		return v
+	}
+	n := maxLoggedBytes
+	for n > 0 && !utf8.RuneStart(v[n]) {
+		n--
+	}
+	return fmt.Sprintf("%s…(cut from %d bytes)", v[:n], len(v))
 }
 
 // putRefused logs and counts a result putResults chose not to store.

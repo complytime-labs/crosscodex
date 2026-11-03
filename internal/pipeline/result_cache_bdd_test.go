@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
@@ -295,6 +296,83 @@ var _ = Describe("Result cache settings and the model probe", Ordered, func() {
 			Entry("an unprintable name", "model\x1b[31m",
 				`the model gateway returned a model name for alias "default-chat" that is not printable text of at most 256 bytes, so its calls were neither looked up nor stored`),
 		)
+
+		DescribeTable("takes the deployment into the model's identity, and caches an alias the gateway echoes only when a deployment or revision names its model",
+			func(model, deployment string, revisions map[string]string, want analysis.CacheModel) {
+				llmCfg.ModelRevisions = revisions
+				llm.CompleteFunc = func(context.Context, *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+					return &llmclient.CompletionResponse{Model: model, Deployment: deployment}, nil
+				}
+				settings, err := wired().PrepareResultCache(ctx, job, att, []string{"classify"}, controls)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(settings.Models[completionUse]).To(Equal(want))
+			},
+			Entry("an echoed alias with no deployment and no revision is not cached, naming the setting that would cache it",
+				"default-chat", "", nil, analysis.CacheModel{Alias: "default-chat", Reason: `the model gateway named only the alias ` +
+					`"default-chat" as the model and sent no deployment ID, so a change of the model behind the alias could not be ` +
+					`detected and its calls were neither looked up nor stored. To cache them, set llm.model_revisions.default-chat ` +
+					`and change it whenever the model behind the alias changes`}),
+			Entry("an echoed alias with a deployment is cached under both",
+				"default-chat", "e96b0292", nil, analysis.CacheModel{Alias: "default-chat", Observed: "default-chat", Deployment: "e96b0292"}),
+			Entry("an echoed alias with a revision is cached under both",
+				"default-chat", "", map[string]string{"default-chat": "rev-7"},
+				analysis.CacheModel{Alias: "default-chat", Observed: "default-chat", Revision: "rev-7"}),
+			Entry("a concrete model with no deployment is cached under the model",
+				"qwen2.5:14b", "", nil, analysis.CacheModel{Alias: "default-chat", Observed: "qwen2.5:14b"}),
+			Entry("a concrete model with a deployment is cached under both",
+				"qwen2.5:14b", "e96b0292", nil, analysis.CacheModel{Alias: "default-chat", Observed: "qwen2.5:14b", Deployment: "e96b0292"}),
+			Entry("an unprintable deployment is not cached",
+				"qwen2.5:14b", "e96b\x1b[31m", nil, analysis.CacheModel{Alias: "default-chat", Reason: `the model gateway returned a ` +
+					`deployment ID for alias "default-chat" that is not printable text of at most 256 bytes, so its calls were ` +
+					`neither looked up nor stored`}),
+			Entry("a deployment over 256 bytes is not cached",
+				"qwen2.5:14b", strings.Repeat("d", 257), nil, analysis.CacheModel{Alias: "default-chat", Reason: `the model gateway ` +
+					`returned a deployment ID for alias "default-chat" that is not printable text of at most 256 bytes, so its ` +
+					`calls were neither looked up nor stored`}),
+		)
+
+		DescribeTable("counts each probe by outcome: observed when the alias is cached, uncached or empty when it is not",
+			func(model, deployment string, revisions map[string]string, want string) {
+				llmCfg.ModelRevisions = revisions
+				llm.CompleteFunc = func(context.Context, *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+					return &llmclient.CompletionResponse{Model: model, Deployment: deployment}, nil
+				}
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+				svc := serviceWith(pipeline.WithResultCache(&resultcachetest.Fake{}, cacheCfg, llmCfg, llm),
+					pipeline.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+				_, err = svc.PrepareResultCache(ctx, job, att, []string{"classify"}, controls)
+				Expect(err).NotTo(HaveOccurred())
+				m := telemetrytest.FindMetric(tp.GetMetrics(), "pipeline.result_cache.probes.total")
+				Expect(m).NotTo(BeNil())
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				Expect(ok).To(BeTrue())
+				outcomes := map[string]int64{}
+				for _, dp := range sum.DataPoints {
+					o, _ := dp.Attributes.Value("outcome")
+					outcomes[o.AsString()] += dp.Value
+				}
+				Expect(outcomes).To(Equal(map[string]int64{want: 1}))
+			},
+			Entry("a concrete model", "qwen2.5:14b", "", nil, "observed"),
+			Entry("an echoed alias with a deployment", "default-chat", "e96b0292", nil, "observed"),
+			Entry("an echoed alias with a revision", "default-chat", "", map[string]string{"default-chat": "rev-7"}, "observed"),
+			Entry("no model name", "", "", nil, "empty"),
+			Entry("an unprintable model name", "m\x1b", "", nil, "empty"),
+			Entry("an echoed alias with no deployment and no revision", "default-chat", "", nil, "uncached"),
+			Entry("an unprintable deployment", "qwen2.5:14b", "d\x1b", nil, "uncached"),
+		)
+
+		It("takes an embedding probe's deployment into the model's identity", func() {
+			llm.EmbedFunc = func(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+				return &llmclient.EmbeddingResponse{Model: req.Model, Deployment: "0a1b2c3d"}, nil
+			}
+			settings, err := wired().PrepareResultCache(ctx, job, att, []string{"embedding"}, controls)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(settings.Models[embeddingUse]).To(Equal(analysis.CacheModel{
+				Alias: "default-embed", Observed: "default-embed", Deployment: "0a1b2c3d"}))
+		})
 
 		It("accepts a printable name of exactly 256 bytes", func() {
 			name := strings.Repeat("m", 256)

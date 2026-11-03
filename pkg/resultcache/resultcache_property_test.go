@@ -14,9 +14,9 @@ import (
 
 // request is every input of the key encoding.
 type request struct {
-	name               string
-	id                 resultcache.Identity
-	observed, revision string
+	name  string
+	id    resultcache.Identity
+	model resultcache.ModelIdentity
 }
 
 func drawRequest(t *rapid.T, label string) request {
@@ -29,8 +29,11 @@ func drawRequest(t *rapid.T, label string) request {
 			Sample:      rapid.Int64().Draw(t, label+".sample"),
 			ContentHash: rapid.String().Draw(t, label+".contentHash"),
 		},
-		observed: rapid.String().Draw(t, label+".observed"),
-		revision: rapid.String().Draw(t, label+".revision"),
+		model: resultcache.ModelIdentity{
+			Observed:   rapid.String().Draw(t, label+".observed"),
+			Deployment: rapid.String().Draw(t, label+".deployment"),
+			Revision:   rapid.String().Draw(t, label+".revision"),
+		},
 	}
 	if rapid.Bool().Draw(t, label+".hasTemperature") {
 		v := rapid.Float64Range(0, 2).Draw(t, label+".temperature")
@@ -41,7 +44,7 @@ func drawRequest(t *rapid.T, label string) request {
 
 // mutateOne returns r with one drawn field redrawn.
 func mutateOne(t *rapid.T, r request) request {
-	switch rapid.IntRange(0, 9).Draw(t, "field") {
+	switch rapid.IntRange(0, 10).Draw(t, "field") {
 	case 0:
 		r.name = rapid.String().Draw(t, "new")
 	case 1:
@@ -62,12 +65,20 @@ func mutateOne(t *rapid.T, r request) request {
 	case 6:
 		r.id.ContentHash = rapid.String().Draw(t, "new")
 	case 7:
-		r.observed = rapid.String().Draw(t, "new")
+		r.model.Observed = rapid.String().Draw(t, "new")
 	case 8:
-		r.revision = rapid.String().Draw(t, "new")
+		r.model.Deployment = rapid.String().Draw(t, "new")
+	case 9:
+		r.model.Revision = rapid.String().Draw(t, "new")
 	default:
-		// Move one byte from the end of one field to the start of the next.
-		if r.name != "" {
+		// Move one byte from the end of one field to the start of the next:
+		// name into task type, or observed model into deployment.
+		if rapid.Bool().Draw(t, "modelFields") {
+			if r.model.Observed != "" {
+				r.model.Deployment = r.model.Observed[len(r.model.Observed)-1:] + r.model.Deployment
+				r.model.Observed = r.model.Observed[:len(r.model.Observed)-1]
+			}
+		} else if r.name != "" {
 			r.id.TaskType = r.name[len(r.name)-1:] + r.id.TaskType
 			r.name = r.name[:len(r.name)-1]
 		}
@@ -86,7 +97,7 @@ func same(a, b request) bool {
 }
 
 func encode(r request) []byte {
-	return resultcache.ExportEncodeKey(r.name, r.id, r.observed, r.revision)
+	return resultcache.ExportEncodeKey(r.name, r.id, r.model)
 }
 
 var _ = Describe("Property Specifications", Ordered, func() {

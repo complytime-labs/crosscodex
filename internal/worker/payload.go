@@ -72,13 +72,19 @@ func buildCompletionResult(resp *llmclient.CompletionResponse) (*structpb.Struct
 		response = resp.Choices[0].Message.Content
 	}
 
-	return structpb.NewStruct(map[string]interface{}{
+	fields := map[string]interface{}{
 		"response":          response,
 		"model":             resp.Model,
 		"tokens_used":       float64(resp.Usage.TotalTokens),
 		"prompt_tokens":     float64(resp.Usage.PromptTokens),
 		"completion_tokens": float64(resp.Usage.CompletionTokens),
-	})
+	}
+	// The result cache stores a result only when its deployment is the one
+	// the job's model probe observed (internal/analysis putResults).
+	if resp.Deployment != "" {
+		fields["deployment"] = resp.Deployment
+	}
+	return structpb.NewStruct(fields)
 }
 
 func buildEmbeddingResult(resp *llmclient.EmbeddingResponse) (*structpb.Struct, error) {
@@ -96,12 +102,16 @@ func buildEmbeddingResult(resp *llmclient.EmbeddingResponse) (*structpb.Struct, 
 		dimensions = len(resp.Data[0].Embedding)
 	}
 
-	return structpb.NewStruct(map[string]interface{}{
+	fields := map[string]interface{}{
 		"embeddings":  embeddings,
 		"model":       resp.Model,
 		"tokens_used": float64(resp.Usage.TotalTokens),
 		"dimensions":  float64(dimensions),
-	})
+	}
+	if resp.Deployment != "" {
+		fields["deployment"] = resp.Deployment
+	}
+	return structpb.NewStruct(fields)
 }
 
 func getStringField(fields map[string]*structpb.Value, key string) string {
