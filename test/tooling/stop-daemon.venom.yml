@@ -1,0 +1,90 @@
+name: test/e2e/stop-daemon.sh stops the e2e daemon and stub gateway
+
+vars:
+  root: "."
+
+testcases:
+  - name: No pidfiles is a no-op success
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          bash {{.root}}/test/e2e/stop-daemon.sh "$d"
+          echo "exit=$?"
+          rm -rf "$d"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+
+  - name: A daemon that honours TERM is stopped and its pidfile removed
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          nohup sleep 300 >/dev/null 2>&1 </dev/null &
+          pid=$!
+          trap 'kill -KILL "$pid" 2>/dev/null; rm -rf "$d"' EXIT
+          echo "$pid" >"$d/daemon.pid"
+          bash {{.root}}/test/e2e/stop-daemon.sh "$d"
+          echo "exit=$?"
+          s=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+          case "$s" in ""|Z*) echo "process=gone" ;; *) echo "process=alive" ;; esac
+          [ -e "$d/daemon.pid" ] && echo "pidfile=present" || echo "pidfile=removed"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+          - result.systemout ShouldContainSubstring process=gone
+          - result.systemout ShouldContainSubstring pidfile=removed
+
+  - name: A daemon that ignores TERM is killed within the bound
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          nohup bash -c 'trap "" TERM; exec sleep 300' >/dev/null 2>&1 </dev/null &
+          pid=$!
+          trap 'kill -KILL "$pid" 2>/dev/null; rm -rf "$d"' EXIT
+          echo "$pid" >"$d/daemon.pid"
+          start=$(date +%s)
+          bash {{.root}}/test/e2e/stop-daemon.sh "$d"
+          echo "exit=$?"
+          elapsed=$(( $(date +%s) - start ))
+          [ "$elapsed" -le 15 ] && echo "bounded=yes" || echo "bounded=no elapsed=$elapsed"
+          s=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+          case "$s" in ""|Z*) echo "process=gone" ;; *) echo "process=alive" ;; esac
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+          - result.systemout ShouldContainSubstring process=gone
+          - result.systemout ShouldContainSubstring bounded=yes
+
+  - name: A stale pidfile for a dead process is removed
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          sh -c 'exit 0' & pid=$!; wait "$pid"
+          echo "$pid" >"$d/daemon.pid"
+          bash {{.root}}/test/e2e/stop-daemon.sh "$d"
+          echo "exit=$?"
+          [ -e "$d/daemon.pid" ] && echo "pidfile=present" || echo "pidfile=removed"
+          rm -rf "$d"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+          - result.systemout ShouldContainSubstring pidfile=removed
+
+  - name: A leftover stub LLM gateway is killed and its pidfile removed
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          nohup sleep 300 >/dev/null 2>&1 </dev/null &
+          pid=$!
+          trap 'kill -KILL "$pid" 2>/dev/null; rm -rf "$d"' EXIT
+          echo "$pid" >"$d/llm-stub.pid"
+          bash {{.root}}/test/e2e/stop-daemon.sh "$d"
+          echo "exit=$?"
+          s=$(ps -o stat= -p "$pid" 2>/dev/null || true)
+          case "$s" in ""|Z*) echo "process=gone" ;; *) echo "process=alive" ;; esac
+          [ -e "$d/llm-stub.pid" ] && echo "pidfile=present" || echo "pidfile=removed"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+          - result.systemout ShouldContainSubstring process=gone
+          - result.systemout ShouldContainSubstring pidfile=removed

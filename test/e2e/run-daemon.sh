@@ -35,36 +35,8 @@ if [[ "$MODE" != "llm" ]]; then
 	fi
 fi
 
-# Pre-start cleanup: kill any prior daemon tracked by pidfile
-if [[ -f "$E2E_DIR/daemon.pid" ]]; then
-	OLD_PID=$(cat "$E2E_DIR/daemon.pid")
-	if kill -0 "$OLD_PID" 2>/dev/null; then
-		echo "Cleaning up stale daemon (PID $OLD_PID)..."
-		kill -TERM "$OLD_PID" 2>/dev/null || true
-		# Wait up to 5s for graceful exit
-		for _ in $(seq 1 50); do
-			if ! kill -0 "$OLD_PID" 2>/dev/null; then
-				break
-			fi
-			sleep 0.1
-		done
-		# Force kill if still alive
-		if kill -0 "$OLD_PID" 2>/dev/null; then
-			kill -KILL "$OLD_PID" 2>/dev/null || true
-			sleep 0.5
-		fi
-	fi
-	rm -f "$E2E_DIR/daemon.pid"
-fi
-# A stub gateway normally exits with its daemon; this catches one that didn't.
-if [[ -f "$E2E_DIR/llm-stub.pid" ]]; then
-	OLD_STUB_PID=$(cat "$E2E_DIR/llm-stub.pid")
-	if kill -0 "$OLD_STUB_PID" 2>/dev/null; then
-		echo "Cleaning up stale stub LLM gateway (PID $OLD_STUB_PID)..."
-		kill -KILL "$OLD_STUB_PID" 2>/dev/null || true
-	fi
-	rm -f "$E2E_DIR/llm-stub.pid"
-fi
+# Pre-start cleanup: stop any prior daemon and stub tracked by pidfile.
+bash "$ROOT_DIR/test/e2e/stop-daemon.sh" "$E2E_DIR"
 
 # Port guard: ensure the daemon's bind port is not held by a foreign process
 if timeout 1 bash -c "cat < /dev/null > /dev/tcp/$SERVER_HOST/$SERVER_PORT" 2>/dev/null; then

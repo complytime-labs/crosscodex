@@ -478,6 +478,14 @@ task test:e2e:venom:llm
 
 **Requirements:** both suites need `venom`, `psql`, and `pg_isready` on the host plus a podman (or docker) runtime; the LLM tier also needs `jq`. The podman `TMPDIR` / storage-driver notes under **Stress Tests** apply here too.
 
+#### Tooling Tests
+
+Venom suites in `test/tooling/` check the repo's own scripts and Taskfile behaviour: the e2e daemon is stopped before its database is torn down, and the deploy tasks fail with an actionable message when `deploy/.env` is missing. They need only `venom` and `task`, start no containers, and never touch your `deploy/.env`. CI runs them in the `e2e-venom` job.
+
+```bash
+task test:tooling
+```
+
 ### Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development workflow, PR process, and coding standards.

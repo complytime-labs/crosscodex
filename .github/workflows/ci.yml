@@ -151,6 +151,11 @@ jobs:
       - name: Install Venom
         uses: ./.github/actions/venom-setup
 
+      # Teardown and precondition behaviour of the repo's own scripts and
+      # Taskfiles; seconds, no containers, so run it before the slow suite.
+      - name: Run tooling suites (Venom)
+        run: task test:tooling
+
       - name: Run hermetic ingest-to-AGE E2E (Venom, no LLM)
         run: task test:e2e:venom
 

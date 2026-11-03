@@ -1,0 +1,43 @@
+name: deploy tasks without deploy/.env fail once with an actionable message
+
+vars:
+  root: "."
+
+testcases:
+  - name: deploy:smoke stops on the precondition and never starts or tears down
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cp {{.root}}/Taskfile.yml "$d/"
+          cp -r {{.root}}/.taskfiles "$d/"
+          mkdir "$d/deploy"
+          cp {{.root}}/deploy/*.yaml {{.root}}/deploy/.env.example "$d/deploy/"
+          (cd "$d" && task deploy:smoke >out.log 2>&1); echo "exit=$?"
+          echo "missing_count=$(grep -c 'deploy/.env missing' "$d/out.log")"
+          grep -q Traceback "$d/out.log" && echo "traceback=yes" || echo "traceback=no"
+          grep -q smoke_up.sh "$d/out.log" && echo "smoke_up_ran=yes" || echo "smoke_up_ran=no"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring missing_count=1
+          - result.systemout ShouldContainSubstring traceback=no
+          - result.systemout ShouldContainSubstring smoke_up_ran=no
+
+  - name: deploy:down explains how to tear down instead of tracing back
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cp {{.root}}/Taskfile.yml "$d/"
+          cp -r {{.root}}/.taskfiles "$d/"
+          mkdir "$d/deploy"
+          cp {{.root}}/deploy/*.yaml {{.root}}/deploy/.env.example "$d/deploy/"
+          (cd "$d" && task deploy:down >out.log 2>&1); echo "exit=$?"
+          grep -q 'Restore deploy/.env' "$d/out.log" && echo "actionable=yes" || echo "actionable=no"
+          grep -q Traceback "$d/out.log" && echo "traceback=yes" || echo "traceback=no"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring actionable=yes
+          - result.systemout ShouldContainSubstring traceback=no

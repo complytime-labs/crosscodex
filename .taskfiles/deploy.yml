@@ -331,6 +331,9 @@ tasks:
     env:
       CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
+    preconditions:
+      - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
+        msg: "deploy/.env missing, so compose cannot resolve the stack's required variables to tear it down. Restore deploy/.env (copy deploy/.env.example and fill it in) and rerun."
     cmds:
       # podman-compose prints "no container ... found" for the gateway that
       # isn't running; that is expected and harmless.
@@ -370,6 +373,12 @@ tasks:
       vars:
         - name: LLM_GATEWAY
           enum: [litellm, praxis]
+    # Checked before cmds, so the smoke:down defer is never registered: a
+    # teardown without deploy/.env would fail compose interpolation and bury
+    # this message under a podman-compose traceback.
+    preconditions:
+      - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
+        msg: "deploy/.env missing. Copy deploy/.env.example to deploy/.env and fill it in."
     cmds:
       # Deferred so the stack is always torn down, whether smoke:up passes,
       # fails, or is interrupted. Registered before smoke:up runs; deferred cmds
