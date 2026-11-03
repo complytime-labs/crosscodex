@@ -143,17 +143,21 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 	}
 
 	fewShotStr := intanalyzer.FormatFewShotExamples(spec.FewShot)
-	reqText := intanalyzer.TruncateText(input.GetStatement(), a.cfg.MaxTextChars)
+	// Every catalog value is uploader- or OSCAL-controlled, so each is
+	// cleaned and its tag delimiters escaped: the statement with PromptText
+	// at the analyzer's text limit, the short values with PromptValue at
+	// MaxPromptValueBytes.
+	short := func(v string) string { return intanalyzer.PromptValue(v, intanalyzer.MaxPromptValueBytes) }
 
 	vars := map[string]string{
 		"extraction_guidance":       extractionGuidance,
 		"artifact_type_definitions": artifactTypeDefinitions,
 		"few_shot_examples":         fewShotStr,
 		"output_format":             outputFormat,
-		"control_id":                input.GetIdentifier(),
-		"framework":                 cfg.Parameters["framework"],
-		"ancestor_title":            input.GetParts()["ancestor_title"],
-		"requirement_text":          reqText,
+		"control_id":                short(input.GetIdentifier()),
+		"framework":                 short(cfg.Parameters["framework"]),
+		"ancestor_title":            short(input.GetParts()["ancestor_title"]),
+		"requirement_text":          intanalyzer.PromptText(input.GetStatement(), a.cfg.MaxTextChars),
 	}
 
 	systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)

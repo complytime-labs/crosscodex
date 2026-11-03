@@ -115,45 +115,10 @@ var _ = Describe("Full Pipeline Flow", func() {
 			},
 		}
 
-		// Setup prompt registry with realistic templates matching relationship.yaml.
-		prompts := specRegistry(&prompt.PromptSpec{
-			Name:    "relationship",
-			Version: "1.0.0",
-			Templates: prompt.TemplateSet{
-				System: `You are a compliance analyst classifying the relationship between two
-requirements from different frameworks.
-
-${classification_guidance}
-
-${relationship_definitions}
-
-Respond ONLY in this exact format:
-RELATIONSHIP: <EQUIVALENT|SUPERSET_OF|SUBSET_OF|CONTRIBUTES_TO|COMPLEMENTS|PARTIAL|CONFLICTS_WITH|NO_RELATIONSHIP>
-CONTRIBUTION_TYPE: <INTEGRAL_TO|EXAMPLE_OF|N/A>  (only when RELATIONSHIP is CONTRIBUTES_TO; otherwise N/A)
-JUSTIFICATION: <one to two sentences explaining your reasoning, including subject domains identified>
-CONFIDENCE: <HIGH|MEDIUM|LOW>
-`,
-				User: `SOURCE FRAMEWORK: ${source_framework}
-TARGET FRAMEWORK: ${target_framework}
-
-${few_shot_examples}
-
-SOURCE REQUIREMENT:
-ID: ${source_id} | Framework: ${source_framework} | Type: ${source_type} | Level: ${source_level} | Control Domain: "${source_ancestor}"
-<requirement>
-${source_text}
-</requirement>
-
-TARGET REQUIREMENT:
-ID: ${target_id} | Framework: ${target_framework} | Type: ${target_type} | Level: ${target_level} | Control Domain: "${target_ancestor}"
-<requirement>
-${target_text}
-</requirement>
-
-Classify the NIST IR 8477 relationship FROM the source TO the target.
-`,
-			},
-		})
+		// The shipped relationship prompt, so this spec cannot drift from
+		// relationship.yaml.
+		prompts, err := prompt.NewRegistry(config.PromptConfig{Layers: config.PromptLayerConfig{Enabled: true}})
+		Expect(err).NotTo(HaveOccurred())
 
 		// Config: 2 models, 1 sample each.
 		cfg := config.RelationshipConfig{
@@ -175,6 +140,8 @@ Classify the NIST IR 8477 relationship FROM the source TO the target.
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tasks).To(HaveLen(4))
+		user := tasks[0].Payload.(*structpb.Struct).Fields["messages"].GetListValue().GetValues()[1].GetStructValue().Fields["content"].GetStringValue()
+		Expect(user).To(ContainSubstring("<source_metadata>\nID: AC-1\n"))
 
 		// Step 2-4: Parse simulated LLM responses and group votes by pair.
 		pairVotes := make(map[string]map[string]*relationship.Vote)

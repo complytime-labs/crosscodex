@@ -14,7 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
@@ -40,7 +40,7 @@ type identityResult struct {
 // identityCell sanitizes a stored identity value (reviewer ID, operator,
 // pseudonym) for one table cell. Reviewer IDs are not pattern-checked like
 // tenant IDs, so format characters are removed as well as control ones.
-func identityCell(s string) string { return artifacts.CleanDisplay(s, maxReviewerDisplayBytes) }
+func identityCell(s string) string { return intanalyzer.CleanDisplay(s, maxReviewerDisplayBytes) }
 
 // newIdentitySigner builds the generator that signs identity requests. It
 // fails closed: an identity change without its signed record is refused.

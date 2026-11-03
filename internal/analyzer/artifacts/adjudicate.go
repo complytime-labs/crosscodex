@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -18,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/consensus"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
@@ -34,26 +33,8 @@ const (
 
 	projectBatch = 100 // decided verdicts per Unprojected call
 
-	maxPromptValueBytes = 200 // per untrusted value rendered into the prompt, before escaping
-
 	maxErrorChars         = 1000
 	maxJustificationChars = 2000
-)
-
-var (
-	// promptBreaks matches runs of control characters (newlines and tabs
-	// included) and Unicode separators (spaces, line and paragraph
-	// separators).
-	promptBreaks = regexp.MustCompile(`[\p{Cc}\p{Z}]+`)
-	// promptInvisibles matches Unicode format characters (zero-width
-	// characters, bidi overrides, tag characters). They render as nothing, so
-	// removing them, rather than turning them into a space, leaves the text a
-	// human reviewer sees; tag characters can otherwise smuggle hidden text
-	// to the model.
-	promptInvisibles = regexp.MustCompile(`\p{Cf}+`)
-	// promptEscaper entity-encodes the characters that could open or close a
-	// prompt tag.
-	promptEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 )
 
 // errLLMUnavailable marks a panel in which every call failed with one of
@@ -433,9 +414,9 @@ func (a *Adjudicator) adjudicatePair(ctx context.Context, tenantID, runID string
 func (a *Adjudicator) panel(ctx context.Context, tenantID, runID string, p LeasedPair) (Verdict, error) {
 	c := p.Context
 	rp, err := a.prompts.Render(ctx, sameAsPromptName, map[string]string{
-		"artifact_type": promptValue(c.Type),
-		"name_a":        promptValue(c.LowName),
-		"name_b":        promptValue(c.HighName),
+		"artifact_type": intanalyzer.PromptValue(c.Type, intanalyzer.MaxPromptValueBytes),
+		"name_a":        intanalyzer.PromptValue(c.LowName, intanalyzer.MaxPromptValueBytes),
+		"name_b":        intanalyzer.PromptValue(c.HighName, intanalyzer.MaxPromptValueBytes),
 		"samples_a":     formatSamples(c.LowSamples),
 		"samples_b":     formatSamples(c.HighSamples),
 	})
@@ -494,7 +475,7 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID, runID string, p Lease
 		Votes: make([]VoteRecord, n), ValidVotes: result.ValidVoteCount, TotalVotes: result.TotalVoteCount}
 	for i, v := range votes {
 		ev.Votes[i] = VoteRecord{VoterID: v.VoterID, Decision: v.Decision,
-			Confidence: cleanText(v.Confidence, maxJustificationChars), Justification: cleanText(v.Justification, maxJustificationChars)}
+			Confidence: intanalyzer.CleanText(v.Confidence, maxJustificationChars), Justification: intanalyzer.CleanText(v.Justification, maxJustificationChars)}
 	}
 	status := VerdictUndecided
 	// Compute breaks a tie as NO with fraction 0.5, so a split panel is
@@ -556,28 +537,8 @@ func panelError(ctx context.Context, tenantID, key string, err error, votes []co
 	return fmt.Errorf("%w (first completion error: %s)", err, msg)
 }
 
-// CleanDisplay makes untrusted text safe to show as one line, in a prompt
-// or a terminal: it repairs invalid UTF-8, removes Unicode format
-// characters, collapses control and separator runs to one space, caps the
-// result at maxBytes on a rune boundary and trims it. maxBytes must be >= 0;
-// callers pass constants, so it is not clamped.
-func CleanDisplay(s string, maxBytes int) string {
-	// Repair invalid UTF-8 first: stripping an invisible rune from between the
-	// bytes of a split sequence would otherwise splice them into a new rune such as U+202E.
-	s = strings.ToValidUTF8(s, "\uFFFD")
-	s = promptBreaks.ReplaceAllString(promptInvisibles.ReplaceAllString(s, ""), " ")
-	return strings.TrimSpace(cleanText(s, maxBytes))
-}
-
-// promptValue makes an untrusted value safe to render inside a prompt tag:
-// CleanDisplay at maxPromptValueBytes, then entity-escaped so no character
-// can close the tag. Escaping comes last, so the cap never splits an entity.
-func promptValue(s string) string {
-	return promptEscaper.Replace(CleanDisplay(s, maxPromptValueBytes))
-}
-
 // formatSamples renders member samples as prompt lines, each value through
-// promptValue.
+// intanalyzer.PromptValue.
 func formatSamples(samples []MemberSample) string {
 	if len(samples) == 0 {
 		return "- none recorded"
@@ -585,13 +546,13 @@ func formatSamples(samples []MemberSample) string {
 	lines := make([]string, len(samples))
 	for i, s := range samples {
 		var details []string
-		if owner := promptValue(s.OwnerRole); owner != "" {
+		if owner := intanalyzer.PromptValue(s.OwnerRole, intanalyzer.MaxPromptValueBytes); owner != "" {
 			details = append(details, "owner: "+owner)
 		}
-		if freq := promptValue(s.Frequency); freq != "" {
+		if freq := intanalyzer.PromptValue(s.Frequency, intanalyzer.MaxPromptValueBytes); freq != "" {
 			details = append(details, "frequency: "+freq)
 		}
-		lines[i] = "- " + promptValue(s.Name)
+		lines[i] = "- " + intanalyzer.PromptValue(s.Name, intanalyzer.MaxPromptValueBytes)
 		if len(details) > 0 {
 			lines[i] += " (" + strings.Join(details, "; ") + ")"
 		}
@@ -819,7 +780,7 @@ func (a *Adjudicator) markProjected(ctx context.Context, tenantID string, pr Pro
 // the pair at max_attempts.
 func (a *Adjudicator) recordFailure(ctx context.Context, tenantID string, p LeasedPair, cause error, at time.Time, res *AdjudicateResult) error {
 	attempts := p.Attempts + 1
-	f := Failure{Err: cleanText(cause.Error(), maxErrorChars), At: at, LeasedUntil: p.LeasedUntil,
+	f := Failure{Err: intanalyzer.CleanText(cause.Error(), maxErrorChars), At: at, LeasedUntil: p.LeasedUntil,
 		NextAttemptAt: at.Add(retryDelay(attempts, a.cfg.RetryBaseDelay, a.cfg.RetryMaxDelay)), Abandon: attempts >= a.cfg.MaxAttempts}
 	if err := a.store.RecordFailure(ctx, tenantID, p.Key, f); err != nil {
 		return fmt.Errorf("adjudicate artifacts: record failure for pair %s: %w", PairRef(p.Key), err)
@@ -846,17 +807,4 @@ func retryDelay(attempts int, base, maxDelay time.Duration) time.Duration {
 		d *= 2
 	}
 	return min(d, maxDelay)
-}
-
-// cleanText makes s storable in PostgreSQL text and jsonb, which reject NUL
-// and invalid UTF-8, and cuts it to at most n bytes on a rune boundary.
-func cleanText(s string, n int) string {
-	s = strings.ToValidUTF8(strings.ReplaceAll(s, "\x00", ""), "�")
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
 }

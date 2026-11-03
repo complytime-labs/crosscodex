@@ -165,7 +165,7 @@ func Reconcile(ctx context.Context, g graphdb.GraphDB, store VerdictStore, tenan
 		}
 		if !errors.Is(err, graphdb.ErrNodeExists) {
 			// The group ID embeds an untrusted, LLM-extracted artifact name.
-			return res, fmt.Errorf("reconcile artifacts: create %s %s: %w", artifactGroupLabel, CleanDisplay(n.ID, maxErrorChars), err)
+			return res, fmt.Errorf("reconcile artifacts: create %s %s: %w", artifactGroupLabel, intanalyzer.CleanDisplay(n.ID, maxErrorChars), err)
 		}
 	}
 	if res.NewMemberships, err = writeEdges(ctx, g, tenantID, memberships, opts.ChunkSize); err != nil {

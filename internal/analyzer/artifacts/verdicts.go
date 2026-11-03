@@ -239,7 +239,8 @@ type HumanDecision struct {
 }
 
 // ReviewItem is one pair as ReviewQueue and SearchPairs list it. Context
-// values are untrusted; pass them through CleanDisplay before printing.
+// values are untrusted; pass them through intanalyzer.CleanDisplay before
+// printing.
 type ReviewItem struct {
 	Ref               string
 	Key               string

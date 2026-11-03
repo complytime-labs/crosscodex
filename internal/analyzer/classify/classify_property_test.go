@@ -1,8 +1,6 @@
 package classify_test
 
 import (
-	"unicode/utf8"
-
 	. "github.com/onsi/ginkgo/v2"
 	"pgregory.net/rapid"
 
@@ -94,45 +92,6 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				}
 				if first.Type != second.Type || first.Level != second.Level {
 					t.Fatalf("not idempotent: %s != %s (from %q)", first, second, input)
-				}
-			})
-		})
-	})
-
-	Context("sanitizeText -- length invariant", func() {
-		It("output rune count never exceeds maxLen", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				text := rapid.String().Draw(t, "text")
-				maxLen := rapid.IntRange(1, 10000).Draw(t, "maxLen")
-				result := classify.ExportSanitizeText(text, maxLen)
-				runeCount := utf8.RuneCountInString(result)
-				if runeCount > maxLen {
-					t.Fatalf("sanitizeText output rune count %d exceeds maxLen %d", runeCount, maxLen)
-				}
-			})
-		})
-
-		It("output is always valid UTF-8", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				text := rapid.String().Draw(t, "text")
-				maxLen := rapid.IntRange(1, 10000).Draw(t, "maxLen")
-				result := classify.ExportSanitizeText(text, maxLen)
-				if !utf8.ValidString(result) {
-					t.Fatalf("sanitizeText produced invalid UTF-8: %q", result)
-				}
-			})
-		})
-	})
-
-	Context("sanitizeText -- no newlines", func() {
-		It("output contains no newline characters", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				text := rapid.String().Draw(t, "text")
-				result := classify.ExportSanitizeText(text, 10000)
-				for _, r := range result {
-					if r == '\n' || r == '\r' {
-						t.Fatalf("sanitizeText output contains newline: %q", result)
-					}
 				}
 			})
 		})
