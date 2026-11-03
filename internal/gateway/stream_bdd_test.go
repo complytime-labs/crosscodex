@@ -155,6 +155,10 @@ func (s *stubPipeline) CancelJob(_ context.Context, _ *connect.Request[pb.Cancel
 	return connect.NewResponse(&pb.CancelJobResponse{}), nil
 }
 
+func (s *stubPipeline) RetryJob(_ context.Context, _ *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+	return connect.NewResponse(&pb.RetryJobResponse{}), nil
+}
+
 type stubGraph struct{}
 
 func (s *stubGraph) Traverse(_ context.Context, _ *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error) {

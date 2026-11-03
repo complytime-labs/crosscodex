@@ -113,23 +113,8 @@ func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJ
 
 	tc := buildTenantContext(identity)
 
-	if !authn.IsAdmin(*identity) {
-		getResp, err := s.pipeline.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{
-			TenantContext: tc,
-			JobId:         req.Msg.GetJobId(),
-		}))
-		if err != nil {
-			err = s.publicError(ctx, "CancelJob", err)
-			s.recordMetrics(ctx, "CancelJob", start, connect.CodeOf(err))
-			return nil, err
-		}
-		if getResp.Msg.GetJob() == nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.New("backend returned nil job"))
-		}
-		if getResp.Msg.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
-			s.recordMetrics(ctx, "CancelJob", start, connect.CodePermissionDenied)
-			return nil, connect.NewError(connect.CodePermissionDenied, errors.New("not the job owner"))
-		}
+	if err := s.authorizeJobOwner(ctx, "CancelJob", start, identity, tc, req.Msg.GetJobId()); err != nil {
+		return nil, err
 	}
 
 	req.Msg.TenantContext = tc
@@ -143,4 +128,73 @@ func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJ
 
 	s.recordMetrics(ctx, "CancelJob", start, connect.Code(0))
 	return resp, nil
+}
+
+// RetryJob retries a job the caller owns (an admin may retry any), in the
+// caller's tenant. retry_from_failure resumes the job in place; otherwise
+// the pipeline starts a new job with the same config. The pipeline's
+// refusals (FailedPrecondition) reach the caller with their message.
+func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+	start := time.Now()
+	identity := identityFromContext(ctx)
+	if identity == nil {
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("not authenticated"))
+	}
+
+	ctx, endSpan := s.startHandlerSpan(ctx, "RetryJob", identity,
+		attribute.String("job.id", req.Msg.GetJobId()),
+		attribute.Bool("job.retry_from_failure", req.Msg.GetRetryFromFailure()))
+	defer endSpan()
+
+	if req.Msg.GetJobId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("job_id is required"))
+	}
+
+	if s.pipeline == nil {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("pipeline backend not configured"))
+	}
+
+	tc := buildTenantContext(identity)
+
+	if err := s.authorizeJobOwner(ctx, "RetryJob", start, identity, tc, req.Msg.GetJobId()); err != nil {
+		return nil, err
+	}
+
+	req.Msg.TenantContext = tc
+
+	resp, err := s.pipeline.RetryJob(ctx, req)
+	if err != nil {
+		err = s.publicError(ctx, "RetryJob", err)
+		s.recordMetrics(ctx, "RetryJob", start, connect.CodeOf(err))
+		return nil, err
+	}
+
+	s.recordMetrics(ctx, "RetryJob", start, connect.Code(0))
+	return resp, nil
+}
+
+// authorizeJobOwner refuses, with PermissionDenied, a caller other than an
+// admin who did not create jobID, looking the job up in the caller's tenant.
+// method names the RPC for errors and metrics.
+func (s *Service) authorizeJobOwner(ctx context.Context, method string, start time.Time, identity *authn.Identity, tc *pb.TenantContext, jobID string) error {
+	if authn.IsAdmin(*identity) {
+		return nil
+	}
+	getResp, err := s.pipeline.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{
+		TenantContext: tc,
+		JobId:         jobID,
+	}))
+	if err != nil {
+		err = s.publicError(ctx, method, err)
+		s.recordMetrics(ctx, method, start, connect.CodeOf(err))
+		return err
+	}
+	if getResp.Msg.GetJob() == nil {
+		return connect.NewError(connect.CodeInternal, errors.New("backend returned nil job"))
+	}
+	if getResp.Msg.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
+		s.recordMetrics(ctx, method, start, connect.CodePermissionDenied)
+		return connect.NewError(connect.CodePermissionDenied, errors.New("not the job owner"))
+	}
+	return nil
 }

@@ -19,8 +19,8 @@ var _ = Describe("pipeline.Server", func() {
 	var svc *pipeline.Service
 
 	BeforeEach(func() {
-		svc = pipeline.New(newFakeStore(), nil, nil, nil, nil, nil, nil, nil,
-			config.PipelineConfig{}, config.AttestationConfig{}, nil)
+		svc = pipeline.New(newFakeStore(), nil, nil, nil, pipeline.Attestors{}, nil, nil, nil,
+			config.PipelineConfig{}, nil)
 	})
 
 	It("routes a request through the tenant interceptor to the service", func() {

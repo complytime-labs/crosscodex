@@ -359,18 +359,27 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 	}, nil
 }
 
+// abandonPublishTimeout bounds an abandon publish, which outlives the
+// collection's cancelled context, so a stuck NATS connection cannot hold up
+// the stage's return or a shutdown waiting for it. It matches the bound on the
+// pipeline's other final-state writes.
+const abandonPublishTimeout = 30 * time.Second
+
 // publishAbandon publishes the abandon control message for one collection.
 // It runs as the collection ends, often because ctx was cancelled (a
 // cancelled job), so it publishes on a context that keeps ctx's values and
-// trace but not its cancellation, scoped to the collection's tenant. A
-// failure is logged and counted here and never returned: the stage already
-// has its own error, and a lost abandon only lets the workers finish tasks
-// whose results nobody reads, which is what happened before abandons existed.
+// trace but not its cancellation, for at most abandonPublishTimeout, scoped
+// to the collection's tenant. A failure is logged and counted here and never
+// returned: the stage already has its own error, and a lost abandon only lets
+// the workers finish tasks whose results nobody reads, which is what happened
+// before abandons existed.
 func (c *NATSCollector) publishAbandon(ctx context.Context, tenantID, subject string, req CollectRequest) {
 	outcome := "published"
 	// The error branch is unreachable: tenantID was validated when the
 	// result subject was built.
-	pubCtx, err := tenant.WithTenant(context.WithoutCancel(ctx), tenantID)
+	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), abandonPublishTimeout)
+	defer cancel()
+	pubCtx, err := tenant.WithTenant(pubCtx, tenantID)
 	if err == nil {
 		err = c.bus.Publish(pubCtx, subject, nil)
 	}

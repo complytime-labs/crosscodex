@@ -1,11 +1,14 @@
 package attestation_test
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/json"
+	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -230,6 +233,45 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						"Name mismatch at index %d", i)
 					Expect(roundTripped[i].Threshold).To(Equal(steps[i].Threshold),
 						"Threshold mismatch at index %d", i)
+				}
+			})
+		})
+	})
+	Context("MarshalBundle/ParseBundle — roundtrip", func() {
+		It("returns the layout and every link envelope, in order, byte for byte", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				envelope := func(label string) []byte {
+					raw, err := json.Marshal(map[string]string{"payload": rapid.String().Draw(t, label)})
+					if err != nil {
+						t.Fatalf("marshal envelope: %v", err)
+					}
+					return raw
+				}
+				layout := &attestation.SignedLayout{Raw: envelope("layout")}
+				n := rapid.IntRange(1, 8).Draw(t, "links")
+				links := make([]*attestation.SignedLink, n)
+				for i := range links {
+					links[i] = &attestation.SignedLink{Raw: envelope(fmt.Sprintf("link-%d", i))}
+				}
+
+				data, err := attestation.MarshalBundle(layout, links)
+				if err != nil {
+					t.Fatalf("MarshalBundle: %v", err)
+				}
+				gotLayout, gotLinks, err := attestation.ParseBundle(data)
+				if err != nil {
+					t.Fatalf("ParseBundle: %v", err)
+				}
+				if !bytes.Equal(gotLayout.Raw, layout.Raw) {
+					t.Fatalf("layout changed: %q != %q", gotLayout.Raw, layout.Raw)
+				}
+				if len(gotLinks) != n {
+					t.Fatalf("got %d links, want %d", len(gotLinks), n)
+				}
+				for i := range links {
+					if !bytes.Equal(gotLinks[i].Raw, links[i].Raw) {
+						t.Fatalf("link %d changed: %q != %q", i, gotLinks[i].Raw, links[i].Raw)
+					}
 				}
 			})
 		})

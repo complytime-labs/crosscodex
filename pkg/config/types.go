@@ -315,6 +315,12 @@ type StructuringConfig struct {
 
 // AttestationConfig configures in-toto attestation generation and verification.
 //
+// When attestation is enabled for a tenant (ForTenant), every pipeline job of
+// that tenant is attested or fails: the daemon refuses to start unless each
+// enabled scope has a loadable key pair (RequireKeys, then key loading in
+// internal/pipeline.NewAttestors). When it is disabled, no signer is built
+// and jobs complete without attestation.
+//
 // FIPS mode is not configured here. Attestation FIPS enforcement is derived
 // from tls.fips.enabled -- a single deployment-wide posture. The service layer
 // reads TLSConfig.FIPS.Enabled and passes attestation.WithFIPSMode() accordingly.
@@ -325,6 +331,51 @@ type AttestationConfig struct {
 	ExpiryDuration    time.Duration                  `yaml:"expiry_duration" json:"expiry_duration"`
 	IncludeByProducts bool                           `yaml:"include_byproducts" json:"include_byproducts"`
 	TenantOverrides   map[string]AttestationOverride `yaml:"tenant_overrides" json:"tenant_overrides"`
+	// StorageRetries is how many more times the pipeline tries to store an
+	// attestation (layout, link or bundle) in object storage after a failed
+	// write, before it fails the job. Range [0, 10]. Global-only: storage
+	// is shared by every tenant.
+	StorageRetries int `yaml:"storage_retries" json:"storage_retries"`
+	// StorageRetryDelay is the wait before each of those retries. Range
+	// [0, 1m], so one write adds at most 10m of retry delay. Global-only.
+	StorageRetryDelay time.Duration `yaml:"storage_retry_delay" json:"storage_retry_delay"`
+}
+
+// RequireKeys reports, as one FieldError per scope, every scope (the global
+// settings, or a tenant override) that enables attestation without both
+// key paths. A tenant that only inherits a global problem is not reported
+// again.
+//
+// crosscodexd calls this, through internal/pipeline.NewAttestors, in the
+// roles that run the pipeline. Config loading does not: the crosscodex CLI
+// and the other roles load the same configuration and never sign.
+func (a *AttestationConfig) RequireKeys() error {
+	var p problems
+	const remedy = "the pipeline signs each job's in-toto attestation with this key pair. " +
+		"Set both paths to an ECDSA key pair, or set %s: false to run jobs without attestation: %w"
+	globalMissing := a.Enabled && (a.PrivateKeyPath == "" || a.PublicKeyPath == "")
+	if globalMissing {
+		p.add("attestation.private_key_path",
+			"attestation.enabled is true but attestation.private_key_path and attestation.public_key_path are not both set: "+remedy,
+			"attestation.enabled", ErrMissingRequired)
+	}
+	for _, tenantID := range slices.Sorted(maps.Keys(a.TenantOverrides)) {
+		override := a.TenantOverrides[tenantID]
+		tc := a.ForTenant(tenantID)
+		if !tc.Enabled || (tc.PrivateKeyPath != "" && tc.PublicKeyPath != "") {
+			continue
+		}
+		ownsProblem := override.Enabled != nil || override.PrivateKeyPath != nil || override.PublicKeyPath != nil
+		if globalMissing && !ownsProblem {
+			continue
+		}
+		prefix := mapKeyPath("attestation.tenant_overrides", tenantID)
+		p.add(prefix+".private_key_path",
+			"attestation is enabled for tenant %q but it has no key pair: set %s.private_key_path and %s.public_key_path, "+
+				"or the global attestation.private_key_path and attestation.public_key_path it inherits; "+remedy,
+			tenantID, prefix, prefix, prefix+".enabled", ErrMissingRequired)
+	}
+	return p.err()
 }
 
 // AttestationOverride allows per-tenant attestation settings.

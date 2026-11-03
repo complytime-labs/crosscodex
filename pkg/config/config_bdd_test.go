@@ -1831,6 +1831,18 @@ logging:
 			Entry("rejects negative expiry duration", func(c *config.Config) {
 				c.Attestation.ExpiryDuration = -1 * time.Hour
 			}, "attestation.expiry_duration", "must be positive"),
+			Entry("rejects negative storage_retries", func(c *config.Config) {
+				c.Attestation.StorageRetries = -1
+			}, "attestation.storage_retries", "-1 must be in range [0, 10]"),
+			Entry("rejects storage_retries above 10", func(c *config.Config) {
+				c.Attestation.StorageRetries = 11
+			}, "attestation.storage_retries", "11 must be in range [0, 10]"),
+			Entry("rejects negative storage_retry_delay", func(c *config.Config) {
+				c.Attestation.StorageRetryDelay = -time.Second
+			}, "attestation.storage_retry_delay", "-1s must be in range [0, 1m]"),
+			Entry("rejects storage_retry_delay above 1m", func(c *config.Config) {
+				c.Attestation.StorageRetryDelay = time.Minute + time.Second
+			}, "attestation.storage_retry_delay", "1m1s must be in range [0, 1m]"),
 		)
 
 		DescribeTable("accepts valid attestation values",
@@ -1839,7 +1851,7 @@ logging:
 				mutate(cfg)
 				Expect(config.ExportValidateConfig(cfg)).To(Succeed())
 			},
-			Entry("passes when both paths empty (ephemeral mode)", func(c *config.Config) {
+			Entry("passes when both paths are empty (RequireKeys decides whether enabled attestation allows it)", func(c *config.Config) {
 				c.Attestation.PrivateKeyPath = ""
 				c.Attestation.PublicKeyPath = ""
 			}),
@@ -1854,7 +1866,66 @@ logging:
 					"tenant-z": {PrivateKeyPath: &privPath, PublicKeyPath: &pubPath},
 				}
 			}),
+			Entry("accepts the storage retry bounds", func(c *config.Config) {
+				c.Attestation.StorageRetries = 10
+				c.Attestation.StorageRetryDelay = time.Minute
+			}),
+			Entry("accepts no storage retries and no delay", func(c *config.Config) {
+				c.Attestation.StorageRetries = 0
+				c.Attestation.StorageRetryDelay = 0
+			}),
 		)
+
+		Describe("RequireKeys", func() {
+			const (
+				key = "/keys/attestation-key.pem"
+				pub = "/keys/attestation-pub.pem"
+			)
+			yes, no, empty := true, false, ""
+			privOverride, pubOverride := "/keys/t1-key.pem", "/keys/t1-pub.pem"
+
+			DescribeTable("refuses attestation that is enabled without a key pair, naming the setting and both remedies",
+				func(cfg config.AttestationConfig, path string) {
+					err := cfg.RequireKeys()
+					Expect(err).To(MatchError(config.ErrMissingRequired))
+					expectOnlyFieldError(err, path)
+					Expect(err.Error()).To(And(
+						ContainSubstring("private_key_path"), ContainSubstring("public_key_path"),
+						ContainSubstring("enabled: false")))
+				},
+				Entry("globally", config.AttestationConfig{Enabled: true}, "attestation.private_key_path"),
+				Entry("for a tenant whose override enables it", config.AttestationConfig{
+					TenantOverrides: map[string]config.AttestationOverride{"t1": {Enabled: &yes}},
+				}, "attestation.tenant_overrides.t1.private_key_path"),
+				Entry("for a tenant whose override clears the global key pair", config.AttestationConfig{
+					Enabled: true, PrivateKeyPath: key, PublicKeyPath: pub,
+					TenantOverrides: map[string]config.AttestationOverride{"t1": {PrivateKeyPath: &empty, PublicKeyPath: &empty}},
+				}, "attestation.tenant_overrides.t1.private_key_path"),
+				Entry("once, globally, when a tenant only inherits the missing pair", config.AttestationConfig{
+					Enabled:         true,
+					TenantOverrides: map[string]config.AttestationOverride{"t1": {IncludeByProducts: &no}},
+				}, "attestation.private_key_path"),
+			)
+
+			DescribeTable("accepts every enabled scope having a key pair",
+				func(cfg config.AttestationConfig) {
+					Expect(cfg.RequireKeys()).To(Succeed())
+				},
+				Entry("attestation disabled with no keys", config.AttestationConfig{}),
+				Entry("attestation enabled with a key pair", config.AttestationConfig{
+					Enabled: true, PrivateKeyPath: key, PublicKeyPath: pub,
+				}),
+				Entry("a tenant that disables attestation and sets no keys", config.AttestationConfig{
+					Enabled: true, PrivateKeyPath: key, PublicKeyPath: pub,
+					TenantOverrides: map[string]config.AttestationOverride{"t1": {Enabled: &no, PrivateKeyPath: &empty, PublicKeyPath: &empty}},
+				}),
+				Entry("a tenant that enables attestation with its own key pair", config.AttestationConfig{
+					TenantOverrides: map[string]config.AttestationOverride{"t1": {
+						Enabled: &yes, PrivateKeyPath: &privOverride, PublicKeyPath: &pubOverride,
+					}},
+				}),
+			)
+		})
 
 	})
 
@@ -2010,6 +2081,20 @@ logging:
 			Expect(cfg.Attestation.ExpiryDuration).To(Equal(8760 * time.Hour))
 			Expect(cfg.Attestation.IncludeByProducts).To(BeTrue())
 			Expect(cfg.Attestation.TenantOverrides).To(BeNil())
+			Expect(cfg.Attestation.StorageRetries).To(Equal(3))
+			Expect(cfg.Attestation.StorageRetryDelay).To(Equal(2 * time.Second))
+		})
+
+		It("takes storage_retries and storage_retry_delay from a config file", func() {
+			tmpHome := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
+			writeTestFile(filepath.Join(tmpHome, "crosscodex", "config.yaml"),
+				"attestation:\n  storage_retries: 5\n  storage_retry_delay: 30s\n")
+
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Attestation.StorageRetries).To(Equal(5))
+			Expect(cfg.Attestation.StorageRetryDelay).To(Equal(30 * time.Second))
 		})
 
 		It("includes attestation in DaemonConfig", func() {
@@ -2117,6 +2202,7 @@ logging:
 			Entry("rejects empty models when relationship enabled", func(c *config.Config) {
 				c.Analysis.Relationship.Enabled = true
 				c.Analysis.Relationship.Models = []string{}
+				c.Analysis.Candidates.Generators = []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true}}
 			}, "analysis.relationship.models", "must not be empty when enabled"),
 			Entry("rejects invalid actionable_types", func(c *config.Config) {
 				c.Analysis.Relationship.ActionableTypes = []string{"EQUIVALENT", "BOGUS"}
@@ -2254,7 +2340,7 @@ logging:
 			GinkgoT().Setenv("XDG_CONFIG_HOME", dir)
 			Expect(os.MkdirAll(filepath.Join(dir, "crosscodex"), 0o700)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(dir, "crosscodex", "config.yaml"),
-				[]byte("analysis:\n  requires:\n    enabled: true\n    models: [m1]\n"), 0o600)).To(Succeed())
+				[]byte("analysis:\n  requires:\n    enabled: true\n    models: [m1]\n  candidates:\n    generators:\n      - name: semantic\n        enabled: true\n"), 0o600)).To(Succeed())
 
 			cfg, err := config.NewLoader().Load(context.Background())
 			Expect(err).NotTo(HaveOccurred())
@@ -2292,6 +2378,107 @@ logging:
 			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 		})
 
+		Describe("analyzer dependencies", func() {
+			// withPairAnalyzers enables the analyzers a mapping job needs:
+			// classify, embedding, a semantic candidate generator and both
+			// pair analyzers with models. Specs then break one link.
+			withPairAnalyzers := func() *config.Config {
+				cfg := validConfig()
+				cfg.Analysis.Candidates.Generators = []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true}}
+				cfg.Analysis.Relationship.Enabled = true
+				cfg.Analysis.Relationship.Models = []string{"m"}
+				cfg.Analysis.Requires = config.RequiresConfig{
+					Enabled: true, Models: []string{"m"}, SamplesPerModel: 1, SamplingTemperature: 0.3,
+					MaxTokens: 300, ConsensusThreshold: 0.67, MaxErrorRate: 0.34, MaxSourceChars: 1500, MaxTargetChars: 800,
+				}
+				return cfg
+			}
+
+			It("accepts every analyzer enabled with what it depends on", func() {
+				Expect(config.ExportValidateConfig(withPairAnalyzers())).To(Succeed())
+			})
+
+			It("accepts every analyzer disabled", func() {
+				cfg := validConfig()
+				cfg.Analysis.Classification.Enabled = false
+				cfg.Analysis.Embedding.Enabled = false
+				Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+			})
+
+			DescribeTable("rejects an enabled analyzer whose dependency is disabled, under the analyzer's enabled setting",
+				func(mutate func(*config.Config), path string, msg ...string) {
+					cfg := withPairAnalyzers()
+					mutate(cfg)
+					err := config.ExportValidateConfig(cfg)
+					expectOnlyFieldError(err, path)
+					Expect(err).To(MatchError(config.ErrInvalidConfig))
+					for _, m := range msg {
+						Expect(err.Error()).To(ContainSubstring(m))
+					}
+				},
+				Entry("embedding without classification", func(c *config.Config) {
+					c.Analysis.Classification.Enabled = false
+					c.Analysis.Relationship.Enabled = false
+					c.Analysis.Requires.Enabled = false
+				}, "analysis.embedding.enabled",
+					"analysis.embedding.enabled is true but analysis.classification.enabled is false",
+					"enable analysis.classification or disable analysis.embedding"),
+				Entry("relationship without embedding", func(c *config.Config) {
+					c.Analysis.Embedding.Enabled = false
+					c.Analysis.Requires.Enabled = false
+				}, "analysis.relationship.enabled",
+					"analysis.relationship.enabled is true but analysis.embedding.enabled is false",
+					"enable analysis.embedding or disable analysis.relationship"),
+				Entry("requires without embedding", func(c *config.Config) {
+					c.Analysis.Embedding.Enabled = false
+					c.Analysis.Relationship.Enabled = false
+				}, "analysis.requires.enabled",
+					"analysis.requires.enabled is true but analysis.embedding.enabled is false",
+					"enable analysis.embedding or disable analysis.requires"),
+				Entry("relationship with no candidate generator listed", func(c *config.Config) {
+					c.Analysis.Candidates.Generators = nil
+					c.Analysis.Requires.Enabled = false
+				}, "analysis.relationship.enabled",
+					"analysis.relationship.enabled is true but no analysis.candidates.generators entry is enabled",
+					"it would analyse zero candidate pairs",
+					"enable a generator (semantic, keyword or level) or disable analysis.relationship"),
+				Entry("requires with every candidate generator disabled", func(c *config.Config) {
+					c.Analysis.Candidates.Generators[0].Enabled = false
+					c.Analysis.Relationship.Enabled = false
+				}, "analysis.requires.enabled",
+					"analysis.requires.enabled is true but no analysis.candidates.generators entry is enabled",
+					"or disable analysis.requires"),
+			)
+
+			It("reports each pair analyzer once when both lack their dependencies", func() {
+				cfg := withPairAnalyzers()
+				cfg.Analysis.Embedding.Enabled = false
+				cfg.Analysis.Candidates.Generators = nil
+				var paths []string
+				for _, fe := range config.FieldErrors(config.ExportValidateConfig(cfg)) {
+					paths = append(paths, fe.Path)
+				}
+				Expect(paths).To(ConsistOf(
+					"analysis.relationship.enabled", "analysis.relationship.enabled",
+					"analysis.requires.enabled", "analysis.requires.enabled",
+				))
+			})
+
+			It("names the file that enabled the analyzer", func() {
+				dir := GinkgoT().TempDir()
+				GinkgoT().Setenv("XDG_CONFIG_HOME", dir)
+				path := filepath.Join(dir, "crosscodex", "config.yaml")
+				Expect(os.MkdirAll(filepath.Dir(path), 0o700)).To(Succeed())
+				Expect(os.WriteFile(path, []byte("analysis:\n  relationship:\n    enabled: true\n    models: [m]\n"), 0o600)).To(Succeed())
+
+				_, err := config.NewLoader().Load(context.Background())
+				fields := config.FieldErrors(err)
+				Expect(fields).To(ContainElement(And(
+					HaveField("Path", "analysis.relationship.enabled"),
+					HaveField("Err", MatchError(ContainSubstring("(set in "+path+")"))),
+				)))
+			})
+		})
 	})
 })
 

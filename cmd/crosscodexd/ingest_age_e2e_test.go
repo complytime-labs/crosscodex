@@ -250,6 +250,7 @@ func allRoleTestConfig(dsn, tenantID string) *config.Config {
 	}
 	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}
 	cfg.Attestation = config.AttestationConfig{
+		Enabled:        true,
 		PrivateKeyPath: testAttestationPrivateKeyPath,
 		PublicKeyPath:  testAttestationPublicKeyPath,
 		ExpiryDuration: 168 * time.Hour,

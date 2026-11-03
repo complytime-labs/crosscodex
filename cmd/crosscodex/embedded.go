@@ -157,18 +157,25 @@ func embeddedAuthRegistry() (*authn.Registry, error) {
 	)
 }
 
-// localPipelineBackend serves job reads and cancellation from the pipeline
-// store but refuses to create jobs. Embedded mode has no executor, NATS or
+// localPipelineBackend serves job reads from the pipeline store but refuses
+// to create, retry or cancel jobs. Embedded mode has no executor, NATS or
 // workers, so a stored job would stay PENDING forever (#212). Analysis runs
 // only under crosscodexd.
 type localPipelineBackend struct {
 	store pipeline.Store
 }
 
+// needsDaemon is why embedded mode refuses to create or retry a job.
+const needsDaemon = `analysis needs the crosscodexd daemon: embedded mode stores and inspects catalogs but cannot run analysis. ` +
+	`Start the crosscodexd daemon, point the CLI at it with "crosscodex config set cli.endpoint <url>", and rerun`
+
 func (b *localPipelineBackend) CreateJob(context.Context, *connectrpc.Request[pb.CreateJobRequest]) (*connectrpc.Response[pb.CreateJobResponse], error) {
-	return nil, connectrpc.NewError(connectrpc.CodeFailedPrecondition, errors.New(
-		`analysis needs the crosscodexd daemon: embedded mode stores and inspects catalogs but cannot run analysis. `+
-			`Start the crosscodexd daemon, point the CLI at it with "crosscodex config set cli.endpoint <url>", and rerun`))
+	return nil, connectrpc.NewError(connectrpc.CodeFailedPrecondition, errors.New(needsDaemon))
+}
+
+// RetryJob refuses like CreateJob: a retried job would run nowhere.
+func (b *localPipelineBackend) RetryJob(context.Context, *connectrpc.Request[pb.RetryJobRequest]) (*connectrpc.Response[pb.RetryJobResponse], error) {
+	return nil, connectrpc.NewError(connectrpc.CodeFailedPrecondition, errors.New(needsDaemon))
 }
 
 func (b *localPipelineBackend) GetJob(ctx context.Context, req *connectrpc.Request[pb.GetJobRequest]) (*connectrpc.Response[pb.GetJobResponse], error) {
@@ -255,29 +262,14 @@ func (b *localPipelineBackend) ListJobs(ctx context.Context, req *connectrpc.Req
 	}), nil
 }
 
-func (b *localPipelineBackend) CancelJob(ctx context.Context, req *connectrpc.Request[pb.CancelJobRequest]) (*connectrpc.Response[pb.CancelJobResponse], error) {
-	tenantID, err := tenant.FromContext(ctx)
-	if err != nil {
-		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, errors.New("missing tenant context"))
-	}
-
-	job, err := b.store.GetJob(ctx, req.Msg.GetJobId())
-	if err != nil {
-		if errors.Is(err, pipeline.ErrNotFound) {
-			return nil, connectrpc.NewError(connectrpc.CodeNotFound, errors.New("job not found"))
-		}
-		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("get job: %w", err))
-	}
-
-	if job.TenantID != tenantID {
-		return nil, connectrpc.NewError(connectrpc.CodeNotFound, errors.New("job not found"))
-	}
-
-	if err := b.store.UpdateJobStatus(ctx, req.Msg.GetJobId(), pipeline.JobStatusCancelled, nil); err != nil {
-		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("cancel job: %w", err))
-	}
-
-	return connectrpc.NewResponse(&pb.CancelJobResponse{Cancelled: true}), nil
+// CancelJob refuses: embedded mode runs no job, so a job that is still
+// running is a crosscodexd daemon's. Only that daemon can stop the run;
+// writing CANCELLED to the database here would leave it executing, and
+// writing, a job recorded as cancelled.
+func (b *localPipelineBackend) CancelJob(context.Context, *connectrpc.Request[pb.CancelJobRequest]) (*connectrpc.Response[pb.CancelJobResponse], error) {
+	return nil, connectrpc.NewError(connectrpc.CodeFailedPrecondition, errors.New(
+		`cancelling a job needs the crosscodexd daemon that runs it: embedded mode runs no job and cannot stop one. `+
+			`Point the CLI at the daemon with "crosscodex config set cli.endpoint <url>", and rerun`))
 }
 
 // localJobToProto converts a pipeline.Job and its stages to the proto PipelineJob
@@ -285,7 +277,7 @@ func (b *localPipelineBackend) CancelJob(ctx context.Context, req *connectrpc.Re
 // avoid exporting internal helpers.
 func localJobToProto(job *pipeline.Job, stages []*pipeline.Stage) *pb.PipelineJob {
 	pbStages := make([]*pb.JobStage, len(stages))
-	var completedSteps, failedSteps int32
+	var completedSteps, failedSteps, cancelledSteps int32
 	for i, stage := range stages {
 		pbStage := &pb.JobStage{
 			StageName:  stage.StageName,
@@ -308,6 +300,8 @@ func localJobToProto(job *pipeline.Job, stages []*pipeline.Stage) *pb.PipelineJo
 			completedSteps++
 		case pipeline.StageStatusFailed:
 			failedSteps++
+		case pipeline.StageStatusCancelled:
+			cancelledSteps++
 		}
 	}
 
@@ -335,6 +329,7 @@ func localJobToProto(job *pipeline.Job, stages []*pipeline.Stage) *pb.PipelineJo
 			TotalSteps:           totalSteps,
 			CompletedSteps:       completedSteps,
 			FailedSteps:          failedSteps,
+			CancelledSteps:       cancelledSteps,
 			CompletionPercentage: completionPct,
 		},
 		Stages: pbStages,
@@ -385,6 +380,8 @@ func localStageStatusToProto(ss pipeline.StageStatus) pb.JobStatus {
 		return pb.JobStatus_JOB_STATUS_COMPLETED
 	case pipeline.StageStatusFailed:
 		return pb.JobStatus_JOB_STATUS_FAILED
+	case pipeline.StageStatusCancelled:
+		return pb.JobStatus_JOB_STATUS_CANCELLED
 	default:
 		return pb.JobStatus_JOB_STATUS_UNSPECIFIED
 	}

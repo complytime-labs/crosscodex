@@ -45,6 +45,7 @@ func splitRoleConfig(dsn, natsURL, tenantID, role string) *config.Config {
 	}
 	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}
 	cfg.Attestation = config.AttestationConfig{
+		Enabled:        true,
 		PrivateKeyPath: testAttestationPrivateKeyPath,
 		PublicKeyPath:  testAttestationPublicKeyPath,
 		ExpiryDuration: 168 * time.Hour,
@@ -181,6 +182,13 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		} else {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
 		}
+
+		// RetryJob round-trips too: a completed job has nothing to resume
+		// from, and the pipeline's refusal reaches the gateway's client with
+		// its code and its remedy.
+		_, err = backend.RetryJob(ctxTenant, connect.NewRequest(&pb.RetryJobRequest{JobId: jobID, RetryFromFailure: true}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+		Expect(err.Error()).To(ContainSubstring("crosscodex run start --source " + catalogID))
 	})
 
 	It("imports an OSCAL catalog through a standalone gateway and completes its job with separate pipeline, worker and graph roles", func() {
@@ -344,6 +352,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		}
 		cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, Addr: "127.0.0.1:0"}
 		cfg.Attestation = config.AttestationConfig{
+			Enabled:        true,
 			PrivateKeyPath: testAttestationPrivateKeyPath,
 			PublicKeyPath:  testAttestationPublicKeyPath,
 			ExpiryDuration: 168 * time.Hour,

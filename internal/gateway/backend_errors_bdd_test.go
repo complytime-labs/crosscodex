@@ -211,6 +211,22 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 			})).CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
 			return e
 		})),
+		Entry("RetryJob ownership lookup", "RetryJob", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
+			_, e := newService(gateway.WithPipelineBackend(&mockPipeline{
+				getJobFn: func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+					return nil, err
+				},
+			})).RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1"}))
+			return e
+		})),
+		Entry("RetryJob", "RetryJob", adminCtx, call(func(ctx context.Context, err error) error {
+			_, e := newService(gateway.WithPipelineBackend(&mockPipeline{
+				retryJobFn: func(context.Context, *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+					return nil, err
+				},
+			})).RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1"}))
+			return e
+		})),
 		Entry("StartAnalysis catalog step", "StartAnalysis", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
 			_, e := newService(gateway.WithCatalogBackend(&mockCatalog{
 				getCatalogFn: func(context.Context, *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error) {

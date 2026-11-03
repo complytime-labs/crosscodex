@@ -63,6 +63,13 @@ Analysis stage limits (#237):
 - `analysis.engine.task_timeout` changed meaning. Before, it was one deadline for a stage's whole batch of LLM tasks, so any real catalog failed after `task_timeout`. Now it is an idle timeout across the whole worker pool: a stage fails only when no worker anywhere reports progress for that long. Total time per stage is capped by `pipeline.stage_timeout` instead (default 24h).
 - Split deployments: each LLM worker remembers an abandon for its own host's `pipeline.stage_timeout`, and `worker.max_abandoned_collections` is likewise per worker host. Set `pipeline.stage_timeout` on worker hosts to the same value as on pipeline hosts, or larger. A smaller value makes workers forget abandons early and run tasks nobody reads.
 - Mixed versions: workers from before this release publish no progress ticks, so a new pipeline with old workers still fails a stage queued behind another stage at `task_timeout`. Upgrade workers with, or before, pipelines.
+- Analyzer `enabled` settings now take effect. Before, every job registered all five analyzers whatever `analysis.<analyzer>.enabled` said, and each ran with whatever models it had: classification and embedding ran even when disabled; artifacts, requires and relationship ran whenever their `models` were set, so a disabled analyzer with models still billed its LLM calls, and with the defaults (`enabled: false`, `models: []`) they ran with zero LLM tasks, so jobs completed with no mappings and no sign that analysis was off. Now a disabled analyzer gets no stage and makes no calls. What changes for you:
+  - Classification and embedding default to enabled, so a default configuration still runs them; one that set them `false` no longer runs them.
+  - Artifacts no longer runs unless `analysis.artifacts.enabled: true`. A configuration that set `analysis.artifacts.models` without enabling it used to extract artifacts and now does not.
+  - Relationship and requires likewise run only when enabled. Both default to off, so a stock deployment produces no mappings until you enable `analysis.relationship` (see [Analyzer `enabled` settings](#analyzer-enabled-settings)).
+  - A configuration that enables an analyzer without what it needs no longer loads: embedding without classification, or requires or relationship without embedding or without an enabled `analysis.candidates.generators` entry.
+  - A job left running across the upgrade, or across a change to these settings, fails when it resumes if its analyzers differ from the enabled ones, naming each one. Start a new job.
+- `crosscodex run cancel` now records the cancellation. Before, the cancelled job's context was also used to write its final state, so every write failed: the job stayed `RUNNING` and resumed at the next daemon start. Stages running at the cancel end with the new stage status `cancelled`. A daemon shutdown still leaves its jobs `RUNNING` for resume, and no longer publishes a `cancelled` job state for them.
 - When an analyzer stage times out, fails to dispatch, or its job is cancelled, LLM workers drop that stage's still-queued tasks instead of calling the model for results nobody reads; a resumed or retried job's new run is unaffected. Only workers and pipelines from this release do this: an older worker runs every task (and sends no progress ticks, see above), and a newer worker runs tasks from an older pipeline normally. See [Control Messages: Abandoned Collections](docs/dev/audit-streams.md#control-messages-abandoned-collections).
 
 SDK and prompt changes:
@@ -70,6 +77,22 @@ SDK and prompt changes:
 - `natsbus.Client` gained `PublishWorkerProgress` and `SubscribeWorkerProgress`. Implementations outside this repo (`pkg/natsbus` is public) must add them.
 - `pkg/natsbus` subject builders reject job IDs longer than 128 bytes with `ErrInvalidJobID`.
 - The shipped `requires` prompt is now 1.1.0 and renders `| Control Domain: "${source_ancestor}"`; `${source_ancestor}` is the bare domain name, no longer a pre-formatted suffix. A user or project prompt override of `requires` still using `Level: ${source_level}${source_ancestor}` renders e.g. `Level: tacticalAccess Control`. Prompt overrides are not version-checked, so update them by hand.
+
+Attestation fails closed (#240):
+
+- An attested pipeline job now completes only once its whole attestation is stored: a signed layout, a link per analyzer, synthesis and graph, a chain that verifies, and the bundle. Before, every attestation failure was logged and ignored, so jobs completed with a partial attestation or none. A job that cannot be attested now fails with an error that names the step and object and says what to do. See [Cryptographic Attestation](#cryptographic-attestation).
+- `attestation.enabled` now takes effect, per tenant through `attestation.tenant_overrides`. When it is `true` (the default) for any tenant, roles `all` and `pipeline` refuse to start unless that scope's `private_key_path` and `public_key_path` are both set, load, and are one key pair; with `tls.fips.enabled` the key must be on a FIPS-approved curve. Before, the daemon refused only empty global paths, even with attestation disabled, and a key that did not load started the daemon and then left every job unattested. The `deploy/` stack and `test/e2e` already supply keys. A configuration of your own that does not: generate a key pair (`task deploy:certs` writes one to `deploy/certs/`) and set both paths, or set `attestation.enabled: false` to run jobs unattested, which the daemon logs at startup.
+- `attestation.include_byproducts`, the per-tenant `expiry_duration` and key paths, and FIPS mode now apply to the pipeline's attestations; they were ignored.
+- Analyzer link digests are now SHA-256 of each analyzer's stored result. Before, every production analyzer's link recorded `sha256` of the analyzer's name, so the chain attested nothing about results. Bundles stored before this change still verify their signatures but not against results.
+- A job left running across the upgrade resumes as before; if its synthesis or graph stage completed without a stored link, it fails and says to start a new job.
+- New settings `attestation.storage_retries` (default 3) and `attestation.storage_retry_delay` (default 2s) bound how long an attestation write is retried before the job fails.
+- Every layout step and link is bound to its job: it records `job:<tenant>/<job-id>` with the digest of the job's stored config, and verification refuses a link or bundle from another job. Before, nothing signed named the job, so with the shared global key one job's attestation verified as another's.
+- `crosscodex results verify` now verifies a job's whole stored bundle and requires `--public-key`, `--tenant` and `--job-id`; it prints the job and its config digest. Before, it verified a single link and reported `Status: Structure valid` without a key; given a bundle it failed.
+- New command `crosscodex run retry <job-id>` (gateway RPC `RetryJob`, `POST /v1/jobs/{job_id}/retry`): `--from-failure` resumes a failed or cancelled job in place, otherwise a new job starts with the same config. Before, retrying needed the pipeline's own RPC, which role `all` does not serve. A failed or cancelled job with no failed or cancelled stage (one whose attestation could not be stored) now resumes instead of being refused, and a job whose failure a retry cannot fix (an attestation that does not verify, changed analyzers, no catalog) is refused with `FailedPrecondition` and left unchanged.
+- `jobs` gains an `error_class` column, folded into the pre-release baseline `001_initial_schema`. A database created by an earlier build lacks it; `crosscodexd` now refuses to start on such a database, saying to recreate it (`task deploy:down VOLUMES=1`, then `crosscodexd migrate`).
+- Cancelling and retrying: a retry of a job whose cancelled run is still stopping is refused (`FailedPrecondition`, "still stopping") until `crosscodex run status` shows it is no longer running, so a retry never runs beside the cancelled run; concurrent retries of one job start it once. Embedded mode now refuses `run cancel`, since the job is run, and can only be stopped, by the daemon. `JobProgress` gains `cancelled_steps`, and `run status` prints the completed, failed and cancelled stage counts.
+- `gateway.PipelineBackend` gains `RetryJob`. Implementations outside this repo must add it. `attestation.Generator.VerifyChain` takes the expected subject and returns a `*VerifiedChain`, and `VerifiedLayout.KeyIDs` lists only the keys whose signatures verified.
+- `pipeline.New` takes a `pipeline.Attestors` (built by `pipeline.NewAttestors`) in place of an `attestation.Generator` and `config.AttestationConfig`. `attestation.Generator.VerifyChain` now requires the layout and one link per layout step (`ErrMissingLink`, `ErrUnexpectedLink`) and verifies every signature; callers that passed a nil layout or a partial chain get an error.
 
 Identity lifecycle (#195):
 
@@ -143,6 +166,10 @@ crosscodex run status <job-id>
 ```
 
 `run start` starts a full analysis of an imported catalog and prints the job ID. Analysis runs in the `crosscodexd` daemon; embedded mode refuses it (see [Deployment Modes](#deployment-modes)).
+
+`crosscodex run cancel <job-id>` asks for confirmation. When stdin is not a terminal (a script, pipe or CI job) it refuses and cancels nothing, even if `y` is piped in; pass `--yes` to cancel without the prompt. Embedded mode refuses it: only the daemon running the job can stop it.
+
+A cancelled job ends with status `CANCELLED`, and the stages that were running end `cancelled`; it is not resumed automatically. `crosscodex run retry --from-failure <job-id>` resumes a cancelled job from its first cancelled stage, as it resumes a failed job from its first failed one, keeping the stages that completed. A failed or cancelled job with no failed or cancelled stage, such as one whose attestation bundle could not be stored, resumes from where it stopped. A job whose failure a retry cannot fix (its attestation does not verify, its analyzers changed, its config names no catalog) is refused, unchanged, with the reason; start a new job. Without `--from-failure`, `run retry` starts a new job with the same config and prints its ID. `run retry` asks for no confirmation: it deletes nothing and re-runs only stages that did not complete. A cancelled job keeps writing its cancellation for a moment after `run cancel` returns; until it stops, `run retry` is refused, saying to retry once `crosscodex run status <job-id>` shows it is no longer running. Embedded mode refuses it, as it refuses `run start`. A job is `COMPLETED` only once its attestation bundle is stored, so a cancel during that last step still cancels it; once the job is being recorded as completed, `run cancel` is refused (`FailedPrecondition`) and says to check `crosscodex run status`. A job interrupted by a `crosscodexd` shutdown is not cancelled: it stays `RUNNING` and resumes from its completed stages when the daemon starts again, including one stopped while its bundle was being stored.
 
 ### 9. Read a job's mappings
 
@@ -331,6 +358,18 @@ tls:
   cert: /etc/crosscodex/tls/server.crt
   key: /etc/crosscodex/tls/server.key
 
+# Attestation (roles all and pipeline refuse to start if an enabled scope's keys are missing or do not load)
+attestation:
+  enabled: true                   # false: jobs complete unattested (logged at startup)
+  private_key_path: /etc/crosscodex/attestation-key.pem   # ECDSA (SEC1 "EC PRIVATE KEY")
+  public_key_path: /etc/crosscodex/attestation-pub.pem    # PKIX "PUBLIC KEY" of the same key
+  expiry_duration: 8760h          # layout validity; `results verify` rejects an expired layout
+  storage_retries: 3              # retries of a failed attestation write, [0, 10]; global-only
+  storage_retry_delay: 2s         # wait before each retry, [0, 1m]; global-only
+  tenant_overrides:
+    sandbox:
+      enabled: false              # this tenant's jobs run unattested
+
 # Multi-tenant X.509 certificate-to-tenant mapping
 tenants:
   enabled: true
@@ -353,18 +392,21 @@ analysis:
     max_retries: 3                       # Redispatches of a failed task
     retry_backoff: 1s                    # Base delay before a redispatch
   classification:
-    enabled: true
+    enabled: true                 # Runs the classify analyzer; embedding needs it
     model: ""                     # Inherits from llm.default_model
     max_text_length: 2000
     temperature: 0.0
     max_tokens: 20
   embedding:
-    enabled: true
+    enabled: true                        # Runs the embedding analyzer; needs classification; requires and relationship need it
     models: ["snowflake-arctic-embed2"]  # Embedding model names; storage is model-agnostic (see docs/dev/embeddings.md), switching models needs no schema migration
     max_chars: 1500                      # Max runes before truncation
     batch_size: 50                       # Controls per batch call
+  relationship:                          # The analyzer whose results are a job's mappings
+    enabled: false                       # Off by default, so a stock deployment produces no mappings; needs embedding and an enabled candidates generator
+    models: []                           # Panel models; required when enabled
   requires:
-    enabled: false                       # Off by default
+    enabled: false                       # Off by default; needs embedding and an enabled candidates generator; finds REQUIRES edges, which are not mappings
     models: []                           # Panel models; required when enabled
     samples_per_model: 1                 # Votes per model per pair; odd unless allow_even_samples
     allow_even_samples: false            # Allow an even samples_per_model
@@ -435,6 +477,14 @@ synthesis:
     contested_warn: 0.20                  # Contested pairs warning threshold
     actionable_warn: 0.30                 # Actionable coverage warning threshold
 ```
+
+#### Analyzer `enabled` settings
+
+`analysis.classification.enabled`, `analysis.embedding.enabled`, `analysis.artifacts.enabled`, `analysis.requires.enabled` and `analysis.relationship.enabled` decide which analyzers a job runs. A disabled analyzer gets no job stage, never runs and makes no LLM calls. The defaults enable classification and embedding only, so a stock deployment classifies and embeds controls but produces **no mappings**: mappings come from the relationship analyzer, which is off until you set `analysis.relationship.enabled: true`, its `models`, and at least one enabled `analysis.candidates.generators` entry. `crosscodex run status <job-id>` lists the analyzers a job runs and says when it has no relationship analyzer.
+
+The configuration does not load if an enabled analyzer cannot run: embedding without classification, requires or relationship without embedding, or requires or relationship with no enabled candidate generator (it would analyse zero pairs). Each error names the setting to change.
+
+A job runs the analyzers enabled when it was created. If they change before the job is resumed (after a daemon restart), the job fails before any analyzer runs, and no stage is left running. The error names each analyzer whose setting differs from when the job was created. A failed job is not resumed, so start a new job with `crosscodex run start --source <catalog-id>`; to give it the analyzers the old job had, first change the settings the error names.
 
 ### Environment Variables
 
@@ -616,13 +666,31 @@ CrossCodex supports dual builds (standard and FIPS) from the same source:
 
 ### Cryptographic Attestation
 
-Pipeline outputs include in-toto attestation for audit trails:
+When attestation is enabled for a job's tenant (`attestation.enabled`, `attestation.tenant_overrides`), the pipeline records an in-toto attestation of the job in object storage under `attestations/<tenant>/<job-id>/`:
 
-- **Layout**: Signed by Pipeline service declaring authorized stages and functionaries
-- **Links**: Per-stage attestations with input/output hashes, model versions, environment
-- **Verification**: Independent validation via in-toto CLI (CrossCodex verify command planned)
+- **Layout** (`layout.json`): signed before any analyzer runs; one step per enabled analyzer, then `synthesis` and `graph`.
+- **Links** (`links/<step>.json`): one signed link per step. Every link records the job, `job:<tenant>/<job-id>`, with the SHA-256 of the job's stored config, and every layout step expects it, so an attestation cannot be passed off as another job's. An analyzer's link records the SHA-256 of its stored result and of the results it consumed; synthesis records every analyzer's result and its own output (the SHA-256 of the JSON of the result it computed, not of rows an auditor can read back from the database); graph records the synthesis output. `candidate_generation` has no link.
+- **Bundle** (`bundle.json`): the layout and every link, stored only after the chain verifies. The job is `COMPLETED` only once it is stored.
 
-See [Cryptographic Attestation Guide](docs/dev/attestation.md) for the attestation model, trace correlation, and implementation roadmap.
+The job fails instead of completing unattested. Every error names the step and object:
+
+| Failure | Job | What to do |
+|---|---|---|
+| Layout or a link cannot be signed | Fails (the step's stage too, for synthesis and graph); a layout failure fails it before any analyzer runs | Fix the key pair and restart `crosscodexd`, then `crosscodex run retry --from-failure <job-id>` or start a new job. If you fixed it by rotating to a new key pair, start a new job: the links the job already stored were signed with the old key and no longer verify, so a retry fails |
+| Object storage refuses a write after `attestation.storage_retries` retries | Fails | Fix storage, then `crosscodex run retry --from-failure <job-id>` or start a new job |
+| A stored link is missing, does not verify, or is for another job on resume, or the chain does not verify | Fails, with every stored object left as it was; `run retry --from-failure` refuses it | Start a new job; check whether objects under `attestations/` were changed |
+
+Publishing the bundle to the audit stream is best effort: a failure is logged, since the stored bundle is the record. When attestation is disabled, no signer is built, no attestation object is written, and the daemon logs at startup that jobs are unattested.
+
+To verify a job offline, copy its `bundle.json` out of object storage and run:
+
+```sh
+crosscodex results verify bundle.json --public-key deploy/certs/attestation-pub.pem --tenant <tenant> --job-id <job-id>
+```
+
+It checks that the bundle is bound to that job, the layout's signature and expiry, every link's signature, one link per layout step, and every digest one step passes to another, and prints the job's config digest the links record. It does not read the database.
+
+See [Cryptographic Attestation Guide](docs/dev/attestation.md) for the attestation model, trace correlation, and how the pipeline builds the chain.
 
 ## Storage Architecture
 

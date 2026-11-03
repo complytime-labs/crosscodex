@@ -88,6 +88,8 @@ message JobProgress {
   int32 failed_steps = 3;
   float completion_percentage = 4;
   google.protobuf.Timestamp estimated_completion = 5;
+  // Stages ended by a cancellation; counted apart from failed_steps.
+  int32 cancelled_steps = 6;
 }
 
 message JobStage {

@@ -15,6 +15,8 @@ var _ = Describe("NaN in a float setting", func() {
 	panels := func(c *config.Config) {
 		c.Analysis.Requires = config.RequiresConfig{Enabled: true, Models: []string{"m"}, SamplesPerModel: 1,
 			ConsensusThreshold: 0.6, MaxSourceChars: 1, MaxTargetChars: 1, MaxTokens: 1}
+		// An enabled requires analyzer needs a candidate generator.
+		c.Analysis.Candidates.Generators = []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true}}
 		c.Analysis.Artifacts = config.ArtifactsConfig{Enabled: true, Models: []string{"m"}, SamplesPerModel: 1,
 			MaxTokens: 1, MaxTextChars: 1, FuzzyThreshold: 0.6}
 		c.Analysis.ArtifactAdjudication = config.ArtifactAdjudicationConfig{Enabled: true, Models: []string{"m"},

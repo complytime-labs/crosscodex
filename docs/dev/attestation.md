@@ -47,17 +47,20 @@ type Generator interface {
     CreateLink(ctx context.Context, step string, materials, products []Artifact, opts ...LinkOption) (*SignedLink, error)
     Verify(ctx context.Context, data []byte) (*VerifiedLink, error)
     VerifyLayout(ctx context.Context, data []byte) (*VerifiedLayout, error)
-    VerifyChain(ctx context.Context, layout *SignedLayout, links []*SignedLink) error
+    VerifyChain(ctx context.Context, layout *SignedLayout, links []*SignedLink, subject Artifact) (*VerifiedChain, error)
 }
 ```
+
+`VerifyChain` verifies one run's whole attestation; see [Chain Verification](#chain-verification-verifychain).
 
 ### Key Providers
 
 | Type                   | Purpose                                                                 |
 |------------------------|-------------------------------------------------------------------------|
 | `KeyProvider`          | Interface: `SigningKey`, `VerificationKey`, `KeyID` methods             |
-| `FileKeyProvider`      | Loads ECDSA P-256 keys from PEM files on disk                           |
-| `EphemeralKeyProvider` | Generates in-memory ECDSA P-256 keys (for embedded/TLS-off mode, tests) |
+| `FileKeyProvider`      | Reads ECDSA keys from PEM files on disk on every call                   |
+| `LoadFileKeys`         | Reads a PEM key pair once, checks the halves match (and the curve in FIPS mode), and serves them from memory; the pipeline uses it |
+| `EphemeralKeyProvider` | Generates in-memory ECDSA P-256 keys (tests)                            |
 
 ### Types
 
@@ -93,13 +96,19 @@ type Generator interface {
 | `ErrKeyNotFound`        | Key file not found at specified path                     |
 | `ErrKeyLoadFailed`      | Key file exists but cannot be parsed                     |
 | `ErrNonFIPSAlgorithm`   | Key uses non-FIPS algorithm (FIPS mode enforcement)      |
-| `ErrChainBroken`        | Hash chain verification failed between consecutive steps |
+| `ErrChainBroken`        | A shared artifact's digests differ between two steps, or a link lacks an artifact its layout step expects |
+| `ErrMissingLink`        | A layout step has no link                                |
+| `ErrUnexpectedLink`     | A link for a step the layout does not declare, or a second link for a step |
+| `ErrKeyMismatch`        | The public key file is not the private key's other half  |
+| `ErrInvalidBundle`      | Data that is not an attestation bundle                   |
 
 ### Standalone Functions
 
 | Function           | Purpose                                                         |
 |--------------------|-----------------------------------------------------------------|
 | `GenerateManifest` | Creates SHA-256 manifest in GNU coreutils format, sorted by URI |
+| `MarshalBundle`    | Encodes a signed layout and its links as a bundle `{"layout": <envelope>, "links": [<envelope>, ...]}` |
+| `ParseBundle`      | Decodes a bundle into its layout and links, unverified; rejects anything else, including a single envelope |
 
 ## Configuration
 
@@ -107,23 +116,27 @@ The `AttestationConfig` in `pkg/config` controls attestation behavior:
 
 ```yaml
 attestation:
-  enabled: true                    # Master enable/disable
-  private_key_path: ""             # Path to ECDSA signing key PEM (empty = ephemeral)
-  public_key_path: ""              # Path to SPKI verification key PEM (empty = ephemeral)
+  enabled: true                    # Attest pipeline jobs (default true)
+  private_key_path: /certs/attestation-key.pem   # SEC1 "EC PRIVATE KEY" PEM
+  public_key_path: /certs/attestation-pub.pem    # PKIX "PUBLIC KEY" PEM of the same key
   expiry_duration: 8760h           # Layout expiry (default: 1 year)
   include_byproducts: true         # Add span_id, timestamp, hostname to links
+  storage_retries: 3               # Retries of a failed attestation write, [0, 10]; global-only
+  storage_retry_delay: 2s          # Wait before each retry, [0, 1m]; global-only
   tenant_overrides:                # Per-tenant overrides
     sensitive-tenant:
       enabled: true
-      private_key_path: ""         # Override signing key (empty = use global)
-      public_key_path: ""          # Override verification key (empty = use global)
+      private_key_path: /certs/sensitive-key.pem   # Unset = inherit the global path
+      public_key_path: /certs/sensitive-pub.pem
       expiry_duration: 4380h       # Shorter expiry for this tenant
       include_byproducts: false    # Strip environment metadata
 ```
 
-The `ForTenant(tenantID)` method resolves per-tenant overrides with nil-pointer inheritance (nil = use global default) and returns an `AttestationTenantConfig` struct containing the resolved `Enabled`, `PrivateKeyPath`, `PublicKeyPath`, `ExpiryDuration`, and `IncludeByProducts` values.
+The `ForTenant(tenantID)` method resolves per-tenant overrides with nil-pointer inheritance (an unset field inherits the global value; a field set to `""` is empty, not inherited) and returns an `AttestationTenantConfig` struct containing the resolved `Enabled`, `PrivateKeyPath`, `PublicKeyPath`, `ExpiryDuration`, and `IncludeByProducts` values.
 
-When both `private_key_path` and `public_key_path` are empty, the system uses `EphemeralKeyProvider` to generate in-memory keys. When both are set, `FileKeyProvider` loads from disk. Having one set but not the other is a validation error. Per-tenant overrides follow the same pairing rule.
+Having one key path set but not the other is a validation error; per-tenant overrides follow the same pairing rule. Config loading accepts both empty, because the CLI and the non-pipeline roles load the same file and never sign. `AttestationConfig.RequireKeys` is the check for the roles that do: it reports, as a path-tagged `FieldError` wrapping `ErrMissingRequired`, each scope (the global settings or a tenant override) that enables attestation without both paths, saying to set them or set that scope's `enabled: false`. A tenant that only inherits the global problem is reported once, globally. There is no ephemeral-key mode: an attestation signed by a key nobody kept cannot be verified.
+
+FIPS mode is not configured here: the pipeline passes `WithFIPSMode(tls.fips.enabled)` to its generators and `LoadFileKeys` checks the curve at startup.
 
 ## Attestation-Trace Bridge
 
@@ -190,51 +203,18 @@ Deserializes a signed link envelope, verifies the signature, and returns a `Veri
 
 ### Chain Verification (`VerifyChain`)
 
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {
-  'primaryColor': '#2f6dab',
-  'primaryTextColor': '#1e1e1e',
-  'primaryBorderColor': '#7c8ba1',
-  'lineColor': '#7c8ba1',
-  'edgeLabelBackground': '#eef2f8',
-  'tertiaryColor': 'transparent',
-  'tertiaryTextColor': '#7c8ba1',
-  'tertiaryBorderColor': '#7c8ba1',
-  'clusterBkg': 'transparent',
-  'clusterBorder': '#7c8ba1',
-  'titleColor': '#7c8ba1',
-  'noteBkgColor': '#eef2f8',
-  'noteTextColor': '#1e1e1e',
-  'fontFamily': 'system-ui, sans-serif'
-}}}%%
-sequenceDiagram
-  participant C as Caller
-  participant V as VerifyChain
-  participant L as Layout
-  participant S1 as Step N Link
-  participant S2 as Step N+1 Link
+`VerifyChain(ctx, layout, links, subject)` verifies one run's whole attestation, and that it is the attestation of `subject`, the run the caller expects. It returns the verified layout and the subject as the links record it (`*VerifiedChain`), or the first problem, naming the step and, for a chain error, the artifact URI:
 
-  C->>V: layout + signed links
-  V->>L: extract step order
-  L-->>V: ordered step names
-  V->>V: sort links by layout order
+1. `subject.URI` is set, every layout step expects it as a material, and every link records it with `subject.Digest`, or, when the caller passes no digest, all with one digest (`ErrSubjectMismatch`). A link or layout from another run is refused even when the same key signed it.
+2. The layout is present (else `ErrInvalidLayout`), and `VerifyLayout` accepts it: valid signature, not expired.
+3. Every link's signature verifies (`Verify`). Steps, materials and products are read from the verified envelopes; the caller's `SignedLink` fields other than `Raw` are ignored, and `links` is not modified. A link that fails verification is labelled with the step its payload claims.
+4. Every layout step has exactly one link (`ErrMissingLink`), and no link is for an undeclared step or a step already linked (`ErrUnexpectedLink`).
+5. Each link records every material and product its layout step expects (`ErrChainBroken`).
+6. Wherever one step's material is another step's product, whatever their order in the layout, the digests match (`ErrChainBroken`).
 
-  loop each consecutive pair
-    V->>S1: get products
-    S1-->>V: product URIs + SHA-256
-    V->>S2: get materials
-    S2-->>V: material URIs + SHA-256
-    V->>V: find shared URIs
-    alt digests match
-      V->>V: continue to next pair
-    else digest mismatch
-      V-->>C: ErrChainBroken
-    end
-  end
-  V-->>C: nil (chain intact)
-```
+Before #240 it compared only links adjacent in layout order, passed with zero or one link, did not require a link per step, trusted the caller's `SignedLink` fields, and bound nothing to a run.
 
-Given a layout and a set of signed links, verifies that the hash chain between consecutive steps is unbroken. For each consecutive pair of steps, shared URI artifacts (where step N's product URI matches step N+1's material URI) must have identical SHA-256 digests. If a layout is provided, links are sorted by layout step order before verification. Returns `ErrChainBroken` with the step names and mismatched artifact URI on failure.
+`VerifyLayout`'s `KeyIDs` are the key IDs of the signatures that verified (the verifier's accepted keys), not every signature entry in the envelope, which may carry bogus ones.
 
 ### FIPS Mode (`WithFIPSMode`)
 
@@ -242,7 +222,15 @@ When enabled, validates that all signing keys use FIPS-approved algorithms (ECDS
 
 ## Storage Paths
 
-Attestation artifacts are stored at two complementary path types:
+The pipeline stores each attested job's objects under `attestations/<tenant>/<job-id>/`:
+
+- `layout.json`: the signed layout.
+- `links/<step>.json`: one signed link per layout step.
+- `bundle.json`: the layout and every link (`MarshalBundle`), written once the chain verifies.
+
+`storage.JobAttestationKey` and `storage.ContentKey` below are general key helpers; the pipeline does not use them.
+
+Attestation artifacts can also be stored at two complementary path types:
 
 ### Job-Structured Paths (Discoverability)
 
@@ -272,7 +260,33 @@ The `internal/pipeline/attestation` package provides a `Converter` that transfor
 - Steps are ordered by DAG topological order
 - `ExpiresIn` is NOT set by the converter — the caller wires it from `AttestationConfig.ExpiryDuration`
 
-This adapter keeps `pkg/attestation` and `pkg/analyzer` decoupled.
+This adapter keeps `pkg/attestation` and `pkg/analyzer` decoupled. The pipeline appends its own steps to the converter's: `synthesis` (expects every analyzer's `<name>.output`, produces `synthesis.output`) and `graph` (expects `synthesis.output`). Only enabled analyzers are in the DAG, so a disabled analyzer has no step and needs no link. `candidate_generation` is not a step and has no link: its output reaches the chain through the analyzers that read the candidates.
+
+## Pipeline Attestation (Fail Closed)
+
+`internal/pipeline` attests a job only when its tenant resolves to an `Attestor` (`Attestors.forTenant`): `attestation.enabled`, overridden per tenant by `attestation.tenant_overrides`. `pipeline.NewAttestors` builds them at startup and fails closed: it runs `RequireKeys`, loads each distinct key pair once with `LoadFileKeys` (FIPS mode from `tls.fips.enabled`), and builds one generator per scope with its `include_byproducts` and `expiry_duration`. Roles `all` and `pipeline` refuse to start on any error. A disabled scope gets no `Attestor`, no key is read for it, and `crosscodexd` logs at startup which scopes are unattested.
+
+Every layout step expects, and every link records, the job's subject: `job:<tenant>/<job-id>` with the SHA-256 of the job's config as stored (`jobs.config`). Finalization passes it to `VerifyChain`, and a stored link that records another job is refused, so a link or bundle cannot be replayed into another job, even within a tenant that shares the global key.
+
+An attested job completes only once its whole attestation is stored. In order:
+
+0. **Stored links first**: a resumed job reads back and verifies the stored links of the synthesis and graph stages an earlier run completed, before it signs or stores anything. A missing or unverifiable one (modified, signed with another key pair, or for another job) fails the job with every stored object as it was.
+1. **Layout**: signed and stored after the analyzer check and before any analyzer runs. A failure fails the job with no analyzer run.
+2. **Analyzer links**: after analysis, one link per DAG analyzer. The digests are SHA-256 of each analyzer's result as stored (`analysis_results.result_data`, what synthesis reads), so a resumed run signs the same digests and an analyzer link can always be made again from the database. Links are re-signed on every run, including a resume.
+3. **Synthesis and graph links**: signed and stored before the stage is marked completed. A failure fails the stage and the job. A resumed job does not run a completed synthesis or graph stage again; step 0 read its link back. The synthesis product digest is SHA-256 of the JSON encoding of the result synthesis returned (rows, quality report, content hash), not of rows read back from the database: synthesis persists its output across several tables (viability on `vote_summaries`, among others) with no canonical encoding an auditor could recompute, so binding the link to a database query is left for a change that defines one.
+4. **Finalization**: `VerifyChain` over the layout and every link, then the bundle is stored, then published to the audit trail. A chain that does not verify or a bundle that is not stored fails the job; the audit publish is best effort, because the stored bundle is the record.
+
+Failures are classified with sentinels in `internal/pipeline/errors.go`, and each message names the job, the step and the object key and says what to do:
+
+| Sentinel | Cause | Recovery |
+|---|---|---|
+| `ErrAttestationSigning` | The layout, a link or the bundle could not be signed or encoded | Fix the key pair and restart `crosscodexd`, then retry or start a new job |
+| `ErrAttestationStorage` | Object storage refused a write after `storage_retries` retries `storage_retry_delay` apart (at most 10m of retry delay per write), or a stored link could not be read | Transient: fix storage, then `crosscodex run retry --from-failure <job-id>`, or start a new job |
+| `ErrAttestationInvalid` | A stored link is missing or does not verify, an analyzer has no stored result, or the chain does not verify | Permanent: start a new job |
+
+Retries happen in process, within the job's context, so a cancel or shutdown stops them. `crosscodex run retry --from-failure` (gateway `RetryJob`, then the pipeline's) resumes a failed or cancelled job whose stages did not fail, which is where a layout, analyzer-link, or bundle failure leaves it; it resets no stage, so a job whose bundle was not stored only finalizes again.
+
+`RetryJob` refuses, with `FailedPrecondition` and the job left unchanged, a job whose failure a retry cannot fix. The class is decided by sentinel when the job fails (`pipeline.ClassifyJobError`: `ErrAttestationInvalid`, `ErrAnalyzersChanged`, `ErrMissingCatalogID`) and stored in `jobs.error_class`, because the stored message is text and must not be matched.
 
 ## Operations Requiring Attestations
 
@@ -291,22 +305,21 @@ An auditor verifying a compliance determination would:
 
 1. Find the compliance decision in the `AUDIT_DECISIONS` NATS stream.
 2. Extract the `X-Trace-Id` provenance header to get the trace ID.
-3. Search object storage for attestation bundles that reference that trace ID (job-structured paths for browsing, content-addressed for verification).
-4. Verify the layout signature via `VerifyLayout`.
-5. Verify each link signature via `Verify`.
-6. Verify the hash chain via `VerifyChain`.
-7. Confirm the manifest matches expected input artifacts.
-8. Optionally, view the full trace in Jaeger using the same trace ID to see timing, service interactions, and error details.
+3. Find the job's bundle in object storage at `attestations/<tenant>/<job-id>/bundle.json`; each link's byproducts carry the trace ID.
+4. Verify the bundle: `crosscodex results verify bundle.json --public-key <attestation public key> --tenant <tenant> --job-id <job-id>` runs `ParseBundle` and `VerifyChain` with subject `job:<tenant>/<job-id>`, which covers the binding to that job, the layout signature and expiry, every link signature, one link per step and the hash chain, and prints the config digest the links record; compare it with the SHA-256 of the job's `jobs.config`. It reads only the file, not the database.
+5. Optionally, view the full trace in Jaeger using the same trace ID to see timing, service interactions, and error details.
 
 ## Remaining Work
 
 - **Service implementations**: The internal services (`internal/ingestion`, `internal/catalog`, `internal/analysis`, `internal/synthesis`) that would call the attestation API.
 - **`AuditMetadata.correlation_id` population**: Each service must set this field from `telemetry.TraceIDFromContext(ctx)` when constructing protobuf messages.
-- **Verification CLI**: A `crosscodex verify` command that takes a compliance report and validates the attestation chain. The `pkg/attestation` API is ready; the CLI is a thin wrapper.
+- **Bundle retrieval by job ID**: `crosscodex results verify` verifies a bundle file copied out of object storage. No RPC exposes attestation objects, so fetching a job's bundle through the gateway needs a new tenant-scoped RPC.
+- **Gateway attestations**: `gateway.WithAttestor` is not wired by `crosscodexd`, and `emitAttestation` discards the link it creates.
 
 ## Security Considerations
 
-- Attestation signing keys must be protected. Use `pkg/tlsconfig/pki` for key generation in development and a proper key management system (HSM, Vault) in production. The `EphemeralKeyProvider` is for embedded/test use only.
+- Attestation signing keys must be protected. Use `pkg/tlsconfig/pki` (or `task deploy:certs`) for key generation in development and a proper key management system (HSM, Vault) in production. The `EphemeralKeyProvider` is for tests only.
+- Rotating the key pair invalidates the stored synthesis and graph links of jobs still running: on resume they no longer verify and the job fails. Rotate between jobs, and keep old public keys to verify old bundles.
 - When `WithFIPSMode(true)` is set, only ECDSA P-256/384/521 keys are accepted. This is enforced at signing time, not just configuration time.
 - The attestation chain depends on the integrity of the OTel trace ID. If trace context is dropped or spoofed, the link between the attestation and the operational record is broken. TLS transport encryption and provenance header validation (enforced by `pkg/natsbus`) mitigate this.
 - Layouts define who is authorized to perform each step. A compromised signing key allows unauthorized attestations. Key rotation and revocation procedures should be defined before production deployment.

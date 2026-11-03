@@ -56,6 +56,14 @@ func useColor(cmd *cobra.Command) bool {
 	return false
 }
 
+// stdinIsTerminal reports whether in is an interactive terminal, the same
+// check useColor makes for stdout. A variable so specs can stand in a
+// terminal, which a test process does not have.
+var stdinIsTerminal = func(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
 func writeJSON(cmd *cobra.Command, v any) error {
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetIndent("", "  ")

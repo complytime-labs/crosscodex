@@ -54,7 +54,7 @@ var _ = Describe("Pipeline Integration", func() {
 		synth = &fakeSynthesisExecutor{
 			result: &synthesis.ExecuteResult{},
 		}
-		attestor = &fakeAttestation{}
+		attestor = newFakeAttestation()
 		converter = pipelineattestation.NewConverter()
 		bus = &natsbustest.Fake{}
 		storage = &storagetest.Fake{}
@@ -106,13 +106,10 @@ var _ = Describe("Pipeline Integration", func() {
 		pipelineCfg := config.PipelineConfig{
 			MaxConcurrentJobs: 10,
 		}
-		attCfg := config.AttestationConfig{
-			ExpiryDuration: 168 * time.Hour,
-		}
 		catalogReader := &fakeCatalogControlsReader{controls: []*pb.Control{
 			{ControlId: "ctrl-1", CatalogId: "integration-cat-1"},
 		}}
-		svc = pipeline.New(store, engine, registry, synth, attestor, converter, bus, storage, pipelineCfg, attCfg, nil,
+		svc = pipeline.New(store, engine, registry, synth, attestedBy(attestor), converter, bus, storage, pipelineCfg, nil,
 			pipeline.WithCatalogControlsReader(catalogReader))
 	})
 

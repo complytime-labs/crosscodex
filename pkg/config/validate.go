@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -176,6 +177,14 @@ func validateAttestation(a *AttestationConfig, tracker *sourceTracker) error {
 	if a.ExpiryDuration <= 0 {
 		p.add("attestation.expiry_duration", "attestation.expiry_duration %s%s must be positive: %w",
 			a.ExpiryDuration, formatSource(tracker, "attestation.expiry_duration"), ErrInvalidConfig)
+	}
+	if a.StorageRetries < 0 || a.StorageRetries > 10 {
+		p.add("attestation.storage_retries", "attestation.storage_retries %d%s must be in range [0, 10]: %w",
+			a.StorageRetries, formatSource(tracker, "attestation.storage_retries"), ErrInvalidConfig)
+	}
+	if a.StorageRetryDelay < 0 || a.StorageRetryDelay > time.Minute {
+		p.add("attestation.storage_retry_delay", "attestation.storage_retry_delay %s%s must be in range [0, 1m]: %w",
+			a.StorageRetryDelay, formatSource(tracker, "attestation.storage_retry_delay"), ErrInvalidConfig)
 	}
 	// A key pair with one half missing is reported under the half that is
 	// set, the setting the operator added.
@@ -382,6 +391,8 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		a.Candidates.validate(tracker),
 		validateCandidateGenerators(a.Candidates.Generators, tracker),
 	)
+
+	p = append(p, validateAnalyzerDependencies(a, tracker))
 
 	// An empty embed_model or models list is already reported above.
 	if e.Enabled && a.Candidates.EmbedModel != "" && len(e.Models) > 0 {
@@ -675,6 +686,51 @@ func formatSettingValue(v interface{}) string {
 		return fmt.Sprintf("%q", s)
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// validateAnalyzerDependencies rejects an enabled analyzer that could not run
+// as configured. The pipeline registers only enabled analyzers, so an enabled
+// one whose dependency is disabled would leave the daemon unable to build its
+// analyzer graph, and a pair analyzer with no candidate generator would
+// analyse zero pairs and report success with no mappings. The dependencies
+// mirror each analyzer's DependsOn (embedding on classify; requires and
+// relationship on embedding), plus candidate generation, which reads the
+// embeddings and runs the enabled generators before the pair analyzers.
+// Each problem is reported under the enabled setting that imposes it.
+func validateAnalyzerDependencies(a *AnalysisConfig, tracker *sourceTracker) error {
+	var p problems
+	if a.Embedding.Enabled && !a.Classification.Enabled {
+		p.add("analysis.embedding.enabled", "analysis.embedding.enabled is true but analysis.classification.enabled is false%s: "+
+			"the embedding analyzer runs after classification; enable analysis.classification or disable analysis.embedding: %w",
+			formatSource(tracker, "analysis.embedding.enabled"), ErrInvalidConfig)
+	}
+	generatorEnabled := false
+	for _, g := range a.Candidates.Generators {
+		if g.Enabled {
+			generatorEnabled = true
+			break
+		}
+	}
+	for _, pair := range []struct {
+		name    string
+		enabled bool
+	}{{"relationship", a.Relationship.Enabled}, {"requires", a.Requires.Enabled}} {
+		if !pair.enabled {
+			continue
+		}
+		path := "analysis." + pair.name + ".enabled"
+		if !a.Embedding.Enabled {
+			p.add(path, "%s is true but analysis.embedding.enabled is false%s: the %s analyzer compares candidate pairs "+
+				"generated from embeddings; enable analysis.embedding or disable analysis.%s: %w",
+				path, formatSource(tracker, path), pair.name, pair.name, ErrInvalidConfig)
+		}
+		if !generatorEnabled {
+			p.add(path, "%s is true but no analysis.candidates.generators entry is enabled%s: it would analyse zero candidate pairs "+
+				"and the job would complete with no mappings; enable a generator (semantic, keyword or level) or disable analysis.%s: %w",
+				path, formatSource(tracker, path), pair.name, ErrInvalidConfig)
+		}
+	}
+	return p.err()
 }
 
 // validateCandidateGenerators checks every generator entry, enabled or not,

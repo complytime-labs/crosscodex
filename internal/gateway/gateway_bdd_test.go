@@ -98,8 +98,8 @@ func (r *recordingAttestor) VerifyLayout(context.Context, []byte) (*attestation.
 	return nil, errUnusedAttestor
 }
 
-func (r *recordingAttestor) VerifyChain(context.Context, *attestation.SignedLayout, []*attestation.SignedLink) error {
-	return errUnusedAttestor
+func (r *recordingAttestor) VerifyChain(context.Context, *attestation.SignedLayout, []*attestation.SignedLink, attestation.Artifact) (*attestation.VerifiedChain, error) {
+	return nil, errUnusedAttestor
 }
 
 // artifactURIs lists the URIs of artifacts, for comparing links.
@@ -147,6 +147,7 @@ type mockPipeline struct {
 	getJobFn    func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error)
 	listJobsFn  func(context.Context, *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error)
 	cancelJobFn func(context.Context, *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error)
+	retryJobFn  func(context.Context, *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error)
 }
 
 func (m *mockPipeline) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
@@ -177,6 +178,13 @@ func (m *mockPipeline) CancelJob(ctx context.Context, req *connect.Request[pb.Ca
 		return m.cancelJobFn(ctx, req)
 	}
 	return connect.NewResponse(&pb.CancelJobResponse{Cancelled: true}), nil
+}
+
+func (m *mockPipeline) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+	if m.retryJobFn != nil {
+		return m.retryJobFn(ctx, req)
+	}
+	return connect.NewResponse(&pb.RetryJobResponse{NewJobId: req.Msg.GetJobId()}), nil
 }
 
 // mockMappings records the request it receives and returns a configured
@@ -459,6 +467,74 @@ var _ = Describe("Job handlers", func() {
 			resp, err := svc.CancelJob(adminCtx(), connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetCancelled()).To(BeTrue())
+		})
+	})
+
+	Context("RetryJob", func() {
+		// retryingBackend is a backend whose job-1 was created by createdBy
+		// and that records the RetryJob requests it receives.
+		retryingBackend := func(createdBy string) (*mockPipeline, *[]*pb.RetryJobRequest) {
+			var got []*pb.RetryJobRequest
+			pipeline := ownedJobBackend(createdBy)
+			pipeline.retryJobFn = func(_ context.Context, req *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+				got = append(got, req.Msg)
+				return connect.NewResponse(&pb.RetryJobResponse{NewJobId: "job-1"}), nil
+			}
+			return pipeline, &got
+		}
+
+		It("lets the owner retry its job from its failure, in the caller's tenant whatever the request says", func() {
+			pipeline, got := retryingBackend("user-a")
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			resp, err := svc.RetryJob(userCtx("user-a"), connect.NewRequest(&pb.RetryJobRequest{
+				JobId: "job-1", RetryFromFailure: true,
+				TenantContext: &pb.TenantContext{TenantId: "someone-else"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetNewJobId()).To(Equal("job-1"))
+			Expect(*got).To(HaveLen(1))
+			Expect((*got)[0].GetRetryFromFailure()).To(BeTrue())
+			Expect((*got)[0].GetTenantContext().GetTenantId()).To(Equal("tenant-a"))
+		})
+
+		It("refuses a caller that does not own the job, retrying nothing", func() {
+			pipeline, got := retryingBackend("user-a")
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			_, err := svc.RetryJob(userCtx("user-b"), connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1", RetryFromFailure: true}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+			Expect(*got).To(BeEmpty())
+		})
+
+		It("lets an admin retry any job", func() {
+			pipeline, got := retryingBackend("user-a")
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			_, err := svc.RetryJob(adminCtx(), connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*got).To(HaveLen(1))
+		})
+
+		It("requires a job_id", func() {
+			pipeline, got := retryingBackend("user-a")
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			_, err := svc.RetryJob(userCtx("user-a"), connect.NewRequest(&pb.RetryJobRequest{}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(*got).To(BeEmpty())
+		})
+
+		It("passes the pipeline's refusal through with its message, so the caller learns what to do", func() {
+			pipeline := ownedJobBackend("user-a")
+			pipeline.retryJobFn = func(context.Context, *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+				return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("cannot retry job job-1 from its failure: start a new job"))
+			}
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			_, err := svc.RetryJob(userCtx("user-a"), connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1", RetryFromFailure: true}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring("start a new job"))
 		})
 	})
 })

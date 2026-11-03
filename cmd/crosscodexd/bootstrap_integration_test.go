@@ -368,7 +368,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		Expect(err.Error()).To(ContainSubstring("pipeline.addr"))
 	})
 
-	It("fails closed when attestation key paths are not configured", func() {
+	It("fails closed when attestation is enabled without key paths", func() {
 		dsn := os.Getenv("TEST_DATABASE_DSN")
 		if dsn == "" {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
@@ -380,8 +380,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
-		cfg.Attestation.PrivateKeyPath = ""
-		cfg.Attestation.PublicKeyPath = ""
+		cfg.Attestation = config.AttestationConfig{Enabled: true, ExpiryDuration: time.Hour}
 		// Valid TLS so this test fails on the attestation precondition, not
 		// attachPipeline's new mutual-TLS check.
 		cfg.TLS = testServerTLS()
@@ -390,8 +389,8 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		defer cancel()
 
 		_, err := bootstrap(ctx, cfg)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("attestation"))
+		Expect(err).To(MatchError(config.ErrMissingRequired))
+		Expect(err.Error()).To(ContainSubstring("attestation.private_key_path"))
 	})
 
 	It("fails closed when no default tenant is configured", func() {

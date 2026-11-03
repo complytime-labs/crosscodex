@@ -119,6 +119,12 @@ func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName
 }
 
 // ReportStageFailed updates DB with error, then publishes to NATS.
+//
+// A stage that fails because its job's context is done (the job was
+// cancelled, or the service is stopping) did not fail on its own, so nothing
+// is recorded or published: the pipeline records the outcome
+// (Service.interruptJob marks a cancelled job's running stages cancelled; a
+// shutdown leaves them for resume).
 func (r *DBStageReporter) ReportStageFailed(ctx context.Context, analyzerName, jobID string, stageErr error) error {
 	ctx, span := telemetry.StartSpan(r.tracer, ctx, "pipeline.ReportStageFailed")
 	defer span.End()
@@ -126,6 +132,11 @@ func (r *DBStageReporter) ReportStageFailed(ctx context.Context, analyzerName, j
 		attribute.String("analyzer.name", analyzerName),
 		attribute.String("job.id", jobID),
 	)
+
+	if ctx.Err() != nil {
+		span.SetAttributes(attribute.Bool("stage.interrupted", true))
+		return nil
+	}
 
 	if updateErr := r.store.UpdateStageError(ctx, jobID, analyzerName, stageErr); updateErr != nil {
 		r.logger.WarnContext(ctx, "failed to update stage error in DB",

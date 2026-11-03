@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -69,6 +70,10 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 					fmt.Fprintf(w, "By relationship type:\n")
 					for _, relType := range slices.Sorted(maps.Keys(counts)) {
 						fmt.Fprintf(w, "  %-20s %d\n", relType, counts[relType])
+					}
+					if len(mappings) == 0 {
+						fmt.Fprintf(w, "\nNo mappings. A job produces mappings only if the relationship analyzer was "+
+							"enabled on the daemon; see which analyzers the job ran with \"crosscodex run status %s\".\n", jobID)
 					}
 				},
 				map[string]any{
@@ -463,62 +468,83 @@ proto supports it.`,
 
 func newResultsVerifyCmd(_ *cliState) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "verify <bundle-file>",
-		Short: "Verify attestation bundle signatures",
-		Long:  `Verify attestation bundle signatures using in-toto verification.`,
+		Use:   "verify <bundle-file> --public-key <path> --tenant <tenant> --job-id <job-id>",
+		Short: "Verify a job's attestation bundle",
+		Long: `Verify the attestation bundle the pipeline stored for one job, offline.
+
+The bundle is the job's bundle.json, stored under the daemon's object
+storage (storage.objects.base_path) at attestations/<tenant>/<job-id>/bundle.json;
+copy it out of storage first. --public-key is the attestation public key the
+pipeline signed with (attestation.public_key_path, or the tenant's override).
+--tenant and --job-id name the job the bundle must be for: the pipeline binds
+every layout step and link to "job:<tenant>/<job-id>", so a bundle copied or
+replayed from another job fails.
+
+Verification checks that the bundle is bound to that job, with one job
+config digest throughout (printed, so it can be compared with the job's
+stored config), the layout's signature and that it has not expired
+(attestation.expiry_duration), every link's signature, that every layout
+step has exactly one link, and that every artifact one step consumes has
+the digest the step that produced it recorded. It does not read the
+database: it proves the bundle is intact and complete, not that the
+database still holds the results it attests.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			bundleFile := args[0]
 			publicKeyPath, _ := cmd.Flags().GetString("public-key")
+			if publicKeyPath == "" {
+				return fmt.Errorf("results verify needs --public-key: the attestation public key the pipeline signed " +
+					"the bundle with (attestation.public_key_path; deploy/certs/attestation-pub.pem in a deploy/ stack). Nothing was verified")
+			}
+			tenantID, _ := cmd.Flags().GetString("tenant")
+			jobID, _ := cmd.Flags().GetString("job-id")
+			if tenantID == "" || jobID == "" {
+				return fmt.Errorf("results verify needs --tenant and --job-id: the job the bundle must be for, as in " +
+					"its path attestations/<tenant>/<job-id>/bundle.json. A bundle proves nothing about a job it is not bound to. Nothing was verified")
+			}
 
 			bundleData, err := os.ReadFile(bundleFile)
 			if err != nil {
 				return fmt.Errorf("failed to read bundle file: %w", err)
 			}
-
-			if publicKeyPath == "" {
-				var bundle map[string]any
-				if err := json.Unmarshal(bundleData, &bundle); err != nil {
-					return fmt.Errorf("invalid attestation bundle (not valid JSON): %w", err)
-				}
-
-				return emit(cmd,
-					func(w io.Writer, color bool) {
-						fmt.Fprintf(w, "Bundle file: %s\n", bundleFile)
-						fmt.Fprintf(w, "Status: Structure valid (JSON parsed successfully)\n")
-						fmt.Fprintf(w, "\nFull verification requires --public-key flag\n")
-					},
-					map[string]any{
-						"bundle_file": bundleFile,
-						"status":      "structure_valid",
-						"note":        "full verification requires public key",
-					},
-				)
-			}
-
-			kp := &attestation.FileKeyProvider{
-				PublicKeyPath: publicKeyPath,
-			}
-
-			gen, err := attestation.NewGenerator(kp)
+			layout, links, err := attestation.ParseBundle(bundleData)
 			if err != nil {
-				return fmt.Errorf("failed to create attestation generator: %w", err)
+				return fmt.Errorf("%s: %w. Pass a job's bundle, stored at attestations/<tenant>/<job-id>/bundle.json "+
+					"under the daemon's storage.objects.base_path", bundleFile, err)
 			}
 
-			verifiedLink, err := gen.Verify(cmd.Context(), bundleData)
+			gen, err := attestation.NewGenerator(&attestation.FileKeyProvider{PublicKeyPath: publicKeyPath})
 			if err != nil {
-				return fmt.Errorf("verification failed: %w", err)
+				return fmt.Errorf("failed to create attestation verifier: %w", err)
+			}
+			subject := attestation.Artifact{URI: fmt.Sprintf("job:%s/%s", tenantID, jobID)}
+			chain, err := gen.VerifyChain(cmd.Context(), layout, links, subject)
+			if err != nil {
+				return fmt.Errorf("verification failed for %s: %w", bundleFile, err)
+			}
+			verified := chain.Layout
+			steps := make([]string, len(verified.Steps))
+			for i, step := range verified.Steps {
+				steps[i] = step.Name
 			}
 
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Bundle file: %s\n", bundleFile)
 					fmt.Fprintf(w, "Status: Verified\n")
-					fmt.Fprintf(w, "Step: %s\n", verifiedLink.Step)
+					fmt.Fprintf(w, "Tenant: %s\n", tenantID)
+					fmt.Fprintf(w, "Job: %s\n", jobID)
+					fmt.Fprintf(w, "Job config digest: %s\n", chain.Subject.Digest)
+					fmt.Fprintf(w, "Steps: %s\n", strings.Join(steps, ", "))
+					fmt.Fprintf(w, "Layout expires: %s\n", verified.Expires.Format(time.RFC3339))
 				},
 				map[string]any{
-					"bundle_file": bundleFile,
-					"status":      "verified",
-					"step":        verifiedLink.Step,
+					"bundle_file":       bundleFile,
+					"status":            "verified",
+					"tenant":            tenantID,
+					"job_id":            jobID,
+					"job_config_digest": chain.Subject.Digest,
+					"steps":             steps,
+					"layout_expires":    verified.Expires.Format(time.RFC3339),
 				},
 			)
 		},
@@ -526,15 +552,16 @@ func newResultsVerifyCmd(_ *cliState) *cobra.Command {
 
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a bundle file path",
-		find:  "crosscodex results verify <bundle-file>",
-		usage: "crosscodex results verify <bundle-file> [--public-key <path>]",
+		find:  "copy attestations/<tenant>/<job-id>/bundle.json out of the daemon's object storage",
+		usage: "crosscodex results verify <bundle-file> --public-key <path> --tenant <tenant> --job-id <job-id>",
 		examples: []string{
-			"crosscodex results verify attestation-bundle.json --public-key public.pem",
-			"crosscodex results verify bundle.json",
+			"crosscodex results verify bundle.json --public-key deploy/certs/attestation-pub.pem --tenant default --job-id 0b6e...",
 		},
 	})
 
-	cmd.Flags().String("public-key", "", "path to public key PEM file for verification")
+	cmd.Flags().String("public-key", "", "attestation public key PEM the pipeline signed with (required)")
+	cmd.Flags().String("tenant", "", "tenant of the job the bundle must be for (required)")
+	cmd.Flags().String("job-id", "", "ID of the job the bundle must be for (required)")
 
 	return cmd
 }

@@ -208,7 +208,8 @@ func parseDSSEEnvelope(data []byte) (*dsse.Envelope, error) {
 // verifyDSSESignature verifies a DSSE envelope's signature using an in-toto Key.
 // This operates at the DSSE level and does not decode the payload, avoiding
 // canonical JSON parsing issues with raw newlines in string values.
-func verifyDSSESignature(ctx context.Context, env *dsse.Envelope, key in_toto.Key) error {
+// It returns the key IDs of the signatures that verified.
+func verifyDSSESignature(ctx context.Context, env *dsse.Envelope, key in_toto.Key) ([]string, error) {
 	sslibKey := signerverifier.SSLibKey{
 		KeyIDHashAlgorithms: key.KeyIDHashAlgorithms,
 		KeyType:             key.KeyType,
@@ -230,19 +231,26 @@ func verifyDSSESignature(ctx context.Context, env *dsse.Envelope, key in_toto.Ke
 	case signerverifier.ED25519KeyType:
 		verifier, err = signerverifier.NewED25519SignerVerifierFromSSLibKey(&sslibKey)
 	default:
-		return fmt.Errorf("unsupported key type %q", sslibKey.KeyType)
+		return nil, fmt.Errorf("unsupported key type %q", sslibKey.KeyType)
 	}
 	if err != nil {
-		return fmt.Errorf("create verifier: %w", err)
+		return nil, fmt.Errorf("create verifier: %w", err)
 	}
 
 	ev, err := dsse.NewEnvelopeVerifier(verifier)
 	if err != nil {
-		return fmt.Errorf("create envelope verifier: %w", err)
+		return nil, fmt.Errorf("create envelope verifier: %w", err)
 	}
 
-	_, err = ev.Verify(ctx, env)
-	return err
+	accepted, err := ev.Verify(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	keyIDs := make([]string, len(accepted))
+	for i, k := range accepted {
+		keyIDs[i] = k.KeyID
+	}
+	return keyIDs, nil
 }
 
 // parseLayoutFromDSSE extracts an in-toto Layout from a DSSE envelope's payload.

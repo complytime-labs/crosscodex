@@ -72,6 +72,34 @@ var _ = Describe("Schema version and restricted role checks", func() {
 			Expect(err).To(MatchError(ContainSubstring("Run `crosscodexd migrate` with database.migration_dsn set to the schema owner")))
 		})
 
+		// The pre-release baseline is edited in place (docs/dev/migrations.md),
+		// so a database an earlier build created reports the same version but
+		// lacks what was folded in later.
+		It("tells the operator to recreate a database created from an earlier baseline, as app_user", func() {
+			ctx, tx := roleCheckTx()
+			mustExec(ctx, tx, "ALTER TABLE jobs DROP COLUMN error_class")
+			mustExec(ctx, tx, "SET LOCAL ROLE app_user")
+			err := db.CheckSchemaVersion(ctx, tx)
+			Expect(err).To(MatchError(And(
+				ContainSubstring("jobs.error_class"),
+				ContainSubstring("created by an earlier build"),
+				ContainSubstring("task deploy:down VOLUMES=1"),
+				ContainSubstring("crosscodexd migrate"))))
+		})
+
+		It("tells the operator to recreate a database whose functions come from an earlier baseline, as app_user", func() {
+			ctx, tx := roleCheckTx()
+			mustExec(ctx, tx, "DROP FUNCTION public.resumable_jobs()")
+			mustExec(ctx, tx, `CREATE FUNCTION public.resumable_jobs() RETURNS TABLE (job_id text) LANGUAGE sql AS $$ SELECT job_id FROM public.jobs $$`)
+			mustExec(ctx, tx, "GRANT EXECUTE ON FUNCTION public.resumable_jobs() TO app_user")
+			mustExec(ctx, tx, "SET LOCAL ROLE app_user")
+			err := db.CheckSchemaVersion(ctx, tx)
+			Expect(err).To(MatchError(And(
+				ContainSubstring("resumable_jobs() column error_class"),
+				ContainSubstring("created by an earlier build"),
+				ContainSubstring("task deploy:down VOLUMES=1"))))
+		})
+
 		It("tells the operator to upgrade when the schema is ahead", func() {
 			ctx, tx := roleCheckTx()
 			latest, err := db.LatestMigrationVersion()

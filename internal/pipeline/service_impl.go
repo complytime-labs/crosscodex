@@ -100,12 +100,13 @@ func (s *Service) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJ
 
 	// Register cancel func after successful DB creation.
 	s.mu.Lock()
-	jobCtx, cancel := context.WithCancel(context.Background())
-	s.running[jobID] = cancel
+	jobCtx, cancel := context.WithCancelCause(context.Background())
+	rj := &runningJob{cancel: cancel}
+	s.running[jobID] = rj
 	s.mu.Unlock()
 
 	s.wg.Add(1)
-	go s.executeJob(jobCtx, tenantID, jobID)
+	go s.executeJob(jobCtx, rj, tenantID, jobID)
 
 	if err := s.publishJobState(ctx, tenantID, jobID, JobStatusPending); err != nil {
 		s.logger.WarnContext(ctx, "failed to publish job state", "job_id", jobID, "error", err)
@@ -253,16 +254,27 @@ func (s *Service) CancelJob(ctx context.Context, req *connect.Request[pb.CancelJ
 	}
 
 	s.mu.Lock()
-	cancel, ok := s.running[req.Msg.JobId]
+	rj, ok := s.running[req.Msg.JobId]
 	if !ok {
 		s.mu.Unlock()
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("job is not running"))
 	}
-	cancel()
-	delete(s.running, req.Msg.JobId)
+	if rj.completing {
+		s.mu.Unlock()
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"cannot cancel job %s: it is already completing (every stage has run and its attestation is stored). "+
+				"Check its final status with \"crosscodex run status %s\"", req.Msg.JobId, req.Msg.JobId))
+	}
+	if rj.cancelled {
+		s.mu.Unlock()
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("job is not running"))
+	}
+	rj.cancel(ErrJobCancelled)
+	rj.cancelled = true
 	s.mu.Unlock()
 
-	// Status update and NATS event handled by executeJob's ctx.Err() path.
+	// executeJob sees ErrJobCancelled as its context's cause, records the
+	// cancellation (interruptJob), and removes the entry when it returns.
 
 	span.SetStatus(otelcodes.Ok, "")
 	return connect.NewResponse(&pb.CancelJobResponse{
@@ -296,6 +308,18 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get job: %v", err))
 	}
 
+	release, err := s.reserveRetry(job)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	if refusal := retryRefusal(job.ErrorClass); refusal != "" && req.Msg.RetryFromFailure {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"cannot retry job %s from its failure: %s. It failed with: %s. Start a new job instead: %s",
+			job.JobID, refusal, job.ErrorMessage, newJobCommand(job)))
+	}
+
 	// Check concurrency limit before spawning retry job.
 	if err := s.checkConcurrencyLimit(); err != nil {
 		return nil, err
@@ -311,23 +335,40 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get stages: %v", err))
 		}
 
+		// A cancelled stage is retried like a failed one: the cancel
+		// stopped the job, and the stages before it completed soundly.
 		var firstFailed string
 		stageNames := make([]string, len(stages))
 		for i, stage := range stages {
 			stageNames[i] = stage.StageName
-			if firstFailed == "" && stage.Status == StageStatusFailed {
+			if firstFailed == "" && (stage.Status == StageStatusFailed || stage.Status == StageStatusCancelled) {
 				firstFailed = stage.StageName
 			}
 		}
 
-		if firstFailed == "" {
-			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("no failed stage to retry from"))
+		// A failed or cancelled job with no failed or cancelled stage
+		// stopped between stages, such as while its attestation layout, an
+		// analyzer's link or its bundle was being signed or stored.
+		// Resuming it runs only what did not complete, so no stage is
+		// reset.
+		resumeOnly := firstFailed == "" && (job.Status == JobStatusFailed || job.Status == JobStatusCancelled)
+
+		if firstFailed == "" && !resumeOnly {
+			catalogID, ok := ExtractCatalogID(job.Config)
+			if !ok {
+				catalogID = "<catalog-id>"
+			}
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"cannot retry job %s from a failure: no stage failed or was cancelled, so there is no stage to resume from. "+
+					"To analyse the catalog again, start a new job: crosscodex run start --source %s", req.Msg.JobId, catalogID))
 		}
 
-		if err := s.store.ResetStagesFrom(ctx, req.Msg.JobId, firstFailed, stageNames); err != nil {
-			span.RecordError(err)
-			span.SetStatus(otelcodes.Error, err.Error())
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("reset stages: %v", err))
+		if !resumeOnly {
+			if err := s.store.ResetStagesFrom(ctx, req.Msg.JobId, firstFailed, stageNames); err != nil {
+				span.RecordError(err)
+				span.SetStatus(otelcodes.Error, err.Error())
+				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("reset stages: %v", err))
+			}
 		}
 
 		if err := s.store.UpdateJobStatus(ctx, req.Msg.JobId, JobStatusRunning, nil); err != nil {
@@ -337,12 +378,13 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 		}
 
 		s.mu.Lock()
-		jobCtx, cancel := context.WithCancel(context.Background())
-		s.running[req.Msg.JobId] = cancel
+		jobCtx, cancel := context.WithCancelCause(context.Background())
+		rj := &runningJob{cancel: cancel}
+		s.running[req.Msg.JobId] = rj
 		s.mu.Unlock()
 
 		s.wg.Add(1)
-		go s.executeJob(jobCtx, tenantID, req.Msg.JobId)
+		go s.executeJob(jobCtx, rj, tenantID, req.Msg.JobId)
 
 		newJobID = req.Msg.JobId
 	} else {
@@ -381,12 +423,13 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 		}
 
 		s.mu.Lock()
-		jobCtx, cancel := context.WithCancel(context.Background())
-		s.running[newJobID] = cancel
+		jobCtx, cancel := context.WithCancelCause(context.Background())
+		rj := &runningJob{cancel: cancel}
+		s.running[newJobID] = rj
 		s.mu.Unlock()
 
 		s.wg.Add(1)
-		go s.executeJob(jobCtx, tenantID, newJobID)
+		go s.executeJob(jobCtx, rj, tenantID, newJobID)
 	}
 
 	if err := s.publishJobState(ctx, tenantID, newJobID, JobStatusRunning); err != nil {
@@ -477,8 +520,9 @@ func (s *Service) dispatchResumableJobs(jobs []*Job, sem chan struct{}) {
 			}
 			continue
 		}
-		jobCtx, cancel := context.WithCancel(context.Background())
-		s.running[job.JobID] = cancel
+		jobCtx, cancel := context.WithCancelCause(context.Background())
+		rj := &runningJob{cancel: cancel}
+		s.running[job.JobID] = rj
 		s.mu.Unlock()
 
 		s.wg.Add(1)
@@ -488,7 +532,7 @@ func (s *Service) dispatchResumableJobs(jobs []*Job, sem chan struct{}) {
 					<-sem
 				}
 			}()
-			s.executeJob(jobCtx, tenantID, jobID)
+			s.executeJob(jobCtx, rj, tenantID, jobID)
 		}(job.TenantID, job.JobID)
 	}
 }
@@ -501,11 +545,14 @@ func (s *Service) Stop(ctx context.Context) error {
 
 	s.mu.Lock()
 	runningJobs := make([]string, 0, len(s.running))
-	for jobID, cancel := range s.running {
+	for jobID, rj := range s.running {
 		runningJobs = append(runningJobs, jobID)
-		cancel()
+		// Not ErrJobCancelled: an interrupted job stays running so the
+		// next start resumes it. A job already completing finishes its
+		// final write, which does not use this context.
+		rj.cancel(errServiceStopping)
 	}
-	s.running = make(map[string]context.CancelFunc)
+	s.running = make(map[string]*runningJob)
 	s.mu.Unlock()
 
 	s.logger.InfoContext(ctx, "cancelled running jobs", "count", len(runningJobs))
@@ -555,7 +602,7 @@ func (s *Service) publishJobState(ctx context.Context, tenantID, jobID string, j
 
 func jobToProto(job *Job, stages []*Stage) *pb.PipelineJob {
 	pbStages := make([]*pb.JobStage, len(stages))
-	var completedSteps, failedSteps int32
+	var completedSteps, failedSteps, cancelledSteps int32
 	for i, stage := range stages {
 		pbStages[i] = stageToProto(stage)
 		switch stage.Status {
@@ -563,6 +610,8 @@ func jobToProto(job *Job, stages []*Stage) *pb.PipelineJob {
 			completedSteps++
 		case StageStatusFailed:
 			failedSteps++
+		case StageStatusCancelled:
+			cancelledSteps++
 		}
 	}
 
@@ -590,6 +639,7 @@ func jobToProto(job *Job, stages []*Stage) *pb.PipelineJob {
 			TotalSteps:           totalSteps,
 			CompletedSteps:       completedSteps,
 			FailedSteps:          failedSteps,
+			CancelledSteps:       cancelledSteps,
 			CompletionPercentage: completionPercentage,
 		},
 		Stages: pbStages,
@@ -662,7 +712,41 @@ func stageStatusToProtoJobStatus(ss StageStatus) pb.JobStatus {
 		return pb.JobStatus_JOB_STATUS_COMPLETED
 	case StageStatusFailed:
 		return pb.JobStatus_JOB_STATUS_FAILED
+	case StageStatusCancelled:
+		return pb.JobStatus_JOB_STATUS_CANCELLED
 	default:
 		return pb.JobStatus_JOB_STATUS_UNSPECIFIED
 	}
+}
+
+// reserveRetry claims job for one RetryJob call and returns the function
+// that releases it. It refuses, with FailedPrecondition, a job this service
+// is still running or still stopping (CancelJob returned, but the run is
+// still recording the cancellation), and a job another RetryJob call is
+// acting on, so exactly one of concurrent retries proceeds and no retry
+// starts a second run of a job beside the first.
+func (s *Service) reserveRetry(job *Job) (func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rj, ok := s.running[job.JobID]; ok {
+		if rj.cancelled {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"job %s is still stopping; retry it when \"crosscodex run status %s\" shows it is no longer running",
+				job.JobID, job.JobID))
+		}
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"job %s is running; a running job cannot be retried. Wait for it to end, or cancel it with "+
+				"\"crosscodex run cancel --yes %s\" and retry once \"crosscodex run status %s\" shows it is no longer running",
+			job.JobID, job.JobID, job.JobID))
+	}
+	if s.retrying[job.JobID] {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"job %s is already being retried; check \"crosscodex run status %s\"", job.JobID, job.JobID))
+	}
+	s.retrying[job.JobID] = true
+	return func() {
+		s.mu.Lock()
+		delete(s.retrying, job.JobID)
+		s.mu.Unlock()
+	}, nil
 }

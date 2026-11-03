@@ -123,3 +123,57 @@ func (e *EphemeralKeyProvider) VerificationKey(_ context.Context) (crypto.Public
 func (e *EphemeralKeyProvider) KeyID(_ context.Context) (string, error) {
 	return e.keyID, nil
 }
+
+// LoadFileKeys reads and parses the PEM key pair at privatePath and
+// publicPath once, and returns a KeyProvider that serves the parsed keys
+// from memory, so a key file that later disappears or changes does not
+// affect signing. It fails if either file is missing or does not parse
+// (ErrKeyNotFound, ErrKeyLoadFailed), if the public key is not the private
+// key's (ErrKeyMismatch), or, when fips is true, if the private key is not
+// FIPS-approved (ErrNonFIPSAlgorithm). Every error names the file at fault.
+func LoadFileKeys(privatePath, publicPath string, fips bool) (KeyProvider, error) {
+	ctx := context.Background()
+	files := &FileKeyProvider{PrivateKeyPath: privatePath, PublicKeyPath: publicPath}
+	signer, err := files.SigningKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pub, err := files.VerificationKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if fips {
+		if err := validateFIPSKey(signer); err != nil {
+			return nil, fmt.Errorf("signing key %s: %w", privatePath, err)
+		}
+	}
+	signerPub, ok := signer.Public().(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !signerPub.Equal(pub) {
+		return nil, fmt.Errorf("public key %s is not the public half of private key %s: %w",
+			publicPath, privatePath, ErrKeyMismatch)
+	}
+	keyID, err := files.KeyID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &loadedKeyProvider{signer: signer, pub: pub, keyID: keyID}, nil
+}
+
+// loadedKeyProvider serves a key pair LoadFileKeys has already parsed.
+type loadedKeyProvider struct {
+	signer crypto.Signer
+	pub    crypto.PublicKey
+	keyID  string
+}
+
+func (l *loadedKeyProvider) SigningKey(_ context.Context) (crypto.Signer, error) {
+	return l.signer, nil
+}
+
+func (l *loadedKeyProvider) VerificationKey(_ context.Context) (crypto.PublicKey, error) {
+	return l.pub, nil
+}
+
+func (l *loadedKeyProvider) KeyID(_ context.Context) (string, error) {
+	return l.keyID, nil
+}

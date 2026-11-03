@@ -50,9 +50,9 @@ tasks:
         exit $status
 
   race:
-    desc: Run unit tests of the concurrency-heavy packages (graphdb, analysis, worker, natsbus) with the race detector
+    desc: Run unit tests of the concurrency-heavy packages (graphdb, analysis, worker, natsbus, pipeline) with the race detector
     vars:
-      PKGS: '{{.PKGS | default "./pkg/graphdb/... ./internal/analysis/... ./internal/worker/... ./pkg/natsbus/..."}}'
+      PKGS: '{{.PKGS | default "./pkg/graphdb/... ./internal/analysis/... ./internal/worker/... ./pkg/natsbus/... ./internal/pipeline/..."}}'
     deps:
       - :dev:deps
       - :dev:generate
@@ -60,8 +60,9 @@ tasks:
       - mkdir -p {{.TEST_DIR}}
       # memdriver is shared by concurrent NATS subscriber tests, and the
       # analysis collector, worker and natsbus hand messages between NATS
-      # callback goroutines and their callers; that locking is only proven
-      # under the race detector.
+      # callback goroutines and their callers; the pipeline runs each job on
+      # its own goroutine beside CancelJob, RetryJob and Stop. That locking
+      # is only proven under the race detector.
       # See test:unit for --keep-going, --output-dir and the status handling.
       - |
         status=0

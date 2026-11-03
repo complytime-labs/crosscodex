@@ -54,6 +54,19 @@ service GatewayService {
     };
   }
 
+  // Retry a job. With retry_from_failure, resumes a failed or cancelled job
+  // in place from its first failed or cancelled stage, keeping the stages
+  // that completed; refused (FailedPrecondition) when the job's failure is
+  // one a retry cannot fix. Without it, starts a new job with the same
+  // config.
+  // INTERNAL: pipeline.RetryJob
+  rpc RetryJob(RetryJobRequest) returns (RetryJobResponse) {
+    option (google.api.http) = {
+      post: "/v1/jobs/{job_id}/retry"
+      body: "*"
+    };
+  }
+
   // Start analysis of an imported catalog
   // INTERNAL: catalog.GetCatalog → pipeline.CreateJob(FULL_ANALYSIS)
   rpc StartAnalysis(StartAnalysisRequest) returns (StartAnalysisResponse) {

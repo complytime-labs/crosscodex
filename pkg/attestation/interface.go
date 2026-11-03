@@ -28,12 +28,27 @@ type Generator interface {
 	// Returns ErrExpired if the layout has expired.
 	VerifyLayout(ctx context.Context, data []byte) (*VerifiedLayout, error)
 
-	// VerifyChain validates artifact integrity across consecutive pipeline steps.
-	// For each consecutive pair (step N, step N+1), any artifact URI that appears
-	// in both step N's products and step N+1's materials must have identical
-	// SHA-256 digests. Step N+1 may have additional materials not from step N.
-	// If layout is non-nil, links are sorted to match layout step ordering.
-	VerifyChain(ctx context.Context, layout *SignedLayout, links []*SignedLink) error
+	// VerifyChain verifies one run's whole attestation against its layout,
+	// and that it is the attestation of subject, the run the caller expects:
+	//   - subject.URI is set, every layout step expects it as a material,
+	//     and every link records it as a material with subject.Digest, or,
+	//     when subject.Digest is empty, all with the same digest
+	//     (ErrSubjectMismatch), so a link or layout from another run is
+	//     refused;
+	//   - the layout is present (else ErrInvalidLayout), its signature is
+	//     valid and it has not expired (VerifyLayout's errors);
+	//   - every link's signature is valid (Verify's errors);
+	//   - every layout step has exactly one link (ErrMissingLink), and no
+	//     link is for an undeclared step or a step already linked
+	//     (ErrUnexpectedLink);
+	//   - each link records every material and product its layout step
+	//     expects, and wherever one step's material is another step's
+	//     product, in any order, their digests match (ErrChainBroken).
+	// Steps, materials and products are read from the signed envelopes;
+	// the other SignedLink fields are ignored and links is not modified.
+	// Every error names the step and, for a chain error, the artifact URI.
+	// It returns the verified layout and the subject as the links record it.
+	VerifyChain(ctx context.Context, layout *SignedLayout, links []*SignedLink, subject Artifact) (*VerifiedChain, error)
 }
 
 // KeyProvider abstracts signing/verification key retrieval.

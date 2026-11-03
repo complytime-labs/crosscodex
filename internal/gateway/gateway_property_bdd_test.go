@@ -178,6 +178,10 @@ var _ = Describe("Gateway Property Tests", func() {
 					_, err := svc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
 					return err
 				}},
+				{"RetryJob", func() error {
+					_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1"}))
+					return err
+				}},
 				{"SubmitDocument", func() error {
 					_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
 						Source: &pb.SubmitDocumentRequest_Content{Content: []byte("x")},

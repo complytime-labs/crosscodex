@@ -15,15 +15,20 @@
 //  3. Graph: Publish events for graph materialization
 //  4. Attestation: Generate in-toto layout, collect links, verify chain
 //
-// Analysis stages are discovered dynamically from the DAG. The pipeline
-// adds "synthesis" and "graph" as meta-stages. No analyzer knowledge
-// is hardcoded.
+// Analysis stages are discovered dynamically from the DAG, which holds only
+// the analyzers the configuration enables (NewProductionRegistry). The
+// pipeline adds "synthesis" and "graph" as meta-stages, and a
+// "candidate_generation" stage before the first candidate-dependent analyzer
+// (requires, relationship) when one is registered.
 //
 // # Resume and Retry
 //
 // On startup, Start() queries for jobs with status "running" and resumes
 // from the last incomplete stage. RetryJob resets failed stages and
-// re-enters executeJob.
+// re-enters executeJob. A job runs the analyzers it was created with: if its
+// analyzer stages differ from the registry's (an analyzer was enabled or
+// disabled meanwhile), it fails before any analyzer runs, with an error that
+// names each changed analyzer and its setting (ErrAnalyzersChanged).
 //
 // # CandidateProvider Pattern
 //

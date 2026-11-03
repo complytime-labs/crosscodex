@@ -45,8 +45,8 @@ import (
 const e2eModel = "e2e-test-model"
 
 // e2eKeyProvider is an ephemeral ECDSA P-256 key provider for the attestation
-// generator, mirroring pkg/attestation's test double. Attestation failures are
-// non-fatal to job completion, but pipeline.New requires a working generator.
+// generator, mirroring pkg/attestation's test double. The job is attested, so
+// it completes only once its whole attestation verifies and is stored.
 type e2eKeyProvider struct{ key *ecdsa.PrivateKey }
 
 // newE2EKeyProvider builds an e2eKeyProvider. Offset 1 so a key-generation
@@ -268,11 +268,11 @@ var _ = Describe("Pipeline end-to-end", func() {
 		converter := pipelineattestation.NewConverter()
 
 		pipelineCfg := config.PipelineConfig{MaxConcurrentJobs: 10}
-		attCfg := config.AttestationConfig{ExpiryDuration: 168 * time.Hour}
+		attestors := Attestors{Default: &Attestor{Generator: attestor, ExpiresIn: 168 * time.Hour}}
 
 		svc := New(
-			store, engine, registry, synth, attestor, converter, bus, storageProvider,
-			pipelineCfg, attCfg, candGen,
+			store, engine, registry, synth, attestors, converter, bus, storageProvider,
+			pipelineCfg, candGen,
 			WithCatalogControlsReader(NewPGCatalogControlsReader(tenantConn)),
 			WithEmbeddingsReader(NewPGEmbeddingsReader(tenantConn)),
 			WithEmbeddingConfig(analysisConfig.Embedding),

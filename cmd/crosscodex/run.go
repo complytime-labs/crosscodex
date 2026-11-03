@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/internal/pipeline"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +24,7 @@ func newRunCmd(state *cliState) *cobra.Command {
 	runCmd.AddCommand(newRunStartCmd(state))
 	runCmd.AddCommand(newRunStatusCmd(state))
 	runCmd.AddCommand(newRunCancelCmd(state))
+	runCmd.AddCommand(newRunRetryCmd(state))
 
 	return runCmd
 }
@@ -91,7 +95,11 @@ func newRunStatusCmd(state *cliState) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status <job-id>",
 		Short: "Check the status of an analysis job",
-		Long:  `Check the status of an analysis job by its job ID.`,
+		Long: `Check the status of an analysis job by its job ID.
+
+Lists the analyzers the job runs: those enabled on the daemon when the job
+was created. Mappings come only from the relationship analyzer; a job
+without it produces none, and the output says so.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID := args[0]
 			tenant, _ := cmd.Flags().GetString("tenant")
@@ -112,6 +120,17 @@ func newRunStatusCmd(state *cliState) *cobra.Command {
 
 			job := resp.Msg.GetJob()
 
+			// The stages show which analyzers the daemon runs the job with:
+			// a disabled analyzer gets none. Mappings come only from the
+			// relationship analyzer, so without it the job completes with no
+			// mappings, which otherwise looks like success.
+			analyzers := []string{}
+			for _, stage := range job.GetStages() {
+				if pipeline.IsAnalyzerStage(stage.GetStageName()) {
+					analyzers = append(analyzers, stage.GetStageName())
+				}
+			}
+
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Job: %s\n", job.GetJobId())
@@ -122,12 +141,29 @@ func newRunStatusCmd(state *cliState) *cobra.Command {
 					if job.GetError() != nil {
 						fmt.Fprintf(w, "Error: %s\n", job.GetError().GetMessage())
 					}
+					if p := job.GetProgress(); p != nil {
+						fmt.Fprintf(w, "Stages: %d of %d completed, %d failed, %d cancelled\n",
+							p.GetCompletedSteps(), p.GetTotalSteps(), p.GetFailedSteps(), p.GetCancelledSteps())
+					}
+					if len(analyzers) == 0 {
+						fmt.Fprintf(w, "Analyzers: none\n")
+					} else {
+						fmt.Fprintf(w, "Analyzers: %s\n", strings.Join(analyzers, ", "))
+					}
+					if !slices.Contains(analyzers, results.RelationshipAnalyzer) {
+						fmt.Fprintf(w, "Note: this job has no relationship analyzer, so it produces no mappings. "+
+							"To get mappings, set analysis.relationship.enabled to true on the daemon "+
+							"(with analysis.relationship.models and an enabled analysis.candidates.generators entry), "+
+							"then start a new job.\n")
+					}
 				},
 				map[string]any{
-					"job_id": job.GetJobId(),
-					"status": job.GetStatus().String(),
-					"audit":  job.GetAudit(),
-					"error":  job.GetError(),
+					"job_id":    job.GetJobId(),
+					"status":    job.GetStatus().String(),
+					"audit":     job.GetAudit(),
+					"error":     job.GetError(),
+					"progress":  job.GetProgress(),
+					"analyzers": analyzers,
 				},
 			)
 		},
@@ -155,13 +191,22 @@ func newRunCancelCmd(state *cliState) *cobra.Command {
 		Short:   "Cancel a running analysis job",
 		Long: `Cancel a running analysis job.
 
-This command will prompt for confirmation unless the --yes flag is provided.`,
+This command prompts for confirmation unless --yes is given. Without a
+terminal on stdin (a script or pipe) it refuses instead of prompting; pass
+--yes to confirm.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID := args[0]
 			yes, _ := cmd.Flags().GetBool("yes")
 			tenant, _ := cmd.Flags().GetString("tenant")
 
 			if !yes {
+				// Without a terminal nobody can answer the prompt: reading a
+				// pipe that never closes would hang, and a piped "y" would
+				// let a script confirm on a person's behalf.
+				if !stdinIsTerminal(cmd.InOrStdin()) {
+					return fmt.Errorf("refusing to cancel job %s without confirmation: stdin is not a terminal, so the prompt cannot be answered; pass --yes to confirm (crosscodex run cancel --yes %s)",
+						jobID, jobID)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Cancel job %s? (y/N): ", jobID)
 				reader := bufio.NewReader(cmd.InOrStdin())
 				response, err := reader.ReadString('\n')
@@ -213,6 +258,69 @@ This command will prompt for confirmation unless the --yes flag is provided.`,
 
 	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().String("tenant", "", "Tenant ID for the job")
+
+	return cmd
+}
+
+func newRunRetryCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "retry <job-id>",
+		Short: "Retry a failed or cancelled analysis job",
+		Long: `Retry an analysis job.
+
+With --from-failure, the job resumes in place from its first failed or
+cancelled stage, keeping the stages that completed; a job whose stages all
+completed (its attestation could not be stored) only finishes. The daemon
+refuses a job whose failure a retry cannot fix, such as an attestation that
+does not verify, and says to start a new job instead.
+
+Without --from-failure, a new job starts over the same catalog and config,
+and its ID is printed.
+
+Neither deletes results: a resumed job re-runs only stages that did not
+complete, so it asks for no confirmation.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			jobID := args[0]
+			fromFailure, _ := cmd.Flags().GetBool("from-failure")
+
+			resp, err := state.client.RetryJob(cmd.Context(), connectrpc.NewRequest(&pb.RetryJobRequest{
+				JobId:            jobID,
+				RetryFromFailure: fromFailure,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to retry job %s: %w", jobID, err)
+			}
+			newJobID := resp.Msg.GetNewJobId()
+
+			return emit(cmd,
+				func(w io.Writer, color bool) {
+					if fromFailure {
+						fmt.Fprintf(w, "Job %s resumed from its failure\n", newJobID)
+					} else {
+						fmt.Fprintf(w, "Started job %s, a retry of job %s\n", newJobID, jobID)
+					}
+					fmt.Fprintf(w, "Follow it with: crosscodex run status %s\n", newJobID)
+				},
+				map[string]any{
+					"job_id":         newJobID,
+					"retried_job_id": jobID,
+					"from_failure":   fromFailure,
+				},
+			)
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
+		noun:  "a job-id",
+		find:  "the job ID crosscodex run start printed; crosscodex run status <job-id> shows whether it failed",
+		usage: "crosscodex run retry [--from-failure] <job-id>",
+		examples: []string{
+			"crosscodex run retry --from-failure abc123",
+			"crosscodex run retry abc123",
+		},
+	})
+
+	cmd.Flags().Bool("from-failure", false, "Resume the job in place from its first failed or cancelled stage instead of starting a new job")
 
 	return cmd
 }

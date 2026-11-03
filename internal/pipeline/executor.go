@@ -6,37 +6,66 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
+	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // jobExecution carries attestation state through the execution phases.
+// attestor is nil when the job's tenant does not attest jobs; every
+// attestation step is then skipped.
 type jobExecution struct {
-	layout *attestation.SignedLayout
-	links  []*attestation.SignedLink
+	attestor *Attestor
+	// subject binds every layout step and link to this job: its URI names
+	// the tenant and job, its digest the job's stored config.
+	subject attestation.Artifact
+	dag     *analyzer.DAG
+	layout  *attestation.SignedLayout
+	links   []*attestation.SignedLink
 }
 
-// executeJob is the main lifecycle method. Called as a goroutine from CreateJob and Start.
-func (s *Service) executeJob(ctx context.Context, tenantID, jobID string) {
+// executeJob is the main lifecycle method. Called as a goroutine from
+// CreateJob, RetryJob and Start, with rj, the entry that registered this run
+// in s.running.
+func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobID string) {
 	defer s.wg.Done()
 
 	start := time.Now()
+	// Runs after every other deferred call, the panic recovery's writes
+	// included: once the entry is gone a retry may start a new run of the
+	// job, so this run must have finished writing. It releases only this
+	// run's own context and entry, never a newer run's.
+	defer func() {
+		s.mu.Lock()
+		rj.cancel(nil)
+		if s.running[jobID] == rj {
+			delete(s.running, jobID)
+		}
+		s.mu.Unlock()
+		if s.jobDuration != nil {
+			s.jobDuration.Record(ctx, float64(time.Since(start).Milliseconds()))
+		}
+	}()
+
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.ExecuteJob")
 	defer span.End()
 	span.SetAttributes(
@@ -58,15 +87,6 @@ func (s *Service) executeJob(ctx context.Context, tenantID, jobID string) {
 			span.RecordError(fmt.Errorf("panic during job execution: %v", r))
 			span.SetStatus(codes.Error, "panic during job execution")
 			s.failJob(failCtx, tenantID, jobID, fmt.Errorf("panic during job execution: %v", r))
-		}
-	}()
-
-	defer func() {
-		s.mu.Lock()
-		delete(s.running, jobID)
-		s.mu.Unlock()
-		if s.jobDuration != nil {
-			s.jobDuration.Record(ctx, float64(time.Since(start).Milliseconds()))
 		}
 	}()
 
@@ -101,23 +121,33 @@ func (s *Service) executeJob(ctx context.Context, tenantID, jobID string) {
 	completed := completedStageSet(stages)
 
 	// Attestation state for this job execution.
-	exec := &jobExecution{}
+	exec := &jobExecution{attestor: s.attestors.forTenant(tenantID), subject: jobSubject(job)}
 
-	// Phase 2: Analysis.
-	if err := s.runAnalysis(ctx, job, completed, exec); err != nil {
-		if ctx.Err() != nil {
-			s.cancelJob(ctx, tenantID, jobID)
+	// Phase 2: Analysis and its attestation. The stored links of the
+	// pipeline steps an earlier run completed are verified first, before
+	// this run signs and stores anything, so a job whose stored attestation
+	// cannot be trusted fails with every object as it was. Then analysis
+	// runs, and a link is signed for every analyzer over its stored result.
+	for _, phase := range []func() error{
+		func() error { return s.loadStoredLinks(ctx, job, completed, exec) },
+		func() error { return s.runAnalysis(ctx, job, stages, completed, exec) },
+		func() error { return s.attestAnalyzers(ctx, job, exec) },
+	} {
+		if err := phase(); err != nil {
+			if ctx.Err() != nil {
+				s.interruptJob(ctx, tenantID, jobID)
+				return
+			}
+			s.failJob(ctx, tenantID, jobID, err)
 			return
 		}
-		s.failJob(ctx, tenantID, jobID, err)
-		return
 	}
 
 	// Phase 3: Synthesis.
 	if !completed["synthesis"] {
 		if err := s.runSynthesis(ctx, tenantID, jobID, job, exec); err != nil {
 			if ctx.Err() != nil {
-				s.cancelJob(ctx, tenantID, jobID)
+				s.interruptJob(ctx, tenantID, jobID)
 				return
 			}
 			s.failJob(ctx, tenantID, jobID, err)
@@ -127,29 +157,53 @@ func (s *Service) executeJob(ctx context.Context, tenantID, jobID string) {
 
 	// Phase 4: Graph.
 	if !completed["graph"] {
-		if err := s.runGraph(ctx, tenantID, jobID, exec); err != nil {
+		if err := s.runGraph(ctx, job, exec); err != nil {
 			if ctx.Err() != nil {
-				s.cancelJob(ctx, tenantID, jobID)
+				s.interruptJob(ctx, tenantID, jobID)
 				return
 			}
 			s.failJob(ctx, tenantID, jobID, err)
 			return
 		}
 	}
-
-	// Phase 5: Attestation finalization.
-	if err := s.finalizeAttestation(ctx, job, exec); err != nil {
-		s.logger.WarnContext(ctx, "attestation finalization failed",
-			"job_id", jobID, "error", err)
-		// Non-fatal: job still completes.
+	// runGraph records a failed stage write as a warning, so a cancel while
+	// the graph stage ran returns nil with the stage still running.
+	if ctx.Err() != nil {
+		s.interruptJob(ctx, tenantID, jobID)
+		return
 	}
 
-	// Done.
-	if err := s.store.UpdateJobStatus(ctx, jobID, JobStatusCompleted, nil); err != nil {
+	// Phase 5: Attestation finalization. Completed is immutable, so the job
+	// is written completed only after this: a bundle lost to a cancel or a
+	// shutdown here could never be stored afterwards. A cancel ends the job
+	// cancelled; a shutdown leaves it running, and the resume finalizes it
+	// again from the links this run stored. A failure fails the job: an
+	// attested job never completes without its bundle. Every stage has
+	// completed, so retrying the job from its failure only finalizes again.
+	if err := s.finalizeAttestation(ctx, job, exec); err != nil {
+		if ctx.Err() != nil {
+			s.interruptJob(ctx, tenantID, jobID)
+			return
+		}
+		s.failJob(ctx, tenantID, jobID, err)
+		return
+	}
+
+	// Done. Claim the completed transition under the lock CancelJob takes,
+	// so a cancel either happened first (the job ends cancelled) or is
+	// refused; the write then runs on a context the cancellation of the
+	// job's own does not reach.
+	if !s.claimCompletion(ctx, rj) {
+		s.interruptJob(ctx, tenantID, jobID)
+		return
+	}
+	doneCtx, cancelDone := terminalWriteContext(ctx)
+	defer cancelDone()
+	if err := s.store.UpdateJobStatus(doneCtx, jobID, JobStatusCompleted, nil); err != nil {
 		s.logger.ErrorContext(ctx, "failed to mark job completed",
 			"job_id", jobID, "error", err)
 	}
-	if err := s.publishJobState(ctx, tenantID, jobID, JobStatusCompleted); err != nil {
+	if err := s.publishJobState(doneCtx, tenantID, jobID, JobStatusCompleted); err != nil {
 		s.logger.WarnContext(ctx, "failed to publish job state", "job_id", jobID, "error", err)
 	}
 	if s.jobCounter != nil {
@@ -193,8 +247,10 @@ func pairAnalyzerParameters(jobID string, controls []*pb.Control, classify *anal
 	return params, nil
 }
 
-// runAnalysis builds the DAG, determines incomplete analyzers, and executes them.
-func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[string]bool, exec *jobExecution) error {
+// runAnalysis builds the DAG, checks that it runs the analyzers the job's
+// stages were created with, determines incomplete analyzers, and executes
+// them.
+func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, completed map[string]bool, exec *jobExecution) error {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.RunAnalysis")
 	defer span.End()
 	span.SetAttributes(attribute.String("job.id", job.JobID))
@@ -215,14 +271,22 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("building DAG: %w", err)
 	}
+	if err := checkJobAnalyzers(job, stages, dag.Order()); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
 
-	// Create attestation layout before analysis starts.
-	layout, err := s.createLayout(ctx, job, dag)
-	if err != nil {
-		s.logger.WarnContext(ctx, "failed to create attestation layout",
-			"job_id", job.JobID, "error", err)
-		// Non-fatal: continue without attestation.
-	} else {
+	// An attested job's layout is signed and stored before any analyzer
+	// runs, so a job that cannot be attested fails without spending work.
+	exec.dag = dag
+	if exec.attestor != nil {
+		layout, err := s.createLayout(ctx, job, exec)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return err
+		}
 		exec.layout = layout
 	}
 
@@ -438,41 +502,6 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 		return fmt.Errorf("runAnalysis: writing vote summaries: %w", err)
 	}
 
-	// Create link for each completed analyzer.
-	for analyzerName, output := range allOutputs {
-		// Materials: outputs from dependencies.
-		var materials []attestation.Artifact
-		for _, dep := range dag.Analyzers() {
-			if dep.Name() == analyzerName {
-				for _, depName := range dep.DependsOn() {
-					if depOutput, ok := allOutputs[depName]; ok {
-						digest := computeDigest(depOutput)
-						materials = append(materials, attestation.Artifact{
-							URI:    depName + ".output",
-							Digest: digest,
-						})
-					}
-				}
-				break
-			}
-		}
-
-		// Products: this analyzer's output.
-		digest := computeDigest(output)
-		products := []attestation.Artifact{
-			{URI: analyzerName + ".output", Digest: digest},
-		}
-
-		link, err := s.createLink(ctx, job, analyzerName, materials, products)
-		if err != nil {
-			s.logger.WarnContext(ctx, "failed to create link for analyzer",
-				"job_id", job.JobID, "analyzer", analyzerName, "error", err)
-			// Non-fatal: continue.
-		} else {
-			exec.links = append(exec.links, link)
-		}
-	}
-
 	span.SetStatus(codes.Ok, "")
 	return nil
 }
@@ -550,43 +579,70 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 		return fmt.Errorf("synthesis.Execute: %w", err)
 	}
 
+	// The stage completes only once its link is stored, so a completed
+	// stage always has one for a later run to read back.
+	if exec.attestor != nil {
+		if err := s.attestSynthesis(ctx, job, exec, synthResult); err != nil {
+			s.failPipelineStage(ctx, job, "synthesis", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return err
+		}
+	}
+
 	if err := s.store.UpdateStageStatus(ctx, jobID, "synthesis", StageStatusCompleted); err != nil {
 		s.logger.WarnContext(ctx, "failed to update synthesis stage to completed", "job_id", jobID, "error", err)
 	}
 	s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageCompleted)
 
-	// Create attestation link for synthesis.
-	// Materials: analysis outputs (stored in exec.links).
-	var materials []attestation.Artifact
-	for _, link := range exec.links {
-		materials = append(materials, link.Products...)
-	}
-
-	// Products: synthesis output (if any).
-	var products []attestation.Artifact
-	if synthResult != nil {
-		digest := computeDigest(synthResult)
-		products = append(products, attestation.Artifact{
-			URI:    "synthesis.output",
-			Digest: digest,
-		})
-	}
-
-	link, err := s.createLink(ctx, job, "synthesis", materials, products)
-	if err != nil {
-		s.logger.WarnContext(ctx, "failed to create synthesis link",
-			"job_id", jobID, "error", err)
-	} else {
-		exec.links = append(exec.links, link)
-	}
-
 	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
+// attestSynthesis signs and stores the synthesis link: its materials are
+// every analyzer's product, and its product is the synthesis result.
+func (s *Service) attestSynthesis(ctx context.Context, job *Job, exec *jobExecution, result *synthesis.ExecuteResult) error {
+	analyzers := make(map[string]bool, len(exec.dag.Order()))
+	for _, name := range exec.dag.Order() {
+		analyzers[name] = true
+	}
+	var materials []attestation.Artifact
+	for _, link := range exec.links {
+		if analyzers[link.Step] {
+			materials = append(materials, link.Products...)
+		}
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("job %s: the synthesis result could not be encoded for its attestation link: %w: %w. %s",
+			job.JobID, err, ErrAttestationSigning, retryHint(job))
+	}
+	link, err := s.createLink(ctx, job, exec, "synthesis", materials,
+		[]attestation.Artifact{{URI: "synthesis.output", Digest: contentDigest(encoded)}})
+	if err != nil {
+		return err
+	}
+	exec.links = append(exec.links, link)
+	return nil
+}
+
+// failPipelineStage records that stage failed with err and publishes it, so
+// retrying the job from its failure resumes at stage. A cancelled or stopped
+// job is left to interruptJob.
+func (s *Service) failPipelineStage(ctx context.Context, job *Job, stage string, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	if uerr := s.store.UpdateStageError(ctx, job.JobID, stage, err); uerr != nil {
+		s.logger.WarnContext(ctx, "failed to record the stage failure", "job_id", job.JobID, "stage", stage, "error", uerr)
+	}
+	s.publishStageEvent(ctx, job.TenantID, job.JobID, stage, natsbus.StageFailed)
+}
+
 // runGraph updates stage status and publishes completion event to NATS.
 // The graph service subscribes asynchronously.
-func (s *Service) runGraph(ctx context.Context, tenantID, jobID string, exec *jobExecution) error {
+func (s *Service) runGraph(ctx context.Context, job *Job, exec *jobExecution) error {
+	tenantID, jobID := job.TenantID, job.JobID
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.RunGraph")
 	defer span.End()
 	span.SetAttributes(attribute.String("job.id", jobID))
@@ -598,44 +654,121 @@ func (s *Service) runGraph(ctx context.Context, tenantID, jobID string, exec *jo
 	}
 	s.publishStageEvent(ctx, tenantID, jobID, "graph", natsbus.StageStarted)
 
+	// The graph link's material is the synthesis product; like synthesis,
+	// the stage completes only once its link is stored.
+	if exec.attestor != nil {
+		var materials []attestation.Artifact
+		for _, link := range exec.links {
+			if link.Step == "synthesis" {
+				materials = link.Products
+			}
+		}
+		link, err := s.createLink(ctx, job, exec, "graph", materials, nil)
+		if err != nil {
+			s.failPipelineStage(ctx, job, "graph", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return err
+		}
+		exec.links = append(exec.links, link)
+	}
+
 	// Graph service subscribes to stage.completed events and materializes asynchronously.
 	if err := s.store.UpdateStageStatus(ctx, jobID, "graph", StageStatusCompleted); err != nil {
 		s.logger.WarnContext(ctx, "failed to update graph stage to completed", "job_id", jobID, "error", err)
 	}
 	s.publishStageEvent(ctx, tenantID, jobID, "graph", natsbus.StageCompleted)
 
-	// Create attestation link for graph.
-	// Materials: synthesis output (last link's products).
-	var materials []attestation.Artifact
-	if len(exec.links) > 0 {
-		materials = exec.links[len(exec.links)-1].Products
-	}
-
-	var products []attestation.Artifact
-
-	job := &Job{TenantID: tenantID, JobID: jobID}
-	link, err := s.createLink(ctx, job, "graph", materials, products)
-	if err != nil {
-		s.logger.WarnContext(ctx, "failed to create graph link",
-			"job_id", jobID, "error", err)
-	} else {
-		exec.links = append(exec.links, link)
-	}
-
 	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
+// endRunningStages applies end to every stage of a job that has just been
+// recorded as ended (failed or cancelled) and is still running, so no stage
+// of a job that will never resume claims to be running. Failures are logged:
+// the job's own status is already recorded.
+//
+// It also runs from executeJob's panic recovery (through failJob), where the
+// store that just panicked may panic again; a panic here is logged instead of
+// crashing the daemon.
+func (s *Service) endRunningStages(ctx context.Context, jobID string, end func(stage string) error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.ErrorContext(ctx, "job ended, but ending its running stages panicked; they keep status \"running\"",
+				"job_id", jobID, "panic", r)
+		}
+	}()
+	stages, err := s.store.GetStages(ctx, jobID)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "job ended, but its stages could not be read to end the running ones; "+
+			"they keep status \"running\". The job itself is recorded as ended and does not resume",
+			"job_id", jobID, "error", err)
+		return
+	}
+	for _, stage := range stages {
+		if stage.Status != StageStatusRunning {
+			continue
+		}
+		if err := end(stage.StageName); err != nil {
+			s.logger.ErrorContext(ctx, "job ended, but a running stage could not be ended; "+
+				"it keeps status \"running\". The job itself is recorded as ended and does not resume",
+				"job_id", jobID, "stage", stage.StageName, "error", err)
+		}
+	}
+}
+
+// claimCompletion marks rj completing unless its context is already done
+// (cancelled or stopped), and reports whether it did. It holds s.mu, which
+// CancelJob holds while it cancels, so exactly one of the two decides the
+// job's terminal state.
+func (s *Service) claimCompletion(ctx context.Context, rj *runningJob) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ctx.Err() != nil {
+		return false
+	}
+	rj.completing = true
+	return true
+}
+
+// terminalWriteTimeout bounds a write of a job's final state made on a
+// context detached from the job's own (terminalWriteContext), so a stuck
+// database cannot hold up shutdown, which waits for every job goroutine.
+const terminalWriteTimeout = 30 * time.Second
+
+// terminalWriteContext returns a context for recording a job's final state:
+// it keeps ctx's values (tenant, trace) but not its cancellation, which has
+// usually already happened (a cancelled job), and expires after
+// terminalWriteTimeout.
+func terminalWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), terminalWriteTimeout)
+}
+
 // failJob updates status to failed, publishes state event, records metric.
+// A job whose context is already done did not fail on its own; it is handed
+// to interruptJob instead.
 func (s *Service) failJob(ctx context.Context, tenantID, jobID string, err error) {
+	if ctx.Err() != nil {
+		s.interruptJob(ctx, tenantID, jobID)
+		return
+	}
 	s.logger.ErrorContext(ctx, "job failed", "job_id", jobID, "error", err)
 
-	if updateErr := s.store.UpdateJobStatus(ctx, jobID, JobStatusFailed, err); updateErr != nil {
+	writeCtx, cancel := terminalWriteContext(ctx)
+	defer cancel()
+
+	if updateErr := s.store.UpdateJobStatus(writeCtx, jobID, JobStatusFailed, err); updateErr != nil {
 		s.logger.ErrorContext(ctx, "failed to update job status to failed",
 			"job_id", jobID, "error", updateErr)
+	} else {
+		// A failed job is never resumed by Start, so a stage still running (left by
+		// a shutdown during an earlier run) will never finish.
+		s.endRunningStages(writeCtx, jobID, func(stage string) error {
+			return s.store.UpdateStageError(writeCtx, jobID, stage, fmt.Errorf("did not finish: the job failed: %w", err))
+		})
 	}
 
-	if err := s.publishJobState(ctx, tenantID, jobID, JobStatusFailed); err != nil {
+	if err := s.publishJobState(writeCtx, tenantID, jobID, JobStatusFailed); err != nil {
 		s.logger.WarnContext(ctx, "failed to publish job state", "job_id", jobID, "error", err)
 	}
 
@@ -645,16 +778,42 @@ func (s *Service) failJob(ctx context.Context, tenantID, jobID string, err error
 	}
 }
 
-// cancelJob updates status to cancelled, publishes state event.
-func (s *Service) cancelJob(ctx context.Context, tenantID, jobID string) {
+// interruptJob ends a job whose context was cancelled. CancelJob cancels with
+// ErrJobCancelled: the job and every stage still running end cancelled, and
+// the cancelled state is published. Stage failures caused by the
+// cancellation are not recorded (DBStageReporter.ReportStageFailed), so a
+// stage that was running is still running here. Any other cause is a
+// shutdown: nothing is written, so the job stays running and the next Start
+// resumes it from its completed stages.
+//
+// The job's context is already cancelled, so the writes use
+// terminalWriteContext; on the job's own context every one would fail.
+func (s *Service) interruptJob(ctx context.Context, tenantID, jobID string) {
+	if !errors.Is(context.Cause(ctx), ErrJobCancelled) {
+		s.logger.InfoContext(ctx, "job interrupted by shutdown; it stays running and resumes on the next start",
+			"job_id", jobID)
+		return
+	}
 	s.logger.InfoContext(ctx, "job cancelled", "job_id", jobID)
 
-	if err := s.store.UpdateJobStatus(ctx, jobID, JobStatusCancelled, nil); err != nil {
-		s.logger.ErrorContext(ctx, "failed to update job status to cancelled",
+	writeCtx, cancel := terminalWriteContext(ctx)
+	defer cancel()
+
+	// A job whose status the store refuses to change resumes on the next
+	// start, so its stages are left as they are too.
+	if err := s.store.UpdateJobStatus(writeCtx, jobID, JobStatusCancelled, nil); err != nil {
+		s.logger.ErrorContext(ctx, fmt.Sprintf("could not record that job %s was cancelled: its status stays %q, "+
+			"so the pipeline resumes it on its next start. Check the database connection; after the restart, "+
+			"cancel it again with \"crosscodex run cancel --yes %s\"", jobID, JobStatusRunning, jobID),
 			"job_id", jobID, "error", err)
+		return
 	}
 
-	if err := s.publishJobState(ctx, tenantID, jobID, JobStatusCancelled); err != nil {
+	s.endRunningStages(writeCtx, jobID, func(stage string) error {
+		return s.store.UpdateStageStatus(writeCtx, jobID, stage, StageStatusCancelled)
+	})
+
+	if err := s.publishJobState(writeCtx, tenantID, jobID, JobStatusCancelled); err != nil {
 		s.logger.WarnContext(ctx, "failed to publish job state", "job_id", jobID, "error", err)
 	}
 }
@@ -706,39 +865,74 @@ func completedStageSet(stages []*Stage) map[string]bool {
 	return completed
 }
 
-// createLayout creates and stores the attestation layout for a job.
-func (s *Service) createLayout(ctx context.Context, job *Job, dag *analyzer.DAG) (*attestation.SignedLayout, error) {
+// attestationKey is the object storage key of a job's attestation object
+// name: layout.json, links/<step>.json or bundle.json.
+func attestationKey(job *Job, name string) string {
+	return fmt.Sprintf("attestations/%s/%s/%s", job.TenantID, job.JobID, name)
+}
+
+// newJobCommand is the command that starts a new job over job's catalog.
+func newJobCommand(job *Job) string {
+	catalogID, ok := ExtractCatalogID(job.Config)
+	if !ok {
+		catalogID = "<catalog-id>"
+	}
+	return "crosscodex run start --source " + catalogID
+}
+
+// retryHint names both ways to run a job again after a failure it can
+// recover from.
+func retryHint(job *Job) string {
+	return fmt.Sprintf("Then resume this job: crosscodex run retry --from-failure %s, "+
+		"or start a new job: %s", job.JobID, newJobCommand(job))
+}
+
+// createLayout signs and stores the attestation layout for a job: a step
+// per analyzer, then the pipeline's own steps.
+func (s *Service) createLayout(ctx context.Context, job *Job, exec *jobExecution) (*attestation.SignedLayout, error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.CreateLayout")
 	defer span.End()
 	span.SetAttributes(attribute.String("job.id", job.JobID))
 
-	// Convert DAG to layout options.
-	layoutOpts := s.attConverter.Convert(dag)
-	layoutOpts.ExpiresIn = s.attCfg.ExpiryDuration
-
-	// Generate layout.
-	layout, err := s.attestor.CreateLayout(ctx, layoutOpts)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("creating layout: %w", err)
+	// Convert DAG to layout options, then declare the pipeline's own steps,
+	// which are linked too: synthesis consumes every analyzer's output, and
+	// graph consumes synthesis's.
+	layoutOpts := s.attConverter.Convert(exec.dag)
+	layoutOpts.ExpiresIn = exec.attestor.ExpiresIn
+	var analyzerOutputs []string
+	for _, step := range layoutOpts.Steps {
+		analyzerOutputs = append(analyzerOutputs, step.ExpectedProducts...)
+	}
+	layoutOpts.Steps = append(layoutOpts.Steps,
+		attestation.Step{Name: "synthesis", ExpectedMaterials: analyzerOutputs, ExpectedProducts: []string{"synthesis.output"}, Threshold: 1},
+		attestation.Step{Name: "graph", ExpectedMaterials: []string{"synthesis.output"}, Threshold: 1},
+	)
+	// Every step expects the job as a material, binding the layout to it.
+	for i := range layoutOpts.Steps {
+		layoutOpts.Steps[i].ExpectedMaterials = append([]string{exec.subject.URI}, layoutOpts.Steps[i].ExpectedMaterials...)
 	}
 
-	// Store layout.
-	path := fmt.Sprintf("attestations/%s/%s/layout.json", job.TenantID, job.JobID)
-	reader := bytes.NewReader(layout.Raw)
-	if err := s.storage.Put(ctx, path, reader); err != nil {
+	layout, err := exec.attestor.Generator.CreateLayout(ctx, layoutOpts)
+	if err != nil {
+		err = fmt.Errorf("job %s cannot start: its attestation layout could not be signed: %w: %w. No analyzer ran. "+
+			"Fix the attestation key pair (attestation.private_key_path and attestation.public_key_path, or the tenant's "+
+			"override) and restart crosscodexd. %s", job.JobID, err, ErrAttestationSigning, retryHint(job))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("storing layout: %w", err)
+		return nil, err
+	}
+	if err := s.putAttestation(ctx, job, "layout", attestationKey(job, "layout.json"), layout.Raw); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
 	}
 
 	span.SetStatus(codes.Ok, "")
 	return layout, nil
 }
 
-// createLink creates and stores an attestation link for a pipeline step.
-func (s *Service) createLink(ctx context.Context, job *Job, stepName string, materials, products []attestation.Artifact) (*attestation.SignedLink, error) {
+// createLink signs and stores an attestation link for a pipeline step.
+func (s *Service) createLink(ctx context.Context, job *Job, exec *jobExecution, stepName string, materials, products []attestation.Artifact) (*attestation.SignedLink, error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.CreateLink")
 	defer span.End()
 	span.SetAttributes(
@@ -746,84 +940,211 @@ func (s *Service) createLink(ctx context.Context, job *Job, stepName string, mat
 		attribute.String("step", stepName),
 	)
 
-	// Generate link.
-	link, err := s.attestor.CreateLink(ctx, stepName, materials, products)
+	// Every link records the job as a material, binding it to this job.
+	materials = append([]attestation.Artifact{exec.subject}, materials...)
+	link, err := exec.attestor.Generator.CreateLink(ctx, stepName, materials, products)
 	if err != nil {
+		err = fmt.Errorf("job %s: the attestation link for step %q could not be signed: %w: %w. "+
+			"Fix the attestation key pair and restart crosscodexd. %s", job.JobID, stepName, err, ErrAttestationSigning, retryHint(job))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("creating link: %w", err)
+		return nil, err
 	}
-
-	// Store link.
-	path := fmt.Sprintf("attestations/%s/%s/links/%s.json", job.TenantID, job.JobID, stepName)
-	reader := bytes.NewReader(link.Raw)
-	if err := s.storage.Put(ctx, path, reader); err != nil {
+	what := fmt.Sprintf("link for step %q", stepName)
+	if err := s.putAttestation(ctx, job, what, attestationKey(job, "links/"+stepName+".json"), link.Raw); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("storing link: %w", err)
+		return nil, err
 	}
 
 	span.SetStatus(codes.Ok, "")
 	return link, nil
 }
 
-// finalizeAttestation verifies the attestation chain and stores the bundle.
+// putAttestation stores data at key, retrying a failed write
+// Attestors.StorageRetries times, Attestors.StorageRetryDelay apart. what
+// names the object in the error. It stops early when ctx is done, and the
+// caller then sees ctx.Err() set.
+func (s *Service) putAttestation(ctx context.Context, job *Job, what, key string, data []byte) error {
+	attempts := 1 + s.attestors.StorageRetries
+	var err error
+	for attempt := 1; ; attempt++ {
+		if err = s.storage.Put(ctx, key, bytes.NewReader(data)); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("storing the attestation %s at %q: %w", what, key, err)
+		}
+		if attempt == attempts {
+			break
+		}
+		s.logger.WarnContext(ctx, "storing an attestation failed; retrying",
+			"job_id", job.JobID, "key", key, "attempt", attempt, "attempts", attempts, "error", err)
+		timer := time.NewTimer(s.attestors.StorageRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("storing the attestation %s at %q: %w", what, key, ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("job %s: its attestation %s could not be stored at %q after %d attempts: %w: %w. "+
+		"Check that object storage (storage.objects.base_path) is writable. %s",
+		job.JobID, what, key, attempts, err, ErrAttestationStorage, retryHint(job))
+}
+
+// attestAnalyzers signs and stores a link for every analyzer of the job, in
+// this run or an earlier one. A link's digests are of the analyzer results
+// as stored, which synthesis reads, so a resumed run signs the same digests
+// and a link can always be made again from the database.
+func (s *Service) attestAnalyzers(ctx context.Context, job *Job, exec *jobExecution) error {
+	if exec.attestor == nil {
+		return nil
+	}
+	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.AttestAnalyzers")
+	defer span.End()
+	span.SetAttributes(attribute.String("job.id", job.JobID))
+
+	order := exec.dag.Order()
+	stored, err := s.store.GetCompletedAnalysisResults(ctx, job.JobID, order)
+	if err != nil {
+		err = fmt.Errorf("attesting analyzers: loading their stored results: %w", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+	digests := make(map[string]string, len(order))
+	for _, name := range order {
+		out, ok := stored[name]
+		if !ok {
+			err := fmt.Errorf("job %s: analyzer %q has no stored result to attest: %w. Start a new job: %s",
+				job.JobID, name, ErrAttestationInvalid, newJobCommand(job))
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return err
+		}
+		digests[name] = contentDigest(out.ResultData)
+	}
+	for _, a := range exec.dag.Analyzers() {
+		var materials []attestation.Artifact
+		for _, dep := range a.DependsOn() {
+			materials = append(materials, attestation.Artifact{URI: dep + ".output", Digest: digests[dep]})
+		}
+		products := []attestation.Artifact{{URI: a.Name() + ".output", Digest: digests[a.Name()]}}
+		link, err := s.createLink(ctx, job, exec, a.Name(), materials, products)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return err
+		}
+		exec.links = append(exec.links, link)
+	}
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
+// linkedPipelineStages are the stages after analysis that have a link. An
+// earlier run that completed one stored its link, which a resumed run reads
+// back, since it does not run the stage again. candidate_generation has no
+// link: its output reaches the chain through the analyzers that read it.
+var linkedPipelineStages = []string{"synthesis", "graph"}
+
+// loadStoredLinks appends to exec the stored, verified link of each
+// linkedPipelineStages stage that was completed when this run started. A
+// missing or unverifiable link fails the job: the stage's results cannot be
+// attested, and running it again would not change what is stored.
+func (s *Service) loadStoredLinks(ctx context.Context, job *Job, completed map[string]bool, exec *jobExecution) error {
+	if exec.attestor == nil {
+		return nil
+	}
+	for _, step := range linkedPipelineStages {
+		if !completed[step] {
+			continue
+		}
+		key := attestationKey(job, "links/"+step+".json")
+		rc, err := s.storage.Get(ctx, key)
+		if errors.Is(err, storage.ErrNotFound) {
+			return fmt.Errorf("job %s: step %q completed in an earlier run, but its attestation link %q is missing: %w. "+
+				"Its results cannot be attested; start a new job: %s", job.JobID, step, key, ErrAttestationInvalid, newJobCommand(job))
+		}
+		if err != nil {
+			return fmt.Errorf("job %s: reading the attestation link of step %q at %q: %w: %w. "+
+				"Check that object storage (storage.objects.base_path) is readable. %s",
+				job.JobID, step, key, err, ErrAttestationStorage, retryHint(job))
+		}
+		raw, err := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return fmt.Errorf("job %s: reading the attestation link of step %q at %q: %w: %w. "+
+				"Check that object storage (storage.objects.base_path) is readable. %s",
+				job.JobID, step, key, err, ErrAttestationStorage, retryHint(job))
+		}
+		verified, err := exec.attestor.Generator.Verify(ctx, raw)
+		if err == nil && verified.Step != step {
+			err = fmt.Errorf("it is signed for step %q", verified.Step)
+		}
+		if err == nil && !slices.Contains(verified.Materials, exec.subject) {
+			err = fmt.Errorf("it is signed for another job, not %q with config digest %q", exec.subject.URI, exec.subject.Digest)
+		}
+		if err != nil {
+			return fmt.Errorf("job %s: the stored attestation link of step %q at %q does not verify: %w: %w. "+
+				"It was modified, or signed with a key pair other than the one configured now; its results cannot be "+
+				"attested. Start a new job: %s", job.JobID, step, key, err, ErrAttestationInvalid, newJobCommand(job))
+		}
+		exec.links = append(exec.links, &attestation.SignedLink{
+			Raw:       raw,
+			Step:      verified.Step,
+			Materials: verified.Materials,
+			Products:  verified.Products,
+		})
+	}
+	return nil
+}
+
+// finalizeAttestation verifies the job's whole attestation (layout and one
+// link per step) and stores it as the job's bundle, then publishes the
+// bundle to the audit trail. The publish is best effort: the stored bundle
+// is the record.
 func (s *Service) finalizeAttestation(ctx context.Context, job *Job, exec *jobExecution) error {
+	if exec.attestor == nil {
+		return nil
+	}
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.FinalizeAttestation")
 	defer span.End()
 	span.SetAttributes(attribute.String("job.id", job.JobID))
 
-	// Skip if no layout created.
-	if exec.layout == nil {
-		span.SetStatus(codes.Ok, "no layout to finalize")
-		return nil
-	}
-
-	// Verify chain.
-	if err := s.attestor.VerifyChain(ctx, exec.layout, exec.links); err != nil {
+	fail := func(err error) error {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("verifying attestation chain: %w", err)
+		return err
 	}
 
-	// Build bundle.
-	linkRaws := make([]json.RawMessage, len(exec.links))
-	for i, link := range exec.links {
-		linkRaws[i] = json.RawMessage(link.Raw)
+	if _, err := exec.attestor.Generator.VerifyChain(ctx, exec.layout, exec.links, exec.subject); err != nil {
+		return fail(fmt.Errorf("job %s: its attestation does not verify: %w: %w. Its results are kept but cannot be "+
+			"attested. Check whether objects under %q were modified or deleted, then start a new job: %s",
+			job.JobID, err, ErrAttestationInvalid, attestationKey(job, ""), newJobCommand(job)))
 	}
 
-	bundle := map[string]interface{}{
-		"layout": json.RawMessage(exec.layout.Raw),
-		"links":  linkRaws,
-	}
-
-	bundleBytes, err := json.Marshal(bundle)
+	bundle, err := attestation.MarshalBundle(exec.layout, exec.links)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("marshaling bundle: %w", err)
+		return fail(fmt.Errorf("job %s: its attestation bundle could not be encoded: %w: %w. %s",
+			job.JobID, err, ErrAttestationSigning, retryHint(job)))
+	}
+	if err := s.putAttestation(ctx, job, "bundle", attestationKey(job, "bundle.json"), bundle); err != nil {
+		return fail(err)
 	}
 
-	// Store bundle.
-	bundlePath := fmt.Sprintf("attestations/%s/%s/bundle.json", job.TenantID, job.JobID)
-	reader := bytes.NewReader(bundleBytes)
-	if err := s.storage.Put(ctx, bundlePath, reader); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("storing bundle: %w", err)
-	}
-
-	// Publish to audit trail.
 	auditSubject, err := natsbus.AuditSubject(job.TenantID, natsbus.AuditEvents, job.JobID)
 	if err != nil {
 		s.logger.WarnContext(ctx, "failed to build audit subject",
 			"job_id", job.JobID, "error", err)
-		// Non-fatal.
 	} else if s.bus != nil {
-		if err := s.bus.Publish(ctx, auditSubject, bundleBytes); err != nil {
-			s.logger.WarnContext(ctx, "failed to publish attestation bundle to audit trail",
+		if err := s.bus.Publish(ctx, auditSubject, bundle); err != nil {
+			s.logger.WarnContext(ctx, "failed to publish attestation bundle to audit trail; the bundle is stored",
 				"job_id", job.JobID, "error", err)
-			// Non-fatal.
 		}
 	}
 
@@ -831,30 +1152,14 @@ func (s *Service) finalizeAttestation(ctx context.Context, job *Job, exec *jobEx
 	return nil
 }
 
-// computeDigest computes SHA-256 hex digest for analyzer outputs or proto messages.
-func computeDigest(v interface{}) string {
-	var data []byte
-	switch t := v.(type) {
-	case *analyzer.Output:
-		// Digest the underlying proto Data.
-		if t.Data != nil {
-			marshaled, err := proto.Marshal(t.Data)
-			if err == nil {
-				data = marshaled
-			}
-		}
-		if data == nil {
-			data = []byte(t.AnalyzerName)
-		}
-	case proto.Message:
-		marshaled, err := proto.Marshal(t)
-		if err == nil {
-			data = marshaled
-		}
-	}
-	if data == nil {
-		data = []byte(fmt.Sprintf("%v", v))
-	}
+// jobSubject is the artifact that binds a job's attestation to the job:
+// "job:<tenant>/<job-id>", with the digest of the job's config as stored.
+func jobSubject(job *Job) attestation.Artifact {
+	return attestation.Artifact{URI: fmt.Sprintf("job:%s/%s", job.TenantID, job.JobID), Digest: contentDigest(job.Config)}
+}
+
+// contentDigest is the "sha256:<hex>" digest an attestation records for data.
+func contentDigest(data []byte) string {
 	hash := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(hash[:])
 }

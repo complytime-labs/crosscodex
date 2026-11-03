@@ -25,6 +25,9 @@ const (
 	StageStatusRunning   StageStatus = "running"
 	StageStatusCompleted StageStatus = "completed"
 	StageStatusFailed    StageStatus = "failed"
+	// StageStatusCancelled marks a stage that was running when its job was
+	// cancelled: it neither completed nor failed on its own.
+	StageStatusCancelled StageStatus = "cancelled"
 )
 
 type Job struct {
@@ -36,6 +39,8 @@ type Job struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	ErrorMessage string
+	// ErrorClass classifies ErrorMessage's cause; see ClassifyJobError.
+	ErrorClass JobErrorClass
 }
 
 // JobCreator returns the created_by of a job created in ctx: the calling

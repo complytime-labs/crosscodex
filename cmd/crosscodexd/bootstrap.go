@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 
 	"go.opentelemetry.io/otel"
 
@@ -23,7 +25,6 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/results"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/internal/worker"
-	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
@@ -580,9 +581,10 @@ var taskTypesByAnalyzer = map[string]natsbus.TaskType{
 }
 
 // buildPipelineService constructs a production pipeline.Service. Fails
-// closed if attestation key paths, a default tenant, or a storage base
-// path aren't configured -- pipeline.New requires a real
-// attestation.Generator, and storage.Provider is bound to one tenant and
+// closed if attestation is enabled for any tenant without a key pair that
+// loads (pipeline.NewAttestors), since every attested job would then fail,
+// or if a default tenant or a storage base path aren't configured --
+// storage.Provider is bound to one tenant and
 // one root directory at construction (see the design doc's storage
 // tenant-scoping note; this mirrors cmd/crosscodex's embedded mode, which
 // has the same single-tenant storage limitation). Without this check, an
@@ -592,9 +594,12 @@ var taskTypesByAnalyzer = map[string]natsbus.TaskType{
 // (in-process, no separate listener), so this construction logic exists in
 // exactly one place.
 func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipeline.Service, error) {
-	if cfg.Attestation.PrivateKeyPath == "" || cfg.Attestation.PublicKeyPath == "" {
-		return nil, errors.New("pipeline: attestation.private_key_path and attestation.public_key_path must be set")
+	attTracer, attMeter := telemetry.Instrumentation("pkg/attestation")
+	attestors, err := pipeline.NewAttestors(cfg.Attestation, cfg.TLS.FIPS.Enabled, attTracer, attMeter)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: %w", err)
 	}
+	logAttestationPosture(attestors)
 	if cfg.Tenants.DefaultTenant == "" {
 		return nil, errors.New("pipeline: tenants.default_tenant must be set")
 	}
@@ -647,24 +652,33 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 
 	synth := synthesis.New(tenantConn, cfg.Synthesis, cfg.Analysis.Relationship.ActionableTypes, synthesis.WithTelemetry(tp, mp))
 
-	attTracer, attMeter := telemetry.Instrumentation("pkg/attestation")
-	attestor, err := attestation.NewGenerator(&attestation.FileKeyProvider{
-		PrivateKeyPath: cfg.Attestation.PrivateKeyPath,
-		PublicKeyPath:  cfg.Attestation.PublicKeyPath,
-	}, attestation.WithTelemetry(attTracer, attMeter))
-	if err != nil {
-		return nil, fmt.Errorf("create attestation generator: %w", err)
-	}
 	converter := pipelineattestation.NewConverter()
 
 	return pipeline.New(
-		store, engine, registry, synth, attestor, converter, shared.natsClient, storageProvider,
-		cfg.Pipeline, cfg.Attestation, candGen,
+		store, engine, registry, synth, attestors, converter, shared.natsClient, storageProvider,
+		cfg.Pipeline, candGen,
 		pipeline.WithCatalogControlsReader(pipeline.NewPGCatalogControlsReader(tenantConn)),
 		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn)),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
 		pipeline.WithTelemetry(tp, mp),
 	), nil
+}
+
+// logAttestationPosture logs, once at startup, each scope whose pipeline
+// jobs are not attested, so running without attestation is never silent.
+func logAttestationPosture(attestors pipeline.Attestors) {
+	if attestors.Default == nil {
+		slog.Warn("attestation is disabled (attestation.enabled: false): pipeline jobs complete without in-toto attestations")
+	}
+	for _, tenantID := range slices.Sorted(maps.Keys(attestors.Tenants)) {
+		switch {
+		case attestors.Tenants[tenantID] == nil && attestors.Default != nil:
+			slog.Warn("attestation is disabled for a tenant (attestation.tenant_overrides): its pipeline jobs complete without in-toto attestations",
+				"tenant_id", tenantID)
+		case attestors.Tenants[tenantID] != nil && attestors.Default == nil:
+			slog.Info("attestation is enabled for a tenant (attestation.tenant_overrides)", "tenant_id", tenantID)
+		}
+	}
 }
 
 // attachPipeline wires a standalone pipeline.Service behind its own

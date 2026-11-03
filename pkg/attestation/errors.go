@@ -24,6 +24,25 @@ var (
 	// ErrNonFIPSAlgorithm indicates the signing key uses a non-FIPS-approved algorithm.
 	ErrNonFIPSAlgorithm = errors.New("non-FIPS signing algorithm")
 
-	// ErrChainBroken indicates hash chain verification failed between pipeline steps.
+	// ErrChainBroken indicates hash chain verification failed between pipeline
+	// steps, or a link does not record an artifact its layout step expects.
 	ErrChainBroken = errors.New("attestation hash chain broken")
+
+	// ErrMissingLink indicates a layout step has no link.
+	ErrMissingLink = errors.New("attestation link missing")
+
+	// ErrUnexpectedLink indicates a link for a step the layout does not
+	// declare, or a second link for the same step.
+	ErrUnexpectedLink = errors.New("unexpected attestation link")
+
+	// ErrSubjectMismatch indicates a chain that is not bound to the run the
+	// caller expects: a layout step or link that does not name it, or names
+	// it with another digest.
+	ErrSubjectMismatch = errors.New("attestation is for another run")
+
+	// ErrKeyMismatch indicates a public key that is not the private key's.
+	ErrKeyMismatch = errors.New("attestation key pair mismatch")
+
+	// ErrInvalidBundle indicates data that is not an attestation bundle.
+	ErrInvalidBundle = errors.New("invalid attestation bundle")
 )

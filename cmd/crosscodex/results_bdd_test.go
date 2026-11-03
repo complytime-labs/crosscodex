@@ -2,11 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	connectrpc "connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -15,6 +21,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 )
 
 // fakeMappingsClient serves ListJobMappings from a queue of pages and
@@ -208,6 +215,21 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Expect(eq).To(BeNumerically("<", sub))
 	})
 
+	It("says where to see which analyzers ran when a summary has no mappings", func() {
+		fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("")}
+		out, _, err := execute(newCmd(), "summary", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("Total mappings: 0"))
+		Expect(out).To(ContainSubstring(`see which analyzers the job ran with "crosscodex run status job-1"`))
+	})
+
+	It("gives no analyzer hint when a summary has mappings", func() {
+		fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", mapping("m1", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))}
+		out, _, err := execute(newCmd(), "summary", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).NotTo(ContainSubstring("crosscodex run status"))
+	})
+
 	It("keeps the summary JSON shape and adds the stage", func() {
 		fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))}
 		stdout, _, err := execute(newCmd(), "--json", "summary", "job-1")
@@ -321,32 +343,138 @@ var _ = Describe("Results Commands", func() {
 	)
 
 	Describe("results verify", func() {
-		It("validates valid JSON bundle without public key", func() {
-			tmpFile, err := os.CreateTemp("", "test-bundle-*.json")
-			Expect(err).NotTo(HaveOccurred())
-			defer os.Remove(tmpFile.Name())
-			Expect(os.WriteFile(tmpFile.Name(), []byte(`{"payloadType": "application/vnd.in-toto+json", "payload": "test"}`), 0o644)).To(Succeed())
-			tmpFile.Close()
+		var (
+			dir    string
+			pubKey string
+			gen    attestation.Generator
+			layout *attestation.SignedLayout
+			linkA  *attestation.SignedLink
+			linkB  *attestation.SignedLink
+		)
 
-			stdout, _, err := execute(newRootCmd(), "results", "verify", tmpFile.Name())
+		writeFile := func(name string, data []byte) string {
+			path := filepath.Join(dir, name)
+			Expect(os.WriteFile(path, data, 0o600)).To(Succeed())
+			return path
+		}
+		bundleFile := func(links ...*attestation.SignedLink) string {
+			data, err := attestation.MarshalBundle(layout, links)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(stdout).To(ContainSubstring("Structure valid"))
+			return writeFile("bundle.json", data)
+		}
+
+		// run is the job the bundle is bound to, as the pipeline binds it.
+		run := attestation.Artifact{URI: "job:acme/job-1", Digest: "sha256:cfg"}
+
+		// A two-step job attestation signed with a key pair whose public
+		// half is in pubKey, as the pipeline stores it.
+		BeforeEach(func() {
+			dir = GinkgoT().TempDir()
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			Expect(err).NotTo(HaveOccurred())
+			privDER, err := x509.MarshalECPrivateKey(key)
+			Expect(err).NotTo(HaveOccurred())
+			pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+			Expect(err).NotTo(HaveOccurred())
+			privKey := writeFile("key.pem", pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER}))
+			pubKey = writeFile("pub.pem", pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
+			kp, err := attestation.LoadFileKeys(privKey, pubKey, false)
+			Expect(err).NotTo(HaveOccurred())
+			gen, err = attestation.NewGenerator(kp)
+			Expect(err).NotTo(HaveOccurred())
+
+			ctx := context.Background()
+			layout, err = gen.CreateLayout(ctx, attestation.LayoutOptions{
+				Steps: []attestation.Step{
+					{Name: "classify", ExpectedMaterials: []string{run.URI}, ExpectedProducts: []string{"classify.output"}, Threshold: 1},
+					{Name: "synthesis", ExpectedMaterials: []string{run.URI, "classify.output"}, ExpectedProducts: []string{"synthesis.output"}, Threshold: 1},
+				},
+				ExpiresIn: time.Hour,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			out := []attestation.Artifact{{URI: "classify.output", Digest: "sha256:aaa"}}
+			linkA, err = gen.CreateLink(ctx, "classify", []attestation.Artifact{run}, out)
+			Expect(err).NotTo(HaveOccurred())
+			linkB, err = gen.CreateLink(ctx, "synthesis", append([]attestation.Artifact{run}, out...), []attestation.Artifact{{URI: "synthesis.output", Digest: "sha256:bbb"}})
+			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("rejects invalid JSON bundle", func() {
-			tmpFile, err := os.CreateTemp("", "test-bundle-*.json")
+		It("verifies a job's bundle: layout, every step's link and the chain, listing the steps and the signed job", func() {
+			stdout, _, err := execute(newRootCmd(), "results", "verify", bundleFile(linkA, linkB), "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-1")
 			Expect(err).NotTo(HaveOccurred())
-			defer os.Remove(tmpFile.Name())
-			Expect(os.WriteFile(tmpFile.Name(), []byte("not json"), 0o644)).To(Succeed())
-			tmpFile.Close()
+			Expect(stdout).To(And(ContainSubstring("Status: Verified"), ContainSubstring("classify"), ContainSubstring("synthesis"),
+				ContainSubstring("Tenant: acme"), ContainSubstring("Job: job-1"), ContainSubstring("Job config digest: sha256:cfg")))
+		})
 
-			_, _, err = execute(newRootCmd(), "results", "verify", tmpFile.Name())
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("not valid JSON"))
+		It("fails when the bundle was signed for another job, naming the job it expected", func() {
+			_, _, err := execute(newRootCmd(), "results", "verify", bundleFile(linkA, linkB), "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-2")
+			Expect(err).To(MatchError(attestation.ErrSubjectMismatch))
+			Expect(err.Error()).To(ContainSubstring("job:acme/job-2"))
+		})
+
+		DescribeTable("refuses to run without the job it verifies, verifying nothing",
+			func(args ...string) {
+				stdout, _, err := execute(newRootCmd(), append([]string{"results", "verify", bundleFile(linkA, linkB), "--public-key", pubKey}, args...)...)
+				Expect(err).To(MatchError(And(ContainSubstring("--tenant"), ContainSubstring("--job-id"))))
+				Expect(stdout).NotTo(ContainSubstring("Verified"))
+			},
+			Entry("without --job-id", "--tenant", "acme"),
+			Entry("without --tenant", "--job-id", "job-1"),
+		)
+
+		It("reports the verified steps as JSON", func() {
+			stdout, _, err := execute(newRootCmd(), "--json", "results", "verify", bundleFile(linkA, linkB), "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-1")
+			Expect(err).NotTo(HaveOccurred())
+			var got map[string]any
+			Expect(json.Unmarshal([]byte(stdout), &got)).To(Succeed())
+			Expect(got).To(HaveKeyWithValue("status", "verified"))
+			Expect(got).To(HaveKeyWithValue("steps", ConsistOf("classify", "synthesis")))
+			Expect(got).To(HaveKeyWithValue("tenant", "acme"))
+			Expect(got).To(HaveKeyWithValue("job_id", "job-1"))
+			Expect(got).To(HaveKeyWithValue("job_config_digest", "sha256:cfg"))
+		})
+
+		It("fails, naming the step, when a step's link is missing", func() {
+			_, _, err := execute(newRootCmd(), "results", "verify", bundleFile(linkA), "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-1")
+			Expect(err).To(MatchError(attestation.ErrMissingLink))
+			Expect(err.Error()).To(ContainSubstring(`"synthesis"`))
+		})
+
+		It("fails, naming the step, when a link was signed with another key", func() {
+			otherKP, err := attestation.NewEphemeralKeyProvider()
+			Expect(err).NotTo(HaveOccurred())
+			other, err := attestation.NewGenerator(otherKP)
+			Expect(err).NotTo(HaveOccurred())
+			foreign, err := other.CreateLink(context.Background(), "synthesis", linkB.Materials, linkB.Products)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, _, err = execute(newRootCmd(), "results", "verify", bundleFile(linkA, foreign), "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-1")
+			Expect(err).To(MatchError(attestation.ErrVerificationFailed))
+			Expect(err.Error()).To(ContainSubstring(`"synthesis"`))
+		})
+
+		It("refuses a single link envelope, saying which file to pass", func() {
+			path := writeFile("link.json", linkA.Raw)
+			_, _, err := execute(newRootCmd(), "results", "verify", path, "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-1")
+			Expect(err).To(MatchError(attestation.ErrInvalidBundle))
+			Expect(err.Error()).To(ContainSubstring("attestations/<tenant>/<job-id>/bundle.json"))
+		})
+
+		It("refuses a file that is not JSON", func() {
+			path := writeFile("bundle.json", []byte("not json"))
+			_, _, err := execute(newRootCmd(), "results", "verify", path, "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-1")
+			Expect(err).To(MatchError(attestation.ErrInvalidBundle))
+		})
+
+		It("refuses to run without --public-key, verifying nothing", func() {
+			stdout, _, err := execute(newRootCmd(), "results", "verify", bundleFile(linkA, linkB))
+			Expect(err).To(MatchError(ContainSubstring("--public-key")))
+			Expect(err.Error()).To(ContainSubstring("attestation.public_key_path"))
+			Expect(stdout).NotTo(ContainSubstring("Verified"))
 		})
 
 		It("errors when bundle file does not exist", func() {
-			_, _, err := execute(newRootCmd(), "results", "verify", "/nonexistent/bundle.json")
+			_, _, err := execute(newRootCmd(), "results", "verify", "/nonexistent/bundle.json", "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-1")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("read bundle file"))
 		})

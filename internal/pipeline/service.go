@@ -13,7 +13,6 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
-	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -37,12 +36,11 @@ type Service struct {
 	catalogControls  CatalogControlsReader
 	embeddingsReader EmbeddingsReader
 	embeddingConfig  config.EmbeddingConfig
-	attestor         attestation.Generator
+	attestors        Attestors
 	attConverter     *pipelineattestation.Converter
 	bus              natsbus.Client
 	storage          storage.Provider
 	cfg              config.PipelineConfig
-	attCfg           config.AttestationConfig
 	logger           *slog.Logger
 	tracer           trace.Tracer
 
@@ -52,11 +50,27 @@ type Service struct {
 	jobCounter  metric.Int64Counter
 	jobDuration metric.Float64Histogram
 
-	mu       sync.Mutex
-	wg       sync.WaitGroup
-	running  map[string]context.CancelFunc
+	mu      sync.Mutex
+	wg      sync.WaitGroup
+	running map[string]*runningJob
+	// retrying holds the job IDs a RetryJob call is acting on, so
+	// concurrent retries of one job are serialised: exactly one proceeds.
+	retrying map[string]bool
 	stopOnce sync.Once
 	stopped  chan struct{}
+}
+
+// runningJob is a job this service is executing, guarded by Service.mu.
+// completing is set, once, when executeJob claims the job's completed
+// transition; from then on CancelJob refuses, so a job ends either cancelled
+// or completed, never reported cancelled and then completed. cancelled is
+// set by CancelJob: the run is still recording the cancellation, and its
+// entry stays until executeJob returns, so no retry can start a second run
+// of the job while the first still writes.
+type runningJob struct {
+	cancel     context.CancelCauseFunc
+	completing bool
+	cancelled  bool
 }
 
 func New(
@@ -64,12 +78,11 @@ func New(
 	engine *analysis.Engine,
 	registry *analyzer.Registry,
 	synth SynthesisExecutor,
-	attestor attestation.Generator,
+	attestors Attestors,
 	converter *pipelineattestation.Converter,
 	bus natsbus.Client,
 	storageProvider storage.Provider,
 	cfg config.PipelineConfig,
-	attCfg config.AttestationConfig,
 	candidateGen candidateGenerator,
 	opts ...Option,
 ) *Service {
@@ -79,14 +92,14 @@ func New(
 		registry:     registry,
 		synthesis:    synth,
 		candidateGen: candidateGen,
-		attestor:     attestor,
+		attestors:    attestors,
 		attConverter: converter,
 		bus:          bus,
 		storage:      storageProvider,
 		cfg:          cfg,
-		attCfg:       attCfg,
 		logger:       slog.Default(),
-		running:      make(map[string]context.CancelFunc),
+		running:      make(map[string]*runningJob),
+		retrying:     make(map[string]bool),
 		stopped:      make(chan struct{}),
 	}
 	for _, opt := range opts {

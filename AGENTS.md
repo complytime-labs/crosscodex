@@ -7,7 +7,7 @@ Rules for coding agents in this Go monorepo. Rationale for the design rules belo
 Use `task` for everything; never run raw `go build` / `go test`.
 
 - `task dev:deps`, `task generate` (buf; output in gitignored `api/gen/`), `task build`, `task lint`, `task check` (lint, then unit tests, then `test:race`, sequentially)
-- `task test:unit`, `task test:property`, `task test:race` (`pkg/graphdb`, `internal/analysis`, `internal/worker` and `pkg/natsbus` with the race detector), `task test:integration:<name>` (see `task --list`), `task test:tooling` (Venom suites for repo scripts and Taskfile behaviour; run it after changing `test/e2e/*.sh` or `.taskfiles/`)
+- `task test:unit`, `task test:property`, `task test:race` (`pkg/graphdb`, `internal/analysis`, `internal/worker`, `pkg/natsbus` and `internal/pipeline` with the race detector), `task test:integration:<name>` (see `task --list`), `task test:tooling` (Venom suites for repo scripts and Taskfile behaviour; run it after changing `test/e2e/*.sh` or `.taskfiles/`)
 - Fuzzing is human-only: agents never run `task test:fuzz` or `go test -fuzz` in any form. It fuzzes every target with a worker per core and saturates the machine. When a change needs fuzzing, ask the human to run it and name the targets. CI deliberately doesn't fuzz PRs or pushes (too slow); only `fuzz-nightly.yml` fuzzes, every target.
 - `FIPS=1` on any build/test task enables BoringCrypto FIPS mode.
 - Proto changes: from `api/proto`, `go tool buf lint` and `go tool buf breaking --against '../../.git#branch=main,subdir=api/proto'` must introduce no new failures. No task or CI job runs these (`task dev:lint:proto` is protolint), and `buf lint` already has violations in `gateway.proto`.

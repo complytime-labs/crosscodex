@@ -169,6 +169,39 @@ var _ = Describe("Abandoning incomplete collections", func() {
 		Expect(abandonedCount(tp, "published")).To(BeZero())
 	})
 
+	It("publishes a cancelled collection's abandon on a context that is not cancelled but expires", func() {
+		type publishCtx struct {
+			err         error
+			hasDeadline bool
+			remaining   time.Duration
+		}
+		published := make(chan publishCtx, 1)
+		bus.PublishFunc = func(pctx context.Context, subject string, _ []byte) error {
+			if _, err := natsbus.ParseAbandonedSubject(subject); err == nil {
+				deadline, ok := pctx.Deadline()
+				published <- publishCtx{err: pctx.Err(), hasDeadline: ok, remaining: time.Until(deadline)}
+			}
+			return nil
+		}
+		handle, err := collector.PrepareCollect(ctx, request(time.Hour, time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+		done := make(chan error, 1)
+		go func() {
+			defer GinkgoRecover()
+			_, err := collector.AwaitResults(ctx, handle)
+			done <- err
+		}()
+
+		cancel()
+
+		var got publishCtx
+		Eventually(published).Should(Receive(&got))
+		Expect(got.err).NotTo(HaveOccurred())
+		Expect(got.hasDeadline).To(BeTrue(), "the abandon publish must be bounded")
+		Expect(got.remaining).To(BeNumerically("<=", 30*time.Second))
+		Eventually(done).Should(Receive(MatchError(context.Canceled)))
+	})
+
 	It("redispatches a failed task under its collection's ID", func() {
 		handle, err := collector.PrepareCollect(ctx, request(time.Second, time.Hour))
 		Expect(err).NotTo(HaveOccurred())
