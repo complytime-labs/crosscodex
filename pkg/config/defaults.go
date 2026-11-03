@@ -164,6 +164,7 @@ analysis:
     retry_max_delay: 24h
 worker:
   queue_group: "llm-workers"
+  max_abandoned_collections: 10000
 synthesis:
   confidence_threshold: 0.5
   max_mappings_per_control: 10
@@ -180,7 +181,7 @@ synthesis:
     actionable_warn: 0.30
 pipeline:
   max_concurrent_jobs: 10
-  stage_timeout: 30m
+  stage_timeout: 24h
   addr: ""
   endpoint: ""
 graph:

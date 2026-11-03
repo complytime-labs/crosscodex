@@ -28,10 +28,12 @@ type Engine struct {
 	dispatcher Dispatcher
 	collector  Collector
 	cfg        config.EngineConfig
-	taskTypes  map[string]natsbus.TaskType
-	reporter   StageReporter
-	logger     *slog.Logger
-	tracer     trace.Tracer
+	// stageTimeout caps each stage's collection; see WithStageTimeout.
+	stageTimeout time.Duration
+	taskTypes    map[string]natsbus.TaskType
+	reporter     StageReporter
+	logger       *slog.Logger
+	tracer       trace.Tracer
 
 	// Metrics (optional, nil-safe).
 	execCounter  metric.Int64Counter
@@ -366,14 +368,15 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		}
 
 		collectReq := CollectRequest{
-			TaskType:    taskType,
-			JobID:       req.JobID,
-			ExpectedIDs: expectedIDs,
-			Tasks:       dispatchTasks,
-			Timeout:     e.cfg.TaskTimeout,
-			MaxRetries:  e.cfg.MaxRetries,
-			Backoff:     e.cfg.RetryBackoff,
-			Dispatcher:  e.dispatcher,
+			TaskType:     taskType,
+			JobID:        req.JobID,
+			ExpectedIDs:  expectedIDs,
+			Tasks:        dispatchTasks,
+			Timeout:      e.cfg.TaskTimeout,
+			StageTimeout: e.stageTimeout,
+			MaxRetries:   e.cfg.MaxRetries,
+			Backoff:      e.cfg.RetryBackoff,
+			Dispatcher:   e.dispatcher,
 		}
 
 		// PrepareCollect: subscribe to result subject BEFORE dispatching tasks.
@@ -392,7 +395,14 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 
 		// Dispatch tasks: publish to work subject. Results will be published to the
 		// already-subscribed result subject, so no message can be lost.
-		if err := e.dispatcher.Dispatch(ctx, dispatchTasks, taskType, req.JobID); err != nil {
+		if err := e.dispatcher.Dispatch(ctx, dispatchTasks, taskType, req.JobID, handle.CollectionID); err != nil {
+			// AwaitResults never runs, so its deferred release and abandon do
+			// not either. Some tasks may already be out, so abandon them,
+			// after release so no retry follows the abandon.
+			if relErr := handle.release(); relErr != nil {
+				e.logger.Warn("failed to release collection subscriptions", "job_id", req.JobID, "error", relErr)
+			}
+			handle.abandon(ctx)
 			analyzerErr := fmt.Errorf("analysis: analyzer %q dispatch failed for job %q: %w: %w",
 				name, req.JobID, ErrAnalyzerFailed, err)
 			state.fail(name, analyzerErr)

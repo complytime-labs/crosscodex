@@ -819,8 +819,13 @@ logging:
 					Level  string `yaml:"level"`
 					Format string `yaml:"format"`
 				} `yaml:"logging"`
+				Pipeline struct {
+					StageTimeout time.Duration `yaml:"stage_timeout"`
+				} `yaml:"pipeline"`
 			}
 			cfg := config.ExportMustUnmarshalNode[defaultsCfg](node)
+
+			Expect(cfg.Pipeline.StageTimeout).To(Equal(24 * time.Hour))
 
 			Expect(cfg.LLM.Timeout).To(Equal(30))
 			Expect(cfg.Storage.Objects.Backend).To(Equal("local"))
@@ -1864,15 +1869,15 @@ logging:
 			Entry("rejects MaxConcurrentJobs > 100", func(c *config.Config) {
 				c.Pipeline.MaxConcurrentJobs = 101
 			}, "pipeline.max_concurrent_jobs", "must be in range [0, 100]"),
-			Entry("rejects StageTimeout > 2h", func(c *config.Config) {
-				c.Pipeline.StageTimeout = 3 * time.Hour
-			}, "pipeline.stage_timeout", "must be in range [0, 2h]"),
+			Entry("rejects zero StageTimeout, which would leave stages unbounded", func(c *config.Config) {
+				c.Pipeline.StageTimeout = 0
+			}, "pipeline.stage_timeout 0s must be in range (0, 168h]", "set a positive duration such as 24h"),
 			Entry("rejects negative StageTimeout", func(c *config.Config) {
 				c.Pipeline.StageTimeout = -1 * time.Minute
-			}, "pipeline.stage_timeout", "must be in range [0, 2h]"),
-			Entry("rejects StageTimeout just above upper boundary (2h1s)", func(c *config.Config) {
-				c.Pipeline.StageTimeout = 2*time.Hour + time.Second
-			}, "pipeline.stage_timeout", "must be in range [0, 2h]"),
+			}, "pipeline.stage_timeout -1m0s must be in range (0, 168h]", "set a positive duration such as 24h"),
+			Entry("rejects StageTimeout just above upper boundary (168h1s)", func(c *config.Config) {
+				c.Pipeline.StageTimeout = 168*time.Hour + time.Second
+			}, "pipeline.stage_timeout 168h0m1s must be in range (0, 168h]", "set a positive duration such as 24h"),
 		)
 
 		DescribeTable("accepts valid pipeline values",
@@ -1884,14 +1889,14 @@ logging:
 			Entry("passes zero MaxConcurrentJobs (default)", func(c *config.Config) {
 				c.Pipeline.MaxConcurrentJobs = 0
 			}),
-			Entry("passes zero StageTimeout (default)", func(c *config.Config) {
-				c.Pipeline.StageTimeout = 0
+			Entry("accepts StageTimeout at the lower end (1s)", func(c *config.Config) {
+				c.Pipeline.StageTimeout = time.Second
 			}),
 			Entry("accepts MaxConcurrentJobs at upper boundary (100)", func(c *config.Config) {
 				c.Pipeline.MaxConcurrentJobs = 100
 			}),
-			Entry("accepts StageTimeout at upper boundary (2h)", func(c *config.Config) {
-				c.Pipeline.StageTimeout = 2 * time.Hour
+			Entry("accepts StageTimeout at upper boundary (168h)", func(c *config.Config) {
+				c.Pipeline.StageTimeout = 168 * time.Hour
 			}),
 		)
 
@@ -2530,6 +2535,40 @@ var _ = Describe("WorkerConfig", func() {
 		Expect(err.Error()).To(ContainSubstring("whitespace"))
 		Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 	})
+
+	It("defaults max_abandoned_collections to 10000", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Worker.MaxAbandonedCollections).To(Equal(10000))
+	})
+
+	It("accepts a max_abandoned_collections override within range", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		cfgFile := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		writeTestFile(cfgFile, "worker:\n  max_abandoned_collections: 100000\n")
+
+		cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(cfgFile))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Worker.MaxAbandonedCollections).To(Equal(100000))
+	})
+
+	DescribeTable("rejects max_abandoned_collections outside [1, 100000] with an actionable error",
+		func(value string) {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			cfgFile := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			writeTestFile(cfgFile, "worker:\n  max_abandoned_collections: "+value+"\n")
+
+			_, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(cfgFile))
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err).To(MatchError(ContainSubstring("worker.max_abandoned_collections " + value + " must be in range [1, 100000]")))
+			Expect(err).To(MatchError(ContainSubstring("such as the default 10000")))
+		},
+		Entry("zero", "0"),
+		Entry("negative", "-1"),
+		Entry("above the maximum", "100001"),
+	)
 })
 
 var _ = Describe("SynthesisConfig validation", func() {

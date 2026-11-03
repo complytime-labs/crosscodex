@@ -13,6 +13,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -46,12 +48,13 @@ var _ = Describe("Handler", func() {
 
 	newWorker := func() *worker.Worker {
 		return worker.New(bus, llm, worker.WorkerConfig{
-			QueueGroup: "test-workers",
+			MaxAbandonedCollections: 10,
+			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "default-model",
 				EmbeddingModel: "default-embed",
 			},
-		}, worker.WithLogger(testspecs.GinkgoLogger()))
+		}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
 	}
 
 	Describe("Completion tasks", func() {
@@ -112,7 +115,8 @@ var _ = Describe("Handler", func() {
 
 			ctx := testspecs.SetupTenantContext("tenant-abc")
 			w := worker.New(bus, llm, worker.WorkerConfig{
-				QueueGroup: "test-workers",
+				MaxAbandonedCollections: 10,
+				QueueGroup:              "test-workers",
 				LLM: config.LLMConfig{
 					DefaultModel:   "global-model",
 					EmbeddingModel: "global-embed",
@@ -120,7 +124,7 @@ var _ = Describe("Handler", func() {
 						"tenant-abc": {DefaultModel: strPtr("tenant-specific-model")},
 					},
 				},
-			}, worker.WithLogger(testspecs.GinkgoLogger()))
+			}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
 			Expect(w.Start(ctx)).To(Succeed())
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
@@ -148,7 +152,8 @@ var _ = Describe("Handler", func() {
 
 			ctx := testspecs.SetupTenantContext("tenant-abc")
 			w := worker.New(bus, llm, worker.WorkerConfig{
-				QueueGroup: "test-workers",
+				MaxAbandonedCollections: 10,
+				QueueGroup:              "test-workers",
 				LLM: config.LLMConfig{
 					DefaultModel:   "global-model",
 					EmbeddingModel: "global-embed",
@@ -156,7 +161,7 @@ var _ = Describe("Handler", func() {
 						"tenant-abc": {EmbeddingModel: strPtr("tenant-embed-model")},
 					},
 				},
-			}, worker.WithLogger(testspecs.GinkgoLogger()))
+			}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
 			Expect(w.Start(ctx)).To(Succeed())
 			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
 
@@ -296,8 +301,8 @@ var _ = Describe("Handler", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { Expect(sub.Unsubscribe()).To(Succeed()) }()
 
-			w1 := worker.New(bus, llm, worker.WorkerConfig{QueueGroup: "shared-group", LLM: config.LLMConfig{DefaultModel: "m"}}, worker.WithLogger(testspecs.GinkgoLogger()))
-			w2 := worker.New(bus, llm, worker.WorkerConfig{QueueGroup: "shared-group", LLM: config.LLMConfig{DefaultModel: "m"}}, worker.WithLogger(testspecs.GinkgoLogger()))
+			w1 := worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, QueueGroup: "shared-group", LLM: config.LLMConfig{DefaultModel: "m"}}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
+			w2 := worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, QueueGroup: "shared-group", LLM: config.LLMConfig{DefaultModel: "m"}}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
 			Expect(w1.Start(ctx)).To(Succeed())
 			Expect(w2.Start(ctx)).To(Succeed())
 			defer func() { Expect(w1.Stop(ctx)).To(Succeed()) }()
@@ -342,8 +347,8 @@ var _ = Describe("Handler tenant validation", func() {
 				return nil, errors.New("LLM must not be called for a rejected tenant")
 			},
 		}
-		w = worker.New(bus, stubLLM, worker.WorkerConfig{},
-			worker.WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+		w = worker.New(bus, stubLLM, worker.WorkerConfig{MaxAbandonedCollections: 10},
+			worker.WithLogger(slog.New(slog.NewTextHandler(logs, nil))), worker.WithAbandonTTL(time.Hour))
 	})
 
 	DescribeTable("discards the task and logs the tenant ID rule",
@@ -365,4 +370,107 @@ var _ = Describe("Handler tenant validation", func() {
 		Entry("53-character tenant ID", "a"+strings.Repeat("b", 52), "invalid tenant ID"),
 		Entry("uppercase tenant ID", "Tenant-1", "invalid tenant ID"),
 	)
+})
+
+var _ = Describe("Handler worker progress", func() {
+	var (
+		logs *bytes.Buffer
+		bus  *natsbustest.Fake
+		llm  *llmclienttest.Fake
+		tp   *telemetrytest.TestProvider
+		w    *worker.Worker
+	)
+
+	resultSubject := "crosscodex.results.tenant-a.classify.job-1"
+
+	BeforeEach(func() {
+		logs = &bytes.Buffer{}
+		bus = &natsbustest.Fake{}
+		llm = newStubLLM()
+		var err error
+		tp, err = telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+		w = worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, LLM: config.LLMConfig{DefaultModel: "default-model"}},
+			worker.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()), worker.WithAbandonTTL(time.Hour))
+	})
+
+	classifyTask := func() *natsbus.Message {
+		data, err := proto.Marshal(BuildCompletionPayload("test", "gpt-4", 0.0, 256))
+		Expect(err).NotTo(HaveOccurred())
+		return &natsbus.Message{
+			Subject: "crosscodex.work.tenant-a.classify.job-1",
+			Data:    data,
+			Headers: map[string][]string{
+				"X-Task-Id":   {"task-1"},
+				"X-Task-Type": {string(natsbus.TaskClassify)},
+				"X-Job-Id":    {"job-1"},
+			},
+			Metadata: natsbus.MessageMetadata{TenantID: "tenant-a"},
+		}
+	}
+
+	tick := natsbustest.Publication{Subject: natsbus.WorkerProgressSubject}
+
+	It("publishes a bare progress tick after the success result", func() {
+		Expect(worker.ExportHandleMessage(w, context.Background(), classifyTask())).To(Succeed())
+
+		published := bus.Published()
+		Expect(published).To(HaveLen(2))
+		Expect(published[0].Subject).To(Equal(resultSubject))
+		Expect(published[0].Headers).NotTo(HaveKey("X-Error"))
+		Expect(published[1]).To(Equal(tick))
+	})
+
+	It("publishes a bare progress tick after the error result", func() {
+		llm.CompleteFunc = func(context.Context, *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+			return nil, errors.New("gateway timeout")
+		}
+		Expect(worker.ExportHandleMessage(w, context.Background(), classifyTask())).To(Succeed())
+
+		published := bus.Published()
+		Expect(published).To(HaveLen(2))
+		Expect(published[0].Subject).To(Equal(resultSubject))
+		Expect(published[0].Headers).To(HaveKeyWithValue("X-Error", []string{"llm_error"}))
+		Expect(published[1]).To(Equal(tick))
+	})
+
+	It("publishes no tick when the result could not be published", func() {
+		bus.PublishWithHeadersFunc = func(context.Context, string, []byte, map[string][]string) error {
+			return natsbus.ErrPublishFailed
+		}
+		Expect(worker.ExportHandleMessage(w, context.Background(), classifyTask())).To(Succeed())
+
+		published := bus.Published()
+		Expect(published).To(HaveLen(1))
+		Expect(published[0].Subject).To(Equal(resultSubject))
+	})
+
+	It("keeps the result and the task's success when the tick fails, and logs and counts the failure", func() {
+		bus.PublishWorkerProgressErr = natsbus.ErrPublishFailed
+
+		Expect(worker.ExportHandleMessage(w, context.Background(), classifyTask())).To(Succeed())
+
+		published := bus.Published()
+		Expect(published).To(HaveLen(2))
+		Expect(published[0].Subject).To(Equal(resultSubject))
+		Expect(published[0].Headers).NotTo(HaveKey("X-Error"))
+
+		Expect(logs.String()).To(ContainSubstring("level=WARN"))
+		Expect(logs.String()).To(ContainSubstring("failed to publish worker progress"))
+		Expect(logs.String()).To(ContainSubstring("analysis.engine.task_timeout"))
+		Expect(strings.Count(logs.String(), "failed to publish worker progress")).To(Equal(1))
+
+		errs := telemetrytest.FindMetric(tp.GetMetrics(), "worker.errors")
+		Expect(errs).NotTo(BeNil())
+		Expect(errs.Data).To(BeAssignableToTypeOf(metricdata.Sum[int64]{}))
+		var progressErrors int64
+		for _, dp := range errs.Data.(metricdata.Sum[int64]).DataPoints {
+			if v, ok := dp.Attributes.Value("error_category"); ok && v.AsString() == "progress_publish_error" {
+				progressErrors += dp.Value
+			}
+		}
+		Expect(progressErrors).To(Equal(int64(1)))
+	})
 })

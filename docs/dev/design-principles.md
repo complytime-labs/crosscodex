@@ -174,6 +174,8 @@ When a safety mechanism is absent or misconfigured, the system must deny access 
 
 Design every isolation boundary so that the default state — before any configuration — is "deny all."
 
+An exception to a fail-closed mechanism must be narrow enough that the worst it can do is fail safe. NATS provenance enforcement has one: the worker progress tick on `crosscodex.workers.progress` carries no tenant ID or provenance, so analysis collections can tell a busy shared worker pool from a stalled one across tenants and daemons. Only two dedicated `pkg/natsbus` methods use that subject without provenance, the tick carries no data, and its handler receives none. A tick, forged or legitimate, can only delay a stage's idle timeout, and at most until the stage's hard cap, `pipeline.stage_timeout`, which no tick resets and which validation requires to be positive. See [audit-streams.md](audit-streams.md#exception-the-worker-progress-signal).
+
 ### Errors Must Be Actionable
 
 Every error a human can trigger must tell them: what happened, why it was blocked, and what to do instead. This applies to database triggers, API responses, CLI output, and log messages. A tired operator at 2am should be able to read the error and know their next step without consulting documentation.

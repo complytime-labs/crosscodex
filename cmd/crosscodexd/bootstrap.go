@@ -531,7 +531,8 @@ func attachWorker(cfg *config.Config, shared *sharedResources, rt *runtime) erro
 	workerCfg := cfg.Worker
 	workerCfg.LLM = cfg.LLM
 	rt.workerService = worker.New(shared.natsClient, shared.llmClient, workerCfg,
-		worker.WithTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()))
+		worker.WithTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()),
+		worker.WithAbandonTTL(cfg.Pipeline.StageTimeout))
 	rt.healthServer = newHealthServer(cfg.Health.Addr)
 	return nil
 }
@@ -628,7 +629,8 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		analysis.NewNATSStageReporter(shared.natsClient, analysis.WithReporterTelemetry(tp, mp)),
 		store, pipeline.WithReporterTracer(tp))
 	engine := analysis.NewWithNATS(registry, shared.natsClient, cfg.Analysis.Engine, taskTypesByAnalyzer,
-		analysis.WithStageReporter(dbReporter), analysis.WithTelemetry(tp, mp))
+		analysis.WithStageReporter(dbReporter), analysis.WithTelemetry(tp, mp),
+		analysis.WithStageTimeout(cfg.Pipeline.StageTimeout))
 
 	candRegistry, err := pipeline.BuildCandidateRegistry(cfg.Analysis.Candidates, tp, mp)
 	if err != nil {

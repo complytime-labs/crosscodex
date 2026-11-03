@@ -288,6 +288,63 @@ func (c *client) QueueSubscribe(ctx context.Context, subject, queue string, hand
 	return &subscription{sub: sub}, nil
 }
 
+// PublishWorkerProgress publishes a bare tick on WorkerProgressSubject. It
+// deliberately bypasses PublishWithHeaders: injecting provenance would put the
+// caller's tenant ID and trace context on a subject every tenant's
+// collections receive.
+func (c *client) PublishWorkerProgress(ctx context.Context) error {
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "natsbus.PublishWorkerProgress")
+	defer span.End()
+	span.SetAttributes(attribute.String("messaging.subject", WorkerProgressSubject))
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		span.SetStatus(codes.Error, "connection closed")
+		return fmt.Errorf("publish worker progress: %w", ErrConnectionClosed)
+	}
+	c.mu.Unlock()
+
+	if err := c.conn.Publish(WorkerProgressSubject, nil); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("publish worker progress: %w: %w", ErrPublishFailed, err)
+	}
+	if c.publishCounter != nil {
+		c.publishCounter.Add(ctx, 1)
+	}
+	if c.publishLatency != nil {
+		c.publishLatency.Record(ctx, time.Since(start).Milliseconds())
+	}
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
+// SubscribeWorkerProgress subscribes handler to WorkerProgressSubject without
+// wrapHandler's provenance check, which a tick cannot pass. The NATS callback
+// discards the message, so neither its payload nor its headers reach handler.
+func (c *client) SubscribeWorkerProgress(ctx context.Context, handler func()) (Subscription, error) {
+	_, span := c.startSpan(ctx, "natsbus.SubscribeWorkerProgress")
+	defer span.End()
+	span.SetAttributes(attribute.String("messaging.subject", WorkerProgressSubject))
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		span.SetStatus(codes.Error, "connection closed")
+		return nil, fmt.Errorf("subscribe to worker progress: %w", ErrConnectionClosed)
+	}
+	c.mu.Unlock()
+
+	sub, err := c.conn.Subscribe(WorkerProgressSubject, func(*nats.Msg) { handler() })
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("subscribe to worker progress: %w: %w", ErrSubscribeFailed, err)
+	}
+	span.SetStatus(codes.Ok, "")
+	return &subscription{sub: sub}, nil
+}
+
 // CreateStream creates or updates a JetStream stream.
 func (c *client) CreateStream(ctx context.Context, cfg StreamConfig) error {
 	c.mu.Lock()
@@ -492,6 +549,14 @@ func (c *client) wrapHandler(handler MessageHandler) nats.MsgHandler {
 	return func(natsMsg *nats.Msg) {
 		headers := map[string][]string(natsMsg.Header)
 		meta, err := extractProvenance(headers)
+		if err != nil && natsMsg.Subject == WorkerProgressSubject {
+			// A catch-all generic subscriber (crosscodex.>) receives every
+			// worker progress tick, which never has provenance. Drop it like
+			// any unprovenanced message, without an error log per tick.
+			c.opts.logger.Debug("dropping worker progress tick at a generic subscriber; use SubscribeWorkerProgress to receive ticks",
+				"subject", natsMsg.Subject)
+			return
+		}
 		if err != nil {
 			c.opts.logger.Error("rejecting message: missing provenance",
 				"subject", natsMsg.Subject,

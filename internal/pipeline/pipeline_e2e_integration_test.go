@@ -243,7 +243,8 @@ var _ = Describe("Pipeline end-to-end", func() {
 		}
 
 		dbReporter := NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)
-		engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, analysis.WithStageReporter(dbReporter))
+		engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, analysis.WithStageReporter(dbReporter),
+			analysis.WithStageTimeout(time.Hour))
 
 		// Candidate generator over the real Postgres adapters.
 		candRegistry, err := BuildCandidateRegistry(analysisConfig.Candidates, nil, nil)
@@ -279,8 +280,9 @@ var _ = Describe("Pipeline end-to-end", func() {
 
 		// Real worker consuming LLM tasks off the shared bus.
 		w := worker.New(bus, fakeLLM, config.WorkerConfig{
-			LLM: config.LLMConfig{DefaultModel: e2eModel, EmbeddingModel: e2eModel},
-		})
+			MaxAbandonedCollections: 10,
+			LLM:                     config.LLMConfig{DefaultModel: e2eModel, EmbeddingModel: e2eModel},
+		}, worker.WithAbandonTTL(time.Hour))
 		Expect(w.Start(context.Background())).To(Succeed(), "start worker")
 		defer func() {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -158,4 +158,69 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 		})
 	})
+	It("a tick subscription is signalled exactly by deliveries to WorkerProgressSubject", func() {
+		subjects := rapid.SampledFrom([]string{
+			natsbus.WorkerProgressSubject,
+			natsbus.WorkerProgressSubject + ".a",
+			"crosscodex.workers",
+			"crosscodex.workers.a",
+			"crosscodex.results.tenant-a.classify.job-1",
+			"a.b",
+		})
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			fake := &natsbustest.Fake{}
+			ticks := 0
+			if _, err := fake.SubscribeWorkerProgress(context.Background(), func() { ticks++ }); err != nil {
+				t.Fatalf("subscribe worker progress: %v", err)
+			}
+			want := 0
+			for _, s := range rapid.SliceOf(subjects).Draw(t, "subjects") {
+				if s == natsbus.WorkerProgressSubject {
+					want++
+				}
+				if err := fake.Deliver(&natsbus.Message{Subject: s, Data: []byte(s)}); err != nil {
+					t.Fatalf("deliver %q: %v", s, err)
+				}
+			}
+			if ticks != want {
+				t.Fatalf("tick handler signalled %d times, want %d", ticks, want)
+			}
+		})
+	})
+
+	It("ticks interleave with publishes in Published, in call order, without data or headers", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			ctx, err := tenant.WithTenant(context.Background(), "tenant-a")
+			if err != nil {
+				t.Fatalf("tenant context: %v", err)
+			}
+			fake := &natsbustest.Fake{}
+			isTick := rapid.SliceOf(rapid.Bool()).Draw(t, "isTick")
+			for i, tick := range isTick {
+				if tick {
+					err = fake.PublishWorkerProgress(ctx)
+				} else {
+					err = fake.Publish(ctx, "a.b", []byte{byte(i)})
+				}
+				if err != nil {
+					t.Fatalf("call %d: %v", i, err)
+				}
+			}
+			got := fake.Published()
+			if len(got) != len(isTick) {
+				t.Fatalf("recorded %d publications for %d calls", len(got), len(isTick))
+			}
+			for i, tick := range isTick {
+				if tick {
+					if got[i].Subject != natsbus.WorkerProgressSubject || got[i].Data != nil || got[i].Headers != nil {
+						t.Fatalf("publication %d = %+v, want a bare tick", i, got[i])
+					}
+					continue
+				}
+				if got[i].Subject != "a.b" || !slices.Equal(got[i].Data, []byte{byte(i)}) {
+					t.Fatalf("publication %d = %+v, want subject a.b data %v", i, got[i], []byte{byte(i)})
+				}
+			}
+		})
+	})
 })

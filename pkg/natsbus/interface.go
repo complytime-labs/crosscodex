@@ -11,7 +11,14 @@ import (
 // A single Client instance serves all tenants. Tenant ID is extracted
 // from context.Context via pkg/tenant.FromContext() on every operation.
 // Provenance headers (trace ID, span ID, tenant ID, timestamp, content
-// hash) are injected automatically on publish.
+// hash) are injected automatically on publish, and subscribers drop any
+// message without them.
+//
+// The only exception is the worker progress signal on WorkerProgressSubject
+// (PublishWorkerProgress, SubscribeWorkerProgress): a tenant-free liveness
+// tick with no payload and no headers. Only those two methods skip the tenant
+// and provenance rules, and only for that subject; Publish, Subscribe and
+// QueueSubscribe apply them to it like to any other subject.
 type Client interface {
 	// Publish sends a message to the specified subject.
 	// Provenance headers are injected automatically.
@@ -30,6 +37,19 @@ type Client interface {
 	// the subject are distributed round-robin across subscribers in the
 	// same queue group.
 	QueueSubscribe(ctx context.Context, subject string, queue string, handler MessageHandler) (Subscription, error)
+
+	// PublishWorkerProgress publishes one tick on WorkerProgressSubject with
+	// an empty payload and no headers. It needs no tenant in ctx, which is
+	// used only for the local span; nothing from ctx goes on the wire.
+	PublishWorkerProgress(ctx context.Context) error
+
+	// SubscribeWorkerProgress calls handler once for every message on
+	// WorkerProgressSubject, from every publisher. The handler receives
+	// nothing from the message, so no wire data reaches it; a call means only
+	// "a worker finished a task somewhere". Unlike Subscribe it skips the
+	// provenance check, which a tick cannot pass. Every subscriber gets every
+	// tick (no queue group).
+	SubscribeWorkerProgress(ctx context.Context, handler func()) (Subscription, error)
 
 	// CreateStream creates or updates a JetStream stream.
 	// Returns nil if the stream already exists with matching configuration.

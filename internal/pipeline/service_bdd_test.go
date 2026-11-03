@@ -413,6 +413,68 @@ var _ = Describe("Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cancelResp.Msg.Cancelled).To(BeTrue())
 		})
+
+		It("abandons the running stage's collection so workers drop its queued LLM tasks", func() {
+			reg := analyzer.NewRegistry()
+			classify := newControlStub("classify")
+			classify.GenerateWorkFunc = func(_ context.Context, c *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return []analyzer.Task{{TaskID: c.GetControlId() + "-task", Payload: &emptypb.Empty{}}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](reg, classify)).To(Succeed())
+			bus := &natsbustest.Fake{}
+			dispatcher := &executorTestDispatcher{}
+			// No worker answers, so the stage waits until the job is cancelled.
+			eng := analysis.New(reg, dispatcher, analysis.NewNATSCollector(bus),
+				config.EngineConfig{TaskTimeout: time.Hour, RetryBackoff: time.Millisecond},
+				map[string]natsbus.TaskType{"classify": natsbus.TaskClassify},
+				analysis.WithStageTimeout(time.Hour))
+			cancelSvc := pipeline.New(store, eng, reg, &fakeSynthesisExecutor{}, &fakeAttestor{},
+				pipelineattestation.NewConverter(), bus, &storagetest.Fake{},
+				config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour},
+				config.AttestationConfig{Enabled: false}, nil,
+				pipeline.WithCatalogControlsReader(&fakeCatalogControlsReader{controls: []*pb.Control{
+					{ControlId: "c1", CatalogId: "cat-1"},
+				}}),
+			)
+			DeferCleanup(func() { Expect(cancelSvc.Stop(context.Background())).To(Succeed()) })
+			const jobID = "job-cancel-abandon"
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: jobID, TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+				Config: []byte(`{"catalog_id":"cat-1"}`), CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"classify", "candidate_generation", "synthesis", "graph"})).To(Succeed())
+			Expect(cancelSvc.Start(ctx)).To(Succeed())
+			dispatchedTo := func() []string {
+				dispatcher.mu.Lock()
+				defer dispatcher.mu.Unlock()
+				var ids []string
+				for _, d := range dispatcher.dispatches {
+					ids = append(ids, d.collectionID)
+				}
+				return ids
+			}
+			Eventually(dispatchedTo).Should(HaveLen(1))
+
+			_, err := cancelSvc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: jobID}))
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() pipeline.JobStatus {
+				j, err := store.GetJob(ctx, jobID)
+				if err != nil {
+					return ""
+				}
+				return j.Status
+			}).Should(Equal(pipeline.JobStatusCancelled))
+			var abandons []natsbus.AbandonedCollection
+			for _, p := range bus.Published() {
+				if c, err := natsbus.ParseAbandonedSubject(p.Subject); err == nil {
+					abandons = append(abandons, c)
+				}
+			}
+			Expect(abandons).To(Equal([]natsbus.AbandonedCollection{{
+				TenantID: "test-tenant", TaskType: natsbus.TaskClassify, JobID: jobID, CollectionID: dispatchedTo()[0],
+			}}))
+		})
 	})
 
 	Describe("synthesis over a corrupt relationship result", func() {

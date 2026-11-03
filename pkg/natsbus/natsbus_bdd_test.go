@@ -1,15 +1,19 @@
 package natsbus_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
@@ -807,6 +811,69 @@ var _ = Describe("NATSBus System", Ordered, func() {
 			It("detects external mode from non-empty URL", func() {
 				Expect(natsbus.IsEmbeddedMode("nats://localhost:4222")).To(BeFalse())
 			})
+		})
+	})
+})
+
+var _ = Describe("WorkerProgressSubject", func() {
+	It("is the single fixed tick subject, with no tenant token", func() {
+		Expect(natsbus.WorkerProgressSubject).To(Equal("crosscodex.workers.progress"))
+	})
+
+	DescribeTable("is outside every tenant-scoped subscription pattern",
+		func(pattern string) {
+			Expect(server.SubjectMatchesFilter(natsbus.WorkerProgressSubject, pattern)).To(BeFalse())
+		},
+		Entry("worker work glob", "crosscodex.work.>"),
+		Entry("results", "crosscodex.results.>"),
+		Entry("audit", "crosscodex.audit.>"),
+		Entry("pipeline stages", "crosscodex.pipeline.*.*.stage.*"),
+		Entry("catalog parsed", "crosscodex.catalog.*.*.parsed"),
+		Entry("feedback", "crosscodex.feedback.*.*"),
+	)
+
+	// A generic subscriber on one of these would receive every tick, so
+	// wrapHandler must drop ticks quietly (see the spec below).
+	DescribeTable("is inside catch-all subscription patterns",
+		func(pattern string) {
+			Expect(server.SubjectMatchesFilter(natsbus.WorkerProgressSubject, pattern)).To(BeTrue())
+		},
+		Entry("everything under crosscodex", "crosscodex.>"),
+		Entry("any two tokens under crosscodex", "crosscodex.*.*"),
+	)
+
+	Describe("at a generic subscriber", func() {
+		var (
+			logs    *bytes.Buffer
+			called  bool
+			handler func(*nats.Msg)
+		)
+
+		BeforeEach(func() {
+			logs = &bytes.Buffer{}
+			called = false
+			logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			handler = natsbus.ExportWrapHandlerWithLogger(logger, func(context.Context, *natsbus.Message) error {
+				called = true
+				return nil
+			})
+		})
+
+		It("drops a tick, which has no provenance, logging it at debug rather than error", func() {
+			handler(&nats.Msg{Subject: natsbus.WorkerProgressSubject})
+
+			Expect(called).To(BeFalse(), "a tick reached a generic handler")
+			Expect(logs.String()).NotTo(ContainSubstring("level=ERROR"))
+			Expect(logs.String()).To(ContainSubstring("level=DEBUG"))
+			Expect(logs.String()).To(ContainSubstring("dropping worker progress tick"))
+		})
+
+		It("still drops an unprovenanced message on any other subject and logs it at error", func() {
+			handler(&nats.Msg{Subject: "crosscodex.work.acme-corp.classify.job-1", Data: []byte("forged")})
+
+			Expect(called).To(BeFalse(), "an unprovenanced message reached the handler")
+			Expect(logs.String()).To(ContainSubstring("level=ERROR"))
+			Expect(logs.String()).To(ContainSubstring("rejecting message: missing provenance"))
 		})
 	})
 })

@@ -8,6 +8,8 @@ var (
 	ErrNilInput         = errors.New("analysis: input must not be nil")
 	ErrUnknownTaskType  = errors.New("analysis: no task type mapping for analyzer")
 	ErrTaskTimeout      = errors.New("analysis: task collection timed out")
+	ErrStageTimeout     = errors.New("analysis: stage exceeded pipeline.stage_timeout")
+	ErrNoStageTimeout   = errors.New("analysis: collection has no stage timeout")
 	ErrRetryExhausted   = errors.New("analysis: task retries exhausted")
 	ErrAnalyzerFailed   = errors.New("analysis: analyzer execution failed")
 	ErrDependencyFailed = errors.New("analysis: dependency analyzer failed")

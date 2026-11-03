@@ -36,13 +36,17 @@ var _ = Describe("NATSDispatcher", func() {
 				{TaskID: "t-2", TaskType: "classify", Payload: payload},
 			}
 
-			err := dispatcher.Dispatch(ctx, tasks, natsbus.TaskClassify, "job-1")
+			err := dispatcher.Dispatch(ctx, tasks, natsbus.TaskClassify, "job-1", "coll-1")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(fake.Published()).To(HaveLen(2))
 
 			Expect(fake.Published()[0].Headers[analysis.ExportHeaderTaskID]).To(Equal([]string{"t-1"}))
 			Expect(fake.Published()[0].Headers[analysis.ExportHeaderRetryCount]).To(Equal([]string{"0"}))
 			Expect(fake.Published()[1].Headers[analysis.ExportHeaderTaskID]).To(Equal([]string{"t-2"}))
+			for _, p := range fake.Published() {
+				Expect(p.Headers[analysis.ExportHeaderCollectionID]).To(Equal([]string{"coll-1"}),
+					"workers drop a task by the collection ID it carries")
+			}
 		})
 
 		It("writes the routing task type into the header, not the task's own analyzer name", func() {
@@ -53,14 +57,14 @@ var _ = Describe("NATSDispatcher", func() {
 			payload, _ := structpb.NewStruct(map[string]interface{}{"key": "val"})
 			tasks := []analyzer.Task{{TaskID: "t-1", TaskType: "embedding", Payload: payload}}
 
-			err := dispatcher.Dispatch(ctx, tasks, natsbus.TaskEmbed, "job-1")
+			err := dispatcher.Dispatch(ctx, tasks, natsbus.TaskEmbed, "job-1", "coll-1")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(fake.Published()).To(HaveLen(1))
 			Expect(fake.Published()[0].Headers[analysis.ExportHeaderTaskType]).To(Equal([]string{string(natsbus.TaskEmbed)}))
 		})
 
 		It("returns error when tenant context is missing", func() {
-			err := dispatcher.Dispatch(context.Background(), []analyzer.Task{{TaskID: "t-1"}}, natsbus.TaskClassify, "job-1")
+			err := dispatcher.Dispatch(context.Background(), []analyzer.Task{{TaskID: "t-1"}}, natsbus.TaskClassify, "job-1", "coll-1")
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, analysis.ErrNoTenant)).To(BeTrue())
 			Expect(fake.Published()).To(BeEmpty())
@@ -73,7 +77,7 @@ var _ = Describe("NATSDispatcher", func() {
 			payload, _ := structpb.NewStruct(map[string]interface{}{})
 			tasks := []analyzer.Task{{TaskID: "t-1", TaskType: "classify", Payload: payload}}
 
-			err := dispatcher.Dispatch(ctx, tasks, natsbus.TaskClassify, "job-1")
+			err := dispatcher.Dispatch(ctx, tasks, natsbus.TaskClassify, "job-1", "coll-1")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("t-1"))
 			Expect(err.Error()).To(ContainSubstring("connection lost"))
@@ -85,9 +89,17 @@ var _ = Describe("NATSDispatcher", func() {
 			payload, _ := structpb.NewStruct(map[string]interface{}{})
 			task := analyzer.Task{TaskID: "t-1", TaskType: "classify", Payload: payload}
 
-			err := dispatcher.Redispatch(ctx, task, natsbus.TaskClassify, "job-1", 2)
+			err := dispatcher.Redispatch(ctx, task, natsbus.TaskClassify, "job-1", "coll-1", 2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(fake.Published()[0].Headers[analysis.ExportHeaderRetryCount]).To(Equal([]string{"2"}))
+		})
+
+		It("carries the collection ID, so a retry of an abandoned collection is dropped too", func() {
+			payload, _ := structpb.NewStruct(map[string]interface{}{})
+			task := analyzer.Task{TaskID: "t-1", TaskType: "classify", Payload: payload}
+
+			Expect(dispatcher.Redispatch(ctx, task, natsbus.TaskClassify, "job-1", "coll-1", 1)).To(Succeed())
+			Expect(fake.Published()[0].Headers[analysis.ExportHeaderCollectionID]).To(Equal([]string{"coll-1"}))
 		})
 	})
 })

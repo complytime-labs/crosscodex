@@ -3,6 +3,7 @@ package natsbus_test
 import (
 	"strings"
 
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"pgregory.net/rapid"
@@ -108,6 +109,35 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Expect(p).NotTo(ContainSubstring(">"),
 							"%s output contains wildcard >: %q", b.name, subject)
 					}
+				}
+			})
+		})
+	})
+
+	Context("AbandonedSubject and ParseAbandonedSubject — round trip", func() {
+		It("parses every subject AbandonedSubject builds back into the same collection", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				want := natsbus.AbandonedCollection{
+					TenantID: validTenantGen().Draw(t, "tenant"),
+					TaskType: rapid.SampledFrom([]natsbus.TaskType{
+						natsbus.TaskClassify, natsbus.TaskRelate, natsbus.TaskRequires, natsbus.TaskArtifacts, natsbus.TaskEmbed,
+					}).Draw(t, "task-type"),
+					JobID: safeTokenGen().Draw(t, "job-id"),
+					CollectionID: uuid.Must(uuid.FromBytes(
+						rapid.SliceOfN(rapid.Byte(), 16, 16).Draw(t, "collection-id"))).String(),
+				}
+				subject, err := natsbus.AbandonedSubject(want)
+				if err != nil {
+					// The tenant generator can produce IDs ValidateTenantID
+					// rejects (reserved names); the builder must reject them.
+					return
+				}
+				got, err := natsbus.ParseAbandonedSubject(subject)
+				if err != nil {
+					t.Fatalf("ParseAbandonedSubject rejected built subject %q: %v", subject, err)
+				}
+				if got != want {
+					t.Fatalf("round trip of %q: got %+v, want %+v", subject, got, want)
 				}
 			})
 		})

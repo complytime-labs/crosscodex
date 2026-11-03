@@ -35,6 +35,12 @@ Tenant administration (#31):
 
 - The gateway refuses every non-health request, with `PermissionDenied`, from a tenant whose `tenants` row is missing, suspended or deleted. The initial schema creates the `tenant_admin` role that `crosscodexd admin tenant` connects as, so tenants can only be provisioned after `crosscodexd migrate` runs. Once crosscodexd has migrated, set the role's password and `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`, then run `crosscodexd admin tenant create` for each authenticated tenant before sending it traffic; requests from that tenant are refused until then. Roles `all` and `gateway` refuse to start until `crosscodexd migrate` has provisioned `tenants.default_tenant`. See [Tenant administration](deploy/README.md#tenant-administration).
 
+Analysis stage limits (#237):
+
+- `pipeline.stage_timeout` now caps every analyzer stage. Its default is 24h (was 30m, unused), and `0` is rejected: a config that sets `stage_timeout: 0` or more than `168h` fails to load. Raise it if a catalog's stage legitimately runs longer than 24h.
+- `analysis.engine.task_timeout` now fails a stage only when the whole LLM worker pool has been silent that long, not when the stage alone has had no result.
+- When an analyzer stage times out, fails to dispatch, or its job is cancelled, LLM workers drop that stage's still-queued tasks instead of calling the model for results nobody reads; a resumed or retried job's new run is unaffected. Only workers and pipelines from this release do this: an older worker runs every task, and a newer worker runs tasks from an older pipeline normally. See [Control Messages: Abandoned Collections](docs/dev/audit-streams.md#control-messages-abandoned-collections).
+
 Identity lifecycle (#195):
 
 - Tenants and SAME_AS verdicts can no longer be deleted by any role short of the database owner or a superuser deliberately disabling triggers (see [Identity Lifecycle](docs/dev/design-principles.md#identity-lifecycle)). Retire a tenant or reviewer with the soft-delete commands under [Tenant administration](#tenant-administration).
@@ -312,6 +318,10 @@ auth:
 
 # Analysis
 analysis:
+  engine:
+    task_timeout: 5m                     # (0, 30m]; fail a stage when neither its own results nor any worker progress arrive for this long
+    max_retries: 3                       # Redispatches of a failed task
+    retry_backoff: 1s                    # Base delay before a redispatch
   classification:
     enabled: true
     model: ""                     # Inherits from llm.default_model
@@ -370,6 +380,12 @@ analysis:
     panel_concurrency: 4                 # Completions in flight per pair
     retry_base_delay: 1m                 # Wait after a pair's first failed panel, doubling per failure
     retry_max_delay: 24h                 # Cap on that wait; at least retry_base_delay
+
+worker:
+  max_abandoned_collections: 10000        # [1, 100000]; abandoned stages each worker remembers so it can drop their queued LLM tasks; raise it if more stages are abandoned within one stage_timeout (global-only)
+
+pipeline:
+  stage_timeout: 24h                      # (0, 168h]; hard cap on each analyzer stage, which worker progress never extends; fails a stage whose task was lost
 
 graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)

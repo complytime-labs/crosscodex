@@ -153,7 +153,7 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 					Order:   []config.PromptLayerEntry{{ID: "embedded"}},
 				},
 			}
-			cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
+			cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}
 			cfg.Attestation = config.AttestationConfig{
 				PrivateKeyPath: testAttestationPrivateKeyPath,
 				PublicKeyPath:  testAttestationPublicKeyPath,

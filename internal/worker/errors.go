@@ -24,6 +24,14 @@ var ErrTenantConfig = errors.New("worker: tenant config resolution failed")
 // not been started.
 var ErrNotStarted = errors.New("worker: not started")
 
+// ErrNoAbandonTTL indicates Start was called on a worker built without a
+// positive WithAbandonTTL, so it could not honor abandoned collections.
+var ErrNoAbandonTTL = errors.New("worker: no abandon TTL")
+
+// ErrNoAbandonedCollectionsLimit indicates Start was called on a worker whose
+// WorkerConfig.MaxAbandonedCollections is not positive.
+var ErrNoAbandonedCollectionsLimit = errors.New("worker: no abandoned collections limit")
+
 // ErrAlreadyStarted indicates Start was called on a worker that is already
 // running.
 var ErrAlreadyStarted = errors.New("worker: already started")

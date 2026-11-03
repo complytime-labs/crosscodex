@@ -441,6 +441,17 @@ type AnalysisConfig struct {
 
 // EngineConfig configures the analysis engine orchestrator.
 type EngineConfig struct {
+	// TaskTimeout is how long an analyzer stage waits while the whole LLM
+	// worker pool is silent before it fails. Any task result of the stage,
+	// or any worker progress tick, resets the timer. A worker ticks after
+	// any task result it publishes, success or error (including an error
+	// that will be retried), for any stage, job, tenant or daemon; it sends
+	// no tick when the result publish fails or the task is dropped before
+	// any result. It does not cap the stage's total duration: a stage of
+	// thousands of LLM tasks runs as long as the pool keeps finishing tasks,
+	// even while it works through another stage's queue. So it does not
+	// catch a lost task while the pool stays busy; pipeline.stage_timeout
+	// does, and bounds how long ticks can delay this timeout. Range (0, 30m].
 	TaskTimeout  time.Duration `yaml:"task_timeout" json:"task_timeout"`
 	MaxRetries   int           `yaml:"max_retries" json:"max_retries"`
 	RetryBackoff time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
@@ -740,6 +751,17 @@ type WorkerConfig struct {
 	// receive round-robin task distribution. Defaults to "llm-workers".
 	QueueGroup string `yaml:"queue_group" json:"queue_group"`
 
+	// MaxAbandonedCollections caps how many abandoned analysis collections
+	// each worker remembers, for up to pipeline.stage_timeout each, so it
+	// can drop their queued tasks before calling the LLM. When more
+	// collections are abandoned within one stage_timeout, the oldest are
+	// forgotten and their remaining tasks run and are billed for nothing.
+	// An entry costs about 430 bytes with UUID job IDs, so the default 10000
+	// is about 4.3 MB and the maximum 100000 about 43 MB (see
+	// internal/worker/abandoned.go for the arithmetic). Range [1, 100000]. Global-only: one worker
+	// serves every tenant, so the set and its cap are shared.
+	MaxAbandonedCollections int `yaml:"max_abandoned_collections" json:"max_abandoned_collections"`
+
 	// LLM holds the global LLM configuration with optional per-tenant overrides.
 	// Wired from the top-level LLMConfig at the service layer; not duplicated here.
 	// Set by the service binary via ServiceConfig().Worker.LLM = cfg.LLM.
@@ -753,13 +775,33 @@ func (c *WorkerConfig) Validate() error {
 		return fmt.Errorf("worker.queue_group %q contains only whitespace: use a non-empty group name or leave empty to use the default %q: %w",
 			c.QueueGroup, "llm-workers", ErrInvalidConfig)
 	}
+	if c.MaxAbandonedCollections < 1 || c.MaxAbandonedCollections > MaxAbandonedCollectionsLimit {
+		return fmt.Errorf("worker.max_abandoned_collections %d must be in range [1, %d]: it caps how many abandoned collections each worker remembers; "+
+			"set a positive count such as the default %d, and raise it if worker.tasks.dropped stays low while abandons are frequent: %w",
+			c.MaxAbandonedCollections, MaxAbandonedCollectionsLimit, 10000, ErrInvalidConfig)
+	}
 	return nil
 }
 
+// MaxAbandonedCollectionsLimit is the largest accepted
+// worker.max_abandoned_collections; it keeps one worker's abandoned set
+// within about 43 MB with UUID job IDs.
+const MaxAbandonedCollectionsLimit = 100_000
+
 // PipelineConfig configures the pipeline orchestration service.
 type PipelineConfig struct {
-	MaxConcurrentJobs int           `yaml:"max_concurrent_jobs" json:"max_concurrent_jobs"`
-	StageTimeout      time.Duration `yaml:"stage_timeout" json:"stage_timeout"`
+	MaxConcurrentJobs int `yaml:"max_concurrent_jobs" json:"max_concurrent_jobs"`
+	// StageTimeout is the hard cap on how long one analyzer stage waits for
+	// its task results, however busy the worker pool is. Worker progress
+	// ticks reset analysis.engine.task_timeout but never this cap, so it is
+	// what fails a stage whose task was lost (work runs on core NATS, with
+	// no redelivery) while other stages keep the pool busy. Range (0, 168h]:
+	// zero is rejected so no stage is unbounded. A real catalog's pair stage
+	// can take hours (requires needed 2h12m for 621 LLM tasks on NIST CSF
+	// 2.0), hence the 24h default. It also bounds how long each LLM worker
+	// remembers an abandoned collection (worker.WithAbandonTTL), since no
+	// collection outlives it. Global-only.
+	StageTimeout time.Duration `yaml:"stage_timeout" json:"stage_timeout"`
 	// Addr is the bind address for the standalone "pipeline" role's own
 	// Connect RPC listener (see internal/pipeline.Server). Empty by
 	// default -- only required when running --role pipeline.
@@ -778,8 +820,8 @@ func (c *PipelineConfig) Validate() error {
 		return fmt.Errorf("pipeline.max_concurrent_jobs %d must be in range [0, 100]: %w",
 			c.MaxConcurrentJobs, ErrInvalidConfig)
 	}
-	if c.StageTimeout < 0 || c.StageTimeout > 2*time.Hour {
-		return fmt.Errorf("pipeline.stage_timeout %s must be in range [0, 2h]: %w",
+	if c.StageTimeout <= 0 || c.StageTimeout > 168*time.Hour {
+		return fmt.Errorf("pipeline.stage_timeout %s must be in range (0, 168h]: it caps how long each analyzer stage may run, so set a positive duration such as 24h: %w",
 			c.StageTimeout, ErrInvalidConfig)
 	}
 	return nil

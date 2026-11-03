@@ -248,7 +248,7 @@ func allRoleTestConfig(dsn, tenantID string) *config.Config {
 			Order:   []config.PromptLayerEntry{{ID: "embedded"}},
 		},
 	}
-	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
+	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}
 	cfg.Attestation = config.AttestationConfig{
 		PrivateKeyPath: testAttestationPrivateKeyPath,
 		PublicKeyPath:  testAttestationPublicKeyPath,

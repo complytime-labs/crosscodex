@@ -12,6 +12,12 @@
 //   - After Close, every method except Close returns natsbus.ErrConnectionClosed.
 //   - Publish and PublishWithHeaders require a tenant in the context
 //     (tenant.FromContext); without one they return the tenant error.
+//   - PublishWorkerProgress and SubscribeWorkerProgress, the tenant-free
+//     worker progress signal, need no tenant and are bound to
+//     natsbus.WorkerProgressSubject. A tick is recorded in Published as
+//     Publication{Subject: natsbus.WorkerProgressSubject} with no data or
+//     headers, and Deliver signals a tick handler only for a message on
+//     exactly that subject, passing it nothing from the message.
 //
 // A rejected call is not recorded, so a spec asserting that code under test
 // must not publish needs a tenant-scoped context (tenant.WithTenant);
@@ -45,11 +51,12 @@
 //     scripted by a <Method>Func field with the method's exact signature
 //     (Fake.CreateStreamFunc, Fake.PublishFunc). When set, it alone decides
 //     the result; an accepted call is still recorded if the fake records that
-//     method. Fake has no argument-free error-only method to script, so it
-//     has no <Method>Err field; Sub, which fakes such methods, uses
-//     Sub.UnsubscribeErr and Sub.DrainErr.
-//   - Publish and PublishWithHeaders record and return nil, Subscribe and
-//     QueueSubscribe record and return a Sub, and Close returns nil. These
+//     method. An argument-free error-only method is scripted by a
+//     <Method>Err field instead: Fake.PublishWorkerProgressErr (its context
+//     only parents a span), Sub.UnsubscribeErr and Sub.DrainErr.
+//   - Publish, PublishWithHeaders and PublishWorkerProgress record and return
+//     nil, Subscribe, QueueSubscribe and SubscribeWorkerProgress record and
+//     return a Sub, and Close returns nil. These
 //     are the natural defaults. An unset CreateStreamFunc, DeleteStreamFunc or
 //     AuditStreamRetentionFunc makes the method return an error wrapping
 //     ErrUnscripted that names the field to set, so an unexpected call fails

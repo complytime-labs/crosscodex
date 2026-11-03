@@ -50,18 +50,22 @@ tasks:
         exit $status
 
   race:
-    desc: Run pkg/graphdb unit tests with the race detector
+    desc: Run unit tests of the concurrency-heavy packages (graphdb, analysis, worker, natsbus) with the race detector
+    vars:
+      PKGS: '{{.PKGS | default "./pkg/graphdb/... ./internal/analysis/... ./internal/worker/... ./pkg/natsbus/..."}}'
     deps:
       - :dev:deps
       - :dev:generate
     cmds:
       - mkdir -p {{.TEST_DIR}}
-      # memdriver is shared by concurrent NATS subscriber tests; its locking
-      # is only proven under the race detector.
+      # memdriver is shared by concurrent NATS subscriber tests, and the
+      # analysis collector, worker and natsbus hand messages between NATS
+      # callback goroutines and their callers; that locking is only proven
+      # under the race detector.
       # See test:unit for --keep-going, --output-dir and the status handling.
       - |
         status=0
-        go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --keep-going --race --randomize-all --fail-on-pending --output-dir {{.TEST_DIR}} --json-report=race-report.json ./pkg/graphdb/... || status=$?
+        go run github.com/onsi/ginkgo/v2/ginkgo run --procs {{.GOMEGA_PROCS}} -r --keep-going --race --randomize-all --fail-on-pending --output-dir {{.TEST_DIR}} --json-report=race-report.json {{.PKGS}} || status=$?
         go run github.com/trevor-vaughan/ginkgoleaf/cmd/ginkgoleaf@v0.1.0 -in {{.TEST_DIR}}/race-report.json -format {{.GINKGOLEAF_FORMAT}} -exit-code || status=$?
         exit $status
 

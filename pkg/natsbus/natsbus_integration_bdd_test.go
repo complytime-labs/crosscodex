@@ -23,6 +23,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // newEmbeddedClient creates an embedded NATS client for testing.
@@ -636,6 +637,194 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 				Eventually(handlerCalled.Load, 5*time.Second, 10*time.Millisecond).Should(BeTrue(),
 					"handler was NOT called for a message with correct content hash; expected acceptance")
 			})
+		})
+	})
+
+	// -----------------------------------------------------------------------
+	// Worker progress signal: the one tenant-free, provenance-free path
+	// -----------------------------------------------------------------------
+
+	Describe("Worker Progress Signal", func() {
+		// tickCounter subscribes a counting tick handler through client.
+		tickCounter := func(client natsbus.Client) *atomic.Int64 {
+			var n atomic.Int64
+			sub, err := client.SubscribeWorkerProgress(context.Background(), func() { n.Add(1) })
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(sub.Unsubscribe)
+			return &n
+		}
+
+		// messageCounter subscribes a counting generic handler through client.
+		messageCounter := func(client natsbus.Client, subject string) *atomic.Int64 {
+			var n atomic.Int64
+			sub, err := client.Subscribe(testTenantCtx("acme-corp"), subject, func(context.Context, *natsbus.Message) error {
+				n.Add(1)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(sub.Unsubscribe)
+			return &n
+		}
+
+		// Publishes and subscriptions on one connection reach the server in
+		// order, so a tick published last on the same client is a barrier:
+		// once it is counted, every earlier publish has been delivered or
+		// dropped.
+
+		It("delivers a tick published without a tenant to every tick subscriber", func() {
+			client := newEmbeddedClient()
+			first, second := tickCounter(client), tickCounter(client)
+
+			Expect(client.PublishWorkerProgress(context.Background())).To(Succeed())
+
+			Eventually(first.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(1)))
+			Eventually(second.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(1)))
+		})
+
+		It("delivers ticks between clients of the same server, as between daemons", func() {
+			es, err := natsbus.ExportStartEmbedded(config.NATSEmbeddedConfig{StoreDir: filepath.Join(GinkgoT().TempDir(), "nats-store")}, slog.Default())
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(es.Shutdown)
+			connect := func() natsbus.Client {
+				c, err := natsbus.New(config.NATSConfig{URL: es.ClientURL(), Streams: defaultTestStreamsConfig()})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(c.Close)
+				return c
+			}
+			publisher, subscriber := connect(), connect()
+			ticks := tickCounter(subscriber)
+
+			// The subscription lives on another connection, so keep ticking
+			// until the server has registered it.
+			Eventually(func() int64 {
+				Expect(publisher.PublishWorkerProgress(context.Background())).To(Succeed())
+				return ticks.Load()
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 1))
+		})
+
+		It("rejects a generic Publish to the tick subject without a tenant, actionably, and delivers nothing", func() {
+			client := newEmbeddedClient()
+			ticks := tickCounter(client)
+			generic := messageCounter(client, natsbus.WorkerProgressSubject)
+
+			err := client.Publish(context.Background(), natsbus.WorkerProgressSubject, []byte("forged"))
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+			Expect(err.Error()).To(ContainSubstring("publish to " + natsbus.WorkerProgressSubject + ": tenant required"))
+
+			Expect(client.PublishWorkerProgress(context.Background())).To(Succeed())
+			Eventually(ticks.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(1)),
+				"only the barrier tick may arrive; the rejected publish must not")
+			Consistently(ticks.Load, 300*time.Millisecond, 10*time.Millisecond).Should(Equal(int64(1)))
+			Consistently(generic.Load, 300*time.Millisecond, 10*time.Millisecond).Should(BeZero())
+		})
+
+		It("keeps dropping ticks at a generic subscriber on the tick subject, which still requires provenance", func() {
+			client := newEmbeddedClient()
+			generic := messageCounter(client, natsbus.WorkerProgressSubject)
+			ticks := tickCounter(client)
+
+			Expect(client.PublishWorkerProgress(context.Background())).To(Succeed())
+
+			Eventually(ticks.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(1)))
+			Consistently(generic.Load, 500*time.Millisecond, 10*time.Millisecond).Should(BeZero(),
+				"a generic handler received a tick, which carries no provenance")
+		})
+
+		It("signals a tick subscriber with only the call for a tenant-scoped message on the tick subject", func() {
+			client := newEmbeddedClient()
+			ticks := tickCounter(client)
+
+			// The handler takes no arguments, so the payload and the
+			// provenance headers of this message cannot reach it.
+			Expect(client.Publish(testTenantCtx("acme-corp"), natsbus.WorkerProgressSubject, []byte("tenant data"))).To(Succeed())
+
+			Eventually(ticks.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(1)))
+		})
+
+		DescribeTable("never signals a tick subscriber for a message on another subject",
+			func(subject string) {
+				client := newEmbeddedClient()
+				ticks := tickCounter(client)
+
+				Expect(client.Publish(testTenantCtx("acme-corp"), subject, []byte("tenant data"))).To(Succeed())
+				Expect(client.PublishWorkerProgress(context.Background())).To(Succeed())
+
+				Eventually(ticks.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(1)))
+				Consistently(ticks.Load, 300*time.Millisecond, 10*time.Millisecond).Should(Equal(int64(1)),
+					"the tick handler was signalled by a message on %s", subject)
+			},
+			Entry("a result subject", "crosscodex.results.acme-corp.classify.job-001"),
+			Entry("a longer subject under the tick subject", natsbus.WorkerProgressSubject+".acme-corp"),
+			Entry("the tick subject's parent", "crosscodex.workers"),
+		)
+
+		It("still drops an unprovenanced message on another subject while a tick subscription is active", func() {
+			es, err := natsbus.ExportStartEmbedded(config.NATSEmbeddedConfig{StoreDir: filepath.Join(GinkgoT().TempDir(), "nats-store")}, slog.Default())
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(es.Shutdown)
+			client, err := natsbus.New(config.NATSConfig{URL: es.ClientURL(), Streams: defaultTestStreamsConfig()})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(client.Close)
+			rawConn, err := nats.Connect(es.ClientURL())
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(rawConn.Close)
+
+			tickCounter(client)
+			subject := "crosscodex.work.acme-corp.classify.job-raw"
+			received := make(chan []byte, 64)
+			sub, err := client.Subscribe(testTenantCtx("acme-corp"), subject, func(_ context.Context, msg *natsbus.Message) error {
+				received <- msg.Data
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(sub.Unsubscribe)
+
+			provenanced := func(payload []byte) *nats.Msg {
+				return &nats.Msg{
+					Subject: subject,
+					Data:    payload,
+					Header: nats.Header{
+						natsbus.HeaderTraceID:       []string{"0af7651916cd43dd8448eb211c80319c"}, // DevSkim: ignore DS173237 - OTel trace ID test fixture, not a credential
+						natsbus.HeaderSpanID:        []string{"b7ad6b7169203331"},
+						natsbus.HeaderTenantID:      []string{"acme-corp"},
+						natsbus.HeaderTimestamp:     []string{time.Now().UTC().Format(time.RFC3339Nano)},
+						natsbus.HeaderContentSHA256: []string{natsbus.ContentHash(payload)},
+					},
+				}
+			}
+
+			// The subscription lives on another connection: probe until the
+			// server routes to it.
+			Eventually(func() int {
+				Expect(rawConn.PublishMsg(provenanced([]byte("probe")))).To(Succeed())
+				return len(received)
+			}, 5*time.Second, 20*time.Millisecond).Should(BeNumerically(">=", 1))
+
+			// Messages from one connection arrive in order, so once the
+			// barrier is received the unprovenanced message has been handled.
+			Expect(rawConn.Publish(subject, []byte("unprovenanced"))).To(Succeed())
+			Expect(rawConn.PublishMsg(provenanced([]byte("barrier")))).To(Succeed())
+			Expect(rawConn.Flush()).To(Succeed())
+
+			var seen []string
+			Eventually(func() []string {
+				select {
+				case d := <-received:
+					seen = append(seen, string(d))
+				default:
+				}
+				return seen
+			}, 5*time.Second, time.Millisecond).Should(ContainElement("barrier"))
+			Expect(seen).NotTo(ContainElement("unprovenanced"), "the unprovenanced message reached the handler")
+		})
+
+		It("fails PublishWorkerProgress and SubscribeWorkerProgress after Close", func() {
+			client := newEmbeddedClient()
+			Expect(client.Close()).To(Succeed())
+
+			Expect(client.PublishWorkerProgress(context.Background())).To(MatchError(natsbus.ErrConnectionClosed))
+			_, err := client.SubscribeWorkerProgress(context.Background(), func() {})
+			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
 		})
 	})
 })

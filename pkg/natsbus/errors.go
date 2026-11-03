@@ -19,6 +19,11 @@ var (
 	// due to invalid tenant ID, job ID, or edge ID.
 	ErrInvalidSubject = errors.New("invalid subject")
 
+	// ErrInvalidJobID indicates a job ID cannot be a subject token: it is
+	// empty, contains a NATS subject delimiter, or is longer than
+	// MaxJobIDLength. Errors wrapping it also wrap ErrInvalidSubject.
+	ErrInvalidJobID = errors.New("invalid job ID")
+
 	// ErrEmbeddedStart indicates the embedded NATS server failed to start.
 	ErrEmbeddedStart = errors.New("failed to start embedded NATS server")
 

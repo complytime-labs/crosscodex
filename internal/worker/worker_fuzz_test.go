@@ -1,10 +1,16 @@
 package worker
 
 import (
+	"context"
+	"log/slog"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 )
 
 // FuzzExtractCompletionRequest feeds arbitrary bytes to the proto + payload
@@ -91,5 +97,43 @@ func FuzzExtractEmbeddingRequest(f *testing.F) {
 			return
 		}
 		_, _ = extractEmbeddingRequest(payload, "tenant-fuzz", "job-fuzz")
+	})
+}
+
+// FuzzHandleAbandoned feeds arbitrary control messages to the worker's
+// abandon handler, the deserialization point for messages anyone on the bus
+// can publish. It must never panic or fail the subscription, and it may
+// record an abandon only for a well-formed, payload-free message whose
+// provenance tenant is the subject's tenant.
+func FuzzHandleAbandoned(f *testing.F) {
+	valid := "crosscodex.control.tenant-a.relate.job-1.0b7e7a9e-5f6c-4a51-9d7e-3c1f2b8a4d10.abandoned"
+	f.Add(valid, "tenant-a", []byte{})
+	f.Add(valid, "tenant-b", []byte{})
+	f.Add(valid, "", []byte{})
+	f.Add(valid, "tenant-a", []byte("task content"))
+	f.Add("crosscodex.control.BAD.relate.job-1.c-1.abandoned", "BAD", []byte{})
+	f.Add("crosscodex.control.tenant-a.relate.*.>.abandoned", "tenant-a", []byte{})
+	f.Add("", "", []byte{0x00})
+
+	f.Fuzz(func(t *testing.T, subject, tenantID string, data []byte) {
+		w := New(&natsbustest.Fake{}, nil, WorkerConfig{MaxAbandonedCollections: 10}, WithAbandonTTL(time.Hour),
+			WithLogger(slog.New(slog.DiscardHandler)))
+		msg := &natsbus.Message{Subject: subject, Data: data, Metadata: natsbus.MessageMetadata{TenantID: tenantID}}
+		if err := w.handleAbandoned(context.Background(), msg); err != nil {
+			t.Fatalf("handleAbandoned returned %v; it must always return nil", err)
+		}
+		if w.abandoned.len() == 0 {
+			return
+		}
+		c, err := natsbus.ParseAbandonedSubject(subject)
+		if err != nil {
+			t.Fatalf("recorded an abandon for unparseable subject %q: %v", subject, err)
+		}
+		if c.TenantID != tenantID || len(data) != 0 {
+			t.Fatalf("recorded an abandon for %q with provenance tenant %q and %d payload bytes", subject, tenantID, len(data))
+		}
+		if !w.abandoned.contains(c) {
+			t.Fatalf("recorded set does not hold %+v", c)
+		}
 	})
 }

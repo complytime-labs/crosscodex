@@ -215,22 +215,23 @@ type executorTestDispatcher struct {
 }
 
 type executorDispatchCall struct {
-	tasks    []analyzer.Task
-	taskType natsbus.TaskType
-	jobID    string
+	tasks        []analyzer.Task
+	taskType     natsbus.TaskType
+	jobID        string
+	collectionID string
 }
 
-func (d *executorTestDispatcher) Dispatch(_ context.Context, tasks []analyzer.Task, taskType natsbus.TaskType, jobID string) error {
+func (d *executorTestDispatcher) Dispatch(_ context.Context, tasks []analyzer.Task, taskType natsbus.TaskType, jobID, collectionID string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.dispatchErr != nil {
 		return d.dispatchErr
 	}
-	d.dispatches = append(d.dispatches, executorDispatchCall{tasks: tasks, taskType: taskType, jobID: jobID})
+	d.dispatches = append(d.dispatches, executorDispatchCall{tasks: tasks, taskType: taskType, jobID: jobID, collectionID: collectionID})
 	return nil
 }
 
-func (d *executorTestDispatcher) Redispatch(_ context.Context, _ analyzer.Task, _ natsbus.TaskType, _ string, _ int) error {
+func (d *executorTestDispatcher) Redispatch(_ context.Context, _ analyzer.Task, _ natsbus.TaskType, _, _ string, _ int) error {
 	return nil
 }
 

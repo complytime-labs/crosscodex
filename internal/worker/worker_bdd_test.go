@@ -68,12 +68,13 @@ var _ = Describe("Worker Lifecycle", func() {
 		bus, cleanup = testspecs.SetupTestNATS()
 		llm = newStubLLM()
 		w = worker.New(bus, llm, worker.WorkerConfig{
-			QueueGroup: "test-workers",
+			MaxAbandonedCollections: 10,
+			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
 				EmbeddingModel: "test-embed-model",
 			},
-		}, worker.WithLogger(testspecs.GinkgoLogger()))
+		}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
 	})
 
 	AfterEach(func() {
@@ -101,12 +102,13 @@ var _ = Describe("Worker Lifecycle", func() {
 	Describe("Default queue group fallback", func() {
 		It("uses defaultQueueGroup when QueueGroup is empty", func() {
 			w := worker.New(bus, llm, worker.WorkerConfig{
+				MaxAbandonedCollections: 10,
 				// QueueGroup is deliberately empty — worker must fall back to "llm-workers"
 				LLM: config.LLMConfig{
 					DefaultModel:   "test-model",
 					EmbeddingModel: "test-embed-model",
 				},
-			}, worker.WithLogger(testspecs.GinkgoLogger()))
+			}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
 
 			ctx := context.Background()
 			Expect(w.Start(ctx)).To(Succeed())
@@ -191,14 +193,15 @@ var _ = Describe("WithTelemetry", func() {
 
 	It("creates a worker with telemetry without error", func() {
 		w := worker.New(bus, llm, worker.WorkerConfig{
-			QueueGroup: "test-workers",
+			MaxAbandonedCollections: 10,
+			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
 				EmbeddingModel: "test-embed-model",
 			},
 		},
 			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
-			worker.WithLogger(testspecs.GinkgoLogger()),
+			worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour),
 		)
 		Expect(w).NotTo(BeNil())
 
@@ -209,14 +212,15 @@ var _ = Describe("WithTelemetry", func() {
 
 	It("records spans after processing a task", func() {
 		w := worker.New(bus, llm, worker.WorkerConfig{
-			QueueGroup: "test-workers",
+			MaxAbandonedCollections: 10,
+			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
 				EmbeddingModel: "test-embed-model",
 			},
 		},
 			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
-			worker.WithLogger(testspecs.GinkgoLogger()),
+			worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour),
 		)
 
 		ctx := testspecs.SetupTenantContext("tenant-abc")
@@ -247,14 +251,15 @@ var _ = Describe("WithTelemetry", func() {
 
 	It("records metrics after processing a task", func() {
 		w := worker.New(bus, llm, worker.WorkerConfig{
-			QueueGroup: "test-workers",
+			MaxAbandonedCollections: 10,
+			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
 				EmbeddingModel: "test-embed-model",
 			},
 		},
 			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
-			worker.WithLogger(testspecs.GinkgoLogger()),
+			worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour),
 		)
 
 		ctx := testspecs.SetupTenantContext("tenant-abc")
@@ -289,14 +294,15 @@ var _ = Describe("WithTelemetry", func() {
 			return nil, errors.New("simulated LLM failure")
 		}
 		w := worker.New(bus, failingLLM, worker.WorkerConfig{
-			QueueGroup: "test-workers",
+			MaxAbandonedCollections: 10,
+			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
 				EmbeddingModel: "test-embed-model",
 			},
 		},
 			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
-			worker.WithLogger(testspecs.GinkgoLogger()),
+			worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour),
 		)
 
 		ctx := testspecs.SetupTenantContext("tenant-abc")
@@ -323,14 +329,15 @@ var _ = Describe("WithTelemetry", func() {
 	It("handles nil providers gracefully", func() {
 		Expect(func() {
 			w := worker.New(bus, llm, worker.WorkerConfig{
-				QueueGroup: "test-workers",
+				MaxAbandonedCollections: 10,
+				QueueGroup:              "test-workers",
 				LLM: config.LLMConfig{
 					DefaultModel:   "test-model",
 					EmbeddingModel: "test-embed-model",
 				},
 			},
 				worker.WithTelemetry(nil, nil),
-				worker.WithLogger(testspecs.GinkgoLogger()),
+				worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour),
 			)
 
 			ctx := testspecs.SetupTenantContext("tenant-abc")
