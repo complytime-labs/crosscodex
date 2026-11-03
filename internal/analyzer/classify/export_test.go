@@ -2,9 +2,6 @@ package classify
 
 import "github.com/complytime-labs/crosscodex/pkg/prompt"
 
-// ExportSanitizeText exposes sanitizeText for testing.
-var ExportSanitizeText = sanitizeText
-
 // ExportFormatFewShotExamples exposes formatFewShotExamples for testing.
 var ExportFormatFewShotExamples = formatFewShotExamples
 

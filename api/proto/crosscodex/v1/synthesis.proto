@@ -201,4 +201,44 @@ message ListJobMappingsRequest {
 message ListJobMappingsResponse {
   repeated ControlMapping mappings = 1;
   PageInfo page_info = 2;
+  // What produced the job's mappings: its source and target catalogs and
+  // direction. Set when the request names a job_id whose config names a
+  // catalog, with the same tenant scope as the mappings; the same on every
+  // page. Unset for a request across jobs (control_id without job_id).
+  JobAnalysis analysis = 3;
+}
+
+// JobAnalysis is the catalog selection of an analysis job.
+message JobAnalysis {
+  // The catalog whose controls were mapped onto the target's.
+  CatalogSummary source_catalog = 1;
+  // The catalog the source's controls were mapped onto. Equal to
+  // source_catalog for an analysis within one catalog.
+  CatalogSummary target_catalog = 2;
+  // The target's controls were mapped onto the source's too. Always false
+  // within one catalog, whose controls are paired in both directions.
+  bool bidirectional = 3;
+}
+
+// CatalogSummary identifies an imported catalog for display.
+message CatalogSummary {
+  // The catalog's ID as the job's config names it; set even when imported is
+  // false. Derived at import from the document's content and the tenant, so
+  // it binds the job to the exact catalog contents it mapped.
+  string catalog_id = 1;
+  // The uploader's catalog_name, or the OSCAL metadata title: as recorded
+  // when the job was created when snapshot is true, else the catalog's
+  // current name.
+  string name = 2;
+  // The OSCAL metadata.version, recorded or current as name is; empty when
+  // import recorded none.
+  string version = 3;
+  // False when the tenant no longer has the catalog (deleted or purged after
+  // the job ran). Name and version are then empty unless snapshot is true.
+  bool imported = 4;
+  // True when name and version were recorded when the job was created
+  // (JobConfig.source_catalog / target_catalog). False for a job created
+  // before snapshots: name and version are then the catalog's current ones,
+  // which a re-import under another name changes.
+  bool snapshot = 5;
 }

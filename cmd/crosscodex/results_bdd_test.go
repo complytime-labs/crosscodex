@@ -60,6 +60,29 @@ func mapping(id string, rt pb.RelationshipType) *pb.ControlMapping {
 	return &pb.ControlMapping{MappingId: id, SourceControlId: "s-" + id, TargetControlId: "t-" + id, RelationshipType: rt, Confidence: 0.9, ViabilityScore: 0.8, IsViable: true}
 }
 
+// CWE-1236: a spreadsheet runs a cell that starts with a formula character.
+var _ = Describe("csvCell", func() {
+	DescribeTable("prefixes a value a spreadsheet would run as a formula with a single quote",
+		func(in, want string) {
+			Expect(csvCell(in)).To(Equal(want))
+		},
+		Entry("equals sign", "=HYPERLINK(\"http://x\")", "'=HYPERLINK(\"http://x\")"),
+		Entry("plus sign", "+1+1", "'+1+1"),
+		Entry("minus sign", "-1+1", "'-1+1"),
+		Entry("at sign", "@SUM(A1)", "'@SUM(A1)"),
+		Entry("a control ID starting with a minus sign", "-AC-1", "'-AC-1"),
+		Entry("a formula after leading whitespace, which cleaning trims", "\t=1+1", "'=1+1"),
+	)
+
+	It("leaves a benign value unchanged", func() {
+		Expect(csvCell("AC-1 = Access Control")).To(Equal("AC-1 = Access Control"))
+	})
+
+	It("cleans a value to one line before checking it", func() {
+		Expect(csvCell("Evil\x1b]0;pwned\x07\nCatalog")).To(Equal("Evil ]0;pwned Catalog"))
+	})
+})
+
 var _ = Describe("Results mappings via ListJobMappings", func() {
 	var fake *fakeMappingsClient
 
@@ -181,7 +204,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 	It("exports an empty mapping list as an empty JSON array", func() {
 		stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(stdout).To(MatchJSON(`{"job_id": "job-1", "mappings": []}`))
+		Expect(stdout).To(MatchJSON(`{"job_id": "job-1", "analysis": null, "mappings": []}`))
 	})
 
 	It("pages until the server returns no next token", func() {
@@ -196,9 +219,152 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Expect(fake.calls[1].GetPagination().GetPageToken()).To(Equal("tok-2"))
 		lines := strings.Split(strings.TrimSpace(stdout), "\n")
 		Expect(lines).To(HaveLen(3))
-		Expect(lines[0]).To(Equal("mapping_id,source_control_id,target_control_id,relationship_type,confidence,viability_score,is_viable"))
+		Expect(lines[0]).To(Equal("mapping_id,source_control_id,target_control_id,relationship_type,confidence,viability_score,is_viable," +
+			"job_source_catalog_id,job_source_catalog_name,job_source_catalog_version," +
+			"job_target_catalog_id,job_target_catalog_name,job_target_catalog_version,job_bidirectional," +
+			"job_source_catalog_snapshot,job_target_catalog_snapshot"))
 		Expect(lines[1]).To(HavePrefix("a,s-a,t-a,RELATIONSHIP_TYPE_EQUIVALENT,0.900,0.800,true"))
 		Expect(lines[2]).To(HavePrefix("b,s-b,t-b,RELATIONSHIP_TYPE_SUBSET_OF"))
+	})
+
+	Describe("export of a crosswalk job", func() {
+		BeforeEach(func() {
+			page := mappingsPage("", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))
+			page.Analysis = &pb.JobAnalysis{
+				SourceCatalog: &pb.CatalogSummary{CatalogId: "cat-src", Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true},
+				TargetCatalog: &pb.CatalogSummary{CatalogId: "cat-tgt", Name: "NIST SP 800-53", Imported: true, Snapshot: true},
+			}
+			fake.pages = []*pb.ListJobMappingsResponse{page}
+		})
+
+		// exportedAnalysis is the "analysis" object of a JSON export.
+		type exportedAnalysis struct {
+			Source        map[string]any `json:"sourceCatalog"`
+			Target        map[string]any `json:"targetCatalog"`
+			Bidirectional bool           `json:"bidirectional"`
+		}
+
+		It("puts the job's analysis in the JSON envelope, once", func() {
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+			Expect(err).NotTo(HaveOccurred())
+			var out struct {
+				Analysis exportedAnalysis `json:"analysis"`
+				Mappings []map[string]any `json:"mappings"`
+			}
+			Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed())
+			Expect(out.Analysis.Source).To(SatisfyAll(HaveKeyWithValue("catalogId", "cat-src"), HaveKeyWithValue("name", "CSF 2.0"), HaveKeyWithValue("version", "2.0"), HaveKeyWithValue("imported", true)))
+			Expect(out.Analysis.Target).To(SatisfyAll(HaveKeyWithValue("catalogId", "cat-tgt"), HaveKeyWithValue("version", ""), HaveKeyWithValue("imported", true)))
+			Expect(out.Analysis.Bidirectional).To(BeFalse())
+			Expect(out.Mappings).To(HaveLen(1))
+		})
+
+		It("repeats the job's analysis on every CSV row", func() {
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
+			Expect(err).NotTo(HaveOccurred())
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
+			Expect(lines).To(HaveLen(2))
+			Expect(lines[1]).To(HaveSuffix(",cat-src,CSF 2.0,2.0,cat-tgt,NIST SP 800-53,,false,true,true"))
+		})
+
+		// A job created before snapshots reports its catalogs' current
+		// labels; the export says which kind each side's label is.
+		DescribeTable("says in CSV whether each side's label was recorded when the job was created",
+			func(source, target bool, wantSuffix string) {
+				fake.pages[0].Analysis.SourceCatalog.Snapshot = source
+				fake.pages[0].Analysis.TargetCatalog.Snapshot = target
+				stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
+				Expect(err).NotTo(HaveOccurred())
+				lines := strings.Split(strings.TrimSpace(stdout), "\n")
+				Expect(lines).To(HaveLen(2))
+				Expect(lines[1]).To(HaveSuffix(wantSuffix))
+			},
+			Entry("a job that recorded both labels", true, true, ",false,true,true"),
+			Entry("a job from before snapshots", false, false, ",false,false,false"),
+		)
+
+		DescribeTable("says in JSON whether each side's label was recorded when the job was created",
+			func(recorded bool) {
+				fake.pages[0].Analysis.SourceCatalog.Snapshot = recorded
+				fake.pages[0].Analysis.TargetCatalog.Snapshot = recorded
+				stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+				Expect(err).NotTo(HaveOccurred())
+				var out struct {
+					Analysis exportedAnalysis `json:"analysis"`
+				}
+				Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed())
+				Expect(out.Analysis.Source).To(HaveKeyWithValue("snapshot", recorded))
+				Expect(out.Analysis.Target).To(HaveKeyWithValue("snapshot", recorded))
+			},
+			Entry("a job that recorded both labels", true),
+			Entry("a job from before snapshots", false),
+		)
+
+		It("takes the analysis from the first page when the export spans pages", func() {
+			first := fake.pages[0]
+			first.PageInfo = &pb.PageInfo{NextPageToken: "tok-2"}
+			fake.pages = append(fake.pages, mappingsPage("", mapping("b", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)))
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
+			Expect(err).NotTo(HaveOccurred())
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
+			Expect(lines).To(HaveLen(3))
+			Expect(lines[2]).To(HaveSuffix(",cat-src,CSF 2.0,2.0,cat-tgt,NIST SP 800-53,,false,true,true"))
+		})
+
+		It("guards uploader-derived CSV cells against formulas, leaving server-generated ones alone", func() {
+			fake.pages[0].Mappings[0].SourceControlId = "=cmd|' /C calc'!A0"
+			fake.pages[0].Mappings[0].TargetControlId = "-AC-1"
+			fake.pages[0].Analysis.SourceCatalog.CatalogId = "@cat"
+			fake.pages[0].Analysis.SourceCatalog.Name = "+CSF"
+			fake.pages[0].Analysis.SourceCatalog.Version = "-2.0"
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
+			Expect(err).NotTo(HaveOccurred())
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
+			Expect(lines).To(HaveLen(2))
+			Expect(lines[1]).To(Equal(`a,'=cmd|' /C calc'!A0,'-AC-1,RELATIONSHIP_TYPE_EQUIVALENT,0.900,0.800,true,` +
+				`'@cat,'+CSF,'-2.0,cat-tgt,NIST SP 800-53,,false,true,true`))
+		})
+
+		It("keeps formula characters as stored in JSON", func() {
+			fake.pages[0].Mappings[0].TargetControlId = "-AC-1"
+			fake.pages[0].Analysis.SourceCatalog.Name = "=CSF"
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+			Expect(err).NotTo(HaveOccurred())
+			var out struct {
+				Analysis exportedAnalysis `json:"analysis"`
+				Mappings []map[string]any `json:"mappings"`
+			}
+			Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed())
+			Expect(out.Analysis.Source).To(HaveKeyWithValue("name", "=CSF"))
+			Expect(out.Mappings[0]).To(HaveKeyWithValue("targetControlId", "-AC-1"))
+		})
+
+		Describe("an uploader-controlled catalog name and version", func() {
+			BeforeEach(func() {
+				fake.pages[0].Analysis.SourceCatalog.Name = "Evil\x1b]0;pwned\x07\nCatalog"
+				fake.pages[0].Analysis.SourceCatalog.Version = "1\u202e0"
+			})
+
+			It("exports them to CSV as one clean line", func() {
+				stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
+				Expect(err).NotTo(HaveOccurred())
+				lines := strings.Split(strings.TrimSpace(stdout), "\n")
+				Expect(lines).To(HaveLen(2))
+				Expect(lines[1]).To(HaveSuffix(",cat-src,Evil ]0;pwned Catalog,10,cat-tgt,NIST SP 800-53,,false,true,true"))
+				Expect(stdout).NotTo(ContainSubstring("\x1b"))
+			})
+
+			It("exports them to JSON as stored, with control characters escaped", func() {
+				stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stdout).NotTo(ContainSubstring("\x1b"))
+				var out struct {
+					Analysis exportedAnalysis `json:"analysis"`
+				}
+				Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed())
+				Expect(out.Analysis.Source).To(SatisfyAll(
+					HaveKeyWithValue("name", "Evil\x1b]0;pwned\x07\nCatalog"), HaveKeyWithValue("version", "1\u202e0")))
+			})
+		})
 	})
 
 	It("summarizes counts sorted by type name across pages", func() {

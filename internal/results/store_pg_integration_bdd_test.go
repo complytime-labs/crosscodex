@@ -85,6 +85,23 @@ func (e storeEnv) seedJob(tenantID, status string) string {
 	return id
 }
 
+// seedJobWithConfig inserts a job of tenantID with the stored config the
+// pipeline's CreateJob writes (JSON of pb.JobConfig).
+func (e storeEnv) seedJobWithConfig(tenantID, status, config string) string {
+	id := "job-" + uuid.NewString()
+	Expect(e.su.Exec(context.Background(), `INSERT INTO jobs (job_id, tenant_id, status, config, created_by) VALUES ($1, $2, $3, $4::jsonb, 'test')`,
+		id, tenantID, status, config)).To(Succeed())
+	return id
+}
+
+// seedCatalog inserts a catalog of tenantID and returns its ID.
+func (e storeEnv) seedCatalog(tenantID, name, version string) string {
+	id := "cat-" + uuid.NewString()
+	Expect(e.su.Exec(context.Background(), `INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
+		VALUES ($1, $2, $3, $4, 'test', 'unused')`, id, tenantID, name, version)).To(Succeed())
+	return id
+}
+
 // seedVote inserts a vote_summaries row with the contribution the pipeline
 // writes for consensus: "requires" rows come from the requires analyzer,
 // every other consensus from the relationship analyzer.
@@ -387,6 +404,87 @@ var _ = Describe("PGStore", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(env.tenantA))
 			Expect(page.Mappings).To(BeEmpty())
+		})
+	})
+
+	Describe("job analysis", func() {
+		It("describes the job's source and target catalogs and direction", func() {
+			src := env.seedCatalog(env.tenantA, "CSF 2.0", "2.0")
+			tgt := env.seedCatalog(env.tenantA, "NIST SP 800-53", "")
+			job := env.seedJobWithConfig(env.tenantA, "completed",
+				fmt.Sprintf(`{"catalog_id":%q,"target_catalog_id":%q,"bidirectional":true}`, src, tgt))
+
+			page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageSynthesized))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Analysis).To(Equal(&results.JobAnalysis{
+				Source:        results.CatalogSummary{ID: src, Name: "CSF 2.0", Version: "2.0", Imported: true},
+				Target:        results.CatalogSummary{ID: tgt, Name: "NIST SP 800-53", Imported: true},
+				Bidirectional: true,
+			}))
+		})
+
+		It("gives a job from before cross-catalog analysis its one catalog on both sides", func() {
+			src := env.seedCatalog(env.tenantA, "CSF 2.0", "2.0")
+			job := env.seedJobWithConfig(env.tenantA, "completed", fmt.Sprintf(`{"catalog_id":%q}`, src))
+
+			page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageSynthesized))
+			Expect(err).NotTo(HaveOccurred())
+			want := results.CatalogSummary{ID: src, Name: "CSF 2.0", Version: "2.0", Imported: true}
+			Expect(page.Analysis).To(Equal(&results.JobAnalysis{Source: want, Target: want}))
+		})
+
+		// A re-import under a new name overwrites catalogs.name but keeps the
+		// ID, so the job's own record is what names its catalogs.
+		It("shows a renamed catalog under the name and version the job recorded", func() {
+			src := env.seedCatalog(env.tenantA, "CSF 2.0 (renamed)", "2.0.1")
+			tgt := env.seedCatalog(env.tenantA, "NIST SP 800-53", "5.1.1")
+			job := env.seedJobWithConfig(env.tenantA, "completed", fmt.Sprintf(
+				`{"catalog_id":%q,"target_catalog_id":%q,"source_catalog":{"catalog_id":%q,"name":"CSF 2.0","version":"2.0"},`+
+					`"target_catalog":{"catalog_id":%q,"name":"NIST SP 800-53","version":"5.1.1"}}`, src, tgt, src, tgt))
+
+			page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageSynthesized))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Analysis).To(Equal(&results.JobAnalysis{
+				Source: results.CatalogSummary{ID: src, Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true},
+				Target: results.CatalogSummary{ID: tgt, Name: "NIST SP 800-53", Version: "5.1.1", Imported: true, Snapshot: true},
+			}))
+		})
+
+		It("still names a catalog deleted since the job by the label the job recorded", func() {
+			src := env.seedCatalog(env.tenantA, "CSF 2.0", "2.0")
+			job := env.seedJobWithConfig(env.tenantA, "completed", fmt.Sprintf(
+				`{"catalog_id":%q,"target_catalog_id":"cat-deleted","source_catalog":{"catalog_id":%q,"name":"CSF 2.0","version":"2.0"},`+
+					`"target_catalog":{"catalog_id":"cat-deleted","name":"Old Framework","version":"1"}}`, src, src))
+
+			page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageSynthesized))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Analysis.Target).To(Equal(results.CatalogSummary{ID: "cat-deleted", Name: "Old Framework", Version: "1", Snapshot: true}))
+		})
+
+		// No existence oracle: a catalog the tenant cannot see reads as not
+		// imported, with nothing of the other tenant's catalog in it.
+		It("reports another tenant's catalog, named in the config, as not imported", func() {
+			src := env.seedCatalog(env.tenantA, "CSF 2.0", "2.0")
+			others := env.seedCatalog(env.tenantB, "Secret Framework", "9")
+			job := env.seedJobWithConfig(env.tenantA, "completed",
+				fmt.Sprintf(`{"catalog_id":%q,"target_catalog_id":%q}`, src, others))
+
+			page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageSynthesized))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Analysis.Target).To(Equal(results.CatalogSummary{ID: others}))
+		})
+
+		It("is unset for a config that names no catalog and for a read across jobs", func() {
+			job := env.seedJob(env.tenantA, "completed")
+			page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageSynthesized))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Analysis).To(BeNil())
+
+			acrossJobs := filter(env.tenantA, "", results.StageSynthesized)
+			acrossJobs.ControlID = "AC-1"
+			page, err = env.store.ListMappings(env.ctxA, acrossJobs)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Analysis).To(BeNil())
 		})
 	})
 })

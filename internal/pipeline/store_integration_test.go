@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"connectrpc.com/connect"
@@ -19,7 +18,6 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/db"
-	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/google/uuid"
 )
@@ -35,51 +33,20 @@ func assertJSONEqual(label string, got, want []byte) {
 	ExpectWithOffset(1, gotVal).To(Equal(wantVal), "%s result_data: got %s, want %s", label, got, want)
 }
 
-// setupPGStore runs migrations, ensures the app_user role, builds superuser and
-// app pools, provisions a unique tenant, and returns a tenant-scoped context.
+// setupPGStore opens the shared integration database (pipeline.OpenIntegrationDB),
+// provisions a unique tenant, and returns a tenant-scoped context.
 // The store's tenant and system pools are both app_user, as crosscodexd wires
 // them; the superuser pool is returned only for seeding and verification.
 // Pools are closed via DeferCleanup. Skips when TEST_DATABASE_DSN is unset.
 func setupPGStore() (*pipeline.PGStore, db.Pool, string, context.Context) {
 	ctx := context.Background()
 
-	suDSN := os.Getenv("TEST_DATABASE_DSN")
-	if suDSN == "" {
-		Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
-	}
-
-	migrator, err := db.NewMigrator(suDSN)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to create migrator")
-	ExpectWithOffset(1, migrator.Up(ctx)).To(Succeed(), "failed to run migrations")
-	ExpectWithOffset(1, migrator.Close()).To(Succeed(), "failed to close migrator")
-
-	appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "app_user password")
-	ExpectWithOffset(1, dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "failed to set app_user password")
-
-	suPool, err := db.NewPool(db.PoolConfig{
-		DSN:          suDSN,
-		MaxOpenConns: 5,
-		Extensions:   []string{"age", "vector"},
-	})
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to create superuser pool")
-	DeferCleanup(func() { suPool.Close() })
-
-	appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to build app_user DSN")
-	appPool, err := db.NewPool(db.PoolConfig{
-		DSN:          appDSN,
-		MaxOpenConns: 2,
-	})
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to create app_user pool")
-	DeferCleanup(func() { appPool.Close() })
-
-	tenantConn := db.NewTenantPool(appPool)
+	suPool, appPool, tenantConn := pipeline.OpenIntegrationDB(ctx, 2)
 
 	tenantID := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
 	ExpectWithOffset(1, db.EnsureTenant(ctx, suPool, tenantID, "pipeline-it")).To(Succeed(), "failed to ensure tenant")
 
-	ctx, err = tenant.WithTenant(ctx, tenantID)
+	ctx, err := tenant.WithTenant(ctx, tenantID)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "failed to set tenant context")
 
 	return pipeline.NewPGStore(tenantConn, appPool), suPool, tenantID, ctx

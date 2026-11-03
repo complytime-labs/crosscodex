@@ -217,12 +217,13 @@ func newControlStub(name string, deps ...string) *analyzertest.Stub[*pb.Control]
 }
 
 // fakeCatalogControlsReader implements pipeline.CatalogControlsReader,
-// recording each call's (tenantID, catalogID) and returning a fixed control
-// set for executor tests.
+// recording each call's (tenantID, catalogID). It serves byCatalog[catalogID]
+// when byCatalog is set, and controls for every catalog otherwise.
 type fakeCatalogControlsReader struct {
-	mu       sync.Mutex
-	calls    []fakeCatalogControlsCall
-	controls []*pb.Control
+	mu        sync.Mutex
+	calls     []fakeCatalogControlsCall
+	controls  []*pb.Control
+	byCatalog map[string][]*pb.Control
 }
 
 type fakeCatalogControlsCall struct {
@@ -234,10 +235,57 @@ func (f *fakeCatalogControlsReader) Controls(_ context.Context, tenantID, catalo
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fakeCatalogControlsCall{tenantID: tenantID, catalogID: catalogID})
+	if f.byCatalog != nil {
+		return f.byCatalog[catalogID], nil
+	}
 	return f.controls, nil
 }
 
+// catalogIDs returns the catalog of every Controls call, in call order.
+func (f *fakeCatalogControlsReader) catalogIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ids := make([]string, len(f.calls))
+	for i, c := range f.calls {
+		ids[i] = c.catalogID
+	}
+	return ids
+}
+
 var _ pipeline.CatalogControlsReader = (*fakeCatalogControlsReader)(nil)
+
+// catalogLabel is a catalog's current name and version in a
+// fakeCatalogNameReader.
+type catalogLabel struct{ name, version string }
+
+// fakeCatalogNameReader serves catalogs' current names and versions by
+// catalog ID. An absent ID is pipeline.ErrCatalogNotFound and an invalid
+// tenant is refused, as the real reader does.
+type fakeCatalogNameReader map[string]catalogLabel
+
+func (f fakeCatalogNameReader) CatalogSnapshot(_ context.Context, tenantID, catalogID string) (*pb.CatalogSnapshot, error) {
+	if err := tenant.ValidateTenantID(tenantID); err != nil {
+		return nil, err
+	}
+	l, ok := f[catalogID]
+	if !ok {
+		return nil, fmt.Errorf("catalog %s: %w", catalogID, pipeline.ErrCatalogNotFound)
+	}
+	return &pb.CatalogSnapshot{CatalogId: catalogID, Name: l.name, Version: l.version}, nil
+}
+
+var _ pipeline.CatalogNameReader = fakeCatalogNameReader(nil)
+
+// failingCatalogNameReader fails every CatalogSnapshot call with err, standing in
+// for a catalog-name read that fails for a reason other than a missing
+// catalog (a database error).
+type failingCatalogNameReader struct{ err error }
+
+func (f failingCatalogNameReader) CatalogSnapshot(context.Context, string, string) (*pb.CatalogSnapshot, error) {
+	return nil, f.err
+}
+
+var _ pipeline.CatalogNameReader = failingCatalogNameReader{}
 
 // executorTestDispatcher records Dispatch calls.
 type executorTestDispatcher struct {
@@ -499,7 +547,7 @@ var _ = Describe("Executor", func() {
 				// A failed job is never resumed, so the only remedy offered
 				// is a new job.
 				Expect(j.ErrorMessage).To(ContainSubstring(`The job is marked failed and is not resumed. ` +
-					`Start a new job with the analyzers enabled now: crosscodex run start --source cat-1`))
+					`Start a new job with the analyzers enabled now: crosscodex run start --source cat-1 --target cat-1. `))
 				Expect(j.ErrorMessage).NotTo(Or(ContainSubstring("restart"), ContainSubstring("resume it"), ContainSubstring(" back ")))
 
 				stages, err := store.GetStages(ctx, jobID)
@@ -836,7 +884,7 @@ var _ = Describe("Executor", func() {
 				ContainSubstring("signer unavailable"),
 				ContainSubstring("No analyzer ran"),
 				ContainSubstring("attestation.private_key_path"),
-				ContainSubstring("crosscodex run start --source cat-1")))
+				ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
 			stages, err := store.GetStages(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(stages).To(HaveEach(HaveField("Status", pipeline.StageStatusPending)))
@@ -1039,7 +1087,7 @@ var _ = Describe("Executor", func() {
 			Expect(job.ErrorMessage).To(And(
 				ContainSubstring("its attestation does not verify"),
 				ContainSubstring(`step "analyzer-a" and step "analyzer-b"`),
-				ContainSubstring("crosscodex run start --source cat-1")))
+				ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
 			exists, err := storage.Exists(ctx, fmt.Sprintf("attestations/%s/%s/bundle.json", tenantID, jobID))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeFalse())
@@ -1159,7 +1207,7 @@ var _ = Describe("Executor", func() {
 					ContainSubstring(`the attestation link for step "synthesis" could not be signed`),
 					ContainSubstring("signer unavailable"),
 					ContainSubstring("crosscodex run retry --from-failure test-job-001"),
-					ContainSubstring("crosscodex run start --source cat-1")))
+					ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
 				Expect(stageStatuses()).To(Equal(map[string]pipeline.StageStatus{
 					"analyzer-a": pipeline.StageStatusCompleted, "analyzer-b": pipeline.StageStatusCompleted,
 					"synthesis": pipeline.StageStatusFailed, "graph": pipeline.StageStatusPending,
@@ -1248,7 +1296,7 @@ var _ = Describe("Executor", func() {
 					ContainSubstring("object store unavailable"),
 					ContainSubstring("storage.objects.base_path"),
 					ContainSubstring("crosscodex run retry --from-failure test-job-001"),
-					ContainSubstring("crosscodex run start --source cat-1")))
+					ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
 				Expect(stageStatuses()).To(Equal(allCompleted))
 				Expect(storage.Objects()).NotTo(HaveKey(bundleKey()))
 
@@ -1292,7 +1340,7 @@ var _ = Describe("Executor", func() {
 						ContainSubstring(`step "synthesis"`),
 						ContainSubstring(strconv.Quote(linkKey("synthesis"))),
 						ContainSubstring(want),
-						ContainSubstring("crosscodex run start --source cat-1")))
+						ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
 					Expect(stageStatuses()).To(Equal(allCompleted))
 					// The stored links are verified before anything is signed
 					// again, so every object is as it was.
@@ -1342,7 +1390,7 @@ var _ = Describe("Executor", func() {
 					ContainSubstring(`step "synthesis"`),
 					ContainSubstring("another job"),
 					ContainSubstring(fmt.Sprintf("job:%s/%s", tenantID, jobID)),
-					ContainSubstring("crosscodex run start --source cat-1")))
+					ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
 				Expect(storage.Objects()).To(Equal(before))
 			})
 		})
@@ -1502,11 +1550,12 @@ var _ = Describe("Executor", func() {
 				config.PipelineConfig{MaxConcurrentJobs: 10},
 				gen,
 				pipeline.WithCatalogControlsReader(twoPassCatalog),
+				pipeline.WithCatalogNameReader(fakeCatalogNameReader{"two-pass-cat-1": {name: "Two-pass Catalog"}}),
 			)
 			DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
 
 			resp, err := svc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{
-				Config: &pb.JobConfig{CatalogId: "two-pass-cat-1"},
+				Config: &pb.JobConfig{CatalogId: "two-pass-cat-1", TargetCatalogId: "two-pass-cat-1"},
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() pipeline.JobStatus {
@@ -1670,8 +1719,8 @@ var _ = Describe("Executor", func() {
 
 			j, err := store.GetJob(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(j.ErrorMessage).To(ContainSubstring("no catalog_id"))
-			Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run start --source"))
+			Expect(j.ErrorMessage).To(ContainSubstring("no usable catalog_id"))
+			Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run start --source <source-catalog-id> --target <target-catalog-id>"))
 			Expect(stageStatus("classify")).To(Equal(pipeline.StageStatusPending))
 			Expect(stageStatus("synthesis")).To(Equal(pipeline.StageStatusPending))
 			Expect(dispatchedTypes()).To(BeEmpty())
@@ -1840,6 +1889,141 @@ var _ = Describe("Executor", func() {
 	})
 
 	Describe("controls and analyzer config wiring", func() {
+		Describe("across two catalogs", func() {
+			// startJob runs a job with config over reader's catalogs, with
+			// classify, embedding and artifacts registered (as in
+			// production, all per-control) and returns their stubs.
+			startJob := func(jobConfig string, reader *fakeCatalogControlsReader) []*analyzertest.Stub[*pb.Control] {
+				reg := analyzer.NewRegistry()
+				stubs := []*analyzertest.Stub[*pb.Control]{
+					newControlStub("classify"),
+					newControlStub("embedding", "classify"),
+					newControlStub("artifacts", "classify"),
+				}
+				for _, s := range stubs {
+					Expect(analyzer.Register[*pb.Control](reg, s)).To(Succeed())
+				}
+				eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{}, config.EngineConfig{
+					TaskTimeout:  5 * time.Minute,
+					MaxRetries:   3,
+					RetryBackoff: time.Millisecond,
+				}, map[string]natsbus.TaskType{"classify": "classify", "embedding": "embedding", "artifacts": "artifacts"})
+				svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10},
+					nil,
+					pipeline.WithCatalogControlsReader(reader),
+					pipeline.WithCatalogNameReader(fakeCatalogNameReader{"cat-src": {name: "CSF 2.0"}, "cat-tgt": {name: "NIST SP 800-53"}}),
+				)
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID: jobID, TenantID: tenantID, Status: pipeline.JobStatusRunning,
+					Config: []byte(jobConfig), CreatedAt: time.Now(), UpdatedAt: time.Now(),
+				})).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, []string{"classify", "embedding", "artifacts", "synthesis", "graph"})).To(Succeed())
+				runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				DeferCleanup(cancel)
+				Expect(svc.Start(runCtx)).To(Succeed())
+				return stubs
+			}
+			jobStatus := func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, jobID)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}
+			inputIDs := func(s *analyzertest.Stub[*pb.Control]) []string {
+				var ids []string
+				for _, in := range s.Inputs() {
+					ids = append(ids, in.GetControlId())
+				}
+				return ids
+			}
+
+			It("fans every per-control analyzer out over the controls of both catalogs", func() {
+				reader := &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+					"cat-src": {{ControlId: "s1", CatalogId: "cat-src", Statement: "Source one."}},
+					"cat-tgt": {{ControlId: "t1", CatalogId: "cat-tgt", Statement: "Target one."}, {ControlId: "t2", CatalogId: "cat-tgt", Statement: "Target two."}},
+				}}
+				stubs := startJob(`{"catalog_id":"cat-src","target_catalog_id":"cat-tgt"}`, reader)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+				Expect(reader.catalogIDs()).To(Equal([]string{"cat-src", "cat-tgt"}))
+				for _, s := range stubs {
+					Expect(inputIDs(s)).To(ConsistOf("s1", "t1", "t2"), s.Name())
+				}
+			})
+
+			It("runs a job whose stored config predates target_catalog_id within its one catalog", func() {
+				reader := &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+					"cat-src": {{ControlId: "s1", CatalogId: "cat-src", Statement: "Source one."}},
+				}}
+				stubs := startJob(`{"catalog_id":"cat-src"}`, reader)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+				Expect(reader.catalogIDs()).To(Equal([]string{"cat-src"}))
+				Expect(inputIDs(stubs[0])).To(ConsistOf("s1"))
+			})
+
+			// A deleted or purged catalog reads as zero controls, so its
+			// existence is checked first: it must not be reported as empty.
+			It("fails a crosswalk whose target was deleted as a missing catalog, not an empty one, before any analyzer runs", func() {
+				reader := &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+					"cat-src": {{ControlId: "s1", CatalogId: "cat-src", Statement: "Source one."}},
+				}}
+				stubs := startJob(`{"catalog_id":"cat-src","target_catalog_id":"cat-gone"}`, reader)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorMessage).To(SatisfyAll(
+					ContainSubstring("catalog cat-gone was not found"),
+					ContainSubstring(pipeline.ErrCatalogNotFound.Error()),
+					ContainSubstring("it may have been deleted or purged. Import the same file again (it gets the same catalog ID)"),
+					ContainSubstring("crosscodex run retry --from-failure "+jobID),
+					Not(ContainSubstring(pipeline.ErrEmptyTargetCatalog.Error())),
+				))
+				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorRetryable))
+				Expect(reader.catalogIDs()).To(BeEmpty())
+				for _, s := range stubs {
+					Expect(s.Inputs()).To(BeEmpty(), s.Name())
+				}
+			})
+
+			// Safety mechanism: a crosswalk onto a target with nothing to
+			// map onto would bill the source's per-control LLM calls for an
+			// empty result.
+			It("fails a crosswalk whose target has no control with a statement, with guidance, before any analyzer runs", func() {
+				reader := &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+					"cat-src": {{ControlId: "s1", CatalogId: "cat-src", Statement: "Source one."}},
+					"cat-tgt": {
+						{ControlId: "t-sec", CatalogId: "cat-tgt", Statement: "A family.", Parts: map[string]string{"class": "compliance-section"}},
+						{ControlId: "t-blank", CatalogId: "cat-tgt", Statement: "  "},
+					},
+				}}
+				stubs := startJob(`{"catalog_id":"cat-src","target_catalog_id":"cat-tgt"}`, reader)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorMessage).To(SatisfyAll(
+					ContainSubstring("target catalog cat-tgt has no control with a statement"),
+					ContainSubstring(pipeline.ErrEmptyTargetCatalog.Error()),
+					ContainSubstring(`crosscodex catalog inspect cat-tgt`),
+					ContainSubstring("crosscodex run start --source cat-src --target <catalog-id>"),
+				))
+				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorEmptyTargetCatalog))
+				for _, s := range stubs {
+					Expect(s.Inputs()).To(BeEmpty(), s.Name())
+				}
+				stages, err := store.GetStages(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stages).To(HaveEach(HaveField("Status", pipeline.StageStatusPending)))
+				results, err := store.GetCompletedAnalysisResults(ctx, jobID, []string{"classify", "embedding", "artifacts"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(results).To(BeEmpty())
+			})
+		})
+
 		It("populates Controls and CatalogID for the pre-candidate pass", func() {
 			type call struct {
 				controlID string
@@ -2005,7 +2189,22 @@ var _ = Describe("Executor", func() {
 			var (
 				mu     sync.Mutex
 				params map[string]map[string]string
+				// pairJobConfig and pairControls are the job startPairJob
+				// runs: within catalog cat-1 unless a spec overrides them.
+				pairJobConfig string
+				pairControls  *fakeCatalogControlsReader
+				pairNames     pipeline.CatalogNameReader
 			)
+			catalogNames := fakeCatalogNameReader{"cat-1": {name: "CSF 2.0", version: "2.0"}, "cat-2": {name: "NIST SP 800-53"}}
+
+			BeforeEach(func() {
+				pairNames = catalogNames
+				pairJobConfig = `{"catalog_id":"cat-1"}`
+				pairControls = &fakeCatalogControlsReader{controls: []*pb.Control{
+					{ControlId: "c1", CatalogId: "cat-1", Statement: "Keep an asset inventory.", Parts: map[string]string{"ancestor_title": "Identify"}},
+					{ControlId: "c2", CatalogId: "cat-1", Statement: "Review the inventory yearly.", Parts: map[string]string{"ancestor_title": "Protect"}},
+				}}
+			})
 
 			classified := []byte(`[{"control_id":"c1","type":"Technical","level":"Operational"},{"control_id":"c2","type":"Procedural","level":"Tactical"}]`)
 
@@ -2059,21 +2258,18 @@ var _ = Describe("Executor", func() {
 					"relationship": "relate",
 				})
 
-				catalogReader := &fakeCatalogControlsReader{controls: []*pb.Control{
-					{ControlId: "c1", Statement: "Keep an asset inventory.", Parts: map[string]string{"ancestor_title": "Identify"}},
-					{ControlId: "c2", Statement: "Review the inventory yearly.", Parts: map[string]string{"ancestor_title": "Protect"}},
-				}}
 				svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
 					config.PipelineConfig{MaxConcurrentJobs: 10},
 					nil,
-					pipeline.WithCatalogControlsReader(catalogReader),
+					pipeline.WithCatalogControlsReader(pairControls),
+					pipeline.WithCatalogNameReader(pairNames),
 				)
 
 				job := &pipeline.Job{
 					JobID:     jobID,
 					TenantID:  tenantID,
 					Status:    pipeline.JobStatusRunning,
-					Config:    []byte(`{"catalog_id":"cat-1"}`),
+					Config:    []byte(pairJobConfig),
 					CreatedAt: time.Now(),
 					UpdatedAt: time.Now(),
 				}
@@ -2091,23 +2287,27 @@ var _ = Describe("Executor", func() {
 
 			wantPairParams := func() map[string]string {
 				return map[string]string{
-					"job_id":             jobID,
-					"source_text_c1":     "Keep an asset inventory.",
-					"target_text_c1":     "Keep an asset inventory.",
-					"source_ancestor_c1": "Identify",
-					"target_ancestor_c1": "Identify",
-					"source_type_c1":     "Technical",
-					"target_type_c1":     "Technical",
-					"source_level_c1":    "Operational",
-					"target_level_c1":    "Operational",
-					"source_text_c2":     "Review the inventory yearly.",
-					"target_text_c2":     "Review the inventory yearly.",
-					"source_ancestor_c2": "Protect",
-					"target_ancestor_c2": "Protect",
-					"source_type_c2":     "Procedural",
-					"target_type_c2":     "Procedural",
-					"source_level_c2":    "Tactical",
-					"target_level_c2":    "Tactical",
+					"job_id":              jobID,
+					"source_text_c1":      "Keep an asset inventory.",
+					"target_text_c1":      "Keep an asset inventory.",
+					"source_ancestor_c1":  "Identify",
+					"target_ancestor_c1":  "Identify",
+					"source_type_c1":      "Technical",
+					"target_type_c1":      "Technical",
+					"source_level_c1":     "Operational",
+					"target_level_c1":     "Operational",
+					"source_text_c2":      "Review the inventory yearly.",
+					"target_text_c2":      "Review the inventory yearly.",
+					"source_ancestor_c2":  "Protect",
+					"target_ancestor_c2":  "Protect",
+					"source_type_c2":      "Procedural",
+					"target_type_c2":      "Procedural",
+					"source_level_c2":     "Tactical",
+					"target_level_c2":     "Tactical",
+					"source_framework_c1": "CSF 2.0",
+					"target_framework_c1": "CSF 2.0",
+					"source_framework_c2": "CSF 2.0",
+					"target_framework_c2": "CSF 2.0",
 				}
 			}
 
@@ -2129,6 +2329,131 @@ var _ = Describe("Executor", func() {
 				for _, name := range []string{"requires", "relationship"} {
 					Expect(params[name]).To(Equal(wantPairParams()), name)
 				}
+			})
+
+			It("gives every control its own catalog's name as its framework in a crosswalk", func() {
+				pairJobConfig = `{"catalog_id":"cat-1","target_catalog_id":"cat-2","bidirectional":true}`
+				pairControls = &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+					"cat-1": {{ControlId: "c1", CatalogId: "cat-1", Statement: "Keep an asset inventory."}},
+					"cat-2": {{ControlId: "t1", CatalogId: "cat-2", Statement: "Maintain a component inventory."}},
+				}}
+				startPairJob(classified, false)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+				mu.Lock()
+				defer mu.Unlock()
+				for _, name := range []string{"requires", "relationship"} {
+					Expect(params[name]).To(SatisfyAll(
+						HaveKeyWithValue("source_framework_c1", "CSF 2.0"),
+						HaveKeyWithValue("target_framework_c1", "CSF 2.0"),
+						HaveKeyWithValue("source_framework_t1", "NIST SP 800-53"),
+						HaveKeyWithValue("target_framework_t1", "NIST SP 800-53"),
+						HaveKeyWithValue("source_text_t1", "Maintain a component inventory."),
+					), name)
+				}
+			})
+
+			// A catalog re-imported under a new name keeps its ID (IDs are
+			// content hashes), so a job resumed after the rename must prompt
+			// with the names it was created with, byte for byte.
+			It("takes each control's framework from the job's creation-time snapshot, not the catalog's current name", func() {
+				pairNames = fakeCatalogNameReader{"cat-1": {name: "CSF 2.0 (renamed)"}, "cat-2": {name: "SP 800-53 (renamed)"}}
+				pairJobConfig = `{"catalog_id":"cat-1","target_catalog_id":"cat-2","bidirectional":true,` +
+					`"source_catalog":{"catalog_id":"cat-1","name":"CSF 2.0","version":"2.0"},` +
+					`"target_catalog":{"catalog_id":"cat-2","name":"NIST SP 800-53"}}`
+				pairControls = &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+					"cat-1": {{ControlId: "c1", CatalogId: "cat-1", Statement: "Keep an asset inventory."}},
+					"cat-2": {{ControlId: "t1", CatalogId: "cat-2", Statement: "Maintain a component inventory."}},
+				}}
+				startPairJob(classified, false)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+				mu.Lock()
+				defer mu.Unlock()
+				for _, name := range []string{"requires", "relationship"} {
+					Expect(params[name]).To(SatisfyAll(
+						HaveKeyWithValue("source_framework_c1", "CSF 2.0"),
+						HaveKeyWithValue("target_framework_c1", "CSF 2.0"),
+						HaveKeyWithValue("source_framework_t1", "NIST SP 800-53"),
+						HaveKeyWithValue("target_framework_t1", "NIST SP 800-53"),
+					), name)
+				}
+			})
+
+			// A snapshot does not make a deleted catalog's job runnable: the
+			// catalog is still read, so it fails before any analyzer runs.
+			It("still fails a job with a snapshot whose catalog was deleted, before any analyzer runs", func() {
+				pairJobConfig = `{"catalog_id":"cat-1","target_catalog_id":"cat-gone",` +
+					`"source_catalog":{"catalog_id":"cat-1","name":"CSF 2.0"},"target_catalog":{"catalog_id":"cat-gone","name":"Gone"}}`
+				startPairJob(classified, false)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorMessage).To(ContainSubstring("catalog cat-gone was not found"))
+				mu.Lock()
+				defer mu.Unlock()
+				Expect(params).To(BeEmpty())
+			})
+
+			// The names are read before any analyzer runs, so a job that
+			// cannot name a catalog spends no LLM calls.
+			// The new-job command puts the placeholder on whichever side
+			// names the missing catalog.
+			DescribeTable("fails the job before any analyzer runs when a catalog's name cannot be read",
+				func(config, command string) {
+					pairJobConfig = config
+					pairControls = &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+						"cat-1":    {{ControlId: "c1", CatalogId: "cat-1", Statement: "Keep an asset inventory."}},
+						"cat-gone": {{ControlId: "g1", CatalogId: "cat-gone", Statement: "Gone."}},
+					}}
+					classify := startPairJob(classified, false)
+
+					Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+
+					j, err := store.GetJob(ctx, jobID)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(j.ErrorMessage).To(SatisfyAll(
+						ContainSubstring("catalog cat-gone was not found"),
+						ContainSubstring(pipeline.ErrCatalogNotFound.Error()),
+						ContainSubstring("it may have been deleted or purged. Import the same file again (it gets the same catalog ID)"),
+						ContainSubstring("crosscodex run retry --from-failure "+jobID),
+						HaveSuffix("or start a new job with another catalog: "+command),
+					))
+					Expect(j.ErrorClass).To(Equal(pipeline.JobErrorRetryable))
+					Expect(classify.Inputs()).To(BeEmpty())
+					mu.Lock()
+					defer mu.Unlock()
+					Expect(params).To(BeEmpty())
+				},
+				Entry("the target is missing", `{"catalog_id":"cat-1","target_catalog_id":"cat-gone","bidirectional":true}`,
+					"crosscodex run start --source cat-1 --target <catalog-id> --bidirectional"),
+				Entry("the source is missing", `{"catalog_id":"cat-gone","target_catalog_id":"cat-1"}`,
+					"crosscodex run start --source <catalog-id> --target cat-1"),
+				Entry("the one catalog of a job within it is missing", `{"catalog_id":"cat-gone"}`,
+					"crosscodex run start --source <catalog-id> --target <catalog-id>"),
+			)
+
+			It("fails the job as retryable, without deleted-catalog guidance, when a catalog's name read fails for another reason", func() {
+				pairNames = failingCatalogNameReader{err: errors.New("connection refused")}
+				classify := startPairJob(classified, false)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorMessage).To(SatisfyAll(
+					ContainSubstring("the name of catalog cat-1 could not be read: connection refused"),
+					ContainSubstring("crosscodex run retry --from-failure "+jobID),
+					Not(ContainSubstring("deleted or purged")),
+				))
+				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorRetryable))
+				Expect(classify.Inputs()).To(BeEmpty())
+				mu.Lock()
+				defer mu.Unlock()
+				Expect(params).To(BeEmpty())
 			})
 
 			It("passes classifications persisted by a prior process run on resume", func() {

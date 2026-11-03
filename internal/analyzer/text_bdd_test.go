@@ -8,28 +8,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 )
 
-var _ = Describe("TruncateText", func() {
-	It("replaces newlines with spaces", func() {
-		Expect(analyzer.TruncateText("line1\nline2\rline3", 100)).To(Equal("line1 line2 line3"))
-	})
-
-	It("truncates to maxChars on rune boundary", func() {
-		Expect(analyzer.TruncateText("abcdef", 3)).To(Equal("abc"))
-	})
-
-	It("handles multi-byte runes correctly", func() {
-		Expect(analyzer.TruncateText("αβγδ", 2)).To(Equal("αβ"))
-	})
-
-	It("returns full text when under limit", func() {
-		Expect(analyzer.TruncateText("short", 100)).To(Equal("short"))
-	})
-
-	It("no-ops when maxChars is 0", func() {
-		Expect(analyzer.TruncateText("anything", 0)).To(Equal("anything"))
-	})
-})
-
 var _ = Describe("FormatFewShotExamples", func() {
 	It("returns empty string for nil slice", func() {
 		Expect(analyzer.FormatFewShotExamples(nil)).To(BeEmpty())

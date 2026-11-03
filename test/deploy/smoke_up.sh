@@ -289,7 +289,7 @@ fi
 # alone passes against a broken LLM gateway/Ollama. The FULL_ANALYSIS job, by
 # contrast, FAILs on insufficient embedding coverage (<80%), so only a working
 # embed path drives it to COMPLETED.
-run_cli --plain run start --source "${CATALOG_ID}" | tee "${OUT_DIR}/start.log"
+run_cli --plain run start --source "${CATALOG_ID}" --target "${CATALOG_ID}" | tee "${OUT_DIR}/start.log"
 JOB_ID="$(sed -n 's/^Job ID: //p' "${OUT_DIR}/start.log" | head -n1)"
 if [ -z "${JOB_ID}" ]; then
 	echo "Could not parse a Job ID from the run start output:" >&2

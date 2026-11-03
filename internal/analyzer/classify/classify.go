@@ -128,8 +128,10 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 		}}, nil
 	}
 
-	// Sanitize requirement text.
-	text := sanitizeText(input.GetStatement(), a.cfg.MaxTextLength)
+	// The statement is uploader- or OSCAL-controlled, so it goes through
+	// PromptText: format characters removed, UTF-8 repaired, whitespace
+	// collapsed, tag delimiters escaped, bounded at MaxTextLength runes.
+	text := intanalyzer.PromptText(input.GetStatement(), a.cfg.MaxTextLength)
 
 	if a.textLenHistogram != nil {
 		a.textLenHistogram.Record(ctx, float64(utf8.RuneCountInString(text)))
@@ -308,19 +310,6 @@ func (a *ClassifyAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 		Metadata:     metadata,
 		ResultData:   resultData,
 	}, nil
-}
-
-// sanitizeText truncates requirement text and replaces newlines with spaces,
-// matching the Python classifier behavior. Truncation operates on rune
-// boundaries to avoid producing invalid UTF-8.
-func sanitizeText(text string, maxLen int) string {
-	text = strings.ReplaceAll(text, "\n", " ")
-	text = strings.ReplaceAll(text, "\r", " ")
-	if maxLen > 0 && utf8.RuneCountInString(text) > maxLen {
-		runes := []rune(text)
-		text = string(runes[:maxLen])
-	}
-	return text
 }
 
 // formatFewShotExamples formats few-shot examples into inline text for

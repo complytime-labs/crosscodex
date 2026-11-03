@@ -11,6 +11,7 @@ import (
 	"io"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -24,6 +25,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -215,20 +217,26 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 // pairAnalyzerParameters returns the AnalyzerConfig parameters the
 // candidate-dependent analyzers (requires, relationship) read when building
 // prompts. Those analyzers run once per job with no per-control input, so
-// every control's statement, ancestor title and classification is passed
-// under both the source_ and target_ prefixes; a control can be either end of
-// a pair. A missing or partial classify output is tolerated (classify can be
-// disabled): controls without a classification simply get no type or level
-// keys. Only a classify output that does not parse fails the job, since
-// prompts would otherwise silently lose classifications that were produced.
-func pairAnalyzerParameters(jobID string, controls []*pb.Control, classify *analyzer.Output) (map[string]string, error) {
+// every control's statement, ancestor title, framework and classification is
+// passed under both the source_ and target_ prefixes; a control can be
+// either end of a pair (in a bidirectional crosswalk, a target control is
+// the source of the reverse pairs). A control's framework is its own
+// catalog's name from frameworks, keyed by catalog ID; a catalog without an
+// entry gives an empty framework. A missing or partial classify output is
+// tolerated (classify can be disabled): controls without a classification
+// simply get no type or level keys. Only a classify output that does not
+// parse fails the job, since prompts would otherwise silently lose
+// classifications that were produced.
+func pairAnalyzerParameters(jobID string, controls []*pb.Control, frameworks map[string]string, classify *analyzer.Output) (map[string]string, error) {
 	params := map[string]string{"job_id": jobID}
 	for _, c := range controls {
 		id := c.GetControlId()
 		ancestor := c.GetParts()["ancestor_title"]
+		framework := frameworks[c.GetCatalogId()]
 		for _, end := range []string{"source_", "target_"} {
 			params[end+"text_"+id] = c.GetStatement()
 			params[end+"ancestor_"+id] = ancestor
+			params[end+"framework_"+id] = framework
 		}
 	}
 	if classify == nil || len(classify.ResultData) == 0 {
@@ -255,14 +263,19 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 	defer span.End()
 	span.SetAttributes(attribute.String("job.id", job.JobID))
 
-	catalogID, ok := ExtractCatalogID(job.Config)
+	cats, ok := jobconfig.ExtractCatalogs(job.Config)
 	if !ok {
-		err := fmt.Errorf("job %s cannot run: %w. Analysis runs over an imported catalog; "+
-			"start a new analysis with \"crosscodex run start --source <catalog-id>\"", job.JobID, ErrMissingCatalogID)
+		err := fmt.Errorf("job %s cannot run: %w. Analysis runs over imported catalogs; "+
+			"start a new analysis with \"%s\"", job.JobID, ErrMissingCatalogID, newJobCommand(job))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
+	span.SetAttributes(
+		attribute.String("source_catalog.id", cats.SourceID),
+		attribute.String("target_catalog.id", cats.TargetID),
+		attribute.Bool("analysis.bidirectional", cats.Bidirectional),
+	)
 
 	// Build DAG from registry.
 	dag, err := s.registry.BuildDAG(ctx)
@@ -342,9 +355,59 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		analyzerConfig[name] = analyzer.AnalyzerConfig{Parameters: map[string]string{"job_id": job.JobID}}
 	}
 
-	// The catalog's full control list is fanned out per-control. controls
-	// starts as a non-nil empty slice (rather than a nil slice) so that
-	// req.Controls in runPass's perControl branch is always non-nil,
+	// Each control's framework in the pair prompts is its catalog's name as
+	// the job recorded it at creation, so a job resumed after a re-import
+	// renamed a catalog prompts as it did before; a config stored before
+	// snapshots uses the current name. The catalogs are read first either
+	// way, whether or not pair analyzers run: a deleted or purged catalog
+	// reads as zero controls, so this is what tells it apart from an empty
+	// one, and it fails the job before any analyzer spends LLM calls. A nil
+	// reader (tests, partial wiring) leaves frameworks empty.
+	frameworks := make(map[string]string, 2)
+	if s.catalogNames != nil {
+		tenantID, terr := tenant.FromContext(ctx)
+		if terr != nil {
+			return fmt.Errorf("runAnalysis: %w", terr)
+		}
+		for _, catalogID := range cats.CatalogIDs() {
+			current, err := s.catalogNames.CatalogSnapshot(ctx, tenantID, catalogID)
+			if errors.Is(err, ErrCatalogNotFound) {
+				// Retryable: re-importing the same file restores the catalog's
+				// ID (IDs are content hashes), and the job has made no LLM
+				// call yet. The new-job command replaces the missing catalog
+				// on whichever side names it.
+				source, target := cats.SourceID, cats.TargetID
+				if source == catalogID {
+					source = "<catalog-id>"
+				}
+				if target == catalogID {
+					target = "<catalog-id>"
+				}
+				err = fmt.Errorf("job %s cannot run: catalog %s was not found: %w: it may have been deleted or purged. "+
+					"Import the same file again (it gets the same catalog ID) and resume this job: "+
+					"crosscodex run retry --from-failure %s, or start a new job with another catalog: %s",
+					job.JobID, catalogID, err, job.JobID, jobCommand(cats, source, target))
+			} else if err != nil {
+				err = fmt.Errorf("job %s cannot run: the name of catalog %s could not be read: %w. "+
+					"Check that the database is reachable. %s", job.JobID, catalogID, err, retryHint(job))
+			}
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return err
+			}
+			frameworks[catalogID] = current.GetName()
+			if label := cats.LabelOf(catalogID); label.Recorded {
+				frameworks[catalogID] = label.Name
+			}
+		}
+	}
+
+	// The per-control analyzers (classify, embedding, artifacts) cover every
+	// control of the job's catalogs: the source's and, for a crosswalk, the
+	// target's, so both sides are classified and embedded in this job.
+	// controls starts as a non-nil empty slice (rather than a nil slice) so
+	// that req.Controls in runPass's perControl branch is always non-nil,
 	// signaling "per-control mode" to the engine instead of falling back to
 	// its single-Input path (which expects a *pb.Control, not the
 	// *emptypb.Empty passed as req.Input here). A nil catalogControls reader
@@ -355,13 +418,32 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		if terr != nil {
 			return fmt.Errorf("runAnalysis: %w", terr)
 		}
-		fetched, err := s.catalogControls.Controls(ctx, tenantID, catalogID)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return fmt.Errorf("runAnalysis: fetching catalog controls: %w", err)
+		hasStatement := func(c *pb.Control) bool {
+			return c.GetParts()["class"] != classifySectionClass && strings.TrimSpace(c.GetStatement()) != ""
 		}
-		controls = fetched
+		for _, catalogID := range cats.CatalogIDs() {
+			fetched, err := s.catalogControls.Controls(ctx, tenantID, catalogID)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return fmt.Errorf("runAnalysis: fetching controls of catalog %s: %w", catalogID, err)
+			}
+			side := "source"
+			if cats.CrossCatalog() && catalogID == cats.TargetID {
+				side = "target"
+				if !slices.ContainsFunc(fetched, hasStatement) {
+					err := fmt.Errorf("job %s cannot run: target catalog %s has no control with a statement, "+
+						"so no source control can be mapped onto it: %w. Check its controls with \"crosscodex catalog inspect %s\", "+
+						"then start a new job with another target: %s",
+						job.JobID, catalogID, ErrEmptyTargetCatalog, catalogID, jobCommand(cats, cats.SourceID, "<catalog-id>"))
+					span.RecordError(err)
+					span.SetStatus(codes.Error, err.Error())
+					return err
+				}
+			}
+			span.SetAttributes(attribute.Int("controls."+side, len(fetched)))
+			controls = append(controls, fetched...)
+		}
 	}
 
 	// allOutputs accumulates analyzer outputs across both passes for the
@@ -402,7 +484,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		}
 		if perControl {
 			req.Controls = controls
-			req.CatalogID = catalogID
+			req.CatalogID = cats.SourceID
 		} else {
 			req.Input = &pb.Control{}
 		}
@@ -464,7 +546,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 
 	// Candidate-dependent pass.
 	if len(postPass) > 0 {
-		pairParams, err := pairAnalyzerParameters(job.JobID, controls, allOutputs["classify"])
+		pairParams, err := pairAnalyzerParameters(job.JobID, controls, frameworks, allOutputs["classify"])
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -551,9 +633,9 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 	// synthesis proceeds with zero similarity stats (SimilarityCount=0 per
 	// pair).
 	similarityByModel := make(map[string]similarityMatrix)
-	if catalogID, ok := ExtractCatalogID(job.Config); ok && s.embeddingsReader != nil {
+	if cats, ok := jobconfig.ExtractCatalogs(job.Config); ok && s.embeddingsReader != nil {
 		for _, model := range s.embeddingConfig.Models {
-			ids, values, err := s.embeddingsReader.SimilarityMatrix(ctx, tenantID, catalogID, model)
+			ids, values, err := s.embeddingsReader.SimilarityMatrix(ctx, tenantID, cats.CatalogIDs(), model)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
@@ -871,13 +953,24 @@ func attestationKey(job *Job, name string) string {
 	return fmt.Sprintf("attestations/%s/%s/%s", job.TenantID, job.JobID, name)
 }
 
-// newJobCommand is the command that starts a new job over job's catalog.
+// newJobCommand is the command that starts a new job over job's catalogs,
+// in job's direction.
 func newJobCommand(job *Job) string {
-	catalogID, ok := ExtractCatalogID(job.Config)
+	cats, ok := jobconfig.ExtractCatalogs(job.Config)
 	if !ok {
-		catalogID = "<catalog-id>"
+		return "crosscodex run start --source <source-catalog-id> --target <target-catalog-id>"
 	}
-	return "crosscodex run start --source " + catalogID
+	return jobCommand(cats, cats.SourceID, cats.TargetID)
+}
+
+// jobCommand is the command that starts a new job from source onto target,
+// in the direction of the job whose catalogs are cats.
+func jobCommand(cats jobconfig.Catalogs, source, target string) string {
+	cmd := "crosscodex run start --source " + source + " --target " + target
+	if cats.Bidirectional {
+		cmd += " --bidirectional"
+	}
+	return cmd
 }
 
 // retryHint names both ways to run a job again after a failure it can

@@ -45,23 +45,25 @@ var _ = Describe("run start", func() {
 	BeforeEach(func() { fake = &fakeStartAnalysisClient{} })
 
 	It("starts analysis of the named catalog and prints the job", func() {
-		out, _, err := execute(newCmd(), "start", "--source", "cat-1")
+		out, _, err := execute(newCmd(), "start", "--source", "cat-1", "--target", "cat-2")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.calls).To(HaveLen(1))
 		Expect(fake.calls[0].GetSourceCatalogId()).To(Equal("cat-1"))
+		Expect(fake.calls[0].GetTargetCatalogId()).To(Equal("cat-2"))
+		Expect(fake.calls[0].GetBidirectional()).To(BeFalse())
 		Expect(fake.calls[0].GetTenantContext()).To(BeNil())
 		Expect(out).To(ContainSubstring("Job ID: job-1"))
 		Expect(out).To(ContainSubstring("Status: " + formatJobStatus(pb.JobStatus_JOB_STATUS_PENDING)))
 	})
 
 	It("passes --tenant as the request's tenant context", func() {
-		_, _, err := execute(newCmd(), "start", "--source", "cat-1", "--tenant", "acme")
+		_, _, err := execute(newCmd(), "start", "--source", "cat-1", "--target", "cat-2", "--tenant", "acme")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fake.calls[0].GetTenantContext().GetTenantId()).To(Equal("acme"))
 	})
 
 	It("emits job_id and status as JSON", func() {
-		out, _, err := execute(newCmd(), "start", "--source", "cat-1", "--json")
+		out, _, err := execute(newCmd(), "start", "--source", "cat-1", "--target", "cat-2", "--json")
 		Expect(err).NotTo(HaveOccurred())
 		var got map[string]string
 		Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
@@ -82,10 +84,53 @@ var _ = Describe("run start", func() {
 
 	It("wraps an RPC failure and preserves its code", func() {
 		fake.err = connectrpc.NewError(connectrpc.CodeNotFound, errors.New("catalog \"cat-x\" not found"))
-		_, _, err := execute(newCmd(), "start", "--source", "cat-x")
+		_, _, err := execute(newCmd(), "start", "--source", "cat-x", "--target", "cat-2")
 		Expect(err).To(MatchError(And(ContainSubstring("failed to start analysis"), ContainSubstring("not found"))))
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound))
 		Expect(fake.calls).To(HaveLen(1))
+	})
+
+	It("passes --bidirectional", func() {
+		_, _, err := execute(newCmd(), "start", "--source", "cat-1", "--target", "cat-2", "--bidirectional")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.calls[0].GetBidirectional()).To(BeTrue())
+	})
+
+	It("analyses within one catalog when --target equals --source", func() {
+		_, _, err := execute(newCmd(), "start", "--source", "cat-1", "--target", "cat-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.calls[0].GetSourceCatalogId()).To(Equal("cat-1"))
+		Expect(fake.calls[0].GetTargetCatalogId()).To(Equal("cat-1"))
+	})
+
+	It("requires --target, says both forms, and never calls the server", func() {
+		_, _, err := execute(newCmd(), "start", "--source", "cat-1")
+		Expect(err).To(MatchError(SatisfyAll(
+			ContainSubstring("requires --target <catalog-id>"),
+			ContainSubstring("--source cat-1 --target cat-1"),
+			ContainSubstring("crosscodex catalog list"),
+		)))
+		Expect(fake.calls).To(BeEmpty())
+	})
+
+	It("refuses --bidirectional within one catalog and never calls the server", func() {
+		_, _, err := execute(newCmd(), "start", "--source", "cat-1", "--target", "cat-1", "--bidirectional")
+		Expect(err).To(MatchError(SatisfyAll(
+			ContainSubstring("--bidirectional"),
+			ContainSubstring("already pairs its controls in both directions"),
+			ContainSubstring("drop --bidirectional, or pass a different --target"),
+		)))
+		Expect(fake.calls).To(BeEmpty())
+	})
+
+	It("shows a crosswalk and the within-catalog form in its help", func() {
+		out, _, err := execute(newCmd(), "start", "--help")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(SatisfyAll(
+			ContainSubstring("crosscodex run start --source 3f2a9c1e --target 7b41d0aa"),
+			ContainSubstring("crosscodex run start --source 3f2a9c1e --target 3f2a9c1e"),
+			ContainSubstring("--bidirectional"),
+		))
 	})
 })
 
@@ -178,15 +223,37 @@ var _ = Describe("stdinIsTerminal", func() {
 	)
 })
 
-// fakeGetJobClient serves GetJob with job; other GatewayServiceClient methods
-// panic through the nil embed.
+// fakeGetJobClient serves GetJob with job (jobErr when set) and GetCatalog
+// from catalogs (NotFound for an absent ID, catalogErr for every lookup when
+// set),
+// recording each catalog lookup; other GatewayServiceClient methods panic
+// through the nil embed.
 type fakeGetJobClient struct {
 	crosscodexv1connect.GatewayServiceClient
-	job *pb.PipelineJob
+	job            *pb.PipelineJob
+	jobErr         error
+	catalogs       map[string]*pb.Catalog
+	catalogErr     error
+	catalogLookups []string
 }
 
 func (f *fakeGetJobClient) GetJob(context.Context, *connectrpc.Request[pb.GetJobRequest]) (*connectrpc.Response[pb.GetJobResponse], error) {
+	if f.jobErr != nil {
+		return nil, f.jobErr
+	}
 	return connectrpc.NewResponse(&pb.GetJobResponse{Job: f.job}), nil
+}
+
+func (f *fakeGetJobClient) GetCatalog(_ context.Context, req *connectrpc.Request[pb.GetCatalogRequest]) (*connectrpc.Response[pb.GetCatalogResponse], error) {
+	f.catalogLookups = append(f.catalogLookups, req.Msg.GetCatalogId())
+	if f.catalogErr != nil {
+		return nil, f.catalogErr
+	}
+	c, ok := f.catalogs[req.Msg.GetCatalogId()]
+	if !ok {
+		return nil, connectrpc.NewError(connectrpc.CodeNotFound, errors.New("catalog not found. List catalogs to find a valid catalog_id"))
+	}
+	return connectrpc.NewResponse(&pb.GetCatalogResponse{Catalog: c}), nil
 }
 
 var _ = Describe("run status", func() {
@@ -253,6 +320,224 @@ var _ = Describe("run status", func() {
 		var got map[string]any
 		Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
 		Expect(got).To(HaveKeyWithValue("analyzers", []any{}))
+	})
+
+	Describe("the job's catalogs", func() {
+		catalogs := map[string]*pb.Catalog{
+			"cat-src": {CatalogId: "cat-src", Name: "CSF 2.0", Version: "2.0", ControlCount: 185},
+			"cat-tgt": {CatalogId: "cat-tgt", Name: "NIST SP 800-53", ControlCount: 1196},
+		}
+		statusOf := func(client *fakeGetJobClient, args ...string) (string, error) {
+			cmd := newRunCmd(&cliState{client: client})
+			cmd.PersistentFlags().Bool("json", false, "output as JSON") // root-level in production
+			out, _, err := execute(cmd, append([]string{"status", "job-1"}, args...)...)
+			return out, err
+		}
+		jobOver := func(cfg *pb.JobConfig) *pb.PipelineJob {
+			job := jobWithStages("classify", "synthesis", "graph")
+			job.Config = cfg
+			return job
+		}
+		// recorded gives cfg the snapshots CreateJob records: each side's
+		// label from catalogs, as they were when the job was created.
+		recorded := func(cfg *pb.JobConfig) *pb.JobConfig {
+			snap := func(id string) *pb.CatalogSnapshot {
+				c := catalogs[id]
+				return &pb.CatalogSnapshot{CatalogId: id, Name: c.GetName(), Version: c.GetVersion()}
+			}
+			target := cfg.GetTargetCatalogId()
+			if target == "" {
+				target = cfg.GetCatalogId()
+			}
+			cfg.SourceCatalog, cfg.TargetCatalog = snap(cfg.GetCatalogId()), snap(target)
+			return cfg
+		}
+		const notRecorded = " (current name; not recorded when the job was created)"
+
+		It("shows source and target by name, version and ID, each side's control count, and the direction", func() {
+			client := &fakeGetJobClient{catalogs: catalogs, job: jobOver(recorded(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt", Bidirectional: true}))}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(SatisfyAll(
+				ContainSubstring("Source catalog: CSF 2.0 (version 2.0, ID cat-src, 185 controls)\n"),
+				ContainSubstring("Target catalog: NIST SP 800-53 (version not recorded, ID cat-tgt, 1196 controls)\n"),
+				ContainSubstring("Direction: both ways (source to target, and target to source)\n"),
+			))
+			Expect(client.catalogLookups).To(Equal([]string{"cat-src", "cat-tgt"}))
+		})
+
+		It("shows a one-way crosswalk's direction", func() {
+			client := &fakeGetJobClient{catalogs: catalogs, job: jobOver(recorded(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"}))}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("Direction: source to target\n"))
+		})
+
+		DescribeTable("shows a job within one catalog with that catalog on both sides, looked up once",
+			func(cfg *pb.JobConfig) {
+				client := &fakeGetJobClient{catalogs: catalogs, job: jobOver(cfg)}
+				out, err := statusOf(client)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(SatisfyAll(
+					ContainSubstring("Source catalog: CSF 2.0 (version 2.0, ID cat-src, 185 controls)\n"),
+					ContainSubstring("Target catalog: CSF 2.0 (version 2.0, ID cat-src, 185 controls)\n"),
+					ContainSubstring("Direction: within one catalog (its controls paired in both directions)\n"),
+				))
+				Expect(client.catalogLookups).To(Equal([]string{"cat-src"}))
+			},
+			Entry("explicit target equal to the source", recorded(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-src"})),
+			Entry("a target-less config with snapshots", recorded(&pb.JobConfig{CatalogId: "cat-src"})),
+		)
+
+		// A re-import under a new name overwrites the catalog's name but
+		// keeps its ID, so the job's own record is what names its catalogs.
+		It("shows a renamed catalog under the name and version the job recorded", func() {
+			job := jobOver(recorded(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"}))
+			renamed := map[string]*pb.Catalog{
+				"cat-src": {CatalogId: "cat-src", Name: "CSF 2.0 (renamed)", Version: "2.0.1", ControlCount: 185},
+				"cat-tgt": catalogs["cat-tgt"],
+			}
+			out, err := statusOf(&fakeGetJobClient{catalogs: renamed, job: job})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("Source catalog: CSF 2.0 (version 2.0, ID cat-src, 185 controls)\n"))
+			Expect(out).NotTo(ContainSubstring("renamed"))
+		})
+
+		It("still names a catalog deleted since the job by the label the job recorded", func() {
+			cfg := recorded(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"})
+			client := &fakeGetJobClient{catalogs: map[string]*pb.Catalog{"cat-src": catalogs["cat-src"]}, job: jobOver(cfg)}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("Target catalog: NIST SP 800-53 (version not recorded, ID cat-tgt, " +
+				"not found: deleted or purged, or not visible to your tenant)\n"))
+		})
+
+		It("labels a job from before snapshots as showing the catalogs' current names", func() {
+			client := &fakeGetJobClient{catalogs: catalogs, job: jobOver(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"})}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(SatisfyAll(
+				ContainSubstring("Source catalog: CSF 2.0 (version 2.0, ID cat-src, 185 controls)"+notRecorded+"\n"),
+				ContainSubstring("Target catalog: NIST SP 800-53 (version not recorded, ID cat-tgt, 1196 controls)"+notRecorded+"\n"),
+			))
+		})
+
+		It("marks a job from before snapshots in the JSON output", func() {
+			client := &fakeGetJobClient{catalogs: catalogs, job: jobOver(&pb.JobConfig{CatalogId: "cat-src"})}
+			out, err := statusOf(client, "--json")
+			Expect(err).NotTo(HaveOccurred())
+			var got struct {
+				Analysis struct {
+					Source map[string]any `json:"source_catalog"`
+					Target map[string]any `json:"target_catalog"`
+				} `json:"analysis"`
+			}
+			Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
+			Expect(got.Analysis.Source).To(SatisfyAll(HaveKeyWithValue("name", "CSF 2.0"), HaveKeyWithValue("snapshot", false)))
+			Expect(got.Analysis.Target).To(HaveKeyWithValue("snapshot", false))
+		})
+
+		It("still shows a job whose catalog is gone, by ID", func() {
+			client := &fakeGetJobClient{catalogs: catalogs, job: jobOver(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-gone"})}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("Target catalog: cat-gone (not found: deleted or purged, or not visible to your tenant)\n"))
+		})
+
+		It("shows an uploader-controlled name and version as one clean line", func() {
+			client := &fakeGetJobClient{job: jobOver(&pb.JobConfig{CatalogId: "cat-evil", TargetCatalogId: "cat-evil",
+				SourceCatalog: &pb.CatalogSnapshot{CatalogId: "cat-evil", Name: "Evil\x1b]0;pwned\x07\nCatalog", Version: "1\u202e0"}}),
+				catalogs: map[string]*pb.Catalog{"cat-evil": {CatalogId: "cat-evil", Name: "Current", ControlCount: 1}}}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("Source catalog: Evil ]0;pwned Catalog (version 10, ID cat-evil, 1 controls)\n"))
+			Expect(out).NotTo(ContainSubstring("\x1b"))
+		})
+
+		// Jobs created before CreateJob confirmed catalog ownership can name
+		// any string as a catalog ID.
+		It("shows an unvalidated catalog ID as one clean line, found or not", func() {
+			evilID := "cat\x1b[2J\nsrc"
+			client := &fakeGetJobClient{job: jobOver(&pb.JobConfig{CatalogId: evilID, TargetCatalogId: "gone\x1b[2J"}),
+				catalogs: map[string]*pb.Catalog{evilID: {CatalogId: evilID, Name: "CSF 2.0", Version: "2.0", ControlCount: 1}}}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(SatisfyAll(
+				ContainSubstring("Source catalog: CSF 2.0 (version 2.0, ID cat [2J src, 1 controls)"+notRecorded+"\n"),
+				ContainSubstring("Target catalog: gone [2J (not found: deleted or purged, or not visible to your tenant)\n"),
+			))
+			Expect(out).NotTo(ContainSubstring("\x1b"))
+		})
+
+		It("still shows the job when a catalog lookup fails, marking each catalog it could not read", func() {
+			client := &fakeGetJobClient{catalogErr: connectrpc.NewError(connectrpc.CodeUnavailable, errors.New("catalog backend down\x1b[2J")),
+				job: jobOver(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"})}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(SatisfyAll(
+				ContainSubstring("Job: job-1\n"),
+				ContainSubstring("Status: "),
+				ContainSubstring("Source catalog: cat-src (lookup failed: unavailable: catalog backend down [2J)\n"),
+				ContainSubstring("Target catalog: cat-tgt (lookup failed: unavailable: catalog backend down [2J)\n"),
+				ContainSubstring("Direction: source to target\n"),
+			))
+			Expect(out).NotTo(ContainSubstring("\x1b"))
+			Expect(client.catalogLookups).To(Equal([]string{"cat-src", "cat-tgt"}))
+		})
+
+		It("reports a failed catalog lookup in the JSON output", func() {
+			client := &fakeGetJobClient{catalogErr: connectrpc.NewError(connectrpc.CodeUnavailable, errors.New("catalog backend down")),
+				job: jobOver(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"})}
+			out, err := statusOf(client, "--json")
+			Expect(err).NotTo(HaveOccurred())
+			var got struct {
+				Analysis struct {
+					Source map[string]any `json:"source_catalog"`
+				} `json:"analysis"`
+			}
+			Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
+			Expect(got.Analysis.Source).To(SatisfyAll(
+				HaveKeyWithValue("catalog_id", "cat-src"), HaveKeyWithValue("found", false),
+				HaveKeyWithValue("lookup_error", "unavailable: catalog backend down"),
+			))
+		})
+
+		It("fails when the job itself cannot be read", func() {
+			client := &fakeGetJobClient{jobErr: connectrpc.NewError(connectrpc.CodeUnavailable, errors.New("gateway down"))}
+			_, err := statusOf(client)
+			Expect(err).To(MatchError(SatisfyAll(ContainSubstring("failed to get job status"), ContainSubstring("gateway down"))))
+			Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeUnavailable))
+			Expect(client.catalogLookups).To(BeEmpty())
+		})
+
+		It("adds the catalogs and direction to the JSON output", func() {
+			client := &fakeGetJobClient{catalogs: catalogs, job: jobOver(recorded(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"}))}
+			out, err := statusOf(client, "--json")
+			Expect(err).NotTo(HaveOccurred())
+			var got struct {
+				Analysis struct {
+					Source    map[string]any `json:"source_catalog"`
+					Target    map[string]any `json:"target_catalog"`
+					Direction string         `json:"direction"`
+				} `json:"analysis"`
+			}
+			Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
+			Expect(got.Analysis.Direction).To(Equal("source_to_target"))
+			Expect(got.Analysis.Source).To(SatisfyAll(
+				HaveKeyWithValue("catalog_id", "cat-src"), HaveKeyWithValue("name", "CSF 2.0"),
+				HaveKeyWithValue("version", "2.0"), HaveKeyWithValue("control_count", BeNumerically("==", 185)),
+				HaveKeyWithValue("found", true), HaveKeyWithValue("snapshot", true),
+			))
+			Expect(got.Analysis.Target).To(HaveKeyWithValue("catalog_id", "cat-tgt"))
+		})
+
+		It("shows no catalogs for a job whose config names none, and looks none up", func() {
+			client := &fakeGetJobClient{job: jobWithStages("synthesis", "graph")}
+			out, err := statusOf(client)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).NotTo(ContainSubstring("catalog:"))
+			Expect(client.catalogLookups).To(BeEmpty())
+		})
 	})
 })
 

@@ -15,6 +15,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
@@ -40,7 +41,7 @@ const reviewCellBytes = 60
 const showWrapWidth = 100
 
 // cell sanitizes one untrusted value for a single table cell or line.
-func cell(s string) string { return artifacts.CleanDisplay(s, reviewCellBytes) }
+func cell(s string) string { return intanalyzer.CleanDisplay(s, reviewCellBytes) }
 
 // maxReviewerDisplayBytes caps the reviewer echoed by decide;
 // ValidateReviewerID already bounds it to the same length.
@@ -135,7 +136,7 @@ func reviewArtifactsCmd(args []string) int {
 			if err != nil {
 				return err
 			}
-			writeReviewQueue(os.Stdout, items, fmt.Sprintf("no pairs match %q", artifacts.CleanDisplay(*name, artifacts.MaxSearchNameBytes)))
+			writeReviewQueue(os.Stdout, items, fmt.Sprintf("no pairs match %q", intanalyzer.CleanDisplay(*name, artifacts.MaxSearchNameBytes)))
 			return nil
 		}
 		items, err := hv.ReviewQueue(ctx, id, *limit)
@@ -195,7 +196,7 @@ func decideArtifactsCmd(args []string) int {
 	if *expect == "" {
 		// *tenantID is not validated yet (runForTenants does that later) and is echoed, so clean it.
 		fmt.Fprintf(os.Stderr, "%s: --expect is required: run \"crosscodexd admin adjudicate artifacts show --tenant %s --pair %s\", review the reasoning, and copy its EXPECT value\n",
-			cmd, artifacts.CleanDisplay(*tenantID, reviewCellBytes), artifacts.CleanDisplay(*pair, reviewCellBytes))
+			cmd, intanalyzer.CleanDisplay(*tenantID, reviewCellBytes), intanalyzer.CleanDisplay(*pair, reviewCellBytes))
 		return 2
 	}
 	if err := artifacts.ValidateExpect(*expect); err != nil {
@@ -220,11 +221,11 @@ func decideArtifactsCmd(args []string) int {
 				at = changed.DecidedAt.UTC().Format(time.RFC3339Nano)
 			}
 			return fmt.Errorf("pair %s changed since you viewed it: it is now %s by %s (%s) at %s; nothing was recorded. Run \"crosscodexd admin adjudicate artifacts show --tenant %s --pair %s\", review the current reasoning, and decide again with its EXPECT value",
-				*pair, cell(string(changed.Status)), artifacts.CleanDisplay(changed.DisplayBy, maxReviewerDisplayBytes), cell(changed.DeterminationType), at, id, *pair)
+				*pair, cell(string(changed.Status)), intanalyzer.CleanDisplay(changed.DisplayBy, maxReviewerDisplayBytes), cell(changed.DeterminationType), at, id, *pair)
 		case err != nil:
 			return err
 		}
-		by := artifacts.CleanDisplay(*reviewer, maxReviewerDisplayBytes)
+		by := intanalyzer.CleanDisplay(*reviewer, maxReviewerDisplayBytes)
 		switch d.Outcome {
 		case artifacts.HumanUnchanged:
 			fmt.Fprintf(os.Stdout, "pair %s: unchanged: already %s by a human; determined_by was not changed\n", *pair, status)
@@ -379,7 +380,7 @@ func showArtifactsCmd(args []string) int {
 		}
 		writePairDetail(os.Stdout, d, id)
 		if d.EvidenceErr != nil {
-			return fmt.Errorf("pair %s: stored evidence cannot be decoded: %s. The pair can still be decided; run decide with --expect %s", *pair, artifacts.CleanDisplay(d.EvidenceErr.Error(), showErrorBytes), d.Expect)
+			return fmt.Errorf("pair %s: stored evidence cannot be decoded: %s. The pair can still be decided; run decide with --expect %s", *pair, intanalyzer.CleanDisplay(d.EvidenceErr.Error(), showErrorBytes), d.Expect)
 		}
 		return nil
 	})
@@ -418,7 +419,7 @@ func writePairDetail(w io.Writer, d artifacts.PairDetail, tenantID string) {
 		fmt.Fprintf(w, "error flushing output: %v\n", err)
 	}
 	if d.EvidenceErr != nil {
-		fmt.Fprintf(w, "\nVOTES\n%s\n", wrapIndent("unreadable: "+artifacts.CleanDisplay(d.EvidenceErr.Error(), showErrorBytes), "  ", showWrapWidth))
+		fmt.Fprintf(w, "\nVOTES\n%s\n", wrapIndent("unreadable: "+intanalyzer.CleanDisplay(d.EvidenceErr.Error(), showErrorBytes), "  ", showWrapWidth))
 	} else if d.Evidence != nil {
 		s := d.Evidence.Split()
 		fmt.Fprintf(w, "\nVOTES (%d same, %d distinct, %d failed; %d valid of %d)\n", s.Same, s.Valid-s.Same, s.Total-s.Valid, s.Valid, s.Total)
@@ -426,7 +427,7 @@ func writePairDetail(w io.Writer, d artifacts.PairDetail, tenantID string) {
 	}
 	writeDissent(w, d)
 	if d.LastError != "" {
-		fmt.Fprintf(w, "\nLAST ERROR\n%s\n", wrapIndent(artifacts.CleanDisplay(d.LastError, showErrorBytes), "  ", showWrapWidth))
+		fmt.Fprintf(w, "\nLAST ERROR\n%s\n", wrapIndent(intanalyzer.CleanDisplay(d.LastError, showErrorBytes), "  ", showWrapWidth))
 	}
 	if d.RelatedTotal == 0 {
 		fmt.Fprint(w, "\nRELATED PAIRS\n  none\n")
@@ -473,7 +474,7 @@ func writeDissent(w io.Writer, d artifacts.PairDetail) {
 		}
 		fmt.Fprintf(w, "  %s\n", status)
 		if dis.EvidenceErr != nil {
-			fmt.Fprintln(w, wrapIndent("dissent not readable: "+artifacts.CleanDisplay(dis.EvidenceErr.Error(), showErrorBytes), "  ", showWrapWidth))
+			fmt.Fprintln(w, wrapIndent("dissent not readable: "+intanalyzer.CleanDisplay(dis.EvidenceErr.Error(), showErrorBytes), "  ", showWrapWidth))
 		}
 		return
 	}
@@ -484,7 +485,7 @@ func writeDissent(w io.Writer, d artifacts.PairDetail) {
 	fmt.Fprintf(w, "  %s by %s at %s (confidence %.2f%s)\n", cell(string(dis.Status)), cell(dis.DeterminedBy),
 		dis.DecidedAt.UTC().Format(time.RFC3339Nano), dis.Confidence, prompt)
 	if dis.EvidenceErr != nil {
-		fmt.Fprintln(w, wrapIndent("evidence not readable: "+artifacts.CleanDisplay(dis.EvidenceErr.Error(), showErrorBytes), "  ", showWrapWidth))
+		fmt.Fprintln(w, wrapIndent("evidence not readable: "+intanalyzer.CleanDisplay(dis.EvidenceErr.Error(), showErrorBytes), "  ", showWrapWidth))
 	} else if dis.Evidence != nil {
 		writeVotes(w, dis.Evidence.Votes)
 	}
@@ -506,7 +507,7 @@ func writeVotes(w io.Writer, votes []artifacts.VoteRecord) {
 			confidence = "-"
 		}
 		fmt.Fprintf(w, "  %s  %s  %s\n", cell(v.VoterID), decision, confidence)
-		if j := wrapIndent(artifacts.CleanDisplay(v.Justification, showJustificationBytes), "    ", showWrapWidth); j != "" {
+		if j := wrapIndent(intanalyzer.CleanDisplay(v.Justification, showJustificationBytes), "    ", showWrapWidth); j != "" {
 			fmt.Fprintln(w, j)
 		}
 	}

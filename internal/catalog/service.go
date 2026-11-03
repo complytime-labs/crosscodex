@@ -239,8 +239,10 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("read document: %w", err))
 	}
 
-	// Detect actual format from content
-	detectedIsOSCAL := isOSCALJSON(data)
+	// Detect actual format from content, decoding the document once for
+	// detection and for its metadata (title, version).
+	doc := readOSCALDocument(data)
+	detectedIsOSCAL := doc.isOSCAL
 
 	// Validate format hint against detected format
 	var isOSCAL bool
@@ -299,7 +301,13 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	// Derive catalog name from OSCAL metadata.title if not provided
 	catalogName := req.Msg.GetCatalogName()
 	if catalogName == "" && isOSCAL {
-		catalogName = extractCatalogName(data)
+		catalogName = doc.metadataString(OSCALTitleKey)
+	}
+	// The catalog's own version, so a crosswalk shows the exact versions it
+	// mapped. Only OSCAL documents carry one; any other format records "".
+	var catalogVersion string
+	if isOSCAL {
+		catalogVersion = doc.metadataString(OSCALVersionKey)
 	}
 
 	// Persist catalog metadata if store configured
@@ -308,7 +316,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			CatalogID:        catalogID,
 			TenantID:         tenantID,
 			Name:             catalogName,
-			Version:          "",
+			Version:          catalogVersion,
 			SourceType:       SourceTypeDocument,
 			ObjectPath:       req.Msg.GetDocumentId(),
 			CreatedAt:        time.Now().UTC(),
@@ -693,14 +701,31 @@ func (s *Service) SearchControls(ctx context.Context, req *connect.Request[cross
 
 // Helper functions
 
-// isOSCALJSON detects if data is OSCAL JSON by checking for "catalog" key.
-func isOSCALJSON(data []byte) bool {
-	var obj map[string]interface{}
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return false
+// oscalDocument is what ParseCatalog reads from a document before parsing
+// its controls: whether it is OSCAL JSON (a JSON object with the "catalog"
+// key, whatever its value) and the catalog's metadata object, nil when absent
+// or not an object.
+type oscalDocument struct {
+	isOSCAL  bool
+	metadata map[string]interface{}
+}
+
+// readOSCALDocument decodes data once. A document that is not a JSON object
+// is not OSCAL.
+func readOSCALDocument(data []byte) oscalDocument {
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return oscalDocument{}
 	}
-	_, ok := obj[OSCALRootKey]
-	return ok
+	rawCatalog, ok := root[OSCALRootKey]
+	if !ok {
+		return oscalDocument{}
+	}
+	doc := oscalDocument{isOSCAL: true}
+	if catalog, ok := rawCatalog.(map[string]interface{}); ok {
+		doc.metadata, _ = catalog[OSCALMetadataKey].(map[string]interface{})
+	}
+	return doc
 }
 
 // unsupportedFormatError explains why a document that failed OSCAL detection
@@ -748,30 +773,12 @@ func generateCatalogID(contentHash, tenantID string) string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// extractCatalogName extracts the catalog name from OSCAL JSON metadata.title.
-// Returns empty string if not found or on error.
-func extractCatalogName(data []byte) string {
-	var root map[string]interface{}
-	if err := json.Unmarshal(data, &root); err != nil {
-		return ""
-	}
-
-	catalog, ok := root[OSCALRootKey].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-
-	metadata, ok := catalog[OSCALMetadataKey].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-
-	title, ok := metadata[OSCALTitleKey].(string)
-	if !ok {
-		return ""
-	}
-
-	return title
+// metadataString returns the string field key of the catalog's metadata
+// (OSCALTitleKey, OSCALVersionKey), or "" when the document is not OSCAL
+// JSON or the field is absent or not a string.
+func (d oscalDocument) metadataString(key string) string {
+	value, _ := d.metadata[key].(string)
+	return value
 }
 
 // formatStringToEnum maps the stored format string to CatalogFormat enum.

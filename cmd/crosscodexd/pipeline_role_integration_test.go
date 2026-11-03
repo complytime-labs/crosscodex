@@ -152,7 +152,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		Expect(err).NotTo(HaveOccurred())
 
 		resp, err := backend.CreateJob(ctxTenant, connect.NewRequest(&pb.CreateJobRequest{
-			Config: &pb.JobConfig{CatalogId: catalogID},
+			Config: &pb.JobConfig{CatalogId: catalogID, TargetCatalogId: catalogID},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		jobID := resp.Msg.JobId
@@ -188,7 +188,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		// its code and its remedy.
 		_, err = backend.RetryJob(ctxTenant, connect.NewRequest(&pb.RetryJobRequest{JobId: jobID, RetryFromFailure: true}))
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
-		Expect(err.Error()).To(ContainSubstring("crosscodex run start --source " + catalogID))
+		Expect(err.Error()).To(HaveSuffix("crosscodex run start --source " + catalogID + " --target " + catalogID))
 	})
 
 	It("imports an OSCAL catalog through a standalone gateway and completes its job with separate pipeline, worker and graph roles", func() {
@@ -279,7 +279,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		Expect(err).NotTo(HaveOccurred(), "SubmitDocument through the standalone gateway")
 		catalogID := submitResp.Msg.GetCatalogId()
 		Expect(catalogID).NotTo(BeEmpty(), "catalog id")
-		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID}))
+		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID, TargetCatalogId: catalogID}))
 		Expect(err).NotTo(HaveOccurred(), "StartAnalysis")
 		jobID := startResp.Msg.GetJobId()
 		Expect(jobID).NotTo(BeEmpty(), "job id")

@@ -1,5 +1,5 @@
 name: artifact_same_as
-version: "1.1.0"
+version: "1.2.0"
 metadata:
   domain: analysis
   analyzer_type: artifact_same_as

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"sort"
 	"strconv"
-	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -200,41 +199,56 @@ func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 		// passes every control's text as parameters.
 		sourceKey := "source_text_" + pair.SourceControlID
 		targetKey := "target_text_" + pair.TargetControlID
-		sourceText := cfg.Parameters[sourceKey]
-		targetText := cfg.Parameters[targetKey]
+		// Every catalog value is uploader- or OSCAL-controlled, so each is
+		// hardened: format characters removed, UTF-8 repaired, whitespace
+		// collapsed, tag delimiters escaped. Statements go through
+		// PromptText with their end's limit. Hardening comes before the
+		// blank check, so a statement of only invisible characters counts
+		// as missing.
+		sourceText := intanalyzer.PromptText(cfg.Parameters[sourceKey], a.cfg.MaxSourceChars)
+		targetText := intanalyzer.PromptText(cfg.Parameters[targetKey], a.cfg.MaxTargetChars)
 		var missingKey string
 		switch {
-		case strings.TrimSpace(sourceText) == "":
+		case sourceText == "":
 			missingKey = sourceKey
-		case strings.TrimSpace(targetText) == "":
+		case targetText == "":
 			missingKey = targetKey
 		}
 		if missingKey != "" {
-			err := fmt.Errorf("requires.GenerateWork: pair %s--%s: no %q parameter: %w",
-				pair.SourceControlID, pair.TargetControlID, missingKey, intanalyzer.ErrMissingControlText)
+			reason := fmt.Sprintf("no %q parameter", missingKey)
+			if _, ok := cfg.Parameters[missingKey]; ok {
+				reason = fmt.Sprintf("parameter %q has no statement text after removing whitespace and format characters; "+
+					"give the control a statement in the catalog and re-import it", missingKey)
+			}
+			err := fmt.Errorf("requires.GenerateWork: pair %s--%s: %s: %w",
+				pair.SourceControlID, pair.TargetControlID, reason, intanalyzer.ErrMissingControlText)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
-		sourceText = intanalyzer.TruncateText(sourceText, a.cfg.MaxSourceChars)
-		targetText = intanalyzer.TruncateText(targetText, a.cfg.MaxTargetChars)
+		// IDs, framework names, types, levels and ancestor titles are short
+		// values: PromptValue caps each at MaxPromptValueBytes, so a catalog
+		// name cannot carry a statement-sized payload.
+		short := func(v string) string { return intanalyzer.PromptValue(v, intanalyzer.MaxPromptValueBytes) }
 
 		vars := map[string]string{
 			"requires_guidance":      requiresGuidance,
 			"dependency_definitions": dependencyDefinitions,
 			"few_shot_examples":      fewShotStr,
-			"source_id":              pair.SourceControlID,
-			"target_id":              pair.TargetControlID,
+			"source_id":              short(pair.SourceControlID),
+			"target_id":              short(pair.TargetControlID),
 			"source_text":            sourceText,
 			"target_text":            targetText,
-			"source_framework":       cfg.Parameters["source_framework"],
-			"target_framework":       cfg.Parameters["target_framework"],
-			"source_type":            cfg.Parameters["source_type_"+pair.SourceControlID],
-			"source_level":           cfg.Parameters["source_level_"+pair.SourceControlID],
-			"source_ancestor":        cfg.Parameters["source_ancestor_"+pair.SourceControlID],
-			"target_type":            cfg.Parameters["target_type_"+pair.TargetControlID],
-			"target_level":           cfg.Parameters["target_level_"+pair.TargetControlID],
-			"target_ancestor":        cfg.Parameters["target_ancestor_"+pair.TargetControlID],
+			// Keyed per control: in a bidirectional crosswalk either end of a
+			// pair can come from either catalog.
+			"source_framework": short(cfg.Parameters["source_framework_"+pair.SourceControlID]),
+			"target_framework": short(cfg.Parameters["target_framework_"+pair.TargetControlID]),
+			"source_type":      short(cfg.Parameters["source_type_"+pair.SourceControlID]),
+			"source_level":     short(cfg.Parameters["source_level_"+pair.SourceControlID]),
+			"source_ancestor":  short(cfg.Parameters["source_ancestor_"+pair.SourceControlID]),
+			"target_type":      short(cfg.Parameters["target_type_"+pair.TargetControlID]),
+			"target_level":     short(cfg.Parameters["target_level_"+pair.TargetControlID]),
+			"target_ancestor":  short(cfg.Parameters["target_ancestor_"+pair.TargetControlID]),
 		}
 
 		systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)

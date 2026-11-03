@@ -9,8 +9,8 @@ import (
 	"crypto/elliptic"
 	crand "crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -25,10 +25,10 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/internal/worker"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
-	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -44,9 +44,15 @@ import (
 // agree on one model.
 const e2eModel = "e2e-test-model"
 
+// e2eIdenticalStatement is every seeded leaf control's statement. Leaves of
+// sections with the same title get identical prepared embedding text,
+// "[<parent title>] <statement>", so cosine similarity 1.0 makes every pair
+// of them a stable candidate.
+const e2eIdenticalStatement = "The organization enforces multi-factor authentication for all privileged accounts."
+
 // e2eKeyProvider is an ephemeral ECDSA P-256 key provider for the attestation
-// generator, mirroring pkg/attestation's test double. The job is attested, so
-// it completes only once its whole attestation verifies and is stored.
+// generator, mirroring pkg/attestation's test double. The jobs are attested,
+// so each completes only once its whole attestation verifies and is stored.
 type e2eKeyProvider struct{ key *ecdsa.PrivateKey }
 
 // newE2EKeyProvider builds an e2eKeyProvider. Offset 1 so a key-generation
@@ -80,251 +86,279 @@ func e2eScalar(conn db.TenantConnection, ctx context.Context, query string, args
 	return n
 }
 
-// TestPipelineE2E exercises the entire durable pipeline against a real
-// Postgres (db compose profile), an embedded NATS server, real analyzers, a
-// real LLM worker, and a hermetic fake LLM client. It seeds a small catalog,
-// runs one job to completion through pipeline.Service.CreateJob, and asserts
-// that every persistence surface this plan introduced was populated for the
-// owning tenant and is isolated from a second tenant by RLS.
-var _ = Describe("Pipeline end-to-end", func() {
-	It("runs a job to completion and populates every durable surface, isolated per tenant", func() {
-		ctx := context.Background()
+// e2eControl is one seeded control row.
+type e2eControl struct {
+	id, title, statement, class, parentID string
+}
 
-		suDSN := os.Getenv("TEST_DATABASE_DSN")
-		if suDSN == "" {
-			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
+// e2eEnv is the durable pipeline under test: a real Postgres (db compose
+// profile), an embedded NATS server, real analyzers, a real LLM worker and a
+// hermetic fake LLM client. tenantA owns every seeded catalog and job;
+// tenantB is an unrelated tenant for the RLS checks.
+type e2eEnv struct {
+	idb              *integrationDB
+	store            *PGStore
+	svc              *Service
+	tenantA, tenantB string
+	ctxA, ctxB       context.Context
+}
+
+// newE2EEnv builds the pipeline and registers its teardown with
+// DeferCleanup, so it lives until the calling BeforeAll's container ends.
+func newE2EEnv() *e2eEnv {
+	ctx := context.Background()
+	idb := openIntegrationDB(ctx, 4)
+	tenantConn := idb.tenantConn
+
+	// vectordb writes go through a superuser *sql.DB: EmbeddingAnalyzer.Aggregate
+	// calls StoreBatch, which writes tenant_id explicitly but does not set
+	// app.current_tenant, so an app_user connection would be blocked by the
+	// embeddings RLS WITH CHECK. The superuser bypasses RLS, matching how the
+	// candidate-generation integration test seeds embeddings.
+	vecDB, err := sql.Open("pgx", idb.suDSN)
+	Expect(err).NotTo(HaveOccurred(), "open vectordb connection")
+	DeferCleanup(vecDB.Close)
+	vectors, err := vectordb.NewPgVectorStore(vecDB)
+	Expect(err).NotTo(HaveOccurred(), "create pgvector store")
+
+	env := &e2eEnv{
+		idb:     idb,
+		tenantA: fmt.Sprintf("e2e-a-%s", uuid.New().String()),
+		tenantB: fmt.Sprintf("e2e-b-%s", uuid.New().String()),
+	}
+	Expect(db.EnsureTenant(ctx, idb.suPool, env.tenantA, "e2e-a")).To(Succeed(), "ensure tenant A")
+	Expect(db.EnsureTenant(ctx, idb.suPool, env.tenantB, "e2e-b")).To(Succeed(), "ensure tenant B")
+	env.ctxA, err = tenant.WithTenant(ctx, env.tenantA)
+	Expect(err).NotTo(HaveOccurred(), "WithTenant A")
+	env.ctxB, err = tenant.WithTenant(ctx, env.tenantB)
+	Expect(err).NotTo(HaveOccurred(), "WithTenant B")
+
+	// Embedded NATS server (in-process JetStream). Shared by the engine's
+	// dispatcher/collector, the pipeline's event publishing, and the worker.
+	bus, err := natsbus.New(config.NATSConfig{
+		URL:      "",
+		Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
+	})
+	Expect(err).NotTo(HaveOccurred(), "create embedded NATS")
+	DeferCleanup(bus.Close)
+
+	// Analyzer configuration: every analyzer enabled, one model, generous
+	// limits so seeded text is never truncated to empty.
+	analysisConfig := config.AnalysisConfig{
+		Engine: config.EngineConfig{
+			TaskTimeout:  2 * time.Minute,
+			MaxRetries:   2,
+			RetryBackoff: time.Second,
+		},
+		Classification: config.ClassificationConfig{
+			Enabled: true, Model: e2eModel, MaxTextLength: 10000, Temperature: 0, MaxTokens: 512,
+		},
+		Embedding: config.EmbeddingConfig{
+			Enabled: true, Models: []string{e2eModel}, MaxChars: 10000, BatchSize: 1,
+		},
+		Relationship: config.RelationshipConfig{
+			Enabled: true, Models: []string{e2eModel},
+			MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512,
+			SamplesPerModel: 1, SamplingTemperature: 0, ActionableTypes: []string{"related"},
+		},
+		Candidates: config.CandidateConfig{
+			Generators:           []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true, Weight: 1.0}},
+			MinEmbeddingCoverage: 0.8,
+			EmbedModel:           e2eModel,
+		},
+		Requires: config.RequiresConfig{
+			Enabled: true, Models: []string{e2eModel}, SamplesPerModel: 1,
+			ConsensusThreshold: 0.5, MaxErrorRate: 0.5,
+			MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512, SamplingTemperature: 0,
+		},
+		Artifacts: config.ArtifactsConfig{
+			Enabled: true, Models: []string{e2eModel}, SamplesPerModel: 1,
+			MaxTokens: 512, MaxTextChars: 10000, FuzzyThreshold: 0.6, SamplingTemperature: 0,
+		},
+	}
+
+	fakeLLM := testspecs.DeterministicLLM{EmbeddingDim: embeddingDim}
+
+	// Embedded-only prompt layer: the built-in defaults provide classify,
+	// artifacts, requires, and relationship prompts. Restricting the stack to
+	// "embedded" keeps the test hermetic (no user/project XDG overlay).
+	prompts, err := prompt.NewRegistry(config.PromptConfig{
+		Layers: config.PromptLayerConfig{
+			Enabled: true,
+			Order:   []config.PromptLayerEntry{{ID: "embedded"}},
+		},
+	})
+	Expect(err).NotTo(HaveOccurred(), "create prompt registry")
+
+	storageProvider, err := storage.NewLocal(GinkgoT().TempDir(), env.tenantA)
+	Expect(err).NotTo(HaveOccurred(), "create local storage")
+
+	env.store = NewPGStore(tenantConn, idb.suPool)
+
+	registry, err := NewProductionRegistry(fakeLLM, vectors, storageProvider, prompts, tenantConn, analysisConfig, nil, nil)
+	Expect(err).NotTo(HaveOccurred(), "build production registry")
+
+	taskTypes := map[string]natsbus.TaskType{
+		"classify":     natsbus.TaskClassify,
+		"embedding":    natsbus.TaskEmbed,
+		"artifacts":    natsbus.TaskArtifacts,
+		"requires":     natsbus.TaskRequires,
+		"relationship": natsbus.TaskRelate,
+	}
+
+	dbReporter := NewDBStageReporter(analysis.NewNATSStageReporter(bus), env.store)
+	engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, analysis.WithStageReporter(dbReporter),
+		analysis.WithStageTimeout(time.Hour))
+
+	// Candidate generator over the real Postgres adapters.
+	candRegistry, err := BuildCandidateRegistry(analysisConfig.Candidates, nil, nil)
+	Expect(err).NotTo(HaveOccurred(), "build candidate registry")
+	candGen := NewCandidateGenerator(
+		NewPGControlsReader(tenantConn),
+		NewPGEmbeddingsReader(tenantConn),
+		candRegistry,
+		NewPGCandidateWriter(tenantConn),
+		analysisConfig.Candidates,
+		e2eModel,
+	)
+
+	// actionableTypes is the configured NIST IR 8477 relationship-type set;
+	// requires-derived rows are always actionable regardless of this list
+	// (see internal/synthesis.ConsensusRequires), so it's left empty here.
+	synth := synthesis.New(tenantConn, config.SynthesisConfig{}, []string{})
+
+	attestor, err := attestation.NewGenerator(newE2EKeyProvider())
+	Expect(err).NotTo(HaveOccurred(), "create attestation generator")
+	converter := pipelineattestation.NewConverter()
+
+	pipelineCfg := config.PipelineConfig{MaxConcurrentJobs: 10}
+	attestors := Attestors{Default: &Attestor{Generator: attestor, ExpiresIn: 168 * time.Hour}}
+
+	env.svc = New(
+		env.store, engine, registry, synth, attestors, converter, bus, storageProvider,
+		pipelineCfg, candGen,
+		WithCatalogControlsReader(NewPGCatalogControlsReader(tenantConn)),
+		WithCatalogNameReader(NewPGCatalogNameReader(tenantConn)),
+		WithEmbeddingsReader(NewPGEmbeddingsReader(tenantConn)),
+		WithEmbeddingConfig(analysisConfig.Embedding),
+	)
+
+	// Real worker consuming LLM tasks off the shared bus.
+	w := worker.New(bus, fakeLLM, config.WorkerConfig{
+		MaxAbandonedCollections: 10,
+		LLM:                     config.LLMConfig{DefaultModel: e2eModel, EmbeddingModel: e2eModel},
+	}, worker.WithAbandonTTL(time.Hour))
+	Expect(w.Start(context.Background())).To(Succeed(), "start worker")
+	DeferCleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := w.Stop(stopCtx); err != nil {
+			GinkgoWriter.Printf("worker stop: %v\n", err)
 		}
+	})
+	// Registered after the worker's cleanup, so (cleanups run LIFO) the
+	// service stops before the worker, as the deferred calls did before.
+	DeferCleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = env.svc.Stop(stopCtx)
+	})
 
-		// Migrate (idempotent).
-		migrator, err := db.NewMigrator(suDSN)
-		Expect(err).NotTo(HaveOccurred(), "create migrator")
-		Expect(migrator.Up(ctx)).To(Succeed(), "run migrations")
-		Expect(migrator.Close()).To(Succeed(), "close migrator")
+	return env
+}
 
-		// Ensure app_user password (idempotent).
-		appPassword, err := dbtest.RolePassword(dbtest.AppUserPasswordEnv)
-		Expect(err).NotTo(HaveOccurred(), "app_user password")
-		Expect(dbtest.SetRolePassword(ctx, suDSN, "app_user", appPassword)).To(Succeed(), "set app_user password")
+// seedCatalog writes catalogID, named name, and its controls under tenant A
+// (superuser: RLS bypassed, tenant_id explicit). Offset 1 so a failure is
+// reported at the caller's line.
+func (env *e2eEnv) seedCatalog(catalogID, name string, controls []e2eControl) {
+	ctx := context.Background()
+	ExpectWithOffset(1, env.idb.suPool.Exec(ctx, `
+		INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
+		VALUES ($1, $2, $3, 'v1', 'test', 'unused')
+	`, catalogID, env.tenantA, name)).To(Succeed(), "seed catalog %s", catalogID)
+	for _, c := range controls {
+		ExpectWithOffset(1, env.idb.suPool.Exec(ctx, `
+			INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id)
+			VALUES ($1, $2, $3, $2, $4, $5, $6, NULLIF($7, ''))
+		`, env.tenantA, c.id, catalogID, c.title, c.statement, c.class, c.parentID)).To(Succeed(), "seed control %s", c.id)
+	}
+}
 
-		// Superuser pool for RLS-bypassing seed writes and verification reads.
-		suPool, err := db.NewPool(db.PoolConfig{
-			DSN:          suDSN,
-			MaxOpenConns: 5,
-			Extensions:   []string{"age", "vector"},
+// seedAlikeCatalogs seeds a source and a target catalog under tenant A and
+// returns their IDs. Every leaf in both has the same section title and
+// statement, so every pair, within a catalog too, is maximally similar: only
+// the job's catalogs and direction decide which pairs are generated.
+func (env *e2eEnv) seedAlikeCatalogs() (src, tgt string) {
+	src, tgt = "cat-src-"+uuid.New().String(), "cat-tgt-"+uuid.New().String()
+	for _, cat := range []struct{ id, name string }{{src, "E2E Source Framework"}, {tgt, "E2E Target Framework"}} {
+		env.seedCatalog(cat.id, cat.name, []e2eControl{
+			{cat.id + "/section", "Access Control", "Access control family.", classifySectionClass, ""},
+			{cat.id + "/c1", "Control One", e2eIdenticalStatement, "SC", cat.id + "/section"},
+			{cat.id + "/c2", "Control Two", e2eIdenticalStatement, "SC", cat.id + "/section"},
 		})
-		Expect(err).NotTo(HaveOccurred(), "create superuser pool")
-		defer suPool.Close()
+	}
+	return src, tgt
+}
 
-		// app_user pool -> tenant-scoped connection (RLS enforced).
-		appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
-		Expect(err).NotTo(HaveOccurred(), "build app_user DSN")
-		appPool, err := db.NewPool(db.PoolConfig{DSN: appDSN, MaxOpenConns: 4})
-		Expect(err).NotTo(HaveOccurred(), "create app_user pool")
-		defer appPool.Close()
-		tenantConn := db.NewTenantPool(appPool)
+// runJob creates a job with cfg under tenant A's context and waits for it to
+// complete, failing the spec if it fails or does not finish in time. It
+// returns the job's ID. Offset 1 so a failure is reported at the caller's line.
+func (env *e2eEnv) runJob(cfg *pb.JobConfig) string {
+	resp, err := env.svc.CreateJob(env.ctxA, connect.NewRequest(&pb.CreateJobRequest{Config: cfg}))
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "CreateJob")
+	jobID := resp.Msg.JobId
+	EventuallyWithOffset(1, func(g Gomega) {
+		job, err := env.store.GetJob(env.ctxA, jobID)
+		g.Expect(err).NotTo(HaveOccurred(), "GetJob")
+		g.Expect(job.Status).NotTo(Equal(JobStatusFailed), "job failed: %s", job.ErrorMessage)
+		g.Expect(job.Status).To(Equal(JobStatusCompleted))
+	}, 90*time.Second, 250*time.Millisecond).Should(Succeed(), "job %s did not complete", jobID)
+	return jobID
+}
 
-		// vectordb writes go through a superuser *sql.DB: EmbeddingAnalyzer.Aggregate
-		// calls StoreBatch, which writes tenant_id explicitly but does not set
-		// app.current_tenant, so an app_user connection would be blocked by the
-		// embeddings RLS WITH CHECK. The superuser bypasses RLS, matching how the
-		// candidate-generation integration test seeds embeddings.
-		vecDB, err := sql.Open("pgx", suDSN)
-		Expect(err).NotTo(HaveOccurred(), "open vectordb connection")
-		defer vecDB.Close()
-		vectors, err := vectordb.NewPgVectorStore(vecDB)
-		Expect(err).NotTo(HaveOccurred(), "create pgvector store")
+// pairsBetween counts the job's rows in table whose source control belongs
+// to fromCatalog and whose target control belongs to toCatalog, read through
+// the tenant-scoped connection. table is one of the fixed names below.
+func (env *e2eEnv) pairsBetween(table, jobID, fromCatalog, toCatalog string) int {
+	switch table {
+	case "vote_summaries", "relationship_candidates", "requires_candidates":
+	default:
+		Fail(fmt.Sprintf("unsupported table %q", table), 1)
+	}
+	return e2eScalar(env.idb.tenantConn, env.ctxA, `
+		SELECT count(*) FROM `+table+` p
+		JOIN controls s ON s.tenant_id = p.tenant_id AND s.control_id = p.source_id
+		JOIN controls t ON t.tenant_id = p.tenant_id AND t.control_id = p.target_id
+		WHERE p.job_id = $1 AND s.catalog_id = $2 AND t.catalog_id = $3
+	`, jobID, fromCatalog, toCatalog)
+}
 
-		// Two tenants: the owner (A) and an unrelated tenant (B) for the RLS check.
-		tenantA := fmt.Sprintf("e2e-a-%s", uuid.New().String())
-		tenantB := fmt.Sprintf("e2e-b-%s", uuid.New().String())
-		Expect(db.EnsureTenant(ctx, suPool, tenantA, "e2e-a")).To(Succeed(), "ensure tenant A")
-		Expect(db.EnsureTenant(ctx, suPool, tenantB, "e2e-b")).To(Succeed(), "ensure tenant B")
+// TestPipelineE2E exercises the entire durable pipeline. Each spec seeds its
+// own catalogs, runs one job to completion through pipeline.Service.CreateJob,
+// and asserts on the persistence surfaces for the owning tenant, isolated
+// from a second tenant by RLS.
+var _ = Describe("Pipeline end-to-end", Ordered, func() {
+	var env *e2eEnv
 
+	BeforeAll(func() {
+		env = newE2EEnv()
+	})
+
+	It("runs a job to completion and populates every durable surface, isolated per tenant", func() {
 		catalogID := "cat-" + uuid.New().String()
 
-		// Seed the catalog and its controls under tenant A. section-1 is a
-		// compliance-section (classify/embedding auto-skip it, candidate generation
-		// excludes it). c1 and c2 are its leaf children with identical statement
-		// text, so their prepared embedding text — "[<parent title>] <statement>" —
-		// is identical, yielding cosine similarity 1.0 and a stable candidate pair.
-		// This also exercises the ancestor_title path (both children inherit the
-		// section's title).
-		Expect(suPool.Exec(ctx, `
-			INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
-			VALUES ($1, $2, 'E2E Catalog', 'v1', 'test', 'unused')
-		`, catalogID, tenantA)).To(Succeed(), "seed catalog")
-
-		const identicalStatement = "The organization enforces multi-factor authentication for all privileged accounts."
-		controls := []struct {
-			id, title, statement, class, parentID string
-		}{
-			{"section-1", "Access Control", "Access control family.", classifySectionClass, ""},
-			{"ctrl-1", "Control One", identicalStatement, "SC", "section-1"},
-			{"ctrl-2", "Control Two", identicalStatement, "SC", "section-1"},
-		}
-		for _, c := range controls {
-			Expect(suPool.Exec(ctx, `
-				INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id)
-				VALUES ($1, $2, $3, $2, $4, $5, $6, NULLIF($7, ''))
-			`, tenantA, c.id, catalogID, c.title, c.statement, c.class, c.parentID)).To(Succeed(), "seed control %s", c.id)
-		}
-
-		// Embedded NATS server (in-process JetStream). Shared by the engine's
-		// dispatcher/collector, the pipeline's event publishing, and the worker.
-		bus, err := natsbus.New(config.NATSConfig{
-			URL:      "",
-			Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
+		// section-1 is a compliance-section (classify/embedding auto-skip it,
+		// candidate generation excludes it). ctrl-1 and ctrl-2 are its leaf
+		// children with identical statements, which also exercises the
+		// ancestor_title path (both inherit the section's title).
+		env.seedCatalog(catalogID, "E2E Catalog", []e2eControl{
+			{catalogID + "/section-1", "Access Control", "Access control family.", classifySectionClass, ""},
+			{catalogID + "/ctrl-1", "Control One", e2eIdenticalStatement, "SC", catalogID + "/section-1"},
+			{catalogID + "/ctrl-2", "Control Two", e2eIdenticalStatement, "SC", catalogID + "/section-1"},
 		})
-		Expect(err).NotTo(HaveOccurred(), "create embedded NATS")
-		defer bus.Close()
 
-		// Analyzer configuration: every analyzer enabled, one model, generous
-		// limits so seeded text is never truncated to empty.
-		analysisConfig := config.AnalysisConfig{
-			Engine: config.EngineConfig{
-				TaskTimeout:  2 * time.Minute,
-				MaxRetries:   2,
-				RetryBackoff: time.Second,
-			},
-			Classification: config.ClassificationConfig{
-				Enabled: true, Model: e2eModel, MaxTextLength: 10000, Temperature: 0, MaxTokens: 512,
-			},
-			Embedding: config.EmbeddingConfig{
-				Enabled: true, Models: []string{e2eModel}, MaxChars: 10000, BatchSize: 1,
-			},
-			Relationship: config.RelationshipConfig{
-				Enabled: true, Models: []string{e2eModel},
-				MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512,
-				SamplesPerModel: 1, SamplingTemperature: 0, ActionableTypes: []string{"related"},
-			},
-			Candidates: config.CandidateConfig{
-				Generators:           []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true, Weight: 1.0}},
-				MinEmbeddingCoverage: 0.8,
-				EmbedModel:           e2eModel,
-			},
-			Requires: config.RequiresConfig{
-				Enabled: true, Models: []string{e2eModel}, SamplesPerModel: 1,
-				ConsensusThreshold: 0.5, MaxErrorRate: 0.5,
-				MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512, SamplingTemperature: 0,
-			},
-			Artifacts: config.ArtifactsConfig{
-				Enabled: true, Models: []string{e2eModel}, SamplesPerModel: 1,
-				MaxTokens: 512, MaxTextChars: 10000, FuzzyThreshold: 0.6, SamplingTemperature: 0,
-			},
-		}
-
-		fakeLLM := testspecs.DeterministicLLM{EmbeddingDim: embeddingDim}
-
-		// Embedded-only prompt layer: the built-in defaults provide classify,
-		// artifacts, requires, and relationship prompts. Restricting the stack to
-		// "embedded" keeps the test hermetic (no user/project XDG overlay).
-		prompts, err := prompt.NewRegistry(config.PromptConfig{
-			Layers: config.PromptLayerConfig{
-				Enabled: true,
-				Order:   []config.PromptLayerEntry{{ID: "embedded"}},
-			},
-		})
-		Expect(err).NotTo(HaveOccurred(), "create prompt registry")
-
-		storageProvider, err := storage.NewLocal(GinkgoT().TempDir(), tenantA)
-		Expect(err).NotTo(HaveOccurred(), "create local storage")
-
-		store := NewPGStore(tenantConn, suPool)
-
-		registry, err := NewProductionRegistry(fakeLLM, vectors, storageProvider, prompts, tenantConn, analysisConfig, nil, nil)
-		Expect(err).NotTo(HaveOccurred(), "build production registry")
-
-		taskTypes := map[string]natsbus.TaskType{
-			"classify":     natsbus.TaskClassify,
-			"embedding":    natsbus.TaskEmbed,
-			"artifacts":    natsbus.TaskArtifacts,
-			"requires":     natsbus.TaskRequires,
-			"relationship": natsbus.TaskRelate,
-		}
-
-		dbReporter := NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)
-		engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, analysis.WithStageReporter(dbReporter),
-			analysis.WithStageTimeout(time.Hour))
-
-		// Candidate generator over the real Postgres adapters.
-		candRegistry, err := BuildCandidateRegistry(analysisConfig.Candidates, nil, nil)
-		Expect(err).NotTo(HaveOccurred(), "build candidate registry")
-		candGen := NewCandidateGenerator(
-			NewPGControlsReader(tenantConn),
-			NewPGEmbeddingsReader(tenantConn),
-			candRegistry,
-			NewPGCandidateWriter(tenantConn),
-			analysisConfig.Candidates,
-			e2eModel,
-		)
-
-		// actionableTypes is the configured NIST IR 8477 relationship-type set;
-		// requires-derived rows are always actionable regardless of this list
-		// (see internal/synthesis.ConsensusRequires), so it's left empty here.
-		synth := synthesis.New(tenantConn, config.SynthesisConfig{}, []string{})
-
-		attestor, err := attestation.NewGenerator(newE2EKeyProvider())
-		Expect(err).NotTo(HaveOccurred(), "create attestation generator")
-		converter := pipelineattestation.NewConverter()
-
-		pipelineCfg := config.PipelineConfig{MaxConcurrentJobs: 10}
-		attestors := Attestors{Default: &Attestor{Generator: attestor, ExpiresIn: 168 * time.Hour}}
-
-		svc := New(
-			store, engine, registry, synth, attestors, converter, bus, storageProvider,
-			pipelineCfg, candGen,
-			WithCatalogControlsReader(NewPGCatalogControlsReader(tenantConn)),
-			WithEmbeddingsReader(NewPGEmbeddingsReader(tenantConn)),
-			WithEmbeddingConfig(analysisConfig.Embedding),
-		)
-
-		// Real worker consuming LLM tasks off the shared bus.
-		w := worker.New(bus, fakeLLM, config.WorkerConfig{
-			MaxAbandonedCollections: 10,
-			LLM:                     config.LLMConfig{DefaultModel: e2eModel, EmbeddingModel: e2eModel},
-		}, worker.WithAbandonTTL(time.Hour))
-		Expect(w.Start(context.Background())).To(Succeed(), "start worker")
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := w.Stop(stopCtx); err != nil {
-				GinkgoWriter.Printf("worker stop: %v\n", err)
-			}
-		}()
-
-		// Create and launch the job under tenant A's context. CreateJob persists the
-		// job + stages and runs executeJob in its own goroutine.
-		ctxA, err := tenant.WithTenant(ctx, tenantA)
-		Expect(err).NotTo(HaveOccurred(), "WithTenant A")
-		req := connect.NewRequest(&pb.CreateJobRequest{
-			Config: &pb.JobConfig{CatalogId: catalogID},
-		})
-		resp, err := svc.CreateJob(ctxA, req)
-		Expect(err).NotTo(HaveOccurred(), "CreateJob")
-		jobID := resp.Msg.JobId
-
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			_ = svc.Stop(stopCtx)
-		}()
-
-		// Poll to completion.
-		deadline := time.Now().Add(90 * time.Second)
-		var finalStatus JobStatus
-		for time.Now().Before(deadline) {
-			job, err := store.GetJob(ctxA, jobID)
-			Expect(err).NotTo(HaveOccurred(), "GetJob")
-			finalStatus = job.Status
-			if finalStatus == JobStatusCompleted || finalStatus == JobStatusFailed {
-				Expect(finalStatus).NotTo(Equal(JobStatusFailed), "job failed: %s", job.ErrorMessage)
-				break
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
-		Expect(finalStatus).To(Equal(JobStatusCompleted), "job did not complete within deadline")
-
-		// --- Assertions (owner reads via the tenant-scoped, RLS-enforced conn) ---
+		jobID := env.runJob(&pb.JobConfig{CatalogId: catalogID, TargetCatalogId: catalogID})
+		tenantConn, ctxA := env.idb.tenantConn, env.ctxA
 
 		// 1. analysis_results has a row for every enabled analyzer.
 		for _, analyzerName := range []string{"classify", "embedding", "artifacts", "requires", "relationship"} {
@@ -353,8 +387,6 @@ var _ = Describe("Pipeline end-to-end", func() {
 			catalogID, e2eModel)).To(Equal(embeddingDim), "embedding dimensions")
 
 		// 5. A second tenant sees zero rows across all five surfaces (RLS).
-		ctxB, err := tenant.WithTenant(ctx, tenantB)
-		Expect(err).NotTo(HaveOccurred(), "WithTenant B")
 		isolationChecks := []struct {
 			table string
 			query string
@@ -367,7 +399,62 @@ var _ = Describe("Pipeline end-to-end", func() {
 			{"embeddings", "SELECT count(*) FROM embeddings WHERE catalog_id = $1", []any{catalogID}},
 		}
 		for _, c := range isolationChecks {
-			Expect(e2eScalar(tenantConn, ctxB, c.query, c.args...)).To(BeZero(), "RLS breach: tenant B saw rows in %s", c.table)
+			Expect(e2eScalar(tenantConn, env.ctxB, c.query, c.args...)).To(BeZero(), "RLS breach: tenant B saw rows in %s", c.table)
+		}
+	})
+
+	It("maps a source catalog onto a target catalog with no pair inside either catalog", func() {
+		src, tgt := env.seedAlikeCatalogs()
+
+		jobID := env.runJob(&pb.JobConfig{CatalogId: src, TargetCatalogId: tgt})
+		tenantConn, ctxA := env.idb.tenantConn, env.ctxA
+
+		// The per-control analyzers covered both catalogs: each leaf is
+		// classified, and embedded under its own catalog.
+		for _, cat := range []string{src, tgt} {
+			Expect(e2eScalar(tenantConn, ctxA,
+				"SELECT count(*) FROM embeddings WHERE catalog_id = $1 AND model = $2", cat, e2eModel)).To(Equal(2), "embeddings of %s", cat)
+		}
+		var classifyBlob []byte
+		tx, err := tenantConn.Begin(ctxA)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = tx.Rollback() }()
+		Expect(tx.QueryRow(ctxA, "SELECT result_data FROM analysis_results WHERE job_id = $1 AND analyzer_name = 'classify'", jobID).Scan(&classifyBlob)).To(Succeed())
+		Expect(tx.Commit()).To(Succeed())
+		var classified []results.ClassifyResult
+		Expect(json.Unmarshal(classifyBlob, &classified)).To(Succeed())
+		classifiedIDs := make([]string, len(classified))
+		for i, c := range classified {
+			classifiedIDs[i] = c.ControlID
+		}
+		Expect(classifiedIDs).To(ContainElements(src+"/c1", src+"/c2", tgt+"/c1", tgt+"/c2"))
+
+		// Mappings (the rows the graph service writes as SEMANTIC_MATCH and
+		// REQUIRES edges) and both candidate tables run source to target only.
+		for _, table := range []string{"vote_summaries", "relationship_candidates", "requires_candidates"} {
+			Expect(env.pairsBetween(table, jobID, src, tgt)).NotTo(BeZero(), "%s: want source-to-target pairs", table)
+			Expect(env.pairsBetween(table, jobID, src, src)).To(BeZero(), "%s: a pair within the source catalog", table)
+			Expect(env.pairsBetween(table, jobID, tgt, tgt)).To(BeZero(), "%s: a pair within the target catalog", table)
+			Expect(env.pairsBetween(table, jobID, tgt, src)).To(BeZero(), "%s: a target-to-source pair without bidirectional", table)
+		}
+		Expect(e2eScalar(tenantConn, ctxA,
+			"SELECT count(*) FROM vote_summaries WHERE job_id = $1 AND analyzer_name IN ('relationship', 'requires')", jobID)).NotTo(BeZero(),
+			"vote_summaries: want relationship or requires rows")
+
+		// RLS: tenant B sees none of the crosswalk.
+		Expect(e2eScalar(tenantConn, env.ctxB, "SELECT count(*) FROM vote_summaries WHERE job_id = $1", jobID)).To(BeZero(), "RLS breach: tenant B saw the crosswalk")
+	})
+
+	It("maps both catalogs onto each other with bidirectional, still with no pair inside either catalog", func() {
+		src, tgt := env.seedAlikeCatalogs()
+
+		jobID := env.runJob(&pb.JobConfig{CatalogId: src, TargetCatalogId: tgt, Bidirectional: true})
+
+		for _, table := range []string{"vote_summaries", "relationship_candidates", "requires_candidates"} {
+			Expect(env.pairsBetween(table, jobID, src, tgt)).NotTo(BeZero(), "%s: want source-to-target pairs", table)
+			Expect(env.pairsBetween(table, jobID, tgt, src)).NotTo(BeZero(), "%s: want target-to-source pairs", table)
+			Expect(env.pairsBetween(table, jobID, src, src)).To(BeZero(), "%s: a pair within the source catalog", table)
+			Expect(env.pairsBetween(table, jobID, tgt, tgt)).To(BeZero(), "%s: a pair within the target catalog", table)
 		}
 	})
 })

@@ -330,6 +330,12 @@ func (s *Service) toResponse(ctx context.Context, page Page) *pb.ListJobMappings
 		s.logger.WarnContext(ctx, "results contain relationship types this build does not know; reported as UNSPECIFIED",
 			"relationship_types", unknown)
 	}
+	if a := page.Analysis; a != nil {
+		summary := func(c CatalogSummary) *pb.CatalogSummary {
+			return &pb.CatalogSummary{CatalogId: c.ID, Name: c.Name, Version: c.Version, Imported: c.Imported, Snapshot: c.Snapshot}
+		}
+		resp.Analysis = &pb.JobAnalysis{SourceCatalog: summary(a.Source), TargetCatalog: summary(a.Target), Bidirectional: a.Bidirectional}
+	}
 	if page.Next != nil {
 		resp.PageInfo.NextPageToken = EncodeCursor(*page.Next)
 	}

@@ -36,8 +36,11 @@ type ExecutionRequest struct {
 	Controls []*pb.Control
 
 	// CatalogID is threaded into context (via analyzer.WithCatalogID) before
-	// GenerateWork/Aggregate for every analyzer in this request. Only
-	// embedding.Aggregate reads it today.
+	// GenerateWork/Aggregate for every analyzer in this request. With
+	// Controls, each control's own CatalogId is threaded too (via
+	// analyzer.WithControlCatalogs); embedding.Aggregate stores each
+	// embedding under its control's catalog and refuses a control without
+	// one. CatalogID is its fallback only for a request without Controls.
 	CatalogID string
 
 	AnalyzerConfig map[string]analyzer.AnalyzerConfig

@@ -207,10 +207,26 @@ message SubmitDocumentResponse {
 
 message StartAnalysisRequest {
   TenantContext tenant_context = 1;
-  // ID of a catalog the tenant imported (SubmitDocument/StreamDocument
-  // returns it; ListCatalogs lists them).
+  // ID of the catalog whose controls are mapped: the source of every pair.
+  // A catalog the tenant imported (SubmitDocument/StreamDocument returns
+  // it; ListCatalogs lists them). Required.
   string source_catalog_id = 2;
   SynthesisConfig synthesis_config = 3;
+  // ID of the catalog the source controls are mapped onto: the target of
+  // every pair. Required: StartAnalysis rejects an empty value with
+  // InvalidArgument. Set it to source_catalog_id to analyse within one
+  // catalog, which pairs that catalog's controls with each other in both
+  // directions. The job classifies and embeds the controls of both
+  // catalogs.
+  string target_catalog_id = 4;
+  // Also pair target controls with source controls (target to source), in
+  // addition to the default source to target. The reverse direction's
+  // sources are the target's controls, so the pair analyzers' LLM calls
+  // scale with source plus target controls rather than source controls
+  // alone. Rejected with InvalidArgument when target_catalog_id equals
+  // source_catalog_id: within one catalog, controls are already paired in
+  // both directions.
+  bool bidirectional = 5;
 }
 
 message StartAnalysisResponse {

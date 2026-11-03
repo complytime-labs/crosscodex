@@ -104,7 +104,7 @@ rejected as an unsupported catalog format.`,
 					fmt.Fprintf(w, "Catalog imported\n")
 					fmt.Fprintf(w, "Catalog ID: %s\n", catalogID)
 					fmt.Fprintf(w, "Document ID: %s\n", resp.Msg.GetDocumentId())
-					fmt.Fprintf(w, "Next: crosscodex run start --source %s\n", catalogID)
+					fmt.Fprintf(w, "Next: crosscodex run start --source %s --target <catalog-id>\n", catalogID)
 				},
 				map[string]string{
 					"catalog_id":  catalogID,

@@ -153,7 +153,7 @@ var _ = Describe("crosscodex results: mappings read back from a completed all-ro
 		Expect(err).NotTo(HaveOccurred(), "SubmitDocument")
 		catalogID := submitResp.Msg.GetCatalogId()
 		Expect(catalogID).NotTo(BeEmpty(), "catalog id")
-		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID}))
+		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID, TargetCatalogId: catalogID}))
 		Expect(err).NotTo(HaveOccurred(), "StartAnalysis")
 		jobID = startResp.Msg.GetJobId()
 		Expect(jobID).NotTo(BeEmpty(), "job id")

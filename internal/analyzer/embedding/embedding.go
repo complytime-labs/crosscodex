@@ -223,7 +223,13 @@ func (a *EmbeddingAnalyzer) Aggregate(ctx context.Context, taskResults []analyze
 	)
 	span.SetStatus(codes.Ok, "")
 
-	catalogID, hasCatalog := analyzer.CatalogIDFromContext(ctx)
+	// Each embedding is stored under its control's own catalog: one pass
+	// covers both catalogs of a job that maps one onto another. The run's
+	// catalog is the fallback only for a run that records no per-control
+	// catalogs; when it records them, a control missing from them fails
+	// closed rather than being filed under the source catalog.
+	runCatalogID, _ := analyzer.CatalogIDFromContext(ctx)
+	perControl := analyzer.HasControlCatalogs(ctx)
 
 	seen := make(map[string]bool)
 	var order []string
@@ -271,6 +277,14 @@ func (a *EmbeddingAnalyzer) Aggregate(ctx context.Context, taskResults []analyze
 		for i, v := range row {
 			vector[i] = float32(v.GetNumberValue())
 		}
+		catalogID, ok := analyzer.ControlCatalogFromContext(ctx, controlID)
+		if !ok {
+			if perControl {
+				return nil, fmt.Errorf("embedding.Aggregate: control %s has no catalog in this analysis run's control catalogs: "+
+					"its embedding would be filed under the wrong catalog, so none of this run's embeddings were stored", controlID)
+			}
+			catalogID = runCatalogID
+		}
 		batch = append(batch, vectordb.Embedding{
 			CatalogID: catalogID,
 			ControlID: controlID,
@@ -280,8 +294,11 @@ func (a *EmbeddingAnalyzer) Aggregate(ctx context.Context, taskResults []analyze
 	}
 
 	if a.vectors != nil && len(batch) > 0 {
-		if !hasCatalog || catalogID == "" {
-			return nil, fmt.Errorf("embedding.Aggregate: catalog ID required in context to persist embeddings")
+		for _, e := range batch {
+			if e.CatalogID == "" {
+				return nil, fmt.Errorf("embedding.Aggregate: catalog ID required in context to persist the embedding of control %s: "+
+					"neither the control nor the analysis run names its catalog", e.ControlID)
+			}
 		}
 		tenantID, err := tenant.FromContext(ctx)
 		if err != nil {

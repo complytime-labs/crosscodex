@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/results"
@@ -362,6 +363,29 @@ var _ = Describe("Service.ListMappings", func() {
 			Expect(span).NotTo(BeNil())
 			Expect(span.Status().Code).To(Equal(codes.Error))
 			Expect(intCounterByAttr(tp, "results.requests.total", "status", "invalid_argument")).To(Equal(int64(1)))
+		})
+	})
+
+	Describe("the job's analysis", func() {
+		It("converts the page's analysis to the response", func() {
+			reader.page = results.Page{Analysis: &results.JobAnalysis{
+				Source:        results.CatalogSummary{ID: "cat-src", Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true},
+				Target:        results.CatalogSummary{ID: "cat-gone"},
+				Bidirectional: true,
+			}}
+			resp, err := call(context.Background(), validRequest())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(proto.Equal(resp.GetAnalysis(), &pb.JobAnalysis{
+				SourceCatalog: &pb.CatalogSummary{CatalogId: "cat-src", Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true},
+				TargetCatalog: &pb.CatalogSummary{CatalogId: "cat-gone"},
+				Bidirectional: true,
+			})).To(BeTrue(), "got %v", resp.GetAnalysis())
+		})
+
+		It("leaves the analysis unset when the page has none", func() {
+			resp, err := call(context.Background(), validRequest())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.GetAnalysis()).To(BeNil())
 		})
 	})
 })

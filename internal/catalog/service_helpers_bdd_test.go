@@ -14,10 +14,10 @@ func generateLongString(length int) string {
 	return strings.Repeat("A", length)
 }
 
-var _ = Describe("extractCatalogName", func() {
-	DescribeTable("extracts the catalog name from OSCAL JSON",
+var _ = Describe("oscalMetadataString", func() {
+	DescribeTable("reads the title from OSCAL JSON metadata",
 		func(oscalJSON string, want string) {
-			Expect(extractCatalogName([]byte(oscalJSON))).To(Equal(want))
+			Expect(oscalMetadataString([]byte(oscalJSON), OSCALTitleKey)).To(Equal(want))
 		},
 		Entry("valid OSCAL with metadata title", `{
 				"catalog": {
@@ -129,6 +129,18 @@ var _ = Describe("extractCatalogName", func() {
 		Entry("catalog is null", `{
 				"catalog": null
 			}`, ""),
+	)
+
+	DescribeTable("reads the version from OSCAL JSON metadata",
+		func(oscalJSON string, want string) {
+			Expect(oscalMetadataString([]byte(oscalJSON), OSCALVersionKey)).To(Equal(want))
+		},
+		Entry("a version", `{"catalog": {"metadata": {"title": "SP 800-53", "version": "5.1.1"}}}`, "5.1.1"),
+		Entry("no version", `{"catalog": {"metadata": {"title": "SP 800-53"}}}`, ""),
+		Entry("a non-string version", `{"catalog": {"metadata": {"version": 5}}}`, ""),
+		Entry("no metadata", `{"catalog": {}}`, ""),
+		Entry("not OSCAL", `{"some_other_root": {}}`, ""),
+		Entry("invalid JSON", `not json`, ""),
 	)
 })
 

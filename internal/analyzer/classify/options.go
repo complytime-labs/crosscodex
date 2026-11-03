@@ -26,7 +26,7 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 			)
 			a.textLenHistogram, _ = meter.Float64Histogram(
 				"classify.prompt.text_length",
-				metric.WithDescription("Rune count of sanitized prompt text"),
+				metric.WithDescription("Rune count of the requirement text as rendered into the prompt: cleaned, truncated and entity-escaped"),
 			)
 		}
 	}

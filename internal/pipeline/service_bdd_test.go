@@ -16,7 +16,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
-
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -27,6 +27,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
@@ -142,6 +143,64 @@ func publishedStates(bus *natsbustest.Fake, tenantID, jobID string) []string {
 	return states
 }
 
+// serviceTestCatalogs are the catalogs the Service specs' jobs name, all of
+// them catalogs of the specs' tenant.
+var serviceTestCatalogs = fakeCatalogNameReader{
+	"test-catalog": {name: "Test Catalog"}, "cat-1": {name: "Catalog One", version: "1.0"}, "cat-2": {name: "Catalog Two", version: "2.0"},
+}
+
+// recordedFailureLabel introduces a job's stored failure in a refused retry.
+const recordedFailureLabel = "It failed with (as recorded then; a command in it may predate this version): "
+
+// emptyTargetRemedy ends a refused retry of a job whose target catalog has
+// no control with a statement, before the new-job command.
+const emptyTargetRemedy = "Importing the target again with control statements gives it a new catalog ID, " +
+	"so start a new job with that catalog or another target: "
+
+// recordedCallKey marks the context of the call whose catalog lookups a
+// recordingCatalogNameReader records.
+type recordedCallKey struct{}
+
+// recordingCatalogNameReader serves names and records, as
+// "<tenant>/<catalog>", each lookup made under a context marked with
+// recordedCallKey. The job a CreateJob starts reads the names again in the
+// background under its own context, which stays unrecorded.
+type recordingCatalogNameReader struct {
+	names fakeCatalogNameReader
+	mu    sync.Mutex
+	seen  []string
+}
+
+func (r *recordingCatalogNameReader) CatalogSnapshot(ctx context.Context, tenantID, catalogID string) (*pb.CatalogSnapshot, error) {
+	if ctx.Value(recordedCallKey{}) != nil {
+		r.mu.Lock()
+		r.seen = append(r.seen, tenantID+"/"+catalogID)
+		r.mu.Unlock()
+	}
+	return r.names.CatalogSnapshot(ctx, tenantID, catalogID)
+}
+
+func (r *recordingCatalogNameReader) lookups() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.seen...)
+}
+
+// leakyCatalogNameReader serves the known catalogs and answers every other
+// ID with notFound, standing in for a reader whose NotFound message says
+// more than the caller may learn.
+type leakyCatalogNameReader struct {
+	known    fakeCatalogNameReader
+	notFound error
+}
+
+func (r leakyCatalogNameReader) CatalogSnapshot(ctx context.Context, tenantID, catalogID string) (*pb.CatalogSnapshot, error) {
+	if _, ok := r.known[catalogID]; ok {
+		return r.known.CatalogSnapshot(ctx, tenantID, catalogID)
+	}
+	return nil, r.notFound
+}
+
 var _ = Describe("Service", func() {
 	var (
 		svc      *pipeline.Service
@@ -170,16 +229,28 @@ var _ = Describe("Service", func() {
 			&storagetest.Fake{},
 			cfg,
 			nil,
+			pipeline.WithCatalogNameReader(serviceTestCatalogs),
 		)
 
 		ctx = context.Background()
 		ctx, _ = tenant.WithTenant(ctx, "test-tenant")
 	})
 
+	// serviceWithReader is a Service over the specs' store whose catalog
+	// reader is r.
+	serviceWithReader := func(r pipeline.CatalogNameReader) *pipeline.Service {
+		s := pipeline.New(store, nil, registry, &fakeSynthesis{}, pipeline.Attestors{},
+			pipelineattestation.NewConverter(), &natsbustest.Fake{}, &storagetest.Fake{},
+			config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}, nil,
+			pipeline.WithCatalogNameReader(r))
+		DeferCleanup(func() { Expect(s.Stop(context.Background())).To(Succeed()) })
+		return s
+	}
+
 	Describe("CreateJob", func() {
 		It("creates a job and stages in the store", func() {
 			req := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{CatalogId: "test-catalog"},
+				Config: &pb.JobConfig{CatalogId: "test-catalog", TargetCatalogId: "test-catalog"},
 			}
 
 			resp, err := svc.CreateJob(ctx, connect.NewRequest(req))
@@ -215,11 +286,11 @@ var _ = Describe("Service", func() {
 					map[string]natsbus.TaskType{})
 				stageSvc := pipeline.New(store, eng, reg, &fakeSynthesis{}, pipeline.Attestors{},
 					pipelineattestation.NewConverter(), &natsbustest.Fake{}, &storagetest.Fake{},
-					config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}, nil)
+					config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}, nil, pipeline.WithCatalogNameReader(serviceTestCatalogs))
 				DeferCleanup(func() { Expect(stageSvc.Stop(context.Background())).To(Succeed()) })
 
 				resp, err := stageSvc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{
-					Config: &pb.JobConfig{CatalogId: "test-catalog"},
+					Config: &pb.JobConfig{CatalogId: "test-catalog", TargetCatalogId: "test-catalog"},
 				}))
 				Expect(err).NotTo(HaveOccurred())
 
@@ -282,10 +353,11 @@ var _ = Describe("Service", func() {
 				&storagetest.Fake{},
 				config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour},
 				nil,
+				pipeline.WithCatalogNameReader(serviceTestCatalogs),
 			)
 
 			req := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{CatalogId: "test-catalog"},
+				Config: &pb.JobConfig{CatalogId: "test-catalog", TargetCatalogId: "test-catalog"},
 			}
 
 			resp, err := orderingSvc.CreateJob(ctx, connect.NewRequest(req))
@@ -337,7 +409,7 @@ var _ = Describe("Service", func() {
 					callCtx = tenant.WithUser(ctx, user)
 				}
 				resp, err := svc.CreateJob(callCtx, connect.NewRequest(&pb.CreateJobRequest{
-					Config: &pb.JobConfig{CatalogId: "test-catalog"},
+					Config: &pb.JobConfig{CatalogId: "test-catalog", TargetCatalogId: "test-catalog"},
 				}))
 				Expect(err).NotTo(HaveOccurred())
 
@@ -380,6 +452,160 @@ var _ = Describe("Service", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(total).To(BeZero())
 			Expect(jobs).To(BeEmpty())
+		})
+
+		// Safety mechanism: CreateJob is the authoritative entry point (the
+		// gateway is not its only caller), so it refuses what the gateway
+		// refuses, before writing any row.
+		DescribeTable("rejects an invalid target or direction with guidance and writes no job",
+			func(cfg *pb.JobConfig, want []string) {
+				_, err := svc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{Config: cfg}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				for _, w := range want {
+					Expect(err.Error()).To(ContainSubstring(w))
+				}
+
+				jobs, total, err := store.ListJobs(ctx, "test-tenant", pipeline.JobFilter{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(total).To(BeZero())
+				Expect(jobs).To(BeEmpty())
+			},
+			Entry("no target", &pb.JobConfig{CatalogId: "cat-1"},
+				[]string{"config.target_catalog_id is required", "set it to config.catalog_id to analyse within one catalog",
+					"(crosscodex run start --source cat-1 --target cat-1)"}),
+			Entry("bidirectional within one catalog", &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1", Bidirectional: true},
+				[]string{"config.bidirectional cannot be set when config.target_catalog_id equals config.catalog_id", "already pairs its controls in both directions"}),
+		)
+
+		It("stores the target and direction of a crosswalk job", func() {
+			resp, err := svc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{
+				Config: &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2", Bidirectional: true},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			job, err := store.GetJob(ctx, resp.Msg.JobId)
+			Expect(err).NotTo(HaveOccurred())
+			cats, ok := jobconfig.ExtractCatalogs(job.Config)
+			Expect(ok).To(BeTrue())
+			Expect(cats).To(Equal(jobconfig.Catalogs{SourceID: "cat-1", TargetID: "cat-2", Bidirectional: true,
+				SourceLabel: jobconfig.Label{Name: "Catalog One", Version: "1.0", Recorded: true},
+				TargetLabel: jobconfig.Label{Name: "Catalog Two", Version: "2.0", Recorded: true}}))
+		})
+
+		// Safety mechanism, defence in depth: the gateway checks the
+		// catalogs, but a direct pipeline RPC caller does not pass through
+		// it, so CreateJob confirms both are the job tenant's before
+		// writing any row.
+		Describe("confirming the job's catalogs are its tenant's", func() {
+			expectNoJob := func() {
+				jobs, total, err := store.ListJobs(ctx, "test-tenant", pipeline.JobFilter{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(total).To(BeZero())
+				Expect(jobs).To(BeEmpty())
+			}
+
+			It("reads the source, then the target, and creates the job", func() {
+				reader := &recordingCatalogNameReader{names: serviceTestCatalogs}
+				_, err := serviceWithReader(reader).CreateJob(context.WithValue(ctx, recordedCallKey{}, true), connect.NewRequest(&pb.CreateJobRequest{
+					Config: &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2"},
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(reader.lookups()).To(Equal([]string{"test-tenant/cat-1", "test-tenant/cat-2"}))
+			})
+
+			It("reads a within-catalog job's one catalog once", func() {
+				reader := &recordingCatalogNameReader{names: serviceTestCatalogs}
+				_, err := serviceWithReader(reader).CreateJob(context.WithValue(ctx, recordedCallKey{}, true), connect.NewRequest(&pb.CreateJobRequest{
+					Config: &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1"},
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(reader.lookups()).To(Equal([]string{"test-tenant/cat-1"}))
+			})
+
+			// The snapshot is part of the stored config, which the job's
+			// attestation subject digests (contentDigest(job.Config)), so the
+			// labels a job reports are signed with it.
+			DescribeTable("snapshots the catalogs' names and versions into the stored config, replacing whatever the caller sent",
+				func(cfg *pb.JobConfig, wantSource, wantTarget *pb.CatalogSnapshot) {
+					sent := proto.Clone(cfg)
+					resp, err := serviceWithReader(serviceTestCatalogs).CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{Config: cfg}))
+					Expect(err).NotTo(HaveOccurred())
+
+					job, err := store.GetJob(ctx, resp.Msg.JobId)
+					Expect(err).NotTo(HaveOccurred())
+					var stored pb.JobConfig
+					Expect(json.Unmarshal(job.Config, &stored)).To(Succeed())
+					Expect(proto.Equal(stored.GetSourceCatalog(), wantSource)).To(BeTrue(), "source snapshot %v", stored.GetSourceCatalog())
+					Expect(proto.Equal(stored.GetTargetCatalog(), wantTarget)).To(BeTrue(), "target snapshot %v", stored.GetTargetCatalog())
+					Expect(proto.Equal(cfg, sent)).To(BeTrue(), "CreateJob changed the caller's request message")
+				},
+				Entry("a crosswalk without a snapshot",
+					&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2"},
+					&pb.CatalogSnapshot{CatalogId: "cat-1", Name: "Catalog One", Version: "1.0"},
+					&pb.CatalogSnapshot{CatalogId: "cat-2", Name: "Catalog Two", Version: "2.0"}),
+				Entry("a crosswalk with a forged snapshot",
+					&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2",
+						SourceCatalog: &pb.CatalogSnapshot{CatalogId: "cat-1", Name: "Forged", Version: "9"},
+						TargetCatalog: &pb.CatalogSnapshot{CatalogId: "cat-other", Name: "Forged too"}},
+					&pb.CatalogSnapshot{CatalogId: "cat-1", Name: "Catalog One", Version: "1.0"},
+					&pb.CatalogSnapshot{CatalogId: "cat-2", Name: "Catalog Two", Version: "2.0"}),
+				Entry("within one catalog, both sides from one read",
+					&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1",
+						TargetCatalog: &pb.CatalogSnapshot{CatalogId: "cat-1", Name: "Forged"}},
+					&pb.CatalogSnapshot{CatalogId: "cat-1", Name: "Catalog One", Version: "1.0"},
+					&pb.CatalogSnapshot{CatalogId: "cat-1", Name: "Catalog One", Version: "1.0"}),
+			)
+
+			// No existence oracle. The reader here leaks, wrapping
+			// ErrCatalogNotFound in a message naming another tenant, so equal
+			// bytes prove CreateJob, not the reader, withholds it.
+			DescribeTable("answers a missing catalog and another tenant's catalog with byte-identical NotFound errors, and writes no job",
+				func(cfg *pb.JobConfig, field string) {
+					start := func(notFound error) *connect.Error {
+						reader := leakyCatalogNameReader{known: serviceTestCatalogs, notFound: notFound}
+						_, err := serviceWithReader(reader).CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{Config: cfg}))
+						var connectErr *connect.Error
+						Expect(errors.As(err, &connectErr)).To(BeTrue(), "want a *connect.Error, got %v", err)
+						return connectErr
+					}
+					othersErr := start(fmt.Errorf("catalog cat-b belongs to tenant other-tenant: %w", pipeline.ErrCatalogNotFound))
+					missingErr := start(fmt.Errorf("catalog cat-b: %w", pipeline.ErrCatalogNotFound))
+
+					Expect(othersErr.Code()).To(Equal(connect.CodeNotFound))
+					Expect(missingErr.Code()).To(Equal(connect.CodeNotFound))
+					Expect([]byte(othersErr.Error())).To(Equal([]byte(missingErr.Error())))
+					Expect(othersErr.Error()).To(SatisfyAll(
+						ContainSubstring(fmt.Sprintf(`config.%s "cat-b" is not a catalog of your tenant`, field)),
+						ContainSubstring("crosscodex catalog list"),
+						Not(ContainSubstring("other-tenant")),
+					))
+					expectNoJob()
+				},
+				Entry("the source", &pb.JobConfig{CatalogId: "cat-b", TargetCatalogId: "cat-1"}, "catalog_id"),
+				Entry("the target", &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-b"}, "target_catalog_id"),
+			)
+
+			It("answers a failed catalog read with Unavailable, withholds the cause, and writes no job", func() {
+				reader := failingCatalogNameReader{err: errors.New("dial tcp 10.0.0.5:5432: connect: connection refused")}
+				_, err := serviceWithReader(reader).CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{
+					Config: &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2"},
+				}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+				Expect(err.Error()).To(SatisfyAll(
+					ContainSubstring(`cannot create the job: whether config.catalog_id "cat-1"`),
+					ContainSubstring("Retry the request"),
+					Not(ContainSubstring("10.0.0.5")),
+				))
+				expectNoJob()
+			})
+
+			It("refuses every job when no catalog reader is wired, and writes no job", func() {
+				_, err := serviceWithReader(nil).CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{
+					Config: &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1"},
+				}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+				Expect(err.Error()).To(ContainSubstring("no catalog reader is configured"))
+				expectNoJob()
+			})
 		})
 	})
 
@@ -508,10 +734,11 @@ var _ = Describe("Service", func() {
 					StageTimeout:      time.Hour,
 				},
 				nil,
+				pipeline.WithCatalogNameReader(serviceTestCatalogs),
 			)
 
 			createReq := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{CatalogId: "test-catalog"},
+				Config: &pb.JobConfig{CatalogId: "test-catalog", TargetCatalogId: "test-catalog"},
 			}
 
 			createResp, err := blockingSvc.CreateJob(ctx, connect.NewRequest(createReq))
@@ -780,7 +1007,8 @@ var _ = Describe("Service", func() {
 				pipeline.Attestors{Default: &pipeline.Attestor{Generator: attestor, ExpiresIn: time.Hour}},
 				pipelineattestation.NewConverter(), bus, stor,
 				config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}, nil,
-				pipeline.WithCatalogControlsReader(&fakeCatalogControlsReader{controls: []*pb.Control{{ControlId: "c1", CatalogId: "cat-1"}}}))
+				pipeline.WithCatalogControlsReader(&fakeCatalogControlsReader{controls: []*pb.Control{{ControlId: "c1", CatalogId: "cat-1"}}}),
+				pipeline.WithCatalogNameReader(serviceTestCatalogs))
 			DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
 			return attestedService{svc: svc, bus: bus, bundlePuts: bundlePuts}
 		}
@@ -792,7 +1020,7 @@ var _ = Describe("Service", func() {
 			return gen
 		}
 		createJob := func(svc *pipeline.Service) string {
-			resp, err := svc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{Config: &pb.JobConfig{CatalogId: "cat-1"}}))
+			resp, err := svc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{Config: &pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1"}}))
 			Expect(err).NotTo(HaveOccurred())
 			return resp.Msg.JobId
 		}
@@ -1077,7 +1305,7 @@ var _ = Describe("Service", func() {
 		// A failure whose cause a retry cannot change is refused before
 		// anything is reset, so the job keeps its stages and its error.
 		DescribeTable("refuses to retry from its failure a job whose failure a retry cannot fix, leaving it unchanged",
-			func(cause error, want string) {
+			func(cause error, want, remedy string) {
 				now := time.Now()
 				configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
 				Expect(store.CreateJob(ctx, &pipeline.Job{
@@ -1086,16 +1314,15 @@ var _ = Describe("Service", func() {
 				})).To(Succeed())
 				Expect(store.CreateStages(ctx, "job-permanent", []string{"classify", "synthesis", "graph"})).To(Succeed())
 				Expect(store.UpdateStageError(ctx, "job-permanent", "synthesis", cause)).To(Succeed())
-				failure := fmt.Errorf("job job-permanent: %w", cause)
+				failure := fmt.Errorf("job job-permanent: %w. Start a new job: crosscodex run start --source test-catalog --target test-catalog", cause)
 				Expect(store.UpdateJobStatus(ctx, "job-permanent", pipeline.JobStatusFailed, failure)).To(Succeed())
 
 				_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-permanent", RetryFromFailure: true}))
 				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
 				Expect(err).To(MatchError(And(
-					ContainSubstring("cannot retry job job-permanent from its failure"),
-					ContainSubstring(want),
-					ContainSubstring(failure.Error()),
-					ContainSubstring("crosscodex run start --source test-catalog"))))
+					ContainSubstring("cannot retry job job-permanent from its failure: "+want),
+					ContainSubstring(recordedFailureLabel+failure.Error()),
+					HaveSuffix(remedy))))
 
 				j, err := store.GetJob(ctx, "job-permanent")
 				Expect(err).NotTo(HaveOccurred())
@@ -1106,9 +1333,112 @@ var _ = Describe("Service", func() {
 				Expect(stages).To(HaveEach(HaveField("RetryCount", 0)))
 				Expect(stages).To(ContainElement(And(HaveField("StageName", "synthesis"), HaveField("Status", pipeline.StageStatusFailed))))
 			},
-			Entry("its stored attestation does not verify", pipeline.ErrAttestationInvalid, "its attestation does not verify"),
-			Entry("its analyzers changed", pipeline.ErrAnalyzersChanged, "the enabled analyzers changed"),
-			Entry("its config names no catalog", pipeline.ErrMissingCatalogID, "its config names no catalog"),
+			Entry("its stored attestation does not verify", pipeline.ErrAttestationInvalid, "its attestation does not verify",
+				"Start a new job: crosscodex run start --source test-catalog --target test-catalog"),
+			Entry("its analyzers changed", pipeline.ErrAnalyzersChanged, "the enabled analyzers changed",
+				"Start a new job: crosscodex run start --source test-catalog --target test-catalog"),
+			Entry("its config names no catalog", pipeline.ErrMissingCatalogID, "its config names no catalog",
+				"Start a new job: crosscodex run start --source test-catalog --target test-catalog"),
+			Entry("its target catalog has nothing to map onto", pipeline.ErrEmptyTargetCatalog,
+				"its target catalog has no control with a statement, and a retry reads the same catalog",
+				emptyTargetRemedy+"crosscodex run start --source test-catalog --target <catalog-id>"),
+		)
+
+		It("accepts a retry from the failure of a job whose catalog was not found", func() {
+			now := time.Now()
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "cat-a", TargetCatalogId: "cat-b"})
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-catalog-gone", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, "job-catalog-gone", []string{"classify", "synthesis", "graph"})).To(Succeed())
+			Expect(store.UpdateStageError(ctx, "job-catalog-gone", "classify", pipeline.ErrCatalogNotFound)).To(Succeed())
+			failure := fmt.Errorf("job job-catalog-gone cannot run: catalog cat-b was not found: %w", pipeline.ErrCatalogNotFound)
+			Expect(store.UpdateJobStatus(ctx, "job-catalog-gone", pipeline.JobStatusFailed, failure)).To(Succeed())
+
+			resp, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-catalog-gone", RetryFromFailure: true}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.NewJobId).To(Equal("job-catalog-gone"))
+		})
+
+		// The stored failure is the job's record and is quoted as it was
+		// written; a job that failed before cross-catalog analysis recorded
+		// a command without --target, which the CLI now refuses. The
+		// refusal therefore ends with a command built from the job's config.
+		DescribeTable("quotes the stored failure as recorded and ends with the new-job command built from the job's config",
+			func(config, recorded, remedy string) {
+				now := time.Now()
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID: "job-recorded", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+					Config: []byte(config), CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+				})).To(Succeed())
+				Expect(store.CreateStages(ctx, "job-recorded", []string{"classify", "synthesis", "graph"})).To(Succeed())
+				Expect(store.UpdateStageError(ctx, "job-recorded", "classify", pipeline.ErrAnalyzersChanged)).To(Succeed())
+				failure := fmt.Errorf("job job-recorded cannot run: %w. %s", pipeline.ErrAnalyzersChanged, recorded)
+				Expect(store.UpdateJobStatus(ctx, "job-recorded", pipeline.JobStatusFailed, failure)).To(Succeed())
+
+				_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-recorded", RetryFromFailure: true}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+				Expect(err).To(MatchError(And(
+					ContainSubstring("cannot retry job job-recorded from its failure: the enabled analyzers changed"),
+					ContainSubstring(recordedFailureLabel+failure.Error()),
+					HaveSuffix(remedy))))
+
+				j, err := store.GetJob(ctx, "job-recorded")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorMessage).To(Equal(failure.Error()))
+			},
+			Entry("a failure recorded before --target existed, within one catalog",
+				`{"catalog_id":"cat-a"}`,
+				"Start a new job with the analyzers enabled now: crosscodex run start --source cat-a. "+
+					"To give the new job the analyzers this one was created with, first set analysis.classify.enabled=true",
+				"Start a new job: crosscodex run start --source cat-a --target cat-a"),
+			Entry("a failure recorded with the current command, across catalogs in both directions",
+				`{"catalog_id":"cat-a","target_catalog_id":"cat-b","bidirectional":true}`,
+				"Start a new job with the analyzers enabled now: crosscodex run start --source cat-a --target cat-b --bidirectional",
+				"Start a new job: crosscodex run start --source cat-a --target cat-b --bidirectional"),
+		)
+
+		// Re-importing a target with statements gives it a new catalog ID
+		// (IDs are content hashes), so the new job must name a target
+		// rather than reuse this job's.
+		DescribeTable("refuses to retry a job whose target has nothing to map onto, pointing at a new job with another target, and writes no job",
+			func(fromFailure bool, want string) {
+				now := time.Now()
+				configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2", Bidirectional: true})
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID: "job-empty-target", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+					Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+				})).To(Succeed())
+				Expect(store.CreateStages(ctx, "job-empty-target", []string{"classify", "synthesis", "graph"})).To(Succeed())
+				Expect(store.UpdateStageError(ctx, "job-empty-target", "classify", pipeline.ErrEmptyTargetCatalog)).To(Succeed())
+				failure := fmt.Errorf("job job-empty-target cannot run: %w", pipeline.ErrEmptyTargetCatalog)
+				Expect(store.UpdateJobStatus(ctx, "job-empty-target", pipeline.JobStatusFailed, failure)).To(Succeed())
+
+				_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-empty-target", RetryFromFailure: fromFailure}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+				Expect(err).To(MatchError(And(
+					ContainSubstring(want),
+					HaveSuffix(emptyTargetRemedy+"crosscodex run start --source cat-1 --target <catalog-id> --bidirectional"),
+					Not(ContainSubstring("--target cat-2")))))
+
+				jobs, total, err := store.ListJobs(ctx, "test-tenant", pipeline.JobFilter{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(total).To(BeEquivalentTo(1), "only the old job exists")
+				Expect(jobs).To(ConsistOf(HaveField("JobID", "job-empty-target")))
+				j, err := store.GetJob(ctx, "job-empty-target")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.Status).To(Equal(pipeline.JobStatusFailed))
+				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorEmptyTargetCatalog))
+				stages, err := store.GetStages(ctx, "job-empty-target")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stages).To(HaveEach(HaveField("RetryCount", 0)))
+			},
+			Entry("from its failure", true,
+				"cannot retry job job-empty-target from its failure: its target catalog has no control with a statement, and a retry reads the same catalog"),
+			// A new job with the same config reads the same empty catalog.
+			Entry("as a new job", false,
+				"cannot retry job job-empty-target as a new job: its target catalog has no control with a statement, and a new job with the same config reads the same catalog"),
 		)
 
 		DescribeTable("classifies a job's failure by its cause, never its text",
@@ -1120,12 +1450,16 @@ var _ = Describe("Service", func() {
 			Entry("an invalid attestation", fmt.Errorf("x: %w", pipeline.ErrAttestationInvalid), pipeline.JobErrorAttestationInvalid),
 			Entry("changed analyzers", fmt.Errorf("x: %w", pipeline.ErrAnalyzersChanged), pipeline.JobErrorAnalyzersChanged),
 			Entry("a missing catalog", fmt.Errorf("x: %w", pipeline.ErrMissingCatalogID), pipeline.JobErrorMissingCatalog),
+			Entry("an empty target catalog", fmt.Errorf("x: %w", pipeline.ErrEmptyTargetCatalog), pipeline.JobErrorEmptyTargetCatalog),
+			// Re-importing the same file restores the catalog's ID, so a
+			// retry can succeed.
+			Entry("a deleted catalog", fmt.Errorf("x: %w", pipeline.ErrCatalogNotFound), pipeline.JobErrorRetryable),
 			Entry("an unwrapped error with an invalid attestation's text", errors.New(pipeline.ErrAttestationInvalid.Error()), pipeline.JobErrorRetryable),
 		)
 
 		It("returns FailedPrecondition, saying what to do, when no stage has failed or been cancelled", func() {
 			now := time.Now()
-			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "cat-a", TargetCatalogId: "cat-b", Bidirectional: true})
 			job := &pipeline.Job{
 				JobID:     "job-retry-nofail",
 				TenantID:  "test-tenant",
@@ -1149,7 +1483,7 @@ var _ = Describe("Service", func() {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
 			Expect(err).To(MatchError(And(
 				ContainSubstring("cannot retry job job-retry-nofail from a failure: no stage failed or was cancelled"),
-				ContainSubstring("crosscodex run start --source test-catalog"),
+				ContainSubstring("crosscodex run start --source cat-a --target cat-b --bidirectional"),
 			)))
 			stages, err := store.GetStages(ctx, "job-retry-nofail")
 			Expect(err).NotTo(HaveOccurred())
@@ -1189,6 +1523,173 @@ var _ = Describe("Service", func() {
 			_, err = store.GetJob(ctx, resp.Msg.NewJobId)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		// A config stored before target_catalog_id ran within its one
+		// catalog; the new job keeps that, stated explicitly, so every job
+		// row created from now on names its target.
+		It("stores the source as the target of a new job retried from a config without a target", func() {
+			now := time.Now()
+			configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-retry-legacy", TenantID: "test-tenant", Status: pipeline.JobStatusFailed,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+
+			resp, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-retry-legacy"}))
+			Expect(err).NotTo(HaveOccurred())
+
+			newJob, err := store.GetJob(ctx, resp.Msg.NewJobId)
+			Expect(err).NotTo(HaveOccurred())
+			var stored pb.JobConfig
+			Expect(json.Unmarshal(newJob.Config, &stored)).To(Succeed())
+			Expect(stored.GetCatalogId()).To(Equal("test-catalog"))
+			Expect(stored.GetTargetCatalogId()).To(Equal("test-catalog"))
+			Expect(stored.GetBidirectional()).To(BeFalse())
+
+			old, err := store.GetJob(ctx, "job-retry-legacy")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(old.Config).To(Equal(configBytes))
+		})
+
+		// The new job is created now, so it records the catalogs' labels
+		// now: a catalog renamed by a re-import since the old job shows its
+		// current name on the new job, and the old job keeps its own.
+		It("takes a fresh snapshot of the catalogs for a new job", func() {
+			now := time.Now()
+			configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2",
+				SourceCatalog: &pb.CatalogSnapshot{CatalogId: "cat-1", Name: "Old One", Version: "0.9"},
+				TargetCatalog: &pb.CatalogSnapshot{CatalogId: "cat-2", Name: "Old Two"}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-retry-snapshot", TenantID: "test-tenant", Status: pipeline.JobStatusFailed,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+
+			resp, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-retry-snapshot"}))
+			Expect(err).NotTo(HaveOccurred())
+
+			newJob, err := store.GetJob(ctx, resp.Msg.NewJobId)
+			Expect(err).NotTo(HaveOccurred())
+			var stored pb.JobConfig
+			Expect(json.Unmarshal(newJob.Config, &stored)).To(Succeed())
+			Expect(proto.Equal(stored.GetSourceCatalog(), &pb.CatalogSnapshot{CatalogId: "cat-1", Name: "Catalog One", Version: "1.0"})).To(BeTrue(), "%v", stored.GetSourceCatalog())
+			Expect(proto.Equal(stored.GetTargetCatalog(), &pb.CatalogSnapshot{CatalogId: "cat-2", Name: "Catalog Two", Version: "2.0"})).To(BeTrue(), "%v", stored.GetTargetCatalog())
+
+			old, err := store.GetJob(ctx, "job-retry-snapshot")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(old.Config).To(Equal(configBytes))
+		})
+
+		// Safety mechanism: the new job is confirmed to be over the
+		// tenant's catalogs as CreateJob confirms one.
+		It("refuses a new job over a catalog the tenant no longer has, and writes no job", func() {
+			now := time.Now()
+			configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-deleted"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-retry-gone", TenantID: "test-tenant", Status: pipeline.JobStatusFailed,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+
+			_, err = svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-retry-gone"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+			Expect(err.Error()).To(SatisfyAll(
+				ContainSubstring(`cannot retry job job-retry-gone as a new job: config.target_catalog_id "cat-deleted" is not a catalog of your tenant`),
+				ContainSubstring("Import the catalog first"),
+			))
+			_, total, err := store.ListJobs(ctx, "test-tenant", pipeline.JobFilter{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(total).To(BeEquivalentTo(1), "only the old job exists")
+			old, err := store.GetJob(ctx, "job-retry-gone")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(old.Config).To(Equal(configBytes))
+		})
+
+		DescribeTable("names the retry, not a job creation, when the new job's catalogs cannot be checked, and writes no job",
+			func(reader pipeline.CatalogNameReader, code connect.Code, want string) {
+				now := time.Now()
+				configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID: "job-retry-op", TenantID: "test-tenant", Status: pipeline.JobStatusFailed,
+					Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+				})).To(Succeed())
+
+				_, err = serviceWithReader(reader).RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-retry-op"}))
+				Expect(connect.CodeOf(err)).To(Equal(code))
+				Expect(err.Error()).To(SatisfyAll(
+					ContainSubstring("cannot retry job job-retry-op as a new job: "+want),
+					Not(ContainSubstring("create")),
+				))
+				_, total, err := store.ListJobs(ctx, "test-tenant", pipeline.JobFilter{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(total).To(BeEquivalentTo(1), "only the old job exists")
+			},
+			Entry("the catalog store cannot be read", failingCatalogNameReader{err: errors.New("connection refused")},
+				connect.CodeUnavailable, `whether config.catalog_id "cat-1" is a catalog of your tenant could not be checked`),
+			Entry("no catalog reader is wired", nil, connect.CodeUnavailable, "no catalog reader is configured"),
+		)
+
+		// A resume runs such a config without the flag (within one catalog,
+		// controls are paired in both directions already), so a new job
+		// from it does the same rather than being refused.
+		It("retries a job stored as bidirectional within one catalog as a new job without the flag", func() {
+			now := time.Now()
+			configBytes := []byte(`{"catalog_id":"cat-1","target_catalog_id":"cat-1","bidirectional":true}`)
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-retry-within-bidi", TenantID: "test-tenant", Status: pipeline.JobStatusFailed,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+
+			resp, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-retry-within-bidi"}))
+			Expect(err).NotTo(HaveOccurred())
+
+			newJob, err := store.GetJob(ctx, resp.Msg.NewJobId)
+			Expect(err).NotTo(HaveOccurred())
+			var stored pb.JobConfig
+			Expect(json.Unmarshal(newJob.Config, &stored)).To(Succeed())
+			Expect(stored.GetCatalogId()).To(Equal("cat-1"))
+			Expect(stored.GetTargetCatalogId()).To(Equal("cat-1"))
+			Expect(stored.GetBidirectional()).To(BeFalse())
+			old, err := store.GetJob(ctx, "job-retry-within-bidi")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(old.Config).To(Equal(configBytes))
+		})
+
+		// Safety mechanism: a stored config CreateJob would refuse (written
+		// before validation or outside CreateJob) must not become a new job.
+		DescribeTable("refuses to retry a job whose stored config is invalid as a new job, and writes no job",
+			func(configBytes []byte, want []string) {
+				now := time.Now()
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID: "job-retry-invalid", TenantID: "test-tenant", Status: pipeline.JobStatusFailed,
+					Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+				})).To(Succeed())
+
+				_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-retry-invalid"}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+				Expect(err.Error()).To(ContainSubstring("cannot retry job job-retry-invalid as a new job"))
+				for _, w := range want {
+					Expect(err.Error()).To(ContainSubstring(w))
+				}
+
+				jobs, total, err := store.ListJobs(ctx, "test-tenant", pipeline.JobFilter{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(total).To(Equal(int64(1)))
+				Expect(jobs).To(ConsistOf(HaveField("JobID", "job-retry-invalid")))
+				old, err := store.GetJob(ctx, "job-retry-invalid")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(old.Config).To(Equal(configBytes))
+				Expect(old.Status).To(Equal(pipeline.JobStatusFailed))
+			},
+			Entry("no catalog_id",
+				[]byte(`{"target_catalog_id":"cat-1"}`),
+				[]string{"config.catalog_id is required", "crosscodex run start --source <source-catalog-id> --target <target-catalog-id>"}),
+			Entry("unreadable config",
+				[]byte(`{"catalog_id":`),
+				[]string{"could not be read", "crosscodex run start --source <source-catalog-id> --target <target-catalog-id>"}),
+		)
 
 		// The new job belongs to whoever retries: the jobs RLS WITH CHECK
 		// demands created_by = app.current_user, the retrying caller.
@@ -1245,10 +1746,11 @@ var _ = Describe("Service", func() {
 					StageTimeout:      time.Hour,
 				},
 				nil,
+				pipeline.WithCatalogNameReader(serviceTestCatalogs),
 			)
 
 			createReq := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{CatalogId: "test-catalog"},
+				Config: &pb.JobConfig{CatalogId: "test-catalog", TargetCatalogId: "test-catalog"},
 			}
 
 			// Create a job so it starts running (blocked in synthesis).
@@ -1288,6 +1790,7 @@ var _ = Describe("Service", func() {
 					StageTimeout:      time.Hour,
 				},
 				nil,
+				pipeline.WithCatalogNameReader(serviceTestCatalogs),
 			)
 
 			_, err = postStopSvc.CreateJob(ctx, connect.NewRequest(createReq))
@@ -1314,10 +1817,11 @@ var _ = Describe("Service", func() {
 					StageTimeout:      time.Hour,
 				},
 				nil,
+				pipeline.WithCatalogNameReader(serviceTestCatalogs),
 			)
 
 			createReq := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{CatalogId: "test-catalog"},
+				Config: &pb.JobConfig{CatalogId: "test-catalog", TargetCatalogId: "test-catalog"},
 			}
 
 			// First job should succeed.

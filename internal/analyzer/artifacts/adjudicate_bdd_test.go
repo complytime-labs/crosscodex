@@ -631,7 +631,7 @@ var _ = Describe("Adjudicator", func() {
 			Entry("a format character between spaces", "x \u200b y", "x y"),
 			Entry("invalid UTF-8", "x\xffy", "x�y"),
 			Entry("a value over the cap, cut on a rune boundary", strings.Repeat("é", 150), strings.Repeat("é", 100)),
-			Entry("the cap counts bytes before escaping", strings.Repeat("<", 250), strings.Repeat("&lt;", 200)),
+			Entry("the cap counts bytes after escaping, never splitting an entity", strings.Repeat("<", 250), strings.Repeat("&lt;", 50)),
 		)
 
 		It("omits an owner or frequency that is blank once flattened", func() {
@@ -685,15 +685,6 @@ var _ = Describe("Adjudicator", func() {
 		f.store.err["Decide"] = errors.New("db down")
 		_, err := f.run()
 		Expect(err).To(MatchError(ContainSubstring("db down")))
-	})
-
-	Describe("cleanText", func() {
-		It("removes NUL, repairs invalid UTF-8 and truncates on a rune boundary", func() {
-			Expect(artifacts.ExportCleanText("a\x00b", 10)).To(Equal("ab"))
-			Expect(artifacts.ExportCleanText("a\xffb", 10)).To(Equal("a�b"))
-			Expect(artifacts.ExportCleanText("aé", 2)).To(Equal("a"))
-			Expect(artifacts.ExportCleanText("abc", 3)).To(Equal("abc"))
-		})
 	})
 })
 

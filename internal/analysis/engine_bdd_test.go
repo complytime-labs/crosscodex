@@ -1030,6 +1030,39 @@ var _ = Describe("Engine", func() {
 			Expect(observedOK).To(BeTrue())
 			Expect(observedCatalogID).To(Equal("cat-42"))
 		})
+
+		It("makes each control's own catalog available to Aggregate via context", func() {
+			observed := map[string]string{}
+
+			mock := newControlStub("classify")
+			mock.GenerateWorkFunc = func(_ context.Context, input *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+				return []analyzer.Task{{TaskID: "mock-" + input.GetControlId(), TaskType: "classify"}}, nil
+			}
+			mock.AggregateFunc = func(ctx context.Context, _ []analyzer.TaskResult) (*analyzer.Output, error) {
+				for _, id := range []string{"cat-a/AC-1", "cat-b/PR.AA-01", "no-catalog"} {
+					if catalogID, ok := analyzer.ControlCatalogFromContext(ctx, id); ok {
+						observed[id] = catalogID
+					}
+				}
+				return &analyzer.Output{AnalyzerName: "classify", Metadata: map[string]string{}}, nil
+			}
+			Expect(analyzer.Register[*pb.Control](registry, mock)).To(Succeed())
+
+			engine := analysis.New(registry, dispatcher, collector, validCfg(), allTaskTypes())
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-fanout-two-catalogs",
+				Controls: []*pb.Control{
+					{ControlId: "cat-a/AC-1", CatalogId: "cat-a"},
+					{ControlId: "cat-b/PR.AA-01", CatalogId: "cat-b"},
+					{ControlId: "no-catalog"},
+				},
+				CatalogID: "cat-a",
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Completed).To(ConsistOf("classify"))
+			Expect(observed).To(Equal(map[string]string{"cat-a/AC-1": "cat-a", "cat-b/PR.AA-01": "cat-b"}))
+		})
 	})
 
 	// =================================================================

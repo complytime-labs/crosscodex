@@ -40,17 +40,3 @@ var _ = Describe("ValidatePairRef", func() {
 		Entry("a pair key fragment", "artifact-pair|a|b"),
 	)
 })
-
-var _ = Describe("CleanDisplay", func() {
-	DescribeTable("makes untrusted text safe for one terminal cell",
-		func(in, want string) { Expect(artifacts.CleanDisplay(in, 40)).To(Equal(want)) },
-		Entry("plain", "Access Policy", "Access Policy"),
-		Entry("escape sequence", "evil\x1b]0;pwned\x07name", "evil ]0;pwned name"),
-		Entry("newlines and tabs", "a\n\tb", "a b"),
-		Entry("bidi and zero-width removed", "a\u202eb\u200bc", "abc"),
-		Entry("invalid UTF-8 repaired", "a\xffb", "a�b"),
-		Entry("trimmed", "  a  ", "a"),
-		Entry("capped on a rune boundary", strings.Repeat("é", 30), strings.Repeat("é", 20)),
-		Entry("keeps < and > (no entity encoding)", "a<b>", "a<b>"),
-	)
-})

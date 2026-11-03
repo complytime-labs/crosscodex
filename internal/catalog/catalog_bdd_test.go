@@ -435,8 +435,32 @@ var _ = Describe("Service", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(cat.TenantID).To(Equal("tenant-1"))
 				Expect(cat.Name).To(Equal("Test Catalog"))
+				Expect(cat.Version).To(BeEmpty(), "the document has no metadata.version")
 				Expect(ms.controlRecords).To(HaveLen(2))
 			})
+
+			DescribeTable("records the catalog's OSCAL metadata version",
+				func(metadata map[string]interface{}, want string) {
+					parser := &mockParser{items: []oscal.ControlItem{
+						{ID: "ac-1", Title: "Access Control Policy", Text: "Develop policy", Class: oscal.ClassRequirement},
+					}}
+					svc = catalog.NewService(catalog.WithParser(parser), catalog.WithStore(ms), catalog.WithStorage(stg))
+					oscalData, err := json.Marshal(map[string]interface{}{"catalog": map[string]interface{}{"uuid": "test-uuid", "metadata": metadata}})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(stg.Put(context.Background(), "doc-1", bytes.NewReader(oscalData))).To(Succeed())
+
+					resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+						TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+						DocumentId:    "doc-1",
+					}))
+					Expect(err).NotTo(HaveOccurred())
+					cat, err := ms.GetCatalog(context.Background(), resp.Msg.CatalogId)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(cat.Version).To(Equal(want))
+				},
+				Entry("a version", map[string]interface{}{"title": "SP 800-53", "version": "5.1.1"}, "5.1.1"),
+				Entry("none", map[string]interface{}{"title": "SP 800-53"}, ""),
+			)
 		})
 
 		Context("with non-OSCAL document", func() {

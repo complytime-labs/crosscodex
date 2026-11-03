@@ -84,7 +84,7 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		Expect(err).NotTo(HaveOccurred(), "SubmitDocument")
 		catalogID := submitResp.Msg.GetCatalogId()
 		Expect(catalogID).NotTo(BeEmpty(), "catalog id")
-		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID}))
+		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID, TargetCatalogId: catalogID}))
 		Expect(err).NotTo(HaveOccurred(), "StartAnalysis")
 		jobID := startResp.Msg.GetJobId()
 		Expect(jobID).NotTo(BeEmpty(), "job id")

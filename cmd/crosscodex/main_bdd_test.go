@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -91,6 +92,15 @@ var _ = Describe("Root Command", func() {
 			Expect(stdout).To(ContainSubstring("Project Commands"))
 			Expect(stdout).To(ContainSubstring("Analysis Commands"))
 			Expect(stdout).To(ContainSubstring("Get started"))
+		})
+
+		It("describes run start in Get started with the command's own summary", func() {
+			root := newRootCmd()
+			start, _, err := root.Find([]string{"run", "start"})
+			Expect(err).NotTo(HaveOccurred())
+			stdout, _, err := execute(root, "--help")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).To(MatchRegexp(`crosscodex run start +` + regexp.QuoteMeta(start.Short) + `\n`))
 		})
 	})
 
@@ -625,6 +635,7 @@ var _ = Describe("Root Command", func() {
 			Expect(err.Error()).To(ContainSubstring(wantSubstr))
 		},
 		Entry("run start needs --source", []string{"run", "start"}, "--source"),
+		Entry("run start needs --target", []string{"run", "start", "--source", "cat-1"}, "--target"),
 		Entry("run status needs a job-id", []string{"run", "status"}, "job-id"),
 		Entry("run cancel needs a job-id", []string{"run", "cancel"}, "job-id"),
 		Entry("catalog validate needs a file", []string{"catalog", "validate"}, "file"),
