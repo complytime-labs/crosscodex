@@ -32,7 +32,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	pkigen "github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -158,48 +157,18 @@ func embeddedAuthRegistry() (*authn.Registry, error) {
 	)
 }
 
-// localPipelineBackend records pipeline jobs via the pipeline store but does
-// not execute them. This is the embedded-mode equivalent of pipeline.Service
-// without DAG execution, NATS, or telemetry.
+// localPipelineBackend serves job reads and cancellation from the pipeline
+// store but refuses to create jobs. Embedded mode has no executor, NATS or
+// workers, so a stored job would stay PENDING forever (#212). Analysis runs
+// only under crosscodexd.
 type localPipelineBackend struct {
 	store pipeline.Store
 }
 
-func (b *localPipelineBackend) CreateJob(ctx context.Context, req *connectrpc.Request[pb.CreateJobRequest]) (*connectrpc.Response[pb.CreateJobResponse], error) {
-	tenantID, err := tenant.FromContext(ctx)
-	if err != nil {
-		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, errors.New("missing tenant context"))
-	}
-
-	if req.Msg.Config == nil {
-		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, errors.New("config is required"))
-	}
-
-	configBytes, err := json.Marshal(req.Msg.Config)
-	if err != nil {
-		return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, fmt.Errorf("marshal config: %w", err))
-	}
-
-	jobID := uuid.New().String()
-	now := time.Now()
-	job := &pipeline.Job{
-		JobID:     jobID,
-		TenantID:  tenantID,
-		Status:    pipeline.JobStatusPending,
-		Config:    configBytes,
-		CreatedBy: pipeline.JobCreator(ctx, tenantID),
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	if err := b.store.CreateJob(ctx, job); err != nil {
-		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("create job: %w", err))
-	}
-
-	return connectrpc.NewResponse(&pb.CreateJobResponse{
-		JobId:  jobID,
-		Status: pb.JobStatus_JOB_STATUS_PENDING,
-	}), nil
+func (b *localPipelineBackend) CreateJob(context.Context, *connectrpc.Request[pb.CreateJobRequest]) (*connectrpc.Response[pb.CreateJobResponse], error) {
+	return nil, connectrpc.NewError(connectrpc.CodeFailedPrecondition, errors.New(
+		`analysis needs the crosscodexd daemon: embedded mode stores and inspects catalogs but cannot run analysis. `+
+			`Start the crosscodexd daemon, point the CLI at it with "crosscodex config set cli.endpoint <url>", and rerun`))
 }
 
 func (b *localPipelineBackend) GetJob(ctx context.Context, req *connectrpc.Request[pb.GetJobRequest]) (*connectrpc.Response[pb.GetJobResponse], error) {

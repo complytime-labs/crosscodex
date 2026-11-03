@@ -87,6 +87,8 @@ crosscodex project init
 crosscodex catalog import catalogs/NIST_SP-800-53_rev5_catalog.json
 ```
 
+Import stores and parses the catalog and prints its catalog ID. It does not start analysis.
+
 ### 7. List and inspect catalogs
 
 ```sh
@@ -97,7 +99,16 @@ crosscodex catalog list
 crosscodex catalog inspect <catalog-id>
 ```
 
-### 8. Read a job's mappings
+### 8. Start an analysis
+
+```sh
+crosscodex run start --source <catalog-id>
+crosscodex run status <job-id>
+```
+
+`run start` starts a full analysis of an imported catalog and prints the job ID. Analysis runs in the `crosscodexd` daemon; embedded mode refuses it (see [Deployment Modes](#deployment-modes)).
+
+### 9. Read a job's mappings
 
 Once a job has completed, read its control mappings. Both commands take the job ID and the same filters:
 
@@ -207,9 +218,11 @@ flowchart TD
 | **Graph**           | openCypher queries via Apache AGE on PostgreSQL | Go                  |
 | **Pipeline**        | Job orchestration, state tracking, retry logic  | Go                  |
 
+The Ingestion service lives in its own repository, [complytime-labs/crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion). The gateway does not call it yet: it stores uploads unchanged, and the Catalog service imports only OSCAL JSON. Wiring Docling conversion into imports is tracked in issue [#214](https://github.com/complytime-labs/crosscodex/issues/214).
+
 ### Deployment Modes
 
-- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. Run `crosscodexd migrate` before starting `crosscodexd` against a database. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
+- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. Analysis does not run in embedded mode: `crosscodex run start` fails with an error that says to start `crosscodexd` and set `cli.endpoint`, and no job is stored. Run `crosscodexd migrate` before starting `crosscodexd` against a database. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
 - **Production (compose)** -- Single-host production stack with full mutual TLS across all services (PostgreSQL, NATS, the LLM gateway, CrossCodex gateway). One-command bring-up via `task deploy:up` after populating `deploy/.env` and generating certificates with `task deploy:certs`. The default LiteLLM gateway runs behind a stunnel sidecar to provide end-to-end mTLS; `LLM_GATEWAY=praxis` selects Praxis AI instead (spike). See [deploy/README.md](deploy/README.md) for setup, first-use CLI commands, and operations.
 - **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage. Multi-host deployment and FIPS 140 container images tracked in issue [#17](https://github.com/complytime-labs/crosscodex/issues/17).
 

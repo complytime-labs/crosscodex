@@ -119,13 +119,7 @@ var _ = Describe("Service", func() {
 	Describe("CreateJob", func() {
 		It("creates a job and stages in the store", func() {
 			req := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{
-					Source: &pb.JobConfig_DocumentContent{
-						DocumentContent: []byte("test"),
-					},
-					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-					CatalogName:   "test-catalog",
-				},
+				Config: &pb.JobConfig{CatalogId: "test-catalog"},
 			}
 
 			resp, err := svc.CreateJob(ctx, connect.NewRequest(req))
@@ -189,13 +183,7 @@ var _ = Describe("Service", func() {
 			)
 
 			req := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{
-					Source: &pb.JobConfig_DocumentContent{
-						DocumentContent: []byte("test"),
-					},
-					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-					CatalogName:   "test-catalog",
-				},
+				Config: &pb.JobConfig{CatalogId: "test-catalog"},
 			}
 
 			resp, err := orderingSvc.CreateJob(ctx, connect.NewRequest(req))
@@ -247,11 +235,7 @@ var _ = Describe("Service", func() {
 					callCtx = tenant.WithUser(ctx, user)
 				}
 				resp, err := svc.CreateJob(callCtx, connect.NewRequest(&pb.CreateJobRequest{
-					Config: &pb.JobConfig{
-						Source:        &pb.JobConfig_DocumentContent{DocumentContent: []byte("test")},
-						CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-						CatalogName:   "test-catalog",
-					},
+					Config: &pb.JobConfig{CatalogId: "test-catalog"},
 				}))
 				Expect(err).NotTo(HaveOccurred())
 
@@ -279,6 +263,21 @@ var _ = Describe("Service", func() {
 			_, err := svc.CreateJob(ctx, connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		})
+
+		// Safety mechanism: a job without a catalog would run over zero
+		// controls, so no row may be written for it.
+		It("rejects a config without catalog_id and writes no job", func() {
+			_, err := svc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{
+				Config: &pb.JobConfig{},
+			}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err).To(MatchError(And(ContainSubstring("catalog_id is required"), ContainSubstring("Import the catalog first"))))
+
+			jobs, total, err := store.ListJobs(ctx, "test-tenant", pipeline.JobFilter{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(total).To(BeZero())
+			Expect(jobs).To(BeEmpty())
 		})
 	})
 
@@ -393,13 +392,7 @@ var _ = Describe("Service", func() {
 			)
 
 			createReq := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{
-					Source: &pb.JobConfig_DocumentContent{
-						DocumentContent: []byte("test"),
-					},
-					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-					CatalogName:   "test-catalog",
-				},
+				Config: &pb.JobConfig{CatalogId: "test-catalog"},
 			}
 
 			createResp, err := blockingSvc.CreateJob(ctx, connect.NewRequest(createReq))
@@ -444,11 +437,7 @@ var _ = Describe("Service", func() {
 			DeferCleanup(func() { Expect(corruptSvc.Stop(context.Background())).To(Succeed()) })
 
 			now := time.Now()
-			configBytes, err := json.Marshal(&pb.JobConfig{
-				Source:        &pb.JobConfig_DocumentContent{DocumentContent: []byte("test")},
-				CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-				CatalogName:   "test-catalog",
-			})
+			configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(store.CreateJob(ctx, &pipeline.Job{
 				JobID: "job-corrupt-rel", TenantID: "test-tenant", Status: pipeline.JobStatusFailed,
@@ -517,13 +506,7 @@ var _ = Describe("Service", func() {
 			})
 
 			now := time.Now()
-			configBytes, err := json.Marshal(&pb.JobConfig{
-				Source: &pb.JobConfig_DocumentContent{
-					DocumentContent: []byte("test"),
-				},
-				CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-				CatalogName:   "test-catalog",
-			})
+			configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
 			Expect(err).NotTo(HaveOccurred())
 			job := &pipeline.Job{
 				JobID:     "job-retry",
@@ -587,11 +570,7 @@ var _ = Describe("Service", func() {
 
 		It("returns FailedPrecondition when no stage has failed", func() {
 			now := time.Now()
-			configBytes, _ := json.Marshal(&pb.JobConfig{
-				Source: &pb.JobConfig_DocumentContent{
-					DocumentContent: []byte("test"),
-				},
-			})
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
 			job := &pipeline.Job{
 				JobID:     "job-retry-nofail",
 				TenantID:  "test-tenant",
@@ -617,11 +596,7 @@ var _ = Describe("Service", func() {
 
 		It("creates a new job when retry_from_failure is false", func() {
 			now := time.Now()
-			configBytes, _ := json.Marshal(&pb.JobConfig{
-				Source: &pb.JobConfig_DocumentContent{
-					DocumentContent: []byte("test"),
-				},
-			})
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
 			job := &pipeline.Job{
 				JobID:     "job-retry-new",
 				TenantID:  "test-tenant",
@@ -655,9 +630,7 @@ var _ = Describe("Service", func() {
 		DescribeTable("records the retrying caller as the new job's creator",
 			func(user, wantCreator string) {
 				now := time.Now()
-				configBytes, err := json.Marshal(&pb.JobConfig{
-					Source: &pb.JobConfig_DocumentContent{DocumentContent: []byte("test")},
-				})
+				configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(store.CreateJob(ctx, &pipeline.Job{
 					JobID:     "job-retry-creator",
@@ -711,13 +684,7 @@ var _ = Describe("Service", func() {
 			)
 
 			createReq := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{
-					Source: &pb.JobConfig_DocumentContent{
-						DocumentContent: []byte("test"),
-					},
-					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-					CatalogName:   "test-catalog",
-				},
+				Config: &pb.JobConfig{CatalogId: "test-catalog"},
 			}
 
 			// Create a job so it starts running (blocked in synthesis).
@@ -788,13 +755,7 @@ var _ = Describe("Service", func() {
 			)
 
 			createReq := &pb.CreateJobRequest{
-				Config: &pb.JobConfig{
-					Source: &pb.JobConfig_DocumentContent{
-						DocumentContent: []byte("test"),
-					},
-					CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-					CatalogName:   "test-catalog",
-				},
+				Config: &pb.JobConfig{CatalogId: "test-catalog"},
 			}
 
 			// First job should succeed.

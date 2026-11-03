@@ -349,11 +349,11 @@ var _ = Describe("Root Command", func() {
 
 		Describe("Run Commands", func() {
 			Describe("aliases", func() {
-				It("supports 'run submit' as alias for start", func() {
+				It("has no 'run submit' alias", func() {
 					cmd := newRootCmd()
-					runCmd, _, err := cmd.Find([]string{"run", "submit"})
+					found, _, err := cmd.Find([]string{"run", "submit"})
 					Expect(err).NotTo(HaveOccurred())
-					Expect(runCmd.Name()).To(Equal("start"))
+					Expect(found.Name()).To(Equal("run"))
 				})
 
 				It("supports 'run stop' as alias for cancel", func() {
@@ -470,7 +470,7 @@ var _ = Describe("Root Command", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(wantSubstr))
 		},
-		Entry("run start needs a file", []string{"run", "start"}, "file"),
+		Entry("run start needs --source", []string{"run", "start"}, "--source"),
 		Entry("run status needs a job-id", []string{"run", "status"}, "job-id"),
 		Entry("run cancel needs a job-id", []string{"run", "cancel"}, "job-id"),
 		Entry("catalog validate needs a file", []string{"catalog", "validate"}, "file"),

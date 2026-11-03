@@ -35,7 +35,7 @@ testcases:
         assertions:
           - result.code ShouldEqual 0
 
-  - name: Submit, await completion, assert real-LLM subgraph shape
+  - name: Import, start analysis, await completion, assert real-LLM subgraph shape
     steps:
       - type: exec
         script: |
@@ -47,6 +47,20 @@ testcases:
             -H "Content-Type: application/json" \
             -d "{\"content\":\"$base64_content\",\"catalogFormat\":\"CATALOG_FORMAT_OSCAL\",\"catalogName\":\"e2e\"}" \
             {{.gateway_url}}/SubmitDocument
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemoutjson.catalogId ShouldNotBeEmpty
+        vars:
+          catalog_id:
+            from: result.systemoutjson.catalogId
+
+      - type: exec
+        script: |
+          curl -sS --fail-with-body \
+            --cacert {{.ca_cert}} --cert {{.client_cert}} --key {{.client_key}} \
+            -H "Content-Type: application/json" \
+            -d "{\"sourceCatalogId\":\"{{.catalog_id}}\"}" \
+            {{.gateway_url}}/StartAnalysis
         assertions:
           - result.code ShouldEqual 0
           - result.systemoutjson.jobId ShouldNotBeEmpty

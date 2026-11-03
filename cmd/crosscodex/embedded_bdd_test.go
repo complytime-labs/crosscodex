@@ -193,8 +193,9 @@ var _ = Describe("gateway.PoolAdminBackend", func() {
 var _ gateway.IngestionBackend = (*backend.PassthroughIngestion)(nil)
 var _ gateway.PipelineBackend = (*localPipelineBackend)(nil)
 
-// capturingJobStore records the job passed to CreateJob; every other
-// pipeline.Store method is unused here and panics through the nil embed.
+// capturingJobStore records the job passed to CreateJob, so a spec can prove
+// none was stored; every other pipeline.Store method is unused here and
+// panics through the nil embed.
 type capturingJobStore struct {
 	pipeline.Store
 	created *pipeline.Job
@@ -206,24 +207,24 @@ func (s *capturingJobStore) CreateJob(_ context.Context, job *pipeline.Job) erro
 }
 
 var _ = Describe("localPipelineBackend.CreateJob", func() {
-	DescribeTable("records the job's creator",
-		func(user, wantCreator string) {
-			ctx, err := tenant.WithTenant(context.Background(), "embedded")
-			Expect(err).NotTo(HaveOccurred())
-			if user != "" {
-				ctx = tenant.WithUser(ctx, user)
-			}
-			store := &capturingJobStore{}
-			b := &localPipelineBackend{store: store}
+	// Safety mechanism: embedded mode has no executor, so a stored job would
+	// stay PENDING forever (#212).
+	It("refuses with an actionable FailedPrecondition and stores no job", func() {
+		ctx, err := tenant.WithTenant(context.Background(), "embedded")
+		Expect(err).NotTo(HaveOccurred())
+		ctx = tenant.WithUser(ctx, "alice@example.com")
+		store := &capturingJobStore{}
+		b := &localPipelineBackend{store: store}
 
-			_, err = b.CreateJob(ctx, connectrpc.NewRequest(&pb.CreateJobRequest{Config: &pb.JobConfig{}}))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(store.created).NotTo(BeNil())
-			Expect(store.created.CreatedBy).To(Equal(wantCreator))
-		},
-		Entry("as the calling user when the context carries one", "alice@example.com", "alice@example.com"),
-		Entry("as the tenant for a system call without a user", "", "embedded"),
-	)
+		_, err = b.CreateJob(ctx, connectrpc.NewRequest(&pb.CreateJobRequest{
+			JobType: pb.JobType_JOB_TYPE_FULL_ANALYSIS,
+			Config:  &pb.JobConfig{CatalogId: "cat-1"},
+		}))
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
+		Expect(err.Error()).To(ContainSubstring("crosscodexd"))
+		Expect(err.Error()).To(ContainSubstring("cli.endpoint"))
+		Expect(store.created).To(BeNil())
+	})
 })
 
 var _ = Describe("buildEmbeddedService", func() {

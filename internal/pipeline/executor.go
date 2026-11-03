@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -165,6 +164,15 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 	defer span.End()
 	span.SetAttributes(attribute.String("job.id", job.JobID))
 
+	catalogID, ok := ExtractCatalogID(job.Config)
+	if !ok {
+		err := fmt.Errorf("job %s cannot run: %w. Analysis runs over an imported catalog; "+
+			"start a new analysis with \"crosscodex run start --source <catalog-id>\"", job.JobID, ErrMissingCatalogID)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
 	// Build DAG from registry.
 	dag, err := s.registry.BuildDAG(ctx)
 	if err != nil {
@@ -233,29 +241,25 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 		analyzerConfig[name] = analyzer.AnalyzerConfig{Parameters: map[string]string{"job_id": job.JobID}}
 	}
 
-	// Catalog-backed jobs get their full control list fanned out per-control;
-	// document-backed jobs (ExtractCatalogID ok=false) leave Controls empty,
-	// mirroring how candidate generation already treats a missing catalog_id
-	// as a legitimate no-op rather than a failure. controls starts as a
-	// non-nil empty slice (rather than a nil slice) so that req.Controls in
-	// runPass's perControl branch is always non-nil, signaling "per-control
-	// mode, zero controls" to the engine instead of falling back to its
-	// single-Input path (which expects a *pb.Control, not the
-	// *emptypb.Empty passed as req.Input here).
-	var catalogID string
+	// The catalog's full control list is fanned out per-control. controls
+	// starts as a non-nil empty slice (rather than a nil slice) so that
+	// req.Controls in runPass's perControl branch is always non-nil,
+	// signaling "per-control mode" to the engine instead of falling back to
+	// its single-Input path (which expects a *pb.Control, not the
+	// *emptypb.Empty passed as req.Input here). A nil catalogControls reader
+	// (tests, partial wiring) leaves it empty.
 	controls := []*pb.Control{}
-	if id, ok := ExtractCatalogID(job.Config); ok && s.catalogControls != nil {
+	if s.catalogControls != nil {
 		tenantID, terr := tenant.FromContext(ctx)
 		if terr != nil {
 			return fmt.Errorf("runAnalysis: %w", terr)
 		}
-		fetched, err := s.catalogControls.Controls(ctx, tenantID, id)
+		fetched, err := s.catalogControls.Controls(ctx, tenantID, catalogID)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return fmt.Errorf("runAnalysis: fetching catalog controls: %w", err)
 		}
-		catalogID = id
 		controls = fetched
 	}
 
@@ -339,17 +343,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 		}
 
 		genErr := s.candidateGen.Generate(ctx, tenantID, job.JobID, job.Config)
-		switch {
-		case genErr == nil || errors.Is(genErr, ErrNotACatalogJob):
-			// A nil error is a real success; ErrNotACatalogJob is a legitimate
-			// no-op for document-backed jobs (zero candidates). Both are a
-			// successfully terminal stage, and the candidate-dependent pass
-			// proceeds either way.
-			if err := s.store.UpdateStageStatus(ctx, job.JobID, "candidate_generation", StageStatusCompleted); err != nil {
-				s.logger.WarnContext(ctx, "failed to update candidate_generation stage to completed",
-					"job_id", job.JobID, "error", err)
-			}
-		default:
+		if genErr != nil {
 			if err := s.store.UpdateStageError(ctx, job.JobID, "candidate_generation", genErr); err != nil {
 				s.logger.WarnContext(ctx, "failed to update candidate_generation stage to failed",
 					"job_id", job.JobID, "error", err)
@@ -357,6 +351,11 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 			span.RecordError(genErr)
 			span.SetStatus(codes.Error, genErr.Error())
 			return fmt.Errorf("candidate generation failed: %w", genErr)
+		}
+		// A nil error is a real success; the candidate-dependent pass proceeds.
+		if err := s.store.UpdateStageStatus(ctx, job.JobID, "candidate_generation", StageStatusCompleted); err != nil {
+			s.logger.WarnContext(ctx, "failed to update candidate_generation stage to completed",
+				"job_id", job.JobID, "error", err)
 		}
 	}
 
@@ -468,10 +467,10 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 	}
 
 	// Similarity matrices: one per configured embedding model, read from the
-	// same pgEmbeddingsReader candidate generation already uses. Only
-	// meaningful for catalog-backed jobs; a document-backed job (no
-	// catalog_id) has no embeddings and synthesis proceeds with zero
-	// similarity stats (SimilarityCount=0 per pair).
+	// same pgEmbeddingsReader candidate generation already uses. A nil
+	// embeddings reader (tests, partial wiring) leaves them empty, and
+	// synthesis proceeds with zero similarity stats (SimilarityCount=0 per
+	// pair).
 	similarityByModel := make(map[string]similarityMatrix)
 	if catalogID, ok := ExtractCatalogID(job.Config); ok && s.embeddingsReader != nil {
 		for _, model := range s.embeddingConfig.Models {

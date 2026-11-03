@@ -80,35 +80,35 @@ var threeControls = map[string]*candidate.ControlData{
 var errCandidateBoom = errors.New("boom")
 
 var _ = Describe("CandidateGenerator", func() {
-	It("skips non-catalog jobs", func() {
+	It("fails a job config without catalog_id", func() {
+		writer := &fakeCandidateWriter{}
 		gen := pipeline.NewCandidateGenerator(
 			fakeControlsReader{}, fakeEmbeddingsReader{},
-			candidate.NewRegistry(), &fakeCandidateWriter{},
+			candidate.NewRegistry(), writer,
 			config.CandidateConfig{}, "test-model",
 		)
-		jobConfig := []byte(`{"Source":{"DocumentContent":"..."}}`)
-		err := gen.Generate(context.Background(), "tenant-1", "job-1", jobConfig)
-		Expect(errors.Is(err, pipeline.ErrNotACatalogJob)).To(BeTrue(), "expected ErrNotACatalogJob, got %v", err)
+		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{}`))
+		Expect(err).To(MatchError(pipeline.ErrMissingCatalogID))
+		Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse())
 	})
 
 	It("extracts the catalog ID", func() {
-		jobConfig := []byte(`{"Source":{"CatalogId":"catalog-123"}}`)
+		jobConfig := []byte(`{"catalog_id":"catalog-123"}`)
 		id, ok := pipeline.ExtractCatalogID(jobConfig)
 		Expect(ok).To(BeTrue())
 		Expect(id).To(Equal("catalog-123"))
 	})
 
-	DescribeTable("ExtractCatalogID on non-catalog and malformed configs",
+	DescribeTable("ExtractCatalogID on configs without a catalog_id",
 		func(jobConfig string) {
 			id, ok := pipeline.ExtractCatalogID([]byte(jobConfig))
 			Expect(ok).To(BeFalse())
 			Expect(id).To(BeEmpty())
 		},
-		Entry("document_content variant", `{"Source":{"DocumentContent":"abc"}}`),
-		Entry("document_uri variant", `{"Source":{"DocumentUri":"file:///x"}}`),
-		Entry("empty source", `{"Source":{}}`),
-		Entry("no source", `{}`),
-		Entry("empty catalog id", `{"Source":{"CatalogId":""}}`),
+		Entry("empty object", `{}`),
+		Entry("empty catalog id", `{"catalog_id":""}`),
+		Entry("non-string catalog id", `{"catalog_id":7}`),
+		Entry("pre-import-only oneof shape", `{"Source":{"CatalogId":"cat-1"}}`),
 		Entry("malformed json", `{not json`),
 		Entry("empty input", ``),
 	)
@@ -122,7 +122,7 @@ var _ = Describe("CandidateGenerator", func() {
 			candidate.NewRegistry(), writer,
 			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
 		)
-		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
+		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 		Expect(err).To(HaveOccurred())
 		Expect(errors.Is(err, pipeline.ErrInsufficientEmbeddingCoverage)).To(BeTrue(), "expected ErrInsufficientEmbeddingCoverage, got %v", err)
 		Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse(), "no candidates should be written below the coverage threshold")
@@ -149,7 +149,7 @@ var _ = Describe("CandidateGenerator", func() {
 			registry, writer,
 			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
 		)
-		Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))).To(Succeed())
+		Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))).To(Succeed())
 
 		Expect(writer.requiresPairs).To(HaveLen(1))
 		Expect(writer.relationshipPairs).To(HaveLen(1))
@@ -167,7 +167,7 @@ var _ = Describe("CandidateGenerator", func() {
 			candidate.NewRegistry(), writer,
 			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
 		)
-		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
+		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 		Expect(err).NotTo(HaveOccurred(), "zero-control catalog should not error")
 		Expect(writer.requiresCalled && writer.relationshipCalled).To(BeTrue(), "writers should still be invoked (with empty sets) for a zero-control catalog")
 	})
@@ -187,7 +187,7 @@ var _ = Describe("CandidateGenerator", func() {
 			candidate.NewRegistry(), writer,
 			config.CandidateConfig{MinEmbeddingCoverage: 0.5}, "test-model",
 		)
-		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
+		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 		Expect(err).NotTo(HaveOccurred(), "expected coverage exactly at threshold to succeed")
 		Expect(writer.requiresCalled && writer.relationshipCalled).To(BeTrue(), "writers should be invoked when coverage meets the threshold exactly")
 	})
@@ -200,7 +200,7 @@ var _ = Describe("CandidateGenerator", func() {
 				candidate.NewRegistry(), writer,
 				config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
 			)
-			err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
+			err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 			Expect(err).To(MatchError(errCandidateBoom))
 			Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse(), "no candidates should be written when a reader fails")
 		},
@@ -220,7 +220,7 @@ var _ = Describe("CandidateGenerator", func() {
 			candidate.NewRegistry(), writer,
 			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
 		)
-		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
+		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 		Expect(errors.Is(err, errCandidateBoom)).To(BeTrue(), "expected wrapped WriteRequires error, got %v", err)
 		Expect(writer.relationshipCalled).To(BeFalse(), "WriteRelationship must not be attempted after WriteRequires fails")
 	})
@@ -233,7 +233,7 @@ var _ = Describe("CandidateGenerator", func() {
 			candidate.NewRegistry(), writer,
 			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
 		)
-		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"Source":{"CatalogId":"cat-1"}}`))
+		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 		Expect(errors.Is(err, errCandidateBoom)).To(BeTrue(), "expected wrapped WriteRelationship error, got %v", err)
 		Expect(writer.requiresCalled).To(BeTrue(), "WriteRequires should have been called before WriteRelationship")
 	})

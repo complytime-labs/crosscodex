@@ -36,7 +36,7 @@ service PipelineService {
 
 enum JobType {
   JOB_TYPE_UNSPECIFIED = 0;
-  // Document → catalog → analysis → synthesis → graph
+  // Imported catalog → analysis → synthesis → graph
   JOB_TYPE_FULL_ANALYSIS = 1;
   // Re-analyze changed controls only
   JOB_TYPE_INCREMENTAL_SYNC = 2;
@@ -53,16 +53,15 @@ message CreateJobRequest {
 }
 
 message JobConfig {
-  oneof source {
-    bytes document_content = 1;
-    string document_uri = 2;
-    string catalog_id = 3;
-  }
-  CatalogFormat catalog_format = 4;
-  string catalog_name = 5;
+  // The imported catalog to analyse. Required: CreateJob rejects a config
+  // without it. Import inputs (content, format, name) belong to upload.
+  string catalog_id = 3;
   string target_catalog_id = 6;
   SynthesisConfig synthesis_config = 7;
   map<string, string> options = 8;
+
+  reserved 1, 2, 4, 5;
+  reserved "document_content", "document_uri", "catalog_format", "catalog_name";
 }
 
 message CreateJobResponse {

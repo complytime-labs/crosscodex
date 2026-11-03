@@ -114,7 +114,7 @@ With `gateway`, `pipeline`, `worker` and `graph` running as separate processes, 
 
 Operational consequences:
 
-- **Eventual consistency.** Control nodes appear after the import returns. Analysis edges that arrive before their Control nodes exist are skipped and counted, not retried. Re-importing the catalog repairs both.
+- **Eventual consistency.** Control nodes appear after the import returns. Analysis edges that arrive before their Control nodes exist are skipped and counted, not retried. Re-importing the catalog restores the Control nodes; starting a new analysis of it (`crosscodex run start --source <catalog-id>`) rewrites the skipped edges.
 - **Start the graph role before importing.** The subscription is core NATS: an event published while no graph role is subscribed is lost. Deploy at least one graph role and start it first. Re-import to recover a lost event.
 - **Storage.** Because the gateway writes uploaded blobs under its own `storage.objects.base_path`, that path is separate from the pipeline role's unless the two roles share a filesystem.
 - Role `all` runs the same ingestion path and additionally confirms the tenant graph exists at startup (`CreateGraph`).

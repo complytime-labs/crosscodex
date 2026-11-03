@@ -40,9 +40,9 @@ func WithLogger(logger *slog.Logger) Option {
 }
 
 // WithCatalogControlsReader wires a CatalogControlsReader so runAnalysis can
-// fan out per-control ExecutionRequests for catalog-backed jobs. A nil (or
-// unset) reader leaves Controls/CatalogID empty, matching document-backed
-// job behavior.
+// fan out per-control ExecutionRequests over the job's catalog. A nil (or
+// unset) reader leaves Controls empty, so per-control analyzers produce zero
+// tasks, the same as a catalog with zero controls.
 func WithCatalogControlsReader(r CatalogControlsReader) Option {
 	return func(s *Service) {
 		s.catalogControls = r
@@ -50,9 +50,9 @@ func WithCatalogControlsReader(r CatalogControlsReader) Option {
 }
 
 // WithEmbeddingsReader wires an EmbeddingsReader so runSynthesis can read
-// per-model similarity matrices for catalog-backed jobs. A nil (or unset)
-// reader leaves the similarity-matrix step a no-op, matching document-backed
-// job behavior (synthesis proceeds with SimilarityCount=0 per pair).
+// per-model similarity matrices for the job's catalog. A nil (or unset)
+// reader leaves the similarity-matrix step a no-op, and synthesis proceeds
+// with SimilarityCount=0 per pair.
 func WithEmbeddingsReader(r EmbeddingsReader) Option {
 	return func(s *Service) {
 		s.embeddingsReader = r

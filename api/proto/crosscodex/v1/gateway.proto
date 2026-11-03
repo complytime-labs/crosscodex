@@ -19,9 +19,9 @@ option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex
 // SECURITY: Extracts TenantContext from mTLS/SAML/Kerberos
 // TRACEABILITY: Each RPC documents internal service call chains
 service GatewayService {
-  // Submit document for full analysis
+  // Import a document as a catalog. Starts no analysis: call StartAnalysis
+  // with the returned catalog_id.
   // INTERNAL: ingestion.ConvertDocument → catalog.ParseCatalog
-  // → pipeline.CreateJob(FULL_ANALYSIS)
   rpc SubmitDocument(SubmitDocumentRequest) returns (SubmitDocumentResponse) {
     option (google.api.http) = {
       post: "/v1/documents"
@@ -50,6 +50,15 @@ service GatewayService {
   rpc CancelJob(CancelJobRequest) returns (CancelJobResponse) {
     option (google.api.http) = {
       post: "/v1/jobs/{job_id}/cancel"
+      body: "*"
+    };
+  }
+
+  // Start analysis of an imported catalog
+  // INTERNAL: catalog.GetCatalog → pipeline.CreateJob(FULL_ANALYSIS)
+  rpc StartAnalysis(StartAnalysisRequest) returns (StartAnalysisResponse) {
+    option (google.api.http) = {
+      post: "/v1/jobs"
       body: "*"
     };
   }
@@ -146,11 +155,11 @@ service GatewayService {
     };
   }
 
-  // Stream a large document for analysis using chunked upload.
+  // Stream a large document for import using chunked upload.
   // First message must contain StreamDocumentMetadata; subsequent messages
   // carry raw bytes. Server reassembles and delegates to SubmitDocument logic.
+  // Starts no analysis: call StartAnalysis with the returned catalog_id.
   // INTERNAL: ingestion.ConvertDocument → catalog.ParseCatalog
-  // → pipeline.CreateJob(FULL_ANALYSIS)
   rpc StreamDocument(stream StreamDocumentChunk) returns (SubmitDocumentResponse) {}
 }
 
@@ -169,14 +178,31 @@ message SubmitDocumentRequest {
   ContentMetadata metadata = 3;
   CatalogFormat catalog_format = 4;
   string catalog_name = 5;
-  string target_catalog_id = 6;  // Optional: auto-create synthesis
-  SynthesisConfig synthesis_config = 7;
+
+  reserved 6, 7;
+  reserved "target_catalog_id", "synthesis_config";
 }
 
+// Response of both upload RPCs (SubmitDocument, StreamDocument).
 message SubmitDocumentResponse {
-  string job_id = 1;
   string document_id = 2;
-  JobStatus status = 3;
+  string catalog_id = 4;
+
+  reserved 1, 3;
+  reserved "job_id", "status";
+}
+
+message StartAnalysisRequest {
+  TenantContext tenant_context = 1;
+  // ID of a catalog the tenant imported (SubmitDocument/StreamDocument
+  // returns it; ListCatalogs lists them).
+  string source_catalog_id = 2;
+  SynthesisConfig synthesis_config = 3;
+}
+
+message StartAnalysisResponse {
+  string job_id = 1;
+  JobStatus status = 2;
 }
 
 message GetControlMappingsRequest {
@@ -224,7 +250,8 @@ message StreamDocumentChunk {
 message StreamDocumentMetadata {
   CatalogFormat catalog_format = 1;
   string catalog_name = 2;
-  string target_catalog_id = 3;
-  SynthesisConfig synthesis_config = 4;
   ContentMetadata content_metadata = 5;
+
+  reserved 3, 4;
+  reserved "target_catalog_id", "synthesis_config";
 }

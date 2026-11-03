@@ -151,7 +151,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		Expect(err).NotTo(HaveOccurred())
 
 		resp, err := backend.CreateJob(ctxTenant, connect.NewRequest(&pb.CreateJobRequest{
-			Config: &pb.JobConfig{Source: &pb.JobConfig_CatalogId{CatalogId: catalogID}},
+			Config: &pb.JobConfig{CatalogId: catalogID},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		jobID := resp.Msg.JobId
@@ -269,20 +269,19 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 			CatalogName:   "split-import",
 		}))
 		Expect(err).NotTo(HaveOccurred(), "SubmitDocument through the standalone gateway")
-		jobID := submitResp.Msg.GetJobId()
+		catalogID := submitResp.Msg.GetCatalogId()
+		Expect(catalogID).NotTo(BeEmpty(), "catalog id")
+		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID}))
+		Expect(err).NotTo(HaveOccurred(), "StartAnalysis")
+		jobID := startResp.Msg.GetJobId()
 		Expect(jobID).NotTo(BeEmpty(), "job id")
 		Expect(submitResp.Msg.GetDocumentId()).NotTo(BeEmpty(), "document id")
 
-		// SubmitDocumentResponse carries no catalog_id; it is content-hash
-		// derived, so read it back. Reads enter the tenant for RLS as app_user.
+		// Reads enter the tenant for RLS as app_user.
 		tenantCtx, err := tenant.WithTenant(ctx, tenantID)
 		Expect(err).NotTo(HaveOccurred())
 		tx, err := db.NewTenantPool(gwRT.shared.appPool).Begin(tenantCtx)
 		Expect(err).NotTo(HaveOccurred(), "begin tenant transaction")
-		var catalogID string
-		Expect(tx.QueryRow(tenantCtx,
-			"SELECT catalog_id FROM catalogs WHERE tenant_id = $1", tenantID).Scan(&catalogID)).
-			To(Succeed(), "read catalog_id")
 		var controlCount int
 		Expect(tx.QueryRow(tenantCtx,
 			"SELECT count(*) FROM controls WHERE catalog_id = $1", catalogID).Scan(&controlCount)).

@@ -203,7 +203,7 @@ task deploy:logs -- crosscodexd
 
 ### Run smoke test
 
-Container-driven end-to-end smoke test (bring up the stack, catalog import round-trip over mTLS, tear down):
+Container-driven end-to-end smoke test (bring up the stack, import a catalog and run its analysis over mTLS, tear down):
 
 ```bash
 task deploy:smoke

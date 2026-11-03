@@ -151,7 +151,11 @@ var _ = Describe("crosscodex results: mappings read back from a completed all-ro
 			CatalogName:   "e2e-minimal",
 		}))
 		Expect(err).NotTo(HaveOccurred(), "SubmitDocument")
-		jobID = submitResp.Msg.GetJobId()
+		catalogID := submitResp.Msg.GetCatalogId()
+		Expect(catalogID).NotTo(BeEmpty(), "catalog id")
+		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID}))
+		Expect(err).NotTo(HaveOccurred(), "StartAnalysis")
+		jobID = startResp.Msg.GetJobId()
 		Expect(jobID).NotTo(BeEmpty(), "job id")
 
 		Eventually(func() pb.JobStatus {

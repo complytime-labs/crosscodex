@@ -303,14 +303,15 @@ func (f *fakeCandidateGen) dispatchesBeforeCall() int {
 // Each analyzer emits one task so dispatches are countable.
 //
 // All four are registered as Analyzer[*pb.Control], matching production.
-// classify/embedding run against a catalog-backed job (see twoPassJob) so
-// their per-control GenerateWork actually fires; a document-backed job would
-// leave Controls empty and, correctly, produce zero tasks for them (see
-// "on a document-backed job (no catalog_id) leaves Controls empty for both
-// passes" below). requires/relationship always run with Controls empty and a
-// placeholder *pb.Control Input regardless of whether the job is
-// catalog-backed, since they read candidate pairs directly instead of
-// fanning out per control.
+// classify/embedding run against a job whose catalog has a control (see
+// twoPassJob) so their per-control GenerateWork actually fires; with no
+// controls (a zero-control catalog or no controls reader wired) Controls is
+// empty and they correctly produce zero tasks (see "with no catalog controls
+// reader wired, leaves per-control analyzers at zero tasks instead of
+// erroring" below). requires/relationship always run with Controls empty and
+// a placeholder *pb.Control Input, however many controls the catalog has,
+// since they read candidate pairs directly instead of fanning out per
+// control.
 func registerTwoPassAnalyzers(reg *analyzer.Registry) {
 	mkControl := func(name string) func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 		return func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
@@ -327,6 +328,10 @@ func registerTwoPassAnalyzers(reg *analyzer.Registry) {
 	Expect(analyzer.Register[*pb.Control](reg, stub("requires", "embedding"))).To(Succeed())
 	Expect(analyzer.Register[*pb.Control](reg, stub("relationship", "embedding"))).To(Succeed())
 }
+
+// catalogJobConfig is the stored config of a job over catalog cat-1, in the
+// shape CreateJob writes (encoding/json of pb.JobConfig).
+var catalogJobConfig = []byte(`{"catalog_id":"cat-1"}`)
 
 var _ = Describe("Executor", func() {
 	var (
@@ -392,9 +397,7 @@ var _ = Describe("Executor", func() {
 
 	Describe("executeJob", func() {
 		It("recovers from a panic in job execution and fails the job", func() {
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -429,9 +432,7 @@ var _ = Describe("Executor", func() {
 
 		It("runs analysis, synthesis, and graph phases in order", func() {
 			// Create job in store.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -459,7 +460,7 @@ var _ = Describe("Executor", func() {
 			job.Status = pipeline.JobStatusRunning
 			store.jobs[jobID] = job
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for job to complete.
@@ -481,9 +482,7 @@ var _ = Describe("Executor", func() {
 
 		It("skips completed stages on resume", func() {
 			// Create job with some stages already completed.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -506,7 +505,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -522,10 +521,10 @@ var _ = Describe("Executor", func() {
 		It("marks job as failed when analysis fails", func() {
 			// Create a registry with analyzers that generate tasks (so dispatch is called).
 			// Registered as Analyzer[*pb.Control] (matching production) and
-			// exercised against a catalog-backed job with one control, so
-			// GenerateWork actually fires and dispatch is reached — a
-			// document-backed job would leave Controls empty and correctly
-			// produce zero tasks, never reaching the failing dispatcher.
+			// exercised against a job whose catalog has one control, so
+			// GenerateWork actually fires and dispatch is reached — with no
+			// controls, Controls would be empty and correctly produce zero
+			// tasks, never reaching the failing dispatcher.
 			failRegistry := analyzer.NewRegistry()
 			genWork := func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 				return []analyzer.Task{{TaskID: "t1", Payload: &emptypb.Empty{}}}, nil
@@ -560,9 +559,7 @@ var _ = Describe("Executor", func() {
 				pipeline.WithCatalogControlsReader(catalogReader))
 
 			// Create job.
-			jobConfig := map[string]interface{}{"Source": map[string]interface{}{"CatalogId": "fail-cat-1"}}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := []byte(`{"catalog_id":"fail-cat-1"}`)
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -581,7 +578,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = failSvc.Start(ctx)
+			err := failSvc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for failure.
@@ -596,9 +593,7 @@ var _ = Describe("Executor", func() {
 
 		It("publishes NATS state events for each transition", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -617,7 +612,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -640,9 +635,7 @@ var _ = Describe("Executor", func() {
 			attestor.layoutErr = errors.New("attestation generation failed")
 
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -661,7 +654,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion (job should still complete despite attestation failure).
@@ -676,9 +669,7 @@ var _ = Describe("Executor", func() {
 
 		It("creates layout before analysis", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -697,7 +688,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -721,9 +712,7 @@ var _ = Describe("Executor", func() {
 
 		It("creates link after each stage completes", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -742,7 +731,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -769,9 +758,7 @@ var _ = Describe("Executor", func() {
 
 		It("verifies chain and stores bundle on finalization", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -790,7 +777,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -830,9 +817,7 @@ var _ = Describe("Executor", func() {
 			)
 
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -851,7 +836,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = failSvc.Start(ctx)
+			err := failSvc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for failure.
@@ -871,9 +856,7 @@ var _ = Describe("Executor", func() {
 			attestor.verifyErr = errors.New("chain verification failed")
 
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -892,7 +875,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Job should still complete despite chain verification failure.
@@ -914,9 +897,7 @@ var _ = Describe("Executor", func() {
 
 		It("publishes bundle to audit trail", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -935,7 +916,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -986,10 +967,10 @@ var _ = Describe("Executor", func() {
 			}, taskTypes)
 
 			// classify/embedding are registered as Analyzer[*pb.Control]
-			// (matching production), so they need a catalog-backed job with at
+			// (matching production), so they need a job whose catalog has at
 			// least one control to actually fan out and dispatch. A
-			// document-backed job would leave Controls empty and correctly
-			// produce zero tasks for them (see the dedicated document-backed
+			// zero-control catalog would leave Controls empty and correctly
+			// produce zero tasks for them (see the dedicated zero-controls
 			// test below) -- which would leave these two-pass ordering tests
 			// unable to observe classify/embedding's dispatch at all.
 			twoPassCatalog = &fakeCatalogControlsReader{controls: []*pb.Control{
@@ -997,13 +978,9 @@ var _ = Describe("Executor", func() {
 			}}
 		})
 
-		// twoPassJob creates a running, catalog-backed job with the full
-		// two-pass stage list.
+		// twoPassJob creates a running job with the full two-pass stage list.
 		twoPassJob := func() {
-			configBytes, err := json.Marshal(map[string]interface{}{
-				"Source": map[string]interface{}{"CatalogId": "two-pass-cat-1"},
-			})
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := []byte(`{"catalog_id":"two-pass-cat-1"}`)
 			job := &pipeline.Job{
 				JobID:     jobID,
 				TenantID:  tenantID,
@@ -1161,9 +1138,10 @@ var _ = Describe("Executor", func() {
 			Expect(findStage(stages, "candidate_generation").ErrorMessage).To(ContainSubstring("candidate boom"))
 		})
 
-		It("treats ErrNotACatalogJob as a no-op and still runs the candidate-dependent pass", func() {
-			gen := &fakeCandidateGen{err: pipeline.ErrNotACatalogJob}
-
+		// Safety mechanism: a stored config without catalog_id (a pre-#212 row,
+		// or one written outside CreateJob) must fail, not analyse zero controls.
+		It("fails a job whose stored config has no catalog_id and runs no analyzer", func() {
+			gen := &fakeCandidateGen{}
 			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, attestor, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
 				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
@@ -1171,7 +1149,16 @@ var _ = Describe("Executor", func() {
 				pipeline.WithCatalogControlsReader(twoPassCatalog),
 			)
 
-			twoPassJob()
+			job := &pipeline.Job{
+				JobID:     jobID,
+				TenantID:  tenantID,
+				Status:    pipeline.JobStatusRunning,
+				Config:    []byte(`{}`),
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			Expect(store.CreateJob(ctx, job)).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"classify", "synthesis"})).To(Succeed())
 
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -1183,14 +1170,19 @@ var _ = Describe("Executor", func() {
 					return ""
 				}
 				return j.Status
-			}, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+			}, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 
-			Expect(gen.wasCalled()).To(BeTrue())
-			// Candidate-dependent pass still ran despite zero candidates.
-			types := dispatchedTypes()
-			Expect(types).To(HaveKey(natsbus.TaskType("requires")))
-			Expect(types).To(HaveKey(natsbus.TaskType("relate")))
-			Expect(stageStatus("candidate_generation")).To(Equal(pipeline.StageStatusCompleted))
+			j, err := store.GetJob(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(j.ErrorMessage).To(ContainSubstring("no catalog_id"))
+			Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run start --source"))
+			Expect(stageStatus("classify")).To(Equal(pipeline.StageStatusPending))
+			Expect(stageStatus("synthesis")).To(Equal(pipeline.StageStatusPending))
+			Expect(dispatchedTypes()).To(BeEmpty())
+			Expect(gen.wasCalled()).To(BeFalse())
+			twoPassCatalog.mu.Lock()
+			defer twoPassCatalog.mu.Unlock()
+			Expect(twoPassCatalog.calls).To(BeEmpty())
 		})
 
 		It("does not re-execute a pre-candidate analyzer already completed by a prior process (crash-recovery resume)", func() {
@@ -1281,8 +1273,7 @@ var _ = Describe("Executor", func() {
 				nil,
 			)
 
-			configBytes, err := json.Marshal(map[string]interface{}{"test": "config"})
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 			job := &pipeline.Job{
 				JobID:     jobID,
 				TenantID:  tenantID,
@@ -1355,7 +1346,7 @@ var _ = Describe("Executor", func() {
 	})
 
 	Describe("controls and analyzer config wiring", func() {
-		It("populates Controls and CatalogID for the pre-candidate pass on a catalog-backed job", func() {
+		It("populates Controls and CatalogID for the pre-candidate pass", func() {
 			type call struct {
 				controlID string
 				catalogID string
@@ -1399,7 +1390,7 @@ var _ = Describe("Executor", func() {
 				JobID:     jobID,
 				TenantID:  tenantID,
 				Status:    pipeline.JobStatusRunning,
-				Config:    []byte(`{"Source":{"CatalogId":"cat-1"}}`),
+				Config:    []byte(`{"catalog_id":"cat-1"}`),
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -1449,10 +1440,10 @@ var _ = Describe("Executor", func() {
 			}
 
 			// classify/embedding are registered as Analyzer[*pb.Control]
-			// (matching production), so the job below must be catalog-backed
-			// with a non-empty control list for their GenerateWork to fire —
-			// a document-backed job would leave Controls empty and correctly
-			// produce zero tasks for them instead.
+			// (matching production), so the job's catalog below must have a
+			// non-empty control list for their GenerateWork to fire — with no
+			// controls, Controls would be empty and correctly produce zero
+			// tasks for them instead.
 			reg := analyzer.NewRegistry()
 			stub := func(name string, deps ...string) *analyzertest.Stub[*pb.Control] {
 				s := newControlStub(name, deps...)
@@ -1487,10 +1478,7 @@ var _ = Describe("Executor", func() {
 				pipeline.WithCatalogControlsReader(catalogReader),
 			)
 
-			configBytes, err := json.Marshal(map[string]interface{}{
-				"Source": map[string]interface{}{"CatalogId": "cfg-cat-1"},
-			})
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := []byte(`{"catalog_id":"cfg-cat-1"}`)
 			job := &pipeline.Job{
 				JobID:     jobID,
 				TenantID:  tenantID,
@@ -1582,7 +1570,7 @@ var _ = Describe("Executor", func() {
 				JobID:     jobID,
 				TenantID:  tenantID,
 				Status:    pipeline.JobStatusRunning,
-				Config:    []byte(`{"Source":{"CatalogId":"cat-1"}}`),
+				Config:    []byte(`{"catalog_id":"cat-1"}`),
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -1604,26 +1592,26 @@ var _ = Describe("Executor", func() {
 			mu.Lock()
 			defer mu.Unlock()
 			// classify fans out per catalog control, proving Controls did apply
-			// to the pre-candidate pass for this catalog-backed job.
+			// to the pre-candidate pass for this job.
 			Expect(classifyCalls).To(HaveLen(2))
 			// requires/relationship each get exactly one call with a placeholder
 			// (empty ControlId) *pb.Control rather than one call per catalog
 			// control — proof Controls was left empty for the
-			// candidate-dependent pass despite the job being catalog-backed.
+			// candidate-dependent pass despite the catalog having controls.
 			Expect(requiresCalls).To(HaveLen(1))
 			Expect(requiresCalls[0].controlID).To(BeEmpty())
 			Expect(relationshipCalls).To(HaveLen(1))
 			Expect(relationshipCalls[0].controlID).To(BeEmpty())
 		})
 
-		It("on a document-backed job (no catalog_id), leaves per-control analyzers at zero tasks instead of erroring", func() {
+		It("with no catalog controls reader wired, leaves per-control analyzers at zero tasks instead of erroring", func() {
 			var mu sync.Mutex
 			var classifyCalls int
 			var requiresCalls int
 			var requiresControlID string
 
 			// classify is registered as Analyzer[*pb.Control], matching every
-			// real production analyzer. Before the fix, a document-backed job
+			// real production analyzer. Before the fix, a job with no controls
 			// (Controls empty) fell back to calling GenerateWorkFromProto with
 			// req.Input == &emptypb.Empty{}, which fails registeredWrapper's
 			// *pb.Control type assertion and crashes the whole job (see
@@ -1676,7 +1664,7 @@ var _ = Describe("Executor", func() {
 				JobID:     jobID,
 				TenantID:  tenantID,
 				Status:    pipeline.JobStatusRunning,
-				Config:    []byte(`{"Source":{"DocumentUri":"file:///doc.pdf"}}`),
+				Config:    catalogJobConfig,
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -1706,7 +1694,7 @@ var _ = Describe("Executor", func() {
 			mu.Lock()
 			defer mu.Unlock()
 			// classify's GenerateWork is never invoked: Controls is a
-			// non-nil, empty slice for this document-backed job, so the
+			// non-nil, empty slice when no controls reader is wired, so the
 			// per-control loop in executeAnalyzer runs zero iterations
 			// rather than falling back to the single-Input path (which would
 			// type-assert req.Input == &emptypb.Empty{} against *pb.Control
@@ -1714,7 +1702,7 @@ var _ = Describe("Executor", func() {
 			Expect(classifyCalls).To(Equal(0))
 			// requires (candidate-dependent pass) is unaffected: it always
 			// runs with Controls nil and a placeholder *pb.Control Input,
-			// regardless of whether the job is catalog-backed.
+			// however many controls the catalog has.
 			Expect(requiresCalls).To(Equal(1))
 			Expect(requiresControlID).To(BeEmpty())
 		})
@@ -1749,7 +1737,7 @@ var _ = Describe("Executor", func() {
 					JobID:     id,
 					TenantID:  tenantID,
 					Status:    pipeline.JobStatusRunning,
-					Config:    []byte(`{"test":"config"}`),
+					Config:    catalogJobConfig,
 					CreatedAt: time.Now(),
 					UpdatedAt: time.Now(),
 				}

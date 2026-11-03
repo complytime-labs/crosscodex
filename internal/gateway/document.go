@@ -39,26 +39,22 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 	}
 
 	return s.processDocument(ctx, start, processDocumentInput{
-		convertReq:      convertReq,
-		catalogFormat:   req.Msg.GetCatalogFormat(),
-		catalogName:     req.Msg.GetCatalogName(),
-		targetCatalogID: req.Msg.GetTargetCatalogId(),
-		synthesisConfig: req.Msg.GetSynthesisConfig(),
-		rpcName:         "SubmitDocument",
+		convertReq:    convertReq,
+		catalogFormat: req.Msg.GetCatalogFormat(),
+		catalogName:   req.Msg.GetCatalogName(),
+		rpcName:       "SubmitDocument",
 	})
 }
 
 type processDocumentInput struct {
-	convertReq      *pb.ConvertDocumentRequest
-	catalogFormat   pb.CatalogFormat
-	catalogName     string
-	targetCatalogID string
-	synthesisConfig *pb.SynthesisConfig
-	rpcName         string
+	convertReq    *pb.ConvertDocumentRequest
+	catalogFormat pb.CatalogFormat
+	catalogName   string
+	rpcName       string
 }
 
 func (s *Service) processDocument(ctx context.Context, start time.Time, input processDocumentInput) (*connect.Response[pb.SubmitDocumentResponse], error) {
-	if s.ingestion == nil || s.catalog == nil || s.pipeline == nil {
+	if s.ingestion == nil || s.catalog == nil {
 		return nil, connect.NewError(connect.CodeUnavailable, errors.New("required backends not configured"))
 	}
 
@@ -116,52 +112,23 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		return nil, connect.NewError(connect.CodeInternal, errors.New("catalog backend returned empty catalog_id"))
 	}
 
-	// Step 3: Create full-analysis job
-	jobReq := &pb.CreateJobRequest{
-		TenantContext: tc,
-		JobType:       pb.JobType_JOB_TYPE_FULL_ANALYSIS,
-		Config: &pb.JobConfig{
-			Source:          &pb.JobConfig_CatalogId{CatalogId: catalogID},
-			CatalogFormat:   input.catalogFormat,
-			CatalogName:     input.catalogName,
-			TargetCatalogId: input.targetCatalogID,
-			SynthesisConfig: input.synthesisConfig,
-		},
-	}
-
-	jobResp, err := s.pipeline.CreateJob(ctx, connect.NewRequest(jobReq))
-	if err != nil {
-		err = s.publicError(ctx, input.rpcName, err)
-		s.recordMetrics(ctx, input.rpcName, start, connect.CodeOf(err))
-		return nil, err
-	}
-
-	if jobResp.Msg.GetJobId() == "" {
-		return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline backend returned empty job_id"))
-	}
-
 	materials := []attestation.Artifact{
 		{URI: fmt.Sprintf("document://%s/%s", identity.TenantID, docID), Digest: ""},
 	}
 	products := []attestation.Artifact{
 		{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, catalogID), Digest: ""},
-		{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobResp.Msg.GetJobId()), Digest: ""},
 	}
 	byProducts := map[string]any{
 		"catalog_format": input.catalogFormat.String(),
 		"catalog_name":   input.catalogName,
-	}
-	if input.targetCatalogID != "" {
-		byProducts["target_catalog_id"] = input.targetCatalogID
 	}
 	s.emitAttestation(ctx, "gateway."+input.rpcName, materials, products, byProducts)
 
 	s.recordMetrics(ctx, input.rpcName, start, connect.Code(0))
 
 	return connect.NewResponse(&pb.SubmitDocumentResponse{
-		JobId:      jobResp.Msg.GetJobId(),
 		DocumentId: docID,
-		Status:     jobResp.Msg.GetStatus(),
+		CatalogId:  catalogID,
 	}), nil
 }
 

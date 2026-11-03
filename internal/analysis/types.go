@@ -32,7 +32,7 @@ type ExecutionRequest struct {
 
 	// CatalogID is threaded into context (via analyzer.WithCatalogID) before
 	// GenerateWork/Aggregate for every analyzer in this request. Only
-	// embedding.Aggregate reads it today. Empty for document-backed jobs.
+	// embedding.Aggregate reads it today.
 	CatalogID string
 
 	AnalyzerConfig map[string]analyzer.AnalyzerConfig

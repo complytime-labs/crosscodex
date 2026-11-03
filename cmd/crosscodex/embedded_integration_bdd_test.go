@@ -5,12 +5,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 
 	connectrpc "connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/spf13/cobra"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/config"
@@ -122,15 +124,14 @@ var _ = Describe("Catalog round-trip (S2)", func() {
 
 		resp, err := importCatalog(ctx, sharedState.client, data, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "minimal")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.GetJobId()).NotTo(BeEmpty())
+		Expect(resp.GetCatalogId()).NotTo(BeEmpty())
 		Expect(resp.GetDocumentId()).NotTo(BeEmpty())
-		Expect(resp.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
 
 		catalogs, err := listCatalogs(ctx, sharedState.client)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(catalogs).To(HaveLen(1))
 		catalogID := catalogs[0].GetCatalogId()
-		Expect(catalogID).NotTo(BeEmpty())
+		Expect(catalogID).To(Equal(resp.GetCatalogId()))
 
 		cat, err := getCatalog(ctx, sharedState.client, catalogID)
 		Expect(err).NotTo(HaveOccurred())
@@ -162,6 +163,93 @@ var _ = Describe("Catalog round-trip (S2)", func() {
 		cat, err := getCatalog(ctx, sharedState.client, catalogs[0].GetCatalogId())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cat.GetFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
+	})
+})
+
+var _ = Describe("Import-only CLI and refused analysis (#212)", func() {
+	var (
+		ctx  context.Context
+		file string
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		truncateCatalogs(ctx, sharedState.daemon.resources.dbPool)
+		file = filepath.Join(GinkgoT().TempDir(), "minimal-catalog.json")
+		Expect(os.WriteFile(file, fixture("minimal-catalog.json"), 0o600)).To(Succeed())
+	})
+
+	runCLI := func(cmd *cobra.Command, args ...string) (string, error) {
+		cmd.PersistentFlags().Bool("json", false, "output as JSON") // root-level in production
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs(args)
+		err := cmd.ExecuteContext(ctx)
+		return out.String(), err
+	}
+
+	// listJobIDs follows next_page_token to collect every job ID, and returns
+	// the total count the first page reports.
+	listJobIDs := func() ([]string, int64) {
+		var ids []string
+		var total int64
+		token := ""
+		for page := 0; ; page++ {
+			resp, err := sharedState.client.ListJobs(ctx, connectrpc.NewRequest(&pb.ListJobsRequest{
+				Options: &pb.ListOptions{Pagination: &pb.Pagination{PageToken: token}},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			if page == 0 {
+				total = resp.Msg.GetPageInfo().GetTotalCount()
+			}
+			for _, job := range resp.Msg.GetJobs() {
+				ids = append(ids, job.GetJobId())
+			}
+			token = resp.Msg.GetPageInfo().GetNextPageToken()
+			if token == "" {
+				return ids, total
+			}
+		}
+	}
+
+	It("catalog import prints the catalog ID and the next step", func() {
+		out, err := runCLI(newCatalogCmd(sharedState), "import", file)
+		Expect(err).NotTo(HaveOccurred())
+		catalogs, err := listCatalogs(ctx, sharedState.client)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(catalogs).To(HaveLen(1))
+		id := catalogs[0].GetCatalogId()
+		Expect(out).To(ContainSubstring("Catalog imported"))
+		Expect(out).To(ContainSubstring("Catalog ID: " + id))
+		Expect(out).To(ContainSubstring("Next: crosscodex run start --source " + id))
+		Expect(out).NotTo(ContainSubstring("Job ID"))
+	})
+
+	It("catalog import --json emits catalog_id and document_id only", func() {
+		out, err := runCLI(newCatalogCmd(sharedState), "import", file, "--json")
+		Expect(err).NotTo(HaveOccurred())
+		var got map[string]string
+		Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
+		Expect(got).To(HaveKey("catalog_id"))
+		Expect(got).To(HaveKey("document_id"))
+		Expect(got).To(HaveLen(2))
+	})
+
+	It("run start fails with an actionable error and leaves the jobs unchanged", func() {
+		resp, err := importCatalog(ctx, sharedState.client, fixture("minimal-catalog.json"), pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "minimal")
+		Expect(err).NotTo(HaveOccurred())
+		beforeIDs, beforeTotal := listJobIDs()
+
+		_, err = runCLI(newRunCmd(sharedState), "start", "--source", resp.GetCatalogId())
+		Expect(err).To(HaveOccurred())
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
+		Expect(err.Error()).To(ContainSubstring("crosscodexd"))
+		Expect(err.Error()).To(ContainSubstring("cli.endpoint"))
+
+		afterIDs, afterTotal := listJobIDs()
+		Expect(afterIDs).To(ConsistOf(beforeIDs))
+		Expect(afterTotal).To(Equal(beforeTotal))
 	})
 })
 

@@ -95,20 +95,20 @@ rejected as an unsupported catalog format.`,
 
 			resp, err := stream.CloseAndReceive()
 			if err != nil {
-				return fmt.Errorf("failed to submit document: %w", err)
+				return fmt.Errorf("failed to import catalog: %w", err)
 			}
 
+			catalogID := resp.Msg.GetCatalogId()
 			return emit(cmd,
 				func(w io.Writer, color bool) {
-					fmt.Fprintf(w, "Document submitted successfully\n")
-					fmt.Fprintf(w, "Job ID: %s\n", resp.Msg.GetJobId())
+					fmt.Fprintf(w, "Catalog imported\n")
+					fmt.Fprintf(w, "Catalog ID: %s\n", catalogID)
 					fmt.Fprintf(w, "Document ID: %s\n", resp.Msg.GetDocumentId())
-					fmt.Fprintf(w, "Status: %s\n", resp.Msg.GetStatus().String())
+					fmt.Fprintf(w, "Next: crosscodex run start --source %s\n", catalogID)
 				},
 				map[string]string{
-					"job_id":      resp.Msg.GetJobId(),
+					"catalog_id":  catalogID,
 					"document_id": resp.Msg.GetDocumentId(),
-					"status":      resp.Msg.GetStatus().String(),
 				},
 			)
 		},

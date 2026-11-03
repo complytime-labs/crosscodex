@@ -61,9 +61,9 @@ var _ = Describe("Pipeline Integration", func() {
 
 		// Register stub analyzers with dependencies: alpha -> beta -> gamma.
 		// Registered as Analyzer[*pb.Control] (matching production analyzer
-		// registration) and exercised against a catalog-backed job below, so
-		// GenerateWork actually runs once per catalog control instead of being
-		// skipped as a zero-task, document-backed job.
+		// registration) and exercised against a job whose catalog has controls,
+		// so GenerateWork actually runs once per catalog control instead of
+		// producing zero tasks as it would for a zero-control catalog.
 		alpha := newControlStub("alpha")
 		alpha.GenerateWorkFunc = func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 			return []analyzer.Task{{TaskID: "alpha-task-1", Payload: &emptypb.Empty{}}}, nil
@@ -123,7 +123,7 @@ var _ = Describe("Pipeline Integration", func() {
 	Describe("full pipeline run with multiple analyzers", func() {
 		It("executes all stages in DAG order and completes", func() {
 			// Create job via CreateJob (triggers executeJob in background).
-			jobConfig := map[string]interface{}{"Source": map[string]interface{}{"CatalogId": "integration-cat-1"}}
+			jobConfig := map[string]interface{}{"catalog_id": "integration-cat-1"}
 			configBytes, err := json.Marshal(jobConfig)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -191,7 +191,7 @@ var _ = Describe("Pipeline Integration", func() {
 		It("resumes from last incomplete stage", func() {
 			var stages []*pipeline.Stage
 			// Pre-populate store with a running job.
-			jobConfig := map[string]interface{}{"Source": map[string]interface{}{"CatalogId": "integration-cat-1"}}
+			jobConfig := map[string]interface{}{"catalog_id": "integration-cat-1"}
 			configBytes, err := json.Marshal(jobConfig)
 			Expect(err).NotTo(HaveOccurred())
 

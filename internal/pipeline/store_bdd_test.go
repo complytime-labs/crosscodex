@@ -147,6 +147,10 @@ func (f *fakeStore) UpdateJobStatus(ctx context.Context, jobID string, status pi
 	}
 
 	job.Status = status
+	job.ErrorMessage = ""
+	if jobErr != nil {
+		job.ErrorMessage = jobErr.Error()
+	}
 	return nil
 }
 

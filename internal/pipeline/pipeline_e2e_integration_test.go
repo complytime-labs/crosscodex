@@ -295,7 +295,7 @@ var _ = Describe("Pipeline end-to-end", func() {
 		ctxA, err := tenant.WithTenant(ctx, tenantA)
 		Expect(err).NotTo(HaveOccurred(), "WithTenant A")
 		req := connect.NewRequest(&pb.CreateJobRequest{
-			Config: &pb.JobConfig{Source: &pb.JobConfig_CatalogId{CatalogId: catalogID}},
+			Config: &pb.JobConfig{CatalogId: catalogID},
 		})
 		resp, err := svc.CreateJob(ctxA, req)
 		Expect(err).NotTo(HaveOccurred(), "CreateJob")

@@ -72,10 +72,8 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 			Source:   &pb.ConvertDocumentRequest_Content{Content: content},
 			Metadata: meta.GetContentMetadata(),
 		},
-		catalogFormat:   meta.GetCatalogFormat(),
-		catalogName:     meta.GetCatalogName(),
-		targetCatalogID: meta.GetTargetCatalogId(),
-		synthesisConfig: meta.GetSynthesisConfig(),
-		rpcName:         "StreamDocument",
+		catalogFormat: meta.GetCatalogFormat(),
+		catalogName:   meta.GetCatalogName(),
+		rpcName:       "StreamDocument",
 	})
 }

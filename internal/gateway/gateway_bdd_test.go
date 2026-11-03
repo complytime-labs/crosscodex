@@ -15,6 +15,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 )
 
@@ -65,6 +66,49 @@ func (m *mockIngestion) DiscardDocument(ctx context.Context, documentID string) 
 		return m.discardFn(ctx, documentID)
 	}
 	return nil
+}
+
+// recordingAttestor records CreateLink calls. The gateway calls nothing
+// else on attestation.Generator, so the other methods fail loudly.
+type recordingAttestor struct {
+	links []recordedLink
+}
+
+type recordedLink struct {
+	step                string
+	materials, products []attestation.Artifact
+}
+
+var errUnusedAttestor = errors.New("recordingAttestor: method not used by the gateway")
+
+func (r *recordingAttestor) CreateLink(_ context.Context, step string, materials, products []attestation.Artifact, _ ...attestation.LinkOption) (*attestation.SignedLink, error) {
+	r.links = append(r.links, recordedLink{step: step, materials: materials, products: products})
+	return &attestation.SignedLink{}, nil
+}
+
+func (r *recordingAttestor) CreateLayout(context.Context, attestation.LayoutOptions) (*attestation.SignedLayout, error) {
+	return nil, errUnusedAttestor
+}
+
+func (r *recordingAttestor) Verify(context.Context, []byte) (*attestation.VerifiedLink, error) {
+	return nil, errUnusedAttestor
+}
+
+func (r *recordingAttestor) VerifyLayout(context.Context, []byte) (*attestation.VerifiedLayout, error) {
+	return nil, errUnusedAttestor
+}
+
+func (r *recordingAttestor) VerifyChain(context.Context, *attestation.SignedLayout, []*attestation.SignedLink) error {
+	return errUnusedAttestor
+}
+
+// artifactURIs lists the URIs of artifacts, for comparing links.
+func artifactURIs(artifacts []attestation.Artifact) []string {
+	uris := make([]string, 0, len(artifacts))
+	for _, a := range artifacts {
+		uris = append(uris, a.URI)
+	}
+	return uris
 }
 
 type mockCatalog struct {
@@ -420,17 +464,36 @@ var _ = Describe("Job handlers", func() {
 })
 
 var _ = Describe("SubmitDocument", func() {
-	It("chains ConvertDocument -> ParseCatalog -> CreateJob successfully", func() {
-		svc := newTestService()
+	It("imports the document and returns its catalog without creating a job", func() {
+		createJobCalled := false
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
+				createJobCalled = true
+				return connect.NewResponse(&pb.CreateJobResponse{JobId: "job-1"}), nil
+			},
+		}))
 
-		ctx := userCtx("user-a")
-		resp, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+		resp, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
 			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Msg.GetDocumentId()).To(Equal("doc-1"))
-		Expect(resp.Msg.GetJobId()).To(Equal("job-1"))
-		Expect(resp.Msg.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
+		Expect(resp.Msg.GetCatalogId()).To(Equal("cat-1"))
+		Expect(createJobCalled).To(BeFalse())
+	})
+
+	It("attests the document as material and the catalog as the only product", func() {
+		att := &recordingAttestor{}
+		svc := newTestService(gateway.WithAttestor(att))
+
+		_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(att.links).To(HaveLen(1))
+		Expect(att.links[0].step).To(Equal("gateway.SubmitDocument"))
+		Expect(artifactURIs(att.links[0].materials)).To(Equal([]string{"document://tenant-a/doc-1"}))
+		Expect(artifactURIs(att.links[0].products)).To(Equal([]string{"catalog://tenant-a/cat-1"}))
 	})
 
 	// A plain backend error is withheld as Internal; backend_errors_bdd_test.go
@@ -455,12 +518,17 @@ var _ = Describe("SubmitDocument", func() {
 				return nil, connect.NewError(connect.CodeInternal, errors.New("catalog unavailable"))
 			},
 		}), connect.CodeInternal),
-		Entry("pipeline backend fails", gateway.WithPipelineBackend(&mockPipeline{
-			createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
-				return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline unavailable"))
-			},
-		}), connect.CodeInternal),
 	)
+
+	It("imports without a pipeline backend", func() {
+		svc := gateway.NewService(gateway.WithIngestionBackend(&mockIngestion{}), gateway.WithCatalogBackend(&mockCatalog{}))
+
+		resp, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetCatalogId()).To(Equal("cat-1"))
+	})
 
 	It("returns error when no source provided", func() {
 		svc := newTestService()
@@ -753,7 +821,20 @@ var _ = Describe("StreamDocument", func() {
 		resp, err := gateway.ExportHandleStreamedDocument(svc, ctx, time.Now(), meta, content)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Msg.GetDocumentId()).To(Equal("doc-1"))
-		Expect(resp.Msg.GetJobId()).To(Equal("job-1"))
+	})
+
+	It("returns the imported catalog without creating a job", func() {
+		createJobCalled := false
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
+				createJobCalled = true
+				return connect.NewResponse(&pb.CreateJobResponse{JobId: "job-1"}), nil
+			},
+		}))
+		resp, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(), &pb.StreamDocumentMetadata{}, []byte("test doc"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetCatalogId()).To(Equal("cat-1"))
+		Expect(createJobCalled).To(BeFalse())
 	})
 
 	It("returns error when metadata is nil", func() {
@@ -774,28 +855,20 @@ var _ = Describe("StreamDocument", func() {
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
 	})
 
-	It("propagates metadata to catalog and pipeline backends", func() {
+	It("propagates metadata to the catalog backend", func() {
 		var capturedParseReq *pb.ParseCatalogRequest
-		var capturedJobReq *pb.CreateJobRequest
 		cat := &mockCatalog{
 			parseFn: func(_ context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
 				capturedParseReq = req.Msg
 				return connect.NewResponse(&pb.ParseCatalogResponse{CatalogId: "cat-1", Status: pb.JobStatus_JOB_STATUS_COMPLETED}), nil
 			},
 		}
-		pipeline := &mockPipeline{
-			createJobFn: func(_ context.Context, req *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
-				capturedJobReq = req.Msg
-				return connect.NewResponse(&pb.CreateJobResponse{JobId: "job-1", Status: pb.JobStatus_JOB_STATUS_PENDING}), nil
-			},
-		}
-		svc := newTestService(gateway.WithCatalogBackend(cat), gateway.WithPipelineBackend(pipeline))
+		svc := newTestService(gateway.WithCatalogBackend(cat))
 		ctx := userCtx("user-a")
 
 		meta := &pb.StreamDocumentMetadata{
-			CatalogFormat:   pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-			CatalogName:     "test-catalog",
-			TargetCatalogId: "target-cat-1",
+			CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+			CatalogName:   "test-catalog",
 		}
 
 		resp, err := gateway.ExportHandleStreamedDocument(svc, ctx, time.Now(), meta, []byte("doc content"))
@@ -805,11 +878,6 @@ var _ = Describe("StreamDocument", func() {
 		Expect(capturedParseReq).NotTo(BeNil())
 		Expect(capturedParseReq.GetFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
 		Expect(capturedParseReq.GetCatalogName()).To(Equal("test-catalog"))
-
-		Expect(capturedJobReq).NotTo(BeNil())
-		Expect(capturedJobReq.GetConfig().GetCatalogFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
-		Expect(capturedJobReq.GetConfig().GetCatalogName()).To(Equal("test-catalog"))
-		Expect(capturedJobReq.GetConfig().GetTargetCatalogId()).To(Equal("target-cat-1"))
 	})
 
 	It("returns Unavailable when backends are nil", func() {

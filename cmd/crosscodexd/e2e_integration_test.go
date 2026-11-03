@@ -222,7 +222,7 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 		Expect(err).NotTo(HaveOccurred())
 
 		resp, err := pipelineRT.pipelineService.CreateJob(ctxTenant, connect.NewRequest(&pb.CreateJobRequest{
-			Config: &pb.JobConfig{Source: &pb.JobConfig_CatalogId{CatalogId: catalogID}},
+			Config: &pb.JobConfig{CatalogId: catalogID},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		jobID := resp.Msg.JobId

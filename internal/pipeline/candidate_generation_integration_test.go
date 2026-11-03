@@ -174,7 +174,7 @@ var _ = Describe("CandidateGenerator integration", func() {
 		// Run Generate under tenant A's context.
 		ctxA, err := tenant.WithTenant(ctx, tenantA)
 		Expect(err).NotTo(HaveOccurred(), "WithTenant A")
-		jobConfig := []byte(fmt.Sprintf(`{"Source":{"CatalogId":%q}}`, catalogID))
+		jobConfig := []byte(fmt.Sprintf(`{"catalog_id":%q}`, catalogID))
 		Expect(gen.Generate(ctxA, tenantA, jobID, jobConfig)).To(Succeed(), "Generate")
 
 		// Owner sees candidate rows in both tables.

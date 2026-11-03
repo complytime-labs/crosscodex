@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	connectrpc "connectrpc.com/connect"
@@ -15,7 +14,7 @@ import (
 func newRunCmd(state *cliState) *cobra.Command {
 	runCmd := &cobra.Command{
 		Use:   "run",
-		Short: "Submit analysis jobs and monitor progress",
+		Short: "Start analysis jobs and monitor progress",
 		RunE:  func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 	}
 
@@ -27,49 +26,50 @@ func newRunCmd(state *cliState) *cobra.Command {
 }
 
 func newRunStartCmd(state *cliState) *cobra.Command {
+	const usage = "crosscodex run start --source <catalog-id>"
+	examples := []string{
+		"crosscodex run start --source 3f2a9c1e",
+		"crosscodex run start --source 3f2a9c1e --tenant acme",
+	}
 	cmd := &cobra.Command{
-		Use:     "start <file>",
-		Aliases: []string{"submit"},
-		Short:   "Start an analysis job by submitting a document",
-		Long: `Start an analysis job by submitting a document.
+		Use:   "start --source <catalog-id>",
+		Short: "Start analysis of an imported catalog",
+		Long: `Start analysis of an imported catalog.
 
-Submits a document for full compliance analysis. The document will be
-parsed, imported as a catalog, and queued for analysis.`,
+Queues a full analysis job over a catalog that "crosscodex catalog import"
+stored. Find catalog IDs with "crosscodex catalog list".
+
+Analysis runs in the crosscodexd daemon; embedded mode refuses it.`,
+		Example: exampleBlock(examples),
+		// Args runs before the connection is opened, so usage errors need no daemon.
 		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) < 1 {
-				return fmt.Errorf("'%s' requires a file path\n\n  Usage: %s\n\n  Examples:\n%s",
-					cmd.CommandPath(),
-					"crosscodex run start <file>",
-					exampleBlock([]string{
-						"crosscodex run start nist-800-53.json",
-						"crosscodex run start oscal-catalog.json",
-					}))
+			if len(args) > 0 {
+				return fmt.Errorf("'%s' takes no file: import the catalog first with \"crosscodex catalog import <file>\", then pass its ID with --source\n\n  Usage: %s",
+					cmd.CommandPath(), usage)
+			}
+			if source, _ := cmd.Flags().GetString("source"); source == "" {
+				return fmt.Errorf("'%s' requires --source <catalog-id>\n\n  Usage: %s\n\n  Find available values:\n    crosscodex catalog list\n\n  Examples:\n%s",
+					cmd.CommandPath(), usage, exampleBlock(examples))
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			filePath := args[0]
+			source, _ := cmd.Flags().GetString("source")
+			tenant, _ := cmd.Flags().GetString("tenant")
 
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				return fmt.Errorf("failed to read file: %w", err)
+			req := &pb.StartAnalysisRequest{SourceCatalogId: source}
+			if tenant != "" {
+				req.TenantContext = &pb.TenantContext{TenantId: tenant}
 			}
 
-			req := &pb.SubmitDocumentRequest{
-				Source: &pb.SubmitDocumentRequest_Content{
-					Content: content,
-				},
-				CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-			}
-
-			resp, err := state.client.SubmitDocument(cmd.Context(), connectrpc.NewRequest(req))
+			resp, err := state.client.StartAnalysis(cmd.Context(), connectrpc.NewRequest(req))
 			if err != nil {
-				return fmt.Errorf("failed to submit document: %w", err)
+				return fmt.Errorf("failed to start analysis: %w", err)
 			}
 
 			return emit(cmd,
 				func(w io.Writer, color bool) {
-					fmt.Fprintf(w, "Job submitted successfully\n")
+					fmt.Fprintf(w, "Analysis started\n")
 					fmt.Fprintf(w, "Job ID: %s\n", resp.Msg.GetJobId())
 					fmt.Fprintf(w, "Status: %s\n", formatJobStatus(resp.Msg.GetStatus()))
 				},
@@ -81,6 +81,7 @@ parsed, imported as a catalog, and queued for analysis.`,
 		},
 	}
 
+	cmd.Flags().String("source", "", "ID of the imported catalog to analyse (see 'crosscodex catalog list')")
 	cmd.Flags().String("tenant", "", "Tenant ID for the job")
 
 	return cmd

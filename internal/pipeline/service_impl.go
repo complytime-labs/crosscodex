@@ -46,6 +46,11 @@ func (s *Service) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJ
 	if req.Msg.Config == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("config is required"))
 	}
+	if req.Msg.Config.GetCatalogId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(
+			"config.catalog_id is required: an analysis job runs over an imported catalog. "+
+				"Import the catalog first, then start the analysis with its catalog_id"))
+	}
 
 	dag, err := s.registry.BuildDAG(ctx)
 	if err != nil {

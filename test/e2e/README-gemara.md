@@ -23,7 +23,7 @@ Create `test/e2e/ingest-gemara.venom.yml` following the pattern in `ingest-to-ag
 1. **Submit Gemara catalog**
    - Base64 encode the fixture
    - POST to SubmitDocument with `catalogFormat: CATALOG_FORMAT_GEMARA`
-   - Assert: jobId returned
+   - Assert: catalogId returned
 
 2. **Verify format persisted**
    - Query: `SELECT format FROM catalogs WHERE name='e2e-gemara'`

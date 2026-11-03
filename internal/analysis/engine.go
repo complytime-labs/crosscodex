@@ -283,8 +283,8 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 	// requested), call GenerateWork once per control and concatenate the
 	// resulting task slices — Dispatch, Collect, and Aggregate are still
 	// each called exactly once, over the combined set, exactly as the
-	// single-Input path below. A non-nil but empty Controls (e.g. a
-	// document-backed job, or a catalog with zero controls) naturally
+	// single-Input path below. A non-nil but empty Controls (a catalog with
+	// zero controls, or no catalog controls reader wired) naturally
 	// produces zero tasks via the loop below, rather than falling through to
 	// the single-Input path with a mismatched Input type. A per-control error
 	// fails the whole analyzer for this job, matching existing all-or-nothing
