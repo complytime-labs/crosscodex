@@ -2082,9 +2082,6 @@ logging:
 			Entry("rejects empty models when enabled", func(c *config.Config) {
 				c.Analysis.Embedding.Models = []string{}
 			}, "analysis.embedding.models", "must not be empty when enabled"),
-			Entry("rejects top_k of zero", func(c *config.Config) {
-				c.Analysis.Relationship.TopK = 0
-			}, "analysis.relationship.top_k", "must be positive"),
 			Entry("rejects max_source_chars of zero", func(c *config.Config) {
 				c.Analysis.Relationship.MaxSourceChars = 0
 			}, "analysis.relationship.max_source_chars", "must be positive"),
@@ -2116,9 +2113,6 @@ logging:
 			Entry("rejects negative batch_size", func(c *config.Config) {
 				c.Analysis.Embedding.BatchSize = -1
 			}, "analysis.embedding.batch_size", "must be positive"),
-			Entry("rejects negative top_k", func(c *config.Config) {
-				c.Analysis.Relationship.TopK = -5
-			}, "analysis.relationship.top_k", "must be positive"),
 			Entry("rejects negative max_source_chars", func(c *config.Config) {
 				c.Analysis.Relationship.MaxSourceChars = -1
 			}, "analysis.relationship.max_source_chars", "must be positive"),
@@ -2199,7 +2193,6 @@ logging:
 
 			Expect(cfg.Analysis.Relationship.Enabled).To(BeFalse())
 			Expect(cfg.Analysis.Relationship.Models).To(BeEmpty())
-			Expect(cfg.Analysis.Relationship.TopK).To(Equal(20))
 			Expect(cfg.Analysis.Relationship.MaxSourceChars).To(Equal(1500))
 			Expect(cfg.Analysis.Relationship.MaxTargetChars).To(Equal(800))
 			Expect(cfg.Analysis.Relationship.MaxTokens).To(Equal(300))
@@ -2209,6 +2202,49 @@ logging:
 				"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF",
 				"CONTRIBUTES_TO", "COMPLEMENTS", "CONFLICTS_WITH",
 			}))
+		})
+
+		It("ignores a leftover analysis.relationship.top_k key in a config file and loads the rest", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			writeTestFile(path, "analysis:\n  relationship:\n    top_k: 10\n    max_tokens: 400\n")
+
+			cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Analysis.Relationship.MaxTokens).To(Equal(400))
+		})
+
+		It("does not ship relationship.top_k in the compiled defaults", func() {
+			Expect(config.ExportDefaultConfigYAML()).NotTo(ContainSubstring("top_k"))
+		})
+
+		It("has correct requires default values from compiled defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(cfg.Analysis.Requires.Models).To(BeEmpty())
+			cfg.Analysis.Requires.Models = nil
+			Expect(cfg.Analysis.Requires).To(Equal(config.RequiresConfig{
+				Enabled: false, SamplesPerModel: 1, AllowEvenSamples: false, SamplingTemperature: 0.3,
+				MaxTokens: 300, ConsensusThreshold: 0.67, MaxErrorRate: 0.34,
+				MaxSourceChars: 1500, MaxTargetChars: 800,
+			}))
+		})
+
+		It("loads a requires block that sets only enabled and models", func() {
+			dir := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", dir)
+			Expect(os.MkdirAll(filepath.Join(dir, "crosscodex"), 0o700)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(dir, "crosscodex", "config.yaml"),
+				[]byte("analysis:\n  requires:\n    enabled: true\n    models: [m1]\n"), 0o600)).To(Succeed())
+
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Analysis.Requires.Enabled).To(BeTrue())
+			Expect(cfg.Analysis.Requires.Models).To(Equal([]string{"m1"}))
+			Expect(cfg.Analysis.Requires.MaxSourceChars).To(Equal(1500))
 		})
 
 		It("includes embedding in DaemonConfig", func() {
@@ -2221,7 +2257,6 @@ logging:
 			daemon := cfg.ServiceConfig()
 			Expect(daemon.Analysis.Embedding.Enabled).To(BeTrue())
 			Expect(daemon.Analysis.Embedding.MaxChars).To(Equal(1500))
-			Expect(daemon.Analysis.Relationship.TopK).To(Equal(20))
 			Expect(daemon.Analysis.Relationship.MaxSourceChars).To(Equal(1500))
 			Expect(daemon.Analysis.Relationship.MaxTargetChars).To(Equal(800))
 			Expect(daemon.Analysis.Relationship.MaxTokens).To(Equal(300))

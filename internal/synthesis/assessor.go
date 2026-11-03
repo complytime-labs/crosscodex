@@ -186,13 +186,16 @@ func (a *Assessor) diagnoseNoRelRate(noRelCount, total int) Diagnostic {
 	var severity DiagnosticSeverity
 	var msg string
 
+	// A high NO_RELATIONSHIP rate means the candidate set reaches too far
+	// down the similarity ranking (top_k too high); a low one means it may
+	// stop too early and miss related pairs (top_k too low).
 	switch {
 	case rate > a.cfg.NoRelHigh:
 		severity = SeverityPoor
-		msg = fmt.Sprintf("top_k too low: %.1f%% NO_RELATIONSHIP", pct)
+		msg = fmt.Sprintf("candidate top_k may be too high: %.1f%% of pairs had NO_RELATIONSHIP; lower analysis.candidates.generators[].config.top_k", pct)
 	case rate < a.cfg.NoRelLow:
 		severity = SeverityWarn
-		msg = fmt.Sprintf("top_k too high: %.1f%% NO_RELATIONSHIP", pct)
+		msg = fmt.Sprintf("candidate top_k may be too low: %.1f%% of pairs had NO_RELATIONSHIP; raise analysis.candidates.generators[].config.top_k", pct)
 	default:
 		severity = SeverityGood
 		msg = fmt.Sprintf("NO_RELATIONSHIP rate %.1f%% within expected range", pct)

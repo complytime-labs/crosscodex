@@ -64,6 +64,48 @@ var _ = Describe("Subscriber Event Handling", func() {
 			return rels
 		}
 
+		DescribeTable("does not resolve results for a stage it has no handler for",
+			func(analyzer string) {
+				resolver.err = errors.New("resolver must not be called")
+				data, err := json.Marshal(map[string]string{
+					"analyzer": analyzer, "job_id": "job-1", "stage": "completed",
+					"timestamp": "2026-10-30T22:38:22Z",
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(graph.ExportHandleEvent(svc, context.Background(), &natsbus.Message{
+					Subject: "crosscodex.pipeline.test-tenant.job-1.stage.completed",
+					Data:    data,
+				})).To(Succeed())
+			},
+			Entry("synthesis", "synthesis"),
+			Entry("graph", "graph"),
+			Entry("an unknown analyzer", "unknown-analyzer"),
+		)
+
+		It("counts a stage event with no graph handler as skipped", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+			registry := graph.NewResolverRegistry()
+			registry.Register(resolver)
+			svc = graph.New(mockGraph, &mockVectorDB{}, nil,
+				graph.WithResolverRegistry(registry),
+				graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+
+			Expect(deliver("synthesis", []any{})).To(Succeed())
+
+			m := telemetrytest.FindMetric(tp.GetMetrics(), "graph.events.total")
+			Expect(m).NotTo(BeNil(), "graph.events.total not recorded")
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			Expect(ok).To(BeTrue())
+			Expect(sum.DataPoints).To(HaveLen(1))
+			Expect(sum.DataPoints[0].Value).To(Equal(int64(1)))
+			status, _ := sum.DataPoints[0].Attributes.Value("status")
+			Expect(status.AsString()).To(Equal("skipped"))
+			analyzer, _ := sum.DataPoints[0].Attributes.Value("analyzer")
+			Expect(analyzer.AsString()).To(Equal("synthesis"))
+		})
+
 		DescribeTable("returns nil, so the message is not redelivered, for an event it cannot process",
 			func(subject string, data string) {
 				err := graph.ExportHandleEvent(svc, context.Background(), &natsbus.Message{Subject: subject, Data: []byte(data)})

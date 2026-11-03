@@ -2,7 +2,11 @@ package config
 
 import (
 	"fmt"
+	"maps"
+	"math"
 	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -316,10 +320,6 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 			formatSource(tracker, "analysis.embedding.models"), ErrInvalidConfig)
 	}
 	r := &a.Relationship
-	if r.TopK <= 0 {
-		return fmt.Errorf("analysis.relationship.top_k %d%s must be positive: %w",
-			r.TopK, formatSource(tracker, "analysis.relationship.top_k"), ErrInvalidConfig)
-	}
 	if r.MaxSourceChars <= 0 {
 		return fmt.Errorf("analysis.relationship.max_source_chars %d%s must be positive: %w",
 			r.MaxSourceChars, formatSource(tracker, "analysis.relationship.max_source_chars"), ErrInvalidConfig)
@@ -373,6 +373,9 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 	}
 
 	if err := a.Candidates.Validate(); err != nil {
+		return err
+	}
+	if err := validateCandidateGenerators(a.Candidates.Generators, tracker); err != nil {
 		return err
 	}
 
@@ -561,5 +564,138 @@ func validateSynthesis(s *SynthesisConfig, tracker *sourceTracker) error {
 		}
 	}
 
+	return nil
+}
+
+// generatorSetting is one key a builtin candidate generator reads from its
+// GenerateRequest.Parameters, with the rule its value must satisfy.
+type generatorSetting struct {
+	valid func(v interface{}) bool
+	rule  string
+}
+
+// candidateGeneratorSettings lists the config keys each builtin generator in
+// pkg/analyzer/candidate/builtin reads (see each Generate doc comment). An
+// unlisted key would be ignored by the generator, so it is rejected here.
+// "weight" is not a config key: it is the entry's own Weight field.
+var candidateGeneratorSettings = map[string]map[string]generatorSetting{
+	"keyword": {
+		"keywords": {valid: isNonEmptyStringList, rule: "must be a non-empty list of non-empty strings"},
+	},
+	"level": {},
+	"semantic": {
+		"top_k":          {valid: isPositiveInteger, rule: "must be a positive integer"},
+		"min_similarity": {valid: isSimilarityThreshold, rule: "must be a number in range [0, 100] (cosine similarity x 100)"},
+	},
+}
+
+// maxExactFloatInt is the largest integer float64 represents exactly; a
+// JSON-decoded top_k above it cannot be converted to int faithfully.
+//
+// The accepted number shapes here (int, int64, integral float64) mirror the
+// generators' readers in pkg/analyzer/candidate/builtin/parameters.go, which
+// pkg/config must not import; change both together.
+const maxExactFloatInt = 1 << 53
+
+// isPositiveInteger accepts the integer shapes a decoder produces: YAML
+// yields int, JSON yields float64, so an integral float64 counts.
+func isPositiveInteger(v interface{}) bool {
+	switch n := v.(type) {
+	case int:
+		return n > 0
+	case int64:
+		return n > 0
+	case float64:
+		return n >= 1 && n <= maxExactFloatInt && n == math.Trunc(n)
+	default:
+		return false
+	}
+}
+
+// isSimilarityThreshold accepts a number in [0, 100]. YAML decodes 0 as int
+// and 72.5 as float64, so both are numbers here.
+func isSimilarityThreshold(v interface{}) bool {
+	var f float64
+	switch n := v.(type) {
+	case int:
+		f = float64(n)
+	case int64:
+		f = float64(n)
+	case float64:
+		f = n
+	default:
+		return false
+	}
+	return f >= 0 && f <= 100
+}
+
+// isNonEmptyStringList rejects an empty list and blank entries: an empty
+// keyword is a substring of every text, so it would match every target.
+func isNonEmptyStringList(v interface{}) bool {
+	var items []interface{}
+	switch l := v.(type) {
+	case []interface{}:
+		items = l
+	case []string:
+		items = make([]interface{}, len(l))
+		for i, s := range l {
+			items[i] = s
+		}
+	default:
+		return false
+	}
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		if s, ok := item.(string); !ok || strings.TrimSpace(s) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// formatSettingValue quotes strings so a string "3" is distinguishable from
+// the number 3 in an error message.
+func formatSettingValue(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return fmt.Sprintf("%q", s)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// validateCandidateGenerators checks every generator entry, enabled or not,
+// so a mistake in a disabled entry does not surface only when it is enabled.
+// The generators read these values at run time; without this check a typo'd
+// key or out-of-range value would silently fall back to a default.
+func validateCandidateGenerators(gens []CandidateGeneratorEntry, tracker *sourceTracker) error {
+	source := formatSource(tracker, "analysis.candidates.generators")
+	known := slices.Sorted(maps.Keys(candidateGeneratorSettings))
+	for i, g := range gens {
+		settings, ok := candidateGeneratorSettings[g.Name]
+		if !ok {
+			return fmt.Errorf("analysis.candidates.generators[%d].name %q%s is not a known generator; use one of %v: %w",
+				i, g.Name, source, known, ErrInvalidConfig)
+		}
+		if math.IsNaN(g.Weight) || g.Weight < 0 || g.Weight > 1 {
+			return fmt.Errorf("analysis.candidates.generators[%d].weight %g%s must be in range [0.0, 1.0]; 0 selects the default 1.0: %w",
+				i, g.Weight, source, ErrInvalidConfig)
+		}
+		for _, key := range slices.Sorted(maps.Keys(g.Config)) {
+			setting, ok := settings[key]
+			if !ok {
+				allowed := "none"
+				if len(settings) > 0 {
+					allowed = fmt.Sprintf("%v", slices.Sorted(maps.Keys(settings)))
+				}
+				return fmt.Errorf("analysis.candidates.generators[%d].config.%s%s is not a setting of generator %q; allowed keys: %s: %w",
+					i, key, source, g.Name, allowed, ErrInvalidConfig)
+			}
+			if value := g.Config[key]; !setting.valid(value) {
+				return fmt.Errorf("analysis.candidates.generators[%d].config.%s %s%s %s: %w",
+					i, key, formatSettingValue(value), source, setting.rule, ErrInvalidConfig)
+			}
+		}
+	}
 	return nil
 }

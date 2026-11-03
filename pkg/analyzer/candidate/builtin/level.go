@@ -52,15 +52,15 @@ var levelIndex = map[string]int{
 
 // Generate produces candidates by pairing sources with targets at higher abstraction levels.
 // Parameters:
-//   - weight (float64): Generator weight for aggregation (default: 1.0)
+//   - weight (number: int, int64 or float64): Generator weight for aggregation (default: 1.0)
 func (g *LevelGenerator) Generate(ctx context.Context, req candidate.GenerateRequest) ([]candidate.Candidate, error) {
 	_, span := telemetry.StartSpan(g.tracer, ctx, "level.Generate")
 	defer span.End()
 
 	// Extract parameters
-	weight := 1.0
-	if v, ok := req.Parameters["weight"].(float64); ok {
-		weight = v
+	weight, err := floatParam("level", req.Parameters, "weight", 1.0)
+	if err != nil {
+		return nil, err
 	}
 
 	var candidates []candidate.Candidate

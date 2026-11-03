@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
@@ -100,13 +104,32 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 		return fmt.Errorf("candidate generation: reading controls: %w", err)
 	}
 
+	// A control with no statement has no requirement text to compare: a pair
+	// containing it would fail the pair stages (they refuse blank prompts),
+	// and its embedding (the ancestor title only, if any) says nothing about
+	// the control. Leaving it out keeps it from becoming a candidate and from
+	// understating embedding coverage.
+	withText := make(map[string]*candidate.ControlData, len(controlData))
+	for id, c := range controlData {
+		if strings.TrimSpace(c.Text) != "" {
+			withText[id] = c
+		}
+	}
+	// If every control is blank the job succeeds with no candidates and the
+	// pair stages produce nothing; record the count on the active span so
+	// that outcome is visible.
+	if skipped := len(controlData) - len(withText); skipped > 0 {
+		trace.SpanFromContext(ctx).SetAttributes(attribute.Int("candidates.skipped_blank_statement", skipped))
+	}
+	controlData = withText
+
 	ids, values, err := g.embeddings.SimilarityMatrix(ctx, tenantID, catalogID, g.embedModel)
 	if err != nil {
 		return fmt.Errorf("candidate generation: reading embeddings: %w", err)
 	}
 
-	// Coverage: fraction of (non-section) controls that have at least one
-	// embeddings row. Skip the check entirely for a zero-control catalog — a
+	// Coverage: fraction of non-section controls that have a statement and
+	// at least one embeddings row. Skip the check entirely for a zero-control catalog — a
 	// degenerate case, not a coverage failure, and it must not divide by zero.
 	embedded := make(map[string]bool, len(ids))
 	for _, id := range ids {

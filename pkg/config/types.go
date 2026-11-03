@@ -487,7 +487,6 @@ type EmbeddingConfig struct {
 type RelationshipConfig struct {
 	Enabled             bool     `yaml:"enabled" json:"enabled"`
 	Models              []string `yaml:"models" json:"models"`                             // LLM models for panel voting; must be non-empty when enabled
-	TopK                int      `yaml:"top_k" json:"top_k"`                               // Number of most-similar control pairs to retain; must be positive
 	MaxSourceChars      int      `yaml:"max_source_chars" json:"max_source_chars"`         // Max runes for source control text; must be positive
 	MaxTargetChars      int      `yaml:"max_target_chars" json:"max_target_chars"`         // Max runes for target control text; must be positive
 	MaxTokens           int      `yaml:"max_tokens" json:"max_tokens"`                     // Max tokens for LLM response; must be positive
@@ -528,8 +527,8 @@ func (c *CandidateConfig) Validate() error {
 type CandidateGeneratorEntry struct {
 	Name    string                 `yaml:"name" json:"name"`       // Generator name (e.g., "semantic", "keyword", "level")
 	Enabled bool                   `yaml:"enabled" json:"enabled"` // Enable this generator
-	Weight  float64                `yaml:"weight" json:"weight"`   // Weight for aggregation; default 1.0 if 0
-	Config  map[string]interface{} `yaml:"config" json:"config"`   // Generator-specific configuration
+	Weight  float64                `yaml:"weight" json:"weight"`   // Weight for aggregation, [0.0, 1.0]; 0 means the default 1.0
+	Config  map[string]interface{} `yaml:"config" json:"config"`   // Generator-specific settings; allowed keys per generator in candidateGeneratorSettings (validate.go)
 }
 
 // RequiresConfig configures the requires analyzer for prerequisite detection.

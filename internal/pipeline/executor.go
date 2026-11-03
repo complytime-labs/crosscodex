@@ -158,6 +158,41 @@ func (s *Service) executeJob(ctx context.Context, tenantID, jobID string) {
 	}
 }
 
+// pairAnalyzerParameters returns the AnalyzerConfig parameters the
+// candidate-dependent analyzers (requires, relationship) read when building
+// prompts. Those analyzers run once per job with no per-control input, so
+// every control's statement, ancestor title and classification is passed
+// under both the source_ and target_ prefixes; a control can be either end of
+// a pair. A missing or partial classify output is tolerated (classify can be
+// disabled): controls without a classification simply get no type or level
+// keys. Only a classify output that does not parse fails the job, since
+// prompts would otherwise silently lose classifications that were produced.
+func pairAnalyzerParameters(jobID string, controls []*pb.Control, classify *analyzer.Output) (map[string]string, error) {
+	params := map[string]string{"job_id": jobID}
+	for _, c := range controls {
+		id := c.GetControlId()
+		ancestor := c.GetParts()["ancestor_title"]
+		for _, end := range []string{"source_", "target_"} {
+			params[end+"text_"+id] = c.GetStatement()
+			params[end+"ancestor_"+id] = ancestor
+		}
+	}
+	if classify == nil || len(classify.ResultData) == 0 {
+		return params, nil
+	}
+	var classified []results.ClassifyResult
+	if err := json.Unmarshal(classify.ResultData, &classified); err != nil {
+		return nil, fmt.Errorf("reading classify results for pair analyzers: %w", err)
+	}
+	for _, r := range classified {
+		for _, end := range []string{"source_", "target_"} {
+			params[end+"type_"+r.ControlID] = r.Type
+			params[end+"level_"+r.ControlID] = r.Level
+		}
+	}
+	return params, nil
+}
+
 // runAnalysis builds the DAG, determines incomplete analyzers, and executes them.
 func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[string]bool, exec *jobExecution) error {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.RunAnalysis")
@@ -233,9 +268,11 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 		}
 	}
 
-	// AnalyzerConfig is shared across both passes: every real analyzer's
-	// GenerateWork needs job_id (requires/relationship read it from
-	// cfg.Parameters["job_id"] and fail fast if absent; the others ignore it).
+	// AnalyzerConfig is shared across both passes. Every analyzer gets job_id
+	// here (requires/relationship read it from cfg.Parameters["job_id"] and
+	// fail fast if absent; the others ignore it); the candidate-dependent
+	// analyzers' entries are replaced with pairAnalyzerParameters once the
+	// pre-candidate pass has produced classify output.
 	analyzerConfig := make(map[string]analyzer.AnalyzerConfig, len(dagOrder))
 	for _, name := range dagOrder {
 		analyzerConfig[name] = analyzer.AnalyzerConfig{Parameters: map[string]string{"job_id": job.JobID}}
@@ -283,9 +320,11 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 	// (classify/embedding/artifacts) need one *pb.Control per task; the
 	// candidate-dependent analyzers (requires/relationship) ignore their
 	// GenerateWork input entirely and instead read all candidate pairs for
-	// the job — so they run with Controls empty and a placeholder *pb.Control
-	// Input (any real analyzer registered here is Analyzer[*pb.Control], so
-	// Input must type-assert to that, unlike the emptypb.Empty stub tests use).
+	// the job, taking each pair's control texts from the parameters built by
+	// pairAnalyzerParameters — so they run with Controls empty and a
+	// placeholder *pb.Control Input (any real analyzer registered here is
+	// Analyzer[*pb.Control], so Input must type-assert to that, unlike the
+	// emptypb.Empty stub tests use).
 	runPass := func(names []string, perControl bool, label string) error {
 		if len(names) == 0 {
 			return nil
@@ -360,6 +399,17 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, completed map[strin
 	}
 
 	// Candidate-dependent pass.
+	if len(postPass) > 0 {
+		pairParams, err := pairAnalyzerParameters(job.JobID, controls, allOutputs["classify"])
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return fmt.Errorf("runAnalysis: %w", err)
+		}
+		for _, name := range postPass {
+			analyzerConfig[name] = analyzer.AnalyzerConfig{Parameters: pairParams}
+		}
+	}
 	if err := runPass(postPass, false, "candidate-dependent pass"); err != nil {
 		return err
 	}
@@ -622,12 +672,15 @@ func (s *Service) publishStageEvent(ctx context.Context, tenantID, jobID, stageN
 		return
 	}
 
+	// Same shape as internal/analysis/reporter.go publish, so subscribers of
+	// crosscodex.pipeline.*.*.stage.* decode analyzer and pipeline stages
+	// alike. Unlike reporter.go, a failed pipeline stage carries no error
+	// detail.
 	event := map[string]interface{}{
-		"tenant_id":  tenantID,
-		"job_id":     jobID,
-		"stage_name": stageName,
-		"stage":      string(stage),
-		"timestamp":  time.Now().Unix(),
+		"analyzer":  stageName,
+		"job_id":    jobID,
+		"stage":     string(stage),
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 
 	payload, err := json.Marshal(event)

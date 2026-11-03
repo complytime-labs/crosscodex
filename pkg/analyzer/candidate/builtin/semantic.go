@@ -68,27 +68,30 @@ func extractMatrixData(matrix interface{}) ([]string, [][]float32, bool) {
 
 // Generate produces candidates from the embedding similarity matrix.
 // Parameters:
-//   - top_k (int): Number of most-similar targets per source (default: 10)
-//   - min_similarity (float64): Minimum similarity threshold [0-100] (default: 0)
-//   - weight (float64): Generator weight for aggregation (default: 1.0)
+//   - top_k (integer): Number of most-similar targets per source (default: 10)
+//   - min_similarity (number): Minimum similarity threshold [0-100] (default: 0)
+//   - weight (number): Generator weight for aggregation (default: 1.0)
+//
+// Numbers may be int, int64 or float64 (top_k only if integral); any other
+// type is an error rather than a silent fallback to the default.
 func (g *SemanticGenerator) Generate(ctx context.Context, req candidate.GenerateRequest) ([]candidate.Candidate, error) {
 	_, span := telemetry.StartSpan(g.tracer, ctx, "semantic.Generate")
 	defer span.End()
 
-	// Extract parameters with defaults
-	topK := 10
-	if v, ok := req.Parameters["top_k"].(int); ok {
-		topK = v
+	topK, err := intParam("semantic", req.Parameters, "top_k", 10)
+	if err != nil {
+		return nil, err
 	}
-
-	minSimilarity := 0.0
-	if v, ok := req.Parameters["min_similarity"].(float64); ok {
-		minSimilarity = v
+	if topK < 1 {
+		return nil, fmt.Errorf("semantic: parameter top_k %s must be a positive integer", describeParam(req.Parameters["top_k"]))
 	}
-
-	weight := 1.0
-	if v, ok := req.Parameters["weight"].(float64); ok {
-		weight = v
+	minSimilarity, err := floatParam("semantic", req.Parameters, "min_similarity", 0)
+	if err != nil {
+		return nil, err
+	}
+	weight, err := floatParam("semantic", req.Parameters, "weight", 1.0)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check if embedding matrix is provided
@@ -125,6 +128,9 @@ func (g *SemanticGenerator) Generate(ctx context.Context, req candidate.Generate
 		var scored []scoredTarget
 
 		for targetID := range req.TargetControls {
+			if targetID == sourceID {
+				continue // a control is never its own candidate
+			}
 			targetIdx, ok := idToIndex[targetID]
 			if !ok {
 				continue // Target not in matrix

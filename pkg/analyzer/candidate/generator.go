@@ -10,5 +10,8 @@ type Generator interface {
 
 	// Generate produces weighted candidate pairs from the given context.
 	// Returns an empty slice (not an error) if no candidates are found.
+	// It never returns a pair whose SourceID equals its TargetID: single-catalog
+	// analysis passes the same controls as sources and targets, and a self-pair
+	// wastes an LLM call per analyzer and can produce a self-mapping.
 	Generate(ctx context.Context, req GenerateRequest) ([]Candidate, error)
 }

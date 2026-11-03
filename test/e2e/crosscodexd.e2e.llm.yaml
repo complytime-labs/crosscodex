@@ -48,7 +48,6 @@ analysis:
   relationship:
     enabled: true
     models: ["small"]
-    top_k: 10
     max_source_chars: 10000
     max_target_chars: 10000
     max_tokens: 512

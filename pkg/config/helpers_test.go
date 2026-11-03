@@ -26,7 +26,7 @@ func validConfig() *config.Config {
 			Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 			Classification:       config.ClassificationConfig{Enabled: true, MaxTextLength: 2000, MaxTokens: 20},
 			Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-			Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+			Relationship:         config.RelationshipConfig{MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 			Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 			ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
 		},

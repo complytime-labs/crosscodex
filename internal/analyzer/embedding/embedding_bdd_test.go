@@ -490,7 +490,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			BatchSize: 50,
 		}
 
-		relCfg = config.RelationshipConfig{TopK: 20}
+		relCfg = config.RelationshipConfig{}
 
 		a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg)
 	})

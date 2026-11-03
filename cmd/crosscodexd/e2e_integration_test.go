@@ -92,7 +92,7 @@ func e2eAnalysisConfig() config.AnalysisConfig {
 			Enabled: true, Models: []string{e2eModel}, MaxChars: 10000, BatchSize: 1,
 		},
 		Relationship: config.RelationshipConfig{
-			Enabled: true, Models: []string{e2eModel}, TopK: 10,
+			Enabled: true, Models: []string{e2eModel},
 			MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512,
 			SamplesPerModel: 1, SamplingTemperature: 0,
 		},

@@ -121,7 +121,6 @@ analysis:
   relationship:
     enabled: false
     models: []
-    top_k: 20
     max_source_chars: 1500
     max_target_chars: 800
     max_tokens: 300
@@ -134,6 +133,17 @@ analysis:
       - CONTRIBUTES_TO
       - COMPLEMENTS
       - CONFLICTS_WITH
+  requires:
+    enabled: false
+    models: []
+    samples_per_model: 1
+    allow_even_samples: false
+    sampling_temperature: 0.3
+    max_tokens: 300
+    consensus_threshold: 0.67
+    max_error_rate: 0.34
+    max_source_chars: 1500
+    max_target_chars: 800
   candidates:
     min_embedding_coverage: 0.8
     embed_model: snowflake-arctic-embed2

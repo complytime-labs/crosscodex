@@ -159,7 +159,6 @@ Classify the NIST IR 8477 relationship FROM the source TO the target.
 		cfg := config.RelationshipConfig{
 			Enabled:             true,
 			Models:              []string{"qwen3:8b", "mistral:7b"},
-			TopK:                20,
 			MaxSourceChars:      1500,
 			MaxTargetChars:      800,
 			MaxTokens:           300,
@@ -171,9 +170,8 @@ Classify the NIST IR 8477 relationship FROM the source TO the target.
 		a := relationship.New(nil, prompts, candidates, cfg)
 
 		// Step 1: GenerateWork — should produce 4 tasks (2 pairs x 2 models x 1 sample).
-		control := &pb.Control{ControlId: "AC-1", Statement: "access control policy"}
-		tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-			Parameters: map[string]string{"job_id": "job-1"},
+		tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+			Parameters: pairParams("job-1", "AC-1", "AC-2", "IT-3.2", "IT-4.1"),
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(tasks).To(HaveLen(4))

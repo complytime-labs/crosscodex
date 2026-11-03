@@ -1,10 +1,16 @@
 package config_test
 
 import (
+	"context"
+	"math"
 	"strings"
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/candidate"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/candidate/builtin"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
@@ -73,5 +79,71 @@ func FuzzValidateConfig(f *testing.F) {
 
 		// Must not panic regardless of input.
 		_ = config.ExportValidateConfig(cfg)
+	})
+}
+
+// FuzzCandidateGeneratorConfig drives YAML through
+// analysis.candidates.generators[] the way the loader decodes it. Accepted
+// input must hold the validated invariants and must be usable by the builtin
+// generator it names: config validation and the generators' parameter
+// readers (pkg/analyzer/candidate/builtin/parameters.go) duplicate the
+// type rules, and this keeps them in agreement.
+func FuzzCandidateGeneratorConfig(f *testing.F) {
+	f.Add("- name: semantic\n  enabled: true\n  weight: 0.5\n  config:\n    top_k: 5\n")
+	f.Add("- name: keyword\n  enabled: true\n  config:\n    keywords: [policy]\n")
+	f.Add("- name: semantic\n  config:\n    top_k: 1.5\n")
+	f.Add("- name: semantic\n  config:\n    top_k: \"5\"\n")
+	f.Add("- name: semantic\n  config:\n    top_k: 1e300\n")
+	f.Add("- name: keyword\n  config:\n    keywords: 5\n")
+	f.Add("- name: keyword\n  config:\n    keywords: [{a: 1}]\n")
+	f.Add("- name: level\n  weight: .nan\n")
+	f.Add("- name: semantic\n  config:\n    min_similarity: .inf\n")
+
+	controls := map[string]*candidate.ControlData{
+		"a": {ControlID: "a", Text: "Establish a policy", Level: "Strategic"},
+		"b": {ControlID: "b", Text: "Review logs", Level: "Operational"},
+	}
+	matrix := struct {
+		IDs    []string
+		Values [][]float32
+	}{IDs: []string{"a", "b"}, Values: [][]float32{{100, 80}, {80, 100}}}
+	generators := map[string]candidate.Generator{
+		"keyword":  builtin.NewKeywordGenerator(),
+		"level":    builtin.NewLevelGenerator(),
+		"semantic": builtin.NewSemanticGenerator(),
+	}
+
+	f.Fuzz(func(t *testing.T, doc string) {
+		var entries []config.CandidateGeneratorEntry
+		if err := yaml.Unmarshal([]byte(doc), &entries); err != nil {
+			return
+		}
+		cfg := validConfig()
+		cfg.Analysis.Candidates.Generators = entries
+		if err := config.ExportValidateConfig(cfg); err != nil {
+			return
+		}
+
+		for i, e := range entries {
+			if math.IsNaN(e.Weight) || e.Weight < 0 || e.Weight > 1 {
+				t.Fatalf("accepted generators[%d].weight %v outside [0, 1]", i, e.Weight)
+			}
+			gen, ok := generators[e.Name]
+			if !ok {
+				t.Fatalf("accepted unknown generator name %q", e.Name)
+			}
+			params := make(map[string]interface{}, len(e.Config)+1)
+			for k, v := range e.Config {
+				params[k] = v
+			}
+			params["weight"] = e.Weight
+			req := candidate.GenerateRequest{
+				SourceControls: controls, TargetControls: controls,
+				EmbeddingMatrix: matrix, Parameters: params,
+			}
+			if _, err := gen.Generate(context.Background(), req); err != nil {
+				t.Fatalf("generator %q rejected accepted config %v: %v", e.Name, e.Config, err)
+			}
+		}
 	})
 }

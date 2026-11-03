@@ -1,5 +1,5 @@
 name: requires
-version: "1.0.0"
+version: "1.1.0"
 metadata:
   domain: analysis
   analyzer_type: requires
@@ -22,13 +22,13 @@ templates:
     ${few_shot_examples}
 
     SOURCE REQUIREMENT:
-    ID: ${source_id} | Framework: ${source_framework} | Type: ${source_type} | Level: ${source_level}${source_ancestor}
+    ID: ${source_id} | Framework: ${source_framework} | Type: ${source_type} | Level: ${source_level} | Control Domain: "${source_ancestor}"
     <requirement>
     ${source_text}
     </requirement>
 
     TARGET REQUIREMENT:
-    ID: ${target_id} | Framework: ${target_framework} | Type: ${target_type} | Level: ${target_level}${target_ancestor}
+    ID: ${target_id} | Framework: ${target_framework} | Type: ${target_type} | Level: ${target_level} | Control Domain: "${target_ancestor}"
     <requirement>
     ${target_text}
     </requirement>

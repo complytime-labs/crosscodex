@@ -323,11 +323,38 @@ analysis:
     models: ["snowflake-arctic-embed2"]  # Embedding model names; storage is model-agnostic (see docs/dev/embeddings.md), switching models needs no schema migration
     max_chars: 1500                      # Max runes before truncation
     batch_size: 50                       # Controls per batch call
-  relationship:
-    top_k: 20                            # Most-similar pairs to retain
+  requires:
+    enabled: false                       # Off by default
+    models: []                           # Panel models; required when enabled
+    samples_per_model: 1                 # Votes per model per pair; odd unless allow_even_samples
+    allow_even_samples: false            # Allow an even samples_per_model
+    sampling_temperature: 0.3            # [0, 2]
+    max_tokens: 300                      # Max tokens per LLM reply
+    consensus_threshold: 0.67            # [0.5, 1]; minimum confidence fraction
+    max_error_rate: 0.34                 # [0, 1]; maximum fraction of votes that can fail
+    max_source_chars: 1500               # Max runes of source control text
+    max_target_chars: 800                # Max runes of target control text
   candidates:
-    min_embedding_coverage: 0.8          # Minimum fraction of a job's controls that must have an embedding before candidate generation runs; below this, the candidate_generation stage fails the job (fail-closed)
+    min_embedding_coverage: 0.8          # Minimum fraction of a job's non-section controls that have a statement and must have an embedding before candidate generation runs; below this, the candidate_generation stage fails the job (fail-closed)
     embed_model: "snowflake-arctic-embed2"  # Embedding model candidate generation reads; must be one of analysis.embedding.models
+    generators:                          # Candidate generators; none by default, and with none enabled no candidate pairs are produced
+      - name: semantic                   # Most-similar controls by embedding
+        enabled: true
+        weight: 1.0                      # [0, 1] in weighted aggregation; 0 or unset means 1.0
+        config:                          # Optional; unknown keys are rejected at load
+          top_k: 10                      # Most-similar targets kept per source control; positive integer (default 10)
+          min_similarity: 0              # Drop targets below this cosine similarity x 100; [0, 100] (default 0)
+      - name: keyword                    # Targets whose text contains a keyword (case-insensitive substring)
+        enabled: false
+        weight: 1.0
+        config:
+          keywords: [policy, procedure]  # Non-empty list of non-empty strings; omit to use the built-in list below
+          # Built-in list: policy, procedure, plan, program, framework,
+          # establish, define, designate, inventory, baseline, register, catalogue, catalog, architecture,
+          # strategy, governance, charter
+      - name: level                      # Targets at a higher abstraction level; takes no config keys
+        enabled: false
+        weight: 1.0
   artifact_adjudication:                 # `crosscodexd admin adjudicate artifacts`
     enabled: false                       # The command refuses to run until true
     models: []                           # Panel models; required when enabled

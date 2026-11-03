@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -132,9 +133,15 @@ func (a *RelationshipAnalyzer) ResultSchema() proto.Message {
 
 // GenerateWork produces one Task per candidate pair per model per sample.
 // Each task carries LLM parameters in a structpb.Struct payload for the worker.
-// The prompt messages are not included in the payload — workers re-resolve
-// the prompt using the prompt_name, prompt_version, and content_hash fields.
-// content_hash enables workers to verify consistency after re-resolution.
+// The rendered prompt messages travel in the payload's "messages" field,
+// alongside prompt_name, prompt_version and their content_hash.
+//
+// input is unused: the pipeline runs this candidate-dependent pass once per
+// job, so each pair's texts come from cfg.Parameters ("source_text_<id>",
+// "target_text_<id>"), as do its classification ("source_type_<id>",
+// "source_level_<id>", "source_ancestor_<id>" and the target_ equivalents).
+// A pair whose source or target text is missing or empty returns an error
+// wrapping intanalyzer.ErrMissingControlText and produces no tasks.
 func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "relationship.GenerateWork")
 	defer span.End()
@@ -192,12 +199,28 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 	// Build tasks.
 	var tasks []analyzer.Task
 	for _, pair := range pairs {
-		// Prepare source and target text from the control's statement.
-		// The pipeline provides control text via AnalyzerConfig parameters
-		// when available. For GenerateWork, we use the input control's text
-		// for the source and look up target text from parameters.
-		sourceText := intanalyzer.TruncateText(input.GetStatement(), a.cfg.MaxSourceChars)
-		targetText := intanalyzer.TruncateText(cfg.Parameters["target_text_"+pair.TargetControlID], a.cfg.MaxTargetChars)
+		// The candidate-dependent pass has no per-control input: the pipeline
+		// passes every control's text as parameters.
+		sourceKey := "source_text_" + pair.SourceControlID
+		targetKey := "target_text_" + pair.TargetControlID
+		sourceText := cfg.Parameters[sourceKey]
+		targetText := cfg.Parameters[targetKey]
+		var missingKey string
+		switch {
+		case strings.TrimSpace(sourceText) == "":
+			missingKey = sourceKey
+		case strings.TrimSpace(targetText) == "":
+			missingKey = targetKey
+		}
+		if missingKey != "" {
+			err := fmt.Errorf("relationship.GenerateWork: pair %s--%s: no %q parameter: %w",
+				pair.SourceControlID, pair.TargetControlID, missingKey, intanalyzer.ErrMissingControlText)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, err
+		}
+		sourceText = intanalyzer.TruncateText(sourceText, a.cfg.MaxSourceChars)
+		targetText = intanalyzer.TruncateText(targetText, a.cfg.MaxTargetChars)
 
 		vars := map[string]string{
 			"classification_guidance":  classificationGuidance,

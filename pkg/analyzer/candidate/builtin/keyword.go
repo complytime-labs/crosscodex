@@ -63,32 +63,21 @@ var defaultKeywords = []string{
 
 // Generate produces candidates by pairing all sources with targets containing foundational keywords.
 // Parameters:
-//   - keywords ([]string): List of keywords to search for in target text (default: defaultKeywords)
-//   - weight (float64): Generator weight for aggregation (default: 1.0)
+//   - keywords (list of strings): Non-empty, non-blank keywords to search for in target text (default: defaultKeywords)
+//   - weight (number: int, int64 or float64): Generator weight for aggregation (default: 1.0)
 func (g *KeywordGenerator) Generate(ctx context.Context, req candidate.GenerateRequest) ([]candidate.Candidate, error) {
 	_, span := telemetry.StartSpan(g.tracer, ctx, "keyword.Generate")
 	defer span.End()
 
 	// Extract parameters
-	keywords := defaultKeywords
-	if kw, ok := req.Parameters["keywords"]; ok {
-		// Convert []interface{} to []string
-		switch kwTyped := kw.(type) {
-		case []interface{}:
-			keywords = make([]string, len(kwTyped))
-			for i, v := range kwTyped {
-				if s, ok := v.(string); ok {
-					keywords[i] = s
-				}
-			}
-		case []string:
-			keywords = kwTyped
-		}
+	keywords, err := stringListParam("keyword", req.Parameters, "keywords", defaultKeywords)
+	if err != nil {
+		return nil, err
 	}
 
-	weight := 1.0
-	if v, ok := req.Parameters["weight"].(float64); ok {
-		weight = v
+	weight, err := floatParam("keyword", req.Parameters, "weight", 1.0)
+	if err != nil {
+		return nil, err
 	}
 
 	// Find all targets that contain foundational keywords
@@ -116,6 +105,9 @@ func (g *KeywordGenerator) Generate(ctx context.Context, req candidate.GenerateR
 
 	for sourceID := range req.SourceControls {
 		for targetID, matchedKeywords := range foundationalTargets {
+			if targetID == sourceID {
+				continue // a control is never its own candidate
+			}
 			candidates = append(candidates, candidate.Candidate{
 				SourceID:    sourceID,
 				TargetID:    targetID,

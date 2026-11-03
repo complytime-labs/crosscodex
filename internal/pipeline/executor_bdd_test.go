@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -478,6 +479,54 @@ var _ = Describe("Executor", func() {
 			// Verify NATS events published (running, stage events, completed).
 			Expect(bus.Published()).NotTo(BeEmpty())
 			Expect(bus.Subscriptions()).To(BeEmpty(), "job execution only publishes")
+		})
+
+		It("publishes its synthesis stage event in the shared stage schema", func() {
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID:     jobID,
+				TenantID:  tenantID,
+				Status:    pipeline.JobStatusRunning,
+				Config:    catalogJobConfig,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"analyzer-a", "analyzer-b", "synthesis", "graph"})).To(Succeed())
+
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			Expect(svc.Start(ctx)).To(Succeed())
+
+			Eventually(func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, jobID)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}, "1s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+			subject, err := natsbus.PipelineStageSubject(tenantID, jobID, natsbus.StageCompleted)
+			Expect(err).NotTo(HaveOccurred())
+			var event map[string]any
+			for _, p := range bus.Published() {
+				if p.Subject != subject {
+					continue
+				}
+				var candidate map[string]any
+				Expect(json.Unmarshal(p.Data, &candidate)).To(Succeed())
+				if candidate["analyzer"] == "synthesis" {
+					event = candidate
+				}
+			}
+			Expect(event).NotTo(BeNil(), "no synthesis event published on %s", subject)
+
+			Expect(event).To(HaveKeyWithValue("analyzer", "synthesis"))
+			Expect(event).To(HaveKeyWithValue("job_id", jobID))
+			Expect(event).To(HaveKeyWithValue("stage", "completed"))
+			Expect(event).NotTo(HaveKey("stage_name"))
+			ts, ok := event["timestamp"].(string)
+			Expect(ok).To(BeTrue(), "timestamp must be an RFC3339 string, got %T", event["timestamp"])
+			_, err = time.Parse(time.RFC3339, ts)
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("skips completed stages on resume", func() {
@@ -1507,6 +1556,167 @@ var _ = Describe("Executor", func() {
 			for _, name := range []string{"classify", "embedding", "requires", "relationship"} {
 				Expect(cfgByName).To(HaveKeyWithValue(name, jobID))
 			}
+		})
+
+		Describe("pair analyzer parameters", func() {
+			var (
+				mu     sync.Mutex
+				params map[string]map[string]string
+			)
+
+			classified := []byte(`[{"control_id":"c1","type":"Technical","level":"Operational"},{"control_id":"c2","type":"Procedural","level":"Tactical"}]`)
+
+			// startPairJob runs a job whose classify output is classifyResult,
+			// with requires and relationship capturing their whole
+			// cfg.Parameters map. resumed seeds classify as completed by a
+			// prior process run, so its stub must never be called; the stub
+			// is returned for that assertion.
+			startPairJob := func(classifyResult []byte, resumed bool) *analyzertest.Stub[*pb.Control] {
+				params = map[string]map[string]string{}
+				perControlTask := func(name string) func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return func(_ context.Context, c *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+						return []analyzer.Task{{TaskID: name + "-" + c.GetControlId(), Payload: &emptypb.Empty{}}}, nil
+					}
+				}
+				capturePair := func(name string) func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return func(_ context.Context, _ *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+						mu.Lock()
+						params[name] = maps.Clone(cfg.Parameters)
+						mu.Unlock()
+						return nil, nil
+					}
+				}
+
+				reg := analyzer.NewRegistry()
+				classify := newControlStub("classify")
+				classify.GenerateWorkFunc = perControlTask("classify")
+				if resumed {
+					classify.GenerateWorkFunc = func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+						return nil, errors.New("classify re-ran although a prior run completed it")
+					}
+				}
+				classify.AggregateFunc = func(context.Context, []analyzer.TaskResult) (*analyzer.Output, error) {
+					return &analyzer.Output{AnalyzerName: "classify", ResultData: classifyResult}, nil
+				}
+				requires := newControlStub("requires", "classify")
+				requires.GenerateWorkFunc = capturePair("requires")
+				relationship := newControlStub("relationship", "classify")
+				relationship.GenerateWorkFunc = capturePair("relationship")
+				Expect(analyzer.Register[*pb.Control](reg, classify)).To(Succeed())
+				Expect(analyzer.Register[*pb.Control](reg, requires)).To(Succeed())
+				Expect(analyzer.Register[*pb.Control](reg, relationship)).To(Succeed())
+
+				eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{}, config.EngineConfig{
+					TaskTimeout:  5 * time.Minute,
+					MaxRetries:   3,
+					RetryBackoff: time.Millisecond,
+				}, map[string]natsbus.TaskType{
+					"classify":     "classify",
+					"requires":     "requires",
+					"relationship": "relate",
+				})
+
+				catalogReader := &fakeCatalogControlsReader{controls: []*pb.Control{
+					{ControlId: "c1", Statement: "Keep an asset inventory.", Parts: map[string]string{"ancestor_title": "Identify"}},
+					{ControlId: "c2", Statement: "Review the inventory yearly.", Parts: map[string]string{"ancestor_title": "Protect"}},
+				}}
+				svc = pipeline.New(store, eng, reg, synth, attestor, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10},
+					config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
+					nil,
+					pipeline.WithCatalogControlsReader(catalogReader),
+				)
+
+				job := &pipeline.Job{
+					JobID:     jobID,
+					TenantID:  tenantID,
+					Status:    pipeline.JobStatusRunning,
+					Config:    []byte(`{"catalog_id":"cat-1"}`),
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+				}
+				Expect(store.CreateJob(ctx, job)).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, []string{"classify", "candidate_generation", "requires", "relationship", "synthesis", "graph"})).To(Succeed())
+				if resumed {
+					Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", classifyResult)).To(Succeed())
+				}
+
+				runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				DeferCleanup(cancel)
+				Expect(svc.Start(runCtx)).To(Succeed())
+				return classify
+			}
+
+			wantPairParams := func() map[string]string {
+				return map[string]string{
+					"job_id":             jobID,
+					"source_text_c1":     "Keep an asset inventory.",
+					"target_text_c1":     "Keep an asset inventory.",
+					"source_ancestor_c1": "Identify",
+					"target_ancestor_c1": "Identify",
+					"source_type_c1":     "Technical",
+					"target_type_c1":     "Technical",
+					"source_level_c1":    "Operational",
+					"target_level_c1":    "Operational",
+					"source_text_c2":     "Review the inventory yearly.",
+					"target_text_c2":     "Review the inventory yearly.",
+					"source_ancestor_c2": "Protect",
+					"target_ancestor_c2": "Protect",
+					"source_type_c2":     "Procedural",
+					"target_type_c2":     "Procedural",
+					"source_level_c2":    "Tactical",
+					"target_level_c2":    "Tactical",
+				}
+			}
+
+			jobStatus := func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, jobID)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}
+
+			It("passes every control's text, ancestor and classification under both pair ends", func() {
+				startPairJob(classified, false)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+				mu.Lock()
+				defer mu.Unlock()
+				for _, name := range []string{"requires", "relationship"} {
+					Expect(params[name]).To(Equal(wantPairParams()), name)
+				}
+			})
+
+			It("passes classifications persisted by a prior process run on resume", func() {
+				classify := startPairJob(classified, true)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+				Expect(classify.Inputs()).To(BeEmpty())
+				mu.Lock()
+				defer mu.Unlock()
+				for _, name := range []string{"requires", "relationship"} {
+					Expect(params[name]).To(SatisfyAll(
+						HaveKeyWithValue("source_type_c1", "Technical"),
+						HaveKeyWithValue("target_level_c2", "Tactical"),
+					), name)
+				}
+			})
+
+			It("fails the job without dispatching pair work when classify results do not parse", func() {
+				startPairJob([]byte("{"), false)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorMessage).To(ContainSubstring("classify results"))
+				mu.Lock()
+				defer mu.Unlock()
+				Expect(params).To(BeEmpty())
+			})
 		})
 
 		It("leaves Controls empty and uses a placeholder Input for the candidate-dependent pass", func() {
