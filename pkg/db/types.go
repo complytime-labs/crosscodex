@@ -2,6 +2,8 @@ package db
 
 import "time"
 
+// IsolationLevel is a PostgreSQL transaction isolation level. Pass one to
+// WithIsolation to start a transaction at it.
 type IsolationLevel string
 
 const (

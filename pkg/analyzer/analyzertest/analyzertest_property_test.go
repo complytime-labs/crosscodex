@@ -64,4 +64,29 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 		})
 	})
+
+	It("a CacheableStub's CacheModels always equals Models and never aliases it", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			models := rapid.SliceOf(rapid.Custom(func(t *rapid.T) analyzer.ModelUse {
+				return analyzer.ModelUse{
+					Alias: rapid.String().Draw(t, "alias"),
+					Kind:  rapid.SampledFrom([]analyzer.ModelKind{analyzer.ModelCompletion, analyzer.ModelEmbedding}).Draw(t, "kind"),
+				}
+			})).Draw(t, "models")
+			stub := &analyzertest.CacheableStub[*wrapperspb.StringValue]{Models: models}
+			got := stub.CacheModels()
+			if len(got) != len(models) {
+				t.Fatalf("CacheModels() = %v, want %v", got, models)
+			}
+			for i := range got {
+				if got[i] != models[i] {
+					t.Fatalf("CacheModels()[%d] = %v, want %v", i, got[i], models[i])
+				}
+				got[i].Alias += "x"
+				if stub.Models[i].Alias == got[i].Alias {
+					t.Fatalf("CacheModels() aliases Models")
+				}
+			}
+		})
+	})
 })

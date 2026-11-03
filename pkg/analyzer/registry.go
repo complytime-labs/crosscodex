@@ -190,5 +190,9 @@ func (w *registeredWrapper[T]) InputType() string {
 	return string(proto.MessageName(zero))
 }
 
+// unwrap returns the registered analyzer, so AsCacheable can find the
+// optional interfaces it implements.
+func (w *registeredWrapper[T]) unwrap() any { return w.inner }
+
 // Compile-time interface verification.
 var _ RegisteredAnalyzer = (*registeredWrapper[*emptypb.Empty])(nil)

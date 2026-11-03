@@ -440,6 +440,15 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 			Expect(dirty).To(BeFalse())
 			Expect(version).To(Equal(uint(0)), "expected no migrations applied after Down")
 
+			// The result-cache trigger functions are CREATE OR REPLACE, so Up
+			// would not notice ones Down left behind; check they are gone.
+			var leftover int
+			Expect(suPool.QueryRow(ctx, `SELECT
+				  (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+				   WHERE n.nspname = 'public' AND p.proname IN ('prevent_cache_audit_mutation', 'require_running_job_for_cache_record'))
+				+ (SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'job_cache_%')`).Scan(&leftover)).To(Succeed())
+			Expect(leftover).To(BeZero(), "Down left result-cache trigger functions or triggers behind")
+
 			Expect(migrator.Up(context.Background())).To(Succeed())
 
 			version, dirty, err = migrator.Version(context.Background())

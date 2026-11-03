@@ -65,6 +65,9 @@ DROP FUNCTION IF EXISTS public.provision_tenant(text, text);
 -- Tables (reverse dependency order). DROP TABLE fires no row or TRUNCATE
 -- trigger, so the refusal triggers do not block it; they go with their
 -- tables.
+DROP TABLE IF EXISTS job_cache_stats;
+DROP TABLE IF EXISTS job_cache_entries;
+DROP TABLE IF EXISTS llm_result_cache;
 DROP TABLE IF EXISTS artifact_pair_verdicts;
 DROP TABLE IF EXISTS retention_holds;
 DROP TABLE IF EXISTS controls;
@@ -84,6 +87,8 @@ DROP TABLE IF EXISTS identity_events;
 DROP TABLE IF EXISTS tenants;
 
 -- Trigger functions, now unreferenced
+DROP FUNCTION IF EXISTS prevent_cache_audit_mutation();
+DROP FUNCTION IF EXISTS require_running_job_for_cache_record();
 DROP FUNCTION IF EXISTS prevent_classification_mutation();
 DROP FUNCTION IF EXISTS prevent_completed_job_child_delete();
 DROP FUNCTION IF EXISTS prevent_completed_job_child_mutation();

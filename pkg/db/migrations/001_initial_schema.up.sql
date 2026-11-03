@@ -279,7 +279,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- Empty: no failure, or one a retry may fix.
     error_class   TEXT NOT NULL DEFAULT '',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Target of the composite foreign keys of the result-cache tables:
+    -- foreign-key checks ignore RLS, so a single-column key would let a row
+    -- of one tenant name another tenant's job (as for catalogs).
+    CONSTRAINT jobs_job_tenant_key UNIQUE (job_id, tenant_id)
 );
 
 ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
@@ -712,6 +716,226 @@ CREATE POLICY tenant_isolation ON controls
 GRANT SELECT, INSERT, UPDATE, DELETE ON controls TO app_user;
 
 -- ============================================================================
+-- LLM result reuse (#243)
+-- ============================================================================
+-- llm_result_cache holds, per tenant and analyzer, the newest result of each
+-- distinct LLM request (cache_key, pkg/resultcache.Key). It is derived and
+-- regenerable: retention purges it with the job that produced it and with
+-- either catalog whose text the request carried, and never archives it.
+-- result is TEXT, not JSONB: JSONB rewrites the bytes, and a hit is verified
+-- by the SHA-256 of the exact bytes its producer stored.
+--
+-- job_cache_entries and job_cache_stats are each job's audit record of its
+-- cache use: what it wrote, what it reused (with the producer) and per-stage
+-- counts and observed models. A job's attestation pins them per analyzer, so
+-- they are append-only: app_user may only SELECT and INSERT, and the
+-- triggers refuse UPDATE and DELETE except to retention_purge members (the
+-- classifications pattern) and refuse TRUNCATE to everyone. Entries are a
+-- set of facts (every identifying column is in the key; writers use ON
+-- CONFLICT DO NOTHING), so a rerun of a stage recording the same fact is a
+-- no-op; a stats row is appended per completed stage run (seq orders them).
+-- producer_job_id has no foreign key: purging a producer must not be
+-- blocked by its consumers' entries, which stay as facts.
+--
+-- attempt names the stage run that recorded a row (the engine makes a UUID
+-- per run; pkg/resultcache.MaxAttemptBytes bounds it). A job's attestation
+-- signs one attempt's manifest, and a hit is verified only against that
+-- attempt's write entries and self-hits, so rows planted under any other
+-- attempt, even while the job runs, are never trusted. The same fact
+-- recorded by two attempts is two rows.
+--
+-- Every table references (job_id, tenant_id) and (catalog_id, tenant_id), so
+-- the database refuses a row naming another tenant's job or catalog for every
+-- role, the owner included.
+--
+-- The grants are the restricted app_user's minimum (see "Roles"): it is the
+-- role whose tenant isolation RLS enforces, so it gets only what
+-- pkg/resultcache/pgstore runs. Put upserts the cache row (SELECT, INSERT,
+-- UPDATE; no DELETE: only retention removes rows, as purge_user).
+
+CREATE TABLE IF NOT EXISTS llm_result_cache (
+    tenant_id         TEXT        NOT NULL REFERENCES tenants(tenant_id),
+    analyzer          TEXT        NOT NULL CHECK (analyzer <> ''),
+    cache_key         TEXT        NOT NULL CHECK (cache_key ~ '^[0-9a-f]{64}$'),
+    result            TEXT        NOT NULL CHECK (result <> ''),
+    response_model    TEXT        NOT NULL CHECK (response_model <> ''),
+    job_id            TEXT        NOT NULL,
+    source_catalog_id TEXT        NOT NULL,
+    target_catalog_id TEXT        NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, analyzer, cache_key),
+    CONSTRAINT llm_result_cache_job_tenant_fkey
+        FOREIGN KEY (job_id, tenant_id) REFERENCES public.jobs (job_id, tenant_id),
+    CONSTRAINT llm_result_cache_source_catalog_tenant_fkey
+        FOREIGN KEY (source_catalog_id, tenant_id) REFERENCES public.catalogs (catalog_id, tenant_id),
+    CONSTRAINT llm_result_cache_target_catalog_tenant_fkey
+        FOREIGN KEY (target_catalog_id, tenant_id) REFERENCES public.catalogs (catalog_id, tenant_id)
+);
+
+CREATE INDEX idx_llm_result_cache_job ON llm_result_cache (job_id);
+CREATE INDEX idx_llm_result_cache_source_catalog ON llm_result_cache (source_catalog_id);
+CREATE INDEX idx_llm_result_cache_target_catalog ON llm_result_cache (target_catalog_id);
+
+ALTER TABLE llm_result_cache ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON llm_result_cache
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+GRANT SELECT, INSERT, UPDATE ON llm_result_cache TO app_user;
+
+CREATE TABLE IF NOT EXISTS job_cache_entries (
+    tenant_id       TEXT        NOT NULL REFERENCES tenants(tenant_id),
+    job_id          TEXT        NOT NULL,
+    analyzer        TEXT        NOT NULL CHECK (analyzer <> ''),
+    attempt         TEXT        NOT NULL CHECK (octet_length(attempt) BETWEEN 1 AND 64),
+    task_id         TEXT        NOT NULL CHECK (task_id <> ''),
+    cache_key       TEXT        NOT NULL CHECK (cache_key ~ '^[0-9a-f]{64}$'),
+    result_digest   TEXT        NOT NULL CHECK (result_digest ~ '^sha256:[0-9a-f]{64}$'),
+    role            TEXT        NOT NULL CHECK (role IN ('hit', 'write')),
+    producer_job_id TEXT        NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT job_cache_entries_producer_check CHECK ((role = 'hit') = (producer_job_id <> '')),
+    PRIMARY KEY (tenant_id, job_id, analyzer, attempt, task_id, role, cache_key, result_digest, producer_job_id),
+    CONSTRAINT job_cache_entries_job_tenant_fkey
+        FOREIGN KEY (job_id, tenant_id) REFERENCES public.jobs (job_id, tenant_id)
+);
+
+-- Serves the lookup's join to the producer's trusted entries (its writes
+-- and self-hits). The primary key's prefix serves the per-attempt manifest.
+CREATE INDEX idx_job_cache_entries_key
+    ON job_cache_entries (tenant_id, job_id, analyzer, cache_key);
+CREATE INDEX idx_job_cache_entries_job ON job_cache_entries (job_id);
+
+ALTER TABLE job_cache_entries ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON job_cache_entries
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+GRANT SELECT, INSERT ON job_cache_entries TO app_user;
+
+CREATE TABLE IF NOT EXISTS job_cache_stats (
+    seq        BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id  TEXT        NOT NULL REFERENCES tenants(tenant_id),
+    job_id     TEXT        NOT NULL,
+    analyzer   TEXT        NOT NULL CHECK (analyzer <> ''),
+    attempt    TEXT        NOT NULL CHECK (octet_length(attempt) BETWEEN 1 AND 64),
+    mode       TEXT        NOT NULL CHECK (mode IN ('enabled', 'bypassed', 'disabled', 'skipped')),
+    reason     TEXT        NOT NULL DEFAULT '',
+    models     JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    tasks      INTEGER     NOT NULL CHECK (tasks >= 0),
+    hits       INTEGER     NOT NULL CHECK (hits >= 0),
+    dispatched INTEGER     NOT NULL CHECK (dispatched >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT job_cache_stats_counts_check CHECK (hits + dispatched <= tasks),
+    CONSTRAINT job_cache_stats_job_tenant_fkey
+        FOREIGN KEY (job_id, tenant_id) REFERENCES public.jobs (job_id, tenant_id)
+);
+
+-- Summaries read each analyzer's latest row; the manifest one attempt's.
+CREATE INDEX idx_job_cache_stats_job ON job_cache_stats (tenant_id, job_id, analyzer, seq);
+CREATE INDEX idx_job_cache_stats_attempt ON job_cache_stats (tenant_id, job_id, analyzer, attempt, seq);
+
+ALTER TABLE job_cache_stats ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON job_cache_stats
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+GRANT SELECT, INSERT ON job_cache_stats TO app_user;
+
+CREATE OR REPLACE FUNCTION prevent_cache_audit_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NOT pg_has_role(current_user, 'retention_purge', 'MEMBER') THEN
+        RAISE EXCEPTION 'cannot % % row of job %: the result-cache audit record is append-only because the job''s attestation pins it. To get a fresh record, start a new job (crosscodex run start ... --no-cache); retention purges these rows with their job.',
+            lower(TG_OP), TG_TABLE_NAME, OLD.job_id
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+-- A job's audit record is frozen once the job stops running: the BEFORE
+-- INSERT triggers below refuse a row unless its job is 'running'. Every
+-- engine write happens in that status (the executor sets it before any
+-- stage runs, and run retry and the shutdown resume both run a 'running'
+-- job), so the only rows refused are ones written outside a run: without
+-- this, a holder of app_user's credentials could append a write digest to a
+-- completed producer (forging a hit after editing its cached result) or a
+-- stats row that makes a finished job look fresh.
+--
+-- SECURITY INVOKER on purpose: the read of jobs runs under the caller's RLS,
+-- so a job the caller cannot see (another tenant's, or another user's when
+-- app.current_user is set) counts as absent and is refused; a definer would
+-- see past RLS and need its own tenant checks. search_path is pinned with
+-- pg_temp last and jobs is schema-qualified, so a temporary table named jobs
+-- cannot stand in for it. FOR SHARE holds the job row until the insert
+-- commits, so the job cannot leave 'running' between the check and the
+-- write. retention_purge needs no exemption: retention only deletes. A job
+-- the caller cannot see raises foreign_key_violation (what the foreign key
+-- would raise) and a job that is not running restrict_violation, so
+-- pkg/resultcache/pgstore classifies the refusal by SQLSTATE alone.
+CREATE OR REPLACE FUNCTION require_running_job_for_cache_record()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+    job_status TEXT;
+BEGIN
+    SELECT j.status INTO job_status
+    FROM public.jobs j
+    WHERE j.job_id = NEW.job_id AND j.tenant_id = NEW.tenant_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'cannot add a % row for job %: no such job is visible in this tenant. Result-cache records are written only for a running job of the current tenant.',
+            TG_TABLE_NAME, NEW.job_id
+            USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    IF job_status <> 'running' THEN
+        RAISE EXCEPTION 'cannot add a % row for job %: its status is "%". Result-cache records are written only while the job runs; to recompute, start a new job (crosscodex run start ... --no-cache).',
+            TG_TABLE_NAME, NEW.job_id, job_status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER job_cache_entries_running_job_only
+    BEFORE INSERT ON job_cache_entries
+    FOR EACH ROW EXECUTE FUNCTION require_running_job_for_cache_record();
+
+CREATE TRIGGER job_cache_stats_running_job_only
+    BEFORE INSERT ON job_cache_stats
+    FOR EACH ROW EXECUTE FUNCTION require_running_job_for_cache_record();
+
+CREATE TRIGGER job_cache_entries_immutable_update
+    BEFORE UPDATE ON job_cache_entries
+    FOR EACH ROW EXECUTE FUNCTION prevent_cache_audit_mutation();
+
+CREATE TRIGGER job_cache_entries_immutable_delete
+    BEFORE DELETE ON job_cache_entries
+    FOR EACH ROW EXECUTE FUNCTION prevent_cache_audit_mutation();
+
+CREATE TRIGGER job_cache_entries_refuse_truncate
+    BEFORE TRUNCATE ON job_cache_entries
+    FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_change(
+        'job_cache_entries is append-only because job attestations pin it, so TRUNCATE is refused. Retention purges the rows of each expired job.');
+
+CREATE TRIGGER job_cache_stats_immutable_update
+    BEFORE UPDATE ON job_cache_stats
+    FOR EACH ROW EXECUTE FUNCTION prevent_cache_audit_mutation();
+
+CREATE TRIGGER job_cache_stats_immutable_delete
+    BEFORE DELETE ON job_cache_stats
+    FOR EACH ROW EXECUTE FUNCTION prevent_cache_audit_mutation();
+
+CREATE TRIGGER job_cache_stats_refuse_truncate
+    BEFORE TRUNCATE ON job_cache_stats
+    FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_change(
+        'job_cache_stats is append-only because job attestations pin it, so TRUNCATE is refused. Retention purges the rows of each expired job.');
+
+-- ============================================================================
 -- Retention
 -- ============================================================================
 -- retention_holds tracks active legal or compliance holds that prevent purge
@@ -778,6 +1002,9 @@ GRANT SELECT, DELETE ON public.analysis_results        TO purge_user;
 GRANT SELECT, DELETE ON public.relationship_candidates TO purge_user;
 GRANT SELECT, DELETE ON public.controls                TO purge_user;
 GRANT SELECT, DELETE ON public.requires_candidates     TO purge_user;
+GRANT SELECT, DELETE ON public.llm_result_cache        TO purge_user;
+GRANT SELECT, DELETE ON public.job_cache_entries       TO purge_user;
+GRANT SELECT, DELETE ON public.job_cache_stats         TO purge_user;
 
 -- ============================================================================
 -- Artifact pair verdicts

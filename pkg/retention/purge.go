@@ -37,6 +37,8 @@ type dbAggregate struct {
 // the archive doc (dbAggregateQueries in archive.go) deliberately omits it:
 // embeddings are derived/regenerable, so they are purge-only. This archive⊆purge
 // asymmetry is intentional — do not add embeddings to the archive to "match".
+// llm_result_cache is purge-only the same way (derived and regenerable), for
+// both classes.
 var dbAggregates = map[DataClass]dbAggregate{
 	ClassJobResults: {
 		parentTable: "jobs", parentPK: "job_id",
@@ -48,6 +50,13 @@ var dbAggregates = map[DataClass]dbAggregate{
 			// requires_candidates has no FK to jobs; it is associated by the job_id
 			// column only, but is job-scoped data purged with the job.
 			{"requires_candidates", "job_id"},
+			// The job's cached LLM results (derived, regenerable: purge-only)
+			// and its append-only cache audit record (archived first, see
+			// dbAggregateQueries). Purging them with the producer keeps
+			// every surviving hit verifiable against a write that exists.
+			{"llm_result_cache", "job_id"},
+			{"job_cache_entries", "job_id"},
+			{"job_cache_stats", "job_id"},
 		},
 	},
 	ClassCatalogs: {
@@ -56,6 +65,10 @@ var dbAggregates = map[DataClass]dbAggregate{
 			{"classifications", "catalog_id"},
 			{"embeddings", "catalog_id"},
 			{"controls", "catalog_id"},
+			// Cached results carry either catalog's text, so either purges
+			// them. Purge-only, like embeddings.
+			{"llm_result_cache", "source_catalog_id"},
+			{"llm_result_cache", "target_catalog_id"},
 		},
 	},
 }

@@ -110,6 +110,9 @@ func staleBaselineError(version int64, what string) error {
 // baseline; the list empties once migrations are append-only.
 var baselineColumns = []struct{ table, column string }{
 	{"jobs", "error_class"},
+	{"llm_result_cache", "cache_key"},
+	{"job_cache_entries", "attempt"},
+	{"job_cache_stats", "attempt"},
 }
 
 // baselineFunctionColumns are result columns of set-returning functions

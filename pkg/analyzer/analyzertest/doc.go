@@ -42,5 +42,13 @@
 //     observe calls on top of different behavior, embed *Stub and override
 //     the method.
 //
+// # Cacheable stubs
+//
+// CacheableStub[T] is a Stub that also implements analyzer.Cacheable, for
+// specs of result reuse. CacheModels returns a copy of Models;
+// CacheIdentity returns CacheIdentityFunc's result, and ok=false when it is
+// unset, which is the interface's own "not cached" default rather than an
+// unscripted call.
+//
 // Production code must not import this package.
 package analyzertest

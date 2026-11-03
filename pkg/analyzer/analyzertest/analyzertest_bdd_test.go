@@ -14,6 +14,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/analyzertest"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
 func TestAnalyzerTest(t *testing.T) {
@@ -260,5 +261,42 @@ var _ = Describe("Stub", func() {
 		}
 		wg.Wait()
 		Expect(stub.Inputs()).To(HaveLen(20))
+	})
+})
+
+var _ = Describe("CacheableStub", func() {
+	It("returns a copy of Models from CacheModels", func() {
+		stub := &analyzertest.CacheableStub[*wrapperspb.StringValue]{Models: []analyzer.ModelUse{{Alias: "a", Kind: analyzer.ModelEmbedding}}}
+		got := stub.CacheModels()
+		got[0].Alias = "changed"
+		Expect(stub.CacheModels()).To(Equal([]analyzer.ModelUse{{Alias: "a", Kind: analyzer.ModelEmbedding}}))
+	})
+
+	It("reports every task uncacheable while CacheIdentityFunc is unset", func() {
+		_, ok := (&analyzertest.CacheableStub[*wrapperspb.StringValue]{}).CacheIdentity(analyzer.Task{TaskID: "t"})
+		Expect(ok).To(BeFalse())
+	})
+
+	It("lets CacheIdentityFunc alone decide the identity", func() {
+		want := analyzer.CacheRequest{Identity: resultcache.Identity{TaskType: "x"}, SourceControlID: "s", TargetControlID: "t"}
+		stub := &analyzertest.CacheableStub[*wrapperspb.StringValue]{
+			CacheIdentityFunc: func(task analyzer.Task) (analyzer.CacheRequest, bool) { return want, task.TaskID == "t1" },
+		}
+		got, ok := stub.CacheIdentity(analyzer.Task{TaskID: "t1"})
+		Expect(ok).To(BeTrue())
+		Expect(got).To(Equal(want))
+		_, ok = stub.CacheIdentity(analyzer.Task{TaskID: "t2"})
+		Expect(ok).To(BeFalse())
+	})
+
+	It("is still a Stub: GenerateWork goes to the embedded Stub's Func", func() {
+		stub := &analyzertest.CacheableStub[*wrapperspb.StringValue]{}
+		stub.GenerateWorkFunc = func(context.Context, *wrapperspb.StringValue, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+			return []analyzer.Task{{TaskID: "t1"}}, nil
+		}
+		tasks, err := stub.GenerateWork(context.Background(), wrapperspb.String("x"), analyzer.AnalyzerConfig{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tasks).To(HaveLen(1))
+		Expect(stub.Inputs()).To(HaveLen(1))
 	})
 })
