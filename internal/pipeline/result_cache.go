@@ -243,7 +243,7 @@ func (s *Service) llmUnavailable(ctx context.Context, job *Job, analyzerName, al
 			"were made (error class llm_unavailable). Retry this job once the gateway is working (crosscodex run retry %s). "+
 			"If this persists, give your operator %s.",
 		analyzerName, job.JobID, analysis.TraceReference(ctx, job.JobID))}
-	if uerr := s.store.UpdateStageError(ctx, job.JobID, analyzerName, err); uerr != nil {
+	if uerr := s.store.UpdateStageError(ctx, job.JobID, analyzerName, tenantFailure(ctx, job.JobID, job, err)); uerr != nil {
 		s.logger.WarnContext(ctx, "failed to record the model probe failure on the stage",
 			"job_id", job.JobID, "analyzer", analyzerName, "error", uerr)
 	}

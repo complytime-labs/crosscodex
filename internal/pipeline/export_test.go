@@ -44,3 +44,15 @@ func (s *Service) PrepareResultCache(ctx context.Context, job *Job, attestor *At
 // MaxAttestationObjectBytes exposes maxAttestationObjectBytes, the largest
 // attestation object read back from storage.
 const MaxAttestationObjectBytes = maxAttestationObjectBytes
+
+// FailJob bridges failJob to the external specs: it records err as jobID's
+// failure, as the executor does when a phase of the job fails; job is nil
+// when the executor could not load it.
+func (s *Service) FailJob(ctx context.Context, tenantID, jobID string, job *Job, err error) {
+	s.failJob(ctx, tenantID, jobID, job, err)
+}
+
+// NewTenantError exposes tenantError, a failure whose text is message.
+func NewTenantError(sentinel error, message string) error {
+	return &tenantError{sentinel: sentinel, message: message}
+}

@@ -21,6 +21,7 @@ import (
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	storagepkg "github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -512,6 +514,22 @@ var _ = Describe("Executor", func() {
 		}
 	}
 
+	// expectWithheld asserts that text is in no part of the GetJob and
+	// ListJobs responses for the job, its stages' errors included.
+	expectWithheld := func(s *pipeline.Service, text string) {
+		GinkgoHelper()
+		got, err := s.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: jobID}))
+		Expect(err).NotTo(HaveOccurred())
+		list, err := s.ListJobs(ctx, connect.NewRequest(&pb.ListJobsRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list.Msg.GetJobs()).NotTo(BeEmpty())
+		for _, m := range []proto.Message{got.Msg, list.Msg} {
+			raw, err := protojson.Marshal(m)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(raw)).NotTo(ContainSubstring(text))
+		}
+	}
+
 	Describe("executeJob", func() {
 		// A job keeps the stages it was created with. When the daemon's
 		// enabled analyzers no longer match them (an analyzer was disabled or
@@ -635,6 +653,35 @@ var _ = Describe("Executor", func() {
 				}
 				return j.Status
 			}, "1s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+		})
+
+		// The panic recovery keeps the job's trace, so the tenant's message
+		// names the trace the operator finds the panic under.
+		It("gives the tenant the trace ID of a job that panicked", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+			traced := pipeline.New(store, engine, registry, synth, attestedBy(attestor), converter, bus, storage,
+				config.PipelineConfig{MaxConcurrentJobs: 10}, nil, pipeline.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+			Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"analyzer-a", "analyzer-b", "synthesis", "graph"})).To(Succeed())
+			store.getStagesPanics = true
+
+			Expect(traced.Start(ctx)).To(Succeed())
+			DeferCleanup(func() { Expect(traced.Stop(context.Background())).To(Succeed()) })
+			Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+			traceID := func() string {
+				for _, sp := range tp.GetSpans() {
+					if sp.Name() == "pipeline.ExecuteJob" {
+						return sp.SpanContext().TraceID().String()
+					}
+				}
+				return ""
+			}
+			Eventually(traceID).ShouldNot(BeEmpty())
+			j, err := store.GetJob(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(j.ErrorMessage).To(HaveSuffix("give your operator trace ID " + traceID() + "."))
 		})
 
 		It("runs analysis, synthesis, and graph phases in order", func() {
@@ -895,7 +942,8 @@ var _ = Describe("Executor", func() {
 			Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
 			job, err := store.GetJob(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(job.ErrorMessage).To(And(
+			Expect(job.ErrorMessage).To(ContainSubstring("failed because of an internal error (error class retryable)"))
+			Expect(store.failureCause(jobID)).To(And(
 				ContainSubstring("attestation layout could not be signed"),
 				ContainSubstring("signer unavailable"),
 				ContainSubstring("No analyzer ran"),
@@ -1089,6 +1137,49 @@ var _ = Describe("Executor", func() {
 			}, "1s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 		})
 
+		// Safety mechanism (CWE-209): GetJob and ListJobs return each stage's
+		// error to the tenant, so a stage that failed with internal text
+		// records the generic message, and the job's error keeps the cause
+		// for the operator's log.
+		DescribeTable("returns no stage's internal error text from GetJob or ListJobs",
+			func(serviceFor func() *pipeline.Service, stage string) {
+				s := serviceFor()
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+				Expect(s.Start(ctx)).To(Succeed())
+				DeferCleanup(func() { Expect(s.Stop(context.Background())).To(Succeed()) })
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				stages, err := store.GetStages(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(findStage(stages, stage).Status).To(Equal(pipeline.StageStatusFailed))
+				Expect(findStage(stages, stage).ErrorMessage).To(HavePrefix("job " + jobID + " failed because of an internal error (error class retryable)."))
+				expectWithheld(s, "SECRET")
+			},
+			Entry("an analyzer whose work could not be generated", func() *pipeline.Service {
+				reg := analyzer.NewRegistry()
+				a := newControlStub("analyzer-a")
+				a.GenerateWorkFunc = func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return nil, errors.New(`SECRET pq: relation "controls" does not exist`)
+				}
+				Expect(analyzer.Register[*pb.Control](reg, a)).To(Succeed())
+				Expect(analyzer.Register[*pb.Control](reg, newControlStub("analyzer-b", "analyzer-a"))).To(Succeed())
+				eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{},
+					config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},
+					map[string]natsbus.TaskType{"analyzer-a": "classify", "analyzer-b": "relate"},
+					analysis.WithStageReporter(pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)))
+				return pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10}, nil,
+					pipeline.WithCatalogControlsReader(&fakeCatalogControlsReader{controls: []*pb.Control{
+						{ControlId: "c1", CatalogId: "cat-1", Statement: "s"}}}))
+			}, "analyzer-a"),
+			Entry("synthesis, whose link could not be signed", func() *pipeline.Service {
+				attestor.linkErr = errors.New("SECRET open /etc/crosscodex/keys/signing.pem: permission denied")
+				attestor.linkErrOn = "synthesis"
+				return svc
+			}, "synthesis"),
+		)
+
 		It("fails the job, storing no bundle, when its attestation chain does not verify", func() {
 			attestor.verifyErr = fmt.Errorf("chain broken between step %q and step %q: %w", "analyzer-a", "analyzer-b", attestation.ErrChainBroken)
 			Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
@@ -1100,7 +1191,8 @@ var _ = Describe("Executor", func() {
 			Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
 			job, err := store.GetJob(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(job.ErrorMessage).To(And(
+			Expect(job.ErrorMessage).To(ContainSubstring("failed because of an internal error (error class attestation_invalid)"))
+			Expect(store.failureCause(jobID)).To(And(
 				ContainSubstring("its attestation does not verify"),
 				ContainSubstring(`step "analyzer-a" and step "analyzer-b"`),
 				ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
@@ -1130,11 +1222,8 @@ var _ = Describe("Executor", func() {
 				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
 				Expect(s.Start(ctx)).To(Succeed())
 			}
-			errorOf := func() string {
-				job, err := store.GetJob(ctx, jobID)
-				Expect(err).NotTo(HaveOccurred())
-				return job.ErrorMessage
-			}
+			// errorOf is the error the job failed with, which failJob logs.
+			errorOf := func() string { return store.failureCause(jobID) }
 			stageStatuses := func() map[string]pipeline.StageStatus {
 				stages, err := store.GetStages(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
@@ -1437,7 +1526,7 @@ var _ = Describe("Executor", func() {
 					job, err := store.GetJob(ctx, jobID)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(job.ErrorClass).To(Equal(pipeline.JobErrorAttestationInvalid))
-					Expect(job.ErrorMessage).To(And(
+					Expect(store.failureCause(jobID)).To(And(
 						ContainSubstring(strconv.Quote(key)),
 						ContainSubstring("larger than the 1048576-byte limit"),
 						ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
@@ -1735,7 +1824,7 @@ var _ = Describe("Executor", func() {
 		})
 
 		It("fails the analysis and skips the candidate-dependent pass when generation errors", func() {
-			gen := &fakeCandidateGen{err: errors.New("candidate boom")}
+			gen := &fakeCandidateGen{err: errors.New("SECRET candidate boom")}
 
 			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
@@ -1767,7 +1856,10 @@ var _ = Describe("Executor", func() {
 			Expect(stageStatus("candidate_generation")).To(Equal(pipeline.StageStatusFailed))
 			stages, err := store.GetStages(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(findStage(stages, "candidate_generation").ErrorMessage).To(ContainSubstring("candidate boom"))
+			Expect(findStage(stages, "candidate_generation").ErrorMessage).To(
+				HavePrefix("job " + jobID + " failed because of an internal error (error class retryable)."))
+			Expect(store.failureCause(jobID)).To(ContainSubstring("SECRET candidate boom"))
+			expectWithheld(svc, "SECRET")
 		})
 
 		// Safety mechanism: a stored config without catalog_id (a pre-#212 row,
@@ -2065,7 +2157,7 @@ var _ = Describe("Executor", func() {
 				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(j.ErrorMessage).To(SatisfyAll(
+				Expect(store.failureCause(jobID)).To(SatisfyAll(
 					ContainSubstring("catalog cat-gone was not found"),
 					ContainSubstring(pipeline.ErrCatalogNotFound.Error()),
 					ContainSubstring("it may have been deleted or purged. Import the same file again (it gets the same catalog ID)"),
@@ -2098,10 +2190,8 @@ var _ = Describe("Executor", func() {
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorResultCacheCorrupt))
-				Expect(j.ErrorMessage).To(SatisfyAll(
-					ContainSubstring("analysis failed: 1 analyzers failed: [classify]"),
-					ContainSubstring(stageErr.Message),
-					Not(ContainSubstring("driver detail"))))
+				Expect(j.ErrorMessage).To(Equal(stageErr.Message))
+				Expect(store.failureCause(jobID)).To(ContainSubstring("analysis failed: 1 analyzers failed: [classify]"))
 			})
 
 			// Safety mechanism: a crosswalk onto a target with nothing to
@@ -2507,7 +2597,8 @@ var _ = Describe("Executor", func() {
 				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(j.ErrorMessage).To(ContainSubstring("catalog cat-gone was not found"))
+				Expect(j.ErrorMessage).To(ContainSubstring("failed because of an internal error (error class retryable)"))
+				Expect(store.failureCause(jobID)).To(ContainSubstring("catalog cat-gone was not found"))
 				mu.Lock()
 				defer mu.Unlock()
 				Expect(params).To(BeEmpty())
@@ -2530,7 +2621,7 @@ var _ = Describe("Executor", func() {
 
 					j, err := store.GetJob(ctx, jobID)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(j.ErrorMessage).To(SatisfyAll(
+					Expect(store.failureCause(jobID)).To(SatisfyAll(
 						ContainSubstring("catalog cat-gone was not found"),
 						ContainSubstring(pipeline.ErrCatalogNotFound.Error()),
 						ContainSubstring("it may have been deleted or purged. Import the same file again (it gets the same catalog ID)"),
@@ -2559,7 +2650,7 @@ var _ = Describe("Executor", func() {
 
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(j.ErrorMessage).To(SatisfyAll(
+				Expect(store.failureCause(jobID)).To(SatisfyAll(
 					ContainSubstring("the name of catalog cat-1 could not be read: connection refused"),
 					ContainSubstring("crosscodex run retry --from-failure "+jobID),
 					Not(ContainSubstring("deleted or purged")),
@@ -2594,7 +2685,8 @@ var _ = Describe("Executor", func() {
 
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(j.ErrorMessage).To(ContainSubstring("classify results"))
+				Expect(j.ErrorMessage).To(ContainSubstring("failed because of an internal error (error class retryable)"))
+				Expect(store.failureCause(jobID)).To(ContainSubstring("classify results"))
 				mu.Lock()
 				defer mu.Unlock()
 				Expect(params).To(BeEmpty())

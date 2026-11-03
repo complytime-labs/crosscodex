@@ -1,8 +1,12 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"strings"
 
+	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
@@ -22,7 +26,8 @@ var ErrJobCancelled = errors.New("pipeline: job cancelled")
 var errServiceStopping = errors.New("pipeline: service stopping")
 
 // ErrAnalyzersChanged reports that the analyzers a job was created with are
-// not the ones the daemon now runs, so the job cannot resume.
+// not the ones the daemon now runs, so the job cannot resume. Its errors
+// are tenantErrors: their text reaches the tenant.
 var ErrAnalyzersChanged = errors.New("the enabled analyzers changed since the job was created")
 
 // ErrAttestationSigning reports that part of a job's attestation (its
@@ -122,6 +127,94 @@ func retryRefusal(class JobErrorClass) string {
 	}
 }
 
+// jobFailure is a failure as it is recorded where the tenant reads it: a
+// job's or a stage's error_message, which GetJob and ListJobs return. Error
+// returns the message written for the tenant; Unwrap returns the error the
+// job or stage failed with, so ClassifyJobError classifies by its sentinel,
+// not by the message.
+type jobFailure struct {
+	message string
+	err     error
+}
+
+func (f *jobFailure) Error() string { return f.message }
+
+func (f *jobFailure) Unwrap() error { return f.err }
+
+// tenantFailure returns err, the failure of job jobID or of one of its
+// stages, as it is recorded for the tenant: its text is tenantJobMessage's.
+// job is nil when it could not be loaded.
+func tenantFailure(ctx context.Context, jobID string, job *Job, err error) *jobFailure {
+	return &jobFailure{message: tenantJobMessage(ctx, jobID, job, err), err: err}
+}
+
+// tenantError is a job failure whose text is written for the tenant, as
+// analysis.StageError's is for a stage: Error returns message only, and
+// Unwrap returns sentinel only, so no other error's text can be in it.
+// Wrapping a sentinel in fmt.Errorf instead makes its text internal.
+type tenantError struct {
+	sentinel error
+	message  string
+}
+
+func (e *tenantError) Error() string { return e.message }
+
+func (e *tenantError) Unwrap() error { return e.sentinel }
+
+// tenantJobMessage returns the message recorded for job jobID's failure
+// err, which GetJob shows to the tenant, so it never carries driver,
+// storage or panic text (CWE-209); failJob logs err in full. It is the
+// text of each analysis.StageError and tenantError in err, the only errors
+// whose text is written for the tenant. Otherwise it is a fixed message
+// naming err's class, the way to run the job again that its class allows,
+// and the reference the operator finds err by. job is nil when it could
+// not be loaded, and its commands then name placeholder catalogs.
+func tenantJobMessage(ctx context.Context, jobID string, job *Job, err error) string {
+	if msgs := tenantMessages(err); len(msgs) > 0 {
+		return strings.Join(msgs, " ")
+	}
+	failed := Job{JobID: jobID, ErrorClass: ClassifyJobError(err)}
+	if job != nil {
+		failed.Config = job.Config
+	}
+	var head, remedy string
+	if retryRefusal(failed.ErrorClass) == "" {
+		class := string(failed.ErrorClass)
+		if failed.ErrorClass == JobErrorRetryable {
+			class = "retryable"
+		}
+		head = fmt.Sprintf("job %s failed because of an internal error (error class %s).", jobID, class)
+		remedy = fmt.Sprintf("Resume it with \"crosscodex run retry --from-failure %s\", which keeps its completed stages, "+
+			"or start a new job: %s.", jobID, newJobCommand(&failed))
+	} else {
+		head = fmt.Sprintf("job %s failed because of an internal error (error class %s), "+
+			"which a retry from its failure cannot fix.", jobID, failed.ErrorClass)
+		remedy = retryRemedy(&failed) + "."
+	}
+	return fmt.Sprintf("%s %s If it fails again, give your operator %s.", head, remedy, analysis.TraceReference(ctx, jobID))
+}
+
+// tenantMessages returns the text of every analysis.StageError and
+// tenantError in err's tree, in order. errors.As would find only the
+// first, and the analysis pass joins one per failed analyzer.
+func tenantMessages(err error) []string {
+	switch e := err.(type) {
+	case *analysis.StageError:
+		return []string{e.Message}
+	case *tenantError:
+		return []string{e.message}
+	case interface{ Unwrap() error }:
+		return tenantMessages(e.Unwrap())
+	case interface{ Unwrap() []error }:
+		var msgs []string
+		for _, u := range e.Unwrap() {
+			msgs = append(msgs, tenantMessages(u)...)
+		}
+		return msgs
+	}
+	return nil
+}
+
 // retryRemedy is the sentence a refused retry of job ends with: the command
 // that starts the new job it needs, built from job's config rather than read
 // from its stored error message, which may predate the current CLI. A job
@@ -145,5 +238,6 @@ var ErrCatalogNotFound = errors.New("catalog not found for the tenant")
 
 // ErrEmptyTargetCatalog reports a job mapping a source catalog onto a target
 // catalog that has no control with a statement: nothing could be mapped onto
-// it, so the job fails before any analyzer spends LLM calls.
+// it, so the job fails before any analyzer spends LLM calls. Its errors are
+// tenantErrors: their text reaches the tenant.
 var ErrEmptyTargetCatalog = errors.New("target catalog has no control with a statement")

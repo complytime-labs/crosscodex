@@ -418,8 +418,10 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 		job := retryFromFailure(jobID)
 		Expect(job.Status).To(Equal(JobStatusFailed))
 		Expect(job.ErrorClass).To(Equal(JobErrorAttestationInvalid))
-		Expect(job.ErrorMessage).To(ContainSubstring(`analyzer "classify" completed in an earlier run`))
-		Expect(job.ErrorMessage).To(ContainSubstring("has no stored checkpoint"))
+		// The detail is the operator's: the stored message withholds it.
+		Expect(job.ErrorMessage).To(HavePrefix("job " + job.JobID + " failed because of an internal error (error class attestation_invalid), " +
+			"which a retry from its failure cannot fix. Start a new job: crosscodex run start "))
+		Expect(job.ErrorMessage).NotTo(ContainSubstring("checkpoint"))
 		Expect(rowsOf(jobID)).To(Equal(before))
 	})
 })

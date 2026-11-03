@@ -316,8 +316,16 @@ func localJobToProto(job *pipeline.Job, stages []*pipeline.Stage) *pb.PipelineJo
 		completionPct = float32(completedSteps) / float32(totalSteps) * 100.0
 	}
 
+	// The recorded message is written for the tenant, as pipeline's
+	// jobToProto returns it.
+	var jobErr *pb.Error
+	if job.ErrorMessage != "" {
+		jobErr = &pb.Error{Message: job.ErrorMessage}
+	}
+
 	return &pb.PipelineJob{
 		JobId:  job.JobID,
+		Error:  jobErr,
 		Status: localJobStatusToProto(job.Status),
 		Config: &cfg,
 		Audit: &pb.AuditMetadata{

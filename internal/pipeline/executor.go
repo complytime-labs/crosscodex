@@ -81,39 +81,42 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 		attribute.String("tenant.id", tenantID),
 	)
 
+	// job is nil until it is loaded; a failure names its catalogs from it.
+	var job *Job
 	defer func() {
 		if r := recover(); r != nil {
 			// A panic in this detached goroutine would otherwise crash the
 			// whole daemon and leave the job in 'running', crash-looping on
-			// every resume. Recover, mark the job failed, and stay up.
-			failCtx := ctx
-			if tctx, terr := tenant.WithTenant(context.Background(), tenantID); terr == nil {
+			// every resume. Recover, mark the job failed, and stay up. The
+			// writes keep the job's trace but not its cancellation.
+			failCtx := context.WithoutCancel(ctx)
+			if tctx, terr := tenant.WithTenant(failCtx, tenantID); terr == nil {
 				failCtx = tctx
 			}
 			s.logger.ErrorContext(failCtx, "recovered from panic during job execution",
 				"job_id", jobID, "panic", r, "stack", string(debug.Stack()))
 			span.RecordError(fmt.Errorf("panic during job execution: %v", r))
 			span.SetStatus(codes.Error, "panic during job execution")
-			s.failJob(failCtx, tenantID, jobID, fmt.Errorf("panic during job execution: %v", r))
+			s.failJob(failCtx, tenantID, jobID, job, fmt.Errorf("panic during job execution: %v", r))
 		}
 	}()
 
 	// Set tenant in context for downstream RLS.
 	ctx, err := tenant.WithTenant(ctx, tenantID)
 	if err != nil {
-		s.failJob(ctx, tenantID, jobID, fmt.Errorf("setting tenant context: %w", err))
+		s.failJob(ctx, tenantID, jobID, nil, fmt.Errorf("setting tenant context: %w", err))
 		return
 	}
 
 	// Phase 1: Load job and update to running.
-	job, err := s.store.GetJob(ctx, jobID)
+	job, err = s.store.GetJob(ctx, jobID)
 	if err != nil {
-		s.failJob(ctx, tenantID, jobID, fmt.Errorf("loading job: %w", err))
+		s.failJob(ctx, tenantID, jobID, nil, fmt.Errorf("loading job: %w", err))
 		return
 	}
 
 	if err := s.store.UpdateJobStatus(ctx, jobID, JobStatusRunning, nil); err != nil {
-		s.failJob(ctx, tenantID, jobID, fmt.Errorf("updating job status: %w", err))
+		s.failJob(ctx, tenantID, jobID, job, fmt.Errorf("updating job status: %w", err))
 		return
 	}
 	if err := s.publishJobState(ctx, tenantID, jobID, JobStatusRunning); err != nil {
@@ -123,7 +126,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 	// Load existing stages (for resume).
 	stages, err := s.store.GetStages(ctx, jobID)
 	if err != nil {
-		s.failJob(ctx, tenantID, jobID, fmt.Errorf("loading stages: %w", err))
+		s.failJob(ctx, tenantID, jobID, job, fmt.Errorf("loading stages: %w", err))
 		return
 	}
 	completed := completedStageSet(stages)
@@ -146,7 +149,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 				s.interruptJob(ctx, tenantID, jobID)
 				return
 			}
-			s.failJob(ctx, tenantID, jobID, err)
+			s.failJob(ctx, tenantID, jobID, job, err)
 			return
 		}
 	}
@@ -158,7 +161,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 				s.interruptJob(ctx, tenantID, jobID)
 				return
 			}
-			s.failJob(ctx, tenantID, jobID, err)
+			s.failJob(ctx, tenantID, jobID, job, err)
 			return
 		}
 	}
@@ -170,7 +173,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 				s.interruptJob(ctx, tenantID, jobID)
 				return
 			}
-			s.failJob(ctx, tenantID, jobID, err)
+			s.failJob(ctx, tenantID, jobID, job, err)
 			return
 		}
 	}
@@ -193,7 +196,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 			s.interruptJob(ctx, tenantID, jobID)
 			return
 		}
-		s.failJob(ctx, tenantID, jobID, err)
+		s.failJob(ctx, tenantID, jobID, job, err)
 		return
 	}
 
@@ -271,8 +274,8 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 
 	cats, ok := jobconfig.ExtractCatalogs(job.Config)
 	if !ok {
-		err := fmt.Errorf("job %s cannot run: %w. Analysis runs over imported catalogs; "+
-			"start a new analysis with \"%s\"", job.JobID, ErrMissingCatalogID, newJobCommand(job))
+		err := &tenantError{sentinel: ErrMissingCatalogID, message: fmt.Sprintf("job %s cannot run: %v. Analysis runs over imported catalogs; "+
+			"start a new analysis with \"%s\"", job.JobID, ErrMissingCatalogID, newJobCommand(job))}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return err
@@ -438,10 +441,10 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 			if cats.CrossCatalog() && catalogID == cats.TargetID {
 				side = "target"
 				if !slices.ContainsFunc(fetched, hasStatement) {
-					err := fmt.Errorf("job %s cannot run: target catalog %s has no control with a statement, "+
-						"so no source control can be mapped onto it: %w. Check its controls with \"crosscodex catalog inspect %s\", "+
-						"then start a new job with another target: %s",
-						job.JobID, catalogID, ErrEmptyTargetCatalog, catalogID, jobCommand(cats, cats.SourceID, "<catalog-id>"))
+					err := &tenantError{sentinel: ErrEmptyTargetCatalog, message: fmt.Sprintf("job %s cannot run: target catalog %s "+
+						"has no control with a statement, so no source control can be mapped onto it: %v. "+
+						"Check its controls with \"crosscodex catalog inspect %s\", then start a new job with another target: %s",
+						job.JobID, catalogID, ErrEmptyTargetCatalog, catalogID, jobCommand(cats, cats.SourceID, "<catalog-id>"))}
 					span.RecordError(err)
 					span.SetStatus(codes.Error, err.Error())
 					return err
@@ -574,7 +577,8 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 
 		genErr := s.candidateGen.Generate(ctx, tenantID, job.JobID, job.Config)
 		if genErr != nil {
-			if err := s.store.UpdateStageError(ctx, job.JobID, "candidate_generation", genErr); err != nil {
+			// genErr is returned to failJob, which logs it.
+			if err := s.store.UpdateStageError(ctx, job.JobID, "candidate_generation", tenantFailure(ctx, job.JobID, job, genErr)); err != nil {
 				s.logger.WarnContext(ctx, "failed to update candidate_generation stage to failed",
 					"job_id", job.JobID, "error", err)
 			}
@@ -760,7 +764,8 @@ func (s *Service) failPipelineStage(ctx context.Context, job *Job, stage string,
 	if ctx.Err() != nil {
 		return
 	}
-	if uerr := s.store.UpdateStageError(ctx, job.JobID, stage, err); uerr != nil {
+	// err is returned to failJob, which logs it.
+	if uerr := s.store.UpdateStageError(ctx, job.JobID, stage, tenantFailure(ctx, job.JobID, job, err)); uerr != nil {
 		s.logger.WarnContext(ctx, "failed to record the stage failure", "job_id", job.JobID, "stage", stage, "error", uerr)
 	}
 	s.publishStageEvent(ctx, job.TenantID, job.JobID, stage, natsbus.StageFailed)
@@ -873,13 +878,16 @@ func terminalWriteContext(ctx context.Context) (context.Context, context.CancelF
 
 // failJob updates status to failed, publishes state event, records metric.
 // A job whose context is already done did not fail on its own; it is handed
-// to interruptJob instead.
-func (s *Service) failJob(ctx context.Context, tenantID, jobID string, err error) {
+// to interruptJob instead. job is nil when it could not be loaded.
+func (s *Service) failJob(ctx context.Context, tenantID, jobID string, job *Job, err error) {
 	if ctx.Err() != nil {
 		s.interruptJob(ctx, tenantID, jobID)
 		return
 	}
 	s.logger.ErrorContext(ctx, "job failed", "job_id", jobID, "error", err)
+	// GetJob returns the recorded failure to the tenant, so it is recorded
+	// with the tenant's message; err, logged above, keeps the detail.
+	err = tenantFailure(ctx, jobID, job, err)
 
 	writeCtx, cancel := terminalWriteContext(ctx)
 	defer cancel()

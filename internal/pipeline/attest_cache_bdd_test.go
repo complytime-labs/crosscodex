@@ -239,9 +239,9 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 			j := rerun()
 			Expect(j.Status).To(Equal(pipeline.JobStatusFailed))
 			Expect(j.ErrorClass).To(Equal(pipeline.JobErrorAttestationInvalid))
-			Expect(j.ErrorMessage).To(ContainSubstring(want))
-			Expect(j.ErrorMessage).To(ContainSubstring(`analyzer "classify"`))
-			Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run start --source cat-1 --target cat-1"))
+			Expect(store.failureCause(attestCacheJob)).To(ContainSubstring(want))
+			Expect(store.failureCause(attestCacheJob)).To(ContainSubstring(`analyzer "classify"`))
+			Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("crosscodex run start --source cat-1 --target cat-1"))
 			Expect(objects.Objects()).NotTo(HaveKey("attestations/test-tenant/" + attestCacheJob + "/links/classify.json"))
 			after, err := cache.Manifest(ctx, attestCacheJob, "classify", attempt)
 			Expect(err).NotTo(HaveOccurred())
@@ -285,8 +285,8 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 		j := rerun()
 		Expect(j.Status).To(Equal(pipeline.JobStatusFailed))
 		Expect(j.ErrorClass).To(Equal(pipeline.JobErrorRetryable))
-		Expect(j.ErrorMessage).To(ContainSubstring("Check that the database is reachable"))
-		Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run retry --from-failure " + attestCacheJob))
+		Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("Check that the database is reachable"))
+		Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("crosscodex run retry --from-failure " + attestCacheJob))
 	})
 
 	It("fails a later run when the daemon no longer wires the result cache, saying how to fix it", func() {
@@ -294,9 +294,9 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 		wired = false
 		j := rerun()
 		Expect(j.Status).To(Equal(pipeline.JobStatusFailed))
-		Expect(j.ErrorMessage).To(ContainSubstring("configure analysis.result_cache and restart crosscodexd"))
-		Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run retry --from-failure " + attestCacheJob))
-		Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run start --source cat-1 --target cat-1"))
+		Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("configure analysis.result_cache and restart crosscodexd"))
+		Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("crosscodex run retry --from-failure " + attestCacheJob))
+		Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("crosscodex run start --source cat-1 --target cat-1"))
 	})
 
 	It("fails a later run as retryable when the earlier analyzer's checkpoint cannot be read", func() {
@@ -305,8 +305,8 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 		j := rerun()
 		Expect(j.Status).To(Equal(pipeline.JobStatusFailed))
 		Expect(j.ErrorClass).To(Equal(pipeline.JobErrorRetryable))
-		Expect(j.ErrorMessage).To(ContainSubstring("Check that object storage"))
-		Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run retry --from-failure " + attestCacheJob))
+		Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("Check that object storage"))
+		Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("crosscodex run retry --from-failure " + attestCacheJob))
 	})
 })
 

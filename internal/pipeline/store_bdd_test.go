@@ -59,6 +59,10 @@ type fakeStore struct {
 
 	analysisResults map[string]map[string][]byte                      // jobID -> analyzerName -> resultData
 	voteSummaries   map[string]map[[3]string]pipeline.VoteSummaryPair // jobID -> (sourceID, targetID, contributionType) -> row
+
+	// failures records each job's last failure error as UpdateJobStatus
+	// received it; see failureCause.
+	failures map[string]error
 }
 
 func newFakeStore() *fakeStore {
@@ -67,7 +71,19 @@ func newFakeStore() *fakeStore {
 		stages:          make(map[string][]*pipeline.Stage),
 		analysisResults: make(map[string]map[string][]byte),
 		voteSummaries:   make(map[string]map[[3]string]pipeline.VoteSummaryPair),
+		failures:        make(map[string]error),
 	}
+}
+
+// failureCause returns the error job jobID failed with: the one failJob
+// logs in full. The job's ErrorMessage is the tenant's message instead,
+// and the error failJob records unwraps to the cause.
+func (f *fakeStore) failureCause(jobID string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cause := errors.Unwrap(f.failures[jobID])
+	Expect(cause).NotTo(BeNil(), "job %s failed through failJob", jobID)
+	return cause.Error()
 }
 
 var _ pipeline.Store = (*fakeStore)(nil)
@@ -180,6 +196,7 @@ func (f *fakeStore) UpdateJobStatus(ctx context.Context, jobID string, status pi
 	job.ErrorMessage = ""
 	if jobErr != nil {
 		job.ErrorMessage = jobErr.Error()
+		f.failures[jobID] = jobErr
 	}
 	job.ErrorClass = pipeline.ClassifyJobError(jobErr)
 	return nil

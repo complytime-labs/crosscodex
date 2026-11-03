@@ -16,6 +16,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -657,6 +658,174 @@ var _ = Describe("Service", func() {
 
 			_, err := svc.GetJob(ctx, connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
+		})
+
+		DescribeTable("returns the job's recorded error message, or no error when there is none",
+			func(status pipeline.JobStatus, jobErr error, want *pb.Error) {
+				now := time.Now()
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID: "job-err", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+					Config: []byte(`{}`), CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+				})).To(Succeed())
+				Expect(store.UpdateJobStatus(ctx, "job-err", status, jobErr)).To(Succeed())
+
+				resp, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-err"}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(proto.Equal(resp.Msg.GetJob().GetError(), want)).To(BeTrue(), "error: %v", resp.Msg.GetJob().GetError())
+
+				list, err := svc.ListJobs(ctx, connect.NewRequest(&pb.ListJobsRequest{}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(list.Msg.GetJobs()).To(HaveLen(1))
+				Expect(proto.Equal(list.Msg.GetJobs()[0].GetError(), want)).To(BeTrue(), "listed error: %v", list.Msg.GetJobs()[0].GetError())
+			},
+			Entry("a failed job", pipeline.JobStatusFailed, errors.New("job job-err failed: try again"),
+				&pb.Error{Message: "job job-err failed: try again"}),
+			Entry("a running job", pipeline.JobStatusRunning, nil, nil),
+		)
+	})
+
+	// failJob records a message written for the tenant, because GetJob
+	// returns it: the error a phase failed with may carry driver, storage
+	// or panic text (CWE-209). The full error is logged once instead.
+	Describe("recording a job's failure", func() {
+		const jobID = "job-failed"
+		var (
+			failing *pipeline.Service
+			logs    *gbytes.Buffer
+		)
+		// Each class's remedy, as the generic message ends with it, for the
+		// job's config {"catalog_id":"cat-1"}.
+		const (
+			bothRetries = `Resume it with "crosscodex run retry --from-failure job-failed", which keeps its completed stages, ` +
+				"or start a new job: crosscodex run start --source cat-1 --target cat-1."
+			newJob     = "which a retry from its failure cannot fix. Start a new job: crosscodex run start --source cat-1 --target cat-1."
+			noCacheJob = "which a retry from its failure cannot fix. Start a new job with --no-cache, which recomputes and replaces " +
+				"the cached results: crosscodex run start --source cat-1 --target cat-1 --no-cache."
+			anotherTarget = "which a retry from its failure cannot fix. Importing the target again with control statements gives it " +
+				"a new catalog ID, so start a new job with that catalog or another target: crosscodex run start --source cat-1 --target <catalog-id>."
+		)
+		// generic is the message recorded for a failure of class whose text
+		// is not shown to the tenant, ending with remedy; ctx carries no
+		// trace, so the job ID is the reference.
+		generic := func(class, remedy string) string {
+			head := "job " + jobID + " failed because of an internal error (error class " + class + ")"
+			if remedy == bothRetries {
+				head += "."
+			} else {
+				head += ","
+			}
+			return head + " " + remedy + " If it fails again, give your operator job ID " + jobID +
+				" (tracing is off, so there is no trace ID)."
+		}
+		stageErr := func(name string, sentinel error) *analysis.StageError {
+			return &analysis.StageError{Analyzer: name, Sentinel: sentinel, Cause: errors.New("SECRET driver detail"),
+				Message: fmt.Sprintf("Stage %q stopped (error class x). Retry this job.", name)}
+		}
+		// fail fails the job through failJob, as the executor does once it
+		// has loaded the job.
+		fail := func(cause error) {
+			j, err := store.GetJob(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			failing.FailJob(ctx, "test-tenant", jobID, j, cause)
+		}
+		driverErr := errors.New(`SECRET pq: relation "job_stages" does not exist`)
+
+		BeforeEach(func() {
+			logs = gbytes.NewBuffer()
+			failing = pipeline.New(store, nil, registry, &fakeSynthesis{}, pipeline.Attestors{},
+				pipelineattestation.NewConverter(), &natsbustest.Fake{}, &storagetest.Fake{},
+				config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}, nil,
+				pipeline.WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+			DeferCleanup(func() { Expect(failing.Stop(context.Background())).To(Succeed()) })
+			now := time.Now()
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: jobID, TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+				Config: []byte(`{"catalog_id":"cat-1"}`), CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"classify", "synthesis", "graph"})).To(Succeed())
+			Expect(store.UpdateStageStatus(ctx, jobID, "classify", pipeline.StageStatusRunning)).To(Succeed())
+		})
+
+		DescribeTable("records the tenant's message on the job and its unfinished stage, and the class of the error",
+			func(cause error, want string) {
+				fail(cause)
+
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.Status).To(Equal(pipeline.JobStatusFailed))
+				Expect(j.ErrorMessage).To(Equal(want))
+				Expect(j.ErrorClass).To(Equal(pipeline.ClassifyJobError(cause)))
+				stages, err := store.GetStages(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stages[0].StageName).To(Equal("classify"))
+				Expect(stages[0].ErrorMessage).To(Equal("did not finish: the job failed: " + want))
+			},
+			Entry("a stage error: its message",
+				fmt.Errorf("engine.Execute (pre-candidate pass): %w", stageErr("classify", resultcache.ErrUnavailable)),
+				`Stage "classify" stopped (error class x). Retry this job.`),
+			Entry("stage errors joined by the analysis pass: each message",
+				fmt.Errorf("%w: %w", errors.New("analysis failed: 2 analyzers failed: [classify embedding]"),
+					errors.Join(stageErr("classify", resultcache.ErrCorrupt), stageErr("embedding", resultcache.ErrUnavailable))),
+				`Stage "classify" stopped (error class x). Retry this job. Stage "embedding" stopped (error class x). Retry this job.`),
+			Entry("changed analyzers, as the executor builds them: that text alone",
+				fmt.Errorf("checking: %w", pipeline.NewTenantError(pipeline.ErrAnalyzersChanged, "job job-failed cannot run: the analyzers changed.")),
+				"job job-failed cannot run: the analyzers changed."),
+			Entry("a missing catalog, as the executor builds it: that text alone",
+				fmt.Errorf("candidate generation failed: %w", pipeline.NewTenantError(pipeline.ErrMissingCatalogID, "job job-failed names no catalog.")),
+				"job job-failed names no catalog."),
+			Entry("an empty target catalog, as the executor builds it, joined with a driver error: that text alone",
+				errors.Join(pipeline.NewTenantError(pipeline.ErrEmptyTargetCatalog, "target cat-2 is empty."), driverErr),
+				"target cat-2 is empty."),
+			Entry("a database error: the generic message with both retries",
+				fmt.Errorf("loading stages: %w", driverErr), generic("retryable", bothRetries)),
+			Entry("a panic: the generic message with both retries",
+				fmt.Errorf("panic during job execution: %v", "SECRET runtime error: index out of range [3]"),
+				generic("retryable", bothRetries)),
+			Entry("an unreadable cache outside a stage error: the generic message with both retries",
+				fmt.Errorf("reading: %w: %w", resultcache.ErrUnavailable, errors.New("SECRET dial tcp 10.0.0.5:5432")),
+				generic("result_cache_unavailable", bothRetries)),
+			Entry("a failed model probe outside a stage error: the generic message with both retries",
+				fmt.Errorf("%w: %w", pipeline.ErrLLMUnavailable, errors.New("SECRET 401 from http://gateway.internal")),
+				generic("llm_unavailable", bothRetries)),
+			Entry("an attestation that does not verify, wrapping a storage error: the generic message with a new job",
+				fmt.Errorf("job %s: its attestation link does not verify: %w: %w. Start a new job",
+					jobID, errors.New("SECRET open /var/lib/crosscodex/objects/x: permission denied"), pipeline.ErrAttestationInvalid),
+				generic("attestation_invalid", newJob)),
+			Entry("a corrupt cache checkpoint outside a stage error: the generic message with a --no-cache job",
+				fmt.Errorf("%w: the cache checkpoint at %q does not verify under the trusted key: %w",
+					resultcache.ErrCorrupt, "SECRET-key", errors.New("bad signature")),
+				generic("result_cache_corrupt", noCacheJob)),
+			Entry("changed analyzers wrapped with a driver error: the generic message with a new job",
+				fmt.Errorf("%w: %w", pipeline.ErrAnalyzersChanged, driverErr), generic("analyzers_changed", newJob)),
+			Entry("a missing catalog wrapped with a driver error: the generic message with a new job",
+				fmt.Errorf("%w: %w", driverErr, pipeline.ErrMissingCatalogID), generic("missing_catalog", newJob)),
+			Entry("an empty target catalog joined with a driver error: the generic message with another target",
+				errors.Join(pipeline.ErrEmptyTargetCatalog, driverErr), generic("empty_target_catalog", anotherTarget)),
+		)
+
+		It("names placeholder catalogs in the new-job command when the job could not be loaded", func() {
+			failing.FailJob(ctx, "test-tenant", jobID, nil, fmt.Errorf("loading job: %w", driverErr))
+
+			j, err := store.GetJob(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(j.ErrorMessage).To(ContainSubstring(
+				"or start a new job: crosscodex run start --source <source-catalog-id> --target <target-catalog-id>. "))
+			Expect(j.ErrorMessage).NotTo(ContainSubstring("SECRET"))
+		})
+
+		// Safety mechanism (CWE-209): the internal text is withheld from
+		// GetJob and kept, once, in the daemon's log.
+		It("returns no internal error text from GetJob, and logs the full error once", func() {
+			fail(fmt.Errorf("loading job: %w", errors.New(`SECRET pq: password authentication failed for user "app"`)))
+
+			resp, err := failing.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: jobID}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetJob().GetError().GetMessage()).To(Equal(generic("retryable", bothRetries)))
+			raw, err := protojson.Marshal(resp.Msg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(raw)).NotTo(ContainSubstring("SECRET"))
+			Expect(strings.Count(string(logs.Contents()), "SECRET")).To(Equal(1))
+			Expect(string(logs.Contents())).To(ContainSubstring(`msg="job failed" job_id=job-failed error="loading job: SECRET pq`))
 		})
 	})
 
@@ -1323,7 +1492,8 @@ var _ = Describe("Service", func() {
 				Expect(err).To(MatchError(And(
 					ContainSubstring("cannot retry job job-permanent from its failure: "+want),
 					ContainSubstring(recordedFailureLabel+failure.Error()),
-					HaveSuffix(remedy))))
+					WithTransform(func(msg string) string { return strings.TrimSuffix(msg, ".") }, HaveSuffix(remedy)),
+					WithTransform(func(msg string) int { return strings.Count(msg+".", remedy+".") }, Equal(1)))))
 
 				j, err := store.GetJob(ctx, "job-permanent")
 				Expect(err).NotTo(HaveOccurred())
@@ -1349,6 +1519,43 @@ var _ = Describe("Service", func() {
 				"Start a new job with --no-cache, which recomputes and replaces the cached results: "+
 					"crosscodex run start --source test-catalog --target test-catalog --no-cache"),
 		)
+
+		It("names the remedy once when the recorded failure already names it", func() {
+			now := time.Now()
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
+			job := &pipeline.Job{
+				JobID: "job-generic", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			}
+			Expect(store.CreateJob(ctx, job)).To(Succeed())
+			Expect(store.CreateStages(ctx, "job-generic", []string{"classify", "synthesis", "graph"})).To(Succeed())
+			svc.FailJob(ctx, "test-tenant", "job-generic", job, fmt.Errorf("%w: %w", pipeline.ErrAttestationInvalid, errors.New("SECRET")))
+			const remedy = "Start a new job: crosscodex run start --source test-catalog --target test-catalog"
+
+			_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-generic", RetryFromFailure: true}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err).To(MatchError(And(
+				ContainSubstring(recordedFailureLabel+"job job-generic failed because of an internal error (error class attestation_invalid)"),
+				WithTransform(func(msg string) int { return strings.Count(msg+".", remedy+".") }, Equal(1)),
+				HaveSuffix("."))))
+		})
+
+		It("quotes a recorded failure that ends in a period without doubling it", func() {
+			now := time.Now()
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "test-catalog"})
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-period", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, "job-period", []string{"classify", "synthesis", "graph"})).To(Succeed())
+			Expect(store.UpdateJobStatus(ctx, "job-period", pipeline.JobStatusFailed,
+				fmt.Errorf("job job-period failed (%w).", pipeline.ErrAttestationInvalid))).To(Succeed())
+
+			_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-period", RetryFromFailure: true}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err).To(MatchError(ContainSubstring(recordedFailureLabel + "job job-period failed (" +
+				pipeline.ErrAttestationInvalid.Error() + "). Start a new job: ")))
+		})
 
 		It("accepts a retry from the failure of a job whose catalog was not found", func() {
 			now := time.Now()
@@ -1388,7 +1595,8 @@ var _ = Describe("Service", func() {
 				Expect(err).To(MatchError(And(
 					ContainSubstring("cannot retry job job-recorded from its failure: the enabled analyzers changed"),
 					ContainSubstring(recordedFailureLabel+failure.Error()),
-					HaveSuffix(remedy))))
+					WithTransform(func(msg string) string { return strings.TrimSuffix(msg, ".") }, HaveSuffix(remedy)),
+					WithTransform(func(msg string) int { return strings.Count(msg+".", remedy+".") }, Equal(1)))))
 
 				j, err := store.GetJob(ctx, "job-recorded")
 				Expect(err).NotTo(HaveOccurred())
@@ -1407,6 +1615,10 @@ var _ = Describe("Service", func() {
 				`{"catalog_id":"cat-a","target_catalog_id":"cat-a","no_cache":true}`,
 				"Start a new job with the analyzers enabled now: crosscodex run start --source cat-a --target cat-a --no-cache",
 				"Start a new job: crosscodex run start --source cat-a --target cat-a --no-cache"),
+			Entry("a failure recorded with a command that extends the current one, which is not the current one",
+				`{"catalog_id":"cat-a"}`,
+				"Start a new job: crosscodex run start --source cat-a --target cat-a --no-cache",
+				"Start a new job: crosscodex run start --source cat-a --target cat-a"),
 		)
 
 		It("refuses to retry as a new job a job whose cached result failed its integrity check, writing no job", func() {

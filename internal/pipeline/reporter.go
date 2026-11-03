@@ -138,7 +138,12 @@ func (r *DBStageReporter) ReportStageFailed(ctx context.Context, analyzerName, j
 		return nil
 	}
 
-	if updateErr := r.store.UpdateStageError(ctx, jobID, analyzerName, stageErr); updateErr != nil {
+	// The stage's error reaches the tenant through GetJob, so it is
+	// recorded as tenantFailure writes it; the NATS reporter, given
+	// stageErr itself, logs it in full. The reporter has no job, so the
+	// message's new-job command names placeholder catalogs; the job's own
+	// error names its catalogs.
+	if updateErr := r.store.UpdateStageError(ctx, jobID, analyzerName, tenantFailure(ctx, jobID, nil, stageErr)); updateErr != nil {
 		r.logger.WarnContext(ctx, "failed to update stage error in DB",
 			"analyzer", analyzerName, "job_id", jobID, "error", updateErr)
 	}

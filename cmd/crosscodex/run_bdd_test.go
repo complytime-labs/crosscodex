@@ -317,6 +317,48 @@ var _ = Describe("run status", func() {
 		Expect(runStatus(job)).To(ContainSubstring("Stages: 1 of 4 completed, 1 failed, 1 cancelled\n"))
 	})
 
+	It("shows why a failed job failed, in text and in JSON", func() {
+		const msg = `job job-1 failed because of an internal error (error class retryable). Retry it with "crosscodex run retry job-1"; ` +
+			"if it fails again, give your operator trace ID 0af7651916cd43dd8448eb211c80319c."
+		job := jobWithStages("classify", "synthesis", "graph")
+		job.Status = pb.JobStatus_JOB_STATUS_FAILED
+		job.Error = &pb.Error{Message: msg}
+		Expect(runStatus(job)).To(ContainSubstring("Error: " + msg + "\n"))
+
+		var got map[string]any
+		Expect(json.Unmarshal([]byte(runStatus(job, "--json")), &got)).To(Succeed())
+		Expect(got).To(HaveKeyWithValue("error", HaveKeyWithValue("message", msg)))
+	})
+
+	// A job that failed before the daemon recorded tenant messages keeps
+	// its raw error, which may hold terminal escapes or many lines.
+	It("shows a job's error on one line, without control characters and bounded, in text and in JSON", func() {
+		job := jobWithStages("classify", "synthesis", "graph")
+		job.Status = pb.JobStatus_JOB_STATUS_FAILED
+		job.Error = &pb.Error{Message: "stopped\x1b]0;owned\x07\nfake line\r\n" + strings.Repeat("x", 5000)}
+
+		out := runStatus(job)
+		Expect(out).NotTo(ContainSubstring("\x1b"))
+		Expect(out).NotTo(ContainSubstring("\x07"))
+		Expect(out).NotTo(ContainSubstring("\nfake line"))
+		var line string
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, "Error: ") {
+				line = l
+			}
+		}
+		Expect(line).To(HavePrefix("Error: stopped"))
+		Expect(len(line)).To(BeNumerically("<=", len("Error: ")+2048))
+
+		var got map[string]any
+		Expect(json.Unmarshal([]byte(runStatus(job, "--json")), &got)).To(Succeed())
+		Expect(got).To(HaveKeyWithValue("error", HaveKeyWithValue("message", strings.TrimPrefix(line, "Error: "))))
+	})
+
+	It("prints no error line for a job without one", func() {
+		Expect(runStatus(jobWithStages("classify", "synthesis", "graph"))).NotTo(ContainSubstring("Error:"))
+	})
+
 	It("gives no note when the relationship analyzer ran", func() {
 		Expect(runStatus(jobWithStages("classify", "embedding", "candidate_generation", "relationship", "synthesis", "graph"))).
 			NotTo(ContainSubstring(noMappingsNote))

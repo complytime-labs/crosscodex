@@ -21,9 +21,15 @@ type Store interface {
 	CreateJob(ctx context.Context, job *Job) error
 	GetJob(ctx context.Context, jobID string) (*Job, error)
 	ListJobs(ctx context.Context, tenantID string, filter JobFilter) ([]*Job, int64, error)
+	// UpdateJobStatus records jobErr's text as the job's error_message,
+	// which GetJob and ListJobs return to the tenant: callers pass a
+	// tenantFailure.
 	UpdateJobStatus(ctx context.Context, jobID string, status JobStatus, jobErr error) error
 	CreateStages(ctx context.Context, jobID string, stageNames []string) error
 	UpdateStageStatus(ctx context.Context, jobID, stageName string, status StageStatus) error
+	// UpdateStageError records stageErr's text as the stage's error_message,
+	// which GetJob and ListJobs return to the tenant: callers pass a
+	// tenantFailure, or text built only from one.
 	UpdateStageError(ctx context.Context, jobID, stageName string, stageErr error) error
 	GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 	ResetStagesFrom(ctx context.Context, jobID, fromStage string, allStages []string) error

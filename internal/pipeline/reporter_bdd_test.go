@@ -245,7 +245,6 @@ var _ = Describe("DBStageReporter", func() {
 			stages, _ := store.GetStages(ctx, "job-1")
 			Expect(stages).To(HaveLen(1))
 			Expect(stages[0].Status).To(Equal(pipeline.StageStatusFailed))
-			Expect(stages[0].ErrorMessage).To(Equal("stage execution failed"))
 
 			// Check NATS reporter was called
 			natsReporter.mu.Lock()
@@ -274,6 +273,34 @@ var _ = Describe("DBStageReporter", func() {
 			},
 			Entry("cancelled by CancelJob", pipeline.ErrJobCancelled),
 			Entry("cancelled by a shutdown", errors.New("service stopping")),
+		)
+
+		// GetJob returns the stage's message to the tenant (CWE-209): an
+		// analyzer's raw error is withheld there. The NATS reporter, which
+		// logs it in full, still gets the error itself.
+		DescribeTable("records the tenant's message on the stage and publishes the error itself",
+			func(stageErr error, want string) {
+				Expect(reporter.ReportStageFailed(ctx, "analyzer-1", "job-1", stageErr)).To(Succeed())
+
+				stages, err := store.GetStages(ctx, "job-1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stages[0].ErrorMessage).To(Equal(want))
+				natsReporter.mu.Lock()
+				defer natsReporter.mu.Unlock()
+				Expect(natsReporter.failed).To(HaveLen(1))
+				Expect(natsReporter.failed[0].err).To(BeIdenticalTo(stageErr))
+			},
+			Entry("an analyzer's raw error: the generic message",
+				fmt.Errorf("analysis: analyzer %q GenerateWork failed: %w: %w", "analyzer-1", analysis.ErrAnalyzerFailed,
+					errors.New(`SECRET pq: relation "controls" does not exist`)),
+				`job job-1 failed because of an internal error (error class retryable). `+
+					`Resume it with "crosscodex run retry --from-failure job-1", which keeps its completed stages, `+
+					`or start a new job: crosscodex run start --source <source-catalog-id> --target <target-catalog-id>. `+
+					`If it fails again, give your operator job ID job-1 (tracing is off, so there is no trace ID).`),
+			Entry("a stage error: its message",
+				&analysis.StageError{Analyzer: "analyzer-1", Sentinel: pipeline.ErrLLMUnavailable,
+					Cause: errors.New("SECRET dial tcp"), Message: "Stage \"analyzer-1\" stopped."},
+				`Stage "analyzer-1" stopped.`),
 		)
 
 		It("logs DB failure but does not return error", func() {

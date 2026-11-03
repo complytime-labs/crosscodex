@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -409,11 +410,19 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 	// The stored error message is the job's record of its failure and is
 	// quoted unchanged. A command in it may predate the current CLI (a job
 	// that failed before target_catalog_id names no --target), so the
-	// refusal ends with a command built from the job's config instead.
+	// refusal ends with a command built from the job's config instead,
+	// unless the message already names that remedy.
 	if refusal := retryRefusal(job.ErrorClass); refusal != "" && req.Msg.RetryFromFailure {
+		remedy := retryRemedy(job)
+		tail := " " + remedy
+		// The remedy must end where the message's sentence does: a stored
+		// command that extends it (a flag more) is another command.
+		if strings.Contains(job.ErrorMessage, remedy+".") || strings.HasSuffix(job.ErrorMessage, remedy) {
+			tail = ""
+		}
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"cannot retry job %s from its failure: %s. It failed with (as recorded then; a command in it may predate this version): %s. %s",
-			job.JobID, refusal, job.ErrorMessage, retryRemedy(job)))
+			"cannot retry job %s from its failure: %s. It failed with (as recorded then; a command in it may predate this version): %s.%s",
+			job.JobID, refusal, strings.TrimSuffix(job.ErrorMessage, "."), tail))
 	}
 	if job.ErrorClass == JobErrorEmptyTargetCatalog && !req.Msg.RetryFromFailure {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
@@ -752,8 +761,15 @@ func jobToProto(job *Job, stages []*Stage) *pb.PipelineJob {
 		completionPercentage = float32(completedSteps) / float32(totalSteps) * 100.0
 	}
 
+	// The recorded message is written for the tenant (tenantJobMessage).
+	var jobErr *pb.Error
+	if job.ErrorMessage != "" {
+		jobErr = &pb.Error{Message: job.ErrorMessage}
+	}
+
 	return &pb.PipelineJob{
 		JobId:  job.JobID,
+		Error:  jobErr,
 		Status: jobStatusToProto(job.Status),
 		Config: &config,
 		Audit: &pb.AuditMetadata{

@@ -9,6 +9,7 @@ import (
 
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/spf13/cobra"
@@ -166,6 +167,12 @@ without one shows as not attested, or in progress while the job runs.`,
 
 			job := resp.Msg.GetJob()
 			catalogs := readJobCatalogs(cmd.Context(), state.client, job.GetConfig(), tenant)
+			// A job that failed before the daemon recorded tenant messages
+			// kept its raw error, so it is cleaned like other daemon text.
+			var jobErr map[string]any
+			if job.GetError() != nil {
+				jobErr = map[string]any{"message": intanalyzer.CleanDisplay(job.GetError().GetMessage(), maxJobErrorBytes)}
+			}
 
 			// The stages show which analyzers the daemon runs the job with:
 			// a disabled analyzer gets none. Mappings come only from the
@@ -190,8 +197,8 @@ without one shows as not attested, or in progress while the job runs.`,
 					if job.GetAudit() != nil && job.GetAudit().GetCreatedAt() != nil {
 						fmt.Fprintf(w, "Created: %s\n", job.GetAudit().GetCreatedAt().AsTime().Format("2006-01-02 15:04:05"))
 					}
-					if job.GetError() != nil {
-						fmt.Fprintf(w, "Error: %s\n", job.GetError().GetMessage())
+					if jobErr != nil {
+						fmt.Fprintf(w, "Error: %s\n", jobErr["message"])
 					}
 					if p := job.GetProgress(); p != nil {
 						fmt.Fprintf(w, "Stages: %d of %d completed, %d failed, %d cancelled\n",
@@ -214,7 +221,7 @@ without one shows as not attested, or in progress while the job runs.`,
 					"job_id":    job.GetJobId(),
 					"status":    job.GetStatus().String(),
 					"audit":     job.GetAudit(),
-					"error":     job.GetError(),
+					"error":     jobErr,
 					"progress":  job.GetProgress(),
 					"analyzers": analyzers,
 					"analysis":  catalogs.toJSON(),
