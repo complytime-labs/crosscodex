@@ -1,0 +1,22 @@
+internal/pipeline/service_bdd_test.go
+  s_9009ab9b9169f3::t_c3d484c6bf0dbc 1618-1621
+  s_9009ab9b9169f3::t_bfcb672c92096a 1496,1539,1599
+internal/pipeline/service_impl.go
+  s_9009ab9b9169f3::t_6d91fac8410788 418-420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82a7ab739eae48aabf2ef5f437315dd8e8ad435d",
+  "prompts": {},
+  "sessions": {
+    "s_9009ab9b9169f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02e88e28-2617-414e-a3a9-59ecbf645180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
