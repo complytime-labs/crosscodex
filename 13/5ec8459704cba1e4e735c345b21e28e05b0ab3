@@ -1,0 +1,19 @@
+internal/pipeline/candidate_registry.go
+  s_1a3538f012a0e0::t_1a44c2bbf576e9 54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "135ec8459704cba1e4e735c345b21e28e05b0ab3",
+  "prompts": {},
+  "sessions": {
+    "s_1a3538f012a0e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d60a29ce-38f5-43b7-9c59-b7f924786abf",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
