@@ -58,10 +58,9 @@ var _ = Describe("Embedding LLM Integration", func() {
 			MaxChars:  2000,
 			BatchSize: 10,
 		}
-		relCfg := config.RelationshipConfig{TopK: 5}
 
 		// Use nil vectordb — GenerateWork does not call it.
-		a := embedding.New(client, nil, store, embCfg, relCfg)
+		a := embedding.New(client, nil, store, embCfg)
 
 		controls := []*pb.Control{
 			{

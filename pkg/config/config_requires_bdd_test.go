@@ -20,7 +20,7 @@ var _ = Describe("Candidate Configuration", func() {
 			entry := config.CandidateGeneratorEntry{
 				Name:    "semantic",
 				Enabled: true,
-				Weight:  1.5,
+				Weight:  0.5,
 				Config: map[string]interface{}{
 					"top_k": 10,
 				},
@@ -28,7 +28,7 @@ var _ = Describe("Candidate Configuration", func() {
 
 			Expect(entry.Name).To(Equal("semantic"))
 			Expect(entry.Enabled).To(BeTrue())
-			Expect(entry.Weight).To(Equal(1.5))
+			Expect(entry.Weight).To(Equal(0.5))
 			Expect(entry.Config["top_k"]).To(Equal(10))
 		})
 	})
@@ -133,6 +133,7 @@ var _ = Describe("Requires Configuration", func() {
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring(field))
 				Expect(err.Error()).To(ContainSubstring(msg))
+				expectOnlyFieldError(err, field)
 			},
 			Entry("consensus threshold below range", func(c *config.RequiresConfig) { c.ConsensusThreshold = 0.4 }, "analysis.requires.consensus_threshold", "must be in range [0.5, 1.0]"),
 			Entry("consensus threshold above range", func(c *config.RequiresConfig) { c.ConsensusThreshold = 1.1 }, "analysis.requires.consensus_threshold", "must be in range [0.5, 1.0]"),

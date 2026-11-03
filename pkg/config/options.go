@@ -9,6 +9,9 @@ type loaderOptions struct {
 	profile    string
 	projectDir string
 	overrides  map[string]string
+
+	// userConfigContent, when non-nil, replaces the user config file.
+	userConfigContent []byte
 }
 
 // WithConfigPath overrides all file-based config with a single path.
@@ -45,5 +48,21 @@ func WithProjectDir(dir string) Option {
 func WithOverrides(overrides map[string]string) Option {
 	return func(o *loaderOptions) {
 		o.overrides = overrides
+	}
+}
+
+// WithUserConfigContent makes Load read data as the user config file
+// (layer 4, $XDG_CONFIG_HOME/crosscodex/config.yaml) instead of reading that
+// file, which need not exist. Errors still name the user config path, at
+// data's line numbers. Empty (non-nil) data is an empty user config; nil
+// data has no effect. It also has no effect with WithConfigPath, which skips
+// layer 4.
+//
+// It has no config field: it exists so `crosscodex config set` can check
+// that an edited user config loads, with every other layer in place, before
+// writing it.
+func WithUserConfigContent(data []byte) Option {
+	return func(o *loaderOptions) {
+		o.userConfigContent = data
 	}
 }

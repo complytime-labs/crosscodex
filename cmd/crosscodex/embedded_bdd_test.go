@@ -193,8 +193,9 @@ var _ = Describe("gateway.PoolAdminBackend", func() {
 var _ gateway.IngestionBackend = (*backend.PassthroughIngestion)(nil)
 var _ gateway.PipelineBackend = (*localPipelineBackend)(nil)
 
-// capturingJobStore records the job passed to CreateJob; every other
-// pipeline.Store method is unused here and panics through the nil embed.
+// capturingJobStore records the job passed to CreateJob, so a spec can prove
+// none was stored; every other pipeline.Store method is unused here and
+// panics through the nil embed.
 type capturingJobStore struct {
 	pipeline.Store
 	created *pipeline.Job
@@ -206,23 +207,71 @@ func (s *capturingJobStore) CreateJob(_ context.Context, job *pipeline.Job) erro
 }
 
 var _ = Describe("localPipelineBackend.CreateJob", func() {
-	DescribeTable("records the job's creator",
-		func(user, wantCreator string) {
+	// Safety mechanism: embedded mode has no executor, so a stored job would
+	// stay PENDING forever (#212).
+	It("refuses with an actionable FailedPrecondition and stores no job", func() {
+		ctx, err := tenant.WithTenant(context.Background(), "embedded")
+		Expect(err).NotTo(HaveOccurred())
+		ctx = tenant.WithUser(ctx, "alice@example.com")
+		store := &capturingJobStore{}
+		b := &localPipelineBackend{store: store}
+
+		_, err = b.CreateJob(ctx, connectrpc.NewRequest(&pb.CreateJobRequest{
+			JobType: pb.JobType_JOB_TYPE_FULL_ANALYSIS,
+			Config:  &pb.JobConfig{CatalogId: "cat-1"},
+		}))
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
+		Expect(err.Error()).To(ContainSubstring("crosscodexd"))
+		Expect(err.Error()).To(ContainSubstring("cli.endpoint"))
+		Expect(store.created).To(BeNil())
+	})
+})
+
+// cancelRecordingStore panics on every pipeline.Store method through the
+// nil embed except UpdateJobStatus, which it records.
+type cancelRecordingStore struct {
+	pipeline.Store
+	updates []pipeline.JobStatus
+}
+
+func (s *cancelRecordingStore) UpdateJobStatus(_ context.Context, _ string, status pipeline.JobStatus, _ error) error {
+	s.updates = append(s.updates, status)
+	return nil
+}
+
+var _ = Describe("localPipelineBackend.CancelJob", func() {
+	// Embedded mode runs no job: a job that is still running is a daemon's,
+	// which goes on executing whatever the database says. Writing CANCELLED
+	// here would leave a daemon writing to a job recorded as cancelled.
+	It("refuses with an actionable FailedPrecondition and writes nothing", func() {
+		ctx, err := tenant.WithTenant(context.Background(), "embedded")
+		Expect(err).NotTo(HaveOccurred())
+		store := &cancelRecordingStore{}
+		b := &localPipelineBackend{store: store}
+
+		_, err = b.CancelJob(ctx, connectrpc.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
+		Expect(err.Error()).To(And(ContainSubstring("crosscodexd"), ContainSubstring("cli.endpoint")))
+		Expect(store.updates).To(BeEmpty())
+	})
+})
+
+var _ = Describe("localPipelineBackend.RetryJob", func() {
+	// A retried job would stay running forever, as a created one would stay
+	// pending: embedded mode has no executor. The store is never touched
+	// (its nil embed would panic).
+	DescribeTable("refuses with an actionable FailedPrecondition and changes no job",
+		func(fromFailure bool) {
 			ctx, err := tenant.WithTenant(context.Background(), "embedded")
 			Expect(err).NotTo(HaveOccurred())
-			if user != "" {
-				ctx = tenant.WithUser(ctx, user)
-			}
-			store := &capturingJobStore{}
-			b := &localPipelineBackend{store: store}
+			b := &localPipelineBackend{store: &capturingJobStore{}}
 
-			_, err = b.CreateJob(ctx, connectrpc.NewRequest(&pb.CreateJobRequest{Config: &pb.JobConfig{}}))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(store.created).NotTo(BeNil())
-			Expect(store.created.CreatedBy).To(Equal(wantCreator))
+			_, err = b.RetryJob(ctx, connectrpc.NewRequest(&pb.RetryJobRequest{JobId: "job-1", RetryFromFailure: fromFailure}))
+			Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
+			Expect(err.Error()).To(And(ContainSubstring("crosscodexd"), ContainSubstring("cli.endpoint")))
 		},
-		Entry("as the calling user when the context carries one", "alice@example.com", "alice@example.com"),
-		Entry("as the tenant for a system call without a user", "", "embedded"),
+		Entry("from its failure", true),
+		Entry("as a new job", false),
 	)
 })
 
@@ -267,5 +316,19 @@ var _ = Describe("startEmbeddedDaemon telemetry initialization", func() {
 		Expect(filepath.Join(stateDir, "pki")).NotTo(BeADirectory(),
 			"an invalid observability config must stop startup before PKI bootstrap")
 		Expect(otel.GetTextMapPropagator().Fields()).To(BeEmpty())
+	})
+})
+
+var _ = Describe("localJobToProto", func() {
+	It("counts completed, failed and cancelled stages apart", func() {
+		stages := []*pipeline.Stage{
+			{StageName: "classify", Status: pipeline.StageStatusCompleted},
+			{StageName: "embedding", Status: pipeline.StageStatusFailed},
+			{StageName: "synthesis", Status: pipeline.StageStatusCancelled},
+			{StageName: "graph", Status: pipeline.StageStatusPending},
+		}
+		p := localJobToProto(&pipeline.Job{JobID: "job-1"}, stages).GetProgress()
+		Expect([]int32{p.GetTotalSteps(), p.GetCompletedSteps(), p.GetFailedSteps(), p.GetCancelledSteps()}).
+			To(Equal([]int32{4, 1, 1, 1}))
 	})
 })

@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
@@ -12,37 +16,29 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
-// ErrNotACatalogJob indicates a job's config has no catalog_id (created from
-// document_content or document_uri instead) — candidate generation is a
-// legitimate no-op for such jobs, not an error. Callers treat this as "skip
-// candidate generation, proceed to the next pass."
-var ErrNotACatalogJob = errors.New("job is not catalog-backed")
+// ErrMissingCatalogID indicates a job's stored config has no catalog_id.
+// CreateJob refuses such configs, so the row predates import-only analysis
+// or was written outside CreateJob. The job fails instead of analysing zero
+// controls.
+var ErrMissingCatalogID = errors.New("job config has no catalog_id")
 
 // ErrInsufficientEmbeddingCoverage indicates fewer of the job's controls have
 // an embeddings row than CandidateConfig.MinEmbeddingCoverage requires. This
 // fails the stage loudly rather than silently producing near-empty candidates.
 var ErrInsufficientEmbeddingCoverage = errors.New("insufficient embedding coverage for candidate generation")
 
-// ExtractCatalogID reads catalog_id from a job's raw JSON config. jobConfig is
-// the same []byte the executor unmarshals into a generic map: pb.JobConfig has
-// no json struct tags, so encoding/json marshals the catalog_id oneof variant
-// under the literal Go field names jobConfig["Source"]["CatalogId"]. Returns
-// ok=false (not an error) for document_content/document_uri jobs and for
-// malformed or empty config.
+// ExtractCatalogID reads catalog_id from a job's raw JSON config: the
+// pb.JobConfig that CreateJob stored with encoding/json, which writes the
+// generated json tag "catalog_id". Returns ok=false when the config is
+// malformed or has no non-empty string catalog_id.
 func ExtractCatalogID(jobConfig []byte) (catalogID string, ok bool) {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(jobConfig, &raw); err != nil {
+	var cfg struct {
+		CatalogID string `json:"catalog_id"`
+	}
+	if err := json.Unmarshal(jobConfig, &cfg); err != nil || cfg.CatalogID == "" {
 		return "", false
 	}
-	source, ok := raw["Source"].(map[string]interface{})
-	if !ok {
-		return "", false
-	}
-	id, ok := source["CatalogId"].(string)
-	if !ok || id == "" {
-		return "", false
-	}
-	return id, true
+	return cfg.CatalogID, true
 }
 
 // ControlsReader reads a catalog's non-section controls, enriched with
@@ -66,8 +62,8 @@ type CandidateWriter interface {
 	WriteRelationship(ctx context.Context, tenantID, jobID string, pairs []relationship.CandidatePair, provenance map[string][]byte) error
 }
 
-// CandidateGenerator orchestrates candidate generation for a catalog-backed
-// job: it reads the job's controls (enriched with classify results) and the
+// CandidateGenerator orchestrates candidate generation for a job's catalog:
+// it reads the job's controls (enriched with classify results) and the
 // catalog's embeddings, verifies embedding coverage, runs the candidate
 // registry, and persists results for both the requires and relationship
 // analyzers.
@@ -95,12 +91,12 @@ func NewCandidateGenerator(controls ControlsReader, embeddings EmbeddingsReader,
 }
 
 // Generate runs candidate generation for a single job. It returns
-// ErrNotACatalogJob when the job has no catalog_id (a legitimate skip) and
+// ErrMissingCatalogID when the job config has no catalog_id and
 // ErrInsufficientEmbeddingCoverage when too few controls are embedded.
 func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID string, jobConfig []byte) error {
 	catalogID, ok := ExtractCatalogID(jobConfig)
 	if !ok {
-		return ErrNotACatalogJob
+		return fmt.Errorf("candidate generation: %w", ErrMissingCatalogID)
 	}
 
 	controlData, err := g.controls.ControlData(ctx, tenantID, catalogID, jobID)
@@ -108,13 +104,32 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 		return fmt.Errorf("candidate generation: reading controls: %w", err)
 	}
 
+	// A control with no statement has no requirement text to compare: a pair
+	// containing it would fail the pair stages (they refuse blank prompts),
+	// and its embedding (the ancestor title only, if any) says nothing about
+	// the control. Leaving it out keeps it from becoming a candidate and from
+	// understating embedding coverage.
+	withText := make(map[string]*candidate.ControlData, len(controlData))
+	for id, c := range controlData {
+		if strings.TrimSpace(c.Text) != "" {
+			withText[id] = c
+		}
+	}
+	// If every control is blank the job succeeds with no candidates and the
+	// pair stages produce nothing; record the count on the active span so
+	// that outcome is visible.
+	if skipped := len(controlData) - len(withText); skipped > 0 {
+		trace.SpanFromContext(ctx).SetAttributes(attribute.Int("candidates.skipped_blank_statement", skipped))
+	}
+	controlData = withText
+
 	ids, values, err := g.embeddings.SimilarityMatrix(ctx, tenantID, catalogID, g.embedModel)
 	if err != nil {
 		return fmt.Errorf("candidate generation: reading embeddings: %w", err)
 	}
 
-	// Coverage: fraction of (non-section) controls that have at least one
-	// embeddings row. Skip the check entirely for a zero-control catalog — a
+	// Coverage: fraction of non-section controls that have a statement and
+	// at least one embeddings row. Skip the check entirely for a zero-control catalog — a
 	// degenerate case, not a coverage failure, and it must not divide by zero.
 	embedded := make(map[string]bool, len(ids))
 	for _, id := range ids {

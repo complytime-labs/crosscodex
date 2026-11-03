@@ -10,6 +10,8 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -761,19 +763,28 @@ var _ = Describe("Telemetry Integration", Ordered, func() {
 		)
 		Expect(err).NotTo(HaveOccurred())
 
+		run := attestation.Artifact{URI: "job:t1/j1", Digest: "sha256:cfg"}
 		link1, err := localGen.CreateLink(context.Background(), "step-a",
-			[]attestation.Artifact{{URI: "in.txt", Digest: "aaa"}},
+			[]attestation.Artifact{run, {URI: "in.txt", Digest: "aaa"}},
 			[]attestation.Artifact{{URI: "mid.json", Digest: "bbb"}},
 		)
 		Expect(err).NotTo(HaveOccurred())
 		link2, err := localGen.CreateLink(context.Background(), "step-b",
-			[]attestation.Artifact{{URI: "mid.json", Digest: "bbb"}},
+			[]attestation.Artifact{run, {URI: "mid.json", Digest: "bbb"}},
 			[]attestation.Artifact{{URI: "out.txt", Digest: "ccc"}},
 		)
 		Expect(err).NotTo(HaveOccurred())
+		layout, err := localGen.CreateLayout(context.Background(), attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "step-a", ExpectedMaterials: []string{run.URI}, Threshold: 1},
+				{Name: "step-b", ExpectedMaterials: []string{run.URI}, Threshold: 1},
+			},
+			ExpiresIn: time.Hour,
+		})
+		Expect(err).NotTo(HaveOccurred())
 
 		localTP.Reset()
-		err = localGen.VerifyChain(context.Background(), nil, []*attestation.SignedLink{link1, link2})
+		_, err = localGen.VerifyChain(context.Background(), layout, []*attestation.SignedLink{link1, link2}, run)
 		Expect(err).NotTo(HaveOccurred())
 
 		spans := localTP.GetSpans()
@@ -965,6 +976,28 @@ var _ = Describe("VerifyLayout", func() {
 		Expect(verified.KeyIDs).NotTo(BeEmpty())
 	})
 
+	It("reports only the key IDs whose signatures verified, not every signature entry", func() {
+		kp, err := attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		signer, err := attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+		layout, err := signer.CreateLayout(ctx, attestation.LayoutOptions{
+			Steps: []attestation.Step{{Name: "build", Threshold: 1}}, ExpiresIn: time.Hour,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		var env map[string]any
+		Expect(json.Unmarshal(layout.Raw, &env)).To(Succeed())
+		env["signatures"] = append(env["signatures"].([]any), map[string]any{"keyid": "bogus-key", "sig": "AAAA"})
+		withBogus, err := json.Marshal(env)
+		Expect(err).NotTo(HaveOccurred())
+
+		verified, err := signer.VerifyLayout(ctx, withBogus)
+		Expect(err).NotTo(HaveOccurred())
+		keyID, err := kp.KeyID(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(verified.KeyIDs).To(Equal([]string{keyID}))
+	})
+
 	It("returns ErrVerificationFailed on tampered envelope", func() {
 		opts := attestation.LayoutOptions{
 			Steps: []attestation.Step{
@@ -1047,128 +1080,371 @@ var _ = Describe("VerifyLayout", func() {
 
 var _ = Describe("VerifyChain", func() {
 	var (
-		kp  *attestation.EphemeralKeyProvider
-		gen attestation.Generator
-		ctx context.Context
+		gen    attestation.Generator
+		ctx    context.Context
+		layout *attestation.SignedLayout
+	)
+	// subject names the run every layout step and link is bound to.
+	subject := attestation.Artifact{URI: "job:t1/j1", Digest: "sha256:cfg"}
+
+	// The layout is a → b → c, where c also consumes a's product directly,
+	// so a link pair that is not adjacent in layout order shares an artifact.
+	BeforeEach(func() {
+		ctx = context.Background()
+		kp, err := attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		gen, err = attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+		layout, err = gen.CreateLayout(ctx, attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "a", ExpectedMaterials: []string{subject.URI}, ExpectedProducts: []string{"a.out"}, Threshold: 1},
+				{Name: "b", ExpectedMaterials: []string{subject.URI, "a.out"}, ExpectedProducts: []string{"b.out"}, Threshold: 1},
+				{Name: "c", ExpectedMaterials: []string{subject.URI, "a.out", "b.out"}, ExpectedProducts: []string{"c.out"}, Threshold: 1},
+			},
+			ExpiresIn: time.Hour,
+		})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	// linkFor signs a link for step that records run as its subject.
+	linkFor := func(g attestation.Generator, run attestation.Artifact, step string, materials, products []attestation.Artifact) *attestation.SignedLink {
+		l, err := g.CreateLink(ctx, step, append([]attestation.Artifact{run}, materials...), products)
+		Expect(err).NotTo(HaveOccurred())
+		return l
+	}
+	link := func(g attestation.Generator, step string, materials, products []attestation.Artifact) *attestation.SignedLink {
+		return linkFor(g, subject, step, materials, products)
+	}
+	verify := func(l *attestation.SignedLayout, links []*attestation.SignedLink) error {
+		_, err := gen.VerifyChain(ctx, l, links, subject)
+		return err
+	}
+	art := func(uri, digest string) attestation.Artifact { return attestation.Artifact{URI: uri, Digest: digest} }
+	arts := func(a ...attestation.Artifact) []attestation.Artifact { return a }
+	linkA := func() *attestation.SignedLink { return link(gen, "a", nil, arts(art("a.out", "aaa"))) }
+	linkB := func() *attestation.SignedLink {
+		return link(gen, "b", arts(art("a.out", "aaa")), arts(art("b.out", "bbb")))
+	}
+	linkC := func() *attestation.SignedLink {
+		return link(gen, "c", arts(art("a.out", "aaa"), art("b.out", "bbb")), arts(art("c.out", "ccc")))
+	}
+
+	It("accepts one link per layout step, in any order", func() {
+		Expect(verify(layout, []*attestation.SignedLink{linkC(), linkA(), linkB()})).To(Succeed())
+	})
+
+	It("reads steps, materials and products from the signed envelopes, not the SignedLink fields", func() {
+		forged := linkB()
+		forged.Step = "c"
+		forged.Products = arts(art("b.out", "not-what-was-signed"))
+		Expect(verify(layout, []*attestation.SignedLink{linkA(), forged, linkC()})).To(Succeed())
+	})
+
+	It("rejects a missing layout", func() {
+		err := verify(nil, []*attestation.SignedLink{linkA()})
+		Expect(err).To(MatchError(attestation.ErrInvalidLayout))
+	})
+
+	It("rejects a layout signed with another key", func() {
+		otherKP, err := attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		other, err := attestation.NewGenerator(otherKP)
+		Expect(err).NotTo(HaveOccurred())
+		foreign, err := other.CreateLayout(ctx, attestation.LayoutOptions{
+			Steps: []attestation.Step{{Name: "a", Threshold: 1}}, ExpiresIn: time.Hour,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		err = verify(foreign, []*attestation.SignedLink{linkA()})
+		Expect(err).To(MatchError(attestation.ErrVerificationFailed))
+		Expect(err.Error()).To(ContainSubstring("layout"))
+	})
+
+	It("rejects a layout step without a link, naming the step", func() {
+		err := verify(layout, []*attestation.SignedLink{linkA(), linkC()})
+		Expect(err).To(MatchError(attestation.ErrMissingLink))
+		Expect(err.Error()).To(ContainSubstring(`"b"`))
+	})
+
+	It("rejects an empty link set", func() {
+		err := verify(layout, nil)
+		Expect(err).To(MatchError(attestation.ErrMissingLink))
+	})
+
+	DescribeTable("rejects links the layout does not declare, naming the step",
+		func(extra func() *attestation.SignedLink, step string) {
+			err := verify(layout, []*attestation.SignedLink{linkA(), linkB(), linkC(), extra()})
+			Expect(err).To(MatchError(attestation.ErrUnexpectedLink))
+			Expect(err.Error()).To(ContainSubstring(`"` + step + `"`))
+		},
+		Entry("a second link for a step", func() *attestation.SignedLink { return linkB() }, "b"),
+		Entry("a link for a step outside the layout", func() *attestation.SignedLink {
+			return link(gen, "rogue", nil, arts(art("rogue.out", "rrr")))
+		}, "rogue"),
+	)
+
+	It("rejects a link signed with another key, naming its step", func() {
+		otherKP, err := attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred())
+		other, err := attestation.NewGenerator(otherKP)
+		Expect(err).NotTo(HaveOccurred())
+		foreignB := link(other, "b", arts(art("a.out", "aaa")), arts(art("b.out", "bbb")))
+
+		err = verify(layout, []*attestation.SignedLink{linkA(), foreignB, linkC()})
+		Expect(err).To(MatchError(attestation.ErrVerificationFailed))
+		Expect(err.Error()).To(ContainSubstring(`"b"`))
+	})
+
+	It("rejects a link whose signed bytes were modified, naming its step", func() {
+		tampered := linkB()
+		var env map[string]any
+		Expect(json.Unmarshal(tampered.Raw, &env)).To(Succeed())
+		payload, err := base64.StdEncoding.DecodeString(env["payload"].(string))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(payload)).To(ContainSubstring("bbb"))
+		env["payload"] = base64.StdEncoding.EncodeToString([]byte(strings.Replace(string(payload), "bbb", "bbc", 1)))
+		tampered.Raw, err = json.Marshal(env)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = verify(layout, []*attestation.SignedLink{linkA(), tampered, linkC()})
+		Expect(err).To(MatchError(attestation.ErrVerificationFailed))
+		Expect(err.Error()).To(ContainSubstring(`"b"`))
+	})
+
+	It("rejects a digest mismatch between steps that are not adjacent in layout order, naming both and the artifact", func() {
+		badC := link(gen, "c", arts(art("a.out", "WRONG"), art("b.out", "bbb")), arts(art("c.out", "ccc")))
+
+		err := verify(layout, []*attestation.SignedLink{linkA(), linkB(), badC})
+		Expect(err).To(MatchError(attestation.ErrChainBroken))
+		Expect(err.Error()).To(And(ContainSubstring(`"a"`), ContainSubstring(`"c"`), ContainSubstring(`"a.out"`)))
+	})
+
+	DescribeTable("rejects a link that lacks an artifact its layout step expects, naming the step and the artifact",
+		func(bad func() *attestation.SignedLink, uri string) {
+			err := verify(layout, []*attestation.SignedLink{linkA(), bad(), linkC()})
+			Expect(err).To(MatchError(attestation.ErrChainBroken))
+			Expect(err.Error()).To(And(ContainSubstring(`"b"`), ContainSubstring(`"`+uri+`"`)))
+		},
+		Entry("an expected material", func() *attestation.SignedLink {
+			return link(gen, "b", nil, arts(art("b.out", "bbb")))
+		}, "a.out"),
+		Entry("an expected product", func() *attestation.SignedLink {
+			return link(gen, "b", arts(art("a.out", "aaa")), nil)
+		}, "b.out"),
+	)
+
+	It("returns the verified layout and the subject the links record", func() {
+		chain, err := gen.VerifyChain(ctx, layout, []*attestation.SignedLink{linkA(), linkB(), linkC()}, subject)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(chain.Subject).To(Equal(subject))
+		Expect(chain.Layout.Steps).To(HaveLen(3))
+		Expect(chain.Layout.Steps[0].Name).To(Equal("a"))
+	})
+
+	It("rejects an empty subject, since a chain bound to no run proves nothing about any", func() {
+		_, err := gen.VerifyChain(ctx, layout, []*attestation.SignedLink{linkA(), linkB(), linkC()}, attestation.Artifact{})
+		Expect(err).To(MatchError(attestation.ErrSubjectMismatch))
+	})
+
+	It("rejects a link replayed from another run, naming the step and the run it records", func() {
+		replayed := linkFor(gen, art("job:t1/other", "sha256:cfg"), "b", arts(art("a.out", "aaa")), arts(art("b.out", "bbb")))
+		err := verify(layout, []*attestation.SignedLink{linkA(), replayed, linkC()})
+		Expect(err).To(MatchError(attestation.ErrSubjectMismatch))
+		Expect(err.Error()).To(And(ContainSubstring(`"b"`), ContainSubstring(`"job:t1/j1"`)))
+	})
+
+	It("rejects a link that records the run with another digest, naming the step and both digests", func() {
+		stale := linkFor(gen, art(subject.URI, "sha256:other-config"), "b", arts(art("a.out", "aaa")), arts(art("b.out", "bbb")))
+		err := verify(layout, []*attestation.SignedLink{linkA(), stale, linkC()})
+		Expect(err).To(MatchError(attestation.ErrSubjectMismatch))
+		Expect(err.Error()).To(And(ContainSubstring(`"b"`), ContainSubstring("sha256:other-config"), ContainSubstring("sha256:cfg")))
+	})
+
+	It("rejects a layout whose steps do not name the run, naming the step", func() {
+		other, err := gen.CreateLayout(ctx, attestation.LayoutOptions{
+			Steps: []attestation.Step{
+				{Name: "a", ExpectedProducts: []string{"a.out"}, Threshold: 1},
+				{Name: "b", ExpectedMaterials: []string{subject.URI, "a.out"}, ExpectedProducts: []string{"b.out"}, Threshold: 1},
+				{Name: "c", ExpectedMaterials: []string{subject.URI, "a.out", "b.out"}, ExpectedProducts: []string{"c.out"}, Threshold: 1},
+			},
+			ExpiresIn: time.Hour,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		err = verify(other, []*attestation.SignedLink{linkA(), linkB(), linkC()})
+		Expect(err).To(MatchError(attestation.ErrSubjectMismatch))
+		Expect(err.Error()).To(ContainSubstring(`"a"`))
+	})
+
+	Context("when the caller knows the run but not its digest", func() {
+		uriOnly := attestation.Artifact{URI: subject.URI}
+
+		It("accepts links that agree on the digest and returns it", func() {
+			chain, err := gen.VerifyChain(ctx, layout, []*attestation.SignedLink{linkA(), linkB(), linkC()}, uriOnly)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(chain.Subject).To(Equal(subject))
+		})
+
+		It("rejects links that disagree on it", func() {
+			stale := linkFor(gen, art(subject.URI, "sha256:other-config"), "b", arts(art("a.out", "aaa")), arts(art("b.out", "bbb")))
+			_, err := gen.VerifyChain(ctx, layout, []*attestation.SignedLink{linkA(), stale, linkC()}, uriOnly)
+			Expect(err).To(MatchError(attestation.ErrSubjectMismatch))
+		})
+	})
+
+	It("leaves the caller's links unchanged", func() {
+		links := []*attestation.SignedLink{linkC(), linkA(), linkB()}
+		before := []string{links[0].Step, links[1].Step, links[2].Step}
+		Expect(verify(layout, links)).To(Succeed())
+		Expect([]string{links[0].Step, links[1].Step, links[2].Step}).To(Equal(before))
+	})
+})
+
+var _ = Describe("LoadFileKeys", func() {
+	var dir string
+
+	writeKey := func(name, pemType string, der []byte) string {
+		path := filepath.Join(dir, name)
+		Expect(os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: pemType, Bytes: der}), 0o600)).To(Succeed())
+		return path
+	}
+	writePair := func(curve elliptic.Curve, prefix string) (string, string) {
+		key, err := ecdsa.GenerateKey(curve, rand.Reader)
+		Expect(err).NotTo(HaveOccurred())
+		privDER, err := x509.MarshalECPrivateKey(key)
+		Expect(err).NotTo(HaveOccurred())
+		pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+		Expect(err).NotTo(HaveOccurred())
+		return writeKey(prefix+"-key.pem", "EC PRIVATE KEY", privDER), writeKey(prefix+"-pub.pem", "PUBLIC KEY", pubDER)
+	}
+
+	BeforeEach(func() { dir = GinkgoT().TempDir() })
+
+	It("signs with the loaded key, and the link verifies against the public key file", func() {
+		priv, pub := writePair(elliptic.P256(), "ok")
+		kp, err := attestation.LoadFileKeys(priv, pub, false)
+		Expect(err).NotTo(HaveOccurred())
+		gen, err := attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+		signed, err := gen.CreateLink(context.Background(), "s", nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		verifier, err := attestation.NewGenerator(&attestation.FileKeyProvider{PublicKeyPath: pub})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = verifier.Verify(context.Background(), signed.Raw)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("reads the key files once, so signing does not depend on them afterwards", func() {
+		priv, pub := writePair(elliptic.P256(), "once")
+		kp, err := attestation.LoadFileKeys(priv, pub, false)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(os.Remove(priv)).To(Succeed())
+		Expect(os.Remove(pub)).To(Succeed())
+
+		gen, err := attestation.NewGenerator(kp)
+		Expect(err).NotTo(HaveOccurred())
+		signed, err := gen.CreateLink(context.Background(), "s", nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = gen.Verify(context.Background(), signed.Raw)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("rejects a missing private key file, naming the path", func() {
+		_, pub := writePair(elliptic.P256(), "missing")
+		absent := filepath.Join(dir, "absent.pem")
+		_, err := attestation.LoadFileKeys(absent, pub, false)
+		Expect(err).To(MatchError(attestation.ErrKeyNotFound))
+		Expect(err.Error()).To(ContainSubstring(absent))
+	})
+
+	It("rejects a public key file that does not parse, naming the path", func() {
+		priv, _ := writePair(elliptic.P256(), "garbled")
+		garbled := filepath.Join(dir, "garbled.pem")
+		Expect(os.WriteFile(garbled, []byte("not a key"), 0o600)).To(Succeed())
+		_, err := attestation.LoadFileKeys(priv, garbled, false)
+		Expect(err).To(MatchError(attestation.ErrKeyLoadFailed))
+		Expect(err.Error()).To(ContainSubstring(garbled))
+	})
+
+	It("rejects a public key that is not the private key's, naming both paths", func() {
+		priv, _ := writePair(elliptic.P256(), "one")
+		_, otherPub := writePair(elliptic.P256(), "two")
+		_, err := attestation.LoadFileKeys(priv, otherPub, false)
+		Expect(err).To(MatchError(attestation.ErrKeyMismatch))
+		Expect(err.Error()).To(And(ContainSubstring(priv), ContainSubstring(otherPub)))
+	})
+
+	It("rejects a key on a curve FIPS does not approve when FIPS mode is on", func() {
+		priv, pub := writePair(elliptic.P224(), "p224")
+		_, err := attestation.LoadFileKeys(priv, pub, true)
+		Expect(err).To(MatchError(attestation.ErrNonFIPSAlgorithm))
+		Expect(err.Error()).To(ContainSubstring(priv))
+	})
+
+	It("accepts the same key when FIPS mode is off", func() {
+		priv, pub := writePair(elliptic.P224(), "p224-off")
+		_, err := attestation.LoadFileKeys(priv, pub, false)
+		Expect(err).NotTo(HaveOccurred())
+	})
+})
+
+var _ = Describe("Bundle encoding", func() {
+	bundleRun := attestation.Artifact{URI: "job:t1/j1", Digest: "sha256:cfg"}
+	var (
+		gen    attestation.Generator
+		ctx    context.Context
+		layout *attestation.SignedLayout
+		links  []*attestation.SignedLink
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		var err error
-		kp, err = attestation.NewEphemeralKeyProvider()
+		kp, err := attestation.NewEphemeralKeyProvider()
 		Expect(err).NotTo(HaveOccurred())
 		gen, err = attestation.NewGenerator(kp)
 		Expect(err).NotTo(HaveOccurred())
+		layout, err = gen.CreateLayout(ctx, attestation.LayoutOptions{
+			Steps: []attestation.Step{{Name: "a", ExpectedMaterials: []string{bundleRun.URI}, ExpectedProducts: []string{"a.out"}, Threshold: 1}}, ExpiresIn: time.Hour,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		l, err := gen.CreateLink(ctx, "a", []attestation.Artifact{bundleRun}, []attestation.Artifact{{URI: "a.out", Digest: "aaa"}})
+		Expect(err).NotTo(HaveOccurred())
+		links = []*attestation.SignedLink{l}
 	})
 
-	It("validates matching products-to-materials chain across 3 steps", func() {
-		link1, err := gen.CreateLink(ctx, "ingestion",
-			[]attestation.Artifact{{URI: "catalog.oscal", Digest: "aaa111"}},
-			[]attestation.Artifact{{URI: "data.json", Digest: "bbb222"}},
-		)
+	It("round-trips a layout and its links, which then verify as a chain", func() {
+		data, err := attestation.MarshalBundle(layout, links)
 		Expect(err).NotTo(HaveOccurred())
 
-		link2, err := gen.CreateLink(ctx, "analysis",
-			[]attestation.Artifact{{URI: "data.json", Digest: "bbb222"}},
-			[]attestation.Artifact{{URI: "analysis.json", Digest: "ccc333"}},
-		)
+		gotLayout, gotLinks, err := attestation.ParseBundle(data)
 		Expect(err).NotTo(HaveOccurred())
-
-		link3, err := gen.CreateLink(ctx, "synthesis",
-			[]attestation.Artifact{{URI: "analysis.json", Digest: "ccc333"}},
-			[]attestation.Artifact{{URI: "report.json", Digest: "ddd444"}},
-		)
-		Expect(err).NotTo(HaveOccurred())
-
-		err = gen.VerifyChain(ctx, nil, []*attestation.SignedLink{link1, link2, link3})
+		Expect(gotLayout.Raw).To(MatchJSON(layout.Raw))
+		Expect(gotLinks).To(HaveLen(1))
+		Expect(gotLinks[0].Raw).To(MatchJSON(links[0].Raw))
+		_, err = gen.VerifyChain(ctx, gotLayout, gotLinks, bundleRun)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("returns ErrChainBroken on digest mismatch", func() {
-		link1, err := gen.CreateLink(ctx, "ingestion",
-			[]attestation.Artifact{{URI: "input.txt", Digest: "aaa"}},
-			[]attestation.Artifact{{URI: "data.json", Digest: "bbb222"}},
-		)
-		Expect(err).NotTo(HaveOccurred())
+	DescribeTable("rejects input that is not a bundle, saying what a bundle is",
+		func(data string) {
+			_, _, err := attestation.ParseBundle([]byte(data))
+			Expect(err).To(MatchError(attestation.ErrInvalidBundle))
+			Expect(err.Error()).To(ContainSubstring(`"layout"`))
+		},
+		Entry("not JSON", `not json`),
+		Entry("a JSON array", `[]`),
+		Entry("a single signed envelope", `{"payloadType":"application/vnd.in-toto+json","payload":"e30=","signatures":[]}`),
+		Entry("no layout", `{"links":[{}]}`),
+		Entry("no links", `{"layout":{}}`),
+		Entry("an empty link list", `{"layout":{},"links":[]}`),
+		Entry("a null link", `{"layout":{},"links":[null]}`),
+	)
 
-		link2, err := gen.CreateLink(ctx, "analysis",
-			[]attestation.Artifact{{URI: "data.json", Digest: "WRONG"}},
-			[]attestation.Artifact{{URI: "out.json", Digest: "ccc"}},
-		)
-		Expect(err).NotTo(HaveOccurred())
-
-		err = gen.VerifyChain(ctx, nil, []*attestation.SignedLink{link1, link2})
-		Expect(err).To(HaveOccurred())
-		Expect(errors.Is(err, attestation.ErrChainBroken)).To(BeTrue())
-		Expect(err.Error()).To(ContainSubstring("data.json"))
-		Expect(err.Error()).To(ContainSubstring("ingestion"))
-		Expect(err.Error()).To(ContainSubstring("analysis"))
-	})
-
-	It("accepts steps where step N+1 has additional materials beyond step N products", func() {
-		link1, err := gen.CreateLink(ctx, "step-a",
-			[]attestation.Artifact{{URI: "in.txt", Digest: "aaa"}},
-			[]attestation.Artifact{{URI: "shared.json", Digest: "bbb"}},
-		)
-		Expect(err).NotTo(HaveOccurred())
-
-		link2, err := gen.CreateLink(ctx, "step-b",
-			[]attestation.Artifact{
-				{URI: "shared.json", Digest: "bbb"},
-				{URI: "external.txt", Digest: "zzz"},
-			},
-			[]attestation.Artifact{{URI: "out.json", Digest: "ccc"}},
-		)
-		Expect(err).NotTo(HaveOccurred())
-
-		err = gen.VerifyChain(ctx, nil, []*attestation.SignedLink{link1, link2})
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	It("returns nil for single-link chain", func() {
-		link1, err := gen.CreateLink(ctx, "only-step",
-			[]attestation.Artifact{{URI: "in.txt", Digest: "aaa"}},
-			[]attestation.Artifact{{URI: "out.txt", Digest: "bbb"}},
-		)
-		Expect(err).NotTo(HaveOccurred())
-
-		err = gen.VerifyChain(ctx, nil, []*attestation.SignedLink{link1})
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	It("returns nil for empty link slice", func() {
-		err := gen.VerifyChain(ctx, nil, []*attestation.SignedLink{})
-		Expect(err).NotTo(HaveOccurred())
-	})
-
-	It("sorts links by layout step order when layout is provided", func() {
-		// Create links OUT of order
-		link2, err := gen.CreateLink(ctx, "step-b",
-			[]attestation.Artifact{{URI: "mid.json", Digest: "bbb"}},
-			[]attestation.Artifact{{URI: "out.json", Digest: "ccc"}},
-		)
-		Expect(err).NotTo(HaveOccurred())
-
-		link1, err := gen.CreateLink(ctx, "step-a",
-			[]attestation.Artifact{{URI: "in.txt", Digest: "aaa"}},
-			[]attestation.Artifact{{URI: "mid.json", Digest: "bbb"}},
-		)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Create layout with step-a before step-b
-		opts := attestation.LayoutOptions{
-			Steps: []attestation.Step{
-				{Name: "step-a", Threshold: 1},
-				{Name: "step-b", Threshold: 1},
-			},
-			ExpiresIn: 24 * time.Hour,
-		}
-		layout, err := gen.CreateLayout(ctx, opts)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Pass links in wrong order — VerifyChain should sort by layout
-		err = gen.VerifyChain(ctx, layout, []*attestation.SignedLink{link2, link1})
-		Expect(err).NotTo(HaveOccurred())
+	It("refuses to encode a bundle without a layout or links", func() {
+		_, err := attestation.MarshalBundle(nil, links)
+		Expect(err).To(MatchError(attestation.ErrInvalidBundle))
+		_, err = attestation.MarshalBundle(layout, nil)
+		Expect(err).To(MatchError(attestation.ErrInvalidBundle))
 	})
 })
 

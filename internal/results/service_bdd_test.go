@@ -104,7 +104,7 @@ var _ = Describe("Service.ListMappings", func() {
 		Entry("unknown stage", func(r *pb.ListJobMappingsRequest) { r.Stage = pb.MappingStage(99) },
 			connect.CodeInvalidArgument, "synthesized, analyzer"),
 		Entry("no job and no control", func(r *pb.ListJobMappingsRequest) { r.JobId = "" },
-			connect.CodeInvalidArgument, `job_id is required; pass the job ID printed by "crosscodex run start" or "catalog import"`),
+			connect.CodeInvalidArgument, `job_id is required; pass the job ID printed by "crosscodex run start"`),
 		Entry("no job with control on the analyzer stage", func(r *pb.ListJobMappingsRequest) {
 			r.JobId, r.ControlId, r.Stage = "", "AC-1", pb.MappingStage_MAPPING_STAGE_ANALYZER
 		}, connect.CodeInvalidArgument, "job_id is required"),

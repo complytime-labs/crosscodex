@@ -186,7 +186,7 @@ func (s *PGStore) GetJob(ctx context.Context, jobID string) (*Job, error) {
 	}
 
 	query := `
-		SELECT job_id, tenant_id, status, config, created_by, created_at, updated_at, error_message
+		SELECT job_id, tenant_id, status, config, created_by, created_at, updated_at, error_message, error_class
 		FROM jobs
 		WHERE job_id = $1 AND tenant_id = $2
 	`
@@ -194,7 +194,7 @@ func (s *PGStore) GetJob(ctx context.Context, jobID string) (*Job, error) {
 	row := tx.QueryRow(ctx, query, jobID, tenantID)
 
 	var job Job
-	err = row.Scan(&job.JobID, &job.TenantID, &job.Status, &job.Config, &job.CreatedBy, &job.CreatedAt, &job.UpdatedAt, &job.ErrorMessage)
+	err = row.Scan(&job.JobID, &job.TenantID, &job.Status, &job.Config, &job.CreatedBy, &job.CreatedAt, &job.UpdatedAt, &job.ErrorMessage, &job.ErrorClass)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			span.SetStatus(codes.Error, "not found")
@@ -251,7 +251,7 @@ func (s *PGStore) ListJobs(ctx context.Context, tenantID string, filter JobFilte
 
 	// Build query with optional status filter
 	countQuery := "SELECT COUNT(*) FROM jobs WHERE tenant_id = $1"
-	listQuery := "SELECT job_id, tenant_id, status, config, created_by, created_at, updated_at, error_message FROM jobs WHERE tenant_id = $1"
+	listQuery := "SELECT job_id, tenant_id, status, config, created_by, created_at, updated_at, error_message, error_class FROM jobs WHERE tenant_id = $1"
 	args := []interface{}{tenantID}
 
 	if filter.Status != "" {
@@ -289,7 +289,7 @@ func (s *PGStore) ListJobs(ctx context.Context, tenantID string, filter JobFilte
 	var jobs []*Job
 	for rows.Next() {
 		var job Job
-		if err := rows.Scan(&job.JobID, &job.TenantID, &job.Status, &job.Config, &job.CreatedBy, &job.CreatedAt, &job.UpdatedAt, &job.ErrorMessage); err != nil {
+		if err := rows.Scan(&job.JobID, &job.TenantID, &job.Status, &job.Config, &job.CreatedBy, &job.CreatedAt, &job.UpdatedAt, &job.ErrorMessage, &job.ErrorClass); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, 0, fmt.Errorf("PGStore.ListJobs: scan failed: %w", err)
@@ -364,11 +364,11 @@ func (s *PGStore) UpdateJobStatus(ctx context.Context, jobID string, status JobS
 
 	query := `
 		UPDATE jobs
-		SET status = $1, updated_at = $2, error_message = $3
-		WHERE job_id = $4 AND tenant_id = $5
+		SET status = $1, updated_at = $2, error_message = $3, error_class = $4
+		WHERE job_id = $5 AND tenant_id = $6
 	`
 
-	err = tx.Exec(ctx, query, status, time.Now(), errorMessage, jobID, tenantID)
+	err = tx.Exec(ctx, query, status, time.Now(), errorMessage, string(ClassifyJobError(jobErr)), jobID, tenantID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -507,7 +507,7 @@ func (s *PGStore) UpdateStageStatus(ctx context.Context, jobID, stageName string
 			WHERE job_id = $3 AND stage_name = $4 AND tenant_id = $5
 		`
 		err = tx.Exec(ctx, query, status, time.Now(), jobID, stageName, tenantID)
-	case StageStatusCompleted, StageStatusFailed:
+	case StageStatusCompleted, StageStatusFailed, StageStatusCancelled:
 		query = `
 			UPDATE job_stages
 			SET status = $1, completed_at = $2
@@ -986,7 +986,7 @@ func (s *PGStore) GetResumableJobs(ctx context.Context) ([]*Job, error) {
 	// returns only running jobs, and none of a deleted tenant. The outer
 	// ORDER BY is the ordering guarantee; a function's own ORDER BY is not.
 	query := `
-		SELECT job_id, tenant_id, status, config, created_by, created_at, updated_at, error_message
+		SELECT job_id, tenant_id, status, config, created_by, created_at, updated_at, error_message, error_class
 		FROM public.resumable_jobs()
 		ORDER BY created_at
 	`
@@ -1002,7 +1002,7 @@ func (s *PGStore) GetResumableJobs(ctx context.Context) ([]*Job, error) {
 	var jobs []*Job
 	for rows.Next() {
 		var job Job
-		if err := rows.Scan(&job.JobID, &job.TenantID, &job.Status, &job.Config, &job.CreatedBy, &job.CreatedAt, &job.UpdatedAt, &job.ErrorMessage); err != nil {
+		if err := rows.Scan(&job.JobID, &job.TenantID, &job.Status, &job.Config, &job.CreatedBy, &job.CreatedAt, &job.UpdatedAt, &job.ErrorMessage, &job.ErrorClass); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("PGStore.GetResumableJobs: scan failed: %w", err)

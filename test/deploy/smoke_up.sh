@@ -272,21 +272,28 @@ if [ "${LLM_GATEWAY}" = "praxis" ]; then
 fi
 
 # Assert the import took effect (not just that the CLI exited 0): the gateway
-# must acknowledge the submission. --plain disables color so the "Job ID:" line
-# parses cleanly below.
+# must return the imported catalog's ID. --plain disables color so the
+# "Catalog ID:" and "Job ID:" lines parse cleanly below.
 run_cli --plain catalog import "${FIXTURE}" | tee "${OUT_DIR}/import.log"
-grep -q "Document submitted successfully" "${OUT_DIR}/import.log"
+grep -q "Catalog imported" "${OUT_DIR}/import.log"
+CATALOG_ID="$(sed -n 's/^Catalog ID: //p' "${OUT_DIR}/import.log" | head -n1)"
+if [ -z "${CATALOG_ID}" ]; then
+	echo "Could not parse a Catalog ID from the import output:" >&2
+	cat "${OUT_DIR}/import.log" >&2
+	exit 1
+fi
 
-# Recover the async analysis job id the import enqueued. Gating on this job's
-# terminal status is what makes the smoke test exercise the LLM path: the catalog
-# row + controls persist during parse regardless of embeddings, so a `list` check
+# Import starts no analysis; start it explicitly. Gating on this job's terminal
+# status is what makes the smoke test exercise the LLM path: the catalog row +
+# controls persist during parse regardless of embeddings, so a `list` check
 # alone passes against a broken LLM gateway/Ollama. The FULL_ANALYSIS job, by
 # contrast, FAILs on insufficient embedding coverage (<80%), so only a working
 # embed path drives it to COMPLETED.
-JOB_ID="$(sed -n 's/^Job ID: //p' "${OUT_DIR}/import.log" | head -n1)"
+run_cli --plain run start --source "${CATALOG_ID}" | tee "${OUT_DIR}/start.log"
+JOB_ID="$(sed -n 's/^Job ID: //p' "${OUT_DIR}/start.log" | head -n1)"
 if [ -z "${JOB_ID}" ]; then
-	echo "Could not parse a Job ID from the import output:" >&2
-	cat "${OUT_DIR}/import.log" >&2
+	echo "Could not parse a Job ID from the run start output:" >&2
+	cat "${OUT_DIR}/start.log" >&2
 	exit 1
 fi
 

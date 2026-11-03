@@ -481,9 +481,11 @@ var _ = Describe("Assessor", func() {
 				Expect(diag.Message).To(ContainSubstring(wantMsg))
 			},
 			// 49 of 50 = 98% NO_RELATIONSHIP
-			Entry("rate > NoRelHigh → SeverityPoor", 50, 1, synthesis.SeverityPoor, "top_k too low"),
+			Entry("rate > NoRelHigh → SeverityPoor", 50, 1, synthesis.SeverityPoor,
+				"candidate top_k may be too high: 98.0% of pairs had NO_RELATIONSHIP; lower analysis.candidates.generators[].config.top_k"),
 			// 7 of 10 = 70% NO_RELATIONSHIP
-			Entry("rate < NoRelLow → SeverityWarn", 10, 3, synthesis.SeverityWarn, "top_k too high"),
+			Entry("rate < NoRelLow → SeverityWarn", 10, 3, synthesis.SeverityWarn,
+				"candidate top_k may be too low: 70.0% of pairs had NO_RELATIONSHIP; raise analysis.candidates.generators[].config.top_k"),
 			// 9 of 10 = 90% NO_RELATIONSHIP, in [0.80, 0.97]
 			Entry("rate in range → SeverityGood", 10, 1, synthesis.SeverityGood, "within expected range"),
 		)

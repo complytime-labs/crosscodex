@@ -169,7 +169,7 @@ func (s *Service) buildFilter(ctx context.Context, msg *pb.ListJobMappingsReques
 	}
 
 	if msg.GetJobId() == "" && (stage != StageSynthesized || msg.GetControlId() == "") {
-		return ctx, Filter{}, invalid(`job_id is required; pass the job ID printed by "crosscodex run start" or "catalog import"`)
+		return ctx, Filter{}, invalid(`job_id is required; pass the job ID printed by "crosscodex run start"`)
 	}
 
 	if c := msg.GetMinConfidence(); math.IsNaN(float64(c)) || c < 0 || c > 1 {

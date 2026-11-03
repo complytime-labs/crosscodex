@@ -25,6 +25,9 @@ const (
 	TaskEmbed     TaskType = "embed"
 )
 
+// taskTypes lists every TaskType constant, in declaration order.
+var taskTypes = []TaskType{TaskClassify, TaskRelate, TaskRequires, TaskArtifacts, TaskEmbed}
+
 // AuditType represents the kind of audit record.
 type AuditType string
 

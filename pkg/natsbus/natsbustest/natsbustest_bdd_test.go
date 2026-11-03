@@ -376,6 +376,102 @@ var _ = Describe("Fake", func() {
 		})
 	})
 
+	Describe("worker progress", func() {
+		It("records a tick in Published, in call order, with no data or headers and without needing a tenant", func() {
+			Expect(fake.Publish(ctx, "a.b", []byte("one"))).To(Succeed())
+			Expect(fake.PublishWorkerProgress(context.Background())).To(Succeed())
+			Expect(fake.PublishWorkerProgress(ctx)).To(Succeed())
+
+			Expect(fake.Published()).To(Equal([]natsbustest.Publication{
+				{Subject: "a.b", Data: []byte("one")},
+				{Subject: natsbus.WorkerProgressSubject},
+				{Subject: natsbus.WorkerProgressSubject},
+			}))
+		})
+
+		It("returns PublishWorkerProgressErr and still records the tick", func() {
+			fake.PublishWorkerProgressErr = errScripted
+			Expect(fake.PublishWorkerProgress(ctx)).To(MatchError(errScripted))
+			Expect(fake.Published()).To(Equal([]natsbustest.Publication{{Subject: natsbus.WorkerProgressSubject}}))
+		})
+
+		It("fails only the tick when PublishWorkerProgressErr is set, not publishes to other subjects", func() {
+			fake.PublishWorkerProgressErr = errScripted
+			Expect(fake.PublishWithHeaders(ctx, "r", []byte("d"), nil)).To(Succeed())
+			Expect(fake.Publish(ctx, natsbus.WorkerProgressSubject, nil)).To(Succeed())
+		})
+
+		It("records a tick subscription on WorkerProgressSubject and signals its handler on each tick delivery", func() {
+			ticks := 0
+			sub, err := fake.SubscribeWorkerProgress(ctx, func() { ticks++ })
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.Subscriptions()).To(HaveLen(1))
+			Expect(fake.Subscriptions()[0].Subject).To(Equal(natsbus.WorkerProgressSubject))
+			Expect(fake.Subscriptions()[0].Queue).To(BeEmpty())
+			Expect(sub).To(BeIdenticalTo(fake.Subscriptions()[0]))
+
+			Expect(fake.Deliver(&natsbus.Message{Subject: natsbus.WorkerProgressSubject})).To(Succeed())
+			Expect(fake.Deliver(&natsbus.Message{
+				Subject: natsbus.WorkerProgressSubject,
+				Data:    []byte("ignored"),
+				Headers: map[string][]string{natsbus.HeaderTenantID: {"tenant-a"}},
+			})).To(Succeed())
+			Expect(ticks).To(Equal(2))
+		})
+
+		DescribeTable("never signals a tick handler for a delivery to another subject",
+			func(subject string) {
+				ticks := 0
+				_, err := fake.SubscribeWorkerProgress(ctx, func() { ticks++ })
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fake.Deliver(&natsbus.Message{Subject: subject})).To(Succeed())
+				Expect(ticks).To(BeZero())
+			},
+			Entry("a result subject", "crosscodex.results.tenant-a.classify.job-1"),
+			Entry("a longer subject under the tick subject", natsbus.WorkerProgressSubject+".x"),
+			Entry("the tick subject's parent", "crosscodex.workers"),
+		)
+
+		It("stops signalling after Unsubscribe", func() {
+			ticks := 0
+			sub, err := fake.SubscribeWorkerProgress(ctx, func() { ticks++ })
+			Expect(err).NotTo(HaveOccurred())
+			Expect(sub.Unsubscribe()).To(Succeed())
+			Expect(fake.Deliver(&natsbus.Message{Subject: natsbus.WorkerProgressSubject})).To(Succeed())
+			Expect(ticks).To(BeZero())
+		})
+
+		It("accepts a nil tick handler and never panics delivering to it", func() {
+			_, err := fake.SubscribeWorkerProgress(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.Deliver(&natsbus.Message{Subject: natsbus.WorkerProgressSubject})).To(Succeed())
+		})
+
+		It("lets SubscribeWorkerProgressFunc fail the call, creating no subscription", func() {
+			fake.SubscribeWorkerProgressFunc = func(context.Context, func()) (natsbus.Subscription, error) {
+				return nil, errScripted
+			}
+			ticks := 0
+			_, err := fake.SubscribeWorkerProgress(ctx, func() { ticks++ })
+			Expect(err).To(MatchError(errScripted))
+			Expect(fake.Subscriptions()).To(BeEmpty())
+			Expect(fake.Deliver(&natsbus.Message{Subject: natsbus.WorkerProgressSubject})).To(Succeed())
+			Expect(ticks).To(BeZero())
+		})
+
+		It("returns the subscription SubscribeWorkerProgressFunc hands back and still records the Sub", func() {
+			other := &natsbustest.Sub{Subject: "other"}
+			fake.SubscribeWorkerProgressFunc = func(context.Context, func()) (natsbus.Subscription, error) {
+				return other, nil
+			}
+			got, err := fake.SubscribeWorkerProgress(ctx, func() {})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(BeIdenticalTo(other))
+			Expect(fake.Subscriptions()).To(HaveLen(1))
+			Expect(fake.Subscriptions()[0].Subject).To(Equal(natsbus.WorkerProgressSubject))
+		})
+	})
+
 	Describe("Close", func() {
 		BeforeEach(func() {
 			fake.CreateStreamFunc = func(context.Context, natsbus.StreamConfig) error { return nil }
@@ -401,6 +497,10 @@ var _ = Describe("Fake", func() {
 			Expect(err.Error()).To(ContainSubstring("subscribe to s"))
 			_, err = fake.QueueSubscribe(ctx, "s", "q", h)
 			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+			Expect(fake.PublishWorkerProgress(ctx)).To(MatchError(natsbus.ErrConnectionClosed))
+			_, err = fake.SubscribeWorkerProgress(ctx, func() {})
+			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+			Expect(err.Error()).To(ContainSubstring("subscribe to worker progress"))
 			Expect(fake.CreateStream(ctx, natsbus.StreamConfig{Name: "S"})).To(MatchError(natsbus.ErrConnectionClosed))
 			Expect(fake.DeleteStream(ctx, "S")).To(MatchError(natsbus.ErrConnectionClosed))
 			_, err = fake.AuditStreamRetention(ctx)

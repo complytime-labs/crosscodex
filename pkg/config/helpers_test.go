@@ -3,8 +3,20 @@ package config_test
 import (
 	"time"
 
+	. "github.com/onsi/gomega"
+
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
+
+// expectOnlyFieldError asserts that err reports exactly one problem, a
+// FieldError for the setting at path, and nothing untagged. A rejected-value
+// spec that calls it fails if its validator forgets the path.
+func expectOnlyFieldError(err error, path string) {
+	fields := config.FieldErrors(err)
+	ExpectWithOffset(1, fields).To(HaveLen(1), "want one FieldError for %s in: %v", path, err)
+	ExpectWithOffset(1, fields[0].Path).To(Equal(path))
+	ExpectWithOffset(1, config.FieldErrorsComplete(err)).To(BeTrue(), "untagged problem in: %v", err)
+}
 
 // validConfig returns a Config that passes ExportValidateConfig with every
 // section populated, so a spec can mutate only the field it tests and still
@@ -21,12 +33,13 @@ func validConfig() *config.Config {
 			IncludeByProducts: true,
 		},
 		Pipeline: config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: 5 * time.Minute},
+		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10000},
 		Graph:    config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 		Analysis: config.AnalysisConfig{
 			Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 			Classification:       config.ClassificationConfig{Enabled: true, MaxTextLength: 2000, MaxTokens: 20},
 			Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
-			Relationship:         config.RelationshipConfig{TopK: 20, MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
+			Relationship:         config.RelationshipConfig{MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 			Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 			ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
 		},

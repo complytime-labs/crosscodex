@@ -66,7 +66,6 @@ var _ = Describe("Relationship LLM Integration", func() {
 		cfg := config.RelationshipConfig{
 			Enabled:             true,
 			Models:              []string{chatModel},
-			TopK:                10,
 			MaxSourceChars:      1500,
 			MaxTargetChars:      800,
 			MaxTokens:           300,
@@ -86,8 +85,12 @@ var _ = Describe("Relationship LLM Integration", func() {
 			Parts:      map[string]string{"class": "requirement"},
 		}
 
-		tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-			Parameters: map[string]string{"job_id": "integration-test-1"},
+		tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+			Parameters: map[string]string{
+				"job_id":             "integration-test-1",
+				"source_text_AC-2":   control.Statement,
+				"target_text_IT-3.2": "IT controls shall restrict access to authorized users only.",
+			},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		// 1 pair x 1 model x 2 samples = 2 tasks.

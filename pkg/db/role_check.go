@@ -44,7 +44,8 @@ func LatestMigrationVersion() (uint, error) {
 }
 
 // CheckSchemaVersion refuses a database whose schema is not at
-// LatestMigrationVersion, or whose last migration failed (dirty). The daemon
+// LatestMigrationVersion, whose last migration failed (dirty), or that was
+// created from an earlier edition of the baseline (baselineColumns). The daemon
 // never migrates; `crosscodexd migrate` does, as the schema owner. Call it on
 // the app_user (database.dsn) connection; other restricted roles lack the
 // SELECT grant on schema_migrations.
@@ -66,7 +67,55 @@ func CheckSchemaVersion(ctx context.Context, q RowQueryer) error {
 	case version > int64(want):
 		return fmt.Errorf("the database schema is at version %d, newer than this crosscodexd (version %d). Upgrade crosscodexd; do not run an older binary against a newer schema", version, want)
 	}
+	for _, c := range baselineColumns {
+		var present bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2)`, c.table, c.column).Scan(&present); err != nil {
+			return fmt.Errorf("cannot check the schema for %s.%s (%w). Check the database connection, then start crosscodexd again", c.table, c.column, err)
+		}
+		if !present {
+			return staleBaselineError(version, c.table+"."+c.column)
+		}
+	}
+	for _, c := range baselineFunctionColumns {
+		var present bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.routines r
+			JOIN information_schema.parameters p ON p.specific_schema = r.specific_schema AND p.specific_name = r.specific_name
+			WHERE r.routine_schema = 'public' AND r.routine_name = $1 AND p.parameter_mode = 'OUT' AND p.parameter_name = $2)`,
+			c.function, c.column).Scan(&present); err != nil {
+			return fmt.Errorf("cannot check the schema for %s() column %s (%w). Check the database connection, then start crosscodexd again", c.function, c.column, err)
+		}
+		if !present {
+			return staleBaselineError(version, c.function+"() column "+c.column)
+		}
+	}
 	return nil
+}
+
+// staleBaselineError reports a database created from an earlier edition of
+// the baseline, which lacks what.
+func staleBaselineError(version int64, what string) error {
+	return fmt.Errorf("the database schema is at version %d but was created by an earlier build of crosscodexd: %s is missing. "+
+		"The pre-release baseline migration was changed in place, so this database cannot be upgraded. "+
+		"Recreate it (for the compose deployment, `task deploy:down VOLUMES=1`), then run `crosscodexd migrate` and start crosscodexd again",
+		version, what)
+}
+
+// baselineColumns are columns folded into the pre-release baseline
+// migration after databases had already been created from it
+// (docs/dev/migrations.md allows editing it in place until the first
+// release). Such a database reports the current version but lacks them, so
+// CheckSchemaVersion looks for each; the daemon would otherwise start and
+// fail at its first write. Add a column here when folding one into the
+// baseline; the list empties once migrations are append-only.
+var baselineColumns = []struct{ table, column string }{
+	{"jobs", "error_class"},
+}
+
+// baselineFunctionColumns are result columns of set-returning functions
+// folded into the baseline the same way.
+var baselineFunctionColumns = []struct{ function, column string }{
+	{"resumable_jobs", "error_class"},
 }
 
 // CheckRestrictedRole refuses a connection whose role bypasses row-level

@@ -82,7 +82,11 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 			CatalogName:   "e2e-minimal",
 		}))
 		Expect(err).NotTo(HaveOccurred(), "SubmitDocument")
-		jobID := submitResp.Msg.GetJobId()
+		catalogID := submitResp.Msg.GetCatalogId()
+		Expect(catalogID).NotTo(BeEmpty(), "catalog id")
+		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID}))
+		Expect(err).NotTo(HaveOccurred(), "StartAnalysis")
+		jobID := startResp.Msg.GetJobId()
 		Expect(jobID).NotTo(BeEmpty(), "job id")
 
 		// Poll to a terminal state.
@@ -109,12 +113,6 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		tx, err := db.NewTenantPool(rt.shared.appPool).Begin(tenantCtx)
 		Expect(err).NotTo(HaveOccurred(), "begin tenant transaction")
 		defer func() { _ = tx.Rollback() }()
-
-		// CatalogID is content-hash-derived, so read it first.
-		var catalogID string
-		Expect(tx.QueryRow(tenantCtx,
-			"SELECT catalog_id FROM catalogs WHERE tenant_id = $1", tenantID).Scan(&catalogID)).
-			To(Succeed(), "read catalog_id")
 
 		var controlCount int
 		Expect(tx.QueryRow(tenantCtx,
@@ -250,8 +248,9 @@ func allRoleTestConfig(dsn, tenantID string) *config.Config {
 			Order:   []config.PromptLayerEntry{{ID: "embedded"}},
 		},
 	}
-	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
+	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}
 	cfg.Attestation = config.AttestationConfig{
+		Enabled:        true,
 		PrivateKeyPath: testAttestationPrivateKeyPath,
 		PublicKeyPath:  testAttestationPublicKeyPath,
 		ExpiryDuration: 168 * time.Hour,

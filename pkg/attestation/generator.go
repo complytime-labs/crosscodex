@@ -2,9 +2,10 @@ package attestation
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"time"
 
 	in_toto "github.com/in-toto/in-toto-golang/in_toto"
@@ -316,8 +317,10 @@ func (g *generator) VerifyLayout(ctx context.Context, data []byte) (*VerifiedLay
 		return nil, fmt.Errorf("convert verification key: %w: %w", ErrVerificationFailed, err)
 	}
 
-	// Verify signature at the DSSE level.
-	if err := verifyDSSESignature(ctx, dsseEnv, verKey); err != nil {
+	// Verify signature at the DSSE level. Only the signatures that verified
+	// name a signer: an envelope may carry other, bogus entries.
+	keyIDs, err := verifyDSSESignature(ctx, dsseEnv, verKey)
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		g.recordMetrics(ctx, operation, "failure", start)
@@ -349,12 +352,6 @@ func (g *generator) VerifyLayout(ctx context.Context, data []byte) (*VerifiedLay
 		return nil, err
 	}
 
-	// Extract key IDs from signatures.
-	var keyIDs []string
-	for _, sig := range dsseEnv.Signatures {
-		keyIDs = append(keyIDs, sig.KeyID)
-	}
-
 	result := &VerifiedLayout{
 		Steps:       inTotoStepsToSteps(layout.Steps),
 		Inspections: inTotoInspectionsToInspections(layout.Inspect),
@@ -367,87 +364,161 @@ func (g *generator) VerifyLayout(ctx context.Context, data []byte) (*VerifiedLay
 	return result, nil
 }
 
-// VerifyChain validates artifact integrity across consecutive pipeline steps.
-func (g *generator) VerifyChain(ctx context.Context, layout *SignedLayout, links []*SignedLink) error {
+// VerifyChain verifies one run's whole attestation; see the Generator
+// interface for the checks it makes.
+func (g *generator) VerifyChain(ctx context.Context, layout *SignedLayout, links []*SignedLink, subject Artifact) (*VerifiedChain, error) {
 	operation := "VerifyChain"
 	start := time.Now()
 	ctx, span := g.startSpan(ctx, "attestation.VerifyChain")
 	defer span.End()
 
-	if len(links) <= 1 {
-		span.SetStatus(codes.Ok, "")
-		g.recordMetrics(ctx, operation, "success", start)
-		return nil
+	fail := func(err error) (*VerifiedChain, error) {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		g.recordMetrics(ctx, operation, "failure", start)
+		return nil, err
 	}
 
-	// If layout is provided, sort links by layout step order.
-	if layout != nil {
-		stepOrder, err := g.extractStepOrder(layout)
-		if err == nil && len(stepOrder) > 0 {
-			orderMap := make(map[string]int, len(stepOrder))
-			for i, name := range stepOrder {
-				orderMap[name] = i
+	if subject.URI == "" {
+		return fail(fmt.Errorf("verify chain: no subject: name the run the attestation must be for: %w", ErrSubjectMismatch))
+	}
+	if layout == nil || len(layout.Raw) == 0 {
+		return fail(fmt.Errorf("verify chain: no layout to verify the links against: %w", ErrInvalidLayout))
+	}
+	verifiedLayout, err := g.VerifyLayout(ctx, layout.Raw)
+	if err != nil {
+		return fail(fmt.Errorf("verify chain: layout: %w", err))
+	}
+	declared := make(map[string]bool, len(verifiedLayout.Steps))
+	for _, step := range verifiedLayout.Steps {
+		declared[step.Name] = true
+	}
+
+	// Steps, materials and products come from the verified envelopes only;
+	// the SignedLink fields are the caller's and are not trusted.
+	byStep := make(map[string]*VerifiedLink, len(links))
+	for i, link := range links {
+		label := fmt.Sprintf("link %d", i)
+		if link != nil && link.Step != "" {
+			label = fmt.Sprintf("link %d (step %q)", i, link.Step)
+		} else if link != nil {
+			if claimed := claimedStep(link.Raw); claimed != "" {
+				label = fmt.Sprintf("link %d (unverified step %q)", i, claimed)
 			}
-			sort.Slice(links, func(i, j int) bool {
-				oi, oki := orderMap[links[i].Step]
-				oj, okj := orderMap[links[j].Step]
-				if !oki {
-					oi = len(stepOrder)
-				}
-				if !okj {
-					oj = len(stepOrder)
-				}
-				return oi < oj
-			})
+		}
+		if link == nil {
+			return fail(fmt.Errorf("verify chain: %s is nil: %w", label, ErrVerificationFailed))
+		}
+		verified, err := g.Verify(ctx, link.Raw)
+		if err != nil {
+			return fail(fmt.Errorf("verify chain: %s: %w", label, err))
+		}
+		if !declared[verified.Step] {
+			return fail(fmt.Errorf("verify chain: %s is signed for step %q, which the layout does not declare: %w",
+				label, verified.Step, ErrUnexpectedLink))
+		}
+		if _, dup := byStep[verified.Step]; dup {
+			return fail(fmt.Errorf("verify chain: more than one link for step %q: %w", verified.Step, ErrUnexpectedLink))
+		}
+		byStep[verified.Step] = verified
+	}
+
+	type producer struct{ step, digest string }
+	producedBy := make(map[string]producer)
+	for _, step := range verifiedLayout.Steps {
+		verified, ok := byStep[step.Name]
+		if !ok {
+			return fail(fmt.Errorf("verify chain: layout step %q has no link: %w", step.Name, ErrMissingLink))
+		}
+		for _, p := range verified.Products {
+			if _, seen := producedBy[p.URI]; !seen {
+				producedBy[p.URI] = producer{step: step.Name, digest: p.Digest}
+			}
 		}
 	}
 
-	// Verify consecutive pairs.
-	for i := 0; i < len(links)-1; i++ {
-		stepN := links[i]
-		stepN1 := links[i+1]
-
-		// Build product map for step N.
-		productDigests := make(map[string]string, len(stepN.Products))
-		for _, p := range stepN.Products {
-			productDigests[p.URI] = p.Digest
+	recorded := subject.Digest
+	for _, step := range verifiedLayout.Steps {
+		verified := byStep[step.Name]
+		if !slices.Contains(step.ExpectedMaterials, subject.URI) {
+			return fail(fmt.Errorf("verify chain: layout step %q does not name the run %q: the layout is for another run: %w",
+				step.Name, subject.URI, ErrSubjectMismatch))
 		}
-
-		// Check shared URIs.
-		for _, m := range stepN1.Materials {
-			if productDigest, shared := productDigests[m.URI]; shared {
-				if productDigest != m.Digest {
-					err := fmt.Errorf("chain broken between step %q and step %q: artifact %q digest mismatch: %w",
-						stepN.Step, stepN1.Step, m.URI, ErrChainBroken)
-					span.RecordError(err)
-					span.SetStatus(codes.Error, err.Error())
-					g.recordMetrics(ctx, operation, "failure", start)
-					return err
-				}
+		got, ok := artifactDigest(verified.Materials, subject.URI)
+		if !ok {
+			return fail(fmt.Errorf("verify chain: the link for step %q does not record the run %q: it is from another run: %w",
+				step.Name, subject.URI, ErrSubjectMismatch))
+		}
+		if recorded == "" {
+			recorded = got
+		}
+		if got != recorded {
+			return fail(fmt.Errorf("verify chain: the link for step %q records the run %q with digest %q, not %q: %w",
+				step.Name, subject.URI, got, recorded, ErrSubjectMismatch))
+		}
+		if uri, ok := firstMissing(step.ExpectedMaterials, verified.Materials); !ok {
+			return fail(fmt.Errorf("verify chain: the link for step %q does not record its expected material %q: %w",
+				step.Name, uri, ErrChainBroken))
+		}
+		if uri, ok := firstMissing(step.ExpectedProducts, verified.Products); !ok {
+			return fail(fmt.Errorf("verify chain: the link for step %q does not record its expected product %q: %w",
+				step.Name, uri, ErrChainBroken))
+		}
+		for _, m := range verified.Materials {
+			p, shared := producedBy[m.URI]
+			if shared && p.step != step.Name && p.digest != m.Digest {
+				return fail(fmt.Errorf("verify chain: chain broken between step %q and step %q: artifact %q digest mismatch: %w",
+					p.step, step.Name, m.URI, ErrChainBroken))
 			}
 		}
 	}
 
 	span.SetStatus(codes.Ok, "")
 	g.recordMetrics(ctx, operation, "success", start)
-	return nil
+	return &VerifiedChain{Layout: verifiedLayout, Subject: Artifact{URI: subject.URI, Digest: recorded}}, nil
 }
 
-// extractStepOrder extracts step names from a signed layout in order.
-func (g *generator) extractStepOrder(layout *SignedLayout) ([]string, error) {
-	dsseEnv, err := parseDSSEEnvelope(layout.Raw)
-	if err != nil {
-		return nil, err
+// artifactDigest returns the digest artifacts record for uri.
+func artifactDigest(artifacts []Artifact, uri string) (string, bool) {
+	for _, a := range artifacts {
+		if a.URI == uri {
+			return a.Digest, true
+		}
 	}
+	return "", false
+}
 
-	l, err := parseLayoutFromDSSE(dsseEnv)
+// claimedStep returns the step name a link envelope's payload states,
+// without verifying it, or "" if it cannot be read. It only labels errors.
+func claimedStep(raw []byte) string {
+	env, err := parseDSSEEnvelope(raw)
 	if err != nil {
-		return nil, err
+		return ""
 	}
+	payload, err := env.DecodeB64Payload()
+	if err != nil {
+		return ""
+	}
+	var link struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(fixCanonicalJSONNewlines(payload), &link); err != nil {
+		return ""
+	}
+	return link.Name
+}
 
-	names := make([]string, len(l.Steps))
-	for i, s := range l.Steps {
-		names[i] = s.Name
+// firstMissing returns the first URI in want that no artifact in have
+// records, and false; or "" and true when have records them all.
+func firstMissing(want []string, have []Artifact) (string, bool) {
+	recorded := make(map[string]bool, len(have))
+	for _, a := range have {
+		recorded[a.URI] = true
 	}
-	return names, nil
+	for _, uri := range want {
+		if !recorded[uri] {
+			return uri, false
+		}
+	}
+	return "", true
 }

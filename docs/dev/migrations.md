@@ -26,7 +26,7 @@ The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequenti
 
 ## Editing Policy
 
-- **Until the first release**, the baseline may be edited in place. No released database needs an upgrade path, so fold the change into `001_initial_schema.up.sql` (and its down) and recreate development databases with `crosscodexd migrate`.
+- **Until the first release**, the baseline may be edited in place. No released database needs an upgrade path, so fold the change into `001_initial_schema.up.sql` (and its down) and recreate development databases with `crosscodexd migrate`. A database created from the earlier baseline still reports version 1, so when the change adds a column, add it to `baselineColumns` (a table column) or `baselineFunctionColumns` (a column a set-returning function returns) in `pkg/db/role_check.go`: `CheckSchemaVersion` then refuses such a database at daemon startup, telling the operator to recreate it, instead of letting it fail at its first write.
 - **After the first release**, never edit an applied migration. Add a new one with the next sequence number; see [Checksum Verification Failure](#checksum-verification-failure).
 
 ## Creating a New Migration
@@ -79,7 +79,7 @@ Run it on first install and after every upgrade, before starting the new `crossc
 The daemon opens the application pool with the restricted `app_user` DSN and refuses to start unless:
 
 - `db.CheckRestrictedRole` finds the `database.dsn` and `database.graph_dsn` connections, and, for role `all` and `admin retention scan`, the `database.purge_dsn` connection when it is set, are not a superuser, `BYPASSRLS`, a table owner, or a member of one. `purge_user` passes: its `retention_purge` membership grants neither.
-- `db.CheckSchemaVersion` finds the schema at the latest embedded migration version (`db.LatestMigrationVersion`) and not dirty. It reads `schema_migrations`, on which the initial schema grants `app_user` `SELECT`. An outdated schema error points at `crosscodexd migrate`.
+- `db.CheckSchemaVersion` finds the schema at the latest embedded migration version (`db.LatestMigrationVersion`) and not dirty. It reads `schema_migrations`, on which the initial schema grants `app_user` `SELECT`. An outdated schema error points at `crosscodexd migrate`. It also checks, through `information_schema.columns`, that every column in `baselineColumns` and `baselineFunctionColumns` exists, refusing a database an earlier build created from the baseline before those columns were folded in; that error says to recreate the database.
 
 The `crosscodexd admin` commands that open the database (`retention scan`, `reconcile artifacts`, `adjudicate artifacts`) run the same checks. Role `all` also refuses to start when `tenants.default_tenant` does not exist; `crosscodexd migrate` creates it.
 

@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"log/slog"
+	"time"
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -43,6 +44,17 @@ func WithLogger(logger *slog.Logger) Option {
 		if logger != nil {
 			e.logger = logger
 		}
+	}
+}
+
+// WithStageTimeout sets the hard cap on each analyzer stage's collection.
+// Wiring contract: fed by pipeline.stage_timeout (config.PipelineConfig),
+// which validation keeps in (0, 168h]. Without it every collection the
+// NATSCollector prepares fails with ErrNoStageTimeout, so a stage can never
+// run unbounded.
+func WithStageTimeout(d time.Duration) Option {
+	return func(e *Engine) {
+		e.stageTimeout = d
 	}
 }
 

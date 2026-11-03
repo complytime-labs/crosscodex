@@ -15,6 +15,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 )
 
@@ -67,6 +68,49 @@ func (m *mockIngestion) DiscardDocument(ctx context.Context, documentID string) 
 	return nil
 }
 
+// recordingAttestor records CreateLink calls. The gateway calls nothing
+// else on attestation.Generator, so the other methods fail loudly.
+type recordingAttestor struct {
+	links []recordedLink
+}
+
+type recordedLink struct {
+	step                string
+	materials, products []attestation.Artifact
+}
+
+var errUnusedAttestor = errors.New("recordingAttestor: method not used by the gateway")
+
+func (r *recordingAttestor) CreateLink(_ context.Context, step string, materials, products []attestation.Artifact, _ ...attestation.LinkOption) (*attestation.SignedLink, error) {
+	r.links = append(r.links, recordedLink{step: step, materials: materials, products: products})
+	return &attestation.SignedLink{}, nil
+}
+
+func (r *recordingAttestor) CreateLayout(context.Context, attestation.LayoutOptions) (*attestation.SignedLayout, error) {
+	return nil, errUnusedAttestor
+}
+
+func (r *recordingAttestor) Verify(context.Context, []byte) (*attestation.VerifiedLink, error) {
+	return nil, errUnusedAttestor
+}
+
+func (r *recordingAttestor) VerifyLayout(context.Context, []byte) (*attestation.VerifiedLayout, error) {
+	return nil, errUnusedAttestor
+}
+
+func (r *recordingAttestor) VerifyChain(context.Context, *attestation.SignedLayout, []*attestation.SignedLink, attestation.Artifact) (*attestation.VerifiedChain, error) {
+	return nil, errUnusedAttestor
+}
+
+// artifactURIs lists the URIs of artifacts, for comparing links.
+func artifactURIs(artifacts []attestation.Artifact) []string {
+	uris := make([]string, 0, len(artifacts))
+	for _, a := range artifacts {
+		uris = append(uris, a.URI)
+	}
+	return uris
+}
+
 type mockCatalog struct {
 	parseFn          func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error)
 	listCatalogsFn   func(context.Context, *connect.Request[pb.ListCatalogsRequest]) (*connect.Response[pb.ListCatalogsResponse], error)
@@ -103,6 +147,7 @@ type mockPipeline struct {
 	getJobFn    func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error)
 	listJobsFn  func(context.Context, *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error)
 	cancelJobFn func(context.Context, *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error)
+	retryJobFn  func(context.Context, *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error)
 }
 
 func (m *mockPipeline) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
@@ -133,6 +178,13 @@ func (m *mockPipeline) CancelJob(ctx context.Context, req *connect.Request[pb.Ca
 		return m.cancelJobFn(ctx, req)
 	}
 	return connect.NewResponse(&pb.CancelJobResponse{Cancelled: true}), nil
+}
+
+func (m *mockPipeline) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+	if m.retryJobFn != nil {
+		return m.retryJobFn(ctx, req)
+	}
+	return connect.NewResponse(&pb.RetryJobResponse{NewJobId: req.Msg.GetJobId()}), nil
 }
 
 // mockMappings records the request it receives and returns a configured
@@ -417,20 +469,107 @@ var _ = Describe("Job handlers", func() {
 			Expect(resp.Msg.GetCancelled()).To(BeTrue())
 		})
 	})
+
+	Context("RetryJob", func() {
+		// retryingBackend is a backend whose job-1 was created by createdBy
+		// and that records the RetryJob requests it receives.
+		retryingBackend := func(createdBy string) (*mockPipeline, *[]*pb.RetryJobRequest) {
+			var got []*pb.RetryJobRequest
+			pipeline := ownedJobBackend(createdBy)
+			pipeline.retryJobFn = func(_ context.Context, req *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+				got = append(got, req.Msg)
+				return connect.NewResponse(&pb.RetryJobResponse{NewJobId: "job-1"}), nil
+			}
+			return pipeline, &got
+		}
+
+		It("lets the owner retry its job from its failure, in the caller's tenant whatever the request says", func() {
+			pipeline, got := retryingBackend("user-a")
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			resp, err := svc.RetryJob(userCtx("user-a"), connect.NewRequest(&pb.RetryJobRequest{
+				JobId: "job-1", RetryFromFailure: true,
+				TenantContext: &pb.TenantContext{TenantId: "someone-else"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetNewJobId()).To(Equal("job-1"))
+			Expect(*got).To(HaveLen(1))
+			Expect((*got)[0].GetRetryFromFailure()).To(BeTrue())
+			Expect((*got)[0].GetTenantContext().GetTenantId()).To(Equal("tenant-a"))
+		})
+
+		It("refuses a caller that does not own the job, retrying nothing", func() {
+			pipeline, got := retryingBackend("user-a")
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			_, err := svc.RetryJob(userCtx("user-b"), connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1", RetryFromFailure: true}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+			Expect(*got).To(BeEmpty())
+		})
+
+		It("lets an admin retry any job", func() {
+			pipeline, got := retryingBackend("user-a")
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			_, err := svc.RetryJob(adminCtx(), connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*got).To(HaveLen(1))
+		})
+
+		It("requires a job_id", func() {
+			pipeline, got := retryingBackend("user-a")
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			_, err := svc.RetryJob(userCtx("user-a"), connect.NewRequest(&pb.RetryJobRequest{}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(*got).To(BeEmpty())
+		})
+
+		It("passes the pipeline's refusal through with its message, so the caller learns what to do", func() {
+			pipeline := ownedJobBackend("user-a")
+			pipeline.retryJobFn = func(context.Context, *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+				return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("cannot retry job job-1 from its failure: start a new job"))
+			}
+			svc := newTestService(gateway.WithPipelineBackend(pipeline))
+
+			_, err := svc.RetryJob(userCtx("user-a"), connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1", RetryFromFailure: true}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring("start a new job"))
+		})
+	})
 })
 
 var _ = Describe("SubmitDocument", func() {
-	It("chains ConvertDocument -> ParseCatalog -> CreateJob successfully", func() {
-		svc := newTestService()
+	It("imports the document and returns its catalog without creating a job", func() {
+		createJobCalled := false
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
+				createJobCalled = true
+				return connect.NewResponse(&pb.CreateJobResponse{JobId: "job-1"}), nil
+			},
+		}))
 
-		ctx := userCtx("user-a")
-		resp, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+		resp, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
 			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Msg.GetDocumentId()).To(Equal("doc-1"))
-		Expect(resp.Msg.GetJobId()).To(Equal("job-1"))
-		Expect(resp.Msg.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_PENDING))
+		Expect(resp.Msg.GetCatalogId()).To(Equal("cat-1"))
+		Expect(createJobCalled).To(BeFalse())
+	})
+
+	It("attests the document as material and the catalog as the only product", func() {
+		att := &recordingAttestor{}
+		svc := newTestService(gateway.WithAttestor(att))
+
+		_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(att.links).To(HaveLen(1))
+		Expect(att.links[0].step).To(Equal("gateway.SubmitDocument"))
+		Expect(artifactURIs(att.links[0].materials)).To(Equal([]string{"document://tenant-a/doc-1"}))
+		Expect(artifactURIs(att.links[0].products)).To(Equal([]string{"catalog://tenant-a/cat-1"}))
 	})
 
 	// A plain backend error is withheld as Internal; backend_errors_bdd_test.go
@@ -455,12 +594,17 @@ var _ = Describe("SubmitDocument", func() {
 				return nil, connect.NewError(connect.CodeInternal, errors.New("catalog unavailable"))
 			},
 		}), connect.CodeInternal),
-		Entry("pipeline backend fails", gateway.WithPipelineBackend(&mockPipeline{
-			createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
-				return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline unavailable"))
-			},
-		}), connect.CodeInternal),
 	)
+
+	It("imports without a pipeline backend", func() {
+		svc := gateway.NewService(gateway.WithIngestionBackend(&mockIngestion{}), gateway.WithCatalogBackend(&mockCatalog{}))
+
+		resp, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetCatalogId()).To(Equal("cat-1"))
+	})
 
 	It("returns error when no source provided", func() {
 		svc := newTestService()
@@ -753,7 +897,20 @@ var _ = Describe("StreamDocument", func() {
 		resp, err := gateway.ExportHandleStreamedDocument(svc, ctx, time.Now(), meta, content)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resp.Msg.GetDocumentId()).To(Equal("doc-1"))
-		Expect(resp.Msg.GetJobId()).To(Equal("job-1"))
+	})
+
+	It("returns the imported catalog without creating a job", func() {
+		createJobCalled := false
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
+				createJobCalled = true
+				return connect.NewResponse(&pb.CreateJobResponse{JobId: "job-1"}), nil
+			},
+		}))
+		resp, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(), &pb.StreamDocumentMetadata{}, []byte("test doc"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetCatalogId()).To(Equal("cat-1"))
+		Expect(createJobCalled).To(BeFalse())
 	})
 
 	It("returns error when metadata is nil", func() {
@@ -774,28 +931,20 @@ var _ = Describe("StreamDocument", func() {
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
 	})
 
-	It("propagates metadata to catalog and pipeline backends", func() {
+	It("propagates metadata to the catalog backend", func() {
 		var capturedParseReq *pb.ParseCatalogRequest
-		var capturedJobReq *pb.CreateJobRequest
 		cat := &mockCatalog{
 			parseFn: func(_ context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
 				capturedParseReq = req.Msg
 				return connect.NewResponse(&pb.ParseCatalogResponse{CatalogId: "cat-1", Status: pb.JobStatus_JOB_STATUS_COMPLETED}), nil
 			},
 		}
-		pipeline := &mockPipeline{
-			createJobFn: func(_ context.Context, req *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
-				capturedJobReq = req.Msg
-				return connect.NewResponse(&pb.CreateJobResponse{JobId: "job-1", Status: pb.JobStatus_JOB_STATUS_PENDING}), nil
-			},
-		}
-		svc := newTestService(gateway.WithCatalogBackend(cat), gateway.WithPipelineBackend(pipeline))
+		svc := newTestService(gateway.WithCatalogBackend(cat))
 		ctx := userCtx("user-a")
 
 		meta := &pb.StreamDocumentMetadata{
-			CatalogFormat:   pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
-			CatalogName:     "test-catalog",
-			TargetCatalogId: "target-cat-1",
+			CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+			CatalogName:   "test-catalog",
 		}
 
 		resp, err := gateway.ExportHandleStreamedDocument(svc, ctx, time.Now(), meta, []byte("doc content"))
@@ -805,11 +954,6 @@ var _ = Describe("StreamDocument", func() {
 		Expect(capturedParseReq).NotTo(BeNil())
 		Expect(capturedParseReq.GetFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
 		Expect(capturedParseReq.GetCatalogName()).To(Equal("test-catalog"))
-
-		Expect(capturedJobReq).NotTo(BeNil())
-		Expect(capturedJobReq.GetConfig().GetCatalogFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_OSCAL))
-		Expect(capturedJobReq.GetConfig().GetCatalogName()).To(Equal("test-catalog"))
-		Expect(capturedJobReq.GetConfig().GetTargetCatalogId()).To(Equal("target-cat-1"))
 	})
 
 	It("returns Unavailable when backends are nil", func() {

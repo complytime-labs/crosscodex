@@ -1,12 +1,20 @@
 package analyzer
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 )
+
+// ErrMissingControlText reports a candidate pair whose source or target
+// control has no statement text in AnalyzerConfig.Parameters
+// ("source_text_<id>" / "target_text_<id>"). The pair analyzers refuse to
+// build such a prompt: an empty requirement wastes a billed LLM call and
+// yields a meaningless verdict.
+var ErrMissingControlText = errors.New("candidate control has no statement text")
 
 // TruncateText replaces newlines with spaces and truncates to maxChars runes.
 // A maxChars of 0 or negative disables truncation.

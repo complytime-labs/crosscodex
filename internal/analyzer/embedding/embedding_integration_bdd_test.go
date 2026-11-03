@@ -116,9 +116,8 @@ var _ = Describe("Embedding Infrastructure Integration", Ordered, func() {
 			MaxChars:  2000,
 			BatchSize: 10,
 		}
-		relCfg := config.RelationshipConfig{TopK: 5}
 
-		a := embedding.New(mock, vectors, store, embCfg, relCfg)
+		a := embedding.New(mock, vectors, store, embCfg)
 
 		controls := []*pb.Control{
 			{

@@ -31,6 +31,40 @@ var _ = Describe("SemanticGenerator", func() {
 	})
 
 	Describe("Generate", func() {
+		Context("when source and target controls overlap (single-catalog analysis)", func() {
+			It("never pairs a control with itself and still returns top-K other controls", func() {
+				matrix := &SimilarityMatrix{
+					IDs: []string{"AC-1", "AC-2", "AC-3"},
+					Values: [][]float32{
+						{100, 80, 60},
+						{80, 100, 70},
+						{60, 70, 100},
+					},
+				}
+				controls := map[string]*candidate.ControlData{
+					"AC-1": {ControlID: "AC-1", Text: "one"},
+					"AC-2": {ControlID: "AC-2", Text: "two"},
+					"AC-3": {ControlID: "AC-3", Text: "three"},
+				}
+				req := candidate.GenerateRequest{
+					TenantID: "test-tenant", JobID: "test-job",
+					SourceControls: controls, TargetControls: controls,
+					EmbeddingMatrix: matrix,
+					Parameters:      map[string]interface{}{"top_k": 1, "min_similarity": 0.0, "weight": 1.0},
+				}
+
+				candidates, err := gen.Generate(context.Background(), req)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(candidates).To(HaveLen(3))
+				pairs := map[string]string{}
+				for _, c := range candidates {
+					pairs[c.SourceID] = c.TargetID
+				}
+				Expect(pairs).To(Equal(map[string]string{"AC-1": "AC-2", "AC-2": "AC-1", "AC-3": "AC-2"}))
+			})
+		})
+
 		Context("when selecting top-K similar targets", func() {
 			It("returns the top-K most similar targets sorted by score", func() {
 				// Create a 3x3 similarity matrix

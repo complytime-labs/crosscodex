@@ -76,6 +76,12 @@ func loadYAMLFile(path string) (*yaml.Node, error) {
 		}
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	return parseYAML(data, path)
+}
+
+// parseYAML parses data, the content of the file at path, and returns its
+// document's root node, or nil when it holds no document.
+func parseYAML(data []byte, path string) (*yaml.Node, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}

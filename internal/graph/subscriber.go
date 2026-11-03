@@ -142,6 +142,14 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 		attribute.String("job.id", event.JobID),
 	)
 
+	handle, ok := s.handlerFor(event.Analyzer)
+	if !ok {
+		s.logger.DebugContext(ctx, "no graph handler for stage", "analyzer", event.Analyzer, "job_id", event.JobID)
+		s.recordEvent(ctx, event.Analyzer, "skipped")
+		span.SetStatus(codes.Ok, "no handler")
+		return nil
+	}
+
 	// Build resource ref for resolution.
 	ref := ResourceRef{
 		Type: "analysis_result",
@@ -160,7 +168,7 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 	}
 
 	// Dispatch to analyzer-specific handler.
-	if err := s.materialize(ctx, tenantID, event.Analyzer, event.JobID, data); err != nil {
+	if err := s.materialize(ctx, handle, tenantID, event.Analyzer, event.JobID, data); err != nil {
 		s.logger.ErrorContext(ctx, "materialization failed",
 			"analyzer", event.Analyzer, "job_id", event.JobID, "error", err)
 		s.recordEvent(ctx, event.Analyzer, "error")

@@ -3,7 +3,7 @@ name: crosscodexd black-box E2E - OSCAL ingest to AGE structural surface (Tier A
 vars:
   root: "."
   fixture: "cmd/crosscodexd/testdata/oscal/e2e-minimal-catalog.json"
-  gateway_url: "https://127.0.0.1:18443/crosscodex.v1.GatewayService/SubmitDocument"
+  gateway_url: "https://127.0.0.1:18443/crosscodex.v1.GatewayService"
   # DB DSN with absolute cert paths (venom runs scripts from a temp dir)
   ca_cert: ""
   client_cert: ""
@@ -35,24 +35,27 @@ testcases:
         assertions:
           - result.code ShouldEqual 0
 
-  - name: Submit inline OSCAL catalog via mTLS Connect JSON
+  - name: Submit inline OSCAL catalog via mTLS Connect JSON (imports only)
     steps:
       - type: exec
         script: |
           base64_content=$(base64 -w 0 <{{.root}}/{{.fixture}})
-          curl -sS --fail-with-body \
+          resp=$(curl -sS --fail-with-body \
             --cacert {{.ca_cert}} \
             --cert {{.client_cert}} \
             --key {{.client_key}} \
             -H "Content-Type: application/json" \
             -d "{\"content\":\"$base64_content\",\"catalogFormat\":\"CATALOG_FORMAT_OSCAL\",\"catalogName\":\"e2e\"}" \
-            {{.gateway_url}}
+            {{.gateway_url}}/SubmitDocument) || { echo "$resp" >&2; exit 1; }
+          # Upload must not start analysis: the response carries no job.
+          if echo "$resp" | jq -e 'has("jobId")' >/dev/null; then
+            echo "upload returned a jobId: $resp" >&2
+            exit 1
+          fi
+          echo "$resp"
         assertions:
           - result.code ShouldEqual 0
-          - result.systemoutjson.jobId ShouldNotBeEmpty
-        vars:
-          job_id:
-            from: result.systemoutjson.jobId
+          - result.systemoutjson.catalogId ShouldNotBeEmpty
 
   - name: Controls persisted in relational DB (controls table)
     steps:

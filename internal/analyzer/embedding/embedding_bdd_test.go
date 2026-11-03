@@ -472,7 +472,6 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 		mockVec    *vectordbtest.Fake
 		mockStore  *storagetest.Fake
 		cfg        config.EmbeddingConfig
-		relCfg     config.RelationshipConfig
 		ctx        context.Context
 	)
 
@@ -490,9 +489,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			BatchSize: 50,
 		}
 
-		relCfg = config.RelationshipConfig{TopK: 20}
-
-		a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg)
+		a = embedding.New(mockClient, mockVec, mockStore, cfg)
 	})
 
 	Describe("Name", func() {
@@ -549,7 +546,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 						Models:    []string{"model-a", "model-b"},
 						MaxChars:  1500,
 						BatchSize: 50,
-					}, relCfg)
+					})
 
 				control := &pb.Control{
 					ControlId:  "nist-800-53/AC-1",
@@ -580,6 +577,28 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				Expect(result.Attributes["skipped"]).To(Equal("true"))
 			})
 		})
+
+		DescribeTable("controls without a statement produce a pre-built skip result",
+			func(statement string, parts map[string]string) {
+				control := &pb.Control{
+					ControlId: "nist-csf-2.0/ID.BE",
+					Statement: statement,
+					Parts:     parts,
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+				Expect(tasks[0].TaskID).To(Equal("embedding-nist-csf-2.0/ID.BE"))
+
+				result, ok := tasks[0].Payload.(*pb.AnalysisResult)
+				Expect(ok).To(BeTrue())
+				Expect(result.Attributes["skipped"]).To(Equal("true"))
+			},
+			Entry("empty statement, no ancestor", "", map[string]string{"class": "compliance-requirement"}),
+			Entry("whitespace-only statement, with ancestor", " \n\t ",
+				map[string]string{"class": "compliance-requirement", "ancestor_title": "Business Environment"}),
+		)
 
 		Context("without tenant context", func() {
 			It("returns an error", func() {
@@ -673,7 +692,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			}
 
 			It("stores a batch of embeddings extracted from successful TaskResults", func() {
-				a = embedding.New(mockClient, mockVec, mockStore, embedCfg, relCfg)
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg)
 
 				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
 				Expect(err).NotTo(HaveOccurred())
@@ -704,7 +723,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			})
 
 			It("skips a TaskResult with a task-level error", func() {
-				a = embedding.New(mockClient, mockVec, mockStore, embedCfg, relCfg)
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg)
 
 				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
 				Expect(err).NotTo(HaveOccurred())
@@ -733,7 +752,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			})
 
 			It("skips persistence without error when there is no vector store", func() {
-				a = embedding.New(mockClient, nil /* vectors */, mockStore, embedCfg, relCfg)
+				a = embedding.New(mockClient, nil /* vectors */, mockStore, embedCfg)
 
 				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
 				Expect(err).NotTo(HaveOccurred())
@@ -754,7 +773,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			})
 
 			It("errors if CatalogID is missing from context and there are embeddings to store", func() {
-				a = embedding.New(mockClient, mockVec, mockStore, embedCfg, relCfg)
+				a = embedding.New(mockClient, mockVec, mockStore, embedCfg)
 
 				aggCtx, err := tenant.WithTenant(context.Background(), "tenant-a")
 				Expect(err).NotTo(HaveOccurred())
@@ -784,7 +803,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 		// than reflecting map-iteration or input order.
 		It("produces ResultData", func() {
 			aggCfg := config.EmbeddingConfig{Models: []string{"nomic-embed-text", "mxbai-embed-large"}}
-			aggAnalyzer := embedding.New(nil, nil, nil, aggCfg, config.RelationshipConfig{})
+			aggAnalyzer := embedding.New(nil, nil, nil, aggCfg)
 
 			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
 				{TaskID: "embedding-AC-2-nomic-embed-text", TaskType: "embedding"},
@@ -811,7 +830,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 		// Aggregate.
 		It("omits errors and foreign task IDs from ResultData", func() {
 			aggCfg := config.EmbeddingConfig{Models: []string{"nomic-embed-text"}}
-			aggAnalyzer := embedding.New(nil, nil, nil, aggCfg, config.RelationshipConfig{})
+			aggAnalyzer := embedding.New(nil, nil, nil, aggCfg)
 
 			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
 				{TaskID: "embedding-AC-4-nomic-embed-text", TaskType: "embedding", Error: errors.New("llm timeout")},
@@ -831,7 +850,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = tp.Shutdown(ctx) }()
 
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
+			a = embedding.New(mockClient, mockVec, mockStore, cfg,
 				embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
 			control := &pb.Control{
@@ -860,7 +879,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = tp.Shutdown(ctx) }()
 
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
+			a = embedding.New(mockClient, mockVec, mockStore, cfg,
 				embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
 			_, err = a.Aggregate(ctx, []analyzer.TaskResult{})
@@ -876,7 +895,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = tp.Shutdown(ctx) }()
 
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
+			a = embedding.New(mockClient, mockVec, mockStore, cfg,
 				embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
 			control := &pb.Control{
@@ -904,7 +923,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				Expect(err).NotTo(HaveOccurred())
 				defer func() { _ = tp.Shutdown(ctx) }()
 
-				a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
+				a = embedding.New(mockClient, mockVec, mockStore, cfg,
 					embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
 				control := &pb.Control{
@@ -931,6 +950,8 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			},
 			Entry("section control (skip path) is counted as skipped",
 				"nist-800-53/AC", "ACCESS CONTROL", "compliance-section", "skipped"),
+			Entry("blank-statement control is counted as skipped",
+				"nist-csf-2.0/ID.BE", "  ", "compliance-requirement", "skipped"),
 			Entry("requirement control (LLM path) is counted as pending",
 				"nist-800-53/AC-1", "The organization shall define access control policy.", "compliance-requirement", "pending"),
 		)
@@ -940,7 +961,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = tp.Shutdown(ctx) }()
 
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg,
+			a = embedding.New(mockClient, mockVec, mockStore, cfg,
 				embedding.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
 			results := []analyzer.TaskResult{
@@ -984,7 +1005,7 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 		})
 
 		It("does not panic without telemetry", func() {
-			a = embedding.New(mockClient, mockVec, mockStore, cfg, relCfg) // no WithTelemetry
+			a = embedding.New(mockClient, mockVec, mockStore, cfg) // no WithTelemetry
 
 			control := &pb.Control{
 				ControlId: "nist-800-53/AC-1",

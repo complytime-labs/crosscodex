@@ -26,6 +26,9 @@ const (
 	headerJobID      = "X-Job-Id"
 	headerRetryCount = "X-Retry-Count"
 	headerError      = "X-Error"
+	// headerCollectionID names the analysis collection a task belongs to;
+	// see natsbus.AbandonedCollection.
+	headerCollectionID = "X-Collection-Id"
 )
 
 func (w *Worker) handleMessage(ctx context.Context, msg *natsbus.Message) error {
@@ -81,6 +84,10 @@ func (w *Worker) handleMessage(ctx context.Context, msg *natsbus.Message) error 
 		if jobID != "" && tenantID != "" {
 			w.publishErrorResult(ctx, tenantID, natsbus.TaskType(taskType), jobID, taskID, "invalid_message")
 		}
+		return nil
+	}
+
+	if w.dropAbandoned(ctx, span, tenantID, taskType, jobID, taskID, getHeader(msg.Headers, headerCollectionID)) {
 		return nil
 	}
 
@@ -145,8 +152,23 @@ func (w *Worker) handleMessage(ctx context.Context, msg *natsbus.Message) error 
 		w.recordError(ctx, taskType, "publish_error")
 		return nil
 	}
+	w.publishProgress(ctx, taskType)
 
 	return nil
+}
+
+// publishProgress publishes the tenant-free worker progress tick that tells
+// every waiting collection the pool is alive. It runs only after a result
+// was published. A failed tick never fails the task, whose result is already
+// out: it is logged and counted.
+func (w *Worker) publishProgress(ctx context.Context, taskType string) {
+	if err := w.bus.PublishWorkerProgress(ctx); err != nil {
+		w.logger.Warn("failed to publish worker progress; the task result was published, but collections "+
+			"waiting on this pool can hit analysis.engine.task_timeout while it is busy. Check this worker's NATS connection",
+			"error", err,
+		)
+		w.recordError(ctx, taskType, "progress_publish_error")
+	}
 }
 
 func (w *Worker) handleCompletion(ctx context.Context, payload *structpb.Struct, tenantID, jobID string) (*structpb.Struct, error) {
@@ -241,7 +263,9 @@ func (w *Worker) publishErrorResult(ctx context.Context, tenantID string, taskTy
 			"task_id", taskID,
 			"error", err,
 		)
+		return
 	}
+	w.publishProgress(ctx, string(taskType))
 }
 
 func (w *Worker) handleTaskError(ctx context.Context, span trace.Span, tenantID string, taskType natsbus.TaskType, jobID, taskID string, err error, category string) {

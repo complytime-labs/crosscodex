@@ -22,19 +22,23 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
 )
 
-// validAnalysisConfig returns a minimal config.AnalysisConfig that satisfies
-// every analyzer's construction-time validation.
+// validAnalysisConfig returns a config.AnalysisConfig with all five analyzers
+// enabled that satisfies every analyzer's construction-time validation.
 func validAnalysisConfig() config.AnalysisConfig {
 	return config.AnalysisConfig{
-		Classification: config.ClassificationConfig{Model: "m", MaxTextLength: 100},
-		Embedding:      config.EmbeddingConfig{Models: []string{"m"}, MaxChars: 100, BatchSize: 1},
-		Relationship:   config.RelationshipConfig{Models: []string{"m"}, SamplesPerModel: 1, MaxSourceChars: 100, MaxTargetChars: 100, MaxTokens: 100},
-		Requires:       config.RequiresConfig{Models: []string{"m"}, SamplesPerModel: 1, ConsensusThreshold: 0.5, MaxSourceChars: 100, MaxTargetChars: 100, MaxTokens: 100},
-		Artifacts:      config.ArtifactsConfig{Models: []string{"m"}, SamplesPerModel: 1, MaxTokens: 100, MaxTextChars: 100, FuzzyThreshold: 0.6},
+		Classification: config.ClassificationConfig{Enabled: true, Model: "m", MaxTextLength: 100},
+		Embedding:      config.EmbeddingConfig{Enabled: true, Models: []string{"m"}, MaxChars: 100, BatchSize: 1},
+		Relationship:   config.RelationshipConfig{Enabled: true, Models: []string{"m"}, SamplesPerModel: 1, MaxSourceChars: 100, MaxTargetChars: 100, MaxTokens: 100},
+		Requires:       config.RequiresConfig{Enabled: true, Models: []string{"m"}, SamplesPerModel: 1, ConsensusThreshold: 0.5, MaxSourceChars: 100, MaxTargetChars: 100, MaxTokens: 100},
+		Artifacts:      config.ArtifactsConfig{Enabled: true, Models: []string{"m"}, SamplesPerModel: 1, MaxTokens: 100, MaxTextChars: 100, FuzzyThreshold: 0.6},
 	}
 }
 
 func newProductionRegistryForTest(tp trace.TracerProvider, mp metric.MeterProvider) (*analyzer.Registry, error) {
+	return newProductionRegistryWithConfig(validAnalysisConfig(), tp, mp)
+}
+
+func newProductionRegistryWithConfig(cfg config.AnalysisConfig, tp trace.TracerProvider, mp metric.MeterProvider) (*analyzer.Registry, error) {
 	// Every transaction enters the tenant and queries zero rows, so the
 	// requires/relationship candidate providers' Candidates() reaches a
 	// successful empty result without a real database, exercising their
@@ -43,7 +47,7 @@ func newProductionRegistryForTest(tp trace.TracerProvider, mp metric.MeterProvid
 		ExecFunc:  func(context.Context, string, ...any) error { return nil },
 		QueryFunc: func(context.Context, string, ...any) (db.Rows, error) { return dbtest.Rows(nil), nil },
 	}}
-	return NewProductionRegistry(&llmclienttest.Fake{}, &vectordbtest.Fake{}, &storagetest.Fake{}, &prompttest.Fake{}, conn, validAnalysisConfig(), tp, mp)
+	return NewProductionRegistry(&llmclienttest.Fake{}, &vectordbtest.Fake{}, &storagetest.Fake{}, &prompttest.Fake{}, conn, cfg, tp, mp)
 }
 
 var _ = Describe("NewProductionRegistry", func() {
@@ -59,6 +63,67 @@ var _ = Describe("NewProductionRegistry", func() {
 		_, err = reg.BuildDAG(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 	})
+
+	DescribeTable("registers exactly the enabled analyzers, and their DAG builds",
+		func(enable func(*config.AnalysisConfig), want []string) {
+			cfg := validAnalysisConfig()
+			cfg.Classification.Enabled = false
+			cfg.Embedding.Enabled = false
+			cfg.Artifacts.Enabled = false
+			cfg.Requires.Enabled = false
+			cfg.Relationship.Enabled = false
+			enable(&cfg)
+
+			reg, err := newProductionRegistryWithConfig(cfg, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			var got []string
+			for _, a := range reg.All() {
+				got = append(got, a.Name())
+			}
+			Expect(got).To(ConsistOf(want))
+			dag, err := reg.BuildDAG(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dag.Order()).To(ConsistOf(want))
+		},
+		Entry("none", func(*config.AnalysisConfig) {}, []string{}),
+		Entry("classify", func(c *config.AnalysisConfig) { c.Classification.Enabled = true }, []string{"classify"}),
+		Entry("artifacts", func(c *config.AnalysisConfig) { c.Artifacts.Enabled = true }, []string{"artifacts"}),
+		Entry("classify and embedding", func(c *config.AnalysisConfig) {
+			c.Classification.Enabled, c.Embedding.Enabled = true, true
+		}, []string{"classify", "embedding"}),
+		Entry("classify, embedding and relationship", func(c *config.AnalysisConfig) {
+			c.Classification.Enabled, c.Embedding.Enabled, c.Relationship.Enabled = true, true, true
+		}, []string{"classify", "embedding", "relationship"}),
+		Entry("classify, embedding and requires", func(c *config.AnalysisConfig) {
+			c.Classification.Enabled, c.Embedding.Enabled, c.Requires.Enabled = true, true, true
+		}, []string{"classify", "embedding", "requires"}),
+		Entry("all five", func(c *config.AnalysisConfig) {
+			c.Classification.Enabled, c.Embedding.Enabled, c.Artifacts.Enabled = true, true, true
+			c.Requires.Enabled, c.Relationship.Enabled = true, true
+		}, []string{"classify", "embedding", "artifacts", "requires", "relationship"}),
+	)
+
+	// Config validation rejects these combinations; the registry refuses them
+	// too, so a caller that skips validation still fails at startup instead
+	// of on the first job.
+	DescribeTable("refuses an enabled analyzer whose dependency is disabled, naming both settings",
+		func(disable func(*config.AnalysisConfig), msg ...string) {
+			cfg := validAnalysisConfig()
+			disable(&cfg)
+			_, err := newProductionRegistryWithConfig(cfg, nil, nil)
+			Expect(err).To(MatchError(analyzer.ErrMissingDependency))
+			for _, m := range msg {
+				Expect(err.Error()).To(ContainSubstring(m))
+			}
+		},
+		Entry("embedding without classify", func(c *config.AnalysisConfig) {
+			c.Classification.Enabled = false
+		}, `analyzer "embedding" depends on "classify"`, "analysis.embedding.enabled", "analysis.classification.enabled"),
+		Entry("relationship and requires without embedding", func(c *config.AnalysisConfig) {
+			c.Embedding.Enabled = false
+		}, `depends on "embedding"`, "analysis.embedding.enabled"),
+	)
 
 	Describe("telemetry forwarding", func() {
 		It("records a registration on the registry's own counter for each analyzer", func() {

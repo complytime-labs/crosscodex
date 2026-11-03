@@ -25,15 +25,74 @@ The graph storage hardening in #148 makes these breaking changes:
 - `BulkCreateEdges` rejects requests with more than `graph.max_bulk_edges` edges (default 1000).
 - `CreateEdge` and `BulkCreateEdges` reject a `temporal.confidence` outside 0 to 1.
 - The never-populated `BulkCreateEdgesResponse.errors` field (field 3) is removed and reserved; `BulkCreateEdges` reports failures only as the RPC status.
-- The unused `tenants.allowed_tenants` config key is removed. A config file or `CROSSCODEX_TENANTS_ALLOWED_TENANTS` that still sets it is ignored; delete it.
+- The unused `tenants.allowed_tenants` config key is removed; delete it. A config file that still sets it fails to load (see unknown config keys below); `CROSSCODEX_TENANTS_ALLOWED_TENANTS` is ignored.
 
 Graphs written before this change must be rebuilt. Follow the "Upgrade note (#148)" in [docs/dev/design-principles.md](docs/dev/design-principles.md#graph-data-model).
 
 The pre-release schema migrations are collapsed into one baseline, `001_initial_schema`. A database migrated by an earlier build cannot be upgraded; `crosscodexd` refuses it as newer than itself. Drop it (for the compose deployment, `task deploy:down VOLUMES=1`) and recreate it with `crosscodexd migrate`.
 
+Unknown config keys:
+
+- A config file (system, user, drop-in, profile, project or `--config`) or CLI flag override that sets a key that is not a configuration field now fails to load instead of being silently ignored. This catches misspellings (`pipeline.stage_timout`) and keys that were removed (`analysis.relationship.top_k`, `tenants.allowed_tenants`). One error lists every unknown key in every file layer and CLI flag override, so all of them can be fixed in one pass, each with its dotted path, `file:line:column`, a "did you mean" suggestion when a valid key is close, and the valid keys at that level; a removed key says what replaced it. Example: `unknown configuration key "pipeline.stage_timout" at /etc/crosscodex/config.yaml:2:3: did you mean "stage_timeout"? (valid keys under pipeline: addr, endpoint, max_concurrent_jobs, stage_timeout)`. `tenant_overrides` entries are checked the same way, and a global-only key set in one names the keys that can be overridden. Environment variables are not checked: a `CROSSCODEX_*` variable that matches no key is still ignored.
+- Loading now reports every problem at once instead of stopping at the first: every invalid value in every section, values of the wrong type (text for a number, a value where a section belongs), and the invalid values alongside any unknown keys. A value of the wrong type is reported against the file, line and column (or CLI flag, or environment variable) that set it, such as ``pipeline.max_concurrent_jobs at /etc/crosscodex/config.yaml:4:24: cannot unmarshal !!str `many` into int``, instead of a line in the merged configuration. A float setting set to `.nan` is rejected. The CLI prints the problems one per line under a single summary line. Each error keeps its message (with `(set in <file>)` where the value came from a file, now also for `analysis.engine`, `analysis.requires`, `analysis.artifacts`, `analysis.artifact_adjudication`, `analysis.candidates`, `worker`, `pipeline` and `retention`), joined one per line. A setting whose rule involves another, such as `tls.mode mutual` needing `tls.cert`, `tls.key` and `tls.ca`, is reported once, under the setting that imposes the rule.
+- A top-level key that only holds a YAML anchor, such as the compose idiom `x-common: &common`, is an unknown key and is rejected. Define the anchor on the first place that uses it, inside a real section, and refer to it from the others; anchors do not reach across files:
+
+  ```yaml
+  tls:
+    targets:
+      llm: &mtls
+        mode: mutual
+        ca: /etc/crosscodex/ca.pem
+      nats: *mtls
+      db:
+        <<: *mtls
+        cert: /etc/crosscodex/db.pem
+  ```
+
+- `<<` merge keys and aliases now take effect over the compiled defaults and earlier layers. Before, `logging: {<<: {level: debug}}` loaded with the default level `warn`, because the default's explicit `level` beat the merged one. Within one mapping, a key set explicitly still wins over a merged one, and in `<<: [*a, *b]` the earlier entry wins, as YAML specifies.
+- `crosscodex config set <key> <value>` and the new `crosscodex config unset <key>` edit only the user config, and write it only if the configuration loads with the change, every other layer and `--profile` included (only that profile; others are not checked). A misspelled key, an invalid value, a key that names a section or list, a path through an alias (`<path> is an alias to another section`), or a change to a section or value whose anchor an alias in the file refers to (the error names the aliases), is refused with the reason, and the file is left byte-identical. When a change depends on another setting (such as `tls.mode mutual` on `tls.cert`, `tls.key` and `tls.ca`), set that one first. The file is replaced atomically, keeping its permissions and owner (a new one is created `0600`; a config owned by another user is refused unless the command can give the new file that owner), and a symlinked user config is written through to its target; a dangling symlink is refused.
+- When the configuration does not load, every command fails with the error, except the `crosscodex config` commands: they print it as a warning and still run. If the user config is the cause, `config unset` removes an unknown key and `config set` fixes a value, one problem per change: a change is written if it removes at least one problem and adds none (the remaining ones are printed as a warning), and refused if it adds a problem or replaces a bad value with another bad one. A rule spanning settings counts as one problem under the setting that imposes it, so `tls.mode mutual` stays a problem until `tls.cert`, `tls.key` and `tls.ca` are all set: set those first, or `tls.mode` back to `off`. If some problem has no setting path (a document whose root is not a mapping, such as a YAML list; a file that does not parse is refused outright, fix its syntax by hand), a change is written only if it makes the configuration load. If a problem's value comes from another layer (system config, drop-in, profile, environment variable), set and unset refuse and name it: fix that file first. A layer that only loads together with the user config (a drop-in sets `llm.gateway_mode: true`, the user config sets `llm.gateway_url`) does not count as broken. A map key a dotted path cannot hold (one containing `.`, `[`, `]` or `"`) is written quoted, both in errors and in `config set`, `get` and `unset` keys, for example `crosscodex config unset 'llm.tenant_overrides["a.b"]'`. `config show` and `config get` have no resolved configuration to print, so they report the error once instead.
+
 Tenant administration (#31):
 
 - The gateway refuses every non-health request, with `PermissionDenied`, from a tenant whose `tenants` row is missing, suspended or deleted. The initial schema creates the `tenant_admin` role that `crosscodexd admin tenant` connects as, so tenants can only be provisioned after `crosscodexd migrate` runs. Once crosscodexd has migrated, set the role's password and `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`, then run `crosscodexd admin tenant create` for each authenticated tenant before sending it traffic; requests from that tenant are refused until then. Roles `all` and `gateway` refuse to start until `crosscodexd migrate` has provisioned `tenants.default_tenant`. See [Tenant administration](deploy/README.md#tenant-administration).
+
+Analysis stage limits (#237):
+
+- `pipeline.stage_timeout` now caps every analyzer stage. Its default is 24h (was 30m, unused), and `0` is rejected: a config that sets `stage_timeout: 0` or more than `168h` fails to load. Raise it if a catalog's stage legitimately runs longer than 24h.
+- `analysis.engine.task_timeout` changed meaning. Before, it was one deadline for a stage's whole batch of LLM tasks, so any real catalog failed after `task_timeout`. Now it is an idle timeout across the whole worker pool: a stage fails only when no worker anywhere reports progress for that long. Total time per stage is capped by `pipeline.stage_timeout` instead (default 24h).
+- Split deployments: each LLM worker remembers an abandon for its own host's `pipeline.stage_timeout`, and `worker.max_abandoned_collections` is likewise per worker host. Set `pipeline.stage_timeout` on worker hosts to the same value as on pipeline hosts, or larger. A smaller value makes workers forget abandons early and run tasks nobody reads.
+- Mixed versions: workers from before this release publish no progress ticks, so a new pipeline with old workers still fails a stage queued behind another stage at `task_timeout`. Upgrade workers with, or before, pipelines.
+- Analyzer `enabled` settings now take effect. Before, every job registered all five analyzers whatever `analysis.<analyzer>.enabled` said, and each ran with whatever models it had: classification and embedding ran even when disabled; artifacts, requires and relationship ran whenever their `models` were set, so a disabled analyzer with models still billed its LLM calls, and with the defaults (`enabled: false`, `models: []`) they ran with zero LLM tasks, so jobs completed with no mappings and no sign that analysis was off. Now a disabled analyzer gets no stage and makes no calls. What changes for you:
+  - Classification and embedding default to enabled, so a default configuration still runs them; one that set them `false` no longer runs them.
+  - Artifacts no longer runs unless `analysis.artifacts.enabled: true`. A configuration that set `analysis.artifacts.models` without enabling it used to extract artifacts and now does not.
+  - Relationship and requires likewise run only when enabled. Both default to off, so a stock deployment produces no mappings until you enable `analysis.relationship` (see [Analyzer `enabled` settings](#analyzer-enabled-settings)).
+  - A configuration that enables an analyzer without what it needs no longer loads: embedding without classification, or requires or relationship without embedding or without an enabled `analysis.candidates.generators` entry.
+  - A job left running across the upgrade, or across a change to these settings, fails when it resumes if its analyzers differ from the enabled ones, naming each one. Start a new job.
+- `crosscodex run cancel` now records the cancellation. Before, the cancelled job's context was also used to write its final state, so every write failed: the job stayed `RUNNING` and resumed at the next daemon start. Stages running at the cancel end with the new stage status `cancelled`. A daemon shutdown still leaves its jobs `RUNNING` for resume, and no longer publishes a `cancelled` job state for them.
+- When an analyzer stage times out, fails to dispatch, or its job is cancelled, LLM workers drop that stage's still-queued tasks instead of calling the model for results nobody reads; a resumed or retried job's new run is unaffected. Only workers and pipelines from this release do this: an older worker runs every task (and sends no progress ticks, see above), and a newer worker runs tasks from an older pipeline normally. See [Control Messages: Abandoned Collections](docs/dev/audit-streams.md#control-messages-abandoned-collections).
+
+SDK and prompt changes:
+
+- `natsbus.Client` gained `PublishWorkerProgress` and `SubscribeWorkerProgress`. Implementations outside this repo (`pkg/natsbus` is public) must add them.
+- `pkg/natsbus` subject builders reject job IDs longer than 128 bytes with `ErrInvalidJobID`.
+- The shipped `requires` prompt is now 1.1.0 and renders `| Control Domain: "${source_ancestor}"`; `${source_ancestor}` is the bare domain name, no longer a pre-formatted suffix. A user or project prompt override of `requires` still using `Level: ${source_level}${source_ancestor}` renders e.g. `Level: tacticalAccess Control`. Prompt overrides are not version-checked, so update them by hand.
+
+Attestation fails closed (#240):
+
+- An attested pipeline job now completes only once its whole attestation is stored: a signed layout, a link per analyzer, synthesis and graph, a chain that verifies, and the bundle. Before, every attestation failure was logged and ignored, so jobs completed with a partial attestation or none. A job that cannot be attested now fails with an error that names the step and object and says what to do. See [Cryptographic Attestation](#cryptographic-attestation).
+- `attestation.enabled` now takes effect, per tenant through `attestation.tenant_overrides`. When it is `true` (the default) for any tenant, roles `all` and `pipeline` refuse to start unless that scope's `private_key_path` and `public_key_path` are both set, load, and are one key pair; with `tls.fips.enabled` the key must be on a FIPS-approved curve. Before, the daemon refused only empty global paths, even with attestation disabled, and a key that did not load started the daemon and then left every job unattested. The `deploy/` stack and `test/e2e` already supply keys. A configuration of your own that does not: generate a key pair (`task deploy:certs` writes one to `deploy/certs/`) and set both paths, or set `attestation.enabled: false` to run jobs unattested, which the daemon logs at startup.
+- `attestation.include_byproducts`, the per-tenant `expiry_duration` and key paths, and FIPS mode now apply to the pipeline's attestations; they were ignored.
+- Analyzer link digests are now SHA-256 of each analyzer's stored result. Before, every production analyzer's link recorded `sha256` of the analyzer's name, so the chain attested nothing about results. Bundles stored before this change still verify their signatures but not against results.
+- A job left running across the upgrade resumes as before; if its synthesis or graph stage completed without a stored link, it fails and says to start a new job.
+- New settings `attestation.storage_retries` (default 3) and `attestation.storage_retry_delay` (default 2s) bound how long an attestation write is retried before the job fails.
+- Every layout step and link is bound to its job: it records `job:<tenant>/<job-id>` with the digest of the job's stored config, and verification refuses a link or bundle from another job. Before, nothing signed named the job, so with the shared global key one job's attestation verified as another's.
+- `crosscodex results verify` now verifies a job's whole stored bundle and requires `--public-key`, `--tenant` and `--job-id`; it prints the job and its config digest. Before, it verified a single link and reported `Status: Structure valid` without a key; given a bundle it failed.
+- New command `crosscodex run retry <job-id>` (gateway RPC `RetryJob`, `POST /v1/jobs/{job_id}/retry`): `--from-failure` resumes a failed or cancelled job in place, otherwise a new job starts with the same config. Before, retrying needed the pipeline's own RPC, which role `all` does not serve. A failed or cancelled job with no failed or cancelled stage (one whose attestation could not be stored) now resumes instead of being refused, and a job whose failure a retry cannot fix (an attestation that does not verify, changed analyzers, no catalog) is refused with `FailedPrecondition` and left unchanged.
+- `jobs` gains an `error_class` column, folded into the pre-release baseline `001_initial_schema`. A database created by an earlier build lacks it; `crosscodexd` now refuses to start on such a database, saying to recreate it (`task deploy:down VOLUMES=1`, then `crosscodexd migrate`).
+- Cancelling and retrying: a retry of a job whose cancelled run is still stopping is refused (`FailedPrecondition`, "still stopping") until `crosscodex run status` shows it is no longer running, so a retry never runs beside the cancelled run; concurrent retries of one job start it once. Embedded mode now refuses `run cancel`, since the job is run, and can only be stopped, by the daemon. `JobProgress` gains `cancelled_steps`, and `run status` prints the completed, failed and cancelled stage counts.
+- `gateway.PipelineBackend` gains `RetryJob`. Implementations outside this repo must add it. `attestation.Generator.VerifyChain` takes the expected subject and returns a `*VerifiedChain`, and `VerifiedLayout.KeyIDs` lists only the keys whose signatures verified.
+- `pipeline.New` takes a `pipeline.Attestors` (built by `pipeline.NewAttestors`) in place of an `attestation.Generator` and `config.AttestationConfig`. `attestation.Generator.VerifyChain` now requires the layout and one link per layout step (`ErrMissingLink`, `ErrUnexpectedLink`) and verifies every signature; callers that passed a nil layout or a partial chain get an error.
 
 Identity lifecycle (#195):
 
@@ -87,6 +146,8 @@ crosscodex project init
 crosscodex catalog import catalogs/NIST_SP-800-53_rev5_catalog.json
 ```
 
+Import stores and parses the catalog and prints its catalog ID. It does not start analysis.
+
 ### 7. List and inspect catalogs
 
 ```sh
@@ -97,7 +158,20 @@ crosscodex catalog list
 crosscodex catalog inspect <catalog-id>
 ```
 
-### 8. Read a job's mappings
+### 8. Start an analysis
+
+```sh
+crosscodex run start --source <catalog-id>
+crosscodex run status <job-id>
+```
+
+`run start` starts a full analysis of an imported catalog and prints the job ID. Analysis runs in the `crosscodexd` daemon; embedded mode refuses it (see [Deployment Modes](#deployment-modes)).
+
+`crosscodex run cancel <job-id>` asks for confirmation. When stdin is not a terminal (a script, pipe or CI job) it refuses and cancels nothing, even if `y` is piped in; pass `--yes` to cancel without the prompt. Embedded mode refuses it: only the daemon running the job can stop it.
+
+A cancelled job ends with status `CANCELLED`, and the stages that were running end `cancelled`; it is not resumed automatically. `crosscodex run retry --from-failure <job-id>` resumes a cancelled job from its first cancelled stage, as it resumes a failed job from its first failed one, keeping the stages that completed. A failed or cancelled job with no failed or cancelled stage, such as one whose attestation bundle could not be stored, resumes from where it stopped. A job whose failure a retry cannot fix (its attestation does not verify, its analyzers changed, its config names no catalog) is refused, unchanged, with the reason; start a new job. Without `--from-failure`, `run retry` starts a new job with the same config and prints its ID. `run retry` asks for no confirmation: it deletes nothing and re-runs only stages that did not complete. A cancelled job keeps writing its cancellation for a moment after `run cancel` returns; until it stops, `run retry` is refused, saying to retry once `crosscodex run status <job-id>` shows it is no longer running. Embedded mode refuses it, as it refuses `run start`. A job is `COMPLETED` only once its attestation bundle is stored, so a cancel during that last step still cancels it; once the job is being recorded as completed, `run cancel` is refused (`FailedPrecondition`) and says to check `crosscodex run status`. A job interrupted by a `crosscodexd` shutdown is not cancelled: it stays `RUNNING` and resumes from its completed stages when the daemon starts again, including one stopped while its bundle was being stored.
+
+### 9. Read a job's mappings
 
 Once a job has completed, read its control mappings. Both commands take the job ID and the same filters:
 
@@ -207,9 +281,11 @@ flowchart TD
 | **Graph**           | openCypher queries via Apache AGE on PostgreSQL | Go                  |
 | **Pipeline**        | Job orchestration, state tracking, retry logic  | Go                  |
 
+The Ingestion service lives in its own repository, [complytime-labs/crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion). The gateway does not call it yet: it stores uploads unchanged, and the Catalog service imports only OSCAL JSON. Wiring Docling conversion into imports is tracked in issue [#214](https://github.com/complytime-labs/crosscodex/issues/214).
+
 ### Deployment Modes
 
-- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. Run `crosscodexd migrate` before starting `crosscodexd` against a database. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
+- **Embedded** -- All services in one process with auto-bootstrapped mTLS. Requires PostgreSQL with AGE and pgvector extensions (start with `task dev:up`). Local filesystem for object storage. Catalog import, list, and inspect work for OSCAL JSON documents. Analysis does not run in embedded mode: `crosscodex run start` fails with an error that says to start `crosscodexd` and set `cli.endpoint`, and no job is stored. Run `crosscodexd migrate` before starting `crosscodexd` against a database. `crosscodexd` (default `--role=all`) bootstraps a DB pool and NATS client and runs the graph, worker, and gateway/pipeline roles together in one process; analysis result persistence is durable end-to-end at the library layer (`internal/pipeline`, `pkg/analyzer`).
 - **Production (compose)** -- Single-host production stack with full mutual TLS across all services (PostgreSQL, NATS, the LLM gateway, CrossCodex gateway). One-command bring-up via `task deploy:up` after populating `deploy/.env` and generating certificates with `task deploy:certs`. The default LiteLLM gateway runs behind a stunnel sidecar to provide end-to-end mTLS; `LLM_GATEWAY=praxis` selects Praxis AI instead (spike). See [deploy/README.md](deploy/README.md) for setup, first-use CLI commands, and operations.
 - **Distributed** -- Services scale independently with external PostgreSQL cluster (AGE + pgvector), NATS cluster with JetStream, and S3-compatible object storage. Multi-host deployment and FIPS 140 container images tracked in issue [#17](https://github.com/complytime-labs/crosscodex/issues/17).
 
@@ -262,7 +338,7 @@ Values merge in ascending priority (last wins):
 llm:
   gateway_url: "http://localhost:4000"  # roles pipeline, worker and all refuse to start if this doesn't answer
   default_model: "qwen3:8b"
-  timeout: 30
+  timeout: 30  # seconds per LLM request; 0 means the 30s default
 
 # Storage
 storage:
@@ -282,6 +358,18 @@ tls:
   cert: /etc/crosscodex/tls/server.crt
   key: /etc/crosscodex/tls/server.key
 
+# Attestation (roles all and pipeline refuse to start if an enabled scope's keys are missing or do not load)
+attestation:
+  enabled: true                   # false: jobs complete unattested (logged at startup)
+  private_key_path: /etc/crosscodex/attestation-key.pem   # ECDSA (SEC1 "EC PRIVATE KEY")
+  public_key_path: /etc/crosscodex/attestation-pub.pem    # PKIX "PUBLIC KEY" of the same key
+  expiry_duration: 8760h          # layout validity; `results verify` rejects an expired layout
+  storage_retries: 3              # retries of a failed attestation write, [0, 10]; global-only
+  storage_retry_delay: 2s         # wait before each retry, [0, 1m]; global-only
+  tenant_overrides:
+    sandbox:
+      enabled: false              # this tenant's jobs run unattested
+
 # Multi-tenant X.509 certificate-to-tenant mapping
 tenants:
   enabled: true
@@ -299,22 +387,56 @@ auth:
 
 # Analysis
 analysis:
+  engine:
+    task_timeout: 5m                     # (0, 30m]; fail a stage when neither its own results nor any worker progress arrive for this long
+    max_retries: 3                       # Redispatches of a failed task
+    retry_backoff: 1s                    # Base delay before a redispatch
   classification:
-    enabled: true
+    enabled: true                 # Runs the classify analyzer; embedding needs it
     model: ""                     # Inherits from llm.default_model
     max_text_length: 2000
     temperature: 0.0
     max_tokens: 20
   embedding:
-    enabled: true
+    enabled: true                        # Runs the embedding analyzer; needs classification; requires and relationship need it
     models: ["snowflake-arctic-embed2"]  # Embedding model names; storage is model-agnostic (see docs/dev/embeddings.md), switching models needs no schema migration
     max_chars: 1500                      # Max runes before truncation
     batch_size: 50                       # Controls per batch call
-  relationship:
-    top_k: 20                            # Most-similar pairs to retain
+  relationship:                          # The analyzer whose results are a job's mappings
+    enabled: false                       # Off by default, so a stock deployment produces no mappings; needs embedding and an enabled candidates generator
+    models: []                           # Panel models; required when enabled
+  requires:
+    enabled: false                       # Off by default; needs embedding and an enabled candidates generator; finds REQUIRES edges, which are not mappings
+    models: []                           # Panel models; required when enabled
+    samples_per_model: 1                 # Votes per model per pair; odd unless allow_even_samples
+    allow_even_samples: false            # Allow an even samples_per_model
+    sampling_temperature: 0.3            # [0, 2]
+    max_tokens: 300                      # Max tokens per LLM reply
+    consensus_threshold: 0.67            # [0.5, 1]; minimum confidence fraction
+    max_error_rate: 0.34                 # [0, 1]; maximum fraction of votes that can fail
+    max_source_chars: 1500               # Max runes of source control text
+    max_target_chars: 800                # Max runes of target control text
   candidates:
-    min_embedding_coverage: 0.8          # Minimum fraction of a job's controls that must have an embedding before candidate generation runs; below this, the candidate_generation stage fails the job (fail-closed)
+    min_embedding_coverage: 0.8          # Minimum fraction of a job's non-section controls that have a statement and must have an embedding before candidate generation runs; below this, the candidate_generation stage fails the job (fail-closed)
     embed_model: "snowflake-arctic-embed2"  # Embedding model candidate generation reads; must be one of analysis.embedding.models
+    generators:                          # Candidate generators; none by default, and with none enabled no candidate pairs are produced
+      - name: semantic                   # Most-similar controls by embedding
+        enabled: true
+        weight: 1.0                      # [0, 1] in weighted aggregation; 0 or unset means 1.0
+        config:                          # Optional; unknown keys are rejected at load
+          top_k: 10                      # Most-similar targets kept per source control; positive integer (default 10)
+          min_similarity: 0              # Drop targets below this cosine similarity x 100; [0, 100] (default 0)
+      - name: keyword                    # Targets whose text contains a keyword (case-insensitive substring)
+        enabled: false
+        weight: 1.0
+        config:
+          keywords: [policy, procedure]  # Non-empty list of non-empty strings; omit to use the built-in list below
+          # Built-in list: policy, procedure, plan, program, framework,
+          # establish, define, designate, inventory, baseline, register, catalogue, catalog, architecture,
+          # strategy, governance, charter
+      - name: level                      # Targets at a higher abstraction level; takes no config keys
+        enabled: false
+        weight: 1.0
   artifact_adjudication:                 # `crosscodexd admin adjudicate artifacts`
     enabled: false                       # The command refuses to run until true
     models: []                           # Panel models; required when enabled
@@ -330,6 +452,12 @@ analysis:
     panel_concurrency: 4                 # Completions in flight per pair
     retry_base_delay: 1m                 # Wait after a pair's first failed panel, doubling per failure
     retry_max_delay: 24h                 # Cap on that wait; at least retry_base_delay
+
+worker:
+  max_abandoned_collections: 10000        # [1, 100000]; abandoned stages each worker remembers so it can drop their queued LLM tasks; raise it if more stages are abandoned within one stage_timeout; per worker host (global-only)
+
+pipeline:
+  stage_timeout: 24h                      # (0, 168h]; hard cap on each analyzer stage, which worker progress never extends; fails a stage whose task was lost; worker hosts must set the same or a larger value (they keep abandons that long)
 
 graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)
@@ -349,6 +477,14 @@ synthesis:
     contested_warn: 0.20                  # Contested pairs warning threshold
     actionable_warn: 0.30                 # Actionable coverage warning threshold
 ```
+
+#### Analyzer `enabled` settings
+
+`analysis.classification.enabled`, `analysis.embedding.enabled`, `analysis.artifacts.enabled`, `analysis.requires.enabled` and `analysis.relationship.enabled` decide which analyzers a job runs. A disabled analyzer gets no job stage, never runs and makes no LLM calls. The defaults enable classification and embedding only, so a stock deployment classifies and embeds controls but produces **no mappings**: mappings come from the relationship analyzer, which is off until you set `analysis.relationship.enabled: true`, its `models`, and at least one enabled `analysis.candidates.generators` entry. `crosscodex run status <job-id>` lists the analyzers a job runs and says when it has no relationship analyzer.
+
+The configuration does not load if an enabled analyzer cannot run: embedding without classification, requires or relationship without embedding, or requires or relationship with no enabled candidate generator (it would analyse zero pairs). Each error names the setting to change.
+
+A job runs the analyzers enabled when it was created. If they change before the job is resumed (after a daemon restart), the job fails before any analyzer runs, and no stage is left running. The error names each analyzer whose setting differs from when the job was created. A failed job is not resumed, so start a new job with `crosscodex run start --source <catalog-id>`; to give it the analyzers the old job had, first change the settings the error names.
 
 ### Environment Variables
 
@@ -478,6 +614,14 @@ task test:e2e:venom:llm
 
 **Requirements:** both suites need `venom`, `psql`, and `pg_isready` on the host plus a podman (or docker) runtime; the LLM tier also needs `jq`. The podman `TMPDIR` / storage-driver notes under **Stress Tests** apply here too.
 
+#### Tooling Tests
+
+Venom suites in `test/tooling/` check the repo's own scripts and Taskfile behaviour: the e2e daemon is stopped before its database is torn down, and the deploy tasks fail with an actionable message when `deploy/.env` is missing. They need only `venom` and `task`, start no containers, and never touch your `deploy/.env`. CI runs them in the `e2e-venom` job.
+
+```bash
+task test:tooling
+```
+
 ### Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development workflow, PR process, and coding standards.
@@ -522,13 +666,31 @@ CrossCodex supports dual builds (standard and FIPS) from the same source:
 
 ### Cryptographic Attestation
 
-Pipeline outputs include in-toto attestation for audit trails:
+When attestation is enabled for a job's tenant (`attestation.enabled`, `attestation.tenant_overrides`), the pipeline records an in-toto attestation of the job in object storage under `attestations/<tenant>/<job-id>/`:
 
-- **Layout**: Signed by Pipeline service declaring authorized stages and functionaries
-- **Links**: Per-stage attestations with input/output hashes, model versions, environment
-- **Verification**: Independent validation via in-toto CLI (CrossCodex verify command planned)
+- **Layout** (`layout.json`): signed before any analyzer runs; one step per enabled analyzer, then `synthesis` and `graph`.
+- **Links** (`links/<step>.json`): one signed link per step. Every link records the job, `job:<tenant>/<job-id>`, with the SHA-256 of the job's stored config, and every layout step expects it, so an attestation cannot be passed off as another job's. An analyzer's link records the SHA-256 of its stored result and of the results it consumed; synthesis records every analyzer's result and its own output (the SHA-256 of the JSON of the result it computed, not of rows an auditor can read back from the database); graph records the synthesis output. `candidate_generation` has no link.
+- **Bundle** (`bundle.json`): the layout and every link, stored only after the chain verifies. The job is `COMPLETED` only once it is stored.
 
-See [Cryptographic Attestation Guide](docs/dev/attestation.md) for the attestation model, trace correlation, and implementation roadmap.
+The job fails instead of completing unattested. Every error names the step and object:
+
+| Failure | Job | What to do |
+|---|---|---|
+| Layout or a link cannot be signed | Fails (the step's stage too, for synthesis and graph); a layout failure fails it before any analyzer runs | Fix the key pair and restart `crosscodexd`, then `crosscodex run retry --from-failure <job-id>` or start a new job. If you fixed it by rotating to a new key pair, start a new job: the links the job already stored were signed with the old key and no longer verify, so a retry fails |
+| Object storage refuses a write after `attestation.storage_retries` retries | Fails | Fix storage, then `crosscodex run retry --from-failure <job-id>` or start a new job |
+| A stored link is missing, does not verify, or is for another job on resume, or the chain does not verify | Fails, with every stored object left as it was; `run retry --from-failure` refuses it | Start a new job; check whether objects under `attestations/` were changed |
+
+Publishing the bundle to the audit stream is best effort: a failure is logged, since the stored bundle is the record. When attestation is disabled, no signer is built, no attestation object is written, and the daemon logs at startup that jobs are unattested.
+
+To verify a job offline, copy its `bundle.json` out of object storage and run:
+
+```sh
+crosscodex results verify bundle.json --public-key deploy/certs/attestation-pub.pem --tenant <tenant> --job-id <job-id>
+```
+
+It checks that the bundle is bound to that job, the layout's signature and expiry, every link's signature, one link per layout step, and every digest one step passes to another, and prints the job's config digest the links record. It does not read the database.
+
+See [Cryptographic Attestation Guide](docs/dev/attestation.md) for the attestation model, trace correlation, and how the pipeline builds the chain.
 
 ## Storage Architecture
 

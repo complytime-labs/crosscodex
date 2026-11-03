@@ -2,6 +2,9 @@ package config
 
 import (
 	"fmt"
+	"maps"
+	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +46,9 @@ type LLMConfig struct {
 	APIKeyRef      string   `yaml:"api_key_ref" json:"api_key_ref"`
 	AllowedModels  []string `yaml:"allowed_models" json:"allowed_models"`
 	MaxRetries     int      `yaml:"max_retries" json:"max_retries"`
-	Timeout        int      `yaml:"timeout" json:"timeout"`
+	// Timeout bounds each LLM gateway request, in seconds. Zero means
+	// llmclient.DefaultTimeout (30s) for both http and https gateways.
+	Timeout int `yaml:"timeout" json:"timeout"`
 	// TenantOverrides maps tenant IDs (must satisfy pkg/tenant.ValidateTenantID)
 	// to per-tenant LLM config overrides. Nil pointer fields inherit the global
 	// value. AllowedModels replaces (not merges with) the global list when
@@ -310,6 +315,12 @@ type StructuringConfig struct {
 
 // AttestationConfig configures in-toto attestation generation and verification.
 //
+// When attestation is enabled for a tenant (ForTenant), every pipeline job of
+// that tenant is attested or fails: the daemon refuses to start unless each
+// enabled scope has a loadable key pair (RequireKeys, then key loading in
+// internal/pipeline.NewAttestors). When it is disabled, no signer is built
+// and jobs complete without attestation.
+//
 // FIPS mode is not configured here. Attestation FIPS enforcement is derived
 // from tls.fips.enabled -- a single deployment-wide posture. The service layer
 // reads TLSConfig.FIPS.Enabled and passes attestation.WithFIPSMode() accordingly.
@@ -320,6 +331,51 @@ type AttestationConfig struct {
 	ExpiryDuration    time.Duration                  `yaml:"expiry_duration" json:"expiry_duration"`
 	IncludeByProducts bool                           `yaml:"include_byproducts" json:"include_byproducts"`
 	TenantOverrides   map[string]AttestationOverride `yaml:"tenant_overrides" json:"tenant_overrides"`
+	// StorageRetries is how many more times the pipeline tries to store an
+	// attestation (layout, link or bundle) in object storage after a failed
+	// write, before it fails the job. Range [0, 10]. Global-only: storage
+	// is shared by every tenant.
+	StorageRetries int `yaml:"storage_retries" json:"storage_retries"`
+	// StorageRetryDelay is the wait before each of those retries. Range
+	// [0, 1m], so one write adds at most 10m of retry delay. Global-only.
+	StorageRetryDelay time.Duration `yaml:"storage_retry_delay" json:"storage_retry_delay"`
+}
+
+// RequireKeys reports, as one FieldError per scope, every scope (the global
+// settings, or a tenant override) that enables attestation without both
+// key paths. A tenant that only inherits a global problem is not reported
+// again.
+//
+// crosscodexd calls this, through internal/pipeline.NewAttestors, in the
+// roles that run the pipeline. Config loading does not: the crosscodex CLI
+// and the other roles load the same configuration and never sign.
+func (a *AttestationConfig) RequireKeys() error {
+	var p problems
+	const remedy = "the pipeline signs each job's in-toto attestation with this key pair. " +
+		"Set both paths to an ECDSA key pair, or set %s: false to run jobs without attestation: %w"
+	globalMissing := a.Enabled && (a.PrivateKeyPath == "" || a.PublicKeyPath == "")
+	if globalMissing {
+		p.add("attestation.private_key_path",
+			"attestation.enabled is true but attestation.private_key_path and attestation.public_key_path are not both set: "+remedy,
+			"attestation.enabled", ErrMissingRequired)
+	}
+	for _, tenantID := range slices.Sorted(maps.Keys(a.TenantOverrides)) {
+		override := a.TenantOverrides[tenantID]
+		tc := a.ForTenant(tenantID)
+		if !tc.Enabled || (tc.PrivateKeyPath != "" && tc.PublicKeyPath != "") {
+			continue
+		}
+		ownsProblem := override.Enabled != nil || override.PrivateKeyPath != nil || override.PublicKeyPath != nil
+		if globalMissing && !ownsProblem {
+			continue
+		}
+		prefix := mapKeyPath("attestation.tenant_overrides", tenantID)
+		p.add(prefix+".private_key_path",
+			"attestation is enabled for tenant %q but it has no key pair: set %s.private_key_path and %s.public_key_path, "+
+				"or the global attestation.private_key_path and attestation.public_key_path it inherits; "+remedy,
+			tenantID, prefix, prefix, prefix+".enabled", ErrMissingRequired)
+	}
+	return p.err()
 }
 
 // AttestationOverride allows per-tenant attestation settings.
@@ -439,6 +495,17 @@ type AnalysisConfig struct {
 
 // EngineConfig configures the analysis engine orchestrator.
 type EngineConfig struct {
+	// TaskTimeout is how long an analyzer stage waits while the whole LLM
+	// worker pool is silent before it fails. Any task result of the stage,
+	// or any worker progress tick, resets the timer. A worker ticks after
+	// any task result it publishes, success or error (including an error
+	// that will be retried), for any stage, job, tenant or daemon; it sends
+	// no tick when the result publish fails or the task is dropped before
+	// any result. It does not cap the stage's total duration: a stage of
+	// thousands of LLM tasks runs as long as the pool keeps finishing tasks,
+	// even while it works through another stage's queue. So it does not
+	// catch a lost task while the pool stays busy; pipeline.stage_timeout
+	// does, and bounds how long ticks can delay this timeout. Range (0, 30m].
 	TaskTimeout  time.Duration `yaml:"task_timeout" json:"task_timeout"`
 	MaxRetries   int           `yaml:"max_retries" json:"max_retries"`
 	RetryBackoff time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
@@ -446,20 +513,23 @@ type EngineConfig struct {
 
 // Validate checks EngineConfig for consistency and required fields.
 // Returns ErrInvalidConfig on validation failure.
-func (c *EngineConfig) Validate() error {
+func (c *EngineConfig) Validate() error { return c.validate(nil) }
+
+func (c *EngineConfig) validate(tracker *sourceTracker) error {
+	var p problems
 	if c.TaskTimeout <= 0 || c.TaskTimeout > 30*time.Minute {
-		return fmt.Errorf("analysis.engine.task_timeout %s must be in range (0, 30m]: %w",
-			c.TaskTimeout, ErrInvalidConfig)
+		p.add("analysis.engine.task_timeout", "analysis.engine.task_timeout %s%s must be in range (0, 30m]: %w",
+			c.TaskTimeout, formatSource(tracker, "analysis.engine.task_timeout"), ErrInvalidConfig)
 	}
 	if c.MaxRetries < 0 || c.MaxRetries > 10 {
-		return fmt.Errorf("analysis.engine.max_retries %d must be in range [0, 10]: %w",
-			c.MaxRetries, ErrInvalidConfig)
+		p.add("analysis.engine.max_retries", "analysis.engine.max_retries %d%s must be in range [0, 10]: %w",
+			c.MaxRetries, formatSource(tracker, "analysis.engine.max_retries"), ErrInvalidConfig)
 	}
 	if c.RetryBackoff < 0 || c.RetryBackoff > 5*time.Minute {
-		return fmt.Errorf("analysis.engine.retry_backoff %s must be in range [0, 5m]: %w",
-			c.RetryBackoff, ErrInvalidConfig)
+		p.add("analysis.engine.retry_backoff", "analysis.engine.retry_backoff %s%s must be in range [0, 5m]: %w",
+			c.RetryBackoff, formatSource(tracker, "analysis.engine.retry_backoff"), ErrInvalidConfig)
 	}
-	return nil
+	return p.err()
 }
 
 // ClassificationConfig configures the classification analyzer.
@@ -485,7 +555,6 @@ type EmbeddingConfig struct {
 type RelationshipConfig struct {
 	Enabled             bool     `yaml:"enabled" json:"enabled"`
 	Models              []string `yaml:"models" json:"models"`                             // LLM models for panel voting; must be non-empty when enabled
-	TopK                int      `yaml:"top_k" json:"top_k"`                               // Number of most-similar control pairs to retain; must be positive
 	MaxSourceChars      int      `yaml:"max_source_chars" json:"max_source_chars"`         // Max runes for source control text; must be positive
 	MaxTargetChars      int      `yaml:"max_target_chars" json:"max_target_chars"`         // Max runes for target control text; must be positive
 	MaxTokens           int      `yaml:"max_tokens" json:"max_tokens"`                     // Max tokens for LLM response; must be positive
@@ -511,23 +580,27 @@ type CandidateConfig struct {
 
 // Validate checks CandidateConfig for consistency and required fields.
 // Returns ErrInvalidConfig on validation failure.
-func (c *CandidateConfig) Validate() error {
-	if c.MinEmbeddingCoverage < 0.0 || c.MinEmbeddingCoverage > 1.0 {
-		return fmt.Errorf("analysis.candidates.min_embedding_coverage %g must be in range [0.0, 1.0]: %w",
-			c.MinEmbeddingCoverage, ErrInvalidConfig)
+func (c *CandidateConfig) Validate() error { return c.validate(nil) }
+
+func (c *CandidateConfig) validate(tracker *sourceTracker) error {
+	var p problems
+	if math.IsNaN(c.MinEmbeddingCoverage) || c.MinEmbeddingCoverage < 0.0 || c.MinEmbeddingCoverage > 1.0 {
+		p.add("analysis.candidates.min_embedding_coverage", "analysis.candidates.min_embedding_coverage %g%s must be in range [0.0, 1.0]: %w",
+			c.MinEmbeddingCoverage, formatSource(tracker, "analysis.candidates.min_embedding_coverage"), ErrInvalidConfig)
 	}
 	if c.EmbedModel == "" {
-		return fmt.Errorf("analysis.candidates.embed_model must not be empty: %w", ErrInvalidConfig)
+		p.add("analysis.candidates.embed_model", "analysis.candidates.embed_model%s must not be empty: %w",
+			formatSource(tracker, "analysis.candidates.embed_model"), ErrInvalidConfig)
 	}
-	return nil
+	return p.err()
 }
 
 // CandidateGeneratorEntry configures a single candidate generator.
 type CandidateGeneratorEntry struct {
 	Name    string                 `yaml:"name" json:"name"`       // Generator name (e.g., "semantic", "keyword", "level")
 	Enabled bool                   `yaml:"enabled" json:"enabled"` // Enable this generator
-	Weight  float64                `yaml:"weight" json:"weight"`   // Weight for aggregation; default 1.0 if 0
-	Config  map[string]interface{} `yaml:"config" json:"config"`   // Generator-specific configuration
+	Weight  float64                `yaml:"weight" json:"weight"`   // Weight for aggregation, [0.0, 1.0]; 0 means the default 1.0
+	Config  map[string]interface{} `yaml:"config" json:"config"`   // Generator-specific settings; allowed keys per generator in candidateGeneratorSettings (validate.go)
 }
 
 // RequiresConfig configures the requires analyzer for prerequisite detection.
@@ -546,56 +619,50 @@ type RequiresConfig struct {
 
 // Validate checks RequiresConfig for consistency and required fields.
 // Returns ErrInvalidConfig on validation failure.
-func (c *RequiresConfig) Validate() error {
+func (c *RequiresConfig) Validate() error { return c.validate(nil) }
+
+func (c *RequiresConfig) validate(tracker *sourceTracker) error {
 	if !c.Enabled {
 		return nil
 	}
-
+	const pfx = "analysis.requires."
+	var p problems
 	if len(c.Models) == 0 {
-		return fmt.Errorf("analysis.requires.models must not be empty when enabled: %w", ErrInvalidConfig)
+		p.add(pfx+"models", "analysis.requires.models%s must not be empty when enabled: %w",
+			formatSource(tracker, pfx+"models"), ErrInvalidConfig)
 	}
-
 	if c.SamplesPerModel <= 0 {
-		return fmt.Errorf("analysis.requires.samples_per_model %d must be positive: %w",
-			c.SamplesPerModel, ErrInvalidConfig)
+		p.add(pfx+"samples_per_model", "analysis.requires.samples_per_model %d%s must be positive: %w",
+			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
+	} else if !c.AllowEvenSamples && c.SamplesPerModel%2 == 0 {
+		p.add(pfx+"samples_per_model", "analysis.requires.samples_per_model %d%s must be odd unless allow_even_samples=true: %w",
+			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
 	}
-
-	if !c.AllowEvenSamples && c.SamplesPerModel%2 == 0 {
-		return fmt.Errorf("analysis.requires.samples_per_model %d must be odd unless allow_even_samples=true: %w",
-			c.SamplesPerModel, ErrInvalidConfig)
+	if math.IsNaN(c.ConsensusThreshold) || c.ConsensusThreshold < 0.5 || c.ConsensusThreshold > 1.0 {
+		p.add(pfx+"consensus_threshold", "analysis.requires.consensus_threshold %g%s must be in range [0.5, 1.0]: %w",
+			c.ConsensusThreshold, formatSource(tracker, pfx+"consensus_threshold"), ErrInvalidConfig)
 	}
-
-	if c.ConsensusThreshold < 0.5 || c.ConsensusThreshold > 1.0 {
-		return fmt.Errorf("analysis.requires.consensus_threshold %g must be in range [0.5, 1.0]: %w",
-			c.ConsensusThreshold, ErrInvalidConfig)
+	if math.IsNaN(c.MaxErrorRate) || c.MaxErrorRate < 0.0 || c.MaxErrorRate > 1.0 {
+		p.add(pfx+"max_error_rate", "analysis.requires.max_error_rate %g%s must be in range [0.0, 1.0]: %w",
+			c.MaxErrorRate, formatSource(tracker, pfx+"max_error_rate"), ErrInvalidConfig)
 	}
-
-	if c.MaxErrorRate < 0.0 || c.MaxErrorRate > 1.0 {
-		return fmt.Errorf("analysis.requires.max_error_rate %g must be in range [0.0, 1.0]: %w",
-			c.MaxErrorRate, ErrInvalidConfig)
-	}
-
 	if c.MaxSourceChars <= 0 {
-		return fmt.Errorf("analysis.requires.max_source_chars %d must be positive: %w",
-			c.MaxSourceChars, ErrInvalidConfig)
+		p.add(pfx+"max_source_chars", "analysis.requires.max_source_chars %d%s must be positive: %w",
+			c.MaxSourceChars, formatSource(tracker, pfx+"max_source_chars"), ErrInvalidConfig)
 	}
-
 	if c.MaxTargetChars <= 0 {
-		return fmt.Errorf("analysis.requires.max_target_chars %d must be positive: %w",
-			c.MaxTargetChars, ErrInvalidConfig)
+		p.add(pfx+"max_target_chars", "analysis.requires.max_target_chars %d%s must be positive: %w",
+			c.MaxTargetChars, formatSource(tracker, pfx+"max_target_chars"), ErrInvalidConfig)
 	}
-
 	if c.MaxTokens <= 0 {
-		return fmt.Errorf("analysis.requires.max_tokens %d must be positive: %w",
-			c.MaxTokens, ErrInvalidConfig)
+		p.add(pfx+"max_tokens", "analysis.requires.max_tokens %d%s must be positive: %w",
+			c.MaxTokens, formatSource(tracker, pfx+"max_tokens"), ErrInvalidConfig)
 	}
-
-	if c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
-		return fmt.Errorf("analysis.requires.sampling_temperature %g must be in range [0.0, 2.0]: %w",
-			c.SamplingTemperature, ErrInvalidConfig)
+	if math.IsNaN(c.SamplingTemperature) || c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
+		p.add(pfx+"sampling_temperature", "analysis.requires.sampling_temperature %g%s must be in range [0.0, 2.0]: %w",
+			c.SamplingTemperature, formatSource(tracker, pfx+"sampling_temperature"), ErrInvalidConfig)
 	}
-
-	return nil
+	return p.err()
 }
 
 // ArtifactsConfig configures the artifacts analyzer for observable artifact extraction.
@@ -610,41 +677,39 @@ type ArtifactsConfig struct {
 }
 
 // Validate checks ArtifactsConfig for consistency and required fields.
-func (c *ArtifactsConfig) Validate() error {
+func (c *ArtifactsConfig) Validate() error { return c.validate(nil) }
+
+func (c *ArtifactsConfig) validate(tracker *sourceTracker) error {
 	if !c.Enabled {
 		return nil
 	}
-
+	const pfx = "analysis.artifacts."
+	var p problems
 	if len(c.Models) == 0 {
-		return fmt.Errorf("analysis.artifacts.models must not be empty when enabled: %w", ErrInvalidConfig)
+		p.add(pfx+"models", "analysis.artifacts.models%s must not be empty when enabled: %w",
+			formatSource(tracker, pfx+"models"), ErrInvalidConfig)
 	}
-
 	if c.SamplesPerModel <= 0 {
-		return fmt.Errorf("analysis.artifacts.samples_per_model %d must be positive: %w",
-			c.SamplesPerModel, ErrInvalidConfig)
+		p.add(pfx+"samples_per_model", "analysis.artifacts.samples_per_model %d%s must be positive: %w",
+			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
 	}
-
 	if c.MaxTokens <= 0 {
-		return fmt.Errorf("analysis.artifacts.max_tokens %d must be positive: %w",
-			c.MaxTokens, ErrInvalidConfig)
+		p.add(pfx+"max_tokens", "analysis.artifacts.max_tokens %d%s must be positive: %w",
+			c.MaxTokens, formatSource(tracker, pfx+"max_tokens"), ErrInvalidConfig)
 	}
-
 	if c.MaxTextChars <= 0 {
-		return fmt.Errorf("analysis.artifacts.max_text_chars %d must be positive: %w",
-			c.MaxTextChars, ErrInvalidConfig)
+		p.add(pfx+"max_text_chars", "analysis.artifacts.max_text_chars %d%s must be positive: %w",
+			c.MaxTextChars, formatSource(tracker, pfx+"max_text_chars"), ErrInvalidConfig)
 	}
-
-	if c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
-		return fmt.Errorf("analysis.artifacts.sampling_temperature %g must be in range [0.0, 2.0]: %w",
-			c.SamplingTemperature, ErrInvalidConfig)
+	if math.IsNaN(c.SamplingTemperature) || c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
+		p.add(pfx+"sampling_temperature", "analysis.artifacts.sampling_temperature %g%s must be in range [0.0, 2.0]: %w",
+			c.SamplingTemperature, formatSource(tracker, pfx+"sampling_temperature"), ErrInvalidConfig)
 	}
-
-	if c.FuzzyThreshold <= 0.0 || c.FuzzyThreshold > 1.0 {
-		return fmt.Errorf("analysis.artifacts.fuzzy_threshold %g must be in range (0.0, 1.0]: %w",
-			c.FuzzyThreshold, ErrInvalidConfig)
+	if math.IsNaN(c.FuzzyThreshold) || c.FuzzyThreshold <= 0.0 || c.FuzzyThreshold > 1.0 {
+		p.add(pfx+"fuzzy_threshold", "analysis.artifacts.fuzzy_threshold %g%s must be in range (0.0, 1.0]: %w",
+			c.FuzzyThreshold, formatSource(tracker, pfx+"fuzzy_threshold"), ErrInvalidConfig)
 	}
-
-	return nil
+	return p.err()
 }
 
 // ArtifactAdjudicationConfig configures `crosscodexd admin adjudicate
@@ -670,62 +735,66 @@ type ArtifactAdjudicationConfig struct {
 // Validate checks ArtifactAdjudicationConfig. Only lease_duration is checked
 // when it is disabled: `admin adjudicate artifacts decide` runs either way
 // and uses it as the projection claim TTL. Errors wrap ErrInvalidConfig.
-func (c *ArtifactAdjudicationConfig) Validate() error {
+func (c *ArtifactAdjudicationConfig) Validate() error { return c.validate(nil) }
+
+func (c *ArtifactAdjudicationConfig) validate(tracker *sourceTracker) error {
+	const pfx = "analysis.artifact_adjudication."
+	var p problems
 	if c.LeaseDuration <= 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.lease_duration %s must be positive (e.g. 15m): %w",
-			c.LeaseDuration, ErrInvalidConfig)
+		p.add(pfx+"lease_duration", "analysis.artifact_adjudication.lease_duration %s%s must be positive (e.g. 15m): %w",
+			c.LeaseDuration, formatSource(tracker, pfx+"lease_duration"), ErrInvalidConfig)
 	}
 	if !c.Enabled {
-		return nil
+		return p.err()
 	}
 	if len(c.Models) == 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.models must not be empty when enabled: %w", ErrInvalidConfig)
+		p.add(pfx+"models", "analysis.artifact_adjudication.models%s must not be empty when enabled: %w",
+			formatSource(tracker, pfx+"models"), ErrInvalidConfig)
 	}
 	if c.SamplesPerModel <= 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.samples_per_model %d must be positive: %w",
-			c.SamplesPerModel, ErrInvalidConfig)
+		p.add(pfx+"samples_per_model", "analysis.artifact_adjudication.samples_per_model %d%s must be positive: %w",
+			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
+	} else if !c.AllowEvenSamples && c.SamplesPerModel%2 == 0 {
+		p.add(pfx+"samples_per_model", "analysis.artifact_adjudication.samples_per_model %d%s must be odd unless allow_even_samples=true: %w",
+			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
 	}
-	if !c.AllowEvenSamples && c.SamplesPerModel%2 == 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.samples_per_model %d must be odd unless allow_even_samples=true: %w",
-			c.SamplesPerModel, ErrInvalidConfig)
-	}
-	if c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
-		return fmt.Errorf("analysis.artifact_adjudication.sampling_temperature %g must be in range [0.0, 2.0]: %w",
-			c.SamplingTemperature, ErrInvalidConfig)
+	if math.IsNaN(c.SamplingTemperature) || c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
+		p.add(pfx+"sampling_temperature", "analysis.artifact_adjudication.sampling_temperature %g%s must be in range [0.0, 2.0]: %w",
+			c.SamplingTemperature, formatSource(tracker, pfx+"sampling_temperature"), ErrInvalidConfig)
 	}
 	if c.MaxTokens <= 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.max_tokens %d must be positive: %w",
-			c.MaxTokens, ErrInvalidConfig)
+		p.add(pfx+"max_tokens", "analysis.artifact_adjudication.max_tokens %d%s must be positive: %w",
+			c.MaxTokens, formatSource(tracker, pfx+"max_tokens"), ErrInvalidConfig)
 	}
-	if c.ConsensusThreshold < 0.5 || c.ConsensusThreshold > 1.0 {
-		return fmt.Errorf("analysis.artifact_adjudication.consensus_threshold %g must be in range [0.5, 1.0]: %w",
-			c.ConsensusThreshold, ErrInvalidConfig)
+	if math.IsNaN(c.ConsensusThreshold) || c.ConsensusThreshold < 0.5 || c.ConsensusThreshold > 1.0 {
+		p.add(pfx+"consensus_threshold", "analysis.artifact_adjudication.consensus_threshold %g%s must be in range [0.5, 1.0]: %w",
+			c.ConsensusThreshold, formatSource(tracker, pfx+"consensus_threshold"), ErrInvalidConfig)
 	}
-	if c.MaxErrorRate < 0.0 || c.MaxErrorRate > 1.0 {
-		return fmt.Errorf("analysis.artifact_adjudication.max_error_rate %g must be in range [0.0, 1.0]: %w",
-			c.MaxErrorRate, ErrInvalidConfig)
+	if math.IsNaN(c.MaxErrorRate) || c.MaxErrorRate < 0.0 || c.MaxErrorRate > 1.0 {
+		p.add(pfx+"max_error_rate", "analysis.artifact_adjudication.max_error_rate %g%s must be in range [0.0, 1.0]: %w",
+			c.MaxErrorRate, formatSource(tracker, pfx+"max_error_rate"), ErrInvalidConfig)
 	}
 	if c.MaxAttempts <= 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.max_attempts %d must be positive: %w",
-			c.MaxAttempts, ErrInvalidConfig)
+		p.add(pfx+"max_attempts", "analysis.artifact_adjudication.max_attempts %d%s must be positive: %w",
+			c.MaxAttempts, formatSource(tracker, pfx+"max_attempts"), ErrInvalidConfig)
 	}
 	if c.LeaseBatch <= 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.lease_batch %d must be positive: %w",
-			c.LeaseBatch, ErrInvalidConfig)
+		p.add(pfx+"lease_batch", "analysis.artifact_adjudication.lease_batch %d%s must be positive: %w",
+			c.LeaseBatch, formatSource(tracker, pfx+"lease_batch"), ErrInvalidConfig)
 	}
 	if c.PanelConcurrency <= 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.panel_concurrency %d must be positive: %w",
-			c.PanelConcurrency, ErrInvalidConfig)
+		p.add(pfx+"panel_concurrency", "analysis.artifact_adjudication.panel_concurrency %d%s must be positive: %w",
+			c.PanelConcurrency, formatSource(tracker, pfx+"panel_concurrency"), ErrInvalidConfig)
 	}
 	if c.RetryBaseDelay <= 0 {
-		return fmt.Errorf("analysis.artifact_adjudication.retry_base_delay %s must be positive (e.g. 1m): %w",
-			c.RetryBaseDelay, ErrInvalidConfig)
+		p.add(pfx+"retry_base_delay", "analysis.artifact_adjudication.retry_base_delay %s%s must be positive (e.g. 1m): %w",
+			c.RetryBaseDelay, formatSource(tracker, pfx+"retry_base_delay"), ErrInvalidConfig)
+	} else if c.RetryMaxDelay < c.RetryBaseDelay {
+		// Compared only against a valid base delay, so one mistake is one problem.
+		p.add(pfx+"retry_max_delay", "analysis.artifact_adjudication.retry_max_delay %s%s must not be below retry_base_delay %s: %w",
+			c.RetryMaxDelay, formatSource(tracker, pfx+"retry_max_delay"), c.RetryBaseDelay, ErrInvalidConfig)
 	}
-	if c.RetryMaxDelay < c.RetryBaseDelay {
-		return fmt.Errorf("analysis.artifact_adjudication.retry_max_delay %s must not be below retry_base_delay %s: %w",
-			c.RetryMaxDelay, c.RetryBaseDelay, ErrInvalidConfig)
-	}
-	return nil
+	return p.err()
 }
 
 // WorkerConfig configures the LLM worker service.
@@ -739,6 +808,17 @@ type WorkerConfig struct {
 	// receive round-robin task distribution. Defaults to "llm-workers".
 	QueueGroup string `yaml:"queue_group" json:"queue_group"`
 
+	// MaxAbandonedCollections caps how many abandoned analysis collections
+	// each worker remembers, for up to pipeline.stage_timeout each, so it
+	// can drop their queued tasks before calling the LLM. When more
+	// collections are abandoned within one stage_timeout, the oldest are
+	// forgotten and their remaining tasks run and are billed for nothing.
+	// An entry costs about 430 bytes with UUID job IDs, so the default 10000
+	// is about 4.3 MB and the maximum 100000 about 43 MB (see
+	// internal/worker/abandoned.go for the arithmetic). Range [1, 100000]. Global-only: one worker
+	// serves every tenant, so the set and its cap are shared.
+	MaxAbandonedCollections int `yaml:"max_abandoned_collections" json:"max_abandoned_collections"`
+
 	// LLM holds the global LLM configuration with optional per-tenant overrides.
 	// Wired from the top-level LLMConfig at the service layer; not duplicated here.
 	// Set by the service binary via ServiceConfig().Worker.LLM = cfg.LLM.
@@ -747,18 +827,41 @@ type WorkerConfig struct {
 
 // Validate checks WorkerConfig for consistency and required fields.
 // Returns ErrInvalidConfig on validation failure.
-func (c *WorkerConfig) Validate() error {
+func (c *WorkerConfig) Validate() error { return c.validate(nil) }
+
+func (c *WorkerConfig) validate(tracker *sourceTracker) error {
+	var p problems
 	if strings.TrimSpace(c.QueueGroup) == "" && c.QueueGroup != "" {
-		return fmt.Errorf("worker.queue_group %q contains only whitespace: use a non-empty group name or leave empty to use the default %q: %w",
-			c.QueueGroup, "llm-workers", ErrInvalidConfig)
+		p.add("worker.queue_group", "worker.queue_group %q%s contains only whitespace: use a non-empty group name or leave empty to use the default %q: %w",
+			c.QueueGroup, formatSource(tracker, "worker.queue_group"), "llm-workers", ErrInvalidConfig)
 	}
-	return nil
+	if c.MaxAbandonedCollections < 1 || c.MaxAbandonedCollections > MaxAbandonedCollectionsLimit {
+		p.add("worker.max_abandoned_collections", "worker.max_abandoned_collections %d%s must be in range [1, %d]: it caps how many abandoned collections each worker remembers; "+
+			"set a positive count such as the default %d, and raise it if worker.tasks.dropped stays low while abandons are frequent: %w",
+			c.MaxAbandonedCollections, formatSource(tracker, "worker.max_abandoned_collections"), MaxAbandonedCollectionsLimit, 10000, ErrInvalidConfig)
+	}
+	return p.err()
 }
+
+// MaxAbandonedCollectionsLimit is the largest accepted
+// worker.max_abandoned_collections; it keeps one worker's abandoned set
+// within about 43 MB with UUID job IDs.
+const MaxAbandonedCollectionsLimit = 100_000
 
 // PipelineConfig configures the pipeline orchestration service.
 type PipelineConfig struct {
-	MaxConcurrentJobs int           `yaml:"max_concurrent_jobs" json:"max_concurrent_jobs"`
-	StageTimeout      time.Duration `yaml:"stage_timeout" json:"stage_timeout"`
+	MaxConcurrentJobs int `yaml:"max_concurrent_jobs" json:"max_concurrent_jobs"`
+	// StageTimeout is the hard cap on how long one analyzer stage waits for
+	// its task results, however busy the worker pool is. Worker progress
+	// ticks reset analysis.engine.task_timeout but never this cap, so it is
+	// what fails a stage whose task was lost (work runs on core NATS, with
+	// no redelivery) while other stages keep the pool busy. Range (0, 168h]:
+	// zero is rejected so no stage is unbounded. A real catalog's pair stage
+	// can take hours (requires needed 2h12m for 621 LLM tasks on NIST CSF
+	// 2.0), hence the 24h default. It also bounds how long each LLM worker
+	// remembers an abandoned collection (worker.WithAbandonTTL), since no
+	// collection outlives it. Global-only.
+	StageTimeout time.Duration `yaml:"stage_timeout" json:"stage_timeout"`
 	// Addr is the bind address for the standalone "pipeline" role's own
 	// Connect RPC listener (see internal/pipeline.Server). Empty by
 	// default -- only required when running --role pipeline.
@@ -772,16 +875,19 @@ type PipelineConfig struct {
 }
 
 // Validate checks PipelineConfig for consistency.
-func (c *PipelineConfig) Validate() error {
+func (c *PipelineConfig) Validate() error { return c.validate(nil) }
+
+func (c *PipelineConfig) validate(tracker *sourceTracker) error {
+	var p problems
 	if c.MaxConcurrentJobs < 0 || c.MaxConcurrentJobs > 100 {
-		return fmt.Errorf("pipeline.max_concurrent_jobs %d must be in range [0, 100]: %w",
-			c.MaxConcurrentJobs, ErrInvalidConfig)
+		p.add("pipeline.max_concurrent_jobs", "pipeline.max_concurrent_jobs %d%s must be in range [0, 100]: %w",
+			c.MaxConcurrentJobs, formatSource(tracker, "pipeline.max_concurrent_jobs"), ErrInvalidConfig)
 	}
-	if c.StageTimeout < 0 || c.StageTimeout > 2*time.Hour {
-		return fmt.Errorf("pipeline.stage_timeout %s must be in range [0, 2h]: %w",
-			c.StageTimeout, ErrInvalidConfig)
+	if c.StageTimeout <= 0 || c.StageTimeout > 168*time.Hour {
+		p.add("pipeline.stage_timeout", "pipeline.stage_timeout %s%s must be in range (0, 168h]: it caps how long each analyzer stage may run, so set a positive duration such as 24h: %w",
+			c.StageTimeout, formatSource(tracker, "pipeline.stage_timeout"), ErrInvalidConfig)
 	}
-	return nil
+	return p.err()
 }
 
 // DefaultGraphMaxBulkEdges is the compiled default for graph.max_bulk_edges,
@@ -1031,9 +1137,10 @@ func ParseRetention(s string) (time.Duration, bool, error) {
 
 var validArchiveBackends = map[string]bool{"": true, "local": true, "s3": true}
 
-// validateRetentionTiers parses all non-empty fields of a RetentionTiers and
-// returns the first error.
-func validateRetentionTiers(tiers RetentionTiers, prefix string) error {
+// validateRetentionTiers parses every non-empty field of a RetentionTiers
+// and returns an error for each that does not parse, each a FieldError for
+// <parent>.<field>.
+func validateRetentionTiers(tiers RetentionTiers, parent string, tracker *sourceTracker) error {
 	fields := []struct {
 		name  string
 		value string
@@ -1046,33 +1153,34 @@ func validateRetentionTiers(tiers RetentionTiers, prefix string) error {
 		{"audit_llm", tiers.AuditLLM},
 		{"audit_events", tiers.AuditEvents},
 	}
+	var p problems
 	for _, f := range fields {
 		if f.value == "" {
 			continue
 		}
 		if _, _, err := ParseRetention(f.value); err != nil {
-			return fmt.Errorf("retention.%s.%s: %w", prefix, f.name, err)
+			path := parent + "." + f.name
+			p.add(path, "%s%s: %w", path, formatSource(tracker, path), err)
 		}
 	}
-	return nil
+	return p.err()
 }
 
 // Validate checks RetentionConfig for correctness.
 // Returns ErrInvalidConfig on validation failure.
-func (rc *RetentionConfig) Validate() error {
+func (rc *RetentionConfig) Validate() error { return rc.validate(nil) }
+
+func (rc *RetentionConfig) validate(tracker *sourceTracker) error {
+	var p problems
 	if !validArchiveBackends[rc.Archive.Backend] {
-		return fmt.Errorf("retention.archive.backend %q must be one of local, s3, or empty: %w",
-			rc.Archive.Backend, ErrInvalidConfig)
+		p.add("retention.archive.backend", "retention.archive.backend %q%s must be one of local, s3, or empty: %w",
+			rc.Archive.Backend, formatSource(tracker, "retention.archive.backend"), ErrInvalidConfig)
 	}
-	if err := validateRetentionTiers(rc.Defaults, "defaults"); err != nil {
-		return err
+	p = append(p, validateRetentionTiers(rc.Defaults, "retention.defaults", tracker))
+	for _, tenantID := range slices.Sorted(maps.Keys(rc.Tenants)) {
+		p = append(p, validateRetentionTiers(rc.Tenants[tenantID], mapKeyPath("retention.tenants", tenantID), tracker))
 	}
-	for tenantID, tiers := range rc.Tenants {
-		if err := validateRetentionTiers(tiers, "tenants."+tenantID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return p.err()
 }
 
 // For returns the effective RetentionTiers for a tenant. Non-empty fields in

@@ -126,6 +126,8 @@ crosscodex config set tls.key deploy/certs/client-key.pem
 crosscodex config set tls.mode mutual
 ```
 
+Set `tls.mode` last: `config set` refuses a change that stops a working configuration loading, and `mutual` needs the CA, certificate and key in place. `crosscodex config unset <key>` removes a key again. If the configuration already fails to load, set and unset write only a change that fixes one of its problems without adding another, and say which problems remain.
+
 ## Architecture: mutual TLS and LiteLLM via stunnel
 
 The production stack runs all inter-service communication over mutual TLS:
@@ -203,13 +205,13 @@ task deploy:logs -- crosscodexd
 
 ### Run smoke test
 
-Container-driven end-to-end smoke test (bring up the stack, catalog import round-trip over mTLS, tear down):
+Container-driven end-to-end smoke test (bring up the stack, import a catalog and run its analysis over mTLS, tear down):
 
 ```bash
 task deploy:smoke
 ```
 
-**Offline by default — no API key required.** Unlike `deploy:up` (which routes the gateway to real OpenAI), the smoke test backs the stack with a local Ollama provider so it runs self-contained. It builds a baked-model image (`llama3.2:1b` + `granite-embedding:30m`, reused from the integration stack), renders a smoke-only gateway config that points the `default`/`embed` aliases at Ollama, and layers an offline overlay onto `compose.yaml` plus the gateway fragment (`deploy/compose.offline.yaml` for LiteLLM, `deploy/compose.offline-praxis.yaml` for Praxis). Production `deploy/compose.yaml` is untouched and stays OpenAI-backed. Your `deploy/.env` still needs `CROSSCODEX_LLM_DEFAULT_MODEL=default` and `CROSSCODEX_LLM_EMBEDDING_MODEL=embed`, but `OPENAI_API_KEY` / `CROSSCODEX_LLM_API_KEY` may be any non-empty placeholder (Ollama ignores them).
+**Offline by default — no API key required.** Unlike `deploy:up` (which routes the gateway to real OpenAI), the smoke test backs the stack with a local Ollama provider so it runs self-contained. It builds a baked-model image (`llama3.2:1b` + `granite-embedding:30m`, reused from the integration stack), renders a smoke-only gateway config that points the `default`/`embed` aliases at Ollama, and layers an offline overlay onto `compose.yaml` plus the gateway fragment (`deploy/compose.offline.yaml` for LiteLLM, `deploy/compose.offline-praxis.yaml` for Praxis). Production `deploy/compose.yaml` is untouched and stays OpenAI-backed. Your `deploy/.env` still needs `CROSSCODEX_LLM_DEFAULT_MODEL=default` and `CROSSCODEX_LLM_EMBEDDING_MODEL=embed`, but `OPENAI_API_KEY` / `CROSSCODEX_LLM_API_KEY` may be any non-empty placeholder (Ollama ignores them). Without deploy/.env, deploy:smoke stops before building or starting anything and prints the copy instruction.
 
 To point the smoke test at an existing Ollama instead of the baked container, pass `OLLAMA_HOST` (and optionally the model names):
 

@@ -116,8 +116,7 @@ var _ = Describe("ArtifactsAnalyzer", func() {
 
 			analyzerCfg = analyzer.AnalyzerConfig{
 				Parameters: map[string]string{
-					"framework":           "NIST-800-53",
-					"ancestor_title_AC-1": "Access Control Policy and Procedures",
+					"framework": "NIST-800-53",
 				},
 			}
 
@@ -150,6 +149,23 @@ var _ = Describe("ArtifactsAnalyzer", func() {
 				payload := payloadStruct.AsMap()
 				Expect(payload["control_id"]).To(Equal("AC-1"))
 				Expect(payload["skipped"]).To(Equal("true"))
+			})
+		})
+
+		Context("ancestor title", func() {
+			It("renders the control's ancestor_title part into the user prompt", func() {
+				control.Parts["ancestor_title"] = "Access Control"
+				a = artifacts.New(nil, prompts, artifactsCfg)
+
+				tasks, err := a.GenerateWork(ctx, control, analyzerCfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+
+				payloadStruct, ok := tasks[0].Payload.(*structpb.Struct)
+				Expect(ok).To(BeTrue())
+				msgs := payloadStruct.Fields["messages"].GetListValue().Values
+				Expect(msgs).To(HaveLen(2))
+				Expect(msgs[1].GetStructValue().Fields["content"].GetStringValue()).To(ContainSubstring("Access Control"))
 			})
 		})
 

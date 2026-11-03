@@ -9,4 +9,9 @@ const (
 	ExportHeaderTaskType   = headerTaskType
 	ExportHeaderJobID      = headerJobID
 	ExportHeaderRetryCount = headerRetryCount
+	// ExportHeaderCollectionID is the work header naming a task's collection.
+	ExportHeaderCollectionID = headerCollectionID
 )
+
+// ExportRelease exposes CollectionHandle.release.
+func (h *CollectionHandle) ExportRelease() error { return h.release() }

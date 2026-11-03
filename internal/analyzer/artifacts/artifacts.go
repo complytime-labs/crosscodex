@@ -152,7 +152,7 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 		"output_format":             outputFormat,
 		"control_id":                input.GetIdentifier(),
 		"framework":                 cfg.Parameters["framework"],
-		"ancestor_title":            cfg.Parameters["ancestor_title_"+input.GetIdentifier()],
+		"ancestor_title":            input.GetParts()["ancestor_title"],
 		"requirement_text":          reqText,
 	}
 

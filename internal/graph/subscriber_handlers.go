@@ -17,8 +17,31 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 )
 
-// materialize dispatches to the appropriate handler based on analyzer name.
-func (s *Service) materialize(ctx context.Context, tenantID, analyzer, jobID string, data []byte) error {
+// materializeFunc writes one analyzer's results for a job into the graph.
+type materializeFunc func(ctx context.Context, tenantID, jobID string, data []byte) error
+
+// handlerFor returns the materializer for an analyzer's results, or false
+// when the graph has nothing to build from that stage (e.g. the pipeline's own
+// synthesis and graph stages).
+func (s *Service) handlerFor(analyzer string) (materializeFunc, bool) {
+	switch analyzer {
+	case "relationship":
+		return s.materializeRelationship, true
+	case "requires":
+		return s.materializeRequires, true
+	case "artifacts":
+		return s.materializeArtifacts, true
+	case "classify":
+		return s.materializeClassify, true
+	case "embedding":
+		return s.materializeEmbed, true
+	default:
+		return nil, false
+	}
+}
+
+// materialize runs the analyzer's handler under a span and records its duration.
+func (s *Service) materialize(ctx context.Context, handle materializeFunc, tenantID, analyzer, jobID string, data []byte) error {
 	start := time.Now()
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "graph.materialize."+analyzer)
 	defer span.End()
@@ -28,23 +51,7 @@ func (s *Service) materialize(ctx context.Context, tenantID, analyzer, jobID str
 		attribute.String("job.id", jobID),
 	)
 
-	var err error
-	switch analyzer {
-	case "relationship":
-		err = s.materializeRelationship(ctx, tenantID, jobID, data)
-	case "requires":
-		err = s.materializeRequires(ctx, tenantID, jobID, data)
-	case "artifacts":
-		err = s.materializeArtifacts(ctx, tenantID, jobID, data)
-	case "classify":
-		err = s.materializeClassify(ctx, tenantID, jobID, data)
-	case "embedding":
-		err = s.materializeEmbed(ctx, tenantID, jobID, data)
-	default:
-		s.logger.InfoContext(ctx, "no graph handler for analyzer", "analyzer", analyzer)
-		span.SetStatus(codes.Ok, "no handler")
-		return nil
-	}
+	err := handle(ctx, tenantID, jobID, data)
 
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -238,7 +245,8 @@ func (s *Service) skipMissingEndpoint(ctx context.Context, tenantID, analyzer, l
 		"usually because the graph role has not projected that control from the catalog parsed event (check the "+
 		"graph role's catalog projection logs) or the analyzer "+
 		"emitted an ID that matches no Control node. The edge stays absent until it is rewritten: after fixing the cause, "+
-		"re-import the tenant's catalog, which rewrites the controls, republishes the catalog parsed event and queues a fresh analysis.",
+		"re-import the tenant's catalog, which rewrites the controls and republishes the catalog parsed event, "+
+		"then start a new analysis of it with \"crosscodex run start --source <catalog-id>\".",
 		"tenant", tenantID, "analyzer", analyzer, "edge.label", label,
 		"source_id", sourceID, "target_id", targetID, "error", err)
 	return true

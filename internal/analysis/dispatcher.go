@@ -23,6 +23,9 @@ const (
 	headerTaskType   = "X-Task-Type"
 	headerJobID      = "X-Job-Id"
 	headerRetryCount = "X-Retry-Count"
+	// headerCollectionID carries CollectionHandle.CollectionID; workers drop
+	// a task whose collection was abandoned (natsbus.AbandonedCollection).
+	headerCollectionID = "X-Collection-Id"
 )
 
 // NATSDispatcher implements Dispatcher using a natsbus.Client.
@@ -74,20 +77,20 @@ func WithDispatcherLogger(logger *slog.Logger) DispatcherOption {
 	}
 }
 
-func (d *NATSDispatcher) Dispatch(ctx context.Context, tasks []analyzer.Task, taskType natsbus.TaskType, jobID string) error {
+func (d *NATSDispatcher) Dispatch(ctx context.Context, tasks []analyzer.Task, taskType natsbus.TaskType, jobID, collectionID string) error {
 	for _, task := range tasks {
-		if err := d.publishTask(ctx, task, taskType, jobID, 0); err != nil {
+		if err := d.publishTask(ctx, task, taskType, jobID, collectionID, 0); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (d *NATSDispatcher) Redispatch(ctx context.Context, task analyzer.Task, taskType natsbus.TaskType, jobID string, retryCount int) error {
-	return d.publishTask(ctx, task, taskType, jobID, retryCount)
+func (d *NATSDispatcher) Redispatch(ctx context.Context, task analyzer.Task, taskType natsbus.TaskType, jobID, collectionID string, retryCount int) error {
+	return d.publishTask(ctx, task, taskType, jobID, collectionID, retryCount)
 }
 
-func (d *NATSDispatcher) publishTask(ctx context.Context, task analyzer.Task, taskType natsbus.TaskType, jobID string, retryCount int) error {
+func (d *NATSDispatcher) publishTask(ctx context.Context, task analyzer.Task, taskType natsbus.TaskType, jobID, collectionID string, retryCount int) error {
 	ctx, span := telemetry.StartSpan(d.tracer, ctx, "analysis.DispatchTask")
 	defer span.End()
 
@@ -119,10 +122,11 @@ func (d *NATSDispatcher) publishTask(ctx context.Context, task analyzer.Task, ta
 	}
 
 	headers := map[string][]string{
-		headerTaskID:     {task.TaskID},
-		headerTaskType:   {string(taskType)},
-		headerJobID:      {jobID},
-		headerRetryCount: {strconv.Itoa(retryCount)},
+		headerTaskID:       {task.TaskID},
+		headerTaskType:     {string(taskType)},
+		headerJobID:        {jobID},
+		headerRetryCount:   {strconv.Itoa(retryCount)},
+		headerCollectionID: {collectionID},
 	}
 
 	if err := d.bus.PublishWithHeaders(ctx, subject, data, headers); err != nil {

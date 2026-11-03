@@ -3,11 +3,26 @@
 //
 // # Architecture
 //
-// Workers are stateless adapters. They subscribe to NATS work subjects as a
-// queue group; NATS distributes tasks round-robin across workers in the same
-// group. Each task is self-contained: the worker deserializes the payload,
-// builds an LLM request, calls the gateway, and publishes the result. No
-// prompt registry, database, or inter-worker coordination is needed.
+// Workers are adapters with no durable state. They subscribe to NATS work
+// subjects as a queue group; NATS distributes tasks round-robin across
+// workers in the same group. Each task is self-contained: the worker
+// deserializes the payload, builds an LLM request, calls the gateway, and
+// publishes the result. No prompt registry, database, or inter-worker
+// coordination is needed.
+//
+// # Abandoned Collections
+//
+// Every worker also subscribes, outside the queue group, to
+// natsbus.AbandonedSubjectFilter. An analysis collection that gives up
+// (timeout, cancelled job, failed dispatch) publishes one abandon naming its
+// collection ID, which it also sent with each task in the X-Collection-Id
+// header. The worker remembers abandons in a bounded in-memory set (at most
+// worker.max_abandoned_collections, each for the WithAbandonTTL duration, fed by
+// pipeline.stage_timeout) and drops a matching task before any LLM call,
+// with no result and no progress tick, counting it in worker.tasks.dropped.
+// The key is the collection, not the job, so a resumed job, which reuses its
+// job ID with new collections, is never affected. Malformed control messages
+// are dropped, logged and counted; see handleAbandoned.
 //
 // # Usage
 //
@@ -18,7 +33,8 @@
 //	workerCfg.QueueGroup = "llm-workers" // optional override
 //
 //	w := worker.New(natsClient, llmClient, workerCfg,
-//	    worker.WithTelemetry(tp, mp), worker.WithLogger(logger))
+//	    worker.WithTelemetry(tp, mp), worker.WithLogger(logger),
+//	    worker.WithAbandonTTL(cfg.Pipeline.StageTimeout))
 //
 //	if err := w.Start(ctx); err != nil { ... }
 //	defer w.Stop(ctx)
@@ -26,7 +42,8 @@
 // # Thread Safety
 //
 // Worker is safe for concurrent use. Each NATS message handler executes
-// independently with no shared mutable state between tasks.
+// independently; the only state shared between handlers is the
+// mutex-guarded set of abandoned collections.
 //
 // # Error Handling
 //
@@ -43,7 +60,7 @@
 //
 //	emitter := worker.NewNATSAuditEmitter(bus, logger)
 //	llm, err := llmclient.New(cfg.LLM, llmclient.WithAuditEmitter(emitter))
-//	w := worker.New(bus, llm, cfg.Worker)
+//	w := worker.New(bus, llm, cfg.Worker, worker.WithAbandonTTL(cfg.Pipeline.StageTimeout))
 //
 // Audit events are published best-effort: publish failures are logged and
 // counted via the crosscodex.worker.audit.failures.total metric, but never

@@ -21,6 +21,9 @@ var (
 	ExportCloneNode         = cloneNode
 	ExportBuildNodeFromPath = buildNodeFromPath
 	ExportBuildNodeSimple   = buildNodeSimple
+	ExportCheckKnownKeys    = checkKnownKeys
+	ExportYAMLFields        = yamlFields
+	ExportResolveReferences = resolveReferences
 )
 
 // ExportLoaderOptions mirrors the unexported loaderOptions struct for

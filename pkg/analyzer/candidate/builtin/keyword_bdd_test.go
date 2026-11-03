@@ -258,5 +258,32 @@ var _ = Describe("KeywordGenerator", func() {
 				Expect(candidates).NotTo(BeEmpty())
 			})
 		})
+
+		Context("when source and target controls overlap (single-catalog analysis)", func() {
+			It("never pairs a control with itself", func() {
+				controls := map[string]*candidate.ControlData{
+					"AC-1": {ControlID: "AC-1", Text: "Define the access policy"},
+					"AC-2": {ControlID: "AC-2", Text: "Document the baseline policy"},
+				}
+				req := candidate.GenerateRequest{
+					TenantID:       "test-tenant",
+					JobID:          "test-job",
+					SourceControls: controls,
+					TargetControls: controls,
+					Parameters: map[string]interface{}{
+						"keywords": []interface{}{"policy"},
+						"weight":   0.8,
+					},
+				}
+
+				candidates, err := gen.Generate(context.Background(), req)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(candidates).To(HaveLen(2))
+				for _, c := range candidates {
+					Expect(c.SourceID).NotTo(Equal(c.TargetID))
+				}
+			})
+		})
 	})
 })

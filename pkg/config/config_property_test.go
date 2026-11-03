@@ -1,6 +1,9 @@
 package config_test
 
 import (
+	"errors"
+	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -405,3 +408,106 @@ var _ = Describe("Property Specifications", Ordered, func() {
 
 // Ensure imports are used.
 var _ = strings.Join
+
+// subsetNode returns a copy of n in which each mapping keeps a random subset
+// of its pairs (recursively); sequences and scalars are copied whole.
+func subsetNode(t *rapid.T, n *yaml.Node, label string) *yaml.Node {
+	out := *n
+	out.Content = nil
+	if n.Kind != yaml.MappingNode {
+		out.Content = append(out.Content, n.Content...)
+		return &out
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		key := n.Content[i]
+		if !rapid.Bool().Draw(t, label+"."+key.Value) {
+			continue
+		}
+		k := *key
+		out.Content = append(out.Content, &k, subsetNode(t, n.Content[i+1], label+"."+key.Value))
+	}
+	return &out
+}
+
+// structMappings appends to out every mapping in n that yaml.v3 decodes into
+// a struct of type t without an inline map, so each of its keys must name a
+// field; n is walked alongside t the way the decoder walks it.
+func structMappings(n *yaml.Node, t reflect.Type, out *[]*yaml.Node) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch {
+	case t.Kind() == reflect.Struct && n.Kind == yaml.MappingNode:
+		fields, inlineMap := config.ExportYAMLFields(t)
+		if inlineMap == nil {
+			*out = append(*out, n)
+		}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if ft, ok := fields[n.Content[i].Value]; ok {
+				structMappings(n.Content[i+1], ft, out)
+			}
+		}
+	case t.Kind() == reflect.Map && n.Kind == yaml.MappingNode:
+		for i := 1; i < len(n.Content); i += 2 {
+			structMappings(n.Content[i], t.Elem(), out)
+		}
+	case (t.Kind() == reflect.Slice || t.Kind() == reflect.Array) && n.Kind == yaml.SequenceNode:
+		for _, item := range n.Content {
+			structMappings(item, t.Elem(), out)
+		}
+	}
+}
+
+var _ = Describe("Property Specifications", Ordered, func() {
+	Context("checkKnownKeys — subsets of the defaults", func() {
+		var defaults *yaml.Node
+
+		BeforeAll(func() {
+			// Every field of a default Config, including the ones the
+			// compiled defaults YAML leaves out, encoded as yaml.v3 would.
+			raw, err := config.ExportDefaultNode()
+			Expect(err).NotTo(HaveOccurred())
+			var cfg config.Config
+			Expect(raw.Decode(&cfg)).To(Succeed())
+			defaults = &yaml.Node{}
+			Expect(defaults.Encode(&cfg)).To(Succeed())
+		})
+
+		It("accepts any subset, and rejects it once one key is renamed to an unknown name", func() {
+			configType := reflect.TypeFor[config.Config]()
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				subset := subsetNode(t, defaults, "keep")
+				if err := config.ExportCheckKnownKeys(subset, "subset.yaml"); err != nil {
+					t.Fatalf("a subset of the defaults was rejected: %v", err)
+				}
+
+				var candidates []*yaml.Node
+				structMappings(subset, configType, &candidates)
+				candidates = slices.DeleteFunc(candidates, func(m *yaml.Node) bool { return len(m.Content) == 0 })
+				if len(candidates) == 0 {
+					return
+				}
+				target := candidates[rapid.IntRange(0, len(candidates)-1).Draw(t, "mapping")]
+				pair := rapid.IntRange(0, len(target.Content)/2-1).Draw(t, "pair")
+				unknown := "unknown_" + rapid.StringMatching(`[a-z]{1,8}`).Draw(t, "suffix")
+
+				original := target.Content[2*pair]
+				renamed := *original
+				renamed.Value = unknown
+				target.Content[2*pair] = &renamed
+				err := config.ExportCheckKnownKeys(subset, "mutated.yaml")
+				target.Content[2*pair] = original
+
+				if !errors.Is(err, config.ErrUnknownKey) || !errors.Is(err, config.ErrInvalidConfig) {
+					t.Fatalf("renaming %q to %q was not rejected as an unknown key: %v", original.Value, unknown, err)
+				}
+				if !strings.Contains(err.Error(), unknown) {
+					t.Fatalf("rejection does not name the unknown key %q: %v", unknown, err)
+				}
+				if err := config.ExportCheckKnownKeys(subset, "subset.yaml"); err != nil {
+					t.Fatalf("the subset was rejected after restoring the renamed key: %v", err)
+				}
+			})
+		})
+	})
+})

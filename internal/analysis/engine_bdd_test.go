@@ -22,6 +22,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/analyzertest"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -92,22 +93,23 @@ type engineTestDispatcher struct {
 }
 
 type engineDispatchCall struct {
-	tasks    []analyzer.Task
-	taskType natsbus.TaskType
-	jobID    string
+	tasks        []analyzer.Task
+	taskType     natsbus.TaskType
+	jobID        string
+	collectionID string
 }
 
-func (d *engineTestDispatcher) Dispatch(_ context.Context, tasks []analyzer.Task, taskType natsbus.TaskType, jobID string) error {
+func (d *engineTestDispatcher) Dispatch(_ context.Context, tasks []analyzer.Task, taskType natsbus.TaskType, jobID, collectionID string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.dispatchErr != nil {
 		return d.dispatchErr
 	}
-	d.dispatches = append(d.dispatches, engineDispatchCall{tasks: tasks, taskType: taskType, jobID: jobID})
+	d.dispatches = append(d.dispatches, engineDispatchCall{tasks: tasks, taskType: taskType, jobID: jobID, collectionID: collectionID})
 	return nil
 }
 
-func (d *engineTestDispatcher) Redispatch(_ context.Context, _ analyzer.Task, _ natsbus.TaskType, _ string, _ int) error {
+func (d *engineTestDispatcher) Redispatch(_ context.Context, _ analyzer.Task, _ natsbus.TaskType, _, _ string, _ int) error {
 	return nil
 }
 
@@ -449,6 +451,44 @@ var _ = Describe("Engine", func() {
 			Expect(result.Failed).To(ConsistOf("classify"))
 			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("dispatch failed")))
 			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("NATS connection lost")))
+		})
+
+		It("passes WithStageTimeout to every collection as its StageTimeout", func() {
+			tasks := makeTasks("classify", 1)
+			stub := newStubWithTasks("classify", tasks)
+			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+
+			engine := analysis.New(registry, dispatcher, collector, validCfg(), allTaskTypes(),
+				analysis.WithStageTimeout(24*time.Hour))
+			_, err := engine.Execute(ctx, analysis.ExecutionRequest{JobID: "job-stage-cap", Input: &emptypb.Empty{}})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(collector.collectCount()).To(Equal(1))
+			Expect(collector.collects[0].StageTimeout).To(Equal(24 * time.Hour))
+			Expect(collector.collects[0].Timeout).To(Equal(validCfg().TaskTimeout))
+		})
+
+		It("releases the collection's subscriptions when Dispatch fails", func() {
+			tasks := makeTasks("classify", 1)
+			stub := newStubWithTasks("classify", tasks)
+			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+			dispatcher.dispatchErr = fmt.Errorf("NATS connection lost")
+			bus := &natsbustest.Fake{}
+
+			engine := analysis.New(registry, dispatcher, analysis.NewNATSCollector(bus),
+				validCfg(), allTaskTypes(), analysis.WithStageTimeout(time.Hour))
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-dispatch-leak",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("dispatch failed")))
+			subs := bus.Subscriptions()
+			Expect(subs).To(HaveLen(2), "a result and a worker progress subscription")
+			for _, s := range subs {
+				Expect(s.Unsubscribed()).To(BeTrue(), "subscription to %s leaked", s.Subject)
+			}
 		})
 
 		It("marks analyzer as failed on PrepareCollect error without dispatching", func() {

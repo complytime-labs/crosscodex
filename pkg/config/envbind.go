@@ -19,8 +19,9 @@ var envAliases = map[string][]string{
 // buildEnvOverlay scans the process environment for variables matching the
 // given prefix and returns a yaml.Node overlay. When tracker is non-nil,
 // each matched variable is recorded individually (e.g., "environment variable
-// CROSSCODEX_TLS_MODE").
-func buildEnvOverlay(prefix string, tracker *sourceTracker) (*yaml.Node, error) {
+// CROSSCODEX_TLS_MODE"). When check is non-nil, it is called with each
+// variable's node and that source name before the node is merged.
+func buildEnvOverlay(prefix string, tracker *sourceTracker, check func(node *yaml.Node, source string)) (*yaml.Node, error) {
 	envPrefix := prefix + "_"
 	var overlay *yaml.Node
 
@@ -46,6 +47,9 @@ func buildEnvOverlay(prefix string, tracker *sourceTracker) (*yaml.Node, error) 
 		if tracker != nil {
 			tracker.track(node, "environment variable "+key)
 		}
+		if check != nil {
+			check(node, "environment variable "+key)
+		}
 
 		var err error
 		overlay, err = deepMerge(overlay, node)
@@ -57,7 +61,7 @@ func buildEnvOverlay(prefix string, tracker *sourceTracker) (*yaml.Node, error) 
 }
 
 func applyEnvVars(base *yaml.Node, prefix string) (*yaml.Node, error) {
-	overlay, err := buildEnvOverlay(prefix, nil)
+	overlay, err := buildEnvOverlay(prefix, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -146,9 +150,14 @@ func inferTag(schemaVal *yaml.Node, value string) string {
 	return schemaVal.Tag
 }
 
+// buildNodeSimple builds the mapping segments name with value at its leaf.
+// The leaf is untagged, so it is read as a YAML scalar exactly as if the
+// value were written in a file: "8" is an int, "true" a bool, "2h" a
+// duration's text. An explicit !!str would make "8" a string, which no int
+// setting accepts.
 func buildNodeSimple(segments []string, value string) *yaml.Node {
 	if len(segments) == 0 {
-		return &yaml.Node{Kind: yaml.ScalarNode, Value: value, Tag: "!!str"}
+		return &yaml.Node{Kind: yaml.ScalarNode, Value: value}
 	}
 
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: segments[0], Tag: "!!str"}

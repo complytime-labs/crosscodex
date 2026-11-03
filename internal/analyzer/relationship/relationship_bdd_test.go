@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
@@ -35,6 +36,17 @@ func specRegistry(spec *prompt.PromptSpec) *prompttest.Fake {
 	}
 }
 
+// pairParams returns GenerateWork parameters for jobID carrying a source and
+// a target statement for every control id in ids.
+func pairParams(jobID string, ids ...string) map[string]string {
+	params := map[string]string{"job_id": jobID}
+	for _, id := range ids {
+		params["source_text_"+id] = "statement of " + id
+		params["target_text_"+id] = "statement of " + id
+	}
+	return params
+}
+
 var _ = Describe("RelationshipAnalyzer", func() {
 	var (
 		a          *relationship.RelationshipAnalyzer
@@ -58,7 +70,6 @@ var _ = Describe("RelationshipAnalyzer", func() {
 		cfg = config.RelationshipConfig{
 			Enabled:             true,
 			Models:              []string{"qwen3:8b"},
-			TopK:                20,
 			MaxSourceChars:      1500,
 			MaxTargetChars:      800,
 			MaxTokens:           300,
@@ -110,9 +121,8 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			cfg.SamplesPerModel = 2
 			a = relationship.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "access control policy"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IT-3.2", "IT-4.1"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tasks).To(HaveLen(2 * 2 * 2)) // 2 pairs * 2 models * 2 samples
@@ -124,9 +134,8 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			}
 			a = relationship.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IT-3.2"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tasks).To(HaveLen(1))
@@ -142,9 +151,8 @@ var _ = Describe("RelationshipAnalyzer", func() {
 				cfg.SamplingTemperature = temp
 				a = relationship.New(nil, prompts, candidates, cfg)
 
-				control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-					Parameters: map[string]string{"job_id": "job-1"},
+				tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+					Parameters: pairParams("job-1", "AC-1", "IT-3.2"),
 				})
 				Expect(err).NotTo(HaveOccurred())
 				payload, ok := tasks[0].Payload.(*structpb.Struct)
@@ -159,6 +167,62 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			},
 			Entry("forces temperature to 0.0 when SamplesPerModel == 1", 1, 0.7, 0.0),
 			Entry("uses SamplingTemperature when SamplesPerModel > 1", 3, 0.7, 0.7),
+		)
+
+		It("builds the prompt from the source_text_ and target_text_ parameters", func() {
+			candidates.pairs = []relationship.CandidatePair{
+				{SourceControlID: "AC-1", TargetControlID: "IT-3.2", SimilarityScore: 87.3},
+			}
+			reg, err := prompt.NewRegistry(config.PromptConfig{
+				Layers: config.PromptLayerConfig{Enabled: true},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			a = relationship.New(nil, reg, candidates, cfg)
+
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: map[string]string{
+					"job_id":                 "job-1",
+					"source_text_AC-1":       "Enforce least privilege.",
+					"target_text_IT-3.2":     "Restrict administrator accounts.",
+					"source_level_AC-1":      "Tactical",
+					"target_ancestor_IT-3.2": "Identity",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tasks).To(HaveLen(1))
+			payload, ok := tasks[0].Payload.(*structpb.Struct)
+			Expect(ok).To(BeTrue())
+			msgs := payload.Fields["messages"].GetListValue().GetValues()
+			Expect(msgs).To(HaveLen(2))
+			user := msgs[1].GetStructValue().Fields["content"].GetStringValue()
+			Expect(user).To(ContainSubstring("Enforce least privilege."))
+			Expect(user).To(ContainSubstring("Restrict administrator accounts."))
+			Expect(user).To(ContainSubstring("Level: Tactical"))
+			Expect(user).To(ContainSubstring(`Control Domain: "Identity"`))
+		})
+
+		DescribeTable("refuses a pair whose control has no text, naming the pair",
+			func(params map[string]string, wantKey string) {
+				candidates.pairs = []relationship.CandidatePair{
+					{SourceControlID: "AC-1", TargetControlID: "IT-3.2", SimilarityScore: 87.3},
+				}
+				a = relationship.New(nil, prompts, candidates, cfg)
+
+				tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{Parameters: params})
+				Expect(err).To(MatchError(intanalyzer.ErrMissingControlText))
+				Expect(err.Error()).To(ContainSubstring("AC-1--IT-3.2"))
+				Expect(err.Error()).To(ContainSubstring(wantKey))
+				Expect(tasks).To(BeEmpty())
+			},
+			Entry("missing source text", map[string]string{
+				"job_id": "job-1", "target_text_IT-3.2": "Restrict administrator accounts.",
+			}, `"source_text_AC-1"`),
+			Entry("missing target text", map[string]string{
+				"job_id": "job-1", "source_text_AC-1": "Enforce least privilege.",
+			}, `"target_text_IT-3.2"`),
+			Entry("whitespace-only source text", map[string]string{
+				"job_id": "job-1", "source_text_AC-1": "  \n\t ", "target_text_IT-3.2": "Restrict administrator accounts.",
+			}, `"source_text_AC-1"`),
 		)
 	})
 

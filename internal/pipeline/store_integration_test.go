@@ -10,11 +10,13 @@ import (
 	"os"
 	"time"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
@@ -128,6 +130,49 @@ var _ = Describe("PGStore integration", func() {
 		Expect(got.JobID).To(Equal(job.JobID), "JobID mismatch")
 		Expect(got.TenantID).To(Equal(job.TenantID), "TenantID mismatch")
 		Expect(got.Status).To(Equal(job.Status), "Status mismatch")
+	})
+
+	It("stores the class of a job's failure with it, and clears it when the job runs again", func() {
+		store, _, tenantID, ctx := setupPGStore()
+		now := time.Now().UTC()
+		job := &pipeline.Job{
+			JobID: uuid.New().String(), TenantID: tenantID, Status: pipeline.JobStatusRunning,
+			Config: []byte(`{}`), CreatedBy: "integration-test", CreatedAt: now, UpdatedAt: now,
+		}
+		Expect(store.CreateJob(ctx, job)).To(Succeed())
+		Expect(store.UpdateJobStatus(ctx, job.JobID, pipeline.JobStatusFailed,
+			fmt.Errorf("job %s: %w", job.JobID, pipeline.ErrAttestationInvalid))).To(Succeed())
+
+		got, err := store.GetJob(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.ErrorClass).To(Equal(pipeline.JobErrorAttestationInvalid))
+
+		Expect(store.UpdateJobStatus(ctx, job.JobID, pipeline.JobStatusRunning, nil)).To(Succeed())
+		got, err = store.GetJob(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.ErrorClass).To(Equal(pipeline.JobErrorRetryable))
+	})
+
+	It("returns each job's error class from ListJobs and GetResumableJobs too", func() {
+		store, _, tenantID, ctx := setupPGStore()
+		now := time.Now().UTC()
+		job := &pipeline.Job{
+			JobID: uuid.New().String(), TenantID: tenantID, Status: pipeline.JobStatusRunning,
+			Config: []byte(`{}`), CreatedBy: "integration-test", CreatedAt: now, UpdatedAt: now,
+		}
+		Expect(store.CreateJob(ctx, job)).To(Succeed())
+		// A running job with a classified error: not a state the pipeline
+		// writes, but the column must reach every reader as stored.
+		Expect(store.UpdateJobStatus(ctx, job.JobID, pipeline.JobStatusRunning,
+			fmt.Errorf("x: %w", pipeline.ErrAnalyzersChanged))).To(Succeed())
+
+		listed, _, err := store.ListJobs(ctx, tenantID, pipeline.JobFilter{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(ContainElement(And(HaveField("JobID", job.JobID), HaveField("ErrorClass", pipeline.JobErrorAnalyzersChanged))))
+
+		resumable, err := store.GetResumableJobs(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resumable).To(ContainElement(And(HaveField("JobID", job.JobID), HaveField("ErrorClass", pipeline.JobErrorAnalyzersChanged))))
 	})
 
 	It("CompleteAnalysisStage upserts analysis_results and completes the stage", func() {
@@ -512,5 +557,60 @@ var _ = Describe("PGStore on a deleted tenant", func() {
 		count, status := jobState()
 		Expect(count).To(Equal(1))
 		Expect(status).To(Equal(string(pipeline.JobStatusPending)))
+	})
+})
+
+// The job's own context is cancelled before the cancellation is recorded;
+// PGStore cannot begin a transaction on it, so these specs prove the writes
+// are made on a context that outlives the job.
+var _ = Describe("Service cancellation against PGStore", func() {
+	It("records a cancelled job and its running stage as cancelled, and the job does not resume", func() {
+		store, _, tenantID, ctx := setupPGStore()
+		jobID := uuid.New().String()
+		job := startStuckClassifyJob(ctx, store, tenantID, jobID)
+		Eventually(func() pipeline.StageStatus {
+			stages, err := store.GetStages(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			return stagesByName(stages)["classify"].Status
+		}).Should(Equal(pipeline.StageStatusRunning))
+
+		_, err := job.svc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: jobID}))
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() pipeline.JobStatus {
+			got, err := store.GetJob(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			return got.Status
+		}).Should(Equal(pipeline.JobStatusCancelled))
+		Eventually(func() []string { return publishedStates(job.bus, tenantID, jobID) }).Should(ContainElement("cancelled"))
+
+		stages, err := store.GetStages(ctx, jobID)
+		Expect(err).NotTo(HaveOccurred())
+		byName := stagesByName(stages)
+		Expect(byName["classify"].Status).To(Equal(pipeline.StageStatusCancelled))
+		Expect(byName["classify"].CompletedAt).NotTo(BeNil(), "a cancelled stage records when it ended")
+		Expect(byName["synthesis"].Status).To(Equal(pipeline.StageStatusPending))
+		Expect(byName["graph"].Status).To(Equal(pipeline.StageStatusPending))
+
+		resumable, err := store.GetResumableJobs(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resumable).NotTo(ContainElement(HaveField("JobID", jobID)))
+	})
+
+	It("leaves a job interrupted by Stop running and resumable", func() {
+		store, _, tenantID, ctx := setupPGStore()
+		jobID := uuid.New().String()
+		job := startStuckClassifyJob(ctx, store, tenantID, jobID)
+
+		stopCtx, stopCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer stopCancel()
+		Expect(job.svc.Stop(stopCtx)).To(Succeed())
+
+		got, err := store.GetJob(ctx, jobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Status).To(Equal(pipeline.JobStatusRunning))
+		resumable, err := store.GetResumableJobs(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resumable).To(ContainElement(HaveField("JobID", jobID)))
 	})
 })

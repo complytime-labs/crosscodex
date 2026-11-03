@@ -28,10 +28,12 @@ type Engine struct {
 	dispatcher Dispatcher
 	collector  Collector
 	cfg        config.EngineConfig
-	taskTypes  map[string]natsbus.TaskType
-	reporter   StageReporter
-	logger     *slog.Logger
-	tracer     trace.Tracer
+	// stageTimeout caps each stage's collection; see WithStageTimeout.
+	stageTimeout time.Duration
+	taskTypes    map[string]natsbus.TaskType
+	reporter     StageReporter
+	logger       *slog.Logger
+	tracer       trace.Tracer
 
 	// Metrics (optional, nil-safe).
 	execCounter  metric.Int64Counter
@@ -283,8 +285,8 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 	// requested), call GenerateWork once per control and concatenate the
 	// resulting task slices — Dispatch, Collect, and Aggregate are still
 	// each called exactly once, over the combined set, exactly as the
-	// single-Input path below. A non-nil but empty Controls (e.g. a
-	// document-backed job, or a catalog with zero controls) naturally
+	// single-Input path below. A non-nil but empty Controls (a catalog with
+	// zero controls, or no catalog controls reader wired) naturally
 	// produces zero tasks via the loop below, rather than falling through to
 	// the single-Input path with a mismatched Input type. A per-control error
 	// fails the whole analyzer for this job, matching existing all-or-nothing
@@ -366,14 +368,15 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		}
 
 		collectReq := CollectRequest{
-			TaskType:    taskType,
-			JobID:       req.JobID,
-			ExpectedIDs: expectedIDs,
-			Tasks:       dispatchTasks,
-			Timeout:     e.cfg.TaskTimeout,
-			MaxRetries:  e.cfg.MaxRetries,
-			Backoff:     e.cfg.RetryBackoff,
-			Dispatcher:  e.dispatcher,
+			TaskType:     taskType,
+			JobID:        req.JobID,
+			ExpectedIDs:  expectedIDs,
+			Tasks:        dispatchTasks,
+			Timeout:      e.cfg.TaskTimeout,
+			StageTimeout: e.stageTimeout,
+			MaxRetries:   e.cfg.MaxRetries,
+			Backoff:      e.cfg.RetryBackoff,
+			Dispatcher:   e.dispatcher,
 		}
 
 		// PrepareCollect: subscribe to result subject BEFORE dispatching tasks.
@@ -392,7 +395,14 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 
 		// Dispatch tasks: publish to work subject. Results will be published to the
 		// already-subscribed result subject, so no message can be lost.
-		if err := e.dispatcher.Dispatch(ctx, dispatchTasks, taskType, req.JobID); err != nil {
+		if err := e.dispatcher.Dispatch(ctx, dispatchTasks, taskType, req.JobID, handle.CollectionID); err != nil {
+			// AwaitResults never runs, so its deferred release and abandon do
+			// not either. Some tasks may already be out, so abandon them,
+			// after release so no retry follows the abandon.
+			if relErr := handle.release(); relErr != nil {
+				e.logger.Warn("failed to release collection subscriptions", "job_id", req.JobID, "error", relErr)
+			}
+			handle.abandon(ctx)
 			analyzerErr := fmt.Errorf("analysis: analyzer %q dispatch failed for job %q: %w: %w",
 				name, req.JobID, ErrAnalyzerFailed, err)
 			state.fail(name, analyzerErr)

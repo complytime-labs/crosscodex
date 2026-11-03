@@ -45,8 +45,8 @@ import (
 const e2eModel = "e2e-test-model"
 
 // e2eKeyProvider is an ephemeral ECDSA P-256 key provider for the attestation
-// generator, mirroring pkg/attestation's test double. Attestation failures are
-// non-fatal to job completion, but pipeline.New requires a working generator.
+// generator, mirroring pkg/attestation's test double. The job is attested, so
+// it completes only once its whole attestation verifies and is stored.
 type e2eKeyProvider struct{ key *ecdsa.PrivateKey }
 
 // newE2EKeyProvider builds an e2eKeyProvider. Offset 1 so a key-generation
@@ -193,7 +193,7 @@ var _ = Describe("Pipeline end-to-end", func() {
 				Enabled: true, Models: []string{e2eModel}, MaxChars: 10000, BatchSize: 1,
 			},
 			Relationship: config.RelationshipConfig{
-				Enabled: true, Models: []string{e2eModel}, TopK: 10,
+				Enabled: true, Models: []string{e2eModel},
 				MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512,
 				SamplesPerModel: 1, SamplingTemperature: 0, ActionableTypes: []string{"related"},
 			},
@@ -243,7 +243,8 @@ var _ = Describe("Pipeline end-to-end", func() {
 		}
 
 		dbReporter := NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)
-		engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, analysis.WithStageReporter(dbReporter))
+		engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, analysis.WithStageReporter(dbReporter),
+			analysis.WithStageTimeout(time.Hour))
 
 		// Candidate generator over the real Postgres adapters.
 		candRegistry, err := BuildCandidateRegistry(analysisConfig.Candidates, nil, nil)
@@ -267,11 +268,11 @@ var _ = Describe("Pipeline end-to-end", func() {
 		converter := pipelineattestation.NewConverter()
 
 		pipelineCfg := config.PipelineConfig{MaxConcurrentJobs: 10}
-		attCfg := config.AttestationConfig{ExpiryDuration: 168 * time.Hour}
+		attestors := Attestors{Default: &Attestor{Generator: attestor, ExpiresIn: 168 * time.Hour}}
 
 		svc := New(
-			store, engine, registry, synth, attestor, converter, bus, storageProvider,
-			pipelineCfg, attCfg, candGen,
+			store, engine, registry, synth, attestors, converter, bus, storageProvider,
+			pipelineCfg, candGen,
 			WithCatalogControlsReader(NewPGCatalogControlsReader(tenantConn)),
 			WithEmbeddingsReader(NewPGEmbeddingsReader(tenantConn)),
 			WithEmbeddingConfig(analysisConfig.Embedding),
@@ -279,8 +280,9 @@ var _ = Describe("Pipeline end-to-end", func() {
 
 		// Real worker consuming LLM tasks off the shared bus.
 		w := worker.New(bus, fakeLLM, config.WorkerConfig{
-			LLM: config.LLMConfig{DefaultModel: e2eModel, EmbeddingModel: e2eModel},
-		})
+			MaxAbandonedCollections: 10,
+			LLM:                     config.LLMConfig{DefaultModel: e2eModel, EmbeddingModel: e2eModel},
+		}, worker.WithAbandonTTL(time.Hour))
 		Expect(w.Start(context.Background())).To(Succeed(), "start worker")
 		defer func() {
 			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -295,7 +297,7 @@ var _ = Describe("Pipeline end-to-end", func() {
 		ctxA, err := tenant.WithTenant(ctx, tenantA)
 		Expect(err).NotTo(HaveOccurred(), "WithTenant A")
 		req := connect.NewRequest(&pb.CreateJobRequest{
-			Config: &pb.JobConfig{Source: &pb.JobConfig_CatalogId{CatalogId: catalogID}},
+			Config: &pb.JobConfig{CatalogId: catalogID},
 		})
 		resp, err := svc.CreateJob(ctxA, req)
 		Expect(err).NotTo(HaveOccurred(), "CreateJob")

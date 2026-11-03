@@ -88,7 +88,7 @@ var _ = Describe("embedded service telemetry wiring", func() {
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(submitResp.Msg.GetDocumentId()).NotTo(BeEmpty())
-		Expect(submitResp.Msg.GetJobId()).NotTo(BeEmpty())
+		Expect(submitResp.Msg.GetCatalogId()).NotTo(BeEmpty())
 
 		listResp, err := svc.ListCatalogs(callCtx, connectrpc.NewRequest(&pb.ListCatalogsRequest{}))
 		Expect(err).NotTo(HaveOccurred())

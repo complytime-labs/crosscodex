@@ -16,7 +16,10 @@ import (
 )
 
 // fakeStore is an in-memory implementation of Store for testing.
-// It uses mutex-guarded maps to support concurrent access.
+// It uses mutex-guarded maps to support concurrent access. Like PGStore,
+// whose every method begins a transaction on ctx, it refuses a cancelled or
+// expired context, so a write made on a job's own context after the job is
+// cancelled is lost here as it is against PostgreSQL.
 type fakeStore struct {
 	mu sync.Mutex
 
@@ -28,10 +31,21 @@ type fakeStore struct {
 	// calls without holding up other fakeStore operations.
 	getJobHook func()
 
-	createJobErr       error
-	getJobErr          error
-	listJobsErr        error
-	updateStatusErr    error
+	// beforeUpdateJobStatus and afterUpdateStageStatus, if set, are called
+	// outside the lock: the first before UpdateJobStatus does anything, the
+	// second after UpdateStageStatus has stored a status. Specs use them to
+	// act at an exact point of a job's lifecycle.
+	beforeUpdateJobStatus  func(jobID string, status pipeline.JobStatus)
+	afterUpdateStageStatus func(jobID, stageName string, status pipeline.StageStatus)
+
+	createJobErr    error
+	getJobErr       error
+	listJobsErr     error
+	updateStatusErr error
+	// updateStatusErrOn, if set, limits updateStatusErr to updates to this
+	// status, so a spec can fail one transition (such as cancelled) while
+	// the job still starts.
+	updateStatusErrOn  pipeline.JobStatus
 	createStagesErr    error
 	updateStageErr     error
 	updateStageErrErr  error
@@ -58,6 +72,9 @@ func newFakeStore() *fakeStore {
 var _ pipeline.Store = (*fakeStore)(nil)
 
 func (f *fakeStore) CreateJob(ctx context.Context, job *pipeline.Job) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -74,6 +91,9 @@ func (f *fakeStore) CreateJob(ctx context.Context, job *pipeline.Job) error {
 }
 
 func (f *fakeStore) GetJob(ctx context.Context, jobID string) (*pipeline.Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if f.getJobHook != nil {
 		f.getJobHook()
 	}
@@ -98,6 +118,9 @@ func (f *fakeStore) GetJob(ctx context.Context, jobID string) (*pipeline.Job, er
 }
 
 func (f *fakeStore) ListJobs(ctx context.Context, tenantID string, filter pipeline.JobFilter) ([]*pipeline.Job, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -134,10 +157,16 @@ func (f *fakeStore) ListJobs(ctx context.Context, tenantID string, filter pipeli
 }
 
 func (f *fakeStore) UpdateJobStatus(ctx context.Context, jobID string, status pipeline.JobStatus, jobErr error) error {
+	if f.beforeUpdateJobStatus != nil {
+		f.beforeUpdateJobStatus(jobID, status)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if f.updateStatusErr != nil {
+	if f.updateStatusErr != nil && (f.updateStatusErrOn == "" || f.updateStatusErrOn == status) {
 		return f.updateStatusErr
 	}
 
@@ -147,10 +176,18 @@ func (f *fakeStore) UpdateJobStatus(ctx context.Context, jobID string, status pi
 	}
 
 	job.Status = status
+	job.ErrorMessage = ""
+	if jobErr != nil {
+		job.ErrorMessage = jobErr.Error()
+	}
+	job.ErrorClass = pipeline.ClassifyJobError(jobErr)
 	return nil
 }
 
 func (f *fakeStore) CreateStages(ctx context.Context, jobID string, stageNames []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -175,6 +212,9 @@ func (f *fakeStore) CreateStages(ctx context.Context, jobID string, stageNames [
 }
 
 func (f *fakeStore) UpdateStageStatus(ctx context.Context, jobID, stageName string, status pipeline.StageStatus) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -190,6 +230,11 @@ func (f *fakeStore) UpdateStageStatus(ctx context.Context, jobID, stageName stri
 	for _, stage := range stages {
 		if stage.StageName == stageName {
 			stage.Status = status
+			if f.afterUpdateStageStatus != nil {
+				f.mu.Unlock()
+				f.afterUpdateStageStatus(jobID, stageName, status)
+				f.mu.Lock()
+			}
 			return nil
 		}
 	}
@@ -198,6 +243,9 @@ func (f *fakeStore) UpdateStageStatus(ctx context.Context, jobID, stageName stri
 }
 
 func (f *fakeStore) UpdateStageError(ctx context.Context, jobID, stageName string, stageErr error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -224,6 +272,9 @@ func (f *fakeStore) UpdateStageError(ctx context.Context, jobID, stageName strin
 }
 
 func (f *fakeStore) GetStages(ctx context.Context, jobID string) ([]*pipeline.Stage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if f.getStagesPanics {
 		panic("simulated panic in GetStages")
 	}
@@ -251,6 +302,9 @@ func (f *fakeStore) GetStages(ctx context.Context, jobID string) ([]*pipeline.St
 }
 
 func (f *fakeStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, allStages []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -294,6 +348,9 @@ func (f *fakeStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string
 }
 
 func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -327,6 +384,9 @@ func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerNa
 }
 
 func (f *fakeStore) GetCompletedAnalysisResults(ctx context.Context, jobID string, analyzerNames []string) (map[string]*analyzer.Output, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -341,6 +401,9 @@ func (f *fakeStore) GetCompletedAnalysisResults(ctx context.Context, jobID strin
 }
 
 func (f *fakeStore) GetResumableJobs(ctx context.Context) ([]*pipeline.Job, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -360,6 +423,9 @@ func (f *fakeStore) GetResumableJobs(ctx context.Context) ([]*pipeline.Job, erro
 }
 
 func (f *fakeStore) WriteVoteSummaries(ctx context.Context, tenantID, jobID string, pairs []pipeline.VoteSummaryPair) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

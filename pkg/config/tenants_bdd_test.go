@@ -41,6 +41,7 @@ var _ = Describe("TenantsConfig.DefaultTenant", func() {
 			Expect(err.Error()).To(ContainSubstring("tenants.default_tenant %q", value))
 			Expect(err.Error()).To(ContainSubstring("CROSSCODEX_TENANTS_DEFAULT_TENANT"))
 			Expect(err.Error()).To(ContainSubstring(tenant.IDRule))
+			expectOnlyFieldError(err, "tenants.default_tenant")
 		},
 		Entry("53 characters, one over the graph-name limit", "a"+strings.Repeat("b", 52)),
 		Entry("uppercase", "Acme"),
@@ -50,15 +51,16 @@ var _ = Describe("TenantsConfig.DefaultTenant", func() {
 })
 
 var _ = Describe("TenantsConfig without allowed_tenants", func() {
-	It("ignores a leftover tenants.allowed_tenants key in a config file and loads the rest", func() {
+	It("rejects a leftover tenants.allowed_tenants key in a config file with removal guidance", func() {
 		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
 		path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
 		writeTestFile(path, "tenants:\n  enabled: true\n  default_tenant: acme\n  allowed_tenants: [acme, beta]\n")
 
 		cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(cfg.Tenants.Enabled).To(BeTrue())
-		Expect(cfg.Tenants.DefaultTenant).To(Equal("acme"))
+		Expect(err).To(MatchError(config.ErrUnknownKey))
+		Expect(err.Error()).To(ContainSubstring(`"tenants.allowed_tenants" at ` + path + ":4:3"))
+		Expect(err.Error()).To(ContainSubstring("crosscodexd admin tenant create"))
+		Expect(cfg).To(BeNil())
 	})
 
 	It("does not ship allowed_tenants in the compiled defaults", func() {

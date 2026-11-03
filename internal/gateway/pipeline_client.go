@@ -75,4 +75,8 @@ func (b *connectPipelineBackend) CancelJob(ctx context.Context, req *connect.Req
 	return b.client.CancelJob(ctx, req)
 }
 
+func (b *connectPipelineBackend) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error) {
+	return b.client.RetryJob(ctx, req)
+}
+
 var _ PipelineBackend = (*connectPipelineBackend)(nil)

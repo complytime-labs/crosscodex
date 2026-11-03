@@ -274,6 +274,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     config        JSONB,
     created_by    TEXT NOT NULL,
     error_message TEXT NOT NULL DEFAULT '',
+    -- Classifies error_message's cause (pipeline.ClassifyJobError), so a
+    -- retry that cannot succeed is refused without matching the text.
+    -- Empty: no failure, or one a retry may fix.
+    error_class   TEXT NOT NULL DEFAULT '',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1617,7 +1621,8 @@ RETURNS TABLE (
     created_by    text,
     created_at    timestamptz,
     updated_at    timestamptz,
-    error_message text
+    error_message text,
+    error_class   text
 )
 LANGUAGE sql
 STABLE
@@ -1625,7 +1630,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp
 AS $$
     SELECT j.job_id, j.tenant_id, j.status, j.config, j.created_by,
-           j.created_at, j.updated_at, j.error_message
+           j.created_at, j.updated_at, j.error_message, j.error_class
     FROM public.jobs j
     JOIN public.tenants t ON t.tenant_id = j.tenant_id
     WHERE j.status = 'running' AND t.status <> 'deleted'

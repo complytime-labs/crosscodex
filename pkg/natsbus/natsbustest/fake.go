@@ -52,8 +52,10 @@ func clonePublication(p Publication) Publication {
 // boundary before any Func runs, without recording the call: every method but
 // Close returns natsbus.ErrConnectionClosed after Close, and Publish and
 // PublishWithHeaders return the tenant error when the context carries no
-// tenant. Publish and PublishWithHeaders record and return nil;
-// Subscribe and QueueSubscribe record a Sub and return it; Close returns nil.
+// tenant. PublishWorkerProgress needs no tenant, like the real client.
+// Publish, PublishWithHeaders and PublishWorkerProgress record and return nil;
+// Subscribe, QueueSubscribe and SubscribeWorkerProgress record a Sub and
+// return it; Close returns nil.
 // Unset CreateStreamFunc, DeleteStreamFunc and AuditStreamRetentionFunc
 // return ErrUnscripted. The zero value is ready to use. Set the exported
 // fields before the first call; the methods are then safe for concurrent use.
@@ -73,6 +75,12 @@ type Fake struct {
 	SubscribeFunc func(ctx context.Context, subject string, handler natsbus.MessageHandler) (natsbus.Subscription, error)
 	// QueueSubscribeFunc is SubscribeFunc for QueueSubscribe.
 	QueueSubscribeFunc func(ctx context.Context, subject, queue string, handler natsbus.MessageHandler) (natsbus.Subscription, error)
+	// PublishWorkerProgressErr is returned by PublishWorkerProgress, which
+	// records the tick in Published whether or not it is set. It affects no
+	// other method, so it fails ticks without failing result publishes.
+	PublishWorkerProgressErr error
+	// SubscribeWorkerProgressFunc is SubscribeFunc for SubscribeWorkerProgress.
+	SubscribeWorkerProgressFunc func(ctx context.Context, handler func()) (natsbus.Subscription, error)
 	// CreateStreamFunc decides what CreateStream returns; unset is ErrUnscripted.
 	CreateStreamFunc func(ctx context.Context, cfg natsbus.StreamConfig) error
 	// DeleteStreamFunc decides what DeleteStream returns; unset is ErrUnscripted.
@@ -139,8 +147,8 @@ func (f *Fake) PublishWithHeaders(ctx context.Context, subject string, data []by
 	return nil
 }
 
-// Published returns every accepted publication from Publish and
-// PublishWithHeaders, in call order. The publications are deep copies, so a
+// Published returns every accepted publication from Publish,
+// PublishWithHeaders and PublishWorkerProgress, in call order. The publications are deep copies, so a
 // caller mutating one does not alter the record.
 func (f *Fake) Published() []Publication {
 	f.mu.Lock()
@@ -178,6 +186,43 @@ func (f *Fake) QueueSubscribe(ctx context.Context, subject, queue string, handle
 		return f.register(sub), nil
 	}
 	got, err := f.QueueSubscribeFunc(ctx, subject, queue, handler)
+	return f.finishSubscribe(sub, got, err)
+}
+
+// PublishWorkerProgress records a bare tick, Publication{Subject:
+// natsbus.WorkerProgressSubject} with no data or headers, in Published in
+// call order with the other publishes, and returns PublishWorkerProgressErr.
+// Like the real client it needs no tenant in ctx.
+func (f *Fake) PublishWorkerProgress(_ context.Context) error {
+	if err := f.checkOpen("publish worker progress"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.published = append(f.published, Publication{Subject: natsbus.WorkerProgressSubject})
+	f.mu.Unlock()
+	return f.PublishWorkerProgressErr
+}
+
+// SubscribeWorkerProgress records a subscription to
+// natsbus.WorkerProgressSubject and returns it, unless
+// SubscribeWorkerProgressFunc decides otherwise. Deliver signals handler for
+// every message on exactly that subject and passes it nothing from the
+// message, as the real client does.
+func (f *Fake) SubscribeWorkerProgress(ctx context.Context, handler func()) (natsbus.Subscription, error) {
+	if err := f.checkOpen("subscribe to worker progress"); err != nil {
+		return nil, err
+	}
+	sub := &Sub{Subject: natsbus.WorkerProgressSubject}
+	if handler != nil { // a nil handler stays nil, so Deliver skips it
+		sub.handler = func(context.Context, *natsbus.Message) error {
+			handler()
+			return nil
+		}
+	}
+	if f.SubscribeWorkerProgressFunc == nil {
+		return f.register(sub), nil
+	}
+	got, err := f.SubscribeWorkerProgressFunc(ctx, handler)
 	return f.finishSubscribe(sub, got, err)
 }
 
@@ -283,7 +328,8 @@ func (f *Fake) Close() error {
 }
 
 // Sub fakes natsbus.Subscription. Fake creates one per accepted Subscribe or
-// QueueSubscribe. The methods are safe for concurrent use.
+// QueueSubscribe, and one per accepted SubscribeWorkerProgress. The methods
+// are safe for concurrent use.
 type Sub struct {
 	// Subject is the subscription's subject pattern.
 	Subject string

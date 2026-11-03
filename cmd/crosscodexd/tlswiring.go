@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
 
@@ -26,8 +27,15 @@ func llmHTTPClient(ctx context.Context, cfg *config.Config) (*http.Client, error
 	if err != nil {
 		return nil, fmt.Errorf("build LLM TLS config: %w", err)
 	}
+	// net/http treats a zero Timeout as "never"; llmclient applies
+	// DefaultTimeout to the client it builds for http gateways, and this
+	// client replaces that one, so apply the same fallback here.
+	timeout := time.Duration(cfg.LLM.Timeout) * time.Second
+	if timeout == 0 {
+		timeout = llmclient.DefaultTimeout
+	}
 	return &http.Client{
-		Timeout:   time.Duration(cfg.LLM.Timeout) * time.Second,
+		Timeout:   timeout,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}, nil
 }

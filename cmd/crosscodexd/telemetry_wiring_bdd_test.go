@@ -75,6 +75,9 @@ var _ = Describe("bootstrap telemetry wiring", func() {
 		// replaces the real client, so it must answer.
 		cfg.LLM.GatewayURL = reachableLLMGatewayURL()
 		cfg.Health.Addr = "127.0.0.1:0"
+		// Validation keeps both positive; the worker refuses to start without them.
+		cfg.Pipeline.StageTimeout = time.Hour
+		cfg.Worker.MaxAbandonedCollections = 10
 
 		rt, err := bootstrap(ctx, cfg, WithLLMClient(fixedEmbeddingLLMClient{}))
 		Expect(err).NotTo(HaveOccurred())

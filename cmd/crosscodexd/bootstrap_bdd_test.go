@@ -3,12 +3,23 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/internal/graph"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
@@ -100,4 +111,80 @@ var _ = Describe("buildIngestGateway client-certificate guard", func() {
 		Entry("all role, server-only tls", config.RoleAll, "server-only", true),
 		Entry("all role, mutual tls", config.RoleAll, "mutual", false),
 	)
+})
+
+// buildPipelineService resolves attestation before anything else, so these
+// specs need no shared resources: a refusal returns first, and a disabled
+// attestation is proved to pass by reaching the next guard.
+var _ = Describe("buildPipelineService attestation guards", func() {
+	captureLogs := func() *bytes.Buffer {
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+		DeferCleanup(func() { slog.SetDefault(prev) })
+		return &buf
+	}
+
+	It("refuses to start when attestation is enabled without a key pair, naming the setting and both remedies", func() {
+		cfg := &config.Config{}
+		cfg.Attestation = config.AttestationConfig{Enabled: true, ExpiryDuration: time.Hour}
+
+		svc, err := buildPipelineService(cfg, &sharedResources{})
+		Expect(svc).To(BeNil())
+		Expect(err).To(MatchError(config.ErrMissingRequired))
+		Expect(err.Error()).To(And(
+			ContainSubstring("attestation.private_key_path"), ContainSubstring("attestation.enabled: false")))
+	})
+
+	It("refuses to start when the configured key pair does not load, naming the file", func() {
+		dir := GinkgoT().TempDir()
+		missing := filepath.Join(dir, "attestation-key.pem")
+		cfg := &config.Config{}
+		cfg.Attestation = config.AttestationConfig{
+			Enabled: true, PrivateKeyPath: missing, PublicKeyPath: filepath.Join(dir, "attestation-pub.pem"),
+			ExpiryDuration: time.Hour,
+		}
+
+		svc, err := buildPipelineService(cfg, &sharedResources{})
+		Expect(svc).To(BeNil())
+		Expect(err).To(MatchError(attestation.ErrKeyNotFound))
+		Expect(err.Error()).To(ContainSubstring(missing))
+	})
+
+	It("reads no key and logs once that attestation is disabled when it is", func() {
+		logs := captureLogs()
+		cfg := &config.Config{}
+		cfg.Attestation = config.AttestationConfig{
+			Enabled: false, PrivateKeyPath: "/nonexistent/key.pem", PublicKeyPath: "/nonexistent/pub.pem",
+		}
+
+		_, err := buildPipelineService(cfg, &sharedResources{})
+		Expect(err).To(MatchError("pipeline: tenants.default_tenant must be set"))
+		Expect(bytes.Count(logs.Bytes(), []byte("attestation is disabled"))).To(Equal(1))
+	})
+
+	It("logs each tenant whose override disables the attestation the global settings enable", func() {
+		logs := captureLogs()
+		dir := GinkgoT().TempDir()
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).NotTo(HaveOccurred())
+		privDER, err := x509.MarshalECPrivateKey(key)
+		Expect(err).NotTo(HaveOccurred())
+		pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+		Expect(err).NotTo(HaveOccurred())
+		priv, pub := filepath.Join(dir, "key.pem"), filepath.Join(dir, "pub.pem")
+		Expect(os.WriteFile(priv, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER}), 0o600)).To(Succeed())
+		Expect(os.WriteFile(pub, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}), 0o600)).To(Succeed())
+		no := false
+		cfg := &config.Config{}
+		cfg.Attestation = config.AttestationConfig{
+			Enabled: true, PrivateKeyPath: priv, PublicKeyPath: pub, ExpiryDuration: time.Hour,
+			TenantOverrides: map[string]config.AttestationOverride{"acme": {Enabled: &no}},
+		}
+
+		_, err = buildPipelineService(cfg, &sharedResources{})
+		Expect(err).To(MatchError("pipeline: tenants.default_tenant must be set"))
+		Expect(logs.String()).To(And(ContainSubstring("attestation is disabled for a tenant"), ContainSubstring("tenant_id=acme")))
+		Expect(logs.String()).NotTo(ContainSubstring("attestation is disabled (attestation.enabled: false)"))
+	})
 })

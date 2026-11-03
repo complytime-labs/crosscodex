@@ -40,7 +40,6 @@ type EmbeddingAnalyzer struct {
 	vectors vectordb.VectorDB
 	store   storage.Provider
 	cfg     config.EmbeddingConfig
-	relCfg  config.RelationshipConfig
 	tracer  trace.Tracer
 
 	// Metrics (optional, nil-safe)
@@ -56,7 +55,6 @@ func New(
 	vectors vectordb.VectorDB,
 	store storage.Provider,
 	cfg config.EmbeddingConfig,
-	relCfg config.RelationshipConfig,
 	opts ...Option,
 ) *EmbeddingAnalyzer {
 	a := &EmbeddingAnalyzer{
@@ -64,7 +62,6 @@ func New(
 		vectors: vectors,
 		store:   store,
 		cfg:     cfg,
-		relCfg:  relCfg,
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -83,8 +80,8 @@ func (a *EmbeddingAnalyzer) ResultSchema() proto.Message {
 	return &pb.AnalysisResult{}
 }
 
-// GenerateWork produces one task per control per model. Section controls
-// are skipped with a pre-built result (no embedding for non-leaf controls).
+// GenerateWork produces one task per control per model. Section controls and
+// controls with a blank statement are skipped with a pre-built result.
 func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "embedding.GenerateWork")
 	defer span.End()
@@ -102,8 +99,14 @@ func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 		attribute.String("control.id", controlID),
 	)
 
-	// Section auto-skip: no embedding for non-leaf controls.
-	if input.GetParts()["class"] == oscal.ClassSection {
+	// Auto-skip sections (non-leaf) and controls with a blank statement.
+	// Blank statements are withdrawn or placeholder controls (e.g. CSF 2.0
+	// ID.BE). Without an ancestor their text is empty and the worker rejects
+	// the task as invalid_payload (retried 3x); with one the text is just
+	// "[ancestor]", which says nothing about the control. Candidate
+	// generation and coverage already exclude them, so nothing reads their
+	// vectors.
+	if input.GetParts()["class"] == oscal.ClassSection || strings.TrimSpace(input.GetStatement()) == "" {
 		span.SetAttributes(attribute.Bool("embedding.skipped", true))
 		if a.embedCounter != nil {
 			a.embedCounter.Add(ctx, 1, metric.WithAttributes(

@@ -18,7 +18,18 @@ type cliState struct {
 	adminClient crosscodexv1connect.AdminServiceClient
 	daemon      *embeddedDaemon
 	logLevel    slog.Level
+
+	// loadErr is why the configuration did not load, for the config
+	// commands that start without one (see inConfigSubtree); fullCfg and
+	// cfg are nil when it is set. loadAdvice says how to fix it.
+	loadErr    error
+	loadAdvice string
 }
+
+// annotationNeedsResolvedConfig marks a config command that cannot run
+// without a loaded configuration. It reports the load error itself, so the
+// root command prints no warning for it.
+const annotationNeedsResolvedConfig = "crosscodex/needs-resolved-config"
 
 func newRootCmd() *cobra.Command {
 	cobra.EnableCommandSorting = false
@@ -35,24 +46,38 @@ explore the results.
 Get started:
   crosscodex project init          Initialize a new project
   crosscodex catalog import        Import a compliance catalog
-  crosscodex run start             Start an analysis job
+  crosscodex run start             Start analysis of an imported catalog
   crosscodex results summary       View analysis results`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			profile, _ := cmd.Flags().GetString("profile")
+			cfgLevel := ""
 			if err := loadConfig(state, profile); err != nil {
-				return err
+				// A configuration that does not load fails every command
+				// closed, except the config commands: without them, the
+				// operator could not use `config set` to repair it.
+				if !inConfigSubtree(cmd) {
+					return err
+				}
+				state.loadErr = err
+				state.loadAdvice = loadFailureAdvice(profile)
+				if cmd.Annotations[annotationNeedsResolvedConfig] == "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n"+
+						"Every crosscodex command except `crosscodex config` refuses to run until this is fixed. %s.\n",
+						renderError(err), state.loadAdvice)
+				}
+			} else {
+				tlsCA, _ := cmd.Flags().GetString("tls-ca")
+				tlsCert, _ := cmd.Flags().GetString("tls-cert")
+				tlsKey, _ := cmd.Flags().GetString("tls-key")
+				applyClientTLSFlags(tlsCA, tlsCert, tlsKey, state.cfg)
+				cfgLevel = state.cfg.Logging.Level
 			}
-
-			tlsCA, _ := cmd.Flags().GetString("tls-ca")
-			tlsCert, _ := cmd.Flags().GetString("tls-cert")
-			tlsKey, _ := cmd.Flags().GetString("tls-key")
-			applyClientTLSFlags(tlsCA, tlsCert, tlsKey, state.cfg)
 
 			verbose, _ := cmd.Flags().GetCount("verbose")
 			debug, _ := cmd.Flags().GetBool("debug")
-			state.logLevel = resolveLogLevel(verbose, debug, state.cfg.Logging.Level)
+			state.logLevel = resolveLogLevel(verbose, debug, cfgLevel)
 			slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 				Level: state.logLevel,
 			})))
@@ -113,6 +138,17 @@ Get started:
 	root.SetHelpCommandGroupID("additional")
 
 	return root
+}
+
+// inConfigSubtree reports whether cmd is the top-level config command or
+// one of its subcommands (not, for example, `project config`).
+func inConfigSubtree(cmd *cobra.Command) bool {
+	for c := cmd; c.HasParent(); c = c.Parent() {
+		if !c.Parent().HasParent() {
+			return c.Name() == "config"
+		}
+	}
+	return false
 }
 
 func main() {

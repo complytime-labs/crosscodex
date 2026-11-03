@@ -92,7 +92,7 @@ func e2eAnalysisConfig() config.AnalysisConfig {
 			Enabled: true, Models: []string{e2eModel}, MaxChars: 10000, BatchSize: 1,
 		},
 		Relationship: config.RelationshipConfig{
-			Enabled: true, Models: []string{e2eModel}, TopK: 10,
+			Enabled: true, Models: []string{e2eModel},
 			MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512,
 			SamplesPerModel: 1, SamplingTemperature: 0,
 		},
@@ -153,8 +153,9 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 					Order:   []config.PromptLayerEntry{{ID: "embedded"}},
 				},
 			}
-			cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
+			cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}
 			cfg.Attestation = config.AttestationConfig{
+				Enabled:        true,
 				PrivateKeyPath: testAttestationPrivateKeyPath,
 				PublicKeyPath:  testAttestationPublicKeyPath,
 				ExpiryDuration: 168 * time.Hour,
@@ -222,7 +223,7 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 		Expect(err).NotTo(HaveOccurred())
 
 		resp, err := pipelineRT.pipelineService.CreateJob(ctxTenant, connect.NewRequest(&pb.CreateJobRequest{
-			Config: &pb.JobConfig{Source: &pb.JobConfig_CatalogId{CatalogId: catalogID}},
+			Config: &pb.JobConfig{CatalogId: catalogID},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		jobID := resp.Msg.JobId

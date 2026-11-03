@@ -57,11 +57,11 @@ tasks:
       # Host pg_isready over TCP mTLS (not podman exec)
       - |
         timeout 120 sh -c 'until PGSSLMODE=verify-full PGSSLROOTCERT={{.TEST_DIR}}/certs/ca.pem PGSSLCERT={{.TEST_DIR}}/certs/client.pem PGSSLKEY={{.TEST_DIR}}/certs/client-key.pem pg_isready -h localhost -p 15432 -U postgres -q; do sleep 2; done'
+      # Registered before the daemon starts so a failed health poll in
+      # run-daemon.sh still stops it; registered after the compose-down defer
+      # so (defers run LIFO) the daemon is gone before Postgres is.
+      - defer: bash {{.ROOT_DIR}}/test/e2e/stop-daemon.sh {{.TEST_DIR}}/e2e
       - bash {{.ROOT_DIR}}/test/e2e/run-daemon.sh {{.ROOT_DIR}} {{.TEST_DIR}}
-      - defer: |
-          if [ -f {{.TEST_DIR}}/e2e/daemon.pid ]; then
-            kill "$(cat {{.TEST_DIR}}/e2e/daemon.pid)" 2>/dev/null || true
-          fi
       - >
         venom run {{.ROOT_DIR}}/test/e2e/ingest-to-age.venom.yml
         --lib-dir {{.ROOT_DIR}}/test/e2e/lib
@@ -138,11 +138,11 @@ tasks:
         vars:
           PROFILE: llm
           OLLAMA_HOST: "http://localhost:11434"
+      # Registered before the daemon starts so a failed health poll in
+      # run-daemon.sh still stops it; registered after the compose-down defer
+      # so (defers run LIFO) the daemon is gone before Postgres is.
+      - defer: bash {{.ROOT_DIR}}/test/e2e/stop-daemon.sh {{.TEST_DIR}}/e2e
       - bash {{.ROOT_DIR}}/test/e2e/run-daemon.sh {{.ROOT_DIR}} {{.TEST_DIR}} llm
-      - defer: |
-          if [ -f {{.TEST_DIR}}/e2e/daemon.pid ]; then
-            kill "$(cat {{.TEST_DIR}}/e2e/daemon.pid)" 2>/dev/null || true
-          fi
       - >
         venom run {{.ROOT_DIR}}/test/e2e/ingest-to-age-llm.venom.yml
         --lib-dir {{.ROOT_DIR}}/test/e2e/lib

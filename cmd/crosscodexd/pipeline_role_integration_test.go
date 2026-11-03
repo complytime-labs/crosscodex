@@ -43,8 +43,9 @@ func splitRoleConfig(dsn, natsURL, tenantID, role string) *config.Config {
 			Order:   []config.PromptLayerEntry{{ID: "embedded"}},
 		},
 	}
-	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10}
+	cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}
 	cfg.Attestation = config.AttestationConfig{
+		Enabled:        true,
 		PrivateKeyPath: testAttestationPrivateKeyPath,
 		PublicKeyPath:  testAttestationPublicKeyPath,
 		ExpiryDuration: 168 * time.Hour,
@@ -151,7 +152,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		Expect(err).NotTo(HaveOccurred())
 
 		resp, err := backend.CreateJob(ctxTenant, connect.NewRequest(&pb.CreateJobRequest{
-			Config: &pb.JobConfig{Source: &pb.JobConfig_CatalogId{CatalogId: catalogID}},
+			Config: &pb.JobConfig{CatalogId: catalogID},
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		jobID := resp.Msg.JobId
@@ -181,6 +182,13 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		} else {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
 		}
+
+		// RetryJob round-trips too: a completed job has nothing to resume
+		// from, and the pipeline's refusal reaches the gateway's client with
+		// its code and its remedy.
+		_, err = backend.RetryJob(ctxTenant, connect.NewRequest(&pb.RetryJobRequest{JobId: jobID, RetryFromFailure: true}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+		Expect(err.Error()).To(ContainSubstring("crosscodex run start --source " + catalogID))
 	})
 
 	It("imports an OSCAL catalog through a standalone gateway and completes its job with separate pipeline, worker and graph roles", func() {
@@ -269,20 +277,19 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 			CatalogName:   "split-import",
 		}))
 		Expect(err).NotTo(HaveOccurred(), "SubmitDocument through the standalone gateway")
-		jobID := submitResp.Msg.GetJobId()
+		catalogID := submitResp.Msg.GetCatalogId()
+		Expect(catalogID).NotTo(BeEmpty(), "catalog id")
+		startResp, err := client.StartAnalysis(ctx, connect.NewRequest(&pb.StartAnalysisRequest{SourceCatalogId: catalogID}))
+		Expect(err).NotTo(HaveOccurred(), "StartAnalysis")
+		jobID := startResp.Msg.GetJobId()
 		Expect(jobID).NotTo(BeEmpty(), "job id")
 		Expect(submitResp.Msg.GetDocumentId()).NotTo(BeEmpty(), "document id")
 
-		// SubmitDocumentResponse carries no catalog_id; it is content-hash
-		// derived, so read it back. Reads enter the tenant for RLS as app_user.
+		// Reads enter the tenant for RLS as app_user.
 		tenantCtx, err := tenant.WithTenant(ctx, tenantID)
 		Expect(err).NotTo(HaveOccurred())
 		tx, err := db.NewTenantPool(gwRT.shared.appPool).Begin(tenantCtx)
 		Expect(err).NotTo(HaveOccurred(), "begin tenant transaction")
-		var catalogID string
-		Expect(tx.QueryRow(tenantCtx,
-			"SELECT catalog_id FROM catalogs WHERE tenant_id = $1", tenantID).Scan(&catalogID)).
-			To(Succeed(), "read catalog_id")
 		var controlCount int
 		Expect(tx.QueryRow(tenantCtx,
 			"SELECT count(*) FROM controls WHERE catalog_id = $1", catalogID).Scan(&controlCount)).
@@ -345,6 +352,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		}
 		cfg.Pipeline = config.PipelineConfig{MaxConcurrentJobs: 10, Addr: "127.0.0.1:0"}
 		cfg.Attestation = config.AttestationConfig{
+			Enabled:        true,
 			PrivateKeyPath: testAttestationPrivateKeyPath,
 			PublicKeyPath:  testAttestationPublicKeyPath,
 			ExpiryDuration: 168 * time.Hour,

@@ -54,6 +54,14 @@ type VerifiedLayout struct {
 	KeyIDs      []string // Key IDs that signed this layout
 }
 
+// VerifiedChain is the result of verifying a run's whole attestation.
+type VerifiedChain struct {
+	Layout *VerifiedLayout
+	// Subject is the run the chain is bound to, with the digest its links
+	// record.
+	Subject Artifact
+}
+
 // VerifiedLink is the result of verifying a signed link envelope.
 type VerifiedLink struct {
 	Step       string         // Step name

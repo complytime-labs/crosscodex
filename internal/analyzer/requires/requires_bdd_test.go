@@ -31,6 +31,17 @@ func (m *mockCandidateProvider) Candidates(_ context.Context, _, _ string) ([]re
 	return m.pairs, m.err
 }
 
+// pairParams returns GenerateWork parameters for jobID carrying a source and
+// a target statement for every control id in ids.
+func pairParams(jobID string, ids ...string) map[string]string {
+	params := map[string]string{"job_id": jobID}
+	for _, id := range ids {
+		params["source_text_"+id] = "statement of " + id
+		params["target_text_"+id] = "statement of " + id
+	}
+	return params
+}
+
 var _ = Describe("RequiresAnalyzer", func() {
 	var (
 		a          *requires.RequiresAnalyzer
@@ -143,9 +154,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			cfg.AllowEvenSamples = true
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "access control policy"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IA-2", "AU-6"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tasks).To(HaveLen(2 * 2 * 3)) // 2 pairs * 2 models * 3 samples
@@ -157,9 +167,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			}
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IA-2"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tasks).To(HaveLen(1))
@@ -172,9 +181,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			}
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IA-2"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tasks[0].TaskType).To(Equal("requires"))
@@ -188,9 +196,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			cfg.SamplingTemperature = 0.7
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IA-2"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := tasks[0].Payload.(*structpb.Struct)
@@ -212,9 +219,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			cfg.SamplingTemperature = 0.7
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IA-2"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := tasks[0].Payload.(*structpb.Struct)
@@ -228,9 +234,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			}
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IA-2"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := tasks[0].Payload.(*structpb.Struct)
@@ -250,9 +255,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			}
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IA-2"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := tasks[0].Payload.(*structpb.Struct)
@@ -268,9 +272,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			}
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			control := &pb.Control{ControlId: "AC-1", Statement: "test"}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: pairParams("job-1", "AC-1", "IA-2"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 			payload, ok := tasks[0].Payload.(*structpb.Struct)
@@ -286,16 +289,74 @@ var _ = Describe("RequiresAnalyzer", func() {
 			cfg.MaxSourceChars = 10
 			a = requires.New(nil, prompts, candidates, cfg)
 
-			longStatement := "This is a very long statement that should be truncated"
-			control := &pb.Control{ControlId: "AC-1", Statement: longStatement}
-			tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{
-				Parameters: map[string]string{"job_id": "job-1"},
+			params := pairParams("job-1", "AC-1", "IA-2")
+			params["source_text_AC-1"] = "This is a very long statement that should be truncated"
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{Parameters: params})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tasks).To(HaveLen(1))
+			payload, ok := tasks[0].Payload.(*structpb.Struct)
+			Expect(ok).To(BeTrue())
+			msgs := payload.Fields["messages"].GetListValue().GetValues()
+			Expect(msgs).To(HaveLen(2))
+			user := msgs[1].GetStructValue().Fields["content"].GetStringValue()
+			Expect(user).To(HavePrefix("User: This is a  statement of IA-2"))
+			Expect(user).NotTo(ContainSubstring("very long"))
+		})
+		It("builds the prompt from the source_text_ and target_text_ parameters", func() {
+			candidates.pairs = []requires.RequiresPair{
+				{SourceControlID: "AC-1", TargetControlID: "IT-3.2", AggregateScore: 0.85},
+			}
+			reg, err := prompt.NewRegistry(config.PromptConfig{
+				Layers: config.PromptLayerConfig{Enabled: true},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			a = requires.New(nil, reg, candidates, cfg)
+
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{
+				Parameters: map[string]string{
+					"job_id":                 "job-1",
+					"source_text_AC-1":       "Enforce least privilege.",
+					"target_text_IT-3.2":     "Restrict administrator accounts.",
+					"source_level_AC-1":      "Tactical",
+					"target_ancestor_IT-3.2": "Identity",
+				},
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tasks).To(HaveLen(1))
-			// The truncated text is embedded in the rendered prompt -- we verify
-			// the task was produced without error, confirming truncation worked.
+			payload, ok := tasks[0].Payload.(*structpb.Struct)
+			Expect(ok).To(BeTrue())
+			msgs := payload.Fields["messages"].GetListValue().GetValues()
+			Expect(msgs).To(HaveLen(2))
+			user := msgs[1].GetStructValue().Fields["content"].GetStringValue()
+			Expect(user).To(ContainSubstring("Enforce least privilege."))
+			Expect(user).To(ContainSubstring("Restrict administrator accounts."))
+			Expect(user).To(ContainSubstring("Level: Tactical"))
+			Expect(user).To(ContainSubstring(`Control Domain: "Identity"`))
 		})
+
+		DescribeTable("refuses a pair whose control has no text, naming the pair",
+			func(params map[string]string, wantKey string) {
+				candidates.pairs = []requires.RequiresPair{
+					{SourceControlID: "AC-1", TargetControlID: "IT-3.2", AggregateScore: 0.85},
+				}
+				a = requires.New(nil, prompts, candidates, cfg)
+
+				tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{Parameters: params})
+				Expect(err).To(MatchError(intanalyzer.ErrMissingControlText))
+				Expect(err.Error()).To(ContainSubstring("AC-1--IT-3.2"))
+				Expect(err.Error()).To(ContainSubstring(wantKey))
+				Expect(tasks).To(BeEmpty())
+			},
+			Entry("missing source text", map[string]string{
+				"job_id": "job-1", "target_text_IT-3.2": "Restrict administrator accounts.",
+			}, `"source_text_AC-1"`),
+			Entry("missing target text", map[string]string{
+				"job_id": "job-1", "source_text_AC-1": "Enforce least privilege.",
+			}, `"target_text_IT-3.2"`),
+			Entry("whitespace-only source text", map[string]string{
+				"job_id": "job-1", "source_text_AC-1": "  \n\t ", "target_text_IT-3.2": "Restrict administrator accounts.",
+			}, `"source_text_AC-1"`),
+		)
 	})
 
 	Context("Aggregate", func() {
@@ -481,7 +542,7 @@ var _ = Describe("RequiresAnalyzer", func() {
 			spec, err := reg.Resolve(ctx, "requires")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(spec.Name).To(Equal("requires"))
-			Expect(spec.Version).To(Equal("1.0.0"))
+			Expect(spec.Version).To(Equal("1.1.0"))
 
 			// Build variable map matching what GenerateWork passes
 			vars := map[string]string{
@@ -496,10 +557,10 @@ var _ = Describe("RequiresAnalyzer", func() {
 				"target_framework":       "ISO-27001",
 				"source_type":            "policy",
 				"source_level":           "strategic",
-				"source_ancestor":        " | Domain: Access Control",
+				"source_ancestor":        "Access Control",
 				"target_type":            "control",
 				"target_level":           "tactical",
-				"target_ancestor":        " | Domain: Identity Management",
+				"target_ancestor":        "Identity Management",
 			}
 
 			// Substitute system template
@@ -517,6 +578,8 @@ var _ = Describe("RequiresAnalyzer", func() {
 			Expect(userMsg).To(ContainSubstring("IA-2"))
 			Expect(userMsg).To(ContainSubstring("access control policies"))
 			Expect(userMsg).To(ContainSubstring("authenticate users"))
+			Expect(userMsg).To(ContainSubstring(`Level: strategic | Control Domain: "Access Control"`))
+			Expect(userMsg).To(ContainSubstring(`Level: tactical | Control Domain: "Identity Management"`))
 			Expect(userMsg).To(ContainSubstring("EXAMPLES:"))
 			Expect(userMsg).To(ContainSubstring("REQUIRES: YES or NO"))
 			Expect(userMsg).To(ContainSubstring("JUSTIFICATION:"))

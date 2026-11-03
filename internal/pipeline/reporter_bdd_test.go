@@ -3,6 +3,7 @@ package pipeline_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -244,6 +245,26 @@ var _ = Describe("DBStageReporter", func() {
 			Expect(natsReporter.failed[0].jobID).To(Equal("job-1"))
 			Expect(natsReporter.failed[0].err).To(Equal(stageErr))
 		})
+
+		DescribeTable("records and publishes nothing when the job's context is done, leaving the outcome to the pipeline",
+			func(cause error) {
+				Expect(reporter.ReportStageStarted(ctx, "analyzer-1", "job-1")).To(Succeed())
+				jobCtx, cancel := context.WithCancelCause(ctx)
+				cancel(cause)
+
+				err := reporter.ReportStageFailed(jobCtx, "analyzer-1", "job-1", fmt.Errorf("await results: %w", context.Canceled))
+				Expect(err).NotTo(HaveOccurred())
+
+				stages, err := store.GetStages(ctx, "job-1")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stages).To(ConsistOf(HaveField("Status", pipeline.StageStatusRunning)))
+				natsReporter.mu.Lock()
+				defer natsReporter.mu.Unlock()
+				Expect(natsReporter.failed).To(BeEmpty())
+			},
+			Entry("cancelled by CancelJob", pipeline.ErrJobCancelled),
+			Entry("cancelled by a shutdown", errors.New("service stopping")),
+		)
 
 		It("logs DB failure but does not return error", func() {
 			store.updateStageErrErr = errors.New("db write failed")

@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+
+	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
 func emit(cmd *cobra.Command, human func(w io.Writer, color bool), jsonValue any) error {
@@ -54,6 +56,14 @@ func useColor(cmd *cobra.Command) bool {
 	return false
 }
 
+// stdinIsTerminal reports whether in is an interactive terminal, the same
+// check useColor makes for stdout. A variable so specs can stand in a
+// terminal, which a test process does not have.
+var stdinIsTerminal = func(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
 func writeJSON(cmd *cobra.Command, v any) error {
 	enc := json.NewEncoder(cmd.OutOrStdout())
 	enc.SetIndent("", "  ")
@@ -65,5 +75,51 @@ func formatCLIError(err error, jsonOut bool) string {
 		b, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(b)
 	}
-	return fmt.Sprintf("error: %s", err.Error())
+	return "error: " + renderError(err)
+}
+
+// renderError formats err for a terminal. When err is made of configuration
+// problems (config.FieldErrors), it is one summary line (the context before
+// the first problem, or "the configuration does not load" when there is
+// none) and then each problem as "  - <message>" on its own
+// line, without the sentinel text every problem's message ends with. Any
+// other error is its message unchanged. Only the rendering changes: err
+// itself, and JSON output, keep the full text.
+func renderError(err error) string {
+	msg := err.Error()
+	fields := config.FieldErrors(err)
+	if len(fields) == 0 || !config.FieldErrorsComplete(err) {
+		return msg
+	}
+	summary := msg
+	if i := strings.Index(msg, fields[0].Error()); i >= 0 {
+		summary = msg[:i]
+	}
+	summary = trimSentinels(summary)
+	if summary == "" {
+		summary = "the configuration does not load"
+	}
+	var b strings.Builder
+	b.WriteString(summary + ":")
+	for _, fe := range fields {
+		b.WriteString("\n  - " + trimSentinels(fe.Error()))
+	}
+	return b.String()
+}
+
+// trimSentinels removes the separators and sentinel texts ("invalid
+// configuration", "failed to load configuration", ...) that wrapping leaves
+// at the end of a message.
+func trimSentinels(s string) string {
+	suffixes := []string{config.ErrWrongType.Error(), config.ErrInvalidConfig.Error(), config.ErrLoadFailed.Error()}
+	for {
+		before := s
+		s = strings.TrimRight(s, ": \n")
+		for _, suffix := range suffixes {
+			s = strings.TrimSuffix(s, suffix)
+		}
+		if s == before {
+			return s
+		}
+	}
 }

@@ -53,3 +53,35 @@ func FuzzGenerateManifest(f *testing.F) {
 		_ = attestation.GenerateManifest(artifacts)
 	})
 }
+
+func FuzzParseBundle(f *testing.F) {
+	f.Add([]byte(`{"layout":{"payloadType":"application/vnd.in-toto+json","payload":"e30=","signatures":[]},"links":[{"payloadType":"application/vnd.in-toto+json","payload":"e30=","signatures":[]}]}`))
+	f.Add([]byte(`{"layout":{},"links":[]}`))
+	f.Add([]byte(`{"payloadType":"application/vnd.in-toto+json","payload":"e30=","signatures":[]}`))
+	f.Add([]byte(`{"layout":null,"links":[null]}`))
+	f.Add([]byte(`{"layout":{},"links":[{}],"layout":"dup"}`))
+	f.Add([]byte(`[]`))
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		layout, links, err := attestation.ParseBundle(data)
+		if err != nil {
+			return
+		}
+		// An accepted bundle re-encodes to one that parses to the same envelopes.
+		again, err := attestation.MarshalBundle(layout, links)
+		if err != nil {
+			t.Fatalf("accepted bundle does not re-encode: %v", err)
+		}
+		layout2, links2, err := attestation.ParseBundle(again)
+		if err != nil {
+			t.Fatalf("re-encoded bundle does not parse: %v", err)
+		}
+		if len(links2) != len(links) || len(links) == 0 {
+			t.Fatalf("link count changed from %d to %d", len(links), len(links2))
+		}
+		if len(layout2.Raw) == 0 {
+			t.Fatalf("re-encoded bundle lost its layout")
+		}
+	})
+}

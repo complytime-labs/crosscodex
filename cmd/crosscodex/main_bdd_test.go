@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
 func TestMainBDD(t *testing.T) {
@@ -280,6 +281,159 @@ var _ = Describe("Root Command", func() {
 					Entry("key", []string{"config", "set"}, "key"),
 					Entry("value", []string{"config", "set", "cli.output"}, "value"),
 				)
+
+				Context("with an existing user config", func() {
+					const existing = "# operator notes\nlogging:\n  level: info # keep quiet\ncli:\n  output: json\nllm:\n  allowed_models: [granite]\n"
+					var userConfigPath string
+
+					BeforeEach(func() {
+						userConfigPath = filepath.Join(tmpConfigDir, "crosscodex", "config.yaml")
+						Expect(os.MkdirAll(filepath.Dir(userConfigPath), 0o755)).To(Succeed())
+						Expect(os.WriteFile(userConfigPath, []byte(existing), 0o640)).To(Succeed())
+						Expect(os.Chmod(userConfigPath, 0o640)).To(Succeed())
+					})
+
+					// expectUnchanged asserts the file still holds exactly what
+					// BeforeEach wrote and no temporary file was left beside it.
+					expectUnchanged := func() {
+						data, err := os.ReadFile(userConfigPath)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(string(data)).To(Equal(existing))
+						entries, err := os.ReadDir(filepath.Dir(userConfigPath))
+						Expect(err).NotTo(HaveOccurred())
+						Expect(entries).To(HaveLen(1))
+					}
+
+					DescribeTable("refuses a change that would stop the configuration loading, leaving the file unchanged",
+						func(key, value string, wantErr error, wantMsgs ...string) {
+							_, _, err := execute(newRootCmd(), "config", "set", key, value)
+							Expect(err).To(MatchError(wantErr))
+							Expect(err).To(MatchError(ContainSubstring("not written")))
+							for _, msg := range wantMsgs {
+								Expect(err).To(MatchError(ContainSubstring(msg)))
+							}
+							expectUnchanged()
+						},
+						Entry("a misspelled key", "logging.levle", "debug", config.ErrUnknownKey,
+							`did you mean "level"?`, userConfigPath),
+						Entry("an unknown section", "loging.level", "debug", config.ErrUnknownKey, `did you mean "logging"?`),
+						Entry("an invalid value", "logging.level", "loud", config.ErrInvalidConfig,
+							"must be one of debug, info, warn, error"),
+					)
+
+					DescribeTable("refuses to replace a whole section with a value, leaving the file unchanged",
+						func(key string) {
+							_, _, err := execute(newRootCmd(), "config", "set", key, "debug")
+							Expect(err).To(MatchError(ContainSubstring(key + " is a section or list, not a value")))
+							Expect(err).To(MatchError(ContainSubstring(key + ".<key>")))
+							Expect(err).To(MatchError(ContainSubstring("not written")))
+							expectUnchanged()
+						},
+						Entry("a top-level section", "logging"),
+						Entry("a nested list", "llm.allowed_models"),
+					)
+
+					It("writes a valid change, keeping comments, other keys and the file mode", func() {
+						_, _, err := execute(newRootCmd(), "config", "set", "logging.level", "debug")
+						Expect(err).NotTo(HaveOccurred())
+
+						data, err := os.ReadFile(userConfigPath)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(string(data)).To(ContainSubstring("# operator notes"))
+						Expect(string(data)).To(ContainSubstring("level: debug # keep quiet"))
+						Expect(string(data)).To(ContainSubstring("output: json"))
+						info, err := os.Stat(userConfigPath)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o640)))
+						entries, err := os.ReadDir(filepath.Dir(userConfigPath))
+						Expect(err).NotTo(HaveOccurred())
+						Expect(entries).To(HaveLen(1))
+					})
+
+					It("replaces a value whose YAML type differs from the new one", func() {
+						Expect(os.WriteFile(userConfigPath, []byte("llm:\n  default_model: 123\n"), 0o640)).To(Succeed())
+						_, _, err := execute(newRootCmd(), "config", "set", "llm.default_model", "granite")
+						Expect(err).NotTo(HaveOccurred())
+						stdout, _, err := execute(newRootCmd(), "config", "get", "llm.default_model")
+						Expect(err).NotTo(HaveOccurred())
+						Expect(stdout).To(Equal("granite\n"))
+					})
+
+					It("writes through a symlinked user config to its target", func() {
+						target := filepath.Join(tmpConfigDir, "dotfiles", "crosscodex.yaml")
+						Expect(os.MkdirAll(filepath.Dir(target), 0o755)).To(Succeed())
+						Expect(os.Rename(userConfigPath, target)).To(Succeed())
+						Expect(os.Symlink(target, userConfigPath)).To(Succeed())
+
+						_, _, err := execute(newRootCmd(), "config", "set", "logging.level", "debug")
+						Expect(err).NotTo(HaveOccurred())
+
+						info, err := os.Lstat(userConfigPath)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(info.Mode() & os.ModeSymlink).NotTo(BeZero())
+						data, err := os.ReadFile(target)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(string(data)).To(ContainSubstring("level: debug"))
+					})
+				})
+
+				It("creates a new user config readable only by its owner", func() {
+					_, _, err := execute(newRootCmd(), "config", "set", "logging.level", "debug")
+					Expect(err).NotTo(HaveOccurred())
+					info, err := os.Stat(filepath.Join(tmpConfigDir, "crosscodex", "config.yaml"))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+				})
+
+				Context("when the existing configuration does not load", func() {
+					var userConfigPath string
+
+					BeforeEach(func() {
+						userConfigPath = filepath.Join(tmpConfigDir, "crosscodex", "config.yaml")
+						Expect(os.MkdirAll(filepath.Dir(userConfigPath), 0o755)).To(Succeed())
+						Expect(os.WriteFile(userConfigPath, []byte("logging:\n  level: loud\n"), 0o600)).To(Succeed())
+					})
+
+					It("still lets config set repair it, warning about the load error", func() {
+						_, stderr, err := execute(newRootCmd(), "config", "set", "logging.level", "debug")
+						Expect(err).NotTo(HaveOccurred())
+						Expect(stderr).To(ContainSubstring("warning:"))
+						Expect(stderr).To(ContainSubstring("must be one of debug, info, warn, error"))
+						Expect(stderr).To(ContainSubstring("crosscodex config set"))
+
+						_, _, err = execute(newRootCmd(), "version")
+						Expect(err).NotTo(HaveOccurred())
+					})
+
+					DescribeTable("still refuses every command outside config",
+						func(args ...string) {
+							_, _, err := execute(newRootCmd(), args...)
+							Expect(err).To(MatchError(config.ErrInvalidConfig))
+							Expect(err).To(MatchError(ContainSubstring("load configuration")))
+						},
+						Entry("version", "version"),
+						Entry("project list", "project", "list"),
+						Entry("project config", "project", "config"),
+					)
+
+					DescribeTable("refuses the config commands that need the resolved configuration",
+						func(args ...string) {
+							_, stderr, err := execute(newRootCmd(), args...)
+							Expect(err).To(MatchError(config.ErrInvalidConfig))
+							Expect(err).To(MatchError(ContainSubstring("does not load")))
+							Expect(err).To(MatchError(ContainSubstring("crosscodex config set")))
+							Expect(stderr).NotTo(ContainSubstring("warning:"))
+						},
+						Entry("config show", "config", "show"),
+						Entry("config get", "config", "get", "logging.level"),
+					)
+
+					It("still lists profiles", func() {
+						stdout, _, err := execute(newRootCmd(), "config", "profiles")
+						Expect(err).NotTo(HaveOccurred())
+						Expect(stdout).To(ContainSubstring("No profiles"))
+					})
+				})
 			})
 
 			Describe("config profiles", func() {
@@ -349,11 +503,11 @@ var _ = Describe("Root Command", func() {
 
 		Describe("Run Commands", func() {
 			Describe("aliases", func() {
-				It("supports 'run submit' as alias for start", func() {
+				It("has no 'run submit' alias", func() {
 					cmd := newRootCmd()
-					runCmd, _, err := cmd.Find([]string{"run", "submit"})
+					found, _, err := cmd.Find([]string{"run", "submit"})
 					Expect(err).NotTo(HaveOccurred())
-					Expect(runCmd.Name()).To(Equal("start"))
+					Expect(found.Name()).To(Equal("run"))
 				})
 
 				It("supports 'run stop' as alias for cancel", func() {
@@ -470,7 +624,7 @@ var _ = Describe("Root Command", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(wantSubstr))
 		},
-		Entry("run start needs a file", []string{"run", "start"}, "file"),
+		Entry("run start needs --source", []string{"run", "start"}, "--source"),
 		Entry("run status needs a job-id", []string{"run", "status"}, "job-id"),
 		Entry("run cancel needs a job-id", []string{"run", "cancel"}, "job-id"),
 		Entry("catalog validate needs a file", []string{"catalog", "validate"}, "file"),

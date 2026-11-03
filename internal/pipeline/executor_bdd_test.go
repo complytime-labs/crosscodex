@@ -1,15 +1,24 @@
 package pipeline_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/proto"
@@ -27,6 +36,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	storagepkg "github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -70,13 +80,18 @@ func (f *fakeSynthesisExecutor) execCount() int {
 }
 
 // fakeAttestation implements attestation.Generator for tests.
+// fakeAttestation is a real attestation.Generator over an ephemeral key that
+// records layout and link calls and fails the calls a spec scripts.
+// linkErrOn limits linkErr to one step; empty fails every link.
 type fakeAttestation struct {
+	attestation.Generator
+
 	mu          sync.Mutex
 	layoutCalls []attestation.LayoutOptions
 	linkCalls   []fakeLinkCall
-	layout      *attestation.SignedLayout
 	layoutErr   error
 	linkErr     error
+	linkErrOn   string
 	verifyErr   error
 }
 
@@ -86,58 +101,76 @@ type fakeLinkCall struct {
 	products  []attestation.Artifact
 }
 
+func newFakeAttestation() *fakeAttestation {
+	kp, err := attestation.NewEphemeralKeyProvider()
+	Expect(err).NotTo(HaveOccurred())
+	gen, err := attestation.NewGenerator(kp)
+	Expect(err).NotTo(HaveOccurred())
+	return &fakeAttestation{Generator: gen}
+}
+
 func (f *fakeAttestation) CreateLayout(ctx context.Context, opts attestation.LayoutOptions) (*attestation.SignedLayout, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.layoutCalls = append(f.layoutCalls, opts)
-	if f.layoutErr != nil {
-		return nil, f.layoutErr
+	err := f.layoutErr
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
 	}
-	if f.layout != nil {
-		return f.layout, nil
-	}
-	return &attestation.SignedLayout{Raw: []byte(`{"_type":"layout"}`)}, nil
+	return f.Generator.CreateLayout(ctx, opts)
 }
 
 func (f *fakeAttestation) CreateLink(ctx context.Context, step string, materials, products []attestation.Artifact, opts ...attestation.LinkOption) (*attestation.SignedLink, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.linkCalls = append(f.linkCalls, fakeLinkCall{
-		step:      step,
-		materials: materials,
-		products:  products,
-	})
-	if f.linkErr != nil {
-		return nil, f.linkErr
+	f.linkCalls = append(f.linkCalls, fakeLinkCall{step: step, materials: materials, products: products})
+	err := f.linkErr
+	if f.linkErrOn != "" && f.linkErrOn != step {
+		err = nil
 	}
-	linkJSON := fmt.Sprintf(`{"_type":"link","name":%q}`, step)
-	return &attestation.SignedLink{
-		Raw:       []byte(linkJSON),
-		Step:      step,
-		Materials: materials,
-		Products:  products,
-	}, nil
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return f.Generator.CreateLink(ctx, step, materials, products, opts...)
 }
 
-func (f *fakeAttestation) VerifyLayout(ctx context.Context, data []byte) (*attestation.VerifiedLayout, error) {
-	return nil, errors.New("VerifyLayout not implemented in fakeAttestation")
-}
-
-func (f *fakeAttestation) VerifyLink(ctx context.Context, data []byte) (*attestation.VerifiedLink, error) {
-	return nil, errors.New("VerifyLink not implemented in fakeAttestation")
-}
-
-func (f *fakeAttestation) Verify(ctx context.Context, data []byte) (*attestation.VerifiedLink, error) {
-	return nil, errors.New("Verify not implemented in fakeAttestation")
-}
-
-func (f *fakeAttestation) VerifyChain(ctx context.Context, layout *attestation.SignedLayout, links []*attestation.SignedLink) error {
+func (f *fakeAttestation) VerifyChain(ctx context.Context, layout *attestation.SignedLayout, links []*attestation.SignedLink, subject attestation.Artifact) (*attestation.VerifiedChain, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.verifyErr != nil {
-		return f.verifyErr
+	err := f.verifyErr
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return f.Generator.VerifyChain(ctx, layout, links, subject)
+}
+
+// flakyBundleStorage is the shared storage fake, except that while failures
+// is positive each bundle write fails (and decrements it). puts counts
+// bundle writes.
+type flakyBundleStorage struct {
+	*storagetest.Fake
+	failures atomic.Int32
+	puts     atomic.Int32
+}
+
+func (f *flakyBundleStorage) Put(ctx context.Context, key string, data io.Reader) error {
+	if strings.HasSuffix(key, "/bundle.json") {
+		f.puts.Add(1)
+		if f.failures.Load() > 0 {
+			f.failures.Add(-1)
+			return errors.New("object store unavailable")
+		}
+	}
+	return f.Fake.Put(ctx, key, data)
+}
+
+// attestedBy attests every tenant's jobs with gen, retrying a failed
+// attestation write twice without delay.
+func attestedBy(gen attestation.Generator) pipeline.Attestors {
+	return pipeline.Attestors{
+		Default:        &pipeline.Attestor{Generator: gen, ExpiresIn: 168 * time.Hour},
+		StorageRetries: 2,
+	}
 }
 
 func (f *fakeAttestation) linkCount() int {
@@ -214,22 +247,23 @@ type executorTestDispatcher struct {
 }
 
 type executorDispatchCall struct {
-	tasks    []analyzer.Task
-	taskType natsbus.TaskType
-	jobID    string
+	tasks        []analyzer.Task
+	taskType     natsbus.TaskType
+	jobID        string
+	collectionID string
 }
 
-func (d *executorTestDispatcher) Dispatch(_ context.Context, tasks []analyzer.Task, taskType natsbus.TaskType, jobID string) error {
+func (d *executorTestDispatcher) Dispatch(_ context.Context, tasks []analyzer.Task, taskType natsbus.TaskType, jobID, collectionID string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.dispatchErr != nil {
 		return d.dispatchErr
 	}
-	d.dispatches = append(d.dispatches, executorDispatchCall{tasks: tasks, taskType: taskType, jobID: jobID})
+	d.dispatches = append(d.dispatches, executorDispatchCall{tasks: tasks, taskType: taskType, jobID: jobID, collectionID: collectionID})
 	return nil
 }
 
-func (d *executorTestDispatcher) Redispatch(_ context.Context, _ analyzer.Task, _ natsbus.TaskType, _ string, _ int) error {
+func (d *executorTestDispatcher) Redispatch(_ context.Context, _ analyzer.Task, _ natsbus.TaskType, _, _ string, _ int) error {
 	return nil
 }
 
@@ -303,14 +337,15 @@ func (f *fakeCandidateGen) dispatchesBeforeCall() int {
 // Each analyzer emits one task so dispatches are countable.
 //
 // All four are registered as Analyzer[*pb.Control], matching production.
-// classify/embedding run against a catalog-backed job (see twoPassJob) so
-// their per-control GenerateWork actually fires; a document-backed job would
-// leave Controls empty and, correctly, produce zero tasks for them (see
-// "on a document-backed job (no catalog_id) leaves Controls empty for both
-// passes" below). requires/relationship always run with Controls empty and a
-// placeholder *pb.Control Input regardless of whether the job is
-// catalog-backed, since they read candidate pairs directly instead of
-// fanning out per control.
+// classify/embedding run against a job whose catalog has a control (see
+// twoPassJob) so their per-control GenerateWork actually fires; with no
+// controls (a zero-control catalog or no controls reader wired) Controls is
+// empty and they correctly produce zero tasks (see "with no catalog controls
+// reader wired, leaves per-control analyzers at zero tasks instead of
+// erroring" below). requires/relationship always run with Controls empty and
+// a placeholder *pb.Control Input, however many controls the catalog has,
+// since they read candidate pairs directly instead of fanning out per
+// control.
 func registerTwoPassAnalyzers(reg *analyzer.Registry) {
 	mkControl := func(name string) func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 		return func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
@@ -327,6 +362,10 @@ func registerTwoPassAnalyzers(reg *analyzer.Registry) {
 	Expect(analyzer.Register[*pb.Control](reg, stub("requires", "embedding"))).To(Succeed())
 	Expect(analyzer.Register[*pb.Control](reg, stub("relationship", "embedding"))).To(Succeed())
 }
+
+// catalogJobConfig is the stored config of a job over catalog cat-1, in the
+// shape CreateJob writes (encoding/json of pb.JobConfig).
+var catalogJobConfig = []byte(`{"catalog_id":"cat-1"}`)
 
 var _ = Describe("Executor", func() {
 	var (
@@ -354,7 +393,7 @@ var _ = Describe("Executor", func() {
 		store = newFakeStore()
 		registry = analyzer.NewRegistry()
 		synth = &fakeSynthesisExecutor{}
-		attestor = &fakeAttestation{}
+		attestor = newFakeAttestation()
 		converter = pipelineattestation.NewConverter()
 		bus = &natsbustest.Fake{}
 		storage = &storagetest.Fake{}
@@ -378,23 +417,130 @@ var _ = Describe("Executor", func() {
 			MaxRetries:   3,
 			RetryBackoff: 1 * time.Second,
 		}
-		engine = analysis.New(registry, dispatcher, collector, engineCfg, taskTypes)
+		// Results reach the store as in production, where the pipeline
+		// signs each analyzer's link over its stored result.
+		engine = analysis.New(registry, dispatcher, collector, engineCfg, taskTypes,
+			analysis.WithStageReporter(pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)))
 
 		// Create service.
 		pipelineCfg := config.PipelineConfig{
 			MaxConcurrentJobs: 10,
 		}
-		attCfg := config.AttestationConfig{
-			ExpiryDuration: 168 * time.Hour,
-		}
-		svc = pipeline.New(store, engine, registry, synth, attestor, converter, bus, storage, pipelineCfg, attCfg, nil)
+		svc = pipeline.New(store, engine, registry, synth, attestedBy(attestor), converter, bus, storage, pipelineCfg, nil)
 	})
 
+	// jobStages are the stages of a job over the BeforeEach analyzers.
+	jobStages := []string{"analyzer-a", "analyzer-b", "synthesis", "graph"}
+	// newRunningJob is jobID over catalog cat-1, as a resume finds it.
+	newRunningJob := func() *pipeline.Job {
+		return &pipeline.Job{
+			JobID: jobID, TenantID: tenantID, Status: pipeline.JobStatusRunning,
+			Config: catalogJobConfig, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+	}
+	jobStatusOf := func(id string) func() pipeline.JobStatus {
+		return func() pipeline.JobStatus {
+			j, err := store.GetJob(ctx, id)
+			if err != nil {
+				return ""
+			}
+			return j.Status
+		}
+	}
+
 	Describe("executeJob", func() {
+		// A job keeps the stages it was created with. When the daemon's
+		// enabled analyzers no longer match them (an analyzer was disabled or
+		// enabled between creation and a resume), running would either hang
+		// on a stage nothing executes or run an analyzer with no stage row,
+		// so the job fails before any analyzer runs, saying what changed.
+		DescribeTable("fails a resumed job whose analyzers no longer match the daemon's, running no analyzer and leaving no stage running",
+			func(createdWith []string, interrupted string, daemonRuns []string, want ...string) {
+				deps := map[string][]string{"embedding": {"classify"}, "requires": {"embedding"}, "relationship": {"embedding"}}
+				reg := analyzer.NewRegistry()
+				var stubs []*analyzertest.Stub[*pb.Control]
+				for _, name := range daemonRuns {
+					stub := newControlStub(name, deps[name]...)
+					stubs = append(stubs, stub)
+					Expect(analyzer.Register[*pb.Control](reg, stub)).To(Succeed())
+				}
+				eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{},
+					config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},
+					map[string]natsbus.TaskType{})
+				svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10}, nil,
+					pipeline.WithCatalogControlsReader(&fakeCatalogControlsReader{controls: []*pb.Control{{ControlId: "c1", CatalogId: "cat-1"}}}))
+				DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
+
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID: jobID, TenantID: tenantID, Status: pipeline.JobStatusRunning,
+					Config: catalogJobConfig, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+				})).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, createdWith)).To(Succeed())
+				if interrupted != "" {
+					// A shutdown interrupted this stage in the job's last run.
+					Expect(store.UpdateStageStatus(ctx, jobID, interrupted, pipeline.StageStatusRunning)).To(Succeed())
+				}
+
+				Expect(svc.Start(ctx)).To(Succeed())
+
+				Eventually(func() pipeline.JobStatus {
+					j, _ := store.GetJob(ctx, jobID)
+					if j == nil {
+						return ""
+					}
+					return j.Status
+				}).Should(Equal(pipeline.JobStatusFailed))
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				for _, w := range want {
+					Expect(j.ErrorMessage).To(ContainSubstring(w))
+				}
+				// A failed job is never resumed, so the only remedy offered
+				// is a new job.
+				Expect(j.ErrorMessage).To(ContainSubstring(`The job is marked failed and is not resumed. ` +
+					`Start a new job with the analyzers enabled now: crosscodex run start --source cat-1`))
+				Expect(j.ErrorMessage).NotTo(Or(ContainSubstring("restart"), ContainSubstring("resume it"), ContainSubstring(" back ")))
+
+				stages, err := store.GetStages(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stages).To(HaveLen(len(createdWith)))
+				for _, st := range stages {
+					if st.StageName == interrupted {
+						Expect(st.Status).To(Equal(pipeline.StageStatusFailed), "interrupted stage %s", st.StageName)
+						Expect(st.ErrorMessage).To(ContainSubstring("did not finish: the job failed: job test-job-001 cannot run"))
+						continue
+					}
+					Expect(st.Status).To(Equal(pipeline.StageStatusPending), "stage %s", st.StageName)
+				}
+				for _, stub := range stubs {
+					Expect(stub.Inputs()).To(BeEmpty(), "analyzer %s ran", stub.Name())
+				}
+			},
+			Entry("relationship disabled since the job was created",
+				[]string{"classify", "embedding", "candidate_generation", "relationship", "synthesis", "graph"}, "",
+				[]string{"classify", "embedding"},
+				`job test-job-001 cannot run: analyzer "relationship" ran when the job was created, but analysis.relationship.enabled is now false`,
+				`To give the new job the analyzers this one was created with, first set analysis.relationship.enabled to true`),
+			Entry("requires enabled since the job was created",
+				[]string{"classify", "embedding", "synthesis", "graph"}, "",
+				[]string{"classify", "embedding", "requires"},
+				`job test-job-001 cannot run: analyzer "requires" did not run when the job was created, but analysis.requires.enabled is now true`,
+				`first set analysis.requires.enabled to false`),
+			Entry("one analyzer disabled and another enabled",
+				[]string{"classify", "embedding", "candidate_generation", "requires", "synthesis", "graph"}, "",
+				[]string{"classify", "embedding", "relationship"},
+				`analyzer "requires" ran when the job was created, but analysis.requires.enabled is now false`,
+				`analyzer "relationship" did not run when the job was created, but analysis.relationship.enabled is now true`,
+				`first set analysis.requires.enabled to true and analysis.relationship.enabled to false`),
+			Entry("artifacts, defaulting to off, after an upgrade interrupted it",
+				[]string{"classify", "embedding", "artifacts", "synthesis", "graph"}, "artifacts",
+				[]string{"classify", "embedding"},
+				`analyzer "artifacts" ran when the job was created, but analysis.artifacts.enabled is now false`),
+		)
+
 		It("recovers from a panic in job execution and fails the job", func() {
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -429,9 +575,7 @@ var _ = Describe("Executor", func() {
 
 		It("runs analysis, synthesis, and graph phases in order", func() {
 			// Create job in store.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -459,7 +603,7 @@ var _ = Describe("Executor", func() {
 			job.Status = pipeline.JobStatusRunning
 			store.jobs[jobID] = job
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for job to complete.
@@ -479,11 +623,57 @@ var _ = Describe("Executor", func() {
 			Expect(bus.Subscriptions()).To(BeEmpty(), "job execution only publishes")
 		})
 
+		It("publishes its synthesis stage event in the shared stage schema", func() {
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID:     jobID,
+				TenantID:  tenantID,
+				Status:    pipeline.JobStatusRunning,
+				Config:    catalogJobConfig,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"analyzer-a", "analyzer-b", "synthesis", "graph"})).To(Succeed())
+
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			Expect(svc.Start(ctx)).To(Succeed())
+
+			Eventually(func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, jobID)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}, "1s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+			subject, err := natsbus.PipelineStageSubject(tenantID, jobID, natsbus.StageCompleted)
+			Expect(err).NotTo(HaveOccurred())
+			var event map[string]any
+			for _, p := range bus.Published() {
+				if p.Subject != subject {
+					continue
+				}
+				var candidate map[string]any
+				Expect(json.Unmarshal(p.Data, &candidate)).To(Succeed())
+				if candidate["analyzer"] == "synthesis" {
+					event = candidate
+				}
+			}
+			Expect(event).NotTo(BeNil(), "no synthesis event published on %s", subject)
+
+			Expect(event).To(HaveKeyWithValue("analyzer", "synthesis"))
+			Expect(event).To(HaveKeyWithValue("job_id", jobID))
+			Expect(event).To(HaveKeyWithValue("stage", "completed"))
+			Expect(event).NotTo(HaveKey("stage_name"))
+			ts, ok := event["timestamp"].(string)
+			Expect(ok).To(BeTrue(), "timestamp must be an RFC3339 string, got %T", event["timestamp"])
+			_, err = time.Parse(time.RFC3339, ts)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("skips completed stages on resume", func() {
 			// Create job with some stages already completed.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -506,7 +696,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -522,10 +712,10 @@ var _ = Describe("Executor", func() {
 		It("marks job as failed when analysis fails", func() {
 			// Create a registry with analyzers that generate tasks (so dispatch is called).
 			// Registered as Analyzer[*pb.Control] (matching production) and
-			// exercised against a catalog-backed job with one control, so
-			// GenerateWork actually fires and dispatch is reached — a
-			// document-backed job would leave Controls empty and correctly
-			// produce zero tasks, never reaching the failing dispatcher.
+			// exercised against a job whose catalog has one control, so
+			// GenerateWork actually fires and dispatch is reached — with no
+			// controls, Controls would be empty and correctly produce zero
+			// tasks, never reaching the failing dispatcher.
 			failRegistry := analyzer.NewRegistry()
 			genWork := func(_ context.Context, _ *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 				return []analyzer.Task{{TaskID: "t1", Payload: &emptypb.Empty{}}}, nil
@@ -552,17 +742,14 @@ var _ = Describe("Executor", func() {
 			failEngine := analysis.New(failRegistry, dispatcher, collector, engineCfg, taskTypes)
 
 			pipelineCfg := config.PipelineConfig{MaxConcurrentJobs: 10}
-			attCfg := config.AttestationConfig{ExpiryDuration: 168 * time.Hour}
 			catalogReader := &fakeCatalogControlsReader{controls: []*pb.Control{
 				{ControlId: "c1", CatalogId: "fail-cat-1"},
 			}}
-			failSvc := pipeline.New(store, failEngine, failRegistry, synth, attestor, converter, bus, storage, pipelineCfg, attCfg, nil,
+			failSvc := pipeline.New(store, failEngine, failRegistry, synth, pipeline.Attestors{}, converter, bus, storage, pipelineCfg, nil,
 				pipeline.WithCatalogControlsReader(catalogReader))
 
 			// Create job.
-			jobConfig := map[string]interface{}{"Source": map[string]interface{}{"CatalogId": "fail-cat-1"}}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := []byte(`{"catalog_id":"fail-cat-1"}`)
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -581,7 +768,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = failSvc.Start(ctx)
+			err := failSvc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for failure.
@@ -596,9 +783,7 @@ var _ = Describe("Executor", func() {
 
 		It("publishes NATS state events for each transition", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -617,7 +802,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -635,50 +820,33 @@ var _ = Describe("Executor", func() {
 			Expect(bus.Subscriptions()).To(BeEmpty(), "job execution only publishes")
 		})
 
-		It("completes job even when attestation finalization fails", func() {
-			// Create attestor that fails.
-			attestor.layoutErr = errors.New("attestation generation failed")
+		It("fails the job before any analyzer runs when its attestation layout cannot be signed", func() {
+			attestor.layoutErr = errors.New("signer unavailable")
+			Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
 
-			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
+			Expect(svc.Start(ctx)).To(Succeed())
+			DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
+
+			Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+			job, err := store.GetJob(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-
-			job := &pipeline.Job{
-				JobID:     jobID,
-				TenantID:  tenantID,
-				Status:    pipeline.JobStatusRunning,
-				Config:    configBytes,
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
-			}
-			Expect(store.CreateJob(ctx, job)).To(Succeed())
-
-			stageNames := []string{"analyzer-a", "analyzer-b", "synthesis", "graph"}
-			Expect(store.CreateStages(ctx, jobID, stageNames)).To(Succeed())
-
-			// Start service.
-			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			defer cancel()
-
-			err = svc.Start(ctx)
+			Expect(job.ErrorMessage).To(And(
+				ContainSubstring("attestation layout could not be signed"),
+				ContainSubstring("signer unavailable"),
+				ContainSubstring("No analyzer ran"),
+				ContainSubstring("attestation.private_key_path"),
+				ContainSubstring("crosscodex run start --source cat-1")))
+			stages, err := store.GetStages(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-
-			// Wait for completion (job should still complete despite attestation failure).
-			Eventually(func() pipeline.JobStatus {
-				j, _ := store.GetJob(ctx, jobID)
-				if j == nil {
-					return ""
-				}
-				return j.Status
-			}, "1s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+			Expect(stages).To(HaveEach(HaveField("Status", pipeline.StageStatusPending)))
+			Expect(synth.executions).To(BeEmpty())
+			Expect(storage.Objects()).To(BeEmpty())
 		})
 
 		It("creates layout before analysis", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -697,7 +865,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -721,9 +889,7 @@ var _ = Describe("Executor", func() {
 
 		It("creates link after each stage completes", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -742,7 +908,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -769,9 +935,7 @@ var _ = Describe("Executor", func() {
 
 		It("verifies chain and stores bundle on finalization", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -790,7 +954,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -823,16 +987,13 @@ var _ = Describe("Executor", func() {
 		It("marks job as failed when synthesis execution fails", func() {
 			// Wire a synthesis executor that returns an error.
 			failSynth := &fakeSynthesisExecutor{execErr: errors.New("synthesis failed")}
-			failSvc := pipeline.New(store, engine, registry, failSynth, attestor, converter, bus, storage,
+			failSvc := pipeline.New(store, engine, registry, failSynth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				nil,
 			)
 
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -851,7 +1012,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = failSvc.Start(ctx)
+			err := failSvc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for failure.
@@ -864,59 +1025,331 @@ var _ = Describe("Executor", func() {
 			}, "1s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 		})
 
-		It("completes job even when VerifyChain fails", func() {
-			// Set VerifyChain to fail. Layout creation still succeeds,
-			// so finalizeAttestation reaches VerifyChain and returns an error.
-			// executeJob treats that as non-fatal.
-			attestor.verifyErr = errors.New("chain verification failed")
+		It("fails the job, storing no bundle, when its attestation chain does not verify", func() {
+			attestor.verifyErr = fmt.Errorf("chain broken between step %q and step %q: %w", "analyzer-a", "analyzer-b", attestation.ErrChainBroken)
+			Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
 
-			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
+			Expect(svc.Start(ctx)).To(Succeed())
+			DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
+
+			Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+			job, err := store.GetJob(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-
-			job := &pipeline.Job{
-				JobID:     jobID,
-				TenantID:  tenantID,
-				Status:    pipeline.JobStatusRunning,
-				Config:    configBytes,
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
-			}
-			Expect(store.CreateJob(ctx, job)).To(Succeed())
-
-			stageNames := []string{"analyzer-a", "analyzer-b", "synthesis", "graph"}
-			Expect(store.CreateStages(ctx, jobID, stageNames)).To(Succeed())
-
-			// Start service.
-			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			defer cancel()
-
-			err = svc.Start(ctx)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Job should still complete despite chain verification failure.
-			Eventually(func() pipeline.JobStatus {
-				j, _ := store.GetJob(ctx, jobID)
-				if j == nil {
-					return ""
-				}
-				return j.Status
-			}, "1s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
-
-			// Verify no attestation bundle was stored (chain verification
-			// failed before bundle creation).
-			bundlePath := fmt.Sprintf("attestations/%s/%s/bundle.json", tenantID, jobID)
-			exists, err := storage.Exists(ctx, bundlePath)
+			Expect(job.ErrorMessage).To(And(
+				ContainSubstring("its attestation does not verify"),
+				ContainSubstring(`step "analyzer-a" and step "analyzer-b"`),
+				ContainSubstring("crosscodex run start --source cat-1")))
+			exists, err := storage.Exists(ctx, fmt.Sprintf("attestations/%s/%s/bundle.json", tenantID, jobID))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeFalse())
+			stages, err := store.GetStages(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stages).To(HaveEach(HaveField("Status", pipeline.StageStatusCompleted)))
+		})
+
+		Describe("attestation", func() {
+			bundleKey := func() string { return fmt.Sprintf("attestations/%s/%s/bundle.json", tenantID, jobID) }
+			linkKey := func(step string) string {
+				return fmt.Sprintf("attestations/%s/%s/links/%s.json", tenantID, jobID, step)
+			}
+			// serviceWith returns a Service over the BeforeEach analyzers
+			// that attests with attestors and stores objects in stor.
+			serviceWith := func(attestors pipeline.Attestors, stor storagepkg.Provider) *pipeline.Service {
+				s := pipeline.New(store, engine, registry, synth, attestors, converter, bus, stor,
+					config.PipelineConfig{MaxConcurrentJobs: 10}, nil)
+				DeferCleanup(func() { Expect(s.Stop(context.Background())).To(Succeed()) })
+				return s
+			}
+			runJob := func(s *pipeline.Service) {
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+				Expect(s.Start(ctx)).To(Succeed())
+			}
+			errorOf := func() string {
+				job, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				return job.ErrorMessage
+			}
+			stageStatuses := func() map[string]pipeline.StageStatus {
+				stages, err := store.GetStages(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				out := make(map[string]pipeline.StageStatus, len(stages))
+				for _, st := range stages {
+					out[st.StageName] = st.Status
+				}
+				return out
+			}
+			allCompleted := map[string]pipeline.StageStatus{
+				"analyzer-a": pipeline.StageStatusCompleted, "analyzer-b": pipeline.StageStatusCompleted,
+				"synthesis": pipeline.StageStatusCompleted, "graph": pipeline.StageStatusCompleted,
+			}
+
+			It("stores a bundle that verifies, with one link per step, each analyzer's signed over its stored result", func() {
+				runJob(svc)
+				DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+
+				rc, err := storage.Get(ctx, bundleKey())
+				Expect(err).NotTo(HaveOccurred())
+				data, err := io.ReadAll(rc)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rc.Close()).To(Succeed())
+				layout, links, err := attestation.ParseBundle(data)
+				Expect(err).NotTo(HaveOccurred())
+				configSum := sha256.Sum256(catalogJobConfig)
+				subject := attestation.Artifact{
+					URI:    fmt.Sprintf("job:%s/%s", tenantID, jobID),
+					Digest: "sha256:" + hex.EncodeToString(configSum[:]),
+				}
+				chain, err := attestor.Generator.VerifyChain(ctx, layout, links, subject)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(chain.Subject).To(Equal(subject))
+				Expect(links).To(HaveLen(4))
+
+				stored, err := store.GetCompletedAnalysisResults(ctx, jobID, []string{"analyzer-a"})
+				Expect(err).NotTo(HaveOccurred())
+				sum := sha256.Sum256(stored["analyzer-a"].ResultData)
+				link, err := storage.Get(ctx, linkKey("analyzer-a"))
+				Expect(err).NotTo(HaveOccurred())
+				raw, err := io.ReadAll(link)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(link.Close()).To(Succeed())
+				verified, err := attestor.Verify(ctx, raw)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(verified.Products).To(ConsistOf(attestation.Artifact{
+					URI: "analyzer-a.output", Digest: "sha256:" + hex.EncodeToString(sum[:]),
+				}))
+			})
+
+			DescribeTable("runs the jobs of a tenant without attestation unattested, writing no attestation object",
+				func(attestors func() pipeline.Attestors) {
+					runJob(serviceWith(attestors(), storage))
+					Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+					Expect(attestor.layoutCalls).To(BeEmpty())
+					Expect(storage.Objects()).To(BeEmpty())
+					Expect(synth.executions).To(HaveLen(1))
+				},
+				Entry("when attestation is disabled", func() pipeline.Attestors { return pipeline.Attestors{} }),
+				Entry("when the tenant's override disables it", func() pipeline.Attestors {
+					a := attestedBy(attestor)
+					a.Tenants = map[string]*pipeline.Attestor{tenantID: nil}
+					return a
+				}),
+			)
+
+			It("attests the jobs of a tenant whose override enables attestation the global settings disable", func() {
+				runJob(serviceWith(pipeline.Attestors{Tenants: map[string]*pipeline.Attestor{
+					tenantID: {Generator: attestor, ExpiresIn: time.Hour},
+				}}, storage))
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				exists, err := storage.Exists(ctx, bundleKey())
+				Expect(err).NotTo(HaveOccurred())
+				Expect(exists).To(BeTrue())
+			})
+
+			It("fails the synthesis stage and the job when the synthesis link cannot be signed, and runs no later stage", func() {
+				attestor.linkErr = errors.New("signer unavailable")
+				attestor.linkErrOn = "synthesis"
+				runJob(svc)
+				DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(errorOf()).To(And(
+					ContainSubstring(`the attestation link for step "synthesis" could not be signed`),
+					ContainSubstring("signer unavailable"),
+					ContainSubstring("crosscodex run retry --from-failure test-job-001"),
+					ContainSubstring("crosscodex run start --source cat-1")))
+				Expect(stageStatuses()).To(Equal(map[string]pipeline.StageStatus{
+					"analyzer-a": pipeline.StageStatusCompleted, "analyzer-b": pipeline.StageStatusCompleted,
+					"synthesis": pipeline.StageStatusFailed, "graph": pipeline.StageStatusPending,
+				}))
+				Expect(storage.Objects()).NotTo(HaveKey(bundleKey()))
+				Expect(storage.Objects()).NotTo(HaveKey(linkKey("synthesis")))
+			})
+
+			It("fails the job before synthesis when an analyzer's link cannot be signed", func() {
+				attestor.linkErr = errors.New("signer unavailable")
+				attestor.linkErrOn = "analyzer-b"
+				runJob(svc)
+				DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(errorOf()).To(ContainSubstring(`the attestation link for step "analyzer-b" could not be signed`))
+				Expect(synth.executions).To(BeEmpty())
+				Expect(stageStatuses()).To(HaveKeyWithValue("synthesis", pipeline.StageStatusPending))
+				Expect(storage.Objects()).NotTo(HaveKey(bundleKey()))
+			})
+
+			It("retries a failed bundle write and completes the job once storage accepts it", func() {
+				flaky := &flakyBundleStorage{Fake: storage}
+				flaky.failures.Store(2)
+				runJob(serviceWith(attestedBy(attestor), flaky))
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(flaky.puts.Load()).To(BeEquivalentTo(3))
+				Expect(storage.Objects()).To(HaveKey(bundleKey()))
+			})
+
+			// cancelWhileRetryingBundle runs the job against storage that
+			// refuses every bundle write and waits an hour between attempts,
+			// and cancels the job once it is waiting. It returns the
+			// service and the storage.
+			cancelWhileRetryingBundle := func() (*pipeline.Service, *flakyBundleStorage) {
+				flaky := &flakyBundleStorage{Fake: storage}
+				flaky.failures.Store(1000)
+				attestors := attestedBy(attestor)
+				attestors.StorageRetryDelay = time.Hour
+				s := serviceWith(attestors, flaky)
+				runJob(s)
+				Eventually(flaky.puts.Load).Should(BeEquivalentTo(1))
+				_, err := s.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: jobID}))
+				Expect(err).NotTo(HaveOccurred())
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCancelled))
+				return s, flaky
+			}
+
+			It("stops waiting to retry a bundle write when the job is cancelled, and ends it cancelled with no bundle", func() {
+				_, flaky := cancelWhileRetryingBundle()
+				Consistently(jobStatusOf(jobID), "200ms").Should(Equal(pipeline.JobStatusCancelled))
+				Expect(flaky.puts.Load()).To(BeEquivalentTo(1))
+				Expect(storage.Objects()).NotTo(HaveKey(bundleKey()))
+				Expect(stageStatuses()).To(Equal(allCompleted))
+			})
+
+			It("resumes a job cancelled after its last stage when retried from its failure, storing only the bundle", func() {
+				s, flaky := cancelWhileRetryingBundle()
+				flaky.failures.Store(0)
+
+				// The cancelled run may still be stopping; the retry is
+				// refused until it has.
+				var resp *connect.Response[pb.RetryJobResponse]
+				Eventually(func() error {
+					var err error
+					resp, err = s.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: jobID, RetryFromFailure: true}))
+					return err
+				}).Should(Succeed())
+				Expect(resp.Msg.NewJobId).To(Equal(jobID))
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(storage.Objects()).To(HaveKey(bundleKey()))
+				Expect(synth.executions).To(HaveLen(1))
+			})
+
+			It("fails the job with a retryable error when storage keeps refusing the bundle, and retrying it from its failure stores the bundle without rerunning a stage", func() {
+				flaky := &flakyBundleStorage{Fake: storage}
+				flaky.failures.Store(1000)
+				s := serviceWith(attestedBy(attestor), flaky)
+				runJob(s)
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(flaky.puts.Load()).To(BeEquivalentTo(3))
+				Expect(errorOf()).To(And(
+					ContainSubstring("its attestation bundle could not be stored at "+strconv.Quote(bundleKey())+" after 3 attempts"),
+					ContainSubstring("object store unavailable"),
+					ContainSubstring("storage.objects.base_path"),
+					ContainSubstring("crosscodex run retry --from-failure test-job-001"),
+					ContainSubstring("crosscodex run start --source cat-1")))
+				Expect(stageStatuses()).To(Equal(allCompleted))
+				Expect(storage.Objects()).NotTo(HaveKey(bundleKey()))
+
+				flaky.failures.Store(0)
+				// The failed run may not have returned yet; until it has, the
+				// retry is refused.
+				var resp *connect.Response[pb.RetryJobResponse]
+				Eventually(func() error {
+					var err error
+					resp, err = s.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: jobID, RetryFromFailure: true}))
+					return err
+				}).Should(Succeed())
+				Expect(resp.Msg.NewJobId).To(Equal(jobID))
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(storage.Objects()).To(HaveKey(bundleKey()))
+				Expect(synth.executions).To(HaveLen(1))
+				stages, err := store.GetStages(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stages).To(HaveEach(HaveField("RetryCount", 0)))
+			})
+
+			// A resumed job does not run its completed pipeline stages again,
+			// so it reads back the links an earlier run stored for them.
+			DescribeTable("fails a resumed job whose stored pipeline link cannot be trusted, naming the step and the object, and leaves the objects as they are",
+				func(alter func(key string), want string) {
+					runJob(svc)
+					Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+					Expect(svc.Stop(ctx)).To(Succeed())
+
+					// Simulate a stop just before the bundle was stored.
+					Expect(storage.Delete(ctx, bundleKey())).To(Succeed())
+					Expect(store.UpdateJobStatus(ctx, jobID, pipeline.JobStatusRunning, nil)).To(Succeed())
+					alter(linkKey("synthesis"))
+					before := maps.Clone(storage.Objects())
+
+					runJob2 := serviceWith(attestedBy(attestor), storage)
+					Expect(runJob2.Start(ctx)).To(Succeed())
+
+					Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+					Expect(errorOf()).To(And(
+						ContainSubstring(`step "synthesis"`),
+						ContainSubstring(strconv.Quote(linkKey("synthesis"))),
+						ContainSubstring(want),
+						ContainSubstring("crosscodex run start --source cat-1")))
+					Expect(stageStatuses()).To(Equal(allCompleted))
+					// The stored links are verified before anything is signed
+					// again, so every object is as it was.
+					Expect(storage.Objects()).To(Equal(before))
+				},
+				Entry("a link whose recorded digest was changed after signing", func(key string) {
+					var env map[string]any
+					Expect(json.Unmarshal(storage.Objects()[key], &env)).To(Succeed())
+					payload, err := base64.StdEncoding.DecodeString(env["payload"].(string))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(string(payload)).To(ContainSubstring("sha256:"))
+					env["payload"] = base64.StdEncoding.EncodeToString(bytes.Replace(payload, []byte("sha256:"), []byte("sha256:0"), 1))
+					tampered, err := json.Marshal(env)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(storage.Put(ctx, key, bytes.NewReader(tampered))).To(Succeed())
+				}, "does not verify"),
+				Entry("a deleted link", func(key string) {
+					Expect(storage.Delete(ctx, key)).To(Succeed())
+				}, "is missing"),
+			)
+
+			It("fails a resumed job whose stored link was replayed from another job of the tenant, leaving every object as it was", func() {
+				// Job "donor" completes first, so its synthesis link is
+				// genuine: signed with the same key, for the same step.
+				donorID := "donor-job"
+				donor := newRunningJob()
+				donor.JobID = donorID
+				Expect(store.CreateJob(ctx, donor)).To(Succeed())
+				Expect(store.CreateStages(ctx, donorID, jobStages)).To(Succeed())
+				runJob(svc)
+				Eventually(jobStatusOf(donorID)).Should(Equal(pipeline.JobStatusCompleted))
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(svc.Stop(ctx)).To(Succeed())
+
+				Expect(storage.Delete(ctx, bundleKey())).To(Succeed())
+				Expect(store.UpdateJobStatus(ctx, jobID, pipeline.JobStatusRunning, nil)).To(Succeed())
+				donorLink := storage.Objects()[fmt.Sprintf("attestations/%s/%s/links/synthesis.json", tenantID, donorID)]
+				Expect(donorLink).NotTo(BeEmpty())
+				Expect(storage.Put(ctx, linkKey("synthesis"), bytes.NewReader(donorLink))).To(Succeed())
+				before := maps.Clone(storage.Objects())
+
+				resumed := serviceWith(attestedBy(attestor), storage)
+				Expect(resumed.Start(ctx)).To(Succeed())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(errorOf()).To(And(
+					ContainSubstring(`step "synthesis"`),
+					ContainSubstring("another job"),
+					ContainSubstring(fmt.Sprintf("job:%s/%s", tenantID, jobID)),
+					ContainSubstring("crosscodex run start --source cat-1")))
+				Expect(storage.Objects()).To(Equal(before))
+			})
 		})
 
 		It("publishes bundle to audit trail", func() {
 			// Create job.
-			jobConfig := map[string]interface{}{"test": "config"}
-			configBytes, err := json.Marshal(jobConfig)
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 
 			job := &pipeline.Job{
 				JobID:     jobID,
@@ -935,7 +1368,7 @@ var _ = Describe("Executor", func() {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 
-			err = svc.Start(ctx)
+			err := svc.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for completion.
@@ -986,10 +1419,10 @@ var _ = Describe("Executor", func() {
 			}, taskTypes)
 
 			// classify/embedding are registered as Analyzer[*pb.Control]
-			// (matching production), so they need a catalog-backed job with at
+			// (matching production), so they need a job whose catalog has at
 			// least one control to actually fan out and dispatch. A
-			// document-backed job would leave Controls empty and correctly
-			// produce zero tasks for them (see the dedicated document-backed
+			// zero-control catalog would leave Controls empty and correctly
+			// produce zero tasks for them (see the dedicated zero-controls
 			// test below) -- which would leave these two-pass ordering tests
 			// unable to observe classify/embedding's dispatch at all.
 			twoPassCatalog = &fakeCatalogControlsReader{controls: []*pb.Control{
@@ -997,13 +1430,9 @@ var _ = Describe("Executor", func() {
 			}}
 		})
 
-		// twoPassJob creates a running, catalog-backed job with the full
-		// two-pass stage list.
+		// twoPassJob creates a running job with the full two-pass stage list.
 		twoPassJob := func() {
-			configBytes, err := json.Marshal(map[string]interface{}{
-				"Source": map[string]interface{}{"CatalogId": "two-pass-cat-1"},
-			})
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := []byte(`{"catalog_id":"two-pass-cat-1"}`)
 			job := &pipeline.Job{
 				JobID:     jobID,
 				TenantID:  tenantID,
@@ -1052,6 +1481,54 @@ var _ = Describe("Executor", func() {
 			return n
 		}
 
+		// Both pair analyzers disabled: NewProductionRegistry registers
+		// neither, so nothing reads candidates.
+		It("with no pair analyzer registered, has no candidate_generation stage, generates no candidates and completes with zero synthesis inputs", func() {
+			reg := analyzer.NewRegistry()
+			for _, name := range []string{"classify", "embedding"} {
+				deps := map[string][]string{"embedding": {"classify"}}[name]
+				stub := newControlStub(name, deps...)
+				stub.GenerateWorkFunc = func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return []analyzer.Task{{TaskID: name + "-task", Payload: &emptypb.Empty{}}}, nil
+				}
+				Expect(analyzer.Register[*pb.Control](reg, stub)).To(Succeed())
+			}
+			eng := analysis.New(reg, twoPassDispatcher, &executorTestCollector{},
+				config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Millisecond},
+				map[string]natsbus.TaskType{"classify": "classify", "embedding": "embedding"},
+				analysis.WithStageReporter(pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)))
+			gen := &fakeCandidateGen{}
+			svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+				config.PipelineConfig{MaxConcurrentJobs: 10},
+				gen,
+				pipeline.WithCatalogControlsReader(twoPassCatalog),
+			)
+			DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
+
+			resp, err := svc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{
+				Config: &pb.JobConfig{CatalogId: "two-pass-cat-1"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, resp.Msg.JobId)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}).Should(Equal(pipeline.JobStatusCompleted))
+
+			stages, err := store.GetStages(ctx, resp.Msg.JobId)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stages).NotTo(ContainElement(HaveField("StageName", "candidate_generation")))
+			Expect(stages).To(HaveEach(HaveField("Status", pipeline.StageStatusCompleted)))
+			Expect(gen.wasCalled()).To(BeFalse())
+			Expect(dispatchedTypes()).To(Equal(map[natsbus.TaskType]bool{"classify": true, "embedding": true}))
+			synth.mu.Lock()
+			defer synth.mu.Unlock()
+			Expect(synth.executions).To(HaveLen(1))
+			Expect(synth.executions[0].inputs).To(BeEmpty())
+		})
+
 		It("runs candidate generation between the pre- and candidate-dependent passes", func() {
 			gen := &fakeCandidateGen{}
 			gen.dispatchCountFn = func() int {
@@ -1060,9 +1537,8 @@ var _ = Describe("Executor", func() {
 				return len(twoPassDispatcher.dispatches)
 			}
 
-			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				gen,
 				pipeline.WithCatalogControlsReader(twoPassCatalog),
 			)
@@ -1094,9 +1570,8 @@ var _ = Describe("Executor", func() {
 		It("does not re-execute pre-candidate analyzers in the candidate-dependent pass", func() {
 			gen := &fakeCandidateGen{}
 
-			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				gen,
 				pipeline.WithCatalogControlsReader(twoPassCatalog),
 			)
@@ -1127,9 +1602,8 @@ var _ = Describe("Executor", func() {
 		It("fails the analysis and skips the candidate-dependent pass when generation errors", func() {
 			gen := &fakeCandidateGen{err: errors.New("candidate boom")}
 
-			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				gen,
 				pipeline.WithCatalogControlsReader(twoPassCatalog),
 			)
@@ -1161,17 +1635,26 @@ var _ = Describe("Executor", func() {
 			Expect(findStage(stages, "candidate_generation").ErrorMessage).To(ContainSubstring("candidate boom"))
 		})
 
-		It("treats ErrNotACatalogJob as a no-op and still runs the candidate-dependent pass", func() {
-			gen := &fakeCandidateGen{err: pipeline.ErrNotACatalogJob}
-
-			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, attestor, converter, bus, storage,
+		// Safety mechanism: a stored config without catalog_id (a pre-#212 row,
+		// or one written outside CreateJob) must fail, not analyse zero controls.
+		It("fails a job whose stored config has no catalog_id and runs no analyzer", func() {
+			gen := &fakeCandidateGen{}
+			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				gen,
 				pipeline.WithCatalogControlsReader(twoPassCatalog),
 			)
 
-			twoPassJob()
+			job := &pipeline.Job{
+				JobID:     jobID,
+				TenantID:  tenantID,
+				Status:    pipeline.JobStatusRunning,
+				Config:    []byte(`{}`),
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			Expect(store.CreateJob(ctx, job)).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"classify", "synthesis"})).To(Succeed())
 
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -1183,22 +1666,26 @@ var _ = Describe("Executor", func() {
 					return ""
 				}
 				return j.Status
-			}, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+			}, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 
-			Expect(gen.wasCalled()).To(BeTrue())
-			// Candidate-dependent pass still ran despite zero candidates.
-			types := dispatchedTypes()
-			Expect(types).To(HaveKey(natsbus.TaskType("requires")))
-			Expect(types).To(HaveKey(natsbus.TaskType("relate")))
-			Expect(stageStatus("candidate_generation")).To(Equal(pipeline.StageStatusCompleted))
+			j, err := store.GetJob(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(j.ErrorMessage).To(ContainSubstring("no catalog_id"))
+			Expect(j.ErrorMessage).To(ContainSubstring("crosscodex run start --source"))
+			Expect(stageStatus("classify")).To(Equal(pipeline.StageStatusPending))
+			Expect(stageStatus("synthesis")).To(Equal(pipeline.StageStatusPending))
+			Expect(dispatchedTypes()).To(BeEmpty())
+			Expect(gen.wasCalled()).To(BeFalse())
+			twoPassCatalog.mu.Lock()
+			defer twoPassCatalog.mu.Unlock()
+			Expect(twoPassCatalog.calls).To(BeEmpty())
 		})
 
 		It("does not re-execute a pre-candidate analyzer already completed by a prior process (crash-recovery resume)", func() {
 			gen := &fakeCandidateGen{}
 
-			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				gen,
 				pipeline.WithCatalogControlsReader(twoPassCatalog),
 			)
@@ -1275,14 +1762,12 @@ var _ = Describe("Executor", func() {
 				"relationship": "relate",
 			})
 
-			svc = pipeline.New(store, eng, reg, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				nil,
 			)
 
-			configBytes, err := json.Marshal(map[string]interface{}{"test": "config"})
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := catalogJobConfig
 			job := &pipeline.Job{
 				JobID:     jobID,
 				TenantID:  tenantID,
@@ -1355,7 +1840,7 @@ var _ = Describe("Executor", func() {
 	})
 
 	Describe("controls and analyzer config wiring", func() {
-		It("populates Controls and CatalogID for the pre-candidate pass on a catalog-backed job", func() {
+		It("populates Controls and CatalogID for the pre-candidate pass", func() {
 			type call struct {
 				controlID string
 				catalogID string
@@ -1388,9 +1873,8 @@ var _ = Describe("Executor", func() {
 				{ControlId: "c2", CatalogId: "cat-1"},
 			}}
 
-			svc = pipeline.New(store, eng, reg, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				nil,
 				pipeline.WithCatalogControlsReader(catalogReader),
 			)
@@ -1399,7 +1883,7 @@ var _ = Describe("Executor", func() {
 				JobID:     jobID,
 				TenantID:  tenantID,
 				Status:    pipeline.JobStatusRunning,
-				Config:    []byte(`{"Source":{"CatalogId":"cat-1"}}`),
+				Config:    []byte(`{"catalog_id":"cat-1"}`),
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -1449,10 +1933,10 @@ var _ = Describe("Executor", func() {
 			}
 
 			// classify/embedding are registered as Analyzer[*pb.Control]
-			// (matching production), so the job below must be catalog-backed
-			// with a non-empty control list for their GenerateWork to fire —
-			// a document-backed job would leave Controls empty and correctly
-			// produce zero tasks for them instead.
+			// (matching production), so the job's catalog below must have a
+			// non-empty control list for their GenerateWork to fire — with no
+			// controls, Controls would be empty and correctly produce zero
+			// tasks for them instead.
 			reg := analyzer.NewRegistry()
 			stub := func(name string, deps ...string) *analyzertest.Stub[*pb.Control] {
 				s := newControlStub(name, deps...)
@@ -1480,17 +1964,13 @@ var _ = Describe("Executor", func() {
 			catalogReader := &fakeCatalogControlsReader{controls: []*pb.Control{
 				{ControlId: "c1", CatalogId: "cfg-cat-1"},
 			}}
-			svc = pipeline.New(store, eng, reg, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				nil,
 				pipeline.WithCatalogControlsReader(catalogReader),
 			)
 
-			configBytes, err := json.Marshal(map[string]interface{}{
-				"Source": map[string]interface{}{"CatalogId": "cfg-cat-1"},
-			})
-			Expect(err).NotTo(HaveOccurred())
+			configBytes := []byte(`{"catalog_id":"cfg-cat-1"}`)
 			job := &pipeline.Job{
 				JobID:     jobID,
 				TenantID:  tenantID,
@@ -1519,6 +1999,166 @@ var _ = Describe("Executor", func() {
 			for _, name := range []string{"classify", "embedding", "requires", "relationship"} {
 				Expect(cfgByName).To(HaveKeyWithValue(name, jobID))
 			}
+		})
+
+		Describe("pair analyzer parameters", func() {
+			var (
+				mu     sync.Mutex
+				params map[string]map[string]string
+			)
+
+			classified := []byte(`[{"control_id":"c1","type":"Technical","level":"Operational"},{"control_id":"c2","type":"Procedural","level":"Tactical"}]`)
+
+			// startPairJob runs a job whose classify output is classifyResult,
+			// with requires and relationship capturing their whole
+			// cfg.Parameters map. resumed seeds classify as completed by a
+			// prior process run, so its stub must never be called; the stub
+			// is returned for that assertion.
+			startPairJob := func(classifyResult []byte, resumed bool) *analyzertest.Stub[*pb.Control] {
+				params = map[string]map[string]string{}
+				perControlTask := func(name string) func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return func(_ context.Context, c *pb.Control, _ analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+						return []analyzer.Task{{TaskID: name + "-" + c.GetControlId(), Payload: &emptypb.Empty{}}}, nil
+					}
+				}
+				capturePair := func(name string) func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return func(_ context.Context, _ *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+						mu.Lock()
+						params[name] = maps.Clone(cfg.Parameters)
+						mu.Unlock()
+						return nil, nil
+					}
+				}
+
+				reg := analyzer.NewRegistry()
+				classify := newControlStub("classify")
+				classify.GenerateWorkFunc = perControlTask("classify")
+				if resumed {
+					classify.GenerateWorkFunc = func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+						return nil, errors.New("classify re-ran although a prior run completed it")
+					}
+				}
+				classify.AggregateFunc = func(context.Context, []analyzer.TaskResult) (*analyzer.Output, error) {
+					return &analyzer.Output{AnalyzerName: "classify", ResultData: classifyResult}, nil
+				}
+				requires := newControlStub("requires", "classify")
+				requires.GenerateWorkFunc = capturePair("requires")
+				relationship := newControlStub("relationship", "classify")
+				relationship.GenerateWorkFunc = capturePair("relationship")
+				Expect(analyzer.Register[*pb.Control](reg, classify)).To(Succeed())
+				Expect(analyzer.Register[*pb.Control](reg, requires)).To(Succeed())
+				Expect(analyzer.Register[*pb.Control](reg, relationship)).To(Succeed())
+
+				eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{}, config.EngineConfig{
+					TaskTimeout:  5 * time.Minute,
+					MaxRetries:   3,
+					RetryBackoff: time.Millisecond,
+				}, map[string]natsbus.TaskType{
+					"classify":     "classify",
+					"requires":     "requires",
+					"relationship": "relate",
+				})
+
+				catalogReader := &fakeCatalogControlsReader{controls: []*pb.Control{
+					{ControlId: "c1", Statement: "Keep an asset inventory.", Parts: map[string]string{"ancestor_title": "Identify"}},
+					{ControlId: "c2", Statement: "Review the inventory yearly.", Parts: map[string]string{"ancestor_title": "Protect"}},
+				}}
+				svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10},
+					nil,
+					pipeline.WithCatalogControlsReader(catalogReader),
+				)
+
+				job := &pipeline.Job{
+					JobID:     jobID,
+					TenantID:  tenantID,
+					Status:    pipeline.JobStatusRunning,
+					Config:    []byte(`{"catalog_id":"cat-1"}`),
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+				}
+				Expect(store.CreateJob(ctx, job)).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, []string{"classify", "candidate_generation", "requires", "relationship", "synthesis", "graph"})).To(Succeed())
+				if resumed {
+					Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", classifyResult)).To(Succeed())
+				}
+
+				runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				DeferCleanup(cancel)
+				Expect(svc.Start(runCtx)).To(Succeed())
+				return classify
+			}
+
+			wantPairParams := func() map[string]string {
+				return map[string]string{
+					"job_id":             jobID,
+					"source_text_c1":     "Keep an asset inventory.",
+					"target_text_c1":     "Keep an asset inventory.",
+					"source_ancestor_c1": "Identify",
+					"target_ancestor_c1": "Identify",
+					"source_type_c1":     "Technical",
+					"target_type_c1":     "Technical",
+					"source_level_c1":    "Operational",
+					"target_level_c1":    "Operational",
+					"source_text_c2":     "Review the inventory yearly.",
+					"target_text_c2":     "Review the inventory yearly.",
+					"source_ancestor_c2": "Protect",
+					"target_ancestor_c2": "Protect",
+					"source_type_c2":     "Procedural",
+					"target_type_c2":     "Procedural",
+					"source_level_c2":    "Tactical",
+					"target_level_c2":    "Tactical",
+				}
+			}
+
+			jobStatus := func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, jobID)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}
+
+			It("passes every control's text, ancestor and classification under both pair ends", func() {
+				startPairJob(classified, false)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+				mu.Lock()
+				defer mu.Unlock()
+				for _, name := range []string{"requires", "relationship"} {
+					Expect(params[name]).To(Equal(wantPairParams()), name)
+				}
+			})
+
+			It("passes classifications persisted by a prior process run on resume", func() {
+				classify := startPairJob(classified, true)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+				Expect(classify.Inputs()).To(BeEmpty())
+				mu.Lock()
+				defer mu.Unlock()
+				for _, name := range []string{"requires", "relationship"} {
+					Expect(params[name]).To(SatisfyAll(
+						HaveKeyWithValue("source_type_c1", "Technical"),
+						HaveKeyWithValue("target_level_c2", "Tactical"),
+					), name)
+				}
+			})
+
+			It("fails the job without dispatching pair work when classify results do not parse", func() {
+				startPairJob([]byte("{"), false)
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorMessage).To(ContainSubstring("classify results"))
+				mu.Lock()
+				defer mu.Unlock()
+				Expect(params).To(BeEmpty())
+			})
 		})
 
 		It("leaves Controls empty and uses a placeholder Input for the candidate-dependent pass", func() {
@@ -1571,9 +2211,8 @@ var _ = Describe("Executor", func() {
 				{ControlId: "c2", CatalogId: "cat-1"},
 			}}
 
-			svc = pipeline.New(store, eng, reg, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				nil,
 				pipeline.WithCatalogControlsReader(catalogReader),
 			)
@@ -1582,7 +2221,7 @@ var _ = Describe("Executor", func() {
 				JobID:     jobID,
 				TenantID:  tenantID,
 				Status:    pipeline.JobStatusRunning,
-				Config:    []byte(`{"Source":{"CatalogId":"cat-1"}}`),
+				Config:    []byte(`{"catalog_id":"cat-1"}`),
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -1604,26 +2243,26 @@ var _ = Describe("Executor", func() {
 			mu.Lock()
 			defer mu.Unlock()
 			// classify fans out per catalog control, proving Controls did apply
-			// to the pre-candidate pass for this catalog-backed job.
+			// to the pre-candidate pass for this job.
 			Expect(classifyCalls).To(HaveLen(2))
 			// requires/relationship each get exactly one call with a placeholder
 			// (empty ControlId) *pb.Control rather than one call per catalog
 			// control — proof Controls was left empty for the
-			// candidate-dependent pass despite the job being catalog-backed.
+			// candidate-dependent pass despite the catalog having controls.
 			Expect(requiresCalls).To(HaveLen(1))
 			Expect(requiresCalls[0].controlID).To(BeEmpty())
 			Expect(relationshipCalls).To(HaveLen(1))
 			Expect(relationshipCalls[0].controlID).To(BeEmpty())
 		})
 
-		It("on a document-backed job (no catalog_id), leaves per-control analyzers at zero tasks instead of erroring", func() {
+		It("with no catalog controls reader wired, leaves per-control analyzers at zero tasks instead of erroring", func() {
 			var mu sync.Mutex
 			var classifyCalls int
 			var requiresCalls int
 			var requiresControlID string
 
 			// classify is registered as Analyzer[*pb.Control], matching every
-			// real production analyzer. Before the fix, a document-backed job
+			// real production analyzer. Before the fix, a job with no controls
 			// (Controls empty) fell back to calling GenerateWorkFromProto with
 			// req.Input == &emptypb.Empty{}, which fails registeredWrapper's
 			// *pb.Control type assertion and crashes the whole job (see
@@ -1666,9 +2305,8 @@ var _ = Describe("Executor", func() {
 				"requires": "requires",
 			}, analysis.WithStageReporter(dbReporter))
 
-			svc = pipeline.New(store, eng, reg, synth, attestor, converter, bus, storage,
+			svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
-				config.AttestationConfig{ExpiryDuration: 168 * time.Hour},
 				nil,
 			)
 
@@ -1676,7 +2314,7 @@ var _ = Describe("Executor", func() {
 				JobID:     jobID,
 				TenantID:  tenantID,
 				Status:    pipeline.JobStatusRunning,
-				Config:    []byte(`{"Source":{"DocumentUri":"file:///doc.pdf"}}`),
+				Config:    catalogJobConfig,
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -1706,7 +2344,7 @@ var _ = Describe("Executor", func() {
 			mu.Lock()
 			defer mu.Unlock()
 			// classify's GenerateWork is never invoked: Controls is a
-			// non-nil, empty slice for this document-backed job, so the
+			// non-nil, empty slice when no controls reader is wired, so the
 			// per-control loop in executeAnalyzer runs zero iterations
 			// rather than falling back to the single-Input path (which would
 			// type-assert req.Input == &emptypb.Empty{} against *pb.Control
@@ -1714,7 +2352,7 @@ var _ = Describe("Executor", func() {
 			Expect(classifyCalls).To(Equal(0))
 			// requires (candidate-dependent pass) is unaffected: it always
 			// runs with Controls nil and a placeholder *pb.Control Input,
-			// regardless of whether the job is catalog-backed.
+			// however many controls the catalog has.
 			Expect(requiresCalls).To(Equal(1))
 			Expect(requiresControlID).To(BeEmpty())
 		})
@@ -1741,7 +2379,7 @@ var _ = Describe("Executor", func() {
 			}
 
 			cfg := config.PipelineConfig{MaxConcurrentJobs: cap}
-			capSvc := pipeline.New(barrierStore, engine, registry, synth, attestor, converter, bus, storage, cfg, config.AttestationConfig{ExpiryDuration: 168 * time.Hour}, nil)
+			capSvc := pipeline.New(barrierStore, engine, registry, synth, pipeline.Attestors{}, converter, bus, storage, cfg, nil)
 
 			for i := 0; i < total; i++ {
 				id := fmt.Sprintf("resume-job-%d", i)
@@ -1749,7 +2387,7 @@ var _ = Describe("Executor", func() {
 					JobID:     id,
 					TenantID:  tenantID,
 					Status:    pipeline.JobStatusRunning,
-					Config:    []byte(`{"test":"config"}`),
+					Config:    catalogJobConfig,
 					CreatedAt: time.Now(),
 					UpdatedAt: time.Now(),
 				}

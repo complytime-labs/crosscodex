@@ -46,6 +46,8 @@ func spanNameList(spans []sdktrace.ReadOnlySpan) []string {
 }
 
 var _ = Describe("Attestation Full Pipeline", func() {
+	// run is the job every step is bound to.
+	run := attestation.Artifact{URI: "job:test-tenant/pipeline-run-001", Digest: "sha256:job-config"}
 	var (
 		kp              attestation.KeyProvider
 		tp              *telemetrytest.TestProvider
@@ -130,18 +132,21 @@ var _ = Describe("Attestation Full Pipeline", func() {
 		mappingDigest = sha256Hex(mappingOutput)
 
 		ingestionMaterials = []attestation.Artifact{
+			run,
 			{URI: "oscal/nist-800-53.json", Digest: catalogDigest},
 		}
 		ingestionProducts = []attestation.Artifact{
 			{URI: "parsed/controls.json", Digest: controlsDigest},
 		}
 		analysisMaterials = []attestation.Artifact{
+			run,
 			{URI: "parsed/controls.json", Digest: controlsDigest},
 		}
 		analysisProducts = []attestation.Artifact{
 			{URI: "analysis/gap-report.json", Digest: analysisDigest},
 		}
 		synthesisMaterials = []attestation.Artifact{
+			run,
 			{URI: "analysis/gap-report.json", Digest: analysisDigest},
 		}
 		synthesisProducts = []attestation.Artifact{
@@ -164,9 +169,9 @@ var _ = Describe("Attestation Full Pipeline", func() {
 			// Create layout with 3 steps
 			layout, err = gen.CreateLayout(ctx, attestation.LayoutOptions{
 				Steps: []attestation.Step{
-					{Name: "ingestion", ExpectedMaterials: []string{"oscal/nist-800-53.json"}, ExpectedProducts: []string{"parsed/controls.json"}},
-					{Name: "analysis", ExpectedMaterials: []string{"parsed/controls.json"}, ExpectedProducts: []string{"analysis/gap-report.json"}},
-					{Name: "synthesis", ExpectedMaterials: []string{"analysis/gap-report.json"}, ExpectedProducts: []string{"mappings/ac-1-mapping.json"}},
+					{Name: "ingestion", ExpectedMaterials: []string{run.URI, "oscal/nist-800-53.json"}, ExpectedProducts: []string{"parsed/controls.json"}},
+					{Name: "analysis", ExpectedMaterials: []string{run.URI, "parsed/controls.json"}, ExpectedProducts: []string{"analysis/gap-report.json"}},
+					{Name: "synthesis", ExpectedMaterials: []string{run.URI, "analysis/gap-report.json"}, ExpectedProducts: []string{"mappings/ac-1-mapping.json"}},
 				},
 				ExpiresIn: 24 * time.Hour,
 			})
@@ -262,7 +267,8 @@ var _ = Describe("Attestation Full Pipeline", func() {
 			})
 
 			It("should verify the full chain", func() {
-				Expect(gen.VerifyChain(ctx, layout, links)).To(Succeed())
+				_, err := gen.VerifyChain(ctx, layout, links, run)
+				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should round-trip layout from job-path storage", func() {
@@ -306,6 +312,7 @@ var _ = Describe("Attestation Full Pipeline", func() {
 
 				manifestContent := manifestBuf.String()
 				expectedURIs := []string{
+					run.URI,
 					"analysis/gap-report.json",
 					"mappings/ac-1-mapping.json",
 					"oscal/nist-800-53.json",
@@ -370,7 +377,8 @@ var _ = Describe("Attestation Full Pipeline", func() {
 					Expect(err).NotTo(HaveOccurred())
 				}
 
-				Expect(gen.VerifyChain(ctx, layout, links)).To(Succeed())
+				_, err = gen.VerifyChain(ctx, layout, links, run)
+				Expect(err).NotTo(HaveOccurred())
 
 				parentSpan.End()
 

@@ -16,6 +16,11 @@
 // Each layer deep-merges over the previous: maps merge recursively, scalars
 // and slices replace. Drop-in files load in lexicographic order.
 //
+// Every file layer and CLI flag override is checked for keys that name no
+// Config field before it is merged (see checkKnownKeys); Load fails with
+// ErrUnknownKey listing each one. Environment variables are not checked,
+// because some CROSSCODEX_* variables are not config paths.
+//
 // Example usage:
 //
 //	loader := config.NewLoader()

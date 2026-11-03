@@ -121,6 +121,16 @@ func ExportStartEmbedded(cfg config.NATSEmbeddedConfig, logger *slog.Logger) (*E
 	return &ExportEmbeddedServer{es: es}, nil
 }
 
+// ExportWrapHandlerWithLogger wraps handler with provenance enforcement
+// using a client that logs to logger and has no connection, for specs that
+// feed wrapHandler messages directly and assert on what it logs.
+func ExportWrapHandlerWithLogger(logger *slog.Logger, handler func(ctx context.Context, msg *Message) error) func(*nats.Msg) {
+	opts := defaultClientOptions()
+	opts.logger = logger
+	c := &client{opts: opts}
+	return c.wrapHandler(handler)
+}
+
 // ExportWrapHandler wraps a MessageHandler with provenance enforcement
 // using a minimal client backed by the given raw NATS connection.
 // This allows external tests to verify fail-closed provenance behavior.

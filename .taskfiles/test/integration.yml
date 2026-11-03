@@ -117,7 +117,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 300s
+          TIMEOUT: 600s
           REPORT: integration-db
           COVERAGE: integration-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/pkg/retention/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/pipeline/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/artifacts/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/... {{.ROOT_DIR}}/internal/results/... {{.ROOT_DIR}}/internal/graph/... {{.ROOT_DIR}}/cmd/crosscodexd/..."
@@ -235,7 +235,7 @@ tasks:
       - task: run-ginkgo
         vars:
           TAGS: integration
-          TIMEOUT: 300s
+          TIMEOUT: 600s
           REPORT: integration-db
           COVERAGE: integration-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/db/... {{.ROOT_DIR}}/pkg/graphdb/... {{.ROOT_DIR}}/pkg/vectordb/... {{.ROOT_DIR}}/pkg/retention/... {{.ROOT_DIR}}/internal/catalog/... {{.ROOT_DIR}}/internal/pipeline/... {{.ROOT_DIR}}/internal/analyzer/classify/... {{.ROOT_DIR}}/internal/analyzer/embedding/... {{.ROOT_DIR}}/internal/analyzer/artifacts/... {{.ROOT_DIR}}/internal/analyzer/relationship/... {{.ROOT_DIR}}/internal/synthesis/... {{.ROOT_DIR}}/internal/results/... {{.ROOT_DIR}}/internal/graph/... {{.ROOT_DIR}}/cmd/crosscodexd/..."

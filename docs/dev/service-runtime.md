@@ -83,7 +83,7 @@ Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Da
 
 `buildPipelineService` in `cmd/crosscodexd/bootstrap.go` refuses to construct a `pipeline.Service` unless three things are configured, returning an error immediately rather than starting in a partially-usable state. This applies to the `pipeline` role directly, and to `all` (which calls `buildPipelineService` as part of its startup sequence):
 
-1. **Attestation key paths** — `attestation.private_key_path` and `attestation.public_key_path` (`pkg/config.AttestationConfig.PrivateKeyPath` / `PublicKeyPath`) must both be set. `pipeline.New` requires a real `attestation.Generator`, and `attestation.NewGenerator` is constructed from an `attestation.FileKeyProvider` pointed at these two paths — an operator must have a signing keypair on disk (or otherwise provisioned to those paths) before running `pipeline` or `all`.
+1. **Attestation keys** — for every scope that enables attestation (`attestation.enabled`, and each `attestation.tenant_overrides` entry, resolved with `ForTenant`), the private and public key paths must both be set, load, and be one key pair, on a FIPS-approved curve when `tls.fips.enabled` is set. `pipeline.NewAttestors` checks this (`AttestationConfig.RequireKeys`, then `attestation.LoadFileKeys`, which reads each pair once) before anything else. A scope with attestation disabled needs no keys and reads none; the daemon logs at startup which scopes are unattested. See [Pipeline Attestation](attestation.md#pipeline-attestation-fail-closed).
 2. **Default tenant** — `tenants.default_tenant` (`pkg/config.TenantsConfig.DefaultTenant`) must be set. `storage.NewLocal` binds the storage provider to exactly one tenant at construction time (a known single-tenant storage limitation shared with `cmd/crosscodex`'s embedded mode), so pipeline can't start without knowing which tenant's storage namespace to use.
 3. **Storage base path** — `storage.objects.base_path` (`pkg/config.ObjectStorageConfig.BasePath`) must be set. It defaults to `""` (`pkg/config/defaults.go`), and `storage.NewLocal` resolves an empty root via `filepath.Abs("")`, which silently resolves to the process's current working directory. Without this check, a `pipeline`/`all` daemon started with default config would write tenant object storage under `<cwd>/<tenant>/` instead of failing fast.
 
@@ -100,7 +100,7 @@ Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Da
     - the `gateway-server` TLS target resolves to `mutual` mode with a CA (`gateway role: catalog import authenticates clients by X.509 certificate, so tls.mode (or tls.targets.gateway-server.mode) must be "mutual" with a CA configured`), because the listener otherwise never verifies a client certificate;
     - the default tenant exists (`gateway role: default tenant "<id>" does not exist. Run crosscodexd migrate ...`) and is not deleted (`gateway role: default tenant "<id>" is deleted. Restore it with crosscodexd admin tenant restore ...`).
   - **Resources** — Postgres (`database.dsn`) and NATS. The gateway holds no graph or vector credentials.
-  - **No pipeline service preconditions** — it does not need the attestation key paths from `buildPipelineService`; it constructs no `pipeline.Service`, only a network client to one.
+  - **No pipeline service preconditions** — it does not need the attestation keys from `buildPipelineService`; it constructs no `pipeline.Service`, only a network client to one.
 - **`all`** needs neither `pipeline.addr` nor `pipeline.endpoint` — it wires `pipeline.Service` directly into the gateway's `PipelineBackend` in-process, with no listener or client involved.
 
 ## Catalog import in a split deployment
@@ -114,7 +114,7 @@ With `gateway`, `pipeline`, `worker` and `graph` running as separate processes, 
 
 Operational consequences:
 
-- **Eventual consistency.** Control nodes appear after the import returns. Analysis edges that arrive before their Control nodes exist are skipped and counted, not retried. Re-importing the catalog repairs both.
+- **Eventual consistency.** Control nodes appear after the import returns. Analysis edges that arrive before their Control nodes exist are skipped and counted, not retried. Re-importing the catalog restores the Control nodes; starting a new analysis of it (`crosscodex run start --source <catalog-id>`) rewrites the skipped edges.
 - **Start the graph role before importing.** The subscription is core NATS: an event published while no graph role is subscribed is lost. Deploy at least one graph role and start it first. Re-import to recover a lost event.
 - **Storage.** Because the gateway writes uploaded blobs under its own `storage.objects.base_path`, that path is separate from the pipeline role's unless the two roles share a filesystem.
 - Role `all` runs the same ingestion path and additionally confirms the tenant graph exists at startup (`CreateGraph`).
