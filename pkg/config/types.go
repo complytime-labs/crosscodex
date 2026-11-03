@@ -49,6 +49,15 @@ type LLMConfig struct {
 	// Timeout bounds each LLM gateway request, in seconds. Zero means
 	// llmclient.DefaultTimeout (30s) for both http and https gateways.
 	Timeout int `yaml:"timeout" json:"timeout"`
+	// ModelRevisions maps a model alias, as the gateway resolves it, to an
+	// operator-declared revision that is part of every result-cache key for
+	// the alias (analysis.result_cache). Change it to force misses when the
+	// gateway's model name and deployment ID cannot show a change, such as an
+	// Ollama re-pull of the same tag. An alias the gateway names only by
+	// itself, with no deployment ID, is cached only when it has a revision.
+	// Global-only: the alias mapping lives in the shared gateway, so tenants
+	// cannot remap it.
+	ModelRevisions map[string]string `yaml:"model_revisions" json:"model_revisions"`
 	// TenantOverrides maps tenant IDs (must satisfy pkg/tenant.ValidateTenantID)
 	// to per-tenant LLM config overrides. Nil pointer fields inherit the global
 	// value. AllowedModels replaces (not merges with) the global list when
@@ -491,6 +500,52 @@ type AnalysisConfig struct {
 	Requires             RequiresConfig             `yaml:"requires" json:"requires"`
 	Artifacts            ArtifactsConfig            `yaml:"artifacts" json:"artifacts"`
 	ArtifactAdjudication ArtifactAdjudicationConfig `yaml:"artifact_adjudication" json:"artifact_adjudication"`
+	ResultCache          ResultCacheConfig          `yaml:"result_cache" json:"result_cache"`
+}
+
+// ResultCacheConfig configures LLM result reuse across a tenant's jobs
+// (#243). Every field is tenant-overridable.
+type ResultCacheConfig struct {
+	// Enabled makes a job look its LLM requests up before sending them and
+	// store their results. False is the kill switch: jobs neither read nor
+	// write the cache. A job started with --no-cache skips lookups but
+	// still stores.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// LookupBatchSize is how many cache keys one lookup query reads, 1 to
+	// 10000.
+	LookupBatchSize int `yaml:"lookup_batch_size" json:"lookup_batch_size"`
+	// TenantOverrides maps tenant IDs (pkg/tenant.ValidateTenantID) to
+	// per-tenant settings. Nil fields inherit the global value.
+	TenantOverrides map[string]ResultCacheOverride `yaml:"tenant_overrides" json:"tenant_overrides"`
+}
+
+// ResultCacheOverride is one tenant's result cache settings.
+type ResultCacheOverride struct {
+	Enabled         *bool `yaml:"enabled" json:"enabled"`
+	LookupBatchSize *int  `yaml:"lookup_batch_size" json:"lookup_batch_size"`
+}
+
+// ResultCacheTenantConfig holds the resolved result cache settings for a
+// tenant.
+type ResultCacheTenantConfig struct {
+	Enabled         bool
+	LookupBatchSize int
+}
+
+// ForTenant returns the effective result cache settings for a tenant.
+// Fields set in TenantOverrides take precedence; nil fields inherit global
+// values.
+func (c *ResultCacheConfig) ForTenant(tenantID string) ResultCacheTenantConfig {
+	tc := ResultCacheTenantConfig{Enabled: c.Enabled, LookupBatchSize: c.LookupBatchSize}
+	if override, ok := c.TenantOverrides[tenantID]; ok {
+		if override.Enabled != nil {
+			tc.Enabled = *override.Enabled
+		}
+		if override.LookupBatchSize != nil {
+			tc.LookupBatchSize = *override.LookupBatchSize
+		}
+	}
+	return tc
 }
 
 // EngineConfig configures the analysis engine orchestrator.

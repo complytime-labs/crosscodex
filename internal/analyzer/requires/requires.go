@@ -311,6 +311,39 @@ func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 	return tasks, nil
 }
 
+var _ analyzer.Cacheable = (*RequiresAnalyzer)(nil)
+
+// CacheModels implements analyzer.Cacheable: one completion model per panel
+// member in analysis.requires.models.
+func (a *RequiresAnalyzer) CacheModels() []analyzer.ModelUse {
+	uses := make([]analyzer.ModelUse, 0, len(a.cfg.Models))
+	for _, m := range a.cfg.Models {
+		uses = append(uses, analyzer.ModelUse{Alias: m, Kind: analyzer.ModelCompletion})
+	}
+	return uses
+}
+
+// CacheIdentity implements analyzer.Cacheable from the task's payload,
+// whose sample_index keeps each voter's identity distinct. aggregate_score
+// is not sent to the model, so it is not part of the identity.
+func (a *RequiresAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequest, bool) {
+	return intanalyzer.PayloadCacheRequest(task, "source_control_id", "target_control_id")
+}
+
+// CacheableResult implements analyzer.Cacheable: a result is stored only
+// when ParseResponse reads a YES or NO decision from its response, the
+// vote Aggregate counts.
+func (a *RequiresAnalyzer) CacheableResult(result *structpb.Struct) error {
+	raw, ok := intanalyzer.ExtractResponseText(result)
+	if !ok {
+		return errors.New("the result has no response text")
+	}
+	if ParseResponse("", raw).Decision == nil {
+		return errors.New("the requires response does not parse: it has no REQUIRES: YES or NO decision")
+	}
+	return nil
+}
+
 // Aggregate groups completed task results by source/target pair, computes
 // consensus for each pair via a.consensus (skipping pairs that don't clear
 // the configured vote/error thresholds), and JSON-encodes the surviving

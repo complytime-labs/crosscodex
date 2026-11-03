@@ -6,6 +6,8 @@ import (
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
 // Option configures an Engine.
@@ -32,6 +34,25 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 				"analysis.execution.duration_ms",
 				metric.WithDescription("Engine Execute call duration"),
 			)
+			e.cacheLookups, _ = meter.Int64Counter("analysis.result_cache.lookups.total",
+				metric.WithDescription("Result cache keys looked up"))
+			e.cacheHits, _ = meter.Int64Counter("analysis.result_cache.hits.total",
+				metric.WithDescription("Tasks served from the result cache instead of a worker"))
+			e.cachePuts, _ = meter.Int64Counter("analysis.result_cache.puts.total",
+				metric.WithDescription("Results stored in the result cache"))
+			e.cachePutErrors, _ = meter.Int64Counter("analysis.result_cache.put_errors.total",
+				metric.WithDescription("Results that could not be stored in the result cache"))
+			e.cachePutsRefused, _ = meter.Int64Counter("analysis.result_cache.puts_refused.total",
+				metric.WithDescription("Successful results not stored in the result cache (attribute reason: "+
+					"unusable_result, the analyzer would discard it; model_mismatch, another model than the probe observed answered; "+
+					"deployment_mismatch, another deployment than the probe reached answered)"))
+			e.cacheIntegrityFailures, _ = meter.Int64Counter("analysis.result_cache.integrity_failures.total",
+				metric.WithDescription("Cached results, checkpoints or stage records that failed an integrity check, "+
+					"and checkpoints signed by a key no longer trusted (attribute reason)"))
+			e.cacheLookupDuration, _ = meter.Float64Histogram("analysis.result_cache.lookup.duration_ms",
+				metric.WithDescription("Duration of one stage's result cache lookups"), metric.WithUnit("ms"))
+			e.cacheInFlight, _ = meter.Int64Gauge("analysis.result_cache.entries_in_flight",
+				metric.WithDescription("Result cache keys being looked up or stored"))
 		}
 	}
 }
@@ -55,6 +76,20 @@ func WithLogger(logger *slog.Logger) Option {
 func WithStageTimeout(d time.Duration) Option {
 	return func(e *Engine) {
 		e.stageTimeout = d
+	}
+}
+
+// WithResultCache wires the LLM result cache store (#243). Wiring
+// contract: crosscodexd passes pkg/resultcache/pgstore over the app_user
+// tenant pool when it builds the pipeline; there is no config field for
+// the store itself. Whether an execution reads or writes it is per request
+// (ExecutionRequest.Cache), which the pipeline resolves from
+// analysis.result_cache and the job's no_cache. A request in ModeEnabled or
+// ModeBypassed on an engine without a store fails Execute
+// (ErrResultCacheNotWired).
+func WithResultCache(store resultcache.Store) Option {
+	return func(e *Engine) {
+		e.cacheStore = store
 	}
 }
 

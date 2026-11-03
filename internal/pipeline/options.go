@@ -7,6 +7,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
 // Option configures a Service.
@@ -26,7 +28,40 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 				metric.WithDescription("Total pipeline jobs by status"))
 			s.jobDuration, _ = meter.Float64Histogram("pipeline.job.duration_ms",
 				metric.WithDescription("Pipeline job duration"))
+			s.probeOps, _ = meter.Int64Counter("pipeline.result_cache.probes.total",
+				metric.WithDescription("Per-job model probes by kind and outcome (observed: the alias is cached; empty: no usable model name; "+
+					"uncached: no usable deployment ID, or only the alias named; failed)"))
+			s.probeDuration, _ = meter.Float64Histogram("pipeline.result_cache.probe.duration_ms",
+				metric.WithDescription("Per-job model probe duration"), metric.WithUnit("ms"))
+			s.checkpointOps, _ = meter.Int64Counter("pipeline.result_cache.checkpoints.total",
+				metric.WithDescription("Result-cache checkpoint operations (sign, store, verify) by outcome"))
+			s.checkpointDuration, _ = meter.Float64Histogram("pipeline.result_cache.checkpoint.duration_ms",
+				metric.WithDescription("Result-cache checkpoint operation duration"), metric.WithUnit("ms"))
+			s.checkpointGauge, _ = meter.Int64Gauge("pipeline.result_cache.checkpoints.in_flight",
+				metric.WithDescription("Result-cache checkpoint operations in progress"))
 		}
+	}
+}
+
+// WithResultCache wires LLM result reuse (#243). store is the result cache
+// store, the same one the engine is built with (analysis.WithResultCache);
+// the pipeline reads it only to verify a stage's sealed record against its
+// checkpoint, when attesting a stage an earlier run completed and for
+// GetJob's cache summaries. cfg is
+// analysis.result_cache (enabled and lookup_batch_size, per tenant); llm is
+// the llm config, whose default_model and embedding_model resolve an empty
+// alias exactly as the worker does and whose model_revisions join every
+// cache key; probe is the client the per-job model probe calls, which
+// crosscodexd wires to its shared, audited LLM client. The engine must be
+// built with analysis.WithResultCache over the result cache store. Without
+// this option jobs neither read nor write the cache.
+func WithResultCache(store resultcache.Store, cfg config.ResultCacheConfig, llm config.LLMConfig, probe llmclient.Client) Option {
+	return func(s *Service) {
+		s.cacheWired = true
+		s.cacheStore = store
+		s.cacheCfg = cfg
+		s.llmCfg = llm
+		s.probe = probe
 	}
 }
 

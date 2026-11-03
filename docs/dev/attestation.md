@@ -260,6 +260,46 @@ The `internal/pipeline/attestation` package provides a `Converter` that transfor
 - Steps are ordered by DAG topological order
 - `ExpiresIn` is NOT set by the converter — the caller wires it from `AttestationConfig.ExpiryDuration`
 
+The pipeline also adds `<name>.cache_manifest` to every analyzer step's expected materials (`createLayout`). Each analyzer link records that material and the result-cache byproducts `result_cache.mode`, `result_cache.reason` and `result_cache.attempt` (`attestAnalyzers`, `internal/pipeline/attest_cache.go`):
+
+- The material is the `resultcache.Manifest` digest that the signed cache checkpoint of the attempt that completed the stage signs (the digest of the checkpoint's product), not a digest of the checkpoint file.
+- For a stage that kept no cache records, the material is the empty manifest's digest.
+
+Cache checkpoints are separate in-toto links with step `result-cache-checkpoint`, stored under `attestations/<tenant>/<job>/cache-checkpoints/`. They are not part of the job's chain. See [LLM Result Reuse](design-principles.md#llm-result-reuse).
+
+### Recomputing a cache manifest digest
+
+An auditor can recompute the digest from the attempt's rows without the Go code (`resultcache.Manifest.Digest`, `pkg/resultcache/resultcache.go`). The rows are the attempt's `job_cache_entries` and `job_cache_stats` rows, selected by tenant, job, analyzer and attempt.
+
+1. **Build one JSON object, with no whitespace between tokens and these keys in this order:**
+
+   ```json
+   {"tenant_id":"…","job_id":"…","analyzer":"…","attempt":"…","entries":[…],"stats":[…]}
+   ```
+
+2. **`entries`.** Every entry row, as an object with these keys in this order:
+
+   ```json
+   {"task_id":"…","role":"…","cache_key":"…","result_digest":"…","producer_job_id":"…"}
+   ```
+
+   - `role` is `hit` or `write`.
+   - `producer_job_id` is `""` for a write.
+   - Sort the entries by `task_id`, then `role`, `cache_key`, `result_digest` and `producer_job_id`. Each comparison is byte-wise on the UTF-8 strings (`resultcache.CompareEntries`).
+   - No entries is `[]`, never `null`.
+3. **`stats`.** Every stats row, oldest first (in recorded order, `job_cache_stats.seq`), as an object with these keys in this order:
+
+   ```json
+   {"mode":"…","reason":"…","models":{…},"tasks":N,"hits":N,"dispatched":N}
+   ```
+
+   - `models` maps each alias to `{"observed":"…","deployment":"…","revision":"…"}`, with its keys sorted byte-wise.
+   - No models is `{}`, never `null`.
+   - The counts are decimal integers.
+   - No stats rows is `[]`.
+4. **Strings** use Go's `encoding/json` escaping: `"` and `\` are backslash-escaped, control characters become `\u00XX` (or `\n`, `\r`, `\t`), and `<`, `>`, `&`, U+2028 and U+2029 become `\u003c`, `\u003e`, `\u0026`, `\u2028` and `\u2029`. Invalid UTF-8 bytes become `\ufffd`.
+5. **The digest** is `sha256:` followed by the lowercase hex SHA-256 of those bytes. A stage that kept no records pins the digest of `{"tenant_id":"","job_id":"","analyzer":"","attempt":"","entries":[],"stats":[]}`.
+
 This adapter keeps `pkg/attestation` and `pkg/analyzer` decoupled. The pipeline appends its own steps to the converter's: `synthesis` (expects every analyzer's `<name>.output`, produces `synthesis.output`) and `graph` (expects `synthesis.output`). Only enabled analyzers are in the DAG, so a disabled analyzer has no step and needs no link. `candidate_generation` is not a step and has no link: its output reaches the chain through the analyzers that read the candidates.
 
 ## Pipeline Attestation (Fail Closed)

@@ -9,8 +9,19 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
+)
+
+const (
+	// maxLookupBatchSize bounds analysis.result_cache.lookup_batch_size: one
+	// lookup binds that many keys in a single ANY($3) array.
+	maxLookupBatchSize = 10000
+	// maxModelRevisionBytes bounds an llm.model_revisions value, which is
+	// part of every cache key and shown in run status.
+	maxModelRevisionBytes = 128
 )
 
 var (
@@ -167,6 +178,24 @@ func validateLLM(llm *LLMConfig, tracker *sourceTracker) error {
 		if override.Timeout != nil && *override.Timeout < 0 {
 			p.add(mapKeyPath("llm.tenant_overrides", key)+".timeout", "llm.tenant_overrides.%s.timeout %d must be non-negative: %w",
 				key, *override.Timeout, ErrInvalidConfig)
+		}
+	}
+	for _, alias := range slices.Sorted(maps.Keys(llm.ModelRevisions)) {
+		rev := llm.ModelRevisions[alias]
+		path := mapKeyPath("llm.model_revisions", alias)
+		switch {
+		case strings.TrimSpace(alias) == "":
+			p.add(path, "llm.model_revisions has an empty alias%s: each key must be a model alias the gateway serves, such as \"default\": %w",
+				formatSource(tracker, "llm.model_revisions"), ErrInvalidConfig)
+		case rev == "":
+			p.add(path, "llm.model_revisions.%s is empty%s: an empty revision means no revision, so omit the alias instead: %w",
+				alias, formatSource(tracker, path), ErrInvalidConfig)
+		case len(rev) > maxModelRevisionBytes:
+			p.add(path, "llm.model_revisions.%s is %d bytes%s, over the %d-byte limit: use a short label such as a date or a digest prefix: %w",
+				alias, len(rev), formatSource(tracker, path), maxModelRevisionBytes, ErrInvalidConfig)
+		case !utf8.ValidString(rev) || strings.IndexFunc(rev, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0:
+			p.add(path, "llm.model_revisions.%s %q%s contains a non-printable character: use letters, digits and punctuation: %w",
+				alias, rev, formatSource(tracker, path), ErrInvalidConfig)
 		}
 	}
 	return p.err()
@@ -406,6 +435,26 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		if !found {
 			p.add("analysis.candidates.embed_model", "analysis.candidates.embed_model %q%s must be one of analysis.embedding.models %v: %w",
 				a.Candidates.EmbedModel, formatSource(tracker, "analysis.candidates.embed_model"), e.Models, ErrInvalidConfig)
+		}
+	}
+
+	rc := &a.ResultCache
+	if rc.LookupBatchSize < 1 || rc.LookupBatchSize > maxLookupBatchSize {
+		p.add("analysis.result_cache.lookup_batch_size", "analysis.result_cache.lookup_batch_size %d%s must be between 1 and %d: "+
+			"it is how many cache keys one lookup query reads (default 1000): %w",
+			rc.LookupBatchSize, formatSource(tracker, "analysis.result_cache.lookup_batch_size"), maxLookupBatchSize, ErrInvalidConfig)
+	}
+	for _, key := range slices.Sorted(maps.Keys(rc.TenantOverrides)) {
+		path := mapKeyPath("analysis.result_cache.tenant_overrides", key)
+		if err := tenant.ValidateTenantID(key); err != nil {
+			p.add(path, "analysis.result_cache.tenant_overrides key %q is not a valid tenant ID: it must be %s: %w",
+				key, tenant.IDRule, ErrInvalidConfig)
+			continue
+		}
+		if n := rc.TenantOverrides[key].LookupBatchSize; n != nil && (*n < 1 || *n > maxLookupBatchSize) {
+			p.add(path+".lookup_batch_size", "analysis.result_cache.tenant_overrides.%s.lookup_batch_size %d%s must be between 1 and %d: "+
+				"it is how many cache keys one lookup query reads (default 1000): %w",
+				key, *n, formatSource(tracker, path+".lookup_batch_size"), maxLookupBatchSize, ErrInvalidConfig)
 		}
 	}
 

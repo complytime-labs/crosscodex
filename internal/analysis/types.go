@@ -12,6 +12,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
 // Dispatcher publishes analyzer tasks to NATS work subjects. collectionID is
@@ -51,7 +52,68 @@ type ExecutionRequest struct {
 	// requested analyzers without being re-executed. A nil map is the common
 	// single-pass case.
 	CompletedOutputs map[string]*analyzer.Output
+
+	// Cache is how this execution uses the LLM result cache (#243). The
+	// zero value (Mode "") neither reads nor writes it and records nothing,
+	// as before #243.
+	Cache CacheSettings
 }
+
+// CacheModel is the model one alias resolved to for one job.
+type CacheModel struct {
+	// Alias is the alias as the gateway receives it: the task's, or for an
+	// empty one the tenant default the worker substitutes.
+	Alias string
+	// Observed is the probe's resp.Model; empty means the alias is neither
+	// looked up nor stored in this job, and Reason says why.
+	Observed string
+	// Deployment is the probe's deployment ID (llmclient.DeploymentHeader),
+	// or "" when the gateway sent none. A result is stored only when its
+	// call reported the same deployment.
+	Deployment string
+	// Revision is llm.model_revisions for Alias, or "".
+	Revision string
+	Reason   string
+}
+
+// CacheSettings is one job's use of the result cache, resolved by the
+// pipeline from analysis.result_cache, the job's no_cache and the per-job
+// model probe.
+type CacheSettings struct {
+	// Mode is resultcache.ModeEnabled (look up, reuse, store),
+	// ModeBypassed (no_cache: store only) or ModeDisabled (the tenant's
+	// kill switch). Disabled and "" make no cache call of any kind; only
+	// Disabled reports the analyzers' cache use (ExecutionResult.CacheStats).
+	// ModeSkipped is per analyzer and is refused here.
+	Mode resultcache.Mode
+	// Models maps each model use a cacheable analyzer declares
+	// (analyzer.Cacheable.CacheModels) to its resolved model.
+	Models map[analyzer.ModelUse]CacheModel
+	// LookupBatchSize is how many keys one lookup reads
+	// (analysis.result_cache.lookup_batch_size); at least 1 in ModeEnabled.
+	LookupBatchSize int
+	// ControlCatalogs maps the ControlId of every control of the job to its
+	// catalog ID, so a stored pair result is purged with either catalog of
+	// its request. A per-control task takes the catalog of the control it
+	// was generated from instead.
+	ControlCatalogs map[string]string
+	// NoCacheCommand is the command that starts a new job like this one
+	// with --no-cache, which the cache errors quote. Required in
+	// ModeEnabled and ModeBypassed.
+	NoCacheCommand string
+	// Checkpoints signs and verifies the job's cache checkpoints. Required
+	// in ModeEnabled and ModeBypassed: an attempt that cannot be sealed is
+	// never trusted, so caching without it would only cost.
+	Checkpoints CacheCheckpoints
+}
+
+// MetadataCacheAttempt is the analyzer.Output metadata key naming the
+// result-cache attempt whose checkpoint sealed a completed stage. The engine
+// sets it only when the stage was sealed (ModeEnabled or ModeBypassed); the
+// pipeline persists it with the stage's completion so a later run can find
+// that checkpoint. It is a pointer, not evidence: readers verify the
+// checkpoint it names.
+const MetadataCacheAttempt = "result_cache.attempt"
 
 // ExecutionResult holds the outcome of an Engine.Execute call.
 type ExecutionResult struct {
@@ -61,6 +123,12 @@ type ExecutionResult struct {
 	Completed []string
 	Failed    []string
 	Skipped   []string
+	// CacheStats is the effective result-cache use of each analyzer this
+	// call completed, keyed by analyzer: its mode (skipped with its reason
+	// when the analyzer was not cached), aliases and counts. Empty when the
+	// request had no cache mode. The pipeline records it in the analyzer's
+	// attestation link.
+	CacheStats map[string]resultcache.Stats
 }
 
 // CollectRequest configures a Collector.Collect call.

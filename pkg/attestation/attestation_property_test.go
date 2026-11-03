@@ -2,12 +2,14 @@ package attestation_test
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -272,6 +274,38 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					if !bytes.Equal(gotLinks[i].Raw, links[i].Raw) {
 						t.Fatalf("link %d changed: %q != %q", i, gotLinks[i].Raw, links[i].Raw)
 					}
+				}
+			})
+		})
+	})
+
+	Context("Verify — trusted and untrusted keys", func() {
+		It("accepts a link only under its signer's key, and reports any other key as untrusted", func() {
+			// Key generation is expensive: build a pool once, draw from it.
+			gens := make([]attestation.Generator, 4)
+			for i := range gens {
+				kp, err := attestation.NewEphemeralKeyProvider()
+				Expect(err).NotTo(HaveOccurred())
+				gens[i], err = attestation.NewGenerator(kp)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				signer := rapid.IntRange(0, len(gens)-1).Draw(t, "signer")
+				verifier := rapid.IntRange(0, len(gens)-1).Draw(t, "verifier")
+				digest := rapid.StringMatching(`[0-9a-f]{64}`).Draw(t, "digest")
+				link, err := gens[signer].CreateLink(context.Background(), "step",
+					[]attestation.Artifact{{URI: "a", Digest: digest}}, nil)
+				if err != nil {
+					t.Fatalf("CreateLink: %v", err)
+				}
+				_, err = gens[verifier].Verify(context.Background(), link.Raw)
+				switch {
+				case signer == verifier && err != nil:
+					t.Fatalf("the signer's own key rejected its link: %v", err)
+				case signer != verifier && !errors.Is(err, attestation.ErrUntrustedKey):
+					t.Fatalf("another key's link: got %v, want ErrUntrustedKey", err)
+				case signer != verifier && !errors.Is(err, attestation.ErrVerificationFailed):
+					t.Fatalf("ErrUntrustedKey without ErrVerificationFailed: %v", err)
 				}
 			})
 		})

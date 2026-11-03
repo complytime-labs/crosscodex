@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -13,9 +14,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -42,6 +45,18 @@ type Engine struct {
 	// Telemetry providers for propagation to sub-components.
 	tracerProvider trace.TracerProvider
 	meterProvider  metric.MeterProvider
+
+	// Result reuse (#243); see WithResultCache and cache.go.
+	cacheStore             resultcache.Store
+	cacheLookups           metric.Int64Counter
+	cacheHits              metric.Int64Counter
+	cachePuts              metric.Int64Counter
+	cachePutErrors         metric.Int64Counter
+	cachePutsRefused       metric.Int64Counter
+	cacheIntegrityFailures metric.Int64Counter
+	cacheLookupDuration    metric.Float64Histogram
+	cacheInFlight          metric.Int64Gauge
+	inFlight               atomic.Int64
 }
 
 // New creates an Engine with explicit Dispatcher and Collector.
@@ -138,6 +153,12 @@ func (e *Engine) Execute(ctx context.Context, req ExecutionRequest) (*ExecutionR
 		return nil, fmt.Errorf("analysis: execute: %w", ErrNilInput)
 	}
 
+	if err := e.validateCache(req.Cache); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("analysis: execute: %w", err)
+	}
+
 	// Build DAG.
 	dag, err := e.buildDAG(ctx, req)
 	if err != nil {
@@ -157,9 +178,10 @@ func (e *Engine) Execute(ctx context.Context, req ExecutionRequest) (*ExecutionR
 	}
 
 	result := &ExecutionResult{
-		JobID:   req.JobID,
-		Outputs: make(map[string]*analyzer.Output),
-		Errors:  make(map[string]error),
+		JobID:      req.JobID,
+		Outputs:    make(map[string]*analyzer.Output),
+		Errors:     make(map[string]error),
+		CacheStats: make(map[string]resultcache.Stats),
 	}
 	state := &executionState{result: result}
 
@@ -168,7 +190,7 @@ func (e *Engine) Execute(ctx context.Context, req ExecutionRequest) (*ExecutionR
 	// analyzers without being re-dispatched, and executeAnalyzer short-circuits
 	// on them so no stage transitions are re-reported.
 	for name, output := range req.CompletedOutputs {
-		state.complete(name, output)
+		state.complete(name, output, nil)
 	}
 
 	span.SetAttributes(
@@ -305,7 +327,11 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 	// semantics for task-level failures.
 	cfg := req.AnalyzerConfig[name]
 	var tasks []analyzer.Task
+	// origins maps each per-control task to the control it was generated
+	// from, so the result cache can store it under that control's catalog.
+	var origins map[string]*pb.Control
 	if req.Controls != nil {
+		origins = map[string]*pb.Control{}
 		for _, control := range req.Controls {
 			controlTasks, err := ra.GenerateWorkFromProto(ctx, control, cfg)
 			if err != nil {
@@ -316,6 +342,9 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 				span.RecordError(analyzerErr)
 				span.SetStatus(codes.Error, analyzerErr.Error())
 				return
+			}
+			for _, t := range controlTasks {
+				origins[t.TaskID] = control
 			}
 			tasks = append(tasks, controlTasks...)
 		}
@@ -351,6 +380,75 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		dispatchTasks = append(dispatchTasks, t)
 	}
 
+	// Result reuse (#243). From here on every stop goes through fail (the
+	// error is final) or stop (seal the stage's writes first, so a retry
+	// reuses the results it paid for).
+	sc, err := e.planCache(ctx, name, ra, req, tasks, origins)
+	fail := func(stageErr error, reportFailed bool) {
+		state.fail(name, stageErr)
+		if reportFailed {
+			_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, stageErr)
+		}
+		span.RecordError(stageErr)
+		span.SetStatus(codes.Error, stageErr.Error())
+	}
+	stop := func(stageErr error) {
+		e.sealAfterFailure(ctx, sc)
+		fail(stageErr, true)
+	}
+	if err != nil {
+		fail(fmt.Errorf("analysis: analyzer %q result cache for job %q: %w: %w", name, req.JobID, ErrAnalyzerFailed, err), true)
+		return
+	}
+	// A verified cached result whose request matches a task's becomes that
+	// task's pre-built result, so the task never goes to a worker. A failed
+	// lookup, or any cached result that fails verification, stops the stage
+	// before anything is dispatched or written.
+	if sc.lookups() {
+		cached, err := e.lookupCached(ctx, sc)
+		if err != nil {
+			fail(err, true)
+			return
+		}
+		remaining := make([]analyzer.Task, 0, len(dispatchTasks))
+		for _, t := range dispatchTasks {
+			if r, ok := cached[t.TaskID]; ok {
+				preBuiltResults = append(preBuiltResults, analyzer.TaskResult{TaskID: t.TaskID, TaskType: t.TaskType, Result: r})
+				continue
+			}
+			remaining = append(remaining, t)
+		}
+		dispatchTasks = remaining
+	}
+	if sc != nil {
+		sc.stats.Tasks = len(tasks)
+		sc.stats.Hits = len(sc.hits)
+		sc.stats.Dispatched = len(dispatchTasks)
+	}
+	// complete records the stage's cache use and seals it, all before the
+	// stage's result is persisted: a reuse or write that cannot be attested
+	// must not be. A sealed stage names its attempt in output's metadata
+	// (MetadataCacheAttempt), which the reporter persists with the result.
+	complete := func(output *analyzer.Output) bool {
+		if !sc.records() {
+			return true
+		}
+		if err := e.recordStage(ctx, sc); err != nil {
+			sealed := e.sealAfterFailure(ctx, sc)
+			fail(e.recordFailed(ctx, sc, err, sealed), true)
+			return false
+		}
+		if err := e.seal(ctx, sc); err != nil {
+			fail(e.checkpointFailed(ctx, sc, err), true)
+			return false
+		}
+		if output.Metadata == nil {
+			output.Metadata = make(map[string]string)
+		}
+		output.Metadata[MetadataCacheAttempt] = sc.attempt
+		return true
+	}
+
 	// Zero dispatchable tasks and no pre-built results: skip straight to an
 	// empty output, exactly as before.
 	if len(dispatchTasks) == 0 && len(preBuiltResults) == 0 {
@@ -358,15 +456,15 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			AnalyzerName: name,
 			Metadata:     map[string]string{"tasks": "0"},
 		}
-		if err := e.reporter.ReportStageCompleted(ctx, name, req.JobID, output); err != nil {
-			analyzerErr := fmt.Errorf("analysis: analyzer %q persist completion failed for job %q: %w: %w",
-				name, req.JobID, ErrAnalyzerFailed, err)
-			state.fail(name, analyzerErr)
-			span.RecordError(analyzerErr)
-			span.SetStatus(codes.Error, analyzerErr.Error())
+		if !complete(output) {
 			return
 		}
-		state.complete(name, output)
+		if err := e.reporter.ReportStageCompleted(ctx, name, req.JobID, output); err != nil {
+			fail(fmt.Errorf("analysis: analyzer %q persist completion failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err), false)
+			return
+		}
+		state.complete(name, output, sc)
 		span.SetStatus(codes.Ok, "zero tasks")
 		return
 	}
@@ -396,12 +494,8 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		// zero-latency workers (e.g., single-process RoleAll with deterministic fake LLM).
 		handle, err := e.collector.PrepareCollect(ctx, collectReq)
 		if err != nil {
-			analyzerErr := fmt.Errorf("analysis: analyzer %q prepare collect failed for job %q: %w: %w",
-				name, req.JobID, ErrAnalyzerFailed, err)
-			state.fail(name, analyzerErr)
-			_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
-			span.RecordError(analyzerErr)
-			span.SetStatus(codes.Error, analyzerErr.Error())
+			stop(fmt.Errorf("analysis: analyzer %q prepare collect failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err))
 			return
 		}
 
@@ -415,27 +509,28 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 				e.logger.Warn("failed to release collection subscriptions", "job_id", req.JobID, "error", relErr)
 			}
 			handle.abandon(ctx)
-			analyzerErr := fmt.Errorf("analysis: analyzer %q dispatch failed for job %q: %w: %w",
-				name, req.JobID, ErrAnalyzerFailed, err)
-			state.fail(name, analyzerErr)
-			_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
-			span.RecordError(analyzerErr)
-			span.SetStatus(codes.Error, analyzerErr.Error())
+			stop(fmt.Errorf("analysis: analyzer %q dispatch failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err))
 			return
 		}
 
 		// AwaitResults: wait for all results on the subscription established above.
 		collected, err := e.collector.AwaitResults(ctx, handle)
 		if err != nil {
-			analyzerErr := fmt.Errorf("analysis: analyzer %q collect failed for job %q: %w: %w",
-				name, req.JobID, ErrAnalyzerFailed, err)
-			state.fail(name, analyzerErr)
-			_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
-			span.RecordError(analyzerErr)
-			span.SetStatus(codes.Error, analyzerErr.Error())
+			// The results that did arrive were paid for: store them so the
+			// failure seal covers them and a retry reuses them. A cancelled
+			// stage stores nothing; it is not sealed either.
+			if ctx.Err() == nil && sc.puts() {
+				e.putResults(ctx, sc, collected)
+			}
+			stop(fmt.Errorf("analysis: analyzer %q collect failed for job %q: %w: %w",
+				name, req.JobID, ErrAnalyzerFailed, err))
 			return
 		}
 		results = collected
+		if sc.puts() {
+			e.putResults(ctx, sc, collected)
+		}
 	}
 	results = append(results, preBuiltResults...)
 
@@ -452,12 +547,8 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 
 	// All tasks failed: analyzer fails.
 	if len(successes) == 0 && failures > 0 {
-		analyzerErr := fmt.Errorf("analysis: analyzer %q: all %d tasks failed for job %q: %w",
-			name, failures, req.JobID, ErrAnalyzerFailed)
-		state.fail(name, analyzerErr)
-		_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
-		span.RecordError(analyzerErr)
-		span.SetStatus(codes.Error, analyzerErr.Error())
+		stop(fmt.Errorf("analysis: analyzer %q: all %d tasks failed for job %q: %w",
+			name, failures, req.JobID, ErrAnalyzerFailed))
 		return
 	}
 
@@ -469,12 +560,8 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 
 	output, err := ra.Aggregate(ctx, aggregateInput)
 	if err != nil {
-		analyzerErr := fmt.Errorf("analysis: analyzer %q Aggregate failed for job %q: %w: %w",
-			name, req.JobID, ErrAnalyzerFailed, err)
-		state.fail(name, analyzerErr)
-		_ = e.reporter.ReportStageFailed(ctx, name, req.JobID, analyzerErr)
-		span.RecordError(analyzerErr)
-		span.SetStatus(codes.Error, analyzerErr.Error())
+		stop(fmt.Errorf("analysis: analyzer %q Aggregate failed for job %q: %w: %w",
+			name, req.JobID, ErrAnalyzerFailed, err))
 		return
 	}
 
@@ -487,19 +574,20 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		output.Metadata["failed_tasks"] = fmt.Sprintf("%d", failures)
 	}
 
+	if !complete(output) {
+		return
+	}
+
 	// Success (possibly partial). Persist the result before marking the
 	// analyzer completed: a persistence failure must fail the analyzer, or
 	// downstream logic (resume, candidate generation) would proceed against
 	// data that was never durably committed.
 	if err := e.reporter.ReportStageCompleted(ctx, name, req.JobID, output); err != nil {
-		analyzerErr := fmt.Errorf("analysis: analyzer %q persist completion failed for job %q: %w: %w",
-			name, req.JobID, ErrAnalyzerFailed, err)
-		state.fail(name, analyzerErr)
-		span.RecordError(analyzerErr)
-		span.SetStatus(codes.Error, analyzerErr.Error())
+		fail(fmt.Errorf("analysis: analyzer %q persist completion failed for job %q: %w: %w",
+			name, req.JobID, ErrAnalyzerFailed, err), false)
 		return
 	}
-	state.complete(name, output)
+	state.complete(name, output, sc)
 	span.SetStatus(codes.Ok, "")
 }
 
@@ -510,11 +598,16 @@ type executionState struct {
 	result *ExecutionResult
 }
 
-func (s *executionState) complete(name string, output *analyzer.Output) {
+// complete records name's output and, when the stage used the result
+// cache (sc non-nil), its effective cache use.
+func (s *executionState) complete(name string, output *analyzer.Output, sc *stageCache) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.result.Outputs[name] = output
 	s.result.Completed = append(s.result.Completed, name)
+	if sc != nil {
+		s.result.CacheStats[name] = sc.stats
+	}
 }
 
 func (s *executionState) fail(name string, err error) {

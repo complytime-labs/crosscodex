@@ -42,6 +42,7 @@ func validConfig() *config.Config {
 			Relationship:         config.RelationshipConfig{MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3},
 			Candidates:           config.CandidateConfig{EmbedModel: "snowflake-arctic-embed2"},
 			ArtifactAdjudication: config.ArtifactAdjudicationConfig{LeaseDuration: 15 * time.Minute},
+			ResultCache:          config.ResultCacheConfig{Enabled: true, LookupBatchSize: 1000},
 		},
 		Synthesis: config.SynthesisConfig{
 			ConfidenceThreshold:   0.5,

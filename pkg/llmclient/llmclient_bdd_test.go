@@ -701,6 +701,66 @@ var _ = Describe("Client", func() {
 		})
 	})
 
+	Describe("Deployment", func() {
+		// gateway answers each request with the next status, deployment
+		// header ("" sends none) and body, repeating the last.
+		type answer struct {
+			status     int
+			deployment string
+			body       []byte
+		}
+		gateway := func(answers ...answer) llmclient.Client {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				a := answers[min(int(calls.Add(1)), len(answers))-1]
+				if a.deployment != "" {
+					w.Header().Set(llmclient.DeploymentHeader, a.deployment)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(a.status)
+				_, _ = w.Write(a.body)
+			}))
+			DeferCleanup(srv.Close)
+			client, err := llmclient.NewClient(config.LLMConfig{GatewayURL: srv.URL, Timeout: 10, MaxRetries: 1})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { client.Close() })
+			return client
+		}
+		complete := func(client llmclient.Client) string {
+			resp, err := client.Complete(testspecs.SetupTenantContext("test-tenant"), &llmclient.CompletionRequest{
+				Model: "gpt-4", Messages: []llmclient.ChatMessage{{Role: "user", Content: "Hi"}}, TenantID: "test-tenant"})
+			Expect(err).NotTo(HaveOccurred())
+			return resp.Deployment
+		}
+		embed := func(client llmclient.Client) string {
+			resp, err := client.Embed(testspecs.SetupTenantContext("test-tenant"), &llmclient.EmbeddingRequest{
+				Model: "text-embedding-ada-002", Input: []string{"hello"}, TenantID: "test-tenant"})
+			Expect(err).NotTo(HaveOccurred())
+			return resp.Deployment
+		}
+		rateLimited := []byte(`{"error":{"message":"rate limited","type":"rate_limit"}}`)
+
+		It("is the gateway's deployment header of a completion", func() {
+			Expect(complete(gateway(answer{http.StatusOK, "e96b0292", completionJSON()}))).To(Equal("e96b0292"))
+		})
+
+		It("is the gateway's deployment header of an embedding", func() {
+			Expect(embed(gateway(answer{http.StatusOK, "e96b0292", embeddingJSON()}))).To(Equal("e96b0292"))
+		})
+
+		It("is empty when the gateway sends no deployment header", func() {
+			Expect(complete(gateway(answer{http.StatusOK, "", completionJSON()}))).To(BeEmpty())
+			Expect(embed(gateway(answer{http.StatusOK, "", embeddingJSON()}))).To(BeEmpty())
+		})
+
+		It("is never taken from a retried error response", func() {
+			Expect(complete(gateway(answer{http.StatusTooManyRequests, "other", rateLimited},
+				answer{http.StatusOK, "", completionJSON()}))).To(BeEmpty())
+			Expect(complete(gateway(answer{http.StatusTooManyRequests, "other", rateLimited},
+				answer{http.StatusOK, "e96b0292", completionJSON()}))).To(Equal("e96b0292"))
+		})
+	})
+
 	Describe("Health", func() {
 		It("returns nil when the gateway is reachable", func() {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -14,12 +14,15 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -68,6 +71,21 @@ func (m *mockKeyProvider) VerificationKey(_ context.Context) (crypto.PublicKey, 
 
 func (m *mockKeyProvider) KeyID(_ context.Context) (string, error) {
 	return "mock-key-id", nil
+}
+
+// tamperPayload returns the signed envelope raw with its payload's digest
+// "aaa" changed to "bbb", leaving its signatures, key IDs included, as they
+// were.
+func tamperPayload(raw []byte) []byte {
+	var env map[string]any
+	ExpectWithOffset(1, json.Unmarshal(raw, &env)).To(Succeed())
+	payload, err := base64.StdEncoding.DecodeString(env["payload"].(string))
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	ExpectWithOffset(1, string(payload)).To(ContainSubstring(`"aaa"`))
+	env["payload"] = base64.StdEncoding.EncodeToString([]byte(strings.Replace(string(payload), `"aaa"`, `"bbb"`, 1)))
+	out, err := json.Marshal(env)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return out
 }
 
 var _ = Describe("Type Definitions", func() {
@@ -565,6 +583,120 @@ var _ = Describe("Verify", Ordered, func() {
 		_, err = gen2.Verify(ctx, link.Raw)
 		Expect(err).To(HaveOccurred())
 		Expect(errors.Is(err, attestation.ErrVerificationFailed)).To(BeTrue())
+	})
+
+	Context("telling a key it does not trust from a bad signature", func() {
+		var trusted, other attestation.Generator
+
+		BeforeAll(func() {
+			trustedKeys, err := attestation.NewEphemeralKeyProvider()
+			Expect(err).NotTo(HaveOccurred())
+			otherKeys, err := attestation.NewEphemeralKeyProvider()
+			Expect(err).NotTo(HaveOccurred())
+			trusted, err = attestation.NewGenerator(trustedKeys)
+			Expect(err).NotTo(HaveOccurred())
+			other, err = attestation.NewGenerator(otherKeys)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("returns ErrUntrustedKey, still wrapping ErrVerificationFailed, for a link signed by another key", func() {
+			ctx := context.Background()
+			link, err := other.CreateLink(ctx, "test", []attestation.Artifact{{URI: "a", Digest: "aaa"}}, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = trusted.Verify(ctx, link.Raw)
+			Expect(err).To(MatchError(attestation.ErrUntrustedKey))
+			Expect(err).To(MatchError(attestation.ErrVerificationFailed))
+		})
+
+		It("names the key IDs the envelope's signatures carry, quoted, so an operator can compare them with retired keys", func() {
+			ctx := context.Background()
+			link, err := other.CreateLink(ctx, "test", []attestation.Artifact{{URI: "a", Digest: "aaa"}}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			var env struct {
+				Signatures []struct {
+					KeyID string `json:"keyid"`
+				} `json:"signatures"`
+			}
+			Expect(json.Unmarshal(link.Raw, &env)).To(Succeed())
+			Expect(env.Signatures).To(HaveLen(1))
+			otherID := env.Signatures[0].KeyID
+
+			_, err = trusted.Verify(ctx, link.Raw)
+			var untrusted *attestation.UntrustedKeyError
+			Expect(errors.As(err, &untrusted)).To(BeTrue())
+			Expect(untrusted.KeyIDs).To(Equal([]string{otherID}))
+			Expect(err.Error()).To(ContainSubstring(strconv.Quote(otherID)))
+		})
+
+		It("keeps at most 4 key IDs, each cut to 128 bytes at a rune boundary, and counts the rest", func() {
+			ctx := context.Background()
+			link, err := other.CreateLink(ctx, "test", []attestation.Artifact{{URI: "a", Digest: "aaa"}}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			var env map[string]any
+			Expect(json.Unmarshal(link.Raw, &env)).To(Succeed())
+			sig := env["signatures"].([]any)[0].(map[string]any)["sig"]
+			// "a" then two-byte runes: byte 128 falls inside a rune.
+			long := "a" + strings.Repeat("é", 200)
+			var sigs []any
+			for i := range 10 {
+				sigs = append(sigs, map[string]any{"keyid": fmt.Sprintf("%d%s", i, long), "sig": sig})
+			}
+			env["signatures"] = sigs
+			raw, err := json.Marshal(env)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = trusted.Verify(ctx, raw)
+			untrusted, ok := errors.AsType[*attestation.UntrustedKeyError](err)
+			Expect(ok).To(BeTrue())
+			Expect(untrusted.KeyIDs).To(HaveLen(4))
+			for i, id := range untrusted.KeyIDs {
+				Expect(len(id)).To(BeNumerically("<=", 128))
+				Expect(utf8.ValidString(id)).To(BeTrue(), "key ID %d was cut inside a rune", i)
+				Expect(id).To(HavePrefix(fmt.Sprintf("%da", i)))
+			}
+			Expect(untrusted.Omitted).To(Equal(6))
+			Expect(err.Error()).To(ContainSubstring("and 6 more"))
+			Expect(len(err.Error())).To(BeNumerically("<", 1024))
+		})
+
+		It("does not return ErrUntrustedKey for a tampered link signed by the trusted key", func() {
+			ctx := context.Background()
+			link, err := trusted.CreateLink(ctx, "test", []attestation.Artifact{{URI: "a", Digest: "aaa"}}, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = trusted.Verify(ctx, tamperPayload(link.Raw))
+			Expect(err).To(MatchError(attestation.ErrVerificationFailed))
+			Expect(err).NotTo(MatchError(attestation.ErrUntrustedKey))
+		})
+
+		It("does not return ErrUntrustedKey for a bad signature that names the trusted key ID", func() {
+			ctx := context.Background()
+			// mockKeyProvider names every key "mock-key-id", so gen2's
+			// signature claims the trusted key ID but does not verify.
+			gen2, err := attestation.NewGenerator(newMockKeyProvider())
+			Expect(err).NotTo(HaveOccurred())
+			link, err := gen2.CreateLink(ctx, "test", []attestation.Artifact{{URI: "a", Digest: "aaa"}}, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = gen.Verify(ctx, link.Raw)
+			Expect(err).To(MatchError(attestation.ErrVerificationFailed))
+			Expect(err).NotTo(MatchError(attestation.ErrUntrustedKey))
+		})
+
+		It("returns ErrUntrustedKey for an envelope with no signature", func() {
+			ctx := context.Background()
+			link, err := trusted.CreateLink(ctx, "test", []attestation.Artifact{{URI: "a", Digest: "aaa"}}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			var env map[string]any
+			Expect(json.Unmarshal(link.Raw, &env)).To(Succeed())
+			env["signatures"] = []any{}
+			unsigned, err := json.Marshal(env)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = trusted.Verify(ctx, unsigned)
+			Expect(err).To(MatchError(attestation.ErrUntrustedKey))
+		})
 	})
 
 	It("returns correct VerifiedLink fields", func() {

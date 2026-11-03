@@ -8,14 +8,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 )
 
-// validRoles is the allowlist of permitted ChatMessage role values.
-// Validated at deserialization to prevent injection via untrusted NATS payloads.
-var validRoles = map[string]bool{
-	"system":    true,
-	"user":      true,
-	"assistant": true,
-}
-
 func extractCompletionRequest(payload *structpb.Struct, tenantID, jobID string) (*llmclient.CompletionRequest, error) {
 	fields := payload.GetFields()
 
@@ -23,26 +15,9 @@ func extractCompletionRequest(payload *structpb.Struct, tenantID, jobID string) 
 	if !ok {
 		return nil, fmt.Errorf("missing required field 'messages': %w", ErrInvalidPayload)
 	}
-	msgList := msgValue.GetListValue()
-	if msgList == nil {
-		return nil, fmt.Errorf("field 'messages' must be a list: %w", ErrInvalidPayload)
-	}
-
-	messages := make([]llmclient.ChatMessage, 0, len(msgList.Values))
-	for i, v := range msgList.Values {
-		msgStruct := v.GetStructValue()
-		if msgStruct == nil {
-			return nil, fmt.Errorf("messages[%d] must be a struct: %w", i, ErrInvalidPayload)
-		}
-		role := msgStruct.Fields["role"].GetStringValue()
-		if role == "" {
-			return nil, fmt.Errorf("messages[%d] missing required field 'role': %w", i, ErrInvalidPayload)
-		}
-		if !validRoles[role] {
-			return nil, fmt.Errorf("messages[%d] has invalid role %q: must be one of system, user, assistant: %w", i, role, ErrInvalidPayload)
-		}
-		content := msgStruct.Fields["content"].GetStringValue()
-		messages = append(messages, llmclient.ChatMessage{Role: role, Content: content})
+	messages, err := llmclient.MessagesFromPayload(msgValue)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", err, ErrInvalidPayload)
 	}
 
 	// Verify content_hash if present. Analyzers embed the hash so workers can
@@ -97,13 +72,19 @@ func buildCompletionResult(resp *llmclient.CompletionResponse) (*structpb.Struct
 		response = resp.Choices[0].Message.Content
 	}
 
-	return structpb.NewStruct(map[string]interface{}{
+	fields := map[string]interface{}{
 		"response":          response,
 		"model":             resp.Model,
 		"tokens_used":       float64(resp.Usage.TotalTokens),
 		"prompt_tokens":     float64(resp.Usage.PromptTokens),
 		"completion_tokens": float64(resp.Usage.CompletionTokens),
-	})
+	}
+	// The result cache stores a result only when its deployment is the one
+	// the job's model probe observed (internal/analysis putResults).
+	if resp.Deployment != "" {
+		fields["deployment"] = resp.Deployment
+	}
+	return structpb.NewStruct(fields)
 }
 
 func buildEmbeddingResult(resp *llmclient.EmbeddingResponse) (*structpb.Struct, error) {
@@ -121,12 +102,16 @@ func buildEmbeddingResult(resp *llmclient.EmbeddingResponse) (*structpb.Struct, 
 		dimensions = len(resp.Data[0].Embedding)
 	}
 
-	return structpb.NewStruct(map[string]interface{}{
+	fields := map[string]interface{}{
 		"embeddings":  embeddings,
 		"model":       resp.Model,
 		"tokens_used": float64(resp.Usage.TotalTokens),
 		"dimensions":  float64(dimensions),
-	})
+	}
+	if resp.Deployment != "" {
+		fields["deployment"] = resp.Deployment
+	}
+	return structpb.NewStruct(fields)
 }
 
 func getStringField(fields map[string]*structpb.Value, key string) string {

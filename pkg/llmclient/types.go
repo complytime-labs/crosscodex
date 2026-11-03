@@ -25,6 +25,13 @@ const (
 	RoleAssistant = "assistant"
 )
 
+// DeploymentHeader is the response header in which a LiteLLM gateway names
+// the deployment that answered: a hash of the deployment's parameters,
+// which changes when the model behind an alias changes. Gateways that do
+// not send it leave CompletionResponse.Deployment and
+// EmbeddingResponse.Deployment empty.
+const DeploymentHeader = "x-litellm-model-id"
+
 // --- Request types (outgoing to OpenAI-compatible API) ---
 
 // ChatMessage represents a single message in a chat conversation.
@@ -63,6 +70,9 @@ type CompletionResponse struct {
 	Model   string             `json:"model"`
 	Choices []CompletionChoice `json:"choices"`
 	Usage   TokenUsage         `json:"usage"`
+	// Deployment is the DeploymentHeader of the successful response, as
+	// sent (not validated), or "" when absent.
+	Deployment string `json:"-"`
 }
 
 // CompletionChoice is a single completion result.
@@ -84,6 +94,9 @@ type EmbeddingResponse struct {
 	Data  []EmbeddingData `json:"data"`
 	Model string          `json:"model"`
 	Usage EmbeddingUsage  `json:"usage"`
+	// Deployment is the DeploymentHeader of the successful response, as
+	// sent (not validated), or "" when absent.
+	Deployment string `json:"-"`
 }
 
 // EmbeddingData holds a single embedding vector.

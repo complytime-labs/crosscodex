@@ -1,9 +1,14 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"strings"
 
+	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
 var ErrNotFound = errors.New("pipeline: not found")
@@ -21,7 +26,8 @@ var ErrJobCancelled = errors.New("pipeline: job cancelled")
 var errServiceStopping = errors.New("pipeline: service stopping")
 
 // ErrAnalyzersChanged reports that the analyzers a job was created with are
-// not the ones the daemon now runs, so the job cannot resume.
+// not the ones the daemon now runs, so the job cannot resume. Its errors
+// are tenantErrors: their text reaches the tenant.
 var ErrAnalyzersChanged = errors.New("the enabled analyzers changed since the job was created")
 
 // ErrAttestationSigning reports that part of a job's attestation (its
@@ -38,6 +44,12 @@ var ErrAttestationStorage = errors.New("attestation could not be stored")
 // stored link is missing, modified or signed with another key, or the chain
 // is broken. Retrying the job cannot fix it.
 var ErrAttestationInvalid = errors.New("attestation does not verify")
+
+// ErrLLMUnavailable reports that the per-job model probe (#243) did not
+// complete, so the job stopped before any analysis LLM call. The gateway
+// may be down or may have refused the probe; a retry may succeed once it
+// works.
+var ErrLLMUnavailable = errors.New("the model gateway did not complete a probe request before analysis")
 
 // JobErrorClass classifies why a job failed, so RetryJob can refuse a retry
 // that cannot succeed. It is stored with the job (jobs.error_class), because
@@ -56,6 +68,19 @@ const (
 	// JobErrorEmptyTargetCatalog is ErrEmptyTargetCatalog. Catalog IDs are
 	// content hashes, so a retry reads the same empty target.
 	JobErrorEmptyTargetCatalog JobErrorClass = "empty_target_catalog"
+	// JobErrorResultCacheUnavailable is resultcache.ErrUnavailable: the
+	// cache could not be read, its audit rows written or its record
+	// sealed. Retryable.
+	JobErrorResultCacheUnavailable JobErrorClass = "result_cache_unavailable"
+	// JobErrorResultCacheCorrupt is resultcache.ErrCorrupt: a cached result
+	// or a stage's cache record failed its integrity check. A retry reads
+	// the same cache, so both retry forms are refused, except a new job
+	// from a --no-cache job, which looks nothing up; a new job with
+	// --no-cache replaces the cached results.
+	JobErrorResultCacheCorrupt JobErrorClass = "result_cache_corrupt"
+	// JobErrorLLMUnavailable is ErrLLMUnavailable: the model probe failed
+	// before any analysis LLM call. Retryable.
+	JobErrorLLMUnavailable JobErrorClass = "llm_unavailable"
 )
 
 // ClassifyJobError returns the class of a job's failure err, by the
@@ -70,6 +95,14 @@ func ClassifyJobError(err error) JobErrorClass {
 		return JobErrorMissingCatalog
 	case errors.Is(err, ErrEmptyTargetCatalog):
 		return JobErrorEmptyTargetCatalog
+	// Corrupt before unavailable: a job whose analyzers failed with both
+	// takes the class a retry cannot fix.
+	case errors.Is(err, resultcache.ErrCorrupt):
+		return JobErrorResultCacheCorrupt
+	case errors.Is(err, resultcache.ErrUnavailable):
+		return JobErrorResultCacheUnavailable
+	case errors.Is(err, ErrLLMUnavailable):
+		return JobErrorLLMUnavailable
 	default:
 		return JobErrorRetryable
 	}
@@ -86,9 +119,100 @@ func retryRefusal(class JobErrorClass) string {
 		return "its config names no catalog to analyse"
 	case JobErrorEmptyTargetCatalog:
 		return "its target catalog has no control with a statement, and a retry reads the same catalog"
+	case JobErrorResultCacheCorrupt:
+		return "a cached result failed its integrity check, or a stage run's cache record did not match what the stage wrote, " +
+			"and a retry reads the same cache"
 	default:
 		return ""
 	}
+}
+
+// jobFailure is a failure as it is recorded where the tenant reads it: a
+// job's or a stage's error_message, which GetJob and ListJobs return. Error
+// returns the message written for the tenant; Unwrap returns the error the
+// job or stage failed with, so ClassifyJobError classifies by its sentinel,
+// not by the message.
+type jobFailure struct {
+	message string
+	err     error
+}
+
+func (f *jobFailure) Error() string { return f.message }
+
+func (f *jobFailure) Unwrap() error { return f.err }
+
+// tenantFailure returns err, the failure of job jobID or of one of its
+// stages, as it is recorded for the tenant: its text is tenantJobMessage's.
+// job is nil when it could not be loaded.
+func tenantFailure(ctx context.Context, jobID string, job *Job, err error) *jobFailure {
+	return &jobFailure{message: tenantJobMessage(ctx, jobID, job, err), err: err}
+}
+
+// tenantError is a job failure whose text is written for the tenant, as
+// analysis.StageError's is for a stage: Error returns message only, and
+// Unwrap returns sentinel only, so no other error's text can be in it.
+// Wrapping a sentinel in fmt.Errorf instead makes its text internal.
+type tenantError struct {
+	sentinel error
+	message  string
+}
+
+func (e *tenantError) Error() string { return e.message }
+
+func (e *tenantError) Unwrap() error { return e.sentinel }
+
+// tenantJobMessage returns the message recorded for job jobID's failure
+// err, which GetJob shows to the tenant, so it never carries driver,
+// storage or panic text (CWE-209); failJob logs err in full. It is the
+// text of each analysis.StageError and tenantError in err, the only errors
+// whose text is written for the tenant. Otherwise it is a fixed message
+// naming err's class, the way to run the job again that its class allows,
+// and the reference the operator finds err by. job is nil when it could
+// not be loaded, and its commands then name placeholder catalogs.
+func tenantJobMessage(ctx context.Context, jobID string, job *Job, err error) string {
+	if msgs := tenantMessages(err); len(msgs) > 0 {
+		return strings.Join(msgs, " ")
+	}
+	failed := Job{JobID: jobID, ErrorClass: ClassifyJobError(err)}
+	if job != nil {
+		failed.Config = job.Config
+	}
+	var head, remedy string
+	if retryRefusal(failed.ErrorClass) == "" {
+		class := string(failed.ErrorClass)
+		if failed.ErrorClass == JobErrorRetryable {
+			class = "retryable"
+		}
+		head = fmt.Sprintf("job %s failed because of an internal error (error class %s).", jobID, class)
+		remedy = fmt.Sprintf("Resume it with \"crosscodex run retry --from-failure %s\", which keeps its completed stages, "+
+			"or start a new job: %s.", jobID, newJobCommand(&failed))
+	} else {
+		head = fmt.Sprintf("job %s failed because of an internal error (error class %s), "+
+			"which a retry from its failure cannot fix.", jobID, failed.ErrorClass)
+		remedy = retryRemedy(&failed) + "."
+	}
+	return fmt.Sprintf("%s %s If it fails again, give your operator %s.", head, remedy, analysis.TraceReference(ctx, jobID))
+}
+
+// tenantMessages returns the text of every analysis.StageError and
+// tenantError in err's tree, in order. errors.As would find only the
+// first, and the analysis pass joins one per failed analyzer.
+func tenantMessages(err error) []string {
+	switch e := err.(type) {
+	case *analysis.StageError:
+		return []string{e.Message}
+	case *tenantError:
+		return []string{e.message}
+	case interface{ Unwrap() error }:
+		return tenantMessages(e.Unwrap())
+	case interface{ Unwrap() []error }:
+		var msgs []string
+		for _, u := range e.Unwrap() {
+			msgs = append(msgs, tenantMessages(u)...)
+		}
+		return msgs
+	}
+	return nil
 }
 
 // retryRemedy is the sentence a refused retry of job ends with: the command
@@ -102,6 +226,9 @@ func retryRemedy(job *Job) string {
 		return "Importing the target again with control statements gives it a new catalog ID, " +
 			"so start a new job with that catalog or another target: " + jobCommand(cats, cats.SourceID, "<catalog-id>")
 	}
+	if job.ErrorClass == JobErrorResultCacheCorrupt {
+		return "Start a new job with --no-cache, which recomputes and replaces the cached results: " + noCacheCommand(job)
+	}
 	return "Start a new job: " + newJobCommand(job)
 }
 
@@ -111,5 +238,6 @@ var ErrCatalogNotFound = errors.New("catalog not found for the tenant")
 
 // ErrEmptyTargetCatalog reports a job mapping a source catalog onto a target
 // catalog that has no control with a statement: nothing could be mapped onto
-// it, so the job fails before any analyzer spends LLM calls.
+// it, so the job fails before any analyzer spends LLM calls. Its errors are
+// tenantErrors: their text reaches the tenant.
 var ErrEmptyTargetCatalog = errors.New("target catalog has no control with a statement")

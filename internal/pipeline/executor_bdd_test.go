@@ -21,6 +21,7 @@ import (
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -36,8 +37,10 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	storagepkg "github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -93,6 +96,14 @@ type fakeAttestation struct {
 	linkErr     error
 	linkErrOn   string
 	verifyErr   error
+	// verifies counts Verify calls: each copies the envelope to a
+	// temporary file, so none means nothing was written.
+	verifies atomic.Int32
+}
+
+func (f *fakeAttestation) Verify(ctx context.Context, data []byte) (*attestation.VerifiedLink, error) {
+	f.verifies.Add(1)
+	return f.Generator.Verify(ctx, data)
 }
 
 type fakeLinkCall struct {
@@ -311,6 +322,13 @@ func (d *executorTestDispatcher) Dispatch(_ context.Context, tasks []analyzer.Ta
 	return nil
 }
 
+// dispatchCount is how many Dispatch calls were accepted.
+func (d *executorTestDispatcher) dispatchCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.dispatches)
+}
+
 func (d *executorTestDispatcher) Redispatch(_ context.Context, _ analyzer.Task, _ natsbus.TaskType, _, _ string, _ int) error {
 	return nil
 }
@@ -496,6 +514,22 @@ var _ = Describe("Executor", func() {
 		}
 	}
 
+	// expectWithheld asserts that text is in no part of the GetJob and
+	// ListJobs responses for the job, its stages' errors included.
+	expectWithheld := func(s *pipeline.Service, text string) {
+		GinkgoHelper()
+		got, err := s.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: jobID}))
+		Expect(err).NotTo(HaveOccurred())
+		list, err := s.ListJobs(ctx, connect.NewRequest(&pb.ListJobsRequest{}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(list.Msg.GetJobs()).NotTo(BeEmpty())
+		for _, m := range []proto.Message{got.Msg, list.Msg} {
+			raw, err := protojson.Marshal(m)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(raw)).NotTo(ContainSubstring(text))
+		}
+	}
+
 	Describe("executeJob", func() {
 		// A job keeps the stages it was created with. When the daemon's
 		// enabled analyzers no longer match them (an analyzer was disabled or
@@ -619,6 +653,35 @@ var _ = Describe("Executor", func() {
 				}
 				return j.Status
 			}, "1s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+		})
+
+		// The panic recovery keeps the job's trace, so the tenant's message
+		// names the trace the operator finds the panic under.
+		It("gives the tenant the trace ID of a job that panicked", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+			traced := pipeline.New(store, engine, registry, synth, attestedBy(attestor), converter, bus, storage,
+				config.PipelineConfig{MaxConcurrentJobs: 10}, nil, pipeline.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+			Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"analyzer-a", "analyzer-b", "synthesis", "graph"})).To(Succeed())
+			store.getStagesPanics = true
+
+			Expect(traced.Start(ctx)).To(Succeed())
+			DeferCleanup(func() { Expect(traced.Stop(context.Background())).To(Succeed()) })
+			Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+			traceID := func() string {
+				for _, sp := range tp.GetSpans() {
+					if sp.Name() == "pipeline.ExecuteJob" {
+						return sp.SpanContext().TraceID().String()
+					}
+				}
+				return ""
+			}
+			Eventually(traceID).ShouldNot(BeEmpty())
+			j, err := store.GetJob(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(j.ErrorMessage).To(HaveSuffix("give your operator trace ID " + traceID() + "."))
 		})
 
 		It("runs analysis, synthesis, and graph phases in order", func() {
@@ -879,7 +942,8 @@ var _ = Describe("Executor", func() {
 			Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
 			job, err := store.GetJob(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(job.ErrorMessage).To(And(
+			Expect(job.ErrorMessage).To(ContainSubstring("failed because of an internal error (error class retryable)"))
+			Expect(store.failureCause(jobID)).To(And(
 				ContainSubstring("attestation layout could not be signed"),
 				ContainSubstring("signer unavailable"),
 				ContainSubstring("No analyzer ran"),
@@ -1073,6 +1137,49 @@ var _ = Describe("Executor", func() {
 			}, "1s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 		})
 
+		// Safety mechanism (CWE-209): GetJob and ListJobs return each stage's
+		// error to the tenant, so a stage that failed with internal text
+		// records the generic message, and the job's error keeps the cause
+		// for the operator's log.
+		DescribeTable("returns no stage's internal error text from GetJob or ListJobs",
+			func(serviceFor func() *pipeline.Service, stage string) {
+				s := serviceFor()
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+				Expect(s.Start(ctx)).To(Succeed())
+				DeferCleanup(func() { Expect(s.Stop(context.Background())).To(Succeed()) })
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				stages, err := store.GetStages(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(findStage(stages, stage).Status).To(Equal(pipeline.StageStatusFailed))
+				Expect(findStage(stages, stage).ErrorMessage).To(HavePrefix("job " + jobID + " failed because of an internal error (error class retryable)."))
+				expectWithheld(s, "SECRET")
+			},
+			Entry("an analyzer whose work could not be generated", func() *pipeline.Service {
+				reg := analyzer.NewRegistry()
+				a := newControlStub("analyzer-a")
+				a.GenerateWorkFunc = func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return nil, errors.New(`SECRET pq: relation "controls" does not exist`)
+				}
+				Expect(analyzer.Register[*pb.Control](reg, a)).To(Succeed())
+				Expect(analyzer.Register[*pb.Control](reg, newControlStub("analyzer-b", "analyzer-a"))).To(Succeed())
+				eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{},
+					config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},
+					map[string]natsbus.TaskType{"analyzer-a": "classify", "analyzer-b": "relate"},
+					analysis.WithStageReporter(pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)))
+				return pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10}, nil,
+					pipeline.WithCatalogControlsReader(&fakeCatalogControlsReader{controls: []*pb.Control{
+						{ControlId: "c1", CatalogId: "cat-1", Statement: "s"}}}))
+			}, "analyzer-a"),
+			Entry("synthesis, whose link could not be signed", func() *pipeline.Service {
+				attestor.linkErr = errors.New("SECRET open /etc/crosscodex/keys/signing.pem: permission denied")
+				attestor.linkErrOn = "synthesis"
+				return svc
+			}, "synthesis"),
+		)
+
 		It("fails the job, storing no bundle, when its attestation chain does not verify", func() {
 			attestor.verifyErr = fmt.Errorf("chain broken between step %q and step %q: %w", "analyzer-a", "analyzer-b", attestation.ErrChainBroken)
 			Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
@@ -1084,7 +1191,8 @@ var _ = Describe("Executor", func() {
 			Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
 			job, err := store.GetJob(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(job.ErrorMessage).To(And(
+			Expect(job.ErrorMessage).To(ContainSubstring("failed because of an internal error (error class attestation_invalid)"))
+			Expect(store.failureCause(jobID)).To(And(
 				ContainSubstring("its attestation does not verify"),
 				ContainSubstring(`step "analyzer-a" and step "analyzer-b"`),
 				ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
@@ -1114,11 +1222,8 @@ var _ = Describe("Executor", func() {
 				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
 				Expect(s.Start(ctx)).To(Succeed())
 			}
-			errorOf := func() string {
-				job, err := store.GetJob(ctx, jobID)
-				Expect(err).NotTo(HaveOccurred())
-				return job.ErrorMessage
-			}
+			// errorOf is the error the job failed with, which failJob logs.
+			errorOf := func() string { return store.failureCause(jobID) }
 			stageStatuses := func() map[string]pipeline.StageStatus {
 				stages, err := store.GetStages(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
@@ -1360,6 +1465,76 @@ var _ = Describe("Executor", func() {
 				Entry("a deleted link", func(key string) {
 					Expect(storage.Delete(ctx, key)).To(Succeed())
 				}, "is missing"),
+			)
+
+			It("keeps a resumed job's error bounded when a stored link names many long key IDs", func() {
+				runJob(svc)
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(svc.Stop(ctx)).To(Succeed())
+				Expect(storage.Delete(ctx, bundleKey())).To(Succeed())
+				Expect(store.UpdateJobStatus(ctx, jobID, pipeline.JobStatusRunning, nil)).To(Succeed())
+				// The link's signature, under keyids the daemon does not
+				// trust, ten times over and each 10 KB long.
+				key := linkKey("synthesis")
+				var env map[string]any
+				Expect(json.Unmarshal(storage.Objects()[key], &env)).To(Succeed())
+				sig := env["signatures"].([]any)[0].(map[string]any)["sig"]
+				var sigs []any
+				for i := range 10 {
+					sigs = append(sigs, map[string]any{"keyid": fmt.Sprintf("%d%s", i, strings.Repeat("k", 10000)), "sig": sig})
+				}
+				env["signatures"] = sigs
+				planted, err := json.Marshal(env)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(storage.Put(ctx, key, bytes.NewReader(planted))).To(Succeed())
+
+				resumed := serviceWith(attestedBy(attestor), storage)
+				Expect(resumed.Start(ctx)).To(Succeed())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				msg := errorOf()
+				Expect(msg).To(And(ContainSubstring(`step "synthesis"`), ContainSubstring("and 6 more")))
+				Expect(len(msg)).To(BeNumerically("<", 2048), "error_message: %d bytes", len(msg))
+			})
+
+			// A stored link is read back bounded: an object a storage writer
+			// replaced with a huge one must not exhaust the daemon's memory
+			// or, through Verify's temporary file, its disk.
+			DescribeTable("bounds the stored link a resumed job reads back",
+				func(extra int, refused bool) {
+					runJob(svc)
+					Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+					Expect(svc.Stop(ctx)).To(Succeed())
+					Expect(storage.Delete(ctx, bundleKey())).To(Succeed())
+					Expect(store.UpdateJobStatus(ctx, jobID, pipeline.JobStatusRunning, nil)).To(Succeed())
+					// JSON allows trailing whitespace, so the padded link is
+					// still the genuine, verifying envelope.
+					key := linkKey("synthesis")
+					raw := storage.Objects()[key]
+					padded := append(slices.Clone(raw), bytes.Repeat([]byte(" "), pipeline.MaxAttestationObjectBytes-len(raw)+extra)...)
+					Expect(storage.Put(ctx, key, bytes.NewReader(padded))).To(Succeed())
+					verifies := attestor.verifies.Load()
+
+					resumed := serviceWith(attestedBy(attestor), storage)
+					Expect(resumed.Start(ctx)).To(Succeed())
+
+					if !refused {
+						Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+						return
+					}
+					Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+					job, err := store.GetJob(ctx, jobID)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(job.ErrorClass).To(Equal(pipeline.JobErrorAttestationInvalid))
+					Expect(store.failureCause(jobID)).To(And(
+						ContainSubstring(strconv.Quote(key)),
+						ContainSubstring("larger than the 1048576-byte limit"),
+						ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
+					Expect(attestor.verifies.Load()).To(Equal(verifies), "the oversized link was not verified, so no temporary file was written")
+					Expect(storage.Objects()[key]).To(Equal(padded))
+				},
+				Entry("a link of exactly the limit is read and verified", 0, false),
+				Entry("a link one byte over the limit is refused unread", 1, true),
 			)
 
 			It("fails a resumed job whose stored link was replayed from another job of the tenant, leaving every object as it was", func() {
@@ -1649,7 +1824,7 @@ var _ = Describe("Executor", func() {
 		})
 
 		It("fails the analysis and skips the candidate-dependent pass when generation errors", func() {
-			gen := &fakeCandidateGen{err: errors.New("candidate boom")}
+			gen := &fakeCandidateGen{err: errors.New("SECRET candidate boom")}
 
 			svc = pipeline.New(store, twoPassEngine, twoPassRegistry, synth, pipeline.Attestors{}, converter, bus, storage,
 				config.PipelineConfig{MaxConcurrentJobs: 10},
@@ -1681,7 +1856,10 @@ var _ = Describe("Executor", func() {
 			Expect(stageStatus("candidate_generation")).To(Equal(pipeline.StageStatusFailed))
 			stages, err := store.GetStages(ctx, jobID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(findStage(stages, "candidate_generation").ErrorMessage).To(ContainSubstring("candidate boom"))
+			Expect(findStage(stages, "candidate_generation").ErrorMessage).To(
+				HavePrefix("job " + jobID + " failed because of an internal error (error class retryable)."))
+			Expect(store.failureCause(jobID)).To(ContainSubstring("SECRET candidate boom"))
+			expectWithheld(svc, "SECRET")
 		})
 
 		// Safety mechanism: a stored config without catalog_id (a pre-#212 row,
@@ -1745,8 +1923,8 @@ var _ = Describe("Executor", func() {
 			// embedding durably (job_stages row + analysis_results row) before
 			// crashing. A fresh executeJob (this call to svc.Start) must treat
 			// them as already done, not re-dispatch them.
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`))).To(Succeed())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`))).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`), "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`), "")).To(Succeed())
 
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -1834,13 +2012,13 @@ var _ = Describe("Executor", func() {
 			// embedding, requires, and relationship durably (requires and
 			// relationship with real result payloads) before crashing.
 			// artifacts did not finish before the crash.
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`))).To(Succeed())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`))).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`), "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`), "")).To(Succeed())
 			requiresJSON, err := json.Marshal([]results.RequiresResult{
 				{SourceID: "AC-1", TargetID: "AC-2", Confidence: 0.9},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "requires", requiresJSON)).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "requires", requiresJSON, "")).To(Succeed())
 			relJSON, err := json.Marshal([]results.SemanticMatchResult{
 				{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "supports", Confidence: 0.8,
 					Properties: map[string]string{
@@ -1849,7 +2027,7 @@ var _ = Describe("Executor", func() {
 					}},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "relationship", relJSON)).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "relationship", relJSON, "")).To(Succeed())
 
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -1892,13 +2070,17 @@ var _ = Describe("Executor", func() {
 		Describe("across two catalogs", func() {
 			// startJob runs a job with config over reader's catalogs, with
 			// classify, embedding and artifacts registered (as in
-			// production, all per-control) and returns their stubs.
-			startJob := func(jobConfig string, reader *fakeCatalogControlsReader) []*analyzertest.Stub[*pb.Control] {
+			// production, all per-control) and returns their stubs. Each
+			// configure func scripts the stubs before the job starts.
+			startJob := func(jobConfig string, reader *fakeCatalogControlsReader, configure ...func([]*analyzertest.Stub[*pb.Control])) []*analyzertest.Stub[*pb.Control] {
 				reg := analyzer.NewRegistry()
 				stubs := []*analyzertest.Stub[*pb.Control]{
 					newControlStub("classify"),
 					newControlStub("embedding", "classify"),
 					newControlStub("artifacts", "classify"),
+				}
+				for _, c := range configure {
+					c(stubs)
 				}
 				for _, s := range stubs {
 					Expect(analyzer.Register[*pb.Control](reg, s)).To(Succeed())
@@ -1975,7 +2157,7 @@ var _ = Describe("Executor", func() {
 				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(j.ErrorMessage).To(SatisfyAll(
+				Expect(store.failureCause(jobID)).To(SatisfyAll(
 					ContainSubstring("catalog cat-gone was not found"),
 					ContainSubstring(pipeline.ErrCatalogNotFound.Error()),
 					ContainSubstring("it may have been deleted or purged. Import the same file again (it gets the same catalog ID)"),
@@ -1987,6 +2169,29 @@ var _ = Describe("Executor", func() {
 				for _, s := range stubs {
 					Expect(s.Inputs()).To(BeEmpty(), s.Name())
 				}
+			})
+
+			// The engine's result-cache failures are classified by their
+			// class sentinel, and their tenant message is the job's.
+			It("fails a job whose stage stopped on a result-cache error with that error's class and message", func() {
+				reader := &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+					"cat-src": {{ControlId: "s1", CatalogId: "cat-src", Statement: "Source one."}},
+				}}
+				stageErr := &analysis.StageError{Analyzer: "classify", Sentinel: resultcache.ErrCorrupt,
+					Cause:   errors.New("dial tcp 10.0.0.7:5432: driver detail"),
+					Message: `Stage "classify" stopped: a cached result failed its integrity check.`}
+				startJob(`{"catalog_id":"cat-src"}`, reader, func(stubs []*analyzertest.Stub[*pb.Control]) {
+					stubs[0].GenerateWorkFunc = func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+						return nil, stageErr
+					}
+				})
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorResultCacheCorrupt))
+				Expect(j.ErrorMessage).To(Equal(stageErr.Message))
+				Expect(store.failureCause(jobID)).To(ContainSubstring("analysis failed: 1 analyzers failed: [classify]"))
 			})
 
 			// Safety mechanism: a crosswalk onto a target with nothing to
@@ -2276,7 +2481,7 @@ var _ = Describe("Executor", func() {
 				Expect(store.CreateJob(ctx, job)).To(Succeed())
 				Expect(store.CreateStages(ctx, jobID, []string{"classify", "candidate_generation", "requires", "relationship", "synthesis", "graph"})).To(Succeed())
 				if resumed {
-					Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", classifyResult)).To(Succeed())
+					Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", classifyResult, "")).To(Succeed())
 				}
 
 				runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -2392,7 +2597,8 @@ var _ = Describe("Executor", func() {
 				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(j.ErrorMessage).To(ContainSubstring("catalog cat-gone was not found"))
+				Expect(j.ErrorMessage).To(ContainSubstring("failed because of an internal error (error class retryable)"))
+				Expect(store.failureCause(jobID)).To(ContainSubstring("catalog cat-gone was not found"))
 				mu.Lock()
 				defer mu.Unlock()
 				Expect(params).To(BeEmpty())
@@ -2415,7 +2621,7 @@ var _ = Describe("Executor", func() {
 
 					j, err := store.GetJob(ctx, jobID)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(j.ErrorMessage).To(SatisfyAll(
+					Expect(store.failureCause(jobID)).To(SatisfyAll(
 						ContainSubstring("catalog cat-gone was not found"),
 						ContainSubstring(pipeline.ErrCatalogNotFound.Error()),
 						ContainSubstring("it may have been deleted or purged. Import the same file again (it gets the same catalog ID)"),
@@ -2444,7 +2650,7 @@ var _ = Describe("Executor", func() {
 
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(j.ErrorMessage).To(SatisfyAll(
+				Expect(store.failureCause(jobID)).To(SatisfyAll(
 					ContainSubstring("the name of catalog cat-1 could not be read: connection refused"),
 					ContainSubstring("crosscodex run retry --from-failure "+jobID),
 					Not(ContainSubstring("deleted or purged")),
@@ -2479,7 +2685,8 @@ var _ = Describe("Executor", func() {
 
 				j, err := store.GetJob(ctx, jobID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(j.ErrorMessage).To(ContainSubstring("classify results"))
+				Expect(j.ErrorMessage).To(ContainSubstring("failed because of an internal error (error class retryable)"))
+				Expect(store.failureCause(jobID)).To(ContainSubstring("classify results"))
 				mu.Lock()
 				defer mu.Unlock()
 				Expect(params).To(BeEmpty())

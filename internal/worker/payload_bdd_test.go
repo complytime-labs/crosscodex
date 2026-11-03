@@ -249,6 +249,36 @@ var _ = Describe("buildEmbeddingResult", func() {
 	})
 })
 
+var _ = Describe("the deployment of a result", func() {
+	type build func(deployment string) (*structpb.Struct, error)
+	completion := func(deployment string) (*structpb.Struct, error) {
+		return buildCompletionResult(&llmclient.CompletionResponse{Model: "default", Deployment: deployment})
+	}
+	embedding := func(deployment string) (*structpb.Struct, error) {
+		return buildEmbeddingResult(&llmclient.EmbeddingResponse{Model: "default", Deployment: deployment})
+	}
+
+	DescribeTable("is the response's deployment when the gateway sent one",
+		func(b build) {
+			result, err := b("e96b0292")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Fields).To(HaveKeyWithValue("deployment", HaveField("GetStringValue()", "e96b0292")))
+		},
+		Entry("completion", build(completion)),
+		Entry("embedding", build(embedding)),
+	)
+
+	DescribeTable("is absent when the gateway sent none",
+		func(b build) {
+			result, err := b("")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Fields).NotTo(HaveKey("deployment"))
+		},
+		Entry("completion", build(completion)),
+		Entry("embedding", build(embedding)),
+	)
+})
+
 var _ = Describe("errorCategory", func() {
 	DescribeTable("maps errors to categories",
 		func(err error, expected string) {

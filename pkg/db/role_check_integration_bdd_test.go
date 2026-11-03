@@ -87,6 +87,44 @@ var _ = Describe("Schema version and restricted role checks", func() {
 				ContainSubstring("crosscodexd migrate"))))
 		})
 
+		It("tells the operator to recreate a database whose stages do not name their sealing cache attempt, as app_user", func() {
+			ctx, tx := roleCheckTx()
+			mustExec(ctx, tx, "ALTER TABLE job_stages DROP COLUMN cache_attempt")
+			mustExec(ctx, tx, "SET LOCAL ROLE app_user")
+			err := db.CheckSchemaVersion(ctx, tx)
+			Expect(err).To(MatchError(And(
+				ContainSubstring("job_stages.cache_attempt"),
+				ContainSubstring("created by an earlier build"),
+				ContainSubstring("task deploy:down VOLUMES=1"))))
+		})
+
+		It("tells the operator to recreate a database whose cache rows do not name their producing attempt, as app_user", func() {
+			ctx, tx := roleCheckTx()
+			mustExec(ctx, tx, "ALTER TABLE llm_result_cache DROP COLUMN producer_attempt")
+			mustExec(ctx, tx, "SET LOCAL ROLE app_user")
+			err := db.CheckSchemaVersion(ctx, tx)
+			Expect(err).To(MatchError(And(
+				ContainSubstring("llm_result_cache.producer_attempt"),
+				ContainSubstring("created by an earlier build"),
+				ContainSubstring("task deploy:down VOLUMES=1"))))
+		})
+
+		DescribeTable("tells the operator to recreate a database created before the result-cache tables, as app_user",
+			func(table, column string) {
+				ctx, tx := roleCheckTx()
+				mustExec(ctx, tx, "DROP TABLE "+table)
+				mustExec(ctx, tx, "SET LOCAL ROLE app_user")
+				err := db.CheckSchemaVersion(ctx, tx)
+				Expect(err).To(MatchError(And(
+					ContainSubstring(table+"."+column),
+					ContainSubstring("created by an earlier build"),
+					ContainSubstring("task deploy:down VOLUMES=1"))))
+			},
+			Entry("llm_result_cache", "llm_result_cache", "cache_key"),
+			Entry("job_cache_entries", "job_cache_entries", "attempt"),
+			Entry("job_cache_stats", "job_cache_stats", "attempt"),
+		)
+
 		It("tells the operator to recreate a database whose functions come from an earlier baseline, as app_user", func() {
 			ctx, tx := roleCheckTx()
 			mustExec(ctx, tx, "DROP FUNCTION public.resumable_jobs()")

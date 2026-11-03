@@ -112,7 +112,17 @@ func (p *pgPool) Begin(ctx context.Context) (Transaction, error) {
 	ctx, span := p.startSpan(ctx, "db.Begin")
 	defer span.End()
 
-	tx, err := p.db.BeginTx(ctx, nil)
+	var opts *sql.TxOptions
+	if level, ok := IsolationFromContext(ctx); ok {
+		iso, known := sqlIsolation[level]
+		if !known {
+			err := fmt.Errorf("cannot begin transaction: unknown isolation level %q. Use one of the db.Isolation* constants", level)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, err
+		}
+		opts = &sql.TxOptions{Isolation: iso}
+	}
+	tx, err := p.db.BeginTx(ctx, opts)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)

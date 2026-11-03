@@ -16,6 +16,7 @@ llm:
   allowed_models: []
   max_retries: 3
   timeout: 30
+  model_revisions: {}
 storage:
   objects:
     backend: local
@@ -164,6 +165,9 @@ analysis:
     panel_concurrency: 4
     retry_base_delay: 1m
     retry_max_delay: 24h
+  result_cache:
+    enabled: true
+    lookup_batch_size: 1000
 worker:
   queue_group: "llm-workers"
   max_abandoned_collections: 10000

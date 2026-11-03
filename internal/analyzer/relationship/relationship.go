@@ -3,6 +3,7 @@ package relationship
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -312,6 +313,39 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 	span.SetAttributes(attribute.Int("task.count", len(tasks)))
 	span.SetStatus(codes.Ok, "")
 	return tasks, nil
+}
+
+var _ analyzer.Cacheable = (*RelationshipAnalyzer)(nil)
+
+// CacheModels implements analyzer.Cacheable: one completion model per panel
+// member in analysis.relationship.models.
+func (a *RelationshipAnalyzer) CacheModels() []analyzer.ModelUse {
+	uses := make([]analyzer.ModelUse, 0, len(a.cfg.Models))
+	for _, m := range a.cfg.Models {
+		uses = append(uses, analyzer.ModelUse{Alias: m, Kind: analyzer.ModelCompletion})
+	}
+	return uses
+}
+
+// CacheIdentity implements analyzer.Cacheable from the task's payload,
+// whose sample_index keeps each voter's identity distinct. similarity_score
+// is not sent to the model, so it is not part of the identity.
+func (a *RelationshipAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequest, bool) {
+	return intanalyzer.PayloadCacheRequest(task, "source_control_id", "target_control_id")
+}
+
+// CacheableResult implements analyzer.Cacheable: a result is stored only
+// when ParseResponse finds a known relationship in its response, the vote
+// Aggregate counts.
+func (a *RelationshipAnalyzer) CacheableResult(result *structpb.Struct) error {
+	raw, ok := intanalyzer.ExtractResponseText(result)
+	if !ok {
+		return errors.New("the result has no response text")
+	}
+	if ParseResponse(raw).ParseStatus != ParseOK {
+		return errors.New("the relationship response does not parse: it names no known RELATIONSHIP")
+	}
+	return nil
 }
 
 // Aggregate groups completed task results by source/target pair, computes

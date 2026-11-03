@@ -121,7 +121,8 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 	}
 
 	var resp CompletionResponse
-	if err := c.doWithRetry(ctx, "/v1/chat/completions", body, &resp); err != nil {
+	header, err := c.doWithRetry(ctx, "/v1/chat/completions", body, &resp)
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		c.recordErrorMetric(ctx)
@@ -131,6 +132,7 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 			0, time.Since(start), false, err.Error())
 		return nil, err
 	}
+	resp.Deployment = header.Get(DeploymentHeader)
 
 	span.SetAttributes(
 		attribute.Int("llm.tokens.prompt", resp.Usage.PromptTokens),
@@ -177,7 +179,8 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 	}
 
 	var resp EmbeddingResponse
-	if err := c.doWithRetry(ctx, "/v1/embeddings", body, &resp); err != nil {
+	header, err := c.doWithRetry(ctx, "/v1/embeddings", body, &resp)
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		c.recordErrorMetric(ctx)
@@ -187,6 +190,7 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 			0, time.Since(start), false, err.Error())
 		return nil, err
 	}
+	resp.Deployment = header.Get(DeploymentHeader)
 
 	span.SetAttributes(
 		attribute.Int("llm.tokens.prompt", resp.Usage.PromptTokens),
@@ -237,8 +241,9 @@ func (c *client) Close() error {
 }
 
 // doWithRetry executes a POST request with exponential backoff retry on
-// transient failures (HTTP 429, 5xx, and network errors).
-func (c *client) doWithRetry(ctx context.Context, path string, body []byte, result any) error {
+// transient failures (HTTP 429, 5xx, and network errors), and returns the
+// headers of the successful response it decoded into result.
+func (c *client) doWithRetry(ctx context.Context, path string, body []byte, result any) (http.Header, error) {
 	url := strings.TrimRight(c.cfg.GatewayURL, "/") + path
 	maxAttempts := c.cfg.MaxRetries + 1
 	if c.cfg.GatewayMode {
@@ -259,14 +264,14 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 			}
 			select {
 			case <-ctx.Done():
-				return fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+				return nil, fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
 			case <-time.After(delay):
 			}
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			return fmt.Errorf("creating request: %w", err)
+			return nil, fmt.Errorf("creating request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		if c.apiKey != "" {
@@ -287,14 +292,14 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 			continue
 		}
 		if len(respBody) >= maxResponseSize {
-			return fmt.Errorf("response body reached %d byte limit: %w", maxResponseSize, ErrResponseTooLarge)
+			return nil, fmt.Errorf("response body reached %d byte limit: %w", maxResponseSize, ErrResponseTooLarge)
 		}
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if err := json.Unmarshal(respBody, result); err != nil {
-				return fmt.Errorf("decoding response: %w", err)
+				return nil, fmt.Errorf("decoding response: %w", err)
 			}
-			return nil
+			return resp.Header, nil
 		}
 
 		apiErr := c.parseAPIError(resp.StatusCode, respBody)
@@ -306,14 +311,14 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 		}
 
 		// Non-retryable HTTP error.
-		return c.classifyError(apiErr)
+		return nil, c.classifyError(apiErr)
 	}
 
 	// Exhausted all retries.
 	if lastErr != nil {
-		return fmt.Errorf("LLM gateway request failed after %d attempts: %w", maxAttempts, lastErr)
+		return nil, fmt.Errorf("LLM gateway request failed after %d attempts: %w", maxAttempts, lastErr)
 	}
-	return fmt.Errorf("LLM gateway request failed: %w", ErrGatewayUnavailable)
+	return nil, fmt.Errorf("LLM gateway request failed: %w", ErrGatewayUnavailable)
 }
 
 // parseAPIError extracts a structured error from the OpenAI error envelope.

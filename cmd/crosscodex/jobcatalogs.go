@@ -34,6 +34,10 @@ const maxUntrustedDisplayBytes = 200
 // status shows it.
 const maxLookupErrorBytes = 160
 
+// maxJobErrorBytes bounds a job's error message as run status shows it. The
+// daemon's messages are a few hundred bytes, or one per failed analyzer.
+const maxJobErrorBytes = 2048
+
 // catalogRef is one catalog a job analyses. Name and Version are the ones
 // the job recorded at creation when Snapshot is true; otherwise (a job
 // created before snapshots) they are the catalog's current ones from

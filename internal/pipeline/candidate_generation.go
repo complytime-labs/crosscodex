@@ -22,7 +22,7 @@ import (
 // or bidirectional has the wrong type (see jobconfig.ExtractCatalogs).
 // CreateJob refuses such configs, so the row predates import-only analysis
 // or was written outside CreateJob. The job fails instead of analysing zero
-// controls.
+// controls. Its errors are tenantErrors: their text reaches the tenant.
 var ErrMissingCatalogID = errors.New("job config has no usable catalog_id (missing, empty, or a catalog field of the wrong type)")
 
 // ErrInsufficientEmbeddingCoverage indicates fewer of the job's controls have
@@ -86,8 +86,8 @@ func NewCandidateGenerator(controls ControlsReader, embeddings EmbeddingsReader,
 func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID string, jobConfig []byte) error {
 	cats, ok := jobconfig.ExtractCatalogs(jobConfig)
 	if !ok {
-		return fmt.Errorf("candidate generation: %w; start a new analysis: %s",
-			ErrMissingCatalogID, newJobCommand(&Job{JobID: jobID, Config: jobConfig}))
+		return &tenantError{sentinel: ErrMissingCatalogID, message: fmt.Sprintf("candidate generation: %v; start a new analysis: %s",
+			ErrMissingCatalogID, newJobCommand(&Job{JobID: jobID, Config: jobConfig}))}
 	}
 
 	source, skipped, err := g.controlsWithText(ctx, tenantID, cats.SourceID, jobID)

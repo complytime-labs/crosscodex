@@ -87,19 +87,26 @@ Purge never runs on data that was not provably archived first. The archiver
     `REFERENCES jobs(job_id)` — `job_stages`, `vote_summaries`,
     `analysis_results`, `relationship_candidates` — and `requires_candidates`,
     which is job-scoped data associated by its `job_id` **column** (no FK) rather
-    than a true FK child.
+    than a true FK child. It also archives the job's result-cache audit record
+    (`job_cache_entries`, `job_cache_stats`; append-only, pinned by the job's
+    attestation) and purges the results the job stored for reuse
+    (`llm_result_cache` rows whose `job_id` is the job), which are never
+    archived.
   - `Catalogs`: the catalog plus its `classifications` and `controls`. The archive
     doc deliberately **omits `embeddings`** even though the purge deletes them:
     embeddings are derived/regenerable, so they are purge-only. This
     archive⊆purge asymmetry is intentional — do not add embeddings to the archive
-    to "match" the purge.
+    to "match" the purge. The purge also deletes cached LLM results whose
+    request carried the catalog's text (`llm_result_cache.source_catalog_id` or
+    `target_catalog_id`), purge-only like embeddings.
 
   If the parent row is absent its field is `NULL` (`row_to_json` over no rows) and
   the archiver errors rather than writing an empty document; the guarded parent
   key is per class (`job` for jobs, `catalog` for catalogs). The archive query and
   the purge delete plan are a matched pair (`dbAggregateQueries` in `archive.go`,
-  `dbAggregates` in `purge.go`) so — modulo the deliberate embeddings omission —
-  the archived set and the deleted set cannot drift.
+  `dbAggregates` in `purge.go`) so — modulo the deliberate embeddings and
+  `llm_result_cache` omissions — the archived set and the deleted set cannot
+  drift.
 
   The `requires_candidates` / `requires_votes` / `requires_consensus` tables carry
   a `job_id` **column** but have no foreign key to `jobs`, so they never block the

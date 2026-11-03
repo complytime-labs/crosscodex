@@ -29,6 +29,9 @@ var ErrArchiveVerify = errors.New("archive verification failed: content hash mis
 // regenerable, so archival is a non-goal. The purge (dbAggregates in purge.go)
 // still deletes embeddings as a catalog dependent — this archive⊆purge asymmetry
 // is intentional; do not "fix" it by adding embeddings to the archive doc.
+// Both aggregates likewise OMIT llm_result_cache (derived, regenerable,
+// purge-only); the job's cache audit record (job_cache_entries,
+// job_cache_stats) is archived because its attestation pins it.
 var dbAggregateQueries = map[DataClass]string{
 	ClassJobResults: `SELECT json_build_object(
   'job',                     (SELECT row_to_json(j) FROM jobs j WHERE j.job_id = $1),
@@ -36,7 +39,9 @@ var dbAggregateQueries = map[DataClass]string{
   'vote_summaries',          COALESCE((SELECT json_agg(row_to_json(v) ORDER BY v.source_id, v.target_id, v.analyzer_name) FROM vote_summaries v WHERE v.job_id = $1), '[]'::json),
   'analysis_results',        COALESCE((SELECT json_agg(row_to_json(a) ORDER BY a.analyzer_name)           FROM analysis_results a        WHERE a.job_id = $1), '[]'::json),
   'relationship_candidates', COALESCE((SELECT json_agg(row_to_json(r) ORDER BY r.source_id, r.target_id)  FROM relationship_candidates r WHERE r.job_id = $1), '[]'::json),
-  'requires_candidates',     COALESCE((SELECT json_agg(row_to_json(rq) ORDER BY rq.source_id, rq.target_id) FROM requires_candidates rq WHERE rq.job_id = $1), '[]'::json)
+  'requires_candidates',     COALESCE((SELECT json_agg(row_to_json(rq) ORDER BY rq.source_id, rq.target_id) FROM requires_candidates rq WHERE rq.job_id = $1), '[]'::json),
+  'job_cache_entries',       COALESCE((SELECT json_agg(row_to_json(ce) ORDER BY ce.analyzer, ce.attempt, ce.task_id, ce.role, ce.cache_key, ce.result_digest, ce.producer_job_id) FROM job_cache_entries ce WHERE ce.job_id = $1), '[]'::json),
+  'job_cache_stats',         COALESCE((SELECT json_agg(row_to_json(cs) ORDER BY cs.seq) FROM job_cache_stats cs WHERE cs.job_id = $1), '[]'::json)
 )`,
 	ClassCatalogs: `SELECT json_build_object(
   'catalog',         (SELECT row_to_json(c) FROM catalogs c WHERE c.catalog_id = $1),

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -232,6 +234,18 @@ func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequ
 	}
 
 	pbJob := jobToProto(job, stages)
+	// Summaries are read only when asked for: the gateway asks only after
+	// checking that the caller owns the job or is an admin. The text
+	// reaches only the gateway, whose publicError withholds it.
+	if !req.Msg.GetIncludeCacheSummaries() {
+		span.SetStatus(otelcodes.Ok, "")
+		return connect.NewResponse(&pb.GetJobResponse{Job: pbJob}), nil
+	}
+	if pbJob.CacheSummaries, err = s.cacheSummaries(ctx, job, stages); err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get cache summaries: %v", err))
+	}
 
 	span.SetStatus(otelcodes.Ok, "")
 	return connect.NewResponse(&pb.GetJobResponse{Job: pbJob}), nil
@@ -396,16 +410,35 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 	// The stored error message is the job's record of its failure and is
 	// quoted unchanged. A command in it may predate the current CLI (a job
 	// that failed before target_catalog_id names no --target), so the
-	// refusal ends with a command built from the job's config instead.
+	// refusal ends with a command built from the job's config instead,
+	// unless the message already names that remedy.
 	if refusal := retryRefusal(job.ErrorClass); refusal != "" && req.Msg.RetryFromFailure {
+		remedy := retryRemedy(job)
+		tail := " " + remedy
+		// The remedy must end where the message's sentence does: a stored
+		// command that extends it (a flag more) is another command.
+		if strings.Contains(job.ErrorMessage, remedy+".") || strings.HasSuffix(job.ErrorMessage, remedy) {
+			tail = ""
+		}
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"cannot retry job %s from its failure: %s. It failed with (as recorded then; a command in it may predate this version): %s. %s",
-			job.JobID, refusal, job.ErrorMessage, retryRemedy(job)))
+			"cannot retry job %s from its failure: %s. It failed with (as recorded then; a command in it may predate this version): %s.%s",
+			job.JobID, refusal, strings.TrimSuffix(job.ErrorMessage, "."), tail))
 	}
 	if job.ErrorClass == JobErrorEmptyTargetCatalog && !req.Msg.RetryFromFailure {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"cannot retry job %s as a new job: its target catalog has no control with a statement, "+
 				"and a new job with the same config reads the same catalog. %s",
+			job.JobID, retryRemedy(job)))
+	}
+	// A job started with --no-cache looks nothing up, so a new job with its
+	// config is the --no-cache remedy itself. An unreadable config reads as
+	// a job that did look up.
+	cats, _ := jobconfig.ExtractCatalogs(job.Config)
+	if job.ErrorClass == JobErrorResultCacheCorrupt && !req.Msg.RetryFromFailure && !cats.NoCache {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"cannot retry job %s as a new job: a cached result it would reuse failed its integrity check, "+
+				"or a stage run's cache record did not match what the stage wrote, "+
+				"and a new job with the same config reads the same cache. %s",
 			job.JobID, retryRemedy(job)))
 	}
 
@@ -728,8 +761,15 @@ func jobToProto(job *Job, stages []*Stage) *pb.PipelineJob {
 		completionPercentage = float32(completedSteps) / float32(totalSteps) * 100.0
 	}
 
+	// The recorded message is written for the tenant (tenantJobMessage).
+	var jobErr *pb.Error
+	if job.ErrorMessage != "" {
+		jobErr = &pb.Error{Message: job.ErrorMessage}
+	}
+
 	return &pb.PipelineJob{
 		JobId:  job.JobID,
+		Error:  jobErr,
 		Status: jobStatusToProto(job.Status),
 		Config: &config,
 		Audit: &pb.AuditMetadata{

@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -278,7 +279,7 @@ func integPurgeJobChildren(tenantID, jobID string) {
 	}
 	for _, table := range []string{
 		"job_stages", "vote_summaries", "analysis_results", "relationship_candidates",
-		"requires_candidates",
+		"requires_candidates", "llm_result_cache", "job_cache_entries", "job_cache_stats",
 	} {
 		_ = tx.Exec(ctx, "DELETE FROM "+table+" WHERE job_id = $1", jobID)
 	}
@@ -302,6 +303,9 @@ func integPurgeJob(tenantID, jobID string) {
 	tx, err := integPurgeTx(ctx, tenantID)
 	if err != nil {
 		return
+	}
+	for _, table := range []string{"llm_result_cache", "job_cache_entries", "job_cache_stats"} {
+		_ = tx.Exec(ctx, "DELETE FROM "+table+" WHERE job_id = $1", jobID)
 	}
 	_ = tx.Exec(ctx, `DELETE FROM jobs WHERE job_id = $1`, jobID)
 	_ = tx.Commit()
@@ -389,11 +393,68 @@ func integPurgeCatalog(tenantID, catalogID string) {
 	if err != nil {
 		return
 	}
+	_ = tx.Exec(ctx, `DELETE FROM llm_result_cache WHERE source_catalog_id = $1 OR target_catalog_id = $1`, catalogID)
 	for _, table := range []string{"classifications", "embeddings", "controls"} {
 		_ = tx.Exec(ctx, "DELETE FROM "+table+" WHERE catalog_id = $1", catalogID)
 	}
 	_ = tx.Exec(ctx, `DELETE FROM catalogs WHERE catalog_id = $1`, catalogID)
 	_ = tx.Commit()
+}
+
+// integSeedRunningJob provisions the tenant and inserts a running job as
+// app_user. A running job is not a retention candidate, and it is the only
+// status the result-cache tables accept records for.
+func integSeedRunningJob(tenantID, jobID string) {
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(db.EnsureTenant(context.Background(), engineSuPool, tenantID, tenantID)).
+		To(Succeed(), "provision tenant")
+	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
+	Expect(err).NotTo(HaveOccurred(), "begin seed tx")
+	defer func() { _ = tx.Rollback() }()
+	Expect(tx.Exec(ctx,
+		`INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'running', 'retention-integ')`,
+		jobID, tenantID)).To(Succeed(), "insert running job")
+	Expect(tx.Commit()).To(Succeed(), "commit seed")
+}
+
+// integCompleteJob moves a running jobID to completed as app_user, as the
+// executor does when the job finishes.
+func integCompleteJob(tenantID, jobID string) {
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	Expect(err).NotTo(HaveOccurred())
+	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
+	Expect(err).NotTo(HaveOccurred(), "begin complete tx")
+	defer func() { _ = tx.Rollback() }()
+	Expect(tx.Exec(ctx, `UPDATE jobs SET status = 'completed' WHERE job_id = $1`, jobID)).To(Succeed(), "complete job")
+	Expect(tx.Commit()).To(Succeed(), "commit complete")
+}
+
+// integSeedJobCache gives jobID (seeded running, with catalogID seeded) a
+// cached result over catalogID with its write entry, and a stats row, as
+// app_user under RLS, the way pgstore writes them.
+func integSeedJobCache(tenantID, jobID, catalogID, cacheKey string) {
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	Expect(err).NotTo(HaveOccurred())
+	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
+	Expect(err).NotTo(HaveOccurred(), "begin cache seed tx")
+	defer func() { _ = tx.Rollback() }()
+	Expect(tx.Exec(ctx, `INSERT INTO llm_result_cache (tenant_id, analyzer, cache_key, result, response_model, job_id, producer_attempt, source_catalog_id, target_catalog_id)
+		VALUES ($1, 'classify', $2, '{"model":"m"}', 'm', $3, 'attempt-1', $4, $4)`, tenantID, cacheKey, jobID, catalogID)).To(Succeed(), "insert cache row")
+	Expect(tx.Exec(ctx, `INSERT INTO job_cache_entries (tenant_id, job_id, analyzer, attempt, task_id, cache_key, result_digest, role)
+		VALUES ($1, $2, 'classify', 'attempt-1', 't1', $3, $4, 'write')`, tenantID, jobID, cacheKey, "sha256:"+strings.Repeat("0", 64))).To(Succeed(), "insert write entry")
+	Expect(tx.Exec(ctx, `INSERT INTO job_cache_stats (tenant_id, job_id, analyzer, attempt, mode, tasks, hits, dispatched)
+		VALUES ($1, $2, 'classify', 'attempt-1', 'enabled', 1, 0, 1)`, tenantID, jobID)).To(Succeed(), "insert stats row")
+	Expect(tx.Commit()).To(Succeed(), "commit cache seed")
+}
+
+// integCountJobCache returns the rows of jobID across the three cache
+// tables, visible to tenantID as app_user.
+func integCountJobCache(tenantID, jobID string) int {
+	return queryIntAsTenant(tenantID, `SELECT
+		   (SELECT count(*) FROM llm_result_cache  WHERE job_id = $1)
+		 + (SELECT count(*) FROM job_cache_entries WHERE job_id = $1)
+		 + (SELECT count(*) FROM job_cache_stats   WHERE job_id = $1)`, jobID)
 }
 
 var _ = Describe("Retention engine end-to-end", Ordered, func() {
@@ -637,6 +698,101 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		Expect(rep.Purged).To(Equal(0), "held data must never be purged")
 
 		Expect(integJobExists(tid, jobID)).To(BeTrue(), "held job must remain")
+	})
+
+	It("purges a job's cached results and archives its cache audit record with it", func() {
+		const tid = "ret-e2e-cache-job"
+		const jobID = "job-e2e-cache-1"
+		const catalogID = "cat-e2e-cache-job"
+		const holdName = "e2e-cache-job-catalog"
+		kit := newIntegKit(tid, nil)
+		ctx, err := tenant.WithTenant(context.Background(), tid)
+		Expect(err).NotTo(HaveOccurred())
+		integSeedRunningJob(tid, jobID)
+		integSeedCatalogAggregate(tid, catalogID)
+		integSeedJobCache(tid, jobID, catalogID, strings.Repeat("a", 64))
+		integCompleteJob(tid, jobID)
+		DeferCleanup(func() { integPurgeJob(tid, jobID); integPurgeCatalog(tid, catalogID) })
+		// Hold the catalog (a hold's JobID matches any candidate ID), so only
+		// the job's purge can remove the cached row.
+		holds := retention.NewPgHoldStore(db.NewTenantPool(holdIntegPool))
+		_, err = holds.Create(ctx, retention.Hold{Name: holdName, CreatedBy: "retention-integ",
+			Scope: retention.HoldScope{TenantID: tid, JobID: catalogID}})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { integDeleteHold(tid, holdName) })
+		Expect(integCountJobCache(tid, jobID)).To(Equal(3))
+
+		rep, err := kit.engine.Scan(ctx, retention.ScanOptions{Now: integScanTime()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rep.Errors).To(BeEmpty())
+		Expect(integJobExists(tid, jobID)).To(BeFalse())
+		Expect(integCatalogExists(tid, catalogID)).To(BeTrue(), "the held catalog stays")
+		Expect(integCountJobCache(tid, jobID)).To(BeZero())
+
+		rc, err := kit.archive.Get(ctx, fmt.Sprintf("db/%s/%s.json", retention.ClassJobResults, jobID))
+		Expect(err).NotTo(HaveOccurred())
+		body, err := io.ReadAll(rc)
+		Expect(rc.Close()).To(Succeed())
+		Expect(err).NotTo(HaveOccurred())
+		var doc map[string]json.RawMessage
+		Expect(json.Unmarshal(body, &doc)).To(Succeed())
+		var entries, stats []map[string]any
+		Expect(json.Unmarshal(doc["job_cache_entries"], &entries)).To(Succeed())
+		Expect(entries).To(ConsistOf(HaveKeyWithValue("role", "write")))
+		Expect(json.Unmarshal(doc["job_cache_stats"], &stats)).To(Succeed())
+		Expect(stats).To(ConsistOf(HaveKeyWithValue("mode", "enabled")))
+		Expect(doc).NotTo(HaveKey("llm_result_cache"), "cached results are purge-only")
+	})
+
+	It("purges cached results with the catalog whose text they carried", func() {
+		const tid = "ret-e2e-cache-cat"
+		const catalogID = "cat-e2e-cache-1"
+		const jobID = "job-e2e-cache-cat"
+		kit := newIntegKit(tid, nil)
+		ctx, err := tenant.WithTenant(context.Background(), tid)
+		Expect(err).NotTo(HaveOccurred())
+		integSeedCatalogAggregate(tid, catalogID)
+		// A running job is not a retention candidate, so only the catalog
+		// purges the row.
+		integSeedRunningJob(tid, jobID)
+		integSeedJobCache(tid, jobID, catalogID, strings.Repeat("b", 64))
+		DeferCleanup(func() { integPurgeCatalog(tid, catalogID); integPurgeJob(tid, jobID) })
+
+		rep, err := kit.engine.Scan(ctx, retention.ScanOptions{Now: integScanTime()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rep.Errors).To(BeEmpty())
+		Expect(integCatalogExists(tid, catalogID)).To(BeFalse())
+		Expect(integJobExists(tid, jobID)).To(BeTrue(), "the running job stays")
+		Expect(queryIntAsTenant(tid, `SELECT count(*) FROM llm_result_cache WHERE source_catalog_id = $1 OR target_catalog_id = $1`, catalogID)).To(BeZero())
+		Expect(queryIntAsTenant(tid, `SELECT count(*) FROM job_cache_entries WHERE job_id = $1`, jobID)).To(Equal(1), "the audit record stays with its job")
+		Expect(queryIntAsTenant(tid, `SELECT count(*) FROM job_cache_stats WHERE job_id = $1`, jobID)).To(Equal(1), "the audit record stays with its job")
+	})
+
+	It("keeps a held job's cached results and cache audit record", func() {
+		const tid = "ret-e2e-cache-hold"
+		const jobID = "job-e2e-cache-hold"
+		const catalogID = "cat-e2e-cache-hold"
+		const holdName = "e2e-cache-hold"
+		kit := newIntegKit(tid, nil)
+		ctx, err := tenant.WithTenant(context.Background(), tid)
+		Expect(err).NotTo(HaveOccurred())
+		integSeedRunningJob(tid, jobID)
+		integSeedCatalogAggregate(tid, catalogID)
+		integSeedJobCache(tid, jobID, catalogID, strings.Repeat("c", 64))
+		integCompleteJob(tid, jobID)
+		DeferCleanup(func() { integPurgeJob(tid, jobID); integPurgeCatalog(tid, catalogID) })
+		holds := retention.NewPgHoldStore(db.NewTenantPool(holdIntegPool))
+		_, err = holds.Create(ctx, retention.Hold{Name: holdName, CreatedBy: "retention-integ", Scope: retention.HoldScope{TenantID: tid}})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { integDeleteHold(tid, holdName) })
+
+		rep, err := kit.engine.Scan(ctx, retention.ScanOptions{Now: integScanTime()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rep.Errors).To(BeEmpty())
+		Expect(rep.Purged).To(Equal(0))
+		Expect(integJobExists(tid, jobID)).To(BeTrue())
+		Expect(integCatalogExists(tid, catalogID)).To(BeTrue())
+		Expect(integCountJobCache(tid, jobID)).To(Equal(3))
 	})
 
 	It("retains data and records an error when the archive backend corrupts the copy", func() {

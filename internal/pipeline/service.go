@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -14,7 +15,9 @@ import (
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 )
 
@@ -50,6 +53,29 @@ type Service struct {
 
 	jobCounter  metric.Int64Counter
 	jobDuration metric.Float64Histogram
+
+	// Result reuse (#243), wired by WithResultCache: the store (read only
+	// to verify sealed records), the tenant-overridable
+	// analysis.result_cache settings, the llm settings that resolve an
+	// empty alias and name each alias's revision, and the client the
+	// per-job model probe calls.
+	cacheWired bool
+	cacheStore resultcache.Store
+	cacheCfg   config.ResultCacheConfig
+	llmCfg     config.LLMConfig
+	probe      llmclient.Client
+
+	// Model probe telemetry (#243): probes by kind and outcome, and their
+	// duration.
+	probeOps      metric.Int64Counter
+	probeDuration metric.Float64Histogram
+
+	// Result-cache checkpoint telemetry (#243): operations by outcome,
+	// their duration, and how many are in flight.
+	checkpointOps       metric.Int64Counter
+	checkpointDuration  metric.Float64Histogram
+	checkpointGauge     metric.Int64Gauge
+	checkpointsInFlight atomic.Int64
 
 	mu      sync.Mutex
 	wg      sync.WaitGroup

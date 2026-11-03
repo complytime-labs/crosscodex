@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	"go.opentelemetry.io/otel"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
@@ -316,6 +319,58 @@ var _ = Describe("startEmbeddedDaemon telemetry initialization", func() {
 		Expect(filepath.Join(stateDir, "pki")).NotTo(BeADirectory(),
 			"an invalid observability config must stop startup before PKI bootstrap")
 		Expect(otel.GetTextMapPropagator().Fields()).To(BeEmpty())
+	})
+})
+
+// failedJobStore serves one failed job of tenant "embedded" with no stages;
+// every other pipeline.Store method panics through the nil embed.
+type failedJobStore struct {
+	pipeline.Store
+	job *pipeline.Job
+}
+
+func (s *failedJobStore) GetJob(context.Context, string) (*pipeline.Job, error) { return s.job, nil }
+
+func (s *failedJobStore) GetStages(context.Context, string) ([]*pipeline.Stage, error) {
+	return nil, nil
+}
+
+// backendJobClient answers GetJob from an embedded localPipelineBackend, as
+// the embedded gateway does for tenant "embedded"; every other
+// GatewayServiceClient method panics through the nil embed.
+type backendJobClient struct {
+	crosscodexv1connect.GatewayServiceClient
+	backend *localPipelineBackend
+}
+
+func (c *backendJobClient) GetJob(ctx context.Context, req *connectrpc.Request[pb.GetJobRequest]) (*connectrpc.Response[pb.GetJobResponse], error) {
+	ctx, err := tenant.WithTenant(ctx, "embedded")
+	if err != nil {
+		return nil, err
+	}
+	return c.backend.GetJob(ctx, req)
+}
+
+var _ = Describe("run status in embedded mode", func() {
+	// The stored message may be a raw one recorded before tenant messages,
+	// so it holds an escape sequence and a line break.
+	It("shows a failed job's error, cleaned, in text and in JSON", func() {
+		store := &failedJobStore{job: &pipeline.Job{JobID: "job-1", TenantID: "embedded", Status: pipeline.JobStatusFailed,
+			Config: []byte(`{}`), ErrorMessage: "job job-1 failed\x1b[2J\nfake line"}}
+		statusOf := func(args ...string) string {
+			cmd := newRunCmd(&cliState{client: &backendJobClient{backend: &localPipelineBackend{store: store}}, daemon: &embeddedDaemon{}})
+			cmd.PersistentFlags().Bool("json", false, "output as JSON") // root-level in production
+			out, _, err := execute(cmd, append([]string{"status", "job-1"}, args...)...)
+			Expect(err).NotTo(HaveOccurred())
+			return out
+		}
+		want := intanalyzer.CleanDisplay(store.job.ErrorMessage, maxJobErrorBytes)
+		Expect(want).NotTo(ContainSubstring("\x1b"))
+
+		Expect(statusOf()).To(ContainSubstring("Error: " + want + "\n"))
+		var got map[string]any
+		Expect(json.Unmarshal([]byte(statusOf("--json")), &got)).To(Succeed())
+		Expect(got).To(HaveKeyWithValue("error", HaveKeyWithValue("message", want)))
 	})
 })
 
