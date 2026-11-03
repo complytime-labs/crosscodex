@@ -51,7 +51,7 @@ func BuildCandidateRegistry(cfg config.CandidateConfig, tp trace.TracerProvider,
 		}
 		// Copy so the config map is never mutated; an unset (0) weight means
 		// the documented default of 1.0.
-		params := make(map[string]interface{}, len(entry.Config)+1)
+		params := make(map[string]interface{}, len(entry.Config))
 		maps.Copy(params, entry.Config)
 		weight := entry.Weight
 		if weight == 0 {
