@@ -1,0 +1,23 @@
+deploy/README.md
+  s_6db2b57b27fedb::t_3e477bb7784cde 131-141
+README.md
+  s_6db2b57b27fedb::t_3d451415d9f4ba 126-130,465,468,546
+deploy/config.yaml
+  s_6db2b57b27fedb::t_7a7b06c8429fb5 88-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1c30100422c1eb991fbc64dafcf96b96ce456d72",
+  "prompts": {},
+  "sessions": {
+    "s_6db2b57b27fedb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99db3f86-87c3-48d7-8787-19135d41d357",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
