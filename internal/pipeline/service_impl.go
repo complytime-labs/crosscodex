@@ -233,6 +233,18 @@ func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequ
 	}
 
 	pbJob := jobToProto(job, stages)
+	// Summaries are read only when asked for: the gateway asks only after
+	// checking that the caller owns the job or is an admin. The text
+	// reaches only the gateway, whose publicError withholds it.
+	if !req.Msg.GetIncludeCacheSummaries() {
+		span.SetStatus(otelcodes.Ok, "")
+		return connect.NewResponse(&pb.GetJobResponse{Job: pbJob}), nil
+	}
+	if pbJob.CacheSummaries, err = s.cacheSummaries(ctx, job, stages); err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get cache summaries: %v", err))
+	}
 
 	span.SetStatus(otelcodes.Ok, "")
 	return connect.NewResponse(&pb.GetJobResponse{Job: pbJob}), nil

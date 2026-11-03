@@ -1,0 +1,46 @@
+package pipeline
+
+import (
+	"context"
+	"errors"
+
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/internal/analysis"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
+)
+
+// CacheCheckpointsFor bridges newCacheCheckpoints to the external specs:
+// the result-cache checkpoints of job for the analyzers named, signed and
+// verified with attestor.
+func (s *Service) CacheCheckpointsFor(job *Job, attestor *Attestor, analyzers ...string) analysis.CacheCheckpoints {
+	return s.newCacheCheckpoints(job, attestor, analyzers)
+}
+
+// CheckpointKey exposes checkpointKey, where a checkpoint is stored.
+var CheckpointKey = checkpointKey
+
+// CheckpointURI exposes checkpointURI, the product a checkpoint signs.
+var CheckpointURI = checkpointURI
+
+// CacheCheckpointStep exposes cacheCheckpointStep.
+const CacheCheckpointStep = cacheCheckpointStep
+
+// PrepareResultCache bridges prepareResultCache to the external specs for
+// job, attested by attestor (nil when its tenant does not attest), over the
+// analyzers in names and the job's controls.
+func (s *Service) PrepareResultCache(ctx context.Context, job *Job, attestor *Attestor, names []string,
+	controls []*pb.Control) (analysis.CacheSettings, error) {
+	cats, ok := jobconfig.ExtractCatalogs(job.Config)
+	if !ok {
+		return analysis.CacheSettings{}, errors.New("export_test: the job's config names no catalog")
+	}
+	dag, err := s.registry.BuildDAG(ctx)
+	if err != nil {
+		return analysis.CacheSettings{}, err
+	}
+	return s.prepareResultCache(ctx, job, cats, &jobExecution{attestor: attestor, subject: jobSubject(job), dag: dag}, names, controls)
+}
+
+// MaxAttestationObjectBytes exposes maxAttestationObjectBytes, the largest
+// attestation object read back from storage.
+const MaxAttestationObjectBytes = maxAttestationObjectBytes

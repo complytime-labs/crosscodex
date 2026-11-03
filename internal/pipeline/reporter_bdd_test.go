@@ -207,6 +207,16 @@ var _ = Describe("DBStageReporter", func() {
 			Expect(natsReporter.completed).To(HaveLen(1))
 		})
 
+		It("persists the attempt that sealed the stage, from the output's metadata, with the completion", func() {
+			output := &analyzer.Output{Metadata: map[string]string{analysis.MetadataCacheAttempt: "attempt-1"}}
+
+			Expect(reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", output)).To(Succeed())
+
+			stages, _ := store.GetStages(ctx, "job-1")
+			Expect(stages[0].Status).To(Equal(pipeline.StageStatusCompleted))
+			Expect(stages[0].CacheAttempt).To(Equal("attempt-1"))
+		})
+
 		It("returns an error and does not call NATS when persisting the result fails", func() {
 			store.completeStageErr = errors.New("db write failed")
 			output := &analyzer.Output{

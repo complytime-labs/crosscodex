@@ -40,6 +40,12 @@ var ErrAttestationStorage = errors.New("attestation could not be stored")
 // is broken. Retrying the job cannot fix it.
 var ErrAttestationInvalid = errors.New("attestation does not verify")
 
+// ErrLLMUnavailable reports that the per-job model probe (#243) did not
+// complete, so the job stopped before any analysis LLM call. The gateway
+// may be down or may have refused the probe; a retry may succeed once it
+// works.
+var ErrLLMUnavailable = errors.New("the model gateway did not complete a probe request before analysis")
+
 // JobErrorClass classifies why a job failed, so RetryJob can refuse a retry
 // that cannot succeed. It is stored with the job (jobs.error_class), because
 // the stored error message is text and must not be matched.
@@ -67,6 +73,9 @@ const (
 	// from a --no-cache job, which looks nothing up; a new job with
 	// --no-cache replaces the cached results.
 	JobErrorResultCacheCorrupt JobErrorClass = "result_cache_corrupt"
+	// JobErrorLLMUnavailable is ErrLLMUnavailable: the model probe failed
+	// before any analysis LLM call. Retryable.
+	JobErrorLLMUnavailable JobErrorClass = "llm_unavailable"
 )
 
 // ClassifyJobError returns the class of a job's failure err, by the
@@ -87,6 +96,8 @@ func ClassifyJobError(err error) JobErrorClass {
 		return JobErrorResultCacheCorrupt
 	case errors.Is(err, resultcache.ErrUnavailable):
 		return JobErrorResultCacheUnavailable
+	case errors.Is(err, ErrLLMUnavailable):
+		return JobErrorLLMUnavailable
 	default:
 		return JobErrorRetryable
 	}

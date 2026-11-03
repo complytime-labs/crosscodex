@@ -103,6 +103,14 @@ type CacheSettings struct {
 	Checkpoints CacheCheckpoints
 }
 
+// MetadataCacheAttempt is the analyzer.Output metadata key naming the
+// result-cache attempt whose checkpoint sealed a completed stage. The engine
+// sets it only when the stage was sealed (ModeEnabled or ModeBypassed); the
+// pipeline persists it with the stage's completion so a later run can find
+// that checkpoint. It is a pointer, not evidence: readers verify the
+// checkpoint it names.
+const MetadataCacheAttempt = "result_cache.attempt"
+
 // ExecutionResult holds the outcome of an Engine.Execute call.
 type ExecutionResult struct {
 	JobID     string

@@ -245,6 +245,18 @@ func (g *generator) Verify(ctx context.Context, data []byte) (*VerifiedLink, err
 		g.recordMetrics(ctx, operation, "failure", start)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
+		// The signer writes its key ID into each DSSE signature; with no
+		// signature naming the trusted key, the link was signed by another
+		// key rather than tampered with (see ErrUntrustedKey for why an
+		// unsigned keyid is safe to rely on here).
+		sigs := env.Sigs()
+		if !slices.ContainsFunc(sigs, func(s in_toto.Signature) bool { return s.KeyID == keyID }) {
+			keyIDs := make([]string, len(sigs))
+			for i, s := range sigs {
+				keyIDs[i] = s.KeyID
+			}
+			return nil, newUntrustedKeyError(keyIDs, err)
+		}
 		return nil, fmt.Errorf("verify signature: %w: %w", ErrVerificationFailed, err)
 	}
 

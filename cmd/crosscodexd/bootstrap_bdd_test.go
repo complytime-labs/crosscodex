@@ -151,7 +151,7 @@ var _ = Describe("buildPipelineService attestation guards", func() {
 		Expect(err.Error()).To(ContainSubstring(missing))
 	})
 
-	It("reads no key and logs once that attestation is disabled when it is", func() {
+	It("reads no key and logs once that attestation, and so result reuse, is disabled when it is", func() {
 		logs := captureLogs()
 		cfg := &config.Config{}
 		cfg.Attestation = config.AttestationConfig{
@@ -161,9 +161,10 @@ var _ = Describe("buildPipelineService attestation guards", func() {
 		_, err := buildPipelineService(cfg, &sharedResources{})
 		Expect(err).To(MatchError("pipeline: tenants.default_tenant must be set"))
 		Expect(bytes.Count(logs.Bytes(), []byte("attestation is disabled"))).To(Equal(1))
+		Expect(logs.String()).To(ContainSubstring("reuse no cached LLM results"))
 	})
 
-	It("logs each tenant whose override disables the attestation the global settings enable", func() {
+	It("logs each tenant whose override disables the attestation the global settings enable, and so its result reuse", func() {
 		logs := captureLogs()
 		dir := GinkgoT().TempDir()
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -184,7 +185,8 @@ var _ = Describe("buildPipelineService attestation guards", func() {
 
 		_, err = buildPipelineService(cfg, &sharedResources{})
 		Expect(err).To(MatchError("pipeline: tenants.default_tenant must be set"))
-		Expect(logs.String()).To(And(ContainSubstring("attestation is disabled for a tenant"), ContainSubstring("tenant_id=acme")))
+		Expect(logs.String()).To(And(ContainSubstring("attestation is disabled for a tenant"), ContainSubstring("tenant_id=acme"),
+			ContainSubstring("reuse no cached LLM results")))
 		Expect(logs.String()).NotTo(ContainSubstring("attestation is disabled (attestation.enabled: false)"))
 	})
 })

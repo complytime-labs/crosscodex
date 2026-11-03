@@ -610,7 +610,7 @@ func StoreContract(setup StoreSetup) {
 			gomega.Expect(env.Store.Checkpoint(ctxA, record, func(context.Context, string) error { return errSeal })).To(gomega.MatchError(errSeal))
 		})
 
-		// ADV-9: a row the stage did not record (planted while the job runs)
+		// A row the stage did not record (planted while the job runs)
 		// stops the checkpoint before anything is signed.
 		ginkgo.It("refuses a record the rows do not match as corrupt, without sealing or changing anything", func() {
 			gomega.Expect(env.Store.Put(ctxA, entry(producer, "t1", 1, `{"model":"m"}`))).To(gomega.Succeed())

@@ -103,6 +103,18 @@ var _ = Describe("run start", func() {
 		Expect(fake.calls[0].GetTargetCatalogId()).To(Equal("cat-1"))
 	})
 
+	It("passes --no-cache", func() {
+		_, _, err := execute(newCmd(), "start", "--source", "cat-1", "--target", "cat-2", "--no-cache")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.calls[0].GetNoCache()).To(BeTrue())
+	})
+
+	It("leaves the cache on without --no-cache", func() {
+		_, _, err := execute(newCmd(), "start", "--source", "cat-1", "--target", "cat-2")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.calls[0].GetNoCache()).To(BeFalse())
+	})
+
 	It("requires --target, says both forms, and never calls the server", func() {
 		_, _, err := execute(newCmd(), "start", "--source", "cat-1")
 		Expect(err).To(MatchError(SatisfyAll(
@@ -235,9 +247,12 @@ type fakeGetJobClient struct {
 	catalogs       map[string]*pb.Catalog
 	catalogErr     error
 	catalogLookups []string
+	// jobRequests records each GetJob request.
+	jobRequests []*pb.GetJobRequest
 }
 
-func (f *fakeGetJobClient) GetJob(context.Context, *connectrpc.Request[pb.GetJobRequest]) (*connectrpc.Response[pb.GetJobResponse], error) {
+func (f *fakeGetJobClient) GetJob(_ context.Context, req *connectrpc.Request[pb.GetJobRequest]) (*connectrpc.Response[pb.GetJobResponse], error) {
+	f.jobRequests = append(f.jobRequests, req.Msg)
 	if f.jobErr != nil {
 		return nil, f.jobErr
 	}
@@ -313,6 +328,49 @@ var _ = Describe("run status", func() {
 		Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
 		Expect(got).To(HaveKeyWithValue("analyzers", []any{"classify", "embedding"}))
 		Expect(got).To(HaveKeyWithValue("job_id", "job-1"))
+	})
+
+	It("prints one result cache line per analyzer, aligned, and the summaries in JSON", func() {
+		job := jobWithStages("classify", "embedding", "synthesis", "graph")
+		job.CacheSummaries = []*pb.AnalyzerCacheSummary{
+			{Analyzer: "classify", Attestation: pb.ResultCacheAttestation_RESULT_CACHE_ATTESTATION_ATTESTED,
+				Mode: pb.ResultCacheMode_RESULT_CACHE_MODE_ENABLED, Tasks: 2, Hits: 2,
+				Models: []*pb.AnalyzerCacheModel{{Alias: "default", ObservedModel: "qwen2.5:14b"}}},
+			{Analyzer: "embedding", Attestation: pb.ResultCacheAttestation_RESULT_CACHE_ATTESTATION_UNATTESTED},
+		}
+		Expect(runStatus(job)).To(ContainSubstring("Result cache:\n" +
+			"  classify   2 of 2 reused, 0 sent to model default → qwen2.5:14b\n" +
+			"  embedding  cache use not attested: no signed checkpoint vouches for this stage's records\n"))
+
+		var got map[string]any
+		Expect(json.Unmarshal([]byte(runStatus(job, "--json")), &got)).To(Succeed())
+		Expect(got).To(HaveKeyWithValue("cache", HaveLen(2)))
+	})
+
+	It("asks the daemon for the job's cache summaries", func() {
+		client := &fakeGetJobClient{job: jobWithStages("classify", "synthesis", "graph")}
+		cmd := newRunCmd(&cliState{client: client})
+		cmd.PersistentFlags().Bool("json", false, "output as JSON")
+		_, _, err := execute(cmd, "status", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(client.jobRequests).To(HaveLen(1))
+		Expect(client.jobRequests[0].GetIncludeCacheSummaries()).To(BeTrue())
+	})
+
+	It("prints no result cache section for a job without summaries, and an empty JSON list", func() {
+		job := jobWithStages("classify", "synthesis", "graph")
+		Expect(runStatus(job)).NotTo(ContainSubstring("Result cache"))
+		var got map[string]any
+		Expect(json.Unmarshal([]byte(runStatus(job, "--json")), &got)).To(Succeed())
+		Expect(got).To(HaveKeyWithValue("cache", []any{}))
+	})
+
+	It("says in embedded mode that cache use is shown only by the daemon", func() {
+		cmd := newRunCmd(&cliState{client: &fakeGetJobClient{job: jobWithStages("classify", "synthesis", "graph")}, daemon: &embeddedDaemon{}})
+		cmd.PersistentFlags().Bool("json", false, "output as JSON")
+		out, _, err := execute(cmd, "status", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("Result cache: shown only when connected to crosscodexd\n"))
 	})
 
 	It("reports an empty analyzer list as an empty JSON array", func() {

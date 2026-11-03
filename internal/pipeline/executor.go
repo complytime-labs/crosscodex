@@ -43,6 +43,12 @@ type jobExecution struct {
 	dag     *analyzer.DAG
 	layout  *attestation.SignedLayout
 	links   []*attestation.SignedLink
+	// checkpoints signs this run's result-cache checkpoints (nil when the
+	// run does not use the cache), and remembers the ones it stored.
+	checkpoints *cacheCheckpoints
+	// cacheRuns is, per analyzer this run completed, its result-cache use,
+	// which its link records.
+	cacheRuns map[string]analyzerCacheRun
 }
 
 // executeJob is the main lifecycle method. Called as a goroutine from
@@ -446,6 +452,17 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		}
 	}
 
+	// Result reuse (#243): the job's cache mode and, unless the cache is
+	// off or disabled, one probe per model alias the incomplete analyzers
+	// call, all after the catalog checks and before any analyzer spends an
+	// LLM call.
+	cacheSettings, err := s.prepareResultCache(ctx, job, cats, exec, incompleteAnalyzers, controls)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
 	// allOutputs accumulates analyzer outputs across both passes for the
 	// attestation link materials/products below. Seeded from any analyzers
 	// already durably completed by a prior process invocation of this job
@@ -481,6 +498,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 			Input:            &emptypb.Empty{},
 			AnalyzerConfig:   analyzerConfig,
 			CompletedOutputs: allOutputs,
+			Cache:            cacheSettings,
 		}
 		if perControl {
 			req.Controls = controls
@@ -513,6 +531,22 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		}
 		for k, v := range result.Outputs {
 			allOutputs[k] = v
+		}
+		// Completed also lists analyzers an earlier pass completed (passed
+		// in as CompletedOutputs); only this pass's own carry its cache use.
+		for _, name := range result.Completed {
+			if !slices.Contains(names, name) {
+				continue
+			}
+			stats, ok := result.CacheStats[name]
+			run := analyzerCacheRun{stats: stats, hasStats: ok}
+			if out := result.Outputs[name]; out != nil {
+				run.attempt = out.Metadata[analysis.MetadataCacheAttempt]
+			}
+			if exec.cacheRuns == nil {
+				exec.cacheRuns = map[string]analyzerCacheRun{}
+			}
+			exec.cacheRuns[name] = run
 		}
 		return nil
 	}
@@ -1017,6 +1051,11 @@ func (s *Service) createLayout(ctx context.Context, job *Job, exec *jobExecution
 	// graph consumes synthesis's.
 	layoutOpts := s.attConverter.Convert(exec.dag)
 	layoutOpts.ExpiresIn = exec.attestor.ExpiresIn
+	// Every analyzer step also expects its result-cache manifest
+	// (<analyzer>.cache_manifest), so a link that omits it breaks the chain.
+	for i := range layoutOpts.Steps {
+		layoutOpts.Steps[i].ExpectedMaterials = append(layoutOpts.Steps[i].ExpectedMaterials, cacheManifestURI(layoutOpts.Steps[i].Name))
+	}
 	var analyzerOutputs []string
 	for _, step := range layoutOpts.Steps {
 		analyzerOutputs = append(analyzerOutputs, step.ExpectedProducts...)
@@ -1050,7 +1089,7 @@ func (s *Service) createLayout(ctx context.Context, job *Job, exec *jobExecution
 }
 
 // createLink signs and stores an attestation link for a pipeline step.
-func (s *Service) createLink(ctx context.Context, job *Job, exec *jobExecution, stepName string, materials, products []attestation.Artifact) (*attestation.SignedLink, error) {
+func (s *Service) createLink(ctx context.Context, job *Job, exec *jobExecution, stepName string, materials, products []attestation.Artifact, opts ...attestation.LinkOption) (*attestation.SignedLink, error) {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.CreateLink")
 	defer span.End()
 	span.SetAttributes(
@@ -1060,7 +1099,7 @@ func (s *Service) createLink(ctx context.Context, job *Job, exec *jobExecution, 
 
 	// Every link records the job as a material, binding it to this job.
 	materials = append([]attestation.Artifact{exec.subject}, materials...)
-	link, err := exec.attestor.Generator.CreateLink(ctx, stepName, materials, products)
+	link, err := exec.attestor.Generator.CreateLink(ctx, stepName, materials, products, opts...)
 	if err != nil {
 		err = fmt.Errorf("job %s: the attestation link for step %q could not be signed: %w: %w. "+
 			"Fix the attestation key pair and restart crosscodexd. %s", job.JobID, stepName, err, ErrAttestationSigning, retryHint(job))
@@ -1114,7 +1153,9 @@ func (s *Service) putAttestation(ctx context.Context, job *Job, what, key string
 // attestAnalyzers signs and stores a link for every analyzer of the job, in
 // this run or an earlier one. A link's digests are of the analyzer results
 // as stored, which synthesis reads, so a resumed run signs the same digests
-// and a link can always be made again from the database.
+// and a link can always be made again from the database. Each link also
+// pins the analyzer's result-cache record (cacheRecordOf): the material
+// <analyzer>.cache_manifest and the result_cache.* byproducts.
 func (s *Service) attestAnalyzers(ctx context.Context, job *Job, exec *jobExecution) error {
 	if exec.attestor == nil {
 		return nil
@@ -1143,13 +1184,36 @@ func (s *Service) attestAnalyzers(ctx context.Context, job *Job, exec *jobExecut
 		}
 		digests[name] = contentDigest(out.ResultData)
 	}
+	stages, err := s.store.GetStages(ctx, job.JobID)
+	if err != nil {
+		err = fmt.Errorf("attesting analyzers: loading their stages: %w", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+	stageByName := make(map[string]*Stage, len(stages))
+	for _, st := range stages {
+		stageByName[st.StageName] = st
+	}
+	records := make(map[string]analyzerCacheRecord, len(order))
+	for _, name := range order {
+		rec, err := s.cacheRecordOf(ctx, job, exec, name, stageByName[name])
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return err
+		}
+		records[name] = rec
+	}
 	for _, a := range exec.dag.Analyzers() {
 		var materials []attestation.Artifact
 		for _, dep := range a.DependsOn() {
 			materials = append(materials, attestation.Artifact{URI: dep + ".output", Digest: digests[dep]})
 		}
+		rec := records[a.Name()]
+		materials = append(materials, attestation.Artifact{URI: cacheManifestURI(a.Name()), Digest: rec.digest})
 		products := []attestation.Artifact{{URI: a.Name() + ".output", Digest: digests[a.Name()]}}
-		link, err := s.createLink(ctx, job, exec, a.Name(), materials, products)
+		link, err := s.createLink(ctx, job, exec, a.Name(), materials, products, attestation.WithByProducts(rec.byProducts()))
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -1180,20 +1244,16 @@ func (s *Service) loadStoredLinks(ctx context.Context, job *Job, completed map[s
 			continue
 		}
 		key := attestationKey(job, "links/"+step+".json")
-		rc, err := s.storage.Get(ctx, key)
+		raw, err := s.readAttestation(ctx, key)
 		if errors.Is(err, storage.ErrNotFound) {
 			return fmt.Errorf("job %s: step %q completed in an earlier run, but its attestation link %q is missing: %w. "+
 				"Its results cannot be attested; start a new job: %s", job.JobID, step, key, ErrAttestationInvalid, newJobCommand(job))
 		}
-		if err != nil {
-			return fmt.Errorf("job %s: reading the attestation link of step %q at %q: %w: %w. "+
-				"Check that object storage (storage.objects.base_path) is readable. %s",
-				job.JobID, step, key, err, ErrAttestationStorage, retryHint(job))
-		}
-		raw, err := io.ReadAll(rc)
-		closeErr := rc.Close()
-		if err == nil {
-			err = closeErr
+		if errors.Is(err, errAttestationTooLarge) {
+			return fmt.Errorf("job %s: the stored attestation link of step %q at %q is larger than the %d-byte limit, "+
+				"so it was not read: %w. The pipeline's links are a few kilobytes, so the object was replaced after "+
+				"signing; check who can write to object storage. Its results cannot be attested; start a new job: %s",
+				job.JobID, step, key, maxAttestationObjectBytes, ErrAttestationInvalid, newJobCommand(job))
 		}
 		if err != nil {
 			return fmt.Errorf("job %s: reading the attestation link of step %q at %q: %w: %w. "+
@@ -1220,6 +1280,47 @@ func (s *Service) loadStoredLinks(ctx context.Context, job *Job, completed map[s
 		})
 	}
 	return nil
+}
+
+// maxAttestationObjectBytes bounds an attestation object (a link or a
+// result-cache checkpoint) read back from object storage, so an object a
+// storage writer replaced with a huge one cannot exhaust the daemon's
+// memory or, through Verify's temporary copy, its disk.
+//
+// It is a constant, not configuration: the objects' size follows from
+// their fixed format, not from anything a deployment tunes. A checkpoint
+// has one material and one product (about 1 KB in the pipeline-e2e suite);
+// a link has one material per dependency (the largest there, synthesis's
+// with five analyzer outputs, is 1.5 KB, about 150 bytes per material).
+// 1 MiB is some 700 times the largest measured, room for thousands of
+// analyzers, and still small enough to read into memory.
+const maxAttestationObjectBytes = 1 << 20
+
+// errAttestationTooLarge reports a stored attestation object over
+// maxAttestationObjectBytes. Its callers classify it: a resumed job's link
+// is ErrAttestationInvalid, a cache checkpoint resultcache.ErrCorrupt.
+var errAttestationTooLarge = errors.New("the stored attestation object is larger than the limit")
+
+// readAttestation reads the attestation object stored at key, reading at
+// most one byte past maxAttestationObjectBytes. A missing object is
+// storage.ErrNotFound and a larger one errAttestationTooLarge; the other
+// errors are the storage provider's, not wrapped.
+func (s *Service) readAttestation(ctx context.Context, key string) ([]byte, error) {
+	rc, err := s.storage.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(rc, maxAttestationObjectBytes+1))
+	if closeErr := rc.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxAttestationObjectBytes {
+		return nil, errAttestationTooLarge
+	}
+	return raw, nil
 }
 
 // finalizeAttestation verifies the job's whole attestation (layout and one
@@ -1273,7 +1374,12 @@ func (s *Service) finalizeAttestation(ctx context.Context, job *Job, exec *jobEx
 // jobSubject is the artifact that binds a job's attestation to the job:
 // "job:<tenant>/<job-id>", with the digest of the job's config as stored.
 func jobSubject(job *Job) attestation.Artifact {
-	return attestation.Artifact{URI: fmt.Sprintf("job:%s/%s", job.TenantID, job.JobID), Digest: contentDigest(job.Config)}
+	return attestation.Artifact{URI: jobURI(job.TenantID, job.JobID), Digest: contentDigest(job.Config)}
+}
+
+// jobURI is the URI of a job's subject (jobSubject).
+func jobURI(tenantID, jobID string) string {
+	return fmt.Sprintf("job:%s/%s", tenantID, jobID)
 }
 
 // contentDigest is the "sha256:<hex>" digest an attestation records for data.

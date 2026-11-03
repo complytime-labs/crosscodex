@@ -1,6 +1,8 @@
 package resultcache_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"math"
@@ -359,6 +361,30 @@ var _ = Describe("Manifest.Digest", func() {
 	}
 	stats := []resultcache.Stats{{Mode: resultcache.ModeEnabled, Tasks: 2, Hits: 1, Dispatched: 1,
 		Models: map[string]resultcache.ModelIdentity{"default": {Observed: "qwen2.5:14b"}}}}
+
+	sha := func(doc string) string {
+		sum := sha256.Sum256([]byte(doc))
+		return "sha256:" + hex.EncodeToString(sum[:])
+	}
+
+	It("is the digest of the encoding docs/dev/attestation.md documents, so an auditor can recompute it", func() {
+		m := resultcache.Manifest{TenantID: "tenant-a", JobID: "job-1", Analyzer: "classify", Attempt: attempt1, Entries: entries,
+			Stats: []resultcache.Stats{
+				{Mode: resultcache.ModeEnabled, Tasks: 2, Hits: 1, Dispatched: 1,
+					Models: map[string]resultcache.ModelIdentity{"z": {Observed: "m2"}, "default": {Observed: "qwen2.5:14b", Revision: "r1"}}},
+				{Mode: resultcache.ModeSkipped, Reason: "a<b>&c"},
+			}}
+		doc := `{"tenant_id":"tenant-a","job_id":"job-1","analyzer":"classify","attempt":"` + attempt1 + `","entries":[` +
+			`{"task_id":"t1","role":"hit","cache_key":"` + strings.Repeat("1", 64) + `","result_digest":"sha256:` + strings.Repeat("1", 64) + `","producer_job_id":"job-0"},` +
+			`{"task_id":"t2","role":"write","cache_key":"` + strings.Repeat("2", 64) + `","result_digest":"sha256:` + strings.Repeat("2", 64) + `","producer_job_id":""}],` +
+			`"stats":[{"mode":"enabled","reason":"","models":{"default":{"observed":"qwen2.5:14b","revision":"r1"},"z":{"observed":"m2","revision":""}},"tasks":2,"hits":1,"dispatched":1},` +
+			`{"mode":"skipped","reason":"a\u003cb\u003e\u0026c","models":{},"tasks":0,"hits":0,"dispatched":0}]}`
+		Expect(m.Digest()).To(Equal(sha(doc)))
+	})
+
+	It("of the empty manifest is the documented no-record digest", func() {
+		Expect(resultcache.Manifest{}.Digest()).To(Equal(sha(`{"tenant_id":"","job_id":"","analyzer":"","attempt":"","entries":[],"stats":[]}`)))
+	})
 
 	DescribeTable("binds the names of the attempt",
 		func(mutate func(*resultcache.Manifest)) {

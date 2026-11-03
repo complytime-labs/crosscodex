@@ -3,6 +3,7 @@ package pipeline_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 
@@ -340,6 +341,7 @@ func (f *fakeStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string
 			stage.StartedAt = nil
 			stage.CompletedAt = nil
 			stage.ErrorMessage = ""
+			stage.CacheAttempt = ""
 			stage.RetryCount++
 		}
 	}
@@ -347,7 +349,7 @@ func (f *fakeStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string
 	return nil
 }
 
-func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte) error {
+func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -367,6 +369,7 @@ func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerNa
 	for _, stage := range stages {
 		if stage.StageName == analyzerName {
 			stage.Status = pipeline.StageStatusCompleted
+			stage.CacheAttempt = cacheAttempt
 			found = true
 			break
 		}
@@ -381,6 +384,23 @@ func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerNa
 	f.analysisResults[jobID][analyzerName] = resultData
 
 	return nil
+}
+
+func (f *fakeStore) JobsCreatedBy(ctx context.Context, jobIDs []string, user string) ([]string, error) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var owned []string
+	for _, id := range jobIDs {
+		if j, ok := f.jobs[id]; ok && user != "" && j.TenantID == tenantID && j.CreatedBy == user {
+			owned = append(owned, id)
+		}
+	}
+	slices.Sort(owned)
+	return owned, nil
 }
 
 func (f *fakeStore) GetCompletedAnalysisResults(ctx context.Context, jobID string, analyzerNames []string) (map[string]*analyzer.Output, error) {
@@ -666,7 +686,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
 		Expect(err).NotTo(HaveOccurred())
 
 		// SET tenant + upsert + stage update, all in the same transaction.
@@ -675,6 +695,25 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		Expect(queries[1]).To(ContainSubstring("ON CONFLICT (tenant_id, job_id, analyzer_name)"))
 		Expect(queries[2]).To(ContainSubstring("job_stages"))
 	})
+
+	DescribeTable("marks the stage completed with the attempt that sealed it, or NULL",
+		func(attempt string, want OmegaMatcher) {
+			var stageArgs []any
+			mockDB.Tx = &dbtest.Tx{
+				ExecFunc: func(ctx context.Context, query string, args ...any) error {
+					if strings.Contains(query, "job_stages") {
+						Expect(query).To(ContainSubstring("cache_attempt"))
+						stageArgs = args
+					}
+					return nil
+				},
+			}
+			Expect(store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), attempt)).To(Succeed())
+			Expect(stageArgs).To(ContainElement(want))
+		},
+		Entry("a sealed attempt", "0b6f2b4e-6c1a-4f43-9b8e-6d2c1f0a9e11", Equal("0b6f2b4e-6c1a-4f43-9b8e-6d2c1f0a9e11")),
+		Entry("no attempt", "", BeNil()),
+	)
 
 	It("rolls back and returns an error when the upsert fails", func() {
 		mockTx := &dbtest.Tx{
@@ -687,7 +726,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("upserting result"))
 		Expect(mockTx.Rollbacks()).To(Equal(1))
@@ -708,7 +747,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
 		Expect(err).To(HaveOccurred())
 		Expect(stageUpdated).To(BeFalse())
 	})
@@ -724,13 +763,13 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("updating stage status"))
 	})
 
 	It("returns an error when jobID is empty", func() {
-		err := store.CompleteAnalysisStage(ctx, "", "requires", []byte(`[]`))
+		err := store.CompleteAnalysisStage(ctx, "", "requires", []byte(`[]`), "")
 		Expect(err).To(HaveOccurred())
 	})
 
@@ -741,7 +780,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`))
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("commit failed"))
 	})

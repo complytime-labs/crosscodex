@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -44,6 +45,14 @@ var defaultUse = analyzer.ModelUse{Alias: "default", Kind: analyzer.ModelComplet
 type cacheEvents struct {
 	mu     sync.Mutex
 	events []string
+	// reported is the metadata of each output reported completed.
+	reported []map[string]string
+}
+
+func (c *cacheEvents) reportedMetadata() []map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.reported)
 }
 
 func (c *cacheEvents) add(e string) {
@@ -138,7 +147,11 @@ func (s *recordingStore) RecordStage(ctx context.Context, rec resultcache.StageR
 
 func (s *recordingStore) Checkpoint(ctx context.Context, expected resultcache.Manifest, seal func(ctx context.Context, digest string) error) error {
 	s.events.add("checkpoint")
-	return s.Fake.Checkpoint(ctx, expected, seal)
+	err := s.Fake.Checkpoint(ctx, expected, seal)
+	// The fake holds the job lock for the whole of its Checkpoint, as
+	// pgstore holds FOR UPDATE until it commits.
+	s.events.add("unlocked")
+	return err
 }
 
 func (s *recordingStore) storedEntries() []resultcache.Entry {
@@ -167,9 +180,9 @@ func analyzerRegistry(r *cacheRig) *analyzer.Registry {
 	return registry
 }
 
-// fakeCheckpoints is an in-memory analysis.CacheCheckpoints: Seal records
-// a trusted checkpoint, and Verified returns the trusted ones of the
-// producers asked for. A local fake: the interface is internal to this
+// fakeCheckpoints is an in-memory analysis.CacheCheckpoints: Sign returns
+// an envelope naming the digest, Store makes it a trusted checkpoint, and
+// Verified returns the trusted ones of the producers asked for. A local fake: the interface is internal to this
 // package's caller contract (AGENTS.md allows it).
 type fakeCheckpoints struct {
 	events *cacheEvents
@@ -181,7 +194,8 @@ type fakeCheckpoints struct {
 	untrusted map[resultcache.AttemptRef]string
 	sealed    []resultcache.AttemptRef
 	verifyErr error
-	sealErr   error
+	signErr   error
+	storeErr  error
 	// afterVerified, if set, runs after Verified has read the checkpoints
 	// and before it returns: the window between verification and lookup.
 	afterVerified func()
@@ -210,7 +224,10 @@ func (c *fakeCheckpoints) Verified(ctx context.Context, analyzerName string, pro
 	}
 	for ref := range c.untrusted {
 		if ref.Analyzer == analyzerName && slices.Contains(producers, ref.JobID) {
-			out.UntrustedKeys++
+			out.Untrusted = append(out.Untrusted, analysis.UntrustedCheckpoint{
+				Location: "checkpoints/" + ref.JobID + "/" + ref.Analyzer + "/" + ref.Attempt + ".json",
+				KeyIDs:   []string{"retired-key"},
+			})
 		}
 	}
 	hook := c.afterVerified
@@ -221,15 +238,33 @@ func (c *fakeCheckpoints) Verified(ctx context.Context, analyzerName string, pro
 	return out, nil
 }
 
-func (c *fakeCheckpoints) Seal(ctx context.Context, ref resultcache.AttemptRef, digest string) error {
+func (c *fakeCheckpoints) Sign(ctx context.Context, ref resultcache.AttemptRef, digest string) ([]byte, error) {
+	if _, err := tenant.FromContext(ctx); err != nil {
+		return nil, err
+	}
+	c.events.add("sign")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.signErr != nil {
+		return nil, c.signErr
+	}
+	return []byte(ref.JobID + "/" + ref.Analyzer + "/" + ref.Attempt + "=" + digest), nil
+}
+
+func (c *fakeCheckpoints) Store(ctx context.Context, ref resultcache.AttemptRef, signed []byte) error {
 	if _, err := tenant.FromContext(ctx); err != nil {
 		return err
 	}
-	c.events.add("seal")
+	c.events.add("store")
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.sealErr != nil {
-		return c.sealErr
+	if c.storeErr != nil {
+		return c.storeErr
+	}
+	prefix := ref.JobID + "/" + ref.Analyzer + "/" + ref.Attempt + "="
+	digest, ok := strings.CutPrefix(string(signed), prefix)
+	if !ok {
+		return fmt.Errorf("fakeCheckpoints: envelope %q was not signed for %v", signed, ref)
 	}
 	c.trusted[ref] = digest
 	c.sealed = append(c.sealed, ref)
@@ -260,8 +295,11 @@ type cacheReporter struct {
 
 func (r *cacheReporter) ReportStageStarted(context.Context, string, string) error { return nil }
 
-func (r *cacheReporter) ReportStageCompleted(context.Context, string, string, *analyzer.Output) error {
+func (r *cacheReporter) ReportStageCompleted(_ context.Context, _, _ string, output *analyzer.Output) error {
 	r.events.add("completed")
+	r.events.mu.Lock()
+	defer r.events.mu.Unlock()
+	r.events.reported = append(r.events.reported, maps.Clone(output.Metadata))
 	return nil
 }
 
@@ -521,7 +559,12 @@ var _ = Describe("Result reuse", func() {
 			Expect(res.CacheStats[cacheAnalyzer]).To(statsCounts(2, 0, 2))
 			Expect(rig.producersOf()).To(HaveEach("job-2"))
 			Expect(rig.counted("analysis.result_cache.integrity_failures.total", "untrusted_key")).To(BeEquivalentTo(1))
-			Expect(rig.logs).To(gbytes.Say("signed by a key the daemon no longer trusts were ignored"))
+			logged := string(rig.logs.Contents())
+			Expect(logged).To(And(
+				ContainSubstring("signed by a key the daemon does not trust were ignored"),
+				ContainSubstring("expected after a signing key rotation; if no rotation happened, the checkpoints may have been altered"),
+				ContainSubstring("checkpoints/job-1/"+cacheAnalyzer+"/"),
+				ContainSubstring("retired-key")))
 		})
 
 		It("stores neither error results nor results that name no model", func() {
@@ -699,7 +742,36 @@ var _ = Describe("Result reuse", func() {
 		It("finishes every put and the stage record before sealing, and seals before reporting the stage completed", func() {
 			rig := newCacheRig("a", "b")
 			rig.run("job-1", rig.settings(resultcache.ModeEnabled))
-			Expect(rig.events.list()).To(Equal([]string{"producers", "put", "put", "record", "checkpoint", "seal", "completed"}))
+			Expect(rig.events.list()).To(Equal([]string{"producers", "put", "put", "record", "checkpoint", "sign", "unlocked", "store", "completed"}))
+		})
+	})
+
+	Describe("The completed stage's attempt", func() {
+		It("names the sealed attempt in the output reported completed, so the pipeline can persist it with the result", func() {
+			rig := newCacheRig("a", "b")
+			res := rig.run("job-1", rig.settings(resultcache.ModeEnabled))
+			Expect(res.Completed).To(ConsistOf(cacheAnalyzer))
+			refs := rig.checkpoints.sealedRefs()
+			Expect(refs).To(HaveLen(1))
+			Expect(rig.events.reportedMetadata()).To(ConsistOf(HaveKeyWithValue(analysis.MetadataCacheAttempt, refs[0].Attempt)))
+			Expect(res.Outputs[cacheAnalyzer].Metadata).To(HaveKeyWithValue(analysis.MetadataCacheAttempt, refs[0].Attempt))
+		})
+
+		It("names the sealed attempt of a stage with no tasks", func() {
+			rig := newCacheRig()
+			res := rig.run("job-1", rig.settings(resultcache.ModeEnabled))
+			Expect(res.Completed).To(ConsistOf(cacheAnalyzer))
+			refs := rig.checkpoints.sealedRefs()
+			Expect(refs).To(HaveLen(1))
+			Expect(rig.events.reportedMetadata()).To(ConsistOf(HaveKeyWithValue(analysis.MetadataCacheAttempt, refs[0].Attempt)))
+		})
+
+		It("names no attempt when the tenant disables the cache, since nothing was sealed", func() {
+			rig := newCacheRig("a")
+			cache := rig.settings(resultcache.ModeDisabled)
+			cache.Checkpoints = nil
+			rig.run("job-1", cache)
+			Expect(rig.events.reportedMetadata()).To(ConsistOf(Not(HaveKey(analysis.MetadataCacheAttempt))))
 		})
 	})
 
@@ -713,7 +785,7 @@ var _ = Describe("Result reuse", func() {
 
 			res := rig.run("job-2", rig.settings(resultcache.ModeBypassed))
 			Expect(res.Completed).To(ConsistOf(cacheAnalyzer))
-			Expect(rig.events.list()).To(Equal([]string{"put", "put", "record", "checkpoint", "seal", "completed"}))
+			Expect(rig.events.list()).To(Equal([]string{"put", "put", "record", "checkpoint", "sign", "unlocked", "store", "completed"}))
 			Expect(res.CacheStats[cacheAnalyzer].Mode).To(Equal(resultcache.ModeBypassed))
 			Expect(res.CacheStats[cacheAnalyzer]).To(statsCounts(2, 0, 2))
 			Expect(rig.producersOf()).To(HaveEach("job-2"))
@@ -752,7 +824,7 @@ var _ = Describe("Result reuse", func() {
 			Expect(res.Completed).To(ConsistOf("embedding"))
 			Expect(res.CacheStats["embedding"].Mode).To(Equal(resultcache.ModeSkipped))
 			Expect(res.CacheStats["embedding"].Reason).To(ContainSubstring("does not opt in"))
-			Expect(rig.events.list()).To(Equal([]string{"record", "checkpoint", "seal", "completed"}))
+			Expect(rig.events.list()).To(Equal([]string{"record", "checkpoint", "sign", "unlocked", "store", "completed"}))
 		})
 
 		It("skips an analyzer whose aliases have no observed model, naming the alias", func() {
@@ -1146,24 +1218,42 @@ var _ = Describe("Result reuse", func() {
 
 		// Q-M8: sealing a failed stage is best effort; the stage's own error
 		// is what the job reports.
-		It("keeps a failed stage's own error when its writes cannot be sealed", func() {
+		DescribeTable("keeps a failed stage's own error when its writes cannot be sealed",
+			func(fail func(*fakeCheckpoints)) {
+				rig := newCacheRig("a")
+				rig.stub.AggregateFunc = func(context.Context, []analyzer.TaskResult) (*analyzer.Output, error) {
+					return nil, errors.New("aggregate failed")
+				}
+				fail(rig.checkpoints)
+				res := rig.run("job-1", rig.settings(resultcache.ModeEnabled))
+				Expect(res.Errors[cacheAnalyzer]).To(MatchError(And(ContainSubstring("aggregate failed"), Not(ContainSubstring(driverText)))))
+				Expect(res.Errors[cacheAnalyzer]).To(MatchError(analysis.ErrAnalyzerFailed))
+				Expect(res.Errors[cacheAnalyzer]).NotTo(MatchError(resultcache.ErrUnavailable))
+				Expect(rig.checkpoints.sealedRefs()).To(BeEmpty())
+				Expect(rig.logs).To(gbytes.Say("could not be sealed, so a later run recomputes them"))
+			},
+			Entry("the checkpoint cannot be signed", func(c *fakeCheckpoints) { c.signErr = errors.New(driverText) }),
+			Entry("the signed checkpoint cannot be stored", func(c *fakeCheckpoints) { c.storeErr = errors.New(driverText) }),
+		)
+
+		It("stores the signed checkpoint only after the job lock is released", func() {
 			rig := newCacheRig("a")
-			rig.stub.AggregateFunc = func(context.Context, []analyzer.TaskResult) (*analyzer.Output, error) {
-				return nil, errors.New("aggregate failed")
-			}
-			rig.checkpoints.sealErr = errors.New(driverText)
+			rig.checkpoints.storeErr = errors.New(driverText)
 			res := rig.run("job-1", rig.settings(resultcache.ModeEnabled))
-			Expect(res.Errors[cacheAnalyzer]).To(MatchError(And(ContainSubstring("aggregate failed"), Not(ContainSubstring(driverText)))))
-			Expect(res.Errors[cacheAnalyzer]).To(MatchError(analysis.ErrAnalyzerFailed))
-			Expect(res.Errors[cacheAnalyzer]).NotTo(MatchError(resultcache.ErrUnavailable))
-			Expect(rig.checkpoints.sealedRefs()).To(BeEmpty())
-			Expect(rig.logs).To(gbytes.Say("could not be sealed, so a later run recomputes them"))
+
+			Expect(stageErr(res)).To(MatchError(resultcache.ErrUnavailable))
+			events := rig.events.list()
+			Expect(events).To(ContainElements("sign", "unlocked", "store"))
+			Expect(slices.Index(events, "sign")).To(BeNumerically("<", slices.Index(events, "unlocked")),
+				"signing runs under the lock")
+			Expect(slices.Index(events, "unlocked")).To(BeNumerically("<", slices.Index(events, "store")),
+				"a slow or failing store must not hold the job lock")
 		})
 
 		DescribeTable("fails as unavailable, saving nothing, when the stage cannot be sealed",
-			func(sealErr error) {
+			func(fail func(*fakeCheckpoints)) {
 				rig := newCacheRig("a")
-				rig.checkpoints.sealErr = sealErr
+				fail(rig.checkpoints)
 				res := rig.run("job-1", rig.settings(resultcache.ModeEnabled))
 
 				se := stageErr(res)
@@ -1177,8 +1267,14 @@ var _ = Describe("Result reuse", func() {
 				Expect(rig.checkpoints.sealedRefs()).To(BeEmpty())
 				Expect(rig.events.count("completed")).To(BeZero())
 			},
-			Entry("the sealer fails", errors.New(driverText)),
-			Entry("the sealer's error wraps ErrCorrupt", fmt.Errorf("%w: %s", resultcache.ErrCorrupt, driverText)),
+			Entry("the signer fails", func(c *fakeCheckpoints) { c.signErr = errors.New(driverText) }),
+			Entry("the signer's error wraps ErrCorrupt", func(c *fakeCheckpoints) {
+				c.signErr = fmt.Errorf("%w: %s", resultcache.ErrCorrupt, driverText)
+			}),
+			Entry("the signed checkpoint cannot be stored", func(c *fakeCheckpoints) { c.storeErr = errors.New(driverText) }),
+			Entry("the store's error wraps ErrCorrupt", func(c *fakeCheckpoints) {
+				c.storeErr = fmt.Errorf("%w: %s", resultcache.ErrCorrupt, driverText)
+			}),
 		)
 
 		It("fails as unavailable when the stage record cannot be written, and seals the writes so a retry reuses them", func() {

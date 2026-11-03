@@ -5,6 +5,8 @@ package gateway_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -267,6 +269,41 @@ func newTestService(opts ...gateway.ServiceOption) *gateway.Service {
 	return gateway.NewService(append(defaults, opts...)...)
 }
 
+// summaryBackend is a pipeline mock whose job-1 is created by createdBy.
+// It records whether each GetJob asked for cache summaries, returns one
+// summary when asked, and fails the request when failSummaries is set.
+type summaryBackend struct {
+	*mockPipeline
+	mu            sync.Mutex
+	asked         []bool
+	failSummaries bool
+}
+
+func newSummaryBackend(createdBy string) *summaryBackend {
+	b := &summaryBackend{}
+	b.mockPipeline = &mockPipeline{getJobFn: func(_ context.Context, req *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+		b.mu.Lock()
+		b.asked = append(b.asked, req.Msg.GetIncludeCacheSummaries())
+		fail := b.failSummaries
+		b.mu.Unlock()
+		job := &pb.PipelineJob{JobId: "job-1", Audit: &pb.AuditMetadata{CreatedBy: createdBy}}
+		if req.Msg.GetIncludeCacheSummaries() {
+			if fail {
+				return nil, connect.NewError(connect.CodeInternal, errors.New("get cache summaries: object storage unreachable"))
+			}
+			job.CacheSummaries = []*pb.AnalyzerCacheSummary{{Analyzer: "classify"}}
+		}
+		return connect.NewResponse(&pb.GetJobResponse{Job: job}), nil
+	}}
+	return b
+}
+
+func (b *summaryBackend) includes() []bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.asked)
+}
+
 // ownedJobBackend returns a pipeline mock whose GetJob reports job-1 as
 // created by createdBy, for ownership-check specs.
 func ownedJobBackend(createdBy string) *mockPipeline {
@@ -385,6 +422,27 @@ var _ = Describe("Job handlers", func() {
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
 		})
 
+		DescribeTable("reads cache summaries only when asked, and only after the caller is shown to own the job or be an admin",
+			func(ctx context.Context, include bool, wantCode connect.Code, wantRequests []bool) {
+				backend := newSummaryBackend("user-a")
+				svc := newTestService(gateway.WithPipelineBackend(backend))
+				resp, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-1", IncludeCacheSummaries: include}))
+				if wantCode != 0 {
+					Expect(connect.CodeOf(err)).To(Equal(wantCode))
+				} else {
+					Expect(err).NotTo(HaveOccurred())
+				}
+				Expect(backend.includes()).To(Equal(wantRequests))
+				if err == nil {
+					Expect(resp.Msg.GetJob().GetCacheSummaries()).To(HaveLen(map[bool]int{true: 1, false: 0}[include]))
+				}
+			},
+			Entry("the owner, asking", userCtx("user-a"), true, connect.Code(0), []bool{false, true}),
+			Entry("an admin, asking", adminCtx(), true, connect.Code(0), []bool{false, true}),
+			Entry("the owner, not asking", userCtx("user-a"), false, connect.Code(0), []bool{false}),
+			Entry("another user, asking", userCtx("user-b"), true, connect.CodePermissionDenied, []bool{false}),
+		)
+
 		It("allows admin to access any job", func() {
 			pipeline := ownedJobBackend("user-a")
 			svc := newTestService(gateway.WithPipelineBackend(pipeline))
@@ -436,6 +494,19 @@ var _ = Describe("Job handlers", func() {
 			resp, err := svc.ListJobs(adminCtx(), connect.NewRequest(&pb.ListJobsRequest{}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetJobs()).To(HaveLen(3))
+		})
+	})
+
+	Context("ownership checks of cancel and retry", func() {
+		It("never read cache summaries, so they succeed while those reads fail", func() {
+			backend := newSummaryBackend("user-a")
+			backend.failSummaries = true
+			svc := newTestService(gateway.WithPipelineBackend(backend))
+			_, err := svc.CancelJob(userCtx("user-a"), connect.NewRequest(&pb.CancelJobRequest{JobId: "job-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			_, err = svc.RetryJob(userCtx("user-a"), connect.NewRequest(&pb.RetryJobRequest{JobId: "job-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(backend.includes()).To(HaveEach(BeFalse()))
 		})
 	})
 

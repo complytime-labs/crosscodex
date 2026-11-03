@@ -116,8 +116,11 @@ message PipelineJob {
   Error error = 9;
   repeated JobStage stages = 10;
   // How each analyzer of the job used the LLM result cache (#243), one
-  // entry per analyzer of the job, in stage order. Set by GetJob only (not
-  // ListJobs).
+  // entry per analyzer of the job, in stage order. Set by GetJob only when
+  // its request sets include_cache_summaries (never by ListJobs), and only
+  // by the daemon: empty in embedded mode, without a
+  // result cache, and for a tenant whose jobs are not attested (such jobs
+  // reuse nothing).
   repeated AnalyzerCacheSummary cache_summaries = 11;
 }
 
@@ -129,31 +132,43 @@ enum ResultCacheMode {
   // The job was started with no_cache: nothing was looked up; every
   // result was sent to the model and stored for later jobs.
   RESULT_CACHE_MODE_BYPASSED = 2;
-  // analysis.result_cache.enabled is false for the tenant: nothing was
-  // looked up or stored.
+  // analysis.result_cache.enabled is false for the tenant, or the daemon
+  // ran the stage without the result cache: nothing was looked up or
+  // stored. reason says which.
   RESULT_CACHE_MODE_DISABLED = 3;
   // The analyzer was not cached; reason says why.
   RESULT_CACHE_MODE_SKIPPED = 4;
+  // The stage completed in an earlier run of the job that recorded no
+  // result-cache attempt, so its link was signed as unrecorded: its cache
+  // use is not known (it was not necessarily disabled). reason says why.
+  RESULT_CACHE_MODE_UNRECORDED = 5;
 }
 
-// ResultCacheAttestation is whether an analyzer's cache summary comes from
-// a stage run whose signed cache checkpoint still matches its records.
+// ResultCacheAttestation is whether a signature vouches for an analyzer's
+// cache summary.
 enum ResultCacheAttestation {
   RESULT_CACHE_ATTESTATION_UNSPECIFIED = 0;
-  // The summary is from the latest checkpointed stage run, whose records
-  // still match the digest its checkpoint signed.
+  // A signature vouches for the summary. Usually it is from the stage run
+  // that completed the analyzer, whose records still match the digest its
+  // signed cache checkpoint names. A completed analyzer that kept no cache
+  // records (mode disabled or unrecorded) instead takes its mode and reason
+  // from its signed attestation link, over the result stored now, and its
+  // counts are empty.
   RESULT_CACHE_ATTESTATION_ATTESTED = 1;
-  // No checkpointed stage run vouches for the analyzer's cache use (the
-  // job is not running), or its records changed after signing. Every
-  // other field but analyzer is empty.
+  // No signature vouches for the analyzer's cache use: the job is not
+  // running and the analyzer has no verifiable completed stage run, its
+  // records changed after signing, or its signed records could not be read
+  // (object storage failed). A stage signed as unrecorded is not this; it
+  // is attested with mode unrecorded. Every other field but analyzer is
+  // empty.
   RESULT_CACHE_ATTESTATION_UNATTESTED = 2;
-  // The job is running and the analyzer has no checkpointed stage run yet.
-  // Every other field but analyzer is empty.
+  // The job is running and the analyzer has not completed yet. Every other
+  // field but analyzer is empty.
   RESULT_CACHE_ATTESTATION_IN_PROGRESS = 3;
 }
 
 // AnalyzerCacheSummary is one analyzer's use of the LLM result cache in
-// one job, from its latest checkpointed stage run.
+// one job, from the stage run that completed it (see attestation).
 message AnalyzerCacheSummary {
   // The analyzer (stage) name, such as "classify".
   string analyzer = 1;
@@ -175,7 +190,8 @@ message AnalyzerCacheSummary {
   // The earlier jobs whose results were reused that the caller created.
   // Other users' jobs are only counted (other_producer_jobs): GetJob is
   // owner-only, so naming them would reveal that they exist. Full IDs are
-  // in the job's attestation.
+  // in the job's audit record (job_cache_entries), which the digest of the
+  // analyzer link's <analyzer>.cache_manifest material pins.
   repeated string producer_job_ids = 8;
   int64 other_producer_jobs = 9;
   // Whether a signed cache checkpoint vouches for the fields above.
@@ -219,6 +235,11 @@ message JobStage {
 message GetJobRequest {
   TenantContext tenant_context = 1;
   string job_id = 2;
+  // Set to also return the job's cache_summaries (#243). Reading them
+  // verifies signed records in object storage, so only callers that show
+  // them (crosscodex run status) set it. The gateway reads them only after
+  // it has checked that the caller owns the job or is an admin.
+  bool include_cache_summaries = 3;
 }
 
 message GetJobResponse {

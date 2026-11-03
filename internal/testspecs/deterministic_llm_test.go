@@ -13,6 +13,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
 var _ = Describe("DeterministicLLM", func() {
@@ -60,6 +61,10 @@ var _ = Describe("DeterministicLLM", func() {
 			Expect(status).To(Equal(artifacts.ParseNone))
 			Expect(arts).To(BeEmpty())
 		})
+	})
+
+	It("answers the result cache's model probe, naming the model it was asked for", func() {
+		Expect(complete(resultcache.ProbePromptName)).To(Equal("OK"))
 	})
 
 	DescribeTable("refuses an unknown PromptName, naming it",

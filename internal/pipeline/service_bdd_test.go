@@ -1178,7 +1178,7 @@ var _ = Describe("Service", func() {
 			// analyzer writes.
 			Expect(store.CompleteAnalysisStage(ctx, "job-corrupt-rel", "relationship", []byte(
 				`[{"source_id":"AC-1","target_id":"AC-2","relationship_type":"CONTRIBUTES_TO","confidence":0.9,`+
-					`"properties":{"contribution_type":"BOGUS","unanimous":"true"}}]`))).To(Succeed())
+					`"properties":{"contribution_type":"BOGUS","unanimous":"true"}}]`), "")).To(Succeed())
 			Expect(store.UpdateStageStatus(ctx, "job-corrupt-rel", "synthesis", pipeline.StageStatusFailed)).To(Succeed())
 
 			_, err = corruptSvc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{
@@ -1481,6 +1481,29 @@ var _ = Describe("Service", func() {
 			Expect(resp.Msg.NewJobId).To(Equal("job-cache-down"))
 		})
 
+		DescribeTable("accepts both retries of a job whose model probe failed",
+			func(fromFailure bool) {
+				now := time.Now()
+				configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.CreateJob(ctx, &pipeline.Job{JobID: "job-llm-down", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+					Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now})).To(Succeed())
+				Expect(store.CreateStages(ctx, "job-llm-down", []string{"classify", "synthesis", "graph"})).To(Succeed())
+				failure := &analysis.StageError{Analyzer: "classify", Sentinel: pipeline.ErrLLMUnavailable, Message: "probe failed"}
+				Expect(store.UpdateStageError(ctx, "job-llm-down", "classify", failure)).To(Succeed())
+				Expect(store.UpdateJobStatus(ctx, "job-llm-down", pipeline.JobStatusFailed, failure)).To(Succeed())
+				j, err := store.GetJob(ctx, "job-llm-down")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorLLMUnavailable))
+
+				resp, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-llm-down", RetryFromFailure: fromFailure}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Msg.NewJobId).NotTo(BeEmpty())
+			},
+			Entry("from its failure", true),
+			Entry("as a new job", false),
+		)
+
 		// Re-importing a target with statements gives it a new catalog ID
 		// (IDs are content hashes), so the new job must name a target
 		// rather than reuse this job's.
@@ -1539,6 +1562,9 @@ var _ = Describe("Service", func() {
 			Entry("an unwrapped error with an invalid attestation's text", errors.New(pipeline.ErrAttestationInvalid.Error()), pipeline.JobErrorRetryable),
 			Entry("an unreadable result cache", fmt.Errorf("x: %w", resultcache.ErrUnavailable), pipeline.JobErrorResultCacheUnavailable),
 			Entry("a corrupt cached result", fmt.Errorf("x: %w", resultcache.ErrCorrupt), pipeline.JobErrorResultCacheCorrupt),
+			Entry("a model probe that failed", fmt.Errorf("x: %w", pipeline.ErrLLMUnavailable), pipeline.JobErrorLLMUnavailable),
+			Entry("a model probe stage error, by its class alone",
+				&analysis.StageError{Sentinel: pipeline.ErrLLMUnavailable, Cause: resultcache.ErrCorrupt}, pipeline.JobErrorLLMUnavailable),
 			Entry("an unreadable cache and a corrupt one in two analyzers, by the class a retry cannot fix",
 				errors.Join(resultcache.ErrUnavailable, resultcache.ErrCorrupt), pipeline.JobErrorResultCacheCorrupt),
 			Entry("an unreadable-cache stage error whose cause wraps a corrupt result, by its class alone",

@@ -128,7 +128,7 @@ An analysis job reads its catalogs from its stored config (`pb.JobConfig`, JSON-
 - **Candidates** pair source → target (`candidate.GenerateRequest{SourceControls: source, TargetControls: target}`); `bidirectional` adds a request with the sides swapped and concatenates the results. Embedding coverage is checked per side, so the error names the catalog that fell short.
 - **Pair prompts** receive every control's text, ancestor, classification and framework under both the `source_` and `target_` prefixes, keyed per control ID (`pairAnalyzerParameters`), because in a bidirectional job either end of a pair can come from either catalog. The framework is the control's catalog name as recorded at creation, or, for a config without labels, the current `catalogs.name` read tenant-scoped by `CatalogNameReader`.
 
-Per-control results are not reused across jobs yet: a crosswalk classifies and embeds its target again even when another job already did.
+LLM results are reused across a tenant's jobs; see [LLM Result Reuse](#llm-result-reuse).
 
 ### Binding a crosswalk to its catalogs
 
@@ -139,6 +139,50 @@ Per-control results are not reused across jobs yet: a crosswalk classifies and e
 ### Prompt-value hardening
 
 Every untrusted value a prompt renders (control IDs, statements, ancestor titles, types, levels, framework names, artifact names and samples) goes through `PromptValue` (short values, capped at `MaxPromptValueBytes`, 200 bytes) or `PromptText` (statements, capped at the analyzer's character limit, such as `max_source_chars`) in `internal/analyzer/promptvalue.go`. Both apply, in order: invalid UTF-8 repaired (before anything else, so removing a character cannot splice two partial sequences into a new one), NFKC normalization (fullwidth and small-form look-alikes of `<` and `>` fold to ASCII), cleaning (format characters such as bidi overrides, zero-width and tag characters removed; control and separator runs collapsed to one space), the cap, measured on the escaped length and cut between source characters, then entity-escaping of `&`, `<` and `>` so no value can close the prompt's delimiting tags. The requires, relationship, classify and artifacts analyzers and the artifact adjudicator all use them. `CleanDisplay`, the same cleaning without NFKC or escaping, is for showing stored values to an operator (CLI output, CSV cells).
+
+## LLM Result Reuse
+
+An analyzer's LLM results are reused per tenant across jobs (#243). This section is the design's trust model, which a change must preserve; code comments refer to it.
+
+- **Key.** The key is the exact request sent. `pkg/resultcache.Key` hashes the analyzer, the request identity read from the task payload (`analyzer.Cacheable`), the model the per-job probe observed, and `llm.model_revisions`. So prompt overrides, layers, limits and samples all change it. An analyzer that does not implement `analyzer.Cacheable` is never cached. Its stats say so.
+- **Store.** `pkg/resultcache.Store` has two implementations: `pgstore` and the shared fake, both bound by `resultcachetest.StoreContract`.
+  - `llm_result_cache` holds the results. `app_user` cannot delete from it; only retention removes rows.
+  - `job_cache_entries` and `job_cache_stats` are each job's audit record. They are append-only, and their BEFORE INSERT triggers refuse rows for a job that is not running (the freeze).
+- **Attempts.** Each stage run has its own attempt, a UUID. Entries, stats rows and cache rows (`producer_attempt`) name it. A rerun never mixes its record with an earlier run's.
+- **Checkpoints, the only source of trust.**
+  - **Signing under the lock.** When a stage stops, success or failure, the engine compares the database's rows for its attempt with its own in-process record. It does this under `SELECT … FOR UPDATE` on the job row, which conflicts with the freeze trigger's `FOR SHARE`. If they match, it signs a checkpoint there over the manifest digest (`Store.Checkpoint`, `CacheCheckpoints.Sign`).
+  - **Storing after the lock.** It stores the checkpoint after the lock is released (`CacheCheckpoints.Store`). Storage retries therefore never hold the lock, and a checkpoint signed but not stored leaves the attempt untrusted.
+  - **On a mismatch** it refuses to sign (`result_cache_corrupt`, or `result_cache_unavailable` when a write's outcome was unknown).
+  - **Format and location.** A checkpoint is an in-toto link with step `result-cache-checkpoint`, the job as its material, and one product `result-cache:<tenant>/<job>/<analyzer>/<attempt>` carrying the digest. It is stored at `attestations/<tenant>/<job>/cache-checkpoints/<analyzer>/<attempt>.json`.
+- **Verifying a hit.** The engine:
+  1. lists each producer's checkpoints and verifies their signatures under the tenant's key;
+  2. reads the cache rows and those attempts' manifests in one REPEATABLE READ snapshot, taking no lock (checkpoints loaded before the snapshot make a planted row fail the digest, and a later row is invisible);
+  3. reuses a row only through the exact `producer_attempt` that stored it.
+
+  The outcome depends on that attempt:
+
+  | The row's `producer_attempt` is | The result is |
+  |---|---|
+  | signed, and it vouches for the result's digest | a hit |
+  | signed, but it does not vouch for the digest | `result_cache_corrupt` |
+  | unsigned: no checkpoint, a crashed run, or a key that is not trusted now | a miss |
+
+  A key rotation therefore ends reuse without raising an alarm.
+- **Attesting a stage.**
+  - **The link.** Each analyzer link pins `<analyzer>.cache_manifest`, the `resultcache.Manifest` digest signed by the checkpoint of the attempt completing the stage (the checkpoint's product digest, not a digest of the checkpoint file), and the layout requires it. The link also signs the byproducts `result_cache.mode`, `.reason` and `.attempt`. A stage that kept no records (mode `disabled`, or `off` without the cache) pins the empty manifest's digest.
+  - **The pointer.** The completing attempt is recorded in `job_stages.cache_attempt`, in the transaction that marks the stage completed.
+  - **A later run** that re-attests the stage (resume, `retry --from-failure`) verifies that attempt's checkpoint and recomputes its manifest from the rows (`VerifiedSummaries`). A missing, untrusted or mismatched record fails the job as `attestation_invalid`. A null pointer is signed as `unrecorded`, and a mode is never inferred. Before that, the run lists the analyzer's checkpoints. If one of them verifies under the key trusted now and seals a completed stage run (its record has stage statistics), the job fails as `attestation_invalid`, because the pointer was removed. This catches only a removed pointer whose checkpoint is still stored and verifiable: a pointer removed together with its checkpoint, or under a rotated key, is still signed as `unrecorded`.
+  - **The pointer's residual trust.** The pointer is not trusted. Someone who can write `job_stages` can repoint it only to another signed attempt of the same job and analyzer that completed the stage, and so still to genuine records. `app_user` can write it only while the job is not completed: a completed job's stages are frozen.
+- **Run status.** `GetJob` shows only signed figures (`internal/pipeline/cache_summary.go`).
+  - Summaries are read only when `GetJobRequest.include_cache_summaries` asks for them, which only `run status` sets. The gateway first reads the job without them, checks that the caller owns the job or is an admin, and only then reads them. So `run cancel` and `run retry`, whose ownership checks call `GetJob`, never depend on them, and a non-owner causes no summary reads.
+  - A completed stage shows its completing attempt's verified stats. If it kept no records, it shows the mode its signed link records, provided the link's `<name>.output` product is the result stored now: `disabled` or `off` as mode `DISABLED`, and `unrecorded` as mode `UNRECORDED` (attested, its mode not known), never as disabled.
+  - Object storage failing does not fail `run status`: the analyzers whose signed records cannot be read show as unattested, and the cause is logged once with the trace ID. Database failures still fail it.
+  - A stage not yet completed, or completed without records and whose link isn't signed yet, shows as in progress while the job runs and as unattested after. A record that fails verification (a bad checkpoint, or a link that doesn't verify or names another result) shows as unattested, whether or not the job is running.
+  - A planted stats row changes nothing it shows. It costs at most one object read per analyzer, no listing, and one read of the stored results when a stage kept no records.
+- **Residual trust.**
+  - Every writer other than the daemon is detected after signing: `app_user`, and a database superuser who skips the triggers, because only the daemon holds the signing key. The one exception is the removed-pointer case under "Attesting a stage" above: a pointer deleted together with its checkpoint (or whose checkpoint is under a rotated key) is signed as `unrecorded`, not detected.
+  - While a job runs, the daemon process executing it can write whatever results it likes into its own tenant's cache. A daemon compromised at that time is not defended against.
+  - A tenant without attestation gets no reuse at all, since nothing it runs can be checkpointed.
 
 ## Identity Lifecycle
 

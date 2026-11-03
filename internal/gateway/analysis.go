@@ -98,6 +98,7 @@ func (s *Service) StartAnalysis(ctx context.Context, req *connect.Request[pb.Sta
 			CatalogId:       sourceID,
 			TargetCatalogId: targetID,
 			Bidirectional:   bidirectional,
+			NoCache:         req.Msg.GetNoCache(),
 			SynthesisConfig: req.Msg.GetSynthesisConfig(),
 		},
 	}))

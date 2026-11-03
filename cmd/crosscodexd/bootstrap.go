@@ -31,6 +31,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache/pgstore"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -624,6 +625,14 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 
 	store := pipeline.NewPGStore(tenantConn, shared.appPool, pipeline.WithStoreTelemetry(tp, mp))
 
+	// Result reuse (#243): one store over the app_user tenant pool, which
+	// the engine looks results up in and writes them to. The pipeline
+	// probes models through the daemon's shared, audited LLM client.
+	cacheStore, err := pgstore.New(tenantConn, pgstore.WithTelemetry(tp, mp))
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: create the result cache store: %w", err)
+	}
+
 	registry, err := pipeline.NewProductionRegistry(shared.llmClient, shared.vectorDB, storageProvider, prompts, tenantConn, cfg.Analysis,
 		tp, mp)
 	if err != nil {
@@ -635,7 +644,7 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		store, pipeline.WithReporterTracer(tp))
 	engine := analysis.NewWithNATS(registry, shared.natsClient, cfg.Analysis.Engine, taskTypesByAnalyzer,
 		analysis.WithStageReporter(dbReporter), analysis.WithTelemetry(tp, mp),
-		analysis.WithStageTimeout(cfg.Pipeline.StageTimeout))
+		analysis.WithStageTimeout(cfg.Pipeline.StageTimeout), analysis.WithResultCache(cacheStore))
 
 	candRegistry, err := pipeline.BuildCandidateRegistry(cfg.Analysis.Candidates, tp, mp)
 	if err != nil {
@@ -661,20 +670,25 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		pipeline.WithCatalogNameReader(pipeline.NewPGCatalogNameReader(tenantConn, pipeline.WithPGCatalogNameReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn, pipeline.WithPGEmbeddingsReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
+		pipeline.WithResultCache(cacheStore, cfg.Analysis.ResultCache, cfg.LLM, shared.llmClient),
 		pipeline.WithTelemetry(tp, mp),
 	), nil
 }
 
 // logAttestationPosture logs, once at startup, each scope whose pipeline
 // jobs are not attested, so running without attestation is never silent.
+// Such jobs reuse no cached LLM result either: only a signed cache
+// checkpoint makes a cached result trusted (#243).
 func logAttestationPosture(attestors pipeline.Attestors) {
 	if attestors.Default == nil {
-		slog.Warn("attestation is disabled (attestation.enabled: false): pipeline jobs complete without in-toto attestations")
+		slog.Warn("attestation is disabled (attestation.enabled: false): pipeline jobs complete without in-toto attestations " +
+			"and reuse no cached LLM results, since only a signed cache checkpoint makes one trusted")
 	}
 	for _, tenantID := range slices.Sorted(maps.Keys(attestors.Tenants)) {
 		switch {
 		case attestors.Tenants[tenantID] == nil && attestors.Default != nil:
-			slog.Warn("attestation is disabled for a tenant (attestation.tenant_overrides): its pipeline jobs complete without in-toto attestations",
+			slog.Warn("attestation is disabled for a tenant (attestation.tenant_overrides): its pipeline jobs complete without "+
+				"in-toto attestations and reuse no cached LLM results, since only a signed cache checkpoint makes one trusted",
 				"tenant_id", tenantID)
 		case attestors.Tenants[tenantID] != nil && attestors.Default == nil:
 			slog.Info("attestation is enabled for a tenant (attestation.tenant_overrides)", "tenant_id", tenantID)

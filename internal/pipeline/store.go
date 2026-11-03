@@ -32,8 +32,10 @@ type Store interface {
 	// CompleteAnalysisStage persists an analyzer's final result and marks its
 	// job_stages row completed in a single transaction — an analyzer must
 	// never be marked completed without its result already durably committed,
-	// or a resumed job would skip it forever.
-	CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte) error
+	// or a resumed job would skip it forever. cacheAttempt is the
+	// result-cache attempt that sealed the stage (analysis.MetadataCacheAttempt),
+	// stored with the completion; "" stores NULL.
+	CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt string) error
 
 	// GetCompletedAnalysisResults loads persisted analyzer outputs for the
 	// given job and analyzer names. Used to pre-seed a resumed execution's
@@ -42,6 +44,11 @@ type Store interface {
 	// ResultData are populated on each returned Output — Data and Metadata
 	// are never persisted (see analyzer.Output's doc comment).
 	GetCompletedAnalysisResults(ctx context.Context, jobID string, analyzerNames []string) (map[string]*analyzer.Output, error)
+
+	// JobsCreatedBy returns, sorted, those of jobIDs that user created in
+	// the ctx tenant. An empty user created none. GetJob uses it to name
+	// only the caller's jobs among those whose results a job reused.
+	JobsCreatedBy(ctx context.Context, jobIDs []string, user string) ([]string, error)
 
 	// WriteVoteSummaries upserts vote_summaries rows for the given job's
 	// requires/relationship contributions, one row per (source, target,
@@ -653,7 +660,8 @@ func (s *PGStore) GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 	}
 
 	query := `
-		SELECT job_id, stage_name, status, started_at, completed_at, retry_count, error_message, tenant_id
+		SELECT job_id, stage_name, status, started_at, completed_at, retry_count, error_message, tenant_id,
+			COALESCE(cache_attempt, '')
 		FROM job_stages
 		WHERE job_id = $1 AND tenant_id = $2
 		ORDER BY stage_name
@@ -670,7 +678,7 @@ func (s *PGStore) GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 	var stages []*Stage
 	for rows.Next() {
 		var stage Stage
-		if err := rows.Scan(&stage.JobID, &stage.StageName, &stage.Status, &stage.StartedAt, &stage.CompletedAt, &stage.RetryCount, &stage.ErrorMessage, &stage.TenantID); err != nil {
+		if err := rows.Scan(&stage.JobID, &stage.StageName, &stage.Status, &stage.StartedAt, &stage.CompletedAt, &stage.RetryCount, &stage.ErrorMessage, &stage.TenantID, &stage.CacheAttempt); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("PGStore.GetStages: scan failed: %w", err)
@@ -756,7 +764,7 @@ func (s *PGStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, 
 
 	query := `
 		UPDATE job_stages
-		SET status = $1, started_at = NULL, completed_at = NULL, error_message = '', retry_count = retry_count + 1
+		SET status = $1, started_at = NULL, completed_at = NULL, error_message = '', retry_count = retry_count + 1, cache_attempt = NULL
 		WHERE job_id = $2 AND stage_name = $3 AND tenant_id = $4
 	`
 
@@ -787,7 +795,7 @@ func (s *PGStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, 
 	return nil
 }
 
-func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte) error {
+func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt string) error {
 	if jobID == "" {
 		return fmt.Errorf("PGStore.CompleteAnalysisStage: %w", ErrInvalidJobID)
 	}
@@ -834,12 +842,18 @@ func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName
 		return fmt.Errorf("PGStore.CompleteAnalysisStage: upserting result: %w", err)
 	}
 
+	// The attempt that sealed the stage is stored with its completion, so
+	// a later run (and run status) can find its checkpoint.
+	var attempt any
+	if cacheAttempt != "" {
+		attempt = cacheAttempt
+	}
 	stageQuery := `
 		UPDATE job_stages
-		SET status = $1, completed_at = $2
+		SET status = $1, completed_at = $2, cache_attempt = $6
 		WHERE job_id = $3 AND stage_name = $4 AND tenant_id = $5
 	`
-	if err := tx.Exec(ctx, stageQuery, StageStatusCompleted, time.Now(), jobID, analyzerName, tenantID); err != nil {
+	if err := tx.Exec(ctx, stageQuery, StageStatusCompleted, time.Now(), jobID, analyzerName, tenantID, attempt); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.CompleteAnalysisStage: updating stage status: %w", err)
@@ -861,6 +875,68 @@ func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName
 
 	span.SetStatus(codes.Ok, "")
 	return nil
+}
+
+// JobsCreatedBy implements Store.
+func (s *PGStore) JobsCreatedBy(ctx context.Context, jobIDs []string, user string) ([]string, error) {
+	if user == "" || len(jobIDs) == 0 {
+		return nil, nil
+	}
+	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.store.jobs_created_by")
+	defer span.End()
+	span.SetAttributes(attribute.Int("jobs.count", len(jobIDs)))
+	start := time.Now()
+	fail := func(err error) ([]string, error) {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return fail(fmt.Errorf("PGStore.JobsCreatedBy: %w", err))
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fail(fmt.Errorf("PGStore.JobsCreatedBy: beginning transaction: %w", err))
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
+		return fail(fmt.Errorf("PGStore.JobsCreatedBy: setting tenant: %w", err))
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT job_id FROM jobs
+		WHERE tenant_id = $1 AND created_by = $2 AND job_id = ANY($3::text[])
+		ORDER BY job_id
+	`, tenantID, user, jobIDs)
+	if err != nil {
+		return fail(fmt.Errorf("PGStore.JobsCreatedBy: query: %w", err))
+	}
+	defer rows.Close()
+	var owned []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fail(fmt.Errorf("PGStore.JobsCreatedBy: scan: %w", err))
+		}
+		owned = append(owned, id)
+	}
+	if err := rows.Err(); err != nil {
+		return fail(fmt.Errorf("PGStore.JobsCreatedBy: read rows: %w", err))
+	}
+	if err := tx.Commit(); err != nil {
+		return fail(fmt.Errorf("PGStore.JobsCreatedBy: commit failed: %w", err))
+	}
+
+	attrs := metric.WithAttributes(attribute.String("operation", "jobs_created_by"))
+	if s.queryCounter != nil {
+		s.queryCounter.Add(ctx, 1, attrs)
+	}
+	if s.queryLatency != nil {
+		s.queryLatency.Record(ctx, time.Since(start).Seconds()*1000, attrs)
+	}
+	span.SetStatus(codes.Ok, "")
+	return owned, nil
 }
 
 // GetCompletedAnalysisResults loads persisted analyzer outputs for the given

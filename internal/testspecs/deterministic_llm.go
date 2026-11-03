@@ -7,6 +7,7 @@ import (
 	"math/rand"
 
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -69,6 +70,9 @@ func (DeterministicLLM) Complete(_ context.Context, req *llmclient.CompletionReq
 		// relationship analyzer produces an (empty) result row and populates no
 		// vote_summaries rows; only the requires contribution reaches synthesis.
 		content = "RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH"
+	case resultcache.ProbePromptName:
+		// The per-job model probe reads only resp.Model.
+		content = "OK"
 	case "artifacts":
 		// artifacts.ParseResponse treats "ARTIFACTS: NONE" as the empty
 		// sentinel — a valid, parseable "no artifacts" result.

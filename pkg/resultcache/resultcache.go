@@ -22,9 +22,12 @@ import (
 )
 
 var (
-	// ErrUnavailable reports that the cache could not be read or its audit
-	// rows written. The stage that needed it stops; the job error class is
-	// result_cache_unavailable (retryable).
+	// ErrUnavailable is the class sentinel of a stage stopped because the
+	// cache could not be read, its audit rows written or its record sealed;
+	// the job error class is result_cache_unavailable (retryable). Only the
+	// engine sets it (internal/analysis StageError.Sentinel); Store
+	// implementations do not wrap it, and the engine classifies their
+	// errors by the call that failed.
 	ErrUnavailable = errors.New("result cache unavailable")
 	// ErrCorrupt reports a cached result that failed its integrity check or
 	// does not decode. The result is never reused; the job error class is
@@ -693,20 +696,24 @@ type Store interface {
 	RecordStage(ctx context.Context, rec StageRecord) error
 	// Manifest returns the rows attempt of jobID recorded for analyzer,
 	// entries in CompareEntries order, stats oldest first, as the database
-	// holds them now: an audit read, never a basis for trust. An invalid
-	// attempt wraps ErrInvalidEntry.
+	// holds them now: an audit read, never a basis for trust. No production
+	// path calls it yet (tests and the contract do); an auditor read path
+	// over it is a planned follow-up. An invalid attempt wraps
+	// ErrInvalidEntry.
 	Manifest(ctx context.Context, jobID, analyzer, attempt string) (Manifest, error)
 	// Checkpoint seals the attempt expected names. Holding the job row FOR
 	// UPDATE, which every cache insert's FOR SHARE waits on, it reads the
 	// attempt's rows and compares them with expected, the executor's
 	// in-process record (MatchRecord). On a mismatch it returns that error,
 	// wrapping ErrCorrupt, without calling seal. Otherwise it calls seal
-	// with expected.Digest(), still under the lock: seal signs that digest
-	// and stores the checkpoint, nothing else. It must not touch the job's
-	// row or the store, or wait on any write to the job's cache record,
-	// which waits on the lock. seal's error is returned wrapped. A job the
-	// tenant does not have wraps ErrUnknownJob; expected naming another
-	// tenant or an invalid attempt wraps ErrInvalidEntry.
+	// with expected.Digest(), still under the lock. seal only signs that
+	// digest: it is CPU work, and must do no object-storage I/O, not touch
+	// the job's row and not call the store, any of which would hold the
+	// lock that every write to the job's cache record waits on. The caller
+	// stores the signed checkpoint after Checkpoint returns and the lock is
+	// released. seal's error is returned wrapped. A job the tenant does not
+	// have wraps ErrUnknownJob; expected naming another tenant or an
+	// invalid attempt wraps ErrInvalidEntry.
 	Checkpoint(ctx context.Context, expected Manifest, seal func(ctx context.Context, digest string) error) error
 	// VerifiedSummaries reads, for each analyzer in signed, the rows of the
 	// signed attempt of jobID and returns SummarizeSigned of them: attested

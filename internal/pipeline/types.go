@@ -63,6 +63,12 @@ type Stage struct {
 	RetryCount   int
 	ErrorMessage string
 	TenantID     string
+	// CacheAttempt is the result-cache attempt whose checkpoint sealed this
+	// analyzer stage's completion (analysis.MetadataCacheAttempt), or "".
+	// Untrusted: a reader verifies the checkpoint it names, and a database
+	// writer could repoint it to another signed attempt of the same job and
+	// analyzer.
+	CacheAttempt string
 }
 
 type JobFilter struct {

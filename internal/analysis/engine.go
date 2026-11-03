@@ -427,8 +427,9 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 	}
 	// complete records the stage's cache use and seals it, all before the
 	// stage's result is persisted: a reuse or write that cannot be attested
-	// must not be.
-	complete := func() bool {
+	// must not be. A sealed stage names its attempt in output's metadata
+	// (MetadataCacheAttempt), which the reporter persists with the result.
+	complete := func(output *analyzer.Output) bool {
 		if !sc.records() {
 			return true
 		}
@@ -441,6 +442,10 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			fail(e.checkpointFailed(ctx, sc, err), true)
 			return false
 		}
+		if output.Metadata == nil {
+			output.Metadata = make(map[string]string)
+		}
+		output.Metadata[MetadataCacheAttempt] = sc.attempt
 		return true
 	}
 
@@ -451,7 +456,7 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			AnalyzerName: name,
 			Metadata:     map[string]string{"tasks": "0"},
 		}
-		if !complete() {
+		if !complete(output) {
 			return
 		}
 		if err := e.reporter.ReportStageCompleted(ctx, name, req.JobID, output); err != nil {
@@ -569,7 +574,7 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		output.Metadata["failed_tasks"] = fmt.Sprintf("%d", failures)
 	}
 
-	if !complete() {
+	if !complete(output) {
 		return
 	}
 

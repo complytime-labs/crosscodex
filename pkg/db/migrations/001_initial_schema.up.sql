@@ -276,8 +276,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     error_message TEXT NOT NULL DEFAULT '',
     -- Classifies error_message's cause (pipeline.ClassifyJobError), so a
     -- retry that cannot succeed is refused without matching the text.
-    -- A retry may fix: '' (no failure, or an unclassified one) and
-    -- result_cache_unavailable. Refused: attestation_invalid,
+    -- A retry may fix: '' (no failure, or an unclassified one),
+    -- result_cache_unavailable and llm_unavailable. Refused: attestation_invalid,
     -- analyzers_changed, missing_catalog, empty_target_catalog and
     -- result_cache_corrupt (both retry forms, except a new job from a job
     -- already started with --no-cache, which is the remedy itself).
@@ -326,6 +326,14 @@ CREATE TABLE IF NOT EXISTS job_stages (
     tenant_id     TEXT NOT NULL REFERENCES tenants(tenant_id),
     retry_count   INTEGER NOT NULL DEFAULT 0,
     error_message TEXT NOT NULL DEFAULT '',
+    -- cache_attempt names the result-cache attempt (#243) whose signed
+    -- checkpoint sealed an analyzer stage's completion, set in the same
+    -- transaction that marks the stage completed; NULL when no attempt was
+    -- sealed (cache disabled or off) and after a reset. It is a pointer, not
+    -- evidence: readers verify the checkpoint it names. Someone who can
+    -- write this table can repoint it only to another genuine signed attempt
+    -- of the same job and analyzer.
+    cache_attempt TEXT,
     PRIMARY KEY (job_id, stage_name)
 );
 
@@ -807,8 +815,8 @@ CREATE TABLE IF NOT EXISTS job_cache_entries (
         FOREIGN KEY (job_id, tenant_id) REFERENCES public.jobs (job_id, tenant_id)
 );
 
--- Serves the lookup's join to the producer's trusted entries (its writes
--- and self-hits). The primary key's prefix serves the per-attempt manifest.
+-- Serves the lookup's join to the producer's trusted entries (its writes).
+-- The primary key's prefix serves the per-attempt manifest.
 CREATE INDEX idx_job_cache_entries_key
     ON job_cache_entries (tenant_id, job_id, analyzer, cache_key);
 CREATE INDEX idx_job_cache_entries_job ON job_cache_entries (job_id);

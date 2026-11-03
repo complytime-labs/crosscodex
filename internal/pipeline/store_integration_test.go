@@ -162,11 +162,11 @@ var _ = Describe("PGStore integration", func() {
 
 		// First write: upsert an initial result.
 		first := []byte(`[{"source_id":"AC-1","target_id":"AC-2","confidence":0.9}]`)
-		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "requires", first)).To(Succeed(), "CompleteAnalysisStage (first write) failed")
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "requires", first, "")).To(Succeed(), "CompleteAnalysisStage (first write) failed")
 
 		// Second write to the same (tenant, job, analyzer) key: must upsert, not duplicate.
 		second := []byte(`[{"source_id":"AC-1","target_id":"AC-3","confidence":0.7}]`)
-		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "requires", second)).To(Succeed(), "CompleteAnalysisStage (second write) failed")
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "requires", second, "")).To(Succeed(), "CompleteAnalysisStage (second write) failed")
 
 		// Verify the durably committed row directly. analysis_results has RLS
 		// (policy tenant_isolation gates on app.current_tenant), so a raw app_user
@@ -223,9 +223,9 @@ var _ = Describe("PGStore integration", func() {
 		// Complete "classify" and "embedding" with distinct payloads; leave
 		// "requires" never completed.
 		classifyData := []byte(`{"a":1}`)
-		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "classify", classifyData)).To(Succeed(), "CompleteAnalysisStage(classify) failed")
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "classify", classifyData, "")).To(Succeed(), "CompleteAnalysisStage(classify) failed")
 		embeddingData := []byte(`{"b":2}`)
-		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "embedding", embeddingData)).To(Succeed(), "CompleteAnalysisStage(embedding) failed")
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "embedding", embeddingData, "")).To(Succeed(), "CompleteAnalysisStage(embedding) failed")
 
 		// Superset query: includes the never-completed "requires" analyzer.
 		// Only the two completed analyzers should come back.
@@ -275,7 +275,7 @@ var _ = Describe("PGStore integration", func() {
 		Expect(store.CreateJob(ctx2, job2)).To(Succeed(), "CreateJob (tenant 2) failed")
 		Expect(store.CreateStages(ctx2, job2.JobID, []string{"classify"})).To(Succeed(), "CreateStages (tenant 2) failed")
 		tenant2Data := []byte(`{"c":3}`)
-		Expect(store.CompleteAnalysisStage(ctx2, job2.JobID, "classify", tenant2Data)).To(Succeed(), "CompleteAnalysisStage (tenant 2) failed")
+		Expect(store.CompleteAnalysisStage(ctx2, job2.JobID, "classify", tenant2Data, "")).To(Succeed(), "CompleteAnalysisStage (tenant 2) failed")
 
 		// Query under tenant 1's context, but with tenant 2's job ID and
 		// analyzer name. Tenant isolation must prevent any row from surfacing.
@@ -353,6 +353,56 @@ var _ = Describe("PGStore integration", func() {
 		gotAfterRetry := readRows()
 		Expect(gotAfterRetry).To(HaveLen(3), "vote_summaries row count after second write (no duplicates; rows=%+v)", gotAfterRetry)
 		Expect(gotAfterRetry).To(Equal(want), "vote_summaries rows after second write must be unchanged")
+	})
+
+	It("records the attempt that sealed a completed stage, NULL when none did, and ResetStagesFrom clears it", func() {
+		store, suPool, tenantID, ctx := setupPGStore()
+
+		job := newITJob(tenantID)
+		Expect(store.CreateJob(ctx, job)).To(Succeed(), "CreateJob failed")
+		stageNames := []string{"classify", "embedding", "synthesis"}
+		Expect(store.CreateStages(ctx, job.JobID, stageNames)).To(Succeed(), "CreateStages failed")
+		attempt := uuid.New().String()
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "classify", []byte(`[]`), attempt)).To(Succeed())
+		Expect(store.CompleteAnalysisStage(ctx, job.JobID, "embedding", []byte(`[]`), "")).To(Succeed())
+
+		stages, err := store.GetStages(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred())
+		byName := stagesByName(stages)
+		Expect(byName["classify"].CacheAttempt).To(Equal(attempt))
+		Expect(byName["embedding"].CacheAttempt).To(BeEmpty())
+		var isNull bool
+		Expect(suPool.QueryRow(ctx, "SELECT cache_attempt IS NULL FROM job_stages WHERE job_id = $1 AND stage_name = 'embedding'",
+			job.JobID).Scan(&isNull)).To(Succeed())
+		Expect(isNull).To(BeTrue(), "a stage no attempt sealed stores NULL, not an empty attempt")
+
+		Expect(store.ResetStagesFrom(ctx, job.JobID, "classify", stageNames)).To(Succeed())
+		stages, err = store.GetStages(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stagesByName(stages)["classify"].CacheAttempt).To(BeEmpty(), "a reset stage names no completing attempt")
+	})
+
+	It("JobsCreatedBy returns only the given jobs the user created, in the context's tenant, as the restricted role", func() {
+		store, suPool, tenantID, ctx := setupPGStore()
+		mine, theirs := newITJob(tenantID), newITJob(tenantID)
+		mine.CreatedBy, theirs.CreatedBy = "user-a", "user-b"
+		Expect(store.CreateJob(ctx, mine)).To(Succeed())
+		Expect(store.CreateJob(ctx, theirs)).To(Succeed())
+
+		got, err := store.JobsCreatedBy(ctx, []string{mine.JobID, theirs.JobID, uuid.New().String()}, "user-a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal([]string{mine.JobID}))
+		got, err = store.JobsCreatedBy(ctx, []string{mine.JobID, theirs.JobID}, "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeEmpty(), "an empty user created no job")
+
+		otherTenant := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, suPool, otherTenant, "pipeline-it-2")).To(Succeed())
+		otherCtx, err := tenant.WithTenant(context.Background(), otherTenant)
+		Expect(err).NotTo(HaveOccurred())
+		got, err = store.JobsCreatedBy(otherCtx, []string{mine.JobID}, "user-a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeEmpty(), "another tenant's job is invisible")
 	})
 
 	It("ResetStagesFrom resets the failed stage and all later stages, leaving earlier stages untouched", func() {

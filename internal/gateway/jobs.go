@@ -34,6 +34,11 @@ func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequ
 	tc := buildTenantContext(identity)
 	req.Msg.TenantContext = tc
 
+	// Cache summaries cost signed-object reads, so they are read only after
+	// the caller is shown to own the job or be an admin: the first read
+	// never asks for them, and a second one does when the caller did.
+	includeSummaries := req.Msg.GetIncludeCacheSummaries()
+	req.Msg.IncludeCacheSummaries = false
 	resp, err := s.pipeline.GetJob(ctx, req)
 	if err != nil {
 		err = s.publicError(ctx, "GetJob", err)
@@ -48,6 +53,18 @@ func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequ
 	if !authn.IsAdmin(*identity) && resp.Msg.GetJob().GetAudit().GetCreatedBy() != identity.Subject {
 		s.recordMetrics(ctx, "GetJob", start, connect.CodePermissionDenied)
 		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("not the job owner"))
+	}
+
+	if includeSummaries {
+		req.Msg.IncludeCacheSummaries = true
+		if resp, err = s.pipeline.GetJob(ctx, req); err != nil {
+			err = s.publicError(ctx, "GetJob", err)
+			s.recordMetrics(ctx, "GetJob", start, connect.CodeOf(err))
+			return nil, err
+		}
+		if resp.Msg.GetJob() == nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.New("backend returned nil job"))
+		}
 	}
 
 	s.recordMetrics(ctx, "GetJob", start, connect.Code(0))

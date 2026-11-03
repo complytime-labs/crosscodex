@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +24,9 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-// CacheCheckpoints signs and verifies a job's cache checkpoints (spec
-// amendment 15): the only source of trust in a cached result. The pipeline
+// CacheCheckpoints signs and verifies a job's cache checkpoints
+// (docs/dev/design-principles.md, "LLM Result Reuse"): the only source of
+// trust in a cached result. The pipeline
 // implements it over pkg/attestation for the job's tenant. Both methods
 // read the tenant from ctx.
 type CacheCheckpoints interface {
@@ -32,31 +34,66 @@ type CacheCheckpoints interface {
 	// signature verifies under a key the daemon trusts, each mapped to the
 	// manifest digest it signed. No checkpoint, or one signed by a key the
 	// daemon does not trust (rotated or unknown), leaves the attempt out;
-	// the latter are counted in UntrustedKeys. An invalid signature under a
+	// the latter are listed in Untrusted. An invalid signature under a
 	// trusted key, or a signed subject naming another tenant, job,
 	// analyzer or attempt than where it is stored, wraps
 	// resultcache.ErrCorrupt. Every other failure must not wrap ErrCorrupt.
 	Verified(ctx context.Context, analyzer string, producers []string) (VerifiedCheckpoints, error)
-	// Seal signs a checkpoint whose subject binds the ctx tenant,
-	// ref.JobID, ref.Analyzer, ref.Attempt and digest, and stores it beside
-	// the job's attestation links. It runs inside Store.Checkpoint under the
-	// job row lock: it must not call the result cache store or touch the
+	// Sign returns a signed checkpoint envelope whose subject binds the ctx
+	// tenant, ref.JobID, ref.Analyzer, ref.Attempt and digest. It runs
+	// inside Store.Checkpoint's seal callback, under the job row lock, so
+	// it does CPU work only: no object storage, no result cache store, no
 	// job row.
-	Seal(ctx context.Context, ref resultcache.AttemptRef, digest string) error
+	Sign(ctx context.Context, ref resultcache.AttemptRef, digest string) ([]byte, error)
+	// Store stores the envelope Sign returned for ref beside the job's
+	// attestation links. It runs after Store.Checkpoint has committed and
+	// released the lock, so its storage retries never hold up the job's
+	// other stages.
+	//
+	// Splitting signing from storing loses no safety. The signature covers
+	// exactly the manifest compared with the database under the lock. A
+	// row inserted after the commit is not in that manifest, so the
+	// attempt's recomputed manifest no longer matches its signed digest
+	// and verification fails it as result_cache_corrupt. A checkpoint that was signed but never stored leaves the
+	// attempt unsigned, so it is untrusted, which is fail-safe.
+	Store(ctx context.Context, ref resultcache.AttemptRef, signed []byte) error
 }
 
 // VerifiedCheckpoints is what CacheCheckpoints.Verified found.
 type VerifiedCheckpoints struct {
 	// Signed maps each trusted attempt to its signed manifest digest.
 	Signed map[resultcache.AttemptRef]string
-	// UntrustedKeys counts checkpoints left out because their signing key
-	// is not trusted.
-	UntrustedKeys int
+	// Untrusted lists the checkpoints left out because their signing key
+	// is not trusted. The engine logs and counts them; the implementation
+	// does neither.
+	Untrusted []UntrustedCheckpoint
 }
 
-// errSealFailed marks the error of CacheCheckpoints.Seal inside the error
-// Store.Checkpoint returns, so a sealer failure is never classified as a
-// record mismatch, whatever it wraps.
+// UntrustedCheckpoint is a checkpoint signed by a key the daemon does not
+// trust.
+type UntrustedCheckpoint struct {
+	// Location is where the checkpoint is stored.
+	Location string
+	// KeyIDs are the key IDs its signatures name, unsigned (DSSE keyids
+	// are not covered by the signature), for an operator to compare with
+	// retired keys.
+	KeyIDs []string
+}
+
+// String is the checkpoint's location and key IDs, quoted, as the engine
+// logs them.
+func (u UntrustedCheckpoint) String() string {
+	quoted := make([]string, len(u.KeyIDs))
+	for i, id := range u.KeyIDs {
+		quoted[i] = strconv.Quote(id)
+	}
+	return fmt.Sprintf("%s (key IDs: %s)", u.Location, strings.Join(quoted, ", "))
+}
+
+// errSealFailed marks an error of CacheCheckpoints.Sign (inside the error
+// Store.Checkpoint returns) or CacheCheckpoints.Store, so a failure to sign
+// or store a checkpoint is never classified as a record mismatch, whatever
+// it wraps.
 var errSealFailed = errors.New("the cache checkpoint could not be signed or stored")
 
 // cachedTask is one task the stage may look up and store.
@@ -370,12 +407,17 @@ func (e *Engine) lookupCached(ctx context.Context, sc *stageCache) (map[string]*
 				}
 				return nil, e.cacheUnavailable(ctx, sc, len(keys), "loading the producers' cache checkpoints", err)
 			}
-			if vc.UntrustedKeys > 0 {
-				e.logger.WarnContext(ctx, "cache checkpoints signed by a key the daemon no longer trusts were ignored, "+
-					"so the results they cover are recomputed. Expected after a signing key rotation",
+			if n := len(vc.Untrusted); n > 0 {
+				untrusted := make([]string, n)
+				for i, u := range vc.Untrusted {
+					untrusted[i] = u.String()
+				}
+				e.logger.WarnContext(ctx, "cache checkpoints signed by a key the daemon does not trust were ignored, "+
+					"so the results they cover are recomputed. This is expected after a signing key rotation; "+
+					"if no rotation happened, the checkpoints may have been altered: compare their key IDs with retired keys",
 					"analyzer", sc.name, "tenant_id", sc.tenantID, "job_id", sc.jobID, "producer_jobs", unverified,
-					"untrusted_checkpoints", vc.UntrustedKeys)
-				e.countIntegrityFailures(ctx, sc, vc.UntrustedKeys, "untrusted_key")
+					"untrusted_checkpoints", untrusted)
+				e.countIntegrityFailures(ctx, sc, n, "untrusted_key")
 			}
 			maps.Copy(signed, vc.Signed)
 		}
@@ -565,19 +607,28 @@ func (e *Engine) recordStage(ctx context.Context, sc *stageCache) error {
 }
 
 // seal compares the database with the stage's record under the job lock
-// and, when they match, has the checkpoint signed and stored.
+// and, when they match, has the checkpoint signed there; it stores the
+// signed checkpoint once the lock is released (CacheCheckpoints.Store
+// says why that is safe).
 func (e *Engine) seal(ctx context.Context, sc *stageCache) error {
 	ctx, span := telemetry.StartSpan(e.tracer, ctx, "analysis.ResultCacheCheckpoint")
 	defer span.End()
 	span.SetAttributes(attribute.String("tenant.id", sc.tenantID), attribute.String("analyzer.name", sc.name),
 		attribute.String("job.id", sc.jobID), attribute.String("cache.attempt", sc.attempt))
 	ref := sc.ref()
+	var signed []byte
 	err := e.cacheStore.Checkpoint(ctx, sc.expected(), func(ctx context.Context, digest string) error {
-		if err := sc.settings.Checkpoints.Seal(ctx, ref, digest); err != nil {
+		var err error
+		if signed, err = sc.settings.Checkpoints.Sign(ctx, ref, digest); err != nil {
 			return fmt.Errorf("%w: %w", errSealFailed, err)
 		}
 		return nil
 	})
+	if err == nil {
+		if serr := sc.settings.Checkpoints.Store(ctx, ref, signed); serr != nil {
+			err = fmt.Errorf("%w: %w", errSealFailed, serr)
+		}
+	}
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "checkpoint failed")

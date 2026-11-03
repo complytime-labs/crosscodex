@@ -1,7 +1,12 @@
 package attestation_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
@@ -83,5 +88,59 @@ func FuzzParseBundle(f *testing.F) {
 		if len(layout2.Raw) == 0 {
 			t.Fatalf("re-encoded bundle lost its layout")
 		}
+	})
+}
+
+// FuzzVerifyLink feeds Verify arbitrary envelopes. It must not panic, an
+// accepted envelope must carry a signature naming the trusted key's ID, and
+// ErrUntrustedKey must always come with ErrVerificationFailed.
+func FuzzVerifyLink(f *testing.F) {
+	kp, err := attestation.NewEphemeralKeyProvider()
+	if err != nil {
+		f.Fatalf("generate key: %v", err)
+	}
+	gen, err := attestation.NewGenerator(kp)
+	if err != nil {
+		f.Fatalf("create generator: %v", err)
+	}
+	keyID, err := kp.KeyID(context.Background())
+	if err != nil {
+		f.Fatalf("key ID: %v", err)
+	}
+	valid, err := gen.CreateLink(context.Background(), "step", []attestation.Artifact{{URI: "a", Digest: "aaa"}}, nil)
+	if err != nil {
+		f.Fatalf("create link: %v", err)
+	}
+	f.Add(valid.Raw)
+	f.Add(bytes.Replace(valid.Raw, []byte(keyID), []byte(strings.Repeat("0", len(keyID))), 1))
+	f.Add([]byte(`{"payload":"e30=","payloadType":"application/vnd.in-toto+json","signatures":[]}`))
+	f.Add([]byte(`{"payload":"e30=","payloadType":"application/vnd.in-toto+json","signatures":[{"keyid":"` + keyID + `","sig":"AAAA"}]}`)) // DevSkim: ignore DS173237 — fuzz seed corpus, not a real key
+	f.Add([]byte(`not json`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, err := gen.Verify(context.Background(), data)
+		if errors.Is(err, attestation.ErrUntrustedKey) && !errors.Is(err, attestation.ErrVerificationFailed) {
+			t.Fatalf("ErrUntrustedKey without ErrVerificationFailed: %v", err)
+		}
+		if untrusted, ok := errors.AsType[*attestation.UntrustedKeyError](err); ok && slices.Contains(untrusted.KeyIDs, keyID) {
+			t.Fatalf("an untrusted-key error names the trusted key ID %s: %v", keyID, err)
+		}
+		if err != nil {
+			return
+		}
+		var env struct {
+			Signatures []struct {
+				KeyID string `json:"keyid"`
+			} `json:"signatures"`
+		}
+		if jerr := json.Unmarshal(data, &env); jerr != nil {
+			t.Fatalf("accepted an envelope that is not JSON: %v", jerr)
+		}
+		for _, s := range env.Signatures {
+			if s.KeyID == keyID {
+				return
+			}
+		}
+		t.Fatalf("accepted an envelope with no signature naming the trusted key %s", keyID)
 	})
 }

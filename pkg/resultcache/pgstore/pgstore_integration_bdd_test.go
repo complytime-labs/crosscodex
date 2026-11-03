@@ -294,7 +294,7 @@ var _ = Describe("Result cache tables guard against the tired admin", func() {
 		Expect(verifySigned()).To(MatchError(resultcache.ErrCorrupt))
 	})
 
-	// ADV-3: while the producer runs, the freeze cannot stop app_user from
+	// While the producer runs, the freeze cannot stop app_user from
 	// adding rows to it. A write planted under any attempt but the signed one
 	// is never trusted for the signed attempt, so the edited result fails.
 	It("does not trust a write planted in a running job under another attempt", func() {
@@ -309,7 +309,7 @@ var _ = Describe("Result cache tables guard against the tired admin", func() {
 		Expect(verifySigned()).To(MatchError(resultcache.ErrCorrupt))
 	})
 
-	// ADV-7: Checkpoint's FOR UPDATE conflicts with the freeze trigger's
+	// Checkpoint's FOR UPDATE conflicts with the freeze trigger's
 	// FOR SHARE, so an insert into the job waits for the seal, and the
 	// record sealed cannot be missing a row that commits later.
 	It("holds an insert into the job until the checkpoint's seal returns, and seals the record without it", func() {
@@ -346,7 +346,7 @@ var _ = Describe("Result cache tables guard against the tired admin", func() {
 		Expect(verifySigned()).To(MatchError(resultcache.ErrCorrupt))
 	})
 
-	// ADV-10: the lookup takes no lock, so a producer job row another
+	// The lookup takes no lock, so a producer job row another
 	// transaction holds (here, an uncommitted status update) neither blocks
 	// nor fails it.
 	It("reads a snapshot while another transaction updates the producer's job", func() {

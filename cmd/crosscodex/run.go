@@ -36,6 +36,7 @@ func newRunStartCmd(state *cliState) *cobra.Command {
 		"crosscodex run start --source 3f2a9c1e --target 7b41d0aa --bidirectional",
 		"crosscodex run start --source 3f2a9c1e --target 3f2a9c1e",
 		"crosscodex run start --source 3f2a9c1e --target 7b41d0aa --tenant acme",
+		"crosscodex run start --source 3f2a9c1e --target 7b41d0aa --no-cache",
 	}
 	cmd := &cobra.Command{
 		Use:   "start --source <catalog-id> --target <catalog-id>",
@@ -52,6 +53,13 @@ with source plus target controls, not source controls alone: mapping a
 To analyse within one catalog, pass its ID to both --source and --target.
 Within one catalog, controls are paired in both directions already, so
 --bidirectional is refused there.
+
+LLM results are reused across your tenant's jobs: a request identical to
+one an earlier job sent (same text, prompt, model and settings) is answered
+from the cache, so re-running an unchanged analysis costs only one probe
+call per model. --no-cache sends every call to the model for a fresh run;
+its results are still stored for later jobs. "crosscodex run status" shows
+what was reused.
 
 Find catalog IDs with "crosscodex catalog list". Analysis runs in the
 crosscodexd daemon; embedded mode refuses it.`,
@@ -84,9 +92,10 @@ crosscodexd daemon; embedded mode refuses it.`,
 			source, _ := cmd.Flags().GetString("source")
 			target, _ := cmd.Flags().GetString("target")
 			bidirectional, _ := cmd.Flags().GetBool("bidirectional")
+			noCache, _ := cmd.Flags().GetBool("no-cache")
 			tenant, _ := cmd.Flags().GetString("tenant")
 
-			req := &pb.StartAnalysisRequest{SourceCatalogId: source, TargetCatalogId: target, Bidirectional: bidirectional}
+			req := &pb.StartAnalysisRequest{SourceCatalogId: source, TargetCatalogId: target, Bidirectional: bidirectional, NoCache: noCache}
 			if tenant != "" {
 				req.TenantContext = &pb.TenantContext{TenantId: tenant}
 			}
@@ -113,6 +122,7 @@ crosscodexd daemon; embedded mode refuses it.`,
 	cmd.Flags().String("source", "", "ID of the imported catalog whose controls are mapped (see 'crosscodex catalog list')")
 	cmd.Flags().String("target", "", "ID of the imported catalog the source's controls are mapped onto; the source's ID analyses within one catalog")
 	cmd.Flags().Bool("bidirectional", false, "also map the target's controls onto the source's (pair LLM calls scale with source plus target controls; refused within one catalog)")
+	cmd.Flags().Bool("no-cache", false, "skip result-cache lookups: send every LLM call to the model for a fresh run (results are still stored for later jobs)")
 	cmd.Flags().String("tenant", "", "Tenant ID for the job")
 
 	return cmd
@@ -129,13 +139,19 @@ when the job was created, ID and control count) and the direction it pairs
 their controls in. Lists the analyzers the
 job runs: those enabled on the daemon when the job was created. Mappings
 come only from the relationship analyzer; a job without it produces none,
-and the output says so.`,
+and the output says so.
+
+Shows, per analyzer, how many LLM results were reused from earlier jobs and
+how many calls were sent to the model, and which model answered each alias.
+Only figures a signed cache record vouches for are shown; an analyzer
+without one shows as not attested, or in progress while the job runs.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID := args[0]
 			tenant, _ := cmd.Flags().GetString("tenant")
 
 			req := &pb.GetJobRequest{
-				JobId: jobID,
+				JobId:                 jobID,
+				IncludeCacheSummaries: true,
 			}
 			if tenant != "" {
 				req.TenantContext = &pb.TenantContext{
@@ -192,6 +208,7 @@ and the output says so.`,
 							"(with analysis.relationship.models and an enabled analysis.candidates.generators entry), "+
 							"then start a new job.\n")
 					}
+					writeCacheLines(w, job.GetCacheSummaries(), state.daemon != nil, len(analyzers))
 				},
 				map[string]any{
 					"job_id":    job.GetJobId(),
@@ -201,6 +218,7 @@ and the output says so.`,
 					"progress":  job.GetProgress(),
 					"analyzers": analyzers,
 					"analysis":  catalogs.toJSON(),
+					"cache":     cacheToJSON(job.GetCacheSummaries()),
 				},
 			)
 		},

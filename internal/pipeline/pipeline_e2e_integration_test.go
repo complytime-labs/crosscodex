@@ -8,9 +8,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	crand "crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -29,8 +33,11 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache/pgstore"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
@@ -101,11 +108,93 @@ type e2eEnv struct {
 	svc              *Service
 	tenantA, tenantB string
 	ctxA, ctxB       context.Context
+
+	// The result-cache env (e2eOptions.resultCache) only: the store the
+	// engine reads and writes, wrapped so a spec can plant a row; the
+	// object storage holding the checkpoints; the LLM calls the worker
+	// made; and newService, which replaces svc with one attesting with gen
+	// over the same database, storage, engine and worker.
+	cache      *plantingStore
+	storage    storage.Provider
+	workerLLM  *countingLLM
+	newService func(gen attestation.Generator)
+}
+
+// e2eOptions selects what newE2EEnv wires beyond the base pipeline.
+type e2eOptions struct {
+	// resultCache wires result reuse (#243): a pgstore over the app_user
+	// pool for the engine, the pipeline's model probe, and an attestor
+	// whose key IDs follow the production scheme, so a checkpoint signed
+	// by another key reads as untrusted.
+	resultCache bool
+}
+
+// countingLLM is the deterministic LLM, counting the calls it answers.
+type countingLLM struct {
+	testspecs.DeterministicLLM
+	calls atomic.Int64
+}
+
+func (c *countingLLM) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+	c.calls.Add(1)
+	return c.DeterministicLLM.Complete(ctx, req)
+}
+
+func (c *countingLLM) Embed(ctx context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
+	c.calls.Add(1)
+	return c.DeterministicLLM.Embed(ctx, req)
+}
+
+// plantingStore is the result cache store, except that while plant is set
+// its first Put of analyzer plant.analyzer also puts, through the same
+// app_user pool, a write the stage never made into the stage's live
+// attempt: the O2 attack of someone holding app_user's credentials.
+type plantingStore struct {
+	resultcache.Store
+	mu    sync.Mutex
+	plant *plantSpec
+}
+
+// plantSpec is one planned plant: the analyzer to plant into, and the
+// entry the plant put once done.
+type plantSpec struct {
+	analyzer string
+	planted  *resultcache.Entry
+}
+
+func (p *plantingStore) Put(ctx context.Context, e resultcache.Entry) error {
+	if err := p.Store.Put(ctx, e); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.plant == nil || p.plant.planted != nil || e.Analyzer != p.plant.analyzer {
+		return nil
+	}
+	planted := e
+	planted.TaskID = "planted-task"
+	sum := sha256.Sum256([]byte("planted " + e.CacheKey))
+	planted.CacheKey = hex.EncodeToString(sum[:])
+	if err := p.Store.Put(ctx, planted); err != nil {
+		return fmt.Errorf("plantingStore: plant: %w", err)
+	}
+	p.plant.planted = &planted
+	return nil
+}
+
+// planted returns the entry the plant put, or nil.
+func (p *plantingStore) planted() *resultcache.Entry {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.plant == nil {
+		return nil
+	}
+	return p.plant.planted
 }
 
 // newE2EEnv builds the pipeline and registers its teardown with
 // DeferCleanup, so it lives until the calling BeforeAll's container ends.
-func newE2EEnv() *e2eEnv {
+func newE2EEnv(opts e2eOptions) *e2eEnv {
 	ctx := context.Background()
 	idb := openIntegrationDB(ctx, 4)
 	tenantConn := idb.tenantConn
@@ -192,6 +281,7 @@ func newE2EEnv() *e2eEnv {
 
 	storageProvider, err := storage.NewLocal(GinkgoT().TempDir(), env.tenantA)
 	Expect(err).NotTo(HaveOccurred(), "create local storage")
+	env.storage = storageProvider
 
 	env.store = NewPGStore(tenantConn, idb.suPool)
 
@@ -207,8 +297,14 @@ func newE2EEnv() *e2eEnv {
 	}
 
 	dbReporter := NewDBStageReporter(analysis.NewNATSStageReporter(bus), env.store)
-	engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, analysis.WithStageReporter(dbReporter),
-		analysis.WithStageTimeout(time.Hour))
+	engineOpts := []analysis.Option{analysis.WithStageReporter(dbReporter), analysis.WithStageTimeout(time.Hour)}
+	if opts.resultCache {
+		cacheStore, err := pgstore.New(tenantConn)
+		Expect(err).NotTo(HaveOccurred(), "create result cache store")
+		env.cache = &plantingStore{Store: cacheStore}
+		engineOpts = append(engineOpts, analysis.WithResultCache(env.cache))
+	}
+	engine := analysis.NewWithNATS(registry, bus, analysisConfig.Engine, taskTypes, engineOpts...)
 
 	// Candidate generator over the real Postgres adapters.
 	candRegistry, err := BuildCandidateRegistry(analysisConfig.Candidates, nil, nil)
@@ -227,26 +323,45 @@ func newE2EEnv() *e2eEnv {
 	// (see internal/synthesis.ConsensusRequires), so it's left empty here.
 	synth := synthesis.New(tenantConn, config.SynthesisConfig{}, []string{})
 
-	attestor, err := attestation.NewGenerator(newE2EKeyProvider())
+	var keys attestation.KeyProvider = newE2EKeyProvider()
+	if opts.resultCache {
+		keys, err = attestation.NewEphemeralKeyProvider()
+		Expect(err).NotTo(HaveOccurred(), "create attestation key pair")
+	}
+	attestor, err := attestation.NewGenerator(keys)
 	Expect(err).NotTo(HaveOccurred(), "create attestation generator")
 	converter := pipelineattestation.NewConverter()
 
 	pipelineCfg := config.PipelineConfig{MaxConcurrentJobs: 10}
-	attestors := Attestors{Default: &Attestor{Generator: attestor, ExpiresIn: 168 * time.Hour}}
+	llmCfg := config.LLMConfig{DefaultModel: e2eModel, EmbeddingModel: e2eModel}
 
-	env.svc = New(
-		env.store, engine, registry, synth, attestors, converter, bus, storageProvider,
-		pipelineCfg, candGen,
-		WithCatalogControlsReader(NewPGCatalogControlsReader(tenantConn)),
-		WithCatalogNameReader(NewPGCatalogNameReader(tenantConn)),
-		WithEmbeddingsReader(NewPGEmbeddingsReader(tenantConn)),
-		WithEmbeddingConfig(analysisConfig.Embedding),
-	)
+	env.newService = func(gen attestation.Generator) {
+		if env.svc != nil {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			Expect(env.svc.Stop(stopCtx)).To(Succeed(), "stop the replaced service")
+		}
+		svcOpts := []Option{
+			WithCatalogControlsReader(NewPGCatalogControlsReader(tenantConn)),
+			WithCatalogNameReader(NewPGCatalogNameReader(tenantConn)),
+			WithEmbeddingsReader(NewPGEmbeddingsReader(tenantConn)),
+			WithEmbeddingConfig(analysisConfig.Embedding),
+		}
+		if opts.resultCache {
+			svcOpts = append(svcOpts, WithResultCache(env.cache, config.ResultCacheConfig{Enabled: true, LookupBatchSize: 1000}, llmCfg, fakeLLM))
+		}
+		env.svc = New(
+			env.store, engine, registry, synth, Attestors{Default: &Attestor{Generator: gen, ExpiresIn: 168 * time.Hour}},
+			converter, bus, storageProvider, pipelineCfg, candGen, svcOpts...,
+		)
+	}
+	env.newService(attestor)
 
 	// Real worker consuming LLM tasks off the shared bus.
-	w := worker.New(bus, fakeLLM, config.WorkerConfig{
+	env.workerLLM = &countingLLM{DeterministicLLM: fakeLLM}
+	w := worker.New(bus, env.workerLLM, config.WorkerConfig{
 		MaxAbandonedCollections: 10,
-		LLM:                     config.LLMConfig{DefaultModel: e2eModel, EmbeddingModel: e2eModel},
+		LLM:                     llmCfg,
 	}, worker.WithAbandonTTL(time.Hour))
 	Expect(w.Start(context.Background())).To(Succeed(), "start worker")
 	DeferCleanup(func() {
@@ -341,7 +456,7 @@ var _ = Describe("Pipeline end-to-end", Ordered, func() {
 	var env *e2eEnv
 
 	BeforeAll(func() {
-		env = newE2EEnv()
+		env = newE2EEnv(e2eOptions{})
 	})
 
 	It("runs a job to completion and populates every durable surface, isolated per tenant", func() {

@@ -94,6 +94,14 @@ type fakeAttestation struct {
 	linkErr     error
 	linkErrOn   string
 	verifyErr   error
+	// verifies counts Verify calls: each copies the envelope to a
+	// temporary file, so none means nothing was written.
+	verifies atomic.Int32
+}
+
+func (f *fakeAttestation) Verify(ctx context.Context, data []byte) (*attestation.VerifiedLink, error) {
+	f.verifies.Add(1)
+	return f.Generator.Verify(ctx, data)
 }
 
 type fakeLinkCall struct {
@@ -310,6 +318,13 @@ func (d *executorTestDispatcher) Dispatch(_ context.Context, tasks []analyzer.Ta
 	}
 	d.dispatches = append(d.dispatches, executorDispatchCall{tasks: tasks, taskType: taskType, jobID: jobID, collectionID: collectionID})
 	return nil
+}
+
+// dispatchCount is how many Dispatch calls were accepted.
+func (d *executorTestDispatcher) dispatchCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.dispatches)
 }
 
 func (d *executorTestDispatcher) Redispatch(_ context.Context, _ analyzer.Task, _ natsbus.TaskType, _, _ string, _ int) error {
@@ -1363,6 +1378,76 @@ var _ = Describe("Executor", func() {
 				}, "is missing"),
 			)
 
+			It("keeps a resumed job's error bounded when a stored link names many long key IDs", func() {
+				runJob(svc)
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(svc.Stop(ctx)).To(Succeed())
+				Expect(storage.Delete(ctx, bundleKey())).To(Succeed())
+				Expect(store.UpdateJobStatus(ctx, jobID, pipeline.JobStatusRunning, nil)).To(Succeed())
+				// The link's signature, under keyids the daemon does not
+				// trust, ten times over and each 10 KB long.
+				key := linkKey("synthesis")
+				var env map[string]any
+				Expect(json.Unmarshal(storage.Objects()[key], &env)).To(Succeed())
+				sig := env["signatures"].([]any)[0].(map[string]any)["sig"]
+				var sigs []any
+				for i := range 10 {
+					sigs = append(sigs, map[string]any{"keyid": fmt.Sprintf("%d%s", i, strings.Repeat("k", 10000)), "sig": sig})
+				}
+				env["signatures"] = sigs
+				planted, err := json.Marshal(env)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(storage.Put(ctx, key, bytes.NewReader(planted))).To(Succeed())
+
+				resumed := serviceWith(attestedBy(attestor), storage)
+				Expect(resumed.Start(ctx)).To(Succeed())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				msg := errorOf()
+				Expect(msg).To(And(ContainSubstring(`step "synthesis"`), ContainSubstring("and 6 more")))
+				Expect(len(msg)).To(BeNumerically("<", 2048), "error_message: %d bytes", len(msg))
+			})
+
+			// A stored link is read back bounded: an object a storage writer
+			// replaced with a huge one must not exhaust the daemon's memory
+			// or, through Verify's temporary file, its disk.
+			DescribeTable("bounds the stored link a resumed job reads back",
+				func(extra int, refused bool) {
+					runJob(svc)
+					Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+					Expect(svc.Stop(ctx)).To(Succeed())
+					Expect(storage.Delete(ctx, bundleKey())).To(Succeed())
+					Expect(store.UpdateJobStatus(ctx, jobID, pipeline.JobStatusRunning, nil)).To(Succeed())
+					// JSON allows trailing whitespace, so the padded link is
+					// still the genuine, verifying envelope.
+					key := linkKey("synthesis")
+					raw := storage.Objects()[key]
+					padded := append(slices.Clone(raw), bytes.Repeat([]byte(" "), pipeline.MaxAttestationObjectBytes-len(raw)+extra)...)
+					Expect(storage.Put(ctx, key, bytes.NewReader(padded))).To(Succeed())
+					verifies := attestor.verifies.Load()
+
+					resumed := serviceWith(attestedBy(attestor), storage)
+					Expect(resumed.Start(ctx)).To(Succeed())
+
+					if !refused {
+						Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+						return
+					}
+					Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+					job, err := store.GetJob(ctx, jobID)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(job.ErrorClass).To(Equal(pipeline.JobErrorAttestationInvalid))
+					Expect(job.ErrorMessage).To(And(
+						ContainSubstring(strconv.Quote(key)),
+						ContainSubstring("larger than the 1048576-byte limit"),
+						ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
+					Expect(attestor.verifies.Load()).To(Equal(verifies), "the oversized link was not verified, so no temporary file was written")
+					Expect(storage.Objects()[key]).To(Equal(padded))
+				},
+				Entry("a link of exactly the limit is read and verified", 0, false),
+				Entry("a link one byte over the limit is refused unread", 1, true),
+			)
+
 			It("fails a resumed job whose stored link was replayed from another job of the tenant, leaving every object as it was", func() {
 				// Job "donor" completes first, so its synthesis link is
 				// genuine: signed with the same key, for the same step.
@@ -1746,8 +1831,8 @@ var _ = Describe("Executor", func() {
 			// embedding durably (job_stages row + analysis_results row) before
 			// crashing. A fresh executeJob (this call to svc.Start) must treat
 			// them as already done, not re-dispatch them.
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`))).To(Succeed())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`))).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`), "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`), "")).To(Succeed())
 
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -1835,13 +1920,13 @@ var _ = Describe("Executor", func() {
 			// embedding, requires, and relationship durably (requires and
 			// relationship with real result payloads) before crashing.
 			// artifacts did not finish before the crash.
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`))).To(Succeed())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`))).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`), "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`), "")).To(Succeed())
 			requiresJSON, err := json.Marshal([]results.RequiresResult{
 				{SourceID: "AC-1", TargetID: "AC-2", Confidence: 0.9},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "requires", requiresJSON)).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "requires", requiresJSON, "")).To(Succeed())
 			relJSON, err := json.Marshal([]results.SemanticMatchResult{
 				{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "supports", Confidence: 0.8,
 					Properties: map[string]string{
@@ -1850,7 +1935,7 @@ var _ = Describe("Executor", func() {
 					}},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "relationship", relJSON)).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "relationship", relJSON, "")).To(Succeed())
 
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -2306,7 +2391,7 @@ var _ = Describe("Executor", func() {
 				Expect(store.CreateJob(ctx, job)).To(Succeed())
 				Expect(store.CreateStages(ctx, jobID, []string{"classify", "candidate_generation", "requires", "relationship", "synthesis", "graph"})).To(Succeed())
 				if resumed {
-					Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", classifyResult)).To(Succeed())
+					Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", classifyResult, "")).To(Succeed())
 				}
 
 				runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

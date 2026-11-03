@@ -89,6 +89,21 @@ var _ = Describe("StartAnalysis", func() {
 		Expect(jobReqs[0].GetConfig().GetSynthesisConfig()).To(BeIdenticalTo(synth))
 	})
 
+	DescribeTable("passes the request's no_cache to the job's config",
+		func(noCache bool) {
+			svc := newTestService(gateway.WithCatalogBackend(knownCatalog()), gateway.WithPipelineBackend(pipeline))
+			req := crosswalk()
+			req.NoCache = noCache
+
+			_, err := svc.StartAnalysis(userCtx("user-a"), connect.NewRequest(req))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(jobReqs).To(HaveLen(1))
+			Expect(jobReqs[0].GetConfig().GetNoCache()).To(Equal(noCache))
+		},
+		Entry("set", true),
+		Entry("unset", false),
+	)
+
 	It("accepts a target equal to the source as an analysis within one catalog, looking it up once", func() {
 		svc := newTestService(gateway.WithCatalogBackend(knownCatalog()), gateway.WithPipelineBackend(pipeline))
 

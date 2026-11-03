@@ -107,7 +107,7 @@ func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName
 	if len(resultData) == 0 {
 		resultData = []byte("null")
 	}
-	if err := r.store.CompleteAnalysisStage(ctx, jobID, analyzerName, resultData); err != nil {
+	if err := r.store.CompleteAnalysisStage(ctx, jobID, analyzerName, resultData, output.Metadata[analysis.MetadataCacheAttempt]); err != nil {
 		r.logger.ErrorContext(ctx, "failed to persist analysis result",
 			"analyzer", analyzerName, "job_id", jobID, "error", err)
 		span.RecordError(err)
