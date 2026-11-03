@@ -209,6 +209,21 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 	}}, nil
 }
 
+var _ analyzer.Cacheable = (*ClassifyAnalyzer)(nil)
+
+// CacheModels implements analyzer.Cacheable: classification calls one
+// completion model, analysis.classification.model ("" for the tenant
+// default).
+func (a *ClassifyAnalyzer) CacheModels() []analyzer.ModelUse {
+	return []analyzer.ModelUse{{Alias: a.cfg.Model, Kind: analyzer.ModelCompletion}}
+}
+
+// CacheIdentity implements analyzer.Cacheable from the task's payload; a
+// section's pre-built task is never cached.
+func (a *ClassifyAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequest, bool) {
+	return intanalyzer.PayloadCacheRequest(task, "control_id", "control_id")
+}
+
 // Aggregate combines completed task results into a single output with
 // metadata, and separately JSON-encodes one results.ClassifyResult per
 // successfully classified control into Output.ResultData. Classification

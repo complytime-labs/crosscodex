@@ -1,10 +1,12 @@
 package llmclient_test
 
 import (
+	"reflect"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/types/known/structpb"
 	"pgregory.net/rapid"
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
@@ -129,6 +131,59 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				idx := rapid.IntRange(0, len(allowed)-1).Draw(t, "allowedIdx")
 				Expect(llmclient.ExportIsModelAllowed(c, allowed[idx])).To(BeTrue(),
 					"model %q should be allowed in list %v", allowed[idx], allowed)
+			})
+		})
+	})
+
+	Context("MessagesFromPayload — round trip", func() {
+		It("decodes messages built from valid roles back to the same messages and ContentHash", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				roles := []string{llmclient.RoleSystem, llmclient.RoleUser, llmclient.RoleAssistant}
+				messages := rapid.SliceOfN(rapid.Custom(func(t *rapid.T) llmclient.ChatMessage {
+					return llmclient.ChatMessage{
+						Role:    rapid.SampledFrom(roles).Draw(t, "role"),
+						Content: rapid.String().Draw(t, "content"),
+					}
+				}), 0, 8).Draw(t, "messages")
+
+				items := make([]any, len(messages))
+				for i, m := range messages {
+					items[i] = map[string]any{"role": m.Role, "content": m.Content, "ignored": "extra"}
+				}
+				v, err := structpb.NewValue(items)
+				if err != nil {
+					t.Skip("content is not representable in a structpb string: ", err)
+				}
+
+				got, err := llmclient.MessagesFromPayload(v)
+				if err != nil {
+					t.Fatalf("valid messages rejected: %v", err)
+				}
+				if len(messages) == 0 {
+					messages = []llmclient.ChatMessage{}
+				}
+				if !reflect.DeepEqual(got, messages) {
+					t.Fatalf("decoded %#v, want %#v", got, messages)
+				}
+				if llmclient.ContentHash(got) != llmclient.ContentHash(messages) {
+					t.Fatalf("decoded messages hash differently from the originals")
+				}
+			})
+		})
+
+		It("rejects any role outside the allowlist", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				role := rapid.String().Draw(t, "role")
+				if role == llmclient.RoleSystem || role == llmclient.RoleUser || role == llmclient.RoleAssistant {
+					t.Skip("allowed role")
+				}
+				v, err := structpb.NewValue([]any{map[string]any{"role": role, "content": "c"}})
+				if err != nil {
+					t.Skip("role is not representable in a structpb string: ", err)
+				}
+				if _, err := llmclient.MessagesFromPayload(v); err == nil {
+					t.Fatalf("role %q accepted", role)
+				}
 			})
 		})
 	})

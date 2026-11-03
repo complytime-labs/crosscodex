@@ -12,6 +12,10 @@ var (
 	// ErrInvalidRequest indicates the request is malformed or missing required fields.
 	ErrInvalidRequest = errors.New("invalid LLM request")
 
+	// ErrInvalidMessages indicates a payload's messages value is not a list of
+	// well-formed chat messages (see MessagesFromPayload).
+	ErrInvalidMessages = errors.New("invalid chat messages")
+
 	// ErrMaxTokensExceeded indicates the request exceeds token limits.
 	ErrMaxTokensExceeded = errors.New("max tokens exceeded")
 

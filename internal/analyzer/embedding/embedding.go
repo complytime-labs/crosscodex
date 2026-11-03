@@ -172,6 +172,24 @@ func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 	return tasks, nil
 }
 
+var _ analyzer.Cacheable = (*EmbeddingAnalyzer)(nil)
+
+// CacheModels implements analyzer.Cacheable: one embedding call per model
+// in analysis.embedding.models.
+func (a *EmbeddingAnalyzer) CacheModels() []analyzer.ModelUse {
+	uses := make([]analyzer.ModelUse, 0, len(a.cfg.Models))
+	for _, m := range a.cfg.Models {
+		uses = append(uses, analyzer.ModelUse{Alias: m, Kind: analyzer.ModelEmbedding})
+	}
+	return uses
+}
+
+// CacheIdentity implements analyzer.Cacheable from the task's payload; a
+// skipped control's pre-built task is never cached.
+func (a *EmbeddingAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequest, bool) {
+	return intanalyzer.PayloadCacheRequest(task, "control_id", "control_id")
+}
+
 // Aggregate combines completed embedding results and produces aggregate
 // metadata counts (total, embedded, skipped, error), and separately
 // JSON-encodes one results.EmbedResult per distinct embedded control into

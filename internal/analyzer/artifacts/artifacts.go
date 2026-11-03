@@ -227,6 +227,24 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 	return tasks, nil
 }
 
+var _ analyzer.Cacheable = (*ArtifactsAnalyzer)(nil)
+
+// CacheModels implements analyzer.Cacheable: one completion model per panel
+// member in analysis.artifacts.models.
+func (a *ArtifactsAnalyzer) CacheModels() []analyzer.ModelUse {
+	uses := make([]analyzer.ModelUse, 0, len(a.cfg.Models))
+	for _, m := range a.cfg.Models {
+		uses = append(uses, analyzer.ModelUse{Alias: m, Kind: analyzer.ModelCompletion})
+	}
+	return uses
+}
+
+// CacheIdentity implements analyzer.Cacheable from the task's payload,
+// whose sample_index keeps each sample's identity distinct.
+func (a *ArtifactsAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequest, bool) {
+	return intanalyzer.PayloadCacheRequest(task, "control_id", "control_id")
+}
+
 // Aggregate groups completed task results by control ID, computes fuzzy
 // consensus over the extracted artifacts for each control, and JSON-encodes
 // the surviving controls (those with at least one consensus artifact) into

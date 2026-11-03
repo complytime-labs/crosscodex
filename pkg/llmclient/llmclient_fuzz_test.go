@@ -3,6 +3,8 @@ package llmclient_test
 import (
 	"testing"
 
+	"google.golang.org/protobuf/types/known/structpb"
+
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 )
 
@@ -73,6 +75,48 @@ func FuzzParseRetryAfter(f *testing.F) {
 		d := llmclient.ParseRetryAfter(header)
 		if d < 0 {
 			t.Errorf("parseRetryAfter(%q) returned negative duration: %v", header, d)
+		}
+	})
+}
+
+func FuzzMessagesFromPayload(f *testing.F) {
+	// Valid
+	f.Add([]byte(`[{"role":"system","content":"s"},{"role":"user","content":"u"}]`))
+	f.Add([]byte(`[{"role":"assistant","content":"a","extra":1}]`))
+
+	// Invalid shape
+	f.Add([]byte(`"not a list"`))
+	f.Add([]byte(`[42, null, "x"]`))
+	f.Add([]byte(`[{"content":"no role"}]`))
+
+	// Boundary
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`[{"role":"user"}]`))
+
+	// Attack: role injection, case variants, non-string role
+	f.Add([]byte(`[{"role":"tool","content":"x"}]`))
+	f.Add([]byte(`[{"role":"SYSTEM","content":"x"}]`))
+	f.Add([]byte(`[{"role":["system"],"content":"x"}]`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		v := &structpb.Value{}
+		if err := v.UnmarshalJSON(data); err != nil {
+			return
+		}
+		messages, err := llmclient.MessagesFromPayload(v)
+		if err != nil {
+			return
+		}
+		if len(messages) != len(v.GetListValue().Values) {
+			t.Fatalf("decoded %d messages from %d items", len(messages), len(v.GetListValue().Values))
+		}
+		for i, m := range messages {
+			if m.Role != llmclient.RoleSystem && m.Role != llmclient.RoleUser && m.Role != llmclient.RoleAssistant {
+				t.Fatalf("messages[%d] accepted with role %q", i, m.Role)
+			}
+			if want := v.GetListValue().GetValues()[i].GetStructValue().GetFields()["content"].GetStringValue(); m.Content != want {
+				t.Fatalf("messages[%d] content %q, want %q: the decoder must not alter content, which the cache hash covers", i, m.Content, want)
+			}
 		}
 	})
 }
