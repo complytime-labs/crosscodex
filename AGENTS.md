@@ -2,6 +2,15 @@
 
 Rules for coding agents in this Go monorepo. Rationale for the design rules below lives in `docs/dev/design-principles.md`; read it before changing an isolation boundary, a safety mechanism, the graph schema, or the relationship taxonomy.
 
+## Personas
+
+Design and review every user-facing change (API, CLI, output, defaults, docs) for each persona, and state in the spec what each gets:
+
+- **Auditor:** can prove which exact inputs, config and direction produced a result, and read results without decoding internal IDs.
+- **Security engineer:** every new untrusted input (including names and titles that reach prompts) is hardened, tenant-scoped and fail-closed, and errors reveal nothing about other tenants.
+- **Developer:** the proto and CLI contract is usable from its comments, help and error messages alone; breaking changes get a README "Upgrading" note.
+- **Operator:** cost (LLM calls, time) is predictable before a run and visible during it; tuning lives in `pkg/config`.
+
 ## Commands
 
 Use `task` for everything; never run raw `go build` / `go test`.
