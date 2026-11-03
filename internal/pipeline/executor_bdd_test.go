@@ -36,6 +36,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	storagepkg "github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -1892,13 +1893,17 @@ var _ = Describe("Executor", func() {
 		Describe("across two catalogs", func() {
 			// startJob runs a job with config over reader's catalogs, with
 			// classify, embedding and artifacts registered (as in
-			// production, all per-control) and returns their stubs.
-			startJob := func(jobConfig string, reader *fakeCatalogControlsReader) []*analyzertest.Stub[*pb.Control] {
+			// production, all per-control) and returns their stubs. Each
+			// configure func scripts the stubs before the job starts.
+			startJob := func(jobConfig string, reader *fakeCatalogControlsReader, configure ...func([]*analyzertest.Stub[*pb.Control])) []*analyzertest.Stub[*pb.Control] {
 				reg := analyzer.NewRegistry()
 				stubs := []*analyzertest.Stub[*pb.Control]{
 					newControlStub("classify"),
 					newControlStub("embedding", "classify"),
 					newControlStub("artifacts", "classify"),
+				}
+				for _, c := range configure {
+					c(stubs)
 				}
 				for _, s := range stubs {
 					Expect(analyzer.Register[*pb.Control](reg, s)).To(Succeed())
@@ -1987,6 +1992,31 @@ var _ = Describe("Executor", func() {
 				for _, s := range stubs {
 					Expect(s.Inputs()).To(BeEmpty(), s.Name())
 				}
+			})
+
+			// The engine's result-cache failures are classified by their
+			// class sentinel, and their tenant message is the job's.
+			It("fails a job whose stage stopped on a result-cache error with that error's class and message", func() {
+				reader := &fakeCatalogControlsReader{byCatalog: map[string][]*pb.Control{
+					"cat-src": {{ControlId: "s1", CatalogId: "cat-src", Statement: "Source one."}},
+				}}
+				stageErr := &analysis.StageError{Analyzer: "classify", Sentinel: resultcache.ErrCorrupt,
+					Cause:   errors.New("dial tcp 10.0.0.7:5432: driver detail"),
+					Message: `Stage "classify" stopped: a cached result failed its integrity check.`}
+				startJob(`{"catalog_id":"cat-src"}`, reader, func(stubs []*analyzertest.Stub[*pb.Control]) {
+					stubs[0].GenerateWorkFunc = func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+						return nil, stageErr
+					}
+				})
+
+				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorResultCacheCorrupt))
+				Expect(j.ErrorMessage).To(SatisfyAll(
+					ContainSubstring("analysis failed: 1 analyzers failed: [classify]"),
+					ContainSubstring(stageErr.Message),
+					Not(ContainSubstring("driver detail"))))
 			})
 
 			// Safety mechanism: a crosswalk onto a target with nothing to

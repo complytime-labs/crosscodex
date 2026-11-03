@@ -48,7 +48,8 @@
 // specs of result reuse. CacheModels returns a copy of Models;
 // CacheIdentity returns CacheIdentityFunc's result, and ok=false when it is
 // unset, which is the interface's own "not cached" default rather than an
-// unscripted call.
+// unscripted call. CacheableResult returns CacheableResultFunc's result,
+// and accepts every result when it is unset.
 //
 // Production code must not import this package.
 package analyzertest

@@ -276,7 +276,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     error_message TEXT NOT NULL DEFAULT '',
     -- Classifies error_message's cause (pipeline.ClassifyJobError), so a
     -- retry that cannot succeed is refused without matching the text.
-    -- Empty: no failure, or one a retry may fix.
+    -- A retry may fix: '' (no failure, or an unclassified one) and
+    -- result_cache_unavailable. Refused: attestation_invalid,
+    -- analyzers_changed, missing_catalog, empty_target_catalog and
+    -- result_cache_corrupt (both retry forms, except a new job from a job
+    -- already started with --no-cache, which is the remedy itself).
     error_class   TEXT NOT NULL DEFAULT '',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -738,11 +742,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON controls TO app_user;
 -- blocked by its consumers' entries, which stay as facts.
 --
 -- attempt names the stage run that recorded a row (the engine makes a UUID
--- per run; pkg/resultcache.MaxAttemptBytes bounds it). A job's attestation
--- signs one attempt's manifest, and a hit is verified only against that
--- attempt's write entries and self-hits, so rows planted under any other
--- attempt, even while the job runs, are never trusted. The same fact
--- recorded by two attempts is two rows.
+-- per run; pkg/resultcache.MaxAttemptBytes bounds it), and a cache row's
+-- producer_attempt names the run that stored it (a put replaces it with the
+-- row). A cache checkpoint signs one attempt's manifest, and a cached
+-- result is verified only against the signed manifest of the attempt that
+-- stored it, so rows planted under any other attempt, even while the job
+-- runs, are never trusted. The same fact recorded by two attempts is two
+-- rows.
 --
 -- Every table references (job_id, tenant_id) and (catalog_id, tenant_id), so
 -- the database refuses a row naming another tenant's job or catalog for every
@@ -760,6 +766,7 @@ CREATE TABLE IF NOT EXISTS llm_result_cache (
     result            TEXT        NOT NULL CHECK (result <> ''),
     response_model    TEXT        NOT NULL CHECK (response_model <> ''),
     job_id            TEXT        NOT NULL,
+    producer_attempt  TEXT        NOT NULL CHECK (octet_length(producer_attempt) BETWEEN 1 AND 64),
     source_catalog_id TEXT        NOT NULL,
     target_catalog_id TEXT        NOT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),

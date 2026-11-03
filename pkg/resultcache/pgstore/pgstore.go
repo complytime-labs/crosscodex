@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	lookupSQL = `SELECT c.cache_key, c.result, c.response_model, c.job_id
+	lookupSQL = `SELECT c.cache_key, c.result, c.response_model, c.job_id, c.producer_attempt
 FROM llm_result_cache c
 WHERE c.tenant_id = $1 AND c.analyzer = $2 AND c.cache_key = ANY($3::text[])`
 
@@ -47,10 +47,11 @@ ORDER BY s.seq`
 	lockJobSQL = `SELECT job_id FROM jobs WHERE tenant_id = $1 AND job_id = $2 FOR UPDATE`
 
 	putRowSQL = `INSERT INTO llm_result_cache
-  (tenant_id, analyzer, cache_key, result, response_model, job_id, source_catalog_id, target_catalog_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+  (tenant_id, analyzer, cache_key, result, response_model, job_id, producer_attempt, source_catalog_id, target_catalog_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (tenant_id, analyzer, cache_key) DO UPDATE SET
   result = EXCLUDED.result, response_model = EXCLUDED.response_model, job_id = EXCLUDED.job_id,
+  producer_attempt = EXCLUDED.producer_attempt,
   source_catalog_id = EXCLUDED.source_catalog_id, target_catalog_id = EXCLUDED.target_catalog_id,
   created_at = now()`
 
@@ -207,11 +208,12 @@ func readHits(ctx context.Context, tx db.Transaction, tenantID, analyzerName str
 		return fmt.Errorf("query cached rows: %w", err)
 	}
 	for rows.Next() {
-		var key, result, model, producer string
-		if err := rows.Scan(&key, &result, &model, &producer); err != nil {
+		var key, result, model, producer, attempt string
+		if err := rows.Scan(&key, &result, &model, &producer, &attempt); err != nil {
 			return errors.Join(fmt.Errorf("scan cached row: %w", err), rows.Close())
 		}
-		hits[key] = resultcache.Hit{CacheKey: key, Result: []byte(result), ResponseModel: model, ProducerJobID: producer}
+		hits[key] = resultcache.Hit{CacheKey: key, Result: []byte(result), ResponseModel: model,
+			ProducerJobID: producer, ProducerAttempt: attempt}
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return fmt.Errorf("read cached rows: %w", err)
@@ -336,7 +338,7 @@ func (s *Store) Put(ctx context.Context, e resultcache.Entry) (err error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	if err := tx.Exec(ctx, putRowSQL, tenantID, e.Analyzer, e.CacheKey, string(e.Result), e.ResponseModel,
-		e.JobID, e.SourceCatalogID, e.TargetCatalogID); err != nil {
+		e.JobID, e.Attempt, e.SourceCatalogID, e.TargetCatalogID); err != nil {
 		return fmt.Errorf("resultcache put: store the result: %w", err)
 	}
 	if err := tx.Exec(ctx, putWriteSQL, tenantID, e.JobID, e.Analyzer, e.Attempt, e.TaskID, e.CacheKey, resultcache.ResultDigest(e.Result)); err != nil {

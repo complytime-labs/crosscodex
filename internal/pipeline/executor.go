@@ -496,6 +496,17 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		}
 		if len(result.Failed) > 0 {
 			failErr := fmt.Errorf("analysis failed: %d analyzers failed: %v", len(result.Failed), result.Failed)
+			// A stage error carries the tenant message and the error class
+			// of a result-cache failure: the job takes both.
+			var stageErrs []error
+			for _, name := range result.Failed {
+				if se, ok := errors.AsType[*analysis.StageError](result.Errors[name]); ok {
+					stageErrs = append(stageErrs, se)
+				}
+			}
+			if len(stageErrs) > 0 {
+				failErr = fmt.Errorf("%w: %w", failErr, errors.Join(stageErrs...))
+			}
 			span.RecordError(failErr)
 			span.SetStatus(codes.Error, failErr.Error())
 			return failErr
@@ -964,13 +975,27 @@ func newJobCommand(job *Job) string {
 }
 
 // jobCommand is the command that starts a new job from source onto target,
-// in the direction of the job whose catalogs are cats.
+// in the direction and cache mode of the job whose catalogs are cats.
 func jobCommand(cats jobconfig.Catalogs, source, target string) string {
 	cmd := "crosscodex run start --source " + source + " --target " + target
 	if cats.Bidirectional {
 		cmd += " --bidirectional"
 	}
+	if cats.NoCache {
+		cmd += " --no-cache"
+	}
 	return cmd
+}
+
+// noCacheCommand is the command that starts a new job like job's that
+// skips result-cache lookups, the remedy for a cache it cannot trust.
+func noCacheCommand(job *Job) string {
+	cats, ok := jobconfig.ExtractCatalogs(job.Config)
+	if !ok {
+		return "crosscodex run start --source <source-catalog-id> --target <target-catalog-id> --no-cache"
+	}
+	cats.NoCache = true
+	return jobCommand(cats, cats.SourceID, cats.TargetID)
 }
 
 // retryHint names both ways to run a job again after a failure it can

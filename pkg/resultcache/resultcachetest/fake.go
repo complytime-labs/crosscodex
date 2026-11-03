@@ -25,8 +25,8 @@ var _ resultcache.Store = (*Fake)(nil)
 type rowKey struct{ tenant, analyzer, key string }
 
 type row struct {
-	result                     []byte
-	model, job, source, target string
+	result                              []byte
+	model, job, attempt, source, target string
 }
 
 type entryKey struct {
@@ -155,7 +155,8 @@ func (f *Fake) hits(tenantID, analyzerName string, keys []string) map[string]res
 	hits := make(map[string]resultcache.Hit, len(keys))
 	for _, key := range keys {
 		if r, ok := f.rows[rowKey{tenantID, analyzerName, key}]; ok {
-			hits[key] = resultcache.Hit{CacheKey: key, Result: slices.Clone(r.result), ResponseModel: r.model, ProducerJobID: r.job}
+			hits[key] = resultcache.Hit{CacheKey: key, Result: slices.Clone(r.result), ResponseModel: r.model,
+				ProducerJobID: r.job, ProducerAttempt: r.attempt}
 		}
 	}
 	return hits
@@ -221,7 +222,7 @@ func (f *Fake) Put(ctx context.Context, e resultcache.Entry) error {
 		return err
 	}
 	f.rows[rowKey{tenantID, e.Analyzer, e.CacheKey}] = row{result: slices.Clone(e.Result), model: e.ResponseModel,
-		job: e.JobID, source: e.SourceCatalogID, target: e.TargetCatalogID}
+		job: e.JobID, attempt: e.Attempt, source: e.SourceCatalogID, target: e.TargetCatalogID}
 	f.entries[entryKey{tenantID, e.JobID, e.Analyzer, e.Attempt, resultcache.ManifestEntry{TaskID: e.TaskID, Role: resultcache.RoleWrite,
 		CacheKey: e.CacheKey, ResultDigest: resultcache.ResultDigest(e.Result)}}] = true
 	return nil

@@ -5,6 +5,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/types"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
@@ -85,4 +87,17 @@ var _ = Describe("requires result reuse", func() {
 		Expect(map[string]bool{two[0]: true, two[1]: true, two[2]: true, two[3]: true, two[4]: true, two[5]: true}).To(HaveLen(6))
 		Expect(two[:3]).To(Equal(keysIn("job-1")))
 	})
+
+	// A result Aggregate would discard must not be stored: every later job
+	// would replay the same failure instead of asking the model again.
+	DescribeTable("stores only a result Aggregate would use",
+		func(fields map[string]any, want types.GomegaMatcher) {
+			result, err := structpb.NewStruct(fields)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(newAnalyzer().CacheableResult(result)).To(want)
+		},
+		Entry("a parsed decision", map[string]any{"model": "m", "response": "REQUIRES: NO\nCONFIDENCE: HIGH"}, Succeed()),
+		Entry("a response with no YES or NO decision", map[string]any{"model": "m", "response": "REQUIRES: MAYBE"}, MatchError(ContainSubstring("does not parse"))),
+		Entry("a result without a response", map[string]any{"model": "m"}, MatchError(ContainSubstring("no response text"))),
+	)
 })

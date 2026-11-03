@@ -23,8 +23,9 @@
 // Trust comes only from those checkpoints: Store.LookupVerifiable reads the
 // cached rows and their producers' checkpointed manifests in one snapshot,
 // and Snapshot.Verify, the only way to read a cached result, accepts it
-// only if each signed manifest still matches and one of them vouches for
-// its bytes (a write entry, or a self-hit). Store.VerifiedSummaries shows
+// only if the attempt that stored it (llm_result_cache.producer_attempt)
+// is signed, its manifest still matches, and one of its write entries
+// vouches for the bytes. Store.VerifiedSummaries shows
 // a checkpointed attempt only while its rows match. Rows of unsigned
 // attempts never count. DecodeResult validates the bytes at the
 // deserialization point.

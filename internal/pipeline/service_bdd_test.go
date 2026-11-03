@@ -30,6 +30,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -1342,6 +1343,11 @@ var _ = Describe("Service", func() {
 			Entry("its target catalog has nothing to map onto", pipeline.ErrEmptyTargetCatalog,
 				"its target catalog has no control with a statement, and a retry reads the same catalog",
 				emptyTargetRemedy+"crosscodex run start --source test-catalog --target <catalog-id>"),
+			Entry("a cached result failed its integrity check", resultcache.ErrCorrupt,
+				"a cached result failed its integrity check, or a stage run's cache record did not match what the stage wrote, "+
+					"and a retry reads the same cache",
+				"Start a new job with --no-cache, which recomputes and replaces the cached results: "+
+					"crosscodex run start --source test-catalog --target test-catalog --no-cache"),
 		)
 
 		It("accepts a retry from the failure of a job whose catalog was not found", func() {
@@ -1397,7 +1403,83 @@ var _ = Describe("Service", func() {
 				`{"catalog_id":"cat-a","target_catalog_id":"cat-b","bidirectional":true}`,
 				"Start a new job with the analyzers enabled now: crosscodex run start --source cat-a --target cat-b --bidirectional",
 				"Start a new job: crosscodex run start --source cat-a --target cat-b --bidirectional"),
+			Entry("a failure of a job started with --no-cache, whose new-job command keeps it",
+				`{"catalog_id":"cat-a","target_catalog_id":"cat-a","no_cache":true}`,
+				"Start a new job with the analyzers enabled now: crosscodex run start --source cat-a --target cat-a --no-cache",
+				"Start a new job: crosscodex run start --source cat-a --target cat-a --no-cache"),
 		)
+
+		It("refuses to retry as a new job a job whose cached result failed its integrity check, writing no job", func() {
+			now := time.Now()
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2"})
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-corrupt", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, "job-corrupt", []string{"classify", "synthesis", "graph"})).To(Succeed())
+			failure := fmt.Errorf("stage classify: %w", resultcache.ErrCorrupt)
+			Expect(store.UpdateStageError(ctx, "job-corrupt", "classify", failure)).To(Succeed())
+			Expect(store.UpdateJobStatus(ctx, "job-corrupt", pipeline.JobStatusFailed, failure)).To(Succeed())
+
+			_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-corrupt"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err).To(MatchError(And(
+				ContainSubstring("cannot retry job job-corrupt as a new job: a cached result it would reuse failed its integrity check, "+
+					"or a stage run's cache record did not match what the stage wrote, and a new job with the same config reads the same cache"),
+				HaveSuffix("crosscodex run start --source cat-1 --target cat-2 --no-cache"))))
+
+			jobs, total, err := store.ListJobs(ctx, "test-tenant", pipeline.JobFilter{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(total).To(BeEquivalentTo(1), "only the old job exists")
+			Expect(jobs).To(ConsistOf(HaveField("JobID", "job-corrupt")))
+			j, err := store.GetJob(ctx, "job-corrupt")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(j.Status).To(Equal(pipeline.JobStatusFailed))
+			Expect(j.ErrorClass).To(Equal(pipeline.JobErrorResultCacheCorrupt))
+		})
+
+		// A job started with --no-cache looks nothing up, so a new job with
+		// its config is the remedy itself; resuming it is not.
+		It("accepts a new-job retry of a --no-cache job that failed its cache integrity check, and still refuses resuming it", func() {
+			now := time.Now()
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-2", NoCache: true})
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: "job-corrupt-nocache", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, "job-corrupt-nocache", []string{"classify", "synthesis", "graph"})).To(Succeed())
+			failure := fmt.Errorf("stage classify: %w", resultcache.ErrCorrupt)
+			Expect(store.UpdateStageError(ctx, "job-corrupt-nocache", "classify", failure)).To(Succeed())
+			Expect(store.UpdateJobStatus(ctx, "job-corrupt-nocache", pipeline.JobStatusFailed, failure)).To(Succeed())
+
+			_, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-corrupt-nocache", RetryFromFailure: true}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err).To(MatchError(ContainSubstring("cannot retry job job-corrupt-nocache from its failure")))
+
+			resp, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-corrupt-nocache"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.NewJobId).NotTo(BeEmpty())
+			Expect(resp.Msg.NewJobId).NotTo(Equal("job-corrupt-nocache"))
+			newJob, err := store.GetJob(ctx, resp.Msg.NewJobId)
+			Expect(err).NotTo(HaveOccurred())
+			cats, ok := jobconfig.ExtractCatalogs(newJob.Config)
+			Expect(ok).To(BeTrue())
+			Expect(cats.NoCache).To(BeTrue(), "the new job keeps --no-cache")
+		})
+
+		It("accepts a retry from the failure of a job whose result cache could not be reached", func() {
+			now := time.Now()
+			configBytes, _ := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1"})
+			Expect(store.CreateJob(ctx, &pipeline.Job{JobID: "job-cache-down", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+				Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now})).To(Succeed())
+			Expect(store.CreateStages(ctx, "job-cache-down", []string{"classify", "synthesis", "graph"})).To(Succeed())
+			Expect(store.UpdateStageError(ctx, "job-cache-down", "classify", resultcache.ErrUnavailable)).To(Succeed())
+			Expect(store.UpdateJobStatus(ctx, "job-cache-down", pipeline.JobStatusFailed, resultcache.ErrUnavailable)).To(Succeed())
+
+			resp, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-cache-down", RetryFromFailure: true}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.NewJobId).To(Equal("job-cache-down"))
+		})
 
 		// Re-importing a target with statements gives it a new catalog ID
 		// (IDs are content hashes), so the new job must name a target
@@ -1455,6 +1537,12 @@ var _ = Describe("Service", func() {
 			// retry can succeed.
 			Entry("a deleted catalog", fmt.Errorf("x: %w", pipeline.ErrCatalogNotFound), pipeline.JobErrorRetryable),
 			Entry("an unwrapped error with an invalid attestation's text", errors.New(pipeline.ErrAttestationInvalid.Error()), pipeline.JobErrorRetryable),
+			Entry("an unreadable result cache", fmt.Errorf("x: %w", resultcache.ErrUnavailable), pipeline.JobErrorResultCacheUnavailable),
+			Entry("a corrupt cached result", fmt.Errorf("x: %w", resultcache.ErrCorrupt), pipeline.JobErrorResultCacheCorrupt),
+			Entry("an unreadable cache and a corrupt one in two analyzers, by the class a retry cannot fix",
+				errors.Join(resultcache.ErrUnavailable, resultcache.ErrCorrupt), pipeline.JobErrorResultCacheCorrupt),
+			Entry("an unreadable-cache stage error whose cause wraps a corrupt result, by its class alone",
+				&analysis.StageError{Sentinel: resultcache.ErrUnavailable, Cause: resultcache.ErrCorrupt}, pipeline.JobErrorResultCacheUnavailable),
 		)
 
 		It("returns FailedPrecondition, saying what to do, when no stage has failed or been cancelled", func() {

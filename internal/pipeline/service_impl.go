@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -406,6 +407,17 @@ func (s *Service) RetryJob(ctx context.Context, req *connect.Request[pb.RetryJob
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"cannot retry job %s as a new job: its target catalog has no control with a statement, "+
 				"and a new job with the same config reads the same catalog. %s",
+			job.JobID, retryRemedy(job)))
+	}
+	// A job started with --no-cache looks nothing up, so a new job with its
+	// config is the --no-cache remedy itself. An unreadable config reads as
+	// a job that did look up.
+	cats, _ := jobconfig.ExtractCatalogs(job.Config)
+	if job.ErrorClass == JobErrorResultCacheCorrupt && !req.Msg.RetryFromFailure && !cats.NoCache {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"cannot retry job %s as a new job: a cached result it would reuse failed its integrity check, "+
+				"or a stage run's cache record did not match what the stage wrote, "+
+				"and a new job with the same config reads the same cache. %s",
 			job.JobID, retryRemedy(job)))
 	}
 

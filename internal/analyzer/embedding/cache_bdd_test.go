@@ -3,6 +3,8 @@ package embedding_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/types"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/embedding"
@@ -61,4 +63,20 @@ var _ = Describe("embedding result reuse", func() {
 			Expect(keysOf(edited)).NotTo(ContainElement(k))
 		}
 	})
+
+	// A result Aggregate would discard must not be stored: every later job
+	// would replay the same failure instead of asking the model again.
+	DescribeTable("stores only a result Aggregate would use",
+		func(fields map[string]any, want types.GomegaMatcher) {
+			result, err := structpb.NewStruct(fields)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(a().CacheableResult(result)).To(want)
+		},
+		Entry("one vector with dimensions", map[string]any{"model": "m1", "embeddings": []any{[]any{0.1, 0.2, 0.3}}}, Succeed()),
+		Entry("no vector", map[string]any{"model": "m1", "embeddings": []any{}}, MatchError(ContainSubstring("exactly one vector"))),
+		Entry("two vectors", map[string]any{"model": "m1", "embeddings": []any{[]any{0.1}, []any{0.2}}}, MatchError(ContainSubstring("exactly one vector"))),
+		Entry("a vector with no dimensions", map[string]any{"model": "m1", "embeddings": []any{[]any{}}}, MatchError(ContainSubstring("no dimensions"))),
+		Entry("a vector with a non-number", map[string]any{"model": "m1", "embeddings": []any{[]any{0.1, "x"}}}, MatchError(ContainSubstring("not a number"))),
+		Entry("a result without embeddings", map[string]any{"model": "m1"}, MatchError(ContainSubstring("exactly one vector"))),
+	)
 })

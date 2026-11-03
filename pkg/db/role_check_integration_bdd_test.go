@@ -87,6 +87,17 @@ var _ = Describe("Schema version and restricted role checks", func() {
 				ContainSubstring("crosscodexd migrate"))))
 		})
 
+		It("tells the operator to recreate a database whose cache rows do not name their producing attempt, as app_user", func() {
+			ctx, tx := roleCheckTx()
+			mustExec(ctx, tx, "ALTER TABLE llm_result_cache DROP COLUMN producer_attempt")
+			mustExec(ctx, tx, "SET LOCAL ROLE app_user")
+			err := db.CheckSchemaVersion(ctx, tx)
+			Expect(err).To(MatchError(And(
+				ContainSubstring("llm_result_cache.producer_attempt"),
+				ContainSubstring("created by an earlier build"),
+				ContainSubstring("task deploy:down VOLUMES=1"))))
+		})
+
 		DescribeTable("tells the operator to recreate a database created before the result-cache tables, as app_user",
 			func(table, column string) {
 				ctx, tx := roleCheckTx()

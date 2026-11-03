@@ -330,6 +330,20 @@ func (a *RequiresAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequ
 	return intanalyzer.PayloadCacheRequest(task, "source_control_id", "target_control_id")
 }
 
+// CacheableResult implements analyzer.Cacheable: a result is stored only
+// when ParseResponse reads a YES or NO decision from its response, the
+// vote Aggregate counts.
+func (a *RequiresAnalyzer) CacheableResult(result *structpb.Struct) error {
+	raw, ok := intanalyzer.ExtractResponseText(result)
+	if !ok {
+		return errors.New("the result has no response text")
+	}
+	if ParseResponse("", raw).Decision == nil {
+		return errors.New("the requires response does not parse: it has no REQUIRES: YES or NO decision")
+	}
+	return nil
+}
+
 // Aggregate groups completed task results by source/target pair, computes
 // consensus for each pair via a.consensus (skipping pairs that don't clear
 // the configured vote/error thresholds), and JSON-encodes the surviving

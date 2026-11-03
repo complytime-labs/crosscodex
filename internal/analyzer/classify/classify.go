@@ -3,6 +3,7 @@ package classify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -222,6 +223,19 @@ func (a *ClassifyAnalyzer) CacheModels() []analyzer.ModelUse {
 // section's pre-built task is never cached.
 func (a *ClassifyAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequest, bool) {
 	return intanalyzer.PayloadCacheRequest(task, "control_id", "control_id")
+}
+
+// CacheableResult implements analyzer.Cacheable: a result is stored only
+// when ParseClassification accepts its response, as Aggregate requires.
+func (a *ClassifyAnalyzer) CacheableResult(result *structpb.Struct) error {
+	raw, ok := intanalyzer.ExtractResponseText(result)
+	if !ok {
+		return errors.New("the result has no response text")
+	}
+	if _, err := ParseClassification(raw); err != nil {
+		return fmt.Errorf("the classification does not parse: %w", err)
+	}
+	return nil
 }
 
 // Aggregate combines completed task results into a single output with

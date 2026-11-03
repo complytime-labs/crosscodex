@@ -64,7 +64,7 @@ var _ = Describe("pgstore.Store", func() {
 		Expect(execs).To(HaveLen(2))
 		Expect(execs[0].Query).To(ContainSubstring("INSERT INTO llm_result_cache"))
 		Expect(execs[0].Query).To(ContainSubstring("ON CONFLICT (tenant_id, analyzer, cache_key) DO UPDATE"))
-		Expect(execs[0].Args).To(Equal([]any{"tenant-a", "classify", e.CacheKey, `{"model":"m"}`, "m", "job-1", "cat-1", "cat-2"}))
+		Expect(execs[0].Args).To(Equal([]any{"tenant-a", "classify", e.CacheKey, `{"model":"m"}`, "m", "job-1", attempt1, "cat-1", "cat-2"}))
 		Expect(execs[1].Query).To(ContainSubstring("INSERT INTO job_cache_entries"))
 		Expect(execs[1].Query).To(ContainSubstring("ON CONFLICT DO NOTHING"))
 		Expect(execs[1].Args).To(Equal([]any{"tenant-a", "job-1", "classify", attempt1, "t1", e.CacheKey, resultcache.ResultDigest(e.Result)}))
@@ -172,7 +172,7 @@ var _ = Describe("pgstore.Store", func() {
 		tx.QueryFunc = func(_ context.Context, query string, args ...any) (db.Rows, error) {
 			Expect(query).To(ContainSubstring("c.cache_key = ANY($3::text[])"))
 			Expect(args).To(Equal([]any{"tenant-a", "classify", []string{key}}))
-			return dbtest.Rows(nil, []any{key, `{"model":"m"}`, "m", "job-1"}), nil
+			return dbtest.Rows(nil, []any{key, `{"model":"m"}`, "m", "job-1", attempt1}), nil
 		}
 		producers, err := s.Producers(tenantCtx(), "classify", []string{key})
 		Expect(err).NotTo(HaveOccurred())
@@ -203,7 +203,7 @@ var _ = Describe("pgstore.Store", func() {
 				case strings.Contains(query, "FROM job_cache_stats"):
 					return dbtest.Rows(nil, []any{"job-1", attempt1, "enabled", "", `{}`, 1, 0, 1}), nil
 				default:
-					return dbtest.Rows(nil, []any{key, `{"model":"m"}`, "m", "job-1"}), nil
+					return dbtest.Rows(nil, []any{key, `{"model":"m"}`, "m", "job-1", attempt1}), nil
 				}
 			}
 			return &queries
@@ -227,6 +227,7 @@ var _ = Describe("pgstore.Store", func() {
 			h, err := snap.Verify(key, map[resultcache.AttemptRef]string{producer: record.Digest()})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(h.ProducerJobID).To(Equal("job-1"))
+			Expect(h.ProducerAttempt).To(Equal(attempt1))
 			Expect(tx.Commits()).To(Equal(1))
 		})
 
@@ -462,8 +463,8 @@ var _ = Describe("pgstore.Store", func() {
 		key := strings.Repeat("a", 64)
 		tx2.QueryFunc = func(context.Context, string, ...any) (db.Rows, error) {
 			return dbtest.Rows(nil,
-				[]any{key, `{"model":"m"}`, "m", "job-1"},
-				[]any{strings.Repeat("b", 64), `{"model":"m"}`, "m", "job-1"},
+				[]any{key, `{"model":"m"}`, "m", "job-1", attempt1},
+				[]any{strings.Repeat("b", 64), `{"model":"m"}`, "m", "job-1", attempt1},
 			), nil
 		}
 		_, err = s.Producers(tenantCtx(), "classify", []string{key, strings.Repeat("b", 64)})

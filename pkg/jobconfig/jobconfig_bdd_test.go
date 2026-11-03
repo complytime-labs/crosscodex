@@ -96,6 +96,15 @@ var _ = Describe("ExtractCatalogs", func() {
 		})
 	})
 
+	It("reads no_cache, which a config stored without it leaves false", func() {
+		c, ok := jobconfig.ExtractCatalogs([]byte(`{"catalog_id":"cat-a","no_cache":true}`))
+		Expect(ok).To(BeTrue())
+		Expect(c.NoCache).To(BeTrue())
+		c, ok = jobconfig.ExtractCatalogs([]byte(`{"catalog_id":"cat-a"}`))
+		Expect(ok).To(BeTrue())
+		Expect(c.NoCache).To(BeFalse())
+	})
+
 	It("reports a crosswalk only when the target differs from the source", func() {
 		Expect(jobconfig.Catalogs{SourceID: "a", TargetID: "a"}.CrossCatalog()).To(BeFalse())
 		Expect(jobconfig.Catalogs{SourceID: "a", TargetID: "b"}.CrossCatalog()).To(BeTrue())

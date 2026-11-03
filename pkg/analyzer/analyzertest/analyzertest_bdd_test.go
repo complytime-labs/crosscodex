@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
@@ -287,6 +288,26 @@ var _ = Describe("CacheableStub", func() {
 		Expect(got).To(Equal(want))
 		_, ok = stub.CacheIdentity(analyzer.Task{TaskID: "t2"})
 		Expect(ok).To(BeFalse())
+	})
+
+	It("accepts every result while CacheableResultFunc is unset", func() {
+		Expect((&analyzertest.CacheableStub[*wrapperspb.StringValue]{}).CacheableResult(&structpb.Struct{})).To(Succeed())
+	})
+
+	It("lets CacheableResultFunc alone decide whether a result is stored", func() {
+		refused := errors.New("refused")
+		stub := &analyzertest.CacheableStub[*wrapperspb.StringValue]{
+			CacheableResultFunc: func(r *structpb.Struct) error {
+				if r.GetFields()["ok"].GetBoolValue() {
+					return nil
+				}
+				return refused
+			},
+		}
+		good, err := structpb.NewStruct(map[string]any{"ok": true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stub.CacheableResult(good)).To(Succeed())
+		Expect(stub.CacheableResult(&structpb.Struct{})).To(MatchError(refused))
 	})
 
 	It("is still a Stub: GenerateWork goes to the embedded Stub's Func", func() {

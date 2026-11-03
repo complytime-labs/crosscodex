@@ -3,6 +3,7 @@ package embedding
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -188,6 +189,26 @@ func (a *EmbeddingAnalyzer) CacheModels() []analyzer.ModelUse {
 // skipped control's pre-built task is never cached.
 func (a *EmbeddingAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequest, bool) {
 	return intanalyzer.PayloadCacheRequest(task, "control_id", "control_id")
+}
+
+// CacheableResult implements analyzer.Cacheable: a result is stored only
+// when it carries exactly one vector of at least one number, the one
+// Aggregate stores for the control.
+func (a *EmbeddingAnalyzer) CacheableResult(result *structpb.Struct) error {
+	vectors := result.GetFields()["embeddings"].GetListValue().GetValues()
+	if len(vectors) != 1 {
+		return fmt.Errorf("the result carries %d vectors, not exactly one vector", len(vectors))
+	}
+	values := vectors[0].GetListValue().GetValues()
+	if len(values) == 0 {
+		return errors.New("the result's vector has no dimensions")
+	}
+	for i, v := range values {
+		if _, isNumber := v.GetKind().(*structpb.Value_NumberValue); !isNumber {
+			return fmt.Errorf("dimension %d of the result's vector is not a number", i)
+		}
+	}
+	return nil
 }
 
 // Aggregate combines completed embedding results and produces aggregate

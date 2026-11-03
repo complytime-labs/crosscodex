@@ -3,6 +3,7 @@ package artifacts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -243,6 +244,20 @@ func (a *ArtifactsAnalyzer) CacheModels() []analyzer.ModelUse {
 // whose sample_index keeps each sample's identity distinct.
 func (a *ArtifactsAnalyzer) CacheIdentity(task analyzer.Task) (analyzer.CacheRequest, bool) {
 	return intanalyzer.PayloadCacheRequest(task, "control_id", "control_id")
+}
+
+// CacheableResult implements analyzer.Cacheable: a result is stored only
+// when ParseResponse extracts artifacts from its response or reads its
+// ARTIFACTS: NONE, as Aggregate requires.
+func (a *ArtifactsAnalyzer) CacheableResult(result *structpb.Struct) error {
+	raw, ok := intanalyzer.ExtractResponseText(result)
+	if !ok {
+		return errors.New("the result has no response text")
+	}
+	if _, status := ParseResponse(raw); status == ParseFail {
+		return errors.New("the artifacts response does not parse: it has no artifact block and no ARTIFACTS: NONE")
+	}
+	return nil
 }
 
 // Aggregate groups completed task results by control ID, computes fuzzy

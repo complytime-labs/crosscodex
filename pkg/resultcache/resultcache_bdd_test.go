@@ -185,14 +185,15 @@ var _ = Describe("Snapshot.Verify", func() {
 	write := func(digest string) resultcache.ManifestEntry {
 		return resultcache.ManifestEntry{TaskID: "t1", Role: resultcache.RoleWrite, CacheKey: key, ResultDigest: digest}
 	}
-	// snapshot holds key's row (stored by job-1) and the given manifests.
-	snapshot := func(stored []byte, manifests ...resultcache.Manifest) resultcache.Snapshot {
+	// snapshot holds key's row, stored by job-1 in attempt, and the given
+	// manifests.
+	snapshot := func(stored []byte, attempt string, manifests ...resultcache.Manifest) resultcache.Snapshot {
 		read := map[resultcache.AttemptRef]resultcache.Manifest{}
 		for _, m := range manifests {
 			read[resultcache.AttemptRef{JobID: m.JobID, Analyzer: m.Analyzer, Attempt: m.Attempt}] = m
 		}
-		return resultcache.NewSnapshot("classify",
-			map[string]resultcache.Hit{key: {CacheKey: key, Result: stored, ResponseModel: "m", ProducerJobID: "job-1"}}, read)
+		return resultcache.NewSnapshot("classify", map[string]resultcache.Hit{key: {CacheKey: key, Result: stored,
+			ResponseModel: "m", ProducerJobID: "job-1", ProducerAttempt: attempt}}, read)
 	}
 	manifest := func(ref resultcache.AttemptRef, entries ...resultcache.ManifestEntry) resultcache.Manifest {
 		return resultcache.Manifest{TenantID: "tenant-a", JobID: ref.JobID, Analyzer: ref.Analyzer, Attempt: ref.Attempt, Entries: entries}
@@ -205,22 +206,23 @@ var _ = Describe("Snapshot.Verify", func() {
 		return out
 	}
 
-	It("returns the hit when a signed attempt whose manifest matches vouches for its bytes", func() {
+	It("returns the hit when the attempt that stored it is signed, matches its signature and vouches for its bytes", func() {
 		m := manifest(ref1, write(resultcache.ResultDigest(result)))
-		h, err := snapshot(result, m).Verify(key, signedFor(m))
+		h, err := snapshot(result, attempt1, m).Verify(key, signedFor(m))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(h.Result).To(Equal(result))
 		Expect(h.ProducerJobID).To(Equal("job-1"))
+		Expect(h.ProducerAttempt).To(Equal(attempt1))
 	})
 
-	It("trusts a self-hit: the producer re-attested its own earlier write", func() {
+	It("does not let a hit entry vouch, even one naming the producer itself", func() {
 		m := manifest(ref2, resultcache.ManifestEntry{TaskID: "t1", Role: resultcache.RoleHit, CacheKey: key,
 			ResultDigest: resultcache.ResultDigest(result), ProducerJobID: "job-1"})
-		_, err := snapshot(result, m).Verify(key, signedFor(m))
-		Expect(err).NotTo(HaveOccurred())
+		_, err := snapshot(result, attempt2, m).Verify(key, signedFor(m))
+		Expect(err).To(MatchError(resultcache.ErrCorrupt))
 	})
 
-	DescribeTable("treats a result no signed attempt covers as a miss",
+	DescribeTable("treats a result whose storing attempt is not signed as a miss",
 		func(s resultcache.Snapshot, signed map[resultcache.AttemptRef]string, want string) {
 			_, err := s.Verify(key, signed)
 			Expect(err).To(MatchError(resultcache.ErrUntrusted))
@@ -228,12 +230,21 @@ var _ = Describe("Snapshot.Verify", func() {
 		},
 		Entry("no cached row", resultcache.NewSnapshot("classify", nil, nil), map[resultcache.AttemptRef]string{}, "no cached result"),
 		Entry("no checkpoint of the producer",
-			snapshot(result, manifest(ref1, write(resultcache.ResultDigest(result)))), map[resultcache.AttemptRef]string{},
-			"no checkpoint-signed attempt of job job-1"),
+			snapshot(result, attempt1, manifest(ref1, write(resultcache.ResultDigest(result)))), map[resultcache.AttemptRef]string{},
+			"attempt "+attempt1+" of job job-1, which stored the result, has no checkpoint-signed record"),
 		Entry("only another job's checkpoint",
-			snapshot(result, manifest(ref1, write(resultcache.ResultDigest(result)))),
+			snapshot(result, attempt1, manifest(ref1, write(resultcache.ResultDigest(result)))),
 			map[resultcache.AttemptRef]string{{JobID: "job-9", Analyzer: "classify", Attempt: attempt1}: "sha256:" + strings.Repeat("9", 64)},
-			"no checkpoint-signed attempt of job job-1"),
+			"has no checkpoint-signed record"),
+		// A1: the producer re-stored the key in a later attempt that was
+		// never sealed (a crash, or a planted row): the result is not one a
+		// signed record vouches for, but nothing signed was changed either.
+		Entry("a later unsealed attempt of the signed producer re-stored the key with another result",
+			snapshot([]byte(`{"model":"m","response":"y"}`), attempt2,
+				manifest(ref1, write(resultcache.ResultDigest(result))),
+				manifest(ref2, write(resultcache.ResultDigest([]byte(`{"model":"m","response":"y"}`))))),
+			signedFor(manifest(ref1, write(resultcache.ResultDigest(result)))),
+			"attempt "+attempt2+" of job job-1, which stored the result, has no checkpoint-signed record"),
 	)
 
 	DescribeTable("reports tampering as corrupt",
@@ -243,26 +254,26 @@ var _ = Describe("Snapshot.Verify", func() {
 			Expect(err).To(MatchError(ContainSubstring(want)))
 		},
 		Entry("an edited result",
-			snapshot([]byte(`{"model":"m","response":"y"}`), manifest(ref1, write(resultcache.ResultDigest(result)))),
-			signedFor(manifest(ref1, write(resultcache.ResultDigest(result)))), "no checkpoint-verified attempt of job job-1 vouches"),
-		Entry("a row added to a signed attempt after it was signed",
-			snapshot(result, manifest(ref1, write(resultcache.ResultDigest(result)), write("sha256:"+strings.Repeat("e", 64)))),
+			snapshot([]byte(`{"model":"m","response":"y"}`), attempt1, manifest(ref1, write(resultcache.ResultDigest(result)))),
+			signedFor(manifest(ref1, write(resultcache.ResultDigest(result)))), "attempt "+attempt1+" of job job-1 does not vouch"),
+		Entry("a row added to the signed attempt after it was signed",
+			snapshot(result, attempt1, manifest(ref1, write(resultcache.ResultDigest(result)), write("sha256:"+strings.Repeat("e", 64)))),
 			signedFor(manifest(ref1, write(resultcache.ResultDigest(result)))), "does not match its signed checkpoint"),
-		Entry("a write only an unsigned attempt holds",
-			snapshot(result, manifest(ref1), manifest(ref2, write(resultcache.ResultDigest(result)))),
-			signedFor(manifest(ref1)), "no checkpoint-verified attempt of job job-1 vouches"),
+		Entry("a write only another attempt holds",
+			snapshot(result, attempt1, manifest(ref1), manifest(ref2, write(resultcache.ResultDigest(result)))),
+			signedFor(manifest(ref1)), "attempt "+attempt1+" of job job-1 does not vouch"),
 		// M2: a hit naming another producer is that producer's result, not
 		// one the manifest's job vouches for.
 		Entry("a hit naming another producer",
-			snapshot(result, manifest(ref1, resultcache.ManifestEntry{TaskID: "t1", Role: resultcache.RoleHit, CacheKey: key,
+			snapshot(result, attempt1, manifest(ref1, resultcache.ManifestEntry{TaskID: "t1", Role: resultcache.RoleHit, CacheKey: key,
 				ResultDigest: resultcache.ResultDigest(result), ProducerJobID: "job-9"})),
 			signedFor(manifest(ref1, resultcache.ManifestEntry{TaskID: "t1", Role: resultcache.RoleHit, CacheKey: key,
-				ResultDigest: resultcache.ResultDigest(result), ProducerJobID: "job-9"})), "no checkpoint-verified attempt of job job-1 vouches"),
+				ResultDigest: resultcache.ResultDigest(result), ProducerJobID: "job-9"})), "attempt "+attempt1+" of job job-1 does not vouch"),
 	)
 
 	It("returns only a copy of the result and lists the keys it holds", func() {
 		m := manifest(ref1, write(resultcache.ResultDigest(result)))
-		s := snapshot(result, m)
+		s := snapshot(result, attempt1, m)
 		Expect(s.Keys()).To(Equal([]string{key}))
 		h, err := s.Verify(key, signedFor(m))
 		Expect(err).NotTo(HaveOccurred())
@@ -276,14 +287,14 @@ var _ = Describe("Snapshot.Verify", func() {
 		m := manifest(ref1, write(resultcache.ResultDigest(result)))
 		other := ref1
 		other.Analyzer = "artifacts"
-		_, err := snapshot(result, m).Verify(key, map[resultcache.AttemptRef]string{other: m.Digest()})
+		_, err := snapshot(result, attempt1, m).Verify(key, map[resultcache.AttemptRef]string{other: m.Digest()})
 		Expect(err).To(MatchError(resultcache.ErrInvalidEntry))
 		Expect(err).To(MatchError(ContainSubstring(`for analyzer "artifacts", not "classify"`)))
 	})
 
 	It("refuses a signed attempt the snapshot did not read, naming it", func() {
 		m := manifest(ref1, write(resultcache.ResultDigest(result)))
-		_, err := snapshot(result).Verify(key, signedFor(m))
+		_, err := snapshot(result, attempt1).Verify(key, signedFor(m))
 		Expect(err).To(MatchError(resultcache.ErrInvalidEntry))
 		Expect(err).To(MatchError(ContainSubstring("attempt " + attempt1 + " of job job-1 was not read")))
 	})

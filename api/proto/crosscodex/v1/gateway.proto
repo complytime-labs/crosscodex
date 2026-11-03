@@ -227,6 +227,10 @@ message StartAnalysisRequest {
   // source_catalog_id: within one catalog, controls are already paired in
   // both directions.
   bool bidirectional = 5;
+  // Skip result-cache lookups: every LLM call is sent to the model (a
+  // fresh, reproducible run), and the results are still stored for later
+  // jobs. Recorded in the job's config, so its attestation proves the mode.
+  bool no_cache = 6;
 }
 
 message StartAnalysisResponse {

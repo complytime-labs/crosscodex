@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
 var ErrNotFound = errors.New("pipeline: not found")
@@ -56,6 +57,16 @@ const (
 	// JobErrorEmptyTargetCatalog is ErrEmptyTargetCatalog. Catalog IDs are
 	// content hashes, so a retry reads the same empty target.
 	JobErrorEmptyTargetCatalog JobErrorClass = "empty_target_catalog"
+	// JobErrorResultCacheUnavailable is resultcache.ErrUnavailable: the
+	// cache could not be read, its audit rows written or its record
+	// sealed. Retryable.
+	JobErrorResultCacheUnavailable JobErrorClass = "result_cache_unavailable"
+	// JobErrorResultCacheCorrupt is resultcache.ErrCorrupt: a cached result
+	// or a stage's cache record failed its integrity check. A retry reads
+	// the same cache, so both retry forms are refused, except a new job
+	// from a --no-cache job, which looks nothing up; a new job with
+	// --no-cache replaces the cached results.
+	JobErrorResultCacheCorrupt JobErrorClass = "result_cache_corrupt"
 )
 
 // ClassifyJobError returns the class of a job's failure err, by the
@@ -70,6 +81,12 @@ func ClassifyJobError(err error) JobErrorClass {
 		return JobErrorMissingCatalog
 	case errors.Is(err, ErrEmptyTargetCatalog):
 		return JobErrorEmptyTargetCatalog
+	// Corrupt before unavailable: a job whose analyzers failed with both
+	// takes the class a retry cannot fix.
+	case errors.Is(err, resultcache.ErrCorrupt):
+		return JobErrorResultCacheCorrupt
+	case errors.Is(err, resultcache.ErrUnavailable):
+		return JobErrorResultCacheUnavailable
 	default:
 		return JobErrorRetryable
 	}
@@ -86,6 +103,9 @@ func retryRefusal(class JobErrorClass) string {
 		return "its config names no catalog to analyse"
 	case JobErrorEmptyTargetCatalog:
 		return "its target catalog has no control with a statement, and a retry reads the same catalog"
+	case JobErrorResultCacheCorrupt:
+		return "a cached result failed its integrity check, or a stage run's cache record did not match what the stage wrote, " +
+			"and a retry reads the same cache"
 	default:
 		return ""
 	}
@@ -101,6 +121,9 @@ func retryRemedy(job *Job) string {
 	if cats, ok := jobconfig.ExtractCatalogs(job.Config); ok && job.ErrorClass == JobErrorEmptyTargetCatalog {
 		return "Importing the target again with control statements gives it a new catalog ID, " +
 			"so start a new job with that catalog or another target: " + jobCommand(cats, cats.SourceID, "<catalog-id>")
+	}
+	if job.ErrorClass == JobErrorResultCacheCorrupt {
+		return "Start a new job with --no-cache, which recomputes and replaces the cached results: " + noCacheCommand(job)
 	}
 	return "Start a new job: " + newJobCommand(job)
 }

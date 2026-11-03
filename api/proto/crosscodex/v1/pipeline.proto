@@ -78,6 +78,11 @@ message JobConfig {
   // to source_catalog within one catalog. Server-set as source_catalog is; a
   // client-supplied value is ignored.
   CatalogSnapshot target_catalog = 11;
+  // Skip result-cache lookups (#243): every LLM call of the job is sent to
+  // the model, and its results are still stored for later jobs to reuse.
+  // Part of the stored config, so the job's attestation records the mode.
+  // `crosscodex run start --no-cache`.
+  bool no_cache = 12;
 
   reserved 1, 2, 4, 5;
   reserved "document_content", "document_uri", "catalog_format", "catalog_name";
@@ -110,6 +115,83 @@ message PipelineJob {
   JobProgress progress = 8;
   Error error = 9;
   repeated JobStage stages = 10;
+  // How each analyzer of the job used the LLM result cache (#243), one
+  // entry per analyzer of the job, in stage order. Set by GetJob only (not
+  // ListJobs).
+  repeated AnalyzerCacheSummary cache_summaries = 11;
+}
+
+// ResultCacheMode is how one analyzer of a job used the LLM result cache.
+enum ResultCacheMode {
+  RESULT_CACHE_MODE_UNSPECIFIED = 0;
+  // Requests were looked up; hits were reused and misses sent and stored.
+  RESULT_CACHE_MODE_ENABLED = 1;
+  // The job was started with no_cache: nothing was looked up; every
+  // result was sent to the model and stored for later jobs.
+  RESULT_CACHE_MODE_BYPASSED = 2;
+  // analysis.result_cache.enabled is false for the tenant: nothing was
+  // looked up or stored.
+  RESULT_CACHE_MODE_DISABLED = 3;
+  // The analyzer was not cached; reason says why.
+  RESULT_CACHE_MODE_SKIPPED = 4;
+}
+
+// ResultCacheAttestation is whether an analyzer's cache summary comes from
+// a stage run whose signed cache checkpoint still matches its records.
+enum ResultCacheAttestation {
+  RESULT_CACHE_ATTESTATION_UNSPECIFIED = 0;
+  // The summary is from the latest checkpointed stage run, whose records
+  // still match the digest its checkpoint signed.
+  RESULT_CACHE_ATTESTATION_ATTESTED = 1;
+  // No checkpointed stage run vouches for the analyzer's cache use (the
+  // job is not running), or its records changed after signing. Every
+  // other field but analyzer is empty.
+  RESULT_CACHE_ATTESTATION_UNATTESTED = 2;
+  // The job is running and the analyzer has no checkpointed stage run yet.
+  // Every other field but analyzer is empty.
+  RESULT_CACHE_ATTESTATION_IN_PROGRESS = 3;
+}
+
+// AnalyzerCacheSummary is one analyzer's use of the LLM result cache in
+// one job, from its latest checkpointed stage run.
+message AnalyzerCacheSummary {
+  // The analyzer (stage) name, such as "classify".
+  string analyzer = 1;
+  ResultCacheMode mode = 2;
+  // Human-readable notes on the mode, joined with "; ": why the analyzer
+  // was skipped or the cache disabled, that the job was started with
+  // --no-cache (bypassed), which aliases were not cached and why, and how
+  // many tasks were not cached and why (for example, no catalog is known
+  // for their controls). Empty when every task was cached as the mode says.
+  string reason = 3;
+  // Tasks the stage had, results reused from the cache, and calls sent to
+  // the model. hits + dispatched is at most tasks: the rest (sections,
+  // skipped controls) need no LLM call.
+  int64 tasks = 4;
+  int64 hits = 5;
+  int64 dispatched = 6;
+  // The concrete model behind each alias the analyzer used.
+  repeated AnalyzerCacheModel models = 7;
+  // The earlier jobs whose results were reused that the caller created.
+  // Other users' jobs are only counted (other_producer_jobs): GetJob is
+  // owner-only, so naming them would reveal that they exist. Full IDs are
+  // in the job's attestation.
+  repeated string producer_job_ids = 8;
+  int64 other_producer_jobs = 9;
+  // Whether a signed cache checkpoint vouches for the fields above.
+  ResultCacheAttestation attestation = 10;
+}
+
+// AnalyzerCacheModel is the model the gateway reported for one alias in
+// one job, and the operator-declared revision (llm.model_revisions).
+message AnalyzerCacheModel {
+  // The alias as the gateway receives it; a task's empty alias shows as the
+  // tenant default it resolved to.
+  string alias = 1;
+  // Empty when the gateway returned no model name; the alias was then not
+  // cached in this job.
+  string observed_model = 2;
+  string revision = 3;
 }
 
 message JobProgress {

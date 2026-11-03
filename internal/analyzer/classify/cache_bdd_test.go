@@ -3,6 +3,8 @@ package classify_test
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/types"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/classify"
@@ -83,5 +85,18 @@ var _ = Describe("classify result reuse", func() {
 		Entry("the token limit", func(c *config.ClassificationConfig) { c.MaxTokens = 21 }, func(*pb.Control) {}),
 		Entry("the temperature", func(c *config.ClassificationConfig) { c.Temperature = 0.4 }, func(*pb.Control) {}),
 		Entry("the model", func(c *config.ClassificationConfig) { c.Model = "other" }, func(*pb.Control) {}),
+	)
+
+	// A result Aggregate would discard must not be stored: every later job
+	// would replay the same failure instead of asking the model again.
+	DescribeTable("stores only a result Aggregate would use",
+		func(fields map[string]any, want types.GomegaMatcher) {
+			result, err := structpb.NewStruct(fields)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(newAnalyzer().CacheableResult(result)).To(want)
+		},
+		Entry("a parsed classification", map[string]any{"model": "m", "response": "Technical|Operational"}, Succeed()),
+		Entry("a response with no text", map[string]any{"model": "m", "response": "  .\n"}, MatchError(ContainSubstring("does not parse"))),
+		Entry("a result without a response", map[string]any{"model": "m"}, MatchError(ContainSubstring("no response text"))),
 	)
 })

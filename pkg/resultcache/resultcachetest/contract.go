@@ -46,9 +46,9 @@ type StoreSetup func(token string) StoreEnv
 // job that is not running (ErrJobNotRunning) or unknown (ErrUnknownJob);
 // attempts: manifests scoped to one, facts kept per attempt;
 // LookupVerifiable's snapshot and Snapshot.Verify over checkpoint-signed
-// attempts (self-hits re-attesting a write, hits naming another producer
-// not trusted, tampering corrupt, no checkpoint a miss, refs for another
-// analyzer refused, repeated refs counted once); Checkpoint comparing the
+// attempts (only the storing attempt vouches, so a re-put in an unsealed
+// attempt is a miss; tampering corrupt, no checkpoint a miss, refs for
+// another analyzer refused, repeated refs counted once); Checkpoint comparing the
 // record under the job lock and sealing only a match.
 func StoreContract(setup StoreSetup) {
 	ginkgo.Describe("resultcache.Store contract", func() {
@@ -191,7 +191,8 @@ func StoreContract(setup StoreSetup) {
 			gomega.Expect(producersA(key(1), key(2))).To(gomega.Equal(map[string]string{key(1): producer}))
 			h, err := verify(ctxA, key(1), sign(ctxA, ref(producer, attemptA)))
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(h).To(gomega.Equal(resultcache.Hit{CacheKey: key(1), Result: e.Result, ResponseModel: "qwen2.5:14b", ProducerJobID: producer}))
+			gomega.Expect(h).To(gomega.Equal(resultcache.Hit{CacheKey: key(1), Result: e.Result, ResponseModel: "qwen2.5:14b",
+				ProducerJobID: producer, ProducerAttempt: attemptA}))
 		})
 
 		ginkgo.It("returns an empty map for no keys and no hit for a key nobody stored", func() {
@@ -422,21 +423,30 @@ func StoreContract(setup StoreSetup) {
 			gomega.Expect(err).To(gomega.MatchError(resultcache.ErrInvalidEntry))
 		})
 
-		// A write planted under an attempt the producer never signed (here by
-		// a put that also replaces the cached bytes) is trusted only for that
-		// attempt, so the hit fails verification against the signed one.
-		ginkgo.It("does not verify a result written under another attempt against the signed attempt", func() {
-			genuine := entry(producer, "t1", 1, `{"model":"m","response":"genuine"}`)
-			gomega.Expect(env.Store.Put(ctxA, genuine)).To(gomega.Succeed())
-			planted := entry(producer, "t1", 1, `{"model":"m","response":"planted"}`)
-			planted.Attempt = "planted-attempt"
-			gomega.Expect(env.Store.Put(ctxA, planted)).To(gomega.Succeed())
+		// The producer sealed attempt A, then re-stored the key with another
+		// result in attempt B, which was never sealed (it crashed, or the
+		// row was planted). The row now names attempt B, which nothing
+		// signed: that is a miss to recompute, not tampering with A.
+		ginkgo.It("treats a result its producer re-stored in an unsealed later attempt as a miss, not corrupt", func() {
+			gomega.Expect(env.Store.Put(ctxA, entry(producer, "t1", 1, `{"model":"m","response":"sealed"}`))).To(gomega.Succeed())
+			signed := sign(ctxA, ref(producer, attemptA))
+			again := entry(producer, "t1", 1, `{"model":"m","response":"unsealed"}`)
+			again.Attempt = attemptB
+			gomega.Expect(env.Store.Put(ctxA, again)).To(gomega.Succeed())
 
-			_, err := verify(ctxA, key(1), sign(ctxA, ref(producer, attemptA)))
-			gomega.Expect(err).To(gomega.MatchError(resultcache.ErrCorrupt))
+			_, err := verify(ctxA, key(1), signed)
+			gomega.Expect(err).To(gomega.MatchError(resultcache.ErrUntrusted))
+			gomega.Expect(err).NotTo(gomega.MatchError(resultcache.ErrCorrupt))
+
+			h, err := verify(ctxA, key(1), sign(ctxA, ref(producer, attemptA), ref(producer, attemptB)))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "once attempt B is sealed, it vouches for its result")
+			gomega.Expect(string(h.Result)).To(gomega.Equal(`{"model":"m","response":"unsealed"}`))
+			gomega.Expect(h.ProducerAttempt).To(gomega.Equal(attemptB))
 		})
 
-		ginkgo.It("trusts a result a later attempt re-attested by hitting its own job's write", func() {
+		// Only the attempt that stored the row vouches for it: another
+		// signed attempt of the producer, whatever it recorded, does not.
+		ginkgo.It("does not trust a result through another signed attempt of its producer", func() {
 			e := entry(producer, "t1", 1, `{"model":"m","response":"x"}`)
 			gomega.Expect(env.Store.Put(ctxA, e)).To(gomega.Succeed())
 			selfHit := resultcache.HitEntry{TaskID: "t1", CacheKey: key(1), ResultDigest: resultcache.ResultDigest(e.Result), ProducerJobID: producer}
@@ -444,21 +454,19 @@ func StoreContract(setup StoreSetup) {
 				Hits: []resultcache.HitEntry{selfHit}, Stats: stats(1, 0)})).To(gomega.Succeed())
 
 			_, err := verify(ctxA, key(1), sign(ctxA, ref(producer, attemptB)))
-			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "attempt B's self-hit vouches for attempt A's write")
+			gomega.Expect(err).To(gomega.MatchError(resultcache.ErrUntrusted))
 		})
 
-		// The row's producer P recorded, in its signed attempt, a hit naming
-		// another job Q with the stored bytes' digest. That is Q's result, so
-		// it vouches for nothing of P's.
-		ginkgo.It("does not trust the producer's hit that names another producer", func() {
-			e := entry(producer, "t1", 1, `{"model":"m","response":"x"}`)
-			gomega.Expect(env.Store.Put(ctxA, e)).To(gomega.Succeed())
-			hit := resultcache.HitEntry{TaskID: "t1", CacheKey: key(1), ResultDigest: resultcache.ResultDigest(e.Result), ProducerJobID: consumer}
-			gomega.Expect(env.Store.RecordStage(ctxA, resultcache.StageRecord{JobID: producer, Analyzer: "classify", Attempt: attemptB,
-				Hits: []resultcache.HitEntry{hit}, Stats: stats(1, 0)})).To(gomega.Succeed())
-			gomega.Expect(producersA(key(1))).To(gomega.Equal(map[string]string{key(1): producer}))
+		// A row the signed attempt that stored it does not vouch for was
+		// edited after signing.
+		ginkgo.It("reports a result its signed storing attempt does not vouch for as corrupt", func() {
+			gomega.Expect(env.Store.Put(ctxA, entry(producer, "t1", 1, `{"model":"m","response":"genuine"}`))).To(gomega.Succeed())
+			signed := sign(ctxA, ref(producer, attemptA))
+			// A put of another task under the same attempt re-stores the key
+			// and adds a write the signature does not cover.
+			gomega.Expect(env.Store.Put(ctxA, entry(producer, "t2", 1, `{"model":"m","response":"planted"}`))).To(gomega.Succeed())
 
-			_, err := verify(ctxA, key(1), sign(ctxA, ref(producer, attemptB)))
+			_, err := verify(ctxA, key(1), signed)
 			gomega.Expect(err).To(gomega.MatchError(resultcache.ErrCorrupt))
 		})
 
@@ -490,8 +498,10 @@ func StoreContract(setup StoreSetup) {
 			gomega.Expect(snap.Keys()).To(gomega.Equal([]string{key(1)}))
 			_, err = snap.Verify(key(1), signed)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			_, err = snap.Verify(key(1), map[resultcache.AttemptRef]string{ref(producer, attemptB): "sha256:" + key(0)})
-			gomega.Expect(err).To(gomega.MatchError(resultcache.ErrInvalidEntry), "attempt B was not requested, so not read")
+			unread, err := env.Store.LookupVerifiable(ctxA, "classify", []string{key(1)}, []resultcache.AttemptRef{ref(consumer, attemptA)})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			_, err = unread.Verify(key(1), signed)
+			gomega.Expect(err).To(gomega.MatchError(resultcache.ErrInvalidEntry), "the producer's attempt was not requested, so not read")
 		})
 
 		ginkgo.It("counts a repeated attempt once", func() {

@@ -170,7 +170,9 @@ type Entry struct {
 	CacheKey string
 	// Result is EncodeResult's encoding of the worker's result struct.
 	Result []byte
-	// ResponseModel is resp.Model of the call that produced Result.
+	// ResponseModel is resp.Model of the call that produced Result. The
+	// engine stores a result only when it is the alias's observed model, the
+	// one CacheKey was built with.
 	ResponseModel string
 	// SourceCatalogID and TargetCatalogID are the catalogs of the controls
 	// whose text the request carried (equal for a per-control task), so the
@@ -308,6 +310,10 @@ type Hit struct {
 	ResponseModel string
 	// ProducerJobID is the job that stored Result (llm_result_cache.job_id).
 	ProducerJobID string
+	// ProducerAttempt is the attempt (stage run) of ProducerJobID that
+	// stored Result (llm_result_cache.producer_attempt). Only that
+	// attempt's signed record can vouch for it.
+	ProducerAttempt string
 }
 
 // AttemptRef names one attempt (stage run) of one job's analyzer.
@@ -342,54 +348,46 @@ func (s Snapshot) Keys() []string {
 
 // Verify returns the hit for key when the snapshot proves it. signed maps
 // each attempt whose cache checkpoint the caller verified under a trusted
-// key to the manifest digest that checkpoint signed. For the hit's
-// producer, every signed attempt's manifest in the snapshot must match its
-// signed digest, else an error wrapping ErrCorrupt; the result's digest
-// must then be one that a matching attempt vouches for (its write entries,
-// or its hit entries naming the producer itself), else ErrCorrupt (an
-// edited result). No row for key, or no signed attempt of the producer,
-// wraps ErrUntrusted: treat it as a miss. A signed attempt of the producer
-// for another analyzer, or one the snapshot did not read, wraps
+// key to the manifest digest that checkpoint signed. Only the attempt that
+// stored the row (its producer and producer attempt) can vouch for it:
+// when signed holds it, its manifest in the snapshot must match its signed
+// digest and hold a write of the result's digest under key, else an error
+// wrapping ErrCorrupt (a record changed after signing, or an edited
+// result). No row for key, or a storing attempt signed holds no checkpoint
+// for (crashed, unsealed, or signed by a key no longer trusted), wraps
+// ErrUntrusted: treat it as a miss. A signed attempt of the producer for
+// another analyzer, or a storing attempt the snapshot did not read, wraps
 // ErrInvalidEntry.
 func (s Snapshot) Verify(key string, signed map[AttemptRef]string) (Hit, error) {
 	h, ok := s.hits[key]
 	if !ok {
 		return Hit{}, fmt.Errorf("%w: no cached result for key %s", ErrUntrusted, key)
 	}
-	var refs []AttemptRef
 	for ref := range signed {
-		if ref.JobID != h.ProducerJobID {
-			continue
-		}
-		if ref.Analyzer != s.analyzer {
+		if ref.JobID == h.ProducerJobID && ref.Analyzer != s.analyzer {
 			return Hit{}, fmt.Errorf("%w: attempt %s of job %s is for analyzer %q, not %q, which this snapshot read",
 				ErrInvalidEntry, ref.Attempt, ref.JobID, ref.Analyzer, s.analyzer)
 		}
-		refs = append(refs, ref)
 	}
-	if len(refs) == 0 {
-		return Hit{}, fmt.Errorf("%w: key %s: no checkpoint-signed attempt of job %s, which stored the result", ErrUntrusted, key, h.ProducerJobID)
+	ref := AttemptRef{JobID: h.ProducerJobID, Analyzer: s.analyzer, Attempt: h.ProducerAttempt}
+	digest, ok := signed[ref]
+	if !ok {
+		return Hit{}, fmt.Errorf("%w: key %s: attempt %s of job %s, which stored the result, has no checkpoint-signed record",
+			ErrUntrusted, key, h.ProducerAttempt, h.ProducerJobID)
 	}
-	slices.SortFunc(refs, func(a, b AttemptRef) int { return strings.Compare(a.Attempt, b.Attempt) })
+	m, read := s.manifests[ref]
+	if !read {
+		return Hit{}, fmt.Errorf("%w: attempt %s of job %s was not read in this snapshot; pass it to LookupVerifiable",
+			ErrInvalidEntry, ref.Attempt, ref.JobID)
+	}
+	if d := m.Digest(); d != digest {
+		return Hit{}, fmt.Errorf("%w: key %s: attempt %s of job %s does not match its signed checkpoint: recorded rows digest to %s, the checkpoint signed %s",
+			ErrCorrupt, key, ref.Attempt, ref.JobID, d, digest)
+	}
 	got := ResultDigest(h.Result)
-	vouched := false
-	for _, ref := range refs {
-		m, read := s.manifests[ref]
-		if !read {
-			return Hit{}, fmt.Errorf("%w: attempt %s of job %s was not read in this snapshot; pass it to LookupVerifiable",
-				ErrInvalidEntry, ref.Attempt, ref.JobID)
-		}
-		if d := m.Digest(); d != signed[ref] {
-			return Hit{}, fmt.Errorf("%w: key %s: attempt %s of job %s does not match its signed checkpoint: recorded rows digest to %s, the checkpoint signed %s",
-				ErrCorrupt, key, ref.Attempt, ref.JobID, d, signed[ref])
-		}
-		if slices.Contains(m.trusted(key), got) {
-			vouched = true
-		}
-	}
-	if !vouched {
-		return Hit{}, fmt.Errorf("%w: key %s: the stored result's digest %s: no checkpoint-verified attempt of job %s vouches for it",
-			ErrCorrupt, key, got, h.ProducerJobID)
+	if !slices.Contains(m.written(key), got) {
+		return Hit{}, fmt.Errorf("%w: key %s: the stored result's digest %s: attempt %s of job %s does not vouch for it",
+			ErrCorrupt, key, got, ref.Attempt, ref.JobID)
 	}
 	h.Result = slices.Clone(h.Result)
 	return h, nil
@@ -591,14 +589,12 @@ func MatchRecord(expected, stored Manifest) error {
 		ErrCorrupt, expected.Attempt, expected.JobID, expected.Analyzer, names, list(diff(got, expN)), list(diff(exp, gotN)))
 }
 
-// trusted returns the digests m vouches for under key: its write entries,
-// and its hit entries naming m's own job (a self-hit re-attesting a result
-// the job wrote in an earlier attempt). A hit naming another producer is
-// that producer's result and does not count.
-func (m Manifest) trusted(key string) []string {
+// written returns the digests m's write entries record under key. A hit
+// entry vouches for nothing: the result it reused is its producer's.
+func (m Manifest) written(key string) []string {
 	var out []string
 	for _, e := range m.Entries {
-		if e.CacheKey == key && (e.Role == RoleWrite || (e.Role == RoleHit && e.ProducerJobID == m.JobID)) {
+		if e.CacheKey == key && e.Role == RoleWrite {
 			out = append(out, e.ResultDigest)
 		}
 	}

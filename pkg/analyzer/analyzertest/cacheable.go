@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 )
@@ -25,6 +26,10 @@ type CacheableStub[T proto.Message] struct {
 	// Unset, every task is uncacheable (ok=false): "not cached" is the
 	// interface's own default, so there is no ErrUnscripted here.
 	CacheIdentityFunc func(task analyzer.Task) (analyzer.CacheRequest, bool)
+	// CacheableResultFunc, if set, alone decides CacheableResult's result.
+	// Unset, every result is accepted: CacheIdentityFunc already decides
+	// which tasks are cached at all.
+	CacheableResultFunc func(result *structpb.Struct) error
 }
 
 // CacheModels returns a copy of Models.
@@ -36,4 +41,12 @@ func (s *CacheableStub[T]) CacheIdentity(task analyzer.Task) (analyzer.CacheRequ
 		return analyzer.CacheRequest{}, false
 	}
 	return s.CacheIdentityFunc(task)
+}
+
+// CacheableResult returns CacheableResultFunc's result, or nil when unset.
+func (s *CacheableStub[T]) CacheableResult(result *structpb.Struct) error {
+	if s.CacheableResultFunc == nil {
+		return nil
+	}
+	return s.CacheableResultFunc(result)
 }

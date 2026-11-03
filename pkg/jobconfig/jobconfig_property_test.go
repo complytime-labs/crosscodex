@@ -22,12 +22,13 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				sourceName := rapid.String().Draw(t, "sourceName")
 				targetName := rapid.String().Draw(t, "targetName")
 				version := rapid.String().Draw(t, "version")
+				noCache := rapid.Bool().Draw(t, "noCache")
 
 				wantTarget := target
 				if wantTarget == "" {
 					wantTarget = source
 				}
-				cfg := &pb.JobConfig{CatalogId: source, TargetCatalogId: target, Bidirectional: bidirectional}
+				cfg := &pb.JobConfig{CatalogId: source, TargetCatalogId: target, Bidirectional: bidirectional, NoCache: noCache}
 				var wantSourceLabel, wantTargetLabel jobconfig.Label
 				if snapshot {
 					// CreateJob snapshots both sides, the target under the
@@ -52,7 +53,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				}
 
 				want := jobconfig.Catalogs{SourceID: source, TargetID: wantTarget, Bidirectional: bidirectional && wantTarget != source,
-					SourceLabel: wantSourceLabel, TargetLabel: wantTargetLabel}
+					NoCache: noCache, SourceLabel: wantSourceLabel, TargetLabel: wantTargetLabel}
 				if got != want {
 					t.Fatalf("ExtractCatalogs(%s) = %+v, want %+v", stored, got, want)
 				}
