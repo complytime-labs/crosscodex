@@ -98,6 +98,7 @@ backup:
 			_, err := load()
 			Expect(err).To(Or(MatchError(config.ErrInvalidConfig), MatchError(config.ErrMissingRequired)))
 			Expect(err.Error()).To(ContainSubstring(field))
+			expectOnlyFieldError(err, field)
 		},
 		Entry("unknown backend",
 			"backup:\n  destination:\n    backend: azure\n", "backup.destination.backend"),

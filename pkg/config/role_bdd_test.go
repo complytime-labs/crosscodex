@@ -69,6 +69,7 @@ var _ = Describe("Config.Role and Config.Health defaults", func() {
 		Expect(err.Error()).To(ContainSubstring("nonexistent"))
 		Expect(err).To(MatchError(config.ErrInvalidConfig),
 			"validateRole must wrap with %w, not %s, so errors.Is(err, ErrInvalidConfig) still matches")
+		expectOnlyFieldError(err, "role")
 	})
 
 	DescribeTable("every canonical role and alias loads without error",

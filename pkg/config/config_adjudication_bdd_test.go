@@ -37,6 +37,7 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue(), "got %v", err)
 			Expect(err.Error()).To(ContainSubstring("analysis.artifact_adjudication.lease_duration"))
 			Expect(err.Error()).To(ContainSubstring("must be positive (e.g. 15m)"))
+			expectOnlyFieldError(err, "analysis.artifact_adjudication.lease_duration")
 		},
 		Entry("zero", time.Duration(0)),
 		Entry("negative", -time.Minute),
@@ -57,6 +58,7 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 			Expect(err.Error()).To(ContainSubstring("analysis.artifact_adjudication." + field))
 			Expect(err.Error()).To(MatchRegexp("must (be|not)"))
+			expectOnlyFieldError(err, "analysis.artifact_adjudication."+field)
 		},
 		Entry("no models", func(c *config.ArtifactAdjudicationConfig) { c.Models = nil }, "models"),
 		Entry("zero samples", func(c *config.ArtifactAdjudicationConfig) { c.SamplesPerModel = 0 }, "samples_per_model"),

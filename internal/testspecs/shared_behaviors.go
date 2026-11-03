@@ -159,13 +159,13 @@ func ConfigurationComplianceBehavior(subject ConfigurableComponent) func() {
 				ginkgo.It("loads configuration from valid paths", func() {
 					configData := []byte(`
 database:
-  host: localhost
-  port: 5432
+  dsn: postgres://localhost:5432/crosscodex
 nats:
   url: localhost:4222
 storage:
-  type: local
-  path: /tmp
+  objects:
+    backend: local
+    base_path: /tmp
 `)
 					configPath, cleanup := SetupTestConfig(configData)
 					defer cleanup()
@@ -196,14 +196,13 @@ storage:
 					// Load a valid configuration for validation tests
 					configData := []byte(`
 database:
-  host: localhost
-  port: 5432
+  dsn: postgres://localhost:5432/crosscodex
 nats:
   url: localhost:4222
 storage:
-  type: local
-  path: /tmp
-order: user-first
+  objects:
+    backend: local
+    base_path: /tmp
 `)
 					configPath, cleanup := SetupTestConfig(configData)
 					defer cleanup()

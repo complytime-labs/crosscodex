@@ -133,6 +133,7 @@ var _ = Describe("Requires Configuration", func() {
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring(field))
 				Expect(err.Error()).To(ContainSubstring(msg))
+				expectOnlyFieldError(err, field)
 			},
 			Entry("consensus threshold below range", func(c *config.RequiresConfig) { c.ConsensusThreshold = 0.4 }, "analysis.requires.consensus_threshold", "must be in range [0.5, 1.0]"),
 			Entry("consensus threshold above range", func(c *config.RequiresConfig) { c.ConsensusThreshold = 1.1 }, "analysis.requires.consensus_threshold", "must be in range [0.5, 1.0]"),

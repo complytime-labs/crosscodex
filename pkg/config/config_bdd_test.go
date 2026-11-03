@@ -536,7 +536,7 @@ var _ = Describe("Configuration System", Ordered, func() {
 		})
 
 		Context("when testing validation edge cases", func() {
-			It("returns the first validation error for multiple invalid fields", func() {
+			It("reports every validation error, each with its path and source", func() {
 				tmpHome := GinkgoT().TempDir()
 				GinkgoT().Setenv("XDG_CONFIG_HOME", tmpHome)
 
@@ -557,13 +557,14 @@ logging:
 				loader := config.NewLoader()
 				_, err := loader.Load(context.Background())
 
-				Expect(err).To(HaveOccurred())
-				Expect(err).To(MatchError(ContainSubstring("invalid")))
-
-				errMsg := err.Error()
-				Expect(errMsg).To(ContainSubstring("tls.mode"))
-				Expect(errMsg).NotTo(ContainSubstring("storage.objects.backend"))
-				Expect(errMsg).NotTo(ContainSubstring("logging.level"))
+				Expect(err).To(MatchError(config.ErrInvalidConfig))
+				var paths []string
+				for _, fe := range config.FieldErrors(err) {
+					paths = append(paths, fe.Path)
+					Expect(fe.Error()).To(ContainSubstring("(set in " + filepath.Join(userDir, "config.yaml") + ")"))
+				}
+				Expect(paths).To(ConsistOf("tls.mode", "storage.objects.backend", "logging.level", "logging.format"))
+				Expect(config.FieldErrorsComplete(err)).To(BeTrue())
 			})
 
 			It("validates all TLS mode configurations comprehensively", func() {
@@ -1353,43 +1354,48 @@ logging:
 		})
 
 		DescribeTable("rejects invalid configurations",
-			func(modify func(*config.Config)) {
+			func(modify func(*config.Config), path string) {
 				cfg := validConfig()
 				modify(cfg)
 
 				err := config.ExportValidateConfig(cfg)
 				Expect(err).To(HaveOccurred())
 				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+				expectOnlyFieldError(err, path)
 			},
-			Entry("invalid TLS mode", func(c *config.Config) { c.TLS.Mode = "invalid" }),
-			Entry("mutual TLS missing cert and key", func(c *config.Config) { c.TLS.Mode = "mutual"; c.TLS.CA = "/etc/ca.crt" }),
+			Entry("invalid TLS mode", func(c *config.Config) { c.TLS.Mode = "invalid" }, "tls.mode"),
+			Entry("mutual TLS missing cert and key", func(c *config.Config) { c.TLS.Mode = "mutual"; c.TLS.CA = "/etc/ca.crt" }, "tls.mode"),
 			Entry("mutual TLS missing CA", func(c *config.Config) {
 				c.TLS.Mode = "mutual"
 				c.TLS.Cert = "/etc/server.crt"
 				c.TLS.Key = "/etc/server.key"
-			}),
-			Entry("server-only TLS missing key", func(c *config.Config) { c.TLS.Mode = "server-only"; c.TLS.Cert = "/etc/server.crt" }),
-			Entry("server-only TLS missing cert", func(c *config.Config) { c.TLS.Mode = "server-only"; c.TLS.Key = "/etc/server.key" }),
-			Entry("invalid storage backend", func(c *config.Config) { c.Storage.Objects.Backend = "azure" }),
-			Entry("invalid log level", func(c *config.Config) { c.Logging.Level = "verbose" }),
-			Entry("invalid log format", func(c *config.Config) { c.Logging.Format = "yaml" }),
+			}, "tls.mode"),
+			Entry("server-only TLS missing key", func(c *config.Config) { c.TLS.Mode = "server-only"; c.TLS.Cert = "/etc/server.crt" }, "tls.mode"),
+			Entry("server-only TLS missing cert", func(c *config.Config) { c.TLS.Mode = "server-only"; c.TLS.Key = "/etc/server.key" }, "tls.mode"),
+			Entry("invalid storage backend", func(c *config.Config) { c.Storage.Objects.Backend = "azure" }, "storage.objects.backend"),
+			Entry("invalid log level", func(c *config.Config) { c.Logging.Level = "verbose" }, "logging.level"),
+			Entry("invalid log format", func(c *config.Config) { c.Logging.Format = "yaml" }, "logging.format"),
 		)
 
-		It("returns the first validation error (early return semantics)", func() {
-			cfg := &config.Config{
-				TLS:     config.TLSConfig{Mode: "bogus"},
-				Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "azure"}},
-				Logging: config.LoggingConfig{Level: "verbose", Format: "yaml"},
-			}
+		It("returns every validation error, not only the first", func() {
+			cfg := validConfig()
+			cfg.TLS.Mode = "bogus"
+			cfg.Storage.Objects.Backend = "azure"
+			cfg.Logging = config.LoggingConfig{Level: "verbose", Format: "yaml"}
 
 			err := config.ExportValidateConfig(cfg)
 			Expect(err).To(HaveOccurred())
 			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 
+			var paths []string
+			for _, fe := range config.FieldErrors(err) {
+				paths = append(paths, fe.Path)
+			}
+			Expect(paths).To(ConsistOf("tls.mode", "storage.objects.backend", "logging.level", "logging.format"))
 			msg := err.Error()
 			Expect(msg).To(ContainSubstring("tls.mode"))
-			Expect(msg).NotTo(ContainSubstring("storage.objects.backend"))
-			Expect(msg).NotTo(ContainSubstring("logging.level"))
+			Expect(msg).To(ContainSubstring("storage.objects.backend"))
+			Expect(msg).To(ContainSubstring("logging.format"))
 		})
 	})
 
@@ -1797,6 +1803,7 @@ logging:
 				Expect(err.Error()).To(ContainSubstring(field))
 				Expect(err.Error()).To(ContainSubstring(msg))
 				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+				expectOnlyFieldError(err, field)
 			},
 			Entry("rejects private_key_path without public_key_path", func(c *config.Config) {
 				c.Attestation.PrivateKeyPath = "/path/to/key.pem"
@@ -1862,6 +1869,7 @@ logging:
 				Expect(err.Error()).To(ContainSubstring(field))
 				Expect(err.Error()).To(ContainSubstring(msg))
 				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+				expectOnlyFieldError(err, field)
 			},
 			Entry("rejects negative MaxConcurrentJobs", func(c *config.Config) {
 				c.Pipeline.MaxConcurrentJobs = -1
@@ -1871,13 +1879,13 @@ logging:
 			}, "pipeline.max_concurrent_jobs", "must be in range [0, 100]"),
 			Entry("rejects zero StageTimeout, which would leave stages unbounded", func(c *config.Config) {
 				c.Pipeline.StageTimeout = 0
-			}, "pipeline.stage_timeout 0s must be in range (0, 168h]", "set a positive duration such as 24h"),
+			}, "pipeline.stage_timeout", "must be in range (0, 168h]: it caps how long each analyzer stage may run, so set a positive duration such as 24h"),
 			Entry("rejects negative StageTimeout", func(c *config.Config) {
 				c.Pipeline.StageTimeout = -1 * time.Minute
-			}, "pipeline.stage_timeout -1m0s must be in range (0, 168h]", "set a positive duration such as 24h"),
+			}, "pipeline.stage_timeout", "-1m0s must be in range (0, 168h]: it caps how long each analyzer stage may run, so set a positive duration such as 24h"),
 			Entry("rejects StageTimeout just above upper boundary (168h1s)", func(c *config.Config) {
 				c.Pipeline.StageTimeout = 168*time.Hour + time.Second
-			}, "pipeline.stage_timeout 168h0m1s must be in range (0, 168h]", "set a positive duration such as 24h"),
+			}, "pipeline.stage_timeout", "168h0m1s must be in range (0, 168h]: it caps how long each analyzer stage may run, so set a positive duration such as 24h"),
 		)
 
 		DescribeTable("accepts valid pipeline values",
@@ -2065,6 +2073,7 @@ logging:
 				Expect(err.Error()).To(ContainSubstring(field))
 				Expect(err.Error()).To(ContainSubstring(msg))
 				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+				expectOnlyFieldError(err, field)
 			},
 			Entry("rejects max_text_length of zero", func(c *config.Config) {
 				c.Analysis.Classification.MaxTextLength = 0
@@ -2209,14 +2218,16 @@ logging:
 			}))
 		})
 
-		It("ignores a leftover analysis.relationship.top_k key in a config file and loads the rest", func() {
+		It("rejects a leftover analysis.relationship.top_k key in a config file with removal guidance", func() {
 			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
 			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
 			writeTestFile(path, "analysis:\n  relationship:\n    top_k: 10\n    max_tokens: 400\n")
 
 			cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Analysis.Relationship.MaxTokens).To(Equal(400))
+			Expect(err).To(MatchError(config.ErrUnknownKey))
+			Expect(err.Error()).To(ContainSubstring(`"analysis.relationship.top_k" at ` + path + ":3:5"))
+			Expect(err.Error()).To(ContainSubstring("analysis.candidates.generators[].config.top_k"))
+			Expect(cfg).To(BeNil())
 		})
 
 		It("does not ship relationship.top_k in the compiled defaults", func() {
@@ -2475,6 +2486,7 @@ var _ = Describe("EngineConfig", func() {
 				Expect(err).To(HaveOccurred())
 				Expect(err).To(MatchError(config.ErrInvalidConfig))
 				Expect(err.Error()).To(ContainSubstring(substr))
+				expectOnlyFieldError(err, "analysis.engine."+substr)
 			},
 			Entry("zero timeout", func(c *config.EngineConfig) { c.TaskTimeout = 0 }, "task_timeout"),
 			Entry("negative timeout", func(c *config.EngineConfig) { c.TaskTimeout = -1 }, "task_timeout"),
@@ -2562,8 +2574,9 @@ var _ = Describe("WorkerConfig", func() {
 
 			_, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(cfgFile))
 			Expect(err).To(MatchError(config.ErrInvalidConfig))
-			Expect(err).To(MatchError(ContainSubstring("worker.max_abandoned_collections " + value + " must be in range [1, 100000]")))
+			Expect(err).To(MatchError(ContainSubstring("worker.max_abandoned_collections " + value + " (set in " + cfgFile + ") must be in range [1, 100000]")))
 			Expect(err).To(MatchError(ContainSubstring("such as the default 10000")))
+			expectOnlyFieldError(err, "worker.max_abandoned_collections")
 		},
 		Entry("zero", "0"),
 		Entry("negative", "-1"),
@@ -2609,6 +2622,15 @@ var _ = Describe("SynthesisConfig validation", func() {
 		Expect(config.ExportValidateConfig(cfg)).To(Succeed())
 	})
 
+	It("rejects an invalid tenant ID key in synthesis.tenant_overrides, under that key's path", func() {
+		cfg := validConfig()
+		cfg.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{"INVALID": {}}
+		err := config.ExportValidateConfig(cfg)
+		Expect(err).To(MatchError(config.ErrInvalidConfig))
+		Expect(err).To(MatchError(ContainSubstring(`synthesis.tenant_overrides key "INVALID" is not a valid tenant ID`)))
+		expectOnlyFieldError(err, "synthesis.tenant_overrides.INVALID")
+	})
+
 	DescribeTable("rejects invalid synthesis values",
 		func(mutate func(*config.Config), field, msg string) {
 			cfg := validConfig()
@@ -2618,6 +2640,7 @@ var _ = Describe("SynthesisConfig validation", func() {
 			Expect(err.Error()).To(ContainSubstring(field))
 			Expect(err.Error()).To(ContainSubstring(msg))
 			Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
+			expectOnlyFieldError(err, field)
 		},
 		Entry("global: zero TypeMismatchFactor",
 			func(c *config.Config) { c.Synthesis.Viability.TypeMismatchFactor = 0 },
@@ -2658,11 +2681,6 @@ var _ = Describe("SynthesisConfig validation", func() {
 		Entry("global: MaxMappingsPerControl of zero",
 			func(c *config.Config) { c.Synthesis.MaxMappingsPerControl = 0 },
 			"synthesis.max_mappings_per_control", "must be positive"),
-		Entry("tenant_overrides: invalid tenant ID key",
-			func(c *config.Config) {
-				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{"INVALID": {}}
-			},
-			"synthesis.tenant_overrides key", "is not a valid tenant ID"),
 		Entry("tenant_overrides: ConfidenceThreshold out of range",
 			func(c *config.Config) {
 				c.Synthesis.TenantOverrides = map[string]config.SynthesisOverride{

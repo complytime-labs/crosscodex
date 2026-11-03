@@ -126,6 +126,8 @@ crosscodex config set tls.key deploy/certs/client-key.pem
 crosscodex config set tls.mode mutual
 ```
 
+Set `tls.mode` last: `config set` refuses a change that stops a working configuration loading, and `mutual` needs the CA, certificate and key in place. `crosscodex config unset <key>` removes a key again. If the configuration already fails to load, set and unset write only a change that fixes one of its problems without adding another, and say which problems remain.
+
 ## Architecture: mutual TLS and LiteLLM via stunnel
 
 The production stack runs all inter-service communication over mutual TLS:

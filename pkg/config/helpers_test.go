@@ -3,8 +3,20 @@ package config_test
 import (
 	"time"
 
+	. "github.com/onsi/gomega"
+
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
+
+// expectOnlyFieldError asserts that err reports exactly one problem, a
+// FieldError for the setting at path, and nothing untagged. A rejected-value
+// spec that calls it fails if its validator forgets the path.
+func expectOnlyFieldError(err error, path string) {
+	fields := config.FieldErrors(err)
+	ExpectWithOffset(1, fields).To(HaveLen(1), "want one FieldError for %s in: %v", path, err)
+	ExpectWithOffset(1, fields[0].Path).To(Equal(path))
+	ExpectWithOffset(1, config.FieldErrorsComplete(err)).To(BeTrue(), "untagged problem in: %v", err)
+}
 
 // validConfig returns a Config that passes ExportValidateConfig with every
 // section populated, so a spec can mutate only the field it tests and still

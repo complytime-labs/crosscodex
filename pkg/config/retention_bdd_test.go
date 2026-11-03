@@ -55,19 +55,25 @@ var _ = Describe("RetentionConfig.Validate", func() {
 		rc := config.RetentionConfig{
 			Archive: config.ArchiveConfig{Backend: "azure"},
 		}
-		Expect(rc.Validate()).To(MatchError(config.ErrInvalidConfig))
+		err := rc.Validate()
+		Expect(err).To(MatchError(config.ErrInvalidConfig))
+		expectOnlyFieldError(err, "retention.archive.backend")
 	})
 	It("rejects unparseable tier values", func() {
 		rc := config.RetentionConfig{
 			Defaults: config.RetentionTiers{Attestation: "notavalue"},
 		}
-		Expect(rc.Validate()).To(MatchError(config.ErrInvalidConfig))
+		err := rc.Validate()
+		Expect(err).To(MatchError(config.ErrInvalidConfig))
+		expectOnlyFieldError(err, "retention.defaults.attestation")
 	})
 	It("rejects negative durations in tiers", func() {
 		rc := config.RetentionConfig{
 			Defaults: config.RetentionTiers{Attestation: "-1h"},
 		}
-		Expect(rc.Validate()).To(MatchError(config.ErrInvalidConfig))
+		err := rc.Validate()
+		Expect(err).To(MatchError(config.ErrInvalidConfig))
+		expectOnlyFieldError(err, "retention.defaults.attestation")
 	})
 	It("accepts indefinite tier values", func() {
 		rc := config.RetentionConfig{

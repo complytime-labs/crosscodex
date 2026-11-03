@@ -39,6 +39,7 @@ var _ = Describe("GraphConfig.MaxBulkEdges", func() {
 			Expect(err.Error()).To(ContainSubstring("graph.max_bulk_edges " + value))
 			Expect(err.Error()).To(ContainSubstring("CROSSCODEX_GRAPH_MAX_BULK_EDGES"))
 			Expect(err.Error()).To(ContainSubstring("must be in range [1, 10000]"))
+			expectOnlyFieldError(err, "graph.max_bulk_edges")
 		},
 		Entry("zero", "0"),
 		Entry("negative", "-5"),

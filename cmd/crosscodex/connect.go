@@ -329,13 +329,19 @@ func writePIDFile(path string, port int) error {
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
-func loadConfig(state *cliState, profile string) error {
-	loader := config.NewLoader()
+// cliLoadOptions returns the loader options every CLI load uses, for the
+// --profile value profile, followed by extra. The commands that check a
+// config edit load through it too, so they check what the CLI will load.
+func cliLoadOptions(profile string, extra ...config.Option) []config.Option {
 	var opts []config.Option
 	if profile != "" {
 		opts = append(opts, config.WithProfile(profile))
 	}
-	cfg, err := loader.Load(context.Background(), opts...)
+	return append(opts, extra...)
+}
+
+func loadConfig(state *cliState, profile string) error {
+	cfg, err := config.NewLoader().Load(context.Background(), cliLoadOptions(profile)...)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
@@ -353,6 +359,7 @@ var localCommands = map[string]bool{
 	"config show":           true,
 	"config get":            true,
 	"config set":            true,
+	"config unset":          true,
 	"config profiles":       true,
 	"catalog validate":      true,
 	"results verify":        true,

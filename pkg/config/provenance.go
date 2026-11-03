@@ -1,6 +1,10 @@
 package config
 
-import "gopkg.in/yaml.v3"
+import (
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
 
 // sourceTracker records which configuration source set each config value.
 // It maps dotted paths (e.g., "tls.mode") to a human-readable source
@@ -47,7 +51,33 @@ func (s *sourceTracker) sourceOf(path string) string {
 	if src, ok := s.sources[path]; ok {
 		return src
 	}
-	return "compiled defaults"
+	return SourceDefaults
+}
+
+// SourceDefaults is the FieldError.Source of a value no layer set: the
+// compiled defaults supplied it, or a required value is missing.
+const SourceDefaults = "compiled defaults"
+
+// sourceOfSetting returns the source of the value a FieldError path names:
+// the source of that setting, or for a section (or a list item, which is
+// tracked as part of its list), the source every value tracked below it
+// shares. It returns "" when none or several sources set it.
+func (s *sourceTracker) sourceOfSetting(path string) string {
+	key := trackerKey(path)
+	if src, ok := s.sources[key]; ok {
+		return src
+	}
+	found := ""
+	for p, src := range s.sources {
+		if !strings.HasPrefix(p, key+".") {
+			continue
+		}
+		if found != "" && found != src {
+			return ""
+		}
+		found = src
+	}
+	return found
 }
 
 // formatSource returns a parenthetical source annotation for error messages.

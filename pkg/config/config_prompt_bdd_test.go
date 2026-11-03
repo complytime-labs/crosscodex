@@ -117,6 +117,7 @@ var _ = Describe("PromptConfig", func() {
 				Expect(errors.Is(err, config.ErrInvalidConfig)).To(BeTrue())
 				Expect(err.Error()).To(ContainSubstring("prompt.tenant_overrides key %q", key))
 				Expect(err.Error()).To(ContainSubstring(tenant.IDRule))
+				expectOnlyFieldError(err, "prompt.tenant_overrides."+key)
 			},
 			Entry("uppercase", "INVALID"),
 			Entry("53 characters, one over the graph-name limit", "a"+strings.Repeat("b", 52)),

@@ -25,11 +25,33 @@ The graph storage hardening in #148 makes these breaking changes:
 - `BulkCreateEdges` rejects requests with more than `graph.max_bulk_edges` edges (default 1000).
 - `CreateEdge` and `BulkCreateEdges` reject a `temporal.confidence` outside 0 to 1.
 - The never-populated `BulkCreateEdgesResponse.errors` field (field 3) is removed and reserved; `BulkCreateEdges` reports failures only as the RPC status.
-- The unused `tenants.allowed_tenants` config key is removed. A config file or `CROSSCODEX_TENANTS_ALLOWED_TENANTS` that still sets it is ignored; delete it.
+- The unused `tenants.allowed_tenants` config key is removed; delete it. A config file that still sets it fails to load (see unknown config keys below); `CROSSCODEX_TENANTS_ALLOWED_TENANTS` is ignored.
 
 Graphs written before this change must be rebuilt. Follow the "Upgrade note (#148)" in [docs/dev/design-principles.md](docs/dev/design-principles.md#graph-data-model).
 
 The pre-release schema migrations are collapsed into one baseline, `001_initial_schema`. A database migrated by an earlier build cannot be upgraded; `crosscodexd` refuses it as newer than itself. Drop it (for the compose deployment, `task deploy:down VOLUMES=1`) and recreate it with `crosscodexd migrate`.
+
+Unknown config keys:
+
+- A config file (system, user, drop-in, profile, project or `--config`) or CLI flag override that sets a key that is not a configuration field now fails to load instead of being silently ignored. This catches misspellings (`pipeline.stage_timout`) and keys that were removed (`analysis.relationship.top_k`, `tenants.allowed_tenants`). One error lists every unknown key in every file layer and CLI flag override, so all of them can be fixed in one pass, each with its dotted path, `file:line:column`, a "did you mean" suggestion when a valid key is close, and the valid keys at that level; a removed key says what replaced it. Example: `unknown configuration key "pipeline.stage_timout" at /etc/crosscodex/config.yaml:2:3: did you mean "stage_timeout"? (valid keys under pipeline: addr, endpoint, max_concurrent_jobs, stage_timeout)`. `tenant_overrides` entries are checked the same way, and a global-only key set in one names the keys that can be overridden. Environment variables are not checked: a `CROSSCODEX_*` variable that matches no key is still ignored.
+- Loading now reports every problem at once instead of stopping at the first: every invalid value in every section, values of the wrong type (text for a number, a value where a section belongs), and the invalid values alongside any unknown keys. A value of the wrong type is reported against the file, line and column (or CLI flag, or environment variable) that set it, such as ``pipeline.max_concurrent_jobs at /etc/crosscodex/config.yaml:4:24: cannot unmarshal !!str `many` into int``, instead of a line in the merged configuration. A float setting set to `.nan` is rejected. The CLI prints the problems one per line under a single summary line. Each error keeps its message (with `(set in <file>)` where the value came from a file, now also for `analysis.engine`, `analysis.requires`, `analysis.artifacts`, `analysis.artifact_adjudication`, `analysis.candidates`, `worker`, `pipeline` and `retention`), joined one per line. A setting whose rule involves another, such as `tls.mode mutual` needing `tls.cert`, `tls.key` and `tls.ca`, is reported once, under the setting that imposes the rule.
+- A top-level key that only holds a YAML anchor, such as the compose idiom `x-common: &common`, is an unknown key and is rejected. Define the anchor on the first place that uses it, inside a real section, and refer to it from the others; anchors do not reach across files:
+
+  ```yaml
+  tls:
+    targets:
+      llm: &mtls
+        mode: mutual
+        ca: /etc/crosscodex/ca.pem
+      nats: *mtls
+      db:
+        <<: *mtls
+        cert: /etc/crosscodex/db.pem
+  ```
+
+- `<<` merge keys and aliases now take effect over the compiled defaults and earlier layers. Before, `logging: {<<: {level: debug}}` loaded with the default level `warn`, because the default's explicit `level` beat the merged one. Within one mapping, a key set explicitly still wins over a merged one, and in `<<: [*a, *b]` the earlier entry wins, as YAML specifies.
+- `crosscodex config set <key> <value>` and the new `crosscodex config unset <key>` edit only the user config, and write it only if the configuration loads with the change, every other layer and `--profile` included (only that profile; others are not checked). A misspelled key, an invalid value, a key that names a section or list, a path through an alias (`<path> is an alias to another section`), or a change to a section or value whose anchor an alias in the file refers to (the error names the aliases), is refused with the reason, and the file is left byte-identical. When a change depends on another setting (such as `tls.mode mutual` on `tls.cert`, `tls.key` and `tls.ca`), set that one first. The file is replaced atomically, keeping its permissions and owner (a new one is created `0600`; a config owned by another user is refused unless the command can give the new file that owner), and a symlinked user config is written through to its target; a dangling symlink is refused.
+- When the configuration does not load, every command fails with the error, except the `crosscodex config` commands: they print it as a warning and still run. If the user config is the cause, `config unset` removes an unknown key and `config set` fixes a value, one problem per change: a change is written if it removes at least one problem and adds none (the remaining ones are printed as a warning), and refused if it adds a problem or replaces a bad value with another bad one. A rule spanning settings counts as one problem under the setting that imposes it, so `tls.mode mutual` stays a problem until `tls.cert`, `tls.key` and `tls.ca` are all set: set those first, or `tls.mode` back to `off`. If some problem has no setting path (a document whose root is not a mapping, such as a YAML list; a file that does not parse is refused outright, fix its syntax by hand), a change is written only if it makes the configuration load. If a problem's value comes from another layer (system config, drop-in, profile, environment variable), set and unset refuse and name it: fix that file first. A layer that only loads together with the user config (a drop-in sets `llm.gateway_mode: true`, the user config sets `llm.gateway_url`) does not count as broken. A map key a dotted path cannot hold (one containing `.`, `[`, `]` or `"`) is written quoted, both in errors and in `config set`, `get` and `unset` keys, for example `crosscodex config unset 'llm.tenant_overrides["a.b"]'`. `config show` and `config get` have no resolved configuration to print, so they report the error once instead.
 
 Tenant administration (#31):
 
@@ -38,8 +60,16 @@ Tenant administration (#31):
 Analysis stage limits (#237):
 
 - `pipeline.stage_timeout` now caps every analyzer stage. Its default is 24h (was 30m, unused), and `0` is rejected: a config that sets `stage_timeout: 0` or more than `168h` fails to load. Raise it if a catalog's stage legitimately runs longer than 24h.
-- `analysis.engine.task_timeout` now fails a stage only when the whole LLM worker pool has been silent that long, not when the stage alone has had no result.
-- When an analyzer stage times out, fails to dispatch, or its job is cancelled, LLM workers drop that stage's still-queued tasks instead of calling the model for results nobody reads; a resumed or retried job's new run is unaffected. Only workers and pipelines from this release do this: an older worker runs every task, and a newer worker runs tasks from an older pipeline normally. See [Control Messages: Abandoned Collections](docs/dev/audit-streams.md#control-messages-abandoned-collections).
+- `analysis.engine.task_timeout` changed meaning. Before, it was one deadline for a stage's whole batch of LLM tasks, so any real catalog failed after `task_timeout`. Now it is an idle timeout across the whole worker pool: a stage fails only when no worker anywhere reports progress for that long. Total time per stage is capped by `pipeline.stage_timeout` instead (default 24h).
+- Split deployments: each LLM worker remembers an abandon for its own host's `pipeline.stage_timeout`, and `worker.max_abandoned_collections` is likewise per worker host. Set `pipeline.stage_timeout` on worker hosts to the same value as on pipeline hosts, or larger. A smaller value makes workers forget abandons early and run tasks nobody reads.
+- Mixed versions: workers from before this release publish no progress ticks, so a new pipeline with old workers still fails a stage queued behind another stage at `task_timeout`. Upgrade workers with, or before, pipelines.
+- When an analyzer stage times out, fails to dispatch, or its job is cancelled, LLM workers drop that stage's still-queued tasks instead of calling the model for results nobody reads; a resumed or retried job's new run is unaffected. Only workers and pipelines from this release do this: an older worker runs every task (and sends no progress ticks, see above), and a newer worker runs tasks from an older pipeline normally. See [Control Messages: Abandoned Collections](docs/dev/audit-streams.md#control-messages-abandoned-collections).
+
+SDK and prompt changes:
+
+- `natsbus.Client` gained `PublishWorkerProgress` and `SubscribeWorkerProgress`. Implementations outside this repo (`pkg/natsbus` is public) must add them.
+- `pkg/natsbus` subject builders reject job IDs longer than 128 bytes with `ErrInvalidJobID`.
+- The shipped `requires` prompt is now 1.1.0 and renders `| Control Domain: "${source_ancestor}"`; `${source_ancestor}` is the bare domain name, no longer a pre-formatted suffix. A user or project prompt override of `requires` still using `Level: ${source_level}${source_ancestor}` renders e.g. `Level: tacticalAccess Control`. Prompt overrides are not version-checked, so update them by hand.
 
 Identity lifecycle (#195):
 
@@ -382,10 +412,10 @@ analysis:
     retry_max_delay: 24h                 # Cap on that wait; at least retry_base_delay
 
 worker:
-  max_abandoned_collections: 10000        # [1, 100000]; abandoned stages each worker remembers so it can drop their queued LLM tasks; raise it if more stages are abandoned within one stage_timeout (global-only)
+  max_abandoned_collections: 10000        # [1, 100000]; abandoned stages each worker remembers so it can drop their queued LLM tasks; raise it if more stages are abandoned within one stage_timeout; per worker host (global-only)
 
 pipeline:
-  stage_timeout: 24h                      # (0, 168h]; hard cap on each analyzer stage, which worker progress never extends; fails a stage whose task was lost
+  stage_timeout: 24h                      # (0, 168h]; hard cap on each analyzer stage, which worker progress never extends; fails a stage whose task was lost; worker hosts must set the same or a larger value (they keep abandons that long)
 
 graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)
