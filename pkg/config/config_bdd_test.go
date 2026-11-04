@@ -2376,7 +2376,7 @@ logging:
 			cfg.Analysis.Requires.Models = nil
 			Expect(cfg.Analysis.Requires).To(Equal(config.RequiresConfig{
 				Enabled: false, SamplesPerModel: 1, AllowEvenSamples: false, SamplingTemperature: 0.3,
-				MaxTokens: 300, ConsensusThreshold: 0.67, MaxErrorRate: 0.34,
+				MaxTokens: 300, ConsensusThreshold: 0.66, MaxErrorRate: 0.34,
 				MaxSourceChars: 1500, MaxTargetChars: 800,
 			}))
 		})

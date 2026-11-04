@@ -135,6 +135,10 @@ Mapping confidence:
 - Cached LLM results are still reused: the prompts and requests are unchanged, and confidence is computed from the cached responses when a job aggregates them. Changing `samples_per_model` does change the requests (a panel of more than one sample uses `sampling_temperature` instead of 0), so the compose stack's switch to 3 samples sends its relationship and requires requests to the model again once.
 - New config key `analysis.relationship.confidence_weights` (`high`, `medium`, `low`). A config that sets a weight outside (0, 1], or a lower level above a higher one, fails to load.
 
+Consensus thresholds:
+
+- The compiled default `consensus_threshold` of `analysis.requires` and `analysis.artifact_adjudication` is now 0.66 (was 0.67). A panel decides when votes for the majority / valid votes ≥ the threshold, and 2/3 is 0.666…, so at 0.67 a three-sample panel decided only when unanimous: a two-of-three requires vote wrote no REQUIRES edge, and a two-of-three adjudication left the pair undecided. Now two of three decide. Expect more REQUIRES edges and fewer undecided artifact pairs; pairs already closed as undecided stay undecided. A config that sets 0.67 explicitly keeps the old behavior.
+
 Certificate generation:
 
 - The deploy PKI generator moved from `deploy/certs/gen.go` to `deploy/certgen/gen.go`, because a regeneration now replaces the whole `deploy/certs/` directory. Keep nothing else in `deploy/certs/` (or in a custom `CERTS_DIR`).
@@ -492,7 +496,7 @@ analysis:
     allow_even_samples: false            # Allow an even samples_per_model
     sampling_temperature: 0.3            # [0, 2]
     max_tokens: 300                      # Max tokens per LLM reply
-    consensus_threshold: 0.67            # [0.5, 1]; minimum confidence fraction
+    consensus_threshold: 0.66            # [0.5, 1]; minimum confidence fraction
     max_error_rate: 0.34                 # [0, 1]; maximum fraction of votes that can fail
     max_source_chars: 1500               # Max runes of source control text
     max_target_chars: 800                # Max runes of target control text
@@ -524,7 +528,7 @@ analysis:
     allow_even_samples: false            # Allow an even samples_per_model
     sampling_temperature: 0.3            # [0, 2]; 0 is used with one sample per model
     max_tokens: 200                      # Max tokens per panel reply
-    consensus_threshold: 0.67            # [0.5, 1]; below it (or on a split) the pair is undecided
+    consensus_threshold: 0.66            # [0.5, 1]; below it (or on a split) the pair is undecided
     max_error_rate: 0.34                 # [0, 1]; more failed votes than this fails the panel (0 disables)
     max_attempts: 5                      # Failed panels before a pair is abandoned
     lease_duration: 15m                  # How long a run holds each leased pair, and each verdict it or `decide` projects; must be positive even when enabled is false

@@ -210,3 +210,16 @@ var _ = Describe("deploy/config.yaml pair analyzers", func() {
 		Expect(cfg.Analysis.Requires.SamplesPerModel).To(Equal(3))
 	})
 })
+
+var _ = Describe("compiled consensus thresholds", func() {
+	// The consensus check is votes/total >= threshold, and 2/3 is 0.666...,
+	// so a threshold of 0.67 would make a three-sample panel unanimous-only.
+	It("let a two-of-three majority decide a requires or adjudication panel", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(2.0 / 3).To(BeNumerically(">=", cfg.Analysis.Requires.ConsensusThreshold))
+		Expect(2.0 / 3).To(BeNumerically(">=", cfg.Analysis.ArtifactAdjudication.ConsensusThreshold))
+	})
+})

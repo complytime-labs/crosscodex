@@ -108,7 +108,7 @@ var _ = Describe("ArtifactAdjudicationConfig", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Analysis.ArtifactAdjudication).To(Equal(config.ArtifactAdjudicationConfig{
 				Enabled: true, Models: []string{"m1"}, SamplesPerModel: 3, SamplingTemperature: 0.3,
-				MaxTokens: 200, ConsensusThreshold: 0.67, MaxErrorRate: 0.34, MaxAttempts: 5,
+				MaxTokens: 200, ConsensusThreshold: 0.66, MaxErrorRate: 0.34, MaxAttempts: 5,
 				LeaseDuration: 15 * time.Minute, LeaseBatch: 10, PanelConcurrency: 4, RetryBaseDelay: time.Minute, RetryMaxDelay: 24 * time.Hour,
 			}))
 		})
