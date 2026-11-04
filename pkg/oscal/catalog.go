@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 
 	oscalTypes "github.com/defenseunicorns/go-oscal/src/types/oscal-1-1-3"
@@ -107,6 +108,9 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) ([]ControlItem,
 		scoped.Params = &merged
 		params := collectParams(catalog, scoped, catalogWide)
 		decomposed := DecomposeStatements(ctrl, groupID, params)
+		for i := range decomposed {
+			maps.Copy(decomposed[i].Props, withdrawnProps(ctrl))
+		}
 		items = append(items, decomposed...)
 	})
 
