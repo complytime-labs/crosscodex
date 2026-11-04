@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -21,11 +22,16 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
+	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
+
+// ensurePKIHelperDirEnv makes the suite binary run ensurePKI on the named
+// directory and exit (see TestMainBDD), so specs can race real processes.
+const ensurePKIHelperDirEnv = "CROSSCODEX_ENSURE_PKI_HELPER_DIR"
 
 var _ = Describe("ensurePKI", func() {
 	It("generates a complete PKI in an empty directory", func() {
@@ -94,6 +100,115 @@ var _ = Describe("ensurePKI", func() {
 		fp2, err := os.ReadFile(filepath.Join(pkiDir, ".fingerprint"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(fp2)).NotTo(Equal(string(fp1)))
+
+		info, err := os.Stat(pkiDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o700)))
+	})
+
+	// expectOneBootstrappedSet asserts pkiDir holds one complete, verifying,
+	// fingerprinted set and that no staging or set-aside dirs remain beside it.
+	expectOneBootstrappedSet := func(pkiDir string) {
+		Expect(testcerts.VerifyDir(pkiDir)).To(Succeed())
+		stored, err := testcerts.ReadFingerprint(pkiDir)
+		Expect(err).NotTo(HaveOccurred())
+		computed, err := testcerts.ComputeFingerprint(pkiDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stored).To(Equal(computed))
+		entries, err := os.ReadDir(filepath.Dir(pkiDir))
+		Expect(err).NotTo(HaveOccurred())
+		names := []string{}
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		Expect(names).To(ConsistOf("pki", ".pki.lock"))
+	}
+
+	It("yields one verifying set when many goroutines bootstrap the same directory", func() {
+		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+		const n = 8
+		errs := make(chan error, n)
+		for range n {
+			go func() { errs <- ensurePKI(pkiDir) }()
+		}
+		for range n {
+			Expect(<-errs).NotTo(HaveOccurred())
+		}
+		expectOneBootstrappedSet(pkiDir)
+	})
+
+	It("yields one verifying set when many CLI processes bootstrap the same directory", func() {
+		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+		const n = 4
+		cmds := make([]*exec.Cmd, n)
+		for i := range n {
+			cmds[i] = exec.Command(os.Args[0], "-test.run=^TestMainBDD$")
+			cmds[i].Env = append(os.Environ(), ensurePKIHelperDirEnv+"="+pkiDir)
+			cmds[i].Stdout = GinkgoWriter
+			cmds[i].Stderr = GinkgoWriter
+			Expect(cmds[i].Start()).To(Succeed())
+		}
+		for _, cmd := range cmds {
+			Expect(cmd.Wait()).To(Succeed())
+		}
+		expectOneBootstrappedSet(pkiDir)
+	})
+
+	Context("when the directory holds certificates the CLI did not generate", func() {
+		var pkiDir string
+		var before map[string][]byte
+
+		// writeOperatorSet writes p without a .fingerprint, as an operator
+		// supplying their own PKI would, and records the bytes on disk.
+		writeOperatorSet := func(p *testcerts.PKI) {
+			pkiDir = filepath.Join(GinkgoT().TempDir(), "pki")
+			Expect(p.WriteToDir(pkiDir)).To(Succeed())
+			before = map[string][]byte{}
+			entries, err := os.ReadDir(pkiDir)
+			Expect(err).NotTo(HaveOccurred())
+			for _, e := range entries {
+				data, err := os.ReadFile(filepath.Join(pkiDir, e.Name()))
+				Expect(err).NotTo(HaveOccurred())
+				before[e.Name()] = data
+			}
+		}
+
+		expectUnchanged := func() {
+			after := map[string][]byte{}
+			entries, err := os.ReadDir(pkiDir)
+			Expect(err).NotTo(HaveOccurred())
+			for _, e := range entries {
+				data, err := os.ReadFile(filepath.Join(pkiDir, e.Name()))
+				Expect(err).NotTo(HaveOccurred())
+				after[e.Name()] = data
+			}
+			Expect(after).To(Equal(before))
+		}
+
+		It("uses a valid set as is", func() {
+			p, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			writeOperatorSet(p)
+
+			Expect(ensurePKI(pkiDir)).To(Succeed())
+			expectUnchanged()
+		})
+
+		It("refuses an invalid set with an actionable error and never replaces it", func() {
+			p, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			other, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			p.ClientKey = other.ClientKey
+			writeOperatorSet(p)
+
+			err = ensurePKI(pkiDir)
+			Expect(err).To(MatchError(testcerts.ErrUnmanagedDir))
+			Expect(err).To(MatchError(And(
+				ContainSubstring("client-key.pem does not match client.pem"),
+				ContainSubstring("remove the directory"))))
+			expectUnchanged()
+		})
 	})
 })
 
