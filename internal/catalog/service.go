@@ -757,7 +757,13 @@ func UnsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) erro
 			return fmt.Errorf("unsupported catalog format: the document is XML. %s; convert it to "+
 				"OSCAL JSON (NIST's oscal-cli converts between OSCAL formats) and import the JSON file", supported)
 		}
-		if bytes.HasPrefix(trimmed, []byte(OSCALRootKey+":")) || bytes.HasPrefix(trimmed, []byte(oscalProfileRootKey+":")) {
+		// YAML may open with comments and a "---" document marker.
+		yamlBody := trimmed
+		for bytes.HasPrefix(yamlBody, []byte("#")) || bytes.HasPrefix(yamlBody, []byte("---")) {
+			_, rest, _ := bytes.Cut(yamlBody, []byte("\n"))
+			yamlBody = bytes.TrimSpace(rest)
+		}
+		if bytes.HasPrefix(yamlBody, []byte(OSCALRootKey+":")) || bytes.HasPrefix(yamlBody, []byte(oscalProfileRootKey+":")) {
 			return fmt.Errorf("unsupported catalog format: the document is YAML. %s; convert it to "+
 				"OSCAL JSON (NIST's oscal-cli converts between OSCAL formats) and import the JSON file", supported)
 		}

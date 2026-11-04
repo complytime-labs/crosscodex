@@ -527,6 +527,9 @@ var _ = Describe("Service", func() {
 				Entry("an OSCAL YAML catalog, declared OSCAL",
 					crosscodexv1.CatalogFormat_CATALOG_FORMAT_OSCAL,
 					"catalog:\n  uuid: x\n", "the document is YAML", "fix the JSON syntax"),
+				Entry("an OSCAL YAML catalog with a document marker and comments, declared OSCAL",
+					crosscodexv1.CatalogFormat_CATALOG_FORMAT_OSCAL,
+					"# exported by a GRC tool\n---\n\ncatalog:\n  uuid: x\n", "the document is YAML", "fix the JSON syntax"),
 			)
 		})
 	})
