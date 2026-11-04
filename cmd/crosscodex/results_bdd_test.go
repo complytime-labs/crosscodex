@@ -227,6 +227,37 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Expect(lines[2]).To(HavePrefix("b,s-b,t-b,RELATIONSHIP_TYPE_SUBSET_OF"))
 	})
 
+	Describe("export of the analyzer stage", func() {
+		// The server sends analyzer mappings with zero viability: the stage
+		// has none, so exporting 0.000/false would claim a verdict.
+		BeforeEach(func() {
+			m := mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)
+			m.ViabilityScore, m.IsViable = 0, false
+			fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", m)}
+		})
+
+		It("leaves the CSV viability cells empty", func() {
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer")
+			Expect(err).NotTo(HaveOccurred())
+			lines := strings.Split(strings.TrimSpace(stdout), "\n")
+			Expect(lines).To(HaveLen(2))
+			Expect(lines[1]).To(HavePrefix("a,s-a,t-a,RELATIONSHIP_TYPE_EQUIVALENT,0.900,,,"))
+		})
+
+		It("omits the viability fields from JSON", func() {
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json", "--stage", "analyzer")
+			Expect(err).NotTo(HaveOccurred())
+			var out struct {
+				Mappings []map[string]any `json:"mappings"`
+			}
+			Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "export output is valid JSON: %s", stdout)
+			Expect(out.Mappings).To(HaveLen(1))
+			Expect(out.Mappings[0]).To(HaveKeyWithValue("confidence", BeNumerically("~", 0.9, 1e-6)))
+			Expect(out.Mappings[0]).NotTo(HaveKey("viabilityScore"))
+			Expect(out.Mappings[0]).NotTo(HaveKey("isViable"))
+		})
+	})
+
 	Describe("export of a crosswalk job", func() {
 		BeforeEach(func() {
 			page := mappingsPage("", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))

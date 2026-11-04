@@ -139,6 +139,10 @@ Consensus thresholds:
 
 - The compiled default `consensus_threshold` of `analysis.requires` and `analysis.artifact_adjudication` is now 0.66 (was 0.67). A panel decides when votes for the majority / valid votes ≥ the threshold, and 2/3 is 0.666…, so at 0.67 a three-sample panel decided only when unanimous: a two-of-three requires vote wrote no REQUIRES edge, and a two-of-three adjudication left the pair undecided. Now two of three decide. Expect more REQUIRES edges and fewer undecided artifact pairs; pairs already closed as undecided stay undecided. A config that sets 0.67 explicitly keeps the old behavior.
 
+Analyzer-stage export:
+
+- `results export --stage analyzer` no longer reports a viability, because that stage has none. JSON mappings omit `viabilityScore` and `isViable` (before: `0` and `false`), and the CSV `viability_score` and `is_viable` cells are empty (before: `0.000` and `false`). The columns stay where they were. The `synthesized` stage is unchanged.
+
 Certificate generation:
 
 - The deploy PKI generator moved from `deploy/certs/gen.go` to `deploy/certgen/gen.go`, because a regeneration now replaces the whole `deploy/certs/` directory. Keep nothing else in `deploy/certs/` (or in a custom `CERTS_DIR`).
@@ -262,7 +266,7 @@ crosscodex results export <job-id> --format csv --control <control-id> --type eq
 
 | Flag | Applies to | Meaning |
 |------|------------|---------|
-| `--stage synthesized\|analyzer` | both | `synthesized` (default) is the output after synthesis's confidence threshold and per-control cap, with a viability score per mapping. `analyzer` is the raw relationship analyzer consensus, with no viability. |
+| `--stage synthesized\|analyzer` | both | `synthesized` (default) is the output after synthesis's confidence threshold and per-control cap, with a viability score per mapping. `analyzer` is the raw relationship analyzer consensus, with no viability: `export` omits `viabilityScore` and `isViable` from JSON and leaves the `viability_score` and `is_viable` CSV cells empty. |
 | `--min-confidence <0-1>` | both | Only mappings at or above this confidence. |
 | `--type <type>` | both | Only this relationship type; repeat for several. Case-insensitive. `NO_RELATIONSHIP` is excluded unless named here. |
 | `--control <id>` | both | Only mappings whose source or target is this control. |
