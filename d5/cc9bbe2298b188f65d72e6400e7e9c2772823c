@@ -1,0 +1,28 @@
+pkg/oscal/oscal_bdd_test.go
+  s_6db2b57b27fedb::t_92f3e0cab8d79c 166-186,218-219
+  s_6db2b57b27fedb::t_2977170e04e4d0 187-202
+  s_6db2b57b27fedb::t_74200ce59cdccf 203-217
+pkg/oscal/catalog.go
+  s_6db2b57b27fedb::t_91c0b8faa042c4 80-93,96-97
+  s_6db2b57b27fedb::t_ca40ef6ebdb884 8
+  s_6db2b57b27fedb::t_6d33911fb9b92e 108
+  s_6db2b57b27fedb::t_95245c568c4964 95,98,100-107
+pkg/oscal/convert.go
+  s_6db2b57b27fedb::t_6d33911fb9b92e 136-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5cc9bbe2298b188f65d72e6400e7e9c2772823c",
+  "prompts": {},
+  "sessions": {
+    "s_6db2b57b27fedb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99db3f86-87c3-48d7-8787-19135d41d357",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
