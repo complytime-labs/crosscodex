@@ -249,8 +249,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	switch requestFormat := req.Msg.GetFormat(); requestFormat {
 	case crosscodexv1.CatalogFormat_CATALOG_FORMAT_OSCAL:
 		if !detectedIsOSCAL {
-			return nil, connect.NewError(connect.CodeInvalidArgument,
-				errors.New("format=CATALOG_FORMAT_OSCAL specified but content does not appear to be OSCAL JSON"))
+			return nil, connect.NewError(connect.CodeInvalidArgument, UnsupportedFormatError(requestFormat, data))
 		}
 		isOSCAL = true
 		prov.Format = FormatOSCAL
@@ -287,7 +286,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("parse OSCAL: %v", err))
 		}
 	} else {
-		return nil, connect.NewError(connect.CodeInvalidArgument, unsupportedFormatError(req.Msg.GetFormat(), data))
+		return nil, connect.NewError(connect.CodeInvalidArgument, UnsupportedFormatError(req.Msg.GetFormat(), data))
 	}
 
 	// Validate items
@@ -728,11 +727,23 @@ func readOSCALDocument(data []byte) oscalDocument {
 	return doc
 }
 
-// unsupportedFormatError explains why a document that failed OSCAL detection
+// oscalProfileRootKey is the top-level key of an OSCAL profile, which selects
+// controls from a catalog rather than being one.
+const oscalProfileRootKey = "profile"
+
+// oscalOtherModelRootKeys are the top-level keys of the OSCAL models that
+// neither are a catalog nor resolve into one.
+var oscalOtherModelRootKeys = []string{
+	"component-definition", "system-security-plan", "assessment-plan",
+	"assessment-results", "plan-of-action-and-milestones", "mapping-collection",
+}
+
+// UnsupportedFormatError explains why a document that failed OSCAL detection
 // cannot be imported. Only OSCAL JSON is supported, so the advice depends on
-// what was sent: a declared Gemara catalog, bytes that are not valid JSON
-// (including a damaged OSCAL file), or valid JSON without the OSCAL root key.
-func unsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) error {
+// what was sent: a declared Gemara catalog, OSCAL in XML or YAML, bytes that
+// are not valid JSON (including a damaged OSCAL file), another OSCAL model
+// (a profile is the common mistake), or other JSON without the OSCAL root key.
+func UnsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) error {
 	const supported = "Only OSCAL JSON catalogs can be imported"
 	if format == crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA {
 		return fmt.Errorf("unsupported catalog format: Gemara catalogs cannot be imported yet. "+
@@ -741,9 +752,38 @@ func unsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) erro
 	// RawMessage validates the syntax without building the document tree.
 	var raw json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
+		trimmed := bytes.TrimSpace(data)
+		if bytes.HasPrefix(trimmed, []byte("<")) {
+			return fmt.Errorf("unsupported catalog format: the document is XML. %s; convert it to "+
+				"OSCAL JSON (NIST's oscal-cli converts between OSCAL formats) and import the JSON file", supported)
+		}
+		// YAML may open with comments and a "---" document marker.
+		yamlBody := trimmed
+		for bytes.HasPrefix(yamlBody, []byte("#")) || bytes.HasPrefix(yamlBody, []byte("---")) {
+			_, rest, _ := bytes.Cut(yamlBody, []byte("\n"))
+			yamlBody = bytes.TrimSpace(rest)
+		}
+		if bytes.HasPrefix(yamlBody, []byte(OSCALRootKey+":")) || bytes.HasPrefix(yamlBody, []byte(oscalProfileRootKey+":")) {
+			return fmt.Errorf("unsupported catalog format: the document is YAML. %s; convert it to "+
+				"OSCAL JSON (NIST's oscal-cli converts between OSCAL formats) and import the JSON file", supported)
+		}
 		return fmt.Errorf("unsupported catalog format: the document is not valid JSON (%v). "+
 			"%s; if this is an OSCAL catalog, fix the JSON syntax, otherwise convert it to an "+
 			"OSCAL catalog, then import it again", err, supported)
+	}
+	var root map[string]json.RawMessage
+	if json.Unmarshal(data, &root) == nil {
+		if _, ok := root[oscalProfileRootKey]; ok {
+			return fmt.Errorf("unsupported catalog format: the document is an OSCAL profile, not a catalog. "+
+				"Resolve the profile into a catalog (NIST's oscal-cli resolves profiles), or import the "+
+				"resolved-profile catalog its publisher provides. %s", supported)
+		}
+		for _, key := range oscalOtherModelRootKeys {
+			if _, ok := root[key]; ok {
+				return fmt.Errorf("unsupported catalog format: the document is an OSCAL %q, not a catalog. "+
+					"%s; import the catalog whose controls it references instead", key, supported)
+			}
+		}
 	}
 	return fmt.Errorf("unsupported catalog format: the document is JSON but has no top-level %q object. "+
 		"%s; convert the document to an OSCAL catalog and import it again", OSCALRootKey, supported)

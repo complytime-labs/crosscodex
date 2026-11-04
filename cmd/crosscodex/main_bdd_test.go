@@ -582,6 +582,17 @@ var _ = Describe("Root Command", func() {
 				Expect(stdout).To(ContainSubstring("valid"))
 			})
 
+			DescribeTable("explains what the document is and how to fix it, as import does",
+				func(content, advice string) {
+					Expect(os.WriteFile(tmpFile, []byte(content), 0o644)).To(Succeed())
+					_, _, err := execute(newRootCmd(), "catalog", "validate", tmpFile)
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring(advice))
+				},
+				Entry("an OSCAL profile", `{"profile": {"uuid": "x"}}`, "is an OSCAL profile, not a catalog"),
+				Entry("an OSCAL XML catalog", `<?xml version="1.0"?><catalog/>`, "the document is XML"),
+				Entry("an OSCAL YAML catalog", "catalog:\n  uuid: x\n", "the document is YAML"),
+			)
 		})
 
 		Describe("catalog import", func() {
