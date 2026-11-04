@@ -1,6 +1,7 @@
 package oscal
 
 import (
+	"maps"
 	"strings"
 
 	oscalTypes "github.com/defenseunicorns/go-oscal/src/types/oscal-1-1-3"
@@ -121,29 +122,52 @@ func ItemToControl(item ControlItem) oscalTypes.Control {
 }
 
 // CollectParams builds a parameter lookup map from catalog-level and control-level params.
-// Resolution order: param.Label first, then param.Values[0], else skip.
-// Control params override catalog params.
+// Resolution order: param.Label first, then param.Values[0], then the
+// param.Select choices, else skip. Control params override catalog params.
+//
+// A selection (SP 800-53 Rev 5 organization-defined parameters such as
+// AC-11's) has neither label nor values; without its choices the statement
+// reads "by [ac-11_odp.01]" and loses its meaning. It renders as NIST prints
+// it, "[Selection (one or more): a; b]". Choices may insert other parameters,
+// so selections render after every label and value is known; a choice that
+// inserts a selection (or itself) shows that parameter's ID instead of
+// recursing.
 func CollectParams(catalog *oscalTypes.Catalog, ctrl oscalTypes.Control) map[string]string {
 	params := make(map[string]string)
+	selections := make(map[string]*oscalTypes.ParameterSelection)
 
-	// Collect catalog-level params first
-	if catalog != nil && catalog.Params != nil {
-		for _, param := range *catalog.Params {
-			value := resolveParamValue(param)
-			if value != "" {
+	collect := func(list *[]oscalTypes.Parameter) {
+		if list == nil {
+			return
+		}
+		for _, param := range *list {
+			if value := resolveParamValue(param); value != "" {
 				params[param.ID] = value
+				delete(selections, param.ID)
+			} else if param.Select != nil && param.Select.Choice != nil && len(*param.Select.Choice) > 0 {
+				selections[param.ID] = param.Select
+				delete(params, param.ID)
 			}
 		}
 	}
 
-	// Control params override catalog params
-	if ctrl.Params != nil {
-		for _, param := range *ctrl.Params {
-			value := resolveParamValue(param)
-			if value != "" {
-				params[param.ID] = value
-			}
+	// Collect catalog-level params first; control params override them.
+	if catalog != nil {
+		collect(catalog.Params)
+	}
+	collect(ctrl.Params)
+
+	plain := maps.Clone(params)
+	for id, sel := range selections {
+		choices := make([]string, 0, len(*sel.Choice))
+		for _, choice := range *sel.Choice {
+			choices = append(choices, CleanProse(choice, plain))
 		}
+		prefix := "Selection: "
+		if sel.HowMany == "one-or-more" {
+			prefix = "Selection (one or more): "
+		}
+		params[id] = "[" + prefix + strings.Join(choices, "; ") + "]"
 	}
 
 	return params
