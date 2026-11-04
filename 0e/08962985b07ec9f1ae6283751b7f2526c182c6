@@ -1,0 +1,44 @@
+test/tooling/cert-generators.venom.yml
+  s_6db2b57b27fedb::t_0458833fb0c884 1-89
+  s_6db2b57b27fedb::t_eeb5a8aae1d367 90
+.gitignore
+  s_6db2b57b27fedb::t_d6f17c80c53e97 74-76
+.taskfiles/deploy.yml
+  s_6db2b57b27fedb::t_c94b091a50fd95 200-202,204-208
+.taskfiles/test.yml
+  s_6db2b57b27fedb::t_7f9cc4d0656621 74
+.taskfiles/test/integration.yml
+  s_6db2b57b27fedb::t_bff652773dc4dd 636-639
+README.md
+  s_6db2b57b27fedb::t_7373e91cd79ba0 125-129
+deploy/README.md
+  s_6db2b57b27fedb::t_79024353cac166 60-61,169,182,445
+deploy/certgen/gen.go
+  s_6db2b57b27fedb::t_617f4a99fff244 5-6,10-21,40-46,48-59,61,74-86,90-91,94,96,103,113-115,142-175
+internal/testcerts/ensure_bdd_test.go
+  s_6db2b57b27fedb::t_2ac53f32b84c61 62-69,92-96,260
+internal/testcerts/gen.go
+  s_6db2b57b27fedb::t_adba5321739b91 11-17,19-22,33-37,40,54,56,59-61
+internal/testcerts/testcerts.go
+  s_6db2b57b27fedb::t_7d6bc7482c6f72 5-6,28-29,46-50,56,73-84,192,194-199,202-204
+internal/testcerts/testcerts_bdd_test.go
+  s_6db2b57b27fedb::t_7b3d846c4bcd06 25-26
+test/deploy/smoke_up.sh
+  s_6db2b57b27fedb::t_7b68cb0e020a6f 212,219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0e08962985b07ec9f1ae6283751b7f2526c182c6",
+  "prompts": {},
+  "sessions": {
+    "s_6db2b57b27fedb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99db3f86-87c3-48d7-8787-19135d41d357",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
