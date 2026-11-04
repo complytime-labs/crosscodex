@@ -133,7 +133,16 @@ func ItemToControl(item ControlItem) oscalTypes.Control {
 // inserts a selection (or itself) shows that parameter's ID instead of
 // recursing.
 func CollectParams(catalog *oscalTypes.Catalog, ctrl oscalTypes.Control) map[string]string {
-	params := make(map[string]string)
+	return collectParams(catalog, ctrl, nil)
+}
+
+// collectParams is CollectParams over a fallback map of already-resolved
+// parameters defined elsewhere in the document. The catalog's and ctrl's own
+// params override the fallback, and selection choices resolve against both,
+// so a choice may insert a parameter only another control defines.
+func collectParams(catalog *oscalTypes.Catalog, ctrl oscalTypes.Control, fallback map[string]string) map[string]string {
+	params := make(map[string]string, len(fallback))
+	maps.Copy(params, fallback)
 	selections := make(map[string]*oscalTypes.ParameterSelection)
 
 	collect := func(list *[]oscalTypes.Parameter) {

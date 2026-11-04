@@ -163,6 +163,60 @@ var _ = Describe("Parser", func() {
 		})
 	})
 
+	Context("parameters an enhancement inherits", func() {
+		// SP 800-53 Rev 5 IA-13(3) inserts its parent's ia-13_odp.01, and its
+		// own params override a parent param of the same ID.
+		It("resolves parameters defined on ancestor controls", func() {
+			doc := `{"catalog": {"uuid": "00000000-0000-0000-0000-000000000000",
+				"metadata": {"title": "T", "version": "1", "oscal-version": "1.1.3", "last-modified": "2026-06-11T00:00:00Z"},
+				"controls": [{"id": "ia-13", "title": "Identity Providers",
+					"params": [{"id": "ia-13_odp.01", "label": "policy"}, {"id": "shared", "label": "parent value"}],
+					"parts": [{"id": "ia-13_smt", "name": "statement", "prose": "Use {{ insert: param, ia-13_odp.01 }}."}],
+					"controls": [{"id": "ia-13.3", "title": "Token Management",
+						"params": [{"id": "shared", "label": "enhancement value"}],
+						"parts": [{"id": "ia-13.3_smt", "name": "statement",
+							"prose": "Ensure tokens follow {{ insert: param, ia-13_odp.01 }} and {{ insert: param, shared }}."}]}]}]}}`
+			items, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+			Expect(err).NotTo(HaveOccurred())
+
+			enh := findItem(items, "ia-13.3")
+			Expect(enh).NotTo(BeNil())
+			Expect(enh.Text).To(Equal("Ensure tokens follow policy and enhancement value."))
+			Expect(findItem(items, "ia-13").Text).To(Equal("Use policy."))
+		})
+
+		// SP 800-53 Rev 5 SC-42(2) inserts sc-42.01_odp, defined on its sibling SC-42(1).
+		It("resolves a parameter defined elsewhere in the catalog when no enclosing control defines it", func() {
+			doc := `{"catalog": {"uuid": "00000000-0000-0000-0000-000000000000",
+				"metadata": {"title": "T", "version": "1", "oscal-version": "1.1.3", "last-modified": "2026-06-11T00:00:00Z"},
+				"controls": [{"id": "sc-42", "title": "Sensor Capability",
+					"controls": [
+						{"id": "sc-42.1", "title": "Reporting", "params": [{"id": "sc-42.01_odp", "label": "sensors"}],
+							"parts": [{"id": "sc-42.1_smt", "name": "statement", "prose": "Report {{ insert: param, sc-42.01_odp }}."}]},
+						{"id": "sc-42.2", "title": "Authorized Use",
+							"parts": [{"id": "sc-42.2_smt", "name": "statement", "prose": "Data collected by {{ insert: param, sc-42.01_odp }}."}]}]}]}}`
+			items, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(findItem(items, "sc-42.2").Text).To(Equal("Data collected by sensors."))
+		})
+
+		It("resolves a parameter defined elsewhere when it is inserted inside a selection's choice", func() {
+			doc := `{"catalog": {"uuid": "00000000-0000-0000-0000-000000000000",
+				"metadata": {"title": "T", "version": "1", "oscal-version": "1.1.3", "last-modified": "2026-06-11T00:00:00Z"},
+				"controls": [
+					{"id": "a-1", "title": "A", "params": [{"id": "a-1_odp", "label": "time period"}],
+						"parts": [{"id": "a-1_smt", "name": "statement", "prose": "Wait {{ insert: param, a-1_odp }}."}]},
+					{"id": "b-1", "title": "B",
+						"params": [{"id": "b-1_odp", "select": {"choice": ["lock after {{ insert: param, a-1_odp }}", "never"]}}],
+						"parts": [{"id": "b-1_smt", "name": "statement", "prose": "Devices {{ insert: param, b-1_odp }}."}]}]}}`
+			items, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(findItem(items, "b-1").Text).To(Equal("Devices [Selection: lock after time period; never]."))
+		})
+	})
+
 	Context("error handling", func() {
 		BeforeEach(func() {
 			parser = oscal.NewParser("")
