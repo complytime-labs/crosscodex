@@ -130,6 +130,17 @@ crosscodex config set tls.mode mutual
 
 Set `tls.mode` last: `config set` refuses a change that stops a working configuration loading, and `mutual` needs the CA, certificate and key in place. `crosscodex config unset <key>` removes a key again. If the configuration already fails to load, set and unset write only a change that fixes one of its problems without adding another, and say which problems remain.
 
+## What an analysis runs, and what it costs
+
+`deploy/config.yaml` turns mapping on. A job (`crosscodex run start --source <id> --target <id>`) classifies and embeds both catalogs' controls, generates candidate pairs with the `semantic` generator (each source control's 10 most similar target controls), then runs both pair analyzers over those pairs, all through the gateway's `default` and `embed` aliases:
+
+- `relationship` produces the job's mappings. Its panel is `default` × 3 samples (`samples_per_model: 3`, at `sampling_temperature` 0.3), so each mapping's confidence reflects whether the samples agree.
+- `requires` produces REQUIRES (prerequisite) edges, which are not mappings. Its panel is `default` × 1 sample.
+
+So pair calls ≈ source controls × 10 × 4 (3 relationship + 1 requires), plus one classify and one embed call per control of both catalogs; `--bidirectional` adds the reverse direction. For example, a 100-control source catalog costs about 4,000 pair calls. Results are reused across your tenant's jobs, so re-running an unchanged job costs little. The top-level README's "Cost" note has the full formula.
+
+To change this, edit `analysis.relationship` / `analysis.requires` in `deploy/config.yaml` and restart `crosscodexd`: `enabled: false` turns an analyzer off (with both off, a job classifies and embeds but produces no mappings), and `samples_per_model` sets the panel size. If you rename the `default` alias in the gateway config, rename it in both `models` lists too.
+
 ## Architecture: mutual TLS and LiteLLM via stunnel
 
 The production stack runs all inter-service communication over mutual TLS:

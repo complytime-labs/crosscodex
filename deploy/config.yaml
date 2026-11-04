@@ -85,3 +85,30 @@ analysis:
       - embed
   candidates:
     embed_model: embed
+    # Candidate generation pairs each source control with its most similar
+    # target controls; the pair analyzers below compare only those pairs.
+    # Without an enabled generator they would compare nothing, so the config
+    # would not load.
+    generators:
+      - name: semantic
+        enabled: true
+        weight: 1.0
+  # Mapping is on: relationship produces a job's mappings and requires its
+  # REQUIRES edges. Both use the gateway's `default` completion alias
+  # (deploy/litellm/config.yaml, deploy/praxis/config.yaml), the same alias
+  # CROSSCODEX_LLM_DEFAULT_MODEL selects for classification; if you rename it
+  # there, rename it here too. Pair calls ~ source controls x top_k (10) x
+  # panel size (models x samples_per_model), summed over both analyzers; see
+  # "Cost" in the top-level README. Disable either with `enabled: false`.
+  relationship:
+    enabled: true
+    models:
+      - default
+    # Three samples (at sampling_temperature 0.3) make the agreement part of
+    # each mapping's confidence meaningful; one sample always agrees with
+    # itself.
+    samples_per_model: 3
+  requires:
+    enabled: true
+    models:
+      - default

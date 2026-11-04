@@ -123,6 +123,11 @@ Cross-catalog analysis (#210) makes these breaking changes:
 - A crosswalk job whose target catalog has no non-section control with a statement fails before any analyzer runs, with the new `jobs.error_class` value `empty_target_catalog`. `run retry` refuses it (`FailedPrecondition`) with or without `--from-failure`, since a retry or a new job with the same config reads the same catalog; start a new job with another target (re-importing the target with statements gives it a new catalog ID).
 - The shipped `requires` (1.2.0), `relationship` (1.1.0), `artifacts` (1.1.0) and `classify` (1.1.0) prompts treat catalog values as untrusted data. Each control's ID, framework, type, level and control domain are one field per line inside `<source_metadata>` / `<target_metadata>` (`<control_metadata>` for `artifacts`), with no quotes around the domain. `${source_framework}` / `${target_framework}` no longer appear in the system message. The system message says that tag contents are data, not instructions. Every prompt value, catalog values and the `artifact_same_as` (now 1.2.0) artifact names and samples, is NFKC-normalized, so fullwidth and small-form look-alikes such as `＜` fold to ASCII, and is cleaned and has `&`, `<` and `>` entity-escaped. The limits apply to the escaped text: statements keep their character limits, and short values get at most 200 bytes. Prompt overrides are not version-checked, so update them by hand. Results can shift against earlier runs.
 
+Mapping on in the compose stack:
+
+- `deploy/config.yaml` now enables `analysis.relationship` and `analysis.requires` on the gateway's `default` alias, with the `semantic` candidate generator. Before, both were off, so a job on the compose stack completed with zero mappings. A job now makes pair calls as well: about source controls × 10 × 4 (relationship 3 samples + requires 1), so it takes longer and costs more (see [deploy/README.md](deploy/README.md#what-an-analysis-runs-and-what-it-costs)). Set `enabled: false` there to go back. If you renamed the `default` alias in the gateway config, rename it in both `models` lists.
+- The compiled defaults are unchanged: a `crosscodexd` with no config file still runs no pair analyzers.
+
 Certificate generation:
 
 - The deploy PKI generator moved from `deploy/certs/gen.go` to `deploy/certgen/gen.go`, because a regeneration now replaces the whole `deploy/certs/` directory. Keep nothing else in `deploy/certs/` (or in a custom `CERTS_DIR`).
@@ -465,10 +470,10 @@ analysis:
     max_chars: 1500                      # Max runes before truncation
     batch_size: 50                       # Controls per batch call
   relationship:                          # The analyzer whose results are a job's mappings
-    enabled: false                       # Off by default, so a stock deployment produces no mappings; needs embedding and an enabled candidates generator
+    enabled: false                       # Off in the compiled defaults (deploy/config.yaml turns it on); needs embedding and an enabled candidates generator
     models: []                           # Panel models; required when enabled
   requires:
-    enabled: false                       # Off by default; needs embedding and an enabled candidates generator; finds REQUIRES edges, which are not mappings
+    enabled: false                       # Off in the compiled defaults (deploy/config.yaml turns it on); needs embedding and an enabled candidates generator; finds REQUIRES edges, which are not mappings
     models: []                           # Panel models; required when enabled
     samples_per_model: 1                 # Votes per model per pair; odd unless allow_even_samples
     allow_even_samples: false            # Allow an even samples_per_model
@@ -546,7 +551,7 @@ synthesis:
 
 #### Analyzer `enabled` settings
 
-`analysis.classification.enabled`, `analysis.embedding.enabled`, `analysis.artifacts.enabled`, `analysis.requires.enabled` and `analysis.relationship.enabled` decide which analyzers a job runs. A disabled analyzer gets no job stage, never runs and makes no LLM calls. The defaults enable classification and embedding only, so a stock deployment classifies and embeds controls but produces **no mappings**: mappings come from the relationship analyzer, which is off until you set `analysis.relationship.enabled: true`, its `models`, and at least one enabled `analysis.candidates.generators` entry. `crosscodex run status <job-id>` lists the analyzers a job runs and says when it has no relationship analyzer.
+`analysis.classification.enabled`, `analysis.embedding.enabled`, `analysis.artifacts.enabled`, `analysis.requires.enabled` and `analysis.relationship.enabled` decide which analyzers a job runs. A disabled analyzer gets no job stage, never runs and makes no LLM calls. The defaults enable classification and embedding only, so a stock deployment classifies and embeds controls but produces **no mappings**: mappings come from the relationship analyzer, which is off until you set `analysis.relationship.enabled: true`, its `models`, and at least one enabled `analysis.candidates.generators` entry. The compose stack's `deploy/config.yaml` turns mapping on: it enables `relationship` (3 samples per pair) and `requires` on the gateway's `default` alias, with the `semantic` generator (see [deploy/README.md](deploy/README.md#what-an-analysis-runs-and-what-it-costs)). `crosscodex run status <job-id>` lists the analyzers a job runs and says when it has no relationship analyzer.
 
 The configuration does not load if an enabled analyzer cannot run: embedding without classification, requires or relationship without embedding, or requires or relationship with no enabled candidate generator (it would analyse zero pairs). Each error names the setting to change.
 
