@@ -289,10 +289,10 @@ var _ = Describe("Error paths", func() {
 		_, err := importCatalog(ctx, sharedState.client, fixture("invalid.json"),
 			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "broken")
 		Expect(err).To(HaveOccurred())
-		// Malformed JSON fails content detection (isOSCALJSON cannot unmarshal it),
-		// so format validation rejects the OSCAL hint as a mismatch.
+		// Malformed JSON fails content detection, so the OSCAL hint is rejected
+		// with advice to fix the JSON syntax.
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
-		Expect(err.Error()).To(ContainSubstring("format=CATALOG_FORMAT_OSCAL specified but content does not appear to be OSCAL JSON"))
+		Expect(err.Error()).To(ContainSubstring("the document is not valid JSON"))
 		cats, err := listCatalogs(ctx, sharedState.client)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cats).To(BeEmpty())
@@ -302,11 +302,10 @@ var _ = Describe("Error paths", func() {
 		_, err := importCatalog(ctx, sharedState.client, fixture("no-catalog-key.json"),
 			pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "nokey")
 		Expect(err).To(HaveOccurred())
-		// Valid JSON without a top-level "catalog" key fails content detection
-		// (isOSCALJSON finds no "catalog" member), so format validation rejects
-		// the OSCAL hint as a mismatch.
+		// Valid JSON without a top-level "catalog" key fails content detection,
+		// so the OSCAL hint is rejected naming the missing key.
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeInvalidArgument))
-		Expect(err.Error()).To(ContainSubstring("format=CATALOG_FORMAT_OSCAL specified but content does not appear to be OSCAL JSON"))
+		Expect(err.Error()).To(ContainSubstring(`no top-level "catalog" object`))
 		cats, err := listCatalogs(ctx, sharedState.client)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cats).To(BeEmpty())
