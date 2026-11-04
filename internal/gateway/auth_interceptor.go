@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"connectrpc.com/connect"
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -99,9 +100,40 @@ func (i *connectAuthInterceptor) WrapUnary(next connect.UnaryFunc) connect.Unary
 		if err := i.checkTenantActive(ctx, identity.TenantID); err != nil {
 			return nil, err
 		}
+		if err := checkRequestedTenant(req.Any(), identity.TenantID); err != nil {
+			i.service.recordAuthFailure(ctx, "tenant_mismatch")
+			return nil, err
+		}
 
 		return next(ctx, req)
 	}
+}
+
+// tenantScopedRequest is a request message that carries a TenantContext.
+type tenantScopedRequest interface {
+	GetTenantContext() *pb.TenantContext
+}
+
+// checkRequestedTenant refuses a request whose tenant_context names a tenant
+// other than the one its client certificate authenticates. Handlers replace
+// the request's tenant with the caller's, so without this check a request for
+// another tenant (a CLI --tenant flag, a script) would silently act on, and
+// return, the caller's own tenant's data as if it were the one asked for. An
+// empty tenant_context means "my tenant" and passes. The message echoes only
+// the requested ID and the caller's own tenant, never another tenant's data.
+func checkRequestedTenant(msg any, authenticated string) error {
+	scoped, ok := msg.(tenantScopedRequest)
+	if !ok {
+		return nil
+	}
+	requested := scoped.GetTenantContext().GetTenantId()
+	if requested == "" || requested == authenticated {
+		return nil
+	}
+	return connect.NewError(connect.CodePermissionDenied, fmt.Errorf(
+		"request names tenant %q, but your client certificate authenticates tenant %q, and a request acts only on its "+
+			"certificate's tenant. Drop the tenant from the request (the --tenant flag), or connect with a certificate "+
+			"issued for tenant %q", requested, authenticated, requested))
 }
 
 func (i *connectAuthInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {

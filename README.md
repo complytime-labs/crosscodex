@@ -56,6 +56,7 @@ Unknown config keys:
 Tenant administration (#31):
 
 - The gateway refuses every non-health request, with `PermissionDenied`, from a tenant whose `tenants` row is missing, suspended or deleted. The initial schema creates the `tenant_admin` role that `crosscodexd admin tenant` connects as, so tenants can only be provisioned after `crosscodexd migrate` runs. Once crosscodexd has migrated, set the role's password and `CROSSCODEX_DATABASE_TENANT_ADMIN_DSN`, then run `crosscodexd admin tenant create` for each authenticated tenant before sending it traffic; requests from that tenant are refused until then. Roles `all` and `gateway` refuse to start until `crosscodexd migrate` has provisioned `tenants.default_tenant`. See [Tenant administration](deploy/README.md#tenant-administration).
+- The gateway refuses, with `PermissionDenied`, a request whose `tenant_context` names a tenant other than the one its client certificate authenticates. Before, the gateway replaced the named tenant with the certificate's and answered for that one, so `crosscodex catalog list --tenant acme` with a certificate for `default` listed `default`'s catalogs, and `run start --tenant acme` started a job for `default`. Omit `--tenant` (it defaults to the certificate's tenant), or connect with a certificate issued for the tenant you name.
 
 Analysis stage limits (#237):
 
