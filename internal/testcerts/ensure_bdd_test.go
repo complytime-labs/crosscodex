@@ -4,7 +4,9 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -96,4 +98,205 @@ var _ = Describe("VerifyDirWith", func() {
 			testcerts.VerifyOptions{VerifyExtra: func(string) error { return errors.New("attestation-key.pem: missing") }},
 			"attestation-key.pem: missing"),
 	)
+})
+
+// ensureHelperDirEnv makes the suite binary run one Ensure against the named
+// directory and exit (see TestTestCertsBDD), so specs can race real processes.
+const ensureHelperDirEnv = "TESTCERTS_ENSURE_HELPER_DIR"
+
+// strictEnsure regenerates with testcerts.Generate under strictOptions.
+var strictEnsure = testcerts.EnsureOptions{Verify: strictOptions, Generate: testcerts.Generate}
+
+// dirEntries lists the names in dir.
+func dirEntries(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	Expect(err).NotTo(HaveOccurred())
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// storedFingerprint reads dir's .fingerprint, failing the spec if absent.
+func storedFingerprint(dir string) string {
+	fp, err := testcerts.ReadFingerprint(dir)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(fp).NotTo(BeEmpty())
+	return fp
+}
+
+var _ = Describe("Ensure", func() {
+	var parent, dir string
+
+	BeforeEach(func() {
+		parent = GinkgoT().TempDir()
+		dir = filepath.Join(parent, "nested", "certs")
+	})
+
+	It("generates a verifying set with a fingerprint, keeping the lock file outside the set", func() {
+		generated, err := testcerts.Ensure(dir, strictEnsure)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(generated).To(BeTrue())
+		Expect(testcerts.VerifyDirWith(dir, strictOptions)).To(Succeed())
+		Expect(dirEntries(dir)).To(ConsistOf(
+			"ca.pem", "ca-key.pem", "server.pem", "server-key.pem", "client.pem", "client-key.pem", ".fingerprint"))
+		Expect(dirEntries(filepath.Dir(dir))).To(ConsistOf("certs", ".certs.lock"))
+	})
+
+	It("leaves a valid set untouched", func() {
+		_, err := testcerts.Ensure(dir, strictEnsure)
+		Expect(err).NotTo(HaveOccurred())
+		before := storedFingerprint(dir)
+
+		generated, err := testcerts.Ensure(dir, strictEnsure)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(generated).To(BeFalse())
+		Expect(storedFingerprint(dir)).To(Equal(before))
+	})
+
+	DescribeTable("replaces a stale set with one that verifies",
+		func(stale func(dir string), opts testcerts.EnsureOptions) {
+			stale(dir)
+			Expect(testcerts.VerifyDirWith(dir, opts.Verify)).NotTo(Succeed())
+			oldCA, err := os.ReadFile(filepath.Join(dir, "ca.pem"))
+			if err != nil {
+				oldCA = nil
+			}
+
+			generated, err := testcerts.Ensure(dir, opts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(generated).To(BeTrue())
+			Expect(testcerts.VerifyDirWith(dir, opts.Verify)).To(Succeed())
+			Expect(os.ReadFile(filepath.Join(dir, "ca.pem"))).NotTo(Equal(oldCA))
+		},
+		Entry("a key from another run", func(dir string) {
+			p, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			other, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			p.ServerKey = other.ServerKey
+			writeSet(p, dir)
+		}, strictEnsure),
+		Entry("a server cert missing a newly required SAN", func(dir string) {
+			p, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			writeSet(p, dir)
+		}, testcerts.EnsureOptions{
+			Verify: testcerts.VerifyOptions{DNSNames: []string{"praxis"}},
+			Generate: func() (*testcerts.PKI, error) {
+				return generateWith(pkigen.WithDNSNames("localhost", "praxis")), nil
+			},
+		}),
+		Entry("certificates about to expire", func(dir string) {
+			writeSet(generateWith(pkigen.WithValidDuration(time.Hour), pkigen.WithDNSNames("localhost", "db", "nats"),
+				pkigen.WithIPs(net.IPv4(127, 0, 0, 1))), dir)
+		}, strictEnsure),
+		Entry("a partial set left by an interrupted in-place write", func(dir string) {
+			p, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.MkdirAll(dir, 0o755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(dir, "ca.pem"), p.CACert, 0o644)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(dir, "server.pem"), p.ServerCert[:len(p.ServerCert)/2], 0o644)).To(Succeed())
+		}, strictEnsure),
+	)
+
+	It("removes staging and set-aside directories left by an interrupted Ensure", func() {
+		_, err := testcerts.Ensure(dir, strictEnsure)
+		Expect(err).NotTo(HaveOccurred())
+		for _, leftover := range []string{".certs.new-123", ".certs.old-456"} {
+			Expect(os.MkdirAll(filepath.Join(filepath.Dir(dir), leftover), 0o755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(filepath.Dir(dir), leftover, "ca.pem"), []byte("partial"), 0o644)).To(Succeed())
+		}
+
+		_, err = testcerts.Ensure(dir, strictEnsure)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(dirEntries(filepath.Dir(dir))).To(ConsistOf("certs", ".certs.lock"))
+	})
+
+	It("writes caller-owned files into the set and regenerates when they fail verification", func() {
+		opts := strictEnsure
+		opts.WriteExtra = func(d string) error {
+			return os.WriteFile(filepath.Join(d, "extra.pem"), []byte("extra"), 0o600)
+		}
+		opts.Verify.VerifyExtra = func(d string) error {
+			_, err := os.Stat(filepath.Join(d, "extra.pem"))
+			return err
+		}
+		_, err := testcerts.Ensure(dir, opts)
+		Expect(err).NotTo(HaveOccurred())
+		info, err := os.Stat(filepath.Join(dir, "extra.pem"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+		before := storedFingerprint(dir)
+
+		Expect(os.Remove(filepath.Join(dir, "extra.pem"))).To(Succeed())
+		generated, err := testcerts.Ensure(dir, opts)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(generated).To(BeTrue())
+		Expect(filepath.Join(dir, "extra.pem")).To(BeAnExistingFile())
+		Expect(storedFingerprint(dir)).NotTo(Equal(before))
+	})
+
+	It("refuses to install a generated set that fails the requirements and keeps the existing set", func() {
+		p, err := testcerts.Generate()
+		Expect(err).NotTo(HaveOccurred())
+		writeSet(p, dir)
+		before := storedFingerprint(dir)
+
+		opts := strictEnsure
+		opts.Verify.DNSNames = []string{"praxis"}
+		_, err = testcerts.Ensure(dir, opts)
+		Expect(err).To(MatchError(And(
+			ContainSubstring(`does not cover required name "praxis"`),
+			ContainSubstring("fix the generator options"))))
+		Expect(storedFingerprint(dir)).To(Equal(before))
+		Expect(dirEntries(filepath.Dir(dir))).To(ConsistOf("certs", ".certs.lock"))
+	})
+
+	It("generates exactly once when many goroutines ensure the same directory", func() {
+		const n = 8
+		results := make(chan bool, n)
+		errs := make(chan error, n)
+		for range n {
+			go func() {
+				defer GinkgoRecover()
+				generated, err := testcerts.Ensure(dir, strictEnsure)
+				errs <- err
+				results <- generated
+			}()
+		}
+		generatedCount := 0
+		for range n {
+			Expect(<-errs).NotTo(HaveOccurred())
+			if <-results {
+				generatedCount++
+			}
+		}
+		Expect(generatedCount).To(Equal(1))
+		Expect(testcerts.VerifyDirWith(dir, strictOptions)).To(Succeed())
+	})
+
+	It("generates exactly once when many processes ensure the same directory", func() {
+		const n = 4
+		cmds := make([]*exec.Cmd, n)
+		outs := make([]*strings.Builder, n)
+		for i := range n {
+			outs[i] = &strings.Builder{}
+			cmds[i] = exec.Command(os.Args[0], "-test.run=^TestTestCertsBDD$")
+			cmds[i].Env = append(os.Environ(), ensureHelperDirEnv+"="+dir)
+			cmds[i].Stdout = outs[i]
+			cmds[i].Stderr = GinkgoWriter
+			Expect(cmds[i].Start()).To(Succeed())
+		}
+		generatedCount := 0
+		for i := range n {
+			Expect(cmds[i].Wait()).To(Succeed())
+			if strings.Contains(outs[i].String(), "generated=true") {
+				generatedCount++
+			}
+		}
+		Expect(generatedCount).To(Equal(1))
+		Expect(testcerts.VerifyDirWith(dir, strictOptions)).To(Succeed())
+	})
 })
