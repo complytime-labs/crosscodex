@@ -1,0 +1,51 @@
+.gitignore
+  s_f8c7430887bee6::t_16e71f9d570b00 74-76
+.taskfiles/deploy.yml
+  s_f8c7430887bee6::t_9b806e5c0432fb 200-202,204-208,307-311
+.taskfiles/test.yml
+  s_f8c7430887bee6::t_1a4ff44ea3b0c1 74
+.taskfiles/test/integration.yml
+  s_f8c7430887bee6::t_35f7ddbef0d8e6 636-639
+README.md
+  s_f8c7430887bee6::t_5e4cd1335f8f95 144-148,398-399
+cmd/crosscodex/embedded.go
+  s_f8c7430887bee6::t_bf37ba79a00166 57-61,63-91,93
+cmd/crosscodex/embedded_bdd_test.go
+  s_f8c7430887bee6::t_e5deb0cf5aa308 10,25,32-35,103-211
+cmd/crosscodex/main_bdd_test.go
+  s_f8c7430887bee6::t_39c7b2f127f06f 6,22-29
+deploy/README.md
+  s_f8c7430887bee6::t_076693ec86695c 60-61,180,193,456
+deploy/certgen/gen.go
+  s_f8c7430887bee6::t_f62592384a3e2c 5-6,10-21,40-46,48-59,61,74-86,90-91,94,96,103,113-115,142-175
+internal/testcerts/ensure.go
+  s_f8c7430887bee6::t_0f8b113907eef6 1-261
+internal/testcerts/ensure_bdd_test.go
+  s_f8c7430887bee6::t_ca0ee36c186ddd 1-400
+internal/testcerts/gen.go
+  s_f8c7430887bee6::t_c40805956d1182 11-17,19-22,33-37,40,54,56,59-61
+internal/testcerts/testcerts.go
+  s_f8c7430887bee6::t_f8f51d6e9ef817 5-6,28-29,46-50,56,73-84,131-150,152-159,161-167,169,174-178,184-185,188,192-207,209,211-212,214-219,223-227,231-256,258,260-262,264,266,268-274,276,278-301
+internal/testcerts/testcerts_bdd_test.go
+  s_f8c7430887bee6::t_0d26cab69a2d38 8,22-30
+test/deploy/smoke_up.sh
+  s_f8c7430887bee6::t_a9e754f5186814 212,219
+test/tooling/cert-generators.venom.yml
+  s_f8c7430887bee6::t_e09de7e9389b7a 1-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90adfef232d679a30df0f1c6b6ae4a6f76e8c3bb",
+  "prompts": {},
+  "sessions": {
+    "s_f8c7430887bee6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30c3bccd-63cd-46bf-a5da-a0ec17abb35d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
