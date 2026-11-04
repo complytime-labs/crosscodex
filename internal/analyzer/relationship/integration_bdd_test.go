@@ -41,7 +41,7 @@ var _ = Describe("Parser to Consensus Integration", func() {
 				votes[v.VoteKey] = v
 			}
 
-			consensus := relationship.ComputeConsensus(votes)
+			consensus := relationship.ComputeConsensus(votes, defaultConfidenceWeights)
 
 			Expect(consensus.Relationship).To(Equal(relationship.RelSupersetOf))
 			Expect(consensus.Unanimous).To(BeTrue())
@@ -67,7 +67,7 @@ var _ = Describe("Parser to Consensus Integration", func() {
 				votes[v.VoteKey] = v
 			}
 
-			consensus := relationship.ComputeConsensus(votes)
+			consensus := relationship.ComputeConsensus(votes, defaultConfidenceWeights)
 
 			Expect(consensus.Relationship).To(Equal(relationship.RelContributesTo))
 			Expect(consensus.ContributionType).To(Equal(relationship.ContribIntegralTo))
@@ -94,7 +94,7 @@ var _ = Describe("Parser to Consensus Integration", func() {
 				votes[v.VoteKey] = v
 			}
 
-			consensus := relationship.ComputeConsensus(votes)
+			consensus := relationship.ComputeConsensus(votes, defaultConfidenceWeights)
 
 			Expect(consensus.Relationship).To(Equal(relationship.RelEquivalent))
 			Expect(consensus.ValidVoteCount).To(Equal(3))
@@ -193,7 +193,7 @@ var _ = Describe("Full Pipeline Flow", func() {
 		// Step 5: Compute consensus and store pair results.
 		store := &storagetest.Fake{}
 		for pairKey, votes := range pairVotes {
-			consensus := relationship.ComputeConsensus(votes)
+			consensus := relationship.ComputeConsensus(votes, defaultConfidenceWeights)
 			parts := strings.SplitN(pairKey, "--", 2)
 			Expect(parts).To(HaveLen(2))
 

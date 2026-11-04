@@ -118,6 +118,10 @@ message ControlMapping {
   string source_control_id = 2;
   string target_control_id = 3;
   RelationshipType relationship_type = 4;
+  // 0 to 1: the relationship panel's agreement (votes for relationship_type /
+  // valid votes) times the mean analysis.relationship.confidence_weights
+  // weight of those votes' self-reported CONFIDENCE. The agreement alone is
+  // the agreement_fraction property of the mapping's SEMANTIC_MATCH edge.
   float confidence = 5;
   float viability_score = 6;
   bool is_viable = 7;

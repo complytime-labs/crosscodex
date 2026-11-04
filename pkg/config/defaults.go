@@ -136,6 +136,10 @@ analysis:
       - CONTRIBUTES_TO
       - COMPLEMENTS
       - CONFLICTS_WITH
+    confidence_weights:
+      high: 1.0
+      medium: 0.67
+      low: 0.33
   requires:
     enabled: false
     models: []

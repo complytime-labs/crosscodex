@@ -436,7 +436,7 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, taskResults []anal
 	var pairResults []results.SemanticMatchResult
 	for _, key := range order {
 		ids := pairIDs[key]
-		c := ComputeConsensus(groups[key])
+		c := ComputeConsensus(groups[key], a.cfg.ConfidenceWeights)
 		if c.Relationship == RelNoRelationship {
 			continue // no relationship found: nothing to persist for this pair
 		}
@@ -448,6 +448,7 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, taskResults []anal
 				results.SemanticMatchContributionTypeKey: c.ContributionType.String(),
 				results.SemanticMatchUnanimousKey:        strconv.FormatBool(c.Unanimous),
 				"valid_vote_count":                       strconv.Itoa(c.ValidVoteCount),
+				"agreement_fraction":                     strconv.FormatFloat(c.AgreementFraction, 'f', -1, 64),
 			},
 		})
 	}

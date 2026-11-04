@@ -3,6 +3,8 @@ package relationship
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
 func FuzzParseResponse(f *testing.F) {
@@ -51,6 +53,11 @@ func FuzzComputeConsensus(f *testing.F) {
 		"a": {ParseStatus: ParseError},
 		"b": {ParseStatus: ParseFail},
 	})
+	addVotes(map[string]*Vote{
+		"a": {Relationship: RelSubsetOf, Confidence: ConfidenceLow, ParseStatus: ParseOK},
+		"b": {Relationship: RelSubsetOf, Confidence: ConfidenceUnknown, ParseStatus: ParseOK},
+		"c": {Relationship: RelPartial, Confidence: ConfidenceHigh, ParseStatus: ParseOK},
+	})
 	addVotes(map[string]*Vote{})
 	// Nil vote — tests nil guard in ComputeConsensus.
 	addVotes(map[string]*Vote{"a": nil})
@@ -64,7 +71,7 @@ func FuzzComputeConsensus(f *testing.F) {
 		if err := json.Unmarshal([]byte(raw), &votes); err != nil {
 			return // Skip invalid JSON
 		}
-		c := ComputeConsensus(votes)
+		c := ComputeConsensus(votes, config.RelationshipConfidenceWeights{High: 1.0, Medium: 0.67, Low: 0.33})
 		if !c.Relationship.Valid() {
 			t.Fatalf("consensus produced invalid relationship: %d", c.Relationship)
 		}

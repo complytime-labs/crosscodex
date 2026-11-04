@@ -190,7 +190,7 @@ var _ = Describe("Relationship LLM Integration", func() {
 		}
 
 		// Compute consensus from real votes.
-		consensus := relationship.ComputeConsensus(votes)
+		consensus := relationship.ComputeConsensus(votes, defaultConfidenceWeights)
 		GinkgoWriter.Printf("Consensus: relationship=%s, confidence=%.2f, unanimous=%t, votes=%v\n",
 			consensus.Relationship.String(), consensus.ConfidenceFraction,
 			consensus.Unanimous, consensus.AllVotes)

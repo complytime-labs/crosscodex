@@ -198,7 +198,8 @@ type Vote struct {
 type Consensus struct {
 	Relationship       RelationshipType `json:"relationship"`
 	ContributionType   ContributionType `json:"contribution_type"`
-	ConfidenceFraction float64          `json:"confidence_fraction"` // winner_count / valid_votes, rounded to 3 decimals
+	ConfidenceFraction float64          `json:"confidence_fraction"` // AgreementFraction x mean confidence weight of the winning votes, rounded to 3 decimals; see ComputeConsensus
+	AgreementFraction  float64          `json:"agreement_fraction"`  // winner_count / valid_votes, rounded to 3 decimals
 	Unanimous          bool             `json:"unanimous"`
 	AllVotes           []string         `json:"all_votes"` // All vote relationship names (including parse errors)
 	ValidVoteCount     int              `json:"valid_vote_count"`

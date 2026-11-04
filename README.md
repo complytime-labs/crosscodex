@@ -128,6 +128,13 @@ Mapping on in the compose stack:
 - `deploy/config.yaml` now enables `analysis.relationship` and `analysis.requires` on the gateway's `default` alias, with the `semantic` candidate generator. Before, both were off, so a job on the compose stack completed with zero mappings. A job now makes pair calls as well: about source controls × 10 × 4 (relationship 3 samples + requires 1), so it takes longer and costs more (see [deploy/README.md](deploy/README.md#what-an-analysis-runs-and-what-it-costs)). Set `enabled: false` there to go back. If you renamed the `default` alias in the gateway config, rename it in both `models` lists.
 - The compiled defaults are unchanged: a `crosscodexd` with no config file still runs no pair analyzers.
 
+Mapping confidence:
+
+- A relationship mapping's confidence is now the panel's agreement times the mean `analysis.relationship.confidence_weights` weight of the winning votes' reported `CONFIDENCE` (see "Confidence" under [Read a job's mappings](#9-read-a-jobs-mappings)). Before, it was the agreement alone, so a one-sample panel gave every mapping 1.000 and `--min-confidence` and `synthesis.confidence_threshold` filtered nothing. Jobs run after the upgrade report lower confidences than earlier jobs on the same catalogs, and with the default weights and threshold a one-sample panel's LOW mappings are no longer viable. Compare runs from the same build only. Set all three weights to 1 to get the old values back.
+- The agreement alone is a new `agreement_fraction` property on each `SEMANTIC_MATCH` graph edge and in the relationship analyzer's stored results.
+- Cached LLM results are still reused: the prompts and requests are unchanged, and confidence is computed from the cached responses when a job aggregates them. Changing `samples_per_model` does change the requests (a panel of more than one sample uses `sampling_temperature` instead of 0), so the compose stack's switch to 3 samples sends its relationship requests to the model again once.
+- New config key `analysis.relationship.confidence_weights` (`high`, `medium`, `low`). A config that sets a weight outside (0, 1], or a lower level above a higher one, fails to load.
+
 Certificate generation:
 
 - The deploy PKI generator moved from `deploy/certs/gen.go` to `deploy/certgen/gen.go`, because a regeneration now replaces the whole `deploy/certs/` directory. Keep nothing else in `deploy/certs/` (or in a custom `CERTS_DIR`).
@@ -261,6 +268,8 @@ crosscodex results export <job-id> --format csv --control <control-id> --type eq
 | `--json` | `summary` | Structured output. |
 
 A job that is still pending or running returns an error saying mappings are available once it completes. A failed or cancelled job never produces mappings; start a new job. An unknown job ID returns not found. `mapping_id` equals the ID of the mapping's `SEMANTIC_MATCH` graph edge. `REQUIRES` is not a mapping and is not returned.
+
+**Confidence.** A mapping's confidence (0 to 1) is the relationship panel's agreement times how sure the agreeing votes said they were: (votes for the winning type / valid votes) × the mean of `analysis.relationship.confidence_weights` over the winning votes' reported `CONFIDENCE` (HIGH 1.0, MEDIUM 0.67, LOW 0.33 by default; a vote that reports none counts as LOW). Three samples that agree, all HIGH, give 1.0; two of three, HIGH and MEDIUM, give 0.557; a one-sample panel gives exactly its vote's weight. The winning type is still chosen by vote count alone. `--min-confidence` and `synthesis.confidence_threshold` (default 0.5) filter on this value, so with the default weights a one-sample panel's LOW mappings fall below the threshold. The agreement alone is kept as the `agreement_fraction` property of each `SEMANTIC_MATCH` graph edge.
 
 Run `crosscodex --help` to see all available commands, or `crosscodex <command> --help` for command-specific usage.
 
@@ -472,6 +481,10 @@ analysis:
   relationship:                          # The analyzer whose results are a job's mappings
     enabled: false                       # Off in the compiled defaults (deploy/config.yaml turns it on); needs embedding and an enabled candidates generator
     models: []                           # Panel models; required when enabled
+    confidence_weights:                  # Weight of each vote's reported CONFIDENCE in a mapping's confidence; each (0, 1], high >= medium >= low (global-only)
+      high: 1.0
+      medium: 0.67
+      low: 0.33                          # Also used for a vote that reports no CONFIDENCE
   requires:
     enabled: false                       # Off in the compiled defaults (deploy/config.yaml turns it on); needs embedding and an enabled candidates generator; finds REQUIRES edges, which are not mappings
     models: []                           # Panel models; required when enabled
@@ -534,7 +547,7 @@ graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)
 
 synthesis:
-  confidence_threshold: 0.5               # Minimum confidence for viable mappings
+  confidence_threshold: 0.5               # Minimum confidence for viable mappings (see "Confidence" under "Read a job's mappings")
   max_mappings_per_control: 10            # Maximum mappings per source control
   viability:
     type_mismatch_factor: 0.8             # Penalty for different classification types

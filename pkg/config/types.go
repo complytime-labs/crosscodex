@@ -616,6 +616,23 @@ type RelationshipConfig struct {
 	SamplesPerModel     int      `yaml:"samples_per_model" json:"samples_per_model"`       // Votes per model per pair; must be positive
 	SamplingTemperature float64  `yaml:"sampling_temperature" json:"sampling_temperature"` // Temperature for multi-sample; [0.0, 2.0]
 	ActionableTypes     []string `yaml:"actionable_types" json:"actionable_types"`         // Relationship types counted for coverage
+	// ConfidenceWeights turns each winning vote's self-reported CONFIDENCE
+	// into a number. A mapping's confidence is the panel's agreement (winning
+	// votes / valid votes) times the mean weight of the winning votes, so a
+	// one-sample panel, which always agrees with itself, still reports how
+	// sure its vote was.
+	ConfidenceWeights RelationshipConfidenceWeights `yaml:"confidence_weights" json:"confidence_weights"`
+}
+
+// RelationshipConfidenceWeights maps the HIGH, MEDIUM and LOW confidence a
+// relationship vote reports to a weight in (0, 1], with high >= medium >=
+// low. A vote whose CONFIDENCE is missing or unrecognised counts as LOW.
+// Global-only, like every analysis.relationship setting: there is no
+// tenant_overrides map.
+type RelationshipConfidenceWeights struct {
+	High   float64 `yaml:"high" json:"high"`
+	Medium float64 `yaml:"medium" json:"medium"`
+	Low    float64 `yaml:"low" json:"low"`
 }
 
 // CandidateConfig configures candidate generation for prerequisite detection.

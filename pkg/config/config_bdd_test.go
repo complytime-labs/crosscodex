@@ -2225,6 +2225,24 @@ logging:
 			Entry("rejects negative samples_per_model", func(c *config.Config) {
 				c.Analysis.Relationship.SamplesPerModel = -1
 			}, "analysis.relationship.samples_per_model", "must be positive"),
+			Entry("rejects a zero high confidence weight", func(c *config.Config) {
+				c.Analysis.Relationship.ConfidenceWeights.High = 0
+			}, "analysis.relationship.confidence_weights.high", "0 must be in range (0, 1]"),
+			Entry("rejects a high confidence weight above 1", func(c *config.Config) {
+				c.Analysis.Relationship.ConfidenceWeights.High = 1.5
+			}, "analysis.relationship.confidence_weights.high", "1.5 must be in range (0, 1]"),
+			Entry("rejects a negative medium confidence weight", func(c *config.Config) {
+				c.Analysis.Relationship.ConfidenceWeights.Medium = -0.1
+			}, "analysis.relationship.confidence_weights.medium", "-0.1 must be in range (0, 1]"),
+			Entry("rejects a zero low confidence weight", func(c *config.Config) {
+				c.Analysis.Relationship.ConfidenceWeights.Low = 0
+			}, "analysis.relationship.confidence_weights.low", "0 must be in range (0, 1]"),
+			Entry("rejects a medium confidence weight above high", func(c *config.Config) {
+				c.Analysis.Relationship.ConfidenceWeights = config.RelationshipConfidenceWeights{High: 0.5, Medium: 0.6, Low: 0.3}
+			}, "analysis.relationship.confidence_weights.medium", "0.6 must not exceed confidence_weights.high 0.5: a MEDIUM vote cannot count for more than a HIGH one; lower medium or raise high"),
+			Entry("rejects a low confidence weight above medium", func(c *config.Config) {
+				c.Analysis.Relationship.ConfidenceWeights = config.RelationshipConfidenceWeights{High: 1, Medium: 0.4, Low: 0.5}
+			}, "analysis.relationship.confidence_weights.low", "0.5 must not exceed confidence_weights.medium 0.4: a LOW vote cannot count for more than a MEDIUM one; lower low or raise medium"),
 		)
 
 		DescribeTable("accepts boundary analysis values",
@@ -2269,6 +2287,12 @@ logging:
 			Entry("accepts empty actionable_types", func(c *config.Config) {
 				c.Analysis.Relationship.ActionableTypes = []string{}
 			}),
+			Entry("accepts equal confidence weights of 1 (verbalized confidence ignored)", func(c *config.Config) {
+				c.Analysis.Relationship.ConfidenceWeights = config.RelationshipConfidenceWeights{High: 1, Medium: 1, Low: 1}
+			}),
+			Entry("accepts small positive confidence weights", func(c *config.Config) {
+				c.Analysis.Relationship.ConfidenceWeights = config.RelationshipConfidenceWeights{High: 0.01, Medium: 0.01, Low: 0.001}
+			}),
 		)
 
 		It("has correct embedding default values from compiled defaults", func() {
@@ -2302,6 +2326,28 @@ logging:
 				"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF",
 				"CONTRIBUTES_TO", "COMPLEMENTS", "CONFLICTS_WITH",
 			}))
+			Expect(cfg.Analysis.Relationship.ConfidenceWeights).To(Equal(config.RelationshipConfidenceWeights{High: 1.0, Medium: 0.67, Low: 0.33}))
+		})
+
+		It("loads relationship confidence_weights from a config file, keeping unset weights at their defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			writeTestFile(path, "analysis:\n  relationship:\n    confidence_weights:\n      medium: 0.5\n      low: 0.1\n")
+
+			cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Analysis.Relationship.ConfidenceWeights).To(Equal(config.RelationshipConfidenceWeights{High: 1.0, Medium: 0.5, Low: 0.1}))
+		})
+
+		It("rejects relationship confidence_weights out of order in a config file, naming the file", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			writeTestFile(path, "analysis:\n  relationship:\n    confidence_weights:\n      low: 0.9\n")
+
+			cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("analysis.relationship.confidence_weights.low 0.9 (set in " + path))
+			Expect(cfg).To(BeNil())
 		})
 
 		It("rejects a leftover analysis.relationship.top_k key in a config file with removal guidance", func() {
