@@ -249,7 +249,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	switch requestFormat := req.Msg.GetFormat(); requestFormat {
 	case crosscodexv1.CatalogFormat_CATALOG_FORMAT_OSCAL:
 		if !detectedIsOSCAL {
-			return nil, connect.NewError(connect.CodeInvalidArgument, unsupportedFormatError(requestFormat, data))
+			return nil, connect.NewError(connect.CodeInvalidArgument, UnsupportedFormatError(requestFormat, data))
 		}
 		isOSCAL = true
 		prov.Format = FormatOSCAL
@@ -286,7 +286,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("parse OSCAL: %v", err))
 		}
 	} else {
-		return nil, connect.NewError(connect.CodeInvalidArgument, unsupportedFormatError(req.Msg.GetFormat(), data))
+		return nil, connect.NewError(connect.CodeInvalidArgument, UnsupportedFormatError(req.Msg.GetFormat(), data))
 	}
 
 	// Validate items
@@ -738,12 +738,12 @@ var oscalOtherModelRootKeys = []string{
 	"assessment-results", "plan-of-action-and-milestones", "mapping-collection",
 }
 
-// unsupportedFormatError explains why a document that failed OSCAL detection
+// UnsupportedFormatError explains why a document that failed OSCAL detection
 // cannot be imported. Only OSCAL JSON is supported, so the advice depends on
 // what was sent: a declared Gemara catalog, OSCAL in XML or YAML, bytes that
 // are not valid JSON (including a damaged OSCAL file), another OSCAL model
 // (a profile is the common mistake), or other JSON without the OSCAL root key.
-func unsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) error {
+func UnsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) error {
 	const supported = "Only OSCAL JSON catalogs can be imported"
 	if format == crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA {
 		return fmt.Errorf("unsupported catalog format: Gemara catalogs cannot be imported yet. "+

@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/spf13/cobra"
 )
 
@@ -269,13 +269,14 @@ structure. It does not require a running daemon.`,
 				return fmt.Errorf("failed to read file: %w", err)
 			}
 
+			// Classify a rejected file as import does, so validate gives the
+			// same advice (profile, XML, YAML, broken JSON) before an upload.
 			var data map[string]any
 			if err := json.Unmarshal(content, &data); err != nil {
-				return fmt.Errorf("invalid JSON: %w", err)
+				return catalog.UnsupportedFormatError(pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, content)
 			}
-
-			if _, ok := data["catalog"]; !ok {
-				return errors.New("missing required 'catalog' key in OSCAL structure")
+			if _, ok := data[catalog.OSCALRootKey]; !ok {
+				return catalog.UnsupportedFormatError(pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, content)
 			}
 
 			return emit(cmd,
