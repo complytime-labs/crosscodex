@@ -209,14 +209,14 @@ if [ "${LLM_GATEWAY}" = "praxis" ]; then
 	untrusted_dir="${CERTS_DIR}/untrusted"
 	rm -rf "${untrusted_dir}"
 	mkdir -p "${untrusted_dir}"
-	go run "${ROOT_DIR}/deploy/certs/gen.go" "${untrusted_dir}" >/dev/null
+	go run "${ROOT_DIR}/deploy/certgen/gen.go" "${untrusted_dir}" >/dev/null
 	# curl cannot tell a bad client cert file apart from a server refusal, so
 	# verify the files exist first. With them present and the trusted probe
 	# above passing, a refusal here is attributed to the untrusted CA.
 	for f in client.pem client-key.pem; do
 		if [ ! -s "${untrusted_dir}/${f}" ]; then
 			echo "FAIL: untrusted-CA probe setup: ${untrusted_dir}/${f} is missing or empty." >&2
-			echo "Check that 'go run deploy/certs/gen.go ${untrusted_dir}' writes a client certificate and key." >&2
+			echo "Check that 'go run deploy/certgen/gen.go ${untrusted_dir}' writes a client certificate and key." >&2
 			exit 1
 		fi
 	done

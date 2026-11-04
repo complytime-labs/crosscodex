@@ -2,7 +2,8 @@
 //
 // It delegates certificate generation to pkg/tlsconfig/pki, keeping only
 // the test-oriented PKI struct and file management utilities (WriteToDir,
-// VerifyDir, fingerprinting).
+// VerifyDir, VerifyDirWith, fingerprinting) and Ensure, which keeps a cert
+// directory valid under concurrent and interrupted generator runs.
 //
 // Usage:
 //
@@ -24,6 +25,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,14 +43,17 @@ type PKI struct {
 	ClientKey  []byte // PEM-encoded client private key
 }
 
+// generateDNSNames are the server SANs Generate issues: localhost plus the
+// compose service names, so containers can verify each other's server certs
+// when connecting by service name (e.g. db, nats).
+var generateDNSNames = []string{"localhost", "db", "nats", "storage", "authn-proxy", "grpc"}
+
 // Generate creates a new PKI with ECDSA P-256 keys and 10-year validity.
 func Generate() (*PKI, error) {
 	bundle, err := pkigen.GenerateDevPKI(
 		pkigen.WithOrganization("CrossCodex Test"),
 		pkigen.WithValidDuration(3650*24*time.Hour),
-		// Include compose service names so containers can verify each other's
-		// server certs when connecting by service name (e.g. db, nats).
-		pkigen.WithDNSNames("localhost", "db", "nats", "storage", "authn-proxy", "grpc"),
+		pkigen.WithDNSNames(generateDNSNames...),
 		pkigen.WithIPs(net.IPv4(127, 0, 0, 1)),
 	)
 	if err != nil {
@@ -62,6 +68,18 @@ func Generate() (*PKI, error) {
 		ClientCert: bundle.Client.CertPEM,
 		ClientKey:  bundle.Client.KeyPEM,
 	}, nil
+}
+
+// GenerateRequirements returns what a directory holding Generate output must
+// satisfy to be reused: every SAN Generate issues, a matching fingerprint, and
+// at least a day of remaining validity so a set never expires mid-run.
+func GenerateRequirements() VerifyOptions {
+	return VerifyOptions{
+		DNSNames:           slices.Clone(generateDNSNames),
+		IPs:                []net.IP{net.IPv4(127, 0, 0, 1)},
+		MinRemaining:       24 * time.Hour,
+		RequireFingerprint: true,
+	}
 }
 
 // WriteToDir writes all 6 PEM files to the given directory.
@@ -171,15 +189,18 @@ func verifyDir(dir string, opts VerifyOptions) error {
 		return err
 	}
 
-	for _, name := range opts.DNSNames {
-		if err := serverCert.VerifyHostname(name); err != nil {
-			return fmt.Errorf("server.pem does not cover required name %q", name)
+	required := slices.Clone(opts.DNSNames)
+	for _, ip := range opts.IPs {
+		required = append(required, ip.String())
+	}
+	var missing []string
+	for _, name := range required {
+		if serverCert.VerifyHostname(name) != nil {
+			missing = append(missing, strconv.Quote(name))
 		}
 	}
-	for _, ip := range opts.IPs {
-		if err := serverCert.VerifyHostname(ip.String()); err != nil {
-			return fmt.Errorf("server.pem does not cover required IP %q", ip.String())
-		}
+	if len(missing) > 0 {
+		return fmt.Errorf("server.pem does not cover required SANs: %s", strings.Join(missing, ", "))
 	}
 
 	if opts.RequireFingerprint {

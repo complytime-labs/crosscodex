@@ -22,7 +22,8 @@ func TestTestCertsBDD(t *testing.T) {
 	if dir := os.Getenv(ensureHelperDirEnv); dir != "" {
 		generated, err := testcerts.Ensure(dir, strictEnsure)
 		if err != nil {
-			t.Fatalf("ensure %s: %v", dir, err)
+			fmt.Fprintf(os.Stderr, "ensure %s: %v\n", dir, err)
+			os.Exit(1)
 		}
 		fmt.Printf("generated=%t\n", generated)
 		return

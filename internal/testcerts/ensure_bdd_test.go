@@ -59,6 +59,14 @@ var _ = Describe("VerifyDirWith", func() {
 		Expect(testcerts.VerifyDirWith(dir, strictOptions)).To(Succeed())
 	})
 
+	It("accepts Generate output under GenerateRequirements, which name every compose service SAN", func() {
+		req := testcerts.GenerateRequirements()
+		Expect(req.DNSNames).To(ConsistOf("localhost", "db", "nats", "storage", "authn-proxy", "grpc"))
+		Expect(req.MinRemaining).To(BeNumerically(">=", 24*time.Hour))
+		Expect(req.RequireFingerprint).To(BeTrue())
+		Expect(testcerts.VerifyDirWith(dir, req)).To(Succeed())
+	})
+
 	DescribeTable("rejects a stale or inconsistent set with an error naming the problem and the fix",
 		func(damage func(dir string), opts testcerts.VerifyOptions, wantSubstr string) {
 			damage(dir)
@@ -81,10 +89,11 @@ var _ = Describe("VerifyDirWith", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(os.WriteFile(filepath.Join(dir, "ca-key.pem"), other.CAKey, 0o600)).To(Succeed())
 		}, testcerts.VerifyOptions{}, "ca-key.pem does not match ca.pem"),
-		Entry("the server cert lacks a required DNS name", func(string) {},
-			testcerts.VerifyOptions{DNSNames: []string{"localhost", "praxis"}}, `server.pem does not cover required name "praxis"`),
-		Entry("the server cert lacks a required IP", func(string) {},
-			testcerts.VerifyOptions{IPs: []net.IP{net.IPv6loopback}}, `server.pem does not cover required IP "::1"`),
+		Entry("the server cert lacks required DNS names and IPs, all named at once", func(string) {},
+			testcerts.VerifyOptions{
+				DNSNames: []string{"localhost", "praxis", "litellm"},
+				IPs:      []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+			}, `server.pem does not cover required SANs: "praxis", "litellm", "::1"`),
 		Entry("a certificate expires within the required margin", func(dir string) {
 			writeSet(generateWith(pkigen.WithValidDuration(time.Hour)), dir)
 		}, testcerts.VerifyOptions{MinRemaining: 24 * time.Hour}, "expires within 24h0m0s"),
@@ -248,7 +257,7 @@ var _ = Describe("Ensure", func() {
 		opts.Verify.DNSNames = []string{"praxis"}
 		_, err = testcerts.Ensure(dir, opts)
 		Expect(err).To(MatchError(And(
-			ContainSubstring(`does not cover required name "praxis"`),
+			ContainSubstring(`does not cover required SANs: "praxis"`),
 			ContainSubstring("fix the generator options"))))
 		Expect(storedFingerprint(dir)).To(Equal(before))
 		Expect(dirEntries(filepath.Dir(dir))).To(ConsistOf("certs", ".certs.lock"))

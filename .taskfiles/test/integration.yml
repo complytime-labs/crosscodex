@@ -633,8 +633,10 @@ tasks:
       - mkdir -p {{.CERTS_DIR}}
       - go run {{.ROOT_DIR}}/internal/testcerts/gen.go {{.CERTS_DIR}}
     status:
-      # Verify certs exist, are parseable, not expired, and CA chain is valid.
-      # Exits non-zero (triggering regeneration) if anything is wrong.
+      # Verify certs exist, chain to the CA, have matching keys, SANs and
+      # fingerprint, and a day of validity left. Exits non-zero (triggering
+      # regeneration) if anything is wrong. The generator re-checks under a
+      # lock and swaps the directory atomically, so parallel runs are safe.
       - go run {{.ROOT_DIR}}/internal/testcerts/gen.go --verify {{.TEST_DIR}}/certs
     sources:
       - "{{.ROOT_DIR}}/internal/testcerts/*.go"
