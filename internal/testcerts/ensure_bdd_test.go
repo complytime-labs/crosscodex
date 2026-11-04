@@ -263,6 +263,95 @@ var _ = Describe("Ensure", func() {
 		Expect(dirEntries(filepath.Dir(dir))).To(ConsistOf("certs", ".certs.lock"))
 	})
 
+	It("installs the directory with DirMode when set", func() {
+		opts := strictEnsure
+		opts.DirMode = 0o700
+		_, err := testcerts.Ensure(dir, opts)
+		Expect(err).NotTo(HaveOccurred())
+		info, err := os.Stat(dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o700)))
+	})
+
+	Describe("with KeepUnmanaged", func() {
+		var opts testcerts.EnsureOptions
+
+		BeforeEach(func() {
+			opts = strictEnsure
+			opts.KeepUnmanaged = true
+		})
+
+		// snapshot returns every file in dir by name, so specs can assert a set was not touched.
+		snapshot := func(dir string) map[string][]byte {
+			files := map[string][]byte{}
+			for _, name := range dirEntries(dir) {
+				data, err := os.ReadFile(filepath.Join(dir, name))
+				Expect(err).NotTo(HaveOccurred())
+				files[name] = data
+			}
+			return files
+		}
+
+		It("keeps a valid set it did not generate, without adding a fingerprint", func() {
+			p, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.WriteToDir(dir)).To(Succeed())
+			before := snapshot(dir)
+
+			generated, err := testcerts.Ensure(dir, opts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(generated).To(BeFalse())
+			Expect(snapshot(dir)).To(Equal(before))
+		})
+
+		It("keeps a set it did not generate that is valid now but inside the renewal margin, since it cannot renew it", func() {
+			writeOnly := generateWith(pkigen.WithValidDuration(time.Hour), pkigen.WithDNSNames("localhost", "db", "nats"),
+				pkigen.WithIPs(net.IPv4(127, 0, 0, 1)))
+			Expect(writeOnly.WriteToDir(dir)).To(Succeed())
+			before := snapshot(dir)
+
+			generated, err := testcerts.Ensure(dir, opts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(generated).To(BeFalse())
+			Expect(snapshot(dir)).To(Equal(before))
+		})
+
+		It("refuses to replace an invalid set it did not generate and leaves it unchanged", func() {
+			p, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			other, err := testcerts.Generate()
+			Expect(err).NotTo(HaveOccurred())
+			p.ServerKey = other.ServerKey
+			Expect(p.WriteToDir(dir)).To(Succeed())
+			before := snapshot(dir)
+
+			_, err = testcerts.Ensure(dir, opts)
+			Expect(err).To(MatchError(testcerts.ErrUnmanagedDir))
+			Expect(err).To(MatchError(And(
+				ContainSubstring("server-key.pem does not match server.pem"),
+				ContainSubstring("remove the directory"))))
+			Expect(snapshot(dir)).To(Equal(before))
+		})
+
+		It("still regenerates a set it generated that has gone stale", func() {
+			_, err := testcerts.Ensure(dir, opts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.WriteFile(filepath.Join(dir, "ca.pem"), []byte("corrupted"), 0o644)).To(Succeed())
+
+			generated, err := testcerts.Ensure(dir, opts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(generated).To(BeTrue())
+			Expect(testcerts.VerifyDirWith(dir, strictOptions)).To(Succeed())
+		})
+
+		It("generates into an existing empty directory", func() {
+			Expect(os.MkdirAll(dir, 0o700)).To(Succeed())
+			generated, err := testcerts.Ensure(dir, opts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(generated).To(BeTrue())
+		})
+	})
+
 	It("generates exactly once when many goroutines ensure the same directory", func() {
 		const n = 8
 		results := make(chan bool, n)
