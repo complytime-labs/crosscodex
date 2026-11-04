@@ -578,6 +578,21 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			})
 		})
 
+		Context("with a withdrawn control that has a statement", func() {
+			It("produces a pre-built skip result (no embedding)", func() {
+				control := &pb.Control{
+					ControlId:  "nist-800-53/AC-3.1",
+					Identifier: "AC-3.1",
+					Statement:  "Leftover text.",
+					Parts:      map[string]string{"class": "compliance-requirement", "status": "withdrawn"},
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+			})
+		})
+
 		DescribeTable("controls without a statement produce a pre-built skip result",
 			func(statement string, parts map[string]string) {
 				control := &pb.Control{

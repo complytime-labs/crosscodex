@@ -27,6 +27,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -428,7 +429,9 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 			return fmt.Errorf("runAnalysis: %w", terr)
 		}
 		hasStatement := func(c *pb.Control) bool {
-			return c.GetParts()["class"] != classifySectionClass && strings.TrimSpace(c.GetStatement()) != ""
+			return c.GetParts()["class"] != classifySectionClass &&
+				c.GetParts()[oscal.PropStatus] != oscal.PropStatusWithdrawn &&
+				strings.TrimSpace(c.GetStatement()) != ""
 		}
 		for _, catalogID := range cats.CatalogIDs() {
 			fetched, err := s.catalogControls.Controls(ctx, tenantID, catalogID)

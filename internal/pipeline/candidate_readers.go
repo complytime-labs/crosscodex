@@ -19,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/candidate"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -50,12 +51,15 @@ func (r *pgControlsReader) ControlData(ctx context.Context, tenantID, catalogID,
 
 	// title, statement, and parent_id are nullable; COALESCE keeps the scan
 	// targets plain strings. class IS DISTINCT FROM handles a NULL class (a
-	// control with no class is not a section and must be included).
+	// control with no class is not a section and must be included). Withdrawn
+	// controls (props.status) are excluded like sections; props may be NULL,
+	// which COALESCE maps to "not withdrawn".
 	rows, err := tx.Query(ctx, `
 		SELECT control_id, COALESCE(title, ''), COALESCE(statement, ''), COALESCE(parent_id, '')
 		FROM controls
 		WHERE tenant_id = $1 AND catalog_id = $2 AND class IS DISTINCT FROM $3
-	`, tenantID, catalogID, classifySectionClass)
+		  AND COALESCE(props->>$4::text, '') <> $5
+	`, tenantID, catalogID, classifySectionClass, oscal.PropStatus, oscal.PropStatusWithdrawn)
 	if err != nil {
 		return nil, fmt.Errorf("pgControlsReader.ControlData: querying controls: %w", err)
 	}
