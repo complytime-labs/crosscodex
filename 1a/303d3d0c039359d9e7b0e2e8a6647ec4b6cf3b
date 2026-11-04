@@ -1,0 +1,21 @@
+internal/catalog/catalog_bdd_test.go
+  s_6db2b57b27fedb::t_49d6f2f226747d 530-532
+internal/catalog/service.go
+  s_6db2b57b27fedb::t_64a43c77ad096a 760-766
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a303d3d0c039359d9e7b0e2e8a6647ec4b6cf3b",
+  "prompts": {},
+  "sessions": {
+    "s_6db2b57b27fedb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99db3f86-87c3-48d7-8787-19135d41d357",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
