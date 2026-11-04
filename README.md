@@ -125,14 +125,14 @@ Cross-catalog analysis (#210) makes these breaking changes:
 
 Mapping on in the compose stack:
 
-- `deploy/config.yaml` now enables `analysis.relationship` and `analysis.requires` on the gateway's `default` alias, with the `semantic` candidate generator. Before, both were off, so a job on the compose stack completed with zero mappings. A job now makes pair calls as well: about source controls × 10 × 4 (relationship 3 samples + requires 1), so it takes longer and costs more (see [deploy/README.md](deploy/README.md#what-an-analysis-runs-and-what-it-costs)). Set `enabled: false` there to go back. If you renamed the `default` alias in the gateway config, rename it in both `models` lists.
+- `deploy/config.yaml` now enables `analysis.relationship` and `analysis.requires` on the gateway's `default` alias, with the `semantic` candidate generator. Before, both were off, so a job on the compose stack completed with zero mappings. A job now makes pair calls as well: about source controls × 10 × 6 (relationship 3 samples + requires 3), so it takes longer and costs more (see [deploy/README.md](deploy/README.md#what-an-analysis-runs-and-what-it-costs)). Set `enabled: false` there to go back. If you renamed the `default` alias in the gateway config, rename it in both `models` lists.
 - The compiled defaults are unchanged: a `crosscodexd` with no config file still runs no pair analyzers.
 
 Mapping confidence:
 
 - A relationship mapping's confidence is now the panel's agreement times the mean `analysis.relationship.confidence_weights` weight of the winning votes' reported `CONFIDENCE` (see "Confidence" under [Read a job's mappings](#9-read-a-jobs-mappings)). Before, it was the agreement alone, so a one-sample panel gave every mapping 1.000 and `--min-confidence` and `synthesis.confidence_threshold` filtered nothing. Jobs run after the upgrade report lower confidences than earlier jobs on the same catalogs, and with the default weights and threshold a one-sample panel's LOW mappings are no longer viable. Compare runs from the same build only. Set all three weights to 1 to get the old values back.
 - The agreement alone is a new `agreement_fraction` property on each `SEMANTIC_MATCH` graph edge and in the relationship analyzer's stored results.
-- Cached LLM results are still reused: the prompts and requests are unchanged, and confidence is computed from the cached responses when a job aggregates them. Changing `samples_per_model` does change the requests (a panel of more than one sample uses `sampling_temperature` instead of 0), so the compose stack's switch to 3 samples sends its relationship requests to the model again once.
+- Cached LLM results are still reused: the prompts and requests are unchanged, and confidence is computed from the cached responses when a job aggregates them. Changing `samples_per_model` does change the requests (a panel of more than one sample uses `sampling_temperature` instead of 0), so the compose stack's switch to 3 samples sends its relationship and requires requests to the model again once.
 - New config key `analysis.relationship.confidence_weights` (`high`, `medium`, `low`). A config that sets a weight outside (0, 1], or a lower level above a higher one, fails to load.
 
 Certificate generation:

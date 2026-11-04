@@ -1,7 +1,9 @@
 package config_test
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -190,5 +192,21 @@ var _ = Describe("Requires Configuration", func() {
 			err := cfg.Validate()
 			Expect(err).NotTo(HaveOccurred())
 		})
+	})
+})
+
+var _ = Describe("deploy/config.yaml pair analyzers", func() {
+	// One sample always agrees with itself, so a one-sample panel makes
+	// relationship confidence uninformative and lets a single noisy
+	// requires vote decide whether an edge exists.
+	It("samples each model three times for relationship and requires", func() {
+		GinkgoT().Setenv("CROSSCODEX_LLM_DEFAULT_MODEL", "default")
+		GinkgoT().Setenv("CROSSCODEX_LLM_EMBEDDING_MODEL", "embed")
+
+		cfg, err := config.NewLoader().Load(context.Background(),
+			config.WithConfigPath(filepath.Join(repoRoot, "deploy", "config.yaml")))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Analysis.Relationship.SamplesPerModel).To(Equal(3))
+		Expect(cfg.Analysis.Requires.SamplesPerModel).To(Equal(3))
 	})
 })

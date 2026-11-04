@@ -112,3 +112,6 @@ analysis:
     enabled: true
     models:
       - default
+    # Three samples so a REQUIRES edge needs a majority (consensus_threshold)
+    # of independent votes, not one noisy answer.
+    samples_per_model: 3
