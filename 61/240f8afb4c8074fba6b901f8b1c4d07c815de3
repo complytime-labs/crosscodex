@@ -1,0 +1,41 @@
+test/tooling/lib/with-fake-openai-models.yml
+  s_f8c7430887bee6::t_b7b832368b6336 1-31
+scripts/check-openai-compat-models.sh
+  s_f8c7430887bee6::t_d295dc47ec48af 1-49
+.taskfiles/test.yml
+  s_f8c7430887bee6::t_0210d2fbb0d096 74,81
+test/tooling/openai-compat-provider.venom.yml
+  s_f8c7430887bee6::t_4576eb8e609860 69-84
+  s_f8c7430887bee6::t_5e053980b7c5de 1-49,54-68,85-96
+  s_f8c7430887bee6::t_9c933a7fa35459 50-53
+test/deploy/smoke_up.sh
+  s_f8c7430887bee6::t_63b81a71b9ecd2 77-79
+  s_f8c7430887bee6::t_d453c2d507aa87 89,95,112,119,153
+  s_f8c7430887bee6::t_ec901f20170366 67-76,80-88,90-94,96-101,107,109,113-117,139,141-146,148,154-164,168,170-171,177-178,186,192
+  s_f8c7430887bee6::t_b861e057e9a8d1 118
+deploy/litellm/config.openai-compat.yaml.tmpl
+  s_f8c7430887bee6::t_d00881707ae13f 6-9
+  s_f8c7430887bee6::t_f857801c5bb302 15
+  s_f8c7430887bee6::t_9df790c3352a93 1-5,10-14,16-41
+.taskfiles/deploy.yml
+  s_f8c7430887bee6::t_0210d2fbb0d096 118,425-431
+deploy/README.md
+  s_f8c7430887bee6::t_773b032a436ded 481-501
+  s_f8c7430887bee6::t_d383dad96c1e62 240-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61240f8afb4c8074fba6b901f8b1c4d07c815de3",
+  "prompts": {},
+  "sessions": {
+    "s_f8c7430887bee6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30c3bccd-63cd-46bf-a5da-a0ec17abb35d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
