@@ -274,7 +274,9 @@ job_target_catalog_snapshot saying which kind of label each side has: they
 describe the job, so in a bidirectional job a row's source control can
 belong to the job's target catalog. A CSV cell from a catalog
 (control and catalog IDs, names, versions) that would start with = + - or @
-gets a leading single quote, so a spreadsheet does not run it as a formula.`,
+gets a leading single quote, so a spreadsheet does not run it as a formula.
+With --stage analyzer, which has no viability, JSON omits viabilityScore and
+isViable and CSV leaves viability_score and is_viable empty.`,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			jobID := args[0]
 			format, _ := cmd.Flags().GetString("format")
@@ -292,6 +294,9 @@ gets a leading single quote, so a spreadsheet does not run it as a formula.`,
 			if err != nil {
 				return err
 			}
+			// Analyzer mappings have no viability; the server's zero values
+			// are not a verdict, so they are left out.
+			noViability := req.GetStage() == pb.MappingStage_MAPPING_STAGE_ANALYZER
 
 			var out io.Writer
 			if outputFile != "" {
@@ -319,6 +324,17 @@ gets a leading single quote, so a spreadsheet does not run it as a formula.`,
 					b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(m)
 					if err != nil {
 						return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
+					}
+					if noViability {
+						var fields map[string]json.RawMessage
+						if err := json.Unmarshal(b, &fields); err != nil {
+							return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
+						}
+						delete(fields, "viabilityScore")
+						delete(fields, "isViable")
+						if b, err = json.Marshal(fields); err != nil {
+							return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
+						}
 					}
 					raw[i] = b
 				}
@@ -349,14 +365,18 @@ gets a leading single quote, so a spreadsheet does not run it as a formula.`,
 				}
 				jobValues := analysisValues(analysis)
 				for _, m := range mappings {
+					viabilityScore, isViable := "", ""
+					if !noViability {
+						viabilityScore, isViable = fmt.Sprintf("%.3f", m.GetViabilityScore()), fmt.Sprintf("%t", m.GetIsViable())
+					}
 					if err := w.Write(append([]string{
 						m.GetMappingId(),
 						csvCell(m.GetSourceControlId()),
 						csvCell(m.GetTargetControlId()),
 						m.GetRelationshipType().String(),
 						fmt.Sprintf("%.3f", m.GetConfidence()),
-						fmt.Sprintf("%.3f", m.GetViabilityScore()),
-						fmt.Sprintf("%t", m.GetIsViable()),
+						viabilityScore,
+						isViable,
 					}, jobValues...)); err != nil {
 						return fmt.Errorf("write CSV row: %w", err)
 					}
