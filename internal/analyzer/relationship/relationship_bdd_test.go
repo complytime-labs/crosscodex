@@ -387,6 +387,31 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			Expect(parsed[0].RelationshipType).To(Equal("EQUIVALENT"))
 		})
 
+		It("scores each mapping as agreement x the winners' mean confidence weight, recording the agreement", func() {
+			aggCfg := config.RelationshipConfig{Models: []string{"llama3.2:3b"}, ConfidenceWeights: defaultConfidenceWeights}
+			aggAnalyzer := relationship.New(nil, nil, nil, aggCfg)
+
+			mkResult := func(taskID, response string) analyzer.TaskResult {
+				s, err := structpb.NewStruct(map[string]interface{}{"response": response})
+				Expect(err).NotTo(HaveOccurred())
+				return analyzer.TaskResult{TaskID: taskID, TaskType: "relationship", Result: s}
+			}
+
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s0", "RELATIONSHIP: EQUIVALENT\nCONFIDENCE: HIGH"),
+				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s1", "RELATIONSHIP: EQUIVALENT\nCONFIDENCE: MEDIUM"),
+				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s2", "RELATIONSHIP: PARTIAL\nCONFIDENCE: HIGH"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed []results.SemanticMatchResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+			Expect(parsed).To(HaveLen(1))
+			Expect(parsed[0].RelationshipType).To(Equal("EQUIVALENT"))
+			Expect(parsed[0].Confidence).To(Equal(0.557)) // 2/3 x (1.0 + 0.67) / 2
+			Expect(parsed[0].Properties).To(HaveKeyWithValue("agreement_fraction", "0.667"))
+		})
+
 		It("omits NO_RELATIONSHIP pairs", func() {
 			aggCfg := config.RelationshipConfig{Models: []string{"llama3.2:3b"}}
 			aggAnalyzer := relationship.New(nil, nil, nil, aggCfg)

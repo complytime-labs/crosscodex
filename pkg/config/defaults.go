@@ -136,6 +136,10 @@ analysis:
       - CONTRIBUTES_TO
       - COMPLEMENTS
       - CONFLICTS_WITH
+    confidence_weights:
+      high: 1.0
+      medium: 0.67
+      low: 0.33
   requires:
     enabled: false
     models: []
@@ -143,7 +147,7 @@ analysis:
     allow_even_samples: false
     sampling_temperature: 0.3
     max_tokens: 300
-    consensus_threshold: 0.67
+    consensus_threshold: 0.66
     max_error_rate: 0.34
     max_source_chars: 1500
     max_target_chars: 800
@@ -157,7 +161,7 @@ analysis:
     allow_even_samples: false
     sampling_temperature: 0.3
     max_tokens: 200
-    consensus_threshold: 0.67
+    consensus_threshold: 0.66
     max_error_rate: 0.34
     max_attempts: 5
     lease_duration: 15m

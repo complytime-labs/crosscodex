@@ -9,9 +9,21 @@ import (
 	"pgregory.net/rapid"
 
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
 var _ = Describe("Property Specifications", Ordered, func() {
+	weights := defaultConfidenceWeights
+
+	// Generator: weights that pass config validation, each in (0, 1] with
+	// high >= medium >= low.
+	genWeights := func(t *rapid.T) config.RelationshipConfidenceWeights {
+		low := rapid.Float64Range(0.001, 1).Draw(t, "low")
+		medium := rapid.Float64Range(low, 1).Draw(t, "medium")
+		high := rapid.Float64Range(medium, 1).Draw(t, "high")
+		return config.RelationshipConfidenceWeights{High: high, Medium: medium, Low: low}
+	}
+
 	// Generator: random valid vote
 	genVote := func(t *rapid.T, label string) *relationship.Vote {
 		relIdx := rapid.IntRange(0, 7).Draw(t, label+"_rel")
@@ -41,8 +53,8 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		It("produces identical results for identical inputs", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				votes := genVotes(t)
-				c1 := relationship.ComputeConsensus(votes)
-				c2 := relationship.ComputeConsensus(votes)
+				c1 := relationship.ComputeConsensus(votes, weights)
+				c2 := relationship.ComputeConsensus(votes, weights)
 				if c1.Relationship != c2.Relationship {
 					t.Fatalf("non-deterministic: %v vs %v", c1.Relationship, c2.Relationship)
 				}
@@ -63,7 +75,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		It("always returns a valid RelationshipType", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				votes := genVotes(t)
-				c := relationship.ComputeConsensus(votes)
+				c := relationship.ComputeConsensus(votes, weights)
 				if !c.Relationship.Valid() {
 					t.Fatalf("invalid relationship: %v", c.Relationship)
 				}
@@ -75,9 +87,34 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		It("confidence is always in [0.0, 1.0]", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				votes := genVotes(t)
-				c := relationship.ComputeConsensus(votes)
+				c := relationship.ComputeConsensus(votes, weights)
 				if c.ConfidenceFraction < 0 || c.ConfidenceFraction > 1.0 {
 					t.Fatalf("confidence out of range: %v", c.ConfidenceFraction)
+				}
+			})
+		})
+	})
+
+	Context("ComputeConsensus — confidence is agreement scaled by the winners' weights", func() {
+		It("lies between agreement x low and agreement x high, and is positive whenever a vote is valid", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				votes := genVotes(t)
+				w := genWeights(t)
+				c := relationship.ComputeConsensus(votes, w)
+				if c.ValidVoteCount == 0 {
+					if c.ConfidenceFraction != 0 || c.AgreementFraction != 0 {
+						t.Fatalf("no valid votes: confidence %v, agreement %v, want 0", c.ConfidenceFraction, c.AgreementFraction)
+					}
+					return
+				}
+				// Both values are rounded to 3 decimals.
+				const tol = 0.001
+				lo, hi := c.AgreementFraction*w.Low, c.AgreementFraction*w.High
+				if c.ConfidenceFraction < lo-tol || c.ConfidenceFraction > hi+tol {
+					t.Fatalf("confidence %v outside [%v, %v] (agreement %v, weights %+v)", c.ConfidenceFraction, lo, hi, c.AgreementFraction, w)
+				}
+				if c.ConfidenceFraction <= 0 && lo >= 0.0005 {
+					t.Fatalf("confidence %v not positive with %d valid votes (weights %+v)", c.ConfidenceFraction, c.ValidVoteCount, w)
 				}
 			})
 		})
@@ -87,7 +124,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		It("unanimous is true iff all valid votes have the same type", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				votes := genVotes(t)
-				c := relationship.ComputeConsensus(votes)
+				c := relationship.ComputeConsensus(votes, weights)
 
 				// Count distinct valid relationship types
 				seen := make(map[relationship.RelationshipType]bool)
@@ -120,7 +157,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		It("equals input count minus parse errors/fails", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				votes := genVotes(t)
-				c := relationship.ComputeConsensus(votes)
+				c := relationship.ComputeConsensus(votes, weights)
 
 				expectedValid := 0
 				for _, v := range votes {
@@ -150,7 +187,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					"a": {Relationship: rt1, ParseStatus: relationship.ParseOK},
 					"b": {Relationship: rt2, ParseStatus: relationship.ParseOK},
 				}
-				c := relationship.ComputeConsensus(votes)
+				c := relationship.ComputeConsensus(votes, weights)
 
 				expectedWinner := rt1
 				if idx2 < idx1 {

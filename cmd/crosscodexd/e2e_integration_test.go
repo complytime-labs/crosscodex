@@ -95,6 +95,7 @@ func e2eAnalysisConfig() config.AnalysisConfig {
 			Enabled: true, Models: []string{e2eModel},
 			MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512,
 			SamplesPerModel: 1, SamplingTemperature: 0,
+			ConfidenceWeights: config.RelationshipConfidenceWeights{High: 1.0, Medium: 0.67, Low: 0.33},
 		},
 		Candidates: config.CandidateConfig{
 			Generators:           []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true, Weight: 1.0}},

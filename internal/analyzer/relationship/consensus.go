@@ -3,6 +3,8 @@ package relationship
 import (
 	"math"
 	"sort"
+
+	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
 // ComputeConsensus aggregates votes into a single relationship determination
@@ -10,10 +12,18 @@ import (
 // Python _compute_consensus() with one documented divergence: contribution
 // type ties are broken deterministically (INTEGRAL_TO wins).
 //
+// The winner is chosen by vote count alone. Its confidence is
+// AgreementFraction (winner votes / valid votes) times the mean of weights
+// over the winning votes' self-reported CONFIDENCE, where a vote with none
+// counts as LOW. Agreement across samples is the calibrated signal; the
+// self-reported weight keeps a one-sample panel, which always agrees with
+// itself, from reporting 1.0 for every pair. With weights in (0, 1] the
+// confidence is never above AgreementFraction.
+//
 // This is a pure function — it takes no context and creates no spans.
 // The calling pipeline orchestrator should create a wrapping span
 // (e.g., "relationship.ComputeConsensus") for trace coverage.
-func ComputeConsensus(votes map[string]*Vote) Consensus {
+func ComputeConsensus(votes map[string]*Vote, weights config.RelationshipConfidenceWeights) Consensus {
 	c := Consensus{
 		Relationship: RelNoRelationship,
 	}
@@ -79,8 +89,25 @@ func ComputeConsensus(votes map[string]*Vote) Consensus {
 		}
 	}
 
+	agreement := float64(maxCount) / float64(validTotal)
+	var weightSum float64
+	for _, v := range votes {
+		if v == nil || v.ParseStatus != ParseOK || v.Relationship != winner {
+			continue
+		}
+		switch v.Confidence {
+		case ConfidenceHigh:
+			weightSum += weights.High
+		case ConfidenceMedium:
+			weightSum += weights.Medium
+		default:
+			weightSum += weights.Low
+		}
+	}
+
 	c.Relationship = winner
-	c.ConfidenceFraction = math.Round(float64(maxCount)/float64(validTotal)*1000) / 1000
+	c.AgreementFraction = math.Round(agreement*1000) / 1000
+	c.ConfidenceFraction = math.Round(agreement*weightSum/float64(maxCount)*1000) / 1000
 	c.Unanimous = validTotal > 0 && maxCount == validTotal
 
 	// Secondary consensus for CONTRIBUTES_TO: contribution type.

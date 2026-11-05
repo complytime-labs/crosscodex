@@ -405,6 +405,7 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		p.add("analysis.relationship.models", "analysis.relationship.models%s must not be empty when enabled: %w",
 			formatSource(tracker, "analysis.relationship.models"), ErrInvalidConfig)
 	}
+	p = append(p, validateConfidenceWeights(&r.ConfidenceWeights, tracker))
 	for _, at := range r.ActionableTypes {
 		if !validRelationshipTypes[at] {
 			p.add("analysis.relationship.actionable_types", "analysis.relationship.actionable_types: invalid type %q%s: %w",
@@ -735,6 +736,39 @@ func formatSettingValue(v interface{}) string {
 		return fmt.Sprintf("%q", s)
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// validateConfidenceWeights checks each analysis.relationship.confidence_weights
+// value is in (0, 1] (0 would zero every mapping that reports that level) and
+// that a less confident level never weighs more than a more confident one.
+// The order is checked only when every weight is in range, so one bad value
+// is reported once.
+func validateConfidenceWeights(w *RelationshipConfidenceWeights, tracker *sourceTracker) error {
+	const pfx = "analysis.relationship.confidence_weights."
+	var p problems
+	levels := []struct {
+		name  string
+		value float64
+	}{{"high", w.High}, {"medium", w.Medium}, {"low", w.Low}}
+	for _, l := range levels {
+		if math.IsNaN(l.value) || l.value <= 0 || l.value > 1 {
+			p.add(pfx+l.name, pfx+"%s %g%s must be in range (0, 1]: %w",
+				l.name, l.value, formatSource(tracker, pfx+l.name), ErrInvalidConfig)
+		}
+	}
+	if len(p) > 0 {
+		return p.err()
+	}
+	for i := 1; i < len(levels); i++ {
+		more, less := levels[i-1], levels[i]
+		if less.value > more.value {
+			p.add(pfx+less.name, pfx+"%s %g%s must not exceed confidence_weights.%s %g: a %s vote cannot count for more than a %s one; "+
+				"lower %s or raise %s: %w",
+				less.name, less.value, formatSource(tracker, pfx+less.name), more.name, more.value,
+				strings.ToUpper(less.name), strings.ToUpper(more.name), less.name, more.name, ErrInvalidConfig)
+		}
+	}
+	return p.err()
 }
 
 // validateAnalyzerDependencies rejects an enabled analyzer that could not run
