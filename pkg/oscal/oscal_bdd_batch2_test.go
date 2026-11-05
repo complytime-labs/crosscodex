@@ -598,6 +598,43 @@ var _ = Describe("Convert", func() {
 			Expect(params).To(HaveLen(1))
 			Expect(params["param-1"]).To(Equal("Control Param"))
 		})
+
+		// SP 800-53 Rev 5 AC-11: a selection parameter has neither label nor
+		// values, and one of its choices inserts another parameter.
+		DescribeTable("renders a selection parameter's choices, resolving parameters inside them",
+			func(howMany, want string) {
+				controlParams := []oscalTypes.Parameter{
+					{ID: "ac-11_odp.01", Select: &oscalTypes.ParameterSelection{
+						HowMany: howMany,
+						Choice: &[]string{
+							"initiating a device lock after {{ insert: param, ac-11_odp.02 }} of inactivity",
+							"requiring the user to initiate a device lock before leaving the system unattended",
+						},
+					}},
+					{ID: "ac-11_odp.02", Label: "time period"},
+				}
+				ctrl := oscalTypes.Control{ID: "ac-11", Title: "Device Lock", Params: &controlParams}
+
+				params := oscal.CollectParams(nil, ctrl)
+				Expect(params["ac-11_odp.01"]).To(Equal(want))
+				Expect(oscal.CleanProse("Prevent further access to the system by {{ insert: param, ac-11_odp.01 }}; and", params)).
+					To(Equal("Prevent further access to the system by " + want + "; and"))
+			},
+			Entry("one or more", "one-or-more",
+				"[Selection (one or more): initiating a device lock after time period of inactivity; "+
+					"requiring the user to initiate a device lock before leaving the system unattended]"),
+			Entry("exactly one", "",
+				"[Selection: initiating a device lock after time period of inactivity; "+
+					"requiring the user to initiate a device lock before leaving the system unattended]"),
+		)
+
+		It("leaves a parameter that inserts itself unexpanded instead of recursing", func() {
+			controlParams := []oscalTypes.Parameter{
+				{ID: "loop", Select: &oscalTypes.ParameterSelection{Choice: &[]string{"see {{ insert: param, loop }}"}}},
+			}
+			params := oscal.CollectParams(nil, oscalTypes.Control{ID: "x-1", Params: &controlParams})
+			Expect(params["loop"]).To(Equal("[Selection: see [loop]]"))
+		})
 	})
 
 	Describe("Round-trip", func() {

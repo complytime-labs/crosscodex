@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 
 	oscalTypes "github.com/defenseunicorns/go-oscal/src/types/oscal-1-1-3"
 	"go.opentelemetry.io/otel/attribute"
@@ -76,9 +77,35 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) ([]ControlItem,
 
 	catalog := root.Catalog
 
+	// A statement may insert a parameter its own control does not define: SP
+	// 800-53 Rev 5 IA-13(3) inserts its parent's ia-13_odp.01, and SC-42(2)
+	// its sibling SC-42(1)'s sc-42.01_odp; without them the text read
+	// "[ia-13_odp.01]". OSCAL parameter IDs are unique in a document, so any
+	// parameter in the catalog may resolve an insert; the nearest definition
+	// wins: the control's own, then its ancestors', then any other control's.
+	var everyParam []oscalTypes.Parameter
+	WalkControls(catalog, func(ctrl oscalTypes.Control, _ string, _ int) {
+		if ctrl.Params != nil {
+			everyParam = append(everyParam, *ctrl.Params...)
+		}
+	})
+	catalogWide := CollectParams(catalog, oscalTypes.Control{Params: &everyParam})
+
 	var items []ControlItem
+	// inherited[d] holds the params of the visited control's depth-d ancestor
+	// (WalkControls is pre-order); ancestors come first so a control's own
+	// param of the same ID overrides theirs.
+	var inherited [][]oscalTypes.Parameter
 	WalkControls(catalog, func(ctrl oscalTypes.Control, groupID string, depth int) {
-		params := CollectParams(catalog, ctrl)
+		var own []oscalTypes.Parameter
+		if ctrl.Params != nil {
+			own = *ctrl.Params
+		}
+		inherited = append(inherited[:depth], own)
+		scoped := ctrl
+		merged := slices.Concat(inherited...)
+		scoped.Params = &merged
+		params := collectParams(catalog, scoped, catalogWide)
 		decomposed := DecomposeStatements(ctrl, groupID, params)
 		items = append(items, decomposed...)
 	})
