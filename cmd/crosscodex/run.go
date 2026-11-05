@@ -124,7 +124,7 @@ crosscodexd daemon; embedded mode refuses it.`,
 	cmd.Flags().String("target", "", "ID of the imported catalog the source's controls are mapped onto; the source's ID analyses within one catalog")
 	cmd.Flags().Bool("bidirectional", false, "also map the target's controls onto the source's (pair LLM calls scale with source plus target controls; refused within one catalog)")
 	cmd.Flags().Bool("no-cache", false, "skip result-cache lookups: send every LLM call to the model for a fresh run (results are still stored for later jobs)")
-	cmd.Flags().String("tenant", "", "Tenant ID for the job")
+	cmd.Flags().String("tenant", "", "Tenant to act on; must be the tenant your client certificate authenticates (default: that tenant)")
 
 	return cmd
 }
@@ -241,7 +241,7 @@ without one shows as not attested, or in progress while the job runs.`,
 		},
 	})
 
-	cmd.Flags().String("tenant", "", "Tenant ID for the job")
+	cmd.Flags().String("tenant", "", "Tenant to act on; must be the tenant your client certificate authenticates (default: that tenant)")
 
 	return cmd
 }
@@ -319,7 +319,7 @@ terminal on stdin (a script or pipe) it refuses instead of prompting; pass
 	})
 
 	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
-	cmd.Flags().String("tenant", "", "Tenant ID for the job")
+	cmd.Flags().String("tenant", "", "Tenant to act on; must be the tenant your client certificate authenticates (default: that tenant)")
 
 	return cmd
 }

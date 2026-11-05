@@ -188,7 +188,7 @@ func newCatalogListCmd(state *cliState) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("tenant", "", "Filter by tenant context")
+	cmd.Flags().String("tenant", "", "Tenant to act on; must be the tenant your client certificate authenticates (default: that tenant)")
 
 	return cmd
 }
@@ -249,7 +249,7 @@ func newCatalogInspectCmd(state *cliState) *cobra.Command {
 		},
 	})
 
-	cmd.Flags().String("tenant", "", "Tenant context for the catalog")
+	cmd.Flags().String("tenant", "", "Tenant to act on; must be the tenant your client certificate authenticates (default: that tenant)")
 
 	return cmd
 }

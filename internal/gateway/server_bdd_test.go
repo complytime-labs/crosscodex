@@ -240,6 +240,35 @@ var _ = Describe("Server", func() {
 			Entry("unary", listCatalogs, connect.CodeUnavailable, "catalog backend not configured"),
 			Entry("client streaming", streamDocument, connect.CodeInvalidArgument, "metadata"),
 		)
+
+		DescribeTable("refuses a request naming another tenant than the certificate's, before the handler",
+			func(requested string) {
+				checker.active = true
+				_, err := client.ListCatalogs(context.Background(), connect.NewRequest(&pb.ListCatalogsRequest{
+					TenantContext: &pb.TenantContext{TenantId: requested},
+				}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+				Expect(err.Error()).To(ContainSubstring(fmt.Sprintf(`request names tenant %q`, requested)))
+				Expect(err.Error()).To(ContainSubstring(`authenticates tenant "acme"`))
+				Expect(err.Error()).To(ContainSubstring("Drop the tenant from the request"))
+				Expect(err.Error()).NotTo(ContainSubstring("catalog backend not configured"))
+			},
+			Entry("a different tenant", "globex"),
+			Entry("a malformed tenant", "../acme"),
+		)
+
+		DescribeTable("lets a request naming no tenant or its own tenant reach the handler",
+			func(requested string) {
+				checker.active = true
+				_, err := client.ListCatalogs(context.Background(), connect.NewRequest(&pb.ListCatalogsRequest{
+					TenantContext: &pb.TenantContext{TenantId: requested},
+				}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+				Expect(err.Error()).To(ContainSubstring("catalog backend not configured"))
+			},
+			Entry("no tenant", ""),
+			Entry("the certificate's tenant", "acme"),
+		)
 	})
 })
 
