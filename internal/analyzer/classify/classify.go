@@ -20,6 +20,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -102,8 +103,8 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 
 	taskID := fmt.Sprintf("%s-%s", analyzerName, controlID)
 
-	// Section auto-classification: no LLM call needed.
-	if input.GetParts()["class"] == sectionClass {
+	// Section and withdrawn auto-classification: no LLM call needed.
+	if input.GetParts()["class"] == sectionClass || input.GetParts()[oscal.PropStatus] == oscal.PropStatusWithdrawn {
 		span.SetAttributes(attribute.Bool("classification.skipped", true))
 		if a.classifyCounter != nil {
 			a.classifyCounter.Add(ctx, 1, metric.WithAttributes(

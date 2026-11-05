@@ -155,6 +155,19 @@ var _ = Describe("ArtifactsAnalyzer", func() {
 			})
 		})
 
+		Context("withdrawn skipping", func() {
+			It("returns a skip task when the control is withdrawn", func() {
+				control.Parts["status"] = "withdrawn"
+				a = artifacts.New(nil, prompts, artifactsCfg)
+
+				tasks, err := a.GenerateWork(ctx, control, analyzerCfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].TaskID).To(Equal("artifacts-AC-1-skip"))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+			})
+		})
+
 		Context("ancestor title", func() {
 			It("renders the control's ancestor_title part into the user prompt", func() {
 				control.Parts["ancestor_title"] = "Access Control"

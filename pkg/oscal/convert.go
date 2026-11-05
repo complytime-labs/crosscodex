@@ -9,6 +9,56 @@ import (
 
 const complianceMapperNS = "https://compliance-mapper/ns"
 
+const (
+	// PropStatus is the ControlItem.Props key holding a control's lifecycle
+	// status; PropStatusWithdrawn is its only value crosscodex stores.
+	PropStatus          = "status"
+	PropStatusWithdrawn = "withdrawn"
+
+	// PropIncorporatedInto and PropMovedTo hold the comma-separated IDs a
+	// withdrawn control points to, from its OSCAL links of the same rel.
+	PropIncorporatedInto = "incorporated-into"
+	PropMovedTo          = "moved-to"
+)
+
+// withdrawnProps returns the Props of a withdrawn control: PropStatus plus the
+// incorporated-into / moved-to targets. It returns nil for any other control.
+// NIST spells the OSCAL status "Withdrawn" (SP 800-53 r4) and "withdrawn"
+// (r5, SP 800-171 r3), link rels with "-" or "_" and hrefs with or without a
+// leading "#"; all are normalised.
+func withdrawnProps(ctrl oscalTypes.Control) map[string]string {
+	withdrawn := false
+	if ctrl.Props != nil {
+		for _, p := range *ctrl.Props {
+			if p.Name == PropStatus && strings.EqualFold(strings.TrimSpace(p.Value), PropStatusWithdrawn) {
+				withdrawn = true
+			}
+		}
+	}
+	if !withdrawn {
+		return nil
+	}
+
+	props := map[string]string{PropStatus: PropStatusWithdrawn}
+	if ctrl.Links == nil {
+		return props
+	}
+	targets := map[string][]string{}
+	for _, l := range *ctrl.Links {
+		rel := strings.ReplaceAll(l.Rel, "_", "-")
+		if rel != PropIncorporatedInto && rel != PropMovedTo {
+			continue
+		}
+		if id := strings.TrimPrefix(l.Href, "#"); id != "" {
+			targets[rel] = append(targets[rel], id)
+		}
+	}
+	for rel, ids := range targets {
+		props[rel] = strings.Join(ids, ",")
+	}
+	return props
+}
+
 // ControlToItem converts a go-oscal Control to an internal ControlItem.
 // Sets ID, Title, GroupID from the go-oscal Control.
 // Extracts prose from statement parts only (filter: part.Name == "statement" at top level).

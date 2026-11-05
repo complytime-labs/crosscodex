@@ -100,14 +100,15 @@ func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 		attribute.String("control.id", controlID),
 	)
 
-	// Auto-skip sections (non-leaf) and controls with a blank statement.
+	// Auto-skip sections (non-leaf), withdrawn controls and controls with a blank
+	// statement.
 	// Blank statements are withdrawn or placeholder controls (e.g. CSF 2.0
 	// ID.BE). Without an ancestor their text is empty and the worker rejects
 	// the task as invalid_payload (retried 3x); with one the text is just
 	// "[ancestor]", which says nothing about the control. Candidate
 	// generation and coverage already exclude them, so nothing reads their
 	// vectors.
-	if input.GetParts()["class"] == oscal.ClassSection || strings.TrimSpace(input.GetStatement()) == "" {
+	if input.GetParts()["class"] == oscal.ClassSection || input.GetParts()[oscal.PropStatus] == oscal.PropStatusWithdrawn || strings.TrimSpace(input.GetStatement()) == "" {
 		span.SetAttributes(attribute.Bool("embedding.skipped", true))
 		if a.embedCounter != nil {
 			a.embedCounter.Add(ctx, 1, metric.WithAttributes(

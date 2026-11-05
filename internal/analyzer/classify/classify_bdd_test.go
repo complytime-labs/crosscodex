@@ -268,6 +268,26 @@ var _ = Describe("ClassifyAnalyzer", func() {
 			})
 		})
 
+		Context("with a withdrawn control", func() {
+			It("pre-classifies None|None without an LLM call even when it has a statement", func() {
+				control := &pb.Control{
+					ControlId:  "nist-800-53/AC-3.1",
+					Identifier: "AC-3.1",
+					Statement:  "Leftover text.",
+					Parts:      map[string]string{"class": "compliance-requirement", "status": "withdrawn"},
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+
+				result, ok := tasks[0].Payload.(*pb.AnalysisResult)
+				Expect(ok).To(BeTrue())
+				Expect(result.Attributes["type"]).To(Equal("None"))
+				Expect(result.Attributes["skipped"]).To(Equal("true"))
+			})
+		})
+
 		Context("text sanitization", func() {
 			// renderedUser runs GenerateWork with the embedded default prompt for
 			// one requirement and returns the user message.

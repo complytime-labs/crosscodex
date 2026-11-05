@@ -19,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -107,7 +108,8 @@ func (a *ArtifactsAnalyzer) ResultSchema() proto.Message {
 }
 
 // GenerateWork produces one Task per model x sample for the given control.
-// Sections (class "compliance-section") are auto-skipped.
+// Sections (class "compliance-section") and withdrawn controls (prop
+// oscal.PropStatus) are auto-skipped.
 func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.GenerateWork")
 	defer span.End()
@@ -119,8 +121,8 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 		return nil, fmt.Errorf("artifacts.GenerateWork: %w", err)
 	}
 
-	// Skip sections.
-	if input.GetParts()["class"] == "compliance-section" {
+	// Skip sections and withdrawn controls.
+	if input.GetParts()["class"] == "compliance-section" || input.GetParts()[oscal.PropStatus] == oscal.PropStatusWithdrawn {
 		taskID := fmt.Sprintf("%s-%s-skip", analyzerName, input.GetIdentifier())
 		payload, _ := structpb.NewStruct(map[string]interface{}{
 			"control_id": input.GetIdentifier(),

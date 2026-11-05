@@ -22,6 +22,25 @@ var _ = Describe("PGControlsReader", func() {
 		Expect(conn.Begins()).To(BeZero(), "the tenant must be refused before any transaction starts")
 	})
 
+	It("excludes sections and withdrawn controls in the query", func() {
+		var gotQuery string
+		var gotArgs []any
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				gotQuery, gotArgs = query, args
+				return dbtest.Rows(nil), nil
+			},
+			QueryRowFunc: func(ctx context.Context, query string, args ...any) db.Row {
+				return dbtest.Row(sql.ErrNoRows)
+			},
+		}
+		reader := pipeline.NewPGControlsReader(&dbtest.Conn{Tx: mockTx})
+		_, err := reader.ControlData(context.Background(), "tenant-1", "catalog-1", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gotQuery).To(ContainSubstring("props->>$4::text"))
+		Expect(gotArgs).To(ContainElements("status", "withdrawn"))
+	})
+
 	It("returns an error when Begin fails", func() {
 		mockDB := &dbtest.Conn{
 			BeginFunc: func(ctx context.Context) (db.Transaction, error) {
