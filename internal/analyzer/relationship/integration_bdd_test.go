@@ -45,7 +45,9 @@ var _ = Describe("Parser to Consensus Integration", func() {
 
 			Expect(consensus.Relationship).To(Equal(relationship.RelSupersetOf))
 			Expect(consensus.Unanimous).To(BeTrue())
-			Expect(consensus.ConfidenceFraction).To(Equal(1.0))
+			Expect(consensus.AgreementFraction).To(Equal(1.0))
+			// (HIGH 1.0 + HIGH 1.0 + MEDIUM 0.67) / 3 under the default weights.
+			Expect(consensus.ConfidenceFraction).To(Equal(0.89))
 			Expect(consensus.ValidVoteCount).To(Equal(3))
 		})
 	})
