@@ -57,6 +57,8 @@ This creates:
 
 The server certificate's Subject Alternative Name (SAN) covers `localhost` and `127.0.0.1`, so host-to-localhost connections work.
 
+`deploy/certs/` holds only generated material: when the set fails verification (a file missing, a key that doesn't match its certificate, a missing SAN, or less than a day of validity left) the next `task deploy:certs` replaces the whole directory, and anything else in it is lost. A valid set is kept. Concurrent runs are safe: one generates, the rest reuse its set.
+
 Certificates are copied into the `crosscodex-certs` docker/podman volume with shared-group ownership (GID 10001) so every service can read the keys despite running as different users (postgres, nats=root, stunnel=nobody, crosscodexd=nonroot).
 
 ## Bring up the stack
@@ -164,7 +166,7 @@ Set `LLM_GATEWAY` and `PRAXIS_MODELS_ENDPOINT` in `deploy/.env` and `deploy:up` 
 2. `task deploy:down`. It removes both gateways' containers whichever one is selected, and prints "no container ... found" errors for the gateway that isn't running. Those are expected.
 3. `task deploy:up`.
 
-Switching to Praxis may also need regenerated certificates (see below).
+Switching to Praxis may regenerate the certificates (see below).
 
 ### Praxis gateway
 
@@ -177,7 +179,7 @@ Praxis AI support is a spike: Praxis is alpha software (v0.8.0, configuration ma
 - `GET /v1/models` is off by default. `PRAXIS_MODELS_ENDPOINT=true` turns it on: for example, `task deploy:up LLM_GATEWAY=praxis PRAXIS_MODELS_ENDPOINT=true` (or set both in `deploy/.env`, and pass the same values to `deploy:logs` if you don't). Praxis then starts on `praxis/config.models.yaml`. The endpoint drops query strings and refuses (HTTP 400) a request that carries a body. To serve `/v1/models` there, that config disables Praxis's startup check for conflicting cluster selectors (`insecure_options.skip_pipeline_checks.conflicting_cluster_selectors`), so a later config edit that introduces a real conflict won't be caught at startup. Keep `config.models.yaml` in sync with `config.yaml`. The flag has no effect with `litellm` (which always serves the endpoint) or with `deploy:smoke`.
 - Retries and double billing: `retry_policy` retries only 429, 503 and connection failures before the request was sent, with jittered backoff (up to 1 s, then up to 2 s); it does not retry resets or other 5xx, and it ignores `Retry-After`. Praxis does still replay a request that fails on a stale pooled upstream connection, so a POST can be billed twice. `idle_timeout_ms: 1` in `praxis/config.yaml` narrows that window at the cost of about one TLS handshake per request, but under concurrent load a replay (and a second charge) remains possible. The daemon's analysis engine also re-dispatches failed tasks (`analysis.engine.max_retries`), which multiplies upstream attempts (tracked in issue #237). The comments in `praxis/config.yaml` are the source of truth for the proxy side.
 - A request for a model not in the Praxis config fails with an empty HTTP 500 (LiteLLM returns a 4xx). See [Troubleshooting](#empty-http-500-from-praxis).
-- The server certificate must name `praxis`. Certificates generated before Praxis support don't, and `deploy:up` keeps any existing PKI that still verifies, so force a regeneration: `task deploy:down`, then `rm deploy/certs/.fingerprint`, then `task deploy:up LLM_GATEWAY=praxis`. Data volumes are kept. The regeneration mints a new CA, new client certificates for the CLI and a new attestation keypair, so keep a copy of the old `deploy/certs/attestation-pub.pem` if you need to verify attestations signed before the change.
+- The server certificate must name `praxis`. Certificates generated before Praxis support don't; `deploy:up` detects that and regenerates them, so run `task deploy:down`, then `task deploy:up LLM_GATEWAY=praxis`. Data volumes are kept. The regeneration mints a new CA, new client certificates for the CLI and a new attestation keypair, so keep a copy of the old `deploy/certs/attestation-pub.pem` if you need to verify attestations signed before the change.
 - The smoke test on Praxis supports only the local baked Ollama (no `OLLAMA_HOST` override). It also probes the Praxis listener directly, published on `127.0.0.1:${SMOKE_PRAXIS_PORT}` (default 54443): a trusted client certificate must be served, and no certificate, an untrusted-CA certificate and an unmapped model must all be refused. The unmapped-model probe sends a model that Ollama serves but Praxis doesn't map, so a pass-through regression would fail the smoke.
 - The image is amd64 only.
 
@@ -440,7 +442,7 @@ If the CLI fails to connect from the host:
 The daemon could not connect to `llm.gateway_url` at startup. Likely causes:
 
 - The gateway fragment wasn't loaded. This happens with hand-run compose commands that name only `compose.yaml`; add `-f compose.gateway-litellm.yaml` or `-f compose.gateway-praxis.yaml` (plus `-f compose.gateway-praxis-models.yaml` with `PRAXIS_MODELS_ENDPOINT=true`). `task deploy:*` loads the right fragment itself.
-- The server certificate doesn't name the gateway (`praxis` or `litellm`). After switching to Praxis, regenerate the certificates as described under [Praxis gateway](#praxis-gateway).
+- The server certificate doesn't name the gateway (`praxis` or `litellm`). `task deploy:up` regenerates such certificates; if you started the stack another way, run `task deploy:certs` first (see [Praxis gateway](#praxis-gateway)).
 - The gateway is down or failed to start: `task deploy:logs -- praxis` (or `litellm`, `litellm-tls`).
 
 ### Empty HTTP 500 from Praxis

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,6 +19,14 @@ import (
 )
 
 func TestMainBDD(t *testing.T) {
+	// Run as an ensurePKI worker for the multi-process spec in embedded_bdd_test.go.
+	if dir := os.Getenv(ensurePKIHelperDirEnv); dir != "" {
+		if err := ensurePKI(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "ensurePKI %s: %v\n", dir, err)
+			os.Exit(1)
+		}
+		return
+	}
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Root Command BDD Suite")
 }

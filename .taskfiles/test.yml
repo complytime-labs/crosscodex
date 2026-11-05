@@ -71,7 +71,7 @@ tasks:
         exit $status
 
   tooling:
-    desc: Run Venom suites for repo tooling scripts (e2e daemon teardown, deploy preconditions)
+    desc: Run Venom suites for repo tooling scripts (e2e daemon teardown, deploy preconditions, cert generators)
     dir: "{{.ROOT_DIR}}"
     preconditions:
       - sh: command -v venom >/dev/null 2>&1

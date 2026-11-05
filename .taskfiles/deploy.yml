@@ -197,16 +197,15 @@ tasks:
     internal: true
     desc: Generate the host-side TLS PKI + attestation keys (skipped when the on-disk material is valid)
     cmds:
-      - mkdir -p {{.CERTS_DIR}}
-      - go run {{.ROOT_DIR}}/deploy/certs/gen.go {{.CERTS_DIR}}
+      # Locks, re-verifies, and atomically replaces CERTS_DIR only if needed,
+      # so runs racing past the status check below don't both regenerate.
+      - go run {{.ROOT_DIR}}/deploy/certgen/gen.go {{.CERTS_DIR}}
     status:
-      - test -f {{.CERTS_DIR}}/.fingerprint
-      # Regenerate when the attestation keypair is absent (e.g. a certs dir
-      # predating attestation support). A full regen mints a new CA, changing
-      # the fingerprint and forcing certs:load to reload the whole bundle.
-      - test -f {{.CERTS_DIR}}/attestation-key.pem
-      - test -f {{.CERTS_DIR}}/attestation-pub.pem
-      - go run {{.ROOT_DIR}}/deploy/certs/gen.go --verify {{.CERTS_DIR}}
+      # Regenerate when anything is missing, mismatched, lacks a compose SAN
+      # (e.g. sets predating praxis), or expires within a day. A full regen
+      # mints a new CA and attestation key, changing the fingerprint and
+      # forcing certs:load to reload the whole bundle.
+      - go run {{.ROOT_DIR}}/deploy/certgen/gen.go --verify {{.CERTS_DIR}}
 
   certs:load:
     internal: true

@@ -54,43 +54,44 @@ func pkiPaths(pkiDir string) embeddedTLSPaths {
 	}
 }
 
+// ensurePKI makes pkiDir hold the embedded daemon's TLS PKI, generating a
+// development PKI only when needed. Concurrent CLI invocations are safe:
+// testcerts.Ensure serializes them with a lock beside pkiDir, and the set is
+// swapped in whole, so none sees a mixed or partial set. A set the CLI did not
+// generate (no .fingerprint) is used if valid and never replaced.
 func ensurePKI(pkiDir string) error {
-	if err := testcerts.VerifyDir(pkiDir); err == nil {
-		return nil
-	}
-
-	bundle, err := pkigen.GenerateDevPKI(
-		pkigen.WithOrganization("CrossCodex Embedded"),
-		pkigen.WithValidDuration(365*24*time.Hour),
-		pkigen.WithDNSNames("localhost"),
-		pkigen.WithIPs(net.IPv4(127, 0, 0, 1), net.IPv6loopback),
-	)
+	_, err := testcerts.Ensure(pkiDir, testcerts.EnsureOptions{
+		// The CLI dials localhost:<port>, so that is the one SAN a set needs.
+		Verify: testcerts.VerifyOptions{
+			DNSNames:     []string{"localhost"},
+			MinRemaining: 24 * time.Hour,
+		},
+		Generate: func() (*testcerts.PKI, error) {
+			bundle, err := pkigen.GenerateDevPKI(
+				pkigen.WithOrganization("CrossCodex Embedded"),
+				pkigen.WithValidDuration(365*24*time.Hour),
+				pkigen.WithDNSNames("localhost"),
+				pkigen.WithIPs(net.IPv4(127, 0, 0, 1), net.IPv6loopback),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("generate embedded PKI: %w", err)
+			}
+			return &testcerts.PKI{
+				CACert:     bundle.CA.CertPEM,
+				CAKey:      bundle.CA.KeyPEM,
+				ServerCert: bundle.Server.CertPEM,
+				ServerKey:  bundle.Server.KeyPEM,
+				ClientCert: bundle.Client.CertPEM,
+				ClientKey:  bundle.Client.KeyPEM,
+			}, nil
+		},
+		// Private keys live here; keep the directory owner-only.
+		DirMode:       0o700,
+		KeepUnmanaged: true,
+	})
 	if err != nil {
-		return fmt.Errorf("generate embedded PKI: %w", err)
+		return fmt.Errorf("embedded PKI in %s: %w", pkiDir, err)
 	}
-
-	pki := &testcerts.PKI{
-		CACert:     bundle.CA.CertPEM,
-		CAKey:      bundle.CA.KeyPEM,
-		ServerCert: bundle.Server.CertPEM,
-		ServerKey:  bundle.Server.KeyPEM,
-		ClientCert: bundle.Client.CertPEM,
-		ClientKey:  bundle.Client.KeyPEM,
-	}
-
-	if err := pki.WriteToDir(pkiDir); err != nil {
-		return fmt.Errorf("write embedded PKI: %w", err)
-	}
-
-	// Lock down the directory
-	if err := os.Chmod(pkiDir, 0o700); err != nil {
-		return fmt.Errorf("chmod PKI directory: %w", err)
-	}
-
-	if err := testcerts.WriteFingerprint(pkiDir); err != nil {
-		return fmt.Errorf("write PKI fingerprint: %w", err)
-	}
-
 	return nil
 }
 

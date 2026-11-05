@@ -2,7 +2,8 @@
 //
 // It delegates certificate generation to pkg/tlsconfig/pki, keeping only
 // the test-oriented PKI struct and file management utilities (WriteToDir,
-// VerifyDir, fingerprinting).
+// VerifyDir, VerifyDirWith, fingerprinting) and Ensure, which keeps a cert
+// directory valid under concurrent and interrupted generator runs.
 //
 // Usage:
 //
@@ -24,6 +25,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,14 +43,17 @@ type PKI struct {
 	ClientKey  []byte // PEM-encoded client private key
 }
 
+// generateDNSNames are the server SANs Generate issues: localhost plus the
+// compose service names, so containers can verify each other's server certs
+// when connecting by service name (e.g. db, nats).
+var generateDNSNames = []string{"localhost", "db", "nats", "storage", "authn-proxy", "grpc"}
+
 // Generate creates a new PKI with ECDSA P-256 keys and 10-year validity.
 func Generate() (*PKI, error) {
 	bundle, err := pkigen.GenerateDevPKI(
 		pkigen.WithOrganization("CrossCodex Test"),
 		pkigen.WithValidDuration(3650*24*time.Hour),
-		// Include compose service names so containers can verify each other's
-		// server certs when connecting by service name (e.g. db, nats).
-		pkigen.WithDNSNames("localhost", "db", "nats", "storage", "authn-proxy", "grpc"),
+		pkigen.WithDNSNames(generateDNSNames...),
 		pkigen.WithIPs(net.IPv4(127, 0, 0, 1)),
 	)
 	if err != nil {
@@ -62,6 +68,18 @@ func Generate() (*PKI, error) {
 		ClientCert: bundle.Client.CertPEM,
 		ClientKey:  bundle.Client.KeyPEM,
 	}, nil
+}
+
+// GenerateRequirements returns what a directory holding Generate output must
+// satisfy to be reused: every SAN Generate issues, a matching fingerprint, and
+// at least a day of remaining validity so a set never expires mid-run.
+func GenerateRequirements() VerifyOptions {
+	return VerifyOptions{
+		DNSNames:           slices.Clone(generateDNSNames),
+		IPs:                []net.IP{net.IPv4(127, 0, 0, 1)},
+		MinRemaining:       24 * time.Hour,
+		RequireFingerprint: true,
+	}
 }
 
 // WriteToDir writes all 6 PEM files to the given directory.
@@ -110,89 +128,177 @@ var certFiles = []string{
 // been regenerated without parsing X.509.
 const fingerprintFile = ".fingerprint"
 
-// VerifyDir validates that the certificates in dir are parseable, not
-// expired, and form a valid CA trust chain (CA signs both server and
-// client certs). Returns nil on success.
+// VerifyOptions states what a cert directory must satisfy beyond the
+// baseline VerifyDir checks. The zero value adds nothing.
+type VerifyOptions struct {
+	// DNSNames and IPs must each be covered by the server certificate's SANs.
+	DNSNames []string
+	IPs      []net.IP
+	// MinRemaining is how long every certificate must remain valid from now,
+	// so a set that is about to expire is replaced before a run, not during it.
+	MinRemaining time.Duration
+	// RequireFingerprint requires .fingerprint to exist and match the PEM files.
+	RequireFingerprint bool
+	// VerifyExtra checks caller-owned files in the directory (e.g. the deploy
+	// attestation keypair). Nil skips it.
+	VerifyExtra func(dir string) error
+}
+
+// VerifyDir validates the baseline every cert directory must meet: all six
+// PEM files parse, every certificate is valid now, the CA signs the server
+// (serverAuth) and client (clientAuth) certificates, and each private key
+// matches its certificate. Returns nil on success.
 func VerifyDir(dir string) error {
-	// Read CA cert
-	caPEM, err := os.ReadFile(filepath.Join(dir, "ca.pem"))
-	if err != nil {
-		return fmt.Errorf("read ca.pem: %w", err)
+	return VerifyDirWith(dir, VerifyOptions{})
+}
+
+// VerifyDirWith runs the VerifyDir checks plus the requirements in opts.
+// The error names the offending file and what is wrong with it.
+func VerifyDirWith(dir string, opts VerifyOptions) error {
+	if err := verifyDir(dir, opts); err != nil {
+		return fmt.Errorf("cert dir %s is unusable: %w; regenerate it (the cert generator replaces the whole set when verification fails)", dir, err)
 	}
-	caBlock, _ := pem.Decode(caPEM)
-	if caBlock == nil {
-		return fmt.Errorf("ca.pem: not valid PEM")
-	}
-	caCert, err := x509.ParseCertificate(caBlock.Bytes)
+	return nil
+}
+
+func verifyDir(dir string, opts VerifyOptions) error {
+	now := time.Now()
+
+	caCert, err := readCert(dir, "ca.pem")
 	if err != nil {
-		return fmt.Errorf("ca.pem: parse: %w", err)
+		return err
 	}
 	if !caCert.IsCA {
 		return fmt.Errorf("ca.pem: certificate is not a CA")
 	}
-	now := time.Now()
-	if now.Before(caCert.NotBefore) || now.After(caCert.NotAfter) {
-		return fmt.Errorf("ca.pem: certificate not valid at current time (notBefore=%s, notAfter=%s)",
-			caCert.NotBefore.Format(time.RFC3339), caCert.NotAfter.Format(time.RFC3339))
+	if err := checkValidity("ca.pem", caCert, now, opts.MinRemaining); err != nil {
+		return err
+	}
+	if err := checkKeyMatches(dir, "ca-key.pem", "ca.pem", caCert); err != nil {
+		return err
 	}
 
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
 
-	// Verify server cert
-	if err := verifyLeaf(dir, "server.pem", pool, x509.ExtKeyUsageServerAuth); err != nil {
+	serverCert, err := verifyLeaf(dir, "server.pem", "server-key.pem", pool, x509.ExtKeyUsageServerAuth, now, opts.MinRemaining)
+	if err != nil {
+		return err
+	}
+	if _, err := verifyLeaf(dir, "client.pem", "client-key.pem", pool, x509.ExtKeyUsageClientAuth, now, opts.MinRemaining); err != nil {
 		return err
 	}
 
-	// Verify client cert
-	if err := verifyLeaf(dir, "client.pem", pool, x509.ExtKeyUsageClientAuth); err != nil {
-		return err
+	required := slices.Clone(opts.DNSNames)
+	for _, ip := range opts.IPs {
+		required = append(required, ip.String())
+	}
+	var missing []string
+	for _, name := range required {
+		if serverCert.VerifyHostname(name) != nil {
+			missing = append(missing, strconv.Quote(name))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("server.pem does not cover required SANs: %s", strings.Join(missing, ", "))
 	}
 
-	// Verify keys are parseable
-	for _, keyFile := range []string{"ca-key.pem", "server-key.pem", "client-key.pem"} {
-		keyPEM, err := os.ReadFile(filepath.Join(dir, keyFile))
+	if opts.RequireFingerprint {
+		stored, err := ReadFingerprint(dir)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", keyFile, err)
+			return err
 		}
-		keyBlock, _ := pem.Decode(keyPEM)
-		if keyBlock == nil {
-			return fmt.Errorf("%s: not valid PEM", keyFile)
+		if stored == "" {
+			return fmt.Errorf("%s is missing", fingerprintFile)
 		}
-		if _, err := x509.ParseECPrivateKey(keyBlock.Bytes); err != nil {
-			return fmt.Errorf("%s: parse: %w", keyFile, err)
+		computed, err := ComputeFingerprint(dir)
+		if err != nil {
+			return err
+		}
+		if stored != computed {
+			return fmt.Errorf("%s does not match the PEM files (the set was modified after generation)", fingerprintFile)
 		}
 	}
 
+	if opts.VerifyExtra != nil {
+		if err := opts.VerifyExtra(dir); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// verifyLeaf reads a leaf certificate from dir/name, checks it is not
-// expired, and verifies it against the given CA pool with the specified
-// extended key usage.
-func verifyLeaf(dir, name string, pool *x509.CertPool, usage x509.ExtKeyUsage) error {
-	leafPEM, err := os.ReadFile(filepath.Join(dir, name))
+// verifyLeaf checks the leaf certificate dir/name is within its validity
+// window, chains to pool with the given extended key usage, and matches the
+// private key in dir/keyName. Returns the parsed certificate.
+func verifyLeaf(dir, name, keyName string, pool *x509.CertPool, usage x509.ExtKeyUsage, now time.Time, minRemaining time.Duration) (*x509.Certificate, error) {
+	leafCert, err := readCert(dir, name)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", name, err)
+		return nil, err
 	}
-	leafBlock, _ := pem.Decode(leafPEM)
-	if leafBlock == nil {
-		return fmt.Errorf("%s: not valid PEM", name)
-	}
-	leafCert, err := x509.ParseCertificate(leafBlock.Bytes)
-	if err != nil {
-		return fmt.Errorf("%s: parse: %w", name, err)
-	}
-	now := time.Now()
-	if now.Before(leafCert.NotBefore) || now.After(leafCert.NotAfter) {
-		return fmt.Errorf("%s: certificate not valid at current time (notBefore=%s, notAfter=%s)",
-			name, leafCert.NotBefore.Format(time.RFC3339), leafCert.NotAfter.Format(time.RFC3339))
+	if err := checkValidity(name, leafCert, now, minRemaining); err != nil {
+		return nil, err
 	}
 	if _, err := leafCert.Verify(x509.VerifyOptions{
-		Roots:     pool,
-		KeyUsages: []x509.ExtKeyUsage{usage},
+		Roots:       pool,
+		KeyUsages:   []x509.ExtKeyUsage{usage},
+		CurrentTime: now,
 	}); err != nil {
-		return fmt.Errorf("%s: CA chain verification failed: %w", name, err)
+		return nil, fmt.Errorf("%s: CA chain verification failed: %w", name, err)
+	}
+	if err := checkKeyMatches(dir, keyName, name, leafCert); err != nil {
+		return nil, err
+	}
+	return leafCert, nil
+}
+
+func readCert(dir, name string) (*x509.Certificate, error) {
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", name, err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("%s: not valid PEM", name)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("%s: parse: %w", name, err)
+	}
+	return cert, nil
+}
+
+// checkValidity rejects a certificate outside its validity window at now, or
+// one whose notAfter falls within minRemaining of now.
+func checkValidity(name string, cert *x509.Certificate, now time.Time, minRemaining time.Duration) error {
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return fmt.Errorf("%s: certificate not valid at current time (notBefore=%s, notAfter=%s)",
+			name, cert.NotBefore.Format(time.RFC3339), cert.NotAfter.Format(time.RFC3339))
+	}
+	if minRemaining > 0 && cert.NotAfter.Before(now.Add(minRemaining)) {
+		return fmt.Errorf("%s: certificate expires within %s (notAfter=%s)",
+			name, minRemaining, cert.NotAfter.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// checkKeyMatches parses the EC private key in dir/keyName and checks its
+// public half is the one certified in cert (read from certName).
+func checkKeyMatches(dir, keyName, certName string, cert *x509.Certificate) error {
+	data, err := os.ReadFile(filepath.Join(dir, keyName))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", keyName, err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return fmt.Errorf("%s: not valid PEM", keyName)
+	}
+	key, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("%s: parse: %w", keyName, err)
+	}
+	if !key.PublicKey.Equal(cert.PublicKey) {
+		return fmt.Errorf("%s does not match %s (mixed set from different generator runs)", keyName, certName)
 	}
 	return nil
 }

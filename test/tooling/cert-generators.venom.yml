@@ -1,0 +1,90 @@
+name: cert generators keep one consistent, current PKI per directory across concurrent and repeated runs
+
+vars:
+  root: "."
+
+testcases:
+  - name: two parallel deploy generator runs produce one set that verifies
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/certs" >"$d/a.log" 2>&1 & go run ./deploy/certgen/gen.go "$d/certs" >"$d/b.log" 2>&1 & wait
+          echo "written=$(cat "$d"/a.log "$d"/b.log | grep -c 'Certificates written')"
+          echo "kept=$(cat "$d"/a.log "$d"/b.log | grep -c 'are valid; kept')"
+          go run ./deploy/certgen/gen.go --verify "$d/certs"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring written=1
+          - result.systemout ShouldContainSubstring kept=1
+          - result.systemout ShouldContainSubstring are valid
+
+  - name: two parallel integration generator runs produce one set that verifies
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./internal/testcerts/gen.go "$d/certs" >"$d/a.log" 2>&1 & go run ./internal/testcerts/gen.go "$d/certs" >"$d/b.log" 2>&1 & wait
+          echo "written=$(cat "$d"/a.log "$d"/b.log | grep -c 'Certificates written')"
+          echo "kept=$(cat "$d"/a.log "$d"/b.log | grep -c 'are valid; kept')"
+          go run ./internal/testcerts/gen.go --verify "$d/certs"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring written=1
+          - result.systemout ShouldContainSubstring kept=1
+          - result.systemout ShouldContainSubstring are valid
+
+  - name: rerunning the deploy generator on a valid set keeps it unchanged
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/certs" >/dev/null
+          before=$(cat "$d/certs/.fingerprint" "$d/certs/attestation-pub.pem" | sha256sum)
+          go run ./deploy/certgen/gen.go "$d/certs"
+          after=$(cat "$d/certs/.fingerprint" "$d/certs/attestation-pub.pem" | sha256sum)
+          [ "$before" = "$after" ] && echo "unchanged=yes" || echo "unchanged=no"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring are valid; kept
+          - result.systemout ShouldContainSubstring unchanged=yes
+
+  - name: deploy verify rejects a set without the praxis SAN and the generator replaces it
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./internal/testcerts/gen.go "$d/certs" >/dev/null
+          go run ./deploy/certgen/gen.go --verify "$d/certs" 2>&1; echo "stale_verify_exit=$?"
+          go run ./deploy/certgen/gen.go "$d/certs"
+          go run ./deploy/certgen/gen.go --verify "$d/certs" >/dev/null; echo "fresh_verify_exit=$?"
+        assertions:
+          - result.systemout ShouldContainSubstring "does not cover required SANs"
+          - result.systemout ShouldContainSubstring '"praxis"'
+          - result.systemout ShouldContainSubstring regenerate
+          - result.systemout ShouldContainSubstring stale_verify_exit=1
+          - result.systemout ShouldContainSubstring Certificates written
+          - result.systemout ShouldContainSubstring fresh_verify_exit=0
+
+  - name: deploy verify rejects an attestation keypair from two different runs
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/a" >/dev/null
+          go run ./deploy/certgen/gen.go "$d/b" >/dev/null
+          cp "$d/b/attestation-pub.pem" "$d/a/attestation-pub.pem"
+          go run ./deploy/certgen/gen.go --verify "$d/a" 2>&1; echo "verify_exit=$?"
+        assertions:
+          - result.systemout ShouldContainSubstring attestation-pub.pem does not match attestation-key.pem
+          - result.systemout ShouldContainSubstring verify_exit=1

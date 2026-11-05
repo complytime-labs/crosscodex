@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,6 +19,15 @@ import (
 )
 
 func TestTestCertsBDD(t *testing.T) {
+	if dir := os.Getenv(ensureHelperDirEnv); dir != "" {
+		generated, err := testcerts.Ensure(dir, strictEnsure)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ensure %s: %v\n", dir, err)
+			os.Exit(1)
+		}
+		fmt.Printf("generated=%t\n", generated)
+		return
+	}
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "TestCerts BDD Suite")
 }
