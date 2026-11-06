@@ -1,0 +1,21 @@
+Taskfile.yml
+  s_f8c7430887bee6::t_ac673fae0d6a76 19-24
+test/tooling/go-tmpdir.venom.yml
+  s_f8c7430887bee6::t_7725ce3562c368 1-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "848e188974a067adc3518eb499f8e83d029697d2",
+  "prompts": {},
+  "sessions": {
+    "s_f8c7430887bee6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30c3bccd-63cd-46bf-a5da-a0ec17abb35d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
