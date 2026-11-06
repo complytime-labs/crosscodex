@@ -8,6 +8,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
@@ -81,6 +82,11 @@ const (
 	// JobErrorLLMUnavailable is ErrLLMUnavailable: the model probe failed
 	// before any analysis LLM call. Retryable.
 	JobErrorLLMUnavailable JobErrorClass = "llm_unavailable"
+	// JobErrorLLMOutputTruncated is llmclient.ErrOutputTruncated: a stage's
+	// model gave no answer within an analyzer's max_tokens. Retryable: once
+	// the model's reasoning is off in the gateway, or max_tokens is raised
+	// and crosscodexd restarted, the same job succeeds.
+	JobErrorLLMOutputTruncated JobErrorClass = "llm_output_truncated"
 )
 
 // ClassifyJobError returns the class of a job's failure err, by the
@@ -103,6 +109,8 @@ func ClassifyJobError(err error) JobErrorClass {
 		return JobErrorResultCacheUnavailable
 	case errors.Is(err, ErrLLMUnavailable):
 		return JobErrorLLMUnavailable
+	case errors.Is(err, llmclient.ErrOutputTruncated):
+		return JobErrorLLMOutputTruncated
 	default:
 		return JobErrorRetryable
 	}

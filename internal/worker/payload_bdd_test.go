@@ -288,6 +288,7 @@ var _ = Describe("errorCategory", func() {
 		Entry("wrapped invalid payload", fmt.Errorf("wrap: %w", ErrInvalidPayload), "invalid_payload"),
 		Entry("LLM call error", ErrLLMCall, "llm_error"),
 		Entry("wrapped LLM error", fmt.Errorf("wrap: %w", ErrLLMCall), "llm_error"),
+		Entry("LLM call with no answer within max_tokens", fmt.Errorf("%w: %w", ErrLLMCall, llmclient.ErrOutputTruncated), natsbus.ResultErrorOutputTruncated),
 		Entry("tenant config error", ErrTenantConfig, "tenant_config_error"),
 		Entry("wrapped tenant config error", fmt.Errorf("wrap: %w", ErrTenantConfig), "tenant_config_error"),
 		Entry("unknown error", errors.New("something else"), "unknown"),

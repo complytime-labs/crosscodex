@@ -24,16 +24,20 @@ func (a *LLMCompleter) Complete(ctx context.Context, messages []oscal.Message) (
 	for i, m := range messages {
 		msgs[i] = llmclient.ChatMessage{Role: m.Role, Content: m.Content}
 	}
-	resp, err := a.client.Complete(ctx, &llmclient.CompletionRequest{
+	req := &llmclient.CompletionRequest{
 		Model:    a.model,
 		Messages: msgs,
 		TenantID: a.tenantID,
-	})
+	}
+	resp, err := a.client.Complete(ctx, req)
 	if err != nil {
 		return "", err
 	}
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("llm returned no choices")
+	}
+	if err := llmclient.CheckAnswered(req, resp); err != nil {
+		return "", err
 	}
 	return resp.Choices[0].Message.Content, nil
 }

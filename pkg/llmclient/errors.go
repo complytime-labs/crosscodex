@@ -33,4 +33,9 @@ var (
 
 	// ErrResponseTooLarge indicates the LLM gateway response exceeded the maximum allowed size.
 	ErrResponseTooLarge = errors.New("LLM gateway response too large")
+
+	// ErrOutputTruncated indicates the model stopped at max_tokens before
+	// writing any answer, typically a reasoning model that spent the budget
+	// thinking (see CheckAnswered).
+	ErrOutputTruncated = errors.New("model gave no answer within max_tokens")
 )

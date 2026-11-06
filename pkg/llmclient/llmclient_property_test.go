@@ -187,4 +187,29 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 	})
+
+	Context("CheckAnswered — an answer is never treated as truncated", func() {
+		It("accepts every response with one non-blank answer, whatever the finish reasons", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				reasons := rapid.SampledFrom([]string{"stop", "length", "content_filter", ""})
+				n := rapid.IntRange(1, 4).Draw(t, "choices")
+				answered := rapid.IntRange(0, n-1).Draw(t, "answered")
+				choices := make([]llmclient.CompletionChoice, n)
+				for i := range choices {
+					content := rapid.SampledFrom([]string{"", " ", "\n"}).Draw(t, "blank")
+					if i == answered {
+						content = rapid.StringMatching(`[A-Za-z|]{1,20}`).Draw(t, "answer")
+					}
+					choices[i] = llmclient.CompletionChoice{
+						Message:      llmclient.ChatMessage{Role: "assistant", Content: content},
+						FinishReason: reasons.Draw(t, "finish"),
+					}
+				}
+				req := &llmclient.CompletionRequest{Model: "m", MaxTokens: rapid.IntRange(1, 4096).Draw(t, "maxTokens")}
+				if err := llmclient.CheckAnswered(req, &llmclient.CompletionResponse{Choices: choices}); err != nil {
+					t.Fatalf("CheckAnswered refused a response with an answer: %v", err)
+				}
+			})
+		})
+	})
 })

@@ -29,6 +29,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
@@ -1716,6 +1717,31 @@ var _ = Describe("Service", func() {
 			Entry("as a new job", false),
 		)
 
+		// Turning the model's reasoning off in the gateway, or raising
+		// max_tokens and restarting crosscodexd, lets the same job succeed.
+		DescribeTable("accepts both retries of a job whose model gave no answer within max_tokens",
+			func(fromFailure bool) {
+				now := time.Now()
+				configBytes, err := json.Marshal(&pb.JobConfig{CatalogId: "cat-1", TargetCatalogId: "cat-1"})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.CreateJob(ctx, &pipeline.Job{JobID: "job-no-answer", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+					Config: configBytes, CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now})).To(Succeed())
+				Expect(store.CreateStages(ctx, "job-no-answer", []string{"classify", "synthesis", "graph"})).To(Succeed())
+				failure := &analysis.StageError{Analyzer: "classify", Sentinel: llmclient.ErrOutputTruncated, Message: "no answer"}
+				Expect(store.UpdateStageError(ctx, "job-no-answer", "classify", failure)).To(Succeed())
+				Expect(store.UpdateJobStatus(ctx, "job-no-answer", pipeline.JobStatusFailed, failure)).To(Succeed())
+				j, err := store.GetJob(ctx, "job-no-answer")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(j.ErrorClass).To(Equal(pipeline.JobErrorLLMOutputTruncated))
+
+				resp, err := svc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{JobId: "job-no-answer", RetryFromFailure: fromFailure}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Msg.NewJobId).NotTo(BeEmpty())
+			},
+			Entry("from its failure", true),
+			Entry("as a new job", false),
+		)
+
 		// Re-importing a target with statements gives it a new catalog ID
 		// (IDs are content hashes), so the new job must name a target
 		// rather than reuse this job's.
@@ -1775,6 +1801,8 @@ var _ = Describe("Service", func() {
 			Entry("an unreadable result cache", fmt.Errorf("x: %w", resultcache.ErrUnavailable), pipeline.JobErrorResultCacheUnavailable),
 			Entry("a corrupt cached result", fmt.Errorf("x: %w", resultcache.ErrCorrupt), pipeline.JobErrorResultCacheCorrupt),
 			Entry("a model probe that failed", fmt.Errorf("x: %w", pipeline.ErrLLMUnavailable), pipeline.JobErrorLLMUnavailable),
+			Entry("a stage whose model gave no answer within max_tokens",
+				&analysis.StageError{Sentinel: llmclient.ErrOutputTruncated, Message: "no answer"}, pipeline.JobErrorLLMOutputTruncated),
 			Entry("a model probe stage error, by its class alone",
 				&analysis.StageError{Sentinel: pipeline.ErrLLMUnavailable, Cause: resultcache.ErrCorrupt}, pipeline.JobErrorLLMUnavailable),
 			Entry("an unreadable cache and a corrupt one in two analyzers, by the class a retry cannot fix",

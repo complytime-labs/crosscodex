@@ -471,6 +471,15 @@ The daemon could not connect to `llm.gateway_url` at startup. Likely causes:
 - The server certificate doesn't name the gateway (`praxis` or `litellm`). `task deploy:up` regenerates such certificates; if you started the stack another way, run `task deploy:certs` first (see [Praxis gateway](#praxis-gateway)).
 - The gateway is down or failed to start: `task deploy:logs -- praxis` (or `litellm`, `litellm-tls`).
 
+### A stage stops: "tasks got no answer from the model within their max_tokens budget"
+
+The chat model spent each analyzer's small answer budget (`max_tokens`: classification 20, the others 200 to 300) before writing an answer, as reasoning models do. The job fails with error class `llm_output_truncated`. Either fix works:
+
+- Turn the model's reasoning off in the gateway alias. For llama.cpp and Qwen3-family models, add `extra_body: {chat_template_kwargs: {enable_thinking: false}}` to the alias in `deploy/litellm/config.yaml` (see [llama.cpp, vLLM or another OpenAI-compatible server](#llamacpp-vllm-or-another-openai-compatible-server)), then restart the gateway.
+- Raise the setting the message names (for example `analysis.classification.max_tokens`) in `deploy/config.yaml` and restart `crosscodexd`. This costs more tokens per call, and it changes the requests, so earlier cached results for that analyzer are not reused.
+
+Then resume the job with `crosscodex run retry --from-failure <job-id>`, which keeps its completed stages.
+
 ### Empty HTTP 500 from Praxis
 
 Praxis answers an empty 500 when the requested model isn't in its config. Check that `CROSSCODEX_LLM_DEFAULT_MODEL` and `CROSSCODEX_LLM_EMBEDDING_MODEL` in `deploy/.env` name aliases listed under `model_to_provider` in `deploy/praxis/config.yaml` (`deploy/praxis/config.models.yaml` with `PRAXIS_MODELS_ENDPOINT=true`; the defaults are `default` and `embed`).

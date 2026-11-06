@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -214,7 +216,9 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 		// Handle error results with retry
 		if taskErr != nil {
 			retryCount := retryCounts[taskID]
-			if retryCount < req.MaxRetries {
+			// No answer within max_tokens is deterministic for the same request,
+			// so a retry would pay for the same empty reply.
+			if retryCount < req.MaxRetries && !errors.Is(taskErr, llmclient.ErrOutputTruncated) {
 				// Retry: redispatch and keep in pending
 				// The handler context comes from the NATS client and never
 				// carries a tenant, but the dispatcher requires one. Use the
@@ -290,10 +294,14 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 			}
 
 			delete(pending, taskID)
+			finalErr := fmt.Errorf("%w: %w", ErrRetryExhausted, taskErr)
+			if errors.Is(taskErr, llmclient.ErrOutputTruncated) {
+				finalErr = taskErr
+			}
 			resultChan <- analyzer.TaskResult{
 				TaskID:   taskID,
 				TaskType: string(req.TaskType),
-				Error:    fmt.Errorf("%w: %w", ErrRetryExhausted, taskErr),
+				Error:    finalErr,
 			}
 			return nil
 		}
@@ -549,6 +557,9 @@ func getHeader(headers map[string][]string, key string) string {
 
 // sanitizeError wraps task errors with generic categories.
 func sanitizeError(errorMsg string) error {
+	if errorMsg == natsbus.ResultErrorOutputTruncated {
+		return fmt.Errorf("task_output_truncated: %w", llmclient.ErrOutputTruncated)
+	}
 	lower := strings.ToLower(errorMsg)
 	if strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline") {
 		return fmt.Errorf("task_timeout")
