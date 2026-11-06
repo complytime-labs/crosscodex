@@ -249,8 +249,54 @@ task deploy:smoke OPENAI_COMPAT_HOST=http://localhost:18080 \
 - **Model IDs** are the ones the server lists at `GET /v1/models` (for llama.cpp's router mode, the preset names). The defaults are `qwen3.8-flash-next` and `qwen3-embedding-8b`. Before anything starts, the host is probed and both IDs must be listed; nothing is pulled, so the server must already be configured to serve them. A missing model fails with the IDs the server does list.
 - **The chat model must answer without thinking first.** Each analyzer gives the model a small answer budget (`max_tokens`: classification 20, the others 200 to 300). A reasoning model spends that budget thinking and returns an empty answer. The smoke gateway config (`deploy/litellm/config.openai-compat.yaml.tmpl`) turns thinking off for the `default` alias with `chat_template_kwargs: {enable_thinking: false}`, which llama.cpp passes to the model's chat template. Qwen3-family models honor it. A model whose reasoning can't be turned off, such as `gpt-oss`, needs larger `max_tokens` in `deploy/config.yaml`, which changes cost and the result-cache keys.
 - **Embedding size** doesn't matter: embeddings are stored without a fixed dimension (`qwen3-embedding-8b` returns 4096).
-- **First calls are slow.** A server that loads models on demand (llama.cpp router mode) takes tens of seconds to load each model the first time.
+- **First calls are slow.** A server that loads models on demand (llama.cpp router mode, llama-swap) takes tens of seconds to load a model, and longer for bigger ones. That can exceed crosscodex's 30-second request timeout and fail the job; see [Tuning a self-hosted model server](#tuning-a-self-hosted-model-server).
 - **Gateway and address:** it works with `LLM_GATEWAY=litellm` only, and refuses to run together with a non-default `OLLAMA_HOST`. A loopback host is rewritten to `host.containers.internal` the same way as for Ollama, and `http://` is assumed when no scheme is given.
+
+#### Tuning a self-hosted model server
+
+These settings apply to the smoke stack and to a production stack pointed at your own server (see [LLM gateway configuration](#llm-gateway-configuration)). Gateway settings are per alias, in `deploy/litellm/config.yaml` (the smoke stack renders `deploy/litellm/config.openai-compat.yaml.tmpl` instead). crosscodex settings are in `deploy/config.yaml`; restart `crosscodexd` after changing them.
+
+| Setting | Where | Default | Change it when |
+|---|---|---|---|
+| Thinking on or off | Gateway alias: `extra_body: {chat_template_kwargs: {enable_thinking: …}}` | `false` in the smoke template; otherwise the model's own default | You want reasoning for one analyzer (see below). |
+| Which alias each analyzer uses | `analysis.classification.model` (empty means `llm.default_model`), and the `models` list of `analysis.relationship`, `analysis.requires`, `analysis.artifacts` and `analysis.artifact_adjudication` | `default` | You want one analyzer on a different alias, such as one with thinking on. |
+| Answer budget per analyzer | `analysis.classification.max_tokens` (20), `analysis.relationship.max_tokens` (300), `analysis.requires.max_tokens` (300), `analysis.artifact_adjudication.max_tokens` (200), `analysis.artifacts.max_tokens` (no default; set it when you enable artifacts) | as listed | The model reasons before answering: the budget must hold the reasoning and the answer. It can't be raised in the gateway: crosscodex always sends its own `max_tokens`, and the request's value wins over an alias's. Global only (no tenant override). A new value changes the requests, so earlier cached results for that analyzer are not reused. |
+| crosscodex request timeout | `llm.timeout` (seconds); per tenant `llm.tenant_overrides.<tenant>.timeout` | 30 | It must cover a cold model load plus the slowest reply. The compose stack sets `llm.gateway_mode: true`, which turns crosscodex's own retries off, so a timeout fails the call outright. A timed-out first call (the job's model probe) fails the job as `llm_unavailable`; a probe-specific timeout is tracked in [#262](https://github.com/complytime-labs/crosscodex/issues/262). |
+| Gateway's wait on the server | Gateway alias: `timeout` in `litellm_params` (LiteLLM's setting, in seconds) | LiteLLM's default | Keep it at least `llm.timeout`, so the gateway doesn't give up first. |
+| Keeping models loaded | The model server, for example a longer idle `ttl` or preloading presets at startup in llama-swap | Server-specific | You want to avoid a cold load at the start of each job. Keeping the chat and embedding models resident avoids it; `llm.timeout` should still cover a cold load after the server restarts. |
+
+**Thinking is off for a reason.** Measured on a Ryzen AI Max+ 395 (128 GB) with llama.cpp and `qwen3.8-flash-next`:
+
+- **Thinking off:** a classification took 5 tokens (0.2 s), and a relationship pair 58 tokens (3.5 s).
+- **Thinking on:** the same calls took 670 to over 4,000 tokens, at about 26 tokens per second for one call, or 46 in total for four at once. That's 45 to 225 seconds per call. Half of them were still thinking at 4,096 tokens and returned no answer.
+
+So a crosswalk that takes hours without thinking would take days with it. Memory wasn't the limit: the chat and embedding models stayed loaded together. The limit is generation speed. A model whose reasoning can't be turned off, such as `gpt-oss`, is a poor fit for the default budgets: its stages fail with error class `llm_output_truncated` (see [Troubleshooting](#a-stage-stops-tasks-got-no-answer-from-the-model-within-their-max_tokens-budget)).
+
+To use thinking where it pays, on an analyzer with few calls such as `artifact_adjudication`:
+
+1. Add a second alias with thinking on, next to `default`:
+   ```yaml
+   - model_name: default-thinking
+     litellm_params:
+       model: openai/qwen3.8-flash-next
+       api_base: http://host.containers.internal:18080/v1
+       api_key: "sk-unused"
+       timeout: 900
+       extra_body:
+         chat_template_kwargs:
+           enable_thinking: true
+   ```
+2. Point only that analyzer at it, give it a budget for its reasoning, and raise the timeout to cover the slowest reply:
+   ```yaml
+   llm:
+     timeout: 900
+   analysis:
+     artifact_adjudication:
+       models: [default-thinking]
+       max_tokens: 8192
+   ```
+
+The other analyzers keep the fast `default` alias. A larger `max_tokens` also costs more on a paid API: every reasoning token is billed.
 
 The smoke test is fully isolated and ephemeral, so it can run alongside a live production stack:
 
@@ -488,7 +534,7 @@ Praxis answers an empty 500 when the requested model isn't in its config. Check 
 
 The model aliases (`default`, `embed`) and upstream provider keys are configured in `deploy/litellm/config.yaml` or `deploy/praxis/config.yaml`, depending on `LLM_GATEWAY`. If you need to change the backing model or add a new provider, edit that file and restart the stack with the same `LLM_GATEWAY` (`task deploy:down LLM_GATEWAY=<gateway> && task deploy:up LLM_GATEWAY=<gateway>`).
 
-To serve the aliases from a self-hosted OpenAI-compatible server (llama.cpp, vLLM, ...) instead of OpenAI, point each alias at it in `deploy/litellm/config.yaml`, using the model IDs it lists at `/v1/models`. Use an address the `litellm` container can reach. A server on the Docker/podman host needs `extra_hosts: ["host.containers.internal:host-gateway"]` on the `litellm` service, as `compose.offline-remote.yaml` adds for the smoke stack. Turn the chat model's thinking off, for the reasons given under [llama.cpp, vLLM or another OpenAI-compatible server](#llamacpp-vllm-or-another-openai-compatible-server):
+To serve the aliases from a self-hosted OpenAI-compatible server (llama.cpp, vLLM, ...) instead of OpenAI, point each alias at it in `deploy/litellm/config.yaml`, using the model IDs it lists at `/v1/models`. Use an address the `litellm` container can reach. A server on the Docker/podman host needs `extra_hosts: ["host.containers.internal:host-gateway"]` on the `litellm` service, as `compose.offline-remote.yaml` adds for the smoke stack. Turn the chat model's thinking off, for the reasons given under [llama.cpp, vLLM or another OpenAI-compatible server](#llamacpp-vllm-or-another-openai-compatible-server), and set the timeouts in [Tuning a self-hosted model server](#tuning-a-self-hosted-model-server):
 
 ```yaml
 model_list:
