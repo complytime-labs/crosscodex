@@ -23,16 +23,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
 
-// analyzerEnabledSettings maps each production analyzer to the config
-// setting that enables it, for errors that tell an operator what to change.
-var analyzerEnabledSettings = map[string]string{
-	"classify":     "analysis.classification.enabled",
-	"embedding":    "analysis.embedding.enabled",
-	"artifacts":    "analysis.artifacts.enabled",
-	"requires":     "analysis.requires.enabled",
-	"relationship": "analysis.relationship.enabled",
-}
-
 // NewProductionRegistry builds and registers the real analyzers (classify,
 // embedding, artifacts, requires, relationship) that cfg enables, with their
 // production dependencies, per the assembly pattern documented in
@@ -105,7 +95,7 @@ func NewProductionRegistry(
 			if _, err := reg.Get(dep); err != nil {
 				return nil, fmt.Errorf("NewProductionRegistry: analyzer %q depends on %q, which is disabled: %w; "+
 					"set %s to true, or set %s to false",
-					a.Name(), dep, analyzer.ErrMissingDependency, analyzerEnabledSettings[dep], analyzerEnabledSettings[a.Name()])
+					a.Name(), dep, analyzer.ErrMissingDependency, analyzerSetting(dep), analyzerSetting(a.Name()))
 			}
 		}
 	}

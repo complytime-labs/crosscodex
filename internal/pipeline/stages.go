@@ -5,6 +5,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
 // candidateDependentAnalyzers require candidate data (requires_candidates /
@@ -89,7 +91,7 @@ func checkJobAnalyzers(job *Job, stages []*Stage, dagOrder []string) error {
 // analyzerSetting names the setting that enables analyzer name, or says that
 // no setting does for an analyzer outside the production set.
 func analyzerSetting(name string) string {
-	if setting, ok := analyzerEnabledSettings[name]; ok {
+	if setting, ok := config.AnalyzerSetting(name, "enabled"); ok {
 		return setting
 	}
 	return fmt.Sprintf("the setting enabling %q", name)
