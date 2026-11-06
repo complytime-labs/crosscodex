@@ -237,6 +237,21 @@ The `OLLAMA_HOST` override works with `LLM_GATEWAY=litellm` only. The host is pr
 
 To use an Ollama running on your **host machine**, point at loopback — `OLLAMA_HOST=localhost:11435` (any port other than the baked default `11434`). LiteLLM runs in the compose bridge network, so `smoke_up.sh` rewrites a `localhost`/`127.0.0.1` host to `host.containers.internal` when rendering the LiteLLM config, and the `compose.offline-remote.yaml` overlay maps that name to the host gateway. This needs podman ≥ 4.1 (or a docker-compose that supports `host-gateway`). A `localhost` override is reachable from the host for the pre-flight probe but only reachable from the container via this rewrite — without it, `localhost` inside the container is the container itself.
 
+#### llama.cpp, vLLM or another OpenAI-compatible server
+
+To back the smoke test with any server that speaks the OpenAI API (`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`), such as `llama-server`, pass `OPENAI_COMPAT_HOST` instead of `OLLAMA_HOST`:
+
+```bash
+task deploy:smoke OPENAI_COMPAT_HOST=http://localhost:18080 \
+  OPENAI_COMPAT_CHAT_MODEL=qwen3.8-flash-next OPENAI_COMPAT_EMBED_MODEL=qwen3-embedding-8b
+```
+
+- **Model IDs** are the ones the server lists at `GET /v1/models` (for llama.cpp's router mode, the preset names). The defaults are `qwen3.8-flash-next` and `qwen3-embedding-8b`. Before anything starts, the host is probed and both IDs must be listed; nothing is pulled, so the server must already be configured to serve them. A missing model fails with the IDs the server does list.
+- **The chat model must answer without thinking first.** Each analyzer gives the model a small answer budget (`max_tokens`: classification 20, the others 200 to 300). A reasoning model spends that budget thinking and returns an empty answer. The smoke gateway config (`deploy/litellm/config.openai-compat.yaml.tmpl`) turns thinking off for the `default` alias with `chat_template_kwargs: {enable_thinking: false}`, which llama.cpp passes to the model's chat template. Qwen3-family models honor it. A model whose reasoning can't be turned off, such as `gpt-oss`, needs larger `max_tokens` in `deploy/config.yaml`, which changes cost and the result-cache keys.
+- **Embedding size** doesn't matter: embeddings are stored without a fixed dimension (`qwen3-embedding-8b` returns 4096).
+- **First calls are slow.** A server that loads models on demand (llama.cpp router mode) takes tens of seconds to load each model the first time.
+- **Gateway and address:** it works with `LLM_GATEWAY=litellm` only, and refuses to run together with a non-default `OLLAMA_HOST`. A loopback host is rewritten to `host.containers.internal` the same way as for Ollama, and `http://` is assumed when no scheme is given.
+
 The smoke test is fully isolated and ephemeral, so it can run alongside a live production stack:
 
 - It runs under its own compose project (`crosscodex-smoke`), with its own data volumes, its own PKI volume (`crosscodex-smoke-certs`) generated from a throwaway host cert dir, and its own published gateway port (`50151`, leaving production's `50051` untouched).
@@ -463,3 +478,24 @@ Praxis answers an empty 500 when the requested model isn't in its config. Check 
 ### LLM gateway configuration
 
 The model aliases (`default`, `embed`) and upstream provider keys are configured in `deploy/litellm/config.yaml` or `deploy/praxis/config.yaml`, depending on `LLM_GATEWAY`. If you need to change the backing model or add a new provider, edit that file and restart the stack with the same `LLM_GATEWAY` (`task deploy:down LLM_GATEWAY=<gateway> && task deploy:up LLM_GATEWAY=<gateway>`).
+
+To serve the aliases from a self-hosted OpenAI-compatible server (llama.cpp, vLLM, ...) instead of OpenAI, point each alias at it in `deploy/litellm/config.yaml`, using the model IDs it lists at `/v1/models`. Use an address the `litellm` container can reach. A server on the Docker/podman host needs `extra_hosts: ["host.containers.internal:host-gateway"]` on the `litellm` service, as `compose.offline-remote.yaml` adds for the smoke stack. Turn the chat model's thinking off, for the reasons given under [llama.cpp, vLLM or another OpenAI-compatible server](#llamacpp-vllm-or-another-openai-compatible-server):
+
+```yaml
+model_list:
+  - model_name: default
+    litellm_params:
+      model: openai/qwen3.8-flash-next
+      api_base: http://host.containers.internal:18080/v1
+      api_key: "sk-unused"
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+  - model_name: embed
+    litellm_params:
+      model: openai/qwen3-embedding-8b
+      api_base: http://host.containers.internal:18080/v1
+      api_key: "sk-unused"
+```
+
+This traffic is plain HTTP, so keep the server on the same host or a trusted network. The stack's mTLS covers the daemon-to-gateway hop, not gateway-to-model.

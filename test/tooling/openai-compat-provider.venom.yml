@@ -1,0 +1,96 @@
+name: smoke stack backed by an OpenAI-compatible server (llama.cpp, vLLM, ...)
+
+vars:
+  root: "."
+
+testcases:
+  - name: the model probe passes when the server lists both models
+    steps:
+      - type: with-fake-openai-models
+        models: "qwen3.8-flash-next qwen3-embedding-8b gpt-oss-20b"
+        command: bash {{.root}}/scripts/check-openai-compat-models.sh "$BASE" qwen3.8-flash-next qwen3-embedding-8b
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+          - result.systemout ShouldContainSubstring qwen3.8-flash-next
+          - result.systemout ShouldContainSubstring qwen3-embedding-8b
+
+  - name: the model probe names a missing model and lists the ones the server has
+    steps:
+      - type: with-fake-openai-models
+        models: "gpt-oss-20b qwen3-embedding-8b"
+        command: bash {{.root}}/scripts/check-openai-compat-models.sh "$BASE" qwen3.8-flash-next qwen3-embedding-8b
+        assertions:
+          - result.systemout ShouldContainSubstring exit=1
+          - result.systemout ShouldContainSubstring "chat model qwen3.8-flash-next"
+          - result.systemout ShouldContainSubstring "gpt-oss-20b"
+
+  - name: the model probe fails with the address when nothing answers
+    steps:
+      - type: exec
+        script: |
+          port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+          bash {{.root}}/scripts/check-openai-compat-models.sh "http://127.0.0.1:${port}" chat embed
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "cannot reach an OpenAI-compatible server at http://127.0.0.1:"
+          - result.systemerr ShouldContainSubstring "/v1/models"
+
+  - name: the LiteLLM template points both aliases at the server and turns thinking off for chat
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+            {{.root}}/deploy/litellm/config.openai-compat.yaml.tmpl "$d/litellm.yaml" \
+            http://host.containers.internal:18080 qwen3.8-flash-next qwen3-embedding-8b >/dev/null
+          cat "$d/litellm.yaml"
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "model: openai/qwen3.8-flash-next"'
+          - 'result.systemout ShouldContainSubstring "model: openai/qwen3-embedding-8b"'
+          - 'result.systemout ShouldContainSubstring "api_base: http://host.containers.internal:18080/v1"'
+          - 'result.systemout ShouldContainSubstring "enable_thinking: false"'
+          - result.systemout ShouldNotContainSubstring OLLAMA_
+
+  - name: smoke_up refuses an OpenAI-compatible server and an Ollama host together
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          ROOT_DIR="$d" OPENAI_COMPAT_HOST=http://localhost:18080 OLLAMA_HOST=http://localhost:11435 \
+            bash {{.root}}/test/deploy/smoke_up.sh
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "OPENAI_COMPAT_HOST"
+          - result.systemerr ShouldContainSubstring "OLLAMA_HOST"
+
+  - name: smoke_up treats the Taskfile's default OLLAMA_HOST as unset and probes the OpenAI-compatible server
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/scripts" && cp {{.root}}/scripts/check-openai-compat-models.sh "$d/scripts/"
+          port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+          ROOT_DIR="$d" OPENAI_COMPAT_HOST="127.0.0.1:${port}" OLLAMA_HOST=http://localhost:11434 \
+            bash {{.root}}/test/deploy/smoke_up.sh
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemout ShouldContainSubstring "Probing OpenAI-compatible server at http://127.0.0.1:"
+          - result.systemerr ShouldContainSubstring "cannot reach an OpenAI-compatible server"
+          - result.systemerr ShouldNotContainSubstring "both OPENAI_COMPAT_HOST"
+
+  - name: smoke_up refuses an OpenAI-compatible server behind the Praxis gateway
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          ROOT_DIR="$d" OPENAI_COMPAT_HOST=http://localhost:18080 LLM_GATEWAY=praxis \
+            bash {{.root}}/test/deploy/smoke_up.sh
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "LLM_GATEWAY=praxis"
+          - result.systemerr ShouldContainSubstring "OPENAI_COMPAT_HOST"
