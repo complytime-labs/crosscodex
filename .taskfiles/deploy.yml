@@ -115,7 +115,7 @@ vars:
   # production stack exactly. The smoke path exports COMPOSE_OVERLAY:
   # compose.offline.yaml (LiteLLM) or compose.offline-praxis.yaml (Praxis) for a
   # local baked Ollama, or compose.offline-remote.yaml (LiteLLM only) for a
-  # remote OLLAMA_HOST. go-task reads exported env vars as vars, so
+  # remote OLLAMA_HOST or an OPENAI_COMPAT_HOST. go-task reads exported env vars as vars, so
   # smoke_up.sh's child `task deploy:up` picks this up.
   COMPOSE_OVERLAY: '{{.COMPOSE_OVERLAY | default ""}}'
 
@@ -422,6 +422,13 @@ tasks:
       OLLAMA_HOST: "{{.OLLAMA_HOST}}"
       OLLAMA_CHAT_MODEL: "{{.OLLAMA_CHAT_MODEL}}"
       OLLAMA_EMBED_MODEL: "{{.OLLAMA_EMBED_MODEL}}"
+      # Or any other OpenAI-compatible server (llama.cpp, vLLM, ...):
+      # `task deploy:smoke:up OPENAI_COMPAT_HOST=http://localhost:18080`, with
+      # OPENAI_COMPAT_CHAT_MODEL / OPENAI_COMPAT_EMBED_MODEL to override the
+      # model IDs smoke_up.sh defaults. Empty selects Ollama.
+      OPENAI_COMPAT_HOST: '{{.OPENAI_COMPAT_HOST | default ""}}'
+      OPENAI_COMPAT_CHAT_MODEL: '{{.OPENAI_COMPAT_CHAT_MODEL | default ""}}'
+      OPENAI_COMPAT_EMBED_MODEL: '{{.OPENAI_COMPAT_EMBED_MODEL | default ""}}'
       # smoke_up.sh builds the baked-model Ollama image directly (the equivalent
       # integration task is internal / not CLI-callable); it needs the engine.
       CONTAINER_ENGINE: "{{.CONTAINER_ENGINE}}"

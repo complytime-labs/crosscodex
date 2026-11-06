@@ -1,0 +1,41 @@
+# LiteLLM proxy config for the deploy SMOKE stack backed by a self-hosted
+# OpenAI-compatible server (llama.cpp, vLLM, LocalAI, ...) (template).
+#
+# Do not edit for local overrides. test/deploy/smoke_up.sh renders it when
+# OPENAI_COMPAT_HOST is set, through scripts/generate-llm-gateway-config.sh.
+# It shares the Ollama template's placeholders (named after Ollama, so they
+# are not repeated here, where the renderer would substitute them): api_base
+# becomes OPENAI_COMPAT_HOST + /v1, and the model names become
+# OPENAI_COMPAT_CHAT_MODEL and OPENAI_COMPAT_EMBED_MODEL.
+#
+# Same aliases as deploy/litellm/config.yaml (default + embed), so the daemon
+# requests the same model names as in production.
+#
+# extra_body turns off the chat model's thinking. Analyzers give the model a
+# small answer budget (classification 20 tokens, the others 200-300); a
+# reasoning model spends it on thinking and returns empty content. llama.cpp
+# passes chat_template_kwargs to the model's chat template: Qwen3-family
+# templates honor enable_thinking, templates without that variable ignore it.
+# Models whose reasoning cannot be turned off (gpt-oss) need larger
+# max_tokens in deploy/config.yaml instead.
+#
+# The api_key is a required-but-ignored placeholder. master_key is kept from
+# the production config so the daemon -> LiteLLM auth stays under test.
+model_list:
+  - model_name: default
+    litellm_params:
+      model: openai/OLLAMA_CHAT_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+  - model_name: embed
+    litellm_params:
+      model: openai/OLLAMA_EMBED_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+
+general_settings:
+  telemetry: false
+  master_key: os.environ/CROSSCODEX_LLM_API_KEY

@@ -1,0 +1,31 @@
+executor: with-fake-openai-models
+input:
+  # Space-separated model IDs the fake server lists at GET /v1/models.
+  models: ""
+  # Command to run while the server is up; $BASE holds its base URL.
+  command: ""
+
+steps:
+  - type: exec
+    script: |
+      d=$(mktemp -d)
+      trap 'kill "$pid" 2>/dev/null; rm -rf "$d"' EXIT
+      mkdir -p "$d/v1"
+      python3 -c 'import json,sys; print(json.dumps({"object":"list","data":[{"id":m,"object":"model"} for m in sys.argv[1:]]}))' {{.input.models}} >"$d/v1/models"
+      port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+      python3 -m http.server --bind 127.0.0.1 --directory "$d" "$port" >/dev/null 2>&1 &
+      pid=$!
+      for _ in $(seq 50); do curl -sf "http://127.0.0.1:${port}/v1/models" >/dev/null && break; sleep 0.1; done
+      export BASE="http://127.0.0.1:${port}"
+      rc=0
+      {{.input.command}} 2>&1 || rc=$?
+      echo "exit=${rc}"
+    assertions:
+      - result.code ShouldEqual 0
+      - result.systemout ShouldContainSubstring exit=
+    vars:
+      out:
+        from: result.systemout
+
+output:
+  systemout: "{{.out}}"
