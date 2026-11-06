@@ -1,0 +1,28 @@
+.taskfiles/deploy.yml
+  h_4db53f42b9be42 118,425-431
+.taskfiles/test.yml
+  h_4db53f42b9be42 74,81
+deploy/README.md
+  h_4db53f42b9be42 240-254,481-501
+deploy/litellm/config.openai-compat.yaml.tmpl
+  h_4db53f42b9be42 1-41
+scripts/check-openai-compat-models.sh
+  h_4db53f42b9be42 1-49
+test/deploy/smoke_up.sh
+  h_4db53f42b9be42 67-101,107,109,112-119,139,141-146,148,153-164,168,170-171,177-178,186,192
+test/tooling/lib/with-fake-openai-models.yml
+  h_4db53f42b9be42 1-31
+test/tooling/openai-compat-provider.venom.yml
+  h_4db53f42b9be42 1-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9517b71174d15697b27af5181aa86f3424db42e3",
+  "prompts": {},
+  "humans": {
+    "h_4db53f42b9be42": {
+      "author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
