@@ -16,8 +16,12 @@ env:
 
   # Keep Go's build temp inside the workspace so the bind-mount's SELinux
   # context (container_file_t) applies instead of usr_tmp_t from /tmp,
-  # which breaks cross-container file sharing.
-  GOTMPDIR: "{{.ROOT_DIR}}/.go-tmp"
+  # which breaks cross-container file sharing. Go refuses to start when
+  # GOTMPDIR does not exist ("creating work dir: ... no such file or
+  # directory"), so creating it here makes every task work in a fresh clone
+  # or worktree, not only after a build task has made it.
+  GOTMPDIR:
+    sh: mkdir -p "{{.ROOT_DIR}}/.go-tmp" && echo "{{.ROOT_DIR}}/.go-tmp"
 
   # When FIPS=1 (e.g., `task build FIPS=1`), all Go commands use
   # GOEXPERIMENT=boringcrypto for FIPS-validated cryptography.
