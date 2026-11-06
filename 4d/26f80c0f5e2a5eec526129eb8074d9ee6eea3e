@@ -1,0 +1,64 @@
+docs/dev/telemetry.md
+  s_9eceb0546014f7::t_44522a7a2b251e 200
+internal/worker/doc.go
+  s_9eceb0546014f7::t_44522a7a2b251e 13-23,55-57
+deploy/config.yaml
+  s_9eceb0546014f7::t_7d0d681357d0fa 118-126
+pkg/config/config_bdd_test.go
+  s_9eceb0546014f7::t_f71502c9986e07 2821-2855
+internal/worker/abandon_bdd_test.go
+  s_9eceb0546014f7::t_613aaba9beb704 71,264,329,342,362
+  s_9eceb0546014f7::t_832de2f972c079 113,241,292,314
+internal/worker/worker_fuzz_test.go
+  s_9eceb0546014f7::t_613aaba9beb704 119
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_9eceb0546014f7::t_224d5906fe6b3b 365
+internal/worker/errors.go
+  s_9eceb0546014f7::t_99235a7c9a9cab 38-41
+internal/worker/handler_bdd_test.go
+  s_9eceb0546014f7::t_224d5906fe6b3b 52,143,181
+  s_9eceb0546014f7::t_613aaba9beb704 330-331,376,420
+cmd/crosscodexd/telemetry_wiring_bdd_test.go
+  s_9eceb0546014f7::t_bbaaa9090904a9 81
+pkg/config/types.go
+  s_9eceb0546014f7::t_674a9d3005cfc1 899-908,930-933
+  s_9eceb0546014f7::t_8ce48ee01f369f 943-948
+  s_9eceb0546014f7::t_74e59fae1069fd 934
+pkg/config/defaults.go
+  s_9eceb0546014f7::t_674a9d3005cfc1 179
+internal/worker/inflight_bdd_test.go
+  s_9eceb0546014f7::t_bf47405ebd36ec 115-116,123-134,151,168,171,221-222
+  s_9eceb0546014f7::t_c65a7013be6b2f 1-114,117-122,135-150,152-167,169-170,172-220,223-236
+internal/worker/abandoned_bdd_test.go
+  s_9eceb0546014f7::t_613aaba9beb704 20
+README.md
+  s_9eceb0546014f7::t_7d0d681357d0fa 557
+internal/worker/worker_bdd_test.go
+  s_9eceb0546014f7::t_224d5906fe6b3b 72,107,199,219,259,303,339
+internal/worker/export_test.go
+  s_9eceb0546014f7::t_832de2f972c079 4-15
+deploy/README.md
+  s_9eceb0546014f7::t_7d0d681357d0fa 142-143,267
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_9eceb0546014f7::t_613aaba9beb704 174
+pkg/config/helpers_test.go
+  s_9eceb0546014f7::t_8ce48ee01f369f 36
+internal/worker/worker.go
+  s_9eceb0546014f7::t_0cef7ad3acb04a 11,51-65,113-116,123-130,140,143,150-204,206-212,227,230-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d26f80c0f5e2a5eec526129eb8074d9ee6eea3e",
+  "prompts": {},
+  "sessions": {
+    "s_9eceb0546014f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc06551b-52ab-4acd-b6d7-f6852c723834",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
