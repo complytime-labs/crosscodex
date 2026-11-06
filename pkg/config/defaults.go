@@ -16,6 +16,7 @@ llm:
   allowed_models: []
   max_retries: 3
   timeout: 30
+  probe_timeout: 0
   model_revisions: {}
 storage:
   objects:

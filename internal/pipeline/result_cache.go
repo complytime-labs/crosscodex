@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 	"unicode"
@@ -232,17 +233,32 @@ func (s *Service) probeModel(ctx context.Context, tenantID, jobID string, use an
 
 // llmUnavailable logs a failed probe once, with its cause, marks
 // analyzerName's stage failed and returns the tenant-facing error, which
-// carries no text of the cause (CWE-209).
+// carries no text of the cause (CWE-209). A probe that timed out gets its
+// own advice: a server that loads models on demand may still be loading the
+// model (#262).
 func (s *Service) llmUnavailable(ctx context.Context, job *Job, analyzerName, alias, tenantID string, cause error) error {
-	s.logger.ErrorContext(ctx, "the model probe failed, so the job stopped before any analysis LLM call. "+
-		"Check that the LLM gateway (llm.gateway_url) is reachable and serves the alias",
-		"analyzer", analyzerName, "alias", alias, "tenant_id", tenantID, "job_id", job.JobID,
-		"trace_id", telemetry.TraceIDFromContext(ctx), "error", cause)
-	err := &analysis.StageError{Analyzer: analyzerName, Sentinel: ErrLLMUnavailable, Cause: cause, Message: fmt.Sprintf(
-		"Stage %q stopped: the model gateway did not complete a probe request before analysis, and no analysis LLM calls "+
-			"were made (error class llm_unavailable). Retry this job once the gateway is working (crosscodex run retry %s). "+
-			"If this persists, give your operator %s.",
-		analyzerName, job.JobID, analysis.TraceReference(ctx, job.JobID))}
+	logAttrs := []any{"analyzer", analyzerName, "alias", alias, "tenant_id", tenantID, "job_id", job.JobID,
+		"trace_id", telemetry.TraceIDFromContext(ctx), "error", cause}
+	err := &analysis.StageError{Analyzer: analyzerName, Sentinel: ErrLLMUnavailable, Cause: cause}
+	if netErr, ok := errors.AsType[net.Error](cause); ok && netErr.Timeout() {
+		s.logger.ErrorContext(ctx, "the model probe timed out, so the job stopped before any analysis LLM call. "+
+			"The model server may still be loading the model: raise llm.probe_timeout to cover a cold load, "+
+			"or keep the model loaded on the server", logAttrs...)
+		err.Message = fmt.Sprintf(
+			"Stage %q stopped: the model gateway did not answer a probe request within the probe timeout, and no analysis "+
+				"LLM calls were made (error class llm_unavailable). The model may still be loading on a server that loads "+
+				"models on demand: retry this job shortly (crosscodex run retry %s). If it keeps timing out, ask your "+
+				"operator to raise llm.probe_timeout or keep the model loaded on the server, and give them %s.",
+			analyzerName, job.JobID, analysis.TraceReference(ctx, job.JobID))
+	} else {
+		s.logger.ErrorContext(ctx, "the model probe failed, so the job stopped before any analysis LLM call. "+
+			"Check that the LLM gateway (llm.gateway_url) is reachable and serves the alias", logAttrs...)
+		err.Message = fmt.Sprintf(
+			"Stage %q stopped: the model gateway did not complete a probe request before analysis, and no analysis LLM calls "+
+				"were made (error class llm_unavailable). Retry this job once the gateway is working (crosscodex run retry %s). "+
+				"If this persists, give your operator %s.",
+			analyzerName, job.JobID, analysis.TraceReference(ctx, job.JobID))
+	}
 	if uerr := s.store.UpdateStageError(ctx, job.JobID, analyzerName, tenantFailure(ctx, job.JobID, job, err)); uerr != nil {
 		s.logger.WarnContext(ctx, "failed to record the model probe failure on the stage",
 			"job_id", job.JobID, "analyzer", analyzerName, "error", uerr)

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -46,10 +47,10 @@ type requiredResources struct {
 // Production code (main.go) never supplies any option.
 type ResourceOption func(*sharedResources)
 
-// WithLLMClient overrides the LLM client with client instead of constructing
-// one via llmclient.NewClient(cfg.LLM).
+// WithLLMClient overrides the LLM client, and the model probe client, with
+// client instead of constructing them via llmclient.NewClient(cfg.LLM).
 func WithLLMClient(client llmclient.Client) ResourceOption {
-	return func(r *sharedResources) { r.llmClient = client }
+	return func(r *sharedResources) { r.llmClient, r.probeClient = client, client }
 }
 
 // resourcesForRole returns the zero value for any role it doesn't
@@ -83,11 +84,18 @@ type sharedResources struct {
 	graphDB_       graphdb.GraphDB
 	natsClient     natsbus.Client
 	llmClient      llmclient.Client
+	// probeClient makes the per-job model probe. It is llmClient unless
+	// llm.probe_timeout is set, when it is a client bounded by that timeout
+	// instead of llm.timeout (#262).
+	probeClient llmclient.Client
 }
 
 // close releases every resource sharedResources constructed, in reverse
 // order of acquisition. Safe to call on a partially-populated value.
 func (r *sharedResources) close() {
+	if r.probeClient != nil && r.probeClient != r.llmClient {
+		r.probeClient.Close()
+	}
 	if r.llmClient != nil {
 		r.llmClient.Close()
 	}
@@ -226,7 +234,24 @@ func buildSharedResources(ctx context.Context, cfg *config.Config, need required
 			res.close()
 			return nil, fmt.Errorf("create LLM client: %w", err)
 		}
-		res.llmClient = llmClient
+		res.llmClient, res.probeClient = llmClient, llmClient
+		if cfg.LLM.ProbeTimeout > 0 {
+			probeCfg := cfg.LLM
+			probeCfg.Timeout = cfg.LLM.ProbeTimeout
+			probeOpts := slices.Clone(llmOpts)
+			if httpClient != nil {
+				// A copy shares the TLS transport and its connection pool.
+				probeHTTP := *httpClient
+				probeHTTP.Timeout = time.Duration(probeCfg.Timeout) * time.Second
+				probeOpts = append(probeOpts, llmclient.WithHTTPClient(&probeHTTP))
+			}
+			probeClient, err := llmclient.NewClient(probeCfg, probeOpts...)
+			if err != nil {
+				res.close()
+				return nil, fmt.Errorf("create LLM model probe client: %w", err)
+			}
+			res.probeClient = probeClient
+		}
 		if err := probeLLMGateway(ctx, cfg.LLM, httpClient); err != nil {
 			res.close()
 			return nil, err

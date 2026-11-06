@@ -49,6 +49,11 @@ type LLMConfig struct {
 	// Timeout bounds each LLM gateway request, in seconds. Zero means
 	// llmclient.DefaultTimeout (30s) for both http and https gateways.
 	Timeout int `yaml:"timeout" json:"timeout"`
+	// ProbeTimeout bounds the per-job model probe request, in seconds, so a
+	// server that loads models on demand can finish a cold load without
+	// stretching every analysis call's Timeout. Zero means Timeout.
+	// Global-only: one probe client serves every tenant.
+	ProbeTimeout int `yaml:"probe_timeout" json:"probe_timeout"`
 	// ModelRevisions maps a model alias, as the gateway resolves it, to an
 	// operator-declared revision that is part of every result-cache key for
 	// the alias (analysis.result_cache). Change it to force misses when the

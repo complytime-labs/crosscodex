@@ -25,6 +25,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	pkigen "github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 )
 
@@ -284,4 +285,94 @@ var _ = Describe("buildSharedResources LLM gateway reachability probe", func() {
 				return errors.As(err, &netErr) && netErr.Timeout()
 			}, BeTrue())),
 	)
+
+	// The per-job model probe is the first call to reach a server that loads
+	// models on demand, so it waits llm.probe_timeout for the load while
+	// analysis calls keep llm.timeout (#262).
+	Describe("the model probe client", func() {
+		// slowCompletions answers a completion after delay, as a server
+		// loading the model does, and anything else (the startup
+		// reachability probe) at once.
+		slowCompletions := func(delay time.Duration) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/chat/completions" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				select {
+				case <-time.After(delay):
+				case <-r.Context().Done():
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"model":"loaded-chat","choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+			})
+		}
+		complete := func(c llmclient.Client) error {
+			_, err := c.Complete(context.Background(), &llmclient.CompletionRequest{Model: "chat", TenantID: "test-tenant",
+				Messages: []llmclient.ChatMessage{{Role: llmclient.RoleUser, Content: "probe"}}, MaxTokens: 1})
+			return err
+		}
+		timedOut := WithTransform(func(err error) bool {
+			var netErr net.Error
+			return errors.As(err, &netErr) && netErr.Timeout()
+		}, BeTrue())
+
+		BeforeEach(func() { cfg.LLM.Timeout = 1 })
+
+		It("waits llm.probe_timeout for a slow first response, while analysis calls keep llm.timeout", func() {
+			cfg.LLM.ProbeTimeout = 4
+			gw := httptest.NewServer(slowCompletions(1500 * time.Millisecond))
+			DeferCleanup(gw.Close)
+			cfg.LLM.GatewayURL = gw.URL
+
+			res, err := build()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(res.close)
+
+			Expect(complete(res.probeClient)).To(Succeed())
+			Expect(complete(res.llmClient)).To(timedOut)
+		})
+
+		It("waits llm.timeout when llm.probe_timeout is zero", func() {
+			gw := httptest.NewServer(slowCompletions(1500 * time.Millisecond))
+			DeferCleanup(gw.Close)
+			cfg.LLM.GatewayURL = gw.URL
+
+			res, err := build()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(res.close)
+
+			Expect(complete(res.probeClient)).To(timedOut)
+		})
+
+		It("keeps the gateway's TLS settings", func() {
+			cfg.LLM.ProbeTimeout = 4
+			cfg.TLS = config.TLSConfig{Mode: "mutual", CA: testTLSWiringCAPath,
+				Cert: testTLSWiringClientCertPath, Key: testTLSWiringClientKeyPath}
+			cfg.LLM.GatewayURL = startTLSGateway(suiteServerCert(), tls.RequireAndVerifyClientCert,
+				slowCompletions(1500*time.Millisecond))
+
+			res, err := build()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(res.close)
+
+			Expect(complete(res.probeClient)).To(Succeed())
+			Expect(complete(res.llmClient)).To(timedOut)
+		})
+
+		It("is the injected client when a test injects one", func() {
+			gw := httptest.NewServer(http.NotFoundHandler())
+			DeferCleanup(gw.Close)
+			cfg.LLM.GatewayURL = gw.URL
+			injected := &llmclienttest.Fake{}
+
+			res, err := buildSharedResources(context.Background(), cfg, requiredResources{nats: true, llm: true},
+				WithLLMClient(injected))
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(res.close)
+
+			Expect(res.probeClient).To(BeIdenticalTo(injected))
+		})
+	})
 })
