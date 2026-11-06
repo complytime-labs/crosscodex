@@ -28,9 +28,9 @@ FIXTURE="${ROOT_DIR}/cmd/crosscodexd/testdata/oscal/e2e-minimal-catalog.json"
 mkdir -p "${OUT_DIR}"
 
 # Podman overlay workaround: point buildah temp to a workspace subdir to avoid
-# "mounting an overlay over build context directory" errors. Detect container
-# execution (/.dockerenv exists, or cgroup shows container runtime).
-if [ -f /.dockerenv ] || grep -qE 'docker|containerd|lxc|kubepods' /proc/1/cgroup 2>/dev/null || grep -qE 'docker|containerd|lxc|kubepods' /proc/self/cgroup 2>/dev/null; then
+# "mounting an overlay over build context directory" errors. Applies only inside
+# a container (docker or podman); see in-container.sh for the markers checked.
+if bash "${ROOT_DIR}/scripts/in-container.sh"; then
 	export TMPDIR="${TMPDIR:-${ROOT_DIR}/.test-output/buildtmp}"
 	export STORAGE_DRIVER="${STORAGE_DRIVER:-vfs}"
 	mkdir -p "${TMPDIR}"

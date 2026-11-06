@@ -1,0 +1,99 @@
+name: in-container.sh detects docker and podman containers, and not a plain host
+
+vars:
+  root: "."
+
+# Each case builds a fake filesystem root and passes it to the script, so the
+# result does not depend on where the suite itself runs. `env -u container`
+# keeps the runner's own container variable (podman sets it) out of the cases
+# that test file markers.
+testcases:
+  - name: a host with no markers is not a container
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/proc/1" "$d/proc/self"
+          echo '0::/init.scope' >"$d/proc/1/cgroup"
+          echo '0::/user.slice/user-1000.slice/session-2.scope' >"$d/proc/self/cgroup"
+          env -u container bash {{.root}}/scripts/in-container.sh "$d"; echo "exit=$?"
+        assertions:
+          - result.systemout ShouldEqual exit=1
+
+  - name: a root without /proc cgroup files is not a container
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          env -u container bash {{.root}}/scripts/in-container.sh "$d"; echo "exit=$?"
+        assertions:
+          - result.systemout ShouldEqual exit=1
+
+  - name: podman's /run/.containerenv marks a container
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/run"
+          : >"$d/run/.containerenv"
+          env -u container bash {{.root}}/scripts/in-container.sh "$d"; echo "exit=$?"
+        assertions:
+          - result.systemout ShouldEqual exit=0
+
+  - name: the container environment variable marks a container
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          container=podman bash {{.root}}/scripts/in-container.sh "$d"; echo "exit=$?"
+        assertions:
+          - result.systemout ShouldEqual exit=0
+
+  - name: an empty container environment variable does not mark a container
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          container= bash {{.root}}/scripts/in-container.sh "$d"; echo "exit=$?"
+        assertions:
+          - result.systemout ShouldEqual exit=1
+
+  - name: docker's /.dockerenv marks a container
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          : >"$d/.dockerenv"
+          env -u container bash {{.root}}/scripts/in-container.sh "$d"; echo "exit=$?"
+        assertions:
+          - result.systemout ShouldEqual exit=0
+
+  - name: a container runtime in PID 1's cgroup marks a container
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/proc/1"
+          echo '0::/kubepods/besteffort/pod1234/abcd' >"$d/proc/1/cgroup"
+          env -u container bash {{.root}}/scripts/in-container.sh "$d"; echo "exit=$?"
+        assertions:
+          - result.systemout ShouldEqual exit=0
+
+  - name: a container runtime in the process's own cgroup marks a container
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/proc/self"
+          echo '0::/system.slice/docker-0123abcd.scope' >"$d/proc/self/cgroup"
+          env -u container bash {{.root}}/scripts/in-container.sh "$d"; echo "exit=$?"
+        assertions:
+          - result.systemout ShouldEqual exit=0
