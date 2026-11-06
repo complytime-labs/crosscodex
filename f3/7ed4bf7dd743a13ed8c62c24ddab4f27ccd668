@@ -1,0 +1,70 @@
+internal/pipeline/service_bdd_test.go
+  s_f8c7430887bee6::t_6d7728db18b936 32
+  s_f8c7430887bee6::t_64308d48c8a32c 1720-1744,1804-1805
+pkg/llmclient/answered_bdd_test.go
+  s_f8c7430887bee6::t_aa278015ffcc31 1-44
+README.md
+  s_f8c7430887bee6::t_1d04488b4ff296 152-157
+internal/worker/handler_bdd_test.go
+  s_f8c7430887bee6::t_8972e593a42cee 104-126
+pkg/llmclient/errors.go
+  s_f8c7430887bee6::t_0186c9ed8925e4 36-40
+internal/pipeline/errors.go
+  s_f8c7430887bee6::t_cdfcaae9783c41 11
+  s_f8c7430887bee6::t_6d7728db18b936 85-89,112-113
+pkg/db/migrations/001_initial_schema.up.sql
+  s_f8c7430887bee6::t_6d7728db18b936 280-281
+pkg/natsbus/types.go
+  s_f8c7430887bee6::t_3fba799b2fb044 28-34
+internal/analyzer/artifacts/adjudicate_bdd_test.go
+  s_f8c7430887bee6::t_f8ddae2c380a8f 308-321
+internal/analysis/engine.go
+  s_f8c7430887bee6::t_31e246b8213012 21,537-540,642-675
+  s_f8c7430887bee6::t_e8ab613a2b4707 5
+  s_f8c7430887bee6::t_ca4b25510033d3 676
+internal/worker/handler.go
+  s_f8c7430887bee6::t_296df9c46335e0 18
+  s_f8c7430887bee6::t_7d767a778d83b8 198-202,323-324
+internal/analysis/collector.go
+  s_f8c7430887bee6::t_995f53be4740e7 5,21
+  s_f8c7430887bee6::t_2286f2f0e49fe1 219-221,297-300,304,560-562
+internal/catalog/adapters_bdd_test.go
+  s_f8c7430887bee6::t_04f1d17f462b27 1-39
+deploy/README.md
+  s_f8c7430887bee6::t_1d04488b4ff296 474-482
+internal/analysis/collector_bdd_test.go
+  s_f8c7430887bee6::t_58040114bf8f49 16,205-236
+  s_f8c7430887bee6::t_43123b4fb566a6 237-238
+internal/analysis/engine_bdd_test.go
+  s_f8c7430887bee6::t_31e246b8213012 416
+  s_f8c7430887bee6::t_e8ab613a2b4707 24
+  s_f8c7430887bee6::t_cf2ef94eb8fa31 384-415,417-420
+  s_f8c7430887bee6::t_5a99336f1df421 421-422
+internal/analyzer/artifacts/adjudicate.go
+  s_f8c7430887bee6::t_fd2bded007d3d6 59,447,450-451
+  s_f8c7430887bee6::t_c9d95bd76dac06 461-465
+internal/catalog/adapters.go
+  s_f8c7430887bee6::t_ee891af189e39b 27,31-32,39-41
+internal/worker/payload_bdd_test.go
+  s_f8c7430887bee6::t_8972e593a42cee 291
+pkg/llmclient/answered.go
+  s_f8c7430887bee6::t_483532bec37156 1-36
+pkg/llmclient/llmclient_property_test.go
+  s_f8c7430887bee6::t_54174d0d31716c 190-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f37ed4bf7dd743a13ed8c62c24ddab4f27ccd668",
+  "prompts": {},
+  "sessions": {
+    "s_f8c7430887bee6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30c3bccd-63cd-46bf-a5da-a0ec17abb35d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
