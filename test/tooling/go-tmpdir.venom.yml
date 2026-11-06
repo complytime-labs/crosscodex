@@ -1,0 +1,18 @@
+name: tasks create GOTMPDIR, so Go commands work in a fresh clone or worktree
+
+vars:
+  root: "."
+
+testcases:
+  - name: running a task in a checkout without .go-tmp creates it
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cp {{.root}}/Taskfile.yml "$d/" && cp -r {{.root}}/.taskfiles "$d/"
+          task -d "$d" default >/dev/null
+          test -d "$d/.go-tmp" && echo "go-tmp=present" || echo "go-tmp=missing"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring go-tmp=present
