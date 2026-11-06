@@ -1,0 +1,27 @@
+internal/pipeline/stages.go
+  s_f8c7430887bee6::t_f70cae2e25a33f 8-9
+  s_f8c7430887bee6::t_0c232b8ec839c8 94
+pkg/config/analyzers.go
+  s_f8c7430887bee6::t_52c1dba5ae1d34 1-24
+pkg/config/analyzers_bdd_test.go
+  s_f8c7430887bee6::t_bcd131cbf97a19 1-45,47-54
+  s_f8c7430887bee6::t_0c232b8ec839c8 46
+internal/pipeline/production_registry.go
+  s_f8c7430887bee6::t_0c232b8ec839c8 98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7311137bc0617e8192b82a6836932b3e9313c8a",
+  "prompts": {},
+  "sessions": {
+    "s_f8c7430887bee6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30c3bccd-63cd-46bf-a5da-a0ec17abb35d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
