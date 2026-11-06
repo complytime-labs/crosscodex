@@ -21,6 +21,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/analyzertest"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -378,6 +379,45 @@ var _ = Describe("Engine", func() {
 			Expect(result.Failed).To(BeEmpty())
 			Expect(result.Outputs["classify"].Metadata["incomplete"]).To(Equal("true"))
 			Expect(result.Outputs["classify"].Metadata["failed_tasks"]).To(Equal("2"))
+		})
+
+		It("fails the analyzer, with an actionable message, when any task got no answer within max_tokens", func() {
+			tasks := makeTasks("classify", 3)
+			stub := newStubWithTasks("classify", tasks)
+			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+
+			truncated := fmt.Errorf("task_output_truncated: %w", llmclient.ErrOutputTruncated)
+			collector.resultsFn = func(req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+				return []analyzer.TaskResult{
+					{TaskID: req.ExpectedIDs[0], TaskType: "classify"},
+					{TaskID: req.ExpectedIDs[1], TaskType: "classify", Error: truncated},
+					{TaskID: req.ExpectedIDs[2], TaskType: "classify", Error: fmt.Errorf("task_failed")},
+				}, nil
+			}
+
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes())
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-trunc",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Failed).To(ConsistOf("classify"))
+			Expect(result.Completed).To(BeEmpty())
+			Expect(result.Outputs).NotTo(HaveKey("classify"), "no partial output is kept")
+			stageErr := result.Errors["classify"]
+			Expect(stageErr).To(MatchError(llmclient.ErrOutputTruncated))
+			var se *analysis.StageError
+			Expect(errors.As(stageErr, &se)).To(BeTrue())
+			Expect(se.Analyzer).To(Equal("classify"))
+			Expect(se.Error()).To(ContainSubstring(`Stage "classify" stopped`))
+			Expect(se.Error()).To(ContainSubstring("1 of 3 tasks got no answer from the model"))
+			Expect(se.Error()).To(ContainSubstring("analysis.classification.max_tokens"))
+			Expect(se.Error()).To(ContainSubstring("reasoning"))
+			Expect(se.Error()).To(ContainSubstring("crosscodex run retry --from-failure job-trunc"))
+			Expect(se.Error()).NotTo(ContainSubstring("task_output_truncated"), "the message is written for the tenant")
 		})
 
 		It("marks analyzer as failed when all tasks fail", func() {

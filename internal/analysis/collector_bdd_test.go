@@ -13,6 +13,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -199,6 +200,40 @@ var _ = Describe("NATSCollector", func() {
 			Expect(redispatches).To(HaveLen(1))
 			Expect(redispatches[0].taskID).To(Equal("t-1"))
 			Expect(redispatches[0].retryCount).To(Equal(1))
+		})
+
+		It("does not retry a task whose model gave no answer within max_tokens", func() {
+			tasks := []analyzer.Task{
+				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
+			}
+			req := analysis.CollectRequest{
+				TaskType:     natsbus.TaskClassify,
+				JobID:        "job-1",
+				ExpectedIDs:  []string{"t-1"},
+				Tasks:        tasks,
+				Timeout:      1 * time.Second,
+				StageTimeout: time.Hour,
+				MaxRetries:   3,
+				Backoff:      1 * time.Millisecond,
+				Dispatcher:   fakeDisp,
+			}
+
+			go func() {
+				time.Sleep(10 * time.Millisecond)
+				deliverResult(fakeNATS, "t-1", nil, natsbus.ResultErrorOutputTruncated)
+			}()
+
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			results, err := collector.AwaitResults(ctx, handle)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveLen(1))
+			Expect(results[0].Error).To(MatchError(llmclient.ErrOutputTruncated))
+			Expect(results[0].Error).NotTo(MatchError(analysis.ErrRetryExhausted))
+
+			fakeDisp.mu.Lock()
+			defer fakeDisp.mu.Unlock()
+			Expect(fakeDisp.redispatches).To(BeEmpty())
 		})
 
 		It("redispatches under the collection's tenant when the NATS handler context carries none", func() {

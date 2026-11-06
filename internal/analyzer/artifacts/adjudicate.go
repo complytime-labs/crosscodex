@@ -56,7 +56,7 @@ var systemLLMErrors = []error{
 // sentinel instead of the full error, which can carry the gateway's reply;
 // panelError replaces every other error with a fixed message.
 var llmErrors = append(slices.Clone(systemLLMErrors),
-	llmclient.ErrInvalidRequest, llmclient.ErrMaxTokensExceeded, llmclient.ErrResponseTooLarge)
+	llmclient.ErrInvalidRequest, llmclient.ErrMaxTokensExceeded, llmclient.ErrResponseTooLarge, llmclient.ErrOutputTruncated)
 
 // AdjudicateOptions configures one Adjudicator.Run.
 type AdjudicateOptions struct {
@@ -444,10 +444,11 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID, runID string, p Lease
 			if a.inFlight != nil {
 				a.inFlight.Add(ctx, 1)
 			}
-			resp, err := a.llm.Complete(ctx, &llmclient.CompletionRequest{
+			req := &llmclient.CompletionRequest{
 				Model: model, Messages: messages, MaxTokens: a.cfg.MaxTokens, Temperature: &temperature,
 				TenantID: tenantID, JobID: runID, PromptName: rp.Name, PromptVersion: rp.Version,
-			})
+			}
+			resp, err := a.llm.Complete(ctx, req)
 			if a.inFlight != nil {
 				a.inFlight.Add(ctx, -1)
 			}
@@ -457,7 +458,11 @@ func (a *Adjudicator) panel(ctx context.Context, tenantID, runID string, p Lease
 			case len(resp.Choices) == 0:
 				votes[i], errs[i] = consensus.Vote{VoterID: voterID}, errNoChoices
 			default:
-				votes[i] = ParseSameAsResponse(voterID, resp.Choices[0].Message.Content)
+				if aerr := llmclient.CheckAnswered(req, resp); aerr != nil {
+					votes[i], errs[i] = consensus.Vote{VoterID: voterID}, aerr
+				} else {
+					votes[i] = ParseSameAsResponse(voterID, resp.Choices[0].Message.Content)
+				}
 			}
 			return nil
 		})

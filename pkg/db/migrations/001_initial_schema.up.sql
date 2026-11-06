@@ -277,7 +277,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- Classifies error_message's cause (pipeline.ClassifyJobError), so a
     -- retry that cannot succeed is refused without matching the text.
     -- A retry may fix: '' (no failure, or an unclassified one),
-    -- result_cache_unavailable and llm_unavailable. Refused: attestation_invalid,
+    -- result_cache_unavailable, llm_unavailable and llm_output_truncated.
+    -- Refused: attestation_invalid,
     -- analyzers_changed, missing_catalog, empty_target_catalog and
     -- result_cache_corrupt (both retry forms, except a new job from a job
     -- already started with --no-cache, which is the remedy itself).

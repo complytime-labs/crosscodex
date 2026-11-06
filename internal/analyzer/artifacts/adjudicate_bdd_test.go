@@ -305,6 +305,20 @@ var _ = Describe("Adjudicator", func() {
 			Entry("any other error", errors.New("raw gateway text"), "completion failed"),
 		)
 
+		It("fails the pair, naming why, when a voter gave no answer within max_tokens", func() {
+			f.llm.CompleteFunc = func(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+				return &llmclient.CompletionResponse{
+					Model:   req.Model,
+					Choices: []llmclient.CompletionChoice{{Message: llmclient.ChatMessage{Role: "assistant"}, FinishReason: "length"}},
+					Usage:   llmclient.TokenUsage{CompletionTokens: req.MaxTokens},
+				}, nil
+			}
+			res, err := f.run()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(artifacts.AdjudicateResult{Leased: 1, Failed: 1}))
+			Expect(f.store.row(adjTenant, f.key).lastError).To(ContainSubstring("first completion error: " + llmclient.ErrOutputTruncated.Error()))
+		})
+
 		It("logs the unredacted completion error once", func() {
 			var logs bytes.Buffer
 			prev := slog.Default()

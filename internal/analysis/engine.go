@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -532,6 +534,10 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			e.putResults(ctx, sc, collected)
 		}
 	}
+	if se := e.outputTruncated(ctx, name, req.JobID, results); se != nil {
+		stop(se)
+		return
+	}
 	results = append(results, preBuiltResults...)
 
 	// Separate successful and failed results.
@@ -632,4 +638,39 @@ func (s *executionState) isCompleted(name string) bool {
 		}
 	}
 	return false
+}
+
+// outputTruncated returns the stage error for results in which any task's
+// model gave no answer within max_tokens, or nil. Such a stage fails instead
+// of aggregating the answered tasks: the budget or the model's reasoning is
+// misconfigured for every task alike, and the unanswered ones would otherwise
+// be left out of the results without a trace.
+func (e *Engine) outputTruncated(ctx context.Context, name, jobID string, results []analyzer.TaskResult) *StageError {
+	var first error
+	truncated := 0
+	for _, r := range results {
+		if errors.Is(r.Error, llmclient.ErrOutputTruncated) {
+			if first == nil {
+				first = r.Error
+			}
+			truncated++
+		}
+	}
+	if truncated == 0 {
+		return nil
+	}
+	setting, ok := config.AnalyzerSetting(name, "max_tokens")
+	if !ok {
+		setting = fmt.Sprintf("analyzer %q's max_tokens setting", name)
+	}
+	e.logger.ErrorContext(ctx, "the model gave no answer within max_tokens, so the stage stopped. It spent the budget "+
+		"before answering, as reasoning models do: turn its reasoning off in the LLM gateway or raise the setting",
+		"analyzer", name, "job_id", jobID, "truncated_tasks", truncated, "tasks", len(results), "setting", setting, "error", first)
+	return &StageError{Analyzer: name, Sentinel: llmclient.ErrOutputTruncated, Cause: first, Message: fmt.Sprintf(
+		"Stage %q stopped: %d of %d tasks got no answer from the model within their max_tokens budget "+
+			"(error class llm_output_truncated). The model spent the budget before answering, as reasoning models do. "+
+			"Turn the model's reasoning off in the LLM gateway (see \"llama.cpp, vLLM or another OpenAI-compatible server\" "+
+			"in deploy/README.md), or raise %s in the crosscodexd configuration and restart crosscodexd. Then resume the job "+
+			"with \"crosscodex run retry --from-failure %s\", which keeps its completed stages. If this persists, give your operator %s.",
+		name, truncated, len(results), setting, jobID, TraceReference(ctx, jobID))}
 }

@@ -101,6 +101,29 @@ var _ = Describe("Handler", func() {
 		})
 	})
 
+	Describe("Completion cut off before any answer", func() {
+		It("publishes output_truncated instead of an empty response", func() {
+			llm.CompleteFunc = func(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+				return &llmclient.CompletionResponse{
+					Model:   req.Model,
+					Choices: []llmclient.CompletionChoice{{Message: llmclient.ChatMessage{Role: "assistant"}, FinishReason: "length"}},
+					Usage:   llmclient.TokenUsage{CompletionTokens: req.MaxTokens},
+				}, nil
+			}
+
+			ctx := testspecs.SetupTenantContext("tenant-abc")
+			w := newWorker()
+			Expect(w.Start(ctx)).To(Succeed())
+			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
+
+			payload := BuildCompletionPayload("test", "gpt-4", 0.0, 20)
+			awaitError := WatchErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
+			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
+
+			Expect(awaitError(5 * time.Second)).To(Equal(natsbus.ResultErrorOutputTruncated))
+		})
+	})
+
 	Describe("Default model resolution", func() {
 		It("uses tenant default model when payload model is empty", func() {
 			var receivedModel string

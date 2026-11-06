@@ -25,6 +25,13 @@ const (
 	TaskEmbed     TaskType = "embed"
 )
 
+// ResultErrorOutputTruncated is the X-Error value a worker publishes for a
+// completion task whose model gave no answer within max_tokens
+// (llmclient.ErrOutputTruncated). It is the worker/collector contract for
+// that failure: the collector matches it exactly and does not retry the
+// task, because the same request at the same budget gets the same result.
+const ResultErrorOutputTruncated = "output_truncated"
+
 // taskTypes lists every TaskType constant, in declaration order.
 var taskTypes = []TaskType{TaskClassify, TaskRelate, TaskRequires, TaskArtifacts, TaskEmbed}
 

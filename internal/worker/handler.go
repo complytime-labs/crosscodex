@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -194,6 +195,11 @@ func (w *Worker) handleCompletion(ctx context.Context, payload *structpb.Struct,
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrLLMCall, err)
 	}
+	// An empty answer cut off at max_tokens would parse as nothing and be
+	// dropped by the analyzer; report it so the stage can say why.
+	if err := llmclient.CheckAnswered(req, resp); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrLLMCall, err)
+	}
 
 	return buildCompletionResult(resp)
 }
@@ -314,6 +320,8 @@ func errorCategory(err error) string {
 	switch {
 	case errors.Is(err, ErrInvalidPayload):
 		return "invalid_payload"
+	case errors.Is(err, llmclient.ErrOutputTruncated):
+		return natsbus.ResultErrorOutputTruncated
 	case errors.Is(err, ErrLLMCall):
 		return "llm_error"
 	case errors.Is(err, ErrTenantConfig):
