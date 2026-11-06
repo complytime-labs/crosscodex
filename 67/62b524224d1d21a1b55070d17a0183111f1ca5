@@ -1,0 +1,20 @@
+.taskfiles/test.yml
+  h_4db53f42b9be42 74
+scripts/in-container.sh
+  h_4db53f42b9be42 1-25
+test/deploy/smoke_up.sh
+  h_4db53f42b9be42 31-33
+test/tooling/in-container.venom.yml
+  h_4db53f42b9be42 1-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6762b524224d1d21a1b55070d17a0183111f1ca5",
+  "prompts": {},
+  "humans": {
+    "h_4db53f42b9be42": {
+      "author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
