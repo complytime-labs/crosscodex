@@ -670,7 +670,7 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		pipeline.WithCatalogNameReader(pipeline.NewPGCatalogNameReader(tenantConn, pipeline.WithPGCatalogNameReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn, pipeline.WithPGEmbeddingsReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
-		pipeline.WithResultCache(cacheStore, cfg.Analysis.ResultCache, cfg.LLM, shared.llmClient),
+		pipeline.WithResultCache(cacheStore, cfg.Analysis.ResultCache, cfg.LLM, shared.probeClient),
 		pipeline.WithTelemetry(tp, mp),
 	), nil
 }

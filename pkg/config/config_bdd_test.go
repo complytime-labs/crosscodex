@@ -1831,6 +1831,9 @@ logging:
 			Entry("rejects negative expiry duration", func(c *config.Config) {
 				c.Attestation.ExpiryDuration = -1 * time.Hour
 			}, "attestation.expiry_duration", "must be positive"),
+			Entry("rejects negative llm.probe_timeout", func(c *config.Config) {
+				c.LLM.ProbeTimeout = -1
+			}, "llm.probe_timeout", "-1 must be non-negative"),
 			Entry("rejects negative storage_retries", func(c *config.Config) {
 				c.Attestation.StorageRetries = -1
 			}, "attestation.storage_retries", "-1 must be in range [0, 10]"),

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -444,6 +446,68 @@ var _ = Describe("Result cache settings and the model probe", Ordered, func() {
 			Expect(stages).To(HaveEach(HaveField("Status", pipeline.StageStatusPending)), "no stage was marked failed")
 			Expect(logs.String()).NotTo(ContainSubstring("llm.gateway_url"))
 			Expect(logs.String()).NotTo(ContainSubstring("level=ERROR"))
+		})
+
+		// A gateway whose first completion is slow, as a server that loads
+		// the model on demand answers while the model loads (#262). The
+		// probe client is a real llmclient whose timeout is the probe's.
+		Describe("against a gateway that answers slowly while it loads the model", func() {
+			slowGateway := func(delay time.Duration) string {
+				gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					select {
+					case <-time.After(delay):
+					case <-r.Context().Done():
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"model":"loaded-chat","choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+				}))
+				DeferCleanup(gw.Close)
+				return gw.URL
+			}
+			probeWith := func(gatewayURL string, timeoutSeconds int) (analysis.CacheSettings, error) {
+				probe, err := llmclient.NewClient(config.LLMConfig{GatewayURL: gatewayURL, GatewayMode: true, Timeout: timeoutSeconds})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(probe.Close)
+				job.Status = pipeline.JobStatusRunning
+				Expect(store.CreateJob(ctx, job)).To(Succeed())
+				Expect(store.CreateStages(ctx, "job-1", []string{"classify"})).To(Succeed())
+				svc := serviceWith(pipeline.WithResultCache(&resultcachetest.Fake{}, cacheCfg, llmCfg, probe))
+				return svc.PrepareResultCache(ctx, job, att, []string{"classify"}, controls)
+			}
+
+			It("proceeds when the response arrives within the probe's timeout", func() {
+				settings, err := probeWith(slowGateway(1200*time.Millisecond), 3)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(settings.Models[completionUse].Observed).To(Equal("loaded-chat"))
+			})
+
+			It("stops with llm_unavailable, saying the model may still be loading, when the probe times out", func() {
+				_, err := probeWith(slowGateway(3*time.Second), 1)
+
+				Expect(err).To(MatchError(pipeline.ErrLLMUnavailable))
+				Expect(pipeline.ClassifyJobError(err)).To(Equal(pipeline.JobErrorLLMUnavailable))
+				Expect(err.Error()).To(Equal(`Stage "classify" stopped: the model gateway did not answer a probe request ` +
+					`within the probe timeout, and no analysis LLM calls were made (error class llm_unavailable). ` +
+					`The model may still be loading on a server that loads models on demand: retry this job shortly ` +
+					`(crosscodex run retry job-1). If it keeps timing out, ask your operator to raise llm.probe_timeout ` +
+					`or keep the model loaded on the server, and give them job ID job-1 (tracing is off, so there is no trace ID).`))
+				Expect(logs.String()).To(ContainSubstring("the model probe timed out"))
+				Expect(logs.String()).To(ContainSubstring("llm.probe_timeout"))
+			})
+
+			It("keeps the gateway-unreachable message when the gateway refuses the connection", func() {
+				gw := httptest.NewServer(http.NotFoundHandler())
+				gw.Close()
+
+				_, err := probeWith(gw.URL, 1)
+
+				Expect(err).To(MatchError(pipeline.ErrLLMUnavailable))
+				Expect(err.Error()).To(ContainSubstring("Retry this job once the gateway is working"))
+				Expect(err.Error()).NotTo(ContainSubstring("loading"))
+				Expect(logs.String()).NotTo(ContainSubstring("timed out"))
+			})
 		})
 
 		It("never puts the gateway's text into a reason", func() {

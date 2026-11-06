@@ -427,6 +427,7 @@ llm:
   gateway_url: "http://localhost:4000"  # roles pipeline, worker and all refuse to start if this doesn't answer
   default_model: "qwen3:8b"
   timeout: 30  # seconds per LLM request; 0 means the 30s default. Raise it for a self-hosted server that loads models on demand or reasons before answering (see "Tuning a self-hosted model server" in deploy/README.md)
+  probe_timeout: 0  # seconds for the per-job model probe, the first call to reach the model; 0 means llm.timeout. Raise it to cover a cold model load without stretching every analysis call's timeout (global-only)
   model_revisions:                      # alias → revision label, part of every result-cache key (global-only); change it to force cache misses. Required to cache an alias the gateway names only by itself, with no deployment ID
     default: "2026-11-01"
 

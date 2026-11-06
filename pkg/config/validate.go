@@ -150,6 +150,10 @@ func validateLLM(llm *LLMConfig, tracker *sourceTracker) error {
 		p.add("llm.timeout", "llm.timeout %d%s must be non-negative: %w",
 			llm.Timeout, formatSource(tracker, "llm.timeout"), ErrInvalidConfig)
 	}
+	if llm.ProbeTimeout < 0 {
+		p.add("llm.probe_timeout", "llm.probe_timeout %d%s must be non-negative: %w",
+			llm.ProbeTimeout, formatSource(tracker, "llm.probe_timeout"), ErrInvalidConfig)
+	}
 	if llm.MaxRetries < 0 {
 		p.add("llm.max_retries", "llm.max_retries %d%s must be non-negative: %w",
 			llm.MaxRetries, formatSource(tracker, "llm.max_retries"), ErrInvalidConfig)
