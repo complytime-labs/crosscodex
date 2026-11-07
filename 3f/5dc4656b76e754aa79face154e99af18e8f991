@@ -1,0 +1,25 @@
+deploy/README.md
+  s_89c2d29d9547cf::t_d9231cd0db9488 140
+README.md
+  s_89c2d29d9547cf::t_d9231cd0db9488 19-26,237,525-526,529,533
+deploy/config.yaml
+  s_89c2d29d9547cf::t_d9231cd0db9488 100
+pkg/config/types.go
+  s_89c2d29d9547cf::t_d9231cd0db9488 658
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3f5dc4656b76e754aa79face154e99af18e8f991",
+  "prompts": {},
+  "sessions": {
+    "s_89c2d29d9547cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9f3f5fc-564b-4eae-9b46-b1bdeaa235ac",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
