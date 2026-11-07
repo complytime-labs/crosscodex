@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -133,6 +135,10 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 
 	// The candidate generators read IDs/Values from any struct via reflection
 	// (pkg/analyzer/candidate/builtin/semantic.go's extractMatrixData).
+	rowOf := make(map[string]int, len(ids))
+	for i, id := range ids {
+		rowOf[id] = i
+	}
 	matrix := struct {
 		IDs    []string
 		Values [][]float32
@@ -151,7 +157,7 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 	}
 	var candidates []candidate.Candidate
 	for _, req := range requests {
-		got, err := g.registry.Generate(ctx, req, candidate.StrategyWeightedUnion)
+		got, err := g.registry.Generate(ctx, req, candidate.StrategyRankFusion, candidate.WithMaxPerSource(g.cfg.MaxPerSource))
 		if err != nil {
 			return fmt.Errorf("candidate generation: generating: %w", err)
 		}
@@ -164,12 +170,20 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 	relationshipPairs := make([]relationship.CandidatePair, len(candidates))
 	provenance := make(map[string][]byte, len(candidates))
 	for i, c := range candidates {
-		prov := []requires.CandidateProvenance{{
-			GeneratorName: c.GeneratorID,
-			Score:         c.Score,
-			Weight:        c.Weight,
-			Metadata:      c.Metadata,
-		}}
+		prov := make([]requires.CandidateProvenance, len(c.Contributions))
+		for j, contribution := range c.Contributions {
+			metadata := maps.Clone(contribution.Metadata)
+			if metadata == nil {
+				metadata = make(map[string]string, 1)
+			}
+			metadata["rank"] = strconv.FormatFloat(contribution.Rank, 'g', -1, 64)
+			prov[j] = requires.CandidateProvenance{
+				GeneratorName: contribution.GeneratorID,
+				Score:         contribution.Score,
+				Weight:        contribution.Weight,
+				Metadata:      metadata,
+			}
+		}
 		requiresPairs[i] = requires.RequiresPair{
 			SourceControlID: c.SourceID,
 			TargetControlID: c.TargetID,
@@ -179,10 +193,7 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 		relationshipPairs[i] = relationship.CandidatePair{
 			SourceControlID: c.SourceID,
 			TargetControlID: c.TargetID,
-			// candidate.Candidate.Score is [0,1]; CandidatePair.SimilarityScore's
-			// contract is [0,100] (relationship/candidates.go), so rescale to
-			// match the scale the direct-embedding relationship path produces.
-			SimilarityScore: float32(c.Score * 100),
+			SimilarityScore: matrixSimilarity(rowOf, values, c.SourceID, c.TargetID),
 		}
 		provJSON, err := json.Marshal(prov)
 		if err != nil {
@@ -198,6 +209,18 @@ func (g *CandidateGenerator) Generate(ctx context.Context, tenantID, jobID strin
 		return fmt.Errorf("candidate generation: writing relationship candidates: %w", err)
 	}
 	return nil
+}
+
+// matrixSimilarity returns the pair's value in the [0, 100] similarity matrix,
+// or 0 when either control has no embedding row (a pair a non-embedding
+// generator proposed).
+func matrixSimilarity(rowOf map[string]int, values [][]float32, sourceID, targetID string) float32 {
+	i, sourceOK := rowOf[sourceID]
+	j, targetOK := rowOf[targetID]
+	if !sourceOK || !targetOK {
+		return 0
+	}
+	return values[i][j]
 }
 
 // controlsWithText reads a catalog's controls and drops those without a

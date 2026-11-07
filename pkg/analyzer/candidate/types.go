@@ -23,8 +23,19 @@ type GenerateRequest struct {
 type Candidate struct {
 	SourceID    string            // Source control ID
 	TargetID    string            // Target control ID
-	Score       float64           // [0.0, 1.0] confidence/similarity score
+	Score       float64           // [0.0, 1.0] confidence/similarity score; for rank fusion, the fused value (< 1)
 	Weight      float64           // [0.0, 1.0] from generator config
 	GeneratorID string            // Which generator produced this
 	Metadata    map[string]string // Generator-specific metadata
+
+	Contributions []Contribution // Per-generator parts; set by StrategyRankFusion only, nil otherwise
+}
+
+// Contribution is one generator's part in a rank-fused candidate.
+type Contribution struct {
+	GeneratorID string
+	Score       float64
+	Weight      float64
+	Rank        float64 // Fractional rank within that generator's output for this source
+	Metadata    map[string]string
 }

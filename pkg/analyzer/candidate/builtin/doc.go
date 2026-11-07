@@ -5,6 +5,7 @@
 //
 //   - SemanticGenerator: Selects top-K most similar targets based on embedding similarity
 //   - KeywordGenerator: Identifies foundational targets by keyword matching
+//   - LexicalGenerator: Ranks targets by BM25 over control text
 //   - LevelGenerator: Pairs sources with higher-level targets (Strategic→Tactical→Operational)
 //
 // All generators implement the candidate.Generator interface and can be configured

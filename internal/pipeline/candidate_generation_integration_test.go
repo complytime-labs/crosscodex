@@ -128,6 +128,7 @@ var _ = Describe("CandidateGenerator integration", func() {
 		cfg := config.CandidateConfig{
 			Generators:           []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true, Weight: 1.0}},
 			MinEmbeddingCoverage: 0.8,
+			MaxPerSource:         10,
 		}
 		registry, err := BuildCandidateRegistry(cfg, nil, nil)
 		Expect(err).NotTo(HaveOccurred(), "BuildCandidateRegistry")

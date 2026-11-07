@@ -38,7 +38,7 @@ var _ = Describe("Candidate Configuration", func() {
 	Describe("validation", func() {
 		DescribeTable("min_embedding_coverage validation",
 			func(coverage float64, shouldErr bool) {
-				cfg := config.CandidateConfig{MinEmbeddingCoverage: coverage, EmbedModel: "m"}
+				cfg := config.CandidateConfig{MinEmbeddingCoverage: coverage, EmbedModel: "m", MaxPerSource: 1}
 
 				err := cfg.Validate()
 				if shouldErr {
@@ -56,7 +56,7 @@ var _ = Describe("Candidate Configuration", func() {
 		)
 
 		It("requires a non-empty embed_model", func() {
-			cfg := config.CandidateConfig{MinEmbeddingCoverage: 0.5, EmbedModel: ""}
+			cfg := config.CandidateConfig{MinEmbeddingCoverage: 0.5, EmbedModel: "", MaxPerSource: 1}
 			err := cfg.Validate()
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("embed_model"))

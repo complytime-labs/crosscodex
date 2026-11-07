@@ -661,6 +661,9 @@ var candidateGeneratorSettings = map[string]map[string]generatorSetting{
 		"keywords": {valid: isNonEmptyStringList, rule: "must be a non-empty list of non-empty strings"},
 	},
 	"level": {},
+	"lexical": {
+		"top_k": {valid: isPositiveInteger, rule: "must be a positive integer"},
+	},
 	"semantic": {
 		"top_k":          {valid: isPositiveInteger, rule: "must be a positive integer"},
 		"min_similarity": {valid: isSimilarityThreshold, rule: "must be a number in range [0, 100] (cosine similarity x 100)"},
@@ -674,6 +677,27 @@ var candidateGeneratorSettings = map[string]map[string]generatorSetting{
 // generators' readers in pkg/analyzer/candidate/builtin/parameters.go, which
 // pkg/config must not import; change both together.
 const maxExactFloatInt = 1 << 53
+
+// defaultTopK is the top_k the semantic and lexical generators use when the
+// entry sets none; it mirrors their default in pkg/analyzer/candidate/builtin,
+// which pkg/config must not import. Change both together.
+const defaultTopK = 10
+
+// topKGenerators names the generators that keep at most top_k targets per
+// source control, so top_k bounds their contribution to max_per_source.
+var topKGenerators = []string{"lexical", "semantic"}
+
+// positiveIntegerValue returns the value of a v that isPositiveInteger accepts.
+func positiveIntegerValue(v interface{}) int64 {
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	default:
+		return int64(v.(float64))
+	}
+}
 
 // isPositiveInteger accepts the integer shapes a decoder produces: YAML
 // yields int, JSON yields float64, so an integral float64 counts.

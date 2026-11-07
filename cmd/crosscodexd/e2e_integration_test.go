@@ -100,6 +100,7 @@ func e2eAnalysisConfig() config.AnalysisConfig {
 		Candidates: config.CandidateConfig{
 			Generators:           []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true, Weight: 1.0}},
 			MinEmbeddingCoverage: 0.8,
+			MaxPerSource:         10,
 			EmbedModel:           e2eModel,
 		},
 		Requires: config.RequiresConfig{

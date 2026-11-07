@@ -45,6 +45,19 @@ var _ = Describe("BuildCandidateRegistry", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("registers the lexical generator when enabled", func() {
+		cfg := config.CandidateConfig{Generators: []config.CandidateGeneratorEntry{
+			{Name: "lexical", Enabled: true},
+		}}
+
+		reg, err := pipeline.BuildCandidateRegistry(cfg, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		gen, err := reg.Get("lexical")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gen.Name()).To(Equal("lexical"))
+	})
+
 	It("rejects unknown generator names loudly instead of skipping them", func() {
 		cfg := config.CandidateConfig{Generators: []config.CandidateGeneratorEntry{
 			{Name: "typo-generator", Enabled: true},
@@ -146,7 +159,7 @@ var _ = Describe("BuildCandidateRegistry", func() {
 				fakeControlsReader{controls: controls},
 				fakeEmbeddingsReader{ids: ids, values: values},
 				reg, writer,
-				config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
+				config.CandidateConfig{MinEmbeddingCoverage: 0.8, MaxPerSource: 10}, "test-model",
 			)
 
 			Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))).To(Succeed())
@@ -164,6 +177,7 @@ var _ = Describe("BuildCandidateRegistry", func() {
 				{Name: "keyword", Enabled: true},
 				{Name: "level", Enabled: true},
 				{Name: "semantic", Enabled: true},
+				{Name: "lexical", Enabled: true},
 			}}
 		}
 
@@ -180,7 +194,7 @@ var _ = Describe("BuildCandidateRegistry", func() {
 			Expect(counterMetric).NotTo(BeNil(), "expected candidate.registrations.total metric")
 			count, err := telemetrytest.CounterValue(counterMetric)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(count).To(Equal(int64(3)))
+			Expect(count).To(Equal(int64(4)))
 		})
 
 		DescribeTable("forwards the tracer provider into each enabled builtin generator",
@@ -203,6 +217,7 @@ var _ = Describe("BuildCandidateRegistry", func() {
 			Entry("keyword", "keyword"),
 			Entry("level", "level"),
 			Entry("semantic", "semantic"),
+			Entry("lexical", "lexical"),
 		)
 	})
 })

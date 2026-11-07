@@ -155,6 +155,7 @@ analysis:
   candidates:
     min_embedding_coverage: 0.8
     embed_model: snowflake-arctic-embed2
+    max_per_source: 10
   artifact_adjudication:
     enabled: false
     models: []

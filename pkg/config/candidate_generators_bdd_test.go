@@ -82,9 +82,15 @@ var _ = Describe("Candidate generator configuration", func() {
 		Entry("semantic NaN min_similarity",
 			config.CandidateGeneratorEntry{Name: "semantic", Config: map[string]interface{}{"min_similarity": math.NaN()}},
 			"analysis.candidates.generators[0].config.min_similarity NaN", "analysis.candidates.generators[0].config.min_similarity", "must be a number in range [0, 100]"),
+		Entry("lexical top_k of zero",
+			config.CandidateGeneratorEntry{Name: "lexical", Config: map[string]interface{}{"top_k": 0}},
+			"analysis.candidates.generators[0].config.top_k 0", "analysis.candidates.generators[0].config.top_k", "must be a positive integer"),
+		Entry("lexical unknown key",
+			config.CandidateGeneratorEntry{Name: "lexical", Config: map[string]interface{}{"topk": 3}},
+			`analysis.candidates.generators[0].config.topk is not a setting of generator "lexical"`, "analysis.candidates.generators[0].config.topk", "allowed keys: [top_k]"),
 		Entry("unknown generator name",
 			config.CandidateGeneratorEntry{Name: "semantics"},
-			`analysis.candidates.generators[0].name "semantics"`, "analysis.candidates.generators[0].name", "use one of [keyword level semantic]"),
+			`analysis.candidates.generators[0].name "semantics"`, "analysis.candidates.generators[0].name", "use one of [keyword level lexical semantic]"),
 	)
 
 	DescribeTable("accepts a valid generator entry",
@@ -101,6 +107,12 @@ var _ = Describe("Candidate generator configuration", func() {
 			config.CandidateGeneratorEntry{Name: "keyword", Enabled: true, Config: map[string]interface{}{"keywords": []interface{}{"policy"}}}),
 		Entry("level with weight and no config",
 			config.CandidateGeneratorEntry{Name: "level", Enabled: true, Weight: 0.5}),
+		Entry("lexical with integer top_k",
+			config.CandidateGeneratorEntry{Name: "lexical", Enabled: true, Config: map[string]interface{}{"top_k": 3}}),
+		Entry("enabled semantic with top_k equal to max_per_source",
+			config.CandidateGeneratorEntry{Name: "semantic", Enabled: true, Config: map[string]interface{}{"top_k": 10}}),
+		Entry("disabled semantic with top_k above max_per_source",
+			config.CandidateGeneratorEntry{Name: "semantic", Enabled: false, Config: map[string]interface{}{"top_k": 50}}),
 		Entry("weight of 1",
 			config.CandidateGeneratorEntry{Name: "semantic", Enabled: true, Weight: 1}),
 	)
@@ -150,5 +162,82 @@ var _ = Describe("Candidate generator configuration", func() {
 		Expect(gens[0].Weight).To(Equal(0.5))
 		Expect(gens[0].Config).To(Equal(map[string]interface{}{"top_k": 3, "min_similarity": 72.5}))
 		Expect(gens[1].Config).To(Equal(map[string]interface{}{"keywords": []interface{}{"policy"}}))
+	})
+
+	Describe("max_per_source", func() {
+		const maxPath = "analysis.candidates.max_per_source"
+
+		DescribeTable("rejects a value below 1",
+			func(value int) {
+				cfg := validConfig()
+				cfg.Analysis.Candidates.MaxPerSource = value
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(MatchError(config.ErrInvalidConfig))
+				Expect(err.Error()).To(ContainSubstring(maxPath))
+				Expect(err.Error()).To(ContainSubstring("must be at least 1"))
+				expectOnlyFieldError(err, maxPath)
+			},
+			Entry("zero", 0),
+			Entry("negative", -1),
+		)
+
+		It("accepts a valid override", func() {
+			cfg := validConfig()
+			cfg.Analysis.Candidates.MaxPerSource = 1
+			Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+		})
+
+		DescribeTable("rejects an enabled generator whose top_k exceeds the cap",
+			func(name string, topK interface{}) {
+				cfg := withGenerator(config.CandidateGeneratorEntry{
+					Name: name, Enabled: true, Config: map[string]interface{}{"top_k": topK}})
+				cfg.Analysis.Candidates.MaxPerSource = 10
+				err := config.ExportValidateConfig(cfg)
+				Expect(err).To(MatchError(config.ErrInvalidConfig))
+				Expect(err.Error()).To(ContainSubstring("max_per_source"))
+				Expect(err.Error()).To(ContainSubstring("raise analysis.candidates.max_per_source or lower"))
+				expectOnlyFieldError(err, "analysis.candidates.generators[0].config.top_k")
+			},
+			Entry("semantic int", "semantic", 11),
+			Entry("semantic JSON float", "semantic", float64(11)),
+			Entry("lexical int", "lexical", 11),
+			Entry("lexical JSON float", "lexical", float64(11)),
+		)
+
+		It("rejects an enabled generator relying on the default top_k of 10", func() {
+			cfg := withGenerator(config.CandidateGeneratorEntry{Name: "lexical", Enabled: true})
+			cfg.Analysis.Candidates.MaxPerSource = 5
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("default 10"))
+			expectOnlyFieldError(err, "analysis.candidates.generators[0]")
+		})
+
+		It("reports only max_per_source when it is invalid, not every generator", func() {
+			cfg := withGenerator(config.CandidateGeneratorEntry{Name: "semantic", Enabled: true})
+			cfg.Analysis.Candidates.MaxPerSource = 0
+			expectOnlyFieldError(config.ExportValidateConfig(cfg), maxPath)
+		})
+
+		It("defaults to 10 in the compiled defaults", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Analysis.Candidates.MaxPerSource).To(Equal(10))
+		})
+
+		It("loads a YAML override and names the file that set an invalid value", func() {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			writeTestFile(path, "analysis:\n  candidates:\n    max_per_source: 0\n")
+			_, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring(maxPath + " 0 (set in " + path + ")"))
+
+			writeTestFile(path, "analysis:\n  candidates:\n    max_per_source: 25\n")
+			cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Analysis.Candidates.MaxPerSource).To(Equal(25))
+		})
 	})
 })

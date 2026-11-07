@@ -653,6 +653,14 @@ type CandidateConfig struct {
 	// in validateAnalysis) — a mismatch would silently read an empty
 	// similarity matrix instead of failing loudly.
 	EmbedModel string `yaml:"embed_model" json:"embed_model"`
+	// MaxPerSource caps the fused candidates kept per source control after
+	// the enabled generators' ranked lists are merged, bounding the number of
+	// pairs each pair analyzer (requires and relationship) sends to the LLM per
+	// source. Must be at least 1 and no smaller than the top_k of any enabled
+	// semantic or lexical generator, which cannot contribute more than top_k
+	// targets per source.
+	// Default: 10.
+	MaxPerSource int `yaml:"max_per_source" json:"max_per_source"`
 }
 
 // Validate checks CandidateConfig for consistency and required fields.
@@ -668,6 +676,32 @@ func (c *CandidateConfig) validate(tracker *sourceTracker) error {
 	if c.EmbedModel == "" {
 		p.add("analysis.candidates.embed_model", "analysis.candidates.embed_model%s must not be empty: %w",
 			formatSource(tracker, "analysis.candidates.embed_model"), ErrInvalidConfig)
+	}
+	if c.MaxPerSource < 1 {
+		p.add("analysis.candidates.max_per_source", "analysis.candidates.max_per_source %d%s must be at least 1: %w",
+			c.MaxPerSource, formatSource(tracker, "analysis.candidates.max_per_source"), ErrInvalidConfig)
+		return p.err()
+	}
+	for i, g := range c.Generators {
+		if !g.Enabled || !slices.Contains(topKGenerators, g.Name) {
+			continue
+		}
+		prefix := fmt.Sprintf("analysis.candidates.generators[%d]", i)
+		topK, explicit := g.Config["top_k"]
+		if !explicit {
+			if defaultTopK > c.MaxPerSource {
+				p.add(prefix, "%s (%s)%s sets no config.top_k, so it uses the default %d, above analysis.candidates.max_per_source %d; set config.top_k or raise analysis.candidates.max_per_source: %w",
+					prefix, g.Name, formatSource(tracker, "analysis.candidates.generators"), defaultTopK, c.MaxPerSource, ErrInvalidConfig)
+			}
+			continue
+		}
+		if !isPositiveInteger(topK) {
+			continue // reported by validateCandidateGenerators
+		}
+		if k := positiveIntegerValue(topK); k > int64(c.MaxPerSource) {
+			p.add(prefix+".config.top_k", "%s.config.top_k %d%s exceeds analysis.candidates.max_per_source %d; raise analysis.candidates.max_per_source or lower top_k: %w",
+				prefix, k, formatSource(tracker, prefix+".config.top_k"), c.MaxPerSource, ErrInvalidConfig)
+		}
 	}
 	return p.err()
 }
