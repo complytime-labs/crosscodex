@@ -1,0 +1,36 @@
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_89c2d29d9547cf::t_d82b9d84ea6609 257
+internal/pipeline/candidate_generation_integration_test.go
+  s_89c2d29d9547cf::t_d82b9d84ea6609 131
+internal/pipeline/candidate_generation_bdd_test.go
+  s_89c2d29d9547cf::t_d82b9d84ea6609 161,212,223,238,262,379,399,418,439,459,472,492,505
+  s_89c2d29d9547cf::t_6f67faee9c53bb 6,246,268-364
+pkg/analyzer/candidate/registry.go
+  s_89c2d29d9547cf::t_0ba8e166e45005 219-220
+internal/pipeline/candidate_generation.go
+  s_89c2d29d9547cf::t_0ba8e166e45005 8-9,138-141,160,173-186,196,214-223
+  s_89c2d29d9547cf::t_b0cb8f068bb0fa 224-225
+internal/pipeline/candidate_registry_test.go
+  s_89c2d29d9547cf::t_6f67faee9c53bb 48-60
+  s_89c2d29d9547cf::t_d82b9d84ea6609 162
+internal/pipeline/candidate_registry.go
+  s_89c2d29d9547cf::t_0ba8e166e45005 47-48
+cmd/crosscodexd/e2e_integration_test.go
+  s_89c2d29d9547cf::t_d82b9d84ea6609 103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1011099b74ecf95076ba8f2660cbe9ad8759b32",
+  "prompts": {},
+  "sessions": {
+    "s_89c2d29d9547cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d9f3f5fc-564b-4eae-9b46-b1bdeaa235ac",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
