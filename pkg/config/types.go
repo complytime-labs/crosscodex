@@ -896,6 +896,16 @@ type WorkerConfig struct {
 	// serves every tenant, so the set and its cap are shared.
 	MaxAbandonedCollections int `yaml:"max_abandoned_collections" json:"max_abandoned_collections"`
 
+	// MaxInFlight bounds how many tasks each worker runs at once; tasks
+	// beyond it wait in the worker's NATS subscription until a slot frees.
+	// Match it to the model server's parallel slots (llama.cpp --parallel,
+	// vLLM --max-num-seqs): a server that batches requests answers several
+	// at once in little more time than one, so this cuts a job's wall time,
+	// not its LLM calls. llm.timeout must cover the time a request queues
+	// at the server as well as the reply. Range [1, MaxInFlightLimit];
+	// default 1 (sequential). Global-only: one worker serves every tenant.
+	MaxInFlight int `yaml:"max_in_flight" json:"max_in_flight"`
+
 	// LLM holds the global LLM configuration with optional per-tenant overrides.
 	// Wired from the top-level LLMConfig at the service layer; not duplicated here.
 	// Set by the service binary via ServiceConfig().Worker.LLM = cfg.LLM.
@@ -917,6 +927,11 @@ func (c *WorkerConfig) validate(tracker *sourceTracker) error {
 			"set a positive count such as the default %d, and raise it if worker.tasks.dropped stays low while abandons are frequent: %w",
 			c.MaxAbandonedCollections, formatSource(tracker, "worker.max_abandoned_collections"), MaxAbandonedCollectionsLimit, 10000, ErrInvalidConfig)
 	}
+	if c.MaxInFlight < 1 || c.MaxInFlight > MaxInFlightLimit {
+		p.add("worker.max_in_flight", "worker.max_in_flight %d%s must be in range [1, %d]: it bounds how many tasks each worker runs at once; "+
+			"match it to the model server's parallel slots, or use the default 1 to run tasks one at a time: %w",
+			c.MaxInFlight, formatSource(tracker, "worker.max_in_flight"), MaxInFlightLimit, ErrInvalidConfig)
+	}
 	return p.err()
 }
 
@@ -924,6 +939,12 @@ func (c *WorkerConfig) validate(tracker *sourceTracker) error {
 // worker.max_abandoned_collections; it keeps one worker's abandoned set
 // within about 43 MB with UUID job IDs.
 const MaxAbandonedCollectionsLimit = 100_000
+
+// MaxInFlightLimit is the largest accepted worker.max_in_flight. Each
+// in-flight task holds a goroutine, a decoded payload and an open request to
+// the model server; 256 is well above the parallel slots of a single
+// self-hosted server or a typical hosted API rate limit.
+const MaxInFlightLimit = 256
 
 // PipelineConfig configures the pipeline orchestration service.
 type PipelineConfig struct {
@@ -1095,6 +1116,8 @@ type ClientConfig struct {
 
 // ServiceConfig returns the daemon-oriented view of this configuration.
 func (c *Config) ServiceConfig() DaemonConfig {
+	worker := c.Worker
+	worker.LLM = c.LLM
 	return DaemonConfig{
 		Addr:          c.Server.Addr,
 		Workers:       c.Server.Workers,
@@ -1111,7 +1134,7 @@ func (c *Config) ServiceConfig() DaemonConfig {
 		Attestation:   c.Attestation,
 		Prompt:        c.Prompt,
 		Analysis:      c.Analysis,
-		Worker:        WorkerConfig{QueueGroup: c.Worker.QueueGroup, LLM: c.LLM},
+		Worker:        worker,
 		Synthesis:     c.Synthesis,
 		Pipeline:      c.Pipeline,
 		Role:          c.Role,

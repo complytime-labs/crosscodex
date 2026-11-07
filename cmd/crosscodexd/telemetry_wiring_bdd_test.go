@@ -78,6 +78,7 @@ var _ = Describe("bootstrap telemetry wiring", func() {
 		// Validation keeps both positive; the worker refuses to start without them.
 		cfg.Pipeline.StageTimeout = time.Hour
 		cfg.Worker.MaxAbandonedCollections = 10
+		cfg.Worker.MaxInFlight = 1
 
 		rt, err := bootstrap(ctx, cfg, WithLLMClient(fixedEmbeddingLLMClient{}))
 		Expect(err).NotTo(HaveOccurred())

@@ -362,6 +362,7 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 	env.workerLLM = &countingLLM{DeterministicLLM: fakeLLM}
 	w := worker.New(bus, env.workerLLM, config.WorkerConfig{
 		MaxAbandonedCollections: 10,
+		MaxInFlight:             1,
 		LLM:                     llmCfg,
 	}, worker.WithAbandonTTL(time.Hour))
 	Expect(w.Start(context.Background())).To(Succeed(), "start worker")

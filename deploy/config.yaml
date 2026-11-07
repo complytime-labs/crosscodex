@@ -115,3 +115,12 @@ analysis:
     # Three samples so a REQUIRES edge needs a majority (consensus_threshold)
     # of independent votes, not one noisy answer.
     samples_per_model: 3
+worker:
+  # Tasks this crosscodexd runs at once (default 1: one LLM call at a time,
+  # across every job). Match it to the model server's parallel slots
+  # (llama.cpp --parallel, vLLM --max-num-seqs) or the hosted API's
+  # concurrency limit. It shortens a job's wall time, not its LLM calls (see
+  # "What an analysis runs, and what it costs" in deploy/README.md). Requests
+  # beyond the server's slots queue there, so llm.timeout must cover that wait
+  # as well as the reply. Range [1, 256].
+  max_in_flight: 1

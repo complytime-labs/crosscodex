@@ -69,6 +69,7 @@ var _ = Describe("Worker Lifecycle", func() {
 		llm = newStubLLM()
 		w = worker.New(bus, llm, worker.WorkerConfig{
 			MaxAbandonedCollections: 10,
+			MaxInFlight:             1,
 			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
@@ -103,6 +104,7 @@ var _ = Describe("Worker Lifecycle", func() {
 		It("uses defaultQueueGroup when QueueGroup is empty", func() {
 			w := worker.New(bus, llm, worker.WorkerConfig{
 				MaxAbandonedCollections: 10,
+				MaxInFlight:             1,
 				// QueueGroup is deliberately empty — worker must fall back to "llm-workers"
 				LLM: config.LLMConfig{
 					DefaultModel:   "test-model",
@@ -194,6 +196,7 @@ var _ = Describe("WithTelemetry", func() {
 	It("creates a worker with telemetry without error", func() {
 		w := worker.New(bus, llm, worker.WorkerConfig{
 			MaxAbandonedCollections: 10,
+			MaxInFlight:             1,
 			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
@@ -213,6 +216,7 @@ var _ = Describe("WithTelemetry", func() {
 	It("records spans after processing a task", func() {
 		w := worker.New(bus, llm, worker.WorkerConfig{
 			MaxAbandonedCollections: 10,
+			MaxInFlight:             1,
 			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
@@ -252,6 +256,7 @@ var _ = Describe("WithTelemetry", func() {
 	It("records metrics after processing a task", func() {
 		w := worker.New(bus, llm, worker.WorkerConfig{
 			MaxAbandonedCollections: 10,
+			MaxInFlight:             1,
 			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
@@ -295,6 +300,7 @@ var _ = Describe("WithTelemetry", func() {
 		}
 		w := worker.New(bus, failingLLM, worker.WorkerConfig{
 			MaxAbandonedCollections: 10,
+			MaxInFlight:             1,
 			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "test-model",
@@ -330,6 +336,7 @@ var _ = Describe("WithTelemetry", func() {
 		Expect(func() {
 			w := worker.New(bus, llm, worker.WorkerConfig{
 				MaxAbandonedCollections: 10,
+				MaxInFlight:             1,
 				QueueGroup:              "test-workers",
 				LLM: config.LLMConfig{
 					DefaultModel:   "test-model",

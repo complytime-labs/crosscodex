@@ -2818,6 +2818,56 @@ var _ = Describe("WorkerConfig", func() {
 		Entry("negative", "-1"),
 		Entry("above the maximum", "100001"),
 	)
+
+	It("defaults max_in_flight to 1", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Worker.MaxInFlight).To(Equal(1))
+	})
+
+	It("accepts a max_in_flight override within range", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		cfgFile := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		writeTestFile(cfgFile, "worker:\n  max_in_flight: 256\n")
+
+		cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(cfgFile))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Worker.MaxInFlight).To(Equal(256))
+	})
+
+	It("carries every worker setting, and the LLM config, into DaemonConfig", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		cfgFile := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		writeTestFile(cfgFile, "worker:\n  queue_group: \"bench\"\n  max_abandoned_collections: 500\n  max_in_flight: 4\n")
+
+		cfg, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(cfgFile))
+		Expect(err).NotTo(HaveOccurred())
+
+		worker := cfg.ServiceConfig().Worker
+		Expect(worker.QueueGroup).To(Equal("bench"))
+		Expect(worker.MaxAbandonedCollections).To(Equal(500))
+		Expect(worker.MaxInFlight).To(Equal(4))
+		Expect(worker.LLM).To(Equal(cfg.LLM))
+	})
+
+	DescribeTable("rejects max_in_flight outside [1, 256] with an actionable error",
+		func(value string) {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+			cfgFile := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+			writeTestFile(cfgFile, "worker:\n  max_in_flight: "+value+"\n")
+
+			_, err := config.NewLoader().Load(context.Background(), config.WithConfigPath(cfgFile))
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err).To(MatchError(ContainSubstring("worker.max_in_flight " + value + " (set in " + cfgFile + ") must be in range [1, 256]")))
+			Expect(err).To(MatchError(ContainSubstring("match it to the model server's parallel slots")))
+			expectOnlyFieldError(err, "worker.max_in_flight")
+		},
+		Entry("zero", "0"),
+		Entry("negative", "-1"),
+		Entry("above the maximum", "257"),
+	)
 })
 
 var _ = Describe("SynthesisConfig validation", func() {

@@ -10,6 +10,17 @@
 // publishes the result. No prompt registry, database, or inter-worker
 // coordination is needed.
 //
+// # Tasks in Flight
+//
+// A worker runs up to worker.max_in_flight tasks at once (default 1). Its one
+// work subscription hands each task to its own goroutine once a slot is free;
+// while every slot is taken the subscription's delivery goroutine waits, so
+// later tasks wait in the NATS client's pending queue. Retry and abandon
+// handling stay per task. Stop drains the subscriptions, keeps tasks still
+// waiting for a slot from starting (counting them in worker.tasks.dropped
+// with reason "worker_stopping"), and waits for running tasks until its
+// context ends.
+//
 // # Abandoned Collections
 //
 // Every worker also subscribes, outside the queue group, to
@@ -41,9 +52,9 @@
 //
 // # Thread Safety
 //
-// Worker is safe for concurrent use. Each NATS message handler executes
-// independently; the only state shared between handlers is the
-// mutex-guarded set of abandoned collections.
+// Worker is safe for concurrent use. Tasks run concurrently, up to
+// worker.max_in_flight; the only state they share is the mutex-guarded set of
+// abandoned collections and the in-flight slots of the current Start.
 //
 // # Error Handling
 //

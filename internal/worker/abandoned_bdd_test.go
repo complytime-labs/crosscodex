@@ -17,7 +17,7 @@ var _ = Describe("worker.abandoned_collections", func() {
 		tp, err := telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
-		w := New(&natsbustest.Fake{}, nil, WorkerConfig{MaxAbandonedCollections: 10},
+		w := New(&natsbustest.Fake{}, nil, WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1},
 			WithAbandonTTL(time.Minute), WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 		now := time.Unix(0, 0)
 		w.abandoned.now = func() time.Time { return now }
