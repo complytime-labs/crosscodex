@@ -1,0 +1,21 @@
+pkg/config/config_bdd_test.go
+  s_9eceb0546014f7::t_870f36cb9aebee 2840-2854
+pkg/config/types.go
+  s_9eceb0546014f7::t_5596369e320eb0 1119-1120,1137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c423d84ec655429d127ebad3c9e43883a45d17f2",
+  "prompts": {},
+  "sessions": {
+    "s_9eceb0546014f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc06551b-52ab-4acd-b6d7-f6852c723834",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
