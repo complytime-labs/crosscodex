@@ -35,3 +35,7 @@ var ErrNoAbandonedCollectionsLimit = errors.New("worker: no abandoned collection
 // ErrAlreadyStarted indicates Start was called on a worker that is already
 // running.
 var ErrAlreadyStarted = errors.New("worker: already started")
+
+// ErrNoInFlightLimit indicates Start was called on a worker whose
+// WorkerConfig.MaxInFlight is not positive, so it could never run a task.
+var ErrNoInFlightLimit = errors.New("worker: no in-flight task limit")

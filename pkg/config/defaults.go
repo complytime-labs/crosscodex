@@ -176,6 +176,7 @@ analysis:
 worker:
   queue_group: "llm-workers"
   max_abandoned_collections: 10000
+  max_in_flight: 1
 synthesis:
   confidence_threshold: 0.5
   max_mappings_per_control: 10

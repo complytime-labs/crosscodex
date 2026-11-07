@@ -33,7 +33,7 @@ func validConfig() *config.Config {
 			IncludeByProducts: true,
 		},
 		Pipeline: config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: 5 * time.Minute},
-		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10000},
+		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10000, MaxInFlight: 1},
 		Graph:    config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
 		Analysis: config.AnalysisConfig{
 			Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},

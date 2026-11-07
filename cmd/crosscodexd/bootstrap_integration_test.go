@@ -171,7 +171,7 @@ func baseTestConfig(suDSN string) *config.Config {
 		// Validation keeps both positive; analysis stages and the worker
 		// refuse to run without them.
 		Pipeline: config.PipelineConfig{StageTimeout: time.Hour},
-		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10},
+		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1},
 	}
 	Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "crosscodexd migrate")
 	return cfg

@@ -49,6 +49,7 @@ var _ = Describe("Handler", func() {
 	newWorker := func() *worker.Worker {
 		return worker.New(bus, llm, worker.WorkerConfig{
 			MaxAbandonedCollections: 10,
+			MaxInFlight:             1,
 			QueueGroup:              "test-workers",
 			LLM: config.LLMConfig{
 				DefaultModel:   "default-model",
@@ -139,6 +140,7 @@ var _ = Describe("Handler", func() {
 			ctx := testspecs.SetupTenantContext("tenant-abc")
 			w := worker.New(bus, llm, worker.WorkerConfig{
 				MaxAbandonedCollections: 10,
+				MaxInFlight:             1,
 				QueueGroup:              "test-workers",
 				LLM: config.LLMConfig{
 					DefaultModel:   "global-model",
@@ -176,6 +178,7 @@ var _ = Describe("Handler", func() {
 			ctx := testspecs.SetupTenantContext("tenant-abc")
 			w := worker.New(bus, llm, worker.WorkerConfig{
 				MaxAbandonedCollections: 10,
+				MaxInFlight:             1,
 				QueueGroup:              "test-workers",
 				LLM: config.LLMConfig{
 					DefaultModel:   "global-model",
@@ -324,8 +327,8 @@ var _ = Describe("Handler", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { Expect(sub.Unsubscribe()).To(Succeed()) }()
 
-			w1 := worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, QueueGroup: "shared-group", LLM: config.LLMConfig{DefaultModel: "m"}}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
-			w2 := worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, QueueGroup: "shared-group", LLM: config.LLMConfig{DefaultModel: "m"}}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
+			w1 := worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1, QueueGroup: "shared-group", LLM: config.LLMConfig{DefaultModel: "m"}}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
+			w2 := worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1, QueueGroup: "shared-group", LLM: config.LLMConfig{DefaultModel: "m"}}, worker.WithLogger(testspecs.GinkgoLogger()), worker.WithAbandonTTL(time.Hour))
 			Expect(w1.Start(ctx)).To(Succeed())
 			Expect(w2.Start(ctx)).To(Succeed())
 			defer func() { Expect(w1.Stop(ctx)).To(Succeed()) }()
@@ -370,7 +373,7 @@ var _ = Describe("Handler tenant validation", func() {
 				return nil, errors.New("LLM must not be called for a rejected tenant")
 			},
 		}
-		w = worker.New(bus, stubLLM, worker.WorkerConfig{MaxAbandonedCollections: 10},
+		w = worker.New(bus, stubLLM, worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1},
 			worker.WithLogger(slog.New(slog.NewTextHandler(logs, nil))), worker.WithAbandonTTL(time.Hour))
 	})
 
@@ -414,7 +417,7 @@ var _ = Describe("Handler worker progress", func() {
 		tp, err = telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
-		w = worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, LLM: config.LLMConfig{DefaultModel: "default-model"}},
+		w = worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1, LLM: config.LLMConfig{DefaultModel: "default-model"}},
 			worker.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
 			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()), worker.WithAbandonTTL(time.Hour))
 	})

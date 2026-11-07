@@ -116,7 +116,7 @@ func FuzzHandleAbandoned(f *testing.F) {
 	f.Add("", "", []byte{0x00})
 
 	f.Fuzz(func(t *testing.T, subject, tenantID string, data []byte) {
-		w := New(&natsbustest.Fake{}, nil, WorkerConfig{MaxAbandonedCollections: 10}, WithAbandonTTL(time.Hour),
+		w := New(&natsbustest.Fake{}, nil, WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1}, WithAbandonTTL(time.Hour),
 			WithLogger(slog.New(slog.DiscardHandler)))
 		msg := &natsbus.Message{Subject: subject, Data: data, Metadata: natsbus.MessageMetadata{TenantID: tenantID}}
 		if err := w.handleAbandoned(context.Background(), msg); err != nil {

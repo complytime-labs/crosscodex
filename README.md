@@ -554,6 +554,7 @@ analysis:
 
 worker:
   max_abandoned_collections: 10000        # [1, 100000]; abandoned stages each worker remembers so it can drop their queued LLM tasks; raise it if more stages are abandoned within one stage_timeout; per worker host (global-only)
+  max_in_flight: 1                        # [1, 256]; tasks each worker runs at once; match the model server's parallel slots, and keep llm.timeout covering the time a request queues there; cuts wall time, not LLM calls; per worker host (global-only)
 
 pipeline:
   stage_timeout: 24h                      # (0, 168h]; hard cap on each analyzer stage, which worker progress never extends; fails a stage whose task was lost; worker hosts must set the same or a larger value (they keep abandons that long)

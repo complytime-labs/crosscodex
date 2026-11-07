@@ -68,7 +68,7 @@ var _ = Describe("Abandoned collections", func() {
 		tp, err = telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
-		w = worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, LLM: config.LLMConfig{DefaultModel: "default-model"}},
+		w = worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1, LLM: config.LLMConfig{DefaultModel: "default-model"}},
 			worker.WithLogger(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))),
 			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
 			worker.WithAbandonTTL(time.Hour))
@@ -110,6 +110,7 @@ var _ = Describe("Abandoned collections", func() {
 			Subject: subject, Data: data, Headers: headers,
 			Metadata: natsbus.MessageMetadata{TenantID: c.TenantID},
 		})).To(Succeed())
+		worker.WaitForTasks(w)
 	}
 
 	controlSub := func() *natsbustest.Sub {
@@ -237,6 +238,7 @@ var _ = Describe("Abandoned collections", func() {
 			},
 			Metadata: natsbus.MessageMetadata{TenantID: target.TenantID},
 		})).To(Succeed())
+		worker.WaitForTasks(w)
 
 		Expect(counterBy(tp, "worker.errors", map[string]string{"error_category": "invalid_message"})).To(Equal(int64(1)))
 		Expect(counterBy(tp, "worker.tasks.dropped", nil)).To(BeZero())
@@ -259,7 +261,7 @@ var _ = Describe("Abandoned collections", func() {
 var _ = Describe("Abandon wiring", func() {
 	It("refuses to start without an abandon TTL, and subscribes to nothing", func() {
 		bus := &natsbustest.Fake{}
-		w := worker.New(bus, newStubLLM(), worker.WorkerConfig{MaxAbandonedCollections: 10})
+		w := worker.New(bus, newStubLLM(), worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1})
 
 		err := w.Start(context.Background())
 
@@ -287,7 +289,7 @@ var _ = Describe("Abandon wiring", func() {
 	It("remembers at most worker.max_abandoned_collections, forgetting the oldest", func() {
 		bus := &natsbustest.Fake{}
 		llm := newStubLLM()
-		w := worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 1, LLM: config.LLMConfig{DefaultModel: "m"}},
+		w := worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 1, MaxInFlight: 1, LLM: config.LLMConfig{DefaultModel: "m"}},
 			worker.WithAbandonTTL(time.Hour))
 		Expect(w.Start(context.Background())).To(Succeed())
 		DeferCleanup(func() { Expect(w.Stop(context.Background())).To(Succeed()) })
@@ -309,6 +311,7 @@ var _ = Describe("Abandon wiring", func() {
 				Headers: map[string][]string{"X-Task-Id": {taskID}, "X-Task-Type": {string(c.TaskType)},
 					"X-Job-Id": {c.JobID}, "X-Collection-Id": {c.CollectionID}},
 				Metadata: natsbus.MessageMetadata{TenantID: c.TenantID}})).To(Succeed())
+			worker.WaitForTasks(w)
 		}
 
 		deliver(newer, "newer-task")
@@ -323,7 +326,7 @@ var _ = Describe("Abandon wiring", func() {
 				return nil, natsbus.ErrSubscribeFailed
 			},
 		}
-		w := worker.New(bus, newStubLLM(), worker.WorkerConfig{MaxAbandonedCollections: 10}, worker.WithAbandonTTL(time.Hour))
+		w := worker.New(bus, newStubLLM(), worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1}, worker.WithAbandonTTL(time.Hour))
 
 		Expect(w.Start(context.Background())).To(MatchError(natsbus.ErrSubscribeFailed))
 
@@ -336,7 +339,7 @@ var _ = Describe("Abandon wiring", func() {
 
 	It("drains both subscriptions on Stop", func() {
 		bus := &natsbustest.Fake{}
-		w := worker.New(bus, newStubLLM(), worker.WorkerConfig{MaxAbandonedCollections: 10}, worker.WithAbandonTTL(time.Hour))
+		w := worker.New(bus, newStubLLM(), worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1}, worker.WithAbandonTTL(time.Hour))
 		Expect(w.Start(context.Background())).To(Succeed())
 
 		Expect(w.Stop(context.Background())).To(Succeed())
@@ -356,7 +359,7 @@ var _ = Describe("Abandoned collections over a real NATS connection", func() {
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
 		llm := newStubLLM()
-		w := worker.New(bus, llm, worker.WorkerConfig{QueueGroup: "test-workers", MaxAbandonedCollections: 10, LLM: config.LLMConfig{DefaultModel: "m"}},
+		w := worker.New(bus, llm, worker.WorkerConfig{QueueGroup: "test-workers", MaxAbandonedCollections: 10, MaxInFlight: 1, LLM: config.LLMConfig{DefaultModel: "m"}},
 			worker.WithLogger(testspecs.GinkgoLogger()),
 			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
 			worker.WithAbandonTTL(time.Hour))
