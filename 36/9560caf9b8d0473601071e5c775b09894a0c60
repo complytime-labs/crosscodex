@@ -1,0 +1,54 @@
+README.md
+  h_4db53f42b9be42 557
+cmd/crosscodexd/bootstrap_integration_test.go
+  h_4db53f42b9be42 174
+cmd/crosscodexd/telemetry_wiring_bdd_test.go
+  h_4db53f42b9be42 81
+deploy/README.md
+  h_4db53f42b9be42 142-143,267
+deploy/config.yaml
+  h_4db53f42b9be42 118-126
+docs/dev/telemetry.md
+  h_4db53f42b9be42 200
+internal/pipeline/pipeline_e2e_integration_test.go
+  h_4db53f42b9be42 365
+internal/worker/abandon_bdd_test.go
+  h_4db53f42b9be42 71,113,241,264,292,314,329,342,362
+internal/worker/abandoned_bdd_test.go
+  h_4db53f42b9be42 20
+internal/worker/doc.go
+  h_4db53f42b9be42 13-23,55-57
+internal/worker/errors.go
+  h_4db53f42b9be42 38-41
+internal/worker/export_test.go
+  h_4db53f42b9be42 4-15
+internal/worker/handler_bdd_test.go
+  h_4db53f42b9be42 52,143,181,330-331,376,420
+internal/worker/inflight_bdd_test.go
+  h_4db53f42b9be42 1-236
+internal/worker/worker.go
+  h_4db53f42b9be42 11,51-65,113-116,123-130,140,143,150-204,206-212,227,230-245
+internal/worker/worker_bdd_test.go
+  h_4db53f42b9be42 72,107,199,219,259,303,339
+internal/worker/worker_fuzz_test.go
+  h_4db53f42b9be42 119
+pkg/config/config_bdd_test.go
+  h_4db53f42b9be42 2821-2870
+pkg/config/defaults.go
+  h_4db53f42b9be42 179
+pkg/config/helpers_test.go
+  h_4db53f42b9be42 36
+pkg/config/types.go
+  h_4db53f42b9be42 899-908,930-934,943-948,1119-1120,1137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "369560caf9b8d0473601071e5c775b09894a0c60",
+  "prompts": {},
+  "humans": {
+    "h_4db53f42b9be42": {
+      "author": "Trevor Vaughan <peiriannydd@gmail.com>"
+    }
+  }
+}
