@@ -44,6 +44,8 @@ func BuildCandidateRegistry(cfg config.CandidateConfig, tp trace.TracerProvider,
 			gen = builtin.NewKeywordGenerator(builtin.WithKeywordTelemetry(builtinTracer))
 		case "level":
 			gen = builtin.NewLevelGenerator(builtin.WithLevelTelemetry(builtinTracer))
+		case "lexical":
+			gen = builtin.NewLexicalGenerator(builtin.WithLexicalTelemetry(builtinTracer))
 		case "semantic":
 			gen = builtin.NewSemanticGenerator(builtin.WithSemanticTelemetry(builtinTracer))
 		default:

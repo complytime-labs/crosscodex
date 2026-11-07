@@ -254,6 +254,7 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 		Candidates: config.CandidateConfig{
 			Generators:           []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true, Weight: 1.0}},
 			MinEmbeddingCoverage: 0.8,
+			MaxPerSource:         10,
 			EmbedModel:           e2eModel,
 		},
 		Requires: config.RequiresConfig{

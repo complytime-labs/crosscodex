@@ -202,7 +202,8 @@ func (r *Registry) Generate(ctx context.Context, req GenerateRequest, strategy A
 
 // generateConfig holds options for Generate
 type generateConfig struct {
-	minScore float64
+	minScore     float64
+	maxPerSource int
 }
 
 // GenerateOption configures Generate behavior
@@ -215,6 +216,14 @@ func WithMinScore(score float64) GenerateOption {
 	}
 }
 
+// WithMaxPerSource sets the per-source candidate cap used by StrategyRankFusion.
+// The pipeline passes config.CandidateConfig.MaxPerSource (analysis.candidates.max_per_source).
+func WithMaxPerSource(n int) GenerateOption {
+	return func(cfg *generateConfig) {
+		cfg.maxPerSource = n
+	}
+}
+
 // AggregationStrategy defines how to combine candidates from multiple generators
 type AggregationStrategy string
 
@@ -224,4 +233,8 @@ const (
 
 	// StrategyWeightedUnion includes candidates where sum(weight * score) >= threshold
 	StrategyWeightedUnion AggregationStrategy = "weighted_union"
+
+	// StrategyRankFusion fuses per-generator ranks with reciprocal rank fusion
+	// and keeps the top WithMaxPerSource candidates per source
+	StrategyRankFusion AggregationStrategy = "rank_fusion"
 )

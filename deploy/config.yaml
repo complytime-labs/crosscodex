@@ -97,7 +97,7 @@ analysis:
   # REQUIRES edges. Both use the gateway's `default` completion alias
   # (deploy/litellm/config.yaml, deploy/praxis/config.yaml), the same alias
   # CROSSCODEX_LLM_DEFAULT_MODEL selects for classification; if you rename it
-  # there, rename it here too. Pair calls ~ source controls x top_k (10) x
+  # there, rename it here too. Pair calls <= source controls x max_per_source (10) x
   # panel size (models x samples_per_model), summed over both analyzers; see
   # "Cost" in the top-level README. Disable either with `enabled: false`.
   relationship:

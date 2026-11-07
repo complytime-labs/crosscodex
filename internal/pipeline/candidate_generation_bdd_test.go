@@ -3,6 +3,7 @@ package pipeline_test
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -157,7 +158,7 @@ var _ = Describe("CandidateGenerator", func() {
 				controls,
 				fakeEmbeddingsReader{ids: embeddedIDs, values: values, gotCatalogIDs: &gotCatalogIDs},
 				registry, writer,
-				config.CandidateConfig{MinEmbeddingCoverage: 1.0}, "test-model",
+				config.CandidateConfig{MinEmbeddingCoverage: 1.0, MaxPerSource: 10}, "test-model",
 			)
 			return gen.Generate(context.Background(), "tenant-1", "job-1", []byte(jobConfig))
 		}
@@ -208,7 +209,7 @@ var _ = Describe("CandidateGenerator", func() {
 			fakeControlsReader{controls: threeControls},
 			fakeEmbeddingsReader{ids: []string{"c1", "c2", "c3"}, values: [][]float32{{100, 0, 0}, {0, 100, 0}, {0, 0, 100}}, gotCatalogIDs: &got},
 			candidate.NewRegistry(), &fakeCandidateWriter{},
-			config.CandidateConfig{MinEmbeddingCoverage: 1.0}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 1.0, MaxPerSource: 10}, "test-model",
 		)
 		Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1","target_catalog_id":"cat-1"}`))).To(Succeed())
 		Expect(got).To(Equal([]string{"cat-1"}))
@@ -219,7 +220,7 @@ var _ = Describe("CandidateGenerator", func() {
 		gen := pipeline.NewCandidateGenerator(
 			fakeControlsReader{}, fakeEmbeddingsReader{},
 			candidate.NewRegistry(), writer,
-			config.CandidateConfig{}, "test-model",
+			config.CandidateConfig{MaxPerSource: 10}, "test-model",
 		)
 		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{}`))
 		Expect(err).To(MatchError(pipeline.ErrMissingCatalogID))
@@ -234,18 +235,14 @@ var _ = Describe("CandidateGenerator", func() {
 			fakeControlsReader{controls: threeControls},
 			fakeEmbeddingsReader{ids: []string{"c1"}, values: [][]float32{{100}}},
 			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 0.8, MaxPerSource: 10}, "test-model",
 		)
 		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
-		Expect(err).To(HaveOccurred())
-		Expect(errors.Is(err, pipeline.ErrInsufficientEmbeddingCoverage)).To(BeTrue(), "expected ErrInsufficientEmbeddingCoverage, got %v", err)
+		Expect(err).To(MatchError(pipeline.ErrInsufficientEmbeddingCoverage))
 		Expect(writer.requiresCalled || writer.relationshipCalled).To(BeFalse(), "no candidates should be written below the coverage threshold")
 	})
 
-	It("scales the relationship score to [0,100] while leaving the requires score at [0,1]", func() {
-		// requires.RequiresPair.AggregateScore keeps the candidate's [0,1] score,
-		// while relationship.CandidatePair.SimilarityScore is contractually [0,100],
-		// so the relationship side must be rescaled by 100.
+	It("sets the relationship score to the pair's similarity-matrix value and the requires score to the fused value", func() {
 		registry := candidate.NewRegistry()
 		Expect(registry.Register(fixedGenerator{
 			name: "stub",
@@ -261,14 +258,109 @@ var _ = Describe("CandidateGenerator", func() {
 			}},
 			fakeEmbeddingsReader{ids: []string{"c1", "c2"}, values: [][]float32{{100, 80}, {80, 100}}},
 			registry, writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 0.8, MaxPerSource: 10}, "test-model",
 		)
 		Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))).To(Succeed())
 
 		Expect(writer.requiresPairs).To(HaveLen(1))
 		Expect(writer.relationshipPairs).To(HaveLen(1))
-		Expect(writer.requiresPairs[0].AggregateScore).To(Equal(0.8), "unscaled [0,1]")
-		Expect(writer.relationshipPairs[0].SimilarityScore).To(BeNumerically("==", 80.0), "[0,100] scaled")
+		Expect(writer.requiresPairs[0].AggregateScore).To(BeNumerically("==", 1.0/61), "fused reciprocal-rank value")
+		Expect(writer.relationshipPairs[0].SimilarityScore).To(BeNumerically("==", 80.0), "matrix value")
+	})
+
+	Describe("with semantic and lexical generators", func() {
+		lexicalControls := map[string]*candidate.ControlData{
+			"c1": {ControlID: "c1", Text: "encrypt stored data"},
+			"c2": {ControlID: "c2", Text: "encrypt data in transit"},
+			"c3": {ControlID: "c3", Text: "rotate widgets monthly"},
+		}
+
+		generate := func(embeddedIDs []string, values [][]float32) *fakeCandidateWriter {
+			cfg := config.CandidateConfig{
+				MinEmbeddingCoverage: 0,
+				MaxPerSource:         10,
+				Generators: []config.CandidateGeneratorEntry{
+					{Name: "semantic", Enabled: true},
+					{Name: "lexical", Enabled: true},
+				},
+			}
+			reg, err := pipeline.BuildCandidateRegistry(cfg, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			writer := &fakeCandidateWriter{}
+			gen := pipeline.NewCandidateGenerator(
+				fakeControlsReader{controls: lexicalControls},
+				fakeEmbeddingsReader{ids: embeddedIDs, values: values},
+				reg, writer, cfg, "test-model",
+			)
+			Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))).To(Succeed())
+			return writer
+		}
+
+		findRequires := func(w *fakeCandidateWriter, source, target string) requires.RequiresPair {
+			for _, p := range w.requiresPairs {
+				if p.SourceControlID == source && p.TargetControlID == target {
+					return p
+				}
+			}
+			Fail("no requires pair " + source + "--" + target)
+			return requires.RequiresPair{}
+		}
+
+		It("records one ranked provenance entry per contributing generator and the fused score", func() {
+			w := generate([]string{"c1", "c2", "c3"}, [][]float32{{100, 90, 10}, {90, 100, 20}, {10, 20, 100}})
+
+			pair := findRequires(w, "c1", "c2")
+			Expect(pair.Provenance).To(HaveLen(2))
+			Expect([]string{pair.Provenance[0].GeneratorName, pair.Provenance[1].GeneratorName}).To(Equal([]string{"lexical", "semantic"}))
+			fused := 0.0
+			for _, prov := range pair.Provenance {
+				Expect(prov.Metadata).To(HaveKey("rank"))
+				rank, err := strconv.ParseFloat(prov.Metadata["rank"], 64)
+				Expect(err).NotTo(HaveOccurred())
+				fused += prov.Weight / (60 + rank)
+			}
+			Expect(pair.AggregateScore).To(BeNumerically("~", fused, 1e-12))
+		})
+
+		It("reports the matrix similarity, and 0 for a lexical-only pair whose target has no matrix row", func() {
+			w := generate([]string{"c1", "c3"}, [][]float32{{100, 10}, {10, 100}})
+
+			sims := map[string]float32{}
+			for _, p := range w.relationshipPairs {
+				sims[p.SourceControlID+"--"+p.TargetControlID] = p.SimilarityScore
+			}
+			Expect(sims).To(HaveKeyWithValue("c1--c3", float32(10)))
+			Expect(sims).To(HaveKeyWithValue("c1--c2", float32(0)), "c2 has no embedding row")
+		})
+	})
+
+	It("does not write the rank into a generator's own metadata map", func() {
+		shared := map[string]string{"method": "stub"}
+		registry := candidate.NewRegistry()
+		Expect(registry.Register(fixedGenerator{
+			name: "stub",
+			candidates: []candidate.Candidate{
+				{SourceID: "c1", TargetID: "c2", Score: 0.8, Weight: 1.0, GeneratorID: "stub", Metadata: shared},
+				{SourceID: "c2", TargetID: "c1", Score: 0.7, Weight: 1.0, GeneratorID: "stub", Metadata: shared},
+			},
+		})).To(Succeed())
+		writer := &fakeCandidateWriter{}
+		gen := pipeline.NewCandidateGenerator(
+			fakeControlsReader{controls: map[string]*candidate.ControlData{
+				"c1": {ControlID: "c1", Text: "one"}, "c2": {ControlID: "c2", Text: "two"},
+			}},
+			fakeEmbeddingsReader{ids: []string{"c1", "c2"}, values: [][]float32{{100, 80}, {80, 100}}},
+			registry, writer,
+			config.CandidateConfig{MinEmbeddingCoverage: 0.8, MaxPerSource: 10}, "test-model",
+		)
+		Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))).To(Succeed())
+
+		Expect(shared).To(Equal(map[string]string{"method": "stub"}))
+		Expect(writer.requiresPairs).To(HaveLen(2))
+		for _, p := range writer.requiresPairs {
+			Expect(p.Provenance[0].Metadata).To(HaveKeyWithValue("method", "stub"))
+			Expect(p.Provenance[0].Metadata).To(HaveKey("rank"))
+		}
 	})
 
 	It("leaves controls without a statement out of the generator request", func() {
@@ -283,7 +375,7 @@ var _ = Describe("CandidateGenerator", func() {
 			}},
 			fakeEmbeddingsReader{ids: []string{"c1"}, values: [][]float32{{100}}},
 			registry, &fakeCandidateWriter{},
-			config.CandidateConfig{MinEmbeddingCoverage: 1.0}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 1.0, MaxPerSource: 10}, "test-model",
 		)
 		Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))).To(Succeed())
 
@@ -303,7 +395,7 @@ var _ = Describe("CandidateGenerator", func() {
 			}},
 			fakeEmbeddingsReader{ids: []string{"c1", "c2"}, values: [][]float32{{100, 80}, {80, 100}}},
 			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 1.0}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 1.0, MaxPerSource: 10}, "test-model",
 		)
 		Expect(gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))).To(Succeed())
 		Expect(writer.requiresCalled && writer.relationshipCalled).To(BeTrue())
@@ -322,7 +414,7 @@ var _ = Describe("CandidateGenerator", func() {
 			}},
 			fakeEmbeddingsReader{},
 			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 1.0}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 1.0, MaxPerSource: 10}, "test-model",
 		)
 		Expect(gen.Generate(ctx, "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))).To(Succeed())
 		span.End()
@@ -343,7 +435,7 @@ var _ = Describe("CandidateGenerator", func() {
 			fakeControlsReader{controls: map[string]*candidate.ControlData{}},
 			fakeEmbeddingsReader{},
 			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 0.8, MaxPerSource: 10}, "test-model",
 		)
 		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 		Expect(err).NotTo(HaveOccurred(), "zero-control catalog should not error")
@@ -363,7 +455,7 @@ var _ = Describe("CandidateGenerator", func() {
 			fakeControlsReader{controls: controls},
 			fakeEmbeddingsReader{ids: []string{"c1", "c2"}, values: [][]float32{{100, 80}, {80, 100}}},
 			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 0.5}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 0.5, MaxPerSource: 10}, "test-model",
 		)
 		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 		Expect(err).NotTo(HaveOccurred(), "expected coverage exactly at threshold to succeed")
@@ -376,7 +468,7 @@ var _ = Describe("CandidateGenerator", func() {
 			gen := pipeline.NewCandidateGenerator(
 				controls, embeddings,
 				candidate.NewRegistry(), writer,
-				config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
+				config.CandidateConfig{MinEmbeddingCoverage: 0.8, MaxPerSource: 10}, "test-model",
 			)
 			err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
 			Expect(err).To(MatchError(errCandidateBoom))
@@ -396,10 +488,10 @@ var _ = Describe("CandidateGenerator", func() {
 			fakeControlsReader{controls: map[string]*candidate.ControlData{}},
 			fakeEmbeddingsReader{},
 			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 0.8, MaxPerSource: 10}, "test-model",
 		)
 		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
-		Expect(errors.Is(err, errCandidateBoom)).To(BeTrue(), "expected wrapped WriteRequires error, got %v", err)
+		Expect(err).To(MatchError(errCandidateBoom))
 		Expect(writer.relationshipCalled).To(BeFalse(), "WriteRelationship must not be attempted after WriteRequires fails")
 	})
 
@@ -409,10 +501,10 @@ var _ = Describe("CandidateGenerator", func() {
 			fakeControlsReader{controls: map[string]*candidate.ControlData{}},
 			fakeEmbeddingsReader{},
 			candidate.NewRegistry(), writer,
-			config.CandidateConfig{MinEmbeddingCoverage: 0.8}, "test-model",
+			config.CandidateConfig{MinEmbeddingCoverage: 0.8, MaxPerSource: 10}, "test-model",
 		)
 		err := gen.Generate(context.Background(), "tenant-1", "job-1", []byte(`{"catalog_id":"cat-1"}`))
-		Expect(errors.Is(err, errCandidateBoom)).To(BeTrue(), "expected wrapped WriteRelationship error, got %v", err)
+		Expect(err).To(MatchError(errCandidateBoom))
 		Expect(writer.requiresCalled).To(BeTrue(), "WriteRequires should have been called before WriteRelationship")
 	})
 })
