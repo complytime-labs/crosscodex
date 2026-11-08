@@ -1,0 +1,42 @@
+internal/graph/synthesis_resolver_integration_bdd_test.go
+  s_a8e359e45d1fd1::t_c84b66e67d1747 1-115
+pkg/analyzer/results/results.go
+  s_a8e359e45d1fd1::t_69b47617839f54 36-68
+internal/graph/synthesis_materializer_bdd_test.go
+  s_a8e359e45d1fd1::t_e1dc4aa4dc08ba 1-165
+internal/graph/resolver_bdd_test.go
+  s_a8e359e45d1fd1::t_45197d20fd1086 170-222,226-228
+  s_a8e359e45d1fd1::t_9e5b6e3a4ccc1d 223-225
+internal/graph/subscriber_handlers.go
+  s_a8e359e45d1fd1::t_69b47617839f54 25,34-35,79-81
+internal/graph/resolver_pg.go
+  s_a8e359e45d1fd1::t_260322541034bd 5-6,15,98-104,121-152
+  s_a8e359e45d1fd1::t_a208b1322f8587 153-155
+internal/graph/subscriber_bdd_test.go
+  s_a8e359e45d1fd1::t_636bf59e59e618 94,105,160
+pkg/analyzer/results/results_bdd_test.go
+  s_a8e359e45d1fd1::t_636bf59e59e618 29-45
+  s_a8e359e45d1fd1::t_e1dc4aa4dc08ba 4
+docs/dev/design-principles.md
+  s_a8e359e45d1fd1::t_47f0ee7e03faf3 79-80
+internal/graph/synthesis_materializer.go
+  s_a8e359e45d1fd1::t_ed8a5593bb2ab9 1-67
+cmd/crosscodexd/results_e2e_test.go
+  s_a8e359e45d1fd1::t_c6ccd6defbb824 25,197-199,201,203-208,214-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "5553dc34cf72984b23652c9aab41b174533263bf",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
