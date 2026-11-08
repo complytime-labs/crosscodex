@@ -1,0 +1,123 @@
+test/eval/crosswalk/profiles/ssdf-to-sp800-53r5.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-16
+test/eval/crosswalk/profile.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-164
+test/eval/crosswalk/testdata/source_a.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-73
+test/eval/crosswalk/README.md
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-95
+test/eval/crosswalk/profile_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-87
+test/eval/crosswalk/subset_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-124
+test/eval/crosswalk/subset.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-105
+test/eval/crosswalk/catalog_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-185
+test/eval/crosswalk/testdata/not_a_catalog.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1
+test/eval/crosswalk/crosswalk_property_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-143
+test/eval/crosswalk/testdata/run/mappings.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-9
+test/eval/crosswalk/inputs.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-271
+test/eval/crosswalk/profiles/sp800-171r3-to-sp800-53r5.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-26
+test/eval/crosswalk/testdata/source_items.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-52
+test/tooling/lib/run-eval-crosswalk.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-36
+test/tooling/eval-crosswalk.venom.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-224
+test/eval/crosswalk/discover.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-104
+test/eval/crosswalk/testdata/source_b.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-82
+test/eval/crosswalk/testdata/profiles/links_in_text.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-11
+test/eval/crosswalk/testdata/synthetic_catalog.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-52
+test/eval/crosswalk/references_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-197
+test/eval/crosswalk/target_index.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-155
+test/eval/crosswalk/cmd/crosswalk-eval/main.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-313
+test/eval/crosswalk/doc.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-5
+test/eval/crosswalk/score_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-846
+test/eval/crosswalk/cmd/crosswalk-eval/main_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-91
+test/eval/crosswalk/testdata/run/candidates.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-9
+test/eval/crosswalk/testdata/statement_catalog.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-66
+test/eval/crosswalk/cmd/crosswalk-eval/main_suite_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-13
+test/tooling/lib/fake-crosscodex.sh
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-29
+.taskfiles/test.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 30,74,88
+.taskfiles/eval.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-61
+test/eval/crosswalk/testdata/profiles/titles_by_rlink.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-10
+test/eval/crosswalk/canonical.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-44
+test/eval/crosswalk/catalog.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-71
+test/eval/crosswalk/score.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-430
+catalogs/oscal-sources.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 15-17
+test/eval/crosswalk/discover_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-75
+test/eval/crosswalk/report.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-341
+test/eval/crosswalk/crosswalk_suite_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-13
+test/eval/crosswalk/testdata/profiles/csv_refs.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-6
+README.md
+  s_a8e359e45d1fd1::t_f238adcb3d4656 748-780
+test/eval/crosswalk/report_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-114
+test/eval/crosswalk/testdata/refs.csv
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-4
+test/eval/crosswalk/profiles_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-68
+test/eval/crosswalk/references.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-260
+test/eval/crosswalk/testdata/run/status.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-13
+Taskfile.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 44-45,57-62
+test/eval/crosswalk/run.sh
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-157
+test/eval/crosswalk/canonical_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-26
+test/eval/crosswalk/crosswalk_fuzz_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-105
+test/eval/crosswalk/testdata/profiles/synth-run.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-11
+.taskfiles/deploy.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 90-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "9ba6a4c2fc0cb981a2e95386f850b5831a1c2e3c",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
