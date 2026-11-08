@@ -1,0 +1,29 @@
+internal/gateway/service.go
+  s_a8e359e45d1fd1::t_d2b29e9375ac5a 105-108
+README.md
+  s_a8e359e45d1fd1::t_6ce6a02cfcf123 750,760,769,774-776
+test/tooling/eval-crosswalk.venom.yml
+  s_a8e359e45d1fd1::t_959bf5e6f9c932 190-224
+test/eval/crosswalk/README.md
+  s_a8e359e45d1fd1::t_6ce6a02cfcf123 16,20-24,72-77
+test/eval/crosswalk/run.sh
+  s_a8e359e45d1fd1::t_fc36d9146067dc 96-101,105
+.taskfiles/eval.yml
+  s_a8e359e45d1fd1::t_2983462258d8dd 16,26-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "61c405bfc1628a008dddd6274db9c5777100e68f",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
