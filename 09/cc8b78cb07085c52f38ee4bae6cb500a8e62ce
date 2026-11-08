@@ -1,0 +1,40 @@
+test/eval/crosswalk/testdata/source_a.json
+  s_49752108b0cba1::t_7b6a63f99eb417 1-73
+test/eval/crosswalk/profile_bdd_test.go
+  s_49752108b0cba1::t_029f0524ffaa76 1-87
+test/eval/crosswalk/references_bdd_test.go
+  s_49752108b0cba1::t_029f0524ffaa76 1-159
+test/eval/crosswalk/testdata/refs.csv
+  s_49752108b0cba1::t_7b6a63f99eb417 1-4
+test/eval/crosswalk/testdata/profiles/links_in_text.yaml
+  s_49752108b0cba1::t_7b6a63f99eb417 1-11
+test/eval/crosswalk/crosswalk_fuzz_test.go
+  s_49752108b0cba1::t_029f0524ffaa76 1-65
+test/eval/crosswalk/testdata/profiles/titles_by_rlink.yaml
+  s_49752108b0cba1::t_7b6a63f99eb417 1-10
+test/eval/crosswalk/testdata/profiles/csv_refs.yaml
+  s_49752108b0cba1::t_7b6a63f99eb417 1-6
+test/eval/crosswalk/references.go
+  s_49752108b0cba1::t_35063efe99e217 1-107,109,115-229
+  s_49752108b0cba1::t_4053926fbb51fe 108,110-114
+test/eval/crosswalk/profile.go
+  s_49752108b0cba1::t_35063efe99e217 1-164
+test/eval/crosswalk/testdata/source_b.json
+  s_49752108b0cba1::t_7b6a63f99eb417 1-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09cc8b78cb07085c52f38ee4bae6cb500a8e62ce",
+  "prompts": {},
+  "sessions": {
+    "s_49752108b0cba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8bdeed27-a981-439b-bed6-b2725146ab22",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
