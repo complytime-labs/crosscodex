@@ -1,0 +1,21 @@
+AGENTS.md
+  s_a8e359e45d1fd1::t_7a5149f8d911e1 36-41
+docs/dev/design-principles.md
+  s_a8e359e45d1fd1::t_dd331ee2c5f970 294-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fa7b7604d5f3cca77301fbbbd73c2b57c27d233f",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
