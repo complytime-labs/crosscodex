@@ -1,0 +1,24 @@
+internal/graph/doc.go
+  s_a8e359e45d1fd1::t_a662fa0ad8cdb1 49
+internal/graph/crosswalk.go
+  s_a8e359e45d1fd1::t_20427a073339ff 1-373
+internal/graph/crosswalk_bdd_test.go
+  s_a8e359e45d1fd1::t_9e08d5880f7d62 1-355,359-389
+  s_a8e359e45d1fd1::t_4bebfdead040c7 356-358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a5e726ddd9144ce4c0208e1a3ef99f90883fb9a2",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
