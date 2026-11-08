@@ -1,0 +1,27 @@
+cmd/crosscodex/crosswalk_render.go
+  s_a8e359e45d1fd1::t_5120338f61262a 13,184-185,239-259,262-265,273
+cmd/crosscodex/crosswalk.go
+  s_a8e359e45d1fd1::t_81d67276db8b44 5,26,86,104,125-126,203-208,236-243
+  s_a8e359e45d1fd1::t_f0e1d52e0fd1a5 53-54
+  s_a8e359e45d1fd1::t_52e71c06211217 244-245
+cmd/crosscodex/crosswalk_bdd_test.go
+  s_a8e359e45d1fd1::t_4244887aba5b8c 43-58,138,141-143,173,435-461,483-484,486-488
+  s_a8e359e45d1fd1::t_ac9c96af605abe 320-333
+  s_a8e359e45d1fd1::t_fc2d692714f1bd 334-335
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "7897f87b30102218b1401d2f905bff15fda56173",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
