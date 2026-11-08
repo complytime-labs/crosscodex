@@ -1,0 +1,33 @@
+cmd/crosscodex/run_bdd_test.go
+  s_49752108b0cba1::t_612078ec736568 377-380,382-403
+  s_49752108b0cba1::t_ad20fba4214db1 10,16,381
+cmd/crosscodex/results_bdd_test.go
+  s_49752108b0cba1::t_505b6105ff5518 723,795
+  s_49752108b0cba1::t_612078ec736568 680-722,724-794,796-813
+cmd/crosscodex/run.go
+  s_49752108b0cba1::t_56d5c59b4b7d6c 9,17,403-409
+  s_49752108b0cba1::t_69ba27414ecde0 190-199,239
+  s_49752108b0cba1::t_3665e3e6177ee1 410-411
+cmd/crosscodex/results.go
+  s_49752108b0cba1::t_69ba27414ecde0 35,413-551,553-563,566
+  s_49752108b0cba1::t_5bcff6f7aae82e 552
+  s_49752108b0cba1::t_b5bffbdad5e65a 564-565,567
+README.md
+  s_49752108b0cba1::t_f37d89a319940b 292-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4436af4c8b925c71f3ed62b90e27b6707443f16f",
+  "prompts": {},
+  "sessions": {
+    "s_49752108b0cba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8bdeed27-a981-439b-bed6-b2725146ab22",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
