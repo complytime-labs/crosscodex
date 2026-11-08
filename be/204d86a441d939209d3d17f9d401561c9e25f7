@@ -1,0 +1,19 @@
+cmd/crosscodex/results.go
+  s_49752108b0cba1::t_d9454d2a2aaf01 258-277,322-324,326,488-490,492
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be204d86a441d939209d3d17f9d401561c9e25f7",
+  "prompts": {},
+  "sessions": {
+    "s_49752108b0cba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8bdeed27-a981-439b-bed6-b2725146ab22",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
