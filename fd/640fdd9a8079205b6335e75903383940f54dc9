@@ -1,0 +1,55 @@
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_49752108b0cba1::t_f82bab7e2a5df1 419-428
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_49752108b0cba1::t_f82bab7e2a5df1 73-77
+internal/results/service.go
+  s_49752108b0cba1::t_c20b8df683f6a5 38-39,47-48,61-62,71,75,82-85,98-124,129,136-154,156-157,159,161-162,164-170,172-175,179-184,186-190,200,208,210,239,241,265-305,339-341,350,352,358,361-362,364-365,415-433,435-443,450-460
+  s_49752108b0cba1::t_d139d4190c2c0f 219,223,227,231,249
+cmd/crosscodex/embedded.go
+  s_49752108b0cba1::t_9728b3b7294b28 527
+cmd/crosscodexd/bootstrap.go
+  s_49752108b0cba1::t_d6b4194bff90e9 755-756
+  s_49752108b0cba1::t_9728b3b7294b28 750-753
+  s_49752108b0cba1::t_dcdb8cff823f53 321-322,329-330
+internal/gateway/service.go
+  s_49752108b0cba1::t_9728b3b7294b28 28,105-106
+  s_49752108b0cba1::t_a327f97a4f15b4 107-108
+internal/gateway/mappings.go
+  s_49752108b0cba1::t_9728b3b7294b28 51-82
+internal/gateway/gateway_bdd_test.go
+  s_49752108b0cba1::t_dbfd5d3e3c613f 1143,1146,1191-1192
+  s_49752108b0cba1::t_f82bab7e2a5df1 211-229,878-919,1222-1223
+  s_49752108b0cba1::t_0269c01ce0ff45 920-921,1193,1224-1225
+internal/gateway/backends.go
+  s_49752108b0cba1::t_9728b3b7294b28 47-53
+internal/results/service_bdd_test.go
+  s_49752108b0cba1::t_e4447cff34e4f3 31,37-41,50-53,403-586
+  s_49752108b0cba1::t_2c1a7fabe033f9 587
+internal/gateway/gateway_property_bdd_test.go
+  s_49752108b0cba1::t_f82bab7e2a5df1 207-210
+docs/dev/service-runtime.md
+  s_49752108b0cba1::t_d6b4194bff90e9 48
+  s_49752108b0cba1::t_ee659f04e912fa 60
+api/proto/crosscodex/v1/gateway.proto
+  s_49752108b0cba1::t_b8f2416aafe625 128-136
+internal/gateway/backend_errors_bdd_test.go
+  s_49752108b0cba1::t_f82bab7e2a5df1 251-255
+api/proto/crosscodex/v1/synthesis.proto
+  s_49752108b0cba1::t_b8f2416aafe625 215-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd640fdd9a8079205b6335e75903383940f54dc9",
+  "prompts": {},
+  "sessions": {
+    "s_49752108b0cba1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8bdeed27-a981-439b-bed6-b2725146ab22",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
