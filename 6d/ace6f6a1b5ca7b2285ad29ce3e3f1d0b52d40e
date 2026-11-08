@@ -1,0 +1,31 @@
+pkg/graphdb/types.go
+  s_a8e359e45d1fd1::t_45417a0c9e7889 33-36,38-43
+pkg/graphdb/interface.go
+  s_a8e359e45d1fd1::t_45417a0c9e7889 93-96
+pkg/graphdb/identifier.go
+  s_a8e359e45d1fd1::t_45417a0c9e7889 63,73-78
+pkg/graphdb/agedriver/client.go
+  s_a8e359e45d1fd1::t_45417a0c9e7889 598-605
+pkg/graphdb/memdriver/client.go
+  s_a8e359e45d1fd1::t_45417a0c9e7889 352-354
+internal/testspecs/graphdb_contract.go
+  s_a8e359e45d1fd1::t_64d25346d92bc8 353-358
+  s_a8e359e45d1fd1::t_ca664d4c2464f7 1572-1603
+  s_a8e359e45d1fd1::t_3c43e84c3e23fe 1604-1605
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "6dace6f6a1b5ca7b2285ad29ce3e3f1d0b52d40e",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
