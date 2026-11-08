@@ -1,0 +1,63 @@
+api/proto/crosscodex/v1/gateway.proto
+  s_a8e359e45d1fd1::t_68209d8f8c696e 128-136
+api/proto/crosscodex/v1/synthesis.proto
+  s_a8e359e45d1fd1::t_77d6de6fe9ea7b 215-264
+cmd/crosscodex/embedded.go
+  s_a8e359e45d1fd1::t_7b3f1869e1b012 527
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_a8e359e45d1fd1::t_d2a4f2ae0ba11d 419-428
+cmd/crosscodexd/bootstrap.go
+  s_a8e359e45d1fd1::t_b4e7f7086f8d23 321-322,329-330,750-753,755-756
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_a8e359e45d1fd1::t_34d934ef1e6fc9 73-77
+docs/dev/service-runtime.md
+  s_a8e359e45d1fd1::t_7562d518e03d35 48,60
+internal/gateway/backend_errors_bdd_test.go
+  s_a8e359e45d1fd1::t_84804a3b190588 251-255
+internal/gateway/backends.go
+  s_a8e359e45d1fd1::t_89725f49b1777e 47-53
+internal/gateway/gateway_bdd_test.go
+  s_a8e359e45d1fd1::t_024fe0396cba88 211-229,878-921,1143,1146,1191-1193,1222-1225
+internal/gateway/gateway_property_bdd_test.go
+  s_a8e359e45d1fd1::t_61bf33b4642547 207-210
+internal/gateway/mappings.go
+  s_a8e359e45d1fd1::t_999ea64514e19c 51-82
+internal/gateway/service.go
+  s_a8e359e45d1fd1::t_3d14c5c8f248e3 28,105-112
+internal/results/candidates.go
+  s_a8e359e45d1fd1::t_3cb6cd7e847d1a 1-53
+internal/results/candidates_bdd_test.go
+  s_a8e359e45d1fd1::t_d0c4ec7be7cb5f 1-45
+internal/results/export_test.go
+  s_a8e359e45d1fd1::t_bfedc235bc6609 1-4
+internal/results/results_fuzz_test.go
+  s_a8e359e45d1fd1::t_ec8943ce5ac1cb 4-5,29-50
+internal/results/results_property_test.go
+  s_a8e359e45d1fd1::t_e314605bc91878 4-6,30-64
+internal/results/service.go
+  s_a8e359e45d1fd1::t_455f4c875d7705 38-39,47-48,61-62,71,75,82-85,98-124,129,136-154,156-157,159,161-162,164-170,172-175,179-184,186-190,200,208,210,219,223,227,231,239,241,249,265-305,339-341,350,352,358,361-362,364-365,415-433,435-443,450-460
+internal/results/service_bdd_test.go
+  s_a8e359e45d1fd1::t_5d4750df29576b 31,37-41,50-55,403-587
+internal/results/store_pg.go
+  s_a8e359e45d1fd1::t_6a70dd0db5d6e5 161,165,193-195,198,200,203,206,219,227,233,239,254-329
+internal/results/store_pg_integration_bdd_test.go
+  s_a8e359e45d1fd1::t_c009b21bfe7fae 117-129,503-606
+internal/results/types.go
+  s_a8e359e45d1fd1::t_07a91b9b7508bb 90-131,134,143-146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e123c662effb55a92d3f49bfe27117eee8385475",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
