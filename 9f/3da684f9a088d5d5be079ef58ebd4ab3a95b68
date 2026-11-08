@@ -1,0 +1,34 @@
+internal/graph/crosswalk.go
+  s_a8e359e45d1fd1::t_164af6ae4144f3 115-116,136,138
+  s_a8e359e45d1fd1::t_917aadccb3642b 93-95
+  s_a8e359e45d1fd1::t_b8e969482143ce 12,47-48,67,92,137,330-405,484-487,497-498,502-507
+  s_a8e359e45d1fd1::t_d934fde5f45a4f 508
+internal/graph/crosswalk_bdd_test.go
+  s_a8e359e45d1fd1::t_26e2c018bc9876 410-501,504-509,511-514,533,535,537
+  s_a8e359e45d1fd1::t_5025a29ad2f92d 502-503,510
+internal/graph/crosswalk_integration_bdd_test.go
+  s_a8e359e45d1fd1::t_9fb78450d39bf6 101-108
+cmd/crosscodex/crosswalk_bdd_test.go
+  s_a8e359e45d1fd1::t_70b954f022fe36 201-220
+cmd/crosscodex/testdata/crosswalk/transitive.csv
+  s_a8e359e45d1fd1::t_70b954f022fe36 1-4
+internal/testspecs/crosswalk_fixture.go
+  s_a8e359e45d1fd1::t_917aadccb3642b 19-20,52-53,65-66,78,88,110-115
+  s_a8e359e45d1fd1::t_26e2c018bc9876 79-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "9f3da684f9a088d5d5be079ef58ebd4ab3a95b68",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
