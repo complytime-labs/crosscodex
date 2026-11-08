@@ -1,0 +1,41 @@
+cmd/crosscodex/testdata/crosswalk/pair.md
+  s_a8e359e45d1fd1::t_70ea19ae23c71b 1-4
+cmd/crosscodex/crosswalk_fuzz_test.go
+  s_a8e359e45d1fd1::t_3d8441b9c70be6 1-18,20-88
+  s_a8e359e45d1fd1::t_b0556444a99ef6 19
+cmd/crosscodex/crosswalk_bdd_test.go
+  s_a8e359e45d1fd1::t_70ea19ae23c71b 16,189,245-293,300-350
+  s_a8e359e45d1fd1::t_480e75c910ae6c 152
+  s_a8e359e45d1fd1::t_3d8441b9c70be6 294-299
+  s_a8e359e45d1fd1::t_4f398fc923cf32 351
+go.mod
+  s_a8e359e45d1fd1::t_bcafbedd936a54 27
+  s_a8e359e45d1fd1::t_e00bacd2b634a3 313-314,348,362-363,390
+cmd/crosscodex/crosswalk.go
+  s_a8e359e45d1fd1::t_eee7b1916f7cef 56-59
+  s_a8e359e45d1fd1::t_480e75c910ae6c 30
+  s_a8e359e45d1fd1::t_b5156349e3f4d1 25,92-95
+cmd/crosscodex/crosswalk_render.go
+  s_a8e359e45d1fd1::t_eee7b1916f7cef 225-227,235
+  s_a8e359e45d1fd1::t_b5156349e3f4d1 11,13-15,27-28,180-224,228-234,236-323
+README.md
+  s_a8e359e45d1fd1::t_d5f2c0ccb27301 330-331
+go.sum
+  s_a8e359e45d1fd1::t_645c7aefb63a4d 1016-1019,1133-1134,1183-1188,1320-1321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ac2e87f26520246e8120773af5a96369c5194840",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
