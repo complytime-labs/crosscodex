@@ -1,0 +1,23 @@
+test/eval/crosswalk/subset_bdd_test.go
+  s_a8e359e45d1fd1::t_ec853cefb0ef65 74,79-99
+  s_a8e359e45d1fd1::t_64971427ea689a 111
+test/eval/crosswalk/subset.go
+  s_a8e359e45d1fd1::t_ec853cefb0ef65 19-22,37,101-102
+  s_a8e359e45d1fd1::t_64971427ea689a 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "60548a7ee5a196afd0ea02d3c08eea1e7d381f6e",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
