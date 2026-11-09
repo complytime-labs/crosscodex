@@ -1,0 +1,49 @@
+cmd/crosscodex/testdata/crosswalk/transitive.csv
+  s_55acb73ee7afd9::t_38732e5209545b 1-3
+cmd/crosscodex/crosswalk_bdd_test.go
+  s_55acb73ee7afd9::t_c2d5bdf9ea4368 410
+  s_55acb73ee7afd9::t_3f6ff2ab25c4c3 67-71
+  s_55acb73ee7afd9::t_8f3f17f5309c37 6
+  s_55acb73ee7afd9::t_22f4f8c3648c0b 79,85,187,226,229-235,244-294,303,382-384,399,427-428,439,444,484,490,493
+cmd/crosscodex/crosswalk_fuzz_test.go
+  s_55acb73ee7afd9::t_eb3940e6f384bf 27,29
+cmd/crosscodex/testdata/crosswalk/one_to_many.csv
+  s_55acb73ee7afd9::t_38732e5209545b 1-3
+cmd/crosscodex/testdata/crosswalk/pair.json
+  s_55acb73ee7afd9::t_38732e5209545b 25-28,39,46-47,51,57,66,73-74,78,84
+cmd/crosscodex/testdata/crosswalk/pair.md
+  s_55acb73ee7afd9::t_38732e5209545b 1-4
+README.md
+  s_55acb73ee7afd9::t_3f6ff2ab25c4c3 341
+  s_55acb73ee7afd9::t_cb46ad4b413cf8 337,339-340,342-343,345,347-348
+cmd/crosscodex/testdata/crosswalk/pair.csv
+  s_55acb73ee7afd9::t_38732e5209545b 1-3
+cmd/crosscodex/crosswalk.go
+  s_c0e2df13a44c6b::t_eff46f2c1e001d 37-48,61-64,130-135
+cmd/crosscodex/crosswalk_render.go
+  s_c0e2df13a44c6b::t_960b9d329d84cd 37-40,46,53,55-57,105,126,338-340
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b7dfe0725d421dbb8fa6da1e88cf514cf6fd9df7",
+  "prompts": {},
+  "sessions": {
+    "s_55acb73ee7afd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d28de1a3-bb79-4887-ade4-5339362ca3c2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_c0e2df13a44c6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aee2cd1fba89710bd",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
