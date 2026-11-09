@@ -1,0 +1,47 @@
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_fcf534241e7f82::t_8fa0d7705270f2 121,133,135,143,146
+test/e2e/ingest-to-age.venom.yml
+  s_fcf534241e7f82::t_074e2a4c7dd927 68,78,87,89,98,100
+internal/catalog/catalog_bdd_test.go
+  s_fcf534241e7f82::t_ec11e9acb1c9c6 466-487
+internal/catalog/catalog_integration_bdd_test.go
+  s_fcf534241e7f82::t_bce4f574b0019a 21-23,29,982-1032
+internal/analyzer/classify/classify_bdd_test.go
+  s_fcf534241e7f82::t_ec11e9acb1c9c6 271-291
+pkg/oscal/oscal_tree_bdd_test.go
+  s_fcf534241e7f82::t_95c56d1368ad2a 7,30-54,86-139
+test/e2e/ingest-to-age-llm.venom.yml
+  s_fcf534241e7f82::t_074e2a4c7dd927 102,104,111,113
+pkg/oscal/catalog.go
+  s_fcf534241e7f82::t_fe12c780346107 96-111,137-138
+internal/catalog/service.go
+  s_fcf534241e7f82::t_fe12c780346107 797-798
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_fcf534241e7f82::t_d7f55128a78bf7 182,213,225
+internal/analyzer/embedding/embedding_bdd_test.go
+  s_fcf534241e7f82::t_ec11e9acb1c9c6 581-599
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_fcf534241e7f82::t_8fa0d7705270f2 298,318,320,332
+pkg/oscal/traversal.go
+  s_fcf534241e7f82::t_fe12c780346107 41-65
+cmd/crosscodexd/oscal_fixture_bdd_test.go
+  s_fcf534241e7f82::t_d7f55128a78bf7 37-42,45-46
+pkg/oscal/oscal_bdd_batch2_test.go
+  s_fcf534241e7f82::t_95c56d1368ad2a 109-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "c43f69e31ffbd1e90efb269f471dc97e8bec0bc5",
+  "prompts": {},
+  "sessions": {
+    "s_fcf534241e7f82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ab1184-8b56-437e-90f5-f01258cf2717",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
