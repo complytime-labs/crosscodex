@@ -1,0 +1,34 @@
+pkg/oscal/testdata/tree/sp800-171r3.json
+  s_fcf534241e7f82::t_cb8d84e7f25f35 1-909
+pkg/oscal/catalog.go
+  s_fcf534241e7f82::t_88b96532489ee4 100-102,109,117-124
+pkg/oscal/oscal_tree_bdd_test.go
+  s_fcf534241e7f82::t_c6bcd520631d16 1-45,47-60
+  s_fcf534241e7f82::t_f109d90393f948 46
+pkg/oscal/testdata/tree/ssdf.json
+  s_fcf534241e7f82::t_cb8d84e7f25f35 1-321
+pkg/oscal/types.go
+  s_fcf534241e7f82::t_c6bcd520631d16 19-29
+pkg/oscal/oscal_withdrawn_bdd_test.go
+  s_fcf534241e7f82::t_f083f6c038a31a 35,39,43,46
+pkg/oscal/testdata/tree/sp800-53r5.json
+  s_fcf534241e7f82::t_cb8d84e7f25f35 1-1818
+docs/dev/design-principles.md
+  s_fcf534241e7f82::t_acabbaad648c4f 233-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "898ab99ea67c2b2735474af0b4c225f6398fe58f",
+  "prompts": {},
+  "sessions": {
+    "s_fcf534241e7f82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ab1184-8b56-437e-90f5-f01258cf2717",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
