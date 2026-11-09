@@ -1,0 +1,24 @@
+pkg/crosswalk/crosswalk_property_test.go
+  s_55acb73ee7afd9::t_237c8aa9020deb 5,64-99
+  s_55acb73ee7afd9::t_9ca543fd4d70c1 100-101
+pkg/crosswalk/collapse.go
+  s_55acb73ee7afd9::t_0d775a0a63f79d 1-126
+pkg/crosswalk/collapse_bdd_test.go
+  s_55acb73ee7afd9::t_237c8aa9020deb 1-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "6efd123ab08879917a123f296910e8181cc75444",
+  "prompts": {},
+  "sessions": {
+    "s_55acb73ee7afd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d28de1a3-bb79-4887-ade4-5339362ca3c2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
