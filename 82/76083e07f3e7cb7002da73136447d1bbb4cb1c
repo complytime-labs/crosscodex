@@ -1,0 +1,37 @@
+internal/pipeline/catalog_readers_integration_test.go
+  s_fcf534241e7f82::t_c40eef41f3279c 228
+  s_fcf534241e7f82::t_33af192f7d9172 7,15,168-169,171-174,176-217,219-225,229
+  s_fcf534241e7f82::t_2a9927db9cceeb 170,175,218,226-227
+  s_fcf534241e7f82::t_f3bb67c7788444 230-231
+internal/pipeline/catalog_controls_reader.go
+  s_fcf534241e7f82::t_c24abcc2c90ecc 30-33,87-90
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_fcf534241e7f82::t_f575ceec69d1f5 414-415,474-475
+internal/pipeline/candidate_readers.go
+  s_fcf534241e7f82::t_c24abcc2c90ecc 37,53-57,59-60,62,69-71,77-78,82-84,92-94,96
+internal/pipeline/result_cache_e2e_integration_test.go
+  s_fcf534241e7f82::t_f575ceec69d1f5 55-56
+internal/pipeline/catalog_controls_reader_bdd_test.go
+  s_fcf534241e7f82::t_b7807b47a9d280 22,38-41,47-63
+  s_fcf534241e7f82::t_c24abcc2c90ecc 23-24
+  s_fcf534241e7f82::t_1972c28cc3d822 64-65
+internal/pipeline/candidate_readers_bdd_test.go
+  s_fcf534241e7f82::t_b7807b47a9d280 25,44-66
+  s_fcf534241e7f82::t_659de5d15b121d 67-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "8276083e07f3e7cb7002da73136447d1bbb4cb1c",
+  "prompts": {},
+  "sessions": {
+    "s_fcf534241e7f82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ab1184-8b56-437e-90f5-f01258cf2717",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
