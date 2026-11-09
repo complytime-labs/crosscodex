@@ -1,0 +1,22 @@
+README.md
+  s_55acb73ee7afd9::t_98deddf5164cd6 341
+  s_55acb73ee7afd9::t_0387578fc875dc 22
+cmd/crosscodex/crosswalk.go
+  s_55acb73ee7afd9::t_98deddf5164cd6 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0bd3b90594a6b1a3da88793ce94f88222bf8a1ee",
+  "prompts": {},
+  "sessions": {
+    "s_55acb73ee7afd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d28de1a3-bb79-4887-ade4-5339362ca3c2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
