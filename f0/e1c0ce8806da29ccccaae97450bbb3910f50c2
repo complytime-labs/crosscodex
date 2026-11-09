@@ -1,0 +1,20 @@
+pkg/crosswalk/crosswalk_property_test.go
+  s_55acb73ee7afd9::t_dfedc098cb72ed 106-107,109-115
+  s_55acb73ee7afd9::t_ee3d55a6323844 18-32,82,108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "f0e1c0ce8806da29ccccaae97450bbb3910f50c2",
+  "prompts": {},
+  "sessions": {
+    "s_55acb73ee7afd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d28de1a3-bb79-4887-ade4-5339362ca3c2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
