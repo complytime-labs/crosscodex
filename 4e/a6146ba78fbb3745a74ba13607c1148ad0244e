@@ -1,0 +1,19 @@
+api/proto/crosscodex/v1/gateway.proto
+  s_55acb73ee7afd9::t_f81e076e8f9e6a 263-264,267-270,284-285,292-293,296-297,302-303,312-320,331-332,341-342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "4ea6146ba78fbb3745a74ba13607c1148ad0244e",
+  "prompts": {},
+  "sessions": {
+    "s_55acb73ee7afd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d28de1a3-bb79-4887-ade4-5339362ca3c2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
