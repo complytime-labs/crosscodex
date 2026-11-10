@@ -2,6 +2,7 @@ README.md
   s_7f230c956fd956::t_43e0b4d0857406 19-24
 internal/catalog/catalog_integration_bdd_test.go
   s_7f230c956fd956::t_dc554c315274fe 1023-1024
+  s_55acb73ee7afd9::t_c150dc31c58ac3 1023-1024
 pkg/oscal/convert.go
   s_7f230c956fd956::t_1eed1a7f15c4d7 175-176,235-238,240-241,244-245
 pkg/oscal/oscal_bdd_batch2_test.go
@@ -17,6 +18,14 @@ pkg/oscal/oscal_property_test.go
   "base_commit_sha": "7f8bcd4b4353f9c3a719e48295e1a3acef0d6ccf",
   "prompts": {},
   "sessions": {
+    "s_55acb73ee7afd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d28de1a3-bb79-4887-ade4-5339362ca3c2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
     "s_7f230c956fd956": {
       "agent_id": {
         "tool": "claude",
