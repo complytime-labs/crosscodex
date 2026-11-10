@@ -1,0 +1,63 @@
+README.md
+  s_7f230c956fd956::t_541daf5f5902bb 19-24,311-342
+api/proto/crosscodex/v1/gateway.proto
+  s_7f230c956fd956::t_6b315672ca7e26 277-278,287-288,290-293,295-298,340-341,349-352,360-363
+cmd/crosscodex/crosswalk.go
+  s_7f230c956fd956::t_ec72e760ca8057 1-273
+cmd/crosscodex/crosswalk_bdd_test.go
+  s_7f230c956fd956::t_3432bdfe8fc2e1 1-499
+cmd/crosscodex/crosswalk_fuzz_test.go
+  s_7f230c956fd956::t_4889ee2f72e607 1-93
+cmd/crosscodex/crosswalk_render.go
+  s_7f230c956fd956::t_ac710455e28f60 1-361
+cmd/crosscodex/main.go
+  s_7f230c956fd956::t_93c2a8038e33b8 133
+cmd/crosscodex/results.go
+  s_7f230c956fd956::t_f9fffff25b341c 251-257
+cmd/crosscodex/testdata/crosswalk/one_to_many.csv
+  s_7f230c956fd956::t_cd37deb3305273 1-3
+cmd/crosscodex/testdata/crosswalk/pair.csv
+  s_7f230c956fd956::t_c11aa6235a0891 1-3
+cmd/crosscodex/testdata/crosswalk/pair.json
+  s_7f230c956fd956::t_98870c78bc138b 1-76
+cmd/crosscodex/testdata/crosswalk/pair.md
+  s_7f230c956fd956::t_c6459a1e19cb9d 1-4
+cmd/crosscodex/testdata/crosswalk/transitive.csv
+  s_7f230c956fd956::t_575233f1c024b6 1-4
+go.mod
+  s_7f230c956fd956::t_4535c5585f618b 27,313-314,348,362-363,390
+go.sum
+  s_7f230c956fd956::t_6eeae66a09ae84 1016-1019,1133-1134,1183-1188,1320-1321
+internal/gateway/crosswalk_bdd_test.go
+  s_7f230c956fd956::t_a11e43d62ad73c 375-380
+internal/graph/crosswalk.go
+  s_7f230c956fd956::t_499218b33126fc 6,8,11,14,44-46,49-50,69,88-97,106,115-148,181,212-244,250,257-260,262,264,274,308-312,328,335,341,347,368-443,508-512,526-532,534-539,542,544,548-550,554-560
+internal/graph/crosswalk_bdd_test.go
+  s_7f230c956fd956::t_3d393c8a3df139 6,33-48,196,202-213,255-333,346-378,449-513,527-530,536-660,664-665,669,682,684,686
+internal/graph/crosswalk_integration_bdd_test.go
+  s_7f230c956fd956::t_48ab93e5425f99 101-108
+internal/testspecs/crosswalk_fixture.go
+  s_7f230c956fd956::t_d17f93b6cbc99e 19-20,44-46,55-56,68-69,81-85,91,113-118
+pkg/crosswalk/crosswalk_property_test.go
+  s_7f230c956fd956::t_50c5f312ab5a0e 4,55-57
+pkg/crosswalk/merge.go
+  s_7f230c956fd956::t_42696f39485c17 81-87
+pkg/crosswalk/merge_bdd_test.go
+  s_7f230c956fd956::t_b3fb3e9241fee5 81-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b11c2fb5d3fb96e8a696e66065dd9241f788819d",
+  "prompts": {},
+  "sessions": {
+    "s_7f230c956fd956": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "69cd6301-17b2-41ea-8de0-b1cd0cb3c534",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
