@@ -1,0 +1,27 @@
+test/e2e/ingest-to-age-llm.venom.yml
+  s_fcf534241e7f82::t_75172e287ce083 102-111,113
+test/e2e/ingest-to-age.venom.yml
+  s_fcf534241e7f82::t_75172e287ce083 68,78,87-98,100
+docs/dev/design-principles.md
+  s_fcf534241e7f82::t_608b6f1579b733 235,237,241
+AGENTS.md
+  s_fcf534241e7f82::t_608b6f1579b733 34
+README.md
+  s_fcf534241e7f82::t_608b6f1579b733 21-26,259
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "72430995a76c3540da97e50e22091615f8eef8ff",
+  "prompts": {},
+  "sessions": {
+    "s_fcf534241e7f82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ab1184-8b56-437e-90f5-f01258cf2717",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
