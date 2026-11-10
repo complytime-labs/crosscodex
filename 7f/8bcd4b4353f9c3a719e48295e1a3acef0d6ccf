@@ -1,0 +1,29 @@
+README.md
+  s_7f230c956fd956::t_43e0b4d0857406 19-24
+internal/catalog/catalog_integration_bdd_test.go
+  s_7f230c956fd956::t_dc554c315274fe 1023-1024
+pkg/oscal/convert.go
+  s_7f230c956fd956::t_1eed1a7f15c4d7 175-176,235-238,240-241,244-245
+pkg/oscal/oscal_bdd_batch2_test.go
+  s_7f230c956fd956::t_361671d3536141 558,560-596,611,636,639
+pkg/oscal/oscal_bdd_test.go
+  s_7f230c956fd956::t_d8833a4c1de088 139-141,185-186,202,217
+pkg/oscal/oscal_property_test.go
+  s_7f230c956fd956::t_051b304b7d921c 6,109-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "7f8bcd4b4353f9c3a719e48295e1a3acef0d6ccf",
+  "prompts": {},
+  "sessions": {
+    "s_7f230c956fd956": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "69cd6301-17b2-41ea-8de0-b1cd0cb3c534",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
