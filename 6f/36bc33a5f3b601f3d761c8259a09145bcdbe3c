@@ -2,8 +2,12 @@ api/proto/crosscodex/v1/gateway.proto
   s_7f230c956fd956::t_74c01d39aa88e4 137-148,202-358
 cmd/crosscodexd/bootstrap.go
   s_7f230c956fd956::t_a15a2d592c68a0 348-349
+  s_a8e359e45d1fd1::t_842c5f41e798f5 348-349
 cmd/crosscodexd/gateway_backends_integration_test.go
   s_7f230c956fd956::t_82c74728495f20 39,78-84
+  s_a8e359e45d1fd1::t_b4c18b14d12b86 78,80-81
+  s_a8e359e45d1fd1::t_34a2de7a45a66f 39,79,82-83
+  s_a8e359e45d1fd1::t_88b559b953a4ed 84
 cmd/crosscodexd/results_e2e_test.go
   s_7f230c956fd956::t_ba43d9caf28d17 25,197-199,201,203-208,214-216
 docs/dev/design-principles.md
@@ -26,8 +30,11 @@ internal/graph/crosswalk.go
   s_7f230c956fd956::t_1c40e3e86673b5 1-381
 internal/graph/crosswalk_bdd_test.go
   s_7f230c956fd956::t_1efe2939a82b2e 1-383
+  s_a8e359e45d1fd1::t_d95496ddfc7690 35-36,42,47,50,100-101
 internal/graph/crosswalk_integration_bdd_test.go
   s_7f230c956fd956::t_f51448703d2695 1-107
+  s_a8e359e45d1fd1::t_b4c18b14d12b86 36-37,39,42,104
+  s_a8e359e45d1fd1::t_559f3a169d206d 1-35,38,40-41,43-103,105-107
 internal/graph/doc.go
   s_7f230c956fd956::t_c67cc538567e89 49
 internal/graph/resolver_bdd_test.go
@@ -46,6 +53,7 @@ internal/graph/synthesis_resolver_integration_bdd_test.go
   s_7f230c956fd956::t_32a52025671593 1-115
 internal/testspecs/crosswalk_fixture.go
   s_7f230c956fd956::t_c3490afab4277f 1-106
+  s_a8e359e45d1fd1::t_cc6628d642ce9e 1-106
 internal/testspecs/graphdb_contract.go
   s_7f230c956fd956::t_bc0b5841cbe575 353-358,1572-1605
 pkg/analyzer/results/results.go
@@ -87,6 +95,14 @@ pkg/graphdb/types.go
       "agent_id": {
         "tool": "claude",
         "id": "69cd6301-17b2-41ea-8de0-b1cd0cb3c534",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
         "model": "claude-opus-5-5"
       },
       "human_author": "LLM (riotbox) <llm@riotbox>"
