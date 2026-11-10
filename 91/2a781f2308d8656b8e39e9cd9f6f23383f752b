@@ -1,0 +1,49 @@
+pkg/db/role_check_integration_bdd_test.go
+  s_fcf534241e7f82::t_5a4b0280b93364 38
+pkg/retention/purge.go
+  s_fcf534241e7f82::t_188c5ef2193c8b 68
+pkg/retention/archive.go
+  s_fcf534241e7f82::t_188c5ef2193c8b 49-50
+pkg/db/catalog_tenant_fk_integration_bdd_test.go
+  s_fcf534241e7f82::t_5a4b0280b93364 63-64,85,95,117
+pkg/retention/purge_bdd_test.go
+  s_fcf534241e7f82::t_87ba183e6c5327 80,82,87,90-92
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_fcf534241e7f82::t_5a4b0280b93364 49
+internal/catalog/rpc_errors_bdd_test.go
+  s_fcf534241e7f82::t_1b8951609a2517 36-38
+internal/catalog/catalog_integration_bdd_test.go
+  s_fcf534241e7f82::t_9aec1873215f99 663-814
+pkg/db/migrations/002_catalog_containers.down.sql
+  s_fcf534241e7f82::t_c3afe116eb0083 1-4
+pkg/db/migrations/002_catalog_containers.up.sql
+  s_fcf534241e7f82::t_c3afe116eb0083 1-44
+pkg/retention/engine_integration_bdd_test.go
+  s_fcf534241e7f82::t_87ba183e6c5327 331,357-361,376,382-383,403,620,631-632,659,666-667
+internal/catalog/store.go
+  s_fcf534241e7f82::t_98b85ae501871b 29,64-81,347-352,358-365,368,370,373-378,388,396-398,402,404,407-445,452,454,464,484,501-508,525,543,619,649
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_fcf534241e7f82::t_1b8951609a2517 84-89
+  s_fcf534241e7f82::t_f37d34e0872d9f 62-65
+internal/catalog/catalog_bdd_test.go
+  s_fcf534241e7f82::t_1b8951609a2517 103-107
+  s_fcf534241e7f82::t_f37d34e0872d9f 71
+pkg/retention/archive_bdd_test.go
+  s_fcf534241e7f82::t_0be377c5e243c1 118-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "912a781f2308d8656b8e39e9cd9f6f23383f752b",
+  "prompts": {},
+  "sessions": {
+    "s_fcf534241e7f82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ab1184-8b56-437e-90f5-f01258cf2717",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
