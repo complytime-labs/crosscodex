@@ -1,5 +1,6 @@
 README.md
   s_7f230c956fd956::t_11a45b6f7bfa00 19-26,257
+  s_fcf534241e7f82::t_fcef595519b8e6 23
 cmd/crosscodexd/ingest_age_e2e_test.go
   s_7f230c956fd956::t_f6005280098fc6 121,133,135,143,146
 cmd/crosscodexd/oscal_fixture_bdd_test.go
@@ -8,6 +9,7 @@ cmd/crosscodexd/pipeline_role_integration_test.go
   s_7f230c956fd956::t_3c4ab4de3fcc1e 298,318,320,332
 docs/dev/design-principles.md
   s_7f230c956fd956::t_c348acc35658b3 233-242
+  s_fcf534241e7f82::t_fcef595519b8e6 241
 internal/analyzer/classify/classify_bdd_test.go
   s_7f230c956fd956::t_4c0511c97db224 271-291
 internal/analyzer/embedding/embedding_bdd_test.go
@@ -48,6 +50,7 @@ pkg/oscal/assemble.go
   s_7f230c956fd956::t_dad9e2e264e6cd 25-29,31,45-50,74-82,85-90,92-120,122,126-131,133-156,158-163,165-170,174-176,178-179,181-182,184-200,204-226
 pkg/oscal/catalog.go
   s_7f230c956fd956::t_eab0db089c4b5b 96-111,116-118,125,133-142
+  s_fcf534241e7f82::t_fcef595519b8e6 98
 pkg/oscal/convert.go
   s_7f230c956fd956::t_a9b238fc279512 5,162-163,167
 pkg/oscal/oscal_bdd_batch2_test.go
@@ -81,6 +84,14 @@ test/e2e/ingest-to-age.venom.yml
       "agent_id": {
         "tool": "claude",
         "id": "69cd6301-17b2-41ea-8de0-b1cd0cb3c534",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_fcf534241e7f82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ab1184-8b56-437e-90f5-f01258cf2717",
         "model": "claude-opus-5-5"
       },
       "human_author": "LLM (riotbox) <llm@riotbox>"
