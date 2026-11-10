@@ -22,12 +22,16 @@ cmd/crosscodex/testdata/crosswalk/transitive.csv
   s_7f230c956fd956::t_1948c5c6a4f902 1-3
 internal/graph/crosswalk.go
   s_7f230c956fd956::t_5e7b07a6405553 34-39,55-62,135,155,159,161,169-183,211,213,215,225-226,304,375,377-381,387,398,404-414,450-457,459,461-464,467,469-483,487-509,513-514,516-517,520,523,526,528-529,531-532,538-575,627-629,637-640
+  s_55acb73ee7afd9::t_0f8bf76b0294bc 543-544
 internal/graph/crosswalk_bdd_test.go
   s_7f230c956fd956::t_b94ac2d8a62dff 6,195-233,263-354,709-710,717,722-748,751-787,814-817,825-837,840-841,864,869-913
+  s_55acb73ee7afd9::t_0f8bf76b0294bc 745,748,751
 internal/graph/export_test.go
   s_7f230c956fd956::t_2ce1c233bbac0e 24-25
 pkg/crosswalk/collapse.go
   s_7f230c956fd956::t_6bebbc1cb02ab8 1-126
+  s_55acb73ee7afd9::t_0f8bf76b0294bc 39,41,44
+  s_55acb73ee7afd9::t_fd8911c0cd0519 33
 pkg/crosswalk/collapse_bdd_test.go
   s_7f230c956fd956::t_1d42ee7f755ef4 1-91
 pkg/crosswalk/crosswalk_property_test.go
@@ -38,6 +42,7 @@ pkg/crosswalk/review_bdd_test.go
   s_7f230c956fd956::t_4c778dfca313c5 1-89
 pkg/oscal/params.go
   s_7f230c956fd956::t_1e634b72a0caf7 12
+  s_55acb73ee7afd9::t_0f8bf76b0294bc 12
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -45,6 +50,14 @@ pkg/oscal/params.go
   "base_commit_sha": "f1c98834c1897de71c1f16be828f2cab33491a26",
   "prompts": {},
   "sessions": {
+    "s_55acb73ee7afd9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d28de1a3-bb79-4887-ade4-5339362ca3c2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
     "s_7f230c956fd956": {
       "agent_id": {
         "tool": "claude",
