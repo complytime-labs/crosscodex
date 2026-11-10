@@ -1,0 +1,74 @@
+pkg/oscal/catalog.go
+  s_fcf534241e7f82::t_6bc16f19cef8c9 127
+  s_fcf534241e7f82::t_1b4aa06234515b 39,45,50-51,54,59,89,97-104,114,145
+pkg/oscal/oscal_bdd_batch2_test.go
+  s_fcf534241e7f82::t_e57abb4c3bfe6d 42,59,75,90,100
+  s_a297f971f2bd34::t_1c9f7443362dc7 112,118,125-126,128
+pkg/oscal/types.go
+  s_fcf534241e7f82::t_aebf04e7735fca 5-10
+  s_fcf534241e7f82::t_4bcfd0271f9419 11-32,47
+cmd/crosscodexd/oscal_fixture_bdd_test.go
+  s_a297f971f2bd34::t_f9abc047affbfc 30,32,38,40-41,44-45
+internal/catalog/catalog_bdd_test.go
+  s_a297f971f2bd34::t_ea292c3f40ddfd 48-50,53,57,104-105,107-109,111,478,484-485,494,498-589,777-783,785-818
+internal/catalog/catalog_fuzz_test.go
+  s_a297f971f2bd34::t_b4d248aa67cf8d 52-59,62-63,67
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_a297f971f2bd34::t_3f10c711fedd6a 52-53,55,57-58,190-191,194,201,203-204,222,234
+internal/catalog/catalog_property_test.go
+  s_a297f971f2bd34::t_cb174ce058dc0f 64,83,104,112,117
+internal/catalog/export_test.go
+  s_a297f971f2bd34::t_6d9597cbea5e0a 7
+internal/catalog/service.go
+  s_a297f971f2bd34::t_774800e6960439 273,279,292-293,297-298,337-348,352-363,367-368,806-816,818-829,831-839,841-850
+internal/catalog/store.go
+  s_a297f971f2bd34::t_5adfda459695fe 396,407,413,418
+internal/pipeline/catalog_readers_integration_test.go
+  s_a297f971f2bd34::t_ece4d91c230830 187,199,219,224
+pkg/oscal/assemble.go
+  s_a297f971f2bd34::t_49767bd141bc83 24-32,93-96,100-102,105-110,115-119,122-124,126,131,151,157-158,170-173
+pkg/oscal/interface.go
+  s_a297f971f2bd34::t_41eb184d3c1288 8,10,56
+pkg/oscal/oscal_bdd_batch3_test.go
+  s_a297f971f2bd34::t_a0acae106a9930 39,72,104,155,184
+pkg/oscal/oscal_bdd_test.go
+  s_a297f971f2bd34::t_1642621ba9d5e3 89,91,181,183,201,203,217,219
+pkg/oscal/oscal_tree_bdd_test.go
+  s_a297f971f2bd34::t_50bf13eb3d2c1b 8,20-21,26,28,31-32,34-42,48-62,66,82-88,113-116,118-137,141-143,145-148,151-153,155-158,161-173,176-185,188-193,195-200,211-212,214,288-298,302,320,338,340-379,381-384,389,391,395-396,398,403-405,409-411,414,416,419-422,429-437,450,455-456
+pkg/oscal/oscal_withdrawn_bdd_test.go
+  s_a297f971f2bd34::t_687149cc5e841f 19,21
+pkg/oscal/testdata/tree/ism-e8.json
+  s_a297f971f2bd34::t_5428b49a4def7b 1-404
+pkg/oscal/traversal.go
+  s_a297f971f2bd34::t_09130f9ac1de83 5,12-15,17,21,33,38-40,42-45,49-51,53-58,63,66-71,73-75,81,83,88
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_a297f971f2bd34::t_d35fa0c4ba8e00 121,133-134,136,144,147
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_a297f971f2bd34::t_e876f8c82fc6dc 298,319,331
+internal/catalog/catalog_integration_bdd_test.go
+  s_a297f971f2bd34::t_03b154d6efbb28 1160,1163,1169-1171,1173-1174,1177-1178,1180-1181,1183-1186,1188,1203,1205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "cd8575c622ec6258b4ce1d198fb24c68dad65d5b",
+  "prompts": {},
+  "sessions": {
+    "s_a297f971f2bd34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae47da9c1b1390cbe",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_fcf534241e7f82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ab1184-8b56-437e-90f5-f01258cf2717",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
