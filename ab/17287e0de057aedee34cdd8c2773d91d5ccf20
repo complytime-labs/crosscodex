@@ -1,0 +1,24 @@
+pkg/config/knownkeys.go
+  s_a8e359e45d1fd1::t_df5912b23fa38a 133-140
+pkg/config/types_check_bdd_test.go
+  s_a8e359e45d1fd1::t_369f82c607b3cf 50-58
+  s_a8e359e45d1fd1::t_33e2373794532f 59
+pkg/config/testdata/fuzz/FuzzCheckKnownKeys/085bcef4590b3506
+  s_a8e359e45d1fd1::t_2e1917f2ec0099 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ab17287e0de057aedee34cdd8c2773d91d5ccf20",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

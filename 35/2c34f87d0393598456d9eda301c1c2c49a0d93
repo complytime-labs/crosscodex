@@ -1,0 +1,23 @@
+test/eval/crosswalk/references_bdd_test.go
+  s_a8e359e45d1fd1::t_3d817755eee80c 152
+test/eval/crosswalk/references.go
+  s_a8e359e45d1fd1::t_b4cfcaffab5289 217-223,225
+test/eval/crosswalk/testdata/fuzz/FuzzExtractCSVReferences/bare-quote-first-field
+  s_a8e359e45d1fd1::t_74fbd6b9d651c1 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "352c34f87d0393598456d9eda301c1c2c49a0d93",
+  "prompts": {},
+  "sessions": {
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
