@@ -1,0 +1,95 @@
+api/proto/crosscodex/v1/gateway.proto
+  s_7f230c956fd956::t_74c01d39aa88e4 137-148,202-358
+cmd/crosscodexd/bootstrap.go
+  s_7f230c956fd956::t_a15a2d592c68a0 348-349
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_7f230c956fd956::t_82c74728495f20 39,78-84
+cmd/crosscodexd/results_e2e_test.go
+  s_7f230c956fd956::t_ba43d9caf28d17 25,197-199,201,203-208,214-216
+docs/dev/design-principles.md
+  s_7f230c956fd956::t_fd3298dd4aad4e 79-80
+internal/gateway/backend_errors_bdd_test.go
+  s_7f230c956fd956::t_1a24f902ce0d6d 256-262
+internal/gateway/backends.go
+  s_7f230c956fd956::t_aa293d689e8351 54-62
+internal/gateway/crosswalk.go
+  s_7f230c956fd956::t_60fbfee89b804e 1-391
+internal/gateway/crosswalk_bdd_test.go
+  s_7f230c956fd956::t_e33e3537718195 1-404
+internal/gateway/gateway_bdd_test.go
+  s_7f230c956fd956::t_bb451cce595c05 1144,1148,1196-1198,1231-1234
+internal/gateway/gateway_property_bdd_test.go
+  s_7f230c956fd956::t_cd7a332e7a0ce9 211-216
+internal/gateway/service.go
+  s_7f230c956fd956::t_d88853ef8f4c54 29,114-121
+internal/graph/crosswalk.go
+  s_7f230c956fd956::t_1c40e3e86673b5 1-381
+internal/graph/crosswalk_bdd_test.go
+  s_7f230c956fd956::t_1efe2939a82b2e 1-383
+internal/graph/crosswalk_integration_bdd_test.go
+  s_7f230c956fd956::t_f51448703d2695 1-107
+internal/graph/doc.go
+  s_7f230c956fd956::t_c67cc538567e89 49
+internal/graph/resolver_bdd_test.go
+  s_7f230c956fd956::t_8ae9e5b7488b28 170-228
+internal/graph/resolver_pg.go
+  s_7f230c956fd956::t_cad9a7fb8397bf 5-6,15,98-104,121-155
+internal/graph/subscriber_bdd_test.go
+  s_7f230c956fd956::t_cd3b99479e1ae0 94,105,160
+internal/graph/subscriber_handlers.go
+  s_7f230c956fd956::t_6b0514a669f624 25,34-35,79-81
+internal/graph/synthesis_materializer.go
+  s_7f230c956fd956::t_7d8feeb9f05d08 1-67
+internal/graph/synthesis_materializer_bdd_test.go
+  s_7f230c956fd956::t_56f7aac6e13e94 1-165
+internal/graph/synthesis_resolver_integration_bdd_test.go
+  s_7f230c956fd956::t_32a52025671593 1-115
+internal/testspecs/crosswalk_fixture.go
+  s_7f230c956fd956::t_c3490afab4277f 1-106
+internal/testspecs/graphdb_contract.go
+  s_7f230c956fd956::t_bc0b5841cbe575 353-358,1572-1605
+pkg/analyzer/results/results.go
+  s_7f230c956fd956::t_037aee6a09a9dd 36-68
+pkg/analyzer/results/results_bdd_test.go
+  s_7f230c956fd956::t_f541e1a63be6a1 4,29-45
+pkg/crosswalk/crosswalk_property_test.go
+  s_7f230c956fd956::t_a63d397d108761 1-61
+pkg/crosswalk/crosswalk_suite_test.go
+  s_7f230c956fd956::t_90d36eb6be255b 1-13
+pkg/crosswalk/doc.go
+  s_7f230c956fd956::t_86d913016eb8d7 1-8
+pkg/crosswalk/merge.go
+  s_7f230c956fd956::t_f715043fdebae0 1-130
+pkg/crosswalk/merge_bdd_test.go
+  s_7f230c956fd956::t_1389299dc842d7 1-95
+pkg/crosswalk/relationship.go
+  s_7f230c956fd956::t_c1d844b023537d 1-101
+pkg/crosswalk/relationship_bdd_test.go
+  s_7f230c956fd956::t_b6855f7f9e5934 1-78
+pkg/graphdb/agedriver/client.go
+  s_7f230c956fd956::t_473c9408d38590 598-605
+pkg/graphdb/identifier.go
+  s_7f230c956fd956::t_c1920a7ca2e410 63,73-78
+pkg/graphdb/interface.go
+  s_7f230c956fd956::t_cd45250fe2162e 93-96
+pkg/graphdb/memdriver/client.go
+  s_7f230c956fd956::t_c977ef8241a66f 352-354
+pkg/graphdb/types.go
+  s_7f230c956fd956::t_f0db6e966a9609 33-36,38-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "6f36bc33a5f3b601f3d761c8259a09145bcdbe3c",
+  "prompts": {},
+  "sessions": {
+    "s_7f230c956fd956": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "69cd6301-17b2-41ea-8de0-b1cd0cb3c534",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
