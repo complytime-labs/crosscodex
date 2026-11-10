@@ -1,0 +1,27 @@
+internal/catalog/store.go
+  s_fcf534241e7f82::t_9adabdc4a9a50a 331-332,349-360,379
+internal/catalog/catalog_bdd_test.go
+  s_fcf534241e7f82::t_6b4ed78cd0f0de 95,151-165,175-176,187-205,215,217-218,228,230,235-254,270,272-273,298-302,304-306,308-309
+  s_fcf534241e7f82::t_7c1976af1fc5c9 73,97-99,549
+internal/catalog/catalog_integration_bdd_test.go
+  s_fcf534241e7f82::t_959d3f47225b37 222,313,607,613,978,1005,1017,1061,1323,1358,1433
+  s_fcf534241e7f82::t_9868d26e907b36 179-184,610,616,619,625,650,660-662,664
+  s_fcf534241e7f82::t_e210fe56081d7b 149-157,349,391,400,444,920,1101,1133,1178,1555,1604
+  s_fcf534241e7f82::t_234afefc54cfd5 679,708-709,735,738,750,761,781,879
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "f895e6633c84bd96ea72b90f8cc737d0aa3d1237",
+  "prompts": {},
+  "sessions": {
+    "s_fcf534241e7f82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ab1184-8b56-437e-90f5-f01258cf2717",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
