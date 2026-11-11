@@ -1,0 +1,44 @@
+pkg/oscal/types.go
+  s_d4655aa51573b9::t_912ed0a3fd4c59 34-48
+pkg/oscal/catalog.go
+  s_d4655aa51573b9::t_a419afb83c4a71 18-20,31-40,44,64,141-145,147-151,162-166,181-183,189-191,195-199
+  s_d4655aa51573b9::t_6197c6227434fb 192-194
+pkg/oscal/testdata/tree/README.md
+  s_d4655aa51573b9::t_bb7753f4a00944 24-36
+pkg/oscal/testdata/tree/ai-rmf.json
+  s_d4655aa51573b9::t_854e6d46ad1dd3 1-390
+pkg/oscal/oscal_bdd_batch2_test.go
+  s_d4655aa51573b9::t_12cc2a5458d474 758,815,851,878
+pkg/oscal/decompose.go
+  s_d4655aa51573b9::t_c31a295ce8d8ac 6,31-37,40-43,45-60,62,64-66,68-70,72-98,101,258-261,265-270,276-280,282-296,299-302,305-306
+  s_d4655aa51573b9::t_a419afb83c4a71 39
+pkg/oscal/testdata/tree/cis-rhel9.json
+  s_d4655aa51573b9::t_854e6d46ad1dd3 1-61
+pkg/oscal/oscal_fuzz_test.go
+  s_d4655aa51573b9::t_43b56a123c364f 4-5,94-139
+  s_d4655aa51573b9::t_2711028ef4d166 140-141
+test/eval/crosswalk/target_index.go
+  s_d4655aa51573b9::t_f54d506dcf2e16 78
+pkg/oscal/testdata/tree/pcidss-4.json
+  s_d4655aa51573b9::t_854e6d46ad1dd3 1-62
+pkg/oscal/oscal_requirement_bdd_test.go
+  s_d4655aa51573b9::t_126cf7d5897d2b 1-294,296-298,300,302-304
+  s_d4655aa51573b9::t_6197c6227434fb 295,299
+  s_d4655aa51573b9::t_30df288bdd8f61 301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "595fed82aec12346e5b6eaf570a7c671fe1a3b78",
+  "prompts": {},
+  "sessions": {
+    "s_d4655aa51573b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1319198e-2eff-4c06-9812-ba95cec73f15",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
