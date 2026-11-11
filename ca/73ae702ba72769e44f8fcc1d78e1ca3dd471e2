@@ -1,0 +1,23 @@
+cmd/crosscodex/catalog.go
+  s_d4655aa51573b9::t_6bf2697a2f26b8 9,12,165-180,191,194
+cmd/crosscodex/catalog_import_bdd_test.go
+  s_d4655aa51573b9::t_a245c44839491c 104
+  s_d4655aa51573b9::t_6bf2697a2f26b8 11,96-103
+  s_d4655aa51573b9::t_03d617e9dc46fd 105-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ca73ae702ba72769e44f8fcc1d78e1ca3dd471e2",
+  "prompts": {},
+  "sessions": {
+    "s_d4655aa51573b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1319198e-2eff-4c06-9812-ba95cec73f15",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
