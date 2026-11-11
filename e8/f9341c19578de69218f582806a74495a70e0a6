@@ -1,0 +1,35 @@
+pkg/oscal/catalog.go
+  s_f42d9f4c29849f::t_269a70ca35bb05 110,115
+pkg/oscal/decompose.go
+  s_f42d9f4c29849f::t_7a7675343d587f 53,60-62,69,76-78,90,115,133,150
+pkg/oscal/export_test.go
+  s_f42d9f4c29849f::t_2d389357b7cf9b 18-23
+pkg/oscal/oscal_labels_bdd_test.go
+  s_f42d9f4c29849f::t_f2a546bf3f2e2c 1-91
+pkg/oscal/oscal_property_test.go
+  s_f42d9f4c29849f::t_6edf3f213866d5 18-31
+pkg/oscal/oscal_tree_bdd_test.go
+  s_f42d9f4c29849f::t_2ffec98a96b295 126-128,370-376,457
+pkg/oscal/props.go
+  s_f42d9f4c29849f::t_18355a4af1ded2 1-71
+pkg/oscal/testdata/tree/README.md
+  s_f42d9f4c29849f::t_c97005a053f3d3 1-23
+pkg/oscal/types.go
+  s_f42d9f4c29849f::t_5c562766b573db 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e8f9341c19578de69218f582806a74495a70e0a6",
+  "prompts": {},
+  "sessions": {
+    "s_f42d9f4c29849f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-acfd16408d0f57deb",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
