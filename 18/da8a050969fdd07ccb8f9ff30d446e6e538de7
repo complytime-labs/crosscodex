@@ -1,0 +1,39 @@
+internal/graph/controls_reader_integration_bdd_test.go
+  s_d4655aa51573b9::t_efc85b58cd4bbb 78,82,84-87,116,126
+  s_d4655aa51573b9::t_794006fd63d215 80-81
+pkg/db/migrations/001_initial_schema.up.sql
+  s_d4655aa51573b9::t_c6ab072f0e2c32 749
+internal/catalog/catalog_bdd_test.go
+  s_d4655aa51573b9::t_3f3c788ad59981 562
+  s_d4655aa51573b9::t_937022bdc0d00c 548
+internal/graph/catalog_projection.go
+  s_d4655aa51573b9::t_1bc7d5f74fe82d 101-103,126-133
+pkg/db/role_check.go
+  s_d4655aa51573b9::t_9357380be6a394 119
+internal/catalog/service.go
+  s_d4655aa51573b9::t_f6a25ab5aceea9 349
+internal/graph/controls_reader.go
+  s_d4655aa51573b9::t_97215c34e4305d 29-30,45,134,144,193,203
+internal/graph/catalog_projection_bdd_test.go
+  s_d4655aa51573b9::t_09a2c0aa627c24 330-357
+internal/catalog/store.go
+  s_d4655aa51573b9::t_f6a25ab5aceea9 72,79,416,418,423,428
+internal/graph/controls_reader_bdd_test.go
+  s_d4655aa51573b9::t_937022bdc0d00c 23-24,28-29,75,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "18da8a050969fdd07ccb8f9ff30d446e6e538de7",
+  "prompts": {},
+  "sessions": {
+    "s_d4655aa51573b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1319198e-2eff-4c06-9812-ba95cec73f15",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
