@@ -1,0 +1,34 @@
+pkg/oscal/oscal_labels_bdd_test.go
+  s_d4655aa51573b9::t_71ac351f08b6d4 90-93
+pkg/oscal/oscal_requirement_bdd_test.go
+  s_d4655aa51573b9::t_71ac351f08b6d4 183,185-190,289-301
+pkg/oscal/decompose.go
+  s_d4655aa51573b9::t_471c63fff6dad0 318-319,321-322,324-331,333,336,339,341
+pkg/oscal/oscal_property_test.go
+  s_d4655aa51573b9::t_71ac351f08b6d4 5,31-38
+  s_d4655aa51573b9::t_c3b401ae04f0e2 39-41
+pkg/oscal/props.go
+  s_d4655aa51573b9::t_5c0d51e75530ac 5,63-68,70-71,74-77,80-81,84,90
+  s_d4655aa51573b9::t_112cb9b0fecaac 78-79,82-83,85-89
+pkg/oscal/catalog.go
+  s_d4655aa51573b9::t_2763b17b6dc6ce 34-35
+  s_d4655aa51573b9::t_471c63fff6dad0 146-147,149,183-190,201-202,218,220-222,224,232-233,241,243
+  s_d4655aa51573b9::t_ea445cef29829d 148,208-217,219,223,225-231,234-240,242
+  s_d4655aa51573b9::t_ae704967fc6ce8 244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ef703025d8a568bb394df52038c182dd3a91b29e",
+  "prompts": {},
+  "sessions": {
+    "s_d4655aa51573b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1319198e-2eff-4c06-9812-ba95cec73f15",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
