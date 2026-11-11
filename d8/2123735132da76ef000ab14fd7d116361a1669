@@ -1,0 +1,26 @@
+docs/dev/design-principles.md
+  s_d4655aa51573b9::t_177ce16f699aa6 131-134,146
+README.md
+  s_d4655aa51573b9::t_8a72e6d314d77b 25-32,242,358
+pkg/oscal/testdata/tree/README.md
+  s_d4655aa51573b9::t_7677b8231722b1 9-13,39-40
+  s_d4655aa51573b9::t_f07d088a3af7e9 8,24-26,38
+docs/dev/test-sources.md
+  s_d4655aa51573b9::t_177ce16f699aa6 13,29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d82123735132da76ef000ab14fd7d116361a1669",
+  "prompts": {},
+  "sessions": {
+    "s_d4655aa51573b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1319198e-2eff-4c06-9812-ba95cec73f15",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
