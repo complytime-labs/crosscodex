@@ -1,0 +1,44 @@
+test/eval/crosswalk/report.go
+  s_cb414c50abe95f::t_219637edbc930c 92-93,382-383
+  s_cb414c50abe95f::t_bdf53bd23b1efe 384
+test/eval/crosswalk/report_bdd_test.go
+  s_cb414c50abe95f::t_071a0ede1b535f 145-153
+test/eval/crosswalk/run.sh
+  s_cb414c50abe95f::t_8f291b0439847e 71-79,163
+test/eval/crosswalk/labels_bdd_test.go
+  s_cb414c50abe95f::t_071a0ede1b535f 169
+  s_cb414c50abe95f::t_10a595179fe805 141-168,170-173
+README.md
+  s_cb414c50abe95f::t_1b65e44235ecf7 844
+test/eval/crosswalk/score.go
+  s_cb414c50abe95f::t_219637edbc930c 33-34,156
+test/tooling/eval-crosswalk.venom.yml
+  s_cb414c50abe95f::t_19aecf88924f29 166-208
+test/eval/crosswalk/labels_property_test.go
+  s_cb414c50abe95f::t_071a0ede1b535f 4-6,63,73-77
+test/eval/crosswalk/cmd/crosswalk-eval/main.go
+  s_cb414c50abe95f::t_219637edbc930c 262,267-269,282
+test/eval/crosswalk/cmd/crosswalk-eval/main_bdd_test.go
+  s_cb414c50abe95f::t_071a0ede1b535f 114
+test/eval/crosswalk/labels.go
+  s_cb414c50abe95f::t_8f291b0439847e 39-40
+  s_cb414c50abe95f::t_219637edbc930c 5-6,33-34,36-38,63-73,176,190-199,201-203,216,227-229,234
+test/eval/crosswalk/README.md
+  s_cb414c50abe95f::t_1b65e44235ecf7 52-54,70-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d75103c66cf95796b952da6a197529e005ca89c2",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
