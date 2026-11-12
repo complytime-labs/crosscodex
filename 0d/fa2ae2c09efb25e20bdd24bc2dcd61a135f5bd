@@ -1,0 +1,103 @@
+internal/graph/synthesis_materializer_bdd_test.go
+  s_cb414c50abe95f::t_8d15b5bb095b9d 95-111
+internal/results/service_bdd_test.go
+  s_cb414c50abe95f::t_415df3677c8456 132-137,233-241,288-296,300
+  s_cb414c50abe95f::t_83c407eb26d853 297-299
+  s_cb414c50abe95f::t_7fd18ccf63bbb0 301-302
+README.md
+  s_cb414c50abe95f::t_86fd9abc6499bd 317,360
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_cb414c50abe95f::t_a9b0c4577ad024 752-754
+  s_cb414c50abe95f::t_6c3707ed53ec2f 135-138,148-156,159-166,168-178,180,182,184-207,213,218,345-355,440-442,451,751
+  s_cb414c50abe95f::t_a922f227d160c0 496
+  s_cb414c50abe95f::t_4c2e30b983d7d9 29,38-39,473-488,492-495,497-506,702-750,755-779
+  s_cb414c50abe95f::t_0e30a3d4067259 179,181,183
+internal/graph/resolver_bdd_test.go
+  s_cb414c50abe95f::t_0b66c6b52e9260 176-178,188,209-210,219,240-241,249-283
+  s_cb414c50abe95f::t_10c34a4119aabc 6,15,235-239,242-248
+internal/graph/crosswalk_bdd_test.go
+  s_cb414c50abe95f::t_bfd579f7b5ca4b 1031-1058
+docs/dev/design-principles.md
+  s_cb414c50abe95f::t_e7e1017954c5f4 81-82
+cmd/crosscodex/results.go
+  s_cb414c50abe95f::t_46f7bdce39991f 11
+  s_cb414c50abe95f::t_c4177a12ee531c 97,128,150-154,171,253-271,333-340,413-419,429,437-441,459
+internal/pipeline/executor_bdd_test.go
+  s_cb414c50abe95f::t_fbcae0fcb705d9 2195-2196
+  s_cb414c50abe95f::t_ab3c2a98d3aad3 2125-2194,2197-2214
+internal/pipeline/executor.go
+  s_cb414c50abe95f::t_3a4958cb5fa5ff 661-662,687-696
+internal/results/service.go
+  s_cb414c50abe95f::t_d063de7327c98f 234-237,263,414-416
+  s_cb414c50abe95f::t_bf5935d7a323af 417
+internal/pipeline/reporter_bdd_test.go
+  s_cb414c50abe95f::t_39f9263ac7eb64 15
+  s_cb414c50abe95f::t_78a64501a8a945 238-300,302
+  s_cb414c50abe95f::t_1b587d8d3b60e5 301,303-304
+internal/pipeline/vote_summaries.go
+  s_cb414c50abe95f::t_3a4958cb5fa5ff 37-42,47-50,71-73,89-91
+docs/dev/telemetry.md
+  s_cb414c50abe95f::t_739f6a7ad1dc7c 182
+cmd/crosscodex/results_bdd_test.go
+  s_cb414c50abe95f::t_a922f227d160c0 9
+  s_cb414c50abe95f::t_1120a2d7964edc 268-277
+  s_cb414c50abe95f::t_a7ce51b893568a 45,111,162-166,255-267,278-297
+  s_cb414c50abe95f::t_a1bf153d742c77 298
+internal/graph/subscriber_critique_bdd_test.go
+  s_cb414c50abe95f::t_b30906c5cd53cd 1-241
+internal/pipeline/vote_summaries_bdd_test.go
+  s_cb414c50abe95f::t_e8c1da90913b53 52-83
+internal/results/store_pg.go
+  s_cb414c50abe95f::t_d063de7327c98f 369-370,391-405,414-422
+internal/graph/synthesis_materializer.go
+  s_cb414c50abe95f::t_2dd15ba3479323 47-49
+internal/graph/subscriber_handlers.go
+  s_cb414c50abe95f::t_c163d5f3f41d19 5,33-34,75-76,78-81,83-85,100-102,112-121,127-128,130-133,135-137,150-152,162-207,209
+  s_cb414c50abe95f::t_989e90883c3b32 208,210
+internal/graph/subscriber.go
+  s_cb414c50abe95f::t_c163d5f3f41d19 15,86-87,89-106,161-169
+  s_cb414c50abe95f::t_a16ba94fc5dbf3 170
+api/proto/crosscodex/v1/synthesis.proto
+  s_cb414c50abe95f::t_d47949f9e8e72a 131-153,223-226
+internal/graph/resolver_pg.go
+  s_cb414c50abe95f::t_2dd15ba3479323 5,129-131,133-147,161-166
+internal/results/types.go
+  s_cb414c50abe95f::t_8ef1f6ed18a0b0 43
+  s_cb414c50abe95f::t_d063de7327c98f 7-8,60-63
+internal/results/store_pg_integration_bdd_test.go
+  s_cb414c50abe95f::t_ad9264d2eb0f69 136-141,327-367
+  s_cb414c50abe95f::t_7bc721391cdc2a 18
+  s_cb414c50abe95f::t_812f0a7a30ec8c 368-369
+internal/pipeline/critique_verdicts.go
+  s_cb414c50abe95f::t_3a4958cb5fa5ff 95-100,102-110
+  s_cb414c50abe95f::t_065e047c2e8a9d 101
+internal/graph/crosswalk.go
+  s_cb414c50abe95f::t_d5b44363c859cd 181
+  s_cb414c50abe95f::t_002d9bfd883379 47-49,58-60,182,373-375,391
+internal/pipeline/reporter.go
+  s_858244bd3650d5::t_6a733482b1b995 7-8,16,92-99,108-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0dfa2ae2c09efb25e20bdd24bc2dcd61a135f5bd",
+  "prompts": {},
+  "sessions": {
+    "s_858244bd3650d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae2586f4ea9e2a192",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
