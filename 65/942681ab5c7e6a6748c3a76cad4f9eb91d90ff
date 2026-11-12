@@ -1,0 +1,65 @@
+internal/analyzer/relationship/relationship.go
+  s_cb414c50abe95f::t_20a873f7be3297 333-340
+  s_cb414c50abe95f::t_732e2dd5a14601 8
+internal/analyzer/requires/requires.go
+  s_cb414c50abe95f::t_732e2dd5a14601 9
+  s_cb414c50abe95f::t_20a873f7be3297 329-336
+pkg/analyzer/panel.go
+  s_cb414c50abe95f::t_7ff191d6d8dc30 1-31
+internal/pipeline/panel_diversity.go
+  s_cb414c50abe95f::t_57acf6e709f9a8 70
+  s_cb414c50abe95f::t_1f73d2e9ec5b83 1-6,8-14,16-69,71-107,239
+  s_cb414c50abe95f::t_0bbb533ea538c3 108-197
+  s_cb414c50abe95f::t_4fa04ade10aa88 7,15,198-238
+internal/pipeline/service.go
+  s_cb414c50abe95f::t_4fa04ade10aa88 68-72
+deploy/README.md
+  s_cb414c50abe95f::t_8225d436c433e9 261-262
+internal/analysis/cache.go
+  s_cb414c50abe95f::t_4fa04ade10aa88 254-256
+internal/analysis/types.go
+  s_cb414c50abe95f::t_4fa04ade10aa88 92-95
+internal/pipeline/executor.go
+  s_cb414c50abe95f::t_395023ffd3feb6 12
+  s_cb414c50abe95f::t_4fa04ade10aa88 53-55,460-465,476-485,1246
+  s_cb414c50abe95f::t_37cc5124efd66f 1240-1243
+internal/pipeline/export_test.go
+  s_cb414c50abe95f::t_f78b4be86b51d7 59-70
+internal/pipeline/panel_diversity_bdd_test.go
+  s_cb414c50abe95f::t_723439c25502ca 1-207,210-258
+  s_cb414c50abe95f::t_f78b4be86b51d7 208-209
+internal/pipeline/result_cache.go
+  s_cb414c50abe95f::t_132663be274e78 188-190,214-240
+  s_cb414c50abe95f::t_da39c73a8a0541 241-242
+internal/pipeline/options.go
+  s_cb414c50abe95f::t_0d1a8b10074785 36-39
+  s_cb414c50abe95f::t_4fa04ade10aa88 72-84
+cmd/crosscodexd/bootstrap.go
+  s_cb414c50abe95f::t_14383960c0d653 679
+internal/analyzer/relationship/cache_bdd_test.go
+  s_cb414c50abe95f::t_4c33d1cca16b36 58-59,64-69
+  s_cb414c50abe95f::t_d9283e611a868b 60-63
+pkg/analyzer/panel_bdd_test.go
+  s_cb414c50abe95f::t_20a873f7be3297 1-41
+internal/analyzer/requires/cache_bdd_test.go
+  s_cb414c50abe95f::t_4c33d1cca16b36 60-61,66-71
+  s_cb414c50abe95f::t_d9283e611a868b 62-65
+test/e2e/run-daemon.sh
+  s_cb414c50abe95f::t_8564ec89b31949 79-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "65942681ab5c7e6a6748c3a76cad4f9eb91d90ff",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
