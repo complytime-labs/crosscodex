@@ -1,0 +1,26 @@
+pkg/config/critique.go
+  s_cb414c50abe95f::t_75dd2d9f0574fa 32-37
+pkg/config/types.go
+  s_cb414c50abe95f::t_75dd2d9f0574fa 764-769
+pkg/config/validate.go
+  s_cb414c50abe95f::t_75dd2d9f0574fa 841-907
+pkg/config/config_critique_bdd_test.go
+  s_cb414c50abe95f::t_459b744028d7d2 5-6,146-169
+  s_cb414c50abe95f::t_9b3fd76139d28d 170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "689fe49772deef40b0f7d44f3092bc9f936a964d",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
