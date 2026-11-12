@@ -1,0 +1,60 @@
+internal/pipeline/panel_diversity.go
+  s_cb414c50abe95f::t_bc9ffedb6f24fc 61-63
+  s_cb414c50abe95f::t_e37a73e0759a0d 58-59,65-67
+  s_cb414c50abe95f::t_081e7d21d0ee4d 5,8-9,16,42,46,172-176,178-180,187,189,191,196-209,211-213,218-230,232-233,269-276,280
+  s_cb414c50abe95f::t_890f51fc3fbb13 284-305
+internal/pipeline/export_test.go
+  s_cb414c50abe95f::t_890f51fc3fbb13 71-75
+cmd/crosscodexd/llm_probe_options_bdd_test.go
+  s_cb414c50abe95f::t_c683820e8e6f80 1-25
+cmd/crosscodex/panelstatus_bdd_test.go
+  s_cb414c50abe95f::t_79d84edc4494a3 1-38
+internal/pipeline/store_bdd_test.go
+  s_cb414c50abe95f::t_302a155cb05c98 263-277
+api/proto/crosscodex/v1/pipeline.proto
+  s_cb414c50abe95f::t_bc580475f7d12a 239-265
+internal/pipeline/service_impl.go
+  s_cb414c50abe95f::t_0f1f01be5b6634 236,306,738,743
+internal/pipeline/panel_diversity_bdd_test.go
+  s_cb414c50abe95f::t_bbb6657924d44f 6,133-134,249-274,276-332
+  s_cb414c50abe95f::t_e37a73e0759a0d 275
+  s_cb414c50abe95f::t_0d688d0ad904cd 333
+internal/pipeline/options.go
+  s_cb414c50abe95f::t_4364caafd2b380 75-78,135-137
+internal/pipeline/types.go
+  s_cb414c50abe95f::t_dc8b45ba0b3a4f 72-75
+internal/pipeline/executor.go
+  s_cb414c50abe95f::t_0f1f01be5b6634 1231-1241
+internal/pipeline/store.go
+  s_cb414c50abe95f::t_dc8b45ba0b3a4f 34-36,638-678,714,731,817
+cmd/crosscodex/run.go
+  s_cb414c50abe95f::t_5ec13b30f7d399 200,231,244
+cmd/crosscodex/panelstatus.go
+  s_cb414c50abe95f::t_5ec13b30f7d399 1-71
+cmd/crosscodexd/bootstrap.go
+  s_cb414c50abe95f::t_dd97c4ec69f3ca 34
+  s_cb414c50abe95f::t_4364caafd2b380 672,678-681,685-694
+  s_cb414c50abe95f::t_150b6b667778a4 695-696
+pkg/db/migrations/001_initial_schema.up.sql
+  s_cb414c50abe95f::t_a6151b48f959f7 338-343
+pkg/db/role_check.go
+  s_cb414c50abe95f::t_a6151b48f959f7 114
+deploy/README.md
+  s_cb414c50abe95f::t_22c80e18ccc186 261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "683db382ac2aaa999ee8174b1eb1b60231e3418c",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
