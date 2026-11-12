@@ -1,0 +1,31 @@
+docs/dev/telemetry.md
+  s_cb414c50abe95f::t_e9484542c1e076 198-201
+README.md
+  s_cb414c50abe95f::t_4015881da19629 19-21,23-26,28-33,180,280-281
+  s_cb414c50abe95f::t_a3d17eb05ee339 22
+  s_cb414c50abe95f::t_9592483a7844f1 596-597,604-605,614-623
+  s_cb414c50abe95f::t_fec76088e2c319 27,704-706
+  s_cb414c50abe95f::t_76a2640e7e1636 624-625
+deploy/README.md
+  s_cb414c50abe95f::t_db98348600d238 137-139,145
+  s_cb414c50abe95f::t_b1f2a8eed9aa8c 141
+docs/dev/design-principles.md
+  s_cb414c50abe95f::t_e9484542c1e076 194-198,200-206
+  s_cb414c50abe95f::t_4712e74399b6c8 199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "6165c6069b434a6d038ff25c2857aa9dcc86cc34",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
