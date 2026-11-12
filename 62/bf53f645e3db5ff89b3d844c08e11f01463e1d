@@ -1,0 +1,52 @@
+.taskfiles/deploy.yml
+  s_cb414c50abe95f::t_d4b547fa415c50 430-435
+test/deploy/smoke_up.sh
+  s_cb414c50abe95f::t_d4b547fa415c50 73-75
+test/tooling/openai-compat-provider.venom.yml
+  s_cb414c50abe95f::t_8dcb7b903aa433 97-105,108-109,112-120,122-148,150-161,163-179,183-235
+  s_cb414c50abe95f::t_a52fcb7cd00797 106-107,110-111,121,149,162,180-182
+deploy/README.md
+  s_cb414c50abe95f::t_322a592acc709e 257-275
+deploy/praxis/config.models.yaml
+  s_cb414c50abe95f::t_3d13a1a3ec9335 136-150
+deploy/litellm/config.yaml
+  s_cb414c50abe95f::t_3d13a1a3ec9335 9-33
+scripts/generate-llm-gateway-config.sh
+  s_cb414c50abe95f::t_928f55969c1a57 59-61
+  s_cb414c50abe95f::t_48a068067287a1 12-22,43-58,62-66,91-93,97,99
+deploy/praxis/config.yaml
+  s_cb414c50abe95f::t_3d13a1a3ec9335 89-103
+deploy/litellm/config.openai-compat.yaml.tmpl
+  s_cb414c50abe95f::t_3d13a1a3ec9335 36-59
+  s_cb414c50abe95f::t_c395e533ace6a6 11-15
+deploy/config.yaml
+  s_cb414c50abe95f::t_002b7315d80516 97-105,109-114,118-136
+deploy/compose.offline.yaml
+  s_cb414c50abe95f::t_d4b547fa415c50 23-31
+pkg/config/config_requires_bdd_test.go
+  s_cb414c50abe95f::t_51341418459c60 199-202,209-216
+deploy/litellm/config.offline.yaml.tmpl
+  s_cb414c50abe95f::t_c395e533ace6a6 9-10,12-14
+  s_cb414c50abe95f::t_3d13a1a3ec9335 28-42
+deploy/compose.offline-praxis.yaml
+  s_cb414c50abe95f::t_d4b547fa415c50 23-31
+deploy/praxis/config.offline.yaml.tmpl
+  s_cb414c50abe95f::t_3d13a1a3ec9335 75-86
+  s_cb414c50abe95f::t_c395e533ace6a6 12-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "62bf53f645e3db5ff89b3d844c08e11f01463e1d",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
