@@ -1,0 +1,59 @@
+pkg/analyzer/results/results.go
+  s_cb414c50abe95f::t_ea8f5a5a93b3f0 106-118,122-131,139
+internal/analyzer/critique/critique_fuzz_test.go
+  s_cb414c50abe95f::t_8b1c444211aa44 8,36-37
+internal/analyzer/critique/critique_property_test.go
+  s_cb414c50abe95f::t_8b1c444211aa44 7-8,14,92-100,111,115-116,118-119
+  s_cb414c50abe95f::t_ee4740ea1a8dc0 84-91
+internal/analyzer/critique/options.go
+  s_cb414c50abe95f::t_4ff41b8b339070 24
+pkg/analyzer/results/results_property_test.go
+  s_cb414c50abe95f::t_531f92d612fa20 5,26-28,30-32,34-36,40-46,91,116,123,130,137,147,158,165,172
+internal/analyzer/promptvalue.go
+  s_cb414c50abe95f::t_2d7be5aa1b1732 33-37
+internal/analyzer/critique/critique_bdd_test.go
+  s_cb414c50abe95f::t_7035af08fb05e5 347,358,361-368,389,398-403,408-424,426-428,434,440-456,473
+  s_cb414c50abe95f::t_1de7b8fe2a0fff 558-562,575
+internal/analyzer/requires/requires.go
+  s_cb414c50abe95f::t_65ed34a6e24e19 4,421,431,447,479,500-518,521-524
+internal/analyzer/requires/requires_bdd_test.go
+  s_cb414c50abe95f::t_1f3bb79e787a63 582,584,593-597,604-617
+internal/analyzer/relationship/relationship.go
+  s_cb414c50abe95f::t_0c58ee7db19316 12
+  s_cb414c50abe95f::t_65ed34a6e24e19 4,466,494-501,504-512
+  s_cb414c50abe95f::t_0856aa61fa322d 513
+internal/analyzer/critique/critique.go
+  s_cb414c50abe95f::t_494f3648e0f7dc 334-335,338-341,345,384,387-388,391,394,404,411,414,436-439,446-449,457-458,461-466,472-480,486,488-489
+  s_cb414c50abe95f::t_ebad16a3f99706 490-501
+  s_cb414c50abe95f::t_3901290aeeb4f5 353-358
+  s_cb414c50abe95f::t_fa985c193d86db 468,485,487
+  s_cb414c50abe95f::t_3545d0acd1a2f1 502-504
+internal/analyzer/critique/parser_bdd_test.go
+  s_cb414c50abe95f::t_8b1c444211aa44 9,45-46,48,51-53
+pkg/analyzer/results/results_roundtrip_bdd_test.go
+  s_cb414c50abe95f::t_531f92d612fa20 50
+pkg/analyzer/results/results_bdd_test.go
+  s_cb414c50abe95f::t_531f92d612fa20 63,66-71
+internal/analyzer/critique/parser.go
+  s_cb414c50abe95f::t_ea8f5a5a93b3f0 40-43,47
+internal/pipeline/critique_verdicts_bdd_test.go
+  s_cb414c50abe95f::t_531f92d612fa20 17-27,103-111,114
+internal/analyzer/relationship/relationship_bdd_test.go
+  s_cb414c50abe95f::t_1f3bb79e787a63 434,436,445-447,449,457-470
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "7c8ef0475f71494aa9d8a1ec16b99304ef3d10fb",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
