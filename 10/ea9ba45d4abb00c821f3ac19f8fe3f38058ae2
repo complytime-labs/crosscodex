@@ -1,0 +1,20 @@
+internal/analyzer/relationship/integration_bdd_test.go
+  s_cb414c50abe95f::t_d9f2673f84a8f4 409,417-418,424,427
+  s_cb414c50abe95f::t_84513bcbf5d39f 404,415-416,421-423,434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "10ea9ba45d4abb00c821f3ac19f8fe3f38058ae2",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
