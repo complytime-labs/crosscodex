@@ -1,0 +1,62 @@
+internal/analyzer/requires/parser_bdd_test.go
+  s_cb414c50abe95f::t_738d9bee0c6b1e 4-5,10-11,16,25,36,40-109
+internal/analyzer/relationship/parser.go
+  s_cb414c50abe95f::t_e21f0cd40637d9 13,19-21,42-52,54-56
+internal/analyzer/relationship/types.go
+  s_cb414c50abe95f::t_e21f0cd40637d9 191,198-203
+  s_cb414c50abe95f::t_c18f98252fc42c 204
+pkg/prompt/defaults/relationship.yaml
+  s_cb414c50abe95f::t_e21f0cd40637d9 2,26-27,67,76,85,94,103,112,121,130
+pkg/prompt/defaults/requires.yaml
+  s_cb414c50abe95f::t_e21f0cd40637d9 2,55-56,66,74,82,90,98
+internal/analyzer/relationship/relationship_property_test.go
+  s_cb414c50abe95f::t_9ebefeb1a9ad5f 211,228-240
+  s_cb414c50abe95f::t_5cfb1e51ada14a 241-244
+internal/analyzer/relationship/cache_bdd_test.go
+  s_cb414c50abe95f::t_b52e50cb968fbd 109
+  s_cb414c50abe95f::t_910de1ca6844e0 111
+internal/analyzer/requires/requires.go
+  s_cb414c50abe95f::t_e21f0cd40637d9 53-59,72
+  s_cb414c50abe95f::t_910de1ca6844e0 359
+internal/analyzer/relationship/relationship.go
+  s_cb414c50abe95f::t_e21f0cd40637d9 53-58
+  s_cb414c50abe95f::t_910de1ca6844e0 363
+cmd/crosscodexd/results_e2e_test.go
+  s_cb414c50abe95f::t_4d804b4b24eab2 43
+internal/analyzer/relationship/integration_bdd_test.go
+  s_cb414c50abe95f::t_4d804b4b24eab2 30-32,58-60,84-85,87,162
+internal/analyzer/relationship/relationship_fuzz_test.go
+  s_cb414c50abe95f::t_1985ac69f1f815 12-15,17-18,22-23
+internal/analyzer/requires/requires_bdd_test.go
+  s_cb414c50abe95f::t_b52e50cb968fbd 566,597-601,656
+internal/analyzer/requires/requires_fuzz_test.go
+  s_cb414c50abe95f::t_1985ac69f1f815 1-34
+internal/analyzer/requires/parser.go
+  s_cb414c50abe95f::t_e21f0cd40637d9 14,19-23,28-29,32-33,36,41-48
+internal/analyzer/relationship/relationship_bdd_test.go
+  s_cb414c50abe95f::t_b52e50cb968fbd 397,420-422,446
+internal/analyzer/requires/cache_bdd_test.go
+  s_cb414c50abe95f::t_b52e50cb968fbd 111
+  s_cb414c50abe95f::t_910de1ca6844e0 113
+internal/testspecs/deterministic_llm.go
+  s_cb414c50abe95f::t_9ebefeb1a9ad5f 72,74,79
+internal/analyzer/relationship/parser_bdd_test.go
+  s_cb414c50abe95f::t_4511357dd99657 148-151,158-162,170-171,174,176
+  s_cb414c50abe95f::t_d6be3f75924575 4,12-13,31-32,36,109,113-147,152-157,163-169,172-173,175,177-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "faf9eaf40c12e3271d156bab6463d5d79a137e14",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
