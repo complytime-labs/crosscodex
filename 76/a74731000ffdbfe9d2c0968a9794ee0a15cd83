@@ -1,0 +1,46 @@
+internal/graph/resolver_pg.go
+  s_cb414c50abe95f::t_0acd858ee4b297 143-145
+internal/results/store_pg.go
+  s_cb414c50abe95f::t_0acd858ee4b297 400-402
+  s_cb414c50abe95f::t_56c7575af3c746 403
+pkg/analyzer/results/critique_bdd_test.go
+  s_cb414c50abe95f::t_5b488bde58ed3e 4-5,107-133
+pkg/analyzer/results/results_property_test.go
+  s_cb414c50abe95f::t_ebae978c84a84a 5-6,212-239
+  s_cb414c50abe95f::t_f7652e0d455c81 240-241
+pkg/analyzer/results/critique.go
+  s_cb414c50abe95f::t_95e907d4fe66ae 4-5,7,29-54
+  s_cb414c50abe95f::t_3af64c37b0626c 55
+internal/pipeline/vote_summaries.go
+  s_cb414c50abe95f::t_0acd858ee4b297 46-47
+internal/pipeline/vote_summaries_bdd_test.go
+  s_cb414c50abe95f::t_0acd858ee4b297 28,45,86,97
+  s_cb414c50abe95f::t_0ad926cae82845 66,79-81
+internal/pipeline/critique_verdicts.go
+  s_cb414c50abe95f::t_56c7575af3c746 106
+  s_cb414c50abe95f::t_0acd858ee4b297 96-101,104-105
+internal/graph/subscriber_handlers.go
+  s_cb414c50abe95f::t_0acd858ee4b297 173-174
+internal/pipeline/executor.go
+  s_cb414c50abe95f::t_0acd858ee4b297 632,689
+internal/graph/subscriber_critique_bdd_test.go
+  s_cb414c50abe95f::t_d829b39bf4aa80 233-235
+internal/graph/resolver_bdd_test.go
+  s_cb414c50abe95f::t_61e1ea51988d4c 253-255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "76a74731000ffdbfe9d2c0968a9794ee0a15cd83",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
