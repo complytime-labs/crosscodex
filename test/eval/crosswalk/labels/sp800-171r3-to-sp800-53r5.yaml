@@ -1,6 +1,9 @@
 # Human-maintained judgements of candidate pairs. A human entry overrides model entries.
 # Seeded 2026-11-12 by independent Opus and Sonnet judges over run A's candidates;
 # agreements carry the Opus rationale, disagreements are disputed and need a human decision.
+# 2026-11-14: every disputed pair was re-judged by fresh Opus and Sonnet judges reading both
+# controls' full text in context; splits were broken by the orchestrating Opus ([opus] only).
+# None of these are human judgements; a human entry for a pair overrides them.
 version: 1
 pairs:
   - source: "SP_800_171_03.01.01.1"
@@ -167,10 +170,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.01.3.1"
     target: "ac-2.i.1"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: granting access on a valid authorization is an access decision rather than the documented specification of authorized users. | sonnet (related): AC-2i.1 requires a valid access authorization before access, which is how authorized users are established."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Granting access on a valid authorization is an access decision; it does not specify the list of authorized users (that is AC-2d.1)."
+    date: 2026-11-14
   - source: "SP_800_171_03.01.01.3.1"
     target: "ac-2.i.2"
     verdict: unrelated
@@ -335,10 +338,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.01.4.1"
     target: "ac-2.d.3"
-    verdict: disputed
-    judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: documenting per-account privileges is a specification step, not the act of authorizing access on a valid authorization. | sonnet (related): AC-2d.3 specifies the privileges and attributes each account is authorized for, which is the authorization record that a valid access authorization check relies on."
-    date: 2026-11-12
+    verdict: related
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus unrelated, sonnet related): per-account specified authorizations are the record access is authorized against"
+    date: 2026-11-14
   - source: "SP_800_171_03.01.01.4.1"
     target: "ac-2.i.1"
     verdict: related
@@ -371,10 +374,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.01.4.2"
     target: "ac-2.11"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: enforcing runtime usage conditions on accounts is not the act of authorizing access according to intended system usage. | sonnet (related): AC-2(11) enforces organization-defined circumstances and usage conditions on accounts, which operationalizes access authorized for intended usage."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Enforcing usage conditions such as time and duration on accounts directly limits access to intended system usage."
+    date: 2026-11-14
   - source: "SP_800_171_03.01.01.4.2"
     target: "ac-2.8"
     verdict: unrelated
@@ -659,10 +662,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.01.6.3"
     target: "ac-2.h.1"
-    verdict: disputed
-    judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: notifying managers that an account is no longer required precedes but does not perform disabling the orphaned account. | sonnet (related): AC-2(h)(1) notifies account managers when accounts are no longer required, the signal that lets orphaned accounts be identified and disabled."
-    date: 2026-11-12
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus unrelated, sonnet related): notifying managers triggers the disable but is not disabling the account"
+    date: 2026-11-14
   - source: "SP_800_171_03.01.01.6.4"
     target: "ac-2.1"
     verdict: unrelated
@@ -965,10 +968,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.01.8"
     target: "ac-11.a"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: a device lock conceals the session but leaves the user logged in, so it does not require logout after inactivity. | sonnet (related): AC-11(a) cuts off access after a set period of inactivity, which shares the source's inactivity-triggered end of an interactive session."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: AC-11 guidance states device locks are not a substitute for logging out, so device lock evidence does not show required logout."
+    date: 2026-11-14
   - source: "SP_800_171_03.01.01.8"
     target: "ac-12"
     verdict: related
@@ -1079,10 +1082,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.05.1"
     target: "sa-8.14"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (related): Applying the least-privilege design principle in system components builds in task-necessary access for processes acting on behalf of users. | sonnet (unrelated): none: SA-8(14) is a design-phase principle for building systems and does not itself restrict access of users to what is authorized."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: SA-8(14) builds least privilege into components and processes acting for users, partially evidencing only-necessary authorized access."
+    date: 2026-11-14
   - source: "SP_800_171_03.01.05.2"
     target: "ac-17.4.a"
     verdict: related
@@ -1091,10 +1094,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.05.2"
     target: "ac-6"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: the general least-privilege principle does not itself designate who is authorized to reach security functions and security-relevant information. | sonnet (related): AC-6 least privilege allows only authorized accesses, which covers authorizing access to security functions and security-relevant information."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: AC-6 restricts all access to authorized and necessary, which encompasses authorization of access to security functions and security-relevant information."
+    date: 2026-11-14
   - source: "SP_800_171_03.01.05.2"
     target: "ac-6.10"
     verdict: related
@@ -1127,10 +1130,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.05.2"
     target: "ac-6.6"
-    verdict: disputed
-    judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: banning privileged access by non-organizational users excludes one population but does not authorize access to security functions. | sonnet (related): AC-6(6) prohibits privileged access by non-organizational users, narrowing who may be authorized for security functions."
-    date: 2026-11-12
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus unrelated, sonnet related): barring non-organizational privileged access does not authorize access to security functions"
+    date: 2026-11-14
   - source: "SP_800_171_03.01.05.2"
     target: "sa-17.7"
     verdict: unrelated
@@ -1205,10 +1208,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.01.05.4"
     target: "ac-2.6"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (related): Dynamic privilege management capabilities let privileges be reassigned or removed as conditions change. | sonnet (unrelated): none: dynamic privilege management is a runtime capability and does not require reassigning or removing privileges on review."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Dynamic privilege management includes immediate revocation and automatic adjustment of privileges, which is reassigning or removing privileges as necessary."
+    date: 2026-11-14
   - source: "SP_800_171_03.01.05.4"
     target: "ac-2.7.d"
     verdict: related
@@ -1835,22 +1838,22 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.03.05.3"
     target: "au-6.5"
-    verdict: disputed
-    judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: AU-6(5) correlates audit data with vulnerability or performance data, not audit records across separate repositories. | sonnet (related): AU-6(5) correlates audit analysis with scanning, performance and monitoring data, extending correlation across data sources toward situational awareness."
-    date: 2026-11-12
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus unrelated, sonnet related): integrates audit analysis with other data types; the source correlates audit repositories (AU-6(3))"
+    date: 2026-11-14
   - source: "SP_800_171_03.03.05.3"
     target: "au-6.6"
-    verdict: disputed
-    judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: correlating audit records with physical access monitoring is a different data fusion than correlating audit repositories. | sonnet (related): AU-6(6) correlates audit records with physical-access monitoring information, a concrete cross-source correlation step."
-    date: 2026-11-12
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus related, sonnet unrelated): correlation with physical-access monitoring is a different obligation from organization-wide audit repository correlation"
+    date: 2026-11-14
   - source: "SP_800_171_03.03.05.3"
     target: "au-6.9"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: AU-6(9) fuses nontechnical source information with audit data, not records across multiple audit repositories. | sonnet (related): AU-6(9) correlates nontechnical-source information with audit records to improve organization-wide situational awareness, a shared goal here."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Nontechnical sources such as HR or harassment records are not audit repositories; only the situational-awareness goal is shared."
+    date: 2026-11-14
   - source: "SP_800_171_03.03.05.3"
     target: "au-6.a"
     verdict: unrelated
@@ -1883,10 +1886,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.04.06.1"
     target: "cm-7.4.a"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (related): CM-7(4)a identifies software programs to deny, a step in restricting the system to only needed capabilities. | sonnet (unrelated): none: cm-7.4.a identifies programs for a denylist, which blocks specific software but does not define the mission-essential capability set."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Identifying programs for a deny-by-exception list blocks specific software; it does not configure the system to provide only mission-essential capabilities."
+    date: 2026-11-14
   - source: "SP_800_171_03.04.06.1"
     target: "cm-7.5.a"
     verdict: related
@@ -1925,10 +1928,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.04.06.2"
     target: "cm-7.1.a"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (related): CM-7(1)a periodic review identifies the unnecessary or nonsecure functions, ports and services that the source then prohibits or restricts. | sonnet (unrelated): none: cm-7.1.a only reviews to identify unneeded functions and does not itself prohibit or restrict their use."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Periodic review to identify unnecessary functions is the source's sibling review item; it does not prohibit or restrict their use."
+    date: 2026-11-14
   - source: "SP_800_171_03.04.06.2"
     target: "cm-7.1.b"
     verdict: related
@@ -1943,22 +1946,22 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.04.06.2"
     target: "cm-7.4.a"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (related): CM-7(4)a identifies software programs to be denied, defining the prohibited functions whose use the source restricts. | sonnet (unrelated): none: cm-7.4.a only identifies software programs for a denylist, leaving the actual restriction of functions, ports and connections to other controls."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Identifying unauthorized software programs defines the prohibited set whose use is restricted, a sub-step that satisfies part of the source."
+    date: 2026-11-14
   - source: "SP_800_171_03.04.06.2"
     target: "cm-7.9.b"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: prohibiting unauthorized hardware connections addresses physical components, not the functions, ports, protocols and services the source restricts. | sonnet (related): CM-7(9)b prohibits use or connection of unauthorized hardware, restricting prohibited connections as this requirement demands."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Prohibiting use or connection of unauthorized hardware restricts prohibited connections, one of the item types the source requires prohibited or restricted."
+    date: 2026-11-14
   - source: "SP_800_171_03.04.06.2"
     target: "cm-7.a"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (related): CM-7a limits the system to mission-essential capabilities, which entails restricting the nonessential functions and services named by the source. | sonnet (unrelated): none: cm-7.a configures toward essential capabilities generally and does not itself restrict the listed functions, ports or protocols."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Configuring only mission-essential capabilities restricts nonessential functions and services, partial evidence that prohibited functions are restricted."
+    date: 2026-11-14
   - source: "SP_800_171_03.04.06.2"
     target: "cm-7.b"
     verdict: related
@@ -2027,16 +2030,16 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.04.06.3"
     target: "sa-4.9"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: developer declaration of intended ports and services at acquisition is a one-time input, not a periodic system review. | sonnet (related): SA-4(9) has the developer identify the functions, ports and protocols intended for use, supplying the baseline against which unnecessary ones are found during review."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: A developer's one-time declaration of intended ports and services is acquisition input, not a periodic review of the system for unnecessary ones."
+    date: 2026-11-14
   - source: "SP_800_171_03.04.06.3"
     target: "sa-9.2"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: external service providers identifying their required ports and services does not review the organization's own system for unnecessary ones. | sonnet (related): SA-9(2) has external service providers identify required functions, ports and protocols, giving the baseline needed to spot unnecessary external connections and services."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: External providers listing ports and services they require does not review the organization's system for unnecessary or nonsecure ones."
+    date: 2026-11-14
   - source: "SP_800_171_03.04.06.3"
     target: "sc-3.3"
     verdict: unrelated
@@ -2081,10 +2084,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.04.06.4"
     target: "cm-7.9.b"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: blocking unauthorized hardware does not disable or remove unnecessary software functions, ports or services. | sonnet (related): CM-7(9)b prohibits connection of unauthorized hardware, removing an unnecessary or nonsecure connection path as this requirement asks."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Blocking unauthorized hardware controls which devices attach; it does not disable or remove unnecessary functions, ports, protocols or services."
+    date: 2026-11-14
   - source: "SP_800_171_03.04.06.4"
     target: "cm-7.a"
     verdict: related
@@ -2261,10 +2264,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.06.02.2"
     target: "ir-7"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (related): IR-7 provides an IR support resource advising users on reporting incidents, helping them report suspected incidents to the IR capability. | sonnet (unrelated): none: ir-7 offers support assistance to users handling incidents, not the reporting time obligation."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: IR-7 provides an advice resource (the source's sibling item d); it does not require reporting suspected incidents within a time period."
+    date: 2026-11-14
   - source: "SP_800_171_03.06.02.2"
     target: "ir-8.a.5"
     verdict: related
@@ -2339,10 +2342,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.06.02.3"
     target: "ir-8.a.5"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: defining reportable incidents in the plan does not itself transmit incident information to authorities. | sonnet (related): IR-8a(5) defines reportable incidents, setting which incidents must be reported to authorities."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Defining reportable incidents in the IR plan does not report incident information to designated authorities."
+    date: 2026-11-14
   - source: "SP_800_171_03.06.02.4"
     target: "ir-2.a.2"
     verdict: unrelated
@@ -2441,10 +2444,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.08.05.1"
     target: "mp-5.c"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (related): MP-5c documents media transport activities, supporting control over CUI media moved outside controlled areas. | sonnet (unrelated): none: mp-5.c documents transport activity, which this requirement set treats as its own separate obligation, not protecting the media physically."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Documenting transport activities is the source's sibling item c; it does not protect or control media during transport."
+    date: 2026-11-14
   - source: "SP_800_171_03.08.05.1"
     target: "mp-5.d"
     verdict: related
@@ -2555,10 +2558,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.08.05.3"
     target: "mp-5.b"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: maintaining accountability during transport is a custody duty separate from documenting the associated transport activities. | sonnet (related): MP-5b maintains accountability during transport, which is normally evidenced by transit records and so contributes to documenting transport activity."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Transport accountability per guidance includes tracking or obtaining records of transport activities, which overlaps documenting transport activities."
+    date: 2026-11-14
   - source: "SP_800_171_03.08.05.3"
     target: "mp-5.c"
     verdict: related
@@ -2597,10 +2600,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.11.01.1"
     target: "ra-2.a"
-    verdict: disputed
-    judged_by: [opus, sonnet]
-    rationale: "opus (related): RA-2a categorizes the system and the information it processes, stores and transmits, determining confidentiality impact that feeds the CUI disclosure risk assessment. | sonnet (unrelated): none: ra-2.a categorizes the system and its information, which classifies impact but is not a risk assessment of CUI disclosure."
-    date: 2026-11-12
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus related, sonnet unrelated): categorization supplies impact but is not a risk assessment of disclosure (no likelihood)"
+    date: 2026-11-14
   - source: "SP_800_171_03.11.01.1"
     target: "ra-3.1.a"
     verdict: related
@@ -2609,10 +2612,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.11.01.1"
     target: "ra-3.1.b"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (related): RA-3(1)b keeps the supply chain risk assessment current, sustaining the supply chain risk element the source requires assessed. | sonnet (unrelated): none: ra-3.1.b updates the supply chain risk assessment on change, a maintenance step while this requirement is the initial assessment."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: An updated supply chain risk assessment presupposes and evidences the supply chain risk assessment the source requires."
+    date: 2026-11-14
   - source: "SP_800_171_03.11.01.1"
     target: "ra-3.a.2"
     verdict: related
@@ -2723,10 +2726,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.13.08"
     target: "sc-28.3"
-    verdict: disputed
+    verdict: unrelated
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: protected key storage safeguards keys but does not itself apply cryptography to protect CUI in transit or storage. | sonnet (related): SC-28(3) protects cryptographic keys in storage, which the encryption of CUI depends on."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Protected key storage safeguards keys; it does not encrypt CUI in transit or at rest."
+    date: 2026-11-14
   - source: "SP_800_171_03.13.08"
     target: "sc-8"
     verdict: related
@@ -2747,10 +2750,10 @@ pairs:
     date: 2026-11-12
   - source: "SP_800_171_03.13.08"
     target: "sc-8.3"
-    verdict: disputed
+    verdict: related
     judged_by: [opus, sonnet]
-    rationale: "opus (unrelated): none: encrypting message externals protects addressing metadata rather than the CUI content the source requires encrypted. | sonnet (related): SC-8(3) applies cryptographic protection to message externals during transmission, extending cryptographic prevention of disclosure of transmitted CUI."
-    date: 2026-11-12
+    rationale: "adjudicated with full control context: Encrypting message headers and routing information is cryptographic transmission confidentiality, partially evidencing encryption of CUI in transit."
+    date: 2026-11-14
   - source: "SP_800_171_03.13.08"
     target: "sc-8.4"
     verdict: unrelated
