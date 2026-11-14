@@ -183,3 +183,23 @@ var _ = Describe("LoadLabels", func() {
 		Entry("two human entries", humanOver(map[string]string{}), humanOver(map[string]string{"verdict": "unrelated"}), "judged by a human"),
 	)
 })
+
+// Seeded label files are discovered at tree-construction time (specs run in
+// the package directory), so a new file under labels/ is covered unasked.
+var _ = Describe("Seeded label files", func() {
+	files, globErr := filepath.Glob(filepath.Join("labels", "*.yaml"))
+
+	It("finds at least one label file", func() {
+		Expect(globErr).NotTo(HaveOccurred())
+		Expect(files).NotTo(BeEmpty(), "no *.yaml under test/eval/crosswalk/labels/")
+	})
+
+	for _, file := range files {
+		It("loads "+file+" with at least one label", func() {
+			got, digest, err := crosswalk.LoadLabels(file)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).NotTo(BeEmpty())
+			Expect(digest).To(HaveLen(64))
+		})
+	}
+})
