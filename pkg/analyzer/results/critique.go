@@ -1,7 +1,10 @@
 package results
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -22,6 +25,33 @@ const (
 // edges for the event: the critique event writes the surviving ones, because
 // a graph edge cannot be deleted once a veto arrives.
 const GraphDeferredMetadataKey = "graph_deferred"
+
+// ErrCorruptCritique reports a stored critique result (the result_data of a
+// job's critique analysis_results row) that DecodeCritique cannot accept.
+var ErrCorruptCritique = errors.New("corrupt")
+
+// DecodeCritique decodes data, the stored critique result of job jobID (a
+// JSON []CritiqueResult). Data that does not decode, or that gives a pair a
+// vote count no panel could produce (negative, or beyond int32, the width
+// the counts reach the API with), is an error wrapping ErrCorruptCritique
+// that names the job and, for a count, the pair. The caller adds what was
+// left undone and what to do about it.
+func DecodeCritique(data []byte, jobID string) ([]CritiqueResult, error) {
+	var crit []CritiqueResult
+	if err := json.Unmarshal(data, &crit); err != nil {
+		return nil, fmt.Errorf("the stored critique result of job %s does not decode, so it is %w: %w", jobID, ErrCorruptCritique, err)
+	}
+	for _, c := range crit {
+		for _, n := range []int{c.Upheld, c.Rejected, c.Failed} {
+			if n < 0 || n > math.MaxInt32 {
+				return nil, fmt.Errorf("the stored critique result of job %s gives pair %s -> %s an impossible vote count "+
+					"(upheld %d, rejected %d, failed %d), so it is %w",
+					jobID, c.SourceControlID, c.TargetControlID, c.Upheld, c.Rejected, c.Failed, ErrCorruptCritique)
+			}
+		}
+	}
+	return crit, nil
+}
 
 // critiqueRejectVerdict is the verdict word of a REJECT entry in
 // CritiqueResult.Reasons.

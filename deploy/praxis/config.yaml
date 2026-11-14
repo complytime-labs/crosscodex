@@ -90,9 +90,10 @@ filter_chains:
             upstream: openai
             target_model: gpt-6.1-terra
             paths: [/v1/chat/completions]
-          # Panel aliases must resolve to different model families; see the
-          # panel-1..3 comment in deploy/litellm/config.yaml for the model
-          # sources and the OpenAI family limits.
+          # The daemon refuses panel aliases that resolve to the same model.
+          # These three are one provider's models; point them at different
+          # providers or model families for real independence. See the
+          # panel-1..3 comment in deploy/litellm/config.yaml for the sources.
           - model: panel-2
             upstream: openai
             target_model: gpt-5.4-mini

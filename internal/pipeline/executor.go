@@ -629,7 +629,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 	if terr != nil {
 		return fmt.Errorf("runAnalysis: %w", terr)
 	}
-	pairs, err := buildVoteSummaryPairs(allOutputs)
+	pairs, err := buildVoteSummaryPairs(allOutputs, job.JobID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -686,7 +686,7 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 	}
 	// Vetoed verdicts are not synthesized, matching the vote_summaries rows
 	// buildVoteSummaryPairs wrote, which synthesis updates one per input.
-	relVerdicts, reqVerdicts, err := critiqueDecisions(classifyOut)
+	relVerdicts, reqVerdicts, err := critiqueDecisions(classifyOut, jobID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())

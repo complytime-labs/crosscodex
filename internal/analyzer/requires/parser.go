@@ -11,7 +11,9 @@ var (
 	reRequires      = regexp.MustCompile(`(?i)REQUIRES:\s*(\S+)`)
 	reJustification = regexp.MustCompile(`(?i)JUSTIFICATION:\s*(.+?)(?:\n|$)`)
 	reConfidence    = regexp.MustCompile(`(?i)CONFIDENCE:\s*(\S+)`)
-	reSanityCheck   = regexp.MustCompile(`(?i)SANITY_CHECK:[ \t]*(\S+)`)
+	// reSanityCheck matches only a line that starts with SANITY_CHECK:, so a
+	// justification quoting the field cannot stand in for the real line.
+	reSanityCheck = regexp.MustCompile(`(?im)^[ \t]*SANITY_CHECK:[ \t]*(\S+)`)
 )
 
 // ParseResponse extracts a consensus.Vote from a raw LLM response matching

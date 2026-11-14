@@ -2,6 +2,8 @@ package results_test
 
 import (
 	"encoding/json"
+	"errors"
+	"math"
 	"reflect"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -204,6 +206,36 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					if again.Vetoed(c.SourceControlID, c.TargetControlID) != c.Vetoed {
 						t.Fatalf("applying the same critique again changed the decision for %s -> %s", c.SourceControlID, c.TargetControlID)
 					}
+				}
+			})
+		})
+
+		It("decodes every stored critique it encodes and rejects any out-of-range vote count", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				crit := rapid.SliceOfN(genCritique(), 1, 8).Draw(t, "critique")
+				data, err := json.Marshal(crit)
+				if err != nil {
+					t.Fatalf("marshal: %v", err)
+				}
+				got, err := results.DecodeCritique(data, "job-1")
+				if err != nil || !reflect.DeepEqual(got, crit) {
+					t.Fatalf("DecodeCritique = %+v, %v; want %+v", got, err, crit)
+				}
+				i := rapid.IntRange(0, len(crit)-1).Draw(t, "corrupted")
+				bad := rapid.OneOf(rapid.IntRange(math.MinInt64, -1), rapid.IntRange(math.MaxInt32+1, math.MaxInt64)).Draw(t, "count")
+				switch rapid.IntRange(0, 2).Draw(t, "field") {
+				case 0:
+					crit[i].Upheld = bad
+				case 1:
+					crit[i].Rejected = bad
+				default:
+					crit[i].Failed = bad
+				}
+				if data, err = json.Marshal(crit); err != nil {
+					t.Fatalf("marshal: %v", err)
+				}
+				if got, err := results.DecodeCritique(data, "job-1"); !errors.Is(err, results.ErrCorruptCritique) || got != nil {
+					t.Fatalf("DecodeCritique with count %d = %+v, %v; want ErrCorruptCritique", bad, got, err)
 				}
 			})
 		})

@@ -74,7 +74,7 @@ var _ = Describe("Precision Property Specifications", Ordered, func() {
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatalf("writing labels: %v", err)
 			}
-			got, err := crosswalk.LoadLabels(path)
+			got, _, err := crosswalk.LoadLabels(path)
 			if err != nil {
 				t.Fatalf("LoadLabels: %v", err)
 			}

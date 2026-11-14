@@ -25,7 +25,7 @@ var _ = Describe("buildVoteSummaryPairs", func() {
 			"relationship": {AnalyzerName: "relationship", ResultData: relJSON},
 		}
 
-		pairs, err := buildVoteSummaryPairs(outputs)
+		pairs, err := buildVoteSummaryPairs(outputs, "job-1")
 		Expect(err).NotTo(HaveOccurred())
 
 		// buildSynthesisInputs emits one synthesis row per contribution, and
@@ -42,7 +42,7 @@ var _ = Describe("buildVoteSummaryPairs", func() {
 		requiresJSON, _ := json.Marshal([]results.RequiresResult{{SourceID: "AC-1", TargetID: "AC-2", Confidence: 0.9}})
 		outputs := map[string]*analyzer.Output{"requires": {ResultData: requiresJSON}}
 
-		pairs, err := buildVoteSummaryPairs(outputs)
+		pairs, err := buildVoteSummaryPairs(outputs, "job-1")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pairs).To(Equal([]VoteSummaryPair{
 			{SourceID: "AC-1", TargetID: "AC-2", Analyzer: "requires", Consensus: synthesis.ConsensusRequires, Confidence: 0.9},
@@ -63,7 +63,7 @@ var _ = Describe("buildVoteSummaryPairs", func() {
 			results.RequiresAnalyzer:     {ResultData: requiresJSON},
 			results.RelationshipAnalyzer: {ResultData: relJSON},
 			results.CritiqueAnalyzer:     {ResultData: critJSON},
-		})
+		}, "job-1")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pairs).To(ConsistOf(
 			VoteSummaryPair{SourceID: "AC-1", TargetID: "AC-2", Analyzer: "requires", Consensus: synthesis.ConsensusRequires, Confidence: 0.9},
@@ -76,13 +76,14 @@ var _ = Describe("buildVoteSummaryPairs", func() {
 		_, err := buildVoteSummaryPairs(map[string]*analyzer.Output{
 			results.RelationshipAnalyzer: {ResultData: relJSON},
 			results.CritiqueAnalyzer:     {ResultData: []byte(`{not json`)},
-		})
-		Expect(err).To(MatchError(ContainSubstring("critique result")))
+		}, "job-1")
+		Expect(err).To(MatchError(results.ErrCorruptCritique))
+		Expect(err).To(MatchError(ContainSubstring("the stored critique result of job job-1 does not decode")))
 		Expect(err).To(MatchError(ContainSubstring("create a new job")))
 	})
 
 	It("returns no rows when neither analyzer produced output", func() {
-		pairs, err := buildVoteSummaryPairs(map[string]*analyzer.Output{})
+		pairs, err := buildVoteSummaryPairs(map[string]*analyzer.Output{}, "job-1")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(pairs).To(BeEmpty())
 	})
@@ -93,7 +94,7 @@ var _ = Describe("buildVoteSummaryPairs", func() {
 			Expect(err).NotTo(HaveOccurred())
 			outputs := map[string]*analyzer.Output{analyzerName: {AnalyzerName: analyzerName, ResultData: raw}}
 
-			pairs, err := buildVoteSummaryPairs(outputs)
+			pairs, err := buildVoteSummaryPairs(outputs, "job-1")
 			Expect(err).To(HaveOccurred())
 			Expect(pairs).To(BeNil())
 			Expect(err.Error()).To(ContainSubstring(analyzerName))

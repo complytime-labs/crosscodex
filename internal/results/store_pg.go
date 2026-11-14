@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -398,20 +397,10 @@ func (s *PGStore) listAnalyzer(ctx context.Context, tx db.Transaction, f Filter)
 	case err != nil:
 		return nil, fmt.Errorf("list mappings: read %s result of job %s: %w", analyzerresults.CritiqueAnalyzer, f.JobID, err)
 	default:
-		if err := json.Unmarshal(critiqueData, &crit); err != nil {
-			return nil, fmt.Errorf("list mappings: decode the %s result of job %s: the stored critique result is corrupt, so re-run the job or ask an operator to inspect its analysis_results row: %w",
-				analyzerresults.CritiqueAnalyzer, f.JobID, err)
-		}
-		// The counts reach the API as int32 (pb.MappingCritique); a count
-		// no panel vote could produce means the stored result is corrupt.
-		for _, c := range crit {
-			for _, n := range []int{c.Upheld, c.Rejected, c.Failed} {
-				if n < 0 || n > math.MaxInt32 {
-					return nil, fmt.Errorf("list mappings: the stored %s result of job %s gives pair %s -> %s an impossible vote count "+
-						"(upheld %d, rejected %d, failed %d), so it is corrupt; re-run the job or ask an operator to inspect its analysis_results row",
-						analyzerresults.CritiqueAnalyzer, f.JobID, c.SourceControlID, c.TargetControlID, c.Upheld, c.Rejected, c.Failed)
-				}
-			}
+		// The counts reach the API as int32 (pb.MappingCritique);
+		// DecodeCritique refuses one that does not fit.
+		if crit, err = analyzerresults.DecodeCritique(critiqueData, f.JobID); err != nil {
+			return nil, fmt.Errorf("list mappings: the critique's vetoes cannot be applied; re-run the job or ask an operator to inspect its analysis_results row: %w", err)
 		}
 	}
 	verdicts := analyzerresults.Apply(analyzerresults.RelationshipAnalyzer, crit)

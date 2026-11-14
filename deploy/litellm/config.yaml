@@ -7,18 +7,18 @@ model_list:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
   # panel-1..3 serve the relationship, requires and critique panels
-  # (analysis.*.models in deploy/config.yaml). Panel diversity is the point:
-  # the daemon rejects a panel whose aliases resolve to the same model, and
-  # their errors are only independent across different model families, so keep
-  # the three on different families. OpenAI offers only the GPT-6 and GPT-5
-  # lines plus the open-weight gpt-oss line, so these are the most distinct
-  # three it has; for stronger diversity point an alias at another
-  # OpenAI-compatible provider. Names checked 2026-11-12 against
-  # https://developers.openai.com/api/docs/models and
-  # https://developers.openai.com/api/docs/models/all (gpt-5.4-mini is listed
-  # as open-weight there without access details; confirm your account can call
-  # it, or swap it). Pair calls use short answer budgets, so a reasoning model
-  # that cannot turn thinking off may need larger max_tokens in config.yaml.
+  # (analysis.*.models in deploy/config.yaml). The daemon refuses a panel whose
+  # aliases resolve to the same model. The three below are current OpenAI API
+  # models that serve Chat Completions (checked 2026-11-12 against
+  # https://developers.openai.com/api/docs/models/all and each model's page).
+  # They are three different models but one provider: they share a vendor's
+  # training data and methods, so their errors are less independent than
+  # those of models from different families. For real independence, point the
+  # aliases at different providers or model families. All three are reasoning
+  # models; gpt-6.1-terra and gpt-5.6-terra default to medium reasoning effort
+  # (gpt-5.4-mini to none), which spends the short answer budgets (max_tokens
+  # in config.yaml) on reasoning: lower their effort to none or raise
+  # max_tokens.
   - model_name: panel-1
     litellm_params:
       model: openai/gpt-6.1-terra

@@ -60,60 +60,53 @@ type Label struct {
 
 func (l Label) byHuman() bool { return slices.Contains(l.JudgedBy, judgeHuman) }
 
-// LabelsDigest returns the hex SHA-256 of the labels file's bytes, so a report
-// names the exact labels it was scored with.
-func LabelsDigest(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("reading labels %q: %w", path, err)
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-// LoadLabels reads a label file and returns its judgements by pair. The file
-// is untrusted input: unknown keys, aliases, missing or malformed fields and
+// LoadLabels reads a label file and returns its judgements by pair, and the
+// hex SHA-256 of the bytes it parsed, so a report names the exact labels it
+// was scored with. The file is read once: the digest and the judgements
+// describe the same bytes even if the file changes meanwhile. The file is
+// untrusted input: unknown keys, aliases, missing or malformed fields and
 // repeated pairs are errors that name the file, line and rule. A pair judged
 // by a human takes precedence over model judgements of it, whatever their
 // order; two judgements of one pair by humans, or by models only, are
 // rejected.
-func LoadLabels(path string) (map[Pair]Label, error) {
+func LoadLabels(path string) (map[Pair]Label, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading labels %q: %w", path, err)
+		return nil, "", fmt.Errorf("reading labels %q: %w", path, err)
 	}
 	defer f.Close()
 	raw, err := io.ReadAll(io.LimitReader(f, maxLabelsBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("reading labels %q: %w", path, err)
+		return nil, "", fmt.Errorf("reading labels %q: %w", path, err)
 	}
 	if len(raw) > maxLabelsBytes {
-		return nil, fmt.Errorf("labels %q: file exceeds %d bytes: split it or remove entries for pairs no run produces", path, maxLabelsBytes)
+		return nil, "", fmt.Errorf("labels %q: file exceeds %d bytes: split it or remove entries for pairs no run produces", path, maxLabelsBytes)
 	}
+	sum := sha256.Sum256(raw)
 	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
 
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	var doc yaml.Node
 	if err := dec.Decode(&doc); err != nil {
 		if errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("labels %q is empty: expected 'version: 1' and a 'pairs' list", path)
+			return nil, "", fmt.Errorf("labels %q is empty: expected 'version: 1' and a 'pairs' list", path)
 		}
-		return nil, fmt.Errorf("decoding labels %q: %w", path, err)
+		return nil, "", fmt.Errorf("decoding labels %q: %w", path, err)
 	}
 	if len(doc.Content) != 1 {
-		return nil, fmt.Errorf("labels %q is empty: expected 'version: 1' and a 'pairs' list", path)
+		return nil, "", fmt.Errorf("labels %q is empty: expected 'version: 1' and a 'pairs' list", path)
 	}
 	if err := dec.Decode(&yaml.Node{}); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("labels %q must be a single YAML document", path)
+		return nil, "", fmt.Errorf("labels %q must be a single YAML document", path)
 	}
 	if err := rejectAliases(&doc); err != nil {
-		return nil, fmt.Errorf("labels %q line %d: %w", path, err.line, err.err)
+		return nil, "", fmt.Errorf("labels %q line %d: %w", path, err.line, err.err)
 	}
 	labels, lerr := parseLabels(doc.Content[0])
 	if lerr != nil {
-		return nil, fmt.Errorf("labels %q line %d: %w", path, lerr.line, lerr.err)
+		return nil, "", fmt.Errorf("labels %q line %d: %w", path, lerr.line, lerr.err)
 	}
-	return labels, nil
+	return labels, hex.EncodeToString(sum[:]), nil
 }
 
 // lineError is a rule violation at a YAML line.

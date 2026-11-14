@@ -152,7 +152,8 @@ type e2eOptions struct {
 	critique bool
 	// sharedPanel gives the relationship stage two aliases that answer as
 	// one upstream model and wires the panel probe, so the panel diversity
-	// check refuses every job.
+	// check refuses every job. The requires stage's single-alias panel is
+	// allowed, so the refusal is the relationship stage's.
 	sharedPanel bool
 }
 
@@ -353,6 +354,7 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 	}
 	if opts.sharedPanel {
 		analysisConfig.Relationship.Models = []string{"e2e-panel-1", "e2e-panel-2"}
+		analysisConfig.Requires.AllowSharedPanelModels = true
 	}
 
 	// Embedded-only prompt layer: the built-in defaults provide classify,

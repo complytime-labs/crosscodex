@@ -16,7 +16,8 @@ type CritiqueConfig struct {
 	MaxSourceChars      int      `yaml:"max_source_chars" json:"max_source_chars"`         // Max runes for source control text; must be positive
 	MaxTargetChars      int      `yaml:"max_target_chars" json:"max_target_chars"`         // Max runes for target control text; must be positive
 	// AllowSharedPanelModels lets the panel aliases resolve to the same
-	// upstream model. False (the default) makes the stage fail when they do.
+	// upstream model, or the panel list a single alias. False (the default)
+	// makes the stage fail when they do.
 	// Set it for offline or single-model deployments. Global-only.
 	AllowSharedPanelModels bool `yaml:"allow_shared_panel_models" json:"allow_shared_panel_models"`
 }

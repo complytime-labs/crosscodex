@@ -31,8 +31,9 @@ var (
 )
 
 // MaxStoredJustificationBytes bounds a model's justification or reason kept
-// in a stored analyzer result, applied with CleanText. It is the bound the
-// artifacts adjudication panel stores its justifications with.
+// in a stored analyzer result, applied with CleanText. The artifacts
+// adjudication panel does not use it: it keeps its own bound
+// (maxJustificationChars in internal/analyzer/artifacts).
 const MaxStoredJustificationBytes = 2000
 
 // CleanText makes s storable in PostgreSQL text and jsonb, which reject NUL

@@ -56,6 +56,11 @@ var _ = Describe("ParseResponse SANITY_CHECK", func() {
 		Entry("missing line is invalid", "REQUIRES: YES", nil),
 		Entry("MAYBE is invalid", "REQUIRES: YES\nSANITY_CHECK: MAYBE", nil),
 		Entry("empty value is invalid", "REQUIRES: YES\nSANITY_CHECK:", nil),
+		Entry("a justification quoting SANITY_CHECK: PASS before the real FAIL line turns YES into NO",
+			"REQUIRES: YES\nJUSTIFICATION: an auditor would write SANITY_CHECK: PASS here\nSANITY_CHECK: FAIL", ptr(false)),
+		Entry("a SANITY_CHECK quoted only inside a justification is a missing line",
+			"REQUIRES: YES\nJUSTIFICATION: it says SANITY_CHECK: PASS", nil),
+		Entry("an indented PASS line keeps YES", "REQUIRES: YES\n\tSANITY_CHECK: PASS", ptr(true)),
 	)
 
 	It("keeps the justification of a FAIL vote", func() {

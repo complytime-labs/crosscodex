@@ -230,6 +230,9 @@ var _ = Describe("Subscriber critique verdicts", func() {
 			Entry("the critique result is corrupt", func() {
 				resolver.data[uri(results.CritiqueAnalyzer)] = []byte(`{not json`)
 			}, "unmarshal critique results"),
+			Entry("a critique vote count is impossible", func() {
+				resolver.data[uri(results.CritiqueAnalyzer)] = []byte(`[{"kind":"relationship","source_control_id":"a","target_control_id":"b","rejected":-1}]`)
+			}, "gives pair a -> b an impossible vote count"),
 			Entry("reading the relationship result fails", func() {
 				resolver.errs[uri(results.RelationshipAnalyzer)] = errors.New("connection lost")
 			}, "connection lost"),

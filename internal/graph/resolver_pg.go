@@ -140,9 +140,9 @@ func readSynthesized(ctx context.Context, tx db.Transaction, tenantID, jobID str
 		return nil, fmt.Errorf("read the critique result of job %s, which decides the pairs it vetoed, so none of the job's synthesized edges were written; "+
 			"once the database is reachable, re-run the job: %w", jobID, err)
 	default:
-		if err := json.Unmarshal(critiqueData, &crit); err != nil {
-			return nil, fmt.Errorf("the stored critique result of job %s does not decode, so it is corrupt and none of the job's synthesized edges were written; "+
-				"re-run the job or ask an operator to inspect its analysis_results row: %w", jobID, err)
+		if crit, err = results.DecodeCritique(critiqueData, jobID); err != nil {
+			return nil, fmt.Errorf("none of the job's synthesized edges were written; "+
+				"re-run the job or ask an operator to inspect its analysis_results row: %w", err)
 		}
 	}
 	verdicts := results.Apply(results.RelationshipAnalyzer, crit)

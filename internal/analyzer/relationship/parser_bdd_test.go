@@ -136,6 +136,15 @@ var _ = Describe("ParseResponse", func() {
 		Entry("empty value is invalid",
 			"RELATIONSHIP: EQUIVALENT\nSANITY_CHECK:\nCONFIDENCE: HIGH",
 			relationship.RelNoRelationship, "", relationship.ParseFail),
+		Entry("a justification quoting SANITY_CHECK: PASS before the real FAIL line downgrades to NO_RELATIONSHIP",
+			"RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: an auditor would write SANITY_CHECK: PASS here\nSANITY_CHECK: FAIL\nCONFIDENCE: HIGH",
+			relationship.RelNoRelationship, "FAIL", relationship.ParseOK),
+		Entry("a SANITY_CHECK quoted only inside a justification is a missing line",
+			"RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: it says SANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+			relationship.RelNoRelationship, "", relationship.ParseFail),
+		Entry("an indented PASS line keeps the verdict",
+			"RELATIONSHIP: EQUIVALENT\n  SANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+			relationship.RelEquivalent, "PASS", relationship.ParseOK),
 	)
 
 	It("discards the contribution type of a FAIL vote", func() {

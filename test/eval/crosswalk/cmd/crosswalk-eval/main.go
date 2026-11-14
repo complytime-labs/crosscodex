@@ -261,10 +261,7 @@ func runScore(args []string, stdout, stderr io.Writer) error {
 	var labelled map[crosswalk.Pair]crosswalk.Label
 	var labelsDigest string
 	if *labels != "" {
-		if labelled, err = crosswalk.LoadLabels(*labels); err != nil {
-			return err
-		}
-		if labelsDigest, err = crosswalk.LabelsDigest(*labels); err != nil {
+		if labelled, labelsDigest, err = crosswalk.LoadLabels(*labels); err != nil {
 			return err
 		}
 	}

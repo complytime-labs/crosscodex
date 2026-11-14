@@ -43,8 +43,8 @@ type VoteSummaryPair struct {
 // One analyzer listing the same pair twice is corrupt persisted output: its
 // rows would collide on the key and synthesis would rank the pair twice.
 // That is an error, like unparseable result data, rather than a silent pick.
-func buildVoteSummaryPairs(outputs map[string]*analyzer.Output) ([]VoteSummaryPair, error) {
-	relVerdicts, reqVerdicts, err := critiqueDecisions(outputs)
+func buildVoteSummaryPairs(outputs map[string]*analyzer.Output, jobID string) ([]VoteSummaryPair, error) {
+	relVerdicts, reqVerdicts, err := critiqueDecisions(outputs, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("buildVoteSummaryPairs: %w", err)
 	}

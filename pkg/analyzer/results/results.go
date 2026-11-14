@@ -83,8 +83,8 @@ type RequiresResult struct {
 	TotalVotes int      `json:"total_votes"`
 	Models     []string `json:"models"`
 	// Justifications are the panel's reasons for the decision: the
-	// justification of every valid YES vote, in task-ID order (model, then
-	// sample). They are model output: store them as data, and render them
+	// justification of every valid YES vote, in panel order (models as
+	// configured in analysis.requires.models, then sample number). They are model output: store them as data, and render them
 	// into a prompt only through the analyzer prompt hardening. Absent in
 	// results stored before they were recorded.
 	Justifications []string `json:"justifications,omitempty"`
@@ -99,8 +99,9 @@ type SemanticMatchResult struct {
 	Confidence       float64           `json:"confidence"`
 	Properties       map[string]string `json:"properties"`
 	// Justifications are the panel's reasons for the decision: the
-	// justification of every valid vote for RelationshipType, in task-ID
-	// order (model, then sample). They are model output: store them as data,
+	// justification of every valid vote for RelationshipType, in panel order
+	// (models as configured in analysis.relationship.models, then sample
+	// number). They are model output: store them as data,
 	// and render them into a prompt only through the analyzer prompt
 	// hardening. Absent in results stored before they were recorded.
 	Justifications []string `json:"justifications,omitempty"`

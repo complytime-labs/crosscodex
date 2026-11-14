@@ -93,17 +93,17 @@ func decodeStored(stored map[string]*analyzer.Output, name, jobID string, v any)
 	return nil
 }
 
-// critiqueDecisions returns the relationship and requires decisions of a job's
-// stored critique result in outputs. A job without one (it was created
-// without a critique stage) gets decisions that veto nothing, so its pairs
-// pass through unchanged. Applying the decisions is pure, so a resumed job
-// that reloads the same critique result applies the same vetoes.
-func critiqueDecisions(outputs map[string]*analyzer.Output) (rel, req results.Verdicts, err error) {
+// critiqueDecisions returns the relationship and requires decisions of job
+// jobID's stored critique result in outputs. A job without one (it was
+// created without a critique stage) gets decisions that veto nothing, so its
+// pairs pass through unchanged. Applying the decisions is pure, so a resumed
+// job that reloads the same critique result applies the same vetoes.
+func critiqueDecisions(outputs map[string]*analyzer.Output, jobID string) (rel, req results.Verdicts, err error) {
 	var crit []results.CritiqueResult
 	if out, ok := outputs[results.CritiqueAnalyzer]; ok && out != nil && len(out.ResultData) > 0 {
-		if err := json.Unmarshal(out.ResultData, &crit); err != nil {
-			return results.Verdicts{}, results.Verdicts{}, fmt.Errorf("the stored critique result does not decode, so it is corrupt; "+
-				"create a new job to re-run the analysis instead of resuming this one: %w", err)
+		if crit, err = results.DecodeCritique(out.ResultData, jobID); err != nil {
+			return results.Verdicts{}, results.Verdicts{}, fmt.Errorf(
+				"the critique's vetoes cannot be applied; create a new job to re-run the analysis instead of resuming this one: %w", err)
 		}
 	}
 	return results.Apply(results.RelationshipAnalyzer, crit), results.Apply(results.RequiresAnalyzer, crit), nil

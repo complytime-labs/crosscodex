@@ -149,11 +149,23 @@ func sharedName(a, b string) string {
 }
 
 // judgePanel classifies the models the aliases of spec reported (alias to
-// upstream model, "" for an unknown one) and returns the outcome. A shared or
-// unknown model is an error wrapping ErrPanelNotIndependent unless
-// spec.AllowShared is set; the outcome is then panelAllowed.
+// upstream model, "" for an unknown one) and returns the outcome. A panel of
+// fewer than two distinct aliases is one model by construction, so it is
+// shared. A shared or unknown model is an error wrapping
+// ErrPanelNotIndependent unless spec.AllowShared is set; the outcome is then
+// panelAllowed.
 func judgePanel(spec panelSpec, models map[string]string) (string, error) {
 	setting := "analysis." + spec.Stage + ".allow_shared_panel_models"
+	if distinct := slices.Compact(slices.Sorted(slices.Values(spec.Aliases))); len(distinct) < 2 {
+		if spec.AllowShared {
+			return panelAllowed, nil
+		}
+		return panelShared, &tenantError{sentinel: ErrPanelNotIndependent, message: fmt.Sprintf(
+			"stage %q stopped: its panel has a single alias (%s), so its votes would only measure one model's "+
+				"self-consistency, not agreement between models. List panel-1, panel-2 and panel-3 in analysis.%s.models, "+
+				"each pointing at a different model in the LLM gateway config, or set %s: true to run a single-model panel.",
+			spec.Stage, strings.Join(distinct, ", "), spec.Stage, setting)}
+	}
 	for i, a := range spec.Aliases {
 		for _, b := range spec.Aliases[i+1:] {
 			if models[a] == "" || models[b] == "" || !sameUpstream(models[a], models[b]) {
@@ -186,8 +198,9 @@ func judgePanel(spec panelSpec, models map[string]string) (string, error) {
 }
 
 // checkPanelDiversity probes every alias of panel once and refuses the panel
-// (an error wrapping ErrPanelNotIndependent) when two aliases answer as the
-// same upstream model, or when an alias's upstream model is unknown, unless
+// (an error wrapping ErrPanelNotIndependent) when it has fewer than two
+// distinct aliases, when two aliases answer as the same upstream model, or
+// when an alias's upstream model is unknown, unless
 // panel.AllowShared. It returns what it found for each alias (an unknown
 // model is "") for the job's provenance. A model catalog read that fails is a
 // failure of the stage, unless panel.AllowShared, which records the alias as

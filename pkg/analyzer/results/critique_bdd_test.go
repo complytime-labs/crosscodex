@@ -1,6 +1,8 @@
 package results_test
 
 import (
+	"encoding/json"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -102,4 +104,31 @@ var _ = Describe("critique verdicts", func() {
 		Entry("a vetoed critique has no note: the pair is dropped",
 			critiqueOf(results.RelationshipAnalyzer, "a", "b", results.CritiqueVetoed, 0, 3, 0, "panel-1 s0 REJECT: x"), ""),
 	)
+
+	Describe("DecodeCritique", func() {
+		It("decodes a stored critique result", func() {
+			crit := []results.CritiqueResult{critiqueOf(results.RelationshipAnalyzer, "a", "b", results.CritiqueSplit, 2, 1, 0,
+				"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: too broad", "panel-3 s0 UPHOLD: ok")}
+			data, err := json.Marshal(crit)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results.DecodeCritique(data, "job-1")).To(Equal(crit))
+		})
+
+		DescribeTable("rejects a corrupt stored critique result, naming the job",
+			func(data, want string) {
+				got, err := results.DecodeCritique([]byte(data), "job-1")
+				Expect(err).To(MatchError(results.ErrCorruptCritique))
+				Expect(err).To(MatchError(ContainSubstring(want)))
+				Expect(got).To(BeNil())
+			},
+			Entry("JSON that does not decode", `{not json`,
+				"the stored critique result of job job-1 does not decode, so it is corrupt"),
+			Entry("an object instead of a list", `{"x":1}`,
+				"the stored critique result of job job-1 does not decode, so it is corrupt"),
+			Entry("a negative vote count", `[{"kind":"relationship","source_control_id":"AC-1","target_control_id":"B-1","upheld":-1}]`,
+				"the stored critique result of job job-1 gives pair AC-1 -> B-1 an impossible vote count (upheld -1, rejected 0, failed 0), so it is corrupt"),
+			Entry("a vote count beyond int32", `[{"kind":"requires","source_control_id":"AC-1","target_control_id":"B-1","failed":2147483648}]`,
+				"the stored critique result of job job-1 gives pair AC-1 -> B-1 an impossible vote count (upheld 0, rejected 0, failed 2147483648), so it is corrupt"),
+		)
+	})
 })

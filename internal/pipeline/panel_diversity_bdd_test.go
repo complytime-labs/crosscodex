@@ -107,6 +107,41 @@ var _ = Describe("Panel diversity check", func() {
 		Entry("an unknown model passes when allowed", func() { models["panel-3"] = "" }, "relationship", true, ""),
 	)
 
+	DescribeTable("treats a panel of one alias as a single-model panel",
+		func(stage string, aliases []string, allowShared bool, wantErr string) {
+			svc := service(pipeline.WithPanelProbe(llm))
+			ids, err := svc.CheckPanelIdentities(ctx, "test-tenant", "job-1", stage, aliases, allowShared)
+			if wantErr != "" {
+				Expect(err).To(MatchError(pipeline.ErrPanelNotIndependent))
+				Expect(err.Error()).To(Equal(wantErr))
+				Expect(ids).To(BeNil())
+				return
+			}
+			Expect(err).NotTo(HaveOccurred())
+			by := pipeline.PanelByProducts(aliases, allowShared, ids)
+			Expect(by).To(HaveKeyWithValue("panel.independence", "allowed shared or unknown upstream model"))
+			Expect(by).To(HaveKeyWithValue("panel.allow_shared", true))
+		},
+		Entry("a relationship panel of one alias is refused", "relationship", []string{"panel-1"}, false,
+			`stage "relationship" stopped: its panel has a single alias (panel-1), so its votes would only measure one model's `+
+				`self-consistency, not agreement between models. List panel-1, panel-2 and panel-3 in analysis.relationship.models, `+
+				`each pointing at a different model in the LLM gateway config, or set analysis.relationship.allow_shared_panel_models: `+
+				`true to run a single-model panel.`),
+		Entry("a requires panel of one alias is refused", "requires", []string{"default"}, false,
+			`stage "requires" stopped: its panel has a single alias (default), so its votes would only measure one model's `+
+				`self-consistency, not agreement between models. List panel-1, panel-2 and panel-3 in analysis.requires.models, `+
+				`each pointing at a different model in the LLM gateway config, or set analysis.requires.allow_shared_panel_models: `+
+				`true to run a single-model panel.`),
+		Entry("a critique panel of one alias listed twice is refused", "critique", []string{"panel-2", "panel-2"}, false,
+			`stage "critique" stopped: its panel has a single alias (panel-2), so its votes would only measure one model's `+
+				`self-consistency, not agreement between models. List panel-1, panel-2 and panel-3 in analysis.critique.models, `+
+				`each pointing at a different model in the LLM gateway config, or set analysis.critique.allow_shared_panel_models: `+
+				`true to run a single-model panel.`),
+		Entry("a relationship panel of one alias passes when allowed, recorded as allowed", "relationship", []string{"panel-1"}, true, ""),
+		Entry("a requires panel of one alias passes when allowed, recorded as allowed", "requires", []string{"default"}, true, ""),
+		Entry("a critique panel of one alias passes when allowed, recorded as allowed", "critique", []string{"panel-3"}, true, ""),
+	)
+
 	Describe("reading the upstream model of an alias the gateway only echoes", func() {
 		catalogOf := func(entries ...llmclient.ModelDeployment) {
 			llm.ModelCatalogFunc = func(context.Context) ([]llmclient.ModelDeployment, error) { return entries, nil }

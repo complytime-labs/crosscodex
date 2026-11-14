@@ -250,6 +250,9 @@ var _ = Describe("PGResolver synthesis stage", func() {
 		},
 		Entry("the critique row does not decode", dbtest.Row(nil, []byte(`{not json`)),
 			"the stored critique result of job job-1 does not decode, so it is corrupt"),
+		Entry("a critique vote count is impossible",
+			dbtest.Row(nil, []byte(`[{"kind":"relationship","source_control_id":"c1","target_control_id":"c2","upheld":2147483648}]`)),
+			"the stored critique result of job job-1 gives pair c1 -> c2 an impossible vote count"),
 		Entry("reading the critique row fails", dbtest.Row(errors.New("connection lost")),
 			"read the critique result of job job-1"),
 	)

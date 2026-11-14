@@ -170,8 +170,8 @@ func (s *Service) writeRequires(ctx context.Context, tenantID, jobID string, req
 // one writes no edge. Writes are idempotent, so a redelivered event adds
 // nothing.
 func (s *Service) materializeCritique(ctx context.Context, tenantID, jobID string, data []byte) error {
-	var crit []results.CritiqueResult
-	if err := json.Unmarshal(data, &crit); err != nil {
+	crit, err := results.DecodeCritique(data, jobID)
+	if err != nil {
 		return fmt.Errorf("unmarshal critique results: %w", err)
 	}
 	var matches []results.SemanticMatchResult

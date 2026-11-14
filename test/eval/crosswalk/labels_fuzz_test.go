@@ -1,6 +1,8 @@
 package crosswalk_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +13,8 @@ import (
 )
 
 // FuzzLoadLabels feeds arbitrary bytes to the strict labels loader. On
-// accepted input every label must satisfy the documented field rules.
+// accepted input every label must satisfy the documented field rules, and
+// the digest must hash the bytes parsed.
 func FuzzLoadLabels(f *testing.F) {
 	entry := "  - source: PO.1.1\n    target: sa-8\n    verdict: related\n    judged_by: [opus, sonnet]\n    rationale: Both define requirements.\n    date: 2026-11-12\n"
 	f.Add([]byte("version: 1\npairs:\n" + entry))
@@ -27,9 +30,12 @@ func FuzzLoadLabels(f *testing.F) {
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		labels, err := crosswalk.LoadLabels(path)
+		labels, digest, err := crosswalk.LoadLabels(path)
 		if err != nil {
 			return
+		}
+		if sum := sha256.Sum256(data); digest != hex.EncodeToString(sum[:]) {
+			t.Fatalf("digest %s does not hash the bytes parsed", digest)
 		}
 		for pair, l := range labels {
 			if pair.SourceID != l.Source || pair.TargetID != l.Target || l.Source == "" || l.Target == "" {

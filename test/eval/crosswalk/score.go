@@ -30,7 +30,8 @@ type ScoreInput struct {
 	// Labels are the loaded label file's judgements keyed by the pair as the
 	// run exported it; nil or empty when the profile has none.
 	Labels map[Pair]Label
-	// LabelsDigest is LabelsDigest of the labels file; empty without labels.
+	// LabelsDigest is the digest LoadLabels returned with Labels; empty
+	// without labels.
 	LabelsDigest string
 }
 

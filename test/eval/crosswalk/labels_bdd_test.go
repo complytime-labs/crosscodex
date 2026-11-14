@@ -50,7 +50,7 @@ func humanOver(o map[string]string) map[string]string {
 
 var _ = Describe("LoadLabels", func() {
 	It("loads a valid file keyed by pair, with each entry's line", func() {
-		got, err := crosswalk.LoadLabels(labelsFile("# note\nversion: 1\npairs:\n" +
+		got, _, err := crosswalk.LoadLabels(labelsFile("# note\nversion: 1\npairs:\n" +
 			entry(nil) + entry(map[string]string{"target": "sa-9", "verdict": "unrelated", "judged_by": "[sonnet]"})))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(HaveLen(2))
@@ -62,14 +62,14 @@ var _ = Describe("LoadLabels", func() {
 	})
 
 	It("accepts a file with no pairs", func() {
-		got, err := crosswalk.LoadLabels(labelsFile("version: 1\npairs: []\n"))
+		got, _, err := crosswalk.LoadLabels(labelsFile("version: 1\npairs: []\n"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(BeEmpty())
 	})
 
 	It("accepts a BOM and CRLF line endings", func() {
 		body := "\xef\xbb\xbfversion: 1\npairs:\n" + entry(nil)
-		got, err := crosswalk.LoadLabels(labelsFile(strings.ReplaceAll(body, "\n", "\r\n")))
+		got, _, err := crosswalk.LoadLabels(labelsFile(strings.ReplaceAll(body, "\n", "\r\n")))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(HaveLen(1))
 		Expect(got[crosswalk.Pair{SourceID: "PO.1.1", TargetID: "sa-8"}].Rationale).To(Equal("Both define security requirements."))
@@ -78,7 +78,7 @@ var _ = Describe("LoadLabels", func() {
 	DescribeTable("rejects an invalid file, naming the file, the line and the rule",
 		func(body, line, rule string) {
 			path := labelsFile(body)
-			_, err := crosswalk.LoadLabels(path)
+			_, _, err := crosswalk.LoadLabels(path)
 			Expect(err).To(MatchError(And(ContainSubstring(path), ContainSubstring("line "+line), ContainSubstring("rule "+rule))))
 		},
 		Entry("no version", "pairs: []\n", "1", "version"),
@@ -109,7 +109,7 @@ var _ = Describe("LoadLabels", func() {
 
 	DescribeTable("rejects a file that is not one YAML mapping",
 		func(body, fragment string) {
-			_, err := crosswalk.LoadLabels(labelsFile(body))
+			_, _, err := crosswalk.LoadLabels(labelsFile(body))
 			Expect(err).To(MatchError(ContainSubstring(fragment)))
 		},
 		Entry("empty", "", "is empty"),
@@ -122,13 +122,13 @@ var _ = Describe("LoadLabels", func() {
 
 	It("fails on a missing file, naming it", func() {
 		path := filepath.Join(GinkgoT().TempDir(), "absent.yaml")
-		_, err := crosswalk.LoadLabels(path)
+		_, _, err := crosswalk.LoadLabels(path)
 		Expect(err).To(MatchError(ContainSubstring(path)))
 	})
 
 	DescribeTable("resolves two entries for one pair",
 		func(first, second map[string]string, winner string) {
-			got, err := crosswalk.LoadLabels(labelsFile("version: 1\npairs:\n" + entry(first) + entry(second)))
+			got, _, err := crosswalk.LoadLabels(labelsFile("version: 1\npairs:\n" + entry(first) + entry(second)))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(HaveLen(1))
 			Expect(got[crosswalk.Pair{SourceID: "PO.1.1", TargetID: "sa-8"}].Verdict).To(Equal(winner))
@@ -144,7 +144,7 @@ var _ = Describe("LoadLabels", func() {
 			for _, e := range entries {
 				body += entry(e)
 			}
-			_, err := crosswalk.LoadLabels(labelsFile(body))
+			_, _, err := crosswalk.LoadLabels(labelsFile(body))
 			Expect(err).To(MatchError(And(ContainSubstring("rule duplicate-pair"), ContainSubstring("lines "+lines))))
 		},
 		Entry("model, human, model", []map[string]string{nil, humanOver(map[string]string{}), {"judged_by": "[sonnet]"}}, "3 and 15"),
@@ -155,25 +155,28 @@ var _ = Describe("LoadLabels", func() {
 	DescribeTable("rejects a source or target over the length limit",
 		func(field string) {
 			path := labelsFile("version: 1\npairs:\n" + entry(map[string]string{field: strings.Repeat("a", 129)}))
-			_, err := crosswalk.LoadLabels(path)
+			_, _, err := crosswalk.LoadLabels(path)
 			Expect(err).To(MatchError(And(ContainSubstring(path), ContainSubstring("rule "+field), ContainSubstring("limit is 128"))))
 		},
 		Entry("source", "source"),
 		Entry("target", "target"),
 	)
 
-	It("hashes the exact bytes of the file", func() {
-		path := labelsFile("version: 1\npairs: []\n")
-		got, err := crosswalk.LabelsDigest(path)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(Equal("ce976dd9c17bebb1fb4dbe519274e297d61538377479e91bf9e1764ae77f8d76"))
-		_, err = crosswalk.LabelsDigest(path + ".absent")
-		Expect(err).To(MatchError(ContainSubstring(".absent")))
-	})
+	DescribeTable("returns the SHA-256 of the exact bytes it parsed",
+		func(body, want string) {
+			got, digest, err := crosswalk.LoadLabels(labelsFile(body))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(BeEmpty())
+			Expect(digest).To(Equal(want))
+		},
+		Entry("a plain file", "version: 1\npairs: []\n", "ce976dd9c17bebb1fb4dbe519274e297d61538377479e91bf9e1764ae77f8d76"),
+		Entry("a file with a BOM, hashed with the BOM", "\xef\xbb\xbfversion: 1\npairs: []\n",
+			"e2352548fdf6c7968932f811494b6fed510173bad89adc09ed634d170875ca22"),
+	)
 
 	DescribeTable("rejects two entries for one pair that no human overrides",
 		func(first, second map[string]string, fragment string) {
-			_, err := crosswalk.LoadLabels(labelsFile("version: 1\npairs:\n" + entry(first) + entry(second)))
+			_, _, err := crosswalk.LoadLabels(labelsFile("version: 1\npairs:\n" + entry(first) + entry(second)))
 			Expect(err).To(MatchError(And(ContainSubstring("rule duplicate-pair"), ContainSubstring("lines 3 and 9"), ContainSubstring(fragment))))
 		},
 		Entry("two model entries", nil, map[string]string{"judged_by": "[sonnet]"}, "add a human entry"),
