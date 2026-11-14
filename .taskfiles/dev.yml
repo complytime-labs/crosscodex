@@ -4,9 +4,9 @@ vars:
   MODULE: '{{.MODULE | default "github.com/complytime-labs/crosscodex"}}'
   BUILD_DIR: '{{.BUILD_DIR | default (printf "%s/bin" .ROOT_DIR)}}'
   # Minimum Go version -- the floor for stdlib fixes govulncheck reports
-  # (go1.26.10 covers crypto/x509, crypto/tls, net/http, html/template).
+  # (go1.26.11 covers crypto/x509, crypto/tls, net/http incl. GO-2026-6859, html/template).
   # Bump this when upgrading Go; deps:update re-applies it after go get -u.
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.26.11"
 
 tasks:
   default:
