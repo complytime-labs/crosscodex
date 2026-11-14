@@ -1,0 +1,54 @@
+internal/graph/synthesis_materializer_bdd_test.go
+  s_21535d83e059fe::t_7d1f98084f574b 108,110,114-123
+  s_21535d83e059fe::t_8e26902be76957 124-125
+internal/graph/resolver_bdd_test.go
+  s_21535d83e059fe::t_7d1f98084f574b 294-312
+api/proto/crosscodex/v1/synthesis.proto
+  s_21535d83e059fe::t_b816ee1c06b2e9 157
+pkg/config/critique.go
+  s_21535d83e059fe::t_7c5d820818a736 27-28
+internal/graph/subscriber_handlers.go
+  s_21535d83e059fe::t_b816ee1c06b2e9 120-122
+docs/dev/design-principles.md
+  s_21535d83e059fe::t_7c5d820818a736 202
+README.md
+  s_21535d83e059fe::t_a8b737ac728f3a 26
+internal/analyzer/critique/critique_property_test.go
+  s_21535d83e059fe::t_bef99197451817 111-115
+cmd/crosscodex/results_bdd_test.go
+  s_21535d83e059fe::t_d9d62afae4ecd1 291-301
+  s_21535d83e059fe::t_8727ce5e40e33f 321
+internal/analyzer/critique/critique_bdd_test.go
+  s_21535d83e059fe::t_f5e1202616f27f 373,409-423
+  s_21535d83e059fe::t_188483ed306cd9 424
+internal/analyzer/critique/doc.go
+  s_21535d83e059fe::t_7c5d820818a736 3-6
+cmd/crosscodex/results.go
+  s_21535d83e059fe::t_dcf957bf5af566 72-75,79,96-97
+  s_21535d83e059fe::t_b816ee1c06b2e9 280,286
+  s_21535d83e059fe::t_a8b737ac728f3a 357-361
+  s_21535d83e059fe::t_7c5d820818a736 356
+internal/analyzer/critique/critique.go
+  s_21535d83e059fe::t_bef99197451817 456-460
+internal/pipeline/vote_summaries_bdd_test.go
+  s_21535d83e059fe::t_7d1f98084f574b 74-91
+internal/results/store_pg_integration_bdd_test.go
+  s_21535d83e059fe::t_39d5fdaa1dd9f6 362-363,369-370,375-377,394-400
+  s_21535d83e059fe::t_2b57ead3977b6e 401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "aa3a511e2a6803100a4542f20db6f68a6fc323d2",
+  "prompts": {},
+  "sessions": {
+    "s_21535d83e059fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a55b66a6-90bf-405a-b5fa-ec54c6ef1232",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
