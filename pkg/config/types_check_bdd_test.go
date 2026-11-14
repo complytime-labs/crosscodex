@@ -47,6 +47,16 @@ var _ = Describe("Values of the wrong type", func() {
 			"llm.tenant_overrides.acme-corp.timeout", "4:16", "into int"),
 	)
 
+	It("is reported for a mapping used as a map key, such as a tenant override's name", func() {
+		// The reference resolver's own decode also rejects such a key, with an
+		// untagged yaml error, so this load carries that error too.
+		file, _, err := loadConfigFile("synthesis:\n  tenant_overrides: {{}}\n")
+		Expect(err).To(MatchError(config.ErrWrongType))
+		Expect(err).To(MatchError(ContainSubstring("synthesis.tenant_overrides at " + file + ":2:22")))
+		Expect(err).To(MatchError(ContainSubstring("into string")))
+		Expect(paths(err)).To(ConsistOf("synthesis.tenant_overrides"))
+	})
+
 	It("is reported together with invalid values and unknown keys, each once", func() {
 		_, _, err := loadConfigFile("pipeline:\n  max_concurrent_jobs: many\n  stage_timeout: soon\nlogging:\n  level: loud\nloging: {}\n")
 		Expect(paths(err)).To(ConsistOf("pipeline.max_concurrent_jobs", "pipeline.stage_timeout", "logging.level", "loging"))
