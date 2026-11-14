@@ -69,6 +69,10 @@ type Stage struct {
 	// writer could repoint it to another signed attempt of the same job and
 	// analyzer.
 	CacheAttempt string
+	// PanelRecord is the JSON the panel diversity check stored for a panel
+	// analyzer stage (see panelRecord), or "" before it ran or for a stage
+	// that predates it.
+	PanelRecord string
 }
 
 type JobFilter struct {

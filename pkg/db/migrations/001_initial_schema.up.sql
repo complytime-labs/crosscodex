@@ -335,6 +335,12 @@ CREATE TABLE IF NOT EXISTS job_stages (
     -- write this table can repoint it only to another genuine signed attempt
     -- of the same job and analyzer.
     cache_attempt TEXT,
+    -- panel_record is the JSON the panel diversity check (#260) wrote for a
+    -- panel analyzer stage: the upstream model each alias reported and
+    -- whether allow_shared_panel_models was in effect. NULL until the check
+    -- runs and for stages that predate it; it survives a resume and is
+    -- cleared with the rest of the stage on a reset.
+    panel_record TEXT,
     PRIMARY KEY (job_id, stage_name)
 );
 

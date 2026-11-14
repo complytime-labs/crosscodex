@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"runtime/debug"
 	"slices"
 	"time"
@@ -49,6 +50,9 @@ type jobExecution struct {
 	// cacheRuns is, per analyzer this run completed, its result-cache use,
 	// which its link records.
 	cacheRuns map[string]analyzerCacheRun
+	// panels is, per panel analyzer this run was about to start, what its
+	// diversity check found, which its link records.
+	panels map[string]panelRecord
 }
 
 // executeJob is the main lifecycle method. Called as a goroutine from
@@ -451,6 +455,12 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 			span.SetAttributes(attribute.Int("controls."+side, len(fetched)))
 			controls = append(controls, fetched...)
 		}
+	}
+
+	if err := s.checkPanels(ctx, job, incompleteAnalyzers, exec); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
 	}
 
 	// Result reuse (#243): the job's cache mode and, unless the cache is
@@ -1217,9 +1227,23 @@ func (s *Service) attestAnalyzers(ctx context.Context, job *Job, exec *jobExecut
 			materials = append(materials, attestation.Artifact{URI: dep + ".output", Digest: digests[dep]})
 		}
 		rec := records[a.Name()]
+		byProducts := rec.byProducts()
+		panel, isPanel := exec.panels[a.Name()]
+		if !isPanel {
+			// A stage an earlier run completed keeps the record that run stored.
+			var err error
+			if panel, isPanel, err = s.storedPanelRecord(stageByName[a.Name()]); err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return fmt.Errorf("attesting analyzers: %w", err)
+			}
+		}
+		if isPanel {
+			maps.Copy(byProducts, panel.byProducts())
+		}
 		materials = append(materials, attestation.Artifact{URI: cacheManifestURI(a.Name()), Digest: rec.digest})
 		products := []attestation.Artifact{{URI: a.Name() + ".output", Digest: digests[a.Name()]}}
-		link, err := s.createLink(ctx, job, exec, a.Name(), materials, products, attestation.WithByProducts(rec.byProducts()))
+		link, err := s.createLink(ctx, job, exec, a.Name(), materials, products, attestation.WithByProducts(byProducts))
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())

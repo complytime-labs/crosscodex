@@ -6,6 +6,31 @@ model_list:
     litellm_params:
       model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
+  # panel-1..3 serve the relationship, requires and critique panels
+  # (analysis.*.models in deploy/config.yaml). Panel diversity is the point:
+  # the daemon rejects a panel whose aliases resolve to the same model, and
+  # their errors are only independent across different model families, so keep
+  # the three on different families. OpenAI offers only the GPT-6 and GPT-5
+  # lines plus the open-weight gpt-oss line, so these are the most distinct
+  # three it has; for stronger diversity point an alias at another
+  # OpenAI-compatible provider. Names checked 2026-11-12 against
+  # https://developers.openai.com/api/docs/models and
+  # https://developers.openai.com/api/docs/models/all (gpt-5.4-mini is listed
+  # as open-weight there without access details; confirm your account can call
+  # it, or swap it). Pair calls use short answer budgets, so a reasoning model
+  # that cannot turn thinking off may need larger max_tokens in config.yaml.
+  - model_name: panel-1
+    litellm_params:
+      model: openai/gpt-6.1-terra
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: panel-2
+    litellm_params:
+      model: openai/gpt-5.4-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: panel-3
+    litellm_params:
+      model: openai/gpt-5.6-terra
+      api_key: os.environ/OPENAI_API_KEY
   - model_name: embed
     litellm_params:
       model: openai/text-embedding-3-small

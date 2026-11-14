@@ -506,7 +506,10 @@ func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
 	return tc
 }
 
-// AnalysisConfig configures the analysis service.
+// AnalysisConfig configures the analysis service. It has no tenant_overrides
+// map, so every setting under it, including the panel settings
+// (allow_shared_panel_models and the critique block), is global: analysis
+// config is global like its siblings and a tenant cannot loosen a panel.
 type AnalysisConfig struct {
 	Engine               EngineConfig               `yaml:"engine" json:"engine"`
 	Classification       ClassificationConfig       `yaml:"classification" json:"classification"`
@@ -514,6 +517,7 @@ type AnalysisConfig struct {
 	Relationship         RelationshipConfig         `yaml:"relationship" json:"relationship"`
 	Candidates           CandidateConfig            `yaml:"candidates" json:"candidates"`
 	Requires             RequiresConfig             `yaml:"requires" json:"requires"`
+	Critique             CritiqueConfig             `yaml:"critique" json:"critique"`
 	Artifacts            ArtifactsConfig            `yaml:"artifacts" json:"artifacts"`
 	ArtifactAdjudication ArtifactAdjudicationConfig `yaml:"artifact_adjudication" json:"artifact_adjudication"`
 	ResultCache          ResultCacheConfig          `yaml:"result_cache" json:"result_cache"`
@@ -638,6 +642,11 @@ type RelationshipConfig struct {
 	// one-sample panel, which always agrees with itself, still reports how
 	// sure its vote was.
 	ConfidenceWeights RelationshipConfidenceWeights `yaml:"confidence_weights" json:"confidence_weights"`
+	// AllowSharedPanelModels lets the panel aliases resolve to the same
+	// upstream model. False (the default) makes the stage fail when they do,
+	// because a panel of one model voting three times is not independent.
+	// Set it for offline or single-model deployments. Global-only.
+	AllowSharedPanelModels bool `yaml:"allow_shared_panel_models" json:"allow_shared_panel_models"`
 }
 
 // RelationshipConfidenceWeights maps the HIGH, MEDIUM and LOW confidence a
@@ -737,6 +746,11 @@ type RequiresConfig struct {
 	MaxErrorRate        float64  `yaml:"max_error_rate" json:"max_error_rate"`             // Maximum fraction of votes that can fail [0.0, 1.0]
 	MaxSourceChars      int      `yaml:"max_source_chars" json:"max_source_chars"`         // Max runes for source control text; must be positive
 	MaxTargetChars      int      `yaml:"max_target_chars" json:"max_target_chars"`         // Max runes for target control text; must be positive
+	// AllowSharedPanelModels lets the panel aliases resolve to the same
+	// upstream model. False (the default) makes the stage fail when they do,
+	// because a panel of one model voting three times is not independent.
+	// Set it for offline or single-model deployments. Global-only.
+	AllowSharedPanelModels bool `yaml:"allow_shared_panel_models" json:"allow_shared_panel_models"`
 }
 
 // Validate checks RequiresConfig for consistency and required fields.
@@ -747,44 +761,12 @@ func (c *RequiresConfig) validate(tracker *sourceTracker) error {
 	if !c.Enabled {
 		return nil
 	}
-	const pfx = "analysis.requires."
-	var p problems
-	if len(c.Models) == 0 {
-		p.add(pfx+"models", "analysis.requires.models%s must not be empty when enabled: %w",
-			formatSource(tracker, pfx+"models"), ErrInvalidConfig)
-	}
-	if c.SamplesPerModel <= 0 {
-		p.add(pfx+"samples_per_model", "analysis.requires.samples_per_model %d%s must be positive: %w",
-			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
-	} else if !c.AllowEvenSamples && c.SamplesPerModel%2 == 0 {
-		p.add(pfx+"samples_per_model", "analysis.requires.samples_per_model %d%s must be odd unless allow_even_samples=true: %w",
-			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
-	}
-	if math.IsNaN(c.ConsensusThreshold) || c.ConsensusThreshold < 0.5 || c.ConsensusThreshold > 1.0 {
-		p.add(pfx+"consensus_threshold", "analysis.requires.consensus_threshold %g%s must be in range [0.5, 1.0]: %w",
-			c.ConsensusThreshold, formatSource(tracker, pfx+"consensus_threshold"), ErrInvalidConfig)
-	}
-	if math.IsNaN(c.MaxErrorRate) || c.MaxErrorRate < 0.0 || c.MaxErrorRate > 1.0 {
-		p.add(pfx+"max_error_rate", "analysis.requires.max_error_rate %g%s must be in range [0.0, 1.0]: %w",
-			c.MaxErrorRate, formatSource(tracker, pfx+"max_error_rate"), ErrInvalidConfig)
-	}
-	if c.MaxSourceChars <= 0 {
-		p.add(pfx+"max_source_chars", "analysis.requires.max_source_chars %d%s must be positive: %w",
-			c.MaxSourceChars, formatSource(tracker, pfx+"max_source_chars"), ErrInvalidConfig)
-	}
-	if c.MaxTargetChars <= 0 {
-		p.add(pfx+"max_target_chars", "analysis.requires.max_target_chars %d%s must be positive: %w",
-			c.MaxTargetChars, formatSource(tracker, pfx+"max_target_chars"), ErrInvalidConfig)
-	}
-	if c.MaxTokens <= 0 {
-		p.add(pfx+"max_tokens", "analysis.requires.max_tokens %d%s must be positive: %w",
-			c.MaxTokens, formatSource(tracker, pfx+"max_tokens"), ErrInvalidConfig)
-	}
-	if math.IsNaN(c.SamplingTemperature) || c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
-		p.add(pfx+"sampling_temperature", "analysis.requires.sampling_temperature %g%s must be in range [0.0, 2.0]: %w",
-			c.SamplingTemperature, formatSource(tracker, pfx+"sampling_temperature"), ErrInvalidConfig)
-	}
-	return p.err()
+	return validatePanelSettings("analysis.requires", panelSettings{
+		Models: c.Models, SamplesPerModel: c.SamplesPerModel, AllowEvenSamples: c.AllowEvenSamples,
+		SamplingTemperature: c.SamplingTemperature, MaxTokens: c.MaxTokens,
+		ConsensusThreshold: c.ConsensusThreshold, MaxErrorRate: c.MaxErrorRate,
+		MaxSourceChars: c.MaxSourceChars, MaxTargetChars: c.MaxTargetChars,
+	}, tracker)
 }
 
 // ArtifactsConfig configures the artifacts analyzer for observable artifact extraction.
@@ -873,6 +855,7 @@ func (c *ArtifactAdjudicationConfig) validate(tracker *sourceTracker) error {
 		p.add(pfx+"models", "analysis.artifact_adjudication.models%s must not be empty when enabled: %w",
 			formatSource(tracker, pfx+"models"), ErrInvalidConfig)
 	}
+	p = append(p, validateDistinctPanelModels("analysis.artifact_adjudication.models", c.Models, tracker))
 	if c.SamplesPerModel <= 0 {
 		p.add(pfx+"samples_per_model", "analysis.artifact_adjudication.samples_per_model %d%s must be positive: %w",
 			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)

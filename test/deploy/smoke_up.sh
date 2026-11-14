@@ -70,6 +70,9 @@ export LLM_GATEWAY PRAXIS_MODELS_ENDPOINT
 #     no OLLAMA_HOST, a baked-model Ollama container runs inside the stack.
 #   - Any other OpenAI-compatible server (llama.cpp, vLLM, ...): OPENAI_COMPAT_HOST,
 #     OPENAI_COMPAT_CHAT_MODEL, OPENAI_COMPAT_EMBED_MODEL.
+# The panel-1..3 aliases take OPENAI_COMPAT_PANEL_MODELS or OLLAMA_PANEL_MODELS
+# (three comma-separated names). generate-llm-gateway-config.sh reads them from
+# the environment, validates them and applies the defaults.
 # The deploy:smoke:up task exports these; the defaults below keep a direct
 # `bash smoke_up.sh` offline too. Reuses the integration stack's rendered-config,
 # baked-image, and model-pull helpers -- no Ollama plumbing is duplicated here.
@@ -114,6 +117,15 @@ if [ "${provider}" = "ollama" ]; then
 	OLLAMA_CHAT_MODEL="${provider_chat_model}"
 	OLLAMA_EMBED_MODEL="${provider_embed_model}"
 	export OLLAMA_HOST OLLAMA_CHAT_MODEL OLLAMA_EMBED_MODEL
+	# Without OLLAMA_PANEL_MODELS the three panel aliases are the one chat model,
+	# so declare that to the daemon (read by compose.offline-remote.yaml; the
+	# local overlays set it themselves). An explicit list stays checked, and the
+	# openai-compat provider (three distinct models by default) never gets this.
+	if [ -z "${OLLAMA_PANEL_MODELS:-}" ]; then
+		export CROSSCODEX_ANALYSIS_RELATIONSHIP_ALLOW_SHARED_PANEL_MODELS=true
+		export CROSSCODEX_ANALYSIS_REQUIRES_ALLOW_SHARED_PANEL_MODELS=true
+		export CROSSCODEX_ANALYSIS_CRITIQUE_ALLOW_SHARED_PANEL_MODELS=true
+	fi
 fi
 
 if [ "${provider}" = "ollama" ] && [ "${provider_host}" = "http://localhost:11434" ]; then

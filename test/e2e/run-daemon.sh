@@ -76,6 +76,12 @@ export CROSSCODEX_TLS_CERT="$CERTS_DIR/server.pem"
 export CROSSCODEX_TLS_KEY="$CERTS_DIR/server-key.pem"
 export CROSSCODEX_ATTESTATION_PRIVATE_KEY_PATH="$E2E_DIR/attestation/private.pem"
 export CROSSCODEX_ATTESTATION_PUBLIC_KEY_PATH="$E2E_DIR/attestation/public.pem"
+# The e2e LLM stack renders all three panel aliases to one model
+# (scripts/generate-llm-gateway-config.sh), so run it as a declared single-model
+# panel: without these the panel diversity check refuses every analysis job.
+export CROSSCODEX_ANALYSIS_RELATIONSHIP_ALLOW_SHARED_PANEL_MODELS=true
+export CROSSCODEX_ANALYSIS_REQUIRES_ALLOW_SHARED_PANEL_MODELS=true
+export CROSSCODEX_ANALYSIS_CRITIQUE_ALLOW_SHARED_PANEL_MODELS=true
 
 # migrate loads and validates the same config as the daemon, so it runs after
 # every override above is exported.

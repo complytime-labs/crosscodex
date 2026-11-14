@@ -94,3 +94,172 @@ testcases:
           - result.code ShouldNotEqual 0
           - result.systemerr ShouldContainSubstring "LLM_GATEWAY=praxis"
           - result.systemerr ShouldContainSubstring "OPENAI_COMPAT_HOST"
+  - name: the openai-compat template maps the three listed panel models to panel-1..3 in order, thinking off
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          OPENAI_COMPAT_PANEL_MODELS=alpha-1,beta_2:x,gamma/3.0 bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+            {{.root}}/deploy/litellm/config.openai-compat.yaml.tmpl "$d/litellm.yaml" \
+            http://host.containers.internal:18080 qwen3.8-flash-next qwen3-embedding-8b >/dev/null
+          grep -A2 'model_name: panel-' "$d/litellm.yaml" | grep -v -- '^--' | paste -sd' ' | tr -s ' '
+          grep -c 'enable_thinking: false' "$d/litellm.yaml"
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "panel-1 litellm_params: model: openai/alpha-1 - model_name: panel-2 litellm_params: model: openai/beta_2:x - model_name: panel-3 litellm_params: model: openai/gamma/3.0"'
+          - 'result.systemout ShouldContainSubstring "4"'
+  - name: the openai-compat template uses the default panel models when no list is given
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          env -u OPENAI_COMPAT_PANEL_MODELS bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+            {{.root}}/deploy/litellm/config.openai-compat.yaml.tmpl "$d/litellm.yaml" \
+            http://host.containers.internal:18080 qwen3.8-flash-next qwen3-embedding-8b >/dev/null
+          grep -A2 'model_name: panel-' "$d/litellm.yaml"
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "model: openai/qwen3.8-flash-next"'
+          - 'result.systemout ShouldContainSubstring "model: openai/gpt-oss-120b"'
+          - 'result.systemout ShouldContainSubstring "model: openai/qwen3.8-27b"'
+  - name: the openai-compat template treats an empty panel list as unset
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          OPENAI_COMPAT_PANEL_MODELS= bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+            {{.root}}/deploy/litellm/config.openai-compat.yaml.tmpl "$d/litellm.yaml" \
+            http://host.containers.internal:18080 qwen3.8-flash-next qwen3-embedding-8b >/dev/null
+          grep -c 'model_name: panel-' "$d/litellm.yaml"
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "3"
+  - name: the offline LiteLLM template maps all three panel aliases to the chat model by default
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          env -u OLLAMA_PANEL_MODELS bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+            {{.root}}/deploy/litellm/config.offline.yaml.tmpl "$d/litellm.yaml" \
+            http://localhost:11434 llama3.2:1b granite-embedding:30m >/dev/null
+          grep -A2 'model_name: panel-' "$d/litellm.yaml" | grep -c 'model: openai/llama3.2:1b'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual "3"
+  - name: the offline LiteLLM template honors OLLAMA_PANEL_MODELS
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          OLLAMA_PANEL_MODELS=llama3.2:1b,qwen2.5:0.5b,gemma2:2b bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+            {{.root}}/deploy/litellm/config.offline.yaml.tmpl "$d/litellm.yaml" \
+            http://localhost:11434 llama3.2:1b granite-embedding:30m >/dev/null
+          grep -A2 'model_name: panel-' "$d/litellm.yaml"
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "model: openai/qwen2.5:0.5b"'
+          - 'result.systemout ShouldContainSubstring "model: openai/gemma2:2b"'
+  - name: the offline Praxis template maps panel-1..3 to the listed models
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          OLLAMA_PANEL_MODELS=m1,m2,m3 bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+            {{.root}}/deploy/praxis/config.offline.yaml.tmpl "$d/praxis.yaml" \
+            http://localhost:11434 llama3.2:1b granite-embedding:30m >/dev/null
+          grep -A2 'model: panel-' "$d/praxis.yaml"
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "model: panel-1"'
+          - 'result.systemout ShouldContainSubstring "m1"'
+          - 'result.systemout ShouldContainSubstring "m2"'
+          - 'result.systemout ShouldContainSubstring "m3"'
+  - name: a panel list that is not exactly three model tokens is rejected naming the variable and value
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          for v in "a,b" "a,b,c,d" "a,,b" "a,b c,d" "a,b,c," ",a,b" "a,b,c;x"; do
+            if OPENAI_COMPAT_PANEL_MODELS="$v" bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+              {{.root}}/deploy/litellm/config.openai-compat.yaml.tmpl "$d/litellm.yaml" \
+              http://host.containers.internal:18080 qwen3.8-flash-next qwen3-embedding-8b >/dev/null 2>"$d/err"; then
+              echo "ACCEPTED: $v"
+            elif grep -q 'OPENAI_COMPAT_PANEL_MODELS' "$d/err" && grep -qF "$v" "$d/err" && grep -q 'exactly three model names' "$d/err"; then
+              echo "REJECTED: $v"
+            else
+              echo "BAD MESSAGE for $v: $(cat "$d/err")"
+            fi
+          done
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring ACCEPTED
+          - result.systemout ShouldNotContainSubstring "BAD MESSAGE"
+          - 'result.systemout ShouldContainSubstring "REJECTED: a,b c,d"'
+          - 'result.systemout ShouldContainSubstring "REJECTED: a,,b"'
+  - name: a malformed OLLAMA_PANEL_MODELS is rejected for an Ollama template and leaves no config behind
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          OLLAMA_PANEL_MODELS="only,two" bash {{.root}}/scripts/generate-llm-gateway-config.sh all \
+            {{.root}}/deploy/litellm/config.offline.yaml.tmpl "$d/litellm.yaml" \
+            http://localhost:11434 llama3.2:1b granite-embedding:30m
+          status=$?
+          [ ! -e "$d/litellm.yaml" ] || echo "LEFTOVER CONFIG"
+          exit $status
+        assertions:
+          - result.code ShouldNotEqual 0
+          - result.systemerr ShouldContainSubstring "OLLAMA_PANEL_MODELS"
+          - result.systemerr ShouldContainSubstring "only,two"
+          - result.systemerr ShouldContainSubstring "exactly three model names"
+          - result.systemout ShouldNotContainSubstring "LEFTOVER CONFIG"
+  - name: every shipped gateway config defines panel-1..3 beside default and embed
+    steps:
+      - type: exec
+        script: |
+          for f in deploy/litellm/config.yaml deploy/praxis/config.yaml deploy/praxis/config.models.yaml; do
+            for n in 1 2 3; do
+              grep -qE "(model_name|model): panel-$n\$" {{.root}}/$f || echo "MISSING panel-$n in $f"
+            done
+          done
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring MISSING
+  - name: smoke_up declares the single-model Ollama panel to the daemon
+    steps:
+      - type: exec
+        script: |
+          env -u OLLAMA_PANEL_MODELS -u OPENAI_COMPAT_HOST OLLAMA_HOST=http://localhost:11434 \
+            bash {{.root}}/test/tooling/lib/smoke-up-allow-shared.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "CROSSCODEX_ANALYSIS_RELATIONSHIP_ALLOW_SHARED_PANEL_MODELS=true"
+          - result.systemout ShouldContainSubstring "CROSSCODEX_ANALYSIS_REQUIRES_ALLOW_SHARED_PANEL_MODELS=true"
+          - result.systemout ShouldContainSubstring "CROSSCODEX_ANALYSIS_CRITIQUE_ALLOW_SHARED_PANEL_MODELS=true"
+          - result.systemout ShouldContainSubstring "smoke_up exit=3"
+  - name: smoke_up keeps an explicit Ollama panel list checked
+    steps:
+      - type: exec
+        script: |
+          env -u OPENAI_COMPAT_HOST OLLAMA_HOST=http://localhost:11434 OLLAMA_PANEL_MODELS=a,b,c \
+            bash {{.root}}/test/tooling/lib/smoke-up-allow-shared.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring ALLOW_SHARED_PANEL_MODELS=
+          - result.systemout ShouldContainSubstring "smoke_up exit=3"
+  - name: smoke_up keeps the openai-compat panel checked
+    steps:
+      - type: with-fake-openai-models
+        models: "qwen3.8-flash-next qwen3-embedding-8b"
+        command: env -u OLLAMA_PANEL_MODELS -u OLLAMA_HOST OPENAI_COMPAT_HOST="$BASE" bash {{.root}}/test/tooling/lib/smoke-up-allow-shared.sh {{.root}}
+        assertions:
+          - result.systemout ShouldNotContainSubstring ALLOW_SHARED_PANEL_MODELS=
+          - result.systemout ShouldContainSubstring "smoke_up exit=3"

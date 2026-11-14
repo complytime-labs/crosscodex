@@ -31,6 +31,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache/pgstore"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -668,16 +669,38 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 
 	converter := pipelineattestation.NewConverter()
 
-	return pipeline.New(
-		store, engine, registry, synth, attestors, converter, shared.natsClient, storageProvider,
-		cfg.Pipeline, candGen,
+	probeOpts, err := llmProbeOptions(cfg, cacheStore, shared)
+	if err != nil {
+		return nil, err
+	}
+	opts := append([]pipeline.Option{
 		pipeline.WithCatalogControlsReader(pipeline.NewPGCatalogControlsReader(tenantConn)),
 		pipeline.WithCatalogNameReader(pipeline.NewPGCatalogNameReader(tenantConn, pipeline.WithPGCatalogNameReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn, pipeline.WithPGEmbeddingsReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
-		pipeline.WithResultCache(cacheStore, cfg.Analysis.ResultCache, cfg.LLM, shared.probeClient),
 		pipeline.WithTelemetry(tp, mp),
+	}, probeOpts...)
+	return pipeline.New(
+		store, engine, registry, synth, attestors, converter, shared.natsClient, storageProvider,
+		cfg.Pipeline, candGen, opts...,
 	), nil
+}
+
+// llmProbeOptions are the pipeline options that probe the LLM gateway before
+// a job's analysis: the result cache's model probe and the panel diversity
+// check (#260). Both use the daemon's probe client. Dropping
+// WithPanelProbe silently turns the panel check off, so
+// llm_probe_options_bdd_test.go asserts it is here.
+func llmProbeOptions(cfg *config.Config, cacheStore resultcache.Store, shared *sharedResources) ([]pipeline.Option, error) {
+	panelProbe, ok := shared.probeClient.(pipeline.PanelProbeClient)
+	if !ok {
+		return nil, fmt.Errorf("pipeline: the LLM probe client %T cannot read the gateway's model catalog, "+
+			"which the panel diversity check needs", shared.probeClient)
+	}
+	return []pipeline.Option{
+		pipeline.WithResultCache(cacheStore, cfg.Analysis.ResultCache, cfg.LLM, shared.probeClient),
+		pipeline.WithPanelProbe(panelProbe),
+	}, nil
 }
 
 // logAttestationPosture logs, once at startup, each scope whose pipeline

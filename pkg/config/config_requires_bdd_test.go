@@ -196,18 +196,24 @@ var _ = Describe("Requires Configuration", func() {
 })
 
 var _ = Describe("deploy/config.yaml pair analyzers", func() {
-	// One sample always agrees with itself, so a one-sample panel makes
-	// relationship confidence uninformative and lets a single noisy
-	// requires vote decide whether an edge exists.
-	It("samples each model three times for relationship and requires", func() {
+	// Agreement is meaningful when the samples come from different models, so
+	// the shipped config asks each of the three panel aliases once, for the
+	// relationship, requires and critique panels alike.
+	It("asks the three panel aliases once each for relationship, requires and critique", func() {
 		GinkgoT().Setenv("CROSSCODEX_LLM_DEFAULT_MODEL", "default")
 		GinkgoT().Setenv("CROSSCODEX_LLM_EMBEDDING_MODEL", "embed")
 
 		cfg, err := config.NewLoader().Load(context.Background(),
 			config.WithConfigPath(filepath.Join(repoRoot, "deploy", "config.yaml")))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cfg.Analysis.Relationship.SamplesPerModel).To(Equal(3))
-		Expect(cfg.Analysis.Requires.SamplesPerModel).To(Equal(3))
+		panel := []string{"panel-1", "panel-2", "panel-3"}
+		Expect(cfg.Analysis.Relationship.Models).To(Equal(panel))
+		Expect(cfg.Analysis.Requires.Models).To(Equal(panel))
+		Expect(cfg.Analysis.Critique.Models).To(Equal(panel))
+		Expect(cfg.Analysis.Relationship.SamplesPerModel).To(Equal(1))
+		Expect(cfg.Analysis.Requires.SamplesPerModel).To(Equal(1))
+		Expect(cfg.Analysis.Critique.SamplesPerModel).To(Equal(1))
+		Expect(cfg.Analysis.Critique.Enabled).To(BeTrue())
 	})
 })
 

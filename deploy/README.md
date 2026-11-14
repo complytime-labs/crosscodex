@@ -254,6 +254,27 @@ task deploy:smoke OPENAI_COMPAT_HOST=http://localhost:18080 \
 - **First calls are slow.** A server that loads models on demand (llama.cpp router mode, llama-swap) takes tens of seconds to load a model, and longer for bigger ones. That can exceed crosscodex's 30-second request timeout and fail the job as `llm_unavailable` with a message saying the model may still be loading; see [Tuning a self-hosted model server](#tuning-a-self-hosted-model-server).
 - **Gateway and address:** it works with `LLM_GATEWAY=litellm` only, and refuses to run together with a non-default `OLLAMA_HOST`. A loopback host is rewritten to `host.containers.internal` the same way as for Ollama, and `http://` is assumed when no scheme is given.
 
+#### Panel aliases
+
+The relationship, requires and critique panels each ask three models, through the gateway aliases `panel-1`, `panel-2` and `panel-3` (`analysis.*.models` in `deploy/config.yaml`). The aliases must resolve to three different model families; the daemon refuses a panel whose aliases resolve to the same model unless that stage sets `allow_shared_panel_models`. `default` stays the classification alias and `embed` the embedding alias.
+
+The daemon checks this before a job's analysis calls, by sending each panel alias one minimal request and comparing the upstream model behind it. A gateway that names the model in its reply is used as is. A LiteLLM gateway replies with the alias itself, so the daemon reads the model from `GET /v1/model/info` (the entry whose deployment ID and alias match the reply; the key must be allowed to read it). Two aliases are shared when their models are equal ignoring case or a provider prefix (`openai/m` and `hosted_vllm/m`). When the model cannot be found (no deployment ID, no `/v1/model/info`, no matching entry) the stage is refused as unknown unless `allow_shared_panel_models` is set; a catalog read that fails for another reason (the key is refused, the gateway is down) fails the stage whatever that setting is. Only the model name is read from the catalog, never its base URLs or keys. `crosscodex run status` lists, for every panel stage, the model each alias reported and whether the allowance was in effect (stored with the stage when the check runs, so a resumed job still shows it; a completed stage from before this check reads "panel independence not recorded"). The signed attestation link of each panel analyzer records the same (`panel.models`, `panel.allow_shared`, `panel.independence`).
+
+- **Production** (`deploy/litellm/config.yaml`, `deploy/praxis/config.yaml`, `deploy/praxis/config.models.yaml`): edit the three entries to name your provider's models. The shipped OpenAI example uses `gpt-6.1-terra`, `gpt-5.4-mini` and `gpt-5.6-terra`, the most distinct lines OpenAI serves through Chat Completions (its open-weight `gpt-oss` is Responses-only). They are still all GPT models, so point an alias at another OpenAI-compatible provider for real diversity. Keep the two Praxis files in sync.
+- **Smoke stack:** the renderer takes a comma-separated list of exactly three model names, in `panel-1..3` order. Names may contain only letters, digits and `. - _ : /`; two or four names, an empty element or a space fails with an error naming the variable and value.
+
+  | Variable | Used with | Default when unset or empty |
+  |---|---|---|
+  | `OPENAI_COMPAT_PANEL_MODELS` | `OPENAI_COMPAT_HOST` (LiteLLM) | `qwen3.8-flash-next,gpt-oss-120b,qwen3.8-27b` (the server must serve them) |
+  | `OLLAMA_PANEL_MODELS` | Ollama (LiteLLM or Praxis) | the chat model three times |
+
+  ```bash
+  task deploy:smoke OPENAI_COMPAT_HOST=http://localhost:18080 \
+    OPENAI_COMPAT_PANEL_MODELS=qwen3.8-flash-next,gpt-oss-120b,qwen3.8-27b
+  ```
+
+  With the Ollama default all three aliases are one model, so `deploy/compose.offline.yaml` and `deploy/compose.offline-praxis.yaml` set `CROSSCODEX_ANALYSIS_{RELATIONSHIP,REQUIRES,CRITIQUE}_ALLOW_SHARED_PANEL_MODELS=true` on `crosscodexd`. `deploy/compose.offline-remote.yaml` (a remote Ollama or an OpenAI-compatible server) passes the same variables through as `false` by default. `smoke_up.sh` sets them to `true` only for an Ollama run without `OLLAMA_PANEL_MODELS`, so an explicit three-model list and the OpenAI-compatible path stay checked by the daemon. The single-model Ollama smoke stack therefore does not exercise the diversity check; production never sets these.
+
 #### Tuning a self-hosted model server
 
 These settings apply to the smoke stack and to a production stack pointed at your own server (see [LLM gateway configuration](#llm-gateway-configuration)). Gateway settings are per alias, in `deploy/litellm/config.yaml` (the smoke stack renders `deploy/litellm/config.openai-compat.yaml.tmpl` instead). crosscodex settings are in `deploy/config.yaml`; restart `crosscodexd` after changing them.

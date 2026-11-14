@@ -236,3 +236,30 @@ var _ = Describe("Fake", func() {
 		Expect(fake.CompleteRequests()).To(HaveLen(n))
 	})
 })
+
+var _ = Describe("Fake ModelCatalog", func() {
+	It("returns what ModelCatalogFunc scripts and counts the calls", func() {
+		want := []llmclient.ModelDeployment{{Alias: "panel-1", ID: "d1", Model: "openai/m"}}
+		fake := &llmclienttest.Fake{ModelCatalogFunc: func(context.Context) ([]llmclient.ModelDeployment, error) { return want, nil }}
+		got, err := fake.ModelCatalog(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(want))
+		Expect(fake.ModelCatalogCalls()).To(Equal(1))
+	})
+
+	It("passes a scripted unsupported-catalog error through", func() {
+		fake := &llmclienttest.Fake{ModelCatalogFunc: func(context.Context) ([]llmclient.ModelDeployment, error) {
+			return nil, llmclient.ErrModelCatalogUnsupported
+		}}
+		_, err := fake.ModelCatalog(context.Background())
+		Expect(err).To(MatchError(llmclient.ErrModelCatalogUnsupported))
+	})
+
+	It("reports an unscripted call, naming the field to set, and still counts it", func() {
+		fake := &llmclienttest.Fake{}
+		_, err := fake.ModelCatalog(context.Background())
+		Expect(err).To(MatchError(llmclienttest.ErrUnscripted))
+		Expect(err.Error()).To(ContainSubstring("ModelCatalogFunc"))
+		Expect(fake.ModelCatalogCalls()).To(Equal(1))
+	})
+})

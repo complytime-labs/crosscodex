@@ -65,6 +65,11 @@ type Service struct {
 	llmCfg     config.LLMConfig
 	probe      llmclient.Client
 
+	// Panel diversity (#260), wired by WithPanelProbe: the client that probes
+	// each panel alias, and the counter of checks by outcome.
+	panelProbe  PanelProbeClient
+	panelChecks metric.Int64Counter
+
 	// Model probe telemetry (#243): probes by kind and outcome, and their
 	// duration.
 	probeOps      metric.Int64Counter

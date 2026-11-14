@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -323,6 +324,14 @@ func (a *RequiresAnalyzer) CacheModels() []analyzer.ModelUse {
 		uses = append(uses, analyzer.ModelUse{Alias: m, Kind: analyzer.ModelCompletion})
 	}
 	return uses
+}
+
+var _ analyzer.Panelled = (*RequiresAnalyzer)(nil)
+
+// Panel implements analyzer.Panelled: the aliases in analysis.requires.models
+// and analysis.requires.allow_shared_panel_models.
+func (a *RequiresAnalyzer) Panel() analyzer.Panel {
+	return analyzer.Panel{Aliases: slices.Clone(a.cfg.Models), AllowShared: a.cfg.AllowSharedPanelModels}
 }
 
 // CacheIdentity implements analyzer.Cacheable from the task's payload,

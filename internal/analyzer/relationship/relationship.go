@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -327,6 +328,14 @@ func (a *RelationshipAnalyzer) CacheModels() []analyzer.ModelUse {
 		uses = append(uses, analyzer.ModelUse{Alias: m, Kind: analyzer.ModelCompletion})
 	}
 	return uses
+}
+
+var _ analyzer.Panelled = (*RelationshipAnalyzer)(nil)
+
+// Panel implements analyzer.Panelled: the aliases in analysis.relationship.models
+// and analysis.relationship.allow_shared_panel_models.
+func (a *RelationshipAnalyzer) Panel() analyzer.Panel {
+	return analyzer.Panel{Aliases: slices.Clone(a.cfg.Models), AllowShared: a.cfg.AllowSharedPanelModels}
 }
 
 // CacheIdentity implements analyzer.Cacheable from the task's payload,

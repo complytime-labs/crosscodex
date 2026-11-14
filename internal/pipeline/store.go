@@ -31,6 +31,9 @@ type Store interface {
 	// which GetJob and ListJobs return to the tenant: callers pass a
 	// tenantFailure, or text built only from one.
 	UpdateStageError(ctx context.Context, jobID, stageName string, stageErr error) error
+	// SetStagePanelRecord stores the JSON record of the stage's panel
+	// diversity check (Stage.PanelRecord), so a resumed job still shows it.
+	SetStagePanelRecord(ctx context.Context, jobID, stageName, record string) error
 	GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 	ResetStagesFrom(ctx context.Context, jobID, fromStage string, allStages []string) error
 	GetResumableJobs(ctx context.Context) ([]*Job, error)
@@ -632,6 +635,47 @@ func (s *PGStore) UpdateStageError(ctx context.Context, jobID, stageName string,
 	return nil
 }
 
+func (s *PGStore) SetStagePanelRecord(ctx context.Context, jobID, stageName, record string) error {
+	if jobID == "" {
+		return fmt.Errorf("PGStore.SetStagePanelRecord: %w", ErrInvalidJobID)
+	}
+	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.store.set_stage_panel_record")
+	defer span.End()
+	span.SetAttributes(attribute.String("job.id", jobID), attribute.String("stage.name", stageName))
+
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.SetStagePanelRecord: %w", err)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.SetStagePanelRecord: beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.SetStagePanelRecord: setting tenant: %w", err)
+	}
+	if err := tx.Exec(ctx, `UPDATE job_stages SET panel_record = $1 WHERE job_id = $2 AND stage_name = $3 AND tenant_id = $4`,
+		record, jobID, stageName, tenantID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.SetStagePanelRecord: update failed: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.SetStagePanelRecord: commit failed: %w", err)
+	}
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
 func (s *PGStore) GetStages(ctx context.Context, jobID string) ([]*Stage, error) {
 	if jobID == "" {
 		return nil, fmt.Errorf("PGStore.GetStages: %w", ErrInvalidJobID)
@@ -667,7 +711,7 @@ func (s *PGStore) GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 
 	query := `
 		SELECT job_id, stage_name, status, started_at, completed_at, retry_count, error_message, tenant_id,
-			COALESCE(cache_attempt, '')
+			COALESCE(cache_attempt, ''), COALESCE(panel_record, '')
 		FROM job_stages
 		WHERE job_id = $1 AND tenant_id = $2
 		ORDER BY stage_name
@@ -684,7 +728,7 @@ func (s *PGStore) GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 	var stages []*Stage
 	for rows.Next() {
 		var stage Stage
-		if err := rows.Scan(&stage.JobID, &stage.StageName, &stage.Status, &stage.StartedAt, &stage.CompletedAt, &stage.RetryCount, &stage.ErrorMessage, &stage.TenantID, &stage.CacheAttempt); err != nil {
+		if err := rows.Scan(&stage.JobID, &stage.StageName, &stage.Status, &stage.StartedAt, &stage.CompletedAt, &stage.RetryCount, &stage.ErrorMessage, &stage.TenantID, &stage.CacheAttempt, &stage.PanelRecord); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("PGStore.GetStages: scan failed: %w", err)
@@ -770,7 +814,7 @@ func (s *PGStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, 
 
 	query := `
 		UPDATE job_stages
-		SET status = $1, started_at = NULL, completed_at = NULL, error_message = '', retry_count = retry_count + 1, cache_attempt = NULL
+		SET status = $1, started_at = NULL, completed_at = NULL, error_message = '', retry_count = retry_count + 1, cache_attempt = NULL, panel_record = NULL
 		WHERE job_id = $2 AND stage_name = $3 AND tenant_id = $4
 	`
 

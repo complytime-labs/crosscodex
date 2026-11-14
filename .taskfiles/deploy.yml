@@ -427,6 +427,12 @@ tasks:
       OPENAI_COMPAT_HOST: '{{.OPENAI_COMPAT_HOST | default ""}}'
       OPENAI_COMPAT_CHAT_MODEL: '{{.OPENAI_COMPAT_CHAT_MODEL | default ""}}'
       OPENAI_COMPAT_EMBED_MODEL: '{{.OPENAI_COMPAT_EMBED_MODEL | default ""}}'
+      # Comma-separated list of exactly three model names for the panel-1..3
+      # aliases (relationship, requires and critique panels). Empty selects the
+      # renderer's default: three distinct models for OPENAI_COMPAT_HOST, the
+      # chat model three times for Ollama.
+      OPENAI_COMPAT_PANEL_MODELS: '{{.OPENAI_COMPAT_PANEL_MODELS | default ""}}'
+      OLLAMA_PANEL_MODELS: '{{.OLLAMA_PANEL_MODELS | default ""}}'
       # smoke_up.sh builds the baked-model Ollama image directly (the equivalent
       # integration task is internal / not CLI-callable); it needs the engine.
       CONTAINER_ENGINE: "{{.CONTAINER_ENGINE}}"

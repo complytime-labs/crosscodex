@@ -133,6 +133,21 @@ filter_chains:
             upstream: openai
             target_model: gpt-4o-mini
             paths: [/v1/chat/completions]
+          - model: panel-1
+            upstream: openai
+            target_model: gpt-6.1-terra
+            paths: [/v1/chat/completions]
+          # Panel aliases must resolve to different model families; see the
+          # panel-1..3 comment in deploy/litellm/config.yaml for the model
+          # sources and the OpenAI family limits.
+          - model: panel-2
+            upstream: openai
+            target_model: gpt-5.4-mini
+            paths: [/v1/chat/completions]
+          - model: panel-3
+            upstream: openai
+            target_model: gpt-5.6-terra
+            paths: [/v1/chat/completions]
           - model: embed
             upstream: openai
             target_model: text-embedding-3-small

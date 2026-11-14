@@ -30,7 +30,7 @@ var _ = Describe("DeterministicLLM", func() {
 	complete := func(prompt string) string {
 		resp, err := det.Complete(ctx, &llmclient.CompletionRequest{Model: "m", TenantID: "tenant-a", PromptName: prompt})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.Model).To(Equal("m"))
+		Expect(resp.Model).To(Equal("deterministic/m"))
 		Expect(resp.Choices).To(HaveLen(1))
 		return resp.Choices[0].Message.Content
 	}
@@ -193,5 +193,17 @@ var _ = Describe("DeterministicLLM Property Specifications", Ordered, func() {
 				}
 			}
 		})
+	})
+})
+
+var _ = Describe("DeterministicLLM model identity", func() {
+	It("names a real upstream model, never the alias, and has an empty catalog the panel check never needs", func() {
+		det := testspecs.DeterministicLLM{EmbeddingDim: 4}
+		resp, err := det.Complete(context.Background(), &llmclient.CompletionRequest{Model: "panel-1", TenantID: "tenant-a", PromptName: "classify"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Model).NotTo(Equal("panel-1"))
+		catalog, err := det.ModelCatalog(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(catalog).To(BeEmpty())
 	})
 })

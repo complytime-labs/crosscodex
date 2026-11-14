@@ -197,6 +197,7 @@ without one shows as not attested, or in progress while the job runs.`,
 				}
 			}
 
+			panels := panelsOf(job.GetStages())
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Job: %s\n", job.GetJobId())
@@ -227,6 +228,7 @@ without one shows as not attested, or in progress while the job runs.`,
 							"(with analysis.relationship.models and an enabled analysis.candidates.generators entry), "+
 							"then start a new job.\n")
 					}
+					writePanelLines(w, panels)
 					writeCacheLines(w, job.GetCacheSummaries(), state.daemon != nil, len(analyzers))
 				},
 				map[string]any{
@@ -239,6 +241,7 @@ without one shows as not attested, or in progress while the job runs.`,
 					"stages":    stages,
 					"analysis":  catalogs.toJSON(),
 					"cache":     cacheToJSON(job.GetCacheSummaries()),
+					"panels":    panels,
 				},
 			)
 		},
