@@ -1,0 +1,258 @@
+test/eval/crosswalk/profiles/ssdf-to-sp800-53r5.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-16
+test/eval/crosswalk/profile.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-164
+test/eval/crosswalk/testdata/source_a.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-73
+test/eval/crosswalk/README.md
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-95
+test/eval/crosswalk/profile_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-87
+test/eval/crosswalk/subset_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-124
+test/eval/crosswalk/subset.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-105
+test/eval/crosswalk/catalog_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-185
+test/eval/crosswalk/testdata/not_a_catalog.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1
+test/eval/crosswalk/crosswalk_property_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-143
+test/eval/crosswalk/testdata/run/mappings.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-9
+test/eval/crosswalk/inputs.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-271
+test/eval/crosswalk/profiles/sp800-171r3-to-sp800-53r5.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-26
+test/eval/crosswalk/testdata/source_items.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-52
+test/tooling/lib/run-eval-crosswalk.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-36
+test/tooling/eval-crosswalk.venom.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-224
+test/eval/crosswalk/discover.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-104
+test/eval/crosswalk/testdata/source_b.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-82
+test/eval/crosswalk/testdata/profiles/links_in_text.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-11
+test/eval/crosswalk/testdata/synthetic_catalog.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-52
+test/eval/crosswalk/references_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-151,153-198
+  s_a8e359e45d1fd1::t_3d817755eee80c 152
+test/eval/crosswalk/target_index.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-155
+test/eval/crosswalk/cmd/crosswalk-eval/main.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-313
+test/eval/crosswalk/doc.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-5
+test/eval/crosswalk/score_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-846
+test/eval/crosswalk/cmd/crosswalk-eval/main_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-91
+test/eval/crosswalk/testdata/run/candidates.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-9
+test/eval/crosswalk/testdata/statement_catalog.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-66
+test/eval/crosswalk/cmd/crosswalk-eval/main_suite_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-13
+test/tooling/lib/fake-crosscodex.sh
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-29
+.taskfiles/test.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 30,74,88
+.taskfiles/eval.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-61
+test/eval/crosswalk/testdata/profiles/titles_by_rlink.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-10
+test/eval/crosswalk/canonical.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-44
+test/eval/crosswalk/catalog.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-71
+test/eval/crosswalk/score.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-430
+catalogs/oscal-sources.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 15-17
+test/eval/crosswalk/discover_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-75
+test/eval/crosswalk/report.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-341
+test/eval/crosswalk/crosswalk_suite_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-13
+test/eval/crosswalk/testdata/profiles/csv_refs.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-6
+README.md
+  s_a8e359e45d1fd1::t_f238adcb3d4656 786-818
+  s_7f230c956fd956::t_541daf5f5902bb 19-24,311-342
+  s_a8e359e45d1fd1::t_752ecc4fca215f 19-24,329,334,336-337,339
+test/eval/crosswalk/report_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-114
+test/eval/crosswalk/testdata/refs.csv
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-4
+test/eval/crosswalk/profiles_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-68
+test/eval/crosswalk/references.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-215,216,224,226-266
+  s_a8e359e45d1fd1::t_b4cfcaffab5289 217-223,225
+test/eval/crosswalk/testdata/run/status.json
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-13
+Taskfile.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 44-45,57-62
+test/eval/crosswalk/run.sh
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-157
+test/eval/crosswalk/canonical_bdd_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-26
+test/eval/crosswalk/crosswalk_fuzz_test.go
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-105
+test/eval/crosswalk/testdata/profiles/synth-run.yaml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 1-11
+.taskfiles/deploy.yml
+  s_a8e359e45d1fd1::t_f238adcb3d4656 90-91
+api/proto/crosscodex/v1/gateway.proto
+  s_7f230c956fd956::t_74c01d39aa88e4 137-148,202-276,279-286,289,294,299-339,342-348,353-359,364-374
+  s_7f230c956fd956::t_6b315672ca7e26 277-278,287-288,290-293,295-298,340-341,349-352,360-363
+cmd/crosscodexd/bootstrap.go
+  s_7f230c956fd956::t_a15a2d592c68a0 348-349
+  s_a8e359e45d1fd1::t_842c5f41e798f5 348-349
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_7f230c956fd956::t_82c74728495f20 39,78-84
+  s_a8e359e45d1fd1::t_b4c18b14d12b86 78,80-81
+  s_a8e359e45d1fd1::t_34a2de7a45a66f 39,79,82-83
+  s_a8e359e45d1fd1::t_88b559b953a4ed 84
+cmd/crosscodexd/results_e2e_test.go
+  s_7f230c956fd956::t_ba43d9caf28d17 25,197-199,201,203-208,214-216
+docs/dev/design-principles.md
+  s_7f230c956fd956::t_fd3298dd4aad4e 79-80
+internal/gateway/backend_errors_bdd_test.go
+  s_7f230c956fd956::t_1a24f902ce0d6d 256-262
+internal/gateway/backends.go
+  s_7f230c956fd956::t_aa293d689e8351 54-62
+internal/gateway/crosswalk.go
+  s_7f230c956fd956::t_60fbfee89b804e 1-391
+internal/gateway/crosswalk_bdd_test.go
+  s_7f230c956fd956::t_e33e3537718195 1-374,381-410
+  s_7f230c956fd956::t_a11e43d62ad73c 375-380
+internal/gateway/gateway_bdd_test.go
+  s_7f230c956fd956::t_bb451cce595c05 1144,1148,1196-1198,1231-1234
+internal/gateway/gateway_property_bdd_test.go
+  s_7f230c956fd956::t_cd7a332e7a0ce9 211-216
+internal/gateway/service.go
+  s_7f230c956fd956::t_d88853ef8f4c54 29,114-121
+internal/graph/crosswalk.go
+  s_7f230c956fd956::t_1c40e3e86673b5 1-5,7,9-10,12-13,15-43,47-48,51-68,70-87,98-105,107-114,149-180,182-211,245-249,251-256,261,263,265-273,275-307,313-327,329-330,331-334,336-340,342-346,348-367,444-507,513-525,533,540-541,543,545-547,551-553
+  s_7f230c956fd956::t_499218b33126fc 6,8,11,14,44-46,49-50,69,88-97,106,115-148,181,212-244,250,257-260,262,264,274,308-312,328,335,341,347,368-443,508-512,526-532,534-539,542,544,548-550,554-560
+internal/graph/crosswalk_bdd_test.go
+  s_7f230c956fd956::t_1efe2939a82b2e 1-5,7-32,49-195,197-201,214-254,334-345,379-448,514-526,531-535,661-663,666-668,670-681,683,685,687-716
+  s_a8e359e45d1fd1::t_d95496ddfc7690 52-53,59,64,67,117-118
+  s_7f230c956fd956::t_3d393c8a3df139 6,33-48,196,202-213,255-333,346-378,449-513,527-530,536-660,664-665,669,682,684,686
+internal/graph/crosswalk_integration_bdd_test.go
+  s_7f230c956fd956::t_f51448703d2695 1-100,109-115
+  s_a8e359e45d1fd1::t_b4c18b14d12b86 36-37,39,42,112
+  s_a8e359e45d1fd1::t_559f3a169d206d 1-35,38,40-41,43-100,109-111,113-115
+  s_7f230c956fd956::t_48ab93e5425f99 101-108
+internal/graph/doc.go
+  s_7f230c956fd956::t_c67cc538567e89 49
+internal/graph/resolver_bdd_test.go
+  s_7f230c956fd956::t_8ae9e5b7488b28 170-228
+internal/graph/resolver_pg.go
+  s_7f230c956fd956::t_cad9a7fb8397bf 5-6,15,98-104,121-155
+internal/graph/subscriber_bdd_test.go
+  s_7f230c956fd956::t_cd3b99479e1ae0 94,105,160
+internal/graph/subscriber_handlers.go
+  s_7f230c956fd956::t_6b0514a669f624 25,34-35,79-81
+internal/graph/synthesis_materializer.go
+  s_7f230c956fd956::t_7d8feeb9f05d08 1-67
+internal/graph/synthesis_materializer_bdd_test.go
+  s_7f230c956fd956::t_56f7aac6e13e94 1-165
+internal/graph/synthesis_resolver_integration_bdd_test.go
+  s_7f230c956fd956::t_32a52025671593 1-115
+internal/testspecs/crosswalk_fixture.go
+  s_7f230c956fd956::t_c3490afab4277f 1-18,21-43,47-54,57-67,70-80,86-90,92-112,119-125
+  s_a8e359e45d1fd1::t_cc6628d642ce9e 1-18,21-43,47-54,57-67,70-80,86-90,92-112,119-125
+  s_7f230c956fd956::t_d17f93b6cbc99e 19-20,44-46,55-56,68-69,81-85,91,113-118
+internal/testspecs/graphdb_contract.go
+  s_7f230c956fd956::t_bc0b5841cbe575 353-358,1572-1605
+pkg/analyzer/results/results.go
+  s_7f230c956fd956::t_037aee6a09a9dd 36-68
+pkg/analyzer/results/results_bdd_test.go
+  s_7f230c956fd956::t_f541e1a63be6a1 4,29-45
+pkg/crosswalk/crosswalk_property_test.go
+  s_7f230c956fd956::t_a63d397d108761 1-3,5-7,8-54,58-63
+  s_7f230c956fd956::t_50c5f312ab5a0e 4,55-57
+pkg/crosswalk/crosswalk_suite_test.go
+  s_7f230c956fd956::t_90d36eb6be255b 1-13
+pkg/crosswalk/doc.go
+  s_7f230c956fd956::t_86d913016eb8d7 1-8
+pkg/crosswalk/merge.go
+  s_7f230c956fd956::t_f715043fdebae0 1-80,88-137
+  s_7f230c956fd956::t_42696f39485c17 81-87
+pkg/crosswalk/merge_bdd_test.go
+  s_7f230c956fd956::t_1389299dc842d7 1-80,95-109
+  s_7f230c956fd956::t_b3fb3e9241fee5 81-94
+pkg/crosswalk/relationship.go
+  s_7f230c956fd956::t_c1d844b023537d 1-101
+pkg/crosswalk/relationship_bdd_test.go
+  s_7f230c956fd956::t_b6855f7f9e5934 1-78
+pkg/graphdb/agedriver/client.go
+  s_7f230c956fd956::t_473c9408d38590 598-605
+pkg/graphdb/identifier.go
+  s_7f230c956fd956::t_c1920a7ca2e410 63,73-78
+pkg/graphdb/interface.go
+  s_7f230c956fd956::t_cd45250fe2162e 93-96
+pkg/graphdb/memdriver/client.go
+  s_7f230c956fd956::t_c977ef8241a66f 352-354
+pkg/graphdb/types.go
+  s_7f230c956fd956::t_f0db6e966a9609 33-36,38-43
+cmd/crosscodex/crosswalk.go
+  s_7f230c956fd956::t_ec72e760ca8057 1-273
+cmd/crosscodex/crosswalk_bdd_test.go
+  s_7f230c956fd956::t_3432bdfe8fc2e1 1-499
+cmd/crosscodex/crosswalk_fuzz_test.go
+  s_7f230c956fd956::t_4889ee2f72e607 1-93
+cmd/crosscodex/crosswalk_render.go
+  s_7f230c956fd956::t_ac710455e28f60 1-361
+cmd/crosscodex/main.go
+  s_7f230c956fd956::t_93c2a8038e33b8 133
+cmd/crosscodex/results.go
+  s_7f230c956fd956::t_f9fffff25b341c 251-257
+cmd/crosscodex/testdata/crosswalk/one_to_many.csv
+  s_7f230c956fd956::t_cd37deb3305273 1-3
+cmd/crosscodex/testdata/crosswalk/pair.csv
+  s_7f230c956fd956::t_c11aa6235a0891 1-3
+cmd/crosscodex/testdata/crosswalk/pair.json
+  s_7f230c956fd956::t_98870c78bc138b 1-76
+cmd/crosscodex/testdata/crosswalk/pair.md
+  s_7f230c956fd956::t_c6459a1e19cb9d 1-4
+cmd/crosscodex/testdata/crosswalk/transitive.csv
+  s_7f230c956fd956::t_575233f1c024b6 1-4
+go.mod
+  s_7f230c956fd956::t_4535c5585f618b 27,313-314,348,362-363,390
+go.sum
+  s_7f230c956fd956::t_6eeae66a09ae84 1016-1019,1133-1134,1183-1188,1320-1321
+test/eval/crosswalk/testdata/fuzz/FuzzExtractCSVReferences/bare-quote-first-field
+  s_a8e359e45d1fd1::t_74fbd6b9d651c1 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a060a00c698a62a41866671ade3300c27901e8f8",
+  "prompts": {},
+  "sessions": {
+    "s_7f230c956fd956": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "69cd6301-17b2-41ea-8de0-b1cd0cb3c534",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_a8e359e45d1fd1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8af4ff5c-e4e8-4881-8f96-e7a456ab2cb5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

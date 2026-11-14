@@ -1,0 +1,249 @@
+pkg/config/analyzers_bdd_test.go
+  s_cb414c50abe95f::t_7f84f4950281ad 26,43
+internal/testspecs/deterministic_llm_test.go
+  s_cb414c50abe95f::t_210710e18ab004 12,60-63
+  s_cb414c50abe95f::t_365a1592d011a9 64-65
+pkg/config/analyzers.go
+  s_cb414c50abe95f::t_9d41c54acc6a80 11
+internal/pipeline/production_registry.go
+  s_cb414c50abe95f::t_75be55f0851f7f 5,15,29,36-40,65-73,96-106
+pkg/analyzer/results/results_property_test.go
+  s_cb414c50abe95f::t_a4885ce6d8a95e 57-59,72-90,92-93,127-129
+  s_cb414c50abe95f::t_40ce9b9e3760ef 131-133
+  s_cb414c50abe95f::t_531f92d612fa20 5,26-28,30-32,34-36,40-46,91,116,123,130,137,147,158,165,172
+  s_cb414c50abe95f::t_c4dbf4cf429bfb 176-210
+internal/analyzer/critique/provider.go
+  s_cb414c50abe95f::t_931fc8c395beb1 1-35
+internal/worker/handler_bdd_test.go
+  s_cb414c50abe95f::t_46b88e09f7aef6 81
+internal/testspecs/deterministic_llm.go
+  s_cb414c50abe95f::t_210710e18ab004 80-84
+internal/worker/handler.go
+  s_cb414c50abe95f::t_46b88e09f7aef6 117
+internal/analyzer/critique/critique_property_test.go
+  s_cb414c50abe95f::t_4a006cc784919d 1-6,9-13,15-83,101-110,112-114,117,120-137
+  s_cb414c50abe95f::t_8b1c444211aa44 7-8,14,92-100,111,115-116,118-119
+  s_cb414c50abe95f::t_ee4740ea1a8dc0 84-91
+internal/pipeline/critique_verdicts_bdd_test.go
+  s_cb414c50abe95f::t_dd57a7fc5d2bf7 1-16,28-102,112-113,115-116
+  s_cb414c50abe95f::t_531f92d612fa20 17-27,103-111,114
+internal/pipeline/critique_verdicts.go
+  s_cb414c50abe95f::t_e49d7d986662e2 1-94
+  s_cb414c50abe95f::t_3a4958cb5fa5ff 95-100,102-110
+  s_cb414c50abe95f::t_065e047c2e8a9d 101
+pkg/natsbus/abandoned_bdd_test.go
+  s_cb414c50abe95f::t_46b88e09f7aef6 49
+internal/pipeline/executor_bdd_test.go
+  s_cb414c50abe95f::t_dc16304227c850 1756-1813
+  s_cb414c50abe95f::t_fbcae0fcb705d9 2195-2196
+  s_cb414c50abe95f::t_ab3c2a98d3aad3 2125-2194,2197-2214
+pkg/prompt/defaults/critique.yaml
+  s_cb414c50abe95f::t_1b8eac03aaf55c 1-56
+pkg/natsbus/types.go
+  s_cb414c50abe95f::t_46b88e09f7aef6 26,37
+internal/analyzer/requires/requires_bdd_test.go
+  s_cb414c50abe95f::t_3b508b8b10952b 583,585-592,598-603,618-619
+  s_cb414c50abe95f::t_1f3bb79e787a63 582,584,593-597,604-617
+internal/analyzer/critique/parser_bdd_test.go
+  s_cb414c50abe95f::t_b2803134b79133 1-8,10-44,47,49-50,54-55
+  s_cb414c50abe95f::t_8b1c444211aa44 9,45-46,48,51-53
+internal/analyzer/critique/doc.go
+  s_cb414c50abe95f::t_9b70c2bef1efb0 1-13
+pkg/prompt/prompt_bdd_test.go
+  s_cb414c50abe95f::t_cdc23789b44827 1198,1201-1202
+internal/analyzer/critique/parser.go
+  s_cb414c50abe95f::t_b09f74cc75dff3 17
+  s_cb414c50abe95f::t_102d25c427ad10 1-15,16,18-38,44-46,48-64
+  s_cb414c50abe95f::t_debfe74fed799e 39
+  s_cb414c50abe95f::t_ea8f5a5a93b3f0 40-43,47
+internal/analyzer/relationship/relationship_bdd_test.go
+  s_cb414c50abe95f::t_44e025841f6b4b 435,437-444,448,450-456,471-472
+  s_cb414c50abe95f::t_1f3bb79e787a63 434,436,445-447,449,457-470
+internal/analyzer/critique/critique_fuzz_test.go
+  s_cb414c50abe95f::t_e1d4348d9915e9 18
+  s_cb414c50abe95f::t_7f0dba89bf70cb 1-7,9-17,19-35,38-43
+  s_cb414c50abe95f::t_8b1c444211aa44 8,36-37
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_cb414c50abe95f::t_2d12268cc6480a 383
+  s_cb414c50abe95f::t_a9b0c4577ad024 752-754
+  s_cb414c50abe95f::t_6c3707ed53ec2f 135-138,148-156,159-166,168-178,180,182,184-207,213,218,345-355,440-442,451,751
+  s_cb414c50abe95f::t_a922f227d160c0 496
+  s_cb414c50abe95f::t_4c2e30b983d7d9 29,38-39,473-488,492-495,497-506,702-750,755-779
+  s_cb414c50abe95f::t_0e30a3d4067259 179,181,183
+pkg/natsbus/natsbus_property_test.go
+  s_cb414c50abe95f::t_46b88e09f7aef6 123
+internal/pipeline/panel_diversity_bdd_test.go
+  s_cb414c50abe95f::t_2c9b00b2876e4b 96-99
+internal/analyzer/requires/requires.go
+  s_cb414c50abe95f::t_0f44680ac5747f 13,499,519,525-526
+  s_cb414c50abe95f::t_e2106077186e11 520
+  s_cb414c50abe95f::t_2bd84e985702bc 527
+  s_cb414c50abe95f::t_65ed34a6e24e19 4,421,431,447,479,500-518,521-524
+pkg/analyzer/results/results.go
+  s_cb414c50abe95f::t_6bc3e39755539a 11-12,16,85-90,101-108,122-124,136-142,144-145
+  s_cb414c50abe95f::t_ea8f5a5a93b3f0 109-121,125-132,135,143
+  s_cb414c50abe95f::t_ec91eefadeb435 133-134
+  s_cb414c50abe95f::t_2dd15ba3479323 62-64,66-72
+internal/pipeline/production_registry_bdd_test.go
+  s_cb414c50abe95f::t_30110e8d619a59 4,6-7,40-45,137-216
+  s_cb414c50abe95f::t_1911c4bce82d99 217
+internal/analyzer/critique/options.go
+  s_cb414c50abe95f::t_076fce0aa7836f 1-23,25-45
+  s_cb414c50abe95f::t_4ff41b8b339070 24
+internal/analyzer/critique/critique_bdd_test.go
+  s_cb414c50abe95f::t_73df2f4956c608 1-12,14-87,91,98-142,144-184,190-192,194-229,231-300,302-346,348-357,359-360,369-388,390-397,404-407,425,429-433,435-436,437-439,457-472,474-508,510-515,517-557,563-574,576-582
+  s_cb414c50abe95f::t_3164bbae34f07f 88-90,92-97,509,516
+  s_cb414c50abe95f::t_c3d8e42791f116 13,143,185-189,193
+  s_cb414c50abe95f::t_e1d4348d9915e9 230,301
+  s_cb414c50abe95f::t_7035af08fb05e5 347,358,361-368,389,398-403,408-424,426-428,434,440-456,473
+  s_cb414c50abe95f::t_1de7b8fe2a0fff 558-562,575
+pkg/analyzer/results/results_bdd_test.go
+  s_cb414c50abe95f::t_a4885ce6d8a95e 59-62,64-65,72-73
+  s_cb414c50abe95f::t_531f92d612fa20 63,66-71
+pkg/analyzer/results/results_roundtrip_bdd_test.go
+  s_cb414c50abe95f::t_a4885ce6d8a95e 18,36,47-49,51-69
+  s_cb414c50abe95f::t_63031fdd367d12 70
+  s_cb414c50abe95f::t_531f92d612fa20 50
+internal/analyzer/relationship/relationship.go
+  s_cb414c50abe95f::t_0f44680ac5747f 492-493,502-503,514-515
+  s_cb414c50abe95f::t_e3610e06ec3048 516
+  s_cb414c50abe95f::t_0c58ee7db19316 12
+  s_cb414c50abe95f::t_65ed34a6e24e19 4,466,494-501,504-512
+  s_cb414c50abe95f::t_0856aa61fa322d 513
+internal/pipeline/stages.go
+  s_cb414c50abe95f::t_9d41c54acc6a80 12-19
+cmd/crosscodexd/bootstrap.go
+  s_cb414c50abe95f::t_46b88e09f7aef6 588
+internal/analyzer/critique/critique.go
+  s_cb414c50abe95f::t_73c5aba242b4c0 1-43,44-275,278-333,336-337,342-344,346-352,359-375,378-380,382-383,385-386,389-390,392-393,395-403,405-410,412-413,415-435,440-445,450-456,459-460,467,469-470,471,481,482-484,505-512,519-520,522,525-526,528-534
+  s_cb414c50abe95f::t_481a0009f1e580 276-277
+  s_cb414c50abe95f::t_e1d4348d9915e9 376-377,381,513-518,521,523-524,527
+  s_cb414c50abe95f::t_494f3648e0f7dc 334-335,338-341,345,384,387-388,391,394,404,411,414,436-439,446-449,457-458,461-466,472-480,486,488-489
+  s_cb414c50abe95f::t_ebad16a3f99706 490-501
+  s_cb414c50abe95f::t_3901290aeeb4f5 353-358
+  s_cb414c50abe95f::t_fa985c193d86db 468,485,487
+  s_cb414c50abe95f::t_3545d0acd1a2f1 502-504
+internal/analyzer/promptvalue.go
+  s_cb414c50abe95f::t_2d7be5aa1b1732 33-37
+pkg/graphdb/edges.go
+  s_cb414c50abe95f::t_b93fbb4c1be48f 25-37
+pkg/graphdb/interface.go
+  s_cb414c50abe95f::t_b93fbb4c1be48f 86-87
+pkg/graphdb/agedriver/edges.go
+  s_cb414c50abe95f::t_b93fbb4c1be48f 73-81
+internal/testspecs/graphdb_contract.go
+  s_cb414c50abe95f::t_03a3fa0aa6f5e5 1373-1397
+pkg/graphdb/memdriver/props.go
+  s_cb414c50abe95f::t_b93fbb4c1be48f 110-116
+pkg/analyzer/results/critique_bdd_test.go
+  s_cb414c50abe95f::t_b6677f0a88ac26 1-105
+pkg/analyzer/results/critique.go
+  s_cb414c50abe95f::t_03eaacfe550851 1-121
+internal/graph/synthesis_materializer_bdd_test.go
+  s_cb414c50abe95f::t_8d15b5bb095b9d 95-111
+internal/results/service_bdd_test.go
+  s_cb414c50abe95f::t_415df3677c8456 132-137,233-241,288-296,300
+  s_cb414c50abe95f::t_83c407eb26d853 297-299
+  s_cb414c50abe95f::t_7fd18ccf63bbb0 301-302
+README.md
+  s_cb414c50abe95f::t_86fd9abc6499bd 360
+  s_cb414c50abe95f::t_7dadfb57062c51 317
+internal/graph/resolver_bdd_test.go
+  s_cb414c50abe95f::t_0b66c6b52e9260 176-178,188,209-210,219,256-290
+  s_cb414c50abe95f::t_10c34a4119aabc 6,15,235
+  s_cb414c50abe95f::t_ac4d01bd27b83f 236-255
+internal/graph/crosswalk_bdd_test.go
+  s_cb414c50abe95f::t_bfd579f7b5ca4b 1031-1058
+docs/dev/design-principles.md
+  s_cb414c50abe95f::t_e7e1017954c5f4 81-82
+cmd/crosscodex/results.go
+  s_cb414c50abe95f::t_46f7bdce39991f 11
+  s_cb414c50abe95f::t_c4177a12ee531c 136,162-166,183,265-283,345-352,435-441,451,459-463,481
+  s_cb414c50abe95f::t_7e10099f0298da 54-56,100,107-108,139-141
+  s_cb414c50abe95f::t_5c345fe6918259 384-386,393,395-400,405-406
+  s_cb414c50abe95f::t_400d9d4dbad662 109-111
+  s_cb414c50abe95f::t_a1baf54088a5f8 142,407
+internal/pipeline/executor.go
+  s_cb414c50abe95f::t_3a4958cb5fa5ff 661-662,687-696
+internal/results/service.go
+  s_cb414c50abe95f::t_d063de7327c98f 234-237,263,414,417-418
+  s_cb414c50abe95f::t_bf5935d7a323af 419
+  s_cb414c50abe95f::t_cf11ad76e6b475 415-416
+internal/pipeline/reporter_bdd_test.go
+  s_cb414c50abe95f::t_39f9263ac7eb64 15
+  s_cb414c50abe95f::t_78a64501a8a945 238-300,302
+  s_cb414c50abe95f::t_1b587d8d3b60e5 301,303-304
+internal/pipeline/vote_summaries.go
+  s_cb414c50abe95f::t_3a4958cb5fa5ff 37-42,47-50,71-73,89-91
+docs/dev/telemetry.md
+  s_cb414c50abe95f::t_739f6a7ad1dc7c 182
+cmd/crosscodex/results_bdd_test.go
+  s_cb414c50abe95f::t_a922f227d160c0 9
+  s_cb414c50abe95f::t_1120a2d7964edc 288-297
+  s_cb414c50abe95f::t_a7ce51b893568a 45,111,162-164,275-287,298-317
+  s_cb414c50abe95f::t_a1bf153d742c77 318
+  s_cb414c50abe95f::t_27a2dee5b9dfea 329
+  s_cb414c50abe95f::t_26cf1d09337166 165-167,213-230
+  s_cb414c50abe95f::t_91d7ef918ae4dd 231
+internal/graph/subscriber_critique_bdd_test.go
+  s_cb414c50abe95f::t_b30906c5cd53cd 1-241
+internal/pipeline/vote_summaries_bdd_test.go
+  s_cb414c50abe95f::t_e8c1da90913b53 52-83
+internal/results/store_pg.go
+  s_cb414c50abe95f::t_d063de7327c98f 370-371,392-404,416-417,426-434
+  s_cb414c50abe95f::t_cf11ad76e6b475 9,405-414
+  s_cb414c50abe95f::t_070848ae14fcad 415
+internal/graph/synthesis_materializer.go
+  s_cb414c50abe95f::t_2dd15ba3479323 47-49
+internal/graph/subscriber_handlers.go
+  s_cb414c50abe95f::t_c163d5f3f41d19 5,33-34,75-76,78-81,83-85,100-102,112-121,127-128,130-133,135-137,150-152,162-207,209
+  s_cb414c50abe95f::t_989e90883c3b32 208,210
+internal/graph/subscriber.go
+  s_cb414c50abe95f::t_c163d5f3f41d19 15,86-87,89-106,161-169
+  s_cb414c50abe95f::t_a16ba94fc5dbf3 170
+api/proto/crosscodex/v1/synthesis.proto
+  s_cb414c50abe95f::t_d47949f9e8e72a 131-153,223-226
+internal/graph/resolver_pg.go
+  s_cb414c50abe95f::t_2dd15ba3479323 5,129-131,133-139,142-143,146-149,163-168
+  s_cb414c50abe95f::t_ac4d01bd27b83f 140-141,144-145
+internal/results/types.go
+  s_cb414c50abe95f::t_8ef1f6ed18a0b0 43
+  s_cb414c50abe95f::t_d063de7327c98f 7-8,60-63
+internal/results/store_pg_integration_bdd_test.go
+  s_cb414c50abe95f::t_ad9264d2eb0f69 136-141,327-359,376-383
+  s_cb414c50abe95f::t_7bc721391cdc2a 18
+  s_cb414c50abe95f::t_812f0a7a30ec8c 384-385
+  s_cb414c50abe95f::t_cf11ad76e6b475 360-375
+internal/graph/crosswalk.go
+  s_cb414c50abe95f::t_d5b44363c859cd 181
+  s_cb414c50abe95f::t_002d9bfd883379 47-49,58-60,182,373-375,391
+internal/pipeline/reporter.go
+  s_858244bd3650d5::t_6a733482b1b995 7-8,16,92-99,108-125
+internal/analyzer/relationship/integration_bdd_test.go
+  s_cb414c50abe95f::t_d9f2673f84a8f4 409,417-418,424,427
+  s_cb414c50abe95f::t_84513bcbf5d39f 404,415-416,421-423,434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "444ff3250ddb4e2c0209816f86d00529b1a942f0",
+  "prompts": {},
+  "sessions": {
+    "s_858244bd3650d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae2586f4ea9e2a192",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

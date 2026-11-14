@@ -1,0 +1,141 @@
+internal/analyzer/relationship/relationship.go
+  s_cb414c50abe95f::t_20a873f7be3297 333-340
+  s_cb414c50abe95f::t_732e2dd5a14601 8
+internal/analyzer/requires/requires.go
+  s_cb414c50abe95f::t_732e2dd5a14601 9
+  s_cb414c50abe95f::t_20a873f7be3297 329-336
+pkg/analyzer/panel.go
+  s_cb414c50abe95f::t_7ff191d6d8dc30 1-31
+internal/pipeline/panel_diversity.go
+  s_cb414c50abe95f::t_1f73d2e9ec5b83 1-4,6-7,11-15,17,19,21-42,45-47,49-59,62,66,70-80,149-158,160-168,170-179,184-185,418
+  s_cb414c50abe95f::t_0bbb533ea538c3 186-190,195-196,198-210,213,215-224,255,257,259-265,298-299,305,312-315,318,320,322,324-327,342,347-350,357
+  s_cb414c50abe95f::t_4fa04ade10aa88 10,20,369-389,391,393-395,397-403,412-414,416-417
+  s_cb414c50abe95f::t_bc9ffedb6f24fc 63-65
+  s_cb414c50abe95f::t_e37a73e0759a0d 60-61,67-69
+  s_cb414c50abe95f::t_081e7d21d0ee4d 5,8-9,16,43,48,300-304,306-308,319,323,328-341,343-345,351-353,357-365,367-368,405-411,415
+  s_cb414c50abe95f::t_890f51fc3fbb13 419-440
+  s_cb414c50abe95f::t_887bbb4cceafc0 18,111-128,132,135-136,140-148,159,183,212,226-227,229-233,245-254,280-299,396
+  s_cb414c50abe95f::t_36960f2f23fa24 169,180-182
+  s_cb414c50abe95f::t_0be12cfc6f4341 44,309-311,316-317,321,346,354-356
+  s_cb414c50abe95f::t_df1b294f30a70e 129-131,134,137-139
+  s_cb414c50abe95f::t_e5acdf909b8866 81-110,133,191-194,197,211,214,225,228,234-244,256,258,266-277
+  s_cb414c50abe95f::t_e4b593a0422faa 390,392,404
+internal/pipeline/service.go
+  s_cb414c50abe95f::t_4fa04ade10aa88 68-69,71-72
+  s_cb414c50abe95f::t_887bbb4cceafc0 70
+deploy/README.md
+  s_cb414c50abe95f::t_8225d436c433e9 262
+  s_cb414c50abe95f::t_a5c665149f9c2a 261
+internal/pipeline/executor.go
+  s_cb414c50abe95f::t_395023ffd3feb6 12
+  s_cb414c50abe95f::t_4fa04ade10aa88 53-55,460-465,1246
+  s_cb414c50abe95f::t_37cc5124efd66f 1230,1242-1243
+  s_cb414c50abe95f::t_0f1f01be5b6634 1231-1241
+internal/pipeline/export_test.go
+  s_cb414c50abe95f::t_f78b4be86b51d7 59-60,62,72-75,84
+  s_cb414c50abe95f::t_890f51fc3fbb13 80-84
+  s_cb414c50abe95f::t_0be12cfc6f4341 61,63-71,76-78
+internal/pipeline/panel_diversity_bdd_test.go
+  s_cb414c50abe95f::t_723439c25502ca 1-5,8-47,53-96,98,100,102-105,283-305,308-341,343-345,348-383,386-422,537-548
+  s_cb414c50abe95f::t_f78b4be86b51d7 384-385
+  s_cb414c50abe95f::t_bbb6657924d44f 6,306-307,423-448,450-506
+  s_cb414c50abe95f::t_e37a73e0759a0d 449
+  s_cb414c50abe95f::t_0d688d0ad904cd 507
+  s_cb414c50abe95f::t_e3f25c9d423d0a 7,48-52,97,99,101,106-150,157-190,231-271,273-276,278-281
+  s_cb414c50abe95f::t_b7ae05fa4d46b4 282
+  s_cb414c50abe95f::t_95c0d736db50ff 151-156,191-230,272,277,342,346-347,508-535
+  s_cb414c50abe95f::t_884128c439a62c 536
+internal/pipeline/result_cache.go
+  s_cb414c50abe95f::t_132663be274e78 188-190,214-240
+  s_cb414c50abe95f::t_da39c73a8a0541 241-242
+internal/pipeline/options.go
+  s_cb414c50abe95f::t_0d1a8b10074785 36-39
+  s_cb414c50abe95f::t_4fa04ade10aa88 72-74,83-87
+  s_cb414c50abe95f::t_4364caafd2b380 79-81,138-140
+  s_cb414c50abe95f::t_887bbb4cceafc0 75-78,82
+internal/analyzer/relationship/cache_bdd_test.go
+  s_cb414c50abe95f::t_4c33d1cca16b36 58-59,64-69
+  s_cb414c50abe95f::t_d9283e611a868b 60-63
+pkg/analyzer/panel_bdd_test.go
+  s_cb414c50abe95f::t_20a873f7be3297 1-41
+internal/analyzer/requires/cache_bdd_test.go
+  s_cb414c50abe95f::t_4c33d1cca16b36 60-61,66-71
+  s_cb414c50abe95f::t_d9283e611a868b 62-65
+test/e2e/run-daemon.sh
+  s_cb414c50abe95f::t_8564ec89b31949 79-84
+cmd/crosscodexd/llm_probe_options_bdd_test.go
+  s_cb414c50abe95f::t_c683820e8e6f80 1-8,10-13,17-19,23-25,33-37
+  s_cb414c50abe95f::t_fa1cf3eb89b870 9,14-16,20-22,26-30
+  s_cb414c50abe95f::t_522db1fd770586 31-32
+cmd/crosscodex/panelstatus_bdd_test.go
+  s_cb414c50abe95f::t_79d84edc4494a3 1-16,19-21,23-29,32-39
+  s_cb414c50abe95f::t_425a73ec6722c9 18,22,30-31
+  s_cb414c50abe95f::t_953288513e6abb 17
+internal/pipeline/store_bdd_test.go
+  s_cb414c50abe95f::t_302a155cb05c98 263-277
+api/proto/crosscodex/v1/pipeline.proto
+  s_cb414c50abe95f::t_bc580475f7d12a 239-265
+  s_cb414c50abe95f::t_0be12cfc6f4341 266-275
+internal/pipeline/service_impl.go
+  s_cb414c50abe95f::t_0f1f01be5b6634 236,306,738,743
+internal/pipeline/types.go
+  s_cb414c50abe95f::t_dc8b45ba0b3a4f 72-75
+internal/pipeline/store.go
+  s_cb414c50abe95f::t_dc8b45ba0b3a4f 34-36,638-678,714,731,817
+cmd/crosscodex/run.go
+  s_cb414c50abe95f::t_5ec13b30f7d399 200,231,244
+cmd/crosscodex/panelstatus.go
+  s_cb414c50abe95f::t_5ec13b30f7d399 1-15,19-38,41-62,70-82
+  s_cb414c50abe95f::t_425a73ec6722c9 16-18,39-40,63-69
+cmd/crosscodexd/bootstrap.go
+  s_cb414c50abe95f::t_dd97c4ec69f3ca 34
+  s_cb414c50abe95f::t_4364caafd2b380 676,683-685,689-692,700-701
+  s_cb414c50abe95f::t_150b6b667778a4 704-705
+  s_cb414c50abe95f::t_fa1cf3eb89b870 672-675,682,694-699,702-703
+  s_cb414c50abe95f::t_0be12cfc6f4341 693
+pkg/db/migrations/001_initial_schema.up.sql
+  s_cb414c50abe95f::t_a6151b48f959f7 338-343
+pkg/db/role_check.go
+  s_cb414c50abe95f::t_a6151b48f959f7 114
+pkg/llmclient/llmclienttest/fake.go
+  s_cb414c50abe95f::t_d2d5926fd242d1 39-42,59-60,66,102-120
+  s_cb414c50abe95f::t_83da7fc2738ae4 121
+pkg/llmclient/modelinfo.go
+  s_cb414c50abe95f::t_13543c27e4ad88 1-148
+pkg/llmclient/llmclient_fuzz_test.go
+  s_cb414c50abe95f::t_5ec2fb6163ffcc 123-149
+pkg/llmclient/llmclienttest/llmclienttest_bdd_test.go
+  s_cb414c50abe95f::t_acd7710d032bc3 239-265
+pkg/llmclient/client.go
+  s_cb414c50abe95f::t_13543c27e4ad88 47-48
+pkg/llmclient/options.go
+  s_cb414c50abe95f::t_13543c27e4ad88 65-72
+pkg/llmclient/llmclient_property_test.go
+  s_cb414c50abe95f::t_5ec2fb6163ffcc 4,22-59
+  s_cb414c50abe95f::t_00c11f05d3d9df 60
+pkg/llmclient/modelinfo_bdd_test.go
+  s_cb414c50abe95f::t_0e870e19d40b09 106,111-115
+  s_cb414c50abe95f::t_5ec2fb6163ffcc 1-105,107-110,116-173
+internal/testspecs/deterministic_llm.go
+  s_cb414c50abe95f::t_9a180c8eaa0c30 14-17
+  s_cb414c50abe95f::t_f87c86bea30743 92-95,137-143
+internal/testspecs/deterministic_llm_test.go
+  s_cb414c50abe95f::t_9a180c8eaa0c30 33
+  s_cb414c50abe95f::t_425a73ec6722c9 198-209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b7f32dd2636eeb543e92d5ae25eb7c44084e9919",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

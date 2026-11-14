@@ -1,0 +1,98 @@
+internal/pipeline/errors.go
+  s_cb414c50abe95f::t_e902b36741ace4 82-85,112
+internal/analysis/engine_bdd_test.go
+  s_cb414c50abe95f::t_aaa0d393dc9da2 187-190,510-519,525-539,542,546-554,581-593
+  s_cb414c50abe95f::t_25661e4d27569b 520-524
+  s_cb414c50abe95f::t_c7d80be7ccb502 540-541,543-545,555-579
+  s_cb414c50abe95f::t_b7ae5f53fbaef9 580
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_cb414c50abe95f::t_a625bc1f551611 311-314
+internal/pipeline/service_bdd_test.go
+  s_cb414c50abe95f::t_eedc7d431f9ed9 1806-1807
+  s_cb414c50abe95f::t_a625bc1f551611 99
+pkg/config/config_bdd_test.go
+  s_cb414c50abe95f::t_194fd03cbc6f4e 2711-2714,2739-2741,2744-2752,2764-2765,2769-2770,2774,2816-2853
+  s_cb414c50abe95f::t_55aeea96b8080e 1978
+  s_cb414c50abe95f::t_8bf88e50f4320e 2788-2796,2798-2800,2810-2817
+  s_cb414c50abe95f::t_c75ed704efd13e 2755,2766-2768,2771-2773,2775-2785,2797,2801-2808
+  s_cb414c50abe95f::t_194ad0f73eda1f 1976-1977,1979
+  s_cb414c50abe95f::t_8b252f26bea66c 2809
+internal/analysis/no_success_bdd_test.go
+  s_cb414c50abe95f::t_b30874b5ef4ef1 1-6,8-41,48-127,128,130-187,190-192,195-201,202-205,257-288
+  s_cb414c50abe95f::t_a99d7e2af2b12c 129,188-189,193-194,213,235,238
+  s_cb414c50abe95f::t_36d1ac3d79e697 255-256
+  s_cb414c50abe95f::t_221c4f03b3c990 7,42-47,206-212,214-234,236-237,239-254
+internal/analysis/abandon_bdd_test.go
+  s_cb414c50abe95f::t_5ea8f79a119e71 92-97
+cmd/crosscodexd/e2e_integration_test.go
+  s_cb414c50abe95f::t_a625bc1f551611 84-87
+internal/analysis/doc.go
+  s_cb414c50abe95f::t_3aaea633a6b50a 69-73,85-87,91
+  s_cb414c50abe95f::t_7c03c4906d103c 74-81
+  s_cb414c50abe95f::t_414b2da738ffa3 82-84
+internal/analysis/collector.go
+  s_cb414c50abe95f::t_d1bc519259143a 50-52,98-101,143-154,192,400,493-497,575,579-580,680-689
+  s_cb414c50abe95f::t_e1d81c72b5b99d 248,250-251,253,350
+  s_cb414c50abe95f::t_4b87f2043b0bd7 694-695
+  s_cb414c50abe95f::t_f356f639677f49 193-195,241,249,252,254-257,401,498-507,536,573-574,576-578,613-646,650-676,690-693
+  s_cb414c50abe95f::t_288ba0596a6763 242-247,647-649
+internal/analysis/errors.go
+  s_cb414c50abe95f::t_1a0954c5e63257 6-7,13-27,39-74
+  s_cb414c50abe95f::t_cfa41a73e4e737 75
+internal/analysis/types.go
+  s_cb414c50abe95f::t_d1bc519259143a 172,176,178-179
+  s_cb414c50abe95f::t_1a0954c5e63257 148-150,154-157
+  s_cb414c50abe95f::t_5fa6b3b1607b15 151-153
+  s_cb414c50abe95f::t_f356f639677f49 173-175,177
+deploy/README.md
+  s_cb414c50abe95f::t_3aaea633a6b50a 556,558,567
+  s_cb414c50abe95f::t_d9a639ecbf0116 555,557,559-565
+  s_cb414c50abe95f::t_eb41c89cc961d1 566
+pkg/config/types.go
+  s_cb414c50abe95f::t_54ce719d3e18ba 636-640
+  s_cb414c50abe95f::t_6b0601e9ffc940 584,610-612
+  s_cb414c50abe95f::t_740773fd1bee80 662-663,667,669-673,675-676
+  s_cb414c50abe95f::t_d55659aeae2c3e 585-597,603-607
+  s_cb414c50abe95f::t_d5263180f03e13 677-679
+  s_cb414c50abe95f::t_4b7ebf39829b68 608-609,619-628,1076-1081,1088
+  s_cb414c50abe95f::t_414b2da738ffa3 598-599
+  s_cb414c50abe95f::t_2c20fccf241445 600-602
+  s_cb414c50abe95f::t_288ba0596a6763 631,635,641-650,664-666,668,674
+internal/analysis/cache_bdd_test.go
+  s_cb414c50abe95f::t_dadce1d08238f1 553-566
+  s_cb414c50abe95f::t_26e5f11db0ba14 13
+docs/dev/telemetry.md
+  s_cb414c50abe95f::t_3aaea633a6b50a 202
+pkg/config/defaults.go
+  s_cb414c50abe95f::t_54ce719d3e18ba 112
+internal/analysis/collector_bdd_test.go
+  s_cb414c50abe95f::t_5ea8f79a119e71 136-145,169-178,212-221,251-260,291-300,327-336,371,376,429,479,522,539,564,586-595,623-632,654,671-680
+internal/analysis/engine.go
+  s_cb414c50abe95f::t_1f84c052a03486 483-492,529-530,540-542,664,667-668,670
+  s_cb414c50abe95f::t_22914d125efb0f 681-682
+  s_cb414c50abe95f::t_cb63c344dab3b6 531-539,658-663,665-666,669,671-680
+pkg/config/helpers_test.go
+  s_cb414c50abe95f::t_86c2b211e95c69 40
+pkg/config/validate.go
+  s_cb414c50abe95f::t_740773fd1bee80 58
+README.md
+  s_cb414c50abe95f::t_d9a639ecbf0116 302
+  s_cb414c50abe95f::t_414b2da738ffa3 21
+  s_cb414c50abe95f::t_eb41c89cc961d1 583
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3c18e8af65c45bbff83880a039cf3f0dc19358d0",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

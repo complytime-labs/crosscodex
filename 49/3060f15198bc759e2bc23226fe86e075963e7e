@@ -1,0 +1,70 @@
+test/eval/crosswalk/labels_fuzz_test.go
+  s_cb414c50abe95f::t_4da3e3d59a0ac2 1-49
+test/eval/crosswalk/run.sh
+  s_cb414c50abe95f::t_b49094e2cc7efc 37,164
+  s_cb414c50abe95f::t_411d5cc8a2f08f 13-15
+  s_cb414c50abe95f::t_cbb3791729709e 165
+  s_cb414c50abe95f::t_8f291b0439847e 71-79,163
+test/eval/crosswalk/cmd/crosswalk-eval/main_bdd_test.go
+  s_cb414c50abe95f::t_c5728d6277e89b 109,113
+  s_cb414c50abe95f::t_e8e3df7502dd7e 91-108,110-112,115-125
+  s_cb414c50abe95f::t_071a0ede1b535f 114
+test/eval/crosswalk/cmd/crosswalk-eval/main.go
+  s_cb414c50abe95f::t_b49094e2cc7efc 233,261,263-266,270
+  s_cb414c50abe95f::t_219637edbc930c 262,267-269,282
+test/eval/crosswalk/score.go
+  s_cb414c50abe95f::t_74be670b9816a2 30-32,125-130,146-148,223,235-266
+  s_cb414c50abe95f::t_dd5bb5b59ebf37 267-268
+  s_cb414c50abe95f::t_219637edbc930c 33-34,156
+test/eval/crosswalk/testdata/labels/synth-run.yaml
+  s_cb414c50abe95f::t_a78f9ae796063a 1-14
+test/eval/crosswalk/report.go
+  s_cb414c50abe95f::t_74be670b9816a2 48,58-77,272-282,299-308
+  s_cb414c50abe95f::t_3e8650e453cf1c 309
+  s_cb414c50abe95f::t_219637edbc930c 92-93,382-383
+  s_cb414c50abe95f::t_bdf53bd23b1efe 384
+test/eval/crosswalk/labels_bdd_test.go
+  s_cb414c50abe95f::t_dbf525c917a603 1-106,108-140,174-182
+  s_cb414c50abe95f::t_66bb34242c73a0 107
+  s_cb414c50abe95f::t_071a0ede1b535f 169
+  s_cb414c50abe95f::t_10a595179fe805 141-168,170-173
+test/tooling/eval-crosswalk.venom.yml
+  s_cb414c50abe95f::t_a78f9ae796063a 46-70
+  s_cb414c50abe95f::t_19aecf88924f29 166-208
+test/eval/crosswalk/labels_property_test.go
+  s_cb414c50abe95f::t_5981cb88f02408 1-3,7-62,64-72,78-86
+  s_cb414c50abe95f::t_071a0ede1b535f 4-6,63,73-77
+test/eval/crosswalk/README.md
+  s_cb414c50abe95f::t_f8864041b2d3bb 49-51,55-69,72-91
+  s_cb414c50abe95f::t_1b65e44235ecf7 52-54,70-71
+test/eval/crosswalk/labels.go
+  s_cb414c50abe95f::t_b49094e2cc7efc 103-105
+  s_cb414c50abe95f::t_303d956488fd05 110,114,121-122,126,143,145,164,211,224
+  s_cb414c50abe95f::t_8d93f3b8deea55 1-4,7-32,35,41-62,74-102,106-109,111-113,115-120,123-125,127-142,144,146-163,165-175,177-189,200,204-210,212-215,217-223,225-226,230-233,235-273
+  s_cb414c50abe95f::t_8f291b0439847e 39-40
+  s_cb414c50abe95f::t_219637edbc930c 5-6,33-34,36-38,63-73,176,190-199,201-203,216,227-229,234
+test/eval/crosswalk/score_bdd_test.go
+  s_cb414c50abe95f::t_dbf525c917a603 847-913
+test/eval/crosswalk/report_bdd_test.go
+  s_cb414c50abe95f::t_5981cb88f02408 115-135,137-144,154
+  s_cb414c50abe95f::t_60fa39112e66a3 136
+  s_cb414c50abe95f::t_071a0ede1b535f 145-153
+README.md
+  s_cb414c50abe95f::t_1b65e44235ecf7 844
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "493060f15198bc759e2bc23226fe86e075963e7e",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}

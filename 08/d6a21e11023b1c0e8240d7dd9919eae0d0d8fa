@@ -1,0 +1,23 @@
+test/eval/crosswalk/labels/sp800-171r3-to-sp800-53r5.yaml
+  s_cb414c50abe95f::t_f63114f2a93816 1-2765
+test/eval/crosswalk/labels/ssdf-to-sp800-53r5.yaml
+  s_cb414c50abe95f::t_31274b116a178e 1-605
+test/eval/crosswalk/labels_bdd_test.go
+  s_cb414c50abe95f::t_a3df208b2a2c03 186-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "08d6a21e11023b1c0e8240d7dd9919eae0d0d8fa",
+  "prompts": {},
+  "sessions": {
+    "s_cb414c50abe95f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9fe09af9-ec8a-422f-8392-8bef53f5948e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
