@@ -81,9 +81,10 @@ func startSharedTestNATS(t GinkgoTInterface) string {
 func e2eAnalysisConfig() config.AnalysisConfig {
 	return config.AnalysisConfig{
 		Engine: config.EngineConfig{
-			TaskTimeout:  2 * time.Minute,
-			MaxRetries:   2,
-			RetryBackoff: time.Second,
+			TaskTimeout:    2 * time.Minute,
+			SuccessTimeout: 10 * time.Minute,
+			MaxRetries:     2,
+			RetryBackoff:   time.Second,
 		},
 		Classification: config.ClassificationConfig{
 			Enabled: true, Model: e2eModel, MaxTextLength: 10000, Temperature: 0, MaxTokens: 512,

@@ -66,10 +66,29 @@
 // at most until that cap. A collection without a positive StageTimeout is
 // refused with ErrNoStageTimeout.
 //
+// Error results reset the idle timer too, and so do the ticks they cause, so
+// a stage whose every LLM call fails (the model gateway is down) would grind
+// through its tasks until the stage cap. CollectRequest.SuccessTimeout
+// (analysis.engine.success_timeout) stops it: once the collection's results
+// have been failures only, with no success, for SuccessTimeout, counted from
+// the first failure after its last success, while its own failures are still
+// arriving (the latest within Timeout), it fails with a NoSuccessError
+// (ErrNoSuccessfulResult). The engine fails the stage with a StageError of
+// that class, which the pipeline classifies as llm_unavailable, or, when the
+// last failure was a truncated answer, with the llmclient.ErrOutputTruncated
+// stage error and its advice. Every error result counts, retried or not;
+// ticks and other collections' results never reset it. A collection whose
+// own results stop, starved behind another's queue or silent, is left to
+// Timeout and StageTimeout. A failure more than Timeout after the previous
+// one restarts the window, so a resumed collection trips only after a full
+// window of failures arriving again. A
+// collection without a positive SuccessTimeout is refused with
+// ErrNoSuccessTimeout.
+//
 // # Abandoned Collections
 //
 // A collection that ends without every expected result (ErrTaskTimeout,
-// ErrStageTimeout, a cancelled context, which is how CancelJob reaches a
+// ErrStageTimeout, ErrNoSuccessfulResult, a cancelled context, which is how CancelJob reaches a
 // running stage, or a failed Dispatch) leaves tasks queued on the worker
 // pool whose results nobody will read, and each one is a billed LLM call.
 // The collection then publishes exactly one tenant-scoped control message on

@@ -184,9 +184,10 @@ func (r *engineTestReporter) ReportStageFailed(context.Context, string, string, 
 // validCfg returns a valid EngineConfig for tests.
 func validCfg() config.EngineConfig {
 	return config.EngineConfig{
-		TaskTimeout:  5 * time.Minute,
-		MaxRetries:   3,
-		RetryBackoff: time.Second,
+		TaskTimeout:    5 * time.Minute,
+		SuccessTimeout: 10 * time.Minute,
+		MaxRetries:     3,
+		RetryBackoff:   time.Second,
 	}
 }
 
@@ -506,6 +507,90 @@ var _ = Describe("Engine", func() {
 			Expect(collector.collectCount()).To(Equal(1))
 			Expect(collector.collects[0].StageTimeout).To(Equal(24 * time.Hour))
 			Expect(collector.collects[0].Timeout).To(Equal(validCfg().TaskTimeout))
+			Expect(collector.collects[0].SuccessTimeout).To(Equal(validCfg().SuccessTimeout))
+		})
+
+		DescribeTable("fails the analyzer, with an actionable llm_unavailable message, when its collection got no successful result within success_timeout",
+			func(lastSuccess time.Time, since string) {
+				tasks := makeTasks("classify", 3)
+				stub := newStubWithTasks("classify", tasks)
+				Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+				collector.resultsFn = func(req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+					return []analyzer.TaskResult{
+						{TaskID: req.ExpectedIDs[0], TaskType: "classify", Error: fmt.Errorf("%w: %w", analysis.ErrRetryExhausted, errors.New("task_timeout"))},
+					}, fmt.Errorf("await results: %w", &analysis.NoSuccessError{
+						JobID: req.JobID, Window: 10 * time.Minute, Failures: 7,
+						LastSuccess: lastSuccess, LastError: errors.New("task_timeout"),
+					})
+				}
+
+				engine := analysis.New(registry, dispatcher, collector, validCfg(), allTaskTypes())
+				result, err := engine.Execute(ctx, analysis.ExecutionRequest{JobID: "job-dark", Input: &emptypb.Empty{}})
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.Failed).To(ConsistOf("classify"))
+				Expect(result.Outputs).NotTo(HaveKey("classify"))
+				stageErr := result.Errors["classify"]
+				Expect(stageErr).To(MatchError(analysis.ErrNoSuccessfulResult))
+				var se *analysis.StageError
+				Expect(errors.As(stageErr, &se)).To(BeTrue())
+				Expect(se.Analyzer).To(Equal("classify"))
+				Expect(se.Sentinel).To(Equal(analysis.ErrNoSuccessfulResult))
+				msg := se.Error()
+				Expect(msg).To(ContainSubstring(`Stage "classify" stopped: it received only failed task results, and no successful one, for 10m0s`))
+				Expect(msg).To(ContainSubstring("7 task results failed since " + since + ", the last with error task_timeout"))
+				Expect(msg).To(ContainSubstring("(error class llm_unavailable)"))
+				Expect(msg).To(ContainSubstring("Either the LLM gateway or model server is not answering, or the model answers but its answers fail"))
+				Expect(msg).To(ContainSubstring("If the gateway or model server is down or unreachable, check it"))
+				Expect(msg).To(ContainSubstring("If the model answers but its answers fail, give your operator job ID job-dark"))
+				Expect(msg).To(ContainSubstring(`"crosscodex run retry --from-failure job-dark"`))
+				Expect(msg).To(ContainSubstring("raise analysis.engine.success_timeout"))
+				Expect(msg).NotTo(ContainSubstring("await results"), "the message is written for the tenant")
+			},
+			Entry("naming the stage start when no task succeeded", time.Time{}, "the stage started"),
+			Entry("naming the last success when one did",
+				time.Date(2026, 11, 12, 2, 5, 0, 0, time.FixedZone("x", 3600)), "the last success at 2026-11-12T01:05:00Z"),
+		)
+
+		It("fails the analyzer with the truncation class and advice when the last failure before success_timeout was a truncated answer", func() {
+			tasks := makeTasks("classify", 3)
+			stub := newStubWithTasks("classify", tasks)
+			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+			truncated := fmt.Errorf("task_output_truncated: %w", llmclient.ErrOutputTruncated)
+			collector.resultsFn = func(req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+				return []analyzer.TaskResult{
+					{TaskID: req.ExpectedIDs[0], TaskType: "classify", Error: truncated},
+					{TaskID: req.ExpectedIDs[1], TaskType: "classify", Error: truncated},
+				}, &analysis.NoSuccessError{
+					JobID: req.JobID, Window: 10 * time.Minute, Failures: 2, LastError: truncated,
+				}
+			}
+
+			engine := analysis.New(registry, dispatcher, collector, validCfg(), allTaskTypes())
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{JobID: "job-trunc-dark", Input: &emptypb.Empty{}})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Failed).To(ConsistOf("classify"))
+			stageErr := result.Errors["classify"]
+			Expect(stageErr).To(MatchError(llmclient.ErrOutputTruncated))
+			Expect(stageErr).NotTo(MatchError(analysis.ErrNoSuccessfulResult))
+			Expect(stageErr.Error()).To(ContainSubstring("2 of 2 tasks got no answer from the model within their max_tokens budget"))
+			Expect(stageErr.Error()).To(ContainSubstring("analysis.classification.max_tokens"))
+		})
+
+		It("never collects a stage with no tasks, so success_timeout cannot fail it", func() {
+			stub := newStubWithTasks("classify", nil)
+			Expect(analyzer.Register[*emptypb.Empty](registry, stub)).To(Succeed())
+			collector.resultsFn = func(req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+				return nil, &analysis.NoSuccessError{JobID: req.JobID, Window: time.Minute}
+			}
+
+			engine := analysis.New(registry, dispatcher, collector, validCfg(), allTaskTypes())
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{JobID: "job-empty", Input: &emptypb.Empty{}})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Completed).To(ConsistOf("classify"))
+			Expect(collector.collectCount()).To(BeZero())
 		})
 
 		It("releases the collection's subscriptions when Dispatch fails", func() {

@@ -109,6 +109,7 @@ prompt:
 analysis:
   engine:
     task_timeout: 5m
+    success_timeout: 10m
     max_retries: 3
     retry_backoff: 1s
   classification:

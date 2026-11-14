@@ -308,9 +308,10 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 	// limits so seeded text is never truncated to empty.
 	analysisConfig := config.AnalysisConfig{
 		Engine: config.EngineConfig{
-			TaskTimeout:  2 * time.Minute,
-			MaxRetries:   2,
-			RetryBackoff: time.Second,
+			TaskTimeout:    2 * time.Minute,
+			SuccessTimeout: 10 * time.Minute,
+			MaxRetries:     2,
+			RetryBackoff:   time.Second,
 		},
 		Classification: config.ClassificationConfig{
 			Enabled: true, Model: e2eModel, MaxTextLength: 10000, Temperature: 0, MaxTokens: 512,

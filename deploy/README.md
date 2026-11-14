@@ -552,6 +552,19 @@ The chat model spent each analyzer's small answer budget (`max_tokens`: classifi
 
 Then resume the job with `crosscodex run retry --from-failure <job-id>`, which keeps its completed stages.
 
+### A stage stops: "it received only failed task results"
+
+For `analysis.engine.success_timeout` (default 10m), counted from the first failure after the stage's last success (or its start), the stage received only failed task results (timeouts, refused connections, unparseable answers) and no successful one, while its failures kept arriving. It stopped rather than fail its remaining tasks one by one until `pipeline.stage_timeout`. The job fails with error class `llm_unavailable`. The message names the stage, how many results failed since the last success (or since the stage started), and the last error category. The stage's queued tasks are abandoned, so the workers stop calling the model for it. If the last failure was an answer cut off at `max_tokens`, the stage fails as `llm_output_truncated` instead; see [the max_tokens entry](#a-stage-stops-tasks-got-no-answer-from-the-model-within-their-max_tokens-budget).
+
+There are two causes, and the message cannot tell them apart:
+
+- **The gateway or model server is not answering** (last error `task_timeout` or `task_failed`, typically). Check that the gateway answers from where crosscodexd runs: `curl` its health endpoint from the crosscodexd container, and check the model server behind it. A rootless container network restart can cut this route while the host still reaches the gateway.
+- **The model answers, but its answers fail** (last error `task_invalid` or `task_failed`, typically). The crosscodexd log for the job, found by the trace ID in the message, has each task's error. Fix the model or its gateway alias.
+
+Then resume the job with `crosscodex run retry --from-failure <job-id>`, which keeps its completed stages and the results it already paid for.
+
+If the model server is healthy but legitimately takes longer than the window between successful answers, raise `analysis.engine.success_timeout` in `deploy/config.yaml` (at least `analysis.engine.task_timeout`, at most `pipeline.stage_timeout`) and restart `crosscodexd`. Keep it well above `llm.timeout` × (`llm.max_retries` + 1), the longest one call can take before its error arrives (2m with the defaults).
+
 ### Empty HTTP 500 from Praxis
 
 Praxis answers an empty 500 when the requested model isn't in its config. Check that `CROSSCODEX_LLM_DEFAULT_MODEL` and `CROSSCODEX_LLM_EMBEDDING_MODEL` in `deploy/.env` name aliases listed under `model_to_provider` in `deploy/praxis/config.yaml` (`deploy/praxis/config.models.yaml` with `PRAXIS_MODELS_ENDPOINT=true`; the defaults are `default` and `embed`).

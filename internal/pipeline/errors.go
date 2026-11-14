@@ -79,8 +79,10 @@ const (
 	// from a --no-cache job, which looks nothing up; a new job with
 	// --no-cache replaces the cached results.
 	JobErrorResultCacheCorrupt JobErrorClass = "result_cache_corrupt"
-	// JobErrorLLMUnavailable is ErrLLMUnavailable: the model probe failed
-	// before any analysis LLM call. Retryable.
+	// JobErrorLLMUnavailable is ErrLLMUnavailable, the model probe failed
+	// before any analysis LLM call, or analysis.ErrNoSuccessfulResult, a
+	// stage's tasks kept failing with no success for
+	// analysis.engine.success_timeout. Retryable.
 	JobErrorLLMUnavailable JobErrorClass = "llm_unavailable"
 	// JobErrorLLMOutputTruncated is llmclient.ErrOutputTruncated: a stage's
 	// model gave no answer within an analyzer's max_tokens. Retryable: once
@@ -107,7 +109,7 @@ func ClassifyJobError(err error) JobErrorClass {
 		return JobErrorResultCacheCorrupt
 	case errors.Is(err, resultcache.ErrUnavailable):
 		return JobErrorResultCacheUnavailable
-	case errors.Is(err, ErrLLMUnavailable):
+	case errors.Is(err, ErrLLMUnavailable), errors.Is(err, analysis.ErrNoSuccessfulResult):
 		return JobErrorLLMUnavailable
 	case errors.Is(err, llmclient.ErrOutputTruncated):
 		return JobErrorLLMOutputTruncated

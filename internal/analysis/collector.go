@@ -47,6 +47,9 @@ type NATSCollector struct {
 	// abandonCounter counts abandon control messages by task_type and
 	// outcome ("published" or "publish_failed").
 	abandonCounter metric.Int64Counter
+	// noSuccessCounter counts collections failed with ErrNoSuccessfulResult,
+	// by task_type.
+	noSuccessCounter metric.Int64Counter
 }
 
 // NewNATSCollector creates a Collector backed by a NATS client.
@@ -92,6 +95,10 @@ func WithCollectorTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Co
 				"analysis.collections.abandoned",
 				metric.WithDescription("Collections that ended without all results, by task_type and outcome of the abandon publish"),
 			)
+			c.noSuccessCounter, _ = meter.Int64Counter(
+				"analysis.collections.no_success",
+				metric.WithDescription("Collections failed because their tasks kept failing with no success for analysis.engine.success_timeout, by task_type"),
+			)
 		}
 	}
 }
@@ -128,6 +135,18 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 		err := fmt.Errorf("prepare collect for job %s: stage timeout %s is not positive, so the stage would have no upper bound; "+
 			"build the engine with analysis.WithStageTimeout fed by pipeline.stage_timeout: %w",
 			req.JobID, req.StageTimeout, ErrNoStageTimeout)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	// Fail closed: without a success window, a stage whose every LLM call
+	// fails keeps the idle timer alive with its error results and runs
+	// until the stage cap.
+	if req.SuccessTimeout <= 0 {
+		err := fmt.Errorf("prepare collect for job %s: success timeout %s is not positive, so a stage whose every LLM call fails "+
+			"would run until pipeline.stage_timeout; set CollectRequest.SuccessTimeout from analysis.engine.success_timeout: %w",
+			req.JobID, req.SuccessTimeout, ErrNoSuccessTimeout)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
@@ -170,6 +189,10 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 	}
 
 	var mu sync.Mutex
+	watch := &successWatch{}
+	// failed wakes AwaitResults to check the no-success window on a
+	// failure; one pending wake-up is enough.
+	failed := make(chan struct{}, 1)
 	resultChan := make(chan analyzer.TaskResult, len(req.ExpectedIDs))
 	doneChan := make(chan struct{})
 
@@ -215,6 +238,23 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 
 		// Handle error results with retry
 		if taskErr != nil {
+			now := time.Now()
+			// A failure more than the idle Timeout after the previous one
+			// ends a starvation: the run before it no longer counts, and
+			// the window restarts here.
+			if watch.failures > 0 && now.Sub(watch.lastFailure) > req.Timeout {
+				watch.failures = 0
+			}
+			if watch.failures == 0 {
+				watch.firstFailure = now
+			}
+			watch.failures++
+			watch.lastFailure = now
+			watch.lastErr = taskErr
+			select {
+			case failed <- struct{}{}:
+			default:
+			}
 			retryCount := retryCounts[taskID]
 			// No answer within max_tokens is deterministic for the same request,
 			// so a retry would pay for the same empty reply.
@@ -307,6 +347,7 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 		}
 
 		// Success
+		*watch = successWatch{lastSuccess: time.Now()}
 		if c.completeCounter != nil {
 			c.completeCounter.Add(handlerCtx, 1)
 		}
@@ -356,6 +397,8 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 		doneChan:     doneChan,
 		pending:      pending,
 		mu:           &mu,
+		watch:        watch,
+		failed:       failed,
 		subject:      subject,
 		Req:          req,
 		CollectionID: collectionID,
@@ -447,6 +490,21 @@ func (c *NATSCollector) AwaitResults(ctx context.Context, handle *CollectionHand
 	// is what fails a stage whose task was lost.
 	stageCap := time.NewTimer(handle.Req.StageTimeout)
 	defer stageCap.Stop()
+	// noSuccess fails a collection whose tasks keep failing: their error
+	// results and the ticks they cause keep the idle timer alive, so
+	// without it a stage whose every LLM call fails runs until the stage
+	// cap. Only this collection's own successes reset it, never ticks or
+	// another collection's results: the question is whether this stage's
+	// model calls work, not whether the pool is alive. See checkNoSuccess
+	// for when it trips. A handle built by a test Collector has no watch,
+	// and so no no-success check.
+	var noSuccess *time.Timer
+	var noSuccessC <-chan time.Time
+	if handle.watch != nil {
+		noSuccess = time.NewTimer(handle.Req.SuccessTimeout)
+		defer noSuccess.Stop()
+		noSuccessC = noSuccess.C
+	}
 	stopMonitor := make(chan struct{})
 	defer close(stopMonitor)
 
@@ -475,6 +533,7 @@ func (c *NATSCollector) AwaitResults(ctx context.Context, handle *CollectionHand
 	}()
 
 	for {
+		var nse *NoSuccessError
 		select {
 		case <-ctx.Done():
 			span.RecordError(ctx.Err())
@@ -511,6 +570,14 @@ func (c *NATSCollector) AwaitResults(ctx context.Context, handle *CollectionHand
 			return results, fmt.Errorf("await results for job %s: stage ran longer than pipeline.stage_timeout (%s), %d of %d tasks complete; a task may have been lost, so rerun the job, or raise pipeline.stage_timeout if the catalog legitimately needs longer: %w",
 				handle.Req.JobID, handle.Req.StageTimeout, len(results), len(handle.Req.ExpectedIDs), ErrStageTimeout)
 
+		case <-noSuccessC:
+			nse = checkNoSuccess(handle, noSuccess)
+
+		case <-handle.failed:
+			if noSuccess != nil {
+				nse = checkNoSuccess(handle, noSuccess)
+			}
+
 		case result := <-handle.resultChan:
 			results = append(results, result)
 			idle.Reset(handle.Req.Timeout)
@@ -543,7 +610,87 @@ func (c *NATSCollector) AwaitResults(ctx context.Context, handle *CollectionHand
 			complete = true
 			return results, nil
 		}
+
+		if nse != nil {
+			// The handler pushes a result under the lock checkNoSuccess
+			// read the watch under, so every failure it counted is queued:
+			// return them all, so the caller sees the last error's result
+			// (a truncated answer, say) and stores the results paid for.
+			for len(handle.resultChan) > 0 {
+				results = append(results, <-handle.resultChan)
+			}
+			span.RecordError(ErrNoSuccessfulResult)
+			span.SetStatus(codes.Error, "no successful result")
+			span.SetAttributes(
+				attribute.Int("completed", len(results)),
+				attribute.Int("failed", len(handle.Req.ExpectedIDs)-len(results)),
+				attribute.Int("failures_since_success", nse.Failures),
+			)
+			if c.collectLatency != nil {
+				c.collectLatency.Record(ctx, float64(time.Since(start).Milliseconds()))
+			}
+			if c.noSuccessCounter != nil {
+				c.noSuccessCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("task_type", string(handle.Req.TaskType))))
+			}
+			return results, nse
+		}
 	}
+}
+
+// checkNoSuccess runs when the no-success timer fires or a failed result
+// arrives, and returns the collection's NoSuccessError once it must fail:
+// no success for SuccessTimeout since the first failure after the last
+// success (or after the start), and the latest failure arrived within the
+// idle Timeout (analysis.engine.task_timeout), so failures are still
+// arriving. A collection whose own results stopped is starved behind
+// another's queue or silent; that is the idle timeout's and the stage cap's
+// to judge, so the timer is stopped. Its next failure, more than Timeout
+// after the previous one, restarts the window (the handler resets the run),
+// so it trips only after a full window of failures arriving again.
+// Otherwise it re-arms timer for when the window could next end. It
+// returns nil once every result is in, so doneChan completes the
+// collection instead of racing it.
+func checkNoSuccess(handle *CollectionHandle, timer *time.Timer) *NoSuccessError {
+	handle.mu.Lock()
+	w := *handle.watch
+	remaining := len(handle.pending)
+	handle.mu.Unlock()
+	window := handle.Req.SuccessTimeout
+	if remaining == 0 {
+		return nil
+	}
+	if w.failures == 0 {
+		timer.Reset(window)
+		return nil
+	}
+	if left := window - time.Since(w.firstFailure); left > 0 {
+		timer.Reset(left)
+		return nil
+	}
+	if time.Since(w.lastFailure) > handle.Req.Timeout {
+		timer.Stop()
+		return nil
+	}
+	return &NoSuccessError{
+		JobID: handle.Req.JobID, Window: window, Failures: w.failures,
+		LastSuccess: w.lastSuccess, LastError: w.lastErr,
+	}
+}
+
+// successWatch is a collection's run of failed task results since its last
+// success, which the no-success window measures. CollectionHandle.mu guards
+// it.
+type successWatch struct {
+	// lastSuccess is when the last successful result arrived; zero before
+	// the first.
+	lastSuccess time.Time
+	// firstFailure is when the first failure after lastSuccess arrived;
+	// zero while failures is 0.
+	firstFailure time.Time
+	// lastFailure is when the latest failure arrived.
+	lastFailure time.Time
+	failures    int
+	lastErr     error
 }
 
 // getHeader extracts the first value of a header, or empty string if not present.

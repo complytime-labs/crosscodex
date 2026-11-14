@@ -480,15 +480,16 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		}
 
 		collectReq := CollectRequest{
-			TaskType:     taskType,
-			JobID:        req.JobID,
-			ExpectedIDs:  expectedIDs,
-			Tasks:        dispatchTasks,
-			Timeout:      e.cfg.TaskTimeout,
-			StageTimeout: e.stageTimeout,
-			MaxRetries:   e.cfg.MaxRetries,
-			Backoff:      e.cfg.RetryBackoff,
-			Dispatcher:   e.dispatcher,
+			TaskType:       taskType,
+			JobID:          req.JobID,
+			ExpectedIDs:    expectedIDs,
+			Tasks:          dispatchTasks,
+			Timeout:        e.cfg.TaskTimeout,
+			StageTimeout:   e.stageTimeout,
+			SuccessTimeout: e.cfg.SuccessTimeout,
+			MaxRetries:     e.cfg.MaxRetries,
+			Backoff:        e.cfg.RetryBackoff,
+			Dispatcher:     e.dispatcher,
 		}
 
 		// PrepareCollect: subscribe to result subject BEFORE dispatching tasks.
@@ -524,6 +525,20 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			// stage stores nothing; it is not sealed either.
 			if ctx.Err() == nil && sc.puts() {
 				e.putResults(ctx, sc, collected)
+			}
+			var nse *NoSuccessError
+			if errors.As(err, &nse) {
+				// Truncated answers are not an unanswering gateway: give
+				// them their own class and remedy. The collector returns
+				// every failed result it counted, the last one included.
+				if errors.Is(nse.LastError, llmclient.ErrOutputTruncated) {
+					if se := e.outputTruncated(ctx, name, req.JobID, collected); se != nil {
+						stop(se)
+						return
+					}
+				}
+				stop(e.noSuccess(ctx, name, req.JobID, nse))
+				return
 			}
 			stop(fmt.Errorf("analysis: analyzer %q collect failed for job %q: %w: %w",
 				name, req.JobID, ErrAnalyzerFailed, err))
@@ -638,6 +653,31 @@ func (s *executionState) isCompleted(name string) bool {
 		}
 	}
 	return false
+}
+
+// noSuccess returns the stage error for a collection that received only
+// failed task results, and no success, for analysis.engine.success_timeout
+// since the first failure after its last success. Its class is
+// llm_unavailable and retryable. The message cannot tell from a sanitized
+// error category whether the gateway stopped answering or the model's
+// answers fail, so it names both, with what to do for each.
+func (e *Engine) noSuccess(ctx context.Context, name, jobID string, nse *NoSuccessError) *StageError {
+	e.logger.ErrorContext(ctx, "the stage received only failed task results, and no successful one, for analysis.engine.success_timeout, "+
+		"so it stopped. Check the LLM gateway and model server, and the task errors logged before this",
+		"analyzer", name, "job_id", jobID, "window", nse.Window, "failures", nse.Failures,
+		"last_success", nse.LastSuccess, "error", nse)
+	ref := TraceReference(ctx, jobID)
+	return &StageError{Analyzer: name, Sentinel: ErrNoSuccessfulResult, Cause: nse, Message: fmt.Sprintf(
+		"Stage %q stopped: it received only failed task results, and no successful one, for %s: %d task results failed since %s, "+
+			"the last with error %v (error class llm_unavailable). Either the LLM gateway or model server is not answering, "+
+			"or the model answers but its answers fail, so the remaining tasks would most likely fail too. "+
+			"If the gateway or model server is down or unreachable, check it, then resume the job with "+
+			"\"crosscodex run retry --from-failure %s\", which keeps its completed stages. "+
+			"If the model answers but its answers fail, give your operator %s to find the errors in the crosscodexd log, "+
+			"fix the model or its gateway alias, then resume the job the same way. "+
+			"If the model server is healthy but legitimately takes longer than %s between successful answers, "+
+			"raise analysis.engine.success_timeout in the crosscodexd configuration and restart crosscodexd.",
+		name, nse.Window, nse.Failures, nse.since(), nse.LastError, jobID, ref, nse.Window)}
 }
 
 // outputTruncated returns the stage error for results in which any task's

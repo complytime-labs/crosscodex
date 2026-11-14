@@ -89,11 +89,12 @@ var _ = Describe("Abandoning incomplete collections", func() {
 				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
 				{TaskID: "t-2", TaskType: "classify", Payload: &structpb.Struct{}},
 			},
-			Timeout:      timeout,
-			StageTimeout: stageTimeout,
-			MaxRetries:   1,
-			Backoff:      10 * time.Millisecond,
-			Dispatcher:   disp,
+			Timeout:        timeout,
+			StageTimeout:   stageTimeout,
+			SuccessTimeout: time.Hour,
+			MaxRetries:     1,
+			Backoff:        10 * time.Millisecond,
+			Dispatcher:     disp,
 		}
 	}
 

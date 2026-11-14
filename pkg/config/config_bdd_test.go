@@ -1973,6 +1973,10 @@ logging:
 			}),
 			Entry("accepts StageTimeout at the lower end (1s)", func(c *config.Config) {
 				c.Pipeline.StageTimeout = time.Second
+				// analysis.engine.success_timeout may not exceed it, nor be
+				// shorter than analysis.engine.task_timeout.
+				c.Analysis.Engine.SuccessTimeout = time.Second
+				c.Analysis.Engine.TaskTimeout = time.Second
 			}),
 			Entry("accepts MaxConcurrentJobs at upper boundary (100)", func(c *config.Config) {
 				c.Pipeline.MaxConcurrentJobs = 100
@@ -2704,9 +2708,10 @@ var _ = Describe("EngineConfig", func() {
 
 	BeforeEach(func() {
 		cfg = config.EngineConfig{
-			TaskTimeout:  5 * time.Minute,
-			MaxRetries:   3,
-			RetryBackoff: time.Second,
+			TaskTimeout:    5 * time.Minute,
+			SuccessTimeout: 10 * time.Minute,
+			MaxRetries:     3,
+			RetryBackoff:   time.Second,
 		}
 	})
 
@@ -2731,10 +2736,23 @@ var _ = Describe("EngineConfig", func() {
 			Entry("retries over 10", func(c *config.EngineConfig) { c.MaxRetries = 11 }, "max_retries"),
 			Entry("negative backoff", func(c *config.EngineConfig) { c.RetryBackoff = -1 }, "retry_backoff"),
 			Entry("backoff over 5m", func(c *config.EngineConfig) { c.RetryBackoff = 6 * time.Minute }, "retry_backoff"),
+			Entry("zero success timeout", func(c *config.EngineConfig) { c.SuccessTimeout = 0 }, "success_timeout"),
+			Entry("negative success timeout", func(c *config.EngineConfig) { c.SuccessTimeout = -1 }, "success_timeout"),
+			Entry("success timeout over 24h", func(c *config.EngineConfig) { c.SuccessTimeout = 24*time.Hour + time.Second }, "success_timeout"),
 		)
+
+		It("says what success_timeout bounds and what to set when it is out of range", func() {
+			cfg.SuccessTimeout = 0
+			err := cfg.Validate()
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("analysis.engine.success_timeout 0s must be in range (0, 24h]"))
+			Expect(err.Error()).To(ContainSubstring("a stage fails when no task of it succeeds for this long while its tasks fail"))
+			Expect(err.Error()).To(ContainSubstring("set a duration such as 10m, longer than llm.timeout × (llm.max_retries + 1)"))
+		})
 
 		It("accepts boundary values", func() {
 			cfg.TaskTimeout = 30 * time.Minute
+			cfg.SuccessTimeout = 30 * time.Minute // may not be shorter than task_timeout
 			cfg.MaxRetries = 0
 			cfg.RetryBackoff = 0
 			Expect(cfg.Validate()).To(Succeed())
@@ -2742,6 +2760,96 @@ var _ = Describe("EngineConfig", func() {
 			cfg.MaxRetries = 10
 			cfg.RetryBackoff = 5 * time.Minute
 			Expect(cfg.Validate()).To(Succeed())
+		})
+
+		DescribeTable("accepts success_timeout at its bounds",
+			func(taskTimeout, successTimeout time.Duration) {
+				cfg.TaskTimeout = taskTimeout
+				cfg.SuccessTimeout = successTimeout
+				Expect(cfg.Validate()).To(Succeed())
+			},
+			Entry("1ns, with task_timeout 1ns", time.Nanosecond, time.Nanosecond),
+			Entry("24h", 5*time.Minute, 24*time.Hour),
+			Entry("equal to task_timeout", 5*time.Minute, 5*time.Minute),
+		)
+
+		It("rejects a success_timeout shorter than task_timeout, saying which to change", func() {
+			cfg.TaskTimeout = 5 * time.Minute
+			cfg.SuccessTimeout = 4 * time.Minute
+			err := cfg.Validate()
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("analysis.engine.success_timeout 4m0s is shorter than analysis.engine.task_timeout 5m0s"))
+			Expect(err.Error()).To(ContainSubstring("set success_timeout at or above task_timeout"))
+			expectOnlyFieldError(err, "analysis.engine.success_timeout")
+		})
+
+	})
+
+	Context("success_timeout against pipeline.stage_timeout", func() {
+		It("rejects a success_timeout longer than pipeline.stage_timeout, saying which to change", func() {
+			c := validConfig()
+			c.Pipeline.StageTimeout = time.Hour
+			c.Analysis.Engine.SuccessTimeout = 2 * time.Hour
+			err := config.ExportValidateConfig(c)
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("analysis.engine.success_timeout 2h0m0s is longer than pipeline.stage_timeout 1h0m0s"))
+			Expect(err.Error()).To(ContainSubstring("the stage cap would stop a failing stage first"))
+			Expect(err.Error()).To(ContainSubstring("set analysis.engine.success_timeout (default 10m) at or below pipeline.stage_timeout"))
+			expectOnlyFieldError(err, "analysis.engine.success_timeout")
+		})
+
+		It("reports only the range error for a success_timeout above its own range and the stage cap", func() {
+			c := validConfig()
+			c.Pipeline.StageTimeout = time.Hour
+			c.Analysis.Engine.SuccessTimeout = 25 * time.Hour
+			err := config.ExportValidateConfig(c)
+			Expect(err).To(MatchError(ContainSubstring("must be in range (0, 24h]")))
+			Expect(err).NotTo(MatchError(ContainSubstring("is longer than pipeline.stage_timeout")))
+		})
+
+		It("accepts a success_timeout equal to pipeline.stage_timeout", func() {
+			c := validConfig()
+			c.Pipeline.StageTimeout = time.Hour
+			c.Analysis.Engine.SuccessTimeout = time.Hour
+			Expect(config.ExportValidateConfig(c)).To(Succeed())
+		})
+	})
+
+	Context("success_timeout loading", func() {
+		load := func(body string) *config.Config {
+			dir := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", dir)
+			if body != "" {
+				Expect(os.MkdirAll(filepath.Join(dir, "crosscodex"), 0o700)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(dir, "crosscodex", "config.yaml"), []byte(body), 0o600)).To(Succeed())
+			}
+			loaded, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			return loaded
+		}
+
+		It("defaults to 10m", func() {
+			Expect(load("").Analysis.Engine.SuccessTimeout).To(Equal(10 * time.Minute))
+		})
+
+		It("loads an override from the user config", func() {
+			Expect(load("analysis:\n  engine:\n    success_timeout: 45m\n").Analysis.Engine.SuccessTimeout).To(Equal(45 * time.Minute))
+		})
+
+		It("binds CROSSCODEX_ANALYSIS_ENGINE_SUCCESS_TIMEOUT", func() {
+			GinkgoT().Setenv("CROSSCODEX_ANALYSIS_ENGINE_SUCCESS_TIMEOUT", "20m")
+			Expect(load("").Analysis.Engine.SuccessTimeout).To(Equal(20 * time.Minute))
+		})
+
+		It("rejects a zero value from the user config, naming the file", func() {
+			dir := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", dir)
+			path := filepath.Join(dir, "crosscodex", "config.yaml")
+			Expect(os.MkdirAll(filepath.Dir(path), 0o700)).To(Succeed())
+			Expect(os.WriteFile(path, []byte("analysis:\n  engine:\n    success_timeout: 0s\n"), 0o600)).To(Succeed())
+			_, err := config.NewLoader().Load(context.Background())
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("analysis.engine.success_timeout 0s (set in " + path + ")"))
 		})
 	})
 })
