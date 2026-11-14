@@ -677,3 +677,137 @@ var _ = Describe("Results Commands", func() {
 		})
 	})
 })
+
+// fakeCandidatesClient serves ListJobCandidates from a queue of pages and
+// records every request; other GatewayServiceClient methods panic through
+// the nil embed.
+type fakeCandidatesClient struct {
+	crosscodexv1connect.GatewayServiceClient
+	pages []*pb.ListJobCandidatesResponse
+	calls []*pb.ListJobCandidatesRequest
+}
+
+func (f *fakeCandidatesClient) ListJobCandidates(_ context.Context, req *connectrpc.Request[pb.ListJobCandidatesRequest]) (*connectrpc.Response[pb.ListJobCandidatesResponse], error) {
+	// Copy: the CLI mutates one request across pages.
+	f.calls = append(f.calls, &pb.ListJobCandidatesRequest{
+		JobId:      req.Msg.GetJobId(),
+		ControlId:  req.Msg.GetControlId(),
+		Pagination: &pb.Pagination{PageSize: req.Msg.GetPagination().GetPageSize(), PageToken: req.Msg.GetPagination().GetPageToken()},
+	})
+	return connectrpc.NewResponse(f.pages[len(f.calls)-1]), nil
+}
+
+func candidatesPage(next string, analysis *pb.JobAnalysis, cs ...*pb.RelationshipCandidate) *pb.ListJobCandidatesResponse {
+	return &pb.ListJobCandidatesResponse{Candidates: cs, PageInfo: &pb.PageInfo{NextPageToken: next}, Analysis: analysis}
+}
+
+func candidate(src, tgt string, score float32, generators ...string) *pb.RelationshipCandidate {
+	c := &pb.RelationshipCandidate{SourceControlId: src, TargetControlId: tgt, SimilarityScore: score}
+	for _, g := range generators {
+		c.Contributions = append(c.Contributions, &pb.CandidateContribution{Generator: g, Score: 0.5, Weight: 1})
+	}
+	return c
+}
+
+var _ = Describe("results candidates", func() {
+	var fake *fakeCandidatesClient
+
+	run := func(args ...string) (string, error) {
+		cmd := newResultsCmd(&cliState{client: fake})
+		cmd.PersistentFlags().Bool("json", false, "output as JSON") // root-level in production
+		stdout, _, err := execute(cmd, append([]string{"candidates"}, args...)...)
+		return stdout, err
+	}
+
+	BeforeEach(func() {
+		fake = &fakeCandidatesClient{pages: []*pb.ListJobCandidatesResponse{candidatesPage("", nil)}}
+	})
+
+	It("exports JSON across pages with every field present", func() {
+		analysis := &pb.JobAnalysis{Bidirectional: true}
+		fake.pages = []*pb.ListJobCandidatesResponse{
+			candidatesPage("p2", analysis, candidate("a", "b", 0.75, "bm25", "dense")),
+			candidatesPage("", nil, candidate("c", "d", 0)),
+		}
+		stdout, err := run("job-1", "--format", "json")
+		Expect(err).NotTo(HaveOccurred())
+
+		var out struct {
+			JobID      string           `json:"job_id"`
+			Analysis   map[string]any   `json:"analysis"`
+			Candidates []map[string]any `json:"candidates"`
+		}
+		Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "valid JSON: %s", stdout)
+		Expect(out.JobID).To(Equal("job-1"))
+		Expect(out.Analysis).To(HaveKeyWithValue("bidirectional", true), "the first page's analysis is kept")
+		Expect(out.Candidates).To(HaveLen(2))
+		Expect(out.Candidates[0]).To(HaveKeyWithValue("sourceControlId", "a"))
+		Expect(out.Candidates[0]).To(HaveKeyWithValue("targetControlId", "b"))
+		Expect(out.Candidates[0]).To(HaveKeyWithValue("similarityScore", 0.75))
+		Expect(out.Candidates[0]).To(HaveKeyWithValue("contributions", HaveLen(2)))
+		Expect(out.Candidates[0]["contributions"].([]any)[0]).To(And(
+			HaveKeyWithValue("generator", "bm25"), HaveKey("score"), HaveKey("weight"), HaveKey("metadata")))
+		Expect(out.Candidates[1]).To(HaveKeyWithValue("similarityScore", 0.0), "a zero score is exported, not omitted")
+		Expect(out.Candidates[1]).To(HaveKeyWithValue("contributions", BeEmpty()))
+		Expect(fake.calls).To(HaveLen(2))
+		Expect(fake.calls[0].GetPagination().GetPageSize()).To(Equal(int32(1000)))
+		Expect(fake.calls[1].GetPagination().GetPageToken()).To(Equal("p2"))
+	})
+
+	It("writes null analysis when the response carries none", func() {
+		stdout, err := run("job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(ContainSubstring(`"analysis": null`))
+		Expect(stdout).To(ContainSubstring(`"candidates": []`))
+	})
+
+	It("sends --control in the request", func() {
+		_, err := run("job-1", "--control", "AC-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.calls[0].GetJobId()).To(Equal("job-1"))
+		Expect(fake.calls[0].GetControlId()).To(Equal("AC-1"))
+	})
+
+	It("exports CSV with generators joined by semicolons and catalog IDs made spreadsheet-safe", func() {
+		fake.pages = []*pb.ListJobCandidatesResponse{
+			candidatesPage("", nil, candidate("-AC-1", "t-1", 0.5, "bm25", "dense"), candidate("a", "b", 0.25)),
+		}
+		stdout, err := run("job-1", "--format", "csv")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.Split(strings.TrimSpace(stdout), "\n")).To(Equal([]string{
+			"source_control_id,target_control_id,similarity_score,generators",
+			"'-AC-1,t-1,0.500,bm25;dense",
+			"a,b,0.250,",
+		}))
+	})
+
+	It("writes to --output instead of stdout", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "cand.json")
+		stdout, err := run("job-1", "--output", path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(BeEmpty())
+		b, err := os.ReadFile(path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(b)).To(ContainSubstring(`"job_id": "job-1"`))
+	})
+
+	It("stops when the server repeats the page token it was given", func() {
+		fake.pages = []*pb.ListJobCandidatesResponse{candidatesPage("tok", nil), candidatesPage("tok", nil), candidatesPage("tok", nil)}
+		_, err := run("job-1")
+		Expect(err).To(MatchError(And(
+			ContainSubstring(`list candidates for job job-1: server returned page token "tok" again`),
+			ContainSubstring("crosscodexd bug"))))
+		Expect(fake.calls).To(HaveLen(2))
+	})
+
+	It("rejects an unknown format, listing the valid ones, without calling the server", func() {
+		_, err := run("job-1", "--format", "xml")
+		Expect(err).To(MatchError(ContainSubstring(`invalid --format "xml": use one of json, csv`)))
+		Expect(fake.calls).To(BeEmpty())
+	})
+
+	It("asks for a job id when none is given", func() {
+		_, err := run()
+		Expect(err).To(MatchError(ContainSubstring("job-id")))
+	})
+})

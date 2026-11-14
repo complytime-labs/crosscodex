@@ -1,0 +1,11 @@
+name: synth-run
+source: test/eval/crosswalk/testdata/source_a.json
+target: test/eval/crosswalk/testdata/synthetic_catalog.json
+controls: [s-1, s-2]
+references:
+  oscal_links:
+    rel: x_ref
+    resource:
+      title: '^SYNTHTARGET$'
+    identifier: link_text
+    separator: ','

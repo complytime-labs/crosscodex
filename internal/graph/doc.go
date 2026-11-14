@@ -46,3 +46,4 @@ import (
 // Compile-time interface assertions.
 var _ pbconnect.GraphServiceHandler = (*Service)(nil)
 var _ gateway.GraphBackend = (*Service)(nil)
+var _ gateway.CrosswalkBackend = (*Service)(nil)

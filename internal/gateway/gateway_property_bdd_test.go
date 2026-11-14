@@ -204,6 +204,16 @@ var _ = Describe("Gateway Property Tests", func() {
 					_, err := svc.ListJobMappings(ctx, connect.NewRequest(&pb.ListJobMappingsRequest{JobId: "job-1"}))
 					return err
 				}},
+				{"ListJobCandidates", func() error {
+					_, err := svc.ListJobCandidates(ctx, connect.NewRequest(&pb.ListJobCandidatesRequest{JobId: "job-1"}))
+					return err
+				}},
+				{"GetCrosswalk", func() error {
+					_, err := svc.GetCrosswalk(ctx, connect.NewRequest(&pb.GetCrosswalkRequest{
+						Mode: &pb.GetCrosswalkRequest_JobId{JobId: "job-1"},
+					}))
+					return err
+				}},
 				{"SubmitVote", func() error {
 					_, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: "map-1"}))
 					return err

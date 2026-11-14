@@ -208,6 +208,25 @@ func (m *mockMappings) ListMappings(_ context.Context, req *connect.Request[pb.L
 	return connect.NewResponse(&pb.ListJobMappingsResponse{}), nil
 }
 
+// mockCandidates records the request it receives and returns a configured
+// response or error.
+type mockCandidates struct {
+	got  *pb.ListJobCandidatesRequest
+	resp *pb.ListJobCandidatesResponse
+	err  error
+}
+
+func (m *mockCandidates) ListCandidates(_ context.Context, req *connect.Request[pb.ListJobCandidatesRequest]) (*connect.Response[pb.ListJobCandidatesResponse], error) {
+	m.got = req.Msg
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.resp != nil {
+		return connect.NewResponse(m.resp), nil
+	}
+	return connect.NewResponse(&pb.ListJobCandidatesResponse{}), nil
+}
+
 type mockGraph struct {
 	traverseFn         func(context.Context, *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error)
 	queryFn            func(context.Context, *connect.Request[pb.QueryRequest]) (*connect.Response[pb.QueryResponse], error)
@@ -856,6 +875,50 @@ var _ = Describe("Graph handlers", func() {
 		})
 	})
 
+	Context("ListJobCandidates", func() {
+		It("returns Unauthenticated without an identity", func() {
+			svc := newTestService(gateway.WithCandidatesBackend(&mockCandidates{}))
+			_, err := svc.ListJobCandidates(context.Background(), connect.NewRequest(&pb.ListJobCandidatesRequest{JobId: "job-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+		})
+
+		It("returns Unavailable when the candidates backend is nil", func() {
+			svc := newTestService()
+			_, err := svc.ListJobCandidates(userCtx("user-a"), connect.NewRequest(&pb.ListJobCandidatesRequest{JobId: "job-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+		})
+
+		It("overwrites a client-supplied tenant_context with the identity's tenant", func() {
+			m := &mockCandidates{}
+			svc := newTestService(gateway.WithCandidatesBackend(m))
+			_, err := svc.ListJobCandidates(userCtx("user-a"), connect.NewRequest(&pb.ListJobCandidatesRequest{
+				JobId:         "job-1",
+				ControlId:     "ctrl-1",
+				TenantContext: &pb.TenantContext{TenantId: "tenant-evil"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(m.got.GetTenantContext().GetTenantId()).To(Equal("tenant-a"))
+			Expect(m.got.GetJobId()).To(Equal("job-1"))
+			Expect(m.got.GetControlId()).To(Equal("ctrl-1"))
+		})
+
+		It("passes backend errors through with their code", func() {
+			m := &mockCandidates{err: connect.NewError(connect.CodeNotFound, errors.New("job not found"))}
+			svc := newTestService(gateway.WithCandidatesBackend(m))
+			_, err := svc.ListJobCandidates(userCtx("user-a"), connect.NewRequest(&pb.ListJobCandidatesRequest{JobId: "job-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+		})
+
+		It("returns the backend's candidates", func() {
+			m := &mockCandidates{resp: &pb.ListJobCandidatesResponse{Candidates: []*pb.RelationshipCandidate{{SourceControlId: "s1", TargetControlId: "t1"}}}}
+			svc := newTestService(gateway.WithCandidatesBackend(m))
+			resp, err := svc.ListJobCandidates(userCtx("user-a"), connect.NewRequest(&pb.ListJobCandidatesRequest{JobId: "job-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetCandidates()).To(HaveLen(1))
+			Expect(resp.Msg.GetCandidates()[0].GetSourceControlId()).To(Equal("s1"))
+		})
+	})
+
 	Context("GetControlMappings", func() {
 		It("returns Unavailable when the mappings backend is nil", func() {
 			svc := newTestService()
@@ -1077,8 +1140,12 @@ var _ = Describe("Required request arguments", func() {
 			var reached []string
 			record := func(name string) { reached = append(reached, name) }
 			mappings := &mockMappings{}
+			candidates := &mockCandidates{}
+			crosswalk := &mockCrosswalk{}
 			svc := newTestService(
 				gateway.WithMappingsBackend(mappings),
+				gateway.WithCandidatesBackend(candidates),
+				gateway.WithCrosswalkBackend(crosswalk),
 				gateway.WithCatalogBackend(&mockCatalog{
 					getCatalogFn: func(context.Context, *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error) {
 						record("GetCatalog")
@@ -1123,6 +1190,12 @@ var _ = Describe("Required request arguments", func() {
 			if mappings.got != nil {
 				record("ListMappings")
 			}
+			if candidates.got != nil {
+				record("ListCandidates")
+			}
+			if crosswalk.got != nil {
+				record("GetCrosswalk")
+			}
 			Expect(reached).To(BeEmpty(), "validation must reject the request before any backend call")
 		},
 		Entry("empty catalog_id on GetCatalog", userCtx("user-1"), func(ctx context.Context, svc *gateway.Service) error {
@@ -1149,6 +1222,14 @@ var _ = Describe("Required request arguments", func() {
 		}),
 		Entry("empty job_id on ListJobMappings", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
 			_, err := svc.ListJobMappings(ctx, connect.NewRequest(&pb.ListJobMappingsRequest{}))
+			return err
+		}),
+		Entry("empty job_id on ListJobCandidates", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.ListJobCandidates(ctx, connect.NewRequest(&pb.ListJobCandidatesRequest{}))
+			return err
+		}),
+		Entry("no mode on GetCrosswalk", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.GetCrosswalk(ctx, connect.NewRequest(&pb.GetCrosswalkRequest{}))
 			return err
 		}),
 		Entry("empty control_id on GetControlMappings", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {

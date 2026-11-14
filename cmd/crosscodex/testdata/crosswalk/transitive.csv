@@ -1,0 +1,4 @@
+﻿source_framework,source_id,source_parent,source_title,source_text,relationship,confidence,direction,hub_id,target_framework,target_id,target_parent,target_title,target_text,jobs_judged,jobs_agreeing,other_verdicts,latest_job,source_node_id,target_node_id
+Framework A,AC-1,AC,Access Control Policy,Define access rules.,equivalent,0.90,direct,,Framework C,3.1.1,3.1,Authorized access,Limit access to authorized users.,2,2,,job-2,cat-a/ac-1,cat-c/3.1.1
+Framework A,AC-1,AC,Access Control Policy,Define access rules.,subset of,0.40,derived,HB-1,Framework C,3.1.1,3.1,Authorized access,Limit access to authorized users.,3,3,,job-4,cat-a/ac-1,cat-c/3.1.1
+Framework A,AC-1,AC,Access Control Policy,Define access rules.,"related (derived, type unknown)",0.30,derived,HB-2,Framework C,3.1.1,3.1,Authorized access,Limit access to authorized users.,2,2,,job-3,cat-a/ac-1,cat-c/3.1.1

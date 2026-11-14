@@ -416,6 +416,16 @@ var _ = Describe("Edge cases (green)", func() {
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound), "got: %v", err)
 	})
 
+	It("ListJobCandidates with an unknown job id returns NotFound, proving the candidates backend is attached", func() {
+		_, err := sharedState.client.ListJobCandidates(ctx, connectrpc.NewRequest(&pb.ListJobCandidatesRequest{
+			JobId: "00000000-0000-0000-0000-000000000000",
+		}))
+		Expect(err).To(HaveOccurred())
+		// CodeUnavailable ("candidates backend not configured") would mean
+		// gateway.WithCandidatesBackend is missing from the embedded service.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound), "got: %v", err)
+	})
+
 	It("results summary for an unknown job fails with not-found through the CLI", func() {
 		cmd := newResultsCmd(sharedState)
 		cmd.SetOut(&bytes.Buffer{})

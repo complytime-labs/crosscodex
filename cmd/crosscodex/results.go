@@ -32,6 +32,7 @@ func newResultsCmd(state *cliState) *cobra.Command {
 
 	resultsCmd.AddCommand(newResultsSummaryCmd(state))
 	resultsCmd.AddCommand(newResultsExportCmd(state))
+	resultsCmd.AddCommand(newResultsCandidatesCmd(state))
 	resultsCmd.AddCommand(newResultsQueryCmd(state))
 	resultsCmd.AddCommand(newResultsDebugCmd(state))
 	resultsCmd.AddCommand(newResultsReviewCmd(state))
@@ -247,11 +248,37 @@ func analysisValues(a *pb.JobAnalysis) []string {
 // as a formula (CWE-1236), so such a value gets a leading single quote.
 // Server-generated cells (mapping IDs, numbers, enums) do not need it.
 func csvCell(s string) string {
-	s = intanalyzer.CleanDisplay(s, maxUntrustedDisplayBytes)
+	return csvCellUpTo(s, maxUntrustedDisplayBytes)
+}
+
+// csvCellUpTo is csvCell with the cleaned value capped at maxBytes, for
+// cells whose full text matters (a crosswalk's control statements).
+func csvCellUpTo(s string, maxBytes int) string {
+	s = intanalyzer.CleanDisplay(s, maxBytes)
 	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
 		return "'" + s
 	}
 	return s
+}
+
+// openOutput returns the writer for --output: the file at path, created or
+// truncated, or the command's stdout when path is empty. The returned close
+// function must be deferred with a pointer to the command's named error
+// result; it joins a close error into it, since a failed close can mean the
+// file was not fully written.
+func openOutput(cmd *cobra.Command, path string) (io.Writer, func(err *error), error) {
+	if path == "" {
+		return cmd.OutOrStdout(), func(*error) {}, nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create output file: %w", err)
+	}
+	return f, func(runErr *error) {
+		if closeErr := f.Close(); closeErr != nil {
+			*runErr = errors.Join(*runErr, fmt.Errorf("close output file %s: %w", path, closeErr))
+		}
+	}, nil
 }
 
 // exportFormats lists the --format values export accepts.
@@ -298,21 +325,11 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 			// are not a verdict, so they are left out.
 			noViability := req.GetStage() == pb.MappingStage_MAPPING_STAGE_ANALYZER
 
-			var out io.Writer
-			if outputFile != "" {
-				f, createErr := os.Create(outputFile)
-				if createErr != nil {
-					return fmt.Errorf("failed to create output file: %w", createErr)
-				}
-				defer func() {
-					if closeErr := f.Close(); closeErr != nil {
-						err = errors.Join(err, fmt.Errorf("close output file %s: %w", outputFile, closeErr))
-					}
-				}()
-				out = f
-			} else {
-				out = cmd.OutOrStdout()
+			out, closeOutput, err := openOutput(cmd, outputFile)
+			if err != nil {
+				return err
 			}
+			defer closeOutput(&err)
 
 			switch format {
 			case "json":
@@ -405,6 +422,151 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 	cmd.Flags().String("format", "json", "output format (json or csv)")
 	cmd.Flags().String("output", "", "output file path (default: stdout)")
 	addMappingFlags(cmd)
+
+	return cmd
+}
+
+// listAllCandidates reads every page of a job's relationship candidates and
+// the job's analysis, which the server sends on every page; the first page's
+// is kept. It mutates req.Pagination to walk the page tokens.
+func listAllCandidates(ctx context.Context, client crosscodexv1connect.GatewayServiceClient, req *pb.ListJobCandidatesRequest) ([]*pb.RelationshipCandidate, *pb.JobAnalysis, error) {
+	var all []*pb.RelationshipCandidate
+	var analysis *pb.JobAnalysis
+	pageToken := ""
+	seen := map[string]bool{}
+	for {
+		req.Pagination = &pb.Pagination{PageSize: mappingPageSize, PageToken: pageToken}
+		resp, err := client.ListJobCandidates(ctx, connectrpc.NewRequest(req))
+		if err != nil {
+			return nil, nil, fmt.Errorf("list candidates for job %s: %w", req.GetJobId(), err)
+		}
+		all = append(all, resp.Msg.GetCandidates()...)
+		if analysis == nil {
+			analysis = resp.Msg.GetAnalysis()
+		}
+		seen[pageToken] = true
+		pageToken = resp.Msg.GetPageInfo().GetNextPageToken()
+		if pageToken == "" {
+			return all, analysis, nil
+		}
+		if seen[pageToken] {
+			return nil, nil, fmt.Errorf("list candidates for job %s: server returned page token %q again; stopping to avoid an endless loop. Report this as a crosscodexd bug", req.GetJobId(), pageToken)
+		}
+	}
+}
+
+func newResultsCandidatesCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "candidates <job-id>",
+		Short: "Export the pairs candidate generation proposed, to JSON or CSV",
+		Long: `Export every source-target pair candidate generation proposed to the
+relationship analyzer for a completed job, whether or not the analyzer later
+mapped it. Use it to check how well candidate generation covers a crosswalk.
+
+similarity_score is the embedding cosine similarity on a 0 to 100 scale; it is
+0 when no embedding exists for the pair. Contributions list one entry per
+generator that proposed the pair, with the generator's own score and the
+weight rank fusion gave it. They are empty unless the candidate strategy is
+rank fusion, so with another strategy JSON shows "contributions": [] and the
+CSV generators column is empty.
+
+JSON wraps the candidates with the job's source and target catalogs and
+direction under "analysis", as results export does. CSV has the columns
+source_control_id, target_control_id, similarity_score and generators, where
+generators joins the proposing generators with ";". A CSV control ID that
+would start with = + - or @ gets a leading single quote, so a spreadsheet does
+not run it as a formula.`,
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			jobID := args[0]
+			format, _ := cmd.Flags().GetString("format")
+			outputFile, _ := cmd.Flags().GetString("output")
+			controlID, _ := cmd.Flags().GetString("control")
+
+			if !slices.Contains(exportFormats, format) {
+				return fmt.Errorf("invalid --format %q: use one of %s", format, strings.Join(exportFormats, ", "))
+			}
+
+			candidates, analysis, err := listAllCandidates(cmd.Context(), state.client, &pb.ListJobCandidatesRequest{JobId: jobID, ControlId: controlID})
+			if err != nil {
+				return err
+			}
+
+			out, closeOutput, err := openOutput(cmd, outputFile)
+			if err != nil {
+				return err
+			}
+			defer closeOutput(&err)
+
+			if format == "csv" {
+				w := csv.NewWriter(out)
+				defer w.Flush()
+
+				if err := w.Write([]string{"source_control_id", "target_control_id", "similarity_score", "generators"}); err != nil {
+					return fmt.Errorf("write CSV header: %w", err)
+				}
+				for _, c := range candidates {
+					generators := make([]string, len(c.GetContributions()))
+					for i, contribution := range c.GetContributions() {
+						generators[i] = contribution.GetGenerator()
+					}
+					if err := w.Write([]string{
+						csvCell(c.GetSourceControlId()),
+						csvCell(c.GetTargetControlId()),
+						fmt.Sprintf("%.3f", c.GetSimilarityScore()),
+						strings.Join(generators, ";"),
+					}); err != nil {
+						return fmt.Errorf("write CSV row: %w", err)
+					}
+				}
+				w.Flush()
+				if err := w.Error(); err != nil {
+					return fmt.Errorf("write CSV: %w", err)
+				}
+				return nil
+			}
+
+			// protojson with EmitUnpopulated keeps zero scores and empty
+			// contributions that encoding/json would drop.
+			raw := make([]json.RawMessage, len(candidates))
+			for i, c := range candidates {
+				b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(c)
+				if err != nil {
+					return fmt.Errorf("encode candidate %s -> %s as JSON: %w", c.GetSourceControlId(), c.GetTargetControlId(), err)
+				}
+				raw[i] = b
+			}
+			analysisJSON := json.RawMessage("null")
+			if analysis != nil {
+				b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(analysis)
+				if err != nil {
+					return fmt.Errorf("encode the analysis of job %s as JSON: %w", jobID, err)
+				}
+				analysisJSON = b
+			}
+			enc := json.NewEncoder(out)
+			enc.SetIndent("", "  ")
+			return enc.Encode(map[string]any{
+				"job_id":     jobID,
+				"analysis":   analysisJSON,
+				"candidates": raw,
+			})
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
+		noun:  "a job-id",
+		find:  "crosscodex results candidates <job-id>",
+		usage: "crosscodex results candidates <job-id> [--format json|csv] [--output file] [--control <id>]",
+		examples: []string{
+			"crosscodex results candidates abc123",
+			"crosscodex results candidates abc123 --format csv --output candidates.csv",
+			"crosscodex results candidates abc123 --control AC-1",
+		},
+	})
+
+	cmd.Flags().String("format", "json", "output format (json or csv)")
+	cmd.Flags().String("output", "", "output file path (default: stdout)")
+	cmd.Flags().String("control", "", "only candidates whose source or target is this control id")
 
 	return cmd
 }

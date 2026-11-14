@@ -158,11 +158,11 @@ func (s *PGStore) ListMappings(ctx context.Context, f Filter) (Page, error) {
 		return s.inTx(ctx, f.TenantID, func(tx db.Transaction) error {
 			var analysis *JobAnalysis
 			if f.JobID != "" {
-				config, err := requireCompleted(ctx, tx, f)
+				config, err := requireCompleted(ctx, tx, "list mappings", f.TenantID, f.JobID)
 				if err != nil {
 					return err
 				}
-				if analysis, err = readAnalysis(ctx, tx, f.TenantID, config); err != nil {
+				if analysis, err = readAnalysis(ctx, tx, "list mappings", f.TenantID, config); err != nil {
 					return err
 				}
 			}
@@ -190,20 +190,20 @@ func (s *PGStore) ListMappings(ctx context.Context, f Filter) (Page, error) {
 	return page, nil
 }
 
-// requireCompleted fails unless f.JobID names a completed job of the tenant,
-// and returns the job's stored config.
-func requireCompleted(ctx context.Context, tx db.Transaction, f Filter) ([]byte, error) {
+// requireCompleted fails unless jobID names a completed job of the tenant,
+// and returns the job's stored config. op prefixes errors.
+func requireCompleted(ctx context.Context, tx db.Transaction, op, tenantID, jobID string) ([]byte, error) {
 	var status string
 	var config []byte
-	err := tx.QueryRow(ctx, `SELECT status, config FROM jobs WHERE job_id = $1 AND tenant_id = $2`, f.JobID, f.TenantID).Scan(&status, &config)
+	err := tx.QueryRow(ctx, `SELECT status, config FROM jobs WHERE job_id = $1 AND tenant_id = $2`, jobID, tenantID).Scan(&status, &config)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("list mappings: %w", ErrJobNotFound)
+		return nil, fmt.Errorf("%s: %w", op, ErrJobNotFound)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("list mappings: read job %s: %w", f.JobID, err)
+		return nil, fmt.Errorf("%s: read job %s: %w", op, jobID, err)
 	}
 	if status != jobStatusCompleted {
-		return nil, &JobNotCompletedError{JobID: f.JobID, Status: status}
+		return nil, &JobNotCompletedError{JobID: jobID, Status: status}
 	}
 	return config, nil
 }
@@ -216,7 +216,7 @@ func requireCompleted(ctx context.Context, tx db.Transaction, f Filter) ([]byte,
 // from its current row: one it does not have (deleted, purged, or another
 // tenant's) is not imported, and without a recorded label is reported by ID
 // only, since RLS and the tenant_id predicate both hide other tenants' rows.
-func readAnalysis(ctx context.Context, tx db.Transaction, tenantID string, config []byte) (*JobAnalysis, error) {
+func readAnalysis(ctx context.Context, tx db.Transaction, op, tenantID string, config []byte) (*JobAnalysis, error) {
 	cats, ok := jobconfig.ExtractCatalogs(config)
 	if !ok {
 		return nil, nil
@@ -224,19 +224,19 @@ func readAnalysis(ctx context.Context, tx db.Transaction, tenantID string, confi
 	rows, err := tx.Query(ctx, `SELECT catalog_id, name, version FROM catalogs WHERE tenant_id = $1 AND catalog_id = ANY($2::text[])`,
 		tenantID, cats.CatalogIDs())
 	if err != nil {
-		return nil, fmt.Errorf("list mappings: read the job's catalogs: %w", err)
+		return nil, fmt.Errorf("%s: read the job's catalogs: %w", op, err)
 	}
 	found := make(map[string]CatalogSummary, 2)
 	for rows.Next() {
 		var c CatalogSummary
 		if err := rows.Scan(&c.ID, &c.Name, &c.Version); err != nil {
-			return nil, errors.Join(fmt.Errorf("list mappings: scan the job's catalog: %w", err), rows.Close())
+			return nil, errors.Join(fmt.Errorf("%s: scan the job's catalog: %w", op, err), rows.Close())
 		}
 		c.Imported = true
 		found[c.ID] = c
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, fmt.Errorf("list mappings: read the job's catalogs: %w", err)
+		return nil, fmt.Errorf("%s: read the job's catalogs: %w", op, err)
 	}
 	summary := func(id string) CatalogSummary {
 		c, ok := found[id]
@@ -249,6 +249,82 @@ func readAnalysis(ctx context.Context, tx db.Transaction, tenantID string, confi
 		return c
 	}
 	return &JobAnalysis{Source: summary(cats.SourceID), Target: summary(cats.TargetID), Bidirectional: cats.Bidirectional}, nil
+}
+
+// candidatesSQL pages relationship_candidates by (job_id, source_id,
+// target_id). The job is checked for completion by requireCompleted. Real rows
+// sort after the empty cursor ("","","") because job_id is never empty.
+const candidatesSQL = `
+SELECT job_id, source_id, target_id, similarity_score, provenance
+FROM relationship_candidates
+WHERE tenant_id = $1
+  AND job_id = $2
+  AND ($3::text = '' OR source_id = $3 OR target_id = $3)
+  AND (job_id, source_id, target_id) > ($4::text, $5::text, $6::text)
+ORDER BY job_id, source_id, target_id
+LIMIT $7`
+
+// ListCandidates returns one page of the relationship candidates of f.JobID.
+// A row whose provenance cannot be decoded fails the whole page with
+// ErrCorruptProvenance rather than being skipped: a caller scoring
+// candidate quality would otherwise report on a silently partial set.
+func (s *PGStore) ListCandidates(ctx context.Context, f CandidateFilter) (CandidatePage, error) {
+	var page CandidatePage
+	err := s.observe(ctx, "ListCandidates", f.TenantID, func(ctx context.Context) error {
+		return s.inTx(ctx, f.TenantID, func(tx db.Transaction) error {
+			config, err := requireCompleted(ctx, tx, "list candidates", f.TenantID, f.JobID)
+			if err != nil {
+				return err
+			}
+			if page.Analysis, err = readAnalysis(ctx, tx, "list candidates", f.TenantID, config); err != nil {
+				return err
+			}
+			rows, err := listCandidateRows(ctx, tx, f)
+			if err != nil {
+				return err
+			}
+			page.Candidates = rows
+			if len(rows) > f.PageSize {
+				page.Candidates = rows[:f.PageSize]
+				last := page.Candidates[f.PageSize-1]
+				page.Next = &Cursor{JobID: last.JobID, SourceID: last.SourceID, TargetID: last.TargetID}
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return CandidatePage{}, err
+	}
+	return page, nil
+}
+
+// listCandidateRows fetches up to f.PageSize+1 candidates; the extra row
+// tells ListCandidates another page exists.
+func listCandidateRows(ctx context.Context, tx db.Transaction, f CandidateFilter) ([]Candidate, error) {
+	after := Cursor{}
+	if f.After != nil {
+		after = *f.After
+	}
+	rs, err := tx.Query(ctx, candidatesSQL, f.TenantID, f.JobID, f.ControlID, after.JobID, after.SourceID, after.TargetID, f.PageSize+1)
+	if err != nil {
+		return nil, fmt.Errorf("list candidates: query relationship candidates: %w", err)
+	}
+	var out []Candidate
+	for rs.Next() {
+		var c Candidate
+		var provenance []byte
+		if err := rs.Scan(&c.JobID, &c.SourceID, &c.TargetID, &c.Similarity, &provenance); err != nil {
+			return nil, errors.Join(fmt.Errorf("list candidates: scan relationship candidate: %w", err), rs.Close())
+		}
+		if c.Contributions, err = decodeContributions(provenance); err != nil {
+			return nil, errors.Join(fmt.Errorf("list candidates: job %s pair %s -> %s: %w; re-run the job or ask an operator to inspect its relationship_candidates row", c.JobID, c.SourceID, c.TargetID, err), rs.Close())
+		}
+		out = append(out, c)
+	}
+	if err := errors.Join(rs.Err(), rs.Close()); err != nil {
+		return nil, fmt.Errorf("list candidates: read relationship candidates: %w", err)
+	}
+	return out, nil
 }
 
 // paginate trims rows fetched with one extra row to size and sets Next to

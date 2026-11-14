@@ -1,0 +1,16 @@
+# SSDF (NIST SP 800-218) tasks scored against the SP 800-53 r5 controls the
+# SSDF cites for them. 10 source controls, 4 groups (PO, PS, PW, RV).
+# Resolved references, checked exactly by profiles_bdd_test.go:
+# references: 36
+name: ssdf-to-sp800-53r5
+source: catalogs/NIST_SP800-218_ver1_catalog.json
+target: catalogs/NIST_SP-800-53_rev5_catalog.json
+controls: [PO.1.2, PO.4.2, PO.5.1, PS.3.1, PW.1.1, PW.4.4, PW.7.2, PW.8.2, RV.1.3, RV.2.2]
+references:
+  oscal_links:
+    rel: external_reference
+    # SP 800-161 cites the same labels, so the title is anchored.
+    resource:
+      title: '^SP80053$'
+    identifier: link_text
+    separator: ','

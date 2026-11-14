@@ -1,0 +1,10 @@
+name: synth-titles-by-rlink
+source: test/eval/crosswalk/testdata/source_b.json
+target: test/eval/crosswalk/testdata/synthetic_catalog.json
+controls: [t-1, t-2]
+references:
+  oscal_links:
+    rel: reference
+    resource:
+      rlink: 'SYNTH_TARGET_1'
+    identifier: resource_title

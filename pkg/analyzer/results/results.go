@@ -33,6 +33,39 @@ const SemanticMatchEdgeLabel = "SEMANTIC_MATCH"
 // share an ID.
 const SemanticMatchEdgeIDKind = "semantic-match"
 
+// SemanticMatchSynthesizedIDKind is the first graphdb.DerivedID part of a
+// synthesized SEMANTIC_MATCH edge ID: DerivedID(SemanticMatchSynthesizedIDKind,
+// jobID, src, tgt). It differs from SemanticMatchEdgeIDKind so a pair's
+// analyzer edge and synthesized edge in one job do not collide.
+const SemanticMatchSynthesizedIDKind = "semantic-match-synthesized"
+
+// StageProperty is the SEMANTIC_MATCH edge property naming the pipeline stage
+// that produced the edge: StageAnalyzer for the relationship analyzer's raw
+// result, StageSynthesized for the synthesis stage's consensus. Readers treat
+// an edge without the property as StageAnalyzer.
+const (
+	StageProperty    = "stage"
+	StageAnalyzer    = "analyzer"
+	StageSynthesized = "synthesized"
+)
+
+// SynthesisStage is the pipeline stage name of synthesis. Its stage event
+// carries no rows; the graph subscriber's PG resolver serves them from
+// vote_summaries as a JSON []SynthesizedMapping.
+const SynthesisStage = "synthesis"
+
+// SynthesizedMapping is one synthesized relationship of a job, read from a
+// vote_summaries row of the relationship analyzer. RelationshipType is the
+// row's consensus; IsViable is Viability > 0.
+type SynthesizedMapping struct {
+	SourceID         string  `json:"source_id"`
+	TargetID         string  `json:"target_id"`
+	RelationshipType string  `json:"relationship_type"`
+	Confidence       float64 `json:"confidence"`
+	Viability        float64 `json:"viability"`
+	IsViable         bool    `json:"is_viable"`
+}
+
 // RequiresResult is one consensus-computed prerequisite pair from the
 // requires analyzer.
 type RequiresResult struct {

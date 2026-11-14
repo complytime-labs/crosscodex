@@ -41,6 +41,8 @@ includes:
     taskfile: .taskfiles/test.yml
   deploy:
     taskfile: .taskfiles/deploy.yml
+  eval:
+    taskfile: .taskfiles/eval.yml
 
 vars:
   MODULE: github.com/complytime-labs/crosscodex
@@ -52,6 +54,12 @@ vars:
     sh: |
       host='{{.OLLAMA_HOST | default "http://localhost:11434"}}'
       case "$host" in http://*|https://*) echo "$host" ;; *) echo "http://$host" ;; esac
+  # The smoke stack's published gateway port and throwaway PKI dir. Shared by
+  # the deploy:smoke:* and eval:* tasks (an included taskfile cannot read
+  # another's vars). SMOKE_CERTS_DIR is a fixed .test-output path (not an
+  # mktemp) so smoke:down can remove the same dir smoke:up created.
+  SMOKE_GATEWAY_PORT: '{{.SMOKE_GATEWAY_PORT | default "50151"}}'
+  SMOKE_CERTS_DIR: '{{.SMOKE_CERTS_DIR | default (printf "%s/.test-output/deploy-smoke/certs" .ROOT_DIR)}}'
   OLLAMA_CHAT_MODEL: '{{.OLLAMA_CHAT_MODEL | default "llama3.2:1b"}}'
   OLLAMA_EMBED_MODEL: '{{.OLLAMA_EMBED_MODEL | default "granite-embedding:30m"}}'
 

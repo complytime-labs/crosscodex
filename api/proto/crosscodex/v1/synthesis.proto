@@ -212,6 +212,56 @@ message ListJobMappingsResponse {
   JobAnalysis analysis = 3;
 }
 
+// ListJobCandidatesRequest lists the relationship candidates of one completed
+// job.
+message ListJobCandidatesRequest {
+  // Set by the gateway from the authenticated identity; a client value is
+  // overwritten.
+  TenantContext tenant_context = 1;
+  // Required. The job must be completed, as for ListJobMappings; an unknown
+  // job, or another tenant's job, is NOT_FOUND.
+  string job_id = 2;
+  // Optional: matches source or target.
+  string control_id = 3;
+  // page_size default 50, max 1000 (larger or negative is INVALID_ARGUMENT).
+  Pagination pagination = 4;
+}
+
+// RelationshipCandidate is one source-target pair candidate generation
+// proposed to the relationship analyzer.
+message RelationshipCandidate {
+  string source_control_id = 1;
+  string target_control_id = 2;
+  // Embedding cosine similarity in [0, 100]. 0 when no embedding exists for
+  // the pair.
+  float similarity_score = 3;
+  // One per generator that proposed the pair. Empty unless the candidate
+  // strategy is rank fusion.
+  repeated CandidateContribution contributions = 4;
+}
+
+// CandidateContribution is one generator's share of a candidate pair.
+message CandidateContribution {
+  // The generator that proposed the pair.
+  string generator = 1;
+  // The generator's own score for the pair.
+  double score = 2;
+  // The weight the fusion gave the generator.
+  double weight = 3;
+  // Generator-specific details.
+  map<string, string> metadata = 4;
+}
+
+// ListJobCandidatesResponse returns one page of candidates ordered by source,
+// then target.
+message ListJobCandidatesResponse {
+  repeated RelationshipCandidate candidates = 1;
+  PageInfo page_info = 2;
+  // What produced the job's candidates; the same on every page. See
+  // ListJobMappingsResponse.analysis.
+  JobAnalysis analysis = 3;
+}
+
 // JobAnalysis is the catalog selection of an analysis job.
 message JobAnalysis {
   // The catalog whose controls were mapped onto the target's.

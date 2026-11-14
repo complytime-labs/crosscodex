@@ -114,6 +114,19 @@ func (e storeEnv) seedVote(tenantID, jobID, src, tgt, consensus string, confiden
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, jobID, src, tgt, contribution, consensus, confidence, viability, tenantID)).To(Succeed())
 }
 
+// seedCandidate inserts a relationship_candidates row with the given
+// provenance JSON, as the pipeline's WriteRelationshipCandidates does.
+func (e storeEnv) seedCandidate(tenantID, jobID, src, tgt string, similarity float64, provenance string) {
+	Expect(e.su.Exec(context.Background(), `INSERT INTO relationship_candidates (tenant_id, job_id, source_id, target_id, similarity_score, provenance)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb)`, tenantID, jobID, src, tgt, similarity, provenance)).To(Succeed())
+}
+
+func (e storeEnv) candidateCount(jobID string) int {
+	var n int
+	Expect(e.su.QueryRow(context.Background(), `SELECT count(*) FROM relationship_candidates WHERE job_id = $1`, jobID).Scan(&n)).To(Succeed())
+	return n
+}
+
 func (e storeEnv) seedAnalysis(tenantID, jobID, data string) {
 	Expect(e.su.Exec(context.Background(), `INSERT INTO analysis_results (tenant_id, job_id, analyzer_name, result_data)
 		VALUES ($1, $2, 'relationship', $3::jsonb)`, tenantID, jobID, data)).To(Succeed())
@@ -485,6 +498,110 @@ var _ = Describe("PGStore", func() {
 			page, err = env.store.ListMappings(env.ctxA, acrossJobs)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(page.Analysis).To(BeNil())
+		})
+	})
+
+	Describe("candidates", func() {
+		const prov = `[{"GeneratorName":"embedding","Score":0.8,"Weight":0.6,"Metadata":{"rank":"1"}},
+			{"GeneratorName":"keyword","Score":0.25,"Weight":0.4,"Metadata":{"rank":"3"}}]`
+		var job string
+
+		candidateFilter := func(ctx string, jobID string) results.CandidateFilter {
+			return results.CandidateFilter{TenantID: ctx, JobID: jobID, PageSize: 100}
+		}
+		pairs := func(p results.CandidatePage) []string {
+			out := make([]string, 0, len(p.Candidates))
+			for _, c := range p.Candidates {
+				out = append(out, c.SourceID+">"+c.TargetID)
+			}
+			return out
+		}
+
+		BeforeEach(func() {
+			job = env.seedJob(env.tenantA, "completed")
+			env.seedCandidate(env.tenantA, job, "A3", "B1", 70, prov)
+			env.seedCandidate(env.tenantA, job, "A1", "B2", 90, prov)
+			env.seedCandidate(env.tenantA, job, "A2", "B1", 80, `[]`)
+		})
+
+		It("pages two of three candidates, then the third, ordered by source and target", func() {
+			f := candidateFilter(env.tenantA, job)
+			f.PageSize = 2
+			first, err := env.store.ListCandidates(env.ctxA, f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairs(first)).To(Equal([]string{"A1>B2", "A2>B1"}))
+			Expect(first.Next).NotTo(BeNil())
+
+			f.After = first.Next
+			second, err := env.store.ListCandidates(env.ctxA, f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairs(second)).To(Equal([]string{"A3>B1"}))
+			Expect(second.Next).To(BeNil())
+		})
+
+		It("decodes similarity and contributions", func() {
+			page, err := env.store.ListCandidates(env.ctxA, candidateFilter(env.tenantA, job))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Candidates[0]).To(Equal(results.Candidate{
+				JobID: job, SourceID: "A1", TargetID: "B2", Similarity: 90,
+				Contributions: []results.Contribution{
+					{Generator: "embedding", Score: 0.8, Weight: 0.6, Metadata: map[string]string{"rank": "1"}},
+					{Generator: "keyword", Score: 0.25, Weight: 0.4, Metadata: map[string]string{"rank": "3"}},
+				},
+			}))
+			Expect(page.Candidates[1].Contributions).To(BeEmpty())
+		})
+
+		It("filters by control on either side", func() {
+			f := candidateFilter(env.tenantA, job)
+			f.ControlID = "B1"
+			page, err := env.store.ListCandidates(env.ctxA, f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairs(page)).To(Equal([]string{"A2>B1", "A3>B1"}))
+
+			f.ControlID = "A1"
+			page, err = env.store.ListCandidates(env.ctxA, f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairs(page)).To(Equal([]string{"A1>B2"}))
+		})
+
+		It("reports the job's analysis", func() {
+			cat := env.seedCatalog(env.tenantA, "Cat", "1")
+			withCatalog := env.seedJobWithConfig(env.tenantA, "completed", fmt.Sprintf(`{"catalog_id":%q,"target_catalog_id":%q}`, cat, cat))
+			page, err := env.store.ListCandidates(env.ctxA, candidateFilter(env.tenantA, withCatalog))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Candidates).To(BeEmpty())
+			Expect(page.Analysis).NotTo(BeNil())
+			Expect(page.Analysis.Source.ID).To(Equal(cat))
+		})
+
+		It("hides another tenant's job", func() {
+			_, err := env.store.ListCandidates(env.ctxB, candidateFilter(env.tenantB, job))
+			Expect(err).To(MatchError(results.ErrJobNotFound))
+		})
+
+		It("refuses a filter whose tenant differs from the context", func() {
+			_, err := env.store.ListCandidates(env.ctxB, candidateFilter(env.tenantA, job))
+			Expect(err).To(HaveOccurred())
+			Expect(err).NotTo(MatchError(results.ErrJobNotFound))
+		})
+
+		It("refuses a job that has not completed", func() {
+			running := env.seedJob(env.tenantA, "running")
+			env.seedCandidate(env.tenantA, running, "A1", "B1", 50, `[]`)
+			_, err := env.store.ListCandidates(env.ctxA, candidateFilter(env.tenantA, running))
+			var notDone *results.JobNotCompletedError
+			Expect(errors.As(err, &notDone)).To(BeTrue())
+			Expect(notDone.Status).To(Equal("running"))
+		})
+
+		It("fails on corrupt provenance and leaves the rows unchanged", func() {
+			env.seedCandidate(env.tenantA, job, "A9", "B9", 10, `{"GeneratorName":"embedding"}`)
+			before := env.candidateCount(job)
+			_, err := env.store.ListCandidates(env.ctxA, candidateFilter(env.tenantA, job))
+			Expect(err).To(MatchError(results.ErrCorruptProvenance))
+			Expect(err).To(MatchError(ContainSubstring("A9 -> B9")))
+			Expect(env.candidateCount(job)).To(Equal(before))
 		})
 	})
 })

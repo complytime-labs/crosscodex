@@ -6,6 +6,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -13,6 +14,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func newRunCmd(state *cliState) *cobra.Command {
@@ -185,6 +187,16 @@ without one shows as not attested, or in progress while the job runs.`,
 				}
 			}
 
+			stages := make([]map[string]string, len(job.GetStages()))
+			for i, stage := range job.GetStages() {
+				stages[i] = map[string]string{
+					"name":         stage.GetStageName(),
+					"status":       stage.GetStatus().String(),
+					"started_at":   formatStageTime(stage.GetStartedAt()),
+					"completed_at": formatStageTime(stage.GetCompletedAt()),
+				}
+			}
+
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Job: %s\n", job.GetJobId())
@@ -224,6 +236,7 @@ without one shows as not attested, or in progress while the job runs.`,
 					"error":     jobErr,
 					"progress":  job.GetProgress(),
 					"analyzers": analyzers,
+					"stages":    stages,
 					"analysis":  catalogs.toJSON(),
 					"cache":     cacheToJSON(job.GetCacheSummaries()),
 				},
@@ -385,6 +398,15 @@ complete, so it asks for no confirmation.`,
 	cmd.Flags().Bool("from-failure", false, "Resume the job in place from its first failed or cancelled stage instead of starting a new job")
 
 	return cmd
+}
+
+// formatStageTime renders a stage timestamp as RFC 3339 with nanoseconds, or
+// "" when the stage has not reached that point.
+func formatStageTime(ts *timestamppb.Timestamp) string {
+	if ts == nil {
+		return ""
+	}
+	return ts.AsTime().Format(time.RFC3339Nano)
 }
 
 func formatJobStatus(status pb.JobStatus) string {

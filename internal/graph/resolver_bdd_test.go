@@ -167,3 +167,62 @@ var _ = Describe("PGResolver tenant scoping", func() {
 		Expect(errors.Is(err, db.ErrTenantRequired)).To(BeTrue())
 	})
 })
+
+var _ = Describe("PGResolver synthesis stage", func() {
+	var ctx context.Context
+
+	BeforeEach(func() {
+		var err error
+		ctx, err = tenant.WithTenant(context.Background(), "tenant-a")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("serves the job's relationship vote summaries as synthesized mappings, bound to the ctx tenant", func() {
+		var capturedArgs []any
+		tx := &dbtest.Tx{
+			QueryFunc: func(_ context.Context, _ string, args ...any) (db.Rows, error) {
+				capturedArgs = args
+				return dbtest.Rows(nil,
+					[]any{"c1", "c2", "EQUIVALENT", 0.9, 0.7},
+					[]any{"c2", "c3", "SUBSET_OF", 0.8, 0.0}), nil
+			},
+		}
+		r := graph.NewPGResolver(&dbtest.Conn{Tx: tx})
+
+		data, err := r.Resolve(ctx, graph.ResourceRef{URI: "pg://results/job-1/synthesis"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(MatchJSON(`[
+			{"source_id":"c1","target_id":"c2","relationship_type":"EQUIVALENT","confidence":0.9,"viability":0.7,"is_viable":true},
+			{"source_id":"c2","target_id":"c3","relationship_type":"SUBSET_OF","confidence":0.8,"viability":0,"is_viable":false}]`))
+		Expect(capturedArgs).To(Equal([]any{"tenant-a", "job-1", "relationship"}))
+		Expect(tx.Commits()).To(Equal(1))
+	})
+
+	It("serves an empty array, not null, when the job has no vote summaries", func() {
+		tx := &dbtest.Tx{
+			QueryFunc: func(context.Context, string, ...any) (db.Rows, error) { return dbtest.Rows(nil), nil },
+		}
+		data, err := graph.NewPGResolver(&dbtest.Conn{Tx: tx}).Resolve(ctx, graph.ResourceRef{URI: "pg://results/job-1/synthesis"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(MatchJSON(`[]`))
+	})
+
+	DescribeTable("rolls back and names the job when reading fails",
+		func(queryFunc func(context.Context, string, ...any) (db.Rows, error), wantMsg string) {
+			tx := &dbtest.Tx{QueryFunc: queryFunc}
+			_, err := graph.NewPGResolver(&dbtest.Conn{Tx: tx}).Resolve(ctx, graph.ResourceRef{URI: "pg://results/job-1/synthesis"})
+			Expect(err).To(MatchError(ContainSubstring("pg resolve job job-1 analyzer synthesis")))
+			Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			Expect(tx.Commits()).To(BeZero())
+			Expect(tx.Rollbacks()).To(Equal(1))
+		},
+		Entry("the query fails",
+			func(context.Context, string, ...any) (db.Rows, error) { return nil, errors.New("connection lost") },
+			"connection lost"),
+		Entry("iterating rows fails",
+			func(context.Context, string, ...any) (db.Rows, error) {
+				return dbtest.Rows(errors.New("cursor broke")), nil
+			},
+			"cursor broke"),
+	)
+})

@@ -350,6 +350,12 @@ func nonIdentifierOps() []any {
 		ginkgo.Entry("QueryRelationships target label", query(graphdb.RelationshipQuery{TargetLabel: cypherBreakout})),
 		ginkgo.Entry("QueryRelationships edge label", query(graphdb.RelationshipQuery{EdgeLabel: cypherBreakout})),
 		ginkgo.Entry("QueryRelationships property key", query(graphdb.RelationshipQuery{Properties: map[string]any{"k = 1 OR 1": 1}})),
+		ginkgo.Entry("QueryRelationships source property key", query(graphdb.RelationshipQuery{SourceProperties: map[string]any{"k = 1 OR 1": 1}})),
+		ginkgo.Entry("QueryRelationships target property key", query(graphdb.RelationshipQuery{TargetProperties: map[string]any{"k = 1 OR 1": 1}})),
+		ginkgo.Entry("QueryAsOf endpoint property key", graphOp(func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
+			_, err := db.QueryAsOf(ctx, tenant, graphdb.RelationshipQuery{SourceProperties: map[string]any{"has space": 1}}, contractT0)
+			return err
+		})),
 		ginkgo.Entry("QueryAsOf edge label", graphOp(func(ctx context.Context, db graphdb.GraphDB, tenant string) error {
 			_, err := db.QueryAsOf(ctx, tenant, graphdb.RelationshipQuery{EdgeLabel: cypherBreakout}, contractT0)
 			return err
@@ -1561,6 +1567,40 @@ func GraphDBContractBehavior(setup GraphDBSetup) func() {
 				mustEdge("b", "a", graphdb.Edge{ID: "e3", Label: "MAPS", ValidFrom: contractT0, ValidTo: timePtr(contractT0.Add(time.Hour))})
 				gomega.Expect(relEdgeIDs(currentEdges(graphdb.RelationshipQuery{}))).To(gomega.ConsistOf("e1", "e2"))
 			})
+		})
+
+		ginkgo.Describe("endpoint property filters", func() {
+			// Nodes p, q, r carry catalog_id A, B, C; s has no catalog_id.
+			// Edges: pq (A->B), pr (A->C), qr (B->C), sp (s->A, s has no catalog_id).
+			ginkgo.BeforeEach(func() {
+				for id, catalog := range map[string]string{"p": "A", "q": "B", "r": "C"} {
+					gomega.Expect(db.CreateNode(ctx, tenant, graphdb.Node{ID: id, Label: "Control", ValidFrom: contractT0, Properties: map[string]any{"catalog_id": catalog}})).To(gomega.Succeed())
+				}
+				mustNode("s", "Control")
+				mustEdge("p", "q", graphdb.Edge{ID: "pq", Label: "SEMANTIC_MATCH", ValidFrom: contractT0})
+				mustEdge("p", "r", graphdb.Edge{ID: "pr", Label: "SEMANTIC_MATCH", ValidFrom: contractT0})
+				mustEdge("q", "r", graphdb.Edge{ID: "qr", Label: "SEMANTIC_MATCH", ValidFrom: contractT0})
+				mustEdge("s", "p", graphdb.Edge{ID: "sp", Label: "SEMANTIC_MATCH", ValidFrom: contractT0})
+			})
+
+			ginkgo.DescribeTable("selects edges by the endpoints' stored properties",
+				func(q graphdb.RelationshipQuery, want []string) {
+					gomega.Expect(relEdgeIDs(currentEdges(q))).To(gomega.ConsistOf(want))
+					asOf, err := db.QueryAsOf(ctx, tenant, q, contractT0)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(relEdgeIDs(asOf)).To(gomega.ConsistOf(want))
+				},
+				ginkgo.Entry("nil maps leave the query unchanged", graphdb.RelationshipQuery{}, []string{"pq", "pr", "qr", "sp"}),
+				ginkgo.Entry("empty maps leave the query unchanged", graphdb.RelationshipQuery{SourceProperties: map[string]any{}, TargetProperties: map[string]any{}}, []string{"pq", "pr", "qr", "sp"}),
+				ginkgo.Entry("source only", graphdb.RelationshipQuery{SourceProperties: map[string]any{"catalog_id": "A"}}, []string{"pq", "pr"}),
+				ginkgo.Entry("target only", graphdb.RelationshipQuery{TargetProperties: map[string]any{"catalog_id": "C"}}, []string{"pr", "qr"}),
+				ginkgo.Entry("source and target", graphdb.RelationshipQuery{SourceProperties: map[string]any{"catalog_id": "A"}, TargetProperties: map[string]any{"catalog_id": "C"}}, []string{"pr"}),
+				ginkgo.Entry("source and target with no common edge", graphdb.RelationshipQuery{SourceProperties: map[string]any{"catalog_id": "C"}, TargetProperties: map[string]any{"catalog_id": "A"}}, []string{}),
+				ginkgo.Entry("value matching no node", graphdb.RelationshipQuery{SourceProperties: map[string]any{"catalog_id": "Z"}}, []string{}),
+				ginkgo.Entry("node without the property never matches", graphdb.RelationshipQuery{SourceProperties: map[string]any{"catalog_id": ""}}, []string{}),
+				ginkgo.Entry("combined with an edge label", graphdb.RelationshipQuery{EdgeLabel: "OTHER", SourceProperties: map[string]any{"catalog_id": "A"}}, []string{}),
+				ginkgo.Entry("not confused with edge properties", graphdb.RelationshipQuery{Properties: map[string]any{"catalog_id": "A"}}, []string{}),
+			)
 		})
 
 		ginkgo.Describe("QueryAsOf", func() {

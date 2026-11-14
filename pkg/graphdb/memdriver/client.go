@@ -349,7 +349,9 @@ func (g *memGraph) relationships(q graphdb.RelationshipQuery, asOf *time.Time) [
 		if q.TargetLabel != "" && e.target.label != q.TargetLabel {
 			continue
 		}
-		if !matchesProps(e.props, q.Properties) {
+		if !matchesProps(e.props, q.Properties) ||
+			!matchesProps(e.source.props, q.SourceProperties) ||
+			!matchesProps(e.target.props, q.TargetProperties) {
 			continue
 		}
 		if asOf == nil {

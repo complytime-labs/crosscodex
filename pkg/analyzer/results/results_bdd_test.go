@@ -1,6 +1,7 @@
 package results_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -22,6 +23,23 @@ var _ = Describe("semantic match edge identity", func() {
 	It("names the label the graph writer and the mappings reader share", func() {
 		Expect(results.SemanticMatchEdgeLabel).To(Equal("SEMANTIC_MATCH"))
 		Expect(results.SemanticMatchEdgeIDKind).To(Equal("semantic-match"))
+	})
+})
+
+var _ = Describe("synthesized mapping projection", func() {
+	It("names the ID kind, stage property and values the graph writer and readers share", func() {
+		Expect(results.SemanticMatchSynthesizedIDKind).To(Equal("semantic-match-synthesized"))
+		Expect(results.StageProperty).To(Equal("stage"))
+		Expect(results.StageAnalyzer).To(Equal("analyzer"))
+		Expect(results.StageSynthesized).To(Equal("synthesized"))
+		Expect(results.SynthesisStage).To(Equal("synthesis"))
+	})
+
+	It("encodes a synthesized mapping with snake_case keys", func() {
+		data, err := json.Marshal(results.SynthesizedMapping{SourceID: "a", TargetID: "b", RelationshipType: "EQUIVALENT",
+			Confidence: 0.9, Viability: 0.5, IsViable: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(MatchJSON(`{"source_id":"a","target_id":"b","relationship_type":"EQUIVALENT","confidence":0.9,"viability":0.5,"is_viable":true}`))
 	})
 })
 

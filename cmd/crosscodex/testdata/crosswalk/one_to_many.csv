@@ -1,0 +1,3 @@
+﻿source_framework,source_id,source_parent,source_title,source_text,relationship,confidence,direction,hub_id,target_framework,target_id,target_parent,target_title,target_text,jobs_judged,jobs_agreeing,other_verdicts,latest_job,source_node_id,target_node_id
+Framework A,AC-1,AC,Access Control Policy,Define access rules.,equivalent,0.90,direct,,Framework B,3.1.1,3.1,Authorized access,Limit access to authorized users.,2,2,,job-2,cat-a/ac-1,cat-b/3.1.1
+Framework A,AC-2,,"'=HYPERLINK(""http://x"") second | line, ""quoted""",Manage accounts.,subset of,0.75,direct,,Framework C,3.1.2,3.1,Account management,Manage system accounts.,2,1,job-1: complements,job-2,cat-a/ac-2,cat-c/3.1.2

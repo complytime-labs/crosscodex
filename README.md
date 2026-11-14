@@ -16,6 +16,12 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Crosswalk export (#260):
+
+- `GetCrosswalk` (gateway) and `crosscodex crosswalk` are new.
+- The graph now holds a second `SEMANTIC_MATCH` edge per judged pair per job, with the new property `stage: synthesized` (plus `viability` and `is_viable`); analyzer edges get `stage: analyzer`. Anything that counts or traverses `SEMANTIC_MATCH` (admin `QueryGraph`, `Traverse`, ad-hoc Cypher) now sees twice as many edges unless it filters on `stage`. Edges written before the upgrade have no `stage`; crosswalks read them as analyzer edges.
+- Jobs completed before the upgrade have no synthesized edges, so the default `crosscodex crosswalk` (stage `synthesized`) is empty for them. Re-run those jobs (`crosscodex run start ...`; cached results make it cheap) or read the analyzer's verdicts with `--stage analyzer`.
+
 Bounded multi-generator candidates (#259):
 
 - `aggregate_score` in `requires` provenance is now a fused ranking value, the sum of weight / (60 + rank) over the generators that found the target, not a weighted average of scores. Compare it only within one source's candidates.
@@ -289,9 +295,50 @@ crosscodex results export <job-id> --format csv --control <control-id> --type eq
 | `--output <file>` | `export` | Write to a file instead of stdout. |
 | `--json` | `summary` | Structured output. |
 
+To see which pairs candidate generation proposed to the relationship analyzer, whether or not they ended up mapped, export the job's candidates:
+
+```sh
+crosscodex results candidates <job-id> --output candidates.json
+crosscodex results candidates <job-id> --format csv --control <control-id>
+```
+
+`--format json|csv` (default `json`), `--output <file>` and `--control <id>` (source or target) work as in `export`. JSON has `job_id`, `analysis` and `candidates` (proto JSON, camelCase: `sourceControlId`, `targetControlId`, `similarityScore`, `contributions`). CSV has the columns `source_control_id`, `target_control_id`, `similarity_score` and `generators`, where `generators` joins the proposing generators with `;`. `similarityScore` is the embedding cosine similarity on a 0 to 100 scale, and 0 when no embedding exists for the pair. `contributions` (one per proposing generator, with its score and fusion weight) is empty unless the candidate strategy is rank fusion. `run status --json` also lists each stage's `name`, `status`, `started_at` and `completed_at` (RFC 3339; empty until set) under `stages`.
+
 A job that is still pending or running returns an error saying mappings are available once it completes. A failed or cancelled job never produces mappings; start a new job. An unknown job ID returns not found. `mapping_id` equals the ID of the mapping's `SEMANTIC_MATCH` graph edge. `REQUIRES` is not a mapping and is not returned.
 
 **Confidence.** A mapping's confidence (0 to 1) is the relationship panel's agreement times how sure the agreeing votes said they were: (votes for the winning type / valid votes) × the mean of `analysis.relationship.confidence_weights` over the winning votes' reported `CONFIDENCE` (HIGH 1.0, MEDIUM 0.67, LOW 0.33 by default; a vote that reports none counts as LOW). Three samples that agree, all HIGH, give 1.0; two of three, HIGH and MEDIUM, give 0.557; a one-sample panel gives exactly its vote's weight. The winning type is still chosen by vote count alone. `--min-confidence` and `synthesis.confidence_threshold` (default 0.5) filter on this value, so with the default weights a one-sample panel's LOW mappings fall below the threshold. The agreement alone is kept as the `agreement_fraction` property of each `SEMANTIC_MATCH` graph edge.
+
+### 10. Sharing crosswalks
+
+`crosscodex crosswalk` exports the mappings between catalogs as one table a reviewer can read in a spreadsheet: each row names both controls (framework, identifier, parent, title, statement) and the relationship, so nobody has to decode IDs. The mode follows the arguments:
+
+```sh
+# Two catalogs: every pair judged between them, from any completed job in either direction, merged
+crosscodex crosswalk <catalog-a> <catalog-b> --output crosswalk.csv
+
+# One job: that job's verdicts
+crosscodex crosswalk --job <job-id> --format json
+
+# One catalog against every catalog it has completed jobs with (rows name the other framework)
+crosscodex crosswalk <catalog-a> --all --output a-everywhere.csv
+
+# Transitive: A to C derived through the hub catalog's controls (direction "derived"), plus the direct A to C rows ("direct")
+crosscodex crosswalk <catalog-a> <catalog-c> --via <hub-catalog> --min-confidence 0.7
+```
+
+`--stage synthesized|analyzer` (default `synthesized`), `--min-confidence <0-1>`, `--type <type>` (repeatable) and `--include-non-viable` filter as in `results export`: the `synthesized` stage serves only the mappings synthesis judged viable unless `--include-non-viable` adds the pairs it filtered out (a flag the `analyzer` stage refuses, since analyzer mappings have no viability). `--type no_relationship` is refused: the relationship analyzer omits "no relationship" verdicts, so a crosswalk lists related pairs only.
+
+Every format has these columns, in this order: `source_framework`, `source_id`, `source_parent`, `source_title`, `source_text`, `relationship`, `confidence`, `direction`, `hub_id`, `target_framework`, `target_id`, `target_parent`, `target_title`, `target_text`, `jobs_judged`, `jobs_agreeing`, `other_verdicts`, `latest_job`, `source_node_id`, `target_node_id`.
+
+- `relationship` is read from source to target (`equivalent`, `subset of`, `superset of`, `contributes to`, `complements`, `partial`, `conflicts with`; a derived row whose composition has no named type reads `related (derived, type unknown)`). `direction` is `direct`, `derived` (through the hub control in `hub_id`) or `reverse` (a target-to-source verdict with no named inverse, reported as stored).
+- `jobs_judged` counts the completed jobs that judged the pair (a bidirectional job counts once), `jobs_agreeing` those whose verdict equals the row's once read source to target, and `other_verdicts` lists every other verdict, newest first, as `<word>@<confidence> (<job>)`. `latest_job` is the job that decided the row: the newest job's verdict. If one bidirectional job's two directions disagree, its higher-confidence verdict decides (then the greater relationship type) and the other direction appears in `other_verdicts`. On a `derived` row, `confidence` is the product of the two legs' confidences and `jobs_judged` and `jobs_agreeing` are sums over the two legs; `other_verdicts` is empty.
+- `--format csv` (default) starts with a UTF-8 byte order mark so spreadsheets read the encoding. Control text is cleaned to one line, and a cell that would start with `=`, `+`, `-` or `@` gets a leading `'` so it is not run as a formula.
+- `--format xlsx` writes an Excel workbook (needs `--output <file>.xlsx`: it is binary, so without `--output` the command refuses and says so). Sheet `crosswalk` has every row with the same columns, a frozen header and a filter; `provenance` lists the mode, stage, row count, skipped mappings, server version, generation time, catalogs and job IDs as field/value rows; `disagreements` has the rows where `jobs_agreeing` is below `jobs_judged`, the ones to review first. Every cell is text, never a formula, and gets the same leading `'` rule as CSV. Line breaks become spaces, as in CSV, and a cell is capped at the 32,767 characters a sheet cell holds: longer text is cut and ends with `…`.
+- `--format md` writes a Markdown table with these columns and no provenance (use JSON or XLSX for that). Cell text is cleaned like CSV (line breaks become spaces; terminal escapes and invisible or bidirectional characters are removed), then `&`, `<` and `>` are written as HTML entities and `\ [ ] ( ) ! * _` and the backtick are backslash-escaped, so uploaded text cannot form HTML, links, images or emphasis; `|` is written `\|`. Text over 200 characters is cut and ends with `…`; use JSON for the text exactly as stored (CSV and XLSX turn line breaks into spaces, and XLSX cuts a cell at 32,767 characters).
+- `--format json` writes `{"provenance": {...}, "rows": [...]}`. Row keys are the column names; `confidence` (two decimals), `jobs_judged` and `jobs_agreeing` are numbers. `provenance` records the mode, stage, catalogs (with whether their names are job snapshots), the completed job IDs, row count, mappings skipped because a control is gone, server version and generation time, so a result can be traced to its inputs.
+- `--output <file>` writes to a file instead of stdout. stderr reports `<n> rows from <m> completed jobs`; when the catalogs have no completed job between them the crosswalk is empty and stderr says which `crosscodex run start` to run, and when jobs exist but no row remains stderr suggests `--include-non-viable` and `--stage analyzer`. Large exports are read in pages of 1000 rows; if a job completes or is removed while paging, the command fails with "the crosswalk changed while paging" and you re-run it, so a file never mixes two job sets.
+
+Crosswalks are read from the graph, which embedded mode does not run: connect to a `crosscodexd` daemon with `--endpoint <host:port>`, or the command exits with that advice.
 
 Run `crosscodex --help` to see all available commands, or `crosscodex <command> --help` for command-specific usage.
 
@@ -735,6 +782,39 @@ Venom suites in `test/tooling/` check the repo's own scripts and Taskfile behavi
 ```bash
 task test:tooling
 ```
+
+### Evaluating crosswalk quality
+
+`task eval:crosswalk` measures how well a deployment's crosswalk analysis finds the cross-framework references that an OSCAL catalog itself cites (for example, the SP 800-53 controls SSDF lists for each of its tasks). It runs a small, fixed set of source controls through a gateway you already run, so its cost is set by the profile and by the size of the catalogs, as the cost notes under Limits explain. It is for tuning models, prompts and retrieval settings; it is not a CI gate.
+
+```bash
+task deploy:smoke:up OPENAI_COMPAT_HOST=<host:port>
+task eval:crosswalk PROFILE=ssdf-to-sp800-53r5 LABEL=baseline
+task eval:crosswalk PROFILE=ssdf-to-sp800-53r5 LABEL=new \
+  BASELINE=.test-output/eval/crosswalk/ssdf-to-sp800-53r5/baseline/report.json
+task deploy:smoke:down
+```
+
+Requires `jq` on the host (the runner reads job status with it). Variables: `PROFILE` (required), `LABEL` (default: UTC timestamp), `BASELINE` (an earlier `report.json`), `MODE=llm` (print only the summary line and errors), `NO_CACHE=1`, `EVAL_TIMEOUT` and `EVAL_POLL` (seconds, defaults 3600 and 10). `EVAL_ENDPOINT`, `EVAL_CA`, `EVAL_CERT` and `EVAL_KEY` default to the `deploy:smoke:up` stack; set them to evaluate another gateway. The model, panel and retrieval come from the daemon's configuration; the eval has no model settings.
+
+Shipped profiles (references are the resolved pairs the score uses):
+
+| Profile | Source controls | References |
+|---|---|---|
+| `ssdf-to-sp800-53r5` | 10 SSDF tasks, every practice group | 36 |
+| `sp800-171r3-to-sp800-53r5` | 10 SP 800-171r3 requirements, 8 families | 28 |
+
+Each run writes `.test-output/eval/crosswalk/<profile>/<LABEL>/` with `report.md` (what the task prints), `report.json` and the raw exports. The report names the job, the catalog IDs, SHA-256 hashes of the profile and catalogs, and the tool's git commit (`-dirty` when it was built from a tree with uncommitted changes), plus each model's deployment hash and, for a profile that names a `references.csv`, that file's hash; each reference carries its citation. A run directory is never overwritten: reuse of a `LABEL` is an error.
+
+Limits to keep in mind:
+
+- The references are what a framework chose to cite, which is sparse. The report measures recall (how many cited pairs the analysis found or could reach) and is not proof of precision: a pair absent from the references may still be correct.
+- "Found exact" counts a reference when the analysis related its source control to the referenced target control, where a statement item the importer derives from a control (for example `sa-15.b` from `sa-15`) counts for the control that contains it, on both sides. "Base" also credits a mapping to any control in the same base tree (an enhancement and its base control). Candidates are scored the same way as "reachable".
+- The summary line and the report count chat calls only (`chat calls`: classify, relationship and requires), taken from `run status`; embedding calls are listed per analyzer in the report table and left out of that total. A figure is shown only when every analyzer's cache summary is attested and was run with the cache enabled or bypassed.
+- Cost is not bounded by the profile; it has two parts. Figures are as measured on these runs, not guarantees. (1) Classify and embedding run over every control or item of both catalogs, so on a cold cache they dominate and do not depend on the profile: SP 800-53r5 plus the subset gave 2,290 classify tasks, 1,740 dispatched in the first SSDF run. The result cache keeps those results, so later runs mostly reuse them (the SP 800-171r3 run dispatched 44 of 2,339). (2) Relationship and requires tasks per analyzer are candidate pairs times the panel size (3), and candidate pairs are the decomposed source items times candidates per item, so the number of controls alone does not predict them. SSDF: 10 controls, 10 source items with candidates, 100 candidates, 300 tasks per analyzer. SP 800-171r3: 10 controls, 46 requirement items with candidates, 460 candidates, 1,380 tasks per analyzer (the imported subset has 59 rows, which include the 10 parent sections and other non-requirement rows that the analyzers skip). The chat calls the report counts are classify plus relationship plus requires dispatched (embedding excluded): 2,340 for SSDF and 2,804 for SP 800-171r3. Wall time on qwen3.8-flash-next behind an OpenAI-compatible server was about 3,650 s cold for SSDF and about 10,350 s for SP 800-171r3, which is relationship-bound (relationship and requires took about 10,250 s each).
+- The result cache is on by default, because a crosswalk run otherwise re-sends thousands of classification calls that have nothing to do with the mappings being measured. A repeat of an unchanged configuration therefore reuses earlier relationship results; the report states how many, and agreement with a baseline is then labelled "not independent" because the two runs share answers. Use `NO_CACHE=1` (passes `--no-cache` to `run start`) to measure run-to-run variance, at the full chat-call cost.
+
+To add a profile, see [test/eval/crosswalk/README.md](./test/eval/crosswalk/README.md).
 
 ### Contributing
 

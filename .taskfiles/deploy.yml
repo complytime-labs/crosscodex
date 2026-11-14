@@ -87,8 +87,8 @@ vars:
   # shared by smoke:up and smoke:down so both act on the same project, volume,
   # port, and throwaway PKI dir. Exported (via each task's env:) as the
   # COMPOSE_PROJECT_NAME / CROSSCODEX_* / CERTS_DIR that deploy/compose.yaml and
-  # the deploy:* tasks read. SMOKE_CERTS_DIR is a fixed .test-output path (not an
-  # mktemp) so smoke:down can remove the same dir smoke:up created.
+  # the deploy:* tasks read. SMOKE_GATEWAY_PORT and SMOKE_CERTS_DIR are defined
+  # in the root Taskfile.yml because eval.yml reads them too.
   SMOKE_PROJECT: '{{.SMOKE_PROJECT | default "crosscodex-smoke"}}'
   # The smoke stack's gateway: the CLI var or env, else litellm. Deliberately
   # ignores deploy/.env, so an operator's persisted praxis choice does not
@@ -97,11 +97,9 @@ vars:
   # child `task deploy:up` that smoke_up.sh runs.
   SMOKE_LLM_GATEWAY: '{{.LLM_GATEWAY | default "litellm"}}'
   SMOKE_CERTS_VOLUME: '{{.SMOKE_CERTS_VOLUME | default "crosscodex-smoke-certs"}}'
-  SMOKE_GATEWAY_PORT: '{{.SMOKE_GATEWAY_PORT | default "50151"}}'
   # Host-loopback port compose.offline-praxis.yaml publishes praxis's mTLS
   # listener on, for smoke_up.sh's direct gateway probes (LLM_GATEWAY=praxis).
   SMOKE_PRAXIS_PORT: '{{.SMOKE_PRAXIS_PORT | default "54443"}}'
-  SMOKE_CERTS_DIR: '{{.SMOKE_CERTS_DIR | default (printf "%s/.test-output/deploy-smoke/certs" .ROOT_DIR)}}'
   # Opt-in fast build path. LOCAL=1 builds the Go binaries on the host and copies
   # them into thin distroless images (deploy/Dockerfile.local), skipping the
   # hermetic in-container Go build. Requires a local Go toolchain and trades

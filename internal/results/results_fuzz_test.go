@@ -1,6 +1,8 @@
 package results_test
 
 import (
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/complytime-labs/crosscodex/internal/results"
@@ -21,6 +23,28 @@ func FuzzDecodeCursor(f *testing.F) {
 		again, err := results.DecodeCursor(results.EncodeCursor(*c))
 		if err != nil || *again != *c {
 			t.Fatalf("accepted token does not round-trip: %q -> %+v", token, c)
+		}
+	})
+}
+
+func FuzzDecodeContributions(f *testing.F) {
+	f.Add(`[{"GeneratorName":"g","Score":0.5,"Weight":0.5,"Metadata":{"rank":"1"}}]`) // valid
+	f.Add(`[]`)                                                                       // empty
+	f.Add(`null`)                                                                     // null
+	f.Add(`{"GeneratorName":"g"}`)                                                    // wrong top-level type
+	f.Add(`[{"GeneratorName":"g","Score":1e999,"Weight":0}]`)                         // overflow
+	f.Add(`[{"GeneratorName":"g","Score":0.5`)                                        // truncated
+	f.Add(`[{"GeneratorName":"'; DROP TABLE jobs;--","Score":0,"Weight":0}]`)         // SQL-ish attack
+	f.Add(strings.Repeat("[", 20000))                                                 // deep nesting
+	f.Fuzz(func(t *testing.T, raw string) {
+		got, err := results.DecodeContributions([]byte(raw))
+		if err != nil {
+			return
+		}
+		for _, c := range got {
+			if c.Generator == "" || math.IsNaN(c.Score) || math.IsInf(c.Score, 0) || math.IsNaN(c.Weight) || math.IsInf(c.Weight, 0) {
+				t.Fatalf("accepted invalid contribution %+v from %q", c, raw)
+			}
 		}
 	})
 }

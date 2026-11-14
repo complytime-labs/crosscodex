@@ -22,7 +22,7 @@ type materializeFunc func(ctx context.Context, tenantID, jobID string, data []by
 
 // handlerFor returns the materializer for an analyzer's results, or false
 // when the graph has nothing to build from that stage (e.g. the pipeline's own
-// synthesis and graph stages).
+// graph stage).
 func (s *Service) handlerFor(analyzer string) (materializeFunc, bool) {
 	switch analyzer {
 	case "relationship":
@@ -31,6 +31,8 @@ func (s *Service) handlerFor(analyzer string) (materializeFunc, bool) {
 		return s.materializeRequires, true
 	case "artifacts":
 		return s.materializeArtifacts, true
+	case results.SynthesisStage:
+		return s.materializeSynthesis, true
 	case "classify":
 		return s.materializeClassify, true
 	case "embedding":
@@ -74,8 +76,9 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 			Label:     results.SemanticMatchEdgeLabel,
 			ValidFrom: time.Now().UTC(),
 			Properties: map[string]any{
-				"relationship_type": r.RelationshipType,
-				"job_id":            jobID,
+				"relationship_type":   r.RelationshipType,
+				"job_id":              jobID,
+				results.StageProperty: results.StageAnalyzer,
 			},
 			Confidence: r.Confidence,
 		}

@@ -77,7 +77,6 @@ var _ = Describe("Subscriber Event Handling", func() {
 					Data:    data,
 				})).To(Succeed())
 			},
-			Entry("synthesis", "synthesis"),
 			Entry("graph", "graph"),
 			Entry("an unknown analyzer", "unknown-analyzer"),
 		)
@@ -92,7 +91,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 				graph.WithResolverRegistry(registry),
 				graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
-			Expect(deliver("synthesis", []any{})).To(Succeed())
+			Expect(deliver("graph", []any{})).To(Succeed())
 
 			m := telemetrytest.FindMetric(tp.GetMetrics(), "graph.events.total")
 			Expect(m).NotTo(BeNil(), "graph.events.total not recorded")
@@ -103,7 +102,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 			status, _ := sum.DataPoints[0].Attributes.Value("status")
 			Expect(status.AsString()).To(Equal("skipped"))
 			analyzer, _ := sum.DataPoints[0].Attributes.Value("analyzer")
-			Expect(analyzer.AsString()).To(Equal("synthesis"))
+			Expect(analyzer.AsString()).To(Equal("graph"))
 		})
 
 		DescribeTable("returns nil, so the message is not redelivered, for an event it cannot process",
@@ -158,6 +157,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 			Expect(rels[0].Source.ID).To(Equal("ctrl-1"))
 			Expect(rels[0].Target.ID).To(Equal("ctrl-2"))
 			Expect(rels[0].Edge.Properties).To(HaveKeyWithValue("relationship_type", "implements"))
+			Expect(rels[0].Edge.Properties).To(HaveKeyWithValue("stage", "analyzer"))
 			Expect(rels[0].Edge.Confidence).To(BeNumerically("~", 0.9, 0.01))
 		})
 

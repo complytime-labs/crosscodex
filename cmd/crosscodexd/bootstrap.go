@@ -318,13 +318,16 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	)
 	ingestion := backend.NewPassthroughIngestion(storageProvider)
 
+	resultsSvc := newMappingsBackend(shared)
+
 	gatewayTracer, gatewayMeter := telemetry.Instrumentation("internal/gateway")
 	opts := []gateway.ServiceOption{
 		gateway.WithAuthn(registry),
 		gateway.WithIngestionBackend(ingestion),
 		gateway.WithCatalogBackend(catalogSvc),
 		gateway.WithPipelineBackend(pipelineBackend),
-		gateway.WithMappingsBackend(newMappingsBackend(shared)),
+		gateway.WithMappingsBackend(resultsSvc),
+		gateway.WithCandidatesBackend(resultsSvc),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(slog.Default()),
@@ -342,7 +345,8 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		return errors.New("attach gateway: graph service is not built; attachGraph must run before attachAllGateway so the gateway can serve graph queries")
 	}
 	gatewaySvc, err := buildIngestGateway(ctx, config.RoleAll, cfg, shared, backendPipeline,
-		gateway.WithGraphBackend(rt.graphService))
+		gateway.WithGraphBackend(rt.graphService),
+		gateway.WithCrosswalkBackend(rt.graphService))
 	if err != nil {
 		return err
 	}
@@ -744,9 +748,13 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 // Compile-time proof that the results service can back the gateway. It lives
 // here, the composition root, because internal/results must not import
 // internal/gateway.
-var _ gateway.MappingsBackend = (*results.Service)(nil)
+var (
+	_ gateway.MappingsBackend   = (*results.Service)(nil)
+	_ gateway.CandidatesBackend = (*results.Service)(nil)
+)
 
-// newMappingsBackend builds the mappings reader both gateway wirings share.
+// newMappingsBackend builds the results reader both gateway wirings share. It
+// backs the mappings and the candidates RPCs.
 func newMappingsBackend(shared *sharedResources) *results.Service {
 	tracer, meter := telemetry.Instrumentation("internal/results")
 	return results.NewService(

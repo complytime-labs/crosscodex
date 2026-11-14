@@ -2,6 +2,8 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -91,9 +94,14 @@ func (r *PGResolver) Resolve(ctx context.Context, ref ResourceRef) ([]byte, erro
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	query := `SELECT result_data FROM analysis_results WHERE job_id = $1 AND analyzer_name = $2 AND tenant_id = $3`
 	var data []byte
-	if err := tx.QueryRow(ctx, query, jobID, analyzerName, tenantID).Scan(&data); err != nil {
+	if analyzerName == results.SynthesisStage {
+		data, err = readSynthesized(ctx, tx, tenantID, jobID)
+	} else {
+		query := `SELECT result_data FROM analysis_results WHERE job_id = $1 AND analyzer_name = $2 AND tenant_id = $3`
+		err = tx.QueryRow(ctx, query, jobID, analyzerName, tenantID).Scan(&data)
+	}
+	if err != nil {
 		r.recordResolve(ctx, start, 0, "error")
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("pg resolve job %s analyzer %s: %w", jobID, analyzerName, err)
@@ -107,6 +115,41 @@ func (r *PGResolver) Resolve(ctx context.Context, ref ResourceRef) ([]byte, erro
 
 	r.recordResolve(ctx, start, int64(len(data)), "ok")
 	span.SetStatus(codes.Ok, "")
+	return data, nil
+}
+
+// readSynthesized serves the synthesis stage, whose event carries no rows: the
+// job's relationship-analyzer vote_summaries rows as a JSON
+// []results.SynthesizedMapping. Requires rows are a different signal outside
+// the relationship enum, and filtering on the analyzer keeps one row per pair.
+// The stage event is published after synthesis finishes writing, so the rows
+// are complete. Viability > 0 is the viable test internal/results applies. The
+// tenant_id predicate is explicit alongside RLS. A job with no rows (or of
+// another tenant) yields "[]".
+func readSynthesized(ctx context.Context, tx db.Transaction, tenantID, jobID string) ([]byte, error) {
+	rows, err := tx.Query(ctx, `SELECT source_id, target_id, consensus, confidence, viability
+		FROM vote_summaries
+		WHERE tenant_id = $1 AND job_id = $2 AND analyzer_name = $3
+		ORDER BY source_id, target_id`, tenantID, jobID, results.RelationshipAnalyzer)
+	if err != nil {
+		return nil, fmt.Errorf("query vote summaries: %w", err)
+	}
+	mappings := []results.SynthesizedMapping{}
+	for rows.Next() {
+		var m results.SynthesizedMapping
+		if err := rows.Scan(&m.SourceID, &m.TargetID, &m.RelationshipType, &m.Confidence, &m.Viability); err != nil {
+			return nil, errors.Join(fmt.Errorf("scan vote summary: %w", err), rows.Close())
+		}
+		m.IsViable = m.Viability > 0
+		mappings = append(mappings, m)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, fmt.Errorf("read vote summaries: %w", err)
+	}
+	data, err := json.Marshal(mappings)
+	if err != nil {
+		return nil, fmt.Errorf("encode synthesized mappings: %w", err)
+	}
 	return data, nil
 }
 

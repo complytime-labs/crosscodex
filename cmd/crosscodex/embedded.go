@@ -524,6 +524,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		gateway.WithIngestionBackend(localIngestion),
 		gateway.WithPipelineBackend(localPipeline),
 		gateway.WithMappingsBackend(mappings),
+		gateway.WithCandidatesBackend(mappings),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(pool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(logger),

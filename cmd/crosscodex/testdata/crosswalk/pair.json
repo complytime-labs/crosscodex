@@ -1,0 +1,76 @@
+{
+  "provenance": {
+    "mode": "pair",
+    "stage": "synthesized",
+    "catalogs": [
+      {
+        "catalog_id": "cat-a",
+        "name": "Framework A",
+        "version": "1.0",
+        "imported": true,
+        "snapshot": true
+      },
+      {
+        "catalog_id": "cat-b",
+        "name": "Framework B",
+        "version": "2",
+        "imported": true,
+        "snapshot": false
+      }
+    ],
+    "job_ids": [
+      "job-1",
+      "job-2"
+    ],
+    "rows": 2,
+    "skipped_missing_controls": 0,
+    "server_version": "test",
+    "generated_at": "2026-11-08T12:00:00Z"
+  },
+  "rows": [
+    {
+      "source_framework": "Framework A",
+      "source_id": "AC-1",
+      "source_parent": "AC",
+      "source_title": "Access Control Policy",
+      "source_text": "Define access rules.",
+      "relationship": "equivalent",
+      "confidence": 0.90,
+      "direction": "direct",
+      "hub_id": "",
+      "target_framework": "Framework B",
+      "target_id": "3.1.1",
+      "target_parent": "3.1",
+      "target_title": "Authorized access",
+      "target_text": "Limit access to authorized users.",
+      "jobs_judged": 2,
+      "jobs_agreeing": 2,
+      "other_verdicts": "",
+      "latest_job": "job-2",
+      "source_node_id": "cat-a/ac-1",
+      "target_node_id": "cat-b/3.1.1"
+    },
+    {
+      "source_framework": "Framework A",
+      "source_id": "AC-2",
+      "source_parent": "",
+      "source_title": "=HYPERLINK(\"http://x\")\nsecond | line, \"quoted\"",
+      "source_text": "Manage accounts.",
+      "relationship": "subset of",
+      "confidence": 0.75,
+      "direction": "direct",
+      "hub_id": "",
+      "target_framework": "Framework B",
+      "target_id": "3.1.2",
+      "target_parent": "3.1",
+      "target_title": "Account management",
+      "target_text": "Manage system accounts.",
+      "jobs_judged": 2,
+      "jobs_agreeing": 1,
+      "other_verdicts": "job-1: complements",
+      "latest_job": "job-2",
+      "source_node_id": "cat-a/ac-2",
+      "target_node_id": "cat-b/3.1.2"
+    }
+  ]
+}
