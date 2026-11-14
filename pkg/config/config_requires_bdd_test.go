@@ -215,6 +215,21 @@ var _ = Describe("deploy/config.yaml pair analyzers", func() {
 		Expect(cfg.Analysis.Critique.SamplesPerModel).To(Equal(1))
 		Expect(cfg.Analysis.Critique.Enabled).To(BeTrue())
 	})
+
+	// Reasoning models (gpt-oss at reasoning_effort low) spend completion
+	// tokens before answering; the compiled 300 truncated a third of them,
+	// and one requires call in the #260 crosswalk eval used all of 1024.
+	It("gives the relationship, requires and critique panels a 2048-token answer budget", func() {
+		GinkgoT().Setenv("CROSSCODEX_LLM_DEFAULT_MODEL", "default")
+		GinkgoT().Setenv("CROSSCODEX_LLM_EMBEDDING_MODEL", "embed")
+
+		cfg, err := config.NewLoader().Load(context.Background(),
+			config.WithConfigPath(filepath.Join(repoRoot, "deploy", "config.yaml")))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Analysis.Relationship.MaxTokens).To(Equal(2048))
+		Expect(cfg.Analysis.Requires.MaxTokens).To(Equal(2048))
+		Expect(cfg.Analysis.Critique.MaxTokens).To(Equal(2048))
+	})
 })
 
 var _ = Describe("compiled consensus thresholds", func() {

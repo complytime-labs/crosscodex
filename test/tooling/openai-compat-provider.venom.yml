@@ -94,7 +94,7 @@ testcases:
           - result.code ShouldNotEqual 0
           - result.systemerr ShouldContainSubstring "LLM_GATEWAY=praxis"
           - result.systemerr ShouldContainSubstring "OPENAI_COMPAT_HOST"
-  - name: the openai-compat template maps the three listed panel models to panel-1..3 in order, thinking off
+  - name: the openai-compat template maps the three listed panel models to panel-1..3 in order, thinking off and reasoning low on every chat alias
     steps:
       - type: exec
         script: |
@@ -104,11 +104,20 @@ testcases:
             {{.root}}/deploy/litellm/config.openai-compat.yaml.tmpl "$d/litellm.yaml" \
             http://host.containers.internal:18080 qwen3.8-flash-next qwen3-embedding-8b >/dev/null
           grep -A2 'model_name: panel-' "$d/litellm.yaml" | grep -v -- '^--' | paste -sd' ' | tr -s ' '
-          grep -c 'enable_thinking: false' "$d/litellm.yaml"
+          # One line per chat_template_kwargs entry, prefixed with its alias.
+          awk '/^  - model_name: /{a=$3} /^ +(enable_thinking|reasoning_effort):/{sub(/^ +/,""); gsub(/"/,""); print "kwarg " a " " $0}' "$d/litellm.yaml"
         assertions:
           - result.code ShouldEqual 0
           - 'result.systemout ShouldContainSubstring "panel-1 litellm_params: model: openai/alpha-1 - model_name: panel-2 litellm_params: model: openai/beta_2:x - model_name: panel-3 litellm_params: model: openai/gamma/3.0"'
-          - 'result.systemout ShouldContainSubstring "4"'
+          - 'result.systemout ShouldContainSubstring "kwarg default enable_thinking: false"'
+          - 'result.systemout ShouldContainSubstring "kwarg default reasoning_effort: low"'
+          - 'result.systemout ShouldContainSubstring "kwarg panel-1 enable_thinking: false"'
+          - 'result.systemout ShouldContainSubstring "kwarg panel-1 reasoning_effort: low"'
+          - 'result.systemout ShouldContainSubstring "kwarg panel-2 enable_thinking: false"'
+          - 'result.systemout ShouldContainSubstring "kwarg panel-2 reasoning_effort: low"'
+          - 'result.systemout ShouldContainSubstring "kwarg panel-3 enable_thinking: false"'
+          - 'result.systemout ShouldContainSubstring "kwarg panel-3 reasoning_effort: low"'
+          - result.systemout ShouldNotContainSubstring "kwarg embed"
   - name: the openai-compat template uses the default panel models when no list is given
     steps:
       - type: exec

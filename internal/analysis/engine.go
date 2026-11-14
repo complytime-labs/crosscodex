@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
@@ -503,8 +505,14 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		}
 
 		// Dispatch tasks: publish to work subject. Results will be published to the
-		// already-subscribed result subject, so no message can be lost.
-		if err := e.dispatcher.Dispatch(ctx, dispatchTasks, taskType, req.JobID, handle.CollectionID); err != nil {
+		// already-subscribed result subject, so no message can be lost. The
+		// tasks go out grouped by model (see orderByModel); the collection
+		// above keeps the generated order, so only the queue order changes.
+		var panel []string
+		if p, ok := analyzer.AsPanelled(ra); ok {
+			panel = p.Panel().Aliases
+		}
+		if err := e.dispatcher.Dispatch(ctx, orderByModel(dispatchTasks, panel), taskType, req.JobID, handle.CollectionID); err != nil {
 			// AwaitResults never runs, so its deferred release and abandon do
 			// not either. Some tasks may already be out, so abandon them,
 			// after release so no retry follows the abandon.
@@ -713,4 +721,46 @@ func (e *Engine) outputTruncated(ctx context.Context, name, jobID string, result
 			"in deploy/README.md), or raise %s in the crosscodexd configuration and restart crosscodexd. Then resume the job "+
 			"with \"crosscodex run retry --from-failure %s\", which keeps its completed stages. If this persists, give your operator %s.",
 		name, truncated, len(results), setting, jobID, TraceReference(ctx, jobID))}
+}
+
+// orderByModel returns a copy of tasks grouped by the model alias each
+// payload names (its "model" field), for dispatch. A worker takes tasks in
+// queue order, and a model server that loads models on demand swaps models
+// whenever consecutive tasks name different ones; analyzers generate a
+// panel's tasks per item (pair or control), every model in turn, so
+// dispatching them as generated costs a swap on nearly every task. Grouped,
+// a stage costs about one swap per model.
+//
+// The groups follow panel (the analyzer's configured aliases, nil for an
+// analyzer without a panel), then any other model in first-seen order; a
+// task without a model is a group of its own. The sort is stable, so tasks
+// of one model keep their generated order. Only the order changes: the
+// tasks, and the results they produce, are the same. tasks is not modified.
+func orderByModel(tasks []analyzer.Task, panel []string) []analyzer.Task {
+	rank := make(map[string]int, len(panel))
+	for i, alias := range panel {
+		if _, ok := rank[alias]; !ok {
+			rank[alias] = i
+		}
+	}
+	modelOf := func(t analyzer.Task) string {
+		s, ok := t.Payload.(*structpb.Struct)
+		if !ok {
+			return ""
+		}
+		return s.GetFields()["model"].GetStringValue()
+	}
+	next := len(panel)
+	for _, t := range tasks {
+		m := modelOf(t)
+		if _, ok := rank[m]; !ok {
+			rank[m] = next
+			next++
+		}
+	}
+	ordered := slices.Clone(tasks)
+	slices.SortStableFunc(ordered, func(a, b analyzer.Task) int {
+		return rank[modelOf(a)] - rank[modelOf(b)]
+	})
+	return ordered
 }

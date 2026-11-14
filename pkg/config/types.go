@@ -597,7 +597,12 @@ type EngineConfig struct {
 	// its own, starved behind another stage's queue or silent, waits for
 	// task_timeout or pipeline.stage_timeout instead; a failure more than
 	// task_timeout after its previous one restarts the window, so it fails
-	// only after a full window of failures arriving again. A stage with
+	// only after a full window of failures arriving again. The engine
+	// dispatches a panel stage's tasks grouped by model, so a panel model
+	// that fails every call delivers its failures back to back and, once
+	// they span this window, fails the stage even though the other models
+	// answer (max_error_rate does not absorb it); that is a configuration
+	// fault: fix or remove the model, or raise this value. A stage with
 	// no tasks to dispatch (none, or all cached) never starts the window.
 	// Each stage has its own window: a success in
 	// another stage or job does not reset it, because unlike task_timeout,

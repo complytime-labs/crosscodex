@@ -15,3 +15,6 @@ const (
 
 // ExportRelease exposes CollectionHandle.release.
 func (h *CollectionHandle) ExportRelease() error { return h.release() }
+
+// ExportOrderByModel exposes orderByModel for property testing.
+var ExportOrderByModel = orderByModel

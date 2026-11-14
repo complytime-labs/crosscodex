@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
@@ -272,6 +274,72 @@ var _ = Describe("The no-success window (analysis.engine.success_timeout)", func
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(results).To(HaveLen(2))
+	})
+
+	// The engine dispatches a panel stage grouped by model (orderByModel), so
+	// one model's results arrive back to back. These specs feed results in
+	// that order: 20 pairs x panel-1..3, one result every 20ms.
+	Context("with a panel stage dispatched grouped by model", func() {
+		panel := []string{"panel-1", "panel-2", "panel-3"}
+
+		groupedRequest := func(window time.Duration) (analysis.CollectRequest, []string) {
+			generated := pairTasks(20, panel...)
+			req := analysis.CollectRequest{
+				TaskType: natsbus.TaskRelate, JobID: "job-panel", Timeout: 5 * time.Second, StageTimeout: time.Hour,
+				SuccessTimeout: window, MaxRetries: 0, Backoff: time.Millisecond, Dispatcher: disp,
+				ExpectedIDs: taskIDs(generated), Tasks: generated,
+			}
+			return req, taskIDs(analysis.ExportOrderByModel(generated, panel))
+		}
+
+		It("fails with the failing model's error class once its tasks have failed back to back for SuccessTimeout", func() {
+			window := 200 * time.Millisecond
+			req, order := groupedRequest(window)
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			// panel-2 truncates every answer; panel-1 and panel-3 succeed.
+			feed(len(order), func(i int) {
+				if strings.HasSuffix(order[i], "-panel-2") {
+					deliverResult(bus, order[i], nil, natsbus.ResultErrorOutputTruncated)
+					return
+				}
+				deliverResult(bus, order[i], success, "")
+			})
+
+			start := time.Now()
+			_, err = collector.AwaitResults(ctx, handle)
+
+			Expect(err).To(MatchError(analysis.ErrNoSuccessfulResult))
+			Expect(time.Since(start)).To(BeNumerically(">=", window))
+			var nse *analysis.NoSuccessError
+			Expect(errors.As(err, &nse)).To(BeTrue())
+			Expect(nse.LastError).To(MatchError(llmclient.ErrOutputTruncated))
+			Expect(nse.LastSuccess.IsZero()).To(BeFalse(), "panel-1's answers succeeded before panel-2's block")
+		})
+
+		It("completes when the model's failures are intermittent among its own successes", func() {
+			req, order := groupedRequest(200 * time.Millisecond)
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			// Every other panel-2 task fails: a success arrives every 40ms.
+			n := 0
+			feed(len(order), func(i int) {
+				if strings.HasSuffix(order[i], "-panel-2") {
+					n++
+					if n%2 == 0 {
+						deliverResult(bus, order[i], nil, natsbus.ResultErrorOutputTruncated)
+						return
+					}
+				}
+				deliverResult(bus, order[i], success, "")
+			})
+
+			results, err := collector.AwaitResults(ctx, handle)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(results).To(HaveLen(len(order)))
+			Expect(noSuccessCount(tp, string(natsbus.TaskRelate))).To(BeZero())
+		})
 	})
 
 	DescribeTable("refuses to prepare a collection without a positive SuccessTimeout, subscribing to nothing",
