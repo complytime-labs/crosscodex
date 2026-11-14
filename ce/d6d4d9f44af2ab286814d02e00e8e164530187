@@ -1,0 +1,35 @@
+internal/graph/testhelpers_test.go
+  s_bb84c6e4c4ce39::t_80cf61315f9648 137,141-147
+pkg/vectordb/interface.go
+  s_bb84c6e4c4ce39::t_dfd6a07d8af08a 42-46
+pkg/vectordb/pgvector.go
+  s_bb84c6e4c4ce39::t_e5e146fdf3c101 532-587
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_bb84c6e4c4ce39::t_aa04dfab69f245 329-369
+pkg/vectordb/vectordb_property_test.go
+  s_bb84c6e4c4ce39::t_3159719015e92e 4-5,12,57-76
+pkg/vectordb/vectordbtest/doc.go
+  s_bb84c6e4c4ce39::t_e4ec640ade41a4 44-45,48-49
+pkg/vectordb/vectordbtest/fake.go
+  s_bb84c6e4c4ce39::t_c7a633c1f315eb 59-62,116-127
+pkg/vectordb/vectordbtest/vectordbtest_bdd_test.go
+  s_bb84c6e4c4ce39::t_3ce05cdd7abbf2 54-57,84-87,112-115,173-179,214-235
+pkg/vectordb/vectordbtest/vectordbtest_property_test.go
+  s_bb84c6e4c4ce39::t_48823cd15ed2c4 84-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ced6d4d9f44af2ab286814d02e00e8e164530187",
+  "prompts": {},
+  "sessions": {
+    "s_bb84c6e4c4ce39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c679fed-791c-4482-b165-7d4148695927",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
