@@ -108,8 +108,9 @@ var _ = Describe("requires result reuse", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(newAnalyzer().CacheableResult(result)).To(want)
 		},
-		Entry("a parsed decision", map[string]any{"model": "m", "response": "REQUIRES: NO\nCONFIDENCE: HIGH"}, Succeed()),
+		Entry("a parsed decision", map[string]any{"model": "m", "response": "REQUIRES: NO\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"}, Succeed()),
 		Entry("a response with no YES or NO decision", map[string]any{"model": "m", "response": "REQUIRES: MAYBE"}, MatchError(ContainSubstring("does not parse"))),
+		Entry("a response with no SANITY_CHECK line", map[string]any{"model": "m", "response": "REQUIRES: NO\nCONFIDENCE: HIGH"}, MatchError(ContainSubstring("SANITY_CHECK"))),
 		Entry("a result without a response", map[string]any{"model": "m"}, MatchError(ContainSubstring("no response text"))),
 	)
 })

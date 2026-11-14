@@ -1,5 +1,5 @@
 name: requires
-version: "1.3.0"
+version: "1.4.0"
 metadata:
   domain: analysis
   analyzer_type: requires
@@ -52,7 +52,8 @@ templates:
 
     Respond ONLY in this exact format:
     REQUIRES: YES or NO
-    JUSTIFICATION: <one to two sentences explaining the structural dependency or independence>
+    JUSTIFICATION: <one to two sentences naming the shared obligation and explaining the structural dependency or independence>
+    SANITY_CHECK: PASS or FAIL (FAIL if you could not name the obligation the source cannot meet without the target or an auditor would not agree the source is impaired without it; otherwise PASS)
     CONFIDENCE: HIGH, MEDIUM, or LOW
 
 few_shot_examples:
@@ -62,6 +63,7 @@ few_shot_examples:
     output: |
       REQUIRES: YES
       JUSTIFICATION: An effective assessment requires a defined scope and methodology to be established first; without it, assessment cannot be conducted systematically.
+      SANITY_CHECK: PASS
       CONFIDENCE: HIGH
   - input: |
       Source: "The organisation shall implement and maintain an incident response capability to detect, contain, eradicate, and recover from security incidents."
@@ -69,6 +71,7 @@ few_shot_examples:
     output: |
       REQUIRES: YES
       JUSTIFICATION: Effective incident response requires knowing what assets exist and their sensitivity; without an asset register, containment scope cannot be determined.
+      SANITY_CHECK: PASS
       CONFIDENCE: HIGH
   - input: |
       Source: "All data at rest on portable storage devices shall be encrypted using an approved encryption algorithm with a minimum key length of 256 bits."
@@ -76,6 +79,7 @@ few_shot_examples:
     output: |
       REQUIRES: NO
       JUSTIFICATION: Data-at-rest encryption is a technical control implemented independently of physical facility security; the two controls address different threat vectors.
+      SANITY_CHECK: PASS
       CONFIDENCE: HIGH
   - input: |
       Source: "The organisation shall implement multi-factor authentication for all privileged user accounts accessing production systems."
@@ -83,6 +87,7 @@ few_shot_examples:
     output: |
       REQUIRES: NO
       JUSTIFICATION: MFA implementation does not require periodic access reviews to be in place first; they are independent controls serving different purposes.
+      SANITY_CHECK: PASS
       CONFIDENCE: HIGH
   - input: |
       Source: "The organisation shall monitor system logs for indicators of compromise and generate alerts when suspicious activity exceeds defined thresholds."
@@ -90,4 +95,13 @@ few_shot_examples:
     output: |
       REQUIRES: YES
       JUSTIFICATION: Effective anomaly detection requires established baselines to compare against; without defined thresholds, alert conditions cannot be meaningfully configured.
+      SANITY_CHECK: PASS
+      CONFIDENCE: MEDIUM
+  - input: |
+      Source: "The organisation shall review user access rights to information systems at least quarterly and revoke rights that are no longer required."
+      Target: "The organisation shall maintain an information security policy that is reviewed annually and approved by senior management."
+    output: |
+      REQUIRES: NO
+      JUSTIFICATION: Both concern access and policy vocabulary, but no obligation of the source (reviewing and revoking access rights) is impossible without the policy; the check fails, so the answer is NO.
+      SANITY_CHECK: FAIL
       CONFIDENCE: MEDIUM

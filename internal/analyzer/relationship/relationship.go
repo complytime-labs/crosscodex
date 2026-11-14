@@ -50,6 +50,12 @@ The core test: if an organisation implements the target requirement, does that
 meaningfully contribute to satisfying the source requirement's underlying obligation?
 If the answer is no — even if the controls share language — use NO_RELATIONSHIP.
 
+Sharing a topic, keywords or a control family is not a relationship.
+Name the specific obligation both requirements share.
+Sanity-check it before answering: say what implementing the target does toward the source.
+Would an auditor accept evidence of the target as evidence toward the source?
+If you cannot name the obligation or the check fails, answer NO_RELATIONSHIP.
+
 Choosing between the overlap types:
 - CONTRIBUTES_TO: both requirements address the SAME subject matter (same type of
   system, actor, data, or risk). Implementing the target measurably contributes to
@@ -354,7 +360,7 @@ func (a *RelationshipAnalyzer) CacheableResult(result *structpb.Struct) error {
 		return errors.New("the result has no response text")
 	}
 	if ParseResponse(raw).ParseStatus != ParseOK {
-		return errors.New("the relationship response does not parse: it names no known RELATIONSHIP")
+		return errors.New("the relationship response does not parse: it names no known RELATIONSHIP or has no SANITY_CHECK: PASS or FAIL")
 	}
 	return nil
 }

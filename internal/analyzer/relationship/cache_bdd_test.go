@@ -106,8 +106,9 @@ var _ = Describe("relationship result reuse", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(newAnalyzer().CacheableResult(result)).To(want)
 		},
-		Entry("a parsed relationship", map[string]any{"model": "m", "response": "RELATIONSHIP: SUPERSET_OF\nCONFIDENCE: HIGH"}, Succeed()),
+		Entry("a parsed relationship", map[string]any{"model": "m", "response": "RELATIONSHIP: SUPERSET_OF\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"}, Succeed()),
 		Entry("a response naming no known relationship", map[string]any{"model": "m", "response": "I am not sure."}, MatchError(ContainSubstring("does not parse"))),
+		Entry("a response with no SANITY_CHECK line", map[string]any{"model": "m", "response": "RELATIONSHIP: SUPERSET_OF\nCONFIDENCE: HIGH"}, MatchError(ContainSubstring("SANITY_CHECK"))),
 		Entry("a result without a response", map[string]any{"model": "m"}, MatchError(ContainSubstring("no response text"))),
 	)
 })

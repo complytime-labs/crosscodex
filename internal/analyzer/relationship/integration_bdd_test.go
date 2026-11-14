@@ -27,9 +27,9 @@ var _ = Describe("Parser to Consensus Integration", func() {
 	Context("multi-model panel with unanimous SUPERSET_OF", func() {
 		It("produces unanimous consensus with full confidence", func() {
 			responses := []string{
-				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Source encompasses target.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Broader scope in source.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Target is a subset of source.\nCONFIDENCE: MEDIUM",
+				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Source encompasses target.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Broader scope in source.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Target is a subset of source.\nSANITY_CHECK: PASS\nCONFIDENCE: MEDIUM",
 			}
 			models := []string{"model-a", "model-b", "model-c"}
 
@@ -55,9 +55,9 @@ var _ = Describe("Parser to Consensus Integration", func() {
 	Context("split vote produces plurality winner with correct confidence", func() {
 		It("selects CONTRIBUTES_TO with INTEGRAL_TO from 2-of-3 majority", func() {
 			responses := []string{
-				"RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nJUSTIFICATION: Integral dependency.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nJUSTIFICATION: Cannot satisfy source without target.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: PARTIAL\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Only tangential overlap.\nCONFIDENCE: MEDIUM",
+				"RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nJUSTIFICATION: Integral dependency.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nJUSTIFICATION: Cannot satisfy source without target.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: PARTIAL\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Only tangential overlap.\nSANITY_CHECK: PASS\nCONFIDENCE: MEDIUM",
 			}
 			models := []string{"model-a", "model-b", "model-c"}
 
@@ -81,10 +81,10 @@ var _ = Describe("Parser to Consensus Integration", func() {
 	Context("mixed valid and garbage responses", func() {
 		It("excludes garbage from valid votes and selects plurality winner", func() {
 			responses := []string{
-				"RELATIONSHIP: EQUIVALENT\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Same scope.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: EQUIVALENT\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Identical intent.\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: EQUIVALENT\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Same scope.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: EQUIVALENT\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Identical intent.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
 				"I don't know how to classify this relationship.",
-				"RELATIONSHIP: NO_RELATIONSHIP\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Different domains.\nCONFIDENCE: LOW",
+				"RELATIONSHIP: NO_RELATIONSHIP\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Different domains.\nSANITY_CHECK: PASS\nCONFIDENCE: LOW",
 			}
 			models := []string{"model-a", "model-b", "model-c", "model-d"}
 
@@ -159,7 +159,7 @@ var _ = Describe("Full Pipeline Flow", func() {
 
 			// Simulate LLM response — all respond SUPERSET_OF.
 			rawResponse := fmt.Sprintf(
-				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Source %s encompasses target %s.\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Source %s encompasses target %s.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
 				srcID, tgtID,
 			)
 

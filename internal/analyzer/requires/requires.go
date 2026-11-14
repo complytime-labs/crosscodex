@@ -50,32 +50,35 @@ Before classifying, reason through these steps:
 
 The core test: if an organisation has NOT implemented the target control, is
 the source control impossible or significantly impaired to implement? If yes,
-the target is a prerequisite. If the source can stand alone, use NO_DEPENDENCY.
+the target is a prerequisite. If the source can stand alone, answer NO.
 
-Choosing between dependency types:
-- REQUIRES: the source control cannot be meaningfully implemented or assessed
+Sharing a topic, keywords or a control family is not a dependency.
+Name the specific obligation the source cannot meet without the target.
+Sanity-check it before answering.
+Would an auditor agree the source is impaired without the target?
+If you cannot name the obligation or the check fails, answer NO.
+
+Choosing the answer:
+- YES: the source control cannot be meaningfully implemented or assessed
   without the target control already being in place. The target is a hard
   operational prerequisite.
   Test: "If the target were removed, would the source become unimplementable
-  or fundamentally incomplete?" If YES -> REQUIRES.
-- BENEFITS_FROM: the target control improves or strengthens the source, but
-  the source can still be implemented without it. The target is a soft
-  dependency.
+  or fundamentally incomplete?" If YES -> answer YES.
+- NO: the target may improve or strengthen the source, but the source can still
+  be implemented without it. A target that only helps, where the source still
+  works without it, is NO. Controls that share vocabulary or sit in the same
+  domain but can be implemented independently are also NO.
   Test: "Would the source be weakened but still functional without the target?"
-  If YES -> BENEFITS_FROM.
-- NO_DEPENDENCY: no operational prerequisite relationship exists. The controls
-  may share vocabulary or be in the same domain but can be implemented
-  independently.`
+  If YES -> answer NO.`
 
 // dependencyDefinitions is the static dependency type definitions text.
-const dependencyDefinitions = `Dependency Definitions:
-REQUIRES: Hard prerequisite. The source control cannot be meaningfully
+const dependencyDefinitions = `Answer Definitions:
+YES: Hard prerequisite. The source control cannot be meaningfully
   implemented or assessed without the target already in place. Removing the
   target makes the source unimplementable or fundamentally incomplete.
-BENEFITS_FROM: Soft dependency. The target strengthens or improves the source
-  implementation, but the source remains functional without it.
-NO_DEPENDENCY: No operational prerequisite. Controls can be implemented
-  independently regardless of shared vocabulary or domain adjacency.`
+NO: No operational prerequisite. The target may strengthen or improve the
+  source, but the source remains functional without it; controls can be
+  implemented independently regardless of shared vocabulary or domain adjacency.`
 
 // RequiresAnalyzer classifies prerequisite dependency relationships between
 // pairs of compliance controls using multi-sample LLM panel voting.
@@ -350,7 +353,7 @@ func (a *RequiresAnalyzer) CacheableResult(result *structpb.Struct) error {
 		return errors.New("the result has no response text")
 	}
 	if ParseResponse("", raw).Decision == nil {
-		return errors.New("the requires response does not parse: it has no REQUIRES: YES or NO decision")
+		return errors.New("the requires response does not parse: it has no REQUIRES: YES or NO decision or no SANITY_CHECK: PASS or FAIL")
 	}
 	return nil
 }

@@ -563,7 +563,7 @@ var _ = Describe("RequiresAnalyzer", func() {
 			}
 
 			taskResults := []analyzer.TaskResult{
-				mkResult("requires-AC-1--AC-2-llama3.2:3b-s0", "REQUIRES: YES\nCONFIDENCE: HIGH", nil),
+				mkResult("requires-AC-1--AC-2-llama3.2:3b-s0", "REQUIRES: YES\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH", nil),
 				// AC-1--AC-3 has zero valid votes (single sample, unparseable) and
 				// MaxErrorRate=0.5 rejects it -> must be skipped, not fail Aggregate.
 				mkResult("requires-AC-1--AC-3-llama3.2:3b-s0", "garbage", nil),
@@ -594,11 +594,11 @@ var _ = Describe("RequiresAnalyzer", func() {
 			// AC-1--AC-2: 3 YES / 2 NO -> Decision=true, confidence=0.6, which clears
 			// the bare-majority gate but not the configured 0.9 threshold.
 			taskResults := []analyzer.TaskResult{
-				mkResult("requires-AC-1--AC-2-m1-s0", "REQUIRES: YES\nCONFIDENCE: HIGH"),
-				mkResult("requires-AC-1--AC-2-m2-s0", "REQUIRES: YES\nCONFIDENCE: HIGH"),
-				mkResult("requires-AC-1--AC-2-m3-s0", "REQUIRES: YES\nCONFIDENCE: HIGH"),
-				mkResult("requires-AC-1--AC-2-m4-s0", "REQUIRES: NO\nCONFIDENCE: HIGH"),
-				mkResult("requires-AC-1--AC-2-m5-s0", "REQUIRES: NO\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m1-s0", "REQUIRES: YES\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m2-s0", "REQUIRES: YES\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m3-s0", "REQUIRES: YES\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m4-s0", "REQUIRES: NO\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m5-s0", "REQUIRES: NO\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
 			}
 
 			out, err := aggAnalyzer.Aggregate(context.Background(), taskResults)
@@ -633,9 +633,9 @@ var _ = Describe("RequiresAnalyzer", func() {
 
 		It("exposes guidance and definitions constants", func() {
 			Expect(requires.ExportRequiresGuidance).To(ContainSubstring("OPERATIONAL DEPENDENCY"))
-			Expect(requires.ExportDependencyDefinitions).To(ContainSubstring("REQUIRES"))
-			Expect(requires.ExportDependencyDefinitions).To(ContainSubstring("BENEFITS_FROM"))
-			Expect(requires.ExportDependencyDefinitions).To(ContainSubstring("NO_DEPENDENCY"))
+			Expect(requires.ExportDependencyDefinitions).To(ContainSubstring("YES: Hard prerequisite."))
+			Expect(requires.ExportDependencyDefinitions).To(ContainSubstring("NO: No operational prerequisite."))
+			Expect(requires.ExportDependencyDefinitions).To(ContainSubstring("source remains functional without it"))
 		})
 	})
 
@@ -653,7 +653,7 @@ var _ = Describe("RequiresAnalyzer", func() {
 			spec, err := reg.Resolve(ctx, "requires")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(spec.Name).To(Equal("requires"))
-			Expect(spec.Version).To(Equal("1.3.0"))
+			Expect(spec.Version).To(Equal("1.4.0"))
 
 			// Build variable map matching what GenerateWork passes
 			vars := map[string]string{

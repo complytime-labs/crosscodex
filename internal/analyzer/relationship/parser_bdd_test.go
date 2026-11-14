@@ -1,6 +1,7 @@
 package relationship_test
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
 )
 
 func TestRelationshipBDD(t *testing.T) {
@@ -25,9 +28,12 @@ var _ = AfterSuite(func() {
 	restoreLogs()
 })
 
+const sanityPass = "\nSANITY_CHECK: PASS"
+
 var _ = Describe("ParseResponse", func() {
 	DescribeTable("extracts fields from valid LLM responses",
 		func(raw string, expectedRel relationship.RelationshipType, expectedContrib relationship.ContributionType, expectedConf relationship.ConfidenceLevel, expectedStatus relationship.ParseStatus) {
+			raw += sanityPass
 			vote := relationship.ParseResponse(raw)
 			Expect(vote.Relationship).To(Equal(expectedRel), "relationship mismatch")
 			Expect(vote.ContributionType).To(Equal(expectedContrib), "contribution_type mismatch")
@@ -100,8 +106,84 @@ var _ = Describe("ParseResponse", func() {
 	)
 
 	It("extracts justification text", func() {
-		raw := "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: Both controls address the same access policy.\nCONFIDENCE: HIGH"
+		raw := "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: Both controls address the same access policy.\nCONFIDENCE: HIGH" + sanityPass
 		vote := relationship.ParseResponse(raw)
 		Expect(vote.Justification).To(Equal("Both controls address the same access policy."))
 	})
+
+	DescribeTable("enforces the SANITY_CHECK line",
+		func(raw string, expectedRel relationship.RelationshipType, expectedSanity string, expectedStatus relationship.ParseStatus) {
+			vote := relationship.ParseResponse(raw)
+			Expect(vote.Relationship).To(Equal(expectedRel))
+			Expect(vote.SanityCheck).To(Equal(expectedSanity))
+			Expect(vote.ParseStatus).To(Equal(expectedStatus))
+		},
+		Entry("PASS keeps the verdict",
+			"RELATIONSHIP: PARTIAL\nJUSTIFICATION: Shared obligation named.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+			relationship.RelPartial, "PASS", relationship.ParseOK),
+		Entry("FAIL downgrades to NO_RELATIONSHIP",
+			"RELATIONSHIP: PARTIAL\nJUSTIFICATION: Topic only.\nSANITY_CHECK: FAIL\nCONFIDENCE: HIGH",
+			relationship.RelNoRelationship, "FAIL", relationship.ParseOK),
+		Entry("padded lowercase pass is PASS",
+			"RELATIONSHIP: EQUIVALENT\nSANITY_CHECK:  pass \nCONFIDENCE: HIGH",
+			relationship.RelEquivalent, "PASS", relationship.ParseOK),
+		Entry("missing line is invalid",
+			"RELATIONSHIP: EQUIVALENT\nCONFIDENCE: HIGH",
+			relationship.RelNoRelationship, "", relationship.ParseFail),
+		Entry("MAYBE is invalid",
+			"RELATIONSHIP: EQUIVALENT\nSANITY_CHECK: MAYBE\nCONFIDENCE: HIGH",
+			relationship.RelNoRelationship, "", relationship.ParseFail),
+		Entry("empty value is invalid",
+			"RELATIONSHIP: EQUIVALENT\nSANITY_CHECK:\nCONFIDENCE: HIGH",
+			relationship.RelNoRelationship, "", relationship.ParseFail),
+	)
+
+	It("discards the contribution type of a FAIL vote", func() {
+		vote := relationship.ParseResponse("RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nSANITY_CHECK: FAIL\nCONFIDENCE: HIGH")
+		Expect(vote.Relationship).To(Equal(relationship.RelNoRelationship))
+		Expect(vote.ContributionType).To(Equal(relationship.ContribNone))
+	})
+
+	It("keeps the justification of a FAIL vote", func() {
+		vote := relationship.ParseResponse("RELATIONSHIP: PARTIAL\nJUSTIFICATION: Topic only, no shared obligation.\nSANITY_CHECK: FAIL\nCONFIDENCE: LOW")
+		Expect(vote.Justification).To(Equal("Topic only, no shared obligation."))
+	})
+})
+
+var _ = Describe("sceptical default prompt", func() {
+	var (
+		spec   *prompt.PromptSpec
+		system string
+	)
+
+	BeforeEach(func() {
+		reg, err := prompt.NewRegistry(config.PromptConfig{Layers: config.PromptLayerConfig{Enabled: true}})
+		Expect(err).NotTo(HaveOccurred())
+		spec, err = reg.Resolve(context.Background(), "relationship")
+		Expect(err).NotTo(HaveOccurred())
+		system, err = prompt.SubstitutePlaceholders(spec.Templates.System, map[string]string{
+			"classification_guidance":  relationship.ExportClassificationGuidance,
+			"relationship_definitions": relationship.ExportRelationshipDefinitions,
+		})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("is version 1.3.0", func() {
+		Expect(spec.Version).To(Equal("1.3.0"))
+	})
+
+	It("asks for the SANITY_CHECK line and a justification naming the shared obligation", func() {
+		Expect(system).To(ContainSubstring("SANITY_CHECK: <PASS|FAIL>"))
+		Expect(system).To(ContainSubstring("naming the shared obligation"))
+	})
+
+	DescribeTable("rendered system prompt carries the rule",
+		func(sentence string) {
+			Expect(system).To(ContainSubstring(sentence))
+		},
+		Entry("topics are not relationships", "Sharing a topic, keywords or a control family is not a relationship."),
+		Entry("name the obligation", "Name the specific obligation both requirements share."),
+		Entry("auditor check", "Would an auditor accept evidence of the target as evidence toward the source?"),
+		Entry("fall back", "If you cannot name the obligation or the check fails, answer NO_RELATIONSHIP."),
+	)
 })

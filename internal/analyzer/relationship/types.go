@@ -188,11 +188,19 @@ type Vote struct {
 	Relationship     RelationshipType `json:"relationship"`
 	ContributionType ContributionType `json:"contribution_type"`
 	Justification    string           `json:"justification"`
+	SanityCheck      string           `json:"sanity_check"` // SanityPass or SanityFail; empty when the vote did not parse
 	Confidence       ConfidenceLevel  `json:"confidence"`
 	RawResponse      string           `json:"raw_response"`
 	ParseStatus      ParseStatus      `json:"parse_status"`
 	DurationMS       int64            `json:"duration_ms"`
 }
+
+// Values of Vote.SanityCheck: the model's self-check that the pair shares a
+// named obligation (see classificationGuidance).
+const (
+	SanityPass = "PASS"
+	SanityFail = "FAIL"
+)
 
 // Consensus captures the aggregated outcome for a control pair.
 type Consensus struct {

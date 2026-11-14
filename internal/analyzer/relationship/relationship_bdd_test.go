@@ -394,7 +394,7 @@ var _ = Describe("RelationshipAnalyzer", func() {
 
 			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
 				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s0",
-					"RELATIONSHIP: EQUIVALENT\nCONFIDENCE: HIGH\nJUSTIFICATION: same control"),
+					"RELATIONSHIP: EQUIVALENT\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH\nJUSTIFICATION: same control"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -417,9 +417,9 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			}
 
 			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
-				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s0", "RELATIONSHIP: EQUIVALENT\nCONFIDENCE: HIGH"),
-				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s1", "RELATIONSHIP: EQUIVALENT\nCONFIDENCE: MEDIUM"),
-				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s2", "RELATIONSHIP: PARTIAL\nCONFIDENCE: HIGH"),
+				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s0", "RELATIONSHIP: EQUIVALENT\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s1", "RELATIONSHIP: EQUIVALENT\nSANITY_CHECK: PASS\nCONFIDENCE: MEDIUM"),
+				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s2", "RELATIONSHIP: PARTIAL\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -443,7 +443,7 @@ var _ = Describe("RelationshipAnalyzer", func() {
 
 			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
 				mkResult("relationship-AC-1--AC-2-llama3.2:3b-s0",
-					"RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH\nJUSTIFICATION: unrelated controls"),
+					"RELATIONSHIP: NO_RELATIONSHIP\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH\nJUSTIFICATION: unrelated controls"),
 			})
 			Expect(err).NotTo(HaveOccurred())
 

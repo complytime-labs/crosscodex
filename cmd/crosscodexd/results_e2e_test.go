@@ -40,7 +40,7 @@ func (c equivalentRelationshipLLMClient) Complete(ctx context.Context, req *llmc
 	if err != nil || req.PromptName != "relationship" {
 		return resp, err
 	}
-	resp.Choices[0].Message.Content = "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: same control intent\nCONFIDENCE: HIGH"
+	resp.Choices[0].Message.Content = "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: same control intent\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"
 	return resp, nil
 }
 

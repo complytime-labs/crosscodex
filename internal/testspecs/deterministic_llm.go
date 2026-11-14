@@ -69,14 +69,14 @@ func (DeterministicLLM) Complete(_ context.Context, req *llmclient.CompletionReq
 		// ParseClassification expects "Type|Level".
 		content = "Technical|Operational"
 	case "requires":
-		// requires.ParseResponse keys on "REQUIRES: YES|NO"; a single YES vote
+		// requires.ParseResponse keys on "REQUIRES: YES|NO" plus "SANITY_CHECK: PASS"; a single YES vote
 		// with HIGH confidence clears the consensus threshold.
-		content = "REQUIRES: YES\nJUSTIFICATION: prerequisite control\nCONFIDENCE: HIGH"
+		content = "REQUIRES: YES\nJUSTIFICATION: prerequisite control\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"
 	case "relationship":
 		// relationship.Aggregate omits NO_RELATIONSHIP pairs, so the
 		// relationship analyzer produces an (empty) result row and populates no
 		// vote_summaries rows; only the requires contribution reaches synthesis.
-		content = "RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH"
+		content = "RELATIONSHIP: NO_RELATIONSHIP\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"
 	case resultcache.ProbePromptName:
 		// The per-job model probe reads only resp.Model and resp.Deployment.
 		content = "OK"
