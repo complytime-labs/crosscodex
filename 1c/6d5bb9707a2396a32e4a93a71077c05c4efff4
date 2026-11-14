@@ -1,0 +1,21 @@
+test/eval/crosswalk/results/2026-11-14-panel-skepticism.md
+  s_21535d83e059fe::t_3b678e07ab6e5b 1-104
+test/eval/crosswalk/README.md
+  s_21535d83e059fe::t_f9d59153d653fd 92-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1c6d5bb9707a2396a32e4a93a71077c05c4efff4",
+  "prompts": {},
+  "sessions": {
+    "s_21535d83e059fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a55b66a6-90bf-405a-b5fa-ec54c6ef1232",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
