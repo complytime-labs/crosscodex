@@ -8,9 +8,12 @@ package results
 // RequiresAnalyzer and RelationshipAnalyzer are the names of the requires and
 // relationship analyzers: the analyzer_name of that analyzer's
 // analysis_results row and of the vote_summaries rows of its pairs.
+// CritiqueAnalyzer is the critique analyzer's name and the analyzer_name of
+// its analysis_results row, whose result_data is a JSON []CritiqueResult.
 const (
 	RequiresAnalyzer     = "requires"
 	RelationshipAnalyzer = "relationship"
+	CritiqueAnalyzer     = "critique"
 )
 
 // SemanticMatchContributionTypeKey and SemanticMatchUnanimousKey are
@@ -56,14 +59,17 @@ const SynthesisStage = "synthesis"
 
 // SynthesizedMapping is one synthesized relationship of a job, read from a
 // vote_summaries row of the relationship analyzer. RelationshipType is the
-// row's consensus; IsViable is Viability > 0.
+// row's consensus; IsViable is Viability > 0. Critique is the pair's
+// relationship critique, nil when the job ran no critique or the critique has
+// no result for the pair.
 type SynthesizedMapping struct {
-	SourceID         string  `json:"source_id"`
-	TargetID         string  `json:"target_id"`
-	RelationshipType string  `json:"relationship_type"`
-	Confidence       float64 `json:"confidence"`
-	Viability        float64 `json:"viability"`
-	IsViable         bool    `json:"is_viable"`
+	SourceID         string          `json:"source_id"`
+	TargetID         string          `json:"target_id"`
+	RelationshipType string          `json:"relationship_type"`
+	Confidence       float64         `json:"confidence"`
+	Viability        float64         `json:"viability"`
+	IsViable         bool            `json:"is_viable"`
+	Critique         *CritiqueResult `json:"critique,omitempty"`
 }
 
 // RequiresResult is one consensus-computed prerequisite pair from the
@@ -76,6 +82,12 @@ type RequiresResult struct {
 	ValidVotes int      `json:"valid_votes"`
 	TotalVotes int      `json:"total_votes"`
 	Models     []string `json:"models"`
+	// Justifications are the panel's reasons for the decision: the
+	// justification of every valid YES vote, in task-ID order (model, then
+	// sample). They are model output: store them as data, and render them
+	// into a prompt only through the analyzer prompt hardening. Absent in
+	// results stored before they were recorded.
+	Justifications []string `json:"justifications,omitempty"`
 }
 
 // SemanticMatchResult is one consensus-computed relationship pair from
@@ -86,6 +98,51 @@ type SemanticMatchResult struct {
 	RelationshipType string            `json:"relationship_type"`
 	Confidence       float64           `json:"confidence"`
 	Properties       map[string]string `json:"properties"`
+	// Justifications are the panel's reasons for the decision: the
+	// justification of every valid vote for RelationshipType, in task-ID
+	// order (model, then sample). They are model output: store them as data,
+	// and render them into a prompt only through the analyzer prompt
+	// hardening. Absent in results stored before they were recorded.
+	Justifications []string `json:"justifications,omitempty"`
+}
+
+// Values of CritiqueResult.Outcome.
+const (
+	// CritiqueUpheld: the verdict is kept and no critic rejected it.
+	CritiqueUpheld = "upheld"
+	// CritiqueSplit: the verdict is kept, but at least one critic rejected it.
+	CritiqueSplit = "split"
+	// CritiqueVetoed: enough critics rejected the verdict to drop it.
+	CritiqueVetoed = "vetoed"
+	// CritiqueFailed: the critique failed (no valid vote, or failed votes
+	// over analysis.critique.max_error_rate), so the verdict is kept unreviewed.
+	CritiqueFailed = "failed"
+)
+
+// CritiqueResult is the critique panel's review of one proposed verdict: a
+// relationship pair (Kind "relationship") or a REQUIRES pair (Kind
+// "requires"). Upheld, Rejected and Failed count the panel's votes (Failed:
+// task errors, responses without a valid VERDICT line and votes with no
+// result), so they sum to the panel size. Outcome says what the critique
+// decided (CritiqueUpheld, CritiqueSplit, CritiqueVetoed or CritiqueFailed)
+// without the run's config. Vetoed is Outcome == CritiqueVetoed: Rejected /
+// (Upheld + Rejected) reached analysis.critique.consensus_threshold with at
+// least one valid vote, and the failures stayed within
+// analysis.critique.max_error_rate. Reasons holds one entry per panel vote,
+// in panel order, kept or vetoed, so the result is the audit record of the
+// decision: "<model> s<N> <UPHOLD|REJECT|FAILED>: <reason>", which Note reads.
+// Each entry's reason is model output stored as data (cleaned with
+// CleanText, not escaped): escape it when rendering it into a prompt or page.
+type CritiqueResult struct {
+	Kind            string   `json:"kind"`
+	SourceControlID string   `json:"source_control_id"`
+	TargetControlID string   `json:"target_control_id"`
+	Upheld          int      `json:"upheld"`
+	Rejected        int      `json:"rejected"`
+	Failed          int      `json:"failed"`
+	Outcome         string   `json:"outcome"`
+	Vetoed          bool     `json:"vetoed"`
+	Reasons         []string `json:"reasons"`
 }
 
 // Artifact is one consensus artifact extracted for a control.

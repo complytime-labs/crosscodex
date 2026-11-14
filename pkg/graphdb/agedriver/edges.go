@@ -70,6 +70,15 @@ func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEd
 		propertyPair{"analyzed_at", fmt.Sprintf("'%s'", escapeCypher(graphdb.FormatTime(reqEdge.AnalyzedAt)))},
 		propertyPair{"job_id", fmt.Sprintf("'%s'", escapeCypher(reqEdge.JobID))},
 	)
+	if c := reqEdge.Critique; c != nil {
+		pairs = append(pairs,
+			propertyPair{"critique_upheld", fmt.Sprintf("%d", c.Upheld)},
+			propertyPair{"critique_rejected", fmt.Sprintf("%d", c.Rejected)},
+		)
+		if c.Note != "" {
+			pairs = append(pairs, propertyPair{"critique_note", fmt.Sprintf("'%s'", escapeCypher(c.Note))})
+		}
+	}
 
 	cypher := fmt.Sprintf(
 		"MATCH (s), (t) WHERE s.id = '%s' AND t.id = '%s' CREATE (s)-[e:REQUIRES %s]->(t)",

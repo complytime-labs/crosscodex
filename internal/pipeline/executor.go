@@ -658,7 +658,8 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 	}
 	s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageStarted)
 
-	classifyOut, err := s.store.GetCompletedAnalysisResults(ctx, jobID, []string{"classify", "requires", "relationship"})
+	classifyOut, err := s.store.GetCompletedAnalysisResults(ctx, jobID,
+		[]string{"classify", results.RequiresAnalyzer, results.RelationshipAnalyzer, results.CritiqueAnalyzer})
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -683,6 +684,16 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 			return fmt.Errorf("runSynthesis: unmarshaling relationship results: %w", err)
 		}
 	}
+	// Vetoed verdicts are not synthesized, matching the vote_summaries rows
+	// buildVoteSummaryPairs wrote, which synthesis updates one per input.
+	relVerdicts, reqVerdicts, err := critiqueDecisions(classifyOut)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("runSynthesis: %w", err)
+	}
+	requiresResults = slices.DeleteFunc(requiresResults, func(r results.RequiresResult) bool { return reqVerdicts.Vetoed(r.SourceID, r.TargetID) })
+	relResults = slices.DeleteFunc(relResults, func(r results.SemanticMatchResult) bool { return relVerdicts.Vetoed(r.SourceID, r.TargetID) })
 
 	// Similarity matrices: one per configured embedding model, read from the
 	// same pgEmbeddingsReader candidate generation already uses. A nil

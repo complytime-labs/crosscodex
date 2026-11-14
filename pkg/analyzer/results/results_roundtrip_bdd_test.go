@@ -15,6 +15,7 @@ var _ = Describe("Result Round-Trips", func() {
 		want := []results.RequiresResult{{
 			SourceID: "AC-1", TargetID: "AC-2", Confidence: 0.8,
 			Unanimous: true, ValidVotes: 3, TotalVotes: 3, Models: []string{"llama3.2:3b"},
+			Justifications: []string{"Assessment needs a defined scope first."},
 		}}
 		data, err := json.Marshal(want)
 		Expect(err).NotTo(HaveOccurred())
@@ -32,6 +33,7 @@ var _ = Describe("Result Round-Trips", func() {
 			RelationshipType: "SUPPORTS",
 			Confidence:       0.9,
 			Properties:       map[string]string{"note": "derived"},
+			Justifications:   []string{"Both require an asset inventory."},
 		}}
 		data, err := json.Marshal(want)
 		Expect(err).NotTo(HaveOccurred())
@@ -41,6 +43,30 @@ var _ = Describe("Result Round-Trips", func() {
 		Expect(reflect.DeepEqual(got[0], want[0])).To(BeTrue(),
 			"round-trip mismatch: got %+v, want %+v", got[0], want[0])
 	})
+
+	It("round-trips CritiqueResult through JSON", func() {
+		want := []results.CritiqueResult{{
+			Kind: "relationship", SourceControlID: "AC-1", TargetControlID: "AC-2",
+			Upheld: 1, Rejected: 2, Failed: 0, Outcome: results.CritiqueVetoed, Vetoed: true,
+			Reasons: []string{"Shares a topic only.", "No common obligation.", "Same obligation."},
+		}}
+		data, err := json.Marshal(want)
+		Expect(err).NotTo(HaveOccurred())
+
+		var got []results.CritiqueResult
+		Expect(json.Unmarshal(data, &got)).To(Succeed())
+		Expect(got).To(Equal(want))
+	})
+
+	DescribeTable("omits empty justifications, so results stored before they existed decode unchanged",
+		func(v any, absent string) {
+			data, err := json.Marshal(v)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(data)).NotTo(ContainSubstring(absent))
+		},
+		Entry("RequiresResult", results.RequiresResult{SourceID: "a", TargetID: "b"}, `"justifications"`),
+		Entry("SemanticMatchResult", results.SemanticMatchResult{SourceID: "a", TargetID: "b"}, `"justifications"`),
+	)
 
 	It("round-trips ArtifactResult through JSON", func() {
 		want := []results.ArtifactResult{{

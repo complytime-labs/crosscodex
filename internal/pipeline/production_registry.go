@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/classify"
+	"github.com/complytime-labs/crosscodex/internal/analyzer/critique"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/embedding"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
@@ -24,12 +26,17 @@ import (
 )
 
 // NewProductionRegistry builds and registers the real analyzers (classify,
-// embedding, artifacts, requires, relationship) that cfg enables, with their
+// embedding, artifacts, requires, relationship, critique) that cfg enables, with their
 // production dependencies, per the assembly pattern documented in
 // internal/pipeline/doc.go. A disabled analyzer is not registered, so it gets
 // no job stage, never runs and makes no LLM calls. Consumed directly by the
 // end-to-end test in this package and by crosscodexd's pipeline-role
 // bootstrap.
+//
+// critique reviews the verdicts of the enabled pair analyzers and depends on
+// exactly those. With relationship and requires both disabled it has nothing
+// to review, so it is not registered (an Info log says so once). Its job has
+// no critique stage, which is how run status shows it did not run.
 //
 // An enabled analyzer whose dependency is disabled (embedding needs classify;
 // requires and relationship need embedding) is refused with
@@ -55,6 +62,15 @@ func NewProductionRegistry(
 	registryOpts := append([]analyzer.RegistryOption{analyzer.WithTelemetry(tp, mp)}, opts...)
 	reg := analyzer.NewRegistry(registryOpts...)
 
+	// The pair analyzers whose verdicts critique reviews, when enabled.
+	var pairAnalyzers []string
+	if cfg.Relationship.Enabled {
+		pairAnalyzers = append(pairAnalyzers, "relationship")
+	}
+	if cfg.Requires.Enabled {
+		pairAnalyzers = append(pairAnalyzers, "requires")
+	}
+
 	analyzers := []struct {
 		name     string
 		enabled  bool
@@ -77,6 +93,17 @@ func NewProductionRegistry(
 			provider := NewRelationshipCandidateProvider(conn, WithRelationshipCandidateTelemetry(tp, mp))
 			return analyzer.Register[*pb.Control](reg, relationship.New(llm, prompts, provider, cfg.Relationship, relationship.WithTelemetry(tp, mp)))
 		}},
+		{"critique", cfg.Critique.Enabled && len(pairAnalyzers) > 0, func() error {
+			// The provider only reads analysis_results through the tenant
+			// connection; it never uses the store's system pool.
+			provider := NewCritiqueVerdictProvider(NewPGStore(conn, nil, WithStoreTelemetry(tp, mp)))
+			return analyzer.Register[*pb.Control](reg, critique.New(llm, prompts, provider, cfg.Critique,
+				critique.WithDependencies(pairAnalyzers...), critique.WithTelemetry(tp, mp)))
+		}},
+	}
+	if cfg.Critique.Enabled && len(pairAnalyzers) == 0 {
+		slog.Info("analysis.critique is enabled but relationship and requires are both disabled, " +
+			"so critique has nothing to review and is not registered; enable a pair analyzer or set analysis.critique.enabled: false")
 	}
 	for _, a := range analyzers {
 		if !a.enabled {

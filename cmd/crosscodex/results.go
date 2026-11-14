@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -50,6 +51,9 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID := args[0]
 
+			if includeVetoed, _ := cmd.Flags().GetBool("include-vetoed"); includeVetoed {
+				return errSummaryIncludeVetoed
+			}
 			req, err := mappingRequestFromFlags(cmd, jobID)
 			if err != nil {
 				return err
@@ -100,6 +104,11 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 		},
 	})
 	addMappingFlags(cmd)
+	// Shared with export, where it lists vetoed pairs; summary refuses it
+	// (errSummaryIncludeVetoed), so its help does not offer it.
+	if err := cmd.Flags().MarkHidden("include-vetoed"); err != nil {
+		panic(err)
+	}
 
 	return cmd
 }
@@ -124,7 +133,12 @@ func addMappingFlags(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("type", nil, "only these relationship types (repeatable, case-insensitive)")
 	cmd.Flags().String("control", "", "only mappings whose source or target is this control id")
 	cmd.Flags().Bool("include-non-viable", false, "include pairs synthesis filtered out (synthesized stage only)")
+	cmd.Flags().Bool("include-vetoed", false, "include pairs the critique stage vetoed, with its votes and reasons (analyzer stage only)")
 }
+
+// errSummaryIncludeVetoed refuses --include-vetoed on summary: a vetoed pair
+// is not a mapping, so counting it would overstate the job's mappings.
+var errSummaryIncludeVetoed = errors.New("--include-vetoed lists vetoed pairs in `results export --stage analyzer`; summary counts only mappings, so drop the flag")
 
 // mappingRequestFromFlags validates the shared mapping flags and builds the
 // request, so mistakes surface here with guidance before any network call.
@@ -145,6 +159,11 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 		return nil, fmt.Errorf("--include-non-viable only applies to the synthesized stage: analyzer mappings have no viability, so drop the flag or use --stage synthesized")
 	}
 
+	includeVetoed, _ := cmd.Flags().GetBool("include-vetoed")
+	if includeVetoed && stage != pb.MappingStage_MAPPING_STAGE_ANALYZER {
+		return nil, fmt.Errorf("--include-vetoed only applies to the analyzer stage: synthesis never receives vetoed pairs, so add --stage analyzer or drop the flag")
+	}
+
 	typeNames, _ := cmd.Flags().GetStringSlice("type")
 	types := make([]pb.RelationshipType, 0, len(typeNames))
 	for _, name := range typeNames {
@@ -161,6 +180,7 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 		Stage:             stage,
 		MinConfidence:     float32(minConfidence),
 		IncludeNonViable:  includeNonViable,
+		IncludeVetoed:     includeVetoed,
 		RelationshipTypes: types,
 		ControlId:         controlID,
 	}, nil
@@ -242,6 +262,25 @@ func analysisValues(a *pb.JobAnalysis) []string {
 	}
 }
 
+// critiqueCell renders a mapping's critique for the CSV critique column:
+// "<vetoed|kept>: <u> upheld, <r> rejected, <f> failed; <reason> | ...", or ""
+// for a mapping without one. The reasons are model output, so the cell goes
+// through csvCellUpTo, uncapped: the server already bounds each reason.
+func critiqueCell(c *pb.MappingCritique) string {
+	if c == nil {
+		return ""
+	}
+	verdict := "kept"
+	if c.GetVetoed() {
+		verdict = "vetoed"
+	}
+	cell := fmt.Sprintf("%s: %d upheld, %d rejected, %d failed", verdict, c.GetUpheld(), c.GetRejected(), c.GetFailed())
+	if reasons := c.GetReasons(); len(reasons) > 0 {
+		cell += "; " + strings.Join(reasons, " | ")
+	}
+	return csvCellUpTo(cell, math.MaxInt)
+}
+
 // csvCell makes an uploader-derived value safe as a CSV cell. CSV is often
 // read on a terminal, so the value is cleaned to one line; a spreadsheet runs
 // a cell starting with = + - @ (or tab or CR, which cleaning already trims)
@@ -303,7 +342,14 @@ belong to the job's target catalog. A CSV cell from a catalog
 (control and catalog IDs, names, versions) that would start with = + - or @
 gets a leading single quote, so a spreadsheet does not run it as a formula.
 With --stage analyzer, which has no viability, JSON omits viabilityScore and
-isViable and CSV leaves viability_score and is_viable empty.`,
+isViable and CSV leaves viability_score and is_viable empty.
+
+When the job ran the critique stage, the pairs it vetoed are not mappings and
+are left out. With --stage analyzer --include-vetoed they are listed too: JSON
+carries each mapping's critique (vetoed, upheld, rejected, failed, reasons)
+and CSV adds a critique column ("vetoed: 0 upheld, 3 rejected, 0 failed;
+<reasons>"; empty for a mapping the critique did not review). The reasons are
+the critics' own words.`,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			jobID := args[0]
 			format, _ := cmd.Flags().GetString("format")
@@ -335,20 +381,30 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 			case "json":
 				// encoding/json would print enums as numbers and drop false and
 				// zero fields; protojson with EmitUnpopulated keeps every field
-				// and the enum names.
+				// and the enum names. Fields that are not a verdict are then
+				// dropped: viability on the analyzer stage, and the critique of
+				// a mapping the critique did not review (null would read as one).
 				raw := make([]json.RawMessage, len(mappings))
 				for i, m := range mappings {
 					b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(m)
 					if err != nil {
 						return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
 					}
+					var drop []string
 					if noViability {
+						drop = append(drop, "viabilityScore", "isViable")
+					}
+					if m.GetCritique() == nil {
+						drop = append(drop, "critique")
+					}
+					if len(drop) > 0 {
 						var fields map[string]json.RawMessage
 						if err := json.Unmarshal(b, &fields); err != nil {
 							return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
 						}
-						delete(fields, "viabilityScore")
-						delete(fields, "isViable")
+						for _, f := range drop {
+							delete(fields, f)
+						}
 						if b, err = json.Marshal(fields); err != nil {
 							return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
 						}
@@ -376,7 +432,13 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 				w := csv.NewWriter(out)
 				defer w.Flush()
 
-				header := append([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}, analysisColumns...)
+				// The critique column is added only on request, so the default
+				// columns stay where scripts expect them.
+				header := []string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}
+				if req.GetIncludeVetoed() {
+					header = append(header, "critique")
+				}
+				header = append(header, analysisColumns...)
 				if err := w.Write(header); err != nil {
 					return fmt.Errorf("write CSV header: %w", err)
 				}
@@ -386,7 +448,7 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 					if !noViability {
 						viabilityScore, isViable = fmt.Sprintf("%.3f", m.GetViabilityScore()), fmt.Sprintf("%t", m.GetIsViable())
 					}
-					if err := w.Write(append([]string{
+					row := []string{
 						m.GetMappingId(),
 						csvCell(m.GetSourceControlId()),
 						csvCell(m.GetTargetControlId()),
@@ -394,7 +456,11 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 						fmt.Sprintf("%.3f", m.GetConfidence()),
 						viabilityScore,
 						isViable,
-					}, jobValues...)); err != nil {
+					}
+					if req.GetIncludeVetoed() {
+						row = append(row, critiqueCell(m.GetCritique()))
+					}
+					if err := w.Write(append(row, jobValues...)); err != nil {
 						return fmt.Errorf("write CSV row: %w", err)
 					}
 				}
@@ -412,7 +478,7 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a job-id",
 		find:  "crosscodex results export <job-id>",
-		usage: "crosscodex results export <job-id> [--format json|csv] [--output file] [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable]",
+		usage: "crosscodex results export <job-id> [--format json|csv] [--output file] [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable] [--include-vetoed]",
 		examples: []string{
 			"crosscodex results export abc123",
 			"crosscodex results export abc123 --format csv --output mappings.csv",

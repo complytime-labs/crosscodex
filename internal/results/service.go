@@ -231,6 +231,10 @@ func (s *Service) buildFilter(ctx context.Context, msg *pb.ListJobMappingsReques
 		return ctx, Filter{}, invalidArgument("include_non_viable applies only to the synthesized stage; analyzer mappings have no viability")
 	}
 
+	if msg.GetIncludeVetoed() && stage != StageAnalyzer {
+		return ctx, Filter{}, invalidArgument("include_vetoed applies only to the analyzer stage: synthesis never receives vetoed pairs; request the analyzer stage to list them")
+	}
+
 	types, err := relationshipNames(msg.GetRelationshipTypes())
 	if err != nil {
 		return ctx, Filter{}, err
@@ -256,6 +260,7 @@ func (s *Service) buildFilter(ctx context.Context, msg *pb.ListJobMappingsReques
 		ControlID:         msg.GetControlId(),
 		MinConfidence:     minConfidence,
 		IncludeNonViable:  msg.GetIncludeNonViable(),
+		IncludeVetoed:     msg.GetIncludeVetoed(),
 		RelationshipTypes: types,
 		PageSize:          pageSize,
 		After:             after,
@@ -405,6 +410,12 @@ func (s *Service) toResponse(ctx context.Context, page Page) *pb.ListJobMappings
 		if m.HasViability {
 			cm.ViabilityScore = float32(m.Viability)
 			cm.IsViable = m.Viability > 0
+		}
+		if c := m.Critique; c != nil {
+			// The store refuses counts outside [0, MaxInt32] as a corrupt
+			// critique result, so the conversions cannot overflow.
+			cm.Critique = &pb.MappingCritique{Vetoed: c.Vetoed, Upheld: int32(c.Upheld), Rejected: int32(c.Rejected),
+				Failed: int32(c.Failed), Reasons: c.Reasons}
 		}
 		resp.Mappings = append(resp.Mappings, cm)
 	}

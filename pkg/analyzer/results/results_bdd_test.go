@@ -56,3 +56,18 @@ var _ = Describe("semantic match properties", func() {
 		Expect(results.SemanticMatchUnanimousKey).To(Equal("unanimous"))
 	})
 })
+
+var _ = Describe("critique result encoding", func() {
+	It("encodes a critique result with snake_case keys and every vote's reason", func() {
+		data, err := json.Marshal(results.CritiqueResult{Kind: "requires", SourceControlID: "a", TargetControlID: "b",
+			Upheld: 1, Rejected: 1, Failed: 1, Outcome: results.CritiqueSplit, Vetoed: false, Reasons: []string{"x", "y"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(MatchJSON(`{"kind":"requires","source_control_id":"a","target_control_id":"b",` +
+			`"upheld":1,"rejected":1,"failed":1,"outcome":"split","vetoed":false,"reasons":["x","y"]}`))
+	})
+
+	It("names the critique outcomes", func() {
+		Expect([]string{results.CritiqueUpheld, results.CritiqueSplit, results.CritiqueVetoed, results.CritiqueFailed}).
+			To(Equal([]string{"upheld", "split", "vetoed", "failed"}))
+	})
+})

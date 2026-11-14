@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/complytime-labs/crosscodex/internal/results"
+	analyzerresults "github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
@@ -130,6 +131,12 @@ func (e storeEnv) candidateCount(jobID string) int {
 func (e storeEnv) seedAnalysis(tenantID, jobID, data string) {
 	Expect(e.su.Exec(context.Background(), `INSERT INTO analysis_results (tenant_id, job_id, analyzer_name, result_data)
 		VALUES ($1, $2, 'relationship', $3::jsonb)`, tenantID, jobID, data)).To(Succeed())
+}
+
+// seedCritique inserts the critique analyzer's result for jobID.
+func (e storeEnv) seedCritique(tenantID, jobID, data string) {
+	Expect(e.su.Exec(context.Background(), `INSERT INTO analysis_results (tenant_id, job_id, analyzer_name, result_data)
+		VALUES ($1, $2, 'critique', $3::jsonb)`, tenantID, jobID, data)).To(Succeed())
 }
 
 func keys(p results.Page) []string {
@@ -315,6 +322,65 @@ var _ = Describe("PGStore", func() {
 			Expect(err.Error()).To(ContainSubstring("AC-1"))
 			Expect(err.Error()).To(ContainSubstring("B-1"))
 			Expect(page.Mappings).To(BeEmpty())
+		})
+
+		Describe("with a critique", func() {
+			// AC-1>B-1 is vetoed as a relationship; AC-2>B-1 is split as a
+			// relationship and vetoed only as requires, which leaves its mapping.
+			BeforeEach(func() {
+				env.seedCritique(env.tenantA, job, `[
+					{"kind":"relationship","source_control_id":"AC-1","target_control_id":"B-1","upheld":0,"rejected":3,"failed":0,
+					 "outcome":"vetoed","vetoed":true,"reasons":["panel-1 s0 REJECT: a","panel-2 s0 REJECT: b","panel-3 s0 REJECT: c"]},
+					{"kind":"relationship","source_control_id":"AC-2","target_control_id":"B-1","upheld":2,"rejected":1,"failed":0,
+					 "outcome":"split","vetoed":false,"reasons":["panel-1 s0 UPHOLD: x","panel-2 s0 REJECT: y","panel-3 s0 UPHOLD: z"]},
+					{"kind":"requires","source_control_id":"AC-2","target_control_id":"B-1","upheld":0,"rejected":3,"failed":0,
+					 "outcome":"vetoed","vetoed":true,"reasons":[]}]`)
+			})
+
+			It("leaves vetoed pairs out and carries the relationship critique of the kept ones", func() {
+				page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageAnalyzer))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keys(page)).To(Equal([]string{"AC-2>B-1"}))
+				Expect(page.Mappings[0].Critique).NotTo(BeNil())
+				Expect(page.Mappings[0].Critique.Outcome).To(Equal(analyzerresults.CritiqueSplit))
+				Expect(page.Mappings[0].Critique.Kind).To(Equal(analyzerresults.RelationshipAnalyzer))
+			})
+
+			It("lists vetoed pairs with their votes and reasons on request", func() {
+				f := filter(env.tenantA, job, results.StageAnalyzer)
+				f.IncludeVetoed = true
+				page, err := env.store.ListMappings(env.ctxA, f)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keys(page)).To(Equal([]string{"AC-1>B-1", "AC-2>B-1"}))
+				Expect(page.Mappings[0].Critique).To(Equal(&analyzerresults.CritiqueResult{Kind: "relationship",
+					SourceControlID: "AC-1", TargetControlID: "B-1", Rejected: 3, Outcome: "vetoed", Vetoed: true,
+					Reasons: []string{"panel-1 s0 REJECT: a", "panel-2 s0 REJECT: b", "panel-3 s0 REJECT: c"}}))
+			})
+
+			DescribeTable("fails, naming the job, the pair and the remedy, when a vote count cannot be a panel's",
+				func(count string) {
+					bad := env.seedJob(env.tenantA, "completed")
+					env.seedAnalysis(env.tenantA, bad, `[{"source_id":"AC-1","target_id":"B-1","relationship_type":"EQUIVALENT","confidence":0.9}]`)
+					env.seedCritique(env.tenantA, bad, `[{"kind":"relationship","source_control_id":"AC-1","target_control_id":"B-1",`+
+						`"upheld":`+count+`,"rejected":0,"failed":0,"outcome":"upheld","vetoed":false,"reasons":[]}]`)
+					page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, bad, results.StageAnalyzer))
+					Expect(err).To(MatchError(ContainSubstring(bad)))
+					Expect(err).To(MatchError(ContainSubstring("AC-1 -> B-1 an impossible vote count")))
+					Expect(err).To(MatchError(ContainSubstring("re-run the job")))
+					Expect(page.Mappings).To(BeEmpty())
+				},
+				Entry("negative", "-1"),
+				Entry("beyond int32", "2147483648"),
+			)
+
+			It("fails, naming the job, when the critique result is corrupt", func() {
+				bad := env.seedJob(env.tenantA, "completed")
+				env.seedAnalysis(env.tenantA, bad, `[]`)
+				env.seedCritique(env.tenantA, bad, `{"x":1}`)
+				_, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, bad, results.StageAnalyzer))
+				Expect(err).To(MatchError(ContainSubstring(bad)))
+				Expect(err).To(MatchError(ContainSubstring("critique result")))
+			})
 		})
 
 		It("refuses the analyzer stage without a job, saying what to pass instead", func() {

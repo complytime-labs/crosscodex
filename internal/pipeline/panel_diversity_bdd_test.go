@@ -93,6 +93,10 @@ var _ = Describe("Panel diversity check", func() {
 			`stage "requires" stopped: panel aliases panel-1 and panel-2 both answered as a, so their votes are not independent `+
 				`and confidence would only measure one model's self-consistency. Point the aliases at different models in the LLM `+
 				`gateway config, or set analysis.requires.allow_shared_panel_models: true to run a single-model panel.`),
+		Entry("the critique stage names its own setting", func() { models["panel-3"] = "a" }, "critique", false,
+			`stage "critique" stopped: panel aliases panel-1 and panel-3 both answered as a, so their votes are not independent `+
+				`and confidence would only measure one model's self-consistency. Point the aliases at different models in the LLM `+
+				`gateway config, or set analysis.critique.allow_shared_panel_models: true to run a single-model panel.`),
 		Entry("an alias echoed back with no deployment is an unknown model", func() { models["panel-2"] = "panel-2" }, "relationship", false,
 			unknownMsg("relationship", "panel-2")),
 		Entry("an empty model name is unknown", func() { models["panel-1"] = "" }, "critique", false,

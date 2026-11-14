@@ -129,6 +129,12 @@ var _ = Describe("Service.ListMappings", func() {
 		Entry("non-viable on the analyzer stage", func(r *pb.ListJobMappingsRequest) {
 			r.Stage, r.IncludeNonViable = pb.MappingStage_MAPPING_STAGE_ANALYZER, true
 		}, connect.CodeInvalidArgument, "include_non_viable applies only to the synthesized stage"),
+		Entry("vetoed pairs on the synthesized stage", func(r *pb.ListJobMappingsRequest) {
+			r.Stage, r.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_SYNTHESIZED, true
+		}, connect.CodeInvalidArgument, "include_vetoed applies only to the analyzer stage: synthesis never receives vetoed pairs; request the analyzer stage to list them"),
+		Entry("vetoed pairs on the default stage", func(r *pb.ListJobMappingsRequest) {
+			r.Stage, r.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_UNSPECIFIED, true
+		}, connect.CodeInvalidArgument, "include_vetoed applies only to the analyzer stage"),
 		Entry("unspecified relationship type", func(r *pb.ListJobMappingsRequest) {
 			r.RelationshipTypes = []pb.RelationshipType{pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED}
 		}, connect.CodeInvalidArgument, "EQUIVALENT"),
@@ -224,6 +230,15 @@ var _ = Describe("Service.ListMappings", func() {
 			_, err := call(context.Background(), req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(reader.filter.Stage).To(Equal(results.StageAnalyzer))
+			Expect(reader.filter.IncludeVetoed).To(BeFalse())
+		})
+
+		It("passes include_vetoed through on the analyzer stage", func() {
+			req := validRequest()
+			req.Stage, req.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_ANALYZER, true
+			_, err := call(context.Background(), req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reader.filter.IncludeVetoed).To(BeTrue())
 		})
 
 		It("allows a cross-job read of one control on the synthesized stage", func() {
@@ -268,6 +283,21 @@ var _ = Describe("Service.ListMappings", func() {
 			decoded, err := results.DecodeCursor(resp.PageInfo.NextPageToken)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(decoded).To(Equal(&next))
+		})
+
+		It("carries a mapping's critique and leaves it unset on a mapping without one", func() {
+			reader.page = results.Page{Mappings: []results.Mapping{
+				{JobID: "j", SourceID: "s", TargetID: "t", RelationshipType: "SUBSET_OF", Critique: &analyzerresults.CritiqueResult{
+					Kind: analyzerresults.RelationshipAnalyzer, SourceControlID: "s", TargetControlID: "t", Upheld: 1, Rejected: 2, Failed: 0,
+					Outcome: analyzerresults.CritiqueVetoed, Vetoed: true, Reasons: []string{"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: no", "panel-3 s0 REJECT: no"}}},
+				{JobID: "j", SourceID: "s", TargetID: "u", RelationshipType: "SUBSET_OF"},
+			}}
+			resp, err := call(context.Background(), validRequest())
+			Expect(err).NotTo(HaveOccurred())
+			want := &pb.MappingCritique{Vetoed: true, Upheld: 1, Rejected: 2,
+				Reasons: []string{"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: no", "panel-3 s0 REJECT: no"}}
+			Expect(proto.Equal(resp.Mappings[0].Critique, want)).To(BeTrue(), "critique %v", resp.Mappings[0].Critique)
+			Expect(resp.Mappings[1].Critique).To(BeNil())
 		})
 
 		It("leaves the next token empty on the last page", func() {

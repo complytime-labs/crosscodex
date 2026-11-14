@@ -26,6 +26,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
+	"github.com/complytime-labs/crosscodex/internal/graph"
 	pipelineattestation "github.com/complytime-labs/crosscodex/internal/pipeline/attestation"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
@@ -34,6 +35,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
@@ -129,6 +132,10 @@ type e2eEnv struct {
 	storage    storage.Provider
 	workerLLM  *countingLLM
 	newService func(gen attestation.Generator)
+
+	// The critique env (e2eOptions.critique) only: the graph the graph
+	// service materializes tenant A's stage events into.
+	graph graphdb.GraphDB
 }
 
 // e2eOptions selects what newE2EEnv wires beyond the base pipeline.
@@ -138,22 +145,77 @@ type e2eOptions struct {
 	// whose key IDs follow the production scheme, so a checkpoint signed
 	// by another key reads as untrusted.
 	resultCache bool
+	// critique enables the critique stage over a relationship panel that
+	// relates every pair, and runs the graph service on the bus over a
+	// memdriver graph. The critique panel rejects the verdicts of a pair
+	// whose prompt names both critiqueRejectMarkers, and upholds the rest.
+	critique bool
+	// sharedPanel gives the relationship stage two aliases that answer as
+	// one upstream model and wires the panel probe, so the panel diversity
+	// check refuses every job.
+	sharedPanel bool
 }
 
-// countingLLM is the deterministic LLM, counting the calls it answers.
-type countingLLM struct {
+// critiqueRejectMarkers are the control titles whose pair the critique env's
+// critique panel rejects.
+var critiqueRejectMarkers = [2]string{"Veto Source Marker", "Veto Target Marker"}
+
+// critiqueLLM is the deterministic LLM, except that relationship prompts get
+// an EQUIVALENT verdict and critique prompts naming both
+// critiqueRejectMarkers get a REJECT.
+type critiqueLLM struct {
 	testspecs.DeterministicLLM
+}
+
+func (c critiqueLLM) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+	resp, err := c.DeterministicLLM.Complete(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	switch req.PromptName {
+	case "relationship":
+		resp.Choices[0].Message.Content = "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: the same obligation\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"
+	case "critique":
+		var text strings.Builder
+		for _, m := range req.Messages {
+			text.WriteString(m.Content)
+		}
+		if strings.Contains(text.String(), critiqueRejectMarkers[0]) && strings.Contains(text.String(), critiqueRejectMarkers[1]) {
+			resp.Choices[0].Message.Content = "VERDICT: REJECT\nREASON: the controls govern different activities"
+		}
+	}
+	return resp, nil
+}
+
+// sharedModelLLM is the deterministic LLM answering every alias as one
+// upstream model, as a gateway routing two aliases to one deployment does.
+type sharedModelLLM struct {
+	testspecs.DeterministicLLM
+}
+
+func (c sharedModelLLM) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+	resp, err := c.DeterministicLLM.Complete(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Model = "deterministic/shared-upstream"
+	return resp, nil
+}
+
+// countingLLM is the env's fake LLM, counting the calls it answers.
+type countingLLM struct {
+	llmclient.Client
 	calls atomic.Int64
 }
 
 func (c *countingLLM) Complete(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
 	c.calls.Add(1)
-	return c.DeterministicLLM.Complete(ctx, req)
+	return c.Client.Complete(ctx, req)
 }
 
 func (c *countingLLM) Embed(ctx context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
 	c.calls.Add(1)
-	return c.DeterministicLLM.Embed(ctx, req)
+	return c.Client.Embed(ctx, req)
 }
 
 // plantingStore is the result cache store, except that while plant is set
@@ -280,6 +342,17 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 	}
 
 	fakeLLM := testspecs.DeterministicLLM{EmbeddingDim: embeddingDim}
+	var workerLLM llmclient.Client = fakeLLM
+	if opts.critique {
+		analysisConfig.Critique = config.CritiqueConfig{
+			Enabled: true, Models: []string{e2eModel}, SamplesPerModel: 1, MaxTokens: 512,
+			ConsensusThreshold: 0.66, MaxErrorRate: 0.5, MaxSourceChars: 10000, MaxTargetChars: 10000,
+		}
+		workerLLM = critiqueLLM{DeterministicLLM: fakeLLM}
+	}
+	if opts.sharedPanel {
+		analysisConfig.Relationship.Models = []string{"e2e-panel-1", "e2e-panel-2"}
+	}
 
 	// Embedded-only prompt layer: the built-in defaults provide classify,
 	// artifacts, requires, and relationship prompts. Restricting the stack to
@@ -307,6 +380,7 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 		"artifacts":    natsbus.TaskArtifacts,
 		"requires":     natsbus.TaskRequires,
 		"relationship": natsbus.TaskRelate,
+		"critique":     natsbus.TaskCritique,
 	}
 
 	dbReporter := NewDBStageReporter(analysis.NewNATSStageReporter(bus), env.store)
@@ -363,6 +437,9 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 		if opts.resultCache {
 			svcOpts = append(svcOpts, WithResultCache(env.cache, config.ResultCacheConfig{Enabled: true, LookupBatchSize: 1000}, llmCfg, fakeLLM))
 		}
+		if opts.sharedPanel {
+			svcOpts = append(svcOpts, WithPanelProbe(sharedModelLLM{DeterministicLLM: fakeLLM}))
+		}
 		env.svc = New(
 			env.store, engine, registry, synth, Attestors{Default: &Attestor{Generator: gen, ExpiresIn: 168 * time.Hour}},
 			converter, bus, storageProvider, pipelineCfg, candGen, svcOpts...,
@@ -371,7 +448,7 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 	env.newService(attestor)
 
 	// Real worker consuming LLM tasks off the shared bus.
-	env.workerLLM = &countingLLM{DeterministicLLM: fakeLLM}
+	env.workerLLM = &countingLLM{Client: workerLLM}
 	w := worker.New(bus, env.workerLLM, config.WorkerConfig{
 		MaxAbandonedCollections: 10,
 		MaxInFlight:             1,
@@ -393,7 +470,38 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 		_ = env.svc.Stop(stopCtx)
 	})
 
+	if opts.critique {
+		// The graph service as the daemon runs it: subscribed to the stage
+		// events on the bus, resolving results through the PG resolver.
+		env.graph = memdriver.New()
+		Expect(env.graph.CreateGraph(ctx, env.tenantA)).To(Succeed(), "create tenant A's graph")
+		resolvers := graph.NewResolverRegistry()
+		resolvers.Register(graph.NewPGResolver(tenantConn))
+		graphSvc := graph.New(env.graph, nil, bus, graph.WithResolverRegistry(resolvers))
+		Expect(graphSvc.Start(ctx)).To(Succeed(), "start the graph service")
+		DeferCleanup(func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = graphSvc.Stop(stopCtx)
+		})
+	}
+
 	return env
+}
+
+// semanticMatches returns tenant A's SEMANTIC_MATCH edges of jobID written
+// at stage, by "<source>><target>".
+func (env *e2eEnv) semanticMatches(g Gomega, jobID, stage string) map[string]graphdb.Edge {
+	rels, err := env.graph.QueryRelationships(env.ctxA, env.tenantA, graphdb.RelationshipQuery{
+		EdgeLabel:  results.SemanticMatchEdgeLabel,
+		Properties: map[string]any{"job_id": jobID, results.StageProperty: stage},
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	out := map[string]graphdb.Edge{}
+	for _, r := range rels {
+		out[r.Source.ID+">"+r.Target.ID] = r.Edge
+	}
+	return out
 }
 
 // seedCatalog writes catalogID, named name, and its controls under tenant A
@@ -589,5 +697,83 @@ var _ = Describe("Pipeline end-to-end", Ordered, func() {
 			Expect(env.pairsBetween(table, jobID, src, src)).To(BeZero(), "%s: a pair within the source catalog", table)
 			Expect(env.pairsBetween(table, jobID, tgt, tgt)).To(BeZero(), "%s: a pair within the target catalog", table)
 		}
+	})
+})
+
+var _ = Describe("Pipeline end-to-end with the critique stage", Ordered, func() {
+	var env *e2eEnv
+
+	BeforeAll(func() {
+		env = newE2EEnv(e2eOptions{critique: true})
+	})
+
+	It("writes no SEMANTIC_MATCH edge for the pair the critique vetoed and writes its siblings' with their votes", func() {
+		src, tgt := "cat-src-"+uuid.New().String(), "cat-tgt-"+uuid.New().String()
+		env.seedCatalog(src, "E2E Critique Source", []e2eControl{
+			{src + "/section", "Access Control", "Access control family.", oscal.ClassSection, ""},
+			{src + "/c1", "Account management", "Manage system accounts.", "SC", "section"},
+			{src + "/c2", critiqueRejectMarkers[0], "Review audit records.", "SC", "section"},
+		})
+		env.seedCatalog(tgt, "E2E Critique Target", []e2eControl{
+			{tgt + "/section", "Access Control", "Access control family.", oscal.ClassSection, ""},
+			{tgt + "/c1", "Account management", "Manage system accounts.", "SC", "section"},
+			{tgt + "/c2", critiqueRejectMarkers[1], "Generate audit records.", "SC", "section"},
+		})
+		// The graph holds the controls' nodes, as the catalog projection
+		// writes them on import, so edges between them can be written.
+		for _, cat := range []string{src, tgt} {
+			for _, c := range []string{"/c1", "/c2"} {
+				Expect(env.graph.CreateNode(env.ctxA, env.tenantA, graphdb.Node{ID: cat + c, Label: "Control", ValidFrom: time.Now().UTC()})).To(Succeed())
+			}
+		}
+		vetoed := src + "/c2>" + tgt + "/c2"
+		siblings := []string{src + "/c1>" + tgt + "/c1", src + "/c1>" + tgt + "/c2", src + "/c2>" + tgt + "/c1"}
+
+		jobID := env.runJob(&pb.JobConfig{CatalogId: src, TargetCatalogId: tgt})
+
+		stages, err := env.store.GetStages(env.ctxA, jobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stages).To(ContainElement(SatisfyAll(HaveField("StageName", results.CritiqueAnalyzer), HaveField("Status", StageStatusCompleted))))
+
+		// The synthesis event is the job's last: once its edges are in, every
+		// earlier event has been materialized.
+		Eventually(func(g Gomega) {
+			g.Expect(env.semanticMatches(g, jobID, results.StageSynthesized)).To(HaveLen(len(siblings)))
+		}, 30*time.Second, 250*time.Millisecond).Should(Succeed())
+
+		analyzerEdges := env.semanticMatches(Default, jobID, results.StageAnalyzer)
+		Expect(analyzerEdges).NotTo(HaveKey(vetoed))
+		Expect(env.semanticMatches(Default, jobID, results.StageSynthesized)).NotTo(HaveKey(vetoed))
+		for _, pair := range siblings {
+			Expect(analyzerEdges).To(HaveKey(pair))
+			// Written by the critique event, not the deferred relationship one.
+			Expect(analyzerEdges[pair].Properties).To(HaveKeyWithValue(results.CritiqueUpheldProperty, BeNumerically("==", 1)), pair)
+		}
+		Expect(e2eScalar(env.idb.tenantConn, env.ctxA,
+			"SELECT count(*) FROM vote_summaries WHERE job_id = $1 AND source_id = $2 AND target_id = $3", jobID, src+"/c2", tgt+"/c2")).
+			To(BeZero(), "synthesis received the vetoed pair")
+	})
+})
+
+var _ = Describe("Pipeline end-to-end with a shared-model panel", Ordered, func() {
+	var env *e2eEnv
+
+	BeforeAll(func() {
+		env = newE2EEnv(e2eOptions{sharedPanel: true})
+	})
+
+	It("fails the job at the panel diversity check before any analysis call", func() {
+		src, tgt := env.seedAlikeCatalogs()
+		resp, err := env.svc.CreateJob(env.ctxA, connect.NewRequest(&pb.CreateJobRequest{Config: &pb.JobConfig{CatalogId: src, TargetCatalogId: tgt}}))
+		Expect(err).NotTo(HaveOccurred())
+		var job *Job
+		Eventually(func(g Gomega) {
+			job, err = env.store.GetJob(env.ctxA, resp.Msg.JobId)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(job.Status).To(Equal(JobStatusFailed))
+		}, 90*time.Second, 250*time.Millisecond).Should(Succeed())
+		Expect(job.ErrorMessage).To(ContainSubstring("panel aliases e2e-panel-1 and e2e-panel-2 both answered as deterministic/shared-upstream"))
+		Expect(job.ErrorMessage).To(ContainSubstring("analysis.relationship.allow_shared_panel_models"))
+		Expect(env.workerLLM.calls.Load()).To(BeZero(), "no analysis call reached the worker")
 	})
 })

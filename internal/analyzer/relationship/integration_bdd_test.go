@@ -401,30 +401,37 @@ var _ = Describe("Prompt Template Validation", func() {
 	})
 
 	Context("few-shot examples cover relationship types", func() {
-		It("covers all actionable relationship types (NO_RELATIONSHIP intentionally omitted)", func() {
+		It("covers six actionable types and shows a failed sanity check answering NO_RELATIONSHIP", func() {
 			spec, err := reg.Resolve(ctx, "relationship")
 			Expect(err).NotTo(HaveOccurred())
 
 			typeSet := make(map[string]bool)
+			downgraded := false
 			for _, example := range spec.FewShot {
 				vote := relationship.ParseResponse(example.Output)
 				if vote.ParseStatus == relationship.ParseOK {
 					typeSet[vote.Relationship.String()] = true
 				}
+				if strings.Contains(example.Output, "SANITY_CHECK: FAIL") {
+					Expect(vote.Relationship.String()).To(Equal("NO_RELATIONSHIP"), "a failed sanity check answers NO_RELATIONSHIP")
+					downgraded = true
+				}
 			}
 
-			// The few-shot examples cover 7 of 8 types. NO_RELATIONSHIP is
-			// intentionally omitted — it is the default/fallback and does not
-			// need a positive example to teach the model.
+			// The sceptical prompt (relationship.yaml 1.3.0) replaced its
+			// PARTIAL example with one whose sanity check fails and answers
+			// NO_RELATIONSHIP; the other six actionable types each keep a
+			// positive example.
 			expectedTypes := []string{
 				"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF", "CONTRIBUTES_TO",
-				"COMPLEMENTS", "PARTIAL", "CONFLICTS_WITH",
+				"COMPLEMENTS", "CONFLICTS_WITH", "NO_RELATIONSHIP",
 			}
 			for _, rt := range expectedTypes {
 				Expect(typeSet).To(HaveKey(rt),
 					fmt.Sprintf("missing relationship type in few-shot examples: %s", rt))
 			}
 			Expect(typeSet).To(HaveLen(7))
+			Expect(downgraded).To(BeTrue(), "no example with a failed sanity check")
 		})
 	})
 })

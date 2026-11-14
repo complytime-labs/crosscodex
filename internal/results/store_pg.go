@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -366,6 +367,8 @@ func listSynthesized(ctx context.Context, tx db.Transaction, f Filter) ([]Mappin
 // The result is one JSON document, not rows, so every analyzer-stage page
 // fetches and decodes the job's whole result_data: walking N pages costs N
 // decodes. s.analyzerBytes reports the size of the last document decoded.
+// When the job ran the critique stage, each mapping carries its relationship
+// critique, and the pairs it vetoed are left out unless f.IncludeVetoed.
 func (s *PGStore) listAnalyzer(ctx context.Context, tx db.Transaction, f Filter) ([]Mapping, error) {
 	if f.JobID == "" {
 		return nil, errors.New("list mappings: the analyzer stage needs a job ID; pass a job ID or request the synthesized stage")
@@ -386,6 +389,32 @@ func (s *PGStore) listAnalyzer(ctx context.Context, tx db.Transaction, f Filter)
 	if err := json.Unmarshal(data, &matches); err != nil {
 		return nil, fmt.Errorf("list mappings: decode %s result of job %s: %w", analyzerresults.RelationshipAnalyzer, f.JobID, err)
 	}
+	var critiqueData []byte
+	var crit []analyzerresults.CritiqueResult
+	err = tx.QueryRow(ctx, `SELECT result_data FROM analysis_results
+		WHERE tenant_id = $1 AND job_id = $2 AND analyzer_name = $3`, f.TenantID, f.JobID, analyzerresults.CritiqueAnalyzer).Scan(&critiqueData)
+	switch {
+	case errors.Is(err, sql.ErrNoRows): // the job ran no critique
+	case err != nil:
+		return nil, fmt.Errorf("list mappings: read %s result of job %s: %w", analyzerresults.CritiqueAnalyzer, f.JobID, err)
+	default:
+		if err := json.Unmarshal(critiqueData, &crit); err != nil {
+			return nil, fmt.Errorf("list mappings: decode the %s result of job %s: the stored critique result is corrupt, so re-run the job or ask an operator to inspect its analysis_results row: %w",
+				analyzerresults.CritiqueAnalyzer, f.JobID, err)
+		}
+		// The counts reach the API as int32 (pb.MappingCritique); a count
+		// no panel vote could produce means the stored result is corrupt.
+		for _, c := range crit {
+			for _, n := range []int{c.Upheld, c.Rejected, c.Failed} {
+				if n < 0 || n > math.MaxInt32 {
+					return nil, fmt.Errorf("list mappings: the stored %s result of job %s gives pair %s -> %s an impossible vote count "+
+						"(upheld %d, rejected %d, failed %d), so it is corrupt; re-run the job or ask an operator to inspect its analysis_results row",
+						analyzerresults.CritiqueAnalyzer, f.JobID, c.SourceControlID, c.TargetControlID, c.Upheld, c.Rejected, c.Failed)
+				}
+			}
+		}
+	}
+	verdicts := analyzerresults.Apply(analyzerresults.RelationshipAnalyzer, crit)
 	var out []Mapping
 	for _, m := range matches {
 		if m.Confidence < f.MinConfidence || !slices.Contains(f.RelationshipTypes, m.RelationshipType) {
@@ -394,8 +423,15 @@ func (s *PGStore) listAnalyzer(ctx context.Context, tx db.Transaction, f Filter)
 		if f.ControlID != "" && m.SourceID != f.ControlID && m.TargetID != f.ControlID {
 			continue
 		}
-		out = append(out, Mapping{JobID: f.JobID, SourceID: m.SourceID, TargetID: m.TargetID,
-			RelationshipType: m.RelationshipType, Confidence: m.Confidence})
+		if !f.IncludeVetoed && verdicts.Vetoed(m.SourceID, m.TargetID) {
+			continue
+		}
+		mapping := Mapping{JobID: f.JobID, SourceID: m.SourceID, TargetID: m.TargetID,
+			RelationshipType: m.RelationshipType, Confidence: m.Confidence}
+		if c, ok := verdicts.Result(m.SourceID, m.TargetID); ok {
+			mapping.Critique = &c
+		}
+		out = append(out, mapping)
 	}
 	slices.SortFunc(out, func(a, b Mapping) int { return compareKey(a, b.JobID, b.SourceID, b.TargetID) })
 	for i := 1; i < len(out); i++ {

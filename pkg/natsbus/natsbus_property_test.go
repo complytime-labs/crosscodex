@@ -120,7 +120,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				want := natsbus.AbandonedCollection{
 					TenantID: validTenantGen().Draw(t, "tenant"),
 					TaskType: rapid.SampledFrom([]natsbus.TaskType{
-						natsbus.TaskClassify, natsbus.TaskRelate, natsbus.TaskRequires, natsbus.TaskArtifacts, natsbus.TaskEmbed,
+						natsbus.TaskClassify, natsbus.TaskRelate, natsbus.TaskRequires, natsbus.TaskArtifacts, natsbus.TaskEmbed, natsbus.TaskCritique,
 					}).Draw(t, "task-type"),
 					JobID: safeTokenGen().Draw(t, "job-id"),
 					CollectionID: uuid.Must(uuid.FromBytes(

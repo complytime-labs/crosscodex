@@ -585,6 +585,7 @@ var taskTypesByAnalyzer = map[string]natsbus.TaskType{
 	"artifacts":    natsbus.TaskArtifacts,
 	"requires":     natsbus.TaskRequires,
 	"relationship": natsbus.TaskRelate,
+	"critique":     natsbus.TaskCritique,
 }
 
 // buildPipelineService constructs a production pipeline.Service. Fails

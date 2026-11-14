@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 )
 
@@ -86,6 +89,14 @@ func (r *DBStageReporter) ReportStageStarted(ctx context.Context, analyzerName, 
 // being logged and ignored. An analyzer must never be marked completed
 // without its result already durably committed, or resume logic would skip
 // it forever.
+//
+// The relationship and requires events of a job whose stage rows include
+// critique are published with results.GraphDeferredMetadataKey set to "true"
+// in a copy of the output's metadata: the graph cannot delete an edge, so it
+// writes their surviving edges from the critique event instead. The job's
+// stage rows decide, not the daemon's config, so a job keeps the stages it was
+// created with across a config change and a resume. When the stage rows cannot
+// be read, nothing is persisted or published and the stage fails.
 func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName, jobID string, output *analyzer.Output) error {
 	ctx, span := telemetry.StartSpan(r.tracer, ctx, "pipeline.ReportStageCompleted")
 	defer span.End()
@@ -93,6 +104,24 @@ func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName
 		attribute.String("analyzer.name", analyzerName),
 		attribute.String("job.id", jobID),
 	)
+
+	if analyzerName == results.RelationshipAnalyzer || analyzerName == results.RequiresAnalyzer {
+		stages, err := r.store.GetStages(ctx, jobID)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return fmt.Errorf("pipeline.ReportStageCompleted: cannot tell whether job %s runs the critique stage, so its %s result was not recorded: "+
+				"reading the job's stages: %w. The %s stage fails; resume the job to run it again", jobID, analyzerName, err, analyzerName)
+		}
+		if slices.ContainsFunc(stages, func(st *Stage) bool { return st.StageName == results.CritiqueAnalyzer }) {
+			marked := *output
+			marked.Metadata = make(map[string]string, len(output.Metadata)+1)
+			maps.Copy(marked.Metadata, output.Metadata)
+			marked.Metadata[results.GraphDeferredMetadataKey] = "true"
+			output = &marked
+			span.SetAttributes(attribute.Bool("graph.deferred", true))
+		}
+	}
 
 	// analysis_results.result_data is JSONB NOT NULL, and completion must
 	// always be durably persisted (see doc comment above) -- including for a

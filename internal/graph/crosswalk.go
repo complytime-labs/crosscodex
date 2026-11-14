@@ -44,6 +44,9 @@ type pairVerdicts struct {
 	// verdicts holds every edge's verdict. A bidirectional job stores the pair
 	// as two edges and contributes both; crosswalk.Merge counts the job once.
 	verdicts []crosswalk.Verdict
+	// critiqueNotes holds the distinct critique notes of the pair's edges,
+	// in the order the edges were read.
+	critiqueNotes []string
 }
 
 // walkedRow is a crosswalk row plus the IDs of every job whose verdict it
@@ -52,6 +55,9 @@ type pairVerdicts struct {
 type walkedRow struct {
 	row  *pb.CrosswalkRow
 	jobs []string // distinct, sorted
+	// critiqueNotes are the critique notes of the row's edges, appended to
+	// its review after the other notes.
+	critiqueNotes []string
 }
 
 // GetCrosswalk implements gateway.CrosswalkBackend for the job, pair,
@@ -172,7 +178,8 @@ func (s *Service) GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetC
 	for i, note := range crosswalk.EquivalenceNotes(rows) {
 		// Collapse notes sit on derived rows and equivalence notes on direct
 		// ones, so today at most one is non-empty; join keeps both if that changes.
-		notes := slices.DeleteFunc([]string{rows[i].Review, note}, func(n string) bool { return n == "" })
+		// The critique notes of the row's edges follow them.
+		notes := slices.DeleteFunc(append([]string{rows[i].Review, note}, walked[i].critiqueNotes...), func(n string) bool { return n == "" })
 		rows[i].Review = strings.Join(notes, "; ")
 	}
 	frameworks := map[string]string{}
@@ -363,6 +370,9 @@ func (s *Service) walkPair(ctx context.Context, tenantID, a, b string, jobs []*p
 				Confidence:  rel.Edge.Confidence,
 				Reversed:    reversed,
 			})
+			if note := propString(rel.Edge.Properties, results.CritiqueNoteProperty); note != "" && !slices.Contains(pv.critiqueNotes, note) {
+				pv.critiqueNotes = append(pv.critiqueNotes, note)
+			}
 		}
 	}
 
@@ -378,7 +388,7 @@ func (s *Service) walkPair(ctx context.Context, tenantID, a, b string, jobs []*p
 		if merged.Direction == crosswalk.Reverse {
 			word = "reverse: " + word
 		}
-		rows = append(rows, walkedRow{jobs: slices.Compact(ids), row: &pb.CrosswalkRow{
+		rows = append(rows, walkedRow{jobs: slices.Compact(ids), critiqueNotes: pv.critiqueNotes, row: &pb.CrosswalkRow{
 			Source:           crosswalkSide(pv.aNode),
 			Target:           crosswalkSide(pv.bNode),
 			RelationshipType: merged.Type,

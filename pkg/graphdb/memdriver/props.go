@@ -107,6 +107,13 @@ func requiresProps(r graphdb.RequiresEdge) map[string]any {
 	if r.PromptVersion != "" {
 		props["prompt_version"] = r.PromptVersion
 	}
+	if c := r.Critique; c != nil {
+		props["critique_upheld"] = float64(c.Upheld)
+		props["critique_rejected"] = float64(c.Rejected)
+		if c.Note != "" {
+			props["critique_note"] = c.Note
+		}
+	}
 	return props
 }
 

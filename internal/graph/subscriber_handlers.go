@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,8 @@ func (s *Service) handlerFor(analyzer string) (materializeFunc, bool) {
 		return s.materializeRelationship, true
 	case "requires":
 		return s.materializeRequires, true
+	case results.CritiqueAnalyzer:
+		return s.materializeCritique, true
 	case "artifacts":
 		return s.materializeArtifacts, true
 	case results.SynthesisStage:
@@ -69,8 +72,17 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 	if err := json.Unmarshal(data, &matches); err != nil {
 		return fmt.Errorf("unmarshal relationship results: %w", err)
 	}
+	return s.writeSemanticMatches(ctx, tenantID, jobID, matches, results.Verdicts{})
+}
 
+// writeSemanticMatches writes one SEMANTIC_MATCH edge per relationship result
+// that verdicts does not veto. An edge whose pair has a critique carries its
+// vote counts and note (see critiqueProperties).
+func (s *Service) writeSemanticMatches(ctx context.Context, tenantID, jobID string, matches []results.SemanticMatchResult, verdicts results.Verdicts) error {
 	for _, r := range matches {
+		if verdicts.Vetoed(r.SourceID, r.TargetID) {
+			continue
+		}
 		edge := graphdb.Edge{
 			ID:        graphdb.DerivedID(results.SemanticMatchEdgeIDKind, jobID, r.SourceID, r.TargetID),
 			Label:     results.SemanticMatchEdgeLabel,
@@ -85,6 +97,9 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 		for k, v := range r.Properties {
 			edge.Properties[k] = v
 		}
+		if c, ok := verdicts.Result(r.SourceID, r.TargetID); ok {
+			critiqueProperties(c, edge.Properties)
+		}
 
 		err := s.graph.CreateEdge(ctx, tenantID, r.SourceID, r.TargetID, edge)
 		if err != nil && !isNodeExists(err) && !s.skipMissingEndpoint(ctx, tenantID, "relationship", results.SemanticMatchEdgeLabel, r.SourceID, r.TargetID, err) {
@@ -94,13 +109,32 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 	return nil
 }
 
+// critiqueProperties sets c's vote counts and, when it has one, its note on an
+// edge's properties.
+func critiqueProperties(c results.CritiqueResult, props map[string]any) {
+	props[results.CritiqueUpheldProperty] = c.Upheld
+	props[results.CritiqueRejectedProperty] = c.Rejected
+	if note := c.Note(); note != "" {
+		props[results.CritiqueNoteProperty] = note
+	}
+}
+
 func (s *Service) materializeRequires(ctx context.Context, tenantID, jobID string, data []byte) error {
 	var reqResults []results.RequiresResult
 	if err := json.Unmarshal(data, &reqResults); err != nil {
 		return fmt.Errorf("unmarshal requires results: %w", err)
 	}
+	return s.writeRequires(ctx, tenantID, jobID, reqResults, results.Verdicts{})
+}
 
+// writeRequires writes one REQUIRES edge per requires result that verdicts
+// does not veto. An edge whose pair has a critique carries its vote counts and
+// note.
+func (s *Service) writeRequires(ctx context.Context, tenantID, jobID string, reqResults []results.RequiresResult, verdicts results.Verdicts) error {
 	for _, r := range reqResults {
+		if verdicts.Vetoed(r.SourceID, r.TargetID) {
+			continue
+		}
 		reqEdge := graphdb.RequiresEdge{
 			SourceID:   r.SourceID,
 			TargetID:   r.TargetID,
@@ -113,11 +147,63 @@ func (s *Service) materializeRequires(ctx context.Context, tenantID, jobID strin
 			TenantID:   tenantID,
 			JobID:      jobID,
 		}
+		if c, ok := verdicts.Result(r.SourceID, r.TargetID); ok {
+			reqEdge.Critique = &graphdb.EdgeCritique{Upheld: c.Upheld, Rejected: c.Rejected, Note: c.Note()}
+		}
 
 		err := s.graph.CreateRequiresEdge(ctx, tenantID, reqEdge)
 		if err != nil && !isNodeExists(err) && !s.skipMissingEndpoint(ctx, tenantID, "requires", "REQUIRES", r.SourceID, r.TargetID, err) {
 			return fmt.Errorf("create REQUIRES edge %s->%s: %w", r.SourceID, r.TargetID, err)
 		}
+	}
+	return nil
+}
+
+// materializeCritique writes the SEMANTIC_MATCH and REQUIRES edges of a job
+// that ran the critique stage, whose relationship and requires events the
+// pipeline deferred to this one: each verdict the critique did not veto, with
+// its critique's vote counts and note. The relationship, requires and
+// critique verdicts are applied independently, so a pair vetoed as a
+// relationship keeps its REQUIRES edge and the reverse. A pair analyzer the
+// job did not run has no stored result (sql.ErrNoRows) and writes nothing.
+// Every result is read and decoded before the first write, so an unreadable
+// one writes no edge. Writes are idempotent, so a redelivered event adds
+// nothing.
+func (s *Service) materializeCritique(ctx context.Context, tenantID, jobID string, data []byte) error {
+	var crit []results.CritiqueResult
+	if err := json.Unmarshal(data, &crit); err != nil {
+		return fmt.Errorf("unmarshal critique results: %w", err)
+	}
+	var matches []results.SemanticMatchResult
+	if err := s.resolveStored(ctx, jobID, results.RelationshipAnalyzer, &matches); err != nil {
+		return err
+	}
+	var reqResults []results.RequiresResult
+	if err := s.resolveStored(ctx, jobID, results.RequiresAnalyzer, &reqResults); err != nil {
+		return err
+	}
+	if err := s.writeSemanticMatches(ctx, tenantID, jobID, matches, results.Apply(results.RelationshipAnalyzer, crit)); err != nil {
+		return err
+	}
+	return s.writeRequires(ctx, tenantID, jobID, reqResults, results.Apply(results.RequiresAnalyzer, crit))
+}
+
+// resolveStored decodes the stored result of analyzer for jobID into v. A job
+// without that analyzer's result leaves v unchanged.
+func (s *Service) resolveStored(ctx context.Context, jobID, analyzer string, v any) error {
+	data, err := s.resolvers.Resolve(ctx, ResourceRef{
+		Type: "analysis_result",
+		ID:   jobID,
+		URI:  fmt.Sprintf("pg://results/%s/%s", jobID, analyzer),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolve %s results: %w", analyzer, err)
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		return fmt.Errorf("unmarshal %s results: %w", analyzer, err)
 	}
 	return nil
 }

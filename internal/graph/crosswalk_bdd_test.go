@@ -1028,6 +1028,34 @@ var _ = Describe("GetCrosswalk", func() {
 			link("j1", "a10", "b11", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, 0.8)
 		})
 
+		DescribeTable("appends an edge's critique note to its row's review",
+			func(stage string) {
+				addNode("a20", catA, "AC-20")
+				addNode("b20", catB, "SC-20")
+				note := "critique split: 1 of 3 rejected — panel-2 s0: scope differs"
+				props := map[string]any{"relationship_type": "SUBSET_OF", "job_id": "j1", results.StageProperty: stage,
+					"is_viable": true, results.CritiqueUpheldProperty: 2, results.CritiqueRejectedProperty: 1, results.CritiqueNoteProperty: note}
+				Expect(mem.CreateEdge(ctx, tenantID, "a20", "b20", graphdb.Edge{ID: "critiqued-" + stage, Label: results.SemanticMatchEdgeLabel,
+					Properties: props, ValidFrom: t0, Confidence: 0.9})).To(Succeed())
+				req := pairReq()
+				if stage == results.StageAnalyzer {
+					req.Msg.Stage = pb.CrosswalkStage_CROSSWALK_STAGE_ANALYZER
+				}
+				resp := get(req)
+				Expect(rowFor(resp, "AC-20", "SC-20").Review).To(Equal(note))
+			},
+			Entry("on a synthesized edge", results.StageSynthesized),
+			Entry("on an analyzer edge", results.StageAnalyzer),
+		)
+
+		It("joins a critique note after the row's equivalence note", func() {
+			note := "critique failed: 3 of 3 votes invalid"
+			Expect(mem.CreateEdge(ctx, tenantID, "a10", "b10", graphdb.Edge{ID: "critiqued-a10", Label: results.SemanticMatchEdgeLabel,
+				Properties: map[string]any{"relationship_type": "EQUIVALENT", "job_id": "j2", results.StageProperty: results.StageSynthesized,
+					"is_viable": true, results.CritiqueNoteProperty: note}, ValidFrom: t0, Confidence: 0.9})).To(Succeed())
+			Expect(rowFor(get(pairReq()), "AC-10", "SC-10").Review).To(Equal("one of 2 'equivalent' targets for AC-10: SC-10, SC-11; " + note))
+		})
+
 		It("flags both rows of a one-to-many equivalence", func() {
 			resp := get(pairReq())
 			for _, tgt := range []string{"SC-10", "SC-11"} {

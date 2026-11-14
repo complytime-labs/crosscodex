@@ -1,6 +1,7 @@
 package requires
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -416,6 +418,7 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 	type pairGroup struct {
 		source, target string
 		votes          []consensus.Vote
+		positions      []panelPosition // votes[i]'s place in the panel
 		models         map[string]bool
 	}
 	groups := make(map[string]*pairGroup)
@@ -425,7 +428,7 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 		if r.Error != nil {
 			continue
 		}
-		source, target, model, _, ok := intanalyzer.ParsePairTaskID(r.TaskID, analyzerName, a.cfg.Models)
+		source, target, model, sample, ok := intanalyzer.ParsePairTaskID(r.TaskID, analyzerName, a.cfg.Models)
 		if !ok {
 			continue
 		}
@@ -441,6 +444,7 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 			order = append(order, key)
 		}
 		g.votes = append(g.votes, ParseResponse(r.TaskID, raw))
+		g.positions = append(g.positions, panelPosition{model: slices.Index(a.cfg.Models, model), sample: sample})
 		g.models[model] = true
 	}
 
@@ -472,6 +476,7 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 			SourceID: g.source, TargetID: g.target,
 			Confidence: res.ConfidenceFraction, Unanimous: res.Unanimous,
 			ValidVotes: res.ValidVoteCount, TotalVotes: res.TotalVoteCount, Models: models,
+			Justifications: yesJustifications(g.votes, g.positions),
 		})
 	}
 
@@ -490,4 +495,33 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 		Metadata:     metadata,
 		ResultData:   resultData,
 	}, nil
+}
+
+// panelPosition is a vote's place in the panel: its model's index in
+// analysis.requires.models and its sample number.
+type panelPosition struct{ model, sample int }
+
+// yesJustifications returns the justification of every valid YES vote in
+// panel order (models as configured, then sample number), so the critique
+// stage reads the panel's reasons for the edge it reviews. positions[i] is
+// votes[i]'s place. Each justification is model output stored in jsonb, so
+// it is cleaned with CleanText and cut to MaxStoredJustificationBytes. Votes
+// with no justification are left out.
+func yesJustifications(votes []consensus.Vote, positions []panelPosition) []string {
+	order := make([]int, 0, len(votes))
+	for i, v := range votes {
+		if v.Decision != nil && *v.Decision {
+			order = append(order, i)
+		}
+	}
+	slices.SortFunc(order, func(a, b int) int {
+		return cmp.Or(cmp.Compare(positions[a].model, positions[b].model), cmp.Compare(positions[a].sample, positions[b].sample))
+	})
+	var out []string
+	for _, i := range order {
+		if j := strings.TrimSpace(intanalyzer.CleanText(votes[i].Justification, intanalyzer.MaxStoredJustificationBytes)); j != "" {
+			out = append(out, j)
+		}
+	}
+	return out
 }

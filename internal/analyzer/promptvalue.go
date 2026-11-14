@@ -30,6 +30,11 @@ var (
 	promptEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 )
 
+// MaxStoredJustificationBytes bounds a model's justification or reason kept
+// in a stored analyzer result, applied with CleanText. It is the bound the
+// artifacts adjudication panel stores its justifications with.
+const MaxStoredJustificationBytes = 2000
+
 // CleanText makes s storable in PostgreSQL text and jsonb, which reject NUL
 // and invalid UTF-8, and cuts it to at most n bytes on a rune boundary.
 func CleanText(s string, n int) string {

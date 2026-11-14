@@ -431,6 +431,45 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			Expect(parsed[0].Properties).To(HaveKeyWithValue("agreement_fraction", "0.667"))
 		})
 
+		It("records the cleaned justifications of the valid votes for the consensus type, in panel order", func() {
+			aggAnalyzer := relationship.New(nil, nil, nil, config.RelationshipConfig{
+				Models: []string{"m-b", "m-a"}, ConfidenceWeights: defaultConfidenceWeights})
+
+			mkResult := func(taskID, response string) analyzer.TaskResult {
+				s, err := structpb.NewStruct(map[string]interface{}{"response": response})
+				Expect(err).NotTo(HaveOccurred())
+				return analyzer.TaskResult{TaskID: taskID, TaskType: "relationship", Result: s}
+			}
+
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				mkResult("relationship-AC-1--AC-2-m-a-s10", "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: a ten\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("relationship-AC-1--AC-2-m-a-s2", "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: a two\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("relationship-AC-1--AC-2-m-b-s0", "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: b\x00 zero\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("relationship-AC-1--AC-2-m-b-s1", "RELATIONSHIP: PARTIAL\nJUSTIFICATION: dissent\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("relationship-AC-1--AC-2-m-a-s0", "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: unparsed\nCONFIDENCE: HIGH"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed []results.SemanticMatchResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+			Expect(parsed).To(HaveLen(1))
+			Expect(parsed[0].RelationshipType).To(Equal("EQUIVALENT"))
+			Expect(parsed[0].Justifications).To(Equal([]string{"b zero", "a two", "a ten"}))
+		})
+
+		It("cuts a stored justification to the storage bound", func() {
+			aggAnalyzer := relationship.New(nil, nil, nil, config.RelationshipConfig{Models: []string{"m"}, ConfidenceWeights: defaultConfidenceWeights})
+			s, err := structpb.NewStruct(map[string]interface{}{"response": "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: " +
+				strings.Repeat("é", intanalyzer.MaxStoredJustificationBytes) + "\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"})
+			Expect(err).NotTo(HaveOccurred())
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				{TaskID: "relationship-AC-1--AC-2-m-s0", TaskType: "relationship", Result: s}})
+			Expect(err).NotTo(HaveOccurred())
+			var parsed []results.SemanticMatchResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+			Expect(parsed[0].Justifications).To(Equal([]string{strings.Repeat("é", intanalyzer.MaxStoredJustificationBytes/2)}))
+		})
+
 		It("omits NO_RELATIONSHIP pairs", func() {
 			aggCfg := config.RelationshipConfig{Models: []string{"llama3.2:3b"}}
 			aggAnalyzer := relationship.New(nil, nil, nil, aggCfg)

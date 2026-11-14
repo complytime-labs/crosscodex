@@ -49,6 +49,38 @@ var _ = Describe("buildVoteSummaryPairs", func() {
 		}))
 	})
 
+	It("drops the pairs the critique vetoed, each kind independently", func() {
+		requiresJSON, _ := json.Marshal([]results.RequiresResult{
+			{SourceID: "AC-1", TargetID: "AC-2", Confidence: 0.9}, {SourceID: "AC-3", TargetID: "AC-4", Confidence: 0.9}})
+		relJSON, _ := json.Marshal([]results.SemanticMatchResult{
+			{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "SUBSET_OF", Confidence: 0.8},
+			{SourceID: "AC-3", TargetID: "AC-4", RelationshipType: "SUBSET_OF", Confidence: 0.8}})
+		critJSON, _ := json.Marshal([]results.CritiqueResult{
+			{Kind: results.RelationshipAnalyzer, SourceControlID: "AC-1", TargetControlID: "AC-2", Rejected: 3, Outcome: results.CritiqueVetoed, Vetoed: true},
+			{Kind: results.RequiresAnalyzer, SourceControlID: "AC-3", TargetControlID: "AC-4", Rejected: 3, Outcome: results.CritiqueVetoed, Vetoed: true},
+			{Kind: results.RequiresAnalyzer, SourceControlID: "AC-1", TargetControlID: "AC-2", Upheld: 2, Rejected: 1, Outcome: results.CritiqueSplit}})
+		pairs, err := buildVoteSummaryPairs(map[string]*analyzer.Output{
+			results.RequiresAnalyzer:     {ResultData: requiresJSON},
+			results.RelationshipAnalyzer: {ResultData: relJSON},
+			results.CritiqueAnalyzer:     {ResultData: critJSON},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pairs).To(ConsistOf(
+			VoteSummaryPair{SourceID: "AC-1", TargetID: "AC-2", Analyzer: "requires", Consensus: synthesis.ConsensusRequires, Confidence: 0.9},
+			VoteSummaryPair{SourceID: "AC-3", TargetID: "AC-4", Analyzer: "relationship", Consensus: "SUBSET_OF", Confidence: 0.8},
+		))
+	})
+
+	It("rejects a critique result that does not decode as corrupt, naming the remedy", func() {
+		relJSON, _ := json.Marshal([]results.SemanticMatchResult{{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "SUBSET_OF"}})
+		_, err := buildVoteSummaryPairs(map[string]*analyzer.Output{
+			results.RelationshipAnalyzer: {ResultData: relJSON},
+			results.CritiqueAnalyzer:     {ResultData: []byte(`{not json`)},
+		})
+		Expect(err).To(MatchError(ContainSubstring("critique result")))
+		Expect(err).To(MatchError(ContainSubstring("create a new job")))
+	})
+
 	It("returns no rows when neither analyzer produced output", func() {
 		pairs, err := buildVoteSummaryPairs(map[string]*analyzer.Output{})
 		Expect(err).NotTo(HaveOccurred())

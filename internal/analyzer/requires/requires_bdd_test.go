@@ -579,6 +579,44 @@ var _ = Describe("RequiresAnalyzer", func() {
 			Expect(parsed[0].TargetID).To(Equal("AC-2"))
 		})
 
+		It("records the cleaned justifications of the valid YES votes, in panel order", func() {
+			aggAnalyzer := requires.New(nil, nil, nil, config.RequiresConfig{
+				Models: []string{"m-b", "m-a"}, ConsensusThreshold: 0.5, MaxErrorRate: 0.5,
+			})
+			mkResult := func(taskID, response string) analyzer.TaskResult {
+				s, err := structpb.NewStruct(map[string]interface{}{"response": response})
+				Expect(err).NotTo(HaveOccurred())
+				return analyzer.TaskResult{TaskID: taskID, TaskType: "requires", Result: s}
+			}
+
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				mkResult("requires-AC-1--AC-2-m-a-s10", "REQUIRES: YES\nJUSTIFICATION: a ten\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m-a-s2", "REQUIRES: YES\nJUSTIFICATION: a two\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m-a-s0", "REQUIRES: NO\nJUSTIFICATION: dissent\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m-b-s1", "REQUIRES: YES\nJUSTIFICATION: topic only\nSANITY_CHECK: FAIL\nCONFIDENCE: HIGH"),
+				mkResult("requires-AC-1--AC-2-m-b-s0", "REQUIRES: YES\nJUSTIFICATION: b\x00 zero\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"),
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var parsed []results.RequiresResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+			Expect(parsed).To(HaveLen(1))
+			Expect(parsed[0].Justifications).To(Equal([]string{"b zero", "a two", "a ten"}))
+		})
+
+		It("cuts a stored justification to the storage bound", func() {
+			aggAnalyzer := requires.New(nil, nil, nil, config.RequiresConfig{Models: []string{"m"}, ConsensusThreshold: 0.5, MaxErrorRate: 0.5})
+			s, err := structpb.NewStruct(map[string]interface{}{"response": "REQUIRES: YES\nJUSTIFICATION: " +
+				strings.Repeat("é", intanalyzer.MaxStoredJustificationBytes) + "\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"})
+			Expect(err).NotTo(HaveOccurred())
+			out, err := aggAnalyzer.Aggregate(context.Background(), []analyzer.TaskResult{
+				{TaskID: "requires-AC-1--AC-2-m-s0", TaskType: "requires", Result: s}})
+			Expect(err).NotTo(HaveOccurred())
+			var parsed []results.RequiresResult
+			Expect(json.Unmarshal(out.ResultData, &parsed)).To(Succeed())
+			Expect(parsed[0].Justifications).To(Equal([]string{strings.Repeat("é", intanalyzer.MaxStoredJustificationBytes/2)}))
+		})
+
 		It("excludes pairs below the consensus threshold", func() {
 			aggCfg := config.RequiresConfig{
 				Models: []string{"m1", "m2", "m3", "m4", "m5"}, ConsensusThreshold: 0.9, MaxErrorRate: 0.5,

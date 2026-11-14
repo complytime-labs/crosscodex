@@ -92,6 +92,23 @@ var _ = Describe("Synthesis materialization", func() {
 		Expect(rels[0].Edge.Properties).To(HaveKeyWithValue("is_viable", true))
 	})
 
+	It("puts a critiqued mapping's vote counts and note on its synthesized edge, and none on an uncritiqued one", func() {
+		critiqued := mapping("ctrl-1", "ctrl-2", "EQUIVALENT")
+		critiqued["critique"] = results.CritiqueResult{Kind: results.RelationshipAnalyzer, SourceControlID: "ctrl-1", TargetControlID: "ctrl-2",
+			Upheld: 2, Rejected: 1, Outcome: results.CritiqueSplit, Reasons: []string{"panel-1 s0 REJECT: too broad"}}
+		Expect(deliver("synthesis", []map[string]any{critiqued, mapping("ctrl-2", "ctrl-3", "EQUIVALENT")})).To(Succeed())
+
+		props := map[string]map[string]any{}
+		for _, r := range edges() {
+			props[r.Source.ID] = r.Edge.Properties
+		}
+		Expect(props["ctrl-1"]).To(HaveKeyWithValue(results.CritiqueUpheldProperty, BeNumerically("==", 2)))
+		Expect(props["ctrl-1"]).To(HaveKeyWithValue(results.CritiqueRejectedProperty, BeNumerically("==", 1)))
+		Expect(props["ctrl-1"]).To(HaveKeyWithValue(results.CritiqueNoteProperty, "critique split: 1 of 3 rejected — panel-1 s0: too broad"))
+		Expect(props["ctrl-2"]).NotTo(HaveKey(results.CritiqueUpheldProperty))
+		Expect(props["ctrl-2"]).NotTo(HaveKey(results.CritiqueNoteProperty))
+	})
+
 	It("keeps a pair's analyzer edge and synthesized edge apart", func() {
 		Expect(deliver("relationship", []map[string]any{mapping("ctrl-1", "ctrl-2", "EQUIVALENT")})).To(Succeed())
 		Expect(deliver("synthesis", []map[string]any{mapping("ctrl-1", "ctrl-2", "SUBSET_OF")})).To(Succeed())

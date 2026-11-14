@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	analyzerresults "github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 )
 
 // Stage selects which pipeline stage's mappings a Filter reads.
@@ -38,6 +40,7 @@ type Filter struct {
 	ControlID         string   // matches source or target; empty = any
 	MinConfidence     float64  // inclusive
 	IncludeNonViable  bool     // StageSynthesized only
+	IncludeVetoed     bool     // StageAnalyzer only: also list the pairs the job's critique vetoed
 	RelationshipTypes []string // analyzer names, e.g. "EQUIVALENT"; never empty
 	PageSize          int      // > 0
 	After             *Cursor  // nil = first page
@@ -54,6 +57,10 @@ type Mapping struct {
 	// StageAnalyzer mappings.
 	Viability    float64
 	HasViability bool
+	// Critique is the job's relationship critique of the pair: set on
+	// StageAnalyzer mappings of a job that ran the critique stage, when the
+	// critique has a result for the pair.
+	Critique *analyzerresults.CritiqueResult
 }
 
 // JobAnalysis is the catalog selection of the job a page lists: what

@@ -128,6 +128,29 @@ message ControlMapping {
   repeated AnalyzerContribution contributions = 8;
   TemporalAttributes temporal = 9;
   ProvenanceMetadata provenance = 10;
+  // The critique stage's review of this ANALYZER-stage mapping. Unset for
+  // SYNTHESIZED mappings, for jobs that did not run the critique stage, and
+  // for a pair the critique produced no result for (kept unreviewed).
+  MappingCritique critique = 11;
+}
+
+// MappingCritique is the critique panel's review of one relationship verdict.
+// upheld + rejected + failed is the panel size.
+message MappingCritique {
+  // The panel rejected the verdict, so it is not a mapping: it is left out of
+  // the graph, synthesis and default listings. Listed only with
+  // ListJobMappingsRequest.include_vetoed.
+  bool vetoed = 1;
+  // Votes that upheld the verdict.
+  int32 upheld = 2;
+  // Votes that rejected the verdict.
+  int32 rejected = 3;
+  // Votes with no valid verdict (task error or unreadable response).
+  int32 failed = 4;
+  // One entry per panel vote, in panel order: "<model alias> s<sample>
+  // <UPHOLD|REJECT|FAILED>: <reason>". The reasons are model output: escape
+  // them before rendering.
+  repeated string reasons = 5;
 }
 
 message AnalyzerContribution {
@@ -197,6 +220,10 @@ message ListJobMappingsRequest {
   repeated RelationshipType relationship_types = 6;
   string control_id = 7;         // Optional: matches source or target
   Pagination pagination = 8;     // page_size default 50, max 1000
+  // ANALYZER only: also list the pairs the critique stage vetoed, each with
+  // its critique (ControlMapping.critique.vetoed is true). SYNTHESIZED never
+  // holds vetoed pairs, so setting this with it is INVALID_ARGUMENT.
+  bool include_vetoed = 9;
 }
 
 // ListJobMappingsResponse returns one page of mappings ordered by job, source,

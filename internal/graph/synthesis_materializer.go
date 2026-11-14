@@ -44,6 +44,9 @@ func (s *Service) materializeSynthesis(ctx context.Context, tenantID, jobID stri
 				Confidence: m.Confidence,
 			},
 		}
+		if m.Critique != nil {
+			critiqueProperties(*m.Critique, edges[i].Edge.Properties)
+		}
 	}
 
 	for start := 0; start < len(edges); start += s.maxBulkEdges {

@@ -77,6 +77,11 @@ func (DeterministicLLM) Complete(_ context.Context, req *llmclient.CompletionReq
 		// relationship analyzer produces an (empty) result row and populates no
 		// vote_summaries rows; only the requires contribution reaches synthesis.
 		content = "RELATIONSHIP: NO_RELATIONSHIP\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"
+	case "critique":
+		// critique.ParseCritique needs "VERDICT: UPHOLD|REJECT" and a REASON;
+		// UPHOLD keeps every reviewed verdict, so suites see the pair
+		// analyzers' results unchanged.
+		content = "VERDICT: UPHOLD\nREASON: the shared obligation holds"
 	case resultcache.ProbePromptName:
 		// The per-job model probe reads only resp.Model and resp.Deployment.
 		content = "OK"

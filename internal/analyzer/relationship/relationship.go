@@ -1,6 +1,7 @@
 package relationship
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -461,6 +463,7 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, taskResults []anal
 			SourceID: ids[0], TargetID: ids[1],
 			RelationshipType: c.Relationship.String(),
 			Confidence:       c.ConfidenceFraction,
+			Justifications:   winningJustifications(groups[key], c.Relationship, a.cfg.Models),
 			Properties: map[string]string{
 				results.SemanticMatchContributionTypeKey: c.ContributionType.String(),
 				results.SemanticMatchUnanimousKey:        strconv.FormatBool(c.Unanimous),
@@ -485,4 +488,29 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, taskResults []anal
 		Metadata:     metadata,
 		ResultData:   resultData,
 	}, nil
+}
+
+// winningJustifications returns the justification of every valid vote for
+// rel, in panel order (models as configured, then sample number), so the
+// critique stage reads the panel's reasons for the decision it reviews. Each
+// is model output stored in jsonb, so it is cleaned with CleanText and cut to
+// MaxStoredJustificationBytes. Votes with no justification are left out.
+func winningJustifications(votes map[string]*Vote, rel RelationshipType, models []string) []string {
+	var winners []*Vote
+	for _, v := range votes {
+		if v == nil || v.ParseStatus == ParseFail || v.ParseStatus == ParseError || v.Relationship != rel {
+			continue
+		}
+		winners = append(winners, v)
+	}
+	slices.SortFunc(winners, func(a, b *Vote) int {
+		return cmp.Or(cmp.Compare(slices.Index(models, a.Model), slices.Index(models, b.Model)), cmp.Compare(a.SampleIndex, b.SampleIndex))
+	})
+	var out []string
+	for _, v := range winners {
+		if j := strings.TrimSpace(intanalyzer.CleanText(v.Justification, intanalyzer.MaxStoredJustificationBytes)); j != "" {
+			out = append(out, j)
+		}
+	}
+	return out
 }

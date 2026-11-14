@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,8 +126,27 @@ func (r *PGResolver) Resolve(ctx context.Context, ref ResourceRef) ([]byte, erro
 // The stage event is published after synthesis finishes writing, so the rows
 // are complete. Viability > 0 is the viable test internal/results applies. The
 // tenant_id predicate is explicit alongside RLS. A job with no rows (or of
-// another tenant) yields "[]".
+// another tenant) yields "[]". Each mapping carries its pair's relationship
+// critique from the job's critique result, when the job ran one; a pair the
+// critique vetoed is never served, so the graph never writes it.
 func readSynthesized(ctx context.Context, tx db.Transaction, tenantID, jobID string) ([]byte, error) {
+	var critiqueData []byte
+	var crit []results.CritiqueResult
+	err := tx.QueryRow(ctx, `SELECT result_data FROM analysis_results WHERE job_id = $1 AND analyzer_name = $2 AND tenant_id = $3`,
+		jobID, results.CritiqueAnalyzer, tenantID).Scan(&critiqueData)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return nil, fmt.Errorf("read the critique result of job %s, which decides the pairs it vetoed, so none of the job's synthesized edges were written; "+
+			"once the database is reachable, re-run the job: %w", jobID, err)
+	default:
+		if err := json.Unmarshal(critiqueData, &crit); err != nil {
+			return nil, fmt.Errorf("the stored critique result of job %s does not decode, so it is corrupt and none of the job's synthesized edges were written; "+
+				"re-run the job or ask an operator to inspect its analysis_results row: %w", jobID, err)
+		}
+	}
+	verdicts := results.Apply(results.RelationshipAnalyzer, crit)
+
 	rows, err := tx.Query(ctx, `SELECT source_id, target_id, consensus, confidence, viability
 		FROM vote_summaries
 		WHERE tenant_id = $1 AND job_id = $2 AND analyzer_name = $3
@@ -139,6 +159,12 @@ func readSynthesized(ctx context.Context, tx db.Transaction, tenantID, jobID str
 		var m results.SynthesizedMapping
 		if err := rows.Scan(&m.SourceID, &m.TargetID, &m.RelationshipType, &m.Confidence, &m.Viability); err != nil {
 			return nil, errors.Join(fmt.Errorf("scan vote summary: %w", err), rows.Close())
+		}
+		if verdicts.Vetoed(m.SourceID, m.TargetID) {
+			continue
+		}
+		if c, ok := verdicts.Result(m.SourceID, m.TargetID); ok {
+			m.Critique = &c
 		}
 		m.IsViable = m.Viability > 0
 		mappings = append(mappings, m)

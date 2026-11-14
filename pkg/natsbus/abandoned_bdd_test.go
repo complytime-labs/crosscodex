@@ -46,7 +46,7 @@ var _ = Describe("Abandoned collection control subject", func() {
 		Entry("empty task type", func(c *natsbus.AbandonedCollection) { c.TaskType = "" }, "task type must not be empty"),
 		Entry("task type with a delimiter", func(c *natsbus.AbandonedCollection) { c.TaskType = "re.late" }, "task type"),
 		Entry("unknown task type", func(c *natsbus.AbandonedCollection) { c.TaskType = "summarize" },
-			`task type "summarize" is not one of classify, relate, requires, artifacts, embed`),
+			`task type "summarize" is not one of classify, relate, requires, artifacts, embed, critique`),
 		Entry("empty job ID", func(c *natsbus.AbandonedCollection) { c.JobID = "" }, "job ID must not be empty"),
 		Entry("job ID with a wildcard", func(c *natsbus.AbandonedCollection) { c.JobID = "job*" }, "job ID"),
 		Entry("empty collection ID", func(c *natsbus.AbandonedCollection) { c.CollectionID = "" }, "collection ID must not be empty"),

@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/csv"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -41,6 +42,7 @@ func (f *fakeMappingsClient) ListJobMappings(_ context.Context, req *connectrpc.
 		Stage:             req.Msg.GetStage(),
 		MinConfidence:     req.Msg.GetMinConfidence(),
 		IncludeNonViable:  req.Msg.GetIncludeNonViable(),
+		IncludeVetoed:     req.Msg.GetIncludeVetoed(),
 		RelationshipTypes: req.Msg.GetRelationshipTypes(),
 		ControlId:         req.Msg.GetControlId(),
 		Pagination:        &pb.Pagination{PageSize: req.Msg.GetPagination().GetPageSize(), PageToken: req.Msg.GetPagination().GetPageToken()},
@@ -106,6 +108,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(req.GetStage()).To(Equal(pb.MappingStage_MAPPING_STAGE_SYNTHESIZED))
 			Expect(req.GetMinConfidence()).To(BeZero())
 			Expect(req.GetIncludeNonViable()).To(BeFalse())
+			Expect(req.GetIncludeVetoed()).To(BeFalse())
 			Expect(req.GetRelationshipTypes()).To(BeEmpty())
 			Expect(req.GetControlId()).To(BeEmpty())
 			Expect(req.GetPagination().GetPageSize()).To(Equal(int32(1000)))
@@ -156,6 +159,12 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Entry("export: unknown type", "export", "equivalent", "--type", "bogus"),
 		Entry("export: confidence above 1", "export", "between 0 and 1", "--min-confidence", "1.5"),
 		Entry("export: non-viable with analyzer stage", "export", "synthesized", "--stage", "analyzer", "--include-non-viable"),
+		Entry("export: vetoed pairs with the default stage", "export",
+			"--include-vetoed only applies to the analyzer stage: synthesis never receives vetoed pairs, so add --stage analyzer or drop the flag",
+			"--include-vetoed"),
+		Entry("summary: vetoed pairs, which are not mappings", "summary",
+			"--include-vetoed lists vetoed pairs in `results export --stage analyzer`; summary counts only mappings",
+			"--stage", "analyzer", "--include-vetoed"),
 	)
 
 	It("stops when the server repeats the page token it was given", func() {
@@ -201,6 +210,25 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Expect(out.Mappings[1]).To(HaveKeyWithValue("confidence", BeNumerically("==", 0)), "zero values are exported")
 	})
 
+	It("omits the critique key from JSON for a mapping without one", func() {
+		fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))}
+		stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+		Expect(err).NotTo(HaveOccurred())
+		var out struct {
+			Mappings []map[string]any `json:"mappings"`
+		}
+		Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "export output is valid JSON: %s", stdout)
+		Expect(out.Mappings).To(HaveLen(1))
+		Expect(out.Mappings[0]).NotTo(HaveKey("critique"))
+		Expect(out.Mappings[0]).To(HaveKeyWithValue("isViable", true))
+	})
+
+	It("does not offer --include-vetoed in summary help", func() {
+		stdout, _, err := execute(newCmd(), "summary", "--help")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).NotTo(ContainSubstring("include-vetoed"))
+	})
+
 	It("exports an empty mapping list as an empty JSON array", func() {
 		stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
 		Expect(err).NotTo(HaveOccurred())
@@ -244,6 +272,50 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(lines[1]).To(HavePrefix("a,s-a,t-a,RELATIONSHIP_TYPE_EQUIVALENT,0.900,,,"))
 		})
 
+		It("asks for vetoed pairs with --include-vetoed", func() {
+			_, _, err := execute(newCmd(), "export", "job-1", "--stage", "analyzer", "--include-vetoed")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.calls[0].GetIncludeVetoed()).To(BeTrue())
+		})
+
+		It("adds a critique CSV column with --include-vetoed, holding the votes and reasons of a critiqued mapping", func() {
+			vetoed := mapping("v", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)
+			vetoed.Critique = &pb.MappingCritique{Vetoed: true, Upheld: 1, Rejected: 2,
+				Reasons: []string{"panel-1 s0 UPHOLD: fine", "panel-2 s0 REJECT: scope\ndiffers", "panel-3 s0 REJECT: =unrelated"}}
+			fake.pages[0].Mappings = append(fake.pages[0].Mappings, vetoed)
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer", "--include-vetoed")
+			Expect(err).NotTo(HaveOccurred())
+			rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rows).To(HaveLen(3))
+			Expect(rows[0][:9]).To(Equal([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence",
+				"viability_score", "is_viable", "critique", "job_source_catalog_id"}))
+			Expect(rows[1][0]).To(Equal("a"))
+			Expect(rows[1][7]).To(BeEmpty(), "a mapping without a critique has an empty cell")
+			Expect(rows[2][0]).To(Equal("v"))
+			Expect(rows[2][7]).To(Equal("vetoed: 1 upheld, 2 rejected, 0 failed; " +
+				"panel-1 s0 UPHOLD: fine | panel-2 s0 REJECT: scope differs | panel-3 s0 REJECT: =unrelated"))
+		})
+
+		It("has no critique CSV column without --include-vetoed", func() {
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.Split(stdout, "\n")[0]).NotTo(ContainSubstring("critique"))
+		})
+
+		It("exports a mapping's critique in JSON", func() {
+			fake.pages[0].Mappings[0].Critique = &pb.MappingCritique{Upheld: 2, Rejected: 1, Reasons: []string{"panel-2 s0 REJECT: no"}}
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json", "--stage", "analyzer")
+			Expect(err).NotTo(HaveOccurred())
+			var out struct {
+				Mappings []map[string]any `json:"mappings"`
+			}
+			Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "export output is valid JSON: %s", stdout)
+			Expect(out.Mappings[0]).To(HaveKeyWithValue("critique", SatisfyAll(
+				HaveKeyWithValue("vetoed", false), HaveKeyWithValue("rejected", BeNumerically("==", 1)),
+				HaveKeyWithValue("reasons", ConsistOf("panel-2 s0 REJECT: no")))))
+		})
+
 		It("omits the viability fields from JSON", func() {
 			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json", "--stage", "analyzer")
 			Expect(err).NotTo(HaveOccurred())
@@ -254,6 +326,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(out.Mappings).To(HaveLen(1))
 			Expect(out.Mappings[0]).To(HaveKeyWithValue("confidence", BeNumerically("~", 0.9, 1e-6)))
 			Expect(out.Mappings[0]).NotTo(HaveKey("viabilityScore"))
+			Expect(out.Mappings[0]).NotTo(HaveKey("critique"))
 			Expect(out.Mappings[0]).NotTo(HaveKey("isViable"))
 		})
 	})

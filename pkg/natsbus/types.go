@@ -23,6 +23,7 @@ const (
 	TaskRequires  TaskType = "requires"
 	TaskArtifacts TaskType = "artifacts"
 	TaskEmbed     TaskType = "embed"
+	TaskCritique  TaskType = "critique"
 )
 
 // ResultErrorOutputTruncated is the X-Error value a worker publishes for a
@@ -33,7 +34,7 @@ const (
 const ResultErrorOutputTruncated = "output_truncated"
 
 // taskTypes lists every TaskType constant, in declaration order.
-var taskTypes = []TaskType{TaskClassify, TaskRelate, TaskRequires, TaskArtifacts, TaskEmbed}
+var taskTypes = []TaskType{TaskClassify, TaskRelate, TaskRequires, TaskArtifacts, TaskEmbed, TaskCritique}
 
 // AuditType represents the kind of audit record.
 type AuditType string

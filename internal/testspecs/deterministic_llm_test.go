@@ -9,6 +9,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/analyzer/artifacts"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/classify"
+	"github.com/complytime-labs/crosscodex/internal/analyzer/critique"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
@@ -54,6 +55,12 @@ var _ = Describe("DeterministicLLM", func() {
 			Expect(v.ParseStatus).To(Equal(relationship.ParseOK))
 			Expect(v.Relationship).To(Equal(relationship.RelNoRelationship))
 			Expect(v.Confidence).To(Equal(relationship.ConfidenceHigh))
+		})
+
+		It("critique: a valid UPHOLD vote, so a critique keeps every verdict", func() {
+			c := critique.ParseCritique(complete("critique"))
+			Expect(c.Valid()).To(BeTrue())
+			Expect(c.Verdict).To(Equal(critique.VerdictUphold))
 		})
 
 		It("artifacts: the empty sentinel", func() {

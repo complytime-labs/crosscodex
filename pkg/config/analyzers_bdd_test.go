@@ -23,6 +23,7 @@ var _ = Describe("AnalyzerSetting", func() {
 		Entry("artifacts", "artifacts", "max_tokens", "analysis.artifacts.max_tokens"),
 		Entry("requires", "requires", "max_tokens", "analysis.requires.max_tokens"),
 		Entry("relationship", "relationship", "max_tokens", "analysis.relationship.max_tokens"),
+		Entry("critique", "critique", "enabled", "analysis.critique.enabled"),
 	)
 
 	It("reports no path for a name that is not a production analyzer", func() {
@@ -39,7 +40,7 @@ var _ = Describe("AnalyzerSetting", func() {
 		var doc map[string]any
 		Expect(yaml.Unmarshal(out, &doc)).To(Succeed())
 
-		for _, name := range []string{"classify", "artifacts", "requires", "relationship"} {
+		for _, name := range []string{"classify", "artifacts", "requires", "relationship", "critique"} {
 			path, ok := config.AnalyzerSetting(name, "max_tokens")
 			Expect(ok).To(BeTrue())
 			node := any(doc)
