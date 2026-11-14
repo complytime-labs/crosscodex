@@ -15,7 +15,7 @@ import (
 )
 
 var _ = Describe("PGCatalogControlsReader", func() {
-	It("returns controls ordered by ID with ancestor title and class", func() {
+	It("returns controls ordered by ID with context and class", func() {
 		// Query column order matches pgCatalogControlsReader.Controls's SELECT:
 		// control_id, identifier, title, statement, class, parent_id, container_key, props.
 		mockTx := &dbtest.Tx{
@@ -45,11 +45,11 @@ var _ = Describe("PGCatalogControlsReader", func() {
 		Expect(controls[1].GetControlId()).To(Equal("cat-1/AC-1_smt.a"))
 		Expect(controls[2].GetControlId()).To(Equal("cat-1/SECTION-1"))
 
-		Expect(controls[1].GetParts()["ancestor_title"]).To(Equal("Access Control"))
+		Expect(controls[1].GetParts()["context"]).To(Equal("Access Control (AC-1)"))
 		Expect(controls[2].GetParts()["class"]).To(Equal("compliance-section"))
 	})
 
-	It("gives no ancestor_title to a row whose parent_id matches no control", func() {
+	It("gives no context to a row whose parent_id matches no control", func() {
 		mockTx := &dbtest.Tx{
 			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
 				if strings.Contains(query, "catalog_containers") {
@@ -67,18 +67,18 @@ var _ = Describe("PGCatalogControlsReader", func() {
 
 		controls, err := reader.Controls(ctx, "tenant-a", "cat-1")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(controls[0].GetParts()).NotTo(HaveKey("ancestor_title"), "a root has no ancestor")
-		Expect(controls[1].GetParts()).NotTo(HaveKey("ancestor_title"), "parent_id is stored raw, so a catalog-prefixed value is unknown")
+		Expect(controls[0].GetParts()).NotTo(HaveKey("context"), "a root has no ancestor")
+		Expect(controls[1].GetParts()).NotTo(HaveKey("context"), "parent_id is stored raw, so a catalog-prefixed value is unknown")
 	})
 
-	It("takes a top-level control's ancestor_title from its container and never emits a container", func() {
+	It("continues a control's context into its container and never emits a container", func() {
 		var containerArgs []any
 		mockTx := &dbtest.Tx{
 			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
 				if strings.Contains(query, "catalog_containers") {
 					containerArgs = args
-					// Columns: container_key, title.
-					return dbtest.Rows(nil, []any{"g1", "Access Control"}), nil
+					// Columns: container_key, parent_key, title, identifier, label.
+					return dbtest.Rows(nil, []any{"g1", "", "Access Control", "", ""}), nil
 				}
 				return dbtest.Rows(nil,
 					[]any{"cat-1/AC-1", "AC-1", "Policy", "stmt", "", "", "g1", []byte(`{}`)},
@@ -96,10 +96,10 @@ var _ = Describe("PGCatalogControlsReader", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(containerArgs).To(Equal([]any{"tenant-a", "cat-1"}), "containers are read tenant- and catalog-scoped")
 		Expect(controls).To(HaveLen(4), "only controls are emitted, never containers")
-		Expect(controls[0].GetParts()["ancestor_title"]).To(Equal("Access Control"))
-		Expect(controls[1].GetParts()["ancestor_title"]).To(Equal("Policy"), "a part keeps its parent item's title")
-		Expect(controls[2].GetParts()).NotTo(HaveKey("ancestor_title"), "an unknown container key yields no ancestor")
-		Expect(controls[3].GetParts()).NotTo(HaveKey("ancestor_title"))
+		Expect(controls[0].GetParts()["context"]).To(Equal("Access Control"))
+		Expect(controls[1].GetParts()["context"]).To(Equal("Access Control > Policy (AC-1)"), "a part's context runs through its parent item")
+		Expect(controls[2].GetParts()).NotTo(HaveKey("context"), "an unknown container key yields no ancestor")
+		Expect(controls[3].GetParts()).NotTo(HaveKey("context"))
 	})
 
 	It("returns an error when the containers query fails", func() {

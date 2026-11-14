@@ -43,11 +43,12 @@ var DefaultRequirementPartNames = []string{"statement"}
 // gets a single ClassRequirement row with blank text.
 //
 // When the requirement part has no child parts, the control is a single
-// ClassRequirement row carrying the part's prose. Otherwise the control row is
-// a ClassSection carrying the part's own prose (its lead-in), and every child
-// part, whatever its name, is walked to any depth: a part with children becomes
-// a ClassSection row (its prose a lead-in), a leaf a ClassRequirement row. Each
-// row's ID is derived from its part ID against its parent row's ID
+// ClassRequirement row carrying the part's prose. Otherwise every child part,
+// whatever its name, is walked to any depth. The control row and each part row
+// with children is a ClassSection, its prose a lead-in, unless that prose is
+// not blank while every part below it is blank: then it is a ClassRequirement
+// carrying the prose (isSection). A leaf is a ClassRequirement row. Each row's
+// ID is derived from its part ID against its parent row's ID
 // (deriveChildID); it records Props "parent-id" and "source-part" and the
 // part's published label and sort-id. Parts decoded from JSON are a finite
 // tree, so the walk terminates without a depth bound.
@@ -69,7 +70,9 @@ func DecomposeStatements(ctrl oscalTypes.Control, groupID string, params map[str
 	if req.Parts == nil || len(*req.Parts) == 0 {
 		return []ControlItem{control}
 	}
-	control.Class = ClassSection
+	if isSection(control.Text, *req.Parts) {
+		control.Class = ClassSection
+	}
 	return appendPartRows([]ControlItem{control}, ctrl.ID, *req.Parts, groupID, params)
 }
 
@@ -78,9 +81,10 @@ func DecomposeStatements(ctrl oscalTypes.Control, groupID string, params map[str
 func appendPartRows(rows []ControlItem, parentID string, parts []oscalTypes.Part, groupID string, params map[string]string) []ControlItem {
 	for idx, part := range parts {
 		hasChildren := part.Parts != nil && len(*part.Parts) > 0
+		text := CleanProse(part.Prose, params)
 		row := ControlItem{
 			ID:       deriveChildID(parentID, part, idx),
-			Text:     CleanProse(part.Prose, params),
+			Text:     text,
 			Class:    ClassRequirement,
 			ParentID: parentID,
 			GroupID:  groupID,
@@ -89,7 +93,7 @@ func appendPartRows(rows []ControlItem, parentID string, parts []oscalTypes.Part
 				"source-part": part.ID,
 			},
 		}
-		if hasChildren {
+		if hasChildren && isSection(text, *part.Parts) {
 			row.Class = ClassSection
 		}
 		setPublishedProps(row.Props, part.Props)
@@ -99,6 +103,15 @@ func appendPartRows(rows []ControlItem, parentID string, parts []oscalTypes.Part
 		}
 	}
 	return rows
+}
+
+// isSection reports whether a row with the given prose and child parts is a
+// section: its prose only leads in to requirement text below it. A row whose
+// prose is not blank but whose children hold none is itself the requirement;
+// were it a section, analysis would skip its prose and nothing would report
+// it.
+func isSection(text string, children []oscalTypes.Part) bool {
+	return strings.TrimSpace(text) == "" || slices.ContainsFunc(children, hasProse)
 }
 
 // DecomposeText applies a 5-tier regex cascade to split unstructured text into sub-requirements.

@@ -14,30 +14,26 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/relationship"
 	"github.com/complytime-labs/crosscodex/internal/analyzer/requires"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/candidate"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/db"
-	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
-
-// classifySectionClass mirrors the unexported sectionClass constant in
-// internal/analyzer/classify (which matches oscal.ClassSection). Section
-// controls are excluded from candidate generation, the same way classify skips
-// them. Duplicated here because the source identifier is unexported.
-const classifySectionClass = "compliance-section"
 
 // pgControlsReader implements ControlsReader against the controls and
 // analysis_results tables.
 type pgControlsReader struct{ db db.TenantConnection }
 
-// ControlData reads a catalog's non-section, non-withdrawn controls and merges in the
-// classify analyzer's persisted type/level for the job. Controls without a
-// classify entry keep empty Type/Level, which the level and keyword generators
-// skip gracefully.
+// ControlData reads a catalog's composed controls (composeControls) that are
+// not intanalyzer.Excluded (sections, withdrawn controls), with the composed
+// statement as Text and the context as Ancestor, and merges in the classify
+// analyzer's persisted type/level for the job. Controls without a classify
+// entry keep empty Type/Level, which the level and keyword generators skip
+// gracefully.
 func (r *pgControlsReader) ControlData(ctx context.Context, tenantID, catalogID, jobID string) (map[string]*candidate.ControlData, error) {
 	if err := tenant.ValidateTenantID(tenantID); err != nil {
 		return nil, fmt.Errorf("pgControlsReader.ControlData: %w", err)
@@ -49,55 +45,18 @@ func (r *pgControlsReader) ControlData(ctx context.Context, tenantID, catalogID,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// title, statement, and parent_id are nullable; COALESCE keeps the scan
-	// targets plain strings. Every row is read so a section or withdrawn parent
-	// still supplies its title as an ancestor; excluded marks the rows that
-	// are not emitted: sections (class IS DISTINCT FROM handles a NULL class,
-	// which is not a section) and withdrawn controls (props.status; props may
-	// be NULL, which COALESCE maps to "not withdrawn").
-	rows, err := tx.Query(ctx, `
-		SELECT control_id, COALESCE(title, ''), COALESCE(statement, ''), COALESCE(parent_id, ''), COALESCE(container_key, ''),
-		       (class IS NOT DISTINCT FROM $3 OR COALESCE(props->>$4::text, '') = $5) AS excluded
-		FROM controls
-		WHERE tenant_id = $1 AND catalog_id = $2
-	`, tenantID, catalogID, classifySectionClass, oscal.PropStatus, oscal.PropStatusWithdrawn)
-	if err != nil {
-		return nil, fmt.Errorf("pgControlsReader.ControlData: querying controls: %w", err)
-	}
-	defer rows.Close()
-
-	// A top-level control (empty parent_id) takes its container's title
-	// (see ancestorTitleOf).
-	titleByID := make(map[string]string)
-	type controlRow struct{ controlID, statement, parentID, containerKey string }
-	var controlRows []controlRow
-	for rows.Next() {
-		var controlID, title, statement, parentID, containerKey string
-		var excluded bool
-		if err := rows.Scan(&controlID, &title, &statement, &parentID, &containerKey, &excluded); err != nil {
-			return nil, fmt.Errorf("pgControlsReader.ControlData: scanning control row: %w", err)
-		}
-		titleByID[controlID] = title
-		if !excluded {
-			controlRows = append(controlRows, controlRow{controlID, statement, parentID, containerKey})
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("pgControlsReader.ControlData: rows error: %w", err)
-	}
-
-	rows.Close()
-
-	containerTitles, err := readContainerTitles(ctx, tx, tenantID, catalogID)
+	// Every row is read so a section or withdrawn parent still supplies its
+	// context and lead-ins. A control without text is kept: controlsWithText
+	// drops and counts it.
+	rows, containers, err := readCatalog(ctx, tx, tenantID, catalogID)
 	if err != nil {
 		return nil, fmt.Errorf("pgControlsReader.ControlData: %w", err)
 	}
-
-	data := make(map[string]*candidate.ControlData, len(controlRows))
-	for _, c := range controlRows {
-		cd := &candidate.ControlData{ControlID: c.controlID, Text: c.statement}
-		cd.Ancestor, _ = ancestorTitleOf(catalogID, c.parentID, c.containerKey, titleByID, containerTitles) // empty when unknown
-		data[c.controlID] = cd
+	data := make(map[string]*candidate.ControlData)
+	for _, c := range composeControls(catalogID, rows, containers) {
+		if !intanalyzer.Excluded(c) {
+			data[c.GetControlId()] = &candidate.ControlData{ControlID: c.GetControlId(), Text: c.GetStatement(), Ancestor: c.GetParts()["context"]}
+		}
 	}
 
 	classifyRow := tx.QueryRow(ctx, `

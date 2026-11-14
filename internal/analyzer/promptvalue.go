@@ -76,6 +76,39 @@ func PromptText(s string, maxChars int) string {
 	return escapeWithin(promptClean(s), maxChars, func(rune) int { return 1 })
 }
 
+// MaxPromptContextBytes bounds the hierarchy breadcrumb a prompt carries for
+// one control.
+const MaxPromptContextBytes = 600
+
+const (
+	contextSeparator = " > "
+	contextElision   = "… > "
+)
+
+// PromptContext makes an untrusted hierarchy breadcrumb (segments joined by
+// " > ") safe to render in a prompt and at most maxBytes bytes long. Each
+// segment is hardened with PromptValue, so the separators stay literal. When
+// the result is too long, leading segments are dropped and the nearest ones
+// kept behind a "… > " prefix. If even the last segment plus the prefix does
+// not fit, the last segment is returned alone, cut with PromptValue when it
+// still exceeds the bound. The cut never splits a rune.
+func PromptContext(context string, maxBytes int) string {
+	raw := strings.Split(context, contextSeparator)
+	segments := make([]string, len(raw))
+	for i, seg := range raw {
+		segments[i] = PromptValue(seg, math.MaxInt)
+	}
+	if joined := strings.Join(segments, contextSeparator); len(joined) <= maxBytes {
+		return joined
+	}
+	for i := 1; i < len(segments); i++ {
+		if cut := contextElision + strings.Join(segments[i:], contextSeparator); len(cut) <= maxBytes {
+			return cut
+		}
+	}
+	return PromptValue(raw[len(raw)-1], maxBytes)
+}
+
 // promptClean is CleanDisplay, uncapped, with NFKC normalization between
 // the UTF-8 repair and the format-character removal: compatibility
 // look-alikes such as fullwidth U+FF1C/U+FF1E and small-form U+FE64/U+FE65

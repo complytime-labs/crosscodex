@@ -39,6 +39,29 @@ var _ = Describe("Property Specifications", func() {
 				}
 			})
 		})
+
+		It("rejects a numbered identifier respelt with other separators and case", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				words := rapid.SliceOfN(rapid.StringMatching(`[a-zA-Z]{1,8}`), 1, 4).Draw(t, "words")
+				number := rapid.StringMatching(`[0-9]{1,3}(\.[0-9]{1,3}){0,2}`).Draw(t, "number")
+				identifier := strings.Join(append(words, number), "_")
+				title := strings.ToUpper(strings.Join(words, " ")) + " " + number
+				if got := oscal.UsableTitle(title, identifier, ""); got != "" {
+					t.Fatalf("UsableTitle(%q, %q, \"\") = %q, want \"\"", title, identifier, got)
+				}
+			})
+		})
+
+		It("keeps a digit-free title that matches a slug identifier only by letters", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				words := rapid.SliceOfN(rapid.StringMatching(`[a-zA-Z]{1,8}`), 2, 4).Draw(t, "words")
+				identifier := strings.ToLower(strings.Join(words, "_"))
+				title := strings.Join(words, " ")
+				if got := oscal.UsableTitle(title, identifier, ""); got != title {
+					t.Fatalf("UsableTitle(%q, %q, \"\") = %q, want %q", title, identifier, got, title)
+				}
+			})
+		})
 	})
 
 	Context("CleanProse — template resolution", func() {

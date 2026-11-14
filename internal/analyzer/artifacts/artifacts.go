@@ -19,7 +19,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
-	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -108,8 +107,8 @@ func (a *ArtifactsAnalyzer) ResultSchema() proto.Message {
 }
 
 // GenerateWork produces one Task per model x sample for the given control.
-// Sections (class "compliance-section") and withdrawn controls (prop
-// oscal.PropStatus) are auto-skipped.
+// Controls that are not intanalyzer.Analysable (sections, withdrawn controls,
+// blank statements) are auto-skipped.
 func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
 	ctx, span := telemetry.StartSpan(a.tracer, ctx, "artifacts.GenerateWork")
 	defer span.End()
@@ -121,8 +120,8 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 		return nil, fmt.Errorf("artifacts.GenerateWork: %w", err)
 	}
 
-	// Skip sections and withdrawn controls.
-	if input.GetParts()["class"] == "compliance-section" || input.GetParts()[oscal.PropStatus] == oscal.PropStatusWithdrawn {
+	// Skip sections, withdrawn controls and controls without statement text.
+	if !intanalyzer.Analysable(input) {
 		taskID := fmt.Sprintf("%s-%s-skip", analyzerName, input.GetIdentifier())
 		payload, _ := structpb.NewStruct(map[string]interface{}{
 			"control_id": input.GetIdentifier(),
@@ -159,7 +158,8 @@ func (a *ArtifactsAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 		"output_format":             outputFormat,
 		"control_id":                short(input.GetIdentifier()),
 		"framework":                 short(cfg.Parameters["framework"]),
-		"ancestor_title":            short(input.GetParts()["ancestor_title"]),
+		"context":                   intanalyzer.PromptContext(input.GetParts()["context"], intanalyzer.MaxPromptContextBytes),
+		"title":                     short(input.GetTitle()),
 		"requirement_text":          intanalyzer.PromptText(input.GetStatement(), a.cfg.MaxTextChars),
 	}
 

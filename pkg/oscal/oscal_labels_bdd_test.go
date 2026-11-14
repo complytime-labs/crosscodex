@@ -82,7 +82,7 @@ var _ = Describe("Published labels and sort-ids", func() {
 			Expect(oscal.UsableTitle(title, identifier, label)).To(Equal(want))
 		},
 		Entry("keeps a real title", "Account Management", "ac-2", "AC-2", "Account Management"),
-		Entry("drops a title equal to the label ignoring case", "AC-2", "ac-2", "", ""),
+		Entry("drops a title equal to the identifier ignoring case", "AC-2", "ac-2", "", ""),
 		Entry("drops a title equal to the identifier", "ac-2.1", "ac-2.1", "", ""),
 		Entry("drops a title equal to the label", "03.01.01", "x", "03.01.01", ""),
 		Entry("drops a blank title", "  ", "a", "", ""),
@@ -91,5 +91,10 @@ var _ = Describe("Published labels and sort-ids", func() {
 		Entry("drops a title equal to the identifier but for case and punctuation", "AC-2", "ac2", "", ""),
 		Entry("drops a title without letters or digits", "—", "a", "", ""),
 		Entry("keeps a real title that contains the identifier", "MANAGE 4.2 Improvements", "MANAGE_4.2", "", "MANAGE 4.2 Improvements"),
+		Entry("drops a title with a digit equal to the label but for punctuation", "3.1.1", "x", "3_1_1", ""),
+		Entry("keeps a digit-free title equal to a slug identifier but for case and punctuation",
+			"Enable Authselect", "enable_authselect", "", "Enable Authselect"),
+		Entry("keeps a digit-free title equal to a slug label but for case and punctuation",
+			"Enable Authselect", "x", "enable-authselect", "Enable Authselect"),
 	)
 })

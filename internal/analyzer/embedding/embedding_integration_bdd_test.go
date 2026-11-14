@@ -218,7 +218,7 @@ var _ = Describe("Embedding Infrastructure Integration", Ordered, func() {
 // embeddingsByControlID returns a Fake.EmbedFunc that answers with
 // pre-defined embedding vectors keyed by control ID. It matches control IDs by
 // searching for them within the prepared text, since prepareText() prepends
-// ancestor context like "[Title] statement". An input matching no ID gets a
+// context like "[Title] statement". An input matching no ID gets a
 // zero vector of width dim.
 func embeddingsByControlID(vectors map[string][]float32, dim int) func(context.Context, *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {
 	return func(_ context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error) {

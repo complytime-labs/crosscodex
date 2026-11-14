@@ -21,5 +21,10 @@ var _ = Describe("LineageSegment", func() {
 		Entry("empty for an empty title", "", "AC", "ac", ""),
 		Entry("empty for a whitespace-only title", "  \t", "AC", "ac", ""),
 		Entry("trimmed title", "  Access Control ", "AC", "ac", "Access Control (AC)"),
+		Entry("title alone when it equals the label", "MANAGE", "MANAGE", "", "MANAGE"),
+		Entry("title alone when it is the identifier respelt with a number", "MANAGE 4", "", "MANAGE_4", "MANAGE 4"),
+		Entry("title alone when it equals the identifier ignoring case", "AC", "", "ac", "AC"),
+		Entry("label kept for a digit-free title that only matches a slug identifier by letters",
+			"Enable Authselect", "", "enable_authselect", "Enable Authselect (enable_authselect)"),
 	)
 })

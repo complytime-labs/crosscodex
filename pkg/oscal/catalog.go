@@ -166,12 +166,16 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 		params := collectParams(catalog, scoped, catalogWide)
 		decomposed := DecomposeStatements(ctrl, groupID, params, p.requirementParts)
 		label, _ := selectProp(ctrl.Props, PropLabel)
-		if findRequirementPart(ctrl, p.requirementParts) == nil && UsableTitle(ctrl.Title, ctrl.ID, label) == "" {
+		// A withdrawn control is never analysed, so its lack of text is not
+		// something the user can or needs to fix.
+		withdrawn := withdrawnProps(ctrl)
+		if len(withdrawn) == 0 && findRequirementPart(ctrl, p.requirementParts) == nil &&
+			UsableTitle(ctrl.Title, ctrl.ID, label) == "" {
 			textless = append(textless, TextlessControl{Identifier: ctrl.ID, PartNames: prosePartNames(ctrl)})
 		}
 		for i := range decomposed {
 			decomposed[i].ContainerKey = groupKey
-			maps.Copy(decomposed[i].Props, withdrawnProps(ctrl))
+			maps.Copy(decomposed[i].Props, withdrawn)
 			if decomposed[i].ID == ctrl.ID {
 				decomposed[i].Props[PropNodeKind] = PropNodeKindControl
 				if depth > 0 {

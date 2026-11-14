@@ -2406,8 +2406,8 @@ var _ = Describe("Executor", func() {
 				pairNames = catalogNames
 				pairJobConfig = `{"catalog_id":"cat-1"}`
 				pairControls = &fakeCatalogControlsReader{controls: []*pb.Control{
-					{ControlId: "c1", CatalogId: "cat-1", Statement: "Keep an asset inventory.", Parts: map[string]string{"ancestor_title": "Identify"}},
-					{ControlId: "c2", CatalogId: "cat-1", Statement: "Review the inventory yearly.", Parts: map[string]string{"ancestor_title": "Protect"}},
+					{ControlId: "c1", CatalogId: "cat-1", Title: "Asset Management", Statement: "Keep an asset inventory.", Parts: map[string]string{"context": "Identify"}},
+					{ControlId: "c2", CatalogId: "cat-1", Statement: "Review the inventory yearly.", Parts: map[string]string{"context": "Protect"}},
 				}}
 			})
 
@@ -2495,16 +2495,20 @@ var _ = Describe("Executor", func() {
 					"job_id":              jobID,
 					"source_text_c1":      "Keep an asset inventory.",
 					"target_text_c1":      "Keep an asset inventory.",
-					"source_ancestor_c1":  "Identify",
-					"target_ancestor_c1":  "Identify",
+					"source_context_c1":   "Identify",
+					"target_context_c1":   "Identify",
+					"source_title_c1":     "Asset Management",
+					"target_title_c1":     "Asset Management",
 					"source_type_c1":      "Technical",
 					"target_type_c1":      "Technical",
 					"source_level_c1":     "Operational",
 					"target_level_c1":     "Operational",
 					"source_text_c2":      "Review the inventory yearly.",
 					"target_text_c2":      "Review the inventory yearly.",
-					"source_ancestor_c2":  "Protect",
-					"target_ancestor_c2":  "Protect",
+					"source_context_c2":   "Protect",
+					"target_context_c2":   "Protect",
+					"source_title_c2":     "",
+					"target_title_c2":     "",
 					"source_type_c2":      "Procedural",
 					"target_type_c2":      "Procedural",
 					"source_level_c2":     "Tactical",
@@ -2524,7 +2528,7 @@ var _ = Describe("Executor", func() {
 				return j.Status
 			}
 
-			It("passes every control's text, ancestor and classification under both pair ends", func() {
+			It("passes every control's text, context, title and classification under both pair ends", func() {
 				startPairJob(classified, false)
 
 				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))

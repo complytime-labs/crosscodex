@@ -139,7 +139,7 @@ func (a *RelationshipAnalyzer) ResultSchema() proto.Message {
 // input is unused: the pipeline runs this candidate-dependent pass once per
 // job, so each pair's texts come from cfg.Parameters ("source_text_<id>",
 // "target_text_<id>"), as do its classification ("source_type_<id>",
-// "source_level_<id>", "source_ancestor_<id>" and the target_ equivalents).
+// "source_level_<id>", "source_context_<id>", "source_title_<id>" and the target_ equivalents).
 // A pair whose source or target text is missing or empty returns an error
 // wrapping intanalyzer.ErrMissingControlText and produces no tasks.
 func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
@@ -230,7 +230,7 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
-		// IDs, framework names, types, levels and ancestor titles are short
+		// IDs, framework names, types, levels and titles are short
 		// values: PromptValue caps each at MaxPromptValueBytes, so a catalog
 		// name cannot carry a statement-sized payload.
 		short := func(v string) string { return intanalyzer.PromptValue(v, intanalyzer.MaxPromptValueBytes) }
@@ -249,10 +249,12 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 			"target_framework": short(cfg.Parameters["target_framework_"+pair.TargetControlID]),
 			"source_type":      short(cfg.Parameters["source_type_"+pair.SourceControlID]),
 			"source_level":     short(cfg.Parameters["source_level_"+pair.SourceControlID]),
-			"source_ancestor":  short(cfg.Parameters["source_ancestor_"+pair.SourceControlID]),
+			"source_context":   intanalyzer.PromptContext(cfg.Parameters["source_context_"+pair.SourceControlID], intanalyzer.MaxPromptContextBytes),
+			"source_title":     short(cfg.Parameters["source_title_"+pair.SourceControlID]),
 			"target_type":      short(cfg.Parameters["target_type_"+pair.TargetControlID]),
 			"target_level":     short(cfg.Parameters["target_level_"+pair.TargetControlID]),
-			"target_ancestor":  short(cfg.Parameters["target_ancestor_"+pair.TargetControlID]),
+			"target_context":   intanalyzer.PromptContext(cfg.Parameters["target_context_"+pair.TargetControlID], intanalyzer.MaxPromptContextBytes),
+			"target_title":     short(cfg.Parameters["target_title_"+pair.TargetControlID]),
 		}
 
 		systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)

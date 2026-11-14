@@ -48,6 +48,23 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
+	It("LineageSegment renders a title that only repeats its mark alone", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			mark := rapid.StringMatching(`[A-Za-z]{1,6}[-_. ]?[0-9]{0,3}`).Draw(t, "mark")
+			title := strings.ToUpper(mark)
+			want := strings.TrimSpace(title)
+			if rapid.Bool().Draw(t, "as label") {
+				if got := crosswalk.LineageSegment(title, mark, "id"); got != want {
+					t.Fatalf("LineageSegment(%q, %q, \"id\") = %q, want %q", title, mark, got, want)
+				}
+				return
+			}
+			if got := crosswalk.LineageSegment(title, "", mark); got != want {
+				t.Fatalf("LineageSegment(%q, \"\", %q) = %q, want %q", title, mark, got, want)
+			}
+		})
+	})
+
 	It("Invert is an involution on invertible types", func() {
 		rapid.Check(GinkgoT(), func(t *rapid.T) {
 			typ := rapid.SampledFrom(invertible).Draw(t, "type")

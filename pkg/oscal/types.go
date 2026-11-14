@@ -31,11 +31,11 @@ type Container struct {
 type Tree struct {
 	Containers []Container
 	Items      []ControlItem
-	// Textless lists, in document order, the controls that have neither
-	// requirement text nor a usable title (see UsableTitle). They are still in
-	// Items, keeping their place in the tree, but nothing can be analysed for
-	// them; the import reports them so the user can name the part that holds
-	// their text.
+	// Textless lists, in document order, the controls that are not withdrawn
+	// and have neither requirement text nor a usable title (see UsableTitle).
+	// They are still in Items, keeping their place in the tree, but nothing
+	// can be analysed for them; the import reports them so the user can name
+	// the part that holds their text.
 	Textless []TextlessControl
 }
 

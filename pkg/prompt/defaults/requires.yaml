@@ -1,5 +1,5 @@
 name: requires
-version: "1.2.0"
+version: "1.3.0"
 metadata:
   domain: analysis
   analyzer_type: requires
@@ -28,7 +28,8 @@ templates:
     Framework: ${source_framework}
     Type: ${source_type}
     Level: ${source_level}
-    Control Domain: ${source_ancestor}
+    Context: ${source_context}
+    Title: ${source_title}
     </source_metadata>
     <requirement>
     ${source_text}
@@ -40,7 +41,8 @@ templates:
     Framework: ${target_framework}
     Type: ${target_type}
     Level: ${target_level}
-    Control Domain: ${target_ancestor}
+    Context: ${target_context}
+    Title: ${target_title}
     </target_metadata>
     <requirement>
     ${target_text}

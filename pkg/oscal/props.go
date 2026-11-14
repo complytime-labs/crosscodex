@@ -60,18 +60,32 @@ func setPublishedProps(dst map[string]string, props *[]oscalTypes.Property) {
 }
 
 // UsableTitle returns the trimmed title, or "" when the title carries no text
-// of its own. Titles are compared by key: case-folded, keeping only Unicode
-// letters and digits. A title is unusable when its key is empty (blank or
-// punctuation only) or equals the key of the identifier or of the label. Some
-// catalogs title a control with its own number in another spelling ("MANAGE
-// 4.2" for MANAGE_4.2, "AC-2" for ac2); such a title must not be shown as a
-// heading or mistaken for requirement text.
+// of its own. A title is unusable when
+//   - it has no letter or digit (blank or punctuation only);
+//   - trimmed and case-folded, it equals the identifier or the label; or
+//   - it contains a digit and its key (case-folded, keeping only Unicode
+//     letters and digits) equals the key of the identifier or of the label.
+//
+// Some catalogs title a control with its own number in another spelling
+// ("MANAGE 4.2" for MANAGE_4.2, "AC-2" for ac2); such a title must not be
+// shown as a heading or mistaken for requirement text. The key match needs a
+// digit because a slug identifier can spell a real title: "Enable Authselect"
+// for enable_authselect is the requirement, not a number.
 func UsableTitle(title, identifier, label string) string {
-	key := titleKey(title)
-	if key == "" || key == titleKey(identifier) || key == titleKey(label) {
+	trimmed := strings.TrimSpace(title)
+	key := titleKey(trimmed)
+	if key == "" {
 		return ""
 	}
-	return strings.TrimSpace(title)
+	for _, name := range []string{identifier, label} {
+		if strings.EqualFold(trimmed, strings.TrimSpace(name)) {
+			return ""
+		}
+		if key == titleKey(name) && strings.IndexFunc(trimmed, unicode.IsDigit) >= 0 {
+			return ""
+		}
+	}
+	return trimmed
 }
 
 // titleKey case-folds s and drops every rune that is not a letter or digit.

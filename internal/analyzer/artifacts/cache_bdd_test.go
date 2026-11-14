@@ -21,7 +21,7 @@ import (
 var _ = Describe("artifacts result reuse", func() {
 	spec := &prompt.PromptSpec{Name: "artifacts", Version: "1.0.0", Templates: prompt.TemplateSet{
 		System: "System: ${extraction_guidance} ${artifact_type_definitions}",
-		User:   "User: ${few_shot_examples} ${output_format} ${control_id} ${framework} ${ancestor_title} ${requirement_text}",
+		User:   "User: ${few_shot_examples} ${output_format} ${control_id} ${framework} ${context} ${title} ${requirement_text}",
 	}}
 	newAnalyzer := func(mutate ...func(*config.ArtifactsConfig)) *artifacts.ArtifactsAnalyzer {
 		prompts := &prompttest.Fake{ResolveFunc: func(context.Context, string) (*prompt.PromptSpec, error) { return spec, nil }}

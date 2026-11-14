@@ -16,6 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/google/uuid"
 )
@@ -95,7 +96,7 @@ var _ = Describe("CandidateGenerator integration", func() {
 		}{
 			{"c1", "SC"},
 			{"c2", "SC"},
-			{"section-1", classifySectionClass},
+			{"section-1", oscal.ClassSection},
 		}
 		for _, c := range controls {
 			Expect(suPool.Exec(ctx, `

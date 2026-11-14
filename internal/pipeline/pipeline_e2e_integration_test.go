@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache/pgstore"
@@ -51,11 +53,20 @@ import (
 // agree on one model.
 const e2eModel = "e2e-test-model"
 
-// e2eIdenticalStatement is every seeded leaf control's statement. Leaves of
-// sections with the same title get identical prepared embedding text,
-// "[<parent title>] <statement>", so cosine similarity 1.0 makes every pair
-// of them a stable candidate.
-const e2eIdenticalStatement = "The organization enforces multi-factor authentication for all privileged accounts."
+// e2eIdenticalStatement and e2eLeafTitle are every seeded leaf control's
+// statement and title. The embedding text and the classify prompt hold the
+// control's context, title and statement ("[<context>] <title>:
+// <statement>"), and the context renders the parent section's title and
+// identifier. Leaves under sections with the same title and identifier
+// therefore get identical text, so cosine similarity 1.0 makes every pair of
+// them a stable candidate and they share one classify cache key. No
+// run-unique value may reach the title or the context: the deterministic
+// embedder gives different texts a similarity of random sign, which the
+// candidate filter drops about half the time.
+const (
+	e2eIdenticalStatement = "The organization enforces multi-factor authentication for all privileged accounts."
+	e2eLeafTitle          = "Privileged Access"
+)
 
 // e2eKeyProvider is an ephemeral ECDSA P-256 key provider for the attestation
 // generator, mirroring pkg/attestation's test double. The jobs are attested,
@@ -386,8 +397,10 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 }
 
 // seedCatalog writes catalogID, named name, and its controls under tenant A
-// (superuser: RLS bypassed, tenant_id explicit). Offset 1 so a failure is
-// reported at the caller's line.
+// (superuser: RLS bypassed, tenant_id explicit). Each control's identifier is
+// its ID without the "<catalogID>/" prefix, as import stores it, so contexts
+// carry no catalog ID. Offset 1 so a failure is reported at the caller's
+// line.
 func (env *e2eEnv) seedCatalog(catalogID, name string, controls []e2eControl) {
 	ctx := context.Background()
 	ExpectWithOffset(1, env.idb.suPool.Exec(ctx, `
@@ -397,22 +410,23 @@ func (env *e2eEnv) seedCatalog(catalogID, name string, controls []e2eControl) {
 	for _, c := range controls {
 		ExpectWithOffset(1, env.idb.suPool.Exec(ctx, `
 			INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id)
-			VALUES ($1, $2, $3, $2, $4, $5, $6, NULLIF($7, ''))
-		`, env.tenantA, c.id, catalogID, c.title, c.statement, c.class, c.parentID)).To(Succeed(), "seed control %s", c.id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''))
+		`, env.tenantA, c.id, catalogID, strings.TrimPrefix(c.id, catalogID+"/"), c.title, c.statement, c.class, c.parentID)).
+			To(Succeed(), "seed control %s", c.id)
 	}
 }
 
 // seedAlikeCatalogs seeds a source and a target catalog under tenant A and
-// returns their IDs. Every leaf in both has the same section title and
+// returns their IDs. Every leaf in both has the same context, title and
 // statement, so every pair, within a catalog too, is maximally similar: only
 // the job's catalogs and direction decide which pairs are generated.
 func (env *e2eEnv) seedAlikeCatalogs() (src, tgt string) {
 	src, tgt = "cat-src-"+uuid.New().String(), "cat-tgt-"+uuid.New().String()
 	for _, cat := range []struct{ id, name string }{{src, "E2E Source Framework"}, {tgt, "E2E Target Framework"}} {
 		env.seedCatalog(cat.id, cat.name, []e2eControl{
-			{cat.id + "/section", "Access Control", "Access control family.", classifySectionClass, ""},
-			{cat.id + "/c1", "Control One", e2eIdenticalStatement, "SC", "section"},
-			{cat.id + "/c2", "Control Two", e2eIdenticalStatement, "SC", "section"},
+			{cat.id + "/section", "Access Control", "Access control family.", oscal.ClassSection, ""},
+			{cat.id + "/c1", e2eLeafTitle, e2eIdenticalStatement, "SC", "section"},
+			{cat.id + "/c2", e2eLeafTitle, e2eIdenticalStatement, "SC", "section"},
 		})
 	}
 	return src, tgt
@@ -467,12 +481,13 @@ var _ = Describe("Pipeline end-to-end", Ordered, func() {
 
 		// section-1 is a compliance-section (classify/embedding auto-skip it,
 		// candidate generation excludes it). ctrl-1 and ctrl-2 are its leaf
-		// children with identical statements, which also exercises the
-		// ancestor_title path (both inherit the section's title).
+		// children with identical titles and statements, which also
+		// exercises the context path (both take the section's title as
+		// context).
 		env.seedCatalog(catalogID, "E2E Catalog", []e2eControl{
-			{catalogID + "/section-1", "Access Control", "Access control family.", classifySectionClass, ""},
-			{catalogID + "/ctrl-1", "Control One", e2eIdenticalStatement, "SC", "section-1"},
-			{catalogID + "/ctrl-2", "Control Two", e2eIdenticalStatement, "SC", "section-1"},
+			{catalogID + "/section-1", "Access Control", "Access control family.", oscal.ClassSection, ""},
+			{catalogID + "/ctrl-1", e2eLeafTitle, e2eIdenticalStatement, "SC", "section-1"},
+			{catalogID + "/ctrl-2", e2eLeafTitle, e2eIdenticalStatement, "SC", "section-1"},
 		})
 
 		jobID := env.runJob(&pb.JobConfig{CatalogId: catalogID, TargetCatalogId: catalogID})

@@ -118,6 +118,43 @@ var _ = Describe("Requirement part", func() {
 			Expect(it.Text).To(Equal("Accounts are reviewed."))
 		})
 
+		Describe("a part with prose whose descendants are all blank", func() {
+			blankBelow := controlWithParts("x-4", "Blank below",
+				wrapperPart("x-4_smt", "statement", "The system:",
+					wrapperPart("x-4_smt.a", "item", "Review accounts.",
+						leafPart("x-4_smt.a.1", "item", ""),
+					),
+					wrapperPart("x-4_smt.b", "item", "",
+						leafPart("x-4_smt.b.1", "item", ""),
+					),
+				),
+			)
+
+			DescribeTable("classifies each row",
+				func(id, class, text string) {
+					it := decompose(blankBelow)[id]
+					Expect(it.Class).To(Equal(class))
+					Expect(it.Text).To(Equal(text))
+				},
+				Entry("a part row with prose over blank parts is a requirement carrying it",
+					"x-4.a", oscal.ClassRequirement, "Review accounts."),
+				Entry("its blank child is still a row", "x-4.a.1", oscal.ClassRequirement, ""),
+				Entry("a blank part row over blank parts stays a section", "x-4.b", oscal.ClassSection, ""),
+				Entry("the control over a part with prose stays a section", "x-4", oscal.ClassSection, "The system:"),
+			)
+
+			It("makes the control a requirement when every part below its statement is blank", func() {
+				ctrl := controlWithParts("x-5", "Lead-in only",
+					wrapperPart("x-5_smt", "statement", "Do the thing.",
+						leafPart("x-5_smt.a", "item", ""),
+					),
+				)
+				it := decompose(ctrl)["x-5"]
+				Expect(it.Class).To(Equal(oscal.ClassRequirement))
+				Expect(it.Text).To(Equal("Do the thing."))
+			})
+		})
+
 		It("keeps a single row when the requirement part has no child parts", func() {
 			ctrl := controlWithParts("x-3", "Flat", leafPart("x-3_smt", "statement", "Do the thing."))
 			result := oscal.DecomposeStatements(ctrl, "g", nil, oscal.DefaultRequirementPartNames)
@@ -249,6 +286,20 @@ var _ = Describe("Requirement part", func() {
 		It("does not report a control with requirement text and an unusable title", func() {
 			tree := parseJSONTree(inlineCatalog(`"controls":[` +
 				`{"id":"s-1","title":"s-1","parts":[{"id":"s-1_smt","name":"statement","prose":"Do it."}]}]`))
+			Expect(tree.Textless).To(BeEmpty())
+		})
+
+		It("does not report a withdrawn control without text but still imports it as withdrawn", func() {
+			tree := parseJSONTree(inlineCatalog(`"controls":[` +
+				`{"id":"w-1","title":"W-1","props":[{"name":"status","value":"withdrawn"}]}]`))
+			Expect(tree.Textless).To(BeEmpty())
+			Expect(itemsByID(tree)["w-1"].Props).To(HaveKeyWithValue(oscal.PropStatus, oscal.PropStatusWithdrawn))
+		})
+
+		It("does not report a control whose slug identifier spells its title", func() {
+			tree := parseJSONTree(inlineCatalog(`"controls":[` +
+				`{"id":"enable_authselect","title":"Enable Authselect",` +
+				`"props":[{"name":"label","value":"enable_authselect"}]}]`))
 			Expect(tree.Textless).To(BeEmpty())
 		})
 

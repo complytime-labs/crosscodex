@@ -311,9 +311,10 @@ type ObservabilityMetricsConfig struct {
 
 // CatalogConfig configures the catalog parsing and structuring pipeline.
 //
-// Every field is global-only: there is no tenant_overrides map. A catalog is
-// parsed once into shared relational rows, so a per-tenant requirement part
-// list would make the same catalog import differently per tenant.
+// Every field is global-only: there is no tenant_overrides map. Catalog
+// parsing has no tenant overrides (the parser is built once per process at
+// startup, before any tenant is known), and the values describe how catalogs
+// are encoded, which does not vary by tenant.
 type CatalogConfig struct {
 	// RequirementPartNames is the ordered list of OSCAL part names that hold
 	// a control's requirement text; the first name a control has wins (see

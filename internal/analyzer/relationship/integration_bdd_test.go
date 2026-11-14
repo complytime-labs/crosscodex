@@ -258,7 +258,7 @@ var _ = Describe("Aggregate with Realistic Data", func() {
 			Version: "1.0.0",
 			Templates: prompt.TemplateSet{
 				System: "System: ${classification_guidance} ${relationship_definitions}",
-				User:   "User: ${source_text} ${target_text} ${source_id} ${target_id} ${source_framework} ${target_framework} ${source_type} ${source_level} ${source_ancestor} ${target_type} ${target_level} ${target_ancestor} ${few_shot_examples}",
+				User:   "User: ${source_text} ${target_text} ${source_id} ${target_id} ${source_framework} ${target_framework} ${source_type} ${source_level} ${source_context} ${source_title} ${target_type} ${target_level} ${target_context} ${target_title} ${few_shot_examples}",
 			},
 		})
 
@@ -372,10 +372,12 @@ var _ = Describe("Prompt Template Validation", func() {
 				"target_framework":         "NIST-800-53",
 				"source_type":              "Technical",
 				"source_level":             "Tactical",
-				"source_ancestor":          "Access Control",
+				"source_context":           "Access Control",
+				"source_title":             "T-source",
 				"target_type":              "Technical",
 				"target_level":             "Tactical",
-				"target_ancestor":          "Access Control",
+				"target_context":           "Access Control",
+				"target_title":             "T-target",
 			}
 
 			systemRendered, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)

@@ -18,6 +18,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -39,7 +40,10 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 	// seed seeds a source and a target catalog whose controls' identifiers
 	// differ from their control IDs (O9: the artifacts analyzer names a
 	// control by identifier), and returns the job config mapping one onto
-	// the other.
+	// the other. Every leaf shares its context (the sections share title and
+	// identifier), title and statement, so classify has one cache key and
+	// every cross-catalog pair is maximally similar (see e2eLeafTitle). The
+	// run tag goes in the statement, so no spec reuses another's results.
 	seed := func() (cfg *pb.JobConfig, src, tgt string) {
 		tag := uuid.New().String()
 		statement := e2eIdenticalStatement + " " + tag
@@ -51,9 +55,9 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 				VALUES ($1, $2, $3, 'v1', 'test', 'unused')
 			`, cat.id, env.tenantA, "Framework "+cat.prefix)).To(Succeed())
 			for _, c := range []struct{ id, identifier, title, statement, class, parent string }{
-				{cat.id + "/section", cat.prefix, "Access Control", "Access control family.", classifySectionClass, ""},
-				{cat.id + "/c1", cat.prefix + "-1", "Control One of " + cat.prefix, statement, "SC", "section"},
-				{cat.id + "/c2", cat.prefix + "-2", "Control Two of " + cat.prefix, statement, "SC", "section"},
+				{cat.id + "/section", "AC", "Access Control", "Access control family.", oscal.ClassSection, ""},
+				{cat.id + "/c1", cat.prefix + "-1", e2eLeafTitle, statement, "SC", "section"},
+				{cat.id + "/c2", cat.prefix + "-2", e2eLeafTitle, statement, "SC", "section"},
 			} {
 				ExpectWithOffset(1, env.idb.suPool.Exec(ctx, `
 					INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id)
@@ -116,9 +120,9 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 
 		// O9: an artifacts request names its control by identifier (S-1,
 		// T-1), and each is stored under the catalog of the control it was
-		// generated from. (Classify's request is the statement alone, which
-		// every leaf here shares, so its one key's row names whichever
-		// catalog stored it last.)
+		// generated from. (Classify's request is the context, title and
+		// statement, which every leaf here shares, so its one key's row names
+		// whichever catalog stored it last.)
 		for _, cat := range []string{src, tgt} {
 			Expect(e2eScalar(env.idb.tenantConn, env.ctxA,
 				"SELECT count(*) FROM llm_result_cache WHERE job_id = $1 AND analyzer = 'artifacts' AND source_catalog_id = $2 AND target_catalog_id = $2",
@@ -226,8 +230,8 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 	}
 	// cachedClassify is the producer, its attempt and the key of the cached
 	// classify result of a seeded pair of catalogs (one key: every leaf
-	// shares its statement, so its row names whichever catalog stored it
-	// last).
+	// shares its context, title and statement, so its row names whichever
+	// catalog stored it last).
 	cachedClassify := func(src, tgt string) (producer, attempt, key string) {
 		ExpectWithOffset(1, env.idb.suPool.QueryRow(context.Background(), `
 			SELECT job_id, producer_attempt, cache_key FROM llm_result_cache

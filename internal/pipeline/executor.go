@@ -11,7 +11,6 @@ import (
 	"io"
 	"runtime/debug"
 	"slices"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -21,13 +20,13 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
-	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -227,7 +226,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 // pairAnalyzerParameters returns the AnalyzerConfig parameters the
 // candidate-dependent analyzers (requires, relationship) read when building
 // prompts. Those analyzers run once per job with no per-control input, so
-// every control's statement, ancestor title, framework and classification is
+// every control's statement, title, context, framework and classification is
 // passed under both the source_ and target_ prefixes; a control can be
 // either end of a pair (in a bidirectional crosswalk, a target control is
 // the source of the reverse pairs). A control's framework is its own
@@ -241,11 +240,12 @@ func pairAnalyzerParameters(jobID string, controls []*pb.Control, frameworks map
 	params := map[string]string{"job_id": jobID}
 	for _, c := range controls {
 		id := c.GetControlId()
-		ancestor := c.GetParts()["ancestor_title"]
+		controlContext := c.GetParts()["context"]
 		framework := frameworks[c.GetCatalogId()]
 		for _, end := range []string{"source_", "target_"} {
 			params[end+"text_"+id] = c.GetStatement()
-			params[end+"ancestor_"+id] = ancestor
+			params[end+"context_"+id] = controlContext
+			params[end+"title_"+id] = c.GetTitle()
 			params[end+"framework_"+id] = framework
 		}
 	}
@@ -428,11 +428,6 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		if terr != nil {
 			return fmt.Errorf("runAnalysis: %w", terr)
 		}
-		hasStatement := func(c *pb.Control) bool {
-			return c.GetParts()["class"] != classifySectionClass &&
-				c.GetParts()[oscal.PropStatus] != oscal.PropStatusWithdrawn &&
-				strings.TrimSpace(c.GetStatement()) != ""
-		}
 		for _, catalogID := range cats.CatalogIDs() {
 			fetched, err := s.catalogControls.Controls(ctx, tenantID, catalogID)
 			if err != nil {
@@ -443,7 +438,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 			side := "source"
 			if cats.CrossCatalog() && catalogID == cats.TargetID {
 				side = "target"
-				if !slices.ContainsFunc(fetched, hasStatement) {
+				if !slices.ContainsFunc(fetched, intanalyzer.Analysable) {
 					err := &tenantError{sentinel: ErrEmptyTargetCatalog, message: fmt.Sprintf("job %s cannot run: target catalog %s "+
 						"has no control with a statement, so no source control can be mapped onto it: %v. "+
 						"Check its controls with \"crosscodex catalog inspect %s\", then start a new job with another target: %s",

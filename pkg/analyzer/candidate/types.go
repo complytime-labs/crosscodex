@@ -6,7 +6,7 @@ type ControlData struct {
 	Text      string // Control statement text
 	Type      string // From classification: "Procedural", "Technical", "Administrative"
 	Level     string // From classification: "Strategic", "Tactical", "Operational"
-	Ancestor  string // Root control title for context
+	Ancestor  string // Context: the titled ancestors, root first, joined with " > "
 }
 
 // GenerateRequest carries all data a generator might need.

@@ -230,7 +230,7 @@ var _ = Describe("Embedded Defaults", func() {
 		Expect(specs["section-detect"].Version).To(Equal("1.0.0"))
 		Expect(specs["section-detect"].Templates.System).NotTo(BeEmpty())
 		Expect(specs["section-detect"].Templates.User).To(Equal("${document_chunk}"))
-		Expect(specs["classify"].Version).To(Equal("1.1.0"))
+		Expect(specs["classify"].Version).To(Equal("1.2.0"))
 	})
 })
 

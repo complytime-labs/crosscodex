@@ -50,9 +50,9 @@ message ParseCatalogRequest {
 message ParseCatalogResponse {
   string catalog_id = 1;
   JobStatus status = 2;
-  // Every imported control that has neither requirement text nor a usable
-  // title, in document order, with no cap. They keep their place in the
-  // catalog but are not analysed.
+  // Every imported control that is not withdrawn and has neither requirement
+  // text nor a usable title, in document order, with no cap. They keep their
+  // place in the catalog but are not analysed.
   repeated TextlessControl textless_controls = 3;
 }
 

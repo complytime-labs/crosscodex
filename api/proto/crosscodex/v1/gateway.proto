@@ -435,10 +435,11 @@ message SubmitDocumentRequest {
 message SubmitDocumentResponse {
   string document_id = 2;
   string catalog_id = 4;
-  // Every imported control that has neither requirement text nor a usable
-  // title, in document order, with no cap. They keep their place in the
-  // catalog but are not analysed; part_names lists the control's parts that
-  // hold prose, the candidates for catalog.requirement_part_names.
+  // Every imported control that is not withdrawn and has neither requirement
+  // text nor a usable title, in document order, with no cap. They keep their
+  // place in the catalog but are not analysed; part_names lists the
+  // control's parts that hold prose, the candidates for
+  // catalog.requirement_part_names.
   repeated TextlessControl textless_controls = 5;
 
   reserved 1, 3;
