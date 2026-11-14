@@ -291,6 +291,21 @@ When practical, code should discover what to load and how to load it instead of 
 
 This applies to thresholds, keyword lists, regex patterns, format allowlists, chunk sizes, retry counts, and any other tuning parameter. The test: would a user deploying CrossCodex against a different compliance framework need to change this value? If yes, it must be configuration, not code.
 
+### Samples Are Not the Spec
+
+Issues arrive with concrete examples: a catalog, a model, a server. Code written to fit those examples breaks quietly on the next source, and a quality measurement built on it reports a wrong number instead of an error. Real catalogs disagree on more than tuning values. They disagree on structure. For example, NIST SSDF (SP 800-218) and NIST SP 800-171r3 both cite SP 800-53 Rev 5, but in different ways:
+
+| | SSDF | SP 800-171r3 |
+|---|---|---|
+| Link rel | `external_reference` | `reference` |
+| Which links cite SP 800-53 | those naming the back-matter resource titled `SP80053`; 30 other documents are cited the same way | those naming resources whose `rlinks` point at SP 800-53 |
+| Where the identifier is | link `text`, comma-separated | the resource `title`, one per link |
+| Identifier form | `SA-15(7)` | `AC-02(03)` |
+
+SP 800-53 itself labels the same control `SA-15(07)` and identifies it as `sa-15.7`. A parser written against the first column resolves nothing in the second. Worse, it would report 0 % recall rather than fail.
+
+So formats come from the data where the data can decide. Identifiers are resolved against the target catalog's own IDs and labels, and hierarchy is taken from the control tree. Where the data can't decide, as with which of 30 cited documents is the target, the choice is declared (configuration, a profile) and never guessed. Anything that did not resolve, or resolved ambiguously, is reported. Tests use fixtures from at least two real encodings, because one source cannot show that code is general.
+
 ### Configuration Surface Discipline
 
 Every runtime-configurable knob in a package MUST have a corresponding config field in `pkg/config` OR a documented wiring contract explaining how it gets its value. No silent knobs — if a functional option exists but has no config field, the gap must be caught during review.
