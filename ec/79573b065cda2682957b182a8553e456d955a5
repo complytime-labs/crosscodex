@@ -1,0 +1,27 @@
+README.md
+  s_9a8e5e4b4a6a7e::t_77490e9c569500 19-24
+docs/dev/embeddings.md
+  s_9a8e5e4b4a6a7e::t_77490e9c569500 20-49
+api/proto/crosscodex/v1/gateway.proto
+  s_9a8e5e4b4a6a7e::t_892502c7b7927c 508-511,514-516
+internal/gateway/gateway_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_dea4b06c4dab73 1037-1063
+internal/gateway/graph.go
+  s_9a8e5e4b4a6a7e::t_892502c7b7927c 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ec79573b065cda2682957b182a8553e456d955a5",
+  "prompts": {},
+  "sessions": {
+    "s_9a8e5e4b4a6a7e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7fcaf031-1d40-4d00-8001-92dace96bfdb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
