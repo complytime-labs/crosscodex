@@ -1,0 +1,23 @@
+.taskfiles/dev.yml
+  s_7410cef4eebd40::t_b7c6ec4c50adcb 7,9
+deploy/Dockerfile
+  s_7410cef4eebd40::t_b7c6ec4c50adcb 3
+go.mod
+  s_7410cef4eebd40::t_b7c6ec4c50adcb 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32de917fccb2ab2eb055dc7b91e3ec7c39719cf1",
+  "prompts": {},
+  "sessions": {
+    "s_7410cef4eebd40": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4c797740-b049-459b-b6d9-3253a9cf2ea1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
