@@ -24,7 +24,7 @@ var words = map[pb.RelationshipType]string{
 	pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT:      "equivalent",
 	pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF:       "subset of",
 	pb.RelationshipType_RELATIONSHIP_TYPE_SUPERSET_OF:     "superset of",
-	pb.RelationshipType_RELATIONSHIP_TYPE_CONTRIBUTES_TO:  "contributes to",
+	pb.RelationshipType_RELATIONSHIP_TYPE_CONTRIBUTES_TO:  "is advanced by",
 	pb.RelationshipType_RELATIONSHIP_TYPE_COMPLEMENTS:     "complements",
 	pb.RelationshipType_RELATIONSHIP_TYPE_PARTIAL:         "partial",
 	pb.RelationshipType_RELATIONSHIP_TYPE_CONFLICTS_WITH:  "conflicts with",

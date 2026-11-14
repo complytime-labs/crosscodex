@@ -34,7 +34,7 @@ const classifySectionClass = "compliance-section"
 // analysis_results tables.
 type pgControlsReader struct{ db db.TenantConnection }
 
-// ControlData reads a catalog's non-section controls and merges in the
+// ControlData reads a catalog's non-section, non-withdrawn controls and merges in the
 // classify analyzer's persisted type/level for the job. Controls without a
 // classify entry keep empty Type/Level, which the level and keyword generators
 // skip gracefully.
@@ -50,43 +50,54 @@ func (r *pgControlsReader) ControlData(ctx context.Context, tenantID, catalogID,
 	defer func() { _ = tx.Rollback() }()
 
 	// title, statement, and parent_id are nullable; COALESCE keeps the scan
-	// targets plain strings. class IS DISTINCT FROM handles a NULL class (a
-	// control with no class is not a section and must be included). Withdrawn
-	// controls (props.status) are excluded like sections; props may be NULL,
-	// which COALESCE maps to "not withdrawn".
+	// targets plain strings. Every row is read so a section or withdrawn parent
+	// still supplies its title as an ancestor; excluded marks the rows that
+	// are not emitted: sections (class IS DISTINCT FROM handles a NULL class,
+	// which is not a section) and withdrawn controls (props.status; props may
+	// be NULL, which COALESCE maps to "not withdrawn").
 	rows, err := tx.Query(ctx, `
-		SELECT control_id, COALESCE(title, ''), COALESCE(statement, ''), COALESCE(parent_id, '')
+		SELECT control_id, COALESCE(title, ''), COALESCE(statement, ''), COALESCE(parent_id, ''), COALESCE(container_key, ''),
+		       (class IS NOT DISTINCT FROM $3 OR COALESCE(props->>$4::text, '') = $5) AS excluded
 		FROM controls
-		WHERE tenant_id = $1 AND catalog_id = $2 AND class IS DISTINCT FROM $3
-		  AND COALESCE(props->>$4::text, '') <> $5
+		WHERE tenant_id = $1 AND catalog_id = $2
 	`, tenantID, catalogID, classifySectionClass, oscal.PropStatus, oscal.PropStatusWithdrawn)
 	if err != nil {
 		return nil, fmt.Errorf("pgControlsReader.ControlData: querying controls: %w", err)
 	}
 	defer rows.Close()
 
+	// A top-level control (empty parent_id) takes its container's title
+	// (see ancestorTitleOf).
 	titleByID := make(map[string]string)
-	type controlRow struct{ controlID, statement, parentID string }
+	type controlRow struct{ controlID, statement, parentID, containerKey string }
 	var controlRows []controlRow
 	for rows.Next() {
-		var controlID, title, statement, parentID string
-		if err := rows.Scan(&controlID, &title, &statement, &parentID); err != nil {
+		var controlID, title, statement, parentID, containerKey string
+		var excluded bool
+		if err := rows.Scan(&controlID, &title, &statement, &parentID, &containerKey, &excluded); err != nil {
 			return nil, fmt.Errorf("pgControlsReader.ControlData: scanning control row: %w", err)
 		}
 		titleByID[controlID] = title
-		controlRows = append(controlRows, controlRow{controlID, statement, parentID})
+		if !excluded {
+			controlRows = append(controlRows, controlRow{controlID, statement, parentID, containerKey})
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("pgControlsReader.ControlData: rows error: %w", err)
 	}
 
+	rows.Close()
+
+	containerTitles, err := readContainerTitles(ctx, tx, tenantID, catalogID)
+	if err != nil {
+		return nil, fmt.Errorf("pgControlsReader.ControlData: %w", err)
+	}
+
 	data := make(map[string]*candidate.ControlData, len(controlRows))
 	for _, c := range controlRows {
-		data[c.controlID] = &candidate.ControlData{
-			ControlID: c.controlID,
-			Text:      c.statement,
-			Ancestor:  titleByID[c.parentID], // empty when no/unknown parent
-		}
+		cd := &candidate.ControlData{ControlID: c.controlID, Text: c.statement}
+		cd.Ancestor, _ = ancestorTitleOf(catalogID, c.parentID, c.containerKey, titleByID, containerTitles) // empty when unknown
+		data[c.controlID] = cd
 	}
 
 	classifyRow := tx.QueryRow(ctx, `

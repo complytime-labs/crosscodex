@@ -25,14 +25,15 @@ import (
 // failingStore fails every call with err, standing in for a database error.
 type failingStore struct{ err error }
 
-func (f failingStore) UpsertCatalog(context.Context, catalog.CatalogRecord) error { return f.err }
 func (f failingStore) GetCatalog(context.Context, string) (*catalog.CatalogRecord, error) {
 	return nil, f.err
 }
 func (f failingStore) ListCatalogs(context.Context, catalog.ListOptions) ([]catalog.CatalogRecord, catalog.PageInfo, error) {
 	return nil, catalog.PageInfo{}, f.err
 }
-func (f failingStore) UpsertControls(context.Context, []catalog.ControlRecord) error { return f.err }
+func (f failingStore) UpsertCatalogWithTree(context.Context, catalog.CatalogRecord, []catalog.ContainerRecord, []catalog.ControlRecord) error {
+	return f.err
+}
 func (f failingStore) GetControl(context.Context, string) (*catalog.ControlRecord, error) {
 	return nil, f.err
 }

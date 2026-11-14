@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -63,10 +64,11 @@ var crosswalkProvenance = &pb.CrosswalkProvenance{
 		{CatalogId: "cat-a", Name: "Framework A", Version: "1.0", Imported: true, Snapshot: true},
 		{CatalogId: "cat-b", Name: "Framework B", Version: "2", Imported: true},
 	},
-	JobIds:        []string{"job-1", "job-2"},
-	Rows:          2,
-	ServerVersion: "test",
-	GeneratedAt:   timestamppb.New(time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)),
+	JobIds:         []string{"job-1", "job-2"},
+	SelectedJobIds: []string{"job-1", "job-2"},
+	Rows:           2,
+	ServerVersion:  "test",
+	GeneratedAt:    timestamppb.New(time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)),
 }
 
 // crosswalkRows has one ordinary row and one whose titles carry the
@@ -74,14 +76,14 @@ var crosswalkProvenance = &pb.CrosswalkProvenance{
 func crosswalkRows() []*pb.CrosswalkRow {
 	return []*pb.CrosswalkRow{
 		{
-			Source:       &pb.CrosswalkSide{NodeId: "cat-a/ac-1", CatalogId: "cat-a", Framework: "Framework A", Identifier: "AC-1", ParentIdentifier: "AC", Title: "Access Control Policy", Statement: "Define access rules."},
-			Target:       &pb.CrosswalkSide{NodeId: "cat-b/3.1.1", CatalogId: "cat-b", Framework: "Framework B", Identifier: "3.1.1", ParentIdentifier: "3.1", Title: "Authorized access", Statement: "Limit access to authorized users."},
+			Source:       &pb.CrosswalkSide{NodeId: "cat-a/ac-1", CatalogId: "cat-a", Framework: "Framework A", Identifier: "AC-1", Label: "AC-01", ParentIdentifier: "AC", ParentLabel: "Access", Context: "Access (AC)", Title: "Access Control Policy", Statement: "Define access rules."},
+			Target:       &pb.CrosswalkSide{NodeId: "cat-b/3.1.1", CatalogId: "cat-b", Framework: "Framework B", Identifier: "3.1.1", Label: "03.01.01", ParentIdentifier: "3.1", ParentLabel: "03.01", Title: "Authorized access", Statement: "Limit access to authorized users."},
 			Relationship: "equivalent", Confidence: 0.9, Direction: "direct",
 			JobsJudged: 2, JobsAgreeing: 2, LatestJobId: "job-2",
 		},
 		{
-			Source:       &pb.CrosswalkSide{NodeId: "cat-a/ac-2", CatalogId: "cat-a", Framework: "Framework A", Identifier: "AC-2", Title: "=HYPERLINK(\"http://x\")\nsecond | line, \"quoted\"", Statement: "Manage accounts."},
-			Target:       &pb.CrosswalkSide{NodeId: "cat-b/3.1.2", CatalogId: "cat-b", Framework: "Framework B", Identifier: "3.1.2", ParentIdentifier: "3.1", Title: "Account management", Statement: "Manage system accounts."},
+			Source:       &pb.CrosswalkSide{NodeId: "cat-a/ac-2", CatalogId: "cat-a", Framework: "Framework A", Identifier: "AC-2", Label: "=SUM(A1)|x", Context: "=HYPERLINK(\"x\")|<b> (AC) > Accounts (AC-2)", Title: "=HYPERLINK(\"http://x\")\nsecond | line, \"quoted\"", Statement: "Manage accounts."},
+			Target:       &pb.CrosswalkSide{NodeId: "cat-b/3.1.2", CatalogId: "cat-b", Framework: "Framework B", Identifier: "3.1.2", Label: "03.01.02", ParentIdentifier: "3.1", ParentLabel: "03.01", Title: "Account management", Statement: "Manage system accounts."},
 			Relationship: "subset of", Confidence: 0.75, Direction: "direct",
 			JobsJudged: 2, JobsAgreeing: 1, OtherVerdicts: "job-1: complements", LatestJobId: "job-2",
 		},
@@ -182,7 +184,7 @@ var _ = Describe("crosscodex crosswalk", func() {
 		Expect(fake.calls).To(HaveLen(2))
 		Expect(fake.calls[0].GetPagination().GetPageToken()).To(BeEmpty())
 		Expect(fake.calls[1].GetPagination().GetPageToken()).To(Equal("tok"))
-		Expect(stderr).To(ContainSubstring("2 rows from 2 completed jobs"))
+		Expect(stderr).To(ContainSubstring("2 rows from 2 jobs (2 selected)"))
 
 		records, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(stdout, "\xEF\xBB\xBF"))).ReadAll()
 		Expect(err).NotTo(HaveOccurred())
@@ -221,24 +223,74 @@ var _ = Describe("crosscodex crosswalk", func() {
 		Expect(stdout).To(Equal(string(want)))
 	})
 
-	It("writes direct and derived rows of a transitive crosswalk, naming the hub control and the unknown type", func() {
+	It("writes a direct row and one derived row per pair, listing every hub control, its path support and the review note", func() {
 		direct := crosswalkRows()[0]
-		direct.Target = &pb.CrosswalkSide{NodeId: "cat-c/3.1.1", CatalogId: "cat-c", Framework: "Framework C", Identifier: "3.1.1", ParentIdentifier: "3.1", Title: "Authorized access", Statement: "Limit access to authorized users."}
-		viaHub1 := proto.Clone(direct).(*pb.CrosswalkRow)
-		viaHub1.Relationship, viaHub1.RelationshipType = "subset of", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF
-		viaHub1.Confidence, viaHub1.Direction, viaHub1.HubIdentifier = 0.4, "derived", "HB-1"
-		viaHub1.JobsJudged, viaHub1.JobsAgreeing, viaHub1.LatestJobId = 3, 3, "job-4"
-		viaHub2 := proto.Clone(viaHub1).(*pb.CrosswalkRow)
-		viaHub2.Relationship, viaHub2.RelationshipType = "related (derived, type unknown)", pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED
-		viaHub2.Confidence, viaHub2.HubIdentifier = 0.3, "HB-2"
-		viaHub2.JobsJudged, viaHub2.JobsAgreeing, viaHub2.LatestJobId = 2, 2, "job-3"
-		fake.pages = []*pb.GetCrosswalkResponse{crosswalkPage("", direct, viaHub1, viaHub2)}
+		direct.Target = &pb.CrosswalkSide{NodeId: "cat-c/3.1.1", CatalogId: "cat-c", Framework: "Framework C", Identifier: "3.1.1", Label: "03.01.01", ParentIdentifier: "3.1", ParentLabel: "03.01", Title: "Authorized access", Statement: "Limit access to authorized users."}
+		derived := proto.Clone(direct).(*pb.CrosswalkRow)
+		derived.Relationship, derived.RelationshipType = "related (derived, type unknown)", pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED
+		derived.Confidence, derived.Direction, derived.HubIdentifier, derived.HubLabel = 0.4, "derived", "HB-1; HB-2", "HB-01; HB-02"
+		derived.PathsSupporting, derived.PathsTotal = 2, 2
+		derived.Review = "paths disagree: subset of via HB-1, superset of via HB-2"
+		derived.JobsJudged, derived.JobsAgreeing, derived.LatestJobId = 3, 3, "job-4"
+		fake.pages = []*pb.GetCrosswalkResponse{crosswalkPage("", direct, derived)}
 
 		stdout, _, err := run("cat-a", "cat-c", "--via", "hub")
 		Expect(err).NotTo(HaveOccurred())
 		want, err := os.ReadFile(filepath.Join("testdata", "crosswalk", "transitive.csv"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stdout).To(Equal(string(want)))
+	})
+
+	It("uses exactly these columns, in this order", func() {
+		Expect(crosswalkColumns).To(Equal([]string{
+			"source_framework", "source_id", "source_label", "source_parent", "source_parent_label", "source_context", "source_title", "source_text",
+			"relationship", "confidence", "direction", "hub_id", "hub_label", "paths_supporting", "paths_total",
+			"target_framework", "target_id", "target_label", "target_parent", "target_parent_label", "target_context", "target_title", "target_text",
+			"jobs_judged", "jobs_agreeing", "other_verdicts", "review", "latest_job",
+			"source_node_id", "target_node_id",
+		}))
+	})
+
+	It("writes the path counts as JSON numbers and the selected jobs in the provenance", func() {
+		derived := crosswalkRows()[0]
+		derived.Direction, derived.HubIdentifier, derived.PathsSupporting, derived.PathsTotal = "derived", "h1; h2", 2, 3
+		fake.pages = []*pb.GetCrosswalkResponse{crosswalkPage("", derived)}
+		stdout, _, err := run("cat-a", "cat-b", "--format", "json")
+		Expect(err).NotTo(HaveOccurred())
+		var out struct {
+			Provenance struct {
+				JobIDs         []string `json:"job_ids"`
+				SelectedJobIDs []string `json:"selected_job_ids"`
+			} `json:"provenance"`
+			Rows []map[string]any `json:"rows"`
+		}
+		Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed())
+		Expect(out.Rows).To(HaveLen(1))
+		Expect(out.Rows[0]).To(HaveKeyWithValue("paths_supporting", BeNumerically("==", 2)))
+		Expect(out.Rows[0]).To(HaveKeyWithValue("paths_total", BeNumerically("==", 3)))
+		Expect(out.Rows[0]).To(HaveKeyWithValue("hub_id", "h1; h2"))
+		Expect(out.Rows[0]).To(HaveKeyWithValue("hub_label", ""))
+		Expect(out.Provenance.JobIDs).To(Equal([]string{"job-1", "job-2"}))
+		Expect(out.Provenance.SelectedJobIDs).To(Equal([]string{"job-1", "job-2"}))
+	})
+
+	It("reports the contributing jobs and the selected jobs apart", func() {
+		page := crosswalkPage("", crosswalkRows()...)
+		page.Provenance = &pb.CrosswalkProvenance{Mode: "pair", JobIds: []string{"job-2"}, SelectedJobIds: []string{"job-1", "job-2"}}
+		fake.pages = []*pb.GetCrosswalkResponse{page}
+		_, stderr, err := run("cat-a", "cat-b")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stderr).To(ContainSubstring("2 rows from 1 job (2 selected)\n"))
+	})
+
+	It("gives the no-completed-jobs advice only when no job was selected", func() {
+		page := &pb.GetCrosswalkResponse{Provenance: &pb.CrosswalkProvenance{Mode: "pair", SelectedJobIds: []string{"job-1"}}}
+		fake.pages = []*pb.GetCrosswalkResponse{page}
+		_, stderr, err := run("cat-a", "cat-b")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stderr).To(ContainSubstring("0 rows from 0 jobs (1 selected)"))
+		Expect(stderr).NotTo(ContainSubstring("no completed jobs between"))
+		Expect(stderr).To(ContainSubstring("no rows:"))
 	})
 
 	It("keeps one CSV record per row when a cell has a newline, quotes, a pipe and a leading equals", func() {
@@ -249,8 +301,22 @@ var _ = Describe("crosscodex crosswalk", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(records).To(HaveLen(3))
 		Expect(records[0]).To(Equal(crosswalkColumns))
-		Expect(records[2][3]).To(Equal(`'=HYPERLINK("http://x") second | line, "quoted"`))
+		Expect(records[2][6]).To(Equal(`'=HYPERLINK("http://x") second | line, "quoted"`))
 		Expect(strings.Count(stdout, "\n")).To(Equal(3), "newlines in a cell are cleaned, so each record is one line")
+	})
+
+	It("formula-guards a label in CSV and keeps one record per row", func() {
+		stdout, _, err := run("cat-a", "cat-b")
+		Expect(err).NotTo(HaveOccurred())
+		records, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(stdout, "\xEF\xBB\xBF"))).ReadAll()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(records[2][2]).To(Equal("'=SUM(A1)|x"))
+	})
+
+	It("escapes a pipe in a label in Markdown so the row keeps its cells", func() {
+		stdout, _, err := run("cat-a", "cat-b", "--format", "md")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.Split(stdout, "\n")[3]).To(ContainSubstring(`| =SUM\(A1\)\|x |`))
 	})
 
 	It("keeps a long statement whole in CSV", func() {
@@ -328,9 +394,16 @@ var _ = Describe("crosscodex crosswalk", func() {
 			openBook()
 			sheet, err := book.GetRows("crosswalk")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(sheet[1][4]).To(Equal(strings.Repeat("a", capacity-1) + "…"))
-			Expect(sheet[2][4]).To(Equal(strings.Repeat("b", capacity)))
-			Expect(sheet[2][13]).To(Equal(strings.Repeat("\U0001F600", (capacity-1)/2) + "…"))
+			Expect(sheet[1][7]).To(Equal(strings.Repeat("a", capacity-1) + "…"))
+			Expect(sheet[2][7]).To(Equal(strings.Repeat("b", capacity)))
+			Expect(sheet[2][22]).To(Equal(strings.Repeat("\U0001F600", (capacity-1)/2) + "…"))
+		})
+
+		It("formula-guards a label cell", func() {
+			openBook()
+			sheet, err := book.GetRows("crosswalk")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(sheet[2][2]).To(Equal("'=SUM(A1)|x"))
 		})
 
 		It("has the crosswalk, provenance and disagreements sheets in order", func() {
@@ -345,7 +418,7 @@ var _ = Describe("crosscodex crosswalk", func() {
 			Expect(rows).To(HaveLen(3))
 			Expect(rows[0]).To(Equal(crosswalkColumns))
 			Expect(rows[1][1]).To(Equal("AC-1"))
-			Expect(rows[1][6]).To(Equal("0.90"))
+			Expect(rows[1][9]).To(Equal("0.90"))
 
 			panes, err := book.GetPanes("crosswalk")
 			Expect(err).NotTo(HaveOccurred())
@@ -356,7 +429,7 @@ var _ = Describe("crosscodex crosswalk", func() {
 			Expect(names).To(ContainElement(And(
 				HaveField("Name", "_xlnm._FilterDatabase"),
 				HaveField("Scope", "crosswalk"),
-				HaveField("RefersTo", ContainSubstring("$A$1:$T$3")),
+				HaveField("RefersTo", ContainSubstring("$A$1:$AD$3")),
 			)))
 		})
 
@@ -373,6 +446,8 @@ var _ = Describe("crosscodex crosswalk", func() {
 				[]string{"catalog", "cat-a | Framework A | 1.0 | imported=true | snapshot=true"},
 				[]string{"job_id", "job-1"},
 				[]string{"job_id", "job-2"},
+				[]string{"selected_job_id", "job-1"},
+				[]string{"selected_job_id", "job-2"},
 			))
 		})
 
@@ -383,12 +458,12 @@ var _ = Describe("crosscodex crosswalk", func() {
 			Expect(rows).To(HaveLen(2))
 			Expect(rows[0]).To(Equal(crosswalkColumns))
 			Expect(rows[1][1]).To(Equal("AC-2"))
-			Expect(rows[1][16]).To(Equal("job-1: complements"))
+			Expect(rows[1][25]).To(Equal("job-1: complements"))
 		})
 
 		It("stores a title starting with = as text beginning with ' and no cell holds a formula", func() {
 			openBook()
-			title, err := book.GetCellValue("crosswalk", "D3")
+			title, err := book.GetCellValue("crosswalk", "G3")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(title).To(HavePrefix(`'=HYPERLINK(`))
 			for _, sheet := range book.GetSheetList() {
@@ -428,16 +503,16 @@ var _ = Describe("crosscodex crosswalk", func() {
 		stdout, stderr, err := run("cat-a", "cat-b")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stdout).To(HavePrefix("\xEF\xBB\xBF"))
-		Expect(stderr).To(ContainSubstring("0 rows from 0 completed jobs"))
+		Expect(stderr).To(ContainSubstring("0 rows from 0 jobs (0 selected)"))
 		Expect(stderr).To(ContainSubstring(`no completed jobs between cat-a and cat-b: run "crosscodex run start --source cat-a --target cat-b" first`))
 	})
 
 	DescribeTable("explains an empty crosswalk drawn from completed jobs",
 		func(args []string, want ...string) {
-			fake.pages = []*pb.GetCrosswalkResponse{{Provenance: &pb.CrosswalkProvenance{Mode: "pair", JobIds: []string{"job-1"}}}}
+			fake.pages = []*pb.GetCrosswalkResponse{{Provenance: &pb.CrosswalkProvenance{Mode: "pair", JobIds: []string{"job-1"}, SelectedJobIds: []string{"job-1"}}}}
 			_, stderr, err := run(args...)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(stderr).To(ContainSubstring("0 rows from 1 completed jobs"))
+			Expect(stderr).To(ContainSubstring("0 rows from 1 job (1 selected)"))
 			for _, w := range want {
 				Expect(stderr).To(ContainSubstring(w))
 			}

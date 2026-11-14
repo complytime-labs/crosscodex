@@ -75,7 +75,7 @@ func (x *TargetIndex) add(ctrl oscalTypes.Control, parent string) {
 	x.parent[ctrl.ID] = parent
 	// The importer derives item IDs with exactly this function; the params
 	// only fill statement text, which the index does not use.
-	for _, item := range oscal.DecomposeStatements(ctrl, "", nil) {
+	for _, item := range oscal.DecomposeStatements(ctrl, "", nil, oscal.DefaultRequirementPartNames) {
 		if item.ID != ctrl.ID {
 			x.items[item.ID] = item.ParentID
 			x.owner[item.ID] = ctrl.ID

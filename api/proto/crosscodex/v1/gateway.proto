@@ -254,14 +254,29 @@ message CrosswalkSide {
   // when CrosswalkProvenance.catalogs marks it a snapshot, else its current
   // name.
   string framework = 3;
-  // The control's published identifier (for example its label), not an
-  // internal ID.
+  // The item's identifier in the catalog (its OSCAL id): stable and unique,
+  // but not necessarily what the source document prints; see label.
   string identifier = 4;
-  // The identifier of the control's parent in the catalog's control tree;
-  // empty for a top-level control.
+  // The identifier of the control's parent in the catalog's control tree. A
+  // top-level control in a group gets its container's identifier (empty when
+  // the group has none); empty for an ungrouped top-level control.
   string parent_identifier = 5;
+  // The control's own title; empty when the control has none, never an
+  // ancestor's.
   string title = 6;
   string statement = 7;
+  // The control's titled ancestors, root first, each as "<title>
+  // (<identifier>)", or "<title>" when the ancestor has no identifier (for
+  // example an ID-less group), joined by " > ". Untitled ancestors are omitted;
+  // empty when no ancestor has a title.
+  string context = 8;
+  // The item's published label, verbatim from the catalog (for example
+  // "AC-2(7)", or "d." for a statement part); empty when the catalog gives
+  // none.
+  string label = 9;
+  // The parent's published label, same rules as label; empty when the item
+  // has no parent or the parent has no label.
+  string parent_label = 10;
 }
 
 // CrosswalkRow is one related control pair.
@@ -275,30 +290,53 @@ message CrosswalkRow {
   // "related (derived, type unknown)" with relationship_type unspecified.
   string relationship = 4;
   // The confidence of the job that decided the verdict, in [0, 1]. For a
-  // derived row it is the product of the two legs' confidences.
+  // derived row it is the highest path confidence among the supporting paths
+  // (a path's confidence is the product of its legs').
   float confidence = 5;
   // How the row was obtained: "direct" (a stored verdict, or one inverted
   // into the source-to-target reading), "reverse" (a target-to-source
   // verdict with no named inverse, reported as stored) or "derived"
   // (composed through a hub control, transitive mode).
   string direction = 6;
-  // The hub control's identifier for a derived row; empty otherwise.
+  // For a derived row, every hub control on the pair's paths, sorted, joined
+  // by "; "; empty otherwise.
   string hub_identifier = 7;
   // Jobs that judged this pair; a bidirectional job counts once, even when
-  // its two directions disagree. For a derived row, the sum over the two legs.
+  // its two directions disagree. For a derived row, the distinct jobs across
+  // every leg of every path.
   int32 jobs_judged = 8;
   // Jobs with a verdict equal to the row's after normalizing to the
   // source-to-target reading. When one job's two directions disagree, the
   // job decides the row with its higher-confidence verdict (then the greater
-  // relationship type). For a derived row, the sum over the two legs.
+  // relationship type). For a derived row, the distinct jobs across the legs
+  // of the supporting paths.
   int32 jobs_agreeing = 9;
   // Every verdict other than the one that decided the row, newest first, as
   // "<word>@<confidence> (<job>)" joined by "; ", including verdicts equal to
   // the row's and both directions of a bidirectional job; empty when the row
   // has one verdict and for derived rows.
   string other_verdicts = 10;
-  // The job that decided the row.
+  // The job that decided the row. For a derived row, the newest deciding job
+  // among the supporting paths.
   string latest_job_id = 11;
+  // Review notes joined by "; "; empty when nothing is flagged. Notes report
+  // and never change the verdict. Three kinds: a one-to-many 'equivalent'
+  // (one control equivalent to several in another catalog); a derived row
+  // whose via paths disagree on the type; a derived row whose named verdict
+  // rests on a minority of its paths.
+  string review = 12;
+  // For a derived row, the number of hub paths whose composition gives the
+  // row's verdict; when the verdict is "type unknown" every path supports it.
+  // 0 on non-derived rows.
+  int32 paths_supporting = 13;
+  // For a derived row, the number of all of the pair's hub paths. 0 on
+  // non-derived rows.
+  int32 paths_total = 14;
+  // For a derived row, the hubs' published labels in the same order and
+  // joined by the same "; " as hub_identifier; a hub without a label
+  // contributes an empty string so positions line up (two unlabelled hubs
+  // read "; "). Empty on non-derived rows, which have no hubs.
+  string hub_label = 15;
 }
 
 // CrosswalkProvenance records exactly what produced a crosswalk, so a reader
@@ -309,7 +347,8 @@ message CrosswalkProvenance {
   CrosswalkStage stage = 2;
   // The catalogs the crosswalk covers, as the gateway resolved them.
   repeated CatalogSummary catalogs = 3;
-  // The completed jobs the crosswalk draws on.
+  // The completed jobs that judged at least one row of the full result
+  // (after filters, before pagination).
   repeated string job_ids = 4;
   // The number of rows before pagination.
   int64 rows = 5;
@@ -318,6 +357,8 @@ message CrosswalkProvenance {
   int64 skipped_missing_controls = 6;
   string server_version = 7;
   google.protobuf.Timestamp generated_at = 8;
+  // Every completed job the request selected, sorted; job_ids is a subset.
+  repeated string selected_job_ids = 9;
 }
 
 // GetCrosswalkRequest selects a crosswalk by mode, then narrows it with the
@@ -394,6 +435,11 @@ message SubmitDocumentRequest {
 message SubmitDocumentResponse {
   string document_id = 2;
   string catalog_id = 4;
+  // Every imported control that has neither requirement text nor a usable
+  // title, in document order, with no cap. They keep their place in the
+  // catalog but are not analysed; part_names lists the control's parts that
+  // hold prose, the candidates for catalog.requirement_part_names.
+  repeated TextlessControl textless_controls = 5;
 
   reserved 1, 3;
   reserved "job_id", "status";

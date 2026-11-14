@@ -39,7 +39,7 @@ var _ = Describe("Traversal", func() {
 			catalog := loadTestCatalog()
 
 			visited := make(map[string]bool)
-			visitor := func(ctrl oscalTypes.Control, groupID string, depth int) {
+			visitor := func(ctrl oscalTypes.Control, groupID, groupKey string, depth int) {
 				visited[ctrl.ID] = true
 			}
 
@@ -56,7 +56,7 @@ var _ = Describe("Traversal", func() {
 			catalog := loadTestCatalog()
 
 			groupIDs := make(map[string]string)
-			visitor := func(ctrl oscalTypes.Control, groupID string, depth int) {
+			visitor := func(ctrl oscalTypes.Control, groupID, groupKey string, depth int) {
 				groupIDs[ctrl.ID] = groupID
 			}
 
@@ -72,7 +72,7 @@ var _ = Describe("Traversal", func() {
 			catalog := loadTestCatalog()
 
 			depths := make(map[string]int)
-			visitor := func(ctrl oscalTypes.Control, groupID string, depth int) {
+			visitor := func(ctrl oscalTypes.Control, groupID, groupKey string, depth int) {
 				depths[ctrl.ID] = depth
 			}
 
@@ -87,7 +87,7 @@ var _ = Describe("Traversal", func() {
 
 		It("handles nil catalog without panic", func() {
 			Expect(func() {
-				oscal.WalkControls(nil, func(ctrl oscalTypes.Control, groupID string, depth int) {
+				oscal.WalkControls(nil, func(ctrl oscalTypes.Control, groupID, groupKey string, depth int) {
 					Fail("visitor should not be called for nil catalog")
 				})
 			}).NotTo(Panic())
@@ -97,12 +97,35 @@ var _ = Describe("Traversal", func() {
 			catalog := &oscalTypes.Catalog{}
 
 			visited := false
-			visitor := func(ctrl oscalTypes.Control, groupID string, depth int) {
+			visitor := func(ctrl oscalTypes.Control, groupID, groupKey string, depth int) {
 				visited = true
 			}
 
 			oscal.WalkControls(catalog, visitor)
 			Expect(visited).To(BeFalse(), "visitor should not be called for empty catalog")
+		})
+	})
+
+	Describe("WalkGroups", func() {
+		It("handles nil catalog without panic", func() {
+			Expect(func() {
+				oscal.WalkGroups(nil, func(oscalTypes.Group, string, string) {
+					Fail("visitor should not be called for nil catalog")
+				})
+			}).NotTo(Panic())
+		})
+
+		It("visits groups pre-order with position keys and parent keys", func() {
+			g2 := oscalTypes.Group{ID: "g2"}
+			g1 := oscalTypes.Group{ID: "g1", Groups: &[]oscalTypes.Group{g2}}
+			g4 := oscalTypes.Group{ID: "g4"}
+			catalog := &oscalTypes.Catalog{Groups: &[]oscalTypes.Group{g1, g4}}
+
+			var visited []string
+			oscal.WalkGroups(catalog, func(g oscalTypes.Group, key, parentKey string) {
+				visited = append(visited, g.ID+":"+key+":"+parentKey)
+			})
+			Expect(visited).To(Equal([]string{"g1:g1:", "g2:g1.1:g1", "g4:g2:"}))
 		})
 	})
 
@@ -555,33 +578,45 @@ var _ = Describe("Convert", func() {
 			params := oscal.CollectParams(catalog, ctrl)
 
 			Expect(params).To(HaveLen(3))
-			Expect(params["param-1"]).To(Equal("Control Override"))
+			Expect(params["param-1"]).To(Equal("[Assignment: Control Override]"))
 			Expect(params["param-2"]).To(Equal("catalog-value"))
-			Expect(params["param-3"]).To(Equal("Control Only"))
+			Expect(params["param-3"]).To(Equal("[Assignment: Control Only]"))
 		})
 
-		It("prefers Label over Values", func() {
-			catalogParams := []oscalTypes.Parameter{
-				{
-					ID:     "param-1",
-					Label:  "Preferred Label",
-					Values: &[]string{"fallback-value"},
-				},
-			}
-
-			catalog := &oscalTypes.Catalog{
-				UUID:   "test-catalog",
-				Params: &catalogParams,
-			}
-
-			ctrl := oscalTypes.Control{
-				ID:    "ac-9",
-				Title: "Previous Logon Notification",
-			}
-
-			params := oscal.CollectParams(catalog, ctrl)
-			Expect(params["param-1"]).To(Equal("Preferred Label"))
-		})
+		// Encodings: SP 800-53 rev 5 ODPs and SP 800-171r3 ODPs carry only a label;
+		// a resolved profile (set-parameter applied) adds the chosen values.
+		DescribeTable("renders a parameter",
+			func(param oscalTypes.Parameter, want string) {
+				ctrl := oscalTypes.Control{ID: "x-1", Params: &[]oscalTypes.Parameter{
+					param,
+					{ID: "p2", Label: "time period"},
+				}}
+				Expect(oscal.CollectParams(nil, ctrl)[param.ID]).To(Equal(want))
+			},
+			Entry("SP 800-53 label-only ODP as an assignment",
+				oscalTypes.Parameter{ID: "ac-2_odp.01", Label: "composition and complexity rules"},
+				"[Assignment: composition and complexity rules]"),
+			Entry("SP 800-171r3 label-only ODP as an assignment",
+				oscalTypes.Parameter{ID: "A.03.01.01.ODP.01", Label: "time period"},
+				"[Assignment: time period]"),
+			Entry("resolved-profile set value over the label",
+				oscalTypes.Parameter{ID: "ia-5_odp.01", Label: "composition and complexity rules", Values: &[]string{"12"}},
+				"12"),
+			Entry("set value without a label",
+				oscalTypes.Parameter{ID: "ia-5_odp.02", Values: &[]string{"30 days"}},
+				"30 days"),
+			Entry("selection as NIST prints it",
+				oscalTypes.Parameter{ID: "sel", Select: &oscalTypes.ParameterSelection{
+					HowMany: "one-or-more", Choice: &[]string{"a", "b"}}},
+				"[Selection (one or more): a; b]"),
+			Entry("selection choice inserting a label-only parameter",
+				oscalTypes.Parameter{ID: "sel", Select: &oscalTypes.ParameterSelection{
+					Choice: &[]string{"use {{ insert: param, p2 }}"}}},
+				"[Selection: use [Assignment: time period]]"),
+			Entry("no label, values or choices is omitted",
+				oscalTypes.Parameter{ID: "empty"},
+				""),
+		)
 
 		It("handles nil catalog gracefully", func() {
 			controlParams := []oscalTypes.Parameter{
@@ -596,7 +631,7 @@ var _ = Describe("Convert", func() {
 
 			params := oscal.CollectParams(nil, ctrl)
 			Expect(params).To(HaveLen(1))
-			Expect(params["param-1"]).To(Equal("Control Param"))
+			Expect(params["param-1"]).To(Equal("[Assignment: Control Param]"))
 		})
 
 		// SP 800-53 Rev 5 AC-11: a selection parameter has neither label nor
@@ -621,10 +656,10 @@ var _ = Describe("Convert", func() {
 					To(Equal("Prevent further access to the system by " + want + "; and"))
 			},
 			Entry("one or more", "one-or-more",
-				"[Selection (one or more): initiating a device lock after time period of inactivity; "+
+				"[Selection (one or more): initiating a device lock after [Assignment: time period] of inactivity; "+
 					"requiring the user to initiate a device lock before leaving the system unattended]"),
 			Entry("exactly one", "",
-				"[Selection: initiating a device lock after time period of inactivity; "+
+				"[Selection: initiating a device lock after [Assignment: time period] of inactivity; "+
 					"requiring the user to initiate a device lock before leaving the system unattended]"),
 		)
 
@@ -720,7 +755,7 @@ var _ = Describe("Decompose", func() {
 			}
 
 			params := make(map[string]string)
-			result := oscal.DecomposeStatements(ctrl, "access-control", params)
+			result := oscal.DecomposeStatements(ctrl, "access-control", params, oscal.DefaultRequirementPartNames)
 
 			Expect(result).To(HaveLen(3))
 
@@ -777,7 +812,7 @@ var _ = Describe("Decompose", func() {
 			}
 
 			params := make(map[string]string)
-			result := oscal.DecomposeStatements(ctrl, "access-control", params)
+			result := oscal.DecomposeStatements(ctrl, "access-control", params, oscal.DefaultRequirementPartNames)
 
 			Expect(result).To(HaveLen(4))
 
@@ -813,7 +848,7 @@ var _ = Describe("Decompose", func() {
 			}
 
 			params := make(map[string]string)
-			result := oscal.DecomposeStatements(ctrl, "access-control", params)
+			result := oscal.DecomposeStatements(ctrl, "access-control", params, oscal.DefaultRequirementPartNames)
 
 			Expect(result).To(HaveLen(1))
 			Expect(result[0].ID).To(Equal("ac-1"))
@@ -840,7 +875,7 @@ var _ = Describe("Decompose", func() {
 				}
 
 				params := make(map[string]string)
-				result := oscal.DecomposeStatements(ctrl, "access-control", params)
+				result := oscal.DecomposeStatements(ctrl, "access-control", params, oscal.DefaultRequirementPartNames)
 
 				// result[0] is the statement itself; items follow.
 				Expect(result).To(HaveLen(len(wantIDs) + 1))

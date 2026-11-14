@@ -253,8 +253,22 @@ func validateAttestation(a *AttestationConfig, tracker *sourceTracker) error {
 	return p.err()
 }
 
+// oscalTokenPattern is the OSCAL token datatype, the type of a part's name.
+var oscalTokenPattern = regexp.MustCompile(`^(\p{L}|_)(\p{L}|\p{N}|[.\-_])*$`)
+
 func validateCatalog(cat *CatalogConfig, tracker *sourceTracker) error {
 	var p problems
+	if len(cat.RequirementPartNames) == 0 {
+		p.add("catalog.requirement_part_names", "catalog.requirement_part_names%s is empty: at least one name is required, because no name means no control has requirement text; list the OSCAL part names that hold it, such as [statement]: %w",
+			formatSource(tracker, "catalog.requirement_part_names"), ErrInvalidConfig)
+	}
+	for i, name := range cat.RequirementPartNames {
+		if !oscalTokenPattern.MatchString(name) {
+			path := fmt.Sprintf("catalog.requirement_part_names[%d]", i)
+			p.add(path, "%s %q%s is not a valid OSCAL token: it must start with a letter or _, then contain only letters, digits, '.', '-' or '_'; use the part name exactly as the catalog spells it: %w",
+				path, name, formatSource(tracker, "catalog.requirement_part_names"), ErrInvalidConfig)
+		}
+	}
 	s := &cat.Structuring
 	if s.MinDecomposeWords < 0 {
 		p.add("catalog.structuring.min_decompose_words", "catalog.structuring.min_decompose_words %d%s must be non-negative: %w",

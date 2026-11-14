@@ -268,6 +268,27 @@ var _ = Describe("ClassifyAnalyzer", func() {
 			})
 		})
 
+		Context("with a container row", func() {
+			It("skips a container row without an LLM call", func() {
+				control := &pb.Control{
+					ControlId:  "nist-800-53/AC",
+					Identifier: "AC",
+					Statement:  "",
+					Parts:      map[string]string{"class": "compliance-section", "node-kind": "container"},
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+
+				result, ok := tasks[0].Payload.(*pb.AnalysisResult)
+				Expect(ok).To(BeTrue())
+				Expect(result.Attributes["type"]).To(Equal("None"))
+				Expect(result.Attributes["level"]).To(Equal("None"))
+				Expect(result.Attributes["skipped"]).To(Equal("true"))
+			})
+		})
+
 		Context("with a withdrawn control", func() {
 			It("pre-classifies None|None without an LLM call even when it has a statement", func() {
 				control := &pb.Control{

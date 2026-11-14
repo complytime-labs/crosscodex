@@ -16,6 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"go.opentelemetry.io/otel"
@@ -60,6 +61,8 @@ var _ = Describe("embedded service telemetry wiring", func() {
 
 		cfg := &config.Config{}
 		cfg.Database.DSN = suDSN
+		// Built without the loader: set the default the parser would otherwise lack.
+		cfg.Catalog.RequirementPartNames = oscal.DefaultRequirementPartNames
 
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		svc, resources, err := buildEmbeddedService(ctx, cfg, logger)

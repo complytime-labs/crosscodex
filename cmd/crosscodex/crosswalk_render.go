@@ -34,26 +34,27 @@ var crosswalkFormats = map[string]crosswalkRenderer{
 // export's contract and differ from the proto field names; rowValues maps
 // one to the other.
 var crosswalkColumns = []string{
-	"source_framework", "source_id", "source_parent", "source_title", "source_text",
-	"relationship", "confidence", "direction", "hub_id",
-	"target_framework", "target_id", "target_parent", "target_title", "target_text",
-	"jobs_judged", "jobs_agreeing", "other_verdicts", "latest_job",
+	"source_framework", "source_id", "source_label", "source_parent", "source_parent_label", "source_context", "source_title", "source_text",
+	"relationship", "confidence", "direction", "hub_id", "hub_label", "paths_supporting", "paths_total",
+	"target_framework", "target_id", "target_label", "target_parent", "target_parent_label", "target_context", "target_title", "target_text",
+	"jobs_judged", "jobs_agreeing", "other_verdicts", "review", "latest_job",
 	"source_node_id", "target_node_id",
 }
 
 // crosswalkNumericColumns are written as JSON numbers; every other column
 // is a string.
-var crosswalkNumericColumns = map[string]bool{"confidence": true, "jobs_judged": true, "jobs_agreeing": true}
+var crosswalkNumericColumns = map[string]bool{"confidence": true, "paths_supporting": true, "paths_total": true, "jobs_judged": true, "jobs_agreeing": true}
 
 // rowValues returns r's values in crosswalkColumns order, unmodified:
 // renderers neutralise them for their own format.
 func rowValues(r *pb.CrosswalkRow) []string {
 	s, t := r.GetSource(), r.GetTarget()
 	return []string{
-		s.GetFramework(), s.GetIdentifier(), s.GetParentIdentifier(), s.GetTitle(), s.GetStatement(),
-		r.GetRelationship(), fmt.Sprintf("%.2f", r.GetConfidence()), r.GetDirection(), r.GetHubIdentifier(),
-		t.GetFramework(), t.GetIdentifier(), t.GetParentIdentifier(), t.GetTitle(), t.GetStatement(),
-		strconv.Itoa(int(r.GetJobsJudged())), strconv.Itoa(int(r.GetJobsAgreeing())), r.GetOtherVerdicts(), r.GetLatestJobId(),
+		s.GetFramework(), s.GetIdentifier(), s.GetLabel(), s.GetParentIdentifier(), s.GetParentLabel(), s.GetContext(), s.GetTitle(), s.GetStatement(),
+		r.GetRelationship(), fmt.Sprintf("%.2f", r.GetConfidence()), r.GetDirection(), r.GetHubIdentifier(), r.GetHubLabel(),
+		strconv.Itoa(int(r.GetPathsSupporting())), strconv.Itoa(int(r.GetPathsTotal())),
+		t.GetFramework(), t.GetIdentifier(), t.GetLabel(), t.GetParentIdentifier(), t.GetParentLabel(), t.GetContext(), t.GetTitle(), t.GetStatement(),
+		strconv.Itoa(int(r.GetJobsJudged())), strconv.Itoa(int(r.GetJobsAgreeing())), r.GetOtherVerdicts(), r.GetReview(), r.GetLatestJobId(),
 		s.GetNodeId(), t.GetNodeId(),
 	}
 }
@@ -101,6 +102,7 @@ type crosswalkProvenanceJSON struct {
 	Stage                  string                 `json:"stage"`
 	Catalogs               []crosswalkCatalogJSON `json:"catalogs"`
 	JobIDs                 []string               `json:"job_ids"`
+	SelectedJobIDs         []string               `json:"selected_job_ids"`
 	Rows                   int                    `json:"rows"`
 	SkippedMissingControls int64                  `json:"skipped_missing_controls"`
 	ServerVersion          string                 `json:"server_version"`
@@ -121,6 +123,7 @@ func renderJSON(w io.Writer, prov *pb.CrosswalkProvenance, rows []*pb.CrosswalkR
 		Stage:                  stage,
 		Catalogs:               make([]crosswalkCatalogJSON, 0, len(prov.GetCatalogs())),
 		JobIDs:                 append([]string{}, prov.GetJobIds()...),
+		SelectedJobIDs:         append([]string{}, prov.GetSelectedJobIds()...),
 		Rows:                   len(rows),
 		SkippedMissingControls: prov.GetSkippedMissingControls(),
 		ServerVersion:          prov.GetServerVersion(),
@@ -331,6 +334,9 @@ func renderXLSX(w io.Writer, prov *pb.CrosswalkProvenance, rows []*pb.CrosswalkR
 	}
 	for _, id := range prov.GetJobIds() {
 		provenance = append(provenance, []string{"job_id", id})
+	}
+	for _, id := range prov.GetSelectedJobIds() {
+		provenance = append(provenance, []string{"selected_job_id", id})
 	}
 
 	if err := f.SetSheetName(f.GetSheetName(0), "crosswalk"); err != nil {

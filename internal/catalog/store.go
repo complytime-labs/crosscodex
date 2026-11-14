@@ -22,10 +22,9 @@ var (
 
 // Store interface for catalog and control persistence.
 type Store interface {
-	UpsertCatalog(ctx context.Context, catalog CatalogRecord) error
 	GetCatalog(ctx context.Context, catalogID string) (*CatalogRecord, error)
 	ListCatalogs(ctx context.Context, opts ListOptions) ([]CatalogRecord, PageInfo, error)
-	UpsertControls(ctx context.Context, controls []ControlRecord) error
+	UpsertCatalogWithTree(ctx context.Context, catalog CatalogRecord, containers []ContainerRecord, controls []ControlRecord) error
 	GetControl(ctx context.Context, controlID string) (*ControlRecord, error)
 	SearchControls(ctx context.Context, query SearchQuery) ([]ControlRecord, PageInfo, error)
 }
@@ -60,8 +59,25 @@ type ControlRecord struct {
 	Class      string
 	ParentID   string
 	GroupID    string
-	Props      map[string]string
-	CreatedAt  time.Time
+	// ContainerKey names the innermost catalog_containers row of the same
+	// catalog that holds this item; "" (stored as NULL) when it is ungrouped.
+	ContainerKey string
+	Props        map[string]string
+	CreatedAt    time.Time
+}
+
+// ContainerRecord represents a grouping node in the catalog_containers table.
+// Key is the parser's position key, unique within the catalog; ParentKey is ""
+// for a top-level container (stored as NULL); Identifier is "" when the source
+// group has no ID; Label is "" when the source group publishes none.
+type ContainerRecord struct {
+	TenantID   string
+	CatalogID  string
+	Key        string
+	Identifier string
+	Title      string
+	Label      string
+	ParentKey  string
 }
 
 // SearchQuery represents a control search request.
@@ -106,25 +122,9 @@ func NewPGStore(conn db.Connection) *PGStore {
 	return &PGStore{conn: conn}
 }
 
-// UpsertCatalog inserts or updates a catalog record of the context tenant.
-// It refuses a record for another tenant, and an ID already used by another
-// tenant's catalog, without writing anything.
-func (s *PGStore) UpsertCatalog(ctx context.Context, catalog CatalogRecord) error {
-	tenantID, err := tenant.FromContext(ctx)
-	if err != nil {
-		return fmt.Errorf("upsert catalog: %w", err)
-	}
-	if catalog.TenantID != tenantID {
-		return fmt.Errorf("upsert catalog %s: record tenant %q does not match the request tenant %q; refusing to write across tenants. Build the record with the request's tenant",
-			catalog.CatalogID, catalog.TenantID, tenantID)
-	}
-
-	tx, err := s.conn.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin upsert catalog: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
-
+// upsertCatalogTx writes catalog inside tx. The caller has checked the record's
+// tenant against the request's.
+func upsertCatalogTx(ctx context.Context, tx db.Transaction, catalog CatalogRecord) error {
 	query := `
 		INSERT INTO catalogs (
 			catalog_id, tenant_id, name, version, source_type, object_path, created_at,
@@ -150,7 +150,7 @@ func (s *PGStore) UpsertCatalog(ctx context.Context, catalog CatalogRecord) erro
 	`
 
 	var upserted string
-	err = tx.QueryRow(ctx, query,
+	err := tx.QueryRow(ctx, query,
 		catalog.CatalogID,
 		catalog.TenantID,
 		catalog.Name,
@@ -176,8 +176,7 @@ func (s *PGStore) UpsertCatalog(ctx context.Context, catalog CatalogRecord) erro
 	if err != nil {
 		return fmt.Errorf("upsert catalog %s: %w", catalog.CatalogID, err)
 	}
-
-	return tx.Commit()
+	return nil
 }
 
 // GetCatalog retrieves a catalog of the context tenant by ID.
@@ -327,20 +326,33 @@ func (s *PGStore) ListCatalogs(ctx context.Context, opts ListOptions) ([]Catalog
 	return records, pageInfo, nil
 }
 
-// errNotTenantCatalog is the format of UpsertControls' refusal of a catalog
-// that is not the request tenant's: control ID, catalog ID, tenant ID.
-const errNotTenantCatalog = "upsert control %s: catalog %q is not a catalog of tenant %q, so no control in this batch was written. Upsert the catalog first, or use one of the tenant's catalog IDs"
+// Refusals of a catalog that is not the request tenant's, naming the first
+// offending record: control ID or container key, catalog ID, tenant ID.
+const (
+	errNotTenantCatalog          = "upsert control %s: catalog %q is not a catalog of tenant %q, so no control in this batch was written. Set the record's catalog ID to the catalog this batch writes, or to one of the tenant's catalog IDs"
+	errNotTenantCatalogContainer = "upsert container %s: catalog %q is not a catalog of tenant %q, so no container or control in this batch was written. Set the record's catalog ID to the catalog this batch writes, or to one of the tenant's catalog IDs"
+)
 
-// UpsertControls inserts or updates multiple control records of the context
-// tenant in a transaction. If any record is for another tenant, or names a
-// catalog that is not the tenant's, it writes none of them.
-func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) error {
+// UpsertCatalogWithTree writes a catalog row, its containers and its controls
+// for the context tenant in one transaction, so a failed import stores nothing:
+// no catalog row without its controls, and a failed re-import leaves the
+// earlier import as it was. It refuses records for another tenant, or a
+// catalog ID of another tenant, without writing anything.
+func (s *PGStore) UpsertCatalogWithTree(ctx context.Context, catalog CatalogRecord, containers []ContainerRecord, controls []ControlRecord) error {
 	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
-		return fmt.Errorf("upsert controls: %w", err)
+		return fmt.Errorf("upsert catalog: %w", err)
 	}
-	if len(controls) == 0 {
-		return nil
+	if catalog.TenantID != tenantID {
+		return fmt.Errorf("upsert catalog %s: record tenant %q does not match the request tenant %q; refusing to write across tenants. Build the record with the request's tenant",
+			catalog.CatalogID, catalog.TenantID, tenantID)
+	}
+	// Refuse any record for another tenant before opening the transaction.
+	for _, c := range containers {
+		if c.TenantID != tenantID {
+			return fmt.Errorf("upsert container %s: record tenant %q does not match the request tenant %q; refusing to write across tenants, so no container or control in this batch was written. Build every record with the request's tenant",
+				c.Key, c.TenantID, tenantID)
+		}
 	}
 	for _, ctrl := range controls {
 		if ctrl.TenantID != tenantID {
@@ -351,37 +363,86 @@ func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) 
 
 	tx, err := s.conn.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin upsert controls: %w", err)
+		return fmt.Errorf("begin upsert catalog %s: %w", catalog.CatalogID, err)
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
+	if err := upsertCatalogTx(ctx, tx, catalog); err != nil {
+		return err
+	}
+	if err := upsertTreeTx(ctx, tx, tenantID, containers, controls); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// upsertTreeTx writes containers, then controls, inside tx. The caller has
+// checked every record's tenant.
+func upsertTreeTx(ctx context.Context, tx db.Transaction, tenantID string, containers []ContainerRecord, controls []ControlRecord) error {
 	// The (catalog_id, tenant_id) foreign key to catalogs
 	// refuses another tenant's catalog; checking first names the catalog
 	// and tells the caller what to do instead.
 	checked := make(map[string]bool)
-	for _, ctrl := range controls {
-		if checked[ctrl.CatalogID] {
-			continue
+	checkCatalog := func(noun, catalogID, recordID, refusal string) error {
+		if checked[catalogID] {
+			return nil
 		}
 		var owned int
 		err := tx.QueryRow(ctx, "SELECT 1 FROM catalogs WHERE catalog_id = $1 AND tenant_id = $2",
-			ctrl.CatalogID, tenantID).Scan(&owned)
+			catalogID, tenantID).Scan(&owned)
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf(errNotTenantCatalog,
-				ctrl.ControlID, ctrl.CatalogID, tenantID)
+			return fmt.Errorf(refusal, recordID, catalogID, tenantID)
 		}
 		if err != nil {
-			return fmt.Errorf("upsert control %s: check catalog %s: %w", ctrl.ControlID, ctrl.CatalogID, err)
+			return fmt.Errorf("upsert %s %s: check catalog %s: %w", noun, recordID, catalogID, err)
 		}
-		checked[ctrl.CatalogID] = true
+		checked[catalogID] = true
+		return nil
+	}
+	for _, c := range containers {
+		if err := checkCatalog("container", c.CatalogID, c.Key, errNotTenantCatalogContainer); err != nil {
+			return err
+		}
+	}
+	for _, ctrl := range controls {
+		if err := checkCatalog("control", ctrl.CatalogID, ctrl.ControlID, errNotTenantCatalog); err != nil {
+			return err
+		}
+	}
+
+	// Containers go first: controls.container_key refers to them by key.
+	containerQuery := `
+		INSERT INTO catalog_containers (
+			tenant_id, catalog_id, container_key, identifier, title, label, parent_key
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7
+		)
+		ON CONFLICT (tenant_id, catalog_id, container_key) DO UPDATE SET
+			identifier = EXCLUDED.identifier,
+			title = EXCLUDED.title,
+			label = EXCLUDED.label,
+			parent_key = EXCLUDED.parent_key
+	`
+	for _, c := range containers {
+		if err := tx.Exec(ctx, containerQuery,
+			c.TenantID, c.CatalogID, c.Key, c.Identifier, c.Title, c.Label, nullIfEmpty(c.ParentKey),
+		); err != nil {
+			// A foreign-key violation past the check above means the
+			// catalog was deleted concurrently; tenants are never deleted.
+			if db.IsPgErrorCode(err, "23503") {
+				return fmt.Errorf(errNotTenantCatalogContainer+": %w",
+					c.Key, c.CatalogID, tenantID, err)
+			}
+			return fmt.Errorf("upsert container %s: %w", c.Key, err)
+		}
 	}
 
 	query := `
 		INSERT INTO controls (
 			tenant_id, control_id, catalog_id, identifier, title, statement,
-			class, parent_id, group_id, props, created_at
+			class, parent_id, group_id, container_key, props, created_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 		)
 		ON CONFLICT (tenant_id, control_id) DO UPDATE SET
 			catalog_id = EXCLUDED.catalog_id,
@@ -391,6 +452,7 @@ func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) 
 			class = EXCLUDED.class,
 			parent_id = EXCLUDED.parent_id,
 			group_id = EXCLUDED.group_id,
+			container_key = EXCLUDED.container_key,
 			props = EXCLUDED.props
 	`
 
@@ -410,6 +472,7 @@ func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) 
 			ctrl.Class,
 			ctrl.ParentID,
 			ctrl.GroupID,
+			nullIfEmpty(ctrl.ContainerKey),
 			propsJSON,
 			ctrl.CreatedAt,
 		); err != nil {
@@ -422,8 +485,15 @@ func (s *PGStore) UpsertControls(ctx context.Context, controls []ControlRecord) 
 			return fmt.Errorf("upsert control %s: %w", ctrl.ControlID, err)
 		}
 	}
+	return nil
+}
 
-	return tx.Commit()
+// nullIfEmpty maps "" to SQL NULL for the nullable key columns.
+func nullIfEmpty(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
 }
 
 // GetControl retrieves a control of the context tenant by ID.
@@ -442,7 +512,7 @@ func (s *PGStore) GetControl(ctx context.Context, controlID string) (*ControlRec
 	query := `
 		SELECT
 			tenant_id, control_id, catalog_id, identifier, title, statement,
-			class, parent_id, group_id, props, created_at
+			class, parent_id, group_id, COALESCE(container_key, ''), props, created_at
 		FROM controls
 		WHERE control_id = $1 AND tenant_id = $2
 	`
@@ -460,6 +530,7 @@ func (s *PGStore) GetControl(ctx context.Context, controlID string) (*ControlRec
 		&rec.Class,
 		&rec.ParentID,
 		&rec.GroupID,
+		&rec.ContainerKey,
 		&propsJSON,
 		&rec.CreatedAt,
 	)
@@ -535,7 +606,7 @@ func (s *PGStore) SearchControls(ctx context.Context, sq SearchQuery) ([]Control
 	searchQuery := fmt.Sprintf(`
 		SELECT
 			tenant_id, control_id, catalog_id, identifier, title, statement,
-			class, parent_id, group_id, props, created_at
+			class, parent_id, group_id, COALESCE(container_key, ''), props, created_at
 		FROM controls
 		%s
 		ORDER BY ts_rank_cd(search_vector, plainto_tsquery('english', $1)) DESC
@@ -565,6 +636,7 @@ func (s *PGStore) SearchControls(ctx context.Context, sq SearchQuery) ([]Control
 			&rec.Class,
 			&rec.ParentID,
 			&rec.GroupID,
+			&rec.ContainerKey,
 			&propsJSON,
 			&rec.CreatedAt,
 		)

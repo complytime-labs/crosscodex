@@ -15,3 +15,9 @@ var ExportDeriveChildID = deriveChildID
 
 // ExportMaxItemsPerChunk exposes maxItemsPerChunk for BDD tests.
 const ExportMaxItemsPerChunk = maxItemsPerChunk
+
+// ExportSelectProp exposes selectProp for BDD tests.
+var ExportSelectProp = selectProp
+
+// ExportNISTNamespace exposes nistNamespace for BDD tests.
+const ExportNISTNamespace = nistNamespace

@@ -46,6 +46,14 @@ type pairVerdicts struct {
 	verdicts []crosswalk.Verdict
 }
 
+// walkedRow is a crosswalk row plus the IDs of every job whose verdict it
+// draws on; provenance job_ids is the union over the rows that survive the
+// filters.
+type walkedRow struct {
+	row  *pb.CrosswalkRow
+	jobs []string // distinct, sorted
+}
+
 // GetCrosswalk implements gateway.CrosswalkBackend for the job, pair,
 // one_to_many and transitive modes:
 // it walks the SEMANTIC_MATCH edges of the jobs the gateway selected, merges
@@ -118,7 +126,7 @@ func (s *Service) GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetC
 		return fail(connect.NewError(connect.CodeInvalidArgument, errors.New(
 			"the crosswalk changed while paging (a job completed or was removed): re-run the export to get a consistent result")))
 	}
-	var rows []*pb.CrosswalkRow
+	var walked []walkedRow
 	var skipped int64
 	switch mode {
 	case "one_to_many":
@@ -138,13 +146,13 @@ func (s *Service) GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetC
 				err = walkErr
 				break
 			}
-			rows = append(rows, pairRows...)
+			walked = append(walked, pairRows...)
 			skipped += pairSkipped
 		}
 	case "transitive":
-		rows, skipped, err = s.walkTransitive(ctx, tenantID, a, hub, b, jobs, stage, includeNonViable)
+		walked, skipped, err = s.walkTransitive(ctx, tenantID, a, hub, b, jobs, stage, includeNonViable)
 	default:
-		rows, skipped, err = s.walkPair(ctx, tenantID, a, b, jobs, stage, includeNonViable)
+		walked, skipped, err = s.walkPair(ctx, tenantID, a, b, jobs, stage, includeNonViable)
 	}
 	if err != nil {
 		code := mapGraphError(err)
@@ -152,7 +160,21 @@ func (s *Service) GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetC
 		return nil, s.rpcError(ctx, "GetCrosswalk", code, err)
 	}
 
-	rows = filterCrosswalkRows(rows, msg.GetMinConfidence(), msg.GetRelationshipTypes())
+	walked = filterCrosswalkRows(walked, msg.GetMinConfidence(), msg.GetRelationshipTypes())
+	rows := make([]*pb.CrosswalkRow, len(walked))
+	contributing := map[string]struct{}{}
+	for i, w := range walked {
+		rows[i] = w.row
+		for _, id := range w.jobs {
+			contributing[id] = struct{}{}
+		}
+	}
+	for i, note := range crosswalk.EquivalenceNotes(rows) {
+		// Collapse notes sit on derived rows and equivalence notes on direct
+		// ones, so today at most one is non-empty; join keeps both if that changes.
+		notes := slices.DeleteFunc([]string{rows[i].Review, note}, func(n string) bool { return n == "" })
+		rows[i].Review = strings.Join(notes, "; ")
+	}
 	frameworks := map[string]string{}
 	for _, c := range msg.GetCatalogs() {
 		frameworks[c.GetCatalogId()] = c.GetName()
@@ -180,10 +202,11 @@ func (s *Service) GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetC
 	if end < total {
 		pageInfo.NextPageToken = base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(end) + ":" + digest))
 	}
-	jobIDs := make([]string, len(jobs))
+	selectedIDs := make([]string, len(jobs))
 	for i, j := range jobs {
-		jobIDs[i] = j.GetJobId()
+		selectedIDs[i] = j.GetJobId()
 	}
+	slices.Sort(selectedIDs)
 
 	s.recordRPC(ctx, "GetCrosswalk", start, connect.Code(0))
 	return connect.NewResponse(&pb.GetCrosswalkResponse{
@@ -193,7 +216,8 @@ func (s *Service) GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetC
 			Mode:                   mode,
 			Stage:                  crosswalkStageEnum(stage),
 			Catalogs:               msg.GetCatalogs(),
-			JobIds:                 jobIDs,
+			JobIds:                 slices.Sorted(maps.Keys(contributing)),
+			SelectedJobIds:         selectedIDs,
 			Rows:                   int64(total),
 			SkippedMissingControls: skipped,
 			ServerVersion:          version.Version,
@@ -271,7 +295,7 @@ func crosswalkPage(p *pb.Pagination) (size, offset int, digest string, err error
 // parent identifiers are not filled: the caller owns the catalog names and
 // calls fillParents on the rows it returns, so parents cost one lookup per
 // returned control, not per walked control.
-func (s *Service) walkPair(ctx context.Context, tenantID, a, b string, jobs []*pb.CrosswalkJob, stage string, includeNonViable bool) ([]*pb.CrosswalkRow, int64, error) {
+func (s *Service) walkPair(ctx context.Context, tenantID, a, b string, jobs []*pb.CrosswalkJob, stage string, includeNonViable bool) ([]walkedRow, int64, error) {
 	jobByID := make(map[string]*pb.CrosswalkJob, len(jobs))
 	for _, j := range jobs {
 		jobByID[j.GetJobId()] = j
@@ -342,14 +366,19 @@ func (s *Service) walkPair(ctx context.Context, tenantID, a, b string, jobs []*p
 		}
 	}
 
-	rows := make([]*pb.CrosswalkRow, 0, len(pairs))
+	rows := make([]walkedRow, 0, len(pairs))
 	for _, pv := range pairs {
+		ids := make([]string, len(pv.verdicts))
+		for i, v := range pv.verdicts {
+			ids[i] = v.JobID
+		}
+		slices.Sort(ids)
 		merged := crosswalk.Merge(pv.verdicts)
 		word := crosswalk.Word(merged.Type)
 		if merged.Direction == crosswalk.Reverse {
 			word = "reverse: " + word
 		}
-		rows = append(rows, &pb.CrosswalkRow{
+		rows = append(rows, walkedRow{jobs: slices.Compact(ids), row: &pb.CrosswalkRow{
 			Source:           crosswalkSide(pv.aNode),
 			Target:           crosswalkSide(pv.bNode),
 			RelationshipType: merged.Type,
@@ -360,20 +389,23 @@ func (s *Service) walkPair(ctx context.Context, tenantID, a, b string, jobs []*p
 			JobsAgreeing:     int32(merged.JobsAgreeing),
 			OtherVerdicts:    crosswalk.FormatOthers(merged.Others),
 			LatestJobId:      merged.LatestJob,
-		})
+		}})
 	}
 	return rows, skipped, nil
 }
 
 // walkTransitive returns the direct rows between catalogs a and c plus one
-// derived row per (a control, hub control, c control) path: the a-to-hub and
-// hub-to-c legs are each merged by walkPair, so a leg's row already holds the
-// consensus of every job on that pair and the path is two hops by
-// construction. A derived row composes the leg types, multiplies their
-// confidences, sums their job counts, names the hub control in HubIdentifier
-// and takes the newer leg's latest job. OtherVerdicts stays empty on derived
-// rows: the dissenting verdicts belong to the legs, not to the composed pair.
-func (s *Service) walkTransitive(ctx context.Context, tenantID, a, hub, c string, jobs []*pb.CrosswalkJob, stage string, includeNonViable bool) ([]*pb.CrosswalkRow, int64, error) {
+// derived row per (a control, c control) pair: the a-to-hub and hub-to-c legs
+// are each merged by walkPair, so a leg's row already holds the consensus of
+// every job on that pair and a path is two hops by construction. Each path
+// composes the leg types and multiplies the leg confidences; crosswalk.Collapse
+// then folds a pair's paths into one verdict (see its doc for the rules) and
+// the row names every hub control in HubIdentifier, "; "-joined. The row's jobs
+// cover every leg of every path. OtherVerdicts stays empty on derived rows:
+// the dissenting verdicts belong to the legs, not to the composed pair. A leg
+// judged in the reverse direction composes as unknown; no-relationship legs
+// start no path.
+func (s *Service) walkTransitive(ctx context.Context, tenantID, a, hub, c string, jobs []*pb.CrosswalkJob, stage string, includeNonViable bool) ([]walkedRow, int64, error) {
 	rows, skipped, err := s.walkPair(ctx, tenantID, a, c, jobs, stage, includeNonViable)
 	if err != nil {
 		return nil, 0, err
@@ -409,61 +441,181 @@ func (s *Service) walkTransitive(ctx context.Context, tenantID, a, hub, c string
 		return r.RelationshipType
 	}
 
-	byHub := map[string][]*pb.CrosswalkRow{}
-	for _, r := range fromHub {
-		byHub[r.Source.NodeId] = append(byHub[r.Source.NodeId], r)
+	type derivedPair struct {
+		source, target *pb.CrosswalkSide
+		paths          []crosswalk.Path
 	}
-	for _, ab := range toHub {
-		for _, bc := range byHub[ab.Target.NodeId] {
-			if ab.RelationshipType == pb.RelationshipType_RELATIONSHIP_TYPE_NO_RELATIONSHIP ||
-				bc.RelationshipType == pb.RelationshipType_RELATIONSHIP_TYPE_NO_RELATIONSHIP {
-				continue
-			}
+	// hubLabels maps a hub control's identifier to its published label.
+	hubLabels := map[string]string{}
+	var order []pairKey
+	derived := map[pairKey]*derivedPair{}
+
+	byHub := map[string][]walkedRow{}
+	for _, r := range fromHub {
+		byHub[r.row.Source.NodeId] = append(byHub[r.row.Source.NodeId], r)
+	}
+	for _, abw := range toHub {
+		ab := abw.row
+		hubLabels[ab.Target.Identifier] = ab.Target.Label
+		for _, bcw := range byHub[ab.Target.NodeId] {
+			bc := bcw.row
 			typ, ok := crosswalk.Compose(legType(ab), legType(bc))
-			word := crosswalk.Word(typ)
 			if !ok {
-				typ, word = pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED, "related (derived, type unknown)"
+				typ = pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED
 			}
-			rows = append(rows, &pb.CrosswalkRow{
-				Source:           ab.Source,
-				Target:           bc.Target,
-				RelationshipType: typ,
-				Relationship:     word,
-				Confidence:       ab.Confidence * bc.Confidence,
-				Direction:        string(crosswalk.Derived),
-				JobsJudged:       ab.JobsJudged + bc.JobsJudged,
-				JobsAgreeing:     ab.JobsAgreeing + bc.JobsAgreeing,
-				LatestJobId:      newerJob(ab.LatestJobId, bc.LatestJobId),
-				HubIdentifier:    ab.Target.Identifier,
+			latest := newerJob(ab.LatestJobId, bc.LatestJobId)
+			key := pairKey{ab.Source.NodeId, bc.Target.NodeId}
+			dp := derived[key]
+			if dp == nil {
+				dp = &derivedPair{source: ab.Source, target: bc.Target}
+				derived[key] = dp
+				order = append(order, key)
+			}
+			dp.paths = append(dp.paths, crosswalk.Path{
+				Hub:        ab.Target.Identifier,
+				Type:       typ,
+				Confidence: float64(ab.Confidence) * float64(bc.Confidence),
+				Jobs:       slices.Concat(abw.jobs, bcw.jobs),
+				LatestJob:  latest,
+				LatestAt:   completedAt[latest],
 			})
 		}
+	}
+	for _, key := range order {
+		dp := derived[key]
+		col := crosswalk.Collapse(dp.paths)
+		word := "related (derived, type unknown)"
+		if col.Type != pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED {
+			word = crosswalk.Word(col.Type)
+		}
+		rows = append(rows, walkedRow{jobs: col.Jobs, row: &pb.CrosswalkRow{
+			Source:           dp.source,
+			Target:           dp.target,
+			RelationshipType: col.Type,
+			Relationship:     word,
+			Confidence:       float32(col.Confidence),
+			Direction:        string(crosswalk.Derived),
+			JobsJudged:       int32(len(col.Jobs)),
+			JobsAgreeing:     int32(col.JobsAgreeing),
+			LatestJobId:      col.LatestJob,
+			HubIdentifier:    strings.Join(col.Hubs, "; "),
+			HubLabel:         strings.Join(hubLabelsOf(col.Hubs, hubLabels), "; "),
+			PathsSupporting:  int32(col.PathsSupporting),
+			PathsTotal:       int32(col.PathsTotal),
+			Review:           strings.Join(col.Notes, "; "),
+		}})
 	}
 	return rows, skipped, nil
 }
 
-// fillParents sets the parent identifier of each side of rows from PARENT_OF,
-// looking each distinct control up once.
+// hubLabelsOf returns the label of each hub identifier, in order, so the
+// result lines up with the identifiers; a hub without a label yields "".
+func hubLabelsOf(hubs []string, labels map[string]string) []string {
+	out := make([]string, len(hubs))
+	for i, h := range hubs {
+		out[i] = labels[h]
+	}
+	return out
+}
+
+// fillParents sets the parent identifier and the context breadcrumb of each
+// side of rows from PARENT_OF. Each node's parent is looked up at most once per
+// call, so siblings and shared ancestors cost no extra reads.
 func (s *Service) fillParents(ctx context.Context, tenantID string, rows []*pb.CrosswalkRow) error {
-	parents := map[string]string{}
+	// parents maps a node ID to its chosen parent; nil means a top-level node.
+	parents := map[string]*graphdb.Node{}
+	parentOf := func(id string) (*graphdb.Node, error) {
+		if p, ok := parents[id]; ok {
+			return p, nil
+		}
+		paths, err := s.graph.Traverse(ctx, tenantID, graphdb.TraversalQuery{
+			StartNode: id, Direction: "inbound", EdgeLabels: []string{parentEdgeLabel}, MaxDepth: 1,
+		})
+		if err != nil {
+			return nil, err
+		}
+		p := lesserParent(paths)
+		parents[id] = p
+		return p, nil
+	}
+	type lineage struct{ parent, parentLabel, context string }
+	seen := map[string]lineage{}
 	for _, r := range rows {
 		for _, side := range []*pb.CrosswalkSide{r.Source, r.Target} {
-			p, ok := parents[side.NodeId]
+			l, ok := seen[side.NodeId]
 			if !ok {
-				paths, err := s.graph.Traverse(ctx, tenantID, graphdb.TraversalQuery{
-					StartNode: side.NodeId, Direction: "inbound", EdgeLabels: []string{parentEdgeLabel}, MaxDepth: 1,
-				})
+				chain, err := ancestorChain(side.NodeId, parentOf)
 				if err != nil {
-					return fmt.Errorf("find the parent of control %s: %w", side.NodeId, err)
+					return fmt.Errorf("find the ancestors of control %s: %w", side.NodeId, err)
 				}
-				if len(paths) > 0 && len(paths[0].Nodes) > 0 {
-					p = propString(paths[0].Nodes[len(paths[0].Nodes)-1].Properties, "identifier")
-				}
-				parents[side.NodeId] = p
+				l.parent, l.parentLabel, l.context = lineageOf(chain)
+				seen[side.NodeId] = l
 			}
-			side.ParentIdentifier = p
+			side.ParentIdentifier = l.parent
+			side.ParentLabel = l.parentLabel
+			side.Context = l.context
 		}
 	}
 	return nil
+}
+
+// lesserParent returns the end node of the one-hop inbound path whose parent
+// has the lesser node ID, or nil when there is none. Drivers do not order
+// paths, so the ID tie-break keeps exports reproducible for a malformed
+// catalog where a control has several parents.
+func lesserParent(paths []graphdb.Path) *graphdb.Node {
+	var best *graphdb.Node
+	for _, p := range paths {
+		if len(p.Nodes) < 2 {
+			continue
+		}
+		if n := &p.Nodes[1]; best == nil || n.ID < best.ID {
+			best = n
+		}
+	}
+	return best
+}
+
+// ancestorChain walks PARENT_OF upward from id one hop at a time, nearest
+// ancestor first. It follows the parent with the lesser node ID at each hop and
+// stops at a node without a parent or at the first node already on the chain,
+// so a cyclic catalog terminates. There is no depth limit: the data decides.
+func ancestorChain(id string, parentOf func(string) (*graphdb.Node, error)) ([]graphdb.Node, error) {
+	visited := map[string]bool{id: true}
+	var chain []graphdb.Node
+	for cur := id; ; {
+		p, err := parentOf(cur)
+		if err != nil {
+			return nil, err
+		}
+		if p == nil || visited[p.ID] {
+			return chain, nil
+		}
+		visited[p.ID] = true
+		chain = append(chain, *p)
+		cur = p.ID
+	}
+}
+
+// lineageOf reads the direct parent's identifier and label and the breadcrumb
+// of titled ancestors from an ancestor chain, nearest first. Each part is
+// crosswalk.LineageSegment of the ancestor (title with its label, else its
+// identifier, else the title alone), root first, joined " > "; untitled
+// ancestors are omitted.
+func lineageOf(chain []graphdb.Node) (parent, parentLabel, breadcrumb string) {
+	if len(chain) == 0 {
+		return "", "", ""
+	}
+	parent = propString(chain[0].Properties, "identifier")
+	parentLabel = propString(chain[0].Properties, "label")
+	var parts []string
+	for _, n := range chain {
+		if seg := crosswalk.LineageSegment(propString(n.Properties, "title"), propString(n.Properties, "label"), propString(n.Properties, "identifier")); seg != "" {
+			parts = append(parts, seg)
+		}
+	}
+	slices.Reverse(parts)
+	return parent, parentLabel, strings.Join(parts, " > ")
 }
 
 // edgeStage reads an edge's stage; an edge without the property is an
@@ -487,6 +639,7 @@ func crosswalkSide(n graphdb.Node) *pb.CrosswalkSide {
 		NodeId:     n.ID,
 		CatalogId:  propString(n.Properties, "catalog_id"),
 		Identifier: propString(n.Properties, "identifier"),
+		Label:      propString(n.Properties, "label"),
 		Title:      propString(n.Properties, "title"),
 		Statement:  propString(n.Properties, "statement"),
 	}
@@ -517,8 +670,9 @@ func propString(props map[string]any, key string) string {
 
 // filterCrosswalkRows applies the post-merge filters: rows below minConfidence
 // and, when types is non-empty, rows of other types are dropped.
-func filterCrosswalkRows(rows []*pb.CrosswalkRow, minConfidence float32, types []pb.RelationshipType) []*pb.CrosswalkRow {
-	return slices.DeleteFunc(rows, func(r *pb.CrosswalkRow) bool {
+func filterCrosswalkRows(rows []walkedRow, minConfidence float32, types []pb.RelationshipType) []walkedRow {
+	return slices.DeleteFunc(rows, func(w walkedRow) bool {
+		r := w.row
 		return r.Confidence < minConfidence || (len(types) > 0 && !slices.Contains(types, r.RelationshipType))
 	})
 }
@@ -526,10 +680,10 @@ func filterCrosswalkRows(rows []*pb.CrosswalkRow, minConfidence float32, types [
 // sortCrosswalkRows orders rows by target framework (constant within a pair),
 // source identifier, the pair's best confidence (descending), then target
 // identifier and node IDs, which keeps each (source, target) pair contiguous.
-// Within a pair the direct row comes first, then derived rows by descending
-// confidence and hub identifier, so an inferred row never reads as the pair's
-// main answer. Outside transitive mode a pair has one row, so its best
-// confidence is its own and the order is by confidence alone.
+// A pair has at most one direct and one derived row (transitive mode), the
+// direct row first, so an inferred row never reads as the pair's main answer.
+// Outside transitive mode a pair has one row, so its best confidence is its
+// own and the order is by confidence alone.
 func sortCrosswalkRows(rows []*pb.CrosswalkRow) {
 	type pair struct{ src, tgt string }
 	best := map[pair]float32{}
@@ -547,7 +701,6 @@ func sortCrosswalkRows(rows []*pb.CrosswalkRow) {
 			cmp.Compare(x.Target.NodeId, y.Target.NodeId),
 			cmp.Compare(derivedRank(x), derivedRank(y)),
 			cmp.Compare(y.Confidence, x.Confidence),
-			cmp.Compare(x.HubIdentifier, y.HubIdentifier),
 		)
 	})
 }

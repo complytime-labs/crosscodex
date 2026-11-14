@@ -1,0 +1,62 @@
+{
+  "catalog": {
+    "uuid": "e20aef86-6be4-4a41-8b3a-49fe74e4cd5f",
+    "metadata": {
+      "title": "Catalog for pcidss_4",
+      "last-modified": "2025-09-26T11:42:22.806128+08:00",
+      "version": "1.0",
+      "oscal-version": "1.1.3"
+    },
+    "groups": [
+      {
+        "id": "pcidss_4_2",
+        "title": "Controls for section pcidss_4_2",
+        "controls": [
+          {
+            "id": "pcidss_4_2-1",
+            "title": "Control for pcidss_4_2-1",
+            "controls": [
+              {
+                "id": "pcidss_4_2-1.1",
+                "class": "CAC_IMPORT",
+                "title": "All Security Policies And Operational Procedures That Are Identified In Requirement 2 Are Documented, Kept Up To Date, In Use And Known To All Affected Parties.",
+                "props": [
+                  {
+                    "name": "label",
+                    "value": "2.1.1"
+                  },
+                  {
+                    "name": "sort-id",
+                    "value": "pcidss_4_2-01.01"
+                  }
+                ]
+              },
+              {
+                "id": "pcidss_4_2-1.2",
+                "class": "CAC_IMPORT",
+                "title": "Roles And Responsibilities For Performing Activities In Requirement 2 Are Documented, Assigned, And Understood.",
+                "props": [
+                  {
+                    "name": "label",
+                    "value": "2.1.2"
+                  },
+                  {
+                    "name": "sort-id",
+                    "value": "pcidss_4_2-01.02"
+                  }
+                ],
+                "parts": [
+                  {
+                    "id": "pcidss_4_2-1.2_smt",
+                    "name": "statement",
+                    "prose": "Day-to-day responsibilities for performing all the activities in Requirement 2 are\nallocated. Personnel are accountable for successful, continuous operation of these\nrequirements."
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

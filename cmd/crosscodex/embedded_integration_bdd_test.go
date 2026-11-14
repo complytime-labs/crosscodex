@@ -46,7 +46,7 @@ var _ = Describe("Embedded daemon startup (S1/S3)", func() {
 	})
 
 	It("has RLS enabled with policies on the tenant-scoped catalog tables", func() {
-		for _, table := range []string{"catalogs", "controls"} {
+		for _, table := range []string{"catalogs", "controls", "catalog_containers"} {
 			var rlsEnabled bool
 			err := sharedState.daemon.resources.dbPool.QueryRow(ctx,
 				"SELECT relrowsecurity FROM pg_class WHERE relname = $1", table).Scan(&rlsEnabled)
@@ -226,14 +226,15 @@ var _ = Describe("Import-only CLI and refused analysis (#212)", func() {
 		Expect(out).NotTo(ContainSubstring("Job ID"))
 	})
 
-	It("catalog import --json emits catalog_id and document_id only", func() {
+	It("catalog import --json emits catalog_id, document_id and the textless controls only", func() {
 		out, err := runCLI(newCatalogCmd(sharedState), "import", file, "--json")
 		Expect(err).NotTo(HaveOccurred())
-		var got map[string]string
+		var got map[string]json.RawMessage
 		Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
 		Expect(got).To(HaveKey("catalog_id"))
 		Expect(got).To(HaveKey("document_id"))
-		Expect(got).To(HaveLen(2))
+		Expect(got).To(HaveKey("textless_controls"))
+		Expect(got).To(HaveLen(3))
 	})
 
 	It("run start fails with an actionable error and leaves the jobs unchanged", func() {

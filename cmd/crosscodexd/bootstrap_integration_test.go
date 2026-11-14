@@ -25,6 +25,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 )
 
 // testAttestationPrivateKeyPath and testAttestationPublicKeyPath point at a
@@ -172,6 +173,9 @@ func baseTestConfig(suDSN string) *config.Config {
 		// refuse to run without them.
 		Pipeline: config.PipelineConfig{StageTimeout: time.Hour},
 		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1},
+		// Built without the loader, so no default applies; an empty list
+		// would make the parser read no requirement part.
+		Catalog: config.CatalogConfig{RequirementPartNames: oscal.DefaultRequirementPartNames},
 	}
 	Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "crosscodexd migrate")
 	return cfg

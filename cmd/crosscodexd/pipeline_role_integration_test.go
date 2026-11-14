@@ -295,7 +295,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 			"SELECT count(*) FROM controls WHERE catalog_id = $1", catalogID).Scan(&controlCount)).
 			To(Succeed(), "count controls")
 		Expect(tx.Rollback()).To(Succeed())
-		Expect(controlCount).To(Equal(3), "controls in relational DB")
+		Expect(controlCount).To(Equal(3), "controls in relational DB (the group is a container, not a controls row)")
 
 		// A transport, auth or TLS error is reported as the failure rather
 		// than masked as a status, and a FAILED job stops the poll at once.
@@ -309,12 +309,14 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 			inner.Expect(job.GetStatus()).To(Equal(pb.JobStatus_JOB_STATUS_COMPLETED), "job status")
 		}, 60*time.Second, 500*time.Millisecond).Should(Succeed(), "job completes")
 
-		// The graph role projects Control nodes asynchronously from the
-		// catalog-parsed event, so poll. Node IDs are "<catalogID>/<item ID>".
+		// The graph role projects Control and Container nodes asynchronously
+		// from the catalog-parsed event, so poll. Control node IDs are
+		// "<catalogID>/<item ID>"; the group is "<catalogID>/containers/g1".
 		// The tenant is unique to this spec, so the counts are exact.
 		g := graphRT.shared.graphDB_
 		parentID := catalogID + "/ac-2"
 		childA, childB := catalogID+"/ac-2.a", catalogID+"/ac-2.b"
+		groupID := catalogID + "/containers/g1"
 		Eventually(func(inner Gomega) {
 			for _, nodeID := range []string{parentID, childA, childB} {
 				n, err := g.GetNode(ctx, tenantID, nodeID)
@@ -322,13 +324,16 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 				inner.Expect(n).NotTo(BeNil(), "node %s exists", nodeID)
 				inner.Expect(n.Label).To(Equal("Control"), "node %s label", nodeID)
 			}
+			group, err := g.GetNode(ctx, tenantID, groupID)
+			inner.Expect(err).NotTo(HaveOccurred(), "GetNode %s", groupID)
+			inner.Expect(group.Label).To(Equal("Container"), "node %s label", groupID)
 			parentOf, err := g.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{EdgeLabel: "PARENT_OF"})
 			inner.Expect(err).NotTo(HaveOccurred(), "query PARENT_OF")
 			pairs := make([]string, 0, len(parentOf))
 			for _, r := range parentOf {
 				pairs = append(pairs, r.Source.ID+" -> "+r.Target.ID)
 			}
-			inner.Expect(pairs).To(ConsistOf(parentID+" -> "+childA, parentID+" -> "+childB), "PARENT_OF edges")
+			inner.Expect(pairs).To(ConsistOf(groupID+" -> "+parentID, parentID+" -> "+childA, parentID+" -> "+childB), "PARENT_OF edges")
 		}, 60*time.Second, 500*time.Millisecond).Should(Succeed(), "graph role projects the imported catalog")
 	})
 

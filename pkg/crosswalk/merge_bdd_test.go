@@ -100,7 +100,7 @@ var _ = Describe("FormatOthers", func() {
 			{JobID: "0123456789abcdef", Type: subset, Confidence: 0.5},
 			{JobID: "short", Type: contributes, Confidence: 0.25, Reversed: true},
 		})
-		Expect(got).To(Equal("subset of@0.50 (01234567); reverse: contributes to@0.25 (short)"))
+		Expect(got).To(Equal("subset of@0.50 (01234567); reverse: is advanced by@0.25 (short)"))
 	})
 
 	It("is empty for no verdicts", func() {

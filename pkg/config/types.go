@@ -310,8 +310,18 @@ type ObservabilityMetricsConfig struct {
 }
 
 // CatalogConfig configures the catalog parsing and structuring pipeline.
+//
+// Every field is global-only: there is no tenant_overrides map. A catalog is
+// parsed once into shared relational rows, so a per-tenant requirement part
+// list would make the same catalog import differently per tenant.
 type CatalogConfig struct {
-	Structuring StructuringConfig `yaml:"structuring" json:"structuring"`
+	// RequirementPartNames is the ordered list of OSCAL part names that hold
+	// a control's requirement text; the first name a control has wins (see
+	// oscal.DecomposeStatements). The default is ["statement"]. At least one
+	// name is required, and each must be an OSCAL token. Wired to
+	// oscal.WithRequirementPartNames in the daemon and the embedded service.
+	RequirementPartNames []string          `yaml:"requirement_part_names" json:"requirement_part_names"`
+	Structuring          StructuringConfig `yaml:"structuring" json:"structuring"`
 }
 
 // StructuringConfig configures document-to-OSCAL structuring behavior.

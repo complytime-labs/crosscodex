@@ -1,0 +1,909 @@
+{
+  "catalog": {
+    "uuid": "90832f77-0f17-4f7f-971d-085307437125",
+    "metadata": {
+      "title": "Electronic (OSCAL) Version of Protecting Controlled Unclassified Information in Nonfederal Systems and Organizations",
+      "published": "2026-10-22T16:00:00.00000-00:00",
+      "last-modified": "2026-10-22T11:30:00.00000-00:00",
+      "version": "1.1.0",
+      "oscal-version": "v1.2.3",
+      "revisions": [
+        {
+          "title": "Electronic (OSCAL) Version of Protecting Controlled Unclassified Information in Nonfederal Systems and Organizations",
+          "last-modified": "2026-01-05T10:24:35.693009-05:00",
+          "version": "1.0.1",
+          "oscal-version": "v1.1.3",
+          "links": [
+            {
+              "href": "b1e4def8-5f2d-4cbe-a7f8-7b9c6bfb9cb8",
+              "rel": "version-history"
+            }
+          ],
+          "remarks": "This revision of the OSCAL representation of the NIST SP 800-171 Rev 3 provides a bug fix for empty statements in security requirements."
+        },
+        {
+          "title": "Electronic (OSCAL) Version of Protecting Controlled Unclassified Information in Nonfederal Systems and Organizations",
+          "last-modified": "2025-07-06T21:01:17.00000-00:00",
+          "version": "1.0.0",
+          "oscal-version": "v1.1.3",
+          "links": [
+            {
+              "href": "98cf22b5-912b-4efc-a622-4cf49f42ac13",
+              "rel": "version-history"
+            }
+          ],
+          "remarks": "OSCAL v1.1.3 representation of the content of SP800-171 Protecting Controlled Unclassified Information in Nonfederal Systems and Organizations."
+        }
+      ],
+      "props": [
+        {
+          "name": "framework-identifier",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "SP_800_171"
+        },
+        {
+          "name": "framework-version-identifier",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "SP_800_171_3_0_0"
+        },
+        {
+          "name": "generated-by",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "Cybersecurity And Privacy Open Reference Datasets In OSCAL (CAPORDINO)"
+        },
+        {
+          "name": "publication-status",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "Final"
+        }
+      ],
+      "links": [
+        {
+          "href": "#6845eb53-a392-4552-83f4-04b129b40d3f",
+          "rel": "alternate"
+        },
+        {
+          "href": "#6957f4cd-7e2e-43a9-9f76-720c861efb45",
+          "rel": "canonical"
+        },
+        {
+          "href": "#e59e6d39-499f-4235-aa9f-8463b3bba156",
+          "rel": "cprt"
+        }
+      ],
+      "roles": [
+        {
+          "id": "creator",
+          "title": "OSCAL Document Creator"
+        },
+        {
+          "id": "publisher",
+          "title": "SP 800-171 Publisher"
+        },
+        {
+          "id": "contact-creator",
+          "title": "Contact Electronic Version Creator"
+        },
+        {
+          "id": "contact-publisher",
+          "title": "Contact Publisher"
+        }
+      ],
+      "parties": [
+        {
+          "uuid": "98c78f9b-5d50-4b01-b47f-d16801e8d0ab",
+          "type": "organization",
+          "name": "OSCAL Program",
+          "short-name": "NIST OSCAL",
+          "email-addresses": [
+            "oscal@nist.gov"
+          ],
+          "addresses": [
+            {
+              "addr-lines": [
+                "National Institute of Standards and Technology",
+                "Attn: Computer Security Division",
+                "Information Technology Laboratory",
+                "100 Bureau Drive (Mail Stop 2000)"
+              ],
+              "city": "Gaithersburg",
+              "state": "MD",
+              "postal-code": "20899-2000"
+            }
+          ]
+        },
+        {
+          "uuid": "4809f9d2-fdb1-47b0-b444-11271f09ff22",
+          "type": "organization",
+          "name": "National Institute of Standards and Technology",
+          "short-name": "NIST",
+          "email-addresses": [
+            "800-171comments@list.nist.gov"
+          ],
+          "addresses": [
+            {
+              "addr-lines": [
+                "National Institute of Standards and Technology",
+                "Attn: Computer Security Division",
+                "Information Technology Laboratory",
+                "100 Bureau Drive (Mail Stop 2000)"
+              ],
+              "city": "Gaithersburg",
+              "state": "MD",
+              "postal-code": "20899-2000"
+            }
+          ]
+        }
+      ],
+      "responsible-parties": [
+        {
+          "role-id": "creator",
+          "party-uuids": [
+            "98c78f9b-5d50-4b01-b47f-d16801e8d0ab"
+          ]
+        },
+        {
+          "role-id": "publisher",
+          "party-uuids": [
+            "4809f9d2-fdb1-47b0-b444-11271f09ff22"
+          ]
+        },
+        {
+          "role-id": "contact-publisher",
+          "party-uuids": [
+            "4809f9d2-fdb1-47b0-b444-11271f09ff22"
+          ]
+        },
+        {
+          "role-id": "contact-creator",
+          "party-uuids": [
+            "98c78f9b-5d50-4b01-b47f-d16801e8d0ab"
+          ]
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "SP_800_171_03.01",
+        "class": "family",
+        "title": "Access Control",
+        "props": [
+          {
+            "name": "sort-id",
+            "value": "03.01"
+          },
+          {
+            "name": "label",
+            "value": "Access Control (03.01)"
+          }
+        ],
+        "controls": [
+          {
+            "id": "SP_800_171_03.01.01",
+            "class": "requirement",
+            "title": "Account Management",
+            "params": [
+              {
+                "id": "A.03.01.01.ODP.01",
+                "props": [
+                  {
+                    "name": "label",
+                    "value": "A.03.01.01.ODP[01]"
+                  }
+                ],
+                "label": "time period",
+                "usage": "organization-defined time period",
+                "guidelines": [
+                  {
+                    "prose": "the time period for account inactivity before disabling is defined."
+                  }
+                ]
+              },
+              {
+                "id": "A.03.01.01.ODP.02",
+                "props": [
+                  {
+                    "name": "label",
+                    "value": "A.03.01.01.ODP[02]"
+                  }
+                ],
+                "label": "time period",
+                "usage": "organization-defined time period",
+                "guidelines": [
+                  {
+                    "prose": "the time period within which to notify account managers and designated personnel or roles when accounts are no longer required is defined."
+                  }
+                ]
+              },
+              {
+                "id": "A.03.01.01.ODP.03",
+                "props": [
+                  {
+                    "name": "label",
+                    "value": "A.03.01.01.ODP[03]"
+                  }
+                ],
+                "label": "time period",
+                "usage": "organization-defined time period",
+                "guidelines": [
+                  {
+                    "prose": "the time period within which to notify account managers and designated personnel or roles when users are terminated or transferred is defined."
+                  }
+                ]
+              },
+              {
+                "id": "A.03.01.01.ODP.04",
+                "props": [
+                  {
+                    "name": "label",
+                    "value": "A.03.01.01.ODP[04]"
+                  }
+                ],
+                "label": "time period",
+                "usage": "organization-defined time period",
+                "guidelines": [
+                  {
+                    "prose": "the time period within which to notify account managers and designated personnel or roles when system usage or the need-to-know changes for an individual is defined."
+                  }
+                ]
+              },
+              {
+                "id": "A.03.01.01.ODP.05",
+                "props": [
+                  {
+                    "name": "label",
+                    "value": "A.03.01.01.ODP[05]"
+                  }
+                ],
+                "label": "time period",
+                "usage": "organization-defined time period",
+                "guidelines": [
+                  {
+                    "prose": "the time period of expected inactivity requiring users to log out of the system is defined."
+                  }
+                ]
+              },
+              {
+                "id": "A.03.01.01.ODP.06",
+                "props": [
+                  {
+                    "name": "label",
+                    "value": "A.03.01.01.ODP[06]"
+                  }
+                ],
+                "label": "circumstances",
+                "usage": "organization-defined circumstances",
+                "guidelines": [
+                  {
+                    "prose": "circumstances requiring users to log out of the system are defined."
+                  }
+                ]
+              }
+            ],
+            "props": [
+              {
+                "name": "sort-id",
+                "value": "03.01.01"
+              },
+              {
+                "name": "label",
+                "value": "Account Management (03.01.01)"
+              }
+            ],
+            "links": [
+              {
+                "href": "#13c67bb0-9c04-442b-8c7f-0e4f55f995a5",
+                "rel": "reference"
+              },
+              {
+                "href": "#78a467a2-9b1b-4d5f-a7e5-b2661a4374a0",
+                "rel": "reference"
+              },
+              {
+                "href": "#9197204c-0af8-4a31-9495-ae2ba8995fb9",
+                "rel": "reference"
+              },
+              {
+                "href": "#a21c08b1-1984-4b6a-b8eb-fa667b8fc7e8",
+                "rel": "reference"
+              },
+              {
+                "href": "#56cd2f5a-abf8-4810-b449-55de6ee5dbb1",
+                "rel": "reference"
+              },
+              {
+                "href": "#f509b76c-728e-4afa-9db3-ed09265f4723",
+                "rel": "reference"
+              },
+              {
+                "href": "#be88bb5c-d994-40f4-b273-3df87369c0ab",
+                "rel": "reference"
+              },
+              {
+                "href": "#68ef9454-30ff-4bb7-bbe5-a631d353a6cb",
+                "rel": "reference"
+              },
+              {
+                "href": "#da00e9f9-6829-46d6-bcec-a08ef5556e7f",
+                "rel": "reference"
+              },
+              {
+                "href": "#276c6996-e72e-409e-a5dc-f9a53435028b",
+                "rel": "reference"
+              },
+              {
+                "href": "#3d61b0ab-28ea-40e4-b231-ba750516968b",
+                "rel": "reference"
+              },
+              {
+                "href": "#72a57444-839c-4c52-8f18-3a710d23b5b6",
+                "rel": "reference"
+              },
+              {
+                "href": "#b684972f-48eb-4a6e-b581-b5e697b3bc19",
+                "rel": "reference"
+              },
+              {
+                "href": "#13290408-22ce-4afa-a0f0-ca438c1e932b",
+                "rel": "reference"
+              },
+              {
+                "href": "#e0aa4a13-03cc-4b86-be6c-80225af5c3af",
+                "rel": "reference"
+              },
+              {
+                "href": "#6aba579a-f262-4bf9-a8e7-6820ea63de34",
+                "rel": "reference"
+              },
+              {
+                "href": "#a58bb8d1-1534-4ba0-b86c-11072b59ec98",
+                "rel": "reference"
+              }
+            ],
+            "parts": [
+              {
+                "id": "statement_03.01.01",
+                "name": "statement",
+                "class": "security_requirement",
+                "parts": [
+                  {
+                    "id": "SR-03.01.01.a",
+                    "name": "item",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "SR-03.01.01.a"
+                      }
+                    ],
+                    "prose": "Define the types of system accounts allowed and prohibited."
+                  },
+                  {
+                    "id": "SR-03.01.01.b",
+                    "name": "item",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "SR-03.01.01.b"
+                      }
+                    ],
+                    "prose": "Create, enable, modify, disable, and remove system accounts in accordance with policy, procedures, prerequisites, and criteria."
+                  },
+                  {
+                    "id": "SR-03.01.01.c",
+                    "name": "item",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "SR-03.01.01.c"
+                      }
+                    ],
+                    "prose": "Specify:",
+                    "parts": [
+                      {
+                        "id": "SR-03.01.01.c.01",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.c.01"
+                          }
+                        ],
+                        "prose": "Authorized users of the system,"
+                      },
+                      {
+                        "id": "SR-03.01.01.c.02",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.c.02"
+                          }
+                        ],
+                        "prose": "Group and role membership, and"
+                      },
+                      {
+                        "id": "SR-03.01.01.c.03",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.c.03"
+                          }
+                        ],
+                        "prose": "Access authorizations (i.e., privileges) for each account."
+                      }
+                    ]
+                  },
+                  {
+                    "id": "SR-03.01.01.d",
+                    "name": "item",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "SR-03.01.01.d"
+                      }
+                    ],
+                    "prose": "Authorize access to the system based on:",
+                    "parts": [
+                      {
+                        "id": "SR-03.01.01.d.01",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.d.01"
+                          }
+                        ],
+                        "prose": "A valid access authorization and"
+                      },
+                      {
+                        "id": "SR-03.01.01.d.02",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.d.02"
+                          }
+                        ],
+                        "prose": "Intended system usage."
+                      }
+                    ]
+                  },
+                  {
+                    "id": "SR-03.01.01.e",
+                    "name": "item",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "SR-03.01.01.e"
+                      }
+                    ],
+                    "prose": "Monitor the use of system accounts."
+                  },
+                  {
+                    "id": "SR-03.01.01.f",
+                    "name": "item",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "SR-03.01.01.f"
+                      }
+                    ],
+                    "prose": "Disable system accounts when:",
+                    "parts": [
+                      {
+                        "id": "SR-03.01.01.f.01",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.f.01"
+                          }
+                        ],
+                        "prose": "The accounts have expired,"
+                      },
+                      {
+                        "id": "SR-03.01.01.f.02",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.f.02"
+                          }
+                        ],
+                        "prose": "The accounts have been inactive for {{ insert: param, A.03.01.01.ODP.01 }},"
+                      },
+                      {
+                        "id": "SR-03.01.01.f.03",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.f.03"
+                          }
+                        ],
+                        "prose": "The accounts are no longer associated with a user or individual,"
+                      },
+                      {
+                        "id": "SR-03.01.01.f.04",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.f.04"
+                          }
+                        ],
+                        "prose": "The accounts are in violation of organizational policy, or"
+                      },
+                      {
+                        "id": "SR-03.01.01.f.05",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.f.05"
+                          }
+                        ],
+                        "prose": "Significant risks associated with individuals are discovered."
+                      }
+                    ]
+                  },
+                  {
+                    "id": "SR-03.01.01.g",
+                    "name": "item",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "SR-03.01.01.g"
+                      }
+                    ],
+                    "prose": "Notify account managers and designated personnel or roles within:",
+                    "parts": [
+                      {
+                        "id": "SR-03.01.01.g.01",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.g.01"
+                          }
+                        ],
+                        "prose": "{{ insert: param, A.03.01.01.ODP.02 }} when accounts are no longer required."
+                      },
+                      {
+                        "id": "SR-03.01.01.g.02",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.g.02"
+                          }
+                        ],
+                        "prose": "{{ insert: param, A.03.01.01.ODP.03 }} when users are terminated or transferred."
+                      },
+                      {
+                        "id": "SR-03.01.01.g.03",
+                        "name": "item",
+                        "props": [
+                          {
+                            "name": "label",
+                            "value": "SR-03.01.01.g.03"
+                          }
+                        ],
+                        "prose": "{{ insert: param, A.03.01.01.ODP.04 }} when system usage or the need-to-know changes for an individual."
+                      }
+                    ]
+                  },
+                  {
+                    "id": "SR-03.01.01.h",
+                    "name": "item",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "SR-03.01.01.h"
+                      }
+                    ],
+                    "prose": "Require that users log out of the system after {{ insert: param, A.03.01.01.ODP.05 }} of expected inactivity or when {{ insert: param, A.03.01.01.ODP.06 }}."
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.b.01",
+                "name": "assessment-objective",
+                "prose": "system accounts are created in accordance with organizational policy, procedures, prerequisites, and criteria.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.b",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.b.02",
+                "name": "assessment-objective",
+                "prose": "system accounts are enabled in accordance with organizational policy, procedures, prerequisites, and criteria.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.b",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.b.03",
+                "name": "assessment-objective",
+                "prose": "system accounts are modified in accordance with organizational policy, procedures, prerequisites, and criteria.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.b",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.b.04",
+                "name": "assessment-objective",
+                "prose": "system accounts are disabled in accordance with organizational policy, procedures, prerequisites, and criteria.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.b",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.b.05",
+                "name": "assessment-objective",
+                "prose": "system accounts are removed in accordance with organizational policy, procedures, prerequisites, and criteria.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.b",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.a.01",
+                "name": "assessment-objective",
+                "prose": "system account types allowed are defined.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.a",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.a.02",
+                "name": "assessment-objective",
+                "prose": "system account types prohibited are defined.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.a",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.c.01",
+                "name": "assessment-objective",
+                "prose": "authorized users of the system are specified.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.c.01",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.c.02",
+                "name": "assessment-objective",
+                "prose": "group and role memberships are specified.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.c.02",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.c.03",
+                "name": "assessment-objective",
+                "prose": "access authorizations (i.e., privileges) for each account are specified.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.c.03",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.d.01",
+                "name": "assessment-objective",
+                "prose": "access to the system is authorized based on a valid access authorization.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.d.01",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.d.02",
+                "name": "assessment-objective",
+                "prose": "access to the system is authorized based on intended system usage.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.d.02",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.e",
+                "name": "assessment-objective",
+                "prose": "the use of system accounts is monitored.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.e",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.f.01",
+                "name": "assessment-objective",
+                "prose": "system accounts are disabled when the accounts have expired.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.f.01",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.f.02",
+                "name": "assessment-objective",
+                "prose": "system accounts are disabled when the accounts have been inactive for {{ insert: param, A.03.01.01.ODP.01 }}.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.f.02",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.f.03",
+                "name": "assessment-objective",
+                "prose": "system accounts are disabled when the accounts are no longer associated with a user or individual.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.f.03",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.f.04",
+                "name": "assessment-objective",
+                "prose": "system accounts are disabled when the accounts violate organizational policy.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.f.04",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.g.01",
+                "name": "assessment-objective",
+                "prose": "account managers and designated personnel or roles are notified within {{ insert: param, A.03.01.01.ODP.02 }} when accounts are no longer required.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.g.01",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.g.02",
+                "name": "assessment-objective",
+                "prose": "account managers and designated personnel or roles are notified within {{ insert: param, A.03.01.01.ODP.03 }} when users are terminated or transferred.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.g.02",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.g.03",
+                "name": "assessment-objective",
+                "prose": "account managers and designated personnel or roles are notified within {{ insert: param, A.03.01.01.ODP.04 }} when system usage or the need-to-know changes for an individual.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.g.03",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.f.05",
+                "name": "assessment-objective",
+                "prose": "system accounts are disabled when significant risks associated with individuals are discovered.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.f.05",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "assessment-objective_DS-A.03.01.01.h",
+                "name": "assessment-objective",
+                "prose": "users are required to log out of the system after {{ insert: param, A.03.01.01.ODP.05 }} of expected inactivity or when the following circumstances occur: {{ insert: param, A.03.01.01.ODP.06 }}.",
+                "links": [
+                  {
+                    "href": "#SR-03.01.01.h",
+                    "rel": "assessment-for"
+                  }
+                ]
+              },
+              {
+                "id": "E-03.01.01_assessment-method_examine",
+                "name": "assessment-method",
+                "props": [
+                  {
+                    "name": "method",
+                    "ns": "http://csrc.nist.gov/ns/rmf",
+                    "value": "EXAMINE"
+                  }
+                ],
+                "parts": [
+                  {
+                    "name": "assessment-objects",
+                    "prose": "access control policy and procedures\n\npersonnel termination or transfer policies and procedures\n\nprocedures for account management\n\nlist of active system accounts and the name of the individual associated with each account\n\nsystem design documentation\n\nlist of conditions for group and role membership\n\nsystem configuration settings\n\nnotifications of recent transfers, separations, or terminations of employees\n\nlist of recently disabled system accounts and the name of the individual associated with each account\n\nlist of user activities that pose significant organizational risks\n\naccess authorization records\n\naccount management compliance reviews\n\nsystem monitoring and audit records\n\nsystem security plan\n\nsystem-generated list of accounts removed\n\nsystem-generated list of emergency accounts disabled\n\nsystem-generated list of disabled accounts\n\nother relevant documents and records"
+                  }
+                ]
+              },
+              {
+                "id": "I-03.01.01_assessment-method_interview",
+                "name": "assessment-method",
+                "props": [
+                  {
+                    "name": "method",
+                    "ns": "http://csrc.nist.gov/ns/rmf",
+                    "value": "INTERVIEW"
+                  }
+                ],
+                "parts": [
+                  {
+                    "name": "assessment-objects",
+                    "prose": "personnel with account management responsibilities\n\nsystem administrators\n\npersonnel with information security responsibilities\n\nsystem developers"
+                  }
+                ]
+              },
+              {
+                "id": "T-03.01.01_assessment-method_test",
+                "name": "assessment-method",
+                "props": [
+                  {
+                    "name": "method",
+                    "ns": "http://csrc.nist.gov/ns/rmf",
+                    "value": "TEST"
+                  }
+                ],
+                "parts": [
+                  {
+                    "name": "assessment-objects",
+                    "prose": "processes for account management on the system\n\nmechanisms for implementing account management"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -80,6 +80,7 @@ observability:
     protocol: ""
     interval: 30s
 catalog:
+  requirement_part_names: [statement]
   structuring:
     section_pattern: ""
     decompose: true

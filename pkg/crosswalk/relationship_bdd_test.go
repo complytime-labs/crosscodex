@@ -29,7 +29,7 @@ var _ = Describe("Relationship rules", func() {
 		Entry("equivalent", equivalent, "equivalent"),
 		Entry("subset", subset, "subset of"),
 		Entry("superset", superset, "superset of"),
-		Entry("contributes", contributes, "contributes to"),
+		Entry("contributes", contributes, "is advanced by"),
 		Entry("complements", complements, "complements"),
 		Entry("partial", partial, "partial"),
 		Entry("conflicts", conflicts, "conflicts with"),

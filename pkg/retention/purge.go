@@ -65,6 +65,7 @@ var dbAggregates = map[DataClass]dbAggregate{
 			{"classifications", "catalog_id"},
 			{"embeddings", "catalog_id"},
 			{"controls", "catalog_id"},
+			{"catalog_containers", "catalog_id"},
 			// Cached results carry either catalog's text, so either purges
 			// them. Purge-only, like embeddings.
 			{"llm_result_cache", "source_catalog_id"},

@@ -52,7 +52,7 @@ A profile (`profiles/<name>.yaml`) names a source and target catalog, a fixed
 list of source `controls`, and where the references come from. The name must
 match `^[a-z0-9][a-z0-9.-]*$`.
 
-1. Fetch the catalogs: `task fetch:oscal-docs`.
+1. Fetch the catalogs: `task fetch:oscal-docs`. Where these and other test sources come from: [Sources of Test Material](../../../docs/dev/test-sources.md).
 2. Find where the source catalog cites the target:
 
    ```bash

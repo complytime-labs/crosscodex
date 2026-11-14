@@ -3,6 +3,8 @@ package graph_test
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -179,7 +181,7 @@ var _ = Describe("GetCrosswalk", func() {
 		It("reports a reversed verdict without an inverse as reverse and counts disagreement", func() {
 			row := rowFor(get(pairReq()), "AC-2", "SC-2")
 			Expect(row.Direction).To(Equal("reverse"))
-			Expect(row.Relationship).To(Equal("reverse: contributes to"))
+			Expect(row.Relationship).To(Equal("reverse: is advanced by"))
 			Expect(row.JobsJudged).To(BeEquivalentTo(2))
 			Expect(row.JobsAgreeing).To(BeEquivalentTo(1))
 			Expect(row.OtherVerdicts).To(Equal("equivalent@0.60 (j1)"))
@@ -191,6 +193,45 @@ var _ = Describe("GetCrosswalk", func() {
 				Expect(r.LatestJobId).NotTo(Equal("running"))
 			}
 			Expect(resp.Provenance.JobIds).To(Equal([]string{"j1", "j2", "j3"}))
+			Expect(resp.Provenance.SelectedJobIds).To(Equal([]string{"j1", "j2", "j3"}))
+		})
+
+		Describe("provenance job lists", func() {
+			BeforeEach(func() {
+				addJob("idle", catA, catB, false, t0)
+				addJob("low", catA, catB, false, t0)
+				link("low", "a2", "b2", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, 0.3)
+			})
+
+			It("lists in job_ids only the jobs that wrote rows, and every selected job in selected_job_ids", func() {
+				resp := get(pairReq(func(m *pb.GetCrosswalkRequest) { m.Jobs = selected("j2", "idle") }))
+				Expect(resp.Provenance.JobIds).To(Equal([]string{"j2"}))
+				Expect(resp.Provenance.SelectedJobIds).To(Equal([]string{"idle", "j2"}))
+			})
+
+			It("lists every job that judged a pair", func() {
+				resp := get(pairReq(func(m *pb.GetCrosswalkRequest) { m.Jobs = selected("j2", "j1") }))
+				Expect(resp.Provenance.JobIds).To(Equal([]string{"j1", "j2"}))
+			})
+
+			It("drops a job from job_ids when the confidence floor removes all its rows, keeping it selected", func() {
+				resp := get(pairReq(func(m *pb.GetCrosswalkRequest) {
+					m.Jobs = selected("j2", "low")
+					m.MinConfidence = 0.5
+				}))
+				Expect(resp.Provenance.JobIds).To(Equal([]string{"j2"}))
+				Expect(resp.Provenance.SelectedJobIds).To(Equal([]string{"j2", "low"}))
+			})
+
+			It("reports an empty job_ids and the whole selection when no row survives", func() {
+				resp := get(pairReq(func(m *pb.GetCrosswalkRequest) {
+					m.Jobs = selected("idle", "j2")
+					m.MinConfidence = 0.99
+				}))
+				Expect(resp.Rows).To(BeEmpty())
+				Expect(resp.Provenance.JobIds).To(BeEmpty())
+				Expect(resp.Provenance.SelectedJobIds).To(Equal([]string{"idle", "j2"}))
+			})
 		})
 
 		It("counts a bidirectional job once and lets its more confident direction decide", func() {
@@ -220,6 +261,230 @@ var _ = Describe("GetCrosswalk", func() {
 			Expect(rowFor(resp, "AC-2", "SC-2").Source.ParentIdentifier).To(BeEmpty())
 		})
 
+		Describe("context breadcrumb", func() {
+			// ctl creates a Control in catalog A; title "" leaves it untitled.
+			ctl := func(id, identifier, title string) {
+				props := map[string]any{"catalog_id": catA, "identifier": identifier}
+				if title != "" {
+					props["title"] = title
+				}
+				Expect(mem.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Control", Properties: props, ValidFrom: t0})).To(Succeed())
+			}
+			// container creates a Container node; identifier "" models an ID-less group.
+			container := func(id, identifier, title string) {
+				props := map[string]any{"catalog_id": catA, "identifier": identifier, "title": title, "node_kind": "container"}
+				Expect(mem.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Container", Properties: props, ValidFrom: t0})).To(Succeed())
+			}
+			parentOf := func(parent, child string) {
+				Expect(mem.CreateEdge(ctx, tenantID, parent, child, graphdb.Edge{
+					ID: parent + ">" + child, Label: "PARENT_OF", ValidFrom: t0})).To(Succeed())
+			}
+			// sideOf links id to b1 and returns the source side of that row.
+			sideOf := func(id, identifier string) *pb.CrosswalkSide {
+				link("j1", id, "b1", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_PARTIAL, 0.5)
+				return rowFor(get(pairReq()), identifier, "SC-1").Source
+			}
+
+			BeforeEach(func() {
+				ctl("pl", "pl", "Planning")
+				ctl("pl-2", "pl-2", "System Security and Privacy Plans")
+				ctl("pl-2.a", "pl-2.a", "")
+				ctl("pl-2.a.13", "pl-2.a.13", "")
+				parentOf("pl", "pl-2")
+				parentOf("pl-2", "pl-2.a")
+				parentOf("pl-2.a", "pl-2.a.13")
+			})
+
+			It("lists titled ancestors root first and omits untitled ones, keeping the direct parent identifier", func() {
+				side := sideOf("pl-2.a.13", "pl-2.a.13")
+				Expect(side.ParentIdentifier).To(Equal("pl-2.a"))
+				Expect(side.Title).To(BeEmpty())
+				Expect(side.Context).To(Equal("Planning (pl) > System Security and Privacy Plans (pl-2)"))
+			})
+
+			It("leaves the context empty for a top-level control", func() {
+				Expect(sideOf("pl", "pl").Context).To(BeEmpty())
+			})
+
+			It("extends the breadcrumb through containers and renders an ID-less one by title alone", func() {
+				container("ctr-1", "", "Guidelines for system hardening")
+				container("ctr-1.1", "", "Operating system hardening")
+				ctl("os-1", "ISM-1", "Standard Operating Environment")
+				ctl("os-1-a", "ISM-1.a", "")
+				parentOf("ctr-1", "ctr-1.1")
+				parentOf("ctr-1.1", "os-1")
+				parentOf("os-1", "os-1-a")
+
+				side := sideOf("os-1-a", "ISM-1.a")
+				Expect(side.Context).To(Equal("Guidelines for system hardening > Operating system hardening > Standard Operating Environment (ISM-1)"))
+				Expect(side.ParentIdentifier).To(Equal("ISM-1"))
+			})
+
+			It("gives a top-level control its container's identifier as parent, empty when the container has none", func() {
+				container("ctr-1", "", "Guidelines for system hardening")
+				ctl("os-1", "ISM-1", "Standard Operating Environment")
+				parentOf("ctr-1", "os-1")
+				ctl("ac-2", "ac-2", "Account Management")
+				container("ctr-ac", "ac", "Access Control")
+				parentOf("ctr-ac", "ac-2")
+
+				ism := sideOf("os-1", "ISM-1")
+				Expect(ism.ParentIdentifier).To(BeEmpty())
+				Expect(ism.Context).To(Equal("Guidelines for system hardening"))
+				nist := sideOf("ac-2", "ac-2")
+				Expect(nist.ParentIdentifier).To(Equal("ac"))
+				Expect(nist.Context).To(Equal("Access Control (ac)"))
+			})
+
+			It("lists the SP 800-53 family, control and enhancement ahead of a part", func() {
+				container("ctr-ac", "ac", "Access Control")
+				ctl("ac-2", "ac-2", "Account Management")
+				ctl("ac-2.7", "ac-2.7", "Privileged User Accounts")
+				ctl("ac-2.7.a", "ac-2.7.a", "")
+				parentOf("ctr-ac", "ac-2")
+				parentOf("ac-2", "ac-2.7")
+				parentOf("ac-2.7", "ac-2.7.a")
+
+				side := sideOf("ac-2.7.a", "ac-2.7.a")
+				Expect(side.ParentIdentifier).To(Equal("ac-2.7"))
+				Expect(side.Context).To(Equal("Access Control (ac) > Account Management (ac-2) > Privileged User Accounts (ac-2.7)"))
+			})
+
+			Describe("published labels", func() {
+				// labelled adds a node carrying a published label beside its identifier.
+				labelled := func(id, label, title string) {
+					props := map[string]any{"catalog_id": catA, "identifier": id, "label": label, "title": title}
+					Expect(mem.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Control", Properties: props, ValidFrom: t0})).To(Succeed())
+				}
+
+				It("renders the breadcrumb with labels as the catalog prints them", func() {
+					Expect(mem.CreateNode(ctx, tenantID, graphdb.Node{ID: "ctr-ac", Label: "Container", ValidFrom: t0, Properties: map[string]any{
+						"catalog_id": catA, "identifier": "ac", "label": "AC", "title": "Access Control", "node_kind": "container"}})).To(Succeed())
+					labelled("ac-2", "AC-2", "Account Management")
+					labelled("ac-2.7", "AC-2(7)", "Privileged User Accounts")
+					parentOf("ctr-ac", "ac-2")
+					parentOf("ac-2", "ac-2.7")
+
+					side := sideOf("ac-2.7", "ac-2.7")
+					Expect(side.Context).To(Equal("Access Control (AC) > Account Management (AC-2)"))
+					Expect(side.Label).To(Equal("AC-2(7)"))
+					Expect(side.ParentIdentifier).To(Equal("ac-2"))
+					Expect(side.ParentLabel).To(Equal("AC-2"))
+				})
+
+				It("includes the control's own label only on the side, not in its breadcrumb", func() {
+					labelled("ac-2", "AC-2", "Account Management")
+					labelled("ac-2.7", "AC-2(7)", "Privileged User Accounts")
+					labelled("ac-2.7.a", "a.", "")
+					parentOf("ac-2", "ac-2.7")
+					parentOf("ac-2.7", "ac-2.7.a")
+
+					side := sideOf("ac-2.7.a", "ac-2.7.a")
+					Expect(side.Label).To(Equal("a."))
+					Expect(side.ParentLabel).To(Equal("AC-2(7)"))
+					Expect(side.Context).To(Equal("Account Management (AC-2) > Privileged User Accounts (AC-2(7))"))
+				})
+
+				It("falls back to the identifier for a label-less ancestor and leaves the labels empty", func() {
+					side := sideOf("pl-2.a.13", "pl-2.a.13")
+					Expect(side.Label).To(BeEmpty())
+					Expect(side.ParentLabel).To(BeEmpty())
+					Expect(side.Context).To(Equal("Planning (pl) > System Security and Privacy Plans (pl-2)"))
+				})
+
+				It("treats a whitespace-only label as absent", func() {
+					labelled("ws", "  ", "Blank Label")
+					labelled("ws-kid", "k", "")
+					parentOf("ws", "ws-kid")
+					Expect(sideOf("ws-kid", "ws-kid").Context).To(Equal("Blank Label (ws)"))
+				})
+			})
+
+			It("carries an untrusted container title through verbatim, leaving escaping to the renderers", func() {
+				container("ctr-evil", "", "=1+1")
+				ctl("ev-1", "ev-1", "Evil child")
+				ctl("ev-1-a", "ev-1.a", "")
+				parentOf("ctr-evil", "ev-1")
+				parentOf("ev-1", "ev-1-a")
+
+				Expect(sideOf("ev-1-a", "ev-1.a").Context).To(Equal("=1+1 > Evil child (ev-1)"))
+			})
+
+			It("keeps a titled control's own title and shows only its ancestors", func() {
+				side := sideOf("pl-2", "pl-2")
+				Expect(side.Title).To(Equal("System Security and Privacy Plans"))
+				Expect(side.Context).To(Equal("Planning (pl)"))
+			})
+
+			It("stops at a PARENT_OF cycle without error or a repeated part", func() {
+				ctl("x", "x", "X title")
+				ctl("y", "y", "Y title")
+				parentOf("x", "y")
+				parentOf("y", "x")
+				side := sideOf("x", "x")
+				Expect(side.Context).To(Equal("Y title (y)"))
+			})
+
+			It("picks the parent with the lesser node ID when a control has two parents at the same depth", func() {
+				ctl("mp-a", "MP-A", "Parent A")
+				ctl("mp-b", "MP-B", "Parent B")
+				ctl("mp-kid", "mp-kid", "")
+				// The greater parent is linked first, so insertion order alone would pick it.
+				parentOf("mp-b", "mp-kid")
+				parentOf("mp-a", "mp-kid")
+				side := sideOf("mp-kid", "mp-kid")
+				Expect(side.ParentIdentifier).To(Equal("MP-A"))
+				Expect(side.Context).To(Equal("Parent A (MP-A)"))
+			})
+
+			It("lists every titled ancestor of a deep chain, root first", func() {
+				prev := ""
+				for i := range 16 {
+					id := fmt.Sprintf("deep-%02d", i)
+					ctl(id, id, "Deep "+id)
+					if prev != "" {
+						parentOf(prev, id)
+					}
+					prev = id
+				}
+				side := sideOf("deep-15", "deep-15")
+				parts := strings.Split(side.Context, " > ")
+				Expect(parts).To(HaveLen(15))
+				Expect(parts[0]).To(Equal("Deep deep-00 (deep-00)"))
+				Expect(parts[len(parts)-1]).To(Equal("Deep deep-14 (deep-14)"))
+			})
+
+			It("looks up each shared ancestor once for controls with a common ancestry", func() {
+				ctl("sh-1", "sh-1", "")
+				ctl("sh-2", "sh-2", "")
+				parentOf("pl-2.a", "sh-1")
+				parentOf("pl-2.a", "sh-2")
+				counter := &traverseCounter{GraphDB: mem}
+				svc = graph.New(counter, &mockVectorDB{}, nil)
+				link("j1", "sh-1", "b1", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_PARTIAL, 0.5)
+				link("j1", "sh-2", "b1", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_PARTIAL, 0.5)
+				get(pairReq())
+				Expect(counter.starts).To(ContainElements("sh-1", "sh-2", "pl-2.a", "pl-2", "pl"))
+				for _, id := range []string{"pl-2.a", "pl-2", "pl"} {
+					Expect(slices.Collect(func(yield func(string) bool) {
+						for _, st := range counter.starts {
+							if st == id && !yield(st) {
+								return
+							}
+						}
+					})).To(HaveLen(1), id)
+				}
+			})
+
+			It("traverses each distinct control and ancestor once per page", func() {
+				counter := &traverseCounter{GraphDB: mem}
+				svc = graph.New(counter, &mockVectorDB{}, nil)
+				link("j1", "pl-2.a.13", "b1", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_PARTIAL, 0.5)
+				link("j1", "pl-2.a.13", "b2", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_PARTIAL, 0.5)
+				get(pairReq())
+				Expect(counter.starts).To(ConsistOf("a1", "a-parent", "a2", "b1", "b2", "pl-2.a.13", "pl-2.a", "pl-2", "pl"))
+			})
+		})
 		It("names frameworks from the request's catalogs, falling back to the catalog ID", func() {
 			row := rowFor(get(pairReq()), "AC-1.a", "SC-1")
 			Expect(row.Source.Framework).To(Equal("Framework A"))
@@ -436,14 +701,14 @@ var _ = Describe("GetCrosswalk", func() {
 			Expect(second.PageInfo.NextPageToken).To(BeEmpty())
 		})
 
-		It("looks up parents only for the returned page, once per distinct control", func() {
+		It("looks up parents only for the returned page, once per distinct control or ancestor", func() {
 			counter := &traverseCounter{GraphDB: mem}
 			svc = graph.New(counter, &mockVectorDB{}, nil)
 			resp := get(pairReq(func(m *pb.GetCrosswalkRequest) { m.Pagination = &pb.Pagination{PageSize: 2} }))
 			Expect(resp.Rows).To(HaveLen(2))
 			Expect(resp.PageInfo.TotalCount).To(BeEquivalentTo(3))
 			// The page holds AC-1.a twice, SC-2 and SC-1; AC-2 is on page two.
-			Expect(counter.starts).To(ConsistOf("a1", "b2", "b1"))
+			Expect(counter.starts).To(ConsistOf("a1", "a-parent", "b2", "b1"))
 		})
 
 		// tokenAt rewrites the offset of a token a previous response issued, keeping
@@ -574,25 +839,105 @@ var _ = Describe("GetCrosswalk", func() {
 			Expect(row.Relationship).To(Equal("related (derived, type unknown)"))
 		})
 
-		It("multiplies the leg confidences, sums their job counts and names the newer leg's job", func() {
-			row := derivedVia(get(transitiveReq()), "AC-1.a", "SC-1", "HB-1")
+		It("takes the best path's confidence, counts the jobs on every leg and names the newest job", func() {
+			row := derivedVia(get(transitiveReq()), "AC-1.a", "SC-1", "HB-1; HB-2")
 			Expect(row.Confidence).To(BeNumerically("~", 0.4, 1e-6))
 			Expect(row.JobsJudged).To(BeEquivalentTo(2))
 			Expect(row.JobsAgreeing).To(BeEquivalentTo(2))
 			Expect(row.LatestJobId).To(Equal("hubB"))
 		})
 
-		It("lists direct and derived rows for the same pair, one derived row per hub control", func() {
+		It("lists one derived row per pair beside the direct row, naming every hub and path support", func() {
 			resp := get(transitiveReq())
 			var got []string
 			for _, r := range resp.Rows {
 				if r.Source.Identifier == "AC-1.a" && r.Target.Identifier == "SC-1" {
-					got = append(got, r.Direction+":"+r.HubIdentifier)
+					got = append(got, fmt.Sprintf("%s:%s:%d/%d", r.Direction, r.HubIdentifier, r.PathsSupporting, r.PathsTotal))
 				}
 			}
-			Expect(got).To(ConsistOf("direct:", "derived:HB-1", "derived:HB-2"))
-			Expect(got[0]).To(Equal("direct:"))
-			Expect(rowFor(resp, "AC-1.a", "SC-1").Direction).To(Equal("direct"))
+			Expect(got).To(Equal([]string{"direct::0/0", "derived:HB-1; HB-2:2/2"}))
+			Expect(derivedVia(resp, "AC-1.a", "SC-1", "HB-1; HB-2").Review).To(BeEmpty())
+		})
+
+		It("reports provenance job IDs that include a job that judged only a hub leg", func() {
+			resp := get(transitiveReq(func(m *pb.GetCrosswalkRequest) { m.Jobs = selected("hubA", "hubB") }))
+			Expect(resp.Rows).NotTo(BeEmpty())
+			Expect(resp.Provenance.JobIds).To(Equal([]string{"hubA", "hubB"}))
+		})
+
+		It("keeps the collapsed row whole when the floor falls between its best and weaker paths", func() {
+			resp := get(transitiveReq(func(m *pb.GetCrosswalkRequest) { m.MinConfidence = 0.35 }))
+			row := derivedVia(resp, "AC-1.a", "SC-1", "HB-1; HB-2")
+			Expect(row.Confidence).To(BeNumerically("~", 0.4, 1e-6))
+			Expect(row.PathsSupporting).To(BeEquivalentTo(2))
+			Expect(row.PathsTotal).To(BeEquivalentTo(2))
+		})
+
+		It("drops the collapsed row, not just its weaker path, when the floor is above its best path", func() {
+			resp := get(transitiveReq(func(m *pb.GetCrosswalkRequest) { m.MinConfidence = 0.45 }))
+			var dirs []string
+			for _, r := range resp.Rows {
+				if r.Source.Identifier == "AC-1.a" && r.Target.Identifier == "SC-1" {
+					dirs = append(dirs, r.Direction)
+				}
+			}
+			Expect(dirs).To(Equal([]string{"direct"}))
+		})
+
+		Describe("pairs with several hub paths", func() {
+			BeforeEach(func() {
+				for _, n := range [][2]string{{"a7", catA}, {"b8", catB}, {"h7", hub}, {"h8", hub}, {"a9", catA}, {"b9", catB}, {"h9", hub}, {"h10", hub}} {
+					addNode(n[0], n[1], strings.ToUpper(n[0]))
+				}
+				syn := results.StageSynthesized
+				eq, sub, sup := pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF, pb.RelationshipType_RELATIONSHIP_TYPE_SUPERSET_OF
+				// A7 reaches B8 through two hubs, both equivalent.
+				link("hubA", "a7", "h7", syn, eq, 0.9)
+				link("hubA", "a7", "h8", syn, eq, 0.8)
+				link("hubB", "h7", "b8", syn, eq, 0.9)
+				link("hubB", "h8", "b8", syn, eq, 0.8)
+				// A9 reaches B9 as a subset through H9 and as a superset through H10.
+				link("hubA", "a9", "h9", syn, eq, 0.9)
+				link("hubB", "h9", "b9", syn, sub, 0.9)
+				link("hubA", "a9", "h10", syn, eq, 0.9)
+				link("hubB", "h10", "b9", syn, sup, 0.9)
+			})
+
+			It("lines hub_label up with hub_identifier, empty for a hub without a label", func() {
+				for _, h := range []struct{ id, label string }{{"h7", "7."}, {"h9", "9."}} {
+					n := graphdb.Node{ID: h.id, Label: "Control", ValidFrom: t0, Properties: map[string]any{
+						"catalog_id": hub, "identifier": strings.ToUpper(h.id), "label": h.label}}
+					_, err := mem.UpsertNode(ctx, tenantID, n)
+					Expect(err).NotTo(HaveOccurred())
+				}
+				// H7 has a label and H8 none; H10 has none and H9 has one (identifiers sort H10 < H9).
+				Expect(derivedVia(get(transitiveReq()), "A7", "B8", "H7; H8").HubLabel).To(Equal("7.; "))
+				Expect(derivedVia(get(transitiveReq()), "A9", "B9", "H10; H9").HubLabel).To(Equal("; 9."))
+			})
+
+			It("keeps hub_label positional when no hub has a label", func() {
+				Expect(derivedVia(get(transitiveReq()), "A7", "B8", "H7; H8").HubLabel).To(Equal("; "))
+			})
+
+			It("leaves hub_label empty for a single unlabelled hub", func() {
+				Expect(derivedVia(get(transitiveReq()), "AC-2", "SC-1", "HB-1").HubLabel).To(BeEmpty())
+			})
+
+			It("collapses agreeing paths into one row naming both hubs", func() {
+				row := derivedVia(get(transitiveReq()), "A7", "B8", "H7; H8")
+				Expect(row.RelationshipType).To(Equal(pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))
+				Expect(row.PathsSupporting).To(BeEquivalentTo(2))
+				Expect(row.PathsTotal).To(BeEquivalentTo(2))
+			})
+
+			It("reads disagreeing paths as type unknown and says so in the review", func() {
+				row := derivedVia(get(transitiveReq()), "A9", "B9", "H10; H9")
+				Expect(row.RelationshipType).To(Equal(pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED))
+				Expect(row.Relationship).To(Equal("related (derived, type unknown)"))
+				Expect(row.Review).To(Equal("paths disagree: superset of via H10, subset of via H9"))
+				Expect(row.PathsSupporting).To(BeEquivalentTo(2))
+				Expect(row.PathsTotal).To(BeEquivalentTo(2))
+			})
 		})
 
 		It("keeps a pair's rows together with the direct row first, even when a derived row is more confident", func() {
@@ -619,8 +964,10 @@ var _ = Describe("GetCrosswalk", func() {
 			addNode("h3", hub, "HB-3")
 			link("hubA", "a2", "h3", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_NO_RELATIONSHIP, 0.9)
 			link("hubB", "h3", "b2", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, 0.9)
-			for _, r := range get(transitiveReq()).Rows {
-				Expect(r.HubIdentifier).NotTo(Equal("HB-3"))
+			resp := get(transitiveReq())
+			Expect(derivedVia(resp, "AC-2", "SC-2", "HB-1").PathsTotal).To(BeEquivalentTo(1))
+			for _, r := range resp.Rows {
+				Expect(r.HubIdentifier).NotTo(ContainSubstring("HB-3"))
 			}
 		})
 
@@ -628,9 +975,23 @@ var _ = Describe("GetCrosswalk", func() {
 			addNode("h4", hub, "HB-4")
 			link("hubA", "h4", "a2", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_CONTRIBUTES_TO, 0.8)
 			link("hubB", "h4", "b2", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, 0.5)
-			row := derivedVia(get(transitiveReq()), "AC-2", "SC-2", "HB-4")
+			row := derivedVia(get(transitiveReq()), "AC-2", "SC-2", "HB-1; HB-4")
+			Expect(row.RelationshipType).To(Equal(pb.RelationshipType_RELATIONSHIP_TYPE_SUPERSET_OF))
+			Expect(row.PathsSupporting).To(BeEquivalentTo(1))
+			Expect(row.PathsTotal).To(BeEquivalentTo(2))
+		})
+
+		It("reads a pair whose only path has a reverse leg as type unknown", func() {
+			addNode("a6", catA, "AC-6")
+			addNode("b7", catB, "SC-7")
+			addNode("h6", hub, "HB-6")
+			link("hubA", "h6", "a6", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_CONTRIBUTES_TO, 0.8)
+			link("hubB", "h6", "b7", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, 0.8)
+			row := derivedVia(get(transitiveReq()), "AC-6", "SC-7", "HB-6")
 			Expect(row.RelationshipType).To(Equal(pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED))
 			Expect(row.Relationship).To(Equal("related (derived, type unknown)"))
+			Expect(row.PathsSupporting).To(BeEquivalentTo(1))
+			Expect(row.PathsTotal).To(BeEquivalentTo(1))
 		})
 
 		It("applies the confidence floor to the derived confidence", func() {
@@ -653,8 +1014,53 @@ var _ = Describe("GetCrosswalk", func() {
 		It("pages derived rows and fills parents for the returned page only", func() {
 			resp := get(transitiveReq(func(m *pb.GetCrosswalkRequest) { m.Pagination = &pb.Pagination{PageSize: 2} }))
 			Expect(resp.Rows).To(HaveLen(2))
-			Expect(resp.PageInfo.TotalCount).To(BeEquivalentTo(7))
+			Expect(resp.PageInfo.TotalCount).To(BeEquivalentTo(6))
 			Expect(resp.PageInfo.NextPageToken).NotTo(BeEmpty())
+		})
+	})
+
+	Describe("review notes", func() {
+		BeforeEach(func() {
+			addNode("a10", catA, "AC-10")
+			addNode("b10", catB, "SC-10")
+			addNode("b11", catB, "SC-11")
+			link("j1", "a10", "b10", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, 0.9)
+			link("j1", "a10", "b11", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, 0.8)
+		})
+
+		It("flags both rows of a one-to-many equivalence", func() {
+			resp := get(pairReq())
+			for _, tgt := range []string{"SC-10", "SC-11"} {
+				Expect(rowFor(resp, "AC-10", tgt).Review).To(Equal("one of 2 'equivalent' targets for AC-10: SC-10, SC-11"))
+			}
+			Expect(rowFor(resp, "AC-2", "SC-2").Review).To(BeEmpty())
+		})
+
+		It("gives every page the notes of the unpaged response", func() {
+			type id struct{ src, tgt, dir string }
+			reviews := func(resp *pb.GetCrosswalkResponse) map[id]string {
+				out := map[id]string{}
+				for _, r := range resp.Rows {
+					out[id{r.Source.Identifier, r.Target.Identifier, r.Direction}] = r.Review
+				}
+				return out
+			}
+			want := reviews(get(pairReq()))
+			Expect(want).To(HaveKeyWithValue(id{"AC-10", "SC-10", "direct"}, Not(BeEmpty())))
+
+			got := map[id]string{}
+			token := ""
+			for {
+				resp := get(pairReq(func(m *pb.GetCrosswalkRequest) { m.Pagination = &pb.Pagination{PageSize: 1, PageToken: token} }))
+				Expect(resp.Rows).To(HaveLen(1))
+				for k, v := range reviews(resp) {
+					got[k] = v
+				}
+				if token = resp.PageInfo.NextPageToken; token == "" {
+					break
+				}
+			}
+			Expect(got).To(Equal(want))
 		})
 	})
 

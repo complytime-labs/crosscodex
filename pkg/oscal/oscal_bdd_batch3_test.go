@@ -36,7 +36,7 @@ var _ = Describe("Assemble", func() {
 				Version: "1.0.0",
 			}
 
-			data, err := assembler.Assemble(context.Background(), items, meta)
+			data, err := assembler.Assemble(context.Background(), &oscal.Tree{Items: items}, meta)
 			Expect(err).NotTo(HaveOccurred())
 
 			var wrapper oscalTypes.OscalCompleteSchema
@@ -69,7 +69,7 @@ var _ = Describe("Assemble", func() {
 
 			meta := oscal.CatalogMeta{Title: "Multi-Group Catalog", Version: "1.0.0"}
 
-			data, err := assembler.Assemble(context.Background(), items, meta)
+			data, err := assembler.Assemble(context.Background(), &oscal.Tree{Items: items}, meta)
 			Expect(err).NotTo(HaveOccurred())
 
 			var wrapper oscalTypes.OscalCompleteSchema
@@ -101,7 +101,7 @@ var _ = Describe("Assemble", func() {
 
 			meta := oscal.CatalogMeta{Title: "Parent-Child Catalog", Version: "1.0.0"}
 
-			data, err := assembler.Assemble(context.Background(), items, meta)
+			data, err := assembler.Assemble(context.Background(), &oscal.Tree{Items: items}, meta)
 			Expect(err).NotTo(HaveOccurred())
 
 			var wrapper oscalTypes.OscalCompleteSchema
@@ -145,22 +145,22 @@ var _ = Describe("Assemble", func() {
 	})
 
 	Context("empty GroupID", func() {
-		It("assigns controls to a default group", func() {
+		It("emits an ungrouped item as a top-level control without inventing a group", func() {
 			items := []oscal.ControlItem{
 				{ID: "misc-1", Title: "Miscellaneous Control", Text: "No group specified", GroupID: ""},
 			}
 
-			meta := oscal.CatalogMeta{Title: "Default Group Catalog", Version: "1.0.0"}
+			meta := oscal.CatalogMeta{Title: "Ungrouped Catalog", Version: "1.0.0"}
 
-			data, err := assembler.Assemble(context.Background(), items, meta)
+			data, err := assembler.Assemble(context.Background(), &oscal.Tree{Items: items}, meta)
 			Expect(err).NotTo(HaveOccurred())
 
 			var wrapper oscalTypes.OscalCompleteSchema
 			Expect(json.Unmarshal(data, &wrapper)).To(Succeed())
-			Expect(wrapper.Catalog.Groups).NotTo(BeNil())
-			groups := *wrapper.Catalog.Groups
-			Expect(groups).NotTo(BeEmpty())
-			Expect(groups[0].ID).To(Equal("default"))
+			Expect(wrapper.Catalog.Groups).To(BeNil())
+			Expect(wrapper.Catalog.Controls).NotTo(BeNil())
+			Expect(*wrapper.Catalog.Controls).To(HaveLen(1))
+			Expect((*wrapper.Catalog.Controls)[0].ID).To(Equal("misc-1"))
 		})
 	})
 
@@ -181,7 +181,7 @@ var _ = Describe("Assemble", func() {
 
 			meta := oscal.CatalogMeta{Title: "Test Catalog", Version: "1.0.0"}
 
-			data, err := assembler.Assemble(context.Background(), items, meta)
+			data, err := assembler.Assemble(context.Background(), &oscal.Tree{Items: items}, meta)
 			Expect(err).NotTo(HaveOccurred())
 
 			var result map[string]interface{}

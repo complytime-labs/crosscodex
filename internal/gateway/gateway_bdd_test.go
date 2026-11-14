@@ -5,6 +5,7 @@ package gateway_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -646,6 +647,31 @@ var _ = Describe("SubmitDocument", func() {
 		Expect(resp.Msg.GetDocumentId()).To(Equal("doc-1"))
 		Expect(resp.Msg.GetCatalogId()).To(Equal("cat-1"))
 		Expect(createJobCalled).To(BeFalse())
+	})
+
+	It("copies the parse response's textless controls, uncapped, into the response", func() {
+		var textless []*pb.TextlessControl
+		for i := 0; i < 25; i++ {
+			textless = append(textless, &pb.TextlessControl{Identifier: fmt.Sprintf("C-%d", i), PartNames: []string{"overview"}})
+		}
+		svc := newTestService(gateway.WithCatalogBackend(&mockCatalog{
+			parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				return connect.NewResponse(&pb.ParseCatalogResponse{CatalogId: "cat-1", TextlessControls: textless}), nil
+			},
+		}))
+
+		submit, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		streamed, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(), &pb.StreamDocumentMetadata{}, []byte("test doc"))
+		Expect(err).NotTo(HaveOccurred())
+
+		for _, resp := range []*pb.SubmitDocumentResponse{submit.Msg, streamed.Msg} {
+			Expect(resp.GetTextlessControls()).To(HaveLen(25))
+			Expect(resp.GetTextlessControls()[24].GetIdentifier()).To(Equal("C-24"))
+			Expect(resp.GetTextlessControls()[0].GetPartNames()).To(Equal([]string{"overview"}))
+		}
 	})
 
 	It("attests the document as material and the catalog as the only product", func() {

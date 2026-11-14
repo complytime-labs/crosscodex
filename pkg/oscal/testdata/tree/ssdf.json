@@ -1,0 +1,321 @@
+{
+  "catalog": {
+    "uuid": "73d089ef-5aeb-443a-a053-c3a790e2062d",
+    "metadata": {
+      "title": "Electronic (OSCAL) Version of Secure Software Development Framework (SSDF): Recommendations for Mitigating the Risk of Software Vulnerabilities",
+      "published": "2026-10-22T16:00:00.00000-00:00",
+      "last-modified": "2026-10-22T11:30:00.00000-00:00",
+      "version": "1.0.0",
+      "oscal-version": "v1.2.3",
+      "revisions": [
+        {
+          "title": "Electronic (OSCAL) Version of Secure Software Development Framework (SSDF): Recommendations for Mitigating the Risk of Software Vulnerabilities",
+          "last-modified": "2025-07-06T22:16:50.000000-00:00",
+          "version": "1.0.0",
+          "oscal-version": "v1.1.3",
+          "links": [
+            {
+              "href": "14d86c0e-3299-426e-88bd-ab46123c3e75",
+              "rel": "version-history"
+            }
+          ],
+          "remarks": "OSCAL v1.1.3 representation of the Secure Software Development Framework (SSDF)."
+        }
+      ],
+      "props": [
+        {
+          "name": "framework-identifier",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "SSDF"
+        },
+        {
+          "name": "framework-version-identifier",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "SP_800_218_1_1_0"
+        },
+        {
+          "name": "generated-by",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "Cybersecurity And Privacy Open Reference Datasets In OSCAL (CAPORDINO)"
+        },
+        {
+          "name": "publication-status",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "Final"
+        }
+      ],
+      "links": [
+        {
+          "href": "#b6b6f996-2c51-4dd0-ac25-3a2e73930b58",
+          "rel": "alternate"
+        },
+        {
+          "href": "#b7cd7296-3062-44ac-868f-347d55295298",
+          "rel": "canonical"
+        },
+        {
+          "href": "#af13a2bc-4b01-4855-a17e-7966285061ad",
+          "rel": "cprt"
+        }
+      ],
+      "roles": [
+        {
+          "id": "creator",
+          "title": "OSCAL Document Creator"
+        },
+        {
+          "id": "publisher",
+          "title": "SP 800-218 Publisher"
+        },
+        {
+          "id": "contact-creator",
+          "title": "Contact Electronic Version Creator"
+        },
+        {
+          "id": "contact-publisher",
+          "title": "Contact Publisher"
+        }
+      ],
+      "parties": [
+        {
+          "uuid": "98c78f9b-5d50-4b01-b47f-d16801e8d0ab",
+          "type": "organization",
+          "name": "OSCAL Program",
+          "short-name": "NIST",
+          "email-addresses": [
+            "oscal@nist.gov"
+          ],
+          "addresses": [
+            {
+              "addr-lines": [
+                "National Institute of Standards and Technology",
+                "Attn: Computer Security Division",
+                "Information Technology Laboratory",
+                "100 Bureau Drive (Mail Stop 2000)"
+              ],
+              "city": "Gaithersburg",
+              "state": "MD",
+              "postal-code": "20899-2000"
+            }
+          ]
+        },
+        {
+          "uuid": "985fea3e-a6e5-4a57-ba3d-74f063bc8fa2",
+          "type": "organization",
+          "name": "National Institute of Standards and Technology",
+          "short-name": "NIST",
+          "email-addresses": [
+            "ssdf@nist.gov"
+          ],
+          "addresses": [
+            {
+              "addr-lines": [
+                "National Institute of Standards and Technology",
+                "Attn: Computer Security Division",
+                "Information Technology Laboratory",
+                "100 Bureau Drive (Mail Stop 2000)"
+              ],
+              "city": "Gaithersburg",
+              "state": "MD",
+              "postal-code": "20899-2000"
+            }
+          ]
+        }
+      ],
+      "responsible-parties": [
+        {
+          "role-id": "creator",
+          "party-uuids": [
+            "98c78f9b-5d50-4b01-b47f-d16801e8d0ab"
+          ]
+        },
+        {
+          "role-id": "publisher",
+          "party-uuids": [
+            "985fea3e-a6e5-4a57-ba3d-74f063bc8fa2"
+          ]
+        },
+        {
+          "role-id": "contact-publisher",
+          "party-uuids": [
+            "985fea3e-a6e5-4a57-ba3d-74f063bc8fa2"
+          ]
+        },
+        {
+          "role-id": "contact-creator",
+          "party-uuids": [
+            "98c78f9b-5d50-4b01-b47f-d16801e8d0ab"
+          ]
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "PO",
+        "class": "group",
+        "title": "Prepare the Organization",
+        "props": [
+          {
+            "name": "sort-id",
+            "value": "000001"
+          },
+          {
+            "name": "label",
+            "value": "Prepare the Organization (PO)"
+          }
+        ],
+        "parts": [
+          {
+            "id": "overview_PO",
+            "name": "overview",
+            "prose": "Organizations should ensure that their people, processes, and technology are prepared to perform secure software development at the organization level. Many organizations will find some PO practices to also be applicable to subsets of their secure software development, like individual development groups or projects."
+          }
+        ],
+        "controls": [
+          {
+            "id": "PO.1",
+            "class": "practice",
+            "title": "Define Security Requirements for Software Development",
+            "props": [
+              {
+                "name": "sort-id",
+                "value": "000001.000001"
+              },
+              {
+                "name": "label",
+                "value": "Define Security Requirements for Software Development (PO.1)"
+              }
+            ],
+            "parts": [
+              {
+                "id": "statement_PO.1",
+                "name": "statement",
+                "prose": "Ensure that security requirements for software development are known at all times so that they can be taken into account throughout the SDLC and duplication of effort can be minimized because the requirements information can be collected once and shared. This includes requirements from internal sources (e.g., the organization’s policies, business objectives, and risk management strategy) and external sources (e.g., applicable laws and regulations)."
+              }
+            ],
+            "controls": [
+              {
+                "id": "PO.1.1",
+                "class": "task",
+                "title": "PO.1.1",
+                "props": [
+                  {
+                    "name": "sort-id",
+                    "value": "000001.000001.000001"
+                  },
+                  {
+                    "name": "label",
+                    "value": "PO.1.1"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "#00b12b29-654e-4fbb-8db0-6a156deb7eb4",
+                    "rel": "external_reference",
+                    "text": "SM.3, DE.1, IA.1, IA.2"
+                  },
+                  {
+                    "href": "#f25c612a-bbe7-495e-ad30-183bf090e376",
+                    "rel": "external_reference",
+                    "text": "CP1.1, CP1.3, SR1.1, SR2.2, SE1.2, SE2.6"
+                  },
+                  {
+                    "href": "#a5859a88-27b6-43fd-92e5-aed9941b6ccb",
+                    "rel": "external_reference",
+                    "text": "4e(ix)"
+                  },
+                  {
+                    "href": "#f7767db5-eb4c-47fc-8bcc-fb93a20ad406",
+                    "rel": "external_reference",
+                    "text": "SM-7, SM-9"
+                  },
+                  {
+                    "href": "#26f48464-ac58-4237-a108-dfdc787f7400",
+                    "rel": "external_reference",
+                    "text": "ID.GV-3"
+                  },
+                  {
+                    "href": "#8b354ddf-2f97-40f2-acc6-15b90bef0fba",
+                    "rel": "external_reference",
+                    "text": "1.1.1"
+                  },
+                  {
+                    "href": "#e3cb2596-7863-498f-8a37-7b47ea4f42c1",
+                    "rel": "external_reference",
+                    "text": "1.10"
+                  },
+                  {
+                    "href": "#990b58bf-e88e-4ed0-95dd-f52e6b933d60",
+                    "rel": "external_reference",
+                    "text": "PC1-A, PC1-B, PC2-A"
+                  },
+                  {
+                    "href": "#01e319d7-c2ab-494f-acfe-76b5941fc016",
+                    "rel": "external_reference",
+                    "text": "2.1, 2.2"
+                  },
+                  {
+                    "href": "#695939c2-27b9-4e45-b690-85de42dbd53a",
+                    "rel": "external_reference",
+                    "text": "Planning the Implementation and Deployment of Secure Development Practices"
+                  },
+                  {
+                    "href": "#79b86445-1dc2-497e-9097-6ae5bcc36c4b",
+                    "rel": "external_reference",
+                    "text": "3.1.2, 3.2.1, 3.2.2, 3.3.1, 3.4.2, 3.4.3"
+                  },
+                  {
+                    "href": "#4c47252a-3356-45a7-b474-556c33d13ae4",
+                    "rel": "external_reference",
+                    "text": "SA-1, SA-8, SA-15, SR-3"
+                  },
+                  {
+                    "href": "#0aa5e31f-31d7-41bd-8ae9-dd68229f683c",
+                    "rel": "external_reference",
+                    "text": "T0414; K0003, K0039, K0044, K0157, K0168, K0177, K0211, K0260, K0261, K0262, K0524; S0010, S0357, S0368; A0033, A0123, A0151"
+                  },
+                  {
+                    "href": "#4f517150-7171-44ba-ae0c-5fb1f2b3a3f8",
+                    "rel": "external_reference",
+                    "text": "SA-1, SA-8, SA-15, SR-3"
+                  }
+                ],
+                "parts": [
+                  {
+                    "id": "statement_PO.1.1",
+                    "name": "statement",
+                    "prose": "Identify and document all security requirements for the organization’s software development infrastructures and processes, and maintain the requirements over time."
+                  },
+                  {
+                    "id": "PO.1.1.1",
+                    "name": "example",
+                    "title": "Example 1:",
+                    "prose": "Define policies for securing software development infrastructures and their components, including development endpoints, throughout the SDLC and maintaining that security."
+                  },
+                  {
+                    "id": "PO.1.1.2",
+                    "name": "example",
+                    "title": "Example 2:",
+                    "prose": "Define policies for securing software development processes throughout the SDLC and maintaining that security, including for open-source and other third-party software components utilized by software being developed."
+                  },
+                  {
+                    "id": "PO.1.1.3",
+                    "name": "example",
+                    "title": "Example 3:",
+                    "prose": "Review and update security requirements at least annually, or sooner if there are new requirements from internal or external sources, or a major security incident targeting software development infrastructure has occurred."
+                  },
+                  {
+                    "id": "PO.1.1.4",
+                    "name": "example",
+                    "title": "Example 4:",
+                    "prose": "Educate affected individuals on impending changes to requirements."
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

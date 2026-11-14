@@ -27,7 +27,9 @@ const (
 
 type fakeControlsReader struct {
 	controls              []graph.CatalogControl
+	containers            []graph.CatalogContainer
 	err                   error
+	containersErr         error
 	calls                 int
 	gotTenant, gotCatalog string
 }
@@ -37,6 +39,13 @@ func (f *fakeControlsReader) ListCatalogControls(ctx context.Context, catalogID 
 	f.gotTenant, _ = tenant.FromContext(ctx)
 	f.gotCatalog = catalogID
 	return f.controls, f.err
+}
+
+func (f *fakeControlsReader) ListCatalogContainers(ctx context.Context, catalogID string) ([]graph.CatalogContainer, error) {
+	if got, _ := tenant.FromContext(ctx); got != f.gotTenant || catalogID != f.gotCatalog {
+		return nil, errors.New("fakeControlsReader: containers listed for a different tenant or catalog than the controls")
+	}
+	return f.containers, f.containersErr
 }
 
 // upsertFailingGraph fails UpsertNode for one node ID and delegates the rest.
@@ -82,19 +91,29 @@ var _ = Describe("Catalog parsed event projection", func() {
 	)
 
 	nodeID := func(identifier string) string { return catalogID + "/" + identifier }
-	parentOf := func(parent, child string) string {
-		return graphdb.DerivedID("parent-of", nodeID(parent), nodeID(child))
+	containerID := func(key string) string { return catalogID + "/containers/" + key }
+	parentOf := func(parentID, childID string) string {
+		return graphdb.DerivedID("parent-of", parentID, childID)
 	}
 
-	// Children are listed before their parent to prove every node is written
-	// before any edge.
+	// Children are listed before their parents to prove every node is written
+	// before any edge. ac-1 sits in the nested container g1.1, ac-2 and its
+	// part directly in g1.
 	fixture := func() []graph.CatalogControl {
 		return []graph.CatalogControl{
+			{ControlID: nodeID("ac-2_smt"), CatalogID: catalogID, Identifier: "ac-2_smt", Statement: "Manage accounts.",
+				ParentID: "ac-2", ContainerKey: "g1", NodeKind: "statement-part"},
 			{ControlID: nodeID("ac-1"), CatalogID: catalogID, Identifier: "ac-1", Title: "Policy",
-				Statement: "Develop a policy.", Class: "SP800-53", ParentID: "ac"},
+				Statement: "Develop a policy.", Class: "SP800-53", ContainerKey: "g1.1", NodeKind: "control"},
 			{ControlID: nodeID("ac-2"), CatalogID: catalogID, Identifier: "ac-2", Title: "Account Management",
-				Statement: "Manage accounts.", Class: "SP800-53", ParentID: "ac"},
-			{ControlID: nodeID("ac"), CatalogID: catalogID, Identifier: "ac", Title: "Access Control", Class: "family"},
+				Statement: "Manage accounts.", Class: "SP800-53", ContainerKey: "g1"},
+		}
+	}
+
+	containerFixture := func() []graph.CatalogContainer {
+		return []graph.CatalogContainer{
+			{CatalogID: catalogID, Key: "g1.1", Title: "Policies", ParentKey: "g1"},
+			{CatalogID: catalogID, Key: "g1", Identifier: "ac", Title: "Access Control"},
 		}
 	}
 
@@ -132,10 +151,10 @@ var _ = Describe("Catalog parsed event projection", func() {
 	}
 
 	// nodeCountIn counts the Control nodes present in tenant t's graph among
-	// every ID a spec uses.
+	// every control ID a spec uses.
 	nodeCountIn := func(t string) int {
 		n := 0
-		for _, id := range []string{"ac", "ac-1", "ac-2", "orphan"} {
+		for _, id := range []string{"ac-1", "ac-2", "ac-2_smt", "orphan"} {
 			node, err := mem.GetNode(ctx, t, nodeID(id))
 			if errors.Is(err, graphdb.ErrNodeNotFound) {
 				continue
@@ -177,7 +196,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 		mem = memdriver.New()
 		Expect(mem.CreateGraph(ctx, tenantID)).To(Succeed())
 		gdb = mem
-		reader = &fakeControlsReader{controls: fixture()}
+		reader = &fakeControlsReader{controls: fixture(), containers: containerFixture()}
 		failOn = ""
 		bus = &natsbustest.Fake{QueueSubscribeFunc: func(_ context.Context, subject, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
 			if subject == failOn {
@@ -264,19 +283,118 @@ var _ = Describe("Catalog parsed event projection", func() {
 				"title":      "Policy",
 				"statement":  "Develop a policy.",
 				"class":      "SP800-53",
+				"node_kind":  "control",
 			} {
 				Expect(node.Properties).To(HaveKeyWithValue(key, want))
 			}
 
-			Expect(parentEdges()).To(HaveLen(2))
-			for _, child := range []string{"ac-1", "ac-2"} {
-				edge, err := mem.GetEdge(ctx, tenantID, parentOf("ac", child))
-				Expect(err).NotTo(HaveOccurred())
-				Expect(edge.Label).To(Equal("PARENT_OF"))
-				Expect(edge.SourceID).To(Equal(nodeID("ac")))
-				Expect(edge.TargetID).To(Equal(nodeID(child)))
-				Expect(edge.ValidFrom.IsZero()).To(BeFalse(), "edge %s has zero ValidFrom", edge.ID)
+			// ac-2 has no node kind: the key is omitted, not set to "".
+			unkinded, err := mem.GetNode(ctx, tenantID, nodeID("ac-2"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(unkinded.Properties).NotTo(HaveKey("node_kind"))
+
+			By("linking the part to its control")
+			edge, err := mem.GetEdge(ctx, tenantID, parentOf(nodeID("ac-2"), nodeID("ac-2_smt")))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(edge.Label).To(Equal("PARENT_OF"))
+			Expect(edge.SourceID).To(Equal(nodeID("ac-2")))
+			Expect(edge.TargetID).To(Equal(nodeID("ac-2_smt")))
+			Expect(edge.ValidFrom.IsZero()).To(BeFalse(), "edge %s has zero ValidFrom", edge.ID)
+		})
+
+		It("writes a Container node per container with its identifier and title", func() {
+			build()
+			Expect(deliver(subject)).To(Succeed())
+
+			g1, err := mem.GetNode(ctx, tenantID, containerID("g1"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(g1.Label).To(Equal("Container"))
+			Expect(g1.ValidFrom.IsZero()).To(BeFalse())
+			for key, want := range map[string]string{
+				"tenant_id":  tenantID,
+				"catalog_id": catalogID,
+				"identifier": "ac",
+				"title":      "Access Control",
+				"node_kind":  "container",
+			} {
+				Expect(g1.Properties).To(HaveKeyWithValue(key, want))
 			}
+
+			By("keeping an empty identifier as an empty property")
+			nested, err := mem.GetNode(ctx, tenantID, containerID("g1.1"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nested.Properties).To(HaveKeyWithValue("identifier", ""))
+			Expect(nested.Properties).To(HaveKeyWithValue("title", "Policies"))
+		})
+
+		It("projects published labels and sort keys only where the source gave them", func() {
+			reader.controls[1].Label = "AC-2(7)"
+			reader.controls[1].SortID = "ac-02.07"
+			reader.containers[1].Label = "Access Control Family"
+			build()
+			Expect(deliver(subject)).To(Succeed())
+
+			labelled, err := mem.GetNode(ctx, tenantID, nodeID("ac-1"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(labelled.Properties).To(HaveKeyWithValue("label", "AC-2(7)"))
+			Expect(labelled.Properties).To(HaveKeyWithValue("sort_id", "ac-02.07"))
+
+			bare, err := mem.GetNode(ctx, tenantID, nodeID("ac-2"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bare.Properties).NotTo(HaveKey("label"))
+			Expect(bare.Properties).NotTo(HaveKey("sort_id"))
+
+			group, err := mem.GetNode(ctx, tenantID, containerID("g1"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(group.Properties).To(HaveKeyWithValue("label", "Access Control Family"))
+			Expect(group.Properties).NotTo(HaveKey("sort_id"))
+
+			unlabelled, err := mem.GetNode(ctx, tenantID, containerID("g1.1"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(unlabelled.Properties).NotTo(HaveKey("label"))
+			Expect(unlabelled.Properties).NotTo(HaveKey("sort_id"))
+		})
+
+		It("links containers to child containers and to top-level controls only", func() {
+			build()
+			Expect(deliver(subject)).To(Succeed())
+
+			Expect(parentEdges()).To(HaveLen(4))
+			for _, link := range [][2]string{
+				{containerID("g1"), containerID("g1.1")},
+				{containerID("g1.1"), nodeID("ac-1")},
+				{containerID("g1"), nodeID("ac-2")},
+				{nodeID("ac-2"), nodeID("ac-2_smt")},
+			} {
+				edge, err := mem.GetEdge(ctx, tenantID, parentOf(link[0], link[1]))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(edge.SourceID).To(Equal(link[0]))
+				Expect(edge.TargetID).To(Equal(link[1]))
+			}
+			_, err := mem.GetEdge(ctx, tenantID, parentOf(containerID("g1"), nodeID("ac-2_smt")))
+			Expect(err).To(MatchError(graphdb.ErrEdgeNotFound), "a part hangs off its control, not its container")
+		})
+
+		It("writes no Container node when the catalog has no controls", func() {
+			reader.controls = nil
+			build()
+			Expect(deliver(subject)).To(HaveOccurred())
+			_, err := mem.GetNode(ctx, tenantID, containerID("g1"))
+			Expect(err).To(MatchError(graphdb.ErrNodeNotFound))
+		})
+
+		It("returns a container listing failure wrapped and leaves the graph unchanged", func() {
+			injected := errors.New("connection reset by peer")
+			reader.containersErr = injected
+			build()
+
+			err := deliver(subject)
+			Expect(err).To(MatchError(injected))
+			Expect(err.Error()).To(ContainSubstring(catalogID))
+			Expect(nodeCount()).To(BeZero())
+			_, err = mem.GetNode(ctx, tenantID, containerID("g1"))
+			Expect(err).To(MatchError(graphdb.ErrNodeNotFound))
+			Expect(eventPoint("error")).To(Equal(int64(1)))
 		})
 
 		It("is idempotent when the same event is delivered twice", func() {
@@ -285,7 +403,9 @@ var _ = Describe("Catalog parsed event projection", func() {
 			Expect(deliver(subject)).To(Succeed())
 
 			Expect(nodeCount()).To(Equal(3))
-			Expect(parentEdges()).To(HaveLen(2))
+			Expect(parentEdges()).To(HaveLen(4))
+			_, err := mem.GetNode(ctx, tenantID, containerID("g1"))
+			Expect(err).NotTo(HaveOccurred())
 			Expect(logs.String()).NotTo(ContainSubstring("level=WARN"))
 		})
 
@@ -293,7 +413,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 			build()
 			Expect(deliver(subject)).To(Succeed())
 			reader.controls = fixture()
-			reader.controls[0].Title = "Policy and Procedures"
+			reader.controls[1].Title = "Policy and Procedures"
 			Expect(deliver(subject)).To(Succeed())
 
 			Expect(nodeCount()).To(Equal(3))
@@ -310,7 +430,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 			Expect(deliver(subject)).To(Succeed())
 
 			Expect(nodeCount()).To(Equal(4))
-			Expect(parentEdges()).To(HaveLen(2))
+			Expect(parentEdges()).To(HaveLen(4))
 
 			m := telemetrytest.FindMetric(tp.GetMetrics(), "graph.materialize.edges_skipped.total")
 			Expect(m).NotTo(BeNil())
@@ -374,7 +494,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 			Expect(nodeCount()).To(Equal(2))
 			_, err = mem.GetNode(ctx, tenantID, nodeID("ac-2"))
 			Expect(err).NotTo(HaveOccurred())
-			_, err = mem.GetNode(ctx, tenantID, nodeID("ac"))
+			_, err = mem.GetNode(ctx, tenantID, containerID("g1"))
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -384,8 +504,12 @@ var _ = Describe("Catalog parsed event projection", func() {
 
 			err := deliver(subject)
 			Expect(err).To(HaveOccurred())
-			for _, child := range []string{"ac-1", "ac-2"} {
-				Expect(err.Error()).To(ContainSubstring(nodeID("ac") + " -> " + nodeID(child)))
+			for _, link := range []string{
+				containerID("g1") + " -> " + containerID("g1.1"),
+				containerID("g1.1") + " -> " + nodeID("ac-1"),
+				nodeID("ac-2") + " -> " + nodeID("ac-2_smt"),
+			} {
+				Expect(err.Error()).To(ContainSubstring(link))
 			}
 			Expect(err.Error()).To(ContainSubstring("connection reset by peer"))
 			Expect(nodeCount()).To(Equal(3))
@@ -410,7 +534,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 					Expect(reader.gotTenant).To(Equal(subjectTenant))
 					Expect(reader.gotCatalog).To(Equal(catalogID))
 					Expect(nodeCountIn(subjectTenant)).To(Equal(3))
-					node, err := mem.GetNode(ctx, subjectTenant, nodeID("ac"))
+					node, err := mem.GetNode(ctx, subjectTenant, containerID("g1"))
 					Expect(err).NotTo(HaveOccurred())
 					Expect(node.Properties).To(HaveKeyWithValue("tenant_id", subjectTenant))
 					Expect(nodeCountIn(otherTenant)).To(BeZero(), "tenant-a's graph must stay unchanged")

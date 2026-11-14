@@ -4,7 +4,7 @@ package catalog
 
 var (
 	ExportIsOSCALJSON          = isOSCALJSON
-	ExportValidateItems        = validateItems
+	ExportValidateTree         = validateTree
 	ExportGenerateCatalogID    = generateCatalogID
 	ExportMergeResults         = mergeResults
 	ExportCatalogRecordToProto = catalogRecordToProto

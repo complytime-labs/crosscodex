@@ -308,7 +308,8 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
 	catalogSvc := catalog.NewService(
-		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer))),
+		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer),
+			oscal.WithRequirementPartNames(cfg.Catalog.RequirementPartNames))),
 		catalog.WithStore(catalog.NewPGStore(dbpkg.NewTenantPool(shared.appPool))),
 		catalog.WithStorage(storageProvider),
 		catalog.WithBus(shared.natsClient),

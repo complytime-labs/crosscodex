@@ -109,6 +109,17 @@ var _ = Describe("Schema version and restricted role checks", func() {
 				ContainSubstring("task deploy:down VOLUMES=1"))))
 		})
 
+		It("tells the operator to recreate a database whose controls do not name their container, as app_user", func() {
+			ctx, tx := roleCheckTx()
+			mustExec(ctx, tx, "ALTER TABLE controls DROP COLUMN container_key")
+			mustExec(ctx, tx, "SET LOCAL ROLE app_user")
+			err := db.CheckSchemaVersion(ctx, tx)
+			Expect(err).To(MatchError(And(
+				ContainSubstring("controls.container_key"),
+				ContainSubstring("created by an earlier build"),
+				ContainSubstring("task deploy:down VOLUMES=1"))))
+		})
+
 		DescribeTable("tells the operator to recreate a database created before the result-cache tables, as app_user",
 			func(table, column string) {
 				ctx, tx := roleCheckTx()
@@ -123,6 +134,7 @@ var _ = Describe("Schema version and restricted role checks", func() {
 			Entry("llm_result_cache", "llm_result_cache", "cache_key"),
 			Entry("job_cache_entries", "job_cache_entries", "attempt"),
 			Entry("job_cache_stats", "job_cache_stats", "attempt"),
+			Entry("catalog_containers", "catalog_containers", "container_key"),
 		)
 
 		It("tells the operator to recreate a database whose functions come from an earlier baseline, as app_user", func() {

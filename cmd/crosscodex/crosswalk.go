@@ -34,11 +34,26 @@ names both controls (framework, identifier, parent, title, statement), the
 relationship, its confidence and how many jobs agreed, so a reader needs no
 internal IDs. Every format has the same columns:
 
-  source_framework, source_id, source_parent, source_title, source_text,
-  relationship, confidence, direction, hub_id,
-  target_framework, target_id, target_parent, target_title, target_text,
-  jobs_judged, jobs_agreeing, other_verdicts, latest_job,
-  source_node_id, target_node_id
+  source_framework, source_id, source_label, source_parent,
+  source_parent_label, source_context, source_title, source_text,
+  relationship, confidence, direction, hub_id, hub_label, paths_supporting,
+  paths_total, target_framework, target_id, target_label, target_parent,
+  target_parent_label, target_context, target_title, target_text, jobs_judged,
+  jobs_agreeing, other_verdicts, review, latest_job, source_node_id,
+  target_node_id
+
+*_label is the label the catalog publishes for the control (or its parent), as
+a reader sees it in the source document; it is empty when the catalog
+publishes none. hub_label is positional with hub_id, "; "-joined, and empty
+on rows that are not derived.
+
+*_context is the control's titled ancestors, root first, as "title (id) > ..."
+(or "title" for an ancestor with no identifier, e.g. an ID-less group).
+review notes verdicts to check (a one-to-many "equivalent" on direct rows, derived paths that
+disagree, a derived type resting on a minority of paths); it never changes a
+verdict. A derived row is one row per pair: hub_id lists every hub control,
+paths_supporting of paths_total paths give its verdict, and its confidence is
+the highest supporting path's.
 
 The mode follows the arguments:
 
@@ -51,9 +66,10 @@ The mode follows the arguments:
 
 Only related pairs are listed: the relationship analyzer does not store "no
 relationship" verdicts. The synthesized stage lists only the mappings synthesis
-judged viable, as "results export" does; --include-non-viable adds the rest. The summary on stderr says how many completed jobs
-the rows came from; the JSON "provenance" records the catalogs, jobs, stage
-and server version that produced them. CSV starts with a UTF-8 byte order
+judged viable, as "results export" does; --include-non-viable adds the rest. The summary on stderr says how many jobs the rows
+came from and how many were selected; the JSON "provenance" records the
+catalogs, the contributing jobs (job_ids), the selected jobs (selected_job_ids),
+stage and server version that produced them. CSV starts with a UTF-8 byte order
 mark so spreadsheets read the encoding, and a cell that would start with
 = + - or @ gets a leading single quote so it is not run as a formula (XLSX
 cells get the same rule and are all text). XLSX is a workbook with sheets
@@ -119,8 +135,12 @@ embedded mode does not run one. Find catalog IDs with "crosscodex catalog list".
 		}
 
 		stderr := cmd.ErrOrStderr()
-		fmt.Fprintf(stderr, "%d rows from %d completed jobs\n", len(rows), len(prov.GetJobIds()))
-		if len(prov.GetJobIds()) == 0 {
+		jobWord := "jobs"
+		if len(prov.GetJobIds()) == 1 {
+			jobWord = "job"
+		}
+		fmt.Fprintf(stderr, "%d rows from %d %s (%d selected)\n", len(rows), len(prov.GetJobIds()), jobWord, len(prov.GetSelectedJobIds()))
+		if len(prov.GetSelectedJobIds()) == 0 {
 			fmt.Fprintln(stderr, noCompletedJobsAdvice(args))
 		} else if len(rows) == 0 {
 			fmt.Fprintln(stderr, noRowsAdvice(req.GetStage()))

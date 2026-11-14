@@ -16,6 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 )
 
 // This package's single Ginkgo bootstrap lives in main_bdd_test.go
@@ -65,6 +66,8 @@ func startTestDaemon() (*cliState, func()) {
 
 	cfg := &config.Config{}
 	cfg.Database.DSN = suDSN
+	// Built without the loader: set the default the parser would otherwise lack.
+	cfg.Catalog.RequirementPartNames = oscal.DefaultRequirementPartNames
 
 	state := &cliState{fullCfg: cfg}
 	pidPath := filepath.Join(stateDir, "daemon.pid")

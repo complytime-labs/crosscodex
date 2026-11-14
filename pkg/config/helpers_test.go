@@ -35,6 +35,7 @@ func validConfig() *config.Config {
 		Pipeline: config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: 5 * time.Minute},
 		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10000, MaxInFlight: 1},
 		Graph:    config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
+		Catalog:  config.CatalogConfig{RequirementPartNames: []string{"statement"}},
 		Analysis: config.AnalysisConfig{
 			Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 			Classification:       config.ClassificationConfig{Enabled: true, MaxTextLength: 2000, MaxTokens: 20},

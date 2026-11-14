@@ -2,6 +2,7 @@ package oscal
 
 import (
 	"maps"
+	"slices"
 	"strings"
 
 	oscalTypes "github.com/defenseunicorns/go-oscal/src/types/oscal-1-1-3"
@@ -158,11 +159,12 @@ func ItemToControl(item ControlItem) oscalTypes.Control {
 	// Convert props to OSCAL properties
 	if len(item.Props) > 0 {
 		props := make([]oscalTypes.Property, 0, len(item.Props))
-		for name, value := range item.Props {
+		// Sorted so the same item always marshals to the same bytes.
+		for _, name := range slices.Sorted(maps.Keys(item.Props)) {
 			props = append(props, oscalTypes.Property{
 				Name:  name,
 				Ns:    complianceMapperNS,
-				Value: value,
+				Value: item.Props[name],
 			})
 		}
 		ctrl.Props = &props
@@ -172,8 +174,8 @@ func ItemToControl(item ControlItem) oscalTypes.Control {
 }
 
 // CollectParams builds a parameter lookup map from catalog-level and control-level params.
-// Resolution order: param.Label first, then param.Values[0], then the
-// param.Select choices, else skip. Control params override catalog params.
+// Resolution order: param.Values[0] first (bare), then param.Label as
+// "[Assignment: <label>]", then the param.Select choices, else skip. Control params override catalog params.
 //
 // A selection (SP 800-53 Rev 5 organization-defined parameters such as
 // AC-11's) has neither label nor values; without its choices the statement
@@ -232,16 +234,17 @@ func collectParams(catalog *oscalTypes.Catalog, ctrl oscalTypes.Control, fallbac
 	return params
 }
 
-// resolveParamValue extracts value from Parameter using label-first, then values[0].
+// resolveParamValue renders a parameter that is not a selection. A set value
+// (values[0], e.g. from a resolved profile) wins and renders bare. A label-only
+// organization-defined parameter renders as NIST prints it, "[Assignment:
+// <label>]", so the text reads as a blank to fill rather than as a value.
 func resolveParamValue(param oscalTypes.Parameter) string {
-	// Prefer label
-	if param.Label != "" {
-		return param.Label
+	if param.Values != nil && len(*param.Values) > 0 && (*param.Values)[0] != "" {
+		return (*param.Values)[0]
 	}
 
-	// Fallback to first value
-	if param.Values != nil && len(*param.Values) > 0 {
-		return (*param.Values)[0]
+	if param.Label != "" {
+		return "[Assignment: " + param.Label + "]"
 	}
 
 	return ""

@@ -77,18 +77,19 @@ var _ = Describe("Purger", func() {
 		tx := purgeTx("")
 		Expect(retention.NewPurger(&dbtest.Conn{Tx: tx}, nil).Purge(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassCatalogs, ID: "cat-1", TenantID: "t1"})).To(Succeed())
 		// set_config, then one DELETE per FK child (classifications, embeddings,
-		// controls) in FK-safe order, then the parent catalog last. embeddings is
+		// controls, catalog_containers) in FK-safe order, then the parent catalog last. embeddings is
 		// deleted here though it is deliberately absent from the archive doc.
-		Expect(tx.Execs()).To(HaveLen(7))
+		Expect(tx.Execs()).To(HaveLen(8))
 		Expect(tx.Execs()[0].Query).To(ContainSubstring("app.current_tenant"))
 		Expect(tx.Execs()[1].Query).To(ContainSubstring("DELETE FROM classifications"))
 		Expect(tx.Execs()[2].Query).To(ContainSubstring("DELETE FROM embeddings"))
 		Expect(tx.Execs()[3].Query).To(ContainSubstring("DELETE FROM controls"))
+		Expect(tx.Execs()[4].Query).To(ContainSubstring("DELETE FROM catalog_containers"))
 		// A cached result is purged with either catalog whose text its
 		// request carried.
-		Expect(tx.Execs()[4].Query).To(ContainSubstring("DELETE FROM llm_result_cache WHERE source_catalog_id = $1"))
-		Expect(tx.Execs()[5].Query).To(ContainSubstring("DELETE FROM llm_result_cache WHERE target_catalog_id = $1"))
-		Expect(tx.Execs()[6].Query).To(ContainSubstring("DELETE FROM catalogs"))
+		Expect(tx.Execs()[5].Query).To(ContainSubstring("DELETE FROM llm_result_cache WHERE source_catalog_id = $1"))
+		Expect(tx.Execs()[6].Query).To(ContainSubstring("DELETE FROM llm_result_cache WHERE target_catalog_id = $1"))
+		Expect(tx.Execs()[7].Query).To(ContainSubstring("DELETE FROM catalogs"))
 		// Every child+parent delete keys on catalog_id via a bound $1; the id is
 		// never string-interpolated into the SQL text.
 		for _, e := range tx.Execs()[1:] {

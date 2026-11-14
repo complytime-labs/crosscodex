@@ -24,9 +24,9 @@ var fuzzCrosswalkSeeds = []string{
 }
 
 func fuzzCrosswalkRows(title string) []*pb.CrosswalkRow {
-	side := &pb.CrosswalkSide{Framework: "F", Identifier: "id", Title: title, Statement: title}
+	side := &pb.CrosswalkSide{Framework: "F", Identifier: "id", Context: title, Title: title, Statement: title}
 	return []*pb.CrosswalkRow{
-		{Source: side, Target: side, Relationship: "equivalent", Confidence: 0.5, Direction: "direct", JobsJudged: 1, JobsAgreeing: 1},
+		{Source: side, Target: side, Relationship: "equivalent", Confidence: 0.5, Direction: "direct", Review: title, JobsJudged: 1, JobsAgreeing: 1},
 		{Source: side, Target: side, Relationship: "subset of", Confidence: 0.25, Direction: "direct", JobsJudged: 2, JobsAgreeing: 1},
 	}
 }

@@ -23,8 +23,14 @@ const catalogSubject = "crosscodex.catalog.*.*.parsed"
 // materialize metrics, alongside the analyzer names.
 const catalogAnalyzer = "catalog"
 
-// handleCatalogEvent projects a parsed catalog's controls into Control nodes
-// and PARENT_OF edges. The tenant and catalog come from the subject and the
+// containerNodeID is the graph ID of a catalog container. The catalog service rejects item IDs
+// containing "/" (validateTree in internal/catalog), so it never collides with a control ID "<catalog_id>/<identifier>".
+func containerNodeID(catalogID, key string) string {
+	return catalogID + "/containers/" + key
+}
+
+// handleCatalogEvent projects a parsed catalog's containers and controls into
+// Container and Control nodes and PARENT_OF edges. The tenant and catalog come from the subject and the
 // content from the tenant's controls rows, so the payload is never trusted.
 // Core NATS does not redeliver: a failed projection stays absent until the
 // catalog is re-imported, which publishes the event again.
@@ -70,11 +76,35 @@ func (s *Service) projectCatalog(ctx context.Context, tenantID, catalogID string
 	if len(controls) == 0 {
 		return fmt.Errorf("catalog %s has no controls for tenant %s, although ingest publishes only after storing them; re-import the catalog to project it", catalogID, tenantID)
 	}
+	containers, err := s.controls.ListCatalogContainers(ctx, catalogID)
+	if err != nil {
+		return err
+	}
 
 	// Every node before any edge, so a child listed ahead of its parent still
 	// gets its PARENT_OF edge.
 	now := time.Now().UTC()
 	var errs []error
+	for _, c := range containers {
+		node := graphdb.Node{
+			ID:        containerNodeID(c.CatalogID, c.Key),
+			Label:     "Container",
+			ValidFrom: now,
+			Properties: map[string]any{
+				"tenant_id":  tenantID,
+				"catalog_id": c.CatalogID,
+				"identifier": c.Identifier,
+				"title":      c.Title,
+				"node_kind":  "container",
+			},
+		}
+		if c.Label != "" {
+			node.Properties["label"] = c.Label
+		}
+		if _, err := s.graph.UpsertNode(ctx, tenantID, node); err != nil {
+			errs = append(errs, fmt.Errorf("upsert Container node %s: %w", node.ID, err))
+		}
+	}
 	for _, c := range controls {
 		node := graphdb.Node{
 			ID:        c.ControlID,
@@ -89,28 +119,51 @@ func (s *Service) projectCatalog(ctx context.Context, tenantID, catalogID string
 				"class":      c.Class,
 			},
 		}
+		// Rows without a kind (imported before node-kind existed) stay unkinded.
+		if c.NodeKind != "" {
+			node.Properties["node_kind"] = c.NodeKind
+		}
+		// Published label and sort key are set only when the source gave
+		// them, so consumers can tell "none" from an empty value.
+		if c.Label != "" {
+			node.Properties["label"] = c.Label
+		}
+		if c.SortID != "" {
+			node.Properties["sort_id"] = c.SortID
+		}
 		// Upsert: the row is authoritative, so a re-import refreshes the node.
 		if _, err := s.graph.UpsertNode(ctx, tenantID, node); err != nil {
 			errs = append(errs, fmt.Errorf("upsert Control node %s: %w", c.ControlID, err))
 		}
 	}
 
-	for _, c := range controls {
-		if c.ParentID == "" {
-			continue
-		}
-		sourceID := c.CatalogID + "/" + c.ParentID
+	link := func(sourceID, targetID string) {
 		edge := graphdb.Edge{
-			ID:        graphdb.DerivedID("parent-of", sourceID, c.ControlID),
+			ID:        graphdb.DerivedID("parent-of", sourceID, targetID),
 			Label:     "PARENT_OF",
 			ValidFrom: now,
 		}
-		err := s.graph.CreateEdge(ctx, tenantID, sourceID, c.ControlID, edge)
+		err := s.graph.CreateEdge(ctx, tenantID, sourceID, targetID, edge)
 		if err == nil || errors.Is(err, graphdb.ErrEdgeExists) ||
-			s.skipMissingEndpoint(ctx, tenantID, catalogAnalyzer, "PARENT_OF", sourceID, c.ControlID, err) {
-			continue
+			s.skipMissingEndpoint(ctx, tenantID, catalogAnalyzer, "PARENT_OF", sourceID, targetID, err) {
+			return
 		}
-		errs = append(errs, fmt.Errorf("create PARENT_OF %s -> %s: %w", sourceID, c.ControlID, err))
+		errs = append(errs, fmt.Errorf("create PARENT_OF %s -> %s: %w", sourceID, targetID, err))
+	}
+	for _, c := range containers {
+		if c.ParentKey != "" {
+			link(containerNodeID(c.CatalogID, c.ParentKey), containerNodeID(c.CatalogID, c.Key))
+		}
+	}
+	for _, c := range controls {
+		switch {
+		case c.ParentID != "":
+			link(c.CatalogID+"/"+c.ParentID, c.ControlID)
+		case c.ContainerKey != "":
+			// Only a top-level control hangs off its container; its parts and
+			// enhancements carry the key too but hang off their control.
+			link(containerNodeID(c.CatalogID, c.ContainerKey), c.ControlID)
+		}
 	}
 	return errors.Join(errs...)
 }

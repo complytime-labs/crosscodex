@@ -55,7 +55,7 @@ The engine collects and purges three classes directly: `JobResults` (completed
 jobs, relational), `Catalogs` (relational), and `Attestation` (objects);
 `tierField` in `pkg/retention/tier.go` maps each to its configured tier. A
 `Catalogs` candidate is purged as an aggregate together with its relational
-dependents — `classifications`, `controls`, and `embeddings`. `Embeddings` is
+dependents — `classifications`, `controls`, `catalog_containers`, and `embeddings`. `Embeddings` is
 therefore **not** collected independently: the table carries no per-row timestamp
 (no `created_at` column), so `retention.tiers.embeddings` cannot drive an
 independent scan and embedding lifetime is bound to the parent catalog's
@@ -92,7 +92,8 @@ Purge never runs on data that was not provably archived first. The archiver
     attestation) and purges the results the job stored for reuse
     (`llm_result_cache` rows whose `job_id` is the job), which are never
     archived.
-  - `Catalogs`: the catalog plus its `classifications` and `controls`. The archive
+  - `Catalogs`: the catalog plus its `classifications`, `controls` and `containers` (the
+    `catalog_containers` rows, archive key `containers`). The archive
     doc deliberately **omits `embeddings`** even though the purge deletes them:
     embeddings are derived/regenerable, so they are purge-only. This
     archive⊆purge asymmetry is intentional — do not add embeddings to the archive
@@ -142,7 +143,7 @@ therefore performed under a dedicated, sanctioned credential:
     `requires_candidates` (job-scoped by column, no FK), then
     `DELETE FROM jobs WHERE job_id = $1`.
   - `Catalogs`: `DELETE FROM <child> WHERE catalog_id = $1` for each of
-    `classifications`, `embeddings`, `controls`, then
+    `classifications`, `embeddings`, `controls`, `catalog_containers`, then
     `DELETE FROM catalogs WHERE catalog_id = $1`. Note `embeddings` is deleted here
     though it is absent from the archive doc (purge-only; see Archive-Verify).
 

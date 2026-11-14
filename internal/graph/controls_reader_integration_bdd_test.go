@@ -69,15 +69,24 @@ var _ = Describe("PGControlsReader tenant isolation", Ordered, func() {
 				 VALUES ($1, $2, 'controls reader', '1.0', 'oscal', 'test') ON CONFLICT DO NOTHING`,
 				c.catalogID, c.tenantID)).To(Succeed())
 		}
-		seedControl := func(tenantID, catalogID, identifier, title, statement, class, parentID string) {
+		seedControl := func(tenantID, catalogID, identifier, title, statement, class, parentID, containerKey, props string) {
 			Expect(suPool.Exec(ctx,
-				`INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT DO NOTHING`,
-				tenantID, catalogID+"/"+identifier, catalogID, identifier, title, statement, class, parentID)).To(Succeed())
+				`INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id, container_key, props)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, '')::jsonb) ON CONFLICT DO NOTHING`,
+				tenantID, catalogID+"/"+identifier, catalogID, identifier, title, statement, class, parentID, containerKey, props)).To(Succeed())
 		}
-		seedControl(tenantA, catalogA, "ac", "Access Control", "", "family", "")
-		seedControl(tenantA, catalogA, "ac-1", "Policy and Procedures", "Develop a policy.", "SP800-53", "ac")
-		seedControl(tenantB, catalogB, "ac", "Tenant B Access Control", "", "family", "")
+		seedContainer := func(tenantID, catalogID, key, identifier, title, label, parentKey string) {
+			Expect(suPool.Exec(ctx,
+				`INSERT INTO catalog_containers (tenant_id, catalog_id, container_key, identifier, title, label, parent_key)
+				 VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')) ON CONFLICT DO NOTHING`,
+				tenantID, catalogID, key, identifier, title, label, parentKey)).To(Succeed())
+		}
+		seedContainer(tenantA, catalogA, "g1", "ac", "Access Control", "AC", "")
+		seedContainer(tenantA, catalogA, "g1.1", "", "Policies", "", "g1")
+		seedContainer(tenantB, catalogB, "g1", "ac", "Tenant B Access Control Group", "", "")
+		seedControl(tenantA, catalogA, "ac-1", "Policy and Procedures", "Develop a policy.", "SP800-53", "", "g1.1", `{"node-kind":"control","label":"AC-1","sort-id":"ac-01"}`)
+		seedControl(tenantA, catalogA, "ac-1_smt", "", "Develop.", "", "ac-1", "g1.1", "")
+		seedControl(tenantB, catalogB, "ac-1", "Tenant B Policy", "", "SP800-53", "", "g1", "")
 
 		appDSN, err := dbtest.RoleDSN(suDSN, "app_user", appPassword)
 		Expect(err).NotTo(HaveOccurred(), "app_user DSN")
@@ -103,28 +112,46 @@ var _ = Describe("PGControlsReader tenant isolation", Ordered, func() {
 		got, err := reader.ListCatalogControls(ctxA, catalogA)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal([]graph.CatalogControl{
-			{ControlID: catalogA + "/ac", CatalogID: catalogA, Identifier: "ac",
-				Title: "Access Control", Class: "family"},
-			{ControlID: catalogA + "/ac-1", CatalogID: catalogA, Identifier: "ac-1",
-				Title: "Policy and Procedures", Statement: "Develop a policy.", Class: "SP800-53", ParentID: "ac"},
+			{ControlID: catalogA + "/ac-1", CatalogID: catalogA, Identifier: "ac-1", Title: "Policy and Procedures",
+				Statement: "Develop a policy.", Class: "SP800-53", NodeKind: "control", Label: "AC-1", SortID: "ac-01", ContainerKey: "g1.1"},
+			{ControlID: catalogA + "/ac-1_smt", CatalogID: catalogA, Identifier: "ac-1_smt",
+				Statement: "Develop.", ParentID: "ac-1", ContainerKey: "g1.1"},
+		}))
+	})
+
+	It("lists the ctx tenant's containers with every column mapped", func() {
+		got, err := reader.ListCatalogContainers(ctxA, catalogA)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal([]graph.CatalogContainer{
+			{CatalogID: catalogA, Key: "g1", Identifier: "ac", Title: "Access Control", Label: "AC"},
+			{CatalogID: catalogA, Key: "g1.1", Title: "Policies", ParentKey: "g1"},
 		}))
 	})
 
 	It("returns no rows when another tenant asks for the catalog", func() {
-		got, err := reader.ListCatalogControls(ctxB, catalogA)
+		controls, err := reader.ListCatalogControls(ctxB, catalogA)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(BeEmpty())
+		Expect(controls).To(BeEmpty())
+		containers, err := reader.ListCatalogContainers(ctxB, catalogA)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(containers).To(BeEmpty())
 	})
 
 	It("still lists the other tenant's own catalog, so the empty result is isolation", func() {
-		got, err := reader.ListCatalogControls(ctxB, catalogB)
+		controls, err := reader.ListCatalogControls(ctxB, catalogB)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(HaveLen(1))
-		Expect(got[0].Title).To(Equal("Tenant B Access Control"))
+		Expect(controls).To(HaveLen(1))
+		Expect(controls[0].Title).To(Equal("Tenant B Policy"))
+		containers, err := reader.ListCatalogContainers(ctxB, catalogB)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(containers).To(HaveLen(1))
+		Expect(containers[0].Title).To(Equal("Tenant B Access Control Group"))
 	})
 
 	It("refuses a ctx without a tenant", func() {
 		_, err := reader.ListCatalogControls(context.Background(), catalogA)
 		Expect(errors.Is(err, tenant.ErrNoTenant)).To(BeTrue(), "got %v", err)
+		_, err = reader.ListCatalogContainers(context.Background(), catalogA)
+		Expect(err).To(MatchError(tenant.ErrNoTenant))
 	})
 })

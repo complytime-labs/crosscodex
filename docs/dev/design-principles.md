@@ -230,6 +230,16 @@ ORDER BY event_id;
 
 **Rollback and tests.** `001_initial_schema.down.sql` drops the whole schema, judgements included, so it is only for disposable databases; no `crosscodexd` command runs it. It refuses while `identity_events` holds any row, because the audit log is permanent and every human judgement's reviewer was registered through it; to decommission such a database, export the audit log with `crosscodexd admin identity export --out <file>`, store the file securely, and drop the database or its volume, which never runs the down migration. Integration-test cleanup cannot delete tenants either, so it uses `dbtest.HardDeleteTenantSQL`: a superuser statement under `session_replication_role = replica`, which skips the refusal and foreign-key triggers and is acceptable only for disposable test databases.
 
+## A Format-Neutral Control Tree
+
+The stored control set is a tree of titled nodes that no single source format owns. Adapters map into it: OSCAL today; ReqIF, SysML v2 Requirements and document headings later. Each `controls` row states its role in `Props["node-kind"]`; containers are a separate table and carry `node_kind` `container` only on their graph node:
+
+- `container`: only organizes (OSCAL group, ReqIF chapter, SysML v2 package); never carries requirement text. Stored in `catalog_containers`, keyed by position within the catalog (`g1`, `g1.1`), with an optional source identifier (OSCAL groups need not have an `id`); never a row in `controls`.
+- `control`: carries a requirement, possibly nested under another control (OSCAL enhancement).
+- `statement-part`: a decomposed piece of a control's text.
+
+New readers should dispatch on `node-kind` and not infer a role from `class`, `ParentID` or other props. Analyzers still skip sections by `class == compliance-section`; containers never reach them because they are not in `controls`. Rows without it (non-OSCAL text imports, or rows imported before the kind existed, until their catalog is re-imported) keep legacy behavior. Promoting the kind to a typed field (`ControlItem`, a `controls` column, proto) needs a migration and is future work.
+
 ## Defensive Design Principles
 
 These principles apply to all packages, not just database code. They reflect hard-won decisions about how CrossCodex handles failure, isolation, and human error.

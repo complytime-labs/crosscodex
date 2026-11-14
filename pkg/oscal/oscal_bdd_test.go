@@ -86,8 +86,9 @@ var _ = Describe("Parser", func() {
 		Expect(err).NotTo(HaveOccurred(), "failed to read test fixture")
 
 		parser = oscal.NewParser("")
-		items, err = parser.Parse(context.Background(), bytes.NewReader(data))
+		tree, err := parser.Parse(context.Background(), bytes.NewReader(data))
 		Expect(err).NotTo(HaveOccurred(), "Parse() failed")
+		items = tree.Items
 	}
 
 	Context("parsing a minimal catalog", func() {
@@ -136,8 +137,9 @@ var _ = Describe("Parser", func() {
 			ac1 := findItem(items, "ac-1")
 			Expect(ac1).NotTo(BeNil(), "AC-1 not found")
 
-			Expect(ac1.Text).To(ContainSubstring("organization-defined personnel or roles"))
-			Expect(ac1.Text).To(ContainSubstring("organization-defined frequency"))
+			Expect(ac1.Text).To(ContainSubstring("security officer"))
+			Expect(ac1.Text).NotTo(ContainSubstring("organization-defined personnel or roles"))
+			Expect(ac1.Text).To(ContainSubstring("[Assignment: organization-defined frequency]"))
 			Expect(ac1.Text).NotTo(ContainSubstring("{{ insert:"))
 		})
 	})
@@ -176,13 +178,14 @@ var _ = Describe("Parser", func() {
 						"params": [{"id": "shared", "label": "enhancement value"}],
 						"parts": [{"id": "ia-13.3_smt", "name": "statement",
 							"prose": "Ensure tokens follow {{ insert: param, ia-13_odp.01 }} and {{ insert: param, shared }}."}]}]}]}}`
-			items, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+			tree, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
 			Expect(err).NotTo(HaveOccurred())
+			items := tree.Items
 
 			enh := findItem(items, "ia-13.3")
 			Expect(enh).NotTo(BeNil())
-			Expect(enh.Text).To(Equal("Ensure tokens follow policy and enhancement value."))
-			Expect(findItem(items, "ia-13").Text).To(Equal("Use policy."))
+			Expect(enh.Text).To(Equal("Ensure tokens follow [Assignment: policy] and [Assignment: enhancement value]."))
+			Expect(findItem(items, "ia-13").Text).To(Equal("Use [Assignment: policy]."))
 		})
 
 		// SP 800-53 Rev 5 SC-42(2) inserts sc-42.01_odp, defined on its sibling SC-42(1).
@@ -195,10 +198,11 @@ var _ = Describe("Parser", func() {
 							"parts": [{"id": "sc-42.1_smt", "name": "statement", "prose": "Report {{ insert: param, sc-42.01_odp }}."}]},
 						{"id": "sc-42.2", "title": "Authorized Use",
 							"parts": [{"id": "sc-42.2_smt", "name": "statement", "prose": "Data collected by {{ insert: param, sc-42.01_odp }}."}]}]}]}}`
-			items, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+			tree, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
 			Expect(err).NotTo(HaveOccurred())
+			items := tree.Items
 
-			Expect(findItem(items, "sc-42.2").Text).To(Equal("Data collected by sensors."))
+			Expect(findItem(items, "sc-42.2").Text).To(Equal("Data collected by [Assignment: sensors]."))
 		})
 
 		It("resolves a parameter defined elsewhere when it is inserted inside a selection's choice", func() {
@@ -210,10 +214,11 @@ var _ = Describe("Parser", func() {
 					{"id": "b-1", "title": "B",
 						"params": [{"id": "b-1_odp", "select": {"choice": ["lock after {{ insert: param, a-1_odp }}", "never"]}}],
 						"parts": [{"id": "b-1_smt", "name": "statement", "prose": "Devices {{ insert: param, b-1_odp }}."}]}]}}`
-			items, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+			tree, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
 			Expect(err).NotTo(HaveOccurred())
+			items := tree.Items
 
-			Expect(findItem(items, "b-1").Text).To(Equal("Devices [Selection: lock after time period; never]."))
+			Expect(findItem(items, "b-1").Text).To(Equal("Devices [Selection: lock after [Assignment: time period]; never]."))
 		})
 	})
 

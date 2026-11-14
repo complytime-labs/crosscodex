@@ -578,6 +578,25 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			})
 		})
 
+		Context("with a container row", func() {
+			It("skips a container row without an embedding", func() {
+				control := &pb.Control{
+					ControlId:  "nist-800-53/AC",
+					Identifier: "AC",
+					Statement:  "",
+					Parts:      map[string]string{"class": "compliance-section", "node-kind": "container"},
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+
+				result, ok := tasks[0].Payload.(*pb.AnalysisResult)
+				Expect(ok).To(BeTrue())
+				Expect(result.Attributes["skipped"]).To(Equal("true"))
+			})
+		})
+
 		Context("with a withdrawn control that has a statement", func() {
 			It("produces a pre-built skip result (no embedding)", func() {
 				control := &pb.Control{

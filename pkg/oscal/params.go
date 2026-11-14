@@ -9,7 +9,7 @@ var (
 
 // CleanProse substitutes OSCAL parameter references in prose text.
 //
-// Pattern: {{ insert: param, <id> }} → resolved label/value.
+// Pattern: {{ insert: param, <id> }} → the value CollectParams resolved (set value, [Assignment: label] or [Selection: …]).
 //
 // When a parameter ID is found in the params map, it is substituted with the
 // corresponding value. When a parameter ID is not found, it is replaced with

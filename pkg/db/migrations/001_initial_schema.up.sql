@@ -704,6 +704,7 @@ CREATE TABLE IF NOT EXISTS controls (
     class         TEXT,
     parent_id     TEXT,
     group_id      TEXT,
+    container_key TEXT,
     props         JSONB,
     search_vector TSVECTOR GENERATED ALWAYS AS (
         setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
@@ -727,6 +728,42 @@ CREATE POLICY tenant_isolation ON controls
     USING (tenant_id = current_setting('app.current_tenant', true));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON controls TO app_user;
+
+-- ---------------------------------------------------------------------------
+-- catalog_containers holds the grouping nodes of a catalog's structure (an
+-- OSCAL group, a ReqIF chapter, a SysML package). They are not controls: a
+-- row in controls is something a control mapping can name, a container only
+-- groups. container_key is a position key assigned by the parser
+-- ("g" + 1-based sibling ordinals joined by "."), unique within the catalog;
+-- parent_key is NULL for a top-level container. controls.container_key names
+-- the innermost container of a grouped control. Same shape as controls:
+-- tenant-scoped by RLS, and tied to its own tenant's catalog by the composite
+-- foreign key, so a row can never reference another tenant's catalog (#260).
+
+CREATE TABLE IF NOT EXISTS catalog_containers (
+    tenant_id     TEXT NOT NULL REFERENCES tenants(tenant_id),
+    catalog_id    TEXT NOT NULL,
+    container_key TEXT NOT NULL,
+    identifier    TEXT NOT NULL DEFAULT '',
+    title         TEXT NOT NULL DEFAULT '',
+    label         TEXT NOT NULL DEFAULT '',
+    parent_key    TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, catalog_id, container_key),
+    CONSTRAINT catalog_containers_catalog_tenant_fkey
+        FOREIGN KEY (catalog_id, tenant_id) REFERENCES public.catalogs (catalog_id, tenant_id)
+);
+
+ALTER TABLE catalog_containers ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON catalog_containers
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+-- The application connects as the restricted role app_user, never as the
+-- schema owner, so row-level security binds it: it can only touch the rows of
+-- the tenant it sets in app.current_tenant. Grants are the minimum the import
+-- needs; never TRUNCATE, ALTER or TRIGGER.
+GRANT SELECT, INSERT, UPDATE, DELETE ON catalog_containers TO app_user;
 
 -- ============================================================================
 -- LLM result reuse (#243)
@@ -1017,6 +1054,7 @@ GRANT SELECT, DELETE ON public.vote_summaries          TO purge_user;
 GRANT SELECT, DELETE ON public.analysis_results        TO purge_user;
 GRANT SELECT, DELETE ON public.relationship_candidates TO purge_user;
 GRANT SELECT, DELETE ON public.controls                TO purge_user;
+GRANT SELECT, DELETE ON public.catalog_containers      TO purge_user;
 GRANT SELECT, DELETE ON public.requires_candidates     TO purge_user;
 GRANT SELECT, DELETE ON public.llm_result_cache        TO purge_user;
 GRANT SELECT, DELETE ON public.job_cache_entries       TO purge_user;

@@ -52,8 +52,8 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 			`, cat.id, env.tenantA, "Framework "+cat.prefix)).To(Succeed())
 			for _, c := range []struct{ id, identifier, title, statement, class, parent string }{
 				{cat.id + "/section", cat.prefix, "Access Control", "Access control family.", classifySectionClass, ""},
-				{cat.id + "/c1", cat.prefix + "-1", "Control One of " + cat.prefix, statement, "SC", cat.id + "/section"},
-				{cat.id + "/c2", cat.prefix + "-2", "Control Two of " + cat.prefix, statement, "SC", cat.id + "/section"},
+				{cat.id + "/c1", cat.prefix + "-1", "Control One of " + cat.prefix, statement, "SC", "section"},
+				{cat.id + "/c2", cat.prefix + "-2", "Control Two of " + cat.prefix, statement, "SC", "section"},
 			} {
 				ExpectWithOffset(1, env.idb.suPool.Exec(ctx, `
 					INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id)

@@ -50,6 +50,20 @@ message ParseCatalogRequest {
 message ParseCatalogResponse {
   string catalog_id = 1;
   JobStatus status = 2;
+  // Every imported control that has neither requirement text nor a usable
+  // title, in document order, with no cap. They keep their place in the
+  // catalog but are not analysed.
+  repeated TextlessControl textless_controls = 3;
+}
+
+// A control imported without requirement text or a usable title. It is stored
+// but not analysed.
+message TextlessControl {
+  string identifier = 1;           // The control's identifier in the catalog
+  // Names of the control's direct child parts that hold prose anywhere in
+  // their subtree, sorted and deduplicated. If one of them holds the
+  // requirement, add it to catalog.requirement_part_names and re-import.
+  repeated string part_names = 2;
 }
 
 message Catalog {

@@ -44,6 +44,7 @@ type Service struct {
 	logger            *slog.Logger
 	catalogsParsed    metric.Int64Counter
 	controlsExtracted metric.Int64Counter
+	textlessControls  metric.Int64Counter
 	parseDuration     metric.Int64Histogram
 	searchDuration    metric.Int64Histogram
 }
@@ -73,6 +74,11 @@ func NewService(opts ...ServiceOption) *Service {
 		s.controlsExtracted, err = s.meter.Int64Counter("oscal.controls.extracted.total")
 		if err != nil {
 			s.logger.Warn("failed to create controlsExtracted counter", "error", err)
+		}
+
+		s.textlessControls, err = s.meter.Int64Counter("crosscodex.catalog.textless_controls")
+		if err != nil {
+			s.logger.Warn("failed to create textlessControls counter", "error", err)
 		}
 
 		s.parseDuration, err = s.meter.Int64Histogram("oscal.parse.duration_ms")
@@ -270,13 +276,13 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		}
 	}
 
-	var items []oscal.ControlItem
+	var tree *oscal.Tree
 	if isOSCAL {
 		// Parse via Parser
 		if s.parser == nil {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("parser not configured"))
 		}
-		items, err = s.parser.Parse(ctx, bytes.NewReader(data))
+		tree, err = s.parser.Parse(ctx, bytes.NewReader(data))
 		if err != nil {
 			// A schema that cannot load is server misconfiguration whose error
 			// names the schema's path; only a parse failure is the caller's.
@@ -289,10 +295,12 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		return nil, connect.NewError(connect.CodeInvalidArgument, UnsupportedFormatError(req.Msg.GetFormat(), data))
 	}
 
-	// Validate items
-	if err := validateItems(items); err != nil {
+	// Validate the tree
+	if err := validateTree(tree); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("validation failed: %v", err))
 	}
+
+	items := tree.Items
 
 	// Generate catalog_id from content hash
 	catalogID := generateCatalogID(prov.ContentHash, tenantID)
@@ -328,30 +336,40 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			ExtractorVersion: prov.ExtractorVersion,
 		}
 
-		if err := s.store.UpsertCatalog(ctx, catalogRecord); err != nil {
-			return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store catalog: %w", err))
+		// The catalog row, its containers and its controls go in one
+		// transaction, so a failed import stores nothing.
+		containerRecords := make([]ContainerRecord, len(tree.Containers))
+		for i, c := range tree.Containers {
+			containerRecords[i] = ContainerRecord{
+				TenantID:   tenantID,
+				CatalogID:  catalogID,
+				Key:        c.Key,
+				Identifier: c.Identifier,
+				Title:      c.Title,
+				Label:      c.Label,
+				ParentKey:  c.ParentKey,
+			}
 		}
-
-		// Persist controls
 		controlRecords := make([]ControlRecord, len(items))
 		for i, item := range items {
 			controlRecords[i] = ControlRecord{
-				TenantID:   tenantID,
-				ControlID:  fmt.Sprintf("%s/%s", catalogID, item.ID),
-				CatalogID:  catalogID,
-				Identifier: item.ID,
-				Title:      item.Title,
-				Statement:  item.Text,
-				Class:      item.Class,
-				ParentID:   item.ParentID,
-				GroupID:    item.GroupID,
-				Props:      item.Props,
-				CreatedAt:  time.Now().UTC(),
+				TenantID:     tenantID,
+				ControlID:    fmt.Sprintf("%s/%s", catalogID, item.ID),
+				CatalogID:    catalogID,
+				Identifier:   item.ID,
+				Title:        item.Title,
+				Statement:    item.Text,
+				Class:        item.Class,
+				ParentID:     item.ParentID,
+				GroupID:      item.GroupID,
+				ContainerKey: item.ContainerKey,
+				Props:        item.Props,
+				CreatedAt:    time.Now().UTC(),
 			}
 		}
 
-		if err := s.store.UpsertControls(ctx, controlRecords); err != nil {
-			return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store controls: %w", err))
+		if err := s.store.UpsertCatalogWithTree(ctx, catalogRecord, containerRecords, controlRecords); err != nil {
+			return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store catalog: %w", err))
 		}
 
 		// The graph role treats an empty projection as an error, so a catalog
@@ -415,10 +433,19 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	if s.controlsExtracted != nil {
 		s.controlsExtracted.Add(ctx, int64(len(items)))
 	}
+	if s.textlessControls != nil {
+		s.textlessControls.Add(ctx, int64(len(tree.Textless)))
+	}
+
+	textless := make([]*crosscodexv1.TextlessControl, len(tree.Textless))
+	for i, tc := range tree.Textless {
+		textless[i] = &crosscodexv1.TextlessControl{Identifier: tc.Identifier, PartNames: tc.PartNames}
+	}
 
 	return connect.NewResponse(&crosscodexv1.ParseCatalogResponse{
-		CatalogId: catalogID,
-		Status:    crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
+		CatalogId:        catalogID,
+		Status:           crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
+		TextlessControls: textless,
 	}), nil
 }
 
@@ -789,17 +816,57 @@ func UnsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) erro
 		"%s; convert the document to an OSCAL catalog and import it again", OSCALRootKey, supported)
 }
 
-// validateItems checks for duplicate IDs and self-referential parents within the import.
-func validateItems(items []oscal.ControlItem) error {
-	seen := make(map[string]bool)
-	for _, item := range items {
-		if seen[item.ID] {
-			return fmt.Errorf("duplicate control ID: %s", item.ID)
+// validateTree fails closed on a tree that would store dangling or ambiguous
+// structure: duplicate item IDs or container keys, an item whose ParentID or
+// ContainerKey names nothing, a container whose ParentKey names no container,
+// self-parents, and item IDs containing "/" (the graph's container node IDs
+// rely on their absence). Every error names the offender and says to fix the source
+// catalog and re-import.
+func validateTree(tree *oscal.Tree) error {
+	containers := make(map[string]bool, len(tree.Containers))
+	for _, c := range tree.Containers {
+		if containers[c.Key] {
+			return fmt.Errorf("duplicate container key %q: container keys must be unique within a catalog; "+
+				"fix the source catalog's group structure and re-import", c.Key)
 		}
-		seen[item.ID] = true
+		containers[c.Key] = true
+	}
+	for _, c := range tree.Containers {
+		if c.ParentKey == c.Key {
+			return fmt.Errorf("self-referential container parent: container %q names itself as its parent; "+
+				"fix the source catalog's group structure and re-import", c.Key)
+		}
+		if c.ParentKey != "" && !containers[c.ParentKey] {
+			return fmt.Errorf("container %q has unknown parent container %q; "+
+				"fix the source catalog's group structure and re-import", c.Key, c.ParentKey)
+		}
+	}
 
+	items := make(map[string]bool, len(tree.Items))
+	for _, item := range tree.Items {
+		if strings.Contains(item.ID, "/") {
+			return fmt.Errorf("invalid item ID %q: IDs must be OSCAL tokens without \"/\" because graph node IDs are "+
+				"\"<catalog>/<id>\" and a slash could collide with a container node; "+
+				"fix the source catalog and re-import", item.ID)
+		}
+		if items[item.ID] {
+			return fmt.Errorf("duplicate control ID %q: IDs must be unique across a catalog's controls and statement parts; "+
+				"rename one in the source catalog and re-import", item.ID)
+		}
+		items[item.ID] = true
+	}
+	for _, item := range tree.Items {
 		if item.ParentID == item.ID {
-			return fmt.Errorf("self-referential parent: %s", item.ID)
+			return fmt.Errorf("self-referential parent: item %q names itself as its parent; "+
+				"fix the source catalog and re-import", item.ID)
+		}
+		if item.ParentID != "" && !items[item.ParentID] {
+			return fmt.Errorf("item %q has unknown parent %q; "+
+				"fix the source catalog so the parent exists and re-import", item.ID, item.ParentID)
+		}
+		if item.ContainerKey != "" && !containers[item.ContainerKey] {
+			return fmt.Errorf("item %q names unknown container %q; "+
+				"fix the source catalog's group structure and re-import", item.ID, item.ContainerKey)
 		}
 	}
 	return nil

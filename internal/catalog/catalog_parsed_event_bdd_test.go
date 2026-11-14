@@ -49,35 +49,34 @@ type editingParser struct {
 	edit func([]oscal.ControlItem) []oscal.ControlItem
 }
 
-func (p *editingParser) Parse(ctx context.Context, r io.Reader) ([]oscal.ControlItem, error) {
-	items, err := p.Parser.Parse(ctx, r)
+func (p *editingParser) Parse(ctx context.Context, r io.Reader) (*oscal.Tree, error) {
+	tree, err := p.Parser.Parse(ctx, r)
 	if err != nil || p.edit == nil {
-		return items, err
+		return tree, err
 	}
-	return p.edit(items), nil
+	tree.Items = p.edit(tree.Items)
+	return tree, nil
 }
 
 // memStore is a minimal in-memory catalog Store that logs its writes.
 type memStore struct {
-	log      *callLog
-	catalogs []CatalogRecord
-	controls []ControlRecord
+	log        *callLog
+	catalogs   []CatalogRecord
+	controls   []ControlRecord
+	containers []ContainerRecord
 }
 
-func (m *memStore) UpsertCatalog(_ context.Context, c CatalogRecord) error {
-	m.catalogs = append(m.catalogs, c)
-	m.log.add("upsert catalog")
-	return nil
-}
 func (m *memStore) GetCatalog(context.Context, string) (*CatalogRecord, error) {
 	return nil, nil
 }
 func (m *memStore) ListCatalogs(context.Context, ListOptions) ([]CatalogRecord, PageInfo, error) {
 	return nil, PageInfo{}, nil
 }
-func (m *memStore) UpsertControls(_ context.Context, c []ControlRecord) error {
+func (m *memStore) UpsertCatalogWithTree(_ context.Context, cat CatalogRecord, containers []ContainerRecord, c []ControlRecord) error {
+	m.catalogs = append(m.catalogs, cat)
+	m.containers = append(m.containers, containers...)
 	m.controls = append(m.controls, c...)
-	m.log.add("upsert controls")
+	m.log.add("upsert catalog with tree")
 	return nil
 }
 func (m *memStore) GetControl(context.Context, string) (*ControlRecord, error) { return nil, nil }
@@ -179,20 +178,21 @@ var _ = Describe("ParseCatalog parsed event", func() {
 		Expect(json.Unmarshal(bus.Published()[at].Data, &payload)).To(Succeed())
 		Expect(payload.CatalogID).To(Equal(catalogID))
 		Expect(payload.ControlCount).To(Equal(len(store.controls)))
-		Expect(payload.ControlCount).To(Equal(3))
+		Expect(payload.ControlCount).To(Equal(3), "containers are not controls")
+		Expect(store.containers).To(HaveLen(1))
 	})
 
-	It("publishes the parsed event only after the controls are stored", func() {
+	It("publishes the parsed event only after the catalog tree is stored", func() {
 		resp, err := parse(newService(WithStore(store), WithBus(bus)))
 		Expect(err).NotTo(HaveOccurred())
 		subject, err := natsbus.CatalogParsedSubject(tenantID, resp.Msg.GetCatalogId())
 		Expect(err).NotTo(HaveOccurred())
 
 		calls := log.snapshot()
-		upsertAt := slices.Index(calls, "upsert controls")
+		upsertAt := slices.Index(calls, "upsert catalog with tree")
 		publishAt := slices.Index(calls, "publish "+subject)
-		Expect(upsertAt).To(BeNumerically(">=", 0), "controls were stored: %v", calls)
-		Expect(publishAt).To(BeNumerically(">", upsertAt), "publish must follow the control upsert: %v", calls)
+		Expect(upsertAt).To(BeNumerically(">=", 0), "the tree was stored: %v", calls)
+		Expect(publishAt).To(BeNumerically(">", upsertAt), "publish must follow the tree upsert: %v", calls)
 	})
 
 	It("fails the import with a retryable, actionable error when the parsed event cannot be published, leaving the stored rows in place", func() {

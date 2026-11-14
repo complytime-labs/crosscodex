@@ -411,8 +411,8 @@ func (env *e2eEnv) seedAlikeCatalogs() (src, tgt string) {
 	for _, cat := range []struct{ id, name string }{{src, "E2E Source Framework"}, {tgt, "E2E Target Framework"}} {
 		env.seedCatalog(cat.id, cat.name, []e2eControl{
 			{cat.id + "/section", "Access Control", "Access control family.", classifySectionClass, ""},
-			{cat.id + "/c1", "Control One", e2eIdenticalStatement, "SC", cat.id + "/section"},
-			{cat.id + "/c2", "Control Two", e2eIdenticalStatement, "SC", cat.id + "/section"},
+			{cat.id + "/c1", "Control One", e2eIdenticalStatement, "SC", "section"},
+			{cat.id + "/c2", "Control Two", e2eIdenticalStatement, "SC", "section"},
 		})
 	}
 	return src, tgt
@@ -471,8 +471,8 @@ var _ = Describe("Pipeline end-to-end", Ordered, func() {
 		// ancestor_title path (both inherit the section's title).
 		env.seedCatalog(catalogID, "E2E Catalog", []e2eControl{
 			{catalogID + "/section-1", "Access Control", "Access control family.", classifySectionClass, ""},
-			{catalogID + "/ctrl-1", "Control One", e2eIdenticalStatement, "SC", catalogID + "/section-1"},
-			{catalogID + "/ctrl-2", "Control Two", e2eIdenticalStatement, "SC", catalogID + "/section-1"},
+			{catalogID + "/ctrl-1", "Control One", e2eIdenticalStatement, "SC", "section-1"},
+			{catalogID + "/ctrl-2", "Control Two", e2eIdenticalStatement, "SC", "section-1"},
 		})
 
 		jobID := env.runJob(&pb.JobConfig{CatalogId: catalogID, TargetCatalogId: catalogID})
