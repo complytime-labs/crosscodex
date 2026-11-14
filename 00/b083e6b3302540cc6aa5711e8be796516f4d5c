@@ -1,0 +1,24 @@
+test/eval/crosswalk/run.sh
+  s_21535d83e059fe::t_244ad2e23ba459 35
+  s_21535d83e059fe::t_86b809fd7d2664 12-13
+test/tooling/eval-crosswalk.venom.yml
+  s_21535d83e059fe::t_d0739723bd8a5a 27-28
+README.md
+  s_21535d83e059fe::t_244ad2e23ba459 869
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "00b083e6b3302540cc6aa5711e8be796516f4d5c",
+  "prompts": {},
+  "sessions": {
+    "s_21535d83e059fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a55b66a6-90bf-405a-b5fa-ec54c6ef1232",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
