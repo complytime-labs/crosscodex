@@ -88,4 +88,39 @@ references:
 		Expect(filepath.Join(out, "report.json")).To(BeAnExistingFile())
 		Expect(filepath.Join(out, "report.md")).To(BeAnExistingFile())
 	})
+
+	Describe("--labels", func() {
+		scoreArgs := func(out string, extra ...string) []string {
+			runDir := filepath.Join(testdata, "run")
+			return append([]string{
+				"score", "--root", synthRoot,
+				"--profile", filepath.Join(testdata, "profiles", "links_in_text.yaml"),
+				"--subset", filepath.Join(testdata, "source_a.json"),
+				"--mappings", filepath.Join(runDir, "mappings.json"),
+				"--candidates", filepath.Join(runDir, "candidates.json"),
+				"--status", filepath.Join(runDir, "status.json"),
+				"--out", out,
+			}, extra...)
+		}
+
+		It("adds labelled precision to the report", func() {
+			out := filepath.Join(GinkgoT().TempDir(), "report")
+			labels := filepath.Join(GinkgoT().TempDir(), "labels.yaml")
+			Expect(os.WriteFile(labels, []byte("version: 1\npairs:\n  - {source: s-1, target: ab-2, verdict: related, judged_by: [opus], rationale: fixture, date: 2026-11-12}\n"), 0o600)).To(Succeed())
+			Expect(run(scoreArgs(out, "--labels", labels), &stdout, &stderr)).To(Equal(0), stderr.String())
+			md, err := os.ReadFile(filepath.Join(out, "report.md"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(md)).To(ContainSubstring("Labelled precision: 1/1 (100.0%)"))
+			Expect(string(md)).To(MatchRegexp(`- Labels SHA-256: [0-9a-f]{64}\n`))
+		})
+
+		It("fails on an invalid labels file, naming it, and writes no report", func() {
+			out := filepath.Join(GinkgoT().TempDir(), "report")
+			labels := filepath.Join(GinkgoT().TempDir(), "labels.yaml")
+			Expect(os.WriteFile(labels, []byte("version: 2\n"), 0o600)).To(Succeed())
+			Expect(run(scoreArgs(out, "--labels", labels), &stdout, &stderr)).NotTo(Equal(0))
+			Expect(stderr.String()).To(ContainSubstring(labels))
+			Expect(filepath.Join(out, "report.md")).NotTo(BeAnExistingFile())
+		})
+	})
 })

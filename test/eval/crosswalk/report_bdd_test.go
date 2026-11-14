@@ -112,3 +112,43 @@ var _ = Describe("Report", func() {
 		})
 	})
 })
+
+var _ = Describe("Report precision section", func() {
+	precisionMarkdown := func(labels map[crosswalk.Pair]crosswalk.Label) string {
+		ms := []crosswalk.Mapping{mapping("s-1", "ab-2", equivalent, 0.8), mapping("s-2", "top.1", subsetOf, 0.8), mapping("s-1", "cd-9", subsetOf, 0.8)}
+		in := scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, ms, candidatesFor(ms))
+		in.Labels = labels
+		md := mustScore(in).Markdown()
+		start := strings.Index(md, "## Precision")
+		Expect(start).To(BeNumerically(">=", 0), "no Precision section in:\n%s", md)
+		return strings.SplitN(md[start:], "\n## Cost", 2)[0]
+	}
+
+	It("labels the reference rate a lower bound and says when there are no labels", func() {
+		section := precisionMarkdown(nil)
+		Expect(section).To(ContainSubstring("Reference agreement: 1/3 (33.3%) of produced rows (a lower bound"))
+		Expect(section).To(ContainSubstring("No labels for this profile."))
+		Expect(section).NotTo(ContainSubstring("Labelled precision"))
+	})
+
+	It("shows labelled precision, coverage, unlabelled and disputed rows", func() {
+		section := precisionMarkdown(map[crosswalk.Pair]crosswalk.Label{
+			{SourceID: "s-1", TargetID: "ab-2"}:  {Verdict: "related"},
+			{SourceID: "s-2", TargetID: "top.1"}: {Verdict: "disputed"},
+		})
+		Expect(section).To(ContainSubstring("Labelled precision: 1/1 (100.0%)"))
+		Expect(section).To(ContainSubstring("Label coverage: 1/3 (33.3%)"))
+		Expect(section).To(ContainSubstring("Unlabelled rows (label these next):\n\n- s-1 -> cd-9\n"))
+		Expect(section).To(ContainSubstring("Disputed rows (need a human decision):\n\n- s-2 -> top.1\n"))
+	})
+
+	It("names the labels digest in the provenance, and only when there are labels", func() {
+		ms := []crosswalk.Mapping{mapping("s-1", "ab-2", equivalent, 0.8)}
+		in := scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, ms, candidatesFor(ms))
+		Expect(mustScore(in).Markdown()).NotTo(ContainSubstring("Labels SHA-256"))
+		in.LabelsDigest = "abc123"
+		r := mustScore(in)
+		Expect(r.Provenance.LabelsDigest).To(Equal("abc123"))
+		Expect(r.Markdown()).To(ContainSubstring("- Labels SHA-256: abc123\n"))
+	})
+})

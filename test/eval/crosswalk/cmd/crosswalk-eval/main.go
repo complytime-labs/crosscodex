@@ -230,6 +230,7 @@ func runScore(args []string, stdout, stderr io.Writer) error {
 	candidates := fs.String("candidates", "", "candidates export JSON (required)")
 	status := fs.String("status", "", "job status JSON (required)")
 	baseline := fs.String("baseline", "", "report.json of an earlier run, for agreement")
+	labels := fs.String("labels", "", "labels YAML of judged candidate pairs, for labelled precision")
 	label := fs.String("label", "", "name for this run in the report")
 	out := fs.String("out", "", "directory for report.json and report.md (required)")
 	if err := parse(fs, args, stderr, map[string]*string{
@@ -257,6 +258,16 @@ func runScore(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	var labelled map[crosswalk.Pair]crosswalk.Label
+	var labelsDigest string
+	if *labels != "" {
+		if labelled, err = crosswalk.LoadLabels(*labels); err != nil {
+			return err
+		}
+		if labelsDigest, err = crosswalk.LabelsDigest(*labels); err != nil {
+			return err
+		}
+	}
 	raw, err := crosswalk.ExtractReferences(l.profile, *root, l.source)
 	if err != nil {
 		return err
@@ -268,7 +279,7 @@ func runScore(args []string, stdout, stderr io.Writer) error {
 	refs := crosswalk.ResolveReferences(raw, crosswalk.NewTargetIndex(l.target))
 	rep, err := crosswalk.Score(crosswalk.ScoreInput{
 		Profile: l.profile, Source: l.source, Subset: sub, Target: l.target,
-		Refs: refs, Run: run, Baseline: base, CSVDigest: csvDigest, Label: *label, Commit: commit,
+		Refs: refs, Run: run, Baseline: base, CSVDigest: csvDigest, Label: *label, Commit: commit, Labels: labelled, LabelsDigest: labelsDigest,
 	})
 	if err != nil {
 		return err

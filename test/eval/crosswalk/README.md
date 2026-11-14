@@ -46,6 +46,49 @@ props; the code contains no framework-specific syntax.
 and uses the profile in `testdata/profiles/synth-run.yaml`. Rerun that suite
 after changing `run.sh` or `.taskfiles/eval.yml`.
 
+## Labels
+
+Precision needs a judgement of each produced row. The reference alone gives a
+lower bound (a row it omits may be right; a row agrees when it shares the
+same base control as a reference row for the same source, the recall rule,
+which is symmetric), so `labels/<profile>.yaml` holds
+judgements of candidate pairs. `run.sh` passes it to `score` as `--labels`
+when the file exists; without it the report says "No labels" and nothing
+else changes. `LABELS_DIR` overrides the directory.
+
+```yaml
+version: 1
+pairs:
+  - source: PO.1.1          # control IDs exactly as the exported rows write them
+    target: sa-8
+    verdict: related        # related | unrelated | disputed
+    judged_by: [opus, sonnet] # non-empty subset of opus | sonnet | human
+    rationale: Both require security requirements to be defined for development.
+    date: 2026-11-12        # YYYY-MM-DD
+```
+
+The report's provenance records the labels file's SHA-256. `run.sh` stops
+before the job if `labels/<profile>.yaml` exists but is not a readable file.
+The loader treats the file as untrusted: unknown keys, aliases, a missing or
+malformed field and a second entry for one pair are errors naming the file,
+line and rule, and nothing is scored. Source and target match produced rows
+by exact string, as the scorer matches them to the references. A BOM and CRLF
+are accepted.
+
+- **Add an entry** for each pair in the report's "Unlabelled rows" list.
+- **Override** a model judgement by adding a second entry for the pair with
+  `human` in `judged_by` (`[opus, human]` counts as human). The human entry
+  wins wherever it sits in the file; delete or edit the model entry only if you
+  want it gone. Two entries for a pair without a human one, or two human
+  entries, are rejected.
+- **Resolve `disputed`** by replacing the entry with a human `related` or
+  `unrelated` one. Disputed rows are excluded from the rates and listed in the
+  report as needing a decision.
+- **Rates.** Labelled precision is rows labelled `related` over rows with a
+  non-disputed label. Coverage is rows with a non-disputed label over all
+  produced rows: read the labelled precision of a run only as far as coverage
+  supports. Labels for pairs a run did not produce are ignored.
+
 ## Adding a profile
 
 A profile (`profiles/<name>.yaml`) names a source and target catalog, a fixed

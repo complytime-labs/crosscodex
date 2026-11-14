@@ -43,6 +43,31 @@ testcases:
           - result.systemout ShouldContainSubstring candidates=yes
           - result.systemout ShouldContainSubstring tls=yes
 
+  - name: labels are scored only when a labels file exists for the profile
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/labels" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/labels"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/labels"
+        env: "PROFILE=synth-run LABEL=with LABELS_DIR={{.root}}/test/eval/crosswalk/testdata/labels"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/labels"
+        env: "PROFILE=synth-run LABEL=without LABELS_DIR={{.root}}/.test-output/eval/tooling-run/labels/none"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/labels/out/synth-run"
+          grep -q 'Labelled precision' "$w/with/report.md" && echo "with=labelled"
+          grep -q 'No labels for this profile' "$w/without/report.md" && echo "without=none"
+        assertions:
+          - result.systemout ShouldContainSubstring with=labelled
+          - result.systemout ShouldContainSubstring without=none
+
   - name: NO_CACHE=1 adds --no-cache to run start
     steps:
       - type: exec
@@ -137,6 +162,49 @@ testcases:
         assertions:
           - result.systemout ShouldNotContainSubstring exit=0
           - result.systemout ShouldContainSubstring invalid LABEL
+
+  - name: a labels path that is not a readable file stops the run before the job starts
+    steps:
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/badlabels"
+          rm -rf "$w" && mkdir -p "$w/dir/synth-run.yaml" "$w/dangling"
+          ln -s "$w/nowhere.yaml" "$w/dangling/synth-run.yaml"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/badlabels"
+        env: "PROFILE=synth-run LABEL=dir LABELS_DIR={{.root}}/.test-output/eval/tooling-run/badlabels/dir"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring not a readable regular file
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/badlabels"
+        env: "PROFILE=synth-run LABEL=dangling LABELS_DIR={{.root}}/.test-output/eval/tooling-run/badlabels/dangling"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring not a readable regular file
+      - type: exec
+        script: |
+          grep -c 'run start' "{{.root}}/.test-output/eval/tooling-run/badlabels/argv.log" || true
+        assertions:
+          - result.systemout ShouldContainSubstring 0
+
+  - name: an invalid labels file fails the score, naming the file and rule
+    steps:
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/invalidlabels"
+          rm -rf "$w" && mkdir -p "$w/labels"
+          printf 'version: 2\n' >"$w/labels/synth-run.yaml"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/invalidlabels"
+        env: "PROFILE=synth-run LABEL=t1 LABELS_DIR={{.root}}/.test-output/eval/tooling-run/invalidlabels/labels"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring synth-run.yaml
+          - result.systemout ShouldContainSubstring rule version
 
   - name: an existing run directory is never overwritten
     steps:

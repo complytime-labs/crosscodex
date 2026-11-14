@@ -1,0 +1,14 @@
+version: 1
+pairs:
+  - source: s-1
+    target: ab-2
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: Synthetic fixture judgement.
+    date: 2026-11-12
+  - source: s-2
+    target: ab-2
+    verdict: disputed
+    judged_by: [opus, sonnet]
+    rationale: Synthetic fixture disagreement.
+    date: 2026-11-12

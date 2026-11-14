@@ -844,3 +844,70 @@ func writeRunFiles(dir, mappingsJob, candidatesJob, statusJob, cacheMode, attest
 			"producer_job_ids": [], "other_producer_jobs": 0}]}`, statusJob, attestation, cacheMode))
 	return f
 }
+
+var _ = Describe("Score precision", func() {
+	lbl := func(verdict string) crosswalk.Label {
+		return crosswalk.Label{Verdict: verdict, JudgedBy: []string{"opus"}}
+	}
+	pr := func(s, t string) crosswalk.Pair { return crosswalk.Pair{SourceID: s, TargetID: t} }
+	refs := []crosswalk.Reference{ref("s-1", "ab-2"), ref("s-2", "cd-1")}
+	rows := []crosswalk.Mapping{
+		mapping("s-1", "ab-2", equivalent, 0.8), mapping("s-2", "cd-1", equivalent, 0.8),
+		mapping("s-1", "cd-9", equivalent, 0.8), mapping("s-2", "top.1", equivalent, 0.8),
+	}
+	labels := map[crosswalk.Pair]crosswalk.Label{
+		pr("s-1", "ab-2"): lbl("related"), pr("s-2", "cd-1"): lbl("related"),
+		pr("s-1", "cd-9"): lbl("unrelated"), pr("s-2", "top.1"): lbl("disputed"),
+	}
+
+	score := func(refs []crosswalk.Reference, ms []crosswalk.Mapping, ls map[crosswalk.Pair]crosswalk.Label) crosswalk.Precision {
+		in := scoreInput(refs, ms, candidatesFor(ms))
+		in.Labels = ls
+		return mustScore(in).Precision
+	}
+
+	It("reports reference, labelled and coverage rates and lists disputed rows", func() {
+		p := score(refs, rows, labels)
+		Expect(p.Reference).To(Equal(rate(2, 4)))
+		Expect(p.Labelled).To(Equal(&crosswalk.Rate{Hit: 2, Total: 3, Rate: 2.0 / 3}))
+		Expect(p.Coverage).To(Equal(&crosswalk.Rate{Hit: 3, Total: 4, Rate: 0.75}))
+		Expect(p.Disputed).To(Equal([]crosswalk.Pair{pr("s-2", "top.1")}))
+		Expect(p.Unlabelled).To(BeEmpty())
+	})
+
+	It("lists rows without a label, sorted, and leaves them out of the labelled rate", func() {
+		ls := map[crosswalk.Pair]crosswalk.Label{pr("s-1", "ab-2"): lbl("related"), pr("s-1", "cd-9"): lbl("unrelated")}
+		p := score(refs, rows, ls)
+		Expect(p.Labelled).To(Equal(&crosswalk.Rate{Hit: 1, Total: 2, Rate: 0.5}))
+		Expect(p.Coverage).To(Equal(&crosswalk.Rate{Hit: 2, Total: 4, Rate: 0.5}))
+		Expect(p.Unlabelled).To(Equal([]crosswalk.Pair{pr("s-2", "cd-1"), pr("s-2", "top.1")}))
+		Expect(p.Disputed).To(BeEmpty())
+	})
+
+	It("has no labelled rate or coverage without labels", func() {
+		p := score(refs, rows, nil)
+		Expect(p.Reference).To(Equal(rate(2, 4)))
+		Expect(p.Labelled).To(BeNil())
+		Expect(p.Coverage).To(BeNil())
+		Expect(p.Unlabelled).To(BeEmpty())
+	})
+
+	It("counts a row on a sibling in the reference's base tree as agreeing", func() {
+		ms := []crosswalk.Mapping{mapping("s-1", "ab-2.3", equivalent, 0.8), mapping("s-2", "ab-2.3", equivalent, 0.8)}
+		Expect(score(refs[:1], ms, nil).Reference).To(Equal(rate(1, 2)))
+	})
+
+	It("ignores labels for pairs the run did not produce", func() {
+		ls := map[crosswalk.Pair]crosswalk.Label{pr("s-2", "cd-9"): lbl("related")}
+		p := score(refs, rows, ls)
+		Expect(p.Labelled).To(Equal(&crosswalk.Rate{}))
+		Expect(p.Coverage).To(Equal(&crosswalk.Rate{Total: 4}))
+		Expect(p.Unlabelled).To(HaveLen(4))
+	})
+
+	It("reports zero rates, not NaN, for a run with no rows", func() {
+		p := score(refs, nil, labels)
+		Expect(p.Reference).To(Equal(rate(0, 0)))
+		Expect(p.Coverage).To(Equal(&crosswalk.Rate{}))
+	})
+})

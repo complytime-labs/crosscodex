@@ -10,8 +10,9 @@
 # Optional: LABEL (default: UTC timestamp), BASELINE (report.json to compare),
 #           MODE=llm (print only the summary line), NO_CACHE=1 (run start
 #           --no-cache), EVAL_TIMEOUT (seconds, default 3600), EVAL_POLL
-#           (seconds, default 10), PROFILES_DIR and EVAL_OUT_DIR (defaults
-#           under ROOT_DIR; the tooling suite overrides them).
+#           (seconds, default 10), PROFILES_DIR, LABELS_DIR and EVAL_OUT_DIR (defaults
+#           under ROOT_DIR; the tooling suite overrides them). A score uses
+#           LABELS_DIR/PROFILE.yaml when it exists; without it no labels apply.
 #
 # PROFILE and LABEL become path components, so both are checked against a
 # strict pattern before use. Catalog text is only ever passed to commands as
@@ -33,6 +34,7 @@ NO_CACHE="${NO_CACHE:-}"
 EVAL_TIMEOUT="${EVAL_TIMEOUT:-3600}"
 EVAL_POLL="${EVAL_POLL:-10}"
 PROFILES_DIR="${PROFILES_DIR:-${ROOT_DIR}/test/eval/crosswalk/profiles}"
+LABELS_DIR="${LABELS_DIR:-${ROOT_DIR}/test/eval/crosswalk/labels}"
 EVAL_OUT_DIR="${EVAL_OUT_DIR:-${ROOT_DIR}/.test-output/eval/crosswalk}"
 
 fail() {
@@ -65,6 +67,15 @@ if [ -z "${LABEL}" ]; then
 fi
 [[ "${LABEL}" =~ ^[A-Za-z0-9._-]+$ ]] ||
 	fail "invalid LABEL '${LABEL}': use letters, digits, '.', '_' and '-' only."
+
+# Labels are optional, but a labels path that exists and cannot be read must
+# stop the run now, before the expensive job, not silently score without them.
+labels_file=""
+if [ -e "${LABELS_DIR}/${PROFILE}.yaml" ] || [ -L "${LABELS_DIR}/${PROFILE}.yaml" ]; then
+	[ -f "${LABELS_DIR}/${PROFILE}.yaml" ] && [ -r "${LABELS_DIR}/${PROFILE}.yaml" ] ||
+		fail "labels path ${LABELS_DIR}/${PROFILE}.yaml exists but is not a readable regular file (a directory or dangling symlink?). Replace it with the labels YAML, or remove it to score without labels."
+	labels_file="${LABELS_DIR}/${PROFILE}.yaml"
+fi
 
 run_dir="${EVAL_OUT_DIR}/${PROFILE}/${LABEL}"
 if [ -e "${run_dir}" ]; then
@@ -148,6 +159,9 @@ score_args=(score --root "${ROOT_DIR}" --profile "${profile_file}"
 	--label "${LABEL}" --out "${run_dir}")
 if [ -n "${BASELINE}" ]; then
 	score_args+=(--baseline "${BASELINE}")
+fi
+if [ -n "${labels_file}" ]; then
+	score_args+=(--labels "${labels_file}")
 fi
 "${EVAL_BIN}" "${score_args[@]}"
 

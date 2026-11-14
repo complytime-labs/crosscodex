@@ -45,6 +45,7 @@ type Report struct {
 	Unresolved   []UnresolvedReference `json:"unresolved"`
 	Ambiguous    []UnresolvedReference `json:"ambiguous"`
 	Recall       Recall                `json:"recall"`
+	Precision    Precision             `json:"precision"`
 	Cost         Cost                  `json:"cost"`
 	Distribution Distribution          `json:"distribution"`
 	// Related is every related mapping of the run, sorted by source then
@@ -52,6 +53,26 @@ type Report struct {
 	Related []Mapping `json:"related"`
 	// Agreement is nil without a baseline.
 	Agreement *Agreement `json:"agreement"`
+}
+
+// Precision is how many of the run's related mappings (its produced rows) hold
+// up. Reference is a lower bound, because a reference can be incomplete: a
+// row it omits is not necessarily wrong. Labelled is the better estimate where
+// labels cover the rows.
+type Precision struct {
+	// Reference is rows agreeing with the reference out of all rows.
+	Reference Rate `json:"reference"`
+	// Labelled is rows labelled related out of rows with a non-disputed label;
+	// nil when there are no labels.
+	Labelled *Rate `json:"labelled"`
+	// Coverage is rows with a non-disputed label out of all rows; nil when
+	// there are no labels.
+	Coverage *Rate `json:"coverage"`
+	// Unlabelled are rows without a label and Disputed are rows whose label is
+	// disputed (needing a human decision), both sorted. Unlabelled is empty
+	// when there are no labels.
+	Unlabelled []Pair `json:"unlabelled"`
+	Disputed   []Pair `json:"disputed"`
 }
 
 // Provenance names the exact inputs a report was computed from.
@@ -68,6 +89,8 @@ type Provenance struct {
 	SourceDigest string `json:"source_digest"`
 	SubsetDigest string `json:"subset_digest"`
 	TargetDigest string `json:"target_digest"`
+	// LabelsDigest is the hex SHA-256 of the labels file; empty without labels.
+	LabelsDigest string `json:"labels_digest,omitempty"`
 }
 
 // ProfileIdentity is the yardstick a report was scored with.
@@ -246,6 +269,17 @@ func median(m *float64) string {
 	return fmt.Sprintf("%.3f", *m)
 }
 
+// markdownPairs writes a titled bullet list of ps, or nothing when empty.
+func markdownPairs(b *strings.Builder, title string, ps []Pair) {
+	if len(ps) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n%s:\n\n", title)
+	for _, p := range ps {
+		fmt.Fprintf(b, "- %s -> %s\n", cell(p.SourceID), cell(p.TargetID))
+	}
+}
+
 // Markdown renders the report for people: resolution first, then recall,
 // reachability, cost, distributions, agreement and provenance.
 func (r *Report) Markdown() string {
@@ -260,6 +294,17 @@ func (r *Report) Markdown() string {
 	for _, g := range slices.Sorted(maps.Keys(r.Recall.ByGenerator)) {
 		x := r.Recall.ByGenerator[g]
 		fmt.Fprintf(&b, "| Reachable via %s | %s | %s |\n", cell(g), x.Exact, x.Base)
+	}
+
+	b.WriteString("\n## Precision\n\n")
+	pc := r.Precision
+	fmt.Fprintf(&b, "Reference agreement: %s of produced rows (a lower bound: the reference can be incomplete, so a row it omits may still be right).\n\n", pc.Reference)
+	if pc.Labelled == nil {
+		b.WriteString("No labels for this profile.\n")
+	} else {
+		fmt.Fprintf(&b, "Labelled precision: %s of rows with a non-disputed label are related. Label coverage: %s of produced rows.\n", pc.Labelled, pc.Coverage)
+		markdownPairs(&b, "Unlabelled rows (label these next)", pc.Unlabelled)
+		markdownPairs(&b, "Disputed rows (need a human decision)", pc.Disputed)
 	}
 
 	b.WriteString("\n## Cost\n\n| Stage | Status | Wall time |\n|---|---|---|\n")
@@ -333,6 +378,9 @@ func (r *Report) Markdown() string {
 	}
 	if p.Profile.CSVDigest != "" {
 		items = append(items, [2]string{"References CSV SHA-256", p.Profile.CSVDigest})
+	}
+	if p.LabelsDigest != "" {
+		items = append(items, [2]string{"Labels SHA-256", p.LabelsDigest})
 	}
 	for _, kv := range items {
 		fmt.Fprintf(&b, "- %s: %s\n", kv[0], cell(kv[1]))

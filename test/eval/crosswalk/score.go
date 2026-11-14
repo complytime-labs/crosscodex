@@ -27,6 +27,11 @@ type ScoreInput struct {
 	// names a references.csv.
 	CSVDigest     string
 	Label, Commit string
+	// Labels are the loaded label file's judgements keyed by the pair as the
+	// run exported it; nil or empty when the profile has none.
+	Labels map[Pair]Label
+	// LabelsDigest is LabelsDigest of the labels file; empty without labels.
+	LabelsDigest string
 }
 
 func (p Pair) String() string { return p.SourceID + " -> " + p.TargetID }
@@ -117,6 +122,12 @@ func Score(in ScoreInput) (*Report, error) {
 		seen[Pair{m.SourceID, m.TargetID}]++
 	}
 	found, foundBase := pairSet{}, pairSet{}
+	agrees := pairSet{}
+	refExact, refBase := pairSet{}, pairSet{}
+	for _, r := range in.Refs.Resolved {
+		refExact[Pair{r.SourceID, r.TargetID}] = true
+		refBase[base(Pair{r.SourceID, r.TargetID})] = true
+	}
 	for _, m := range in.Run.Mappings {
 		raw := Pair{m.SourceID, m.TargetID}
 		pr, err := check("mapping", raw)
@@ -132,6 +143,9 @@ func Score(in ScoreInput) (*Report, error) {
 				"export the mappings and candidates of the same job, or report a pipeline bug", raw, in.Run.JobID)
 		}
 		found[pr], foundBase[base(pr)] = true, true
+		// A row agrees with the reference exactly as recall credits it:
+		// the same pair, or the same source and base control.
+		agrees[raw] = refExact[pr] || refBase[base(pr)]
 	}
 
 	rep := &Report{
@@ -139,7 +153,7 @@ func Score(in ScoreInput) (*Report, error) {
 			Label: in.Label, Commit: in.Commit, JobID: in.Run.JobID,
 			SourceCatalogID: sourceCatalogID, TargetCatalogID: targetCatalogID,
 			Profile:      ProfileIdentity{Name: p.Name, Digest: p.Digest, Controls: slices.Clone(p.Controls), CSVDigest: in.CSVDigest},
-			SourceDigest: in.Source.Digest, SubsetDigest: in.Subset.Digest, TargetDigest: in.Target.Digest,
+			SourceDigest: in.Source.Digest, SubsetDigest: in.Subset.Digest, TargetDigest: in.Target.Digest, LabelsDigest: in.LabelsDigest,
 		},
 		Cost: stageCosts(in.Run.Stages),
 	}
@@ -206,6 +220,7 @@ func Score(in ScoreInput) (*Report, error) {
 		return comparePairs(Pair{a.SourceID, a.TargetID}, Pair{b.SourceID, b.TargetID})
 	})
 	rep.Distribution = distribution(rep.Related)
+	rep.Precision = precision(rep.Related, agrees, in.Labels)
 
 	if in.Baseline != nil {
 		if err := sameYardstick(in.Baseline, rep); err != nil {
@@ -215,6 +230,40 @@ func Score(in ScoreInput) (*Report, error) {
 		rep.Agreement = agreement(in.Baseline, rep.Related, rel)
 	}
 	return rep, nil
+}
+
+// precision scores the produced rows against the reference (agrees, keyed by
+// the pair as exported) and against labels. Rows are sorted, so Unlabelled and
+// Disputed are too. Without labels only the reference rate is set.
+func precision(rows []Mapping, agrees pairSet, labels map[Pair]Label) Precision {
+	var p Precision
+	agreeing, related, judged := 0, 0, 0
+	for _, m := range rows {
+		pr := Pair{m.SourceID, m.TargetID}
+		if agrees[pr] {
+			agreeing++
+		}
+		if len(labels) == 0 {
+			continue
+		}
+		switch l, ok := labels[pr]; {
+		case !ok:
+			p.Unlabelled = append(p.Unlabelled, pr)
+		case l.Verdict == VerdictDisputed:
+			p.Disputed = append(p.Disputed, pr)
+		default:
+			judged++
+			if l.Verdict == VerdictRelated {
+				related++
+			}
+		}
+	}
+	p.Reference = newRate(agreeing, len(rows))
+	if len(labels) > 0 {
+		lr, cov := newRate(related, judged), newRate(judged, len(rows))
+		p.Labelled, p.Coverage = &lr, &cov
+	}
+	return p
 }
 
 // distinctRaw returns refs without repeats of a (source, identifier), keeping
