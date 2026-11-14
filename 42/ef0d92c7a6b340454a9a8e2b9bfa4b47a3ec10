@@ -1,0 +1,21 @@
+README.md
+  s_9a8e5e4b4a6a7e::t_ec0b2866600af8 21-22
+pkg/vectordb/vectordbtest/doc.go
+  s_9a8e5e4b4a6a7e::t_ec0b2866600af8 45-46,49-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "42ef0d92c7a6b340454a9a8e2b9bfa4b47a3ec10",
+  "prompts": {},
+  "sessions": {
+    "s_9a8e5e4b4a6a7e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7fcaf031-1d40-4d00-8001-92dace96bfdb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
