@@ -1,0 +1,22 @@
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_f3bdd2f5644a01 424-429,431-469
+pkg/vectordb/pgvector.go
+  s_9a8e5e4b4a6a7e::t_8a47f97352f583 469-471,473-475,478-481,487-496,535-536
+  s_9a8e5e4b4a6a7e::t_ee309c62ce0828 537-538
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "291ec7928918a82ab49c0361bfe27766cf372b50",
+  "prompts": {},
+  "sessions": {
+    "s_9a8e5e4b4a6a7e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7fcaf031-1d40-4d00-8001-92dace96bfdb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
