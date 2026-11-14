@@ -48,6 +48,38 @@ func (s *Service) ListJobMappings(ctx context.Context, req *connect.Request[pb.L
 	return resp, nil
 }
 
+func (s *Service) ListJobCandidates(ctx context.Context, req *connect.Request[pb.ListJobCandidatesRequest]) (*connect.Response[pb.ListJobCandidatesResponse], error) {
+	start := time.Now()
+	identity := identityFromContext(ctx)
+	if identity == nil {
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("not authenticated"))
+	}
+
+	ctx, endSpan := s.startHandlerSpan(ctx, "ListJobCandidates", identity,
+		attribute.String("job.id", req.Msg.GetJobId()))
+	defer endSpan()
+
+	if req.Msg.GetJobId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("job_id is required"))
+	}
+
+	if s.candidates == nil {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("candidates backend not configured"))
+	}
+
+	req.Msg.TenantContext = buildTenantContext(identity)
+
+	resp, err := s.candidates.ListCandidates(ctx, req)
+	if err != nil {
+		err = s.publicError(ctx, "ListJobCandidates", err)
+		s.recordMetrics(ctx, "ListJobCandidates", start, connect.CodeOf(err))
+		return nil, err
+	}
+
+	s.recordMetrics(ctx, "ListJobCandidates", start, connect.Code(0))
+	return resp, nil
+}
+
 // GetControlMappings lists the synthesized mappings of one control across all
 // of the tenant's jobs.
 func (s *Service) GetControlMappings(ctx context.Context, req *connect.Request[pb.GetControlMappingsRequest]) (*connect.Response[pb.GetControlMappingsResponse], error) {

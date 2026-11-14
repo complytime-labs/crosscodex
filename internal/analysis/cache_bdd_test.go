@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -547,6 +548,20 @@ var _ = Describe("Result reuse", func() {
 			}
 			Expect(res.CacheStats[cacheAnalyzer]).To(statsCounts(3, 3, 0))
 			Expect(rig.counted("analysis.result_cache.hits.total", "")).To(BeEquivalentTo(3))
+		})
+
+		It("never collects a stage whose every task is cached, so success_timeout cannot fail it", func() {
+			rig := newCacheRig("a", "b", "c")
+			rig.produce("job-1")
+			collects := rig.collector.collectCount()
+			rig.collector.resultsFn = func(req analysis.CollectRequest) ([]analyzer.TaskResult, error) {
+				return nil, &analysis.NoSuccessError{JobID: req.JobID, Window: time.Minute}
+			}
+
+			res := rig.run("job-2", rig.settings(resultcache.ModeEnabled))
+
+			Expect(res.Completed).To(ConsistOf(cacheAnalyzer))
+			Expect(rig.collector.collectCount()).To(Equal(collects))
 		})
 
 		It("treats a result whose producer's checkpoint is signed by a key no longer trusted as a miss", func() {

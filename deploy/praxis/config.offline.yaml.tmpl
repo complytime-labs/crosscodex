@@ -9,6 +9,9 @@
 # idle_timeout_ms: that guards against replayed POSTs billing twice at a paid
 # provider, which does not apply to the local Ollama. Only the local Ollama is
 # supported on the Praxis path (smoke_up.sh rejects a non-default OLLAMA_HOST).
+# panel-1..3 all map to the chat model unless OLLAMA_PANEL_MODELS lists three
+# names; with the default the daemon needs allow_shared_panel_models (set by
+# deploy/compose.offline-praxis.yaml).
 admin:
   metrics_address: "127.0.0.1:9901"
 body_limits:
@@ -68,6 +71,18 @@ filter_chains:
           - model: default
             upstream: ollama
             target_model: "OLLAMA_CHAT_MODEL"
+            paths: [/v1/chat/completions]
+          - model: panel-1
+            upstream: ollama
+            target_model: "OLLAMA_PANEL_1_MODEL"
+            paths: [/v1/chat/completions]
+          - model: panel-2
+            upstream: ollama
+            target_model: "OLLAMA_PANEL_2_MODEL"
+            paths: [/v1/chat/completions]
+          - model: panel-3
+            upstream: ollama
+            target_model: "OLLAMA_PANEL_3_MODEL"
             paths: [/v1/chat/completions]
           - model: embed
             upstream: ollama

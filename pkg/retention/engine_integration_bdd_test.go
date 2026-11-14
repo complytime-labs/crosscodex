@@ -328,7 +328,7 @@ func integDeleteHold(tenantID, name string) {
 
 // integSeedCatalogAggregate provisions the tenant, inserts a catalog, and adds
 // one row to each catalog dependent that FK-references catalogs(catalog_id):
-// controls, classifications, embeddings. All inserts run as app_user in a single
+// controls, catalog_containers, classifications, embeddings. All inserts run as app_user in a single
 // tenant-scoped tx (RLS WITH CHECK requires tenant_id to match
 // app.current_tenant). The classifications immutability trigger fires only on
 // UPDATE/DELETE, so seeding is permitted. The embedding uses a small
@@ -355,6 +355,11 @@ func integSeedCatalogAggregate(tenantID, catalogID string) {
 		tenantID, catalogID,
 	)).To(Succeed(), "insert control")
 	Expect(tx.Exec(ctx,
+		`INSERT INTO catalog_containers (tenant_id, catalog_id, container_key, identifier, title)
+		 VALUES ($1, $2, 'g1', 'ac', 'Access Control')`,
+		tenantID, catalogID,
+	)).To(Succeed(), "insert container")
+	Expect(tx.Exec(ctx,
 		`INSERT INTO classifications (catalog_id, control_id, type, level, tenant_id)
 		 VALUES ($1, 'ac-1', 'Technical', 'Operational', $2)`,
 		catalogID, tenantID,
@@ -368,13 +373,14 @@ func integSeedCatalogAggregate(tenantID, catalogID string) {
 	Expect(tx.Commit()).To(Succeed(), "commit catalog seed")
 }
 
-// integCountCatalogDependents returns the total number of rows across the three
+// integCountCatalogDependents returns the total number of rows across the four
 // catalog dependent tables for catalogID, visible to tenantID as app_user.
 func integCountCatalogDependents(tenantID, catalogID string) int {
 	return queryIntAsTenant(tenantID, `SELECT
 		   (SELECT count(*) FROM classifications WHERE catalog_id = $1)
 		 + (SELECT count(*) FROM embeddings      WHERE catalog_id = $1)
-		 + (SELECT count(*) FROM controls        WHERE catalog_id = $1)`, catalogID)
+		 + (SELECT count(*) FROM controls        WHERE catalog_id = $1)
+		 + (SELECT count(*) FROM catalog_containers WHERE catalog_id = $1)`, catalogID)
 }
 
 // integCatalogExists reports whether catalogID is visible to tenantID as app_user.
@@ -394,7 +400,7 @@ func integPurgeCatalog(tenantID, catalogID string) {
 		return
 	}
 	_ = tx.Exec(ctx, `DELETE FROM llm_result_cache WHERE source_catalog_id = $1 OR target_catalog_id = $1`, catalogID)
-	for _, table := range []string{"classifications", "embeddings", "controls"} {
+	for _, table := range []string{"classifications", "embeddings", "controls", "catalog_containers"} {
 		_ = tx.Exec(ctx, "DELETE FROM "+table+" WHERE catalog_id = $1", catalogID)
 	}
 	_ = tx.Exec(ctx, `DELETE FROM catalogs WHERE catalog_id = $1`, catalogID)
@@ -611,7 +617,7 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		Expect(kit.audit.actions()).To(ContainElements(retention.ActionArchive, retention.ActionPurge))
 	})
 
-	It("archives then purges an expired catalog together with its classifications, controls, and embeddings", func() {
+	It("archives then purges an expired catalog together with its classifications, controls, containers, and embeddings", func() {
 		const tid = "ret-e2e-catalog"
 		const catalogID = "cat-e2e-1"
 
@@ -622,8 +628,8 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		integSeedCatalogAggregate(tid, catalogID)
 		DeferCleanup(func() { integPurgeCatalog(tid, catalogID) })
 
-		// Precondition: all three dependent rows are present before the scan.
-		Expect(integCountCatalogDependents(tid, catalogID)).To(Equal(3), "seed must create one row per dependent table")
+		// Precondition: all four dependent rows are present before the scan.
+		Expect(integCountCatalogDependents(tid, catalogID)).To(Equal(4), "seed must create one row per dependent table")
 
 		rep, err := kit.engine.Scan(ctx, retention.ScanOptions{Now: integScanTime()})
 		Expect(err).NotTo(HaveOccurred())
@@ -650,12 +656,15 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 			Catalog         map[string]any   `json:"catalog"`
 			Classifications []map[string]any `json:"classifications"`
 			Controls        []map[string]any `json:"controls"`
+			Containers      []map[string]any `json:"containers"`
 		}
 		Expect(json.Unmarshal(body, &doc)).To(Succeed(), "aggregate archive doc must be valid JSON")
 		Expect(doc.Catalog).NotTo(BeEmpty(), "archived doc must contain the parent catalog")
 		Expect(doc.Catalog["catalog_id"]).To(Equal(catalogID))
 		Expect(doc.Classifications).To(HaveLen(1), "archived doc must contain the classifications child")
 		Expect(doc.Controls).To(HaveLen(1), "archived doc must contain the controls child")
+		Expect(doc.Containers).To(HaveLen(1), "archived doc must contain the catalog_containers child")
+		Expect(doc.Containers[0]).To(HaveKeyWithValue("container_key", "g1"))
 
 		// embeddings are purged as a catalog dependent but deliberately OMITTED
 		// from the archive doc (derived/regenerable, purge-only). Assert the key is

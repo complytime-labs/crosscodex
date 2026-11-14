@@ -310,8 +310,19 @@ type ObservabilityMetricsConfig struct {
 }
 
 // CatalogConfig configures the catalog parsing and structuring pipeline.
+//
+// Every field is global-only: there is no tenant_overrides map. Catalog
+// parsing has no tenant overrides (the parser is built once per process at
+// startup, before any tenant is known), and the values describe how catalogs
+// are encoded, which does not vary by tenant.
 type CatalogConfig struct {
-	Structuring StructuringConfig `yaml:"structuring" json:"structuring"`
+	// RequirementPartNames is the ordered list of OSCAL part names that hold
+	// a control's requirement text; the first name a control has wins (see
+	// oscal.DecomposeStatements). The default is ["statement"]. At least one
+	// name is required, and each must be an OSCAL token. Wired to
+	// oscal.WithRequirementPartNames in the daemon and the embedded service.
+	RequirementPartNames []string          `yaml:"requirement_part_names" json:"requirement_part_names"`
+	Structuring          StructuringConfig `yaml:"structuring" json:"structuring"`
 }
 
 // StructuringConfig configures document-to-OSCAL structuring behavior.
@@ -495,7 +506,10 @@ func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
 	return tc
 }
 
-// AnalysisConfig configures the analysis service.
+// AnalysisConfig configures the analysis service. It has no tenant_overrides
+// map, so every setting under it, including the panel settings
+// (allow_shared_panel_models and the critique block), is global: analysis
+// config is global like its siblings and a tenant cannot loosen a panel.
 type AnalysisConfig struct {
 	Engine               EngineConfig               `yaml:"engine" json:"engine"`
 	Classification       ClassificationConfig       `yaml:"classification" json:"classification"`
@@ -503,6 +517,7 @@ type AnalysisConfig struct {
 	Relationship         RelationshipConfig         `yaml:"relationship" json:"relationship"`
 	Candidates           CandidateConfig            `yaml:"candidates" json:"candidates"`
 	Requires             RequiresConfig             `yaml:"requires" json:"requires"`
+	Critique             CritiqueConfig             `yaml:"critique" json:"critique"`
 	Artifacts            ArtifactsConfig            `yaml:"artifacts" json:"artifacts"`
 	ArtifactAdjudication ArtifactAdjudicationConfig `yaml:"artifact_adjudication" json:"artifact_adjudication"`
 	ResultCache          ResultCacheConfig          `yaml:"result_cache" json:"result_cache"`
@@ -566,19 +581,76 @@ type EngineConfig struct {
 	// even while it works through another stage's queue. So it does not
 	// catch a lost task while the pool stays busy; pipeline.stage_timeout
 	// does, and bounds how long ticks can delay this timeout. Range (0, 30m].
-	TaskTimeout  time.Duration `yaml:"task_timeout" json:"task_timeout"`
-	MaxRetries   int           `yaml:"max_retries" json:"max_retries"`
-	RetryBackoff time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
+	TaskTimeout time.Duration `yaml:"task_timeout" json:"task_timeout"`
+	// SuccessTimeout is how long an analyzer stage may receive only failed
+	// task results, and no successful one, before it fails with error
+	// class llm_unavailable (or llm_output_truncated when the last failure
+	// was a truncated answer): the gateway or model server is not
+	// answering, or the model's answers fail, so the remaining tasks would
+	// most likely fail too. Any error result counts as a failure
+	// (transport, timeout, parse, retries exhausted), including one that
+	// will be retried; a worker progress tick is neither. The window runs
+	// from the stage's first failed result after its last success (or
+	// after it started), and the stage fails only while its own failures
+	// are still arriving: when the window has passed, its latest failure
+	// must be within task_timeout. A stage that stops receiving results of
+	// its own, starved behind another stage's queue or silent, waits for
+	// task_timeout or pipeline.stage_timeout instead; a failure more than
+	// task_timeout after its previous one restarts the window, so it fails
+	// only after a full window of failures arriving again. The engine
+	// dispatches a panel stage's tasks grouped by model, so a panel model
+	// that fails every call delivers its failures back to back and, once
+	// they span this window, fails the stage even though the other models
+	// answer (max_error_rate does not absorb it); that is a configuration
+	// fault: fix or remove the model, or raise this value. A stage with
+	// no tasks to dispatch (none, or all cached) never starts the window.
+	// Each stage has its own window: a success in
+	// another stage or job does not reset it, because unlike task_timeout,
+	// which asks whether the pool is alive, it asks whether this stage's
+	// model calls work. A stage's model call takes up to llm.timeout ×
+	// (llm.max_retries + 1) before its error arrives (2m with the
+	// defaults), so keep this well above that. Global only, like its
+	// siblings. Range (0, 24h], at least task_timeout and at most
+	// pipeline.stage_timeout.
+	SuccessTimeout time.Duration `yaml:"success_timeout" json:"success_timeout"`
+	MaxRetries     int           `yaml:"max_retries" json:"max_retries"`
+	RetryBackoff   time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
 }
 
 // Validate checks EngineConfig for consistency and required fields.
 // Returns ErrInvalidConfig on validation failure.
 func (c *EngineConfig) Validate() error { return c.validate(nil) }
 
+// taskTimeoutInRange reports whether TaskTimeout is in (0, 30m].
+func (c *EngineConfig) taskTimeoutInRange() bool {
+	return c.TaskTimeout > 0 && c.TaskTimeout <= 30*time.Minute
+}
+
+// successTimeoutInRange reports whether SuccessTimeout is in (0, 24h].
+func (c *EngineConfig) successTimeoutInRange() bool {
+	return c.SuccessTimeout > 0 && c.SuccessTimeout <= 24*time.Hour
+}
+
 func (c *EngineConfig) validate(tracker *sourceTracker) error {
 	var p problems
-	if c.TaskTimeout <= 0 || c.TaskTimeout > 30*time.Minute {
+	if !c.taskTimeoutInRange() {
 		p.add("analysis.engine.task_timeout", "analysis.engine.task_timeout %s%s must be in range (0, 30m]: %w",
+			c.TaskTimeout, formatSource(tracker, "analysis.engine.task_timeout"), ErrInvalidConfig)
+	}
+	if !c.successTimeoutInRange() {
+		p.add("analysis.engine.success_timeout", "analysis.engine.success_timeout %s%s must be in range (0, 24h]: "+
+			"a stage fails when no task of it succeeds for this long while its tasks fail, so set a duration such as 10m, "+
+			"longer than llm.timeout × (llm.max_retries + 1): %w",
+			c.SuccessTimeout, formatSource(tracker, "analysis.engine.success_timeout"), ErrInvalidConfig)
+	}
+	// Below task_timeout, a stage starved after one failure could trip on
+	// its next: both the window and the "failures still arriving" check
+	// would hold.
+	if c.successTimeoutInRange() && c.taskTimeoutInRange() && c.SuccessTimeout < c.TaskTimeout {
+		p.add("analysis.engine.success_timeout", "analysis.engine.success_timeout %s%s is shorter than analysis.engine.task_timeout %s%s, "+
+			"so a stage starved behind another stage's queue could fail as llm_unavailable on its first failure after it resumes: "+
+			"set success_timeout at or above task_timeout (success_timeout defaults to 10m, task_timeout to 5m), or lower task_timeout: %w",
+			c.SuccessTimeout, formatSource(tracker, "analysis.engine.success_timeout"),
 			c.TaskTimeout, formatSource(tracker, "analysis.engine.task_timeout"), ErrInvalidConfig)
 	}
 	if c.MaxRetries < 0 || c.MaxRetries > 10 {
@@ -589,6 +661,24 @@ func (c *EngineConfig) validate(tracker *sourceTracker) error {
 		p.add("analysis.engine.retry_backoff", "analysis.engine.retry_backoff %s%s must be in range [0, 5m]: %w",
 			c.RetryBackoff, formatSource(tracker, "analysis.engine.retry_backoff"), ErrInvalidConfig)
 	}
+	return p.err()
+}
+
+// validateSuccessWindow rejects an analysis.engine.success_timeout longer
+// than pipeline.stage_timeout: the stage cap would always stop a failing
+// stage first, so the window could never act. Like the task_timeout check
+// in EngineConfig.validate, it runs only when both values pass their own
+// range checks, so an out-of-range value is reported once, by its range.
+func validateSuccessWindow(engine *EngineConfig, pipeline *PipelineConfig, tracker *sourceTracker) error {
+	if !engine.successTimeoutInRange() || !pipeline.stageTimeoutInRange() || engine.SuccessTimeout <= pipeline.StageTimeout {
+		return nil
+	}
+	var p problems
+	p.add("analysis.engine.success_timeout", "analysis.engine.success_timeout %s%s is longer than pipeline.stage_timeout %s%s, "+
+		"so the stage cap would stop a failing stage first and the window could never act: "+
+		"set analysis.engine.success_timeout (default 10m) at or below pipeline.stage_timeout, or raise pipeline.stage_timeout: %w",
+		engine.SuccessTimeout, formatSource(tracker, "analysis.engine.success_timeout"),
+		pipeline.StageTimeout, formatSource(tracker, "pipeline.stage_timeout"), ErrInvalidConfig)
 	return p.err()
 }
 
@@ -627,6 +717,12 @@ type RelationshipConfig struct {
 	// one-sample panel, which always agrees with itself, still reports how
 	// sure its vote was.
 	ConfidenceWeights RelationshipConfidenceWeights `yaml:"confidence_weights" json:"confidence_weights"`
+	// AllowSharedPanelModels lets the panel aliases resolve to the same
+	// upstream model, or the panel list a single alias. False (the default)
+	// makes the stage fail when they do,
+	// because a panel of one model voting three times is not independent.
+	// Set it for offline or single-model deployments. Global-only.
+	AllowSharedPanelModels bool `yaml:"allow_shared_panel_models" json:"allow_shared_panel_models"`
 }
 
 // RelationshipConfidenceWeights maps the HIGH, MEDIUM and LOW confidence a
@@ -726,6 +822,12 @@ type RequiresConfig struct {
 	MaxErrorRate        float64  `yaml:"max_error_rate" json:"max_error_rate"`             // Maximum fraction of votes that can fail [0.0, 1.0]
 	MaxSourceChars      int      `yaml:"max_source_chars" json:"max_source_chars"`         // Max runes for source control text; must be positive
 	MaxTargetChars      int      `yaml:"max_target_chars" json:"max_target_chars"`         // Max runes for target control text; must be positive
+	// AllowSharedPanelModels lets the panel aliases resolve to the same
+	// upstream model, or the panel list a single alias. False (the default)
+	// makes the stage fail when they do,
+	// because a panel of one model voting three times is not independent.
+	// Set it for offline or single-model deployments. Global-only.
+	AllowSharedPanelModels bool `yaml:"allow_shared_panel_models" json:"allow_shared_panel_models"`
 }
 
 // Validate checks RequiresConfig for consistency and required fields.
@@ -736,44 +838,12 @@ func (c *RequiresConfig) validate(tracker *sourceTracker) error {
 	if !c.Enabled {
 		return nil
 	}
-	const pfx = "analysis.requires."
-	var p problems
-	if len(c.Models) == 0 {
-		p.add(pfx+"models", "analysis.requires.models%s must not be empty when enabled: %w",
-			formatSource(tracker, pfx+"models"), ErrInvalidConfig)
-	}
-	if c.SamplesPerModel <= 0 {
-		p.add(pfx+"samples_per_model", "analysis.requires.samples_per_model %d%s must be positive: %w",
-			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
-	} else if !c.AllowEvenSamples && c.SamplesPerModel%2 == 0 {
-		p.add(pfx+"samples_per_model", "analysis.requires.samples_per_model %d%s must be odd unless allow_even_samples=true: %w",
-			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
-	}
-	if math.IsNaN(c.ConsensusThreshold) || c.ConsensusThreshold < 0.5 || c.ConsensusThreshold > 1.0 {
-		p.add(pfx+"consensus_threshold", "analysis.requires.consensus_threshold %g%s must be in range [0.5, 1.0]: %w",
-			c.ConsensusThreshold, formatSource(tracker, pfx+"consensus_threshold"), ErrInvalidConfig)
-	}
-	if math.IsNaN(c.MaxErrorRate) || c.MaxErrorRate < 0.0 || c.MaxErrorRate > 1.0 {
-		p.add(pfx+"max_error_rate", "analysis.requires.max_error_rate %g%s must be in range [0.0, 1.0]: %w",
-			c.MaxErrorRate, formatSource(tracker, pfx+"max_error_rate"), ErrInvalidConfig)
-	}
-	if c.MaxSourceChars <= 0 {
-		p.add(pfx+"max_source_chars", "analysis.requires.max_source_chars %d%s must be positive: %w",
-			c.MaxSourceChars, formatSource(tracker, pfx+"max_source_chars"), ErrInvalidConfig)
-	}
-	if c.MaxTargetChars <= 0 {
-		p.add(pfx+"max_target_chars", "analysis.requires.max_target_chars %d%s must be positive: %w",
-			c.MaxTargetChars, formatSource(tracker, pfx+"max_target_chars"), ErrInvalidConfig)
-	}
-	if c.MaxTokens <= 0 {
-		p.add(pfx+"max_tokens", "analysis.requires.max_tokens %d%s must be positive: %w",
-			c.MaxTokens, formatSource(tracker, pfx+"max_tokens"), ErrInvalidConfig)
-	}
-	if math.IsNaN(c.SamplingTemperature) || c.SamplingTemperature < 0.0 || c.SamplingTemperature > 2.0 {
-		p.add(pfx+"sampling_temperature", "analysis.requires.sampling_temperature %g%s must be in range [0.0, 2.0]: %w",
-			c.SamplingTemperature, formatSource(tracker, pfx+"sampling_temperature"), ErrInvalidConfig)
-	}
-	return p.err()
+	return validatePanelSettings("analysis.requires", panelSettings{
+		Models: c.Models, SamplesPerModel: c.SamplesPerModel, AllowEvenSamples: c.AllowEvenSamples,
+		SamplingTemperature: c.SamplingTemperature, MaxTokens: c.MaxTokens,
+		ConsensusThreshold: c.ConsensusThreshold, MaxErrorRate: c.MaxErrorRate,
+		MaxSourceChars: c.MaxSourceChars, MaxTargetChars: c.MaxTargetChars,
+	}, tracker)
 }
 
 // ArtifactsConfig configures the artifacts analyzer for observable artifact extraction.
@@ -862,6 +932,7 @@ func (c *ArtifactAdjudicationConfig) validate(tracker *sourceTracker) error {
 		p.add(pfx+"models", "analysis.artifact_adjudication.models%s must not be empty when enabled: %w",
 			formatSource(tracker, pfx+"models"), ErrInvalidConfig)
 	}
+	p = append(p, validateDistinctPanelModels("analysis.artifact_adjudication.models", c.Models, tracker))
 	if c.SamplesPerModel <= 0 {
 		p.add(pfx+"samples_per_model", "analysis.artifact_adjudication.samples_per_model %d%s must be positive: %w",
 			c.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
@@ -1009,13 +1080,19 @@ type PipelineConfig struct {
 // Validate checks PipelineConfig for consistency.
 func (c *PipelineConfig) Validate() error { return c.validate(nil) }
 
+// stageTimeoutInRange reports whether StageTimeout is in (0, 168h], the
+// range validate enforces and the cross-section checks rely on.
+func (c *PipelineConfig) stageTimeoutInRange() bool {
+	return c.StageTimeout > 0 && c.StageTimeout <= 168*time.Hour
+}
+
 func (c *PipelineConfig) validate(tracker *sourceTracker) error {
 	var p problems
 	if c.MaxConcurrentJobs < 0 || c.MaxConcurrentJobs > 100 {
 		p.add("pipeline.max_concurrent_jobs", "pipeline.max_concurrent_jobs %d%s must be in range [0, 100]: %w",
 			c.MaxConcurrentJobs, formatSource(tracker, "pipeline.max_concurrent_jobs"), ErrInvalidConfig)
 	}
-	if c.StageTimeout <= 0 || c.StageTimeout > 168*time.Hour {
+	if !c.stageTimeoutInRange() {
 		p.add("pipeline.stage_timeout", "pipeline.stage_timeout %s%s must be in range (0, 168h]: it caps how long each analyzer stage may run, so set a positive duration such as 24h: %w",
 			c.StageTimeout, formatSource(tracker, "pipeline.stage_timeout"), ErrInvalidConfig)
 	}

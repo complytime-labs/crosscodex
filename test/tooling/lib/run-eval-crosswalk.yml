@@ -1,0 +1,36 @@
+executor: run-eval-crosswalk
+input:
+  # Shell words of VAR=value assignments for test/eval/crosswalk/run.sh, e.g.
+  # "PROFILE=synth-run LABEL=t1". They come last, so they override the presets
+  # (ROOT_DIR, the fake CLI, the endpoint and the TLS paths).
+  env: ""
+  # Per-case working directory. Run directories go under <work>/out and the
+  # fake CLI's calls to <work>/argv.log. The caller creates it (and clears it
+  # first); the executor never deletes anything.
+  work: ""
+  root: "."
+
+steps:
+  - type: exec
+    script: |
+      work="{{.input.work}}"
+      : >"$work/argv.log"
+      rc=0
+      out=$(env ROOT_DIR={{.input.root}} PROFILES_DIR={{.input.root}}/test/eval/crosswalk/testdata/profiles \
+        EVAL_OUT_DIR="$work/out" FAKE_ARGV_LOG="$work/argv.log" \
+        CROSSCODEX_BIN={{.input.root}}/test/tooling/lib/fake-crosscodex.sh \
+        EVAL_BIN={{.input.root}}/.test-output/eval/tooling-bin/crosswalk-eval \
+        FAKE_FIXTURES={{.input.root}}/test/eval/crosswalk/testdata/run \
+        EVAL_ENDPOINT=https://localhost:1 EVAL_CA=ca.pem EVAL_CERT=client.pem EVAL_KEY=client-key.pem \
+        EVAL_POLL=1 {{.input.env}} \
+        bash {{.input.root}}/test/eval/crosswalk/run.sh 2>&1) || rc=$?
+      printf '%s\n' "$out"
+      echo "exit=${rc}"
+    assertions:
+      - result.code ShouldEqual 0
+    vars:
+      out:
+        from: result.systemout
+
+output:
+  systemout: "{{.out}}"

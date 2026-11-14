@@ -9,9 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"runtime/debug"
 	"slices"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -21,13 +21,13 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
-	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -50,6 +50,9 @@ type jobExecution struct {
 	// cacheRuns is, per analyzer this run completed, its result-cache use,
 	// which its link records.
 	cacheRuns map[string]analyzerCacheRun
+	// panels is, per panel analyzer this run was about to start, what its
+	// diversity check found, which its link records.
+	panels map[string]panelRecord
 }
 
 // executeJob is the main lifecycle method. Called as a goroutine from
@@ -227,7 +230,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 // pairAnalyzerParameters returns the AnalyzerConfig parameters the
 // candidate-dependent analyzers (requires, relationship) read when building
 // prompts. Those analyzers run once per job with no per-control input, so
-// every control's statement, ancestor title, framework and classification is
+// every control's statement, title, context, framework and classification is
 // passed under both the source_ and target_ prefixes; a control can be
 // either end of a pair (in a bidirectional crosswalk, a target control is
 // the source of the reverse pairs). A control's framework is its own
@@ -241,11 +244,12 @@ func pairAnalyzerParameters(jobID string, controls []*pb.Control, frameworks map
 	params := map[string]string{"job_id": jobID}
 	for _, c := range controls {
 		id := c.GetControlId()
-		ancestor := c.GetParts()["ancestor_title"]
+		controlContext := c.GetParts()["context"]
 		framework := frameworks[c.GetCatalogId()]
 		for _, end := range []string{"source_", "target_"} {
 			params[end+"text_"+id] = c.GetStatement()
-			params[end+"ancestor_"+id] = ancestor
+			params[end+"context_"+id] = controlContext
+			params[end+"title_"+id] = c.GetTitle()
 			params[end+"framework_"+id] = framework
 		}
 	}
@@ -428,11 +432,6 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 		if terr != nil {
 			return fmt.Errorf("runAnalysis: %w", terr)
 		}
-		hasStatement := func(c *pb.Control) bool {
-			return c.GetParts()["class"] != classifySectionClass &&
-				c.GetParts()[oscal.PropStatus] != oscal.PropStatusWithdrawn &&
-				strings.TrimSpace(c.GetStatement()) != ""
-		}
 		for _, catalogID := range cats.CatalogIDs() {
 			fetched, err := s.catalogControls.Controls(ctx, tenantID, catalogID)
 			if err != nil {
@@ -443,7 +442,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 			side := "source"
 			if cats.CrossCatalog() && catalogID == cats.TargetID {
 				side = "target"
-				if !slices.ContainsFunc(fetched, hasStatement) {
+				if !slices.ContainsFunc(fetched, intanalyzer.Analysable) {
 					err := &tenantError{sentinel: ErrEmptyTargetCatalog, message: fmt.Sprintf("job %s cannot run: target catalog %s "+
 						"has no control with a statement, so no source control can be mapped onto it: %v. "+
 						"Check its controls with \"crosscodex catalog inspect %s\", then start a new job with another target: %s",
@@ -456,6 +455,12 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 			span.SetAttributes(attribute.Int("controls."+side, len(fetched)))
 			controls = append(controls, fetched...)
 		}
+	}
+
+	if err := s.checkPanels(ctx, job, incompleteAnalyzers, exec); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
 	}
 
 	// Result reuse (#243): the job's cache mode and, unless the cache is
@@ -624,7 +629,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 	if terr != nil {
 		return fmt.Errorf("runAnalysis: %w", terr)
 	}
-	pairs, err := buildVoteSummaryPairs(allOutputs)
+	pairs, err := buildVoteSummaryPairs(allOutputs, job.JobID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -653,7 +658,8 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 	}
 	s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageStarted)
 
-	classifyOut, err := s.store.GetCompletedAnalysisResults(ctx, jobID, []string{"classify", "requires", "relationship"})
+	classifyOut, err := s.store.GetCompletedAnalysisResults(ctx, jobID,
+		[]string{"classify", results.RequiresAnalyzer, results.RelationshipAnalyzer, results.CritiqueAnalyzer})
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -678,6 +684,16 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 			return fmt.Errorf("runSynthesis: unmarshaling relationship results: %w", err)
 		}
 	}
+	// Vetoed verdicts are not synthesized, matching the vote_summaries rows
+	// buildVoteSummaryPairs wrote, which synthesis updates one per input.
+	relVerdicts, reqVerdicts, err := critiqueDecisions(classifyOut, jobID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("runSynthesis: %w", err)
+	}
+	requiresResults = slices.DeleteFunc(requiresResults, func(r results.RequiresResult) bool { return reqVerdicts.Vetoed(r.SourceID, r.TargetID) })
+	relResults = slices.DeleteFunc(relResults, func(r results.SemanticMatchResult) bool { return relVerdicts.Vetoed(r.SourceID, r.TargetID) })
 
 	// Similarity matrices: one per configured embedding model, read from the
 	// same pgEmbeddingsReader candidate generation already uses. A nil
@@ -1222,9 +1238,23 @@ func (s *Service) attestAnalyzers(ctx context.Context, job *Job, exec *jobExecut
 			materials = append(materials, attestation.Artifact{URI: dep + ".output", Digest: digests[dep]})
 		}
 		rec := records[a.Name()]
+		byProducts := rec.byProducts()
+		panel, isPanel := exec.panels[a.Name()]
+		if !isPanel {
+			// A stage an earlier run completed keeps the record that run stored.
+			var err error
+			if panel, isPanel, err = s.storedPanelRecord(stageByName[a.Name()]); err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return fmt.Errorf("attesting analyzers: %w", err)
+			}
+		}
+		if isPanel {
+			maps.Copy(byProducts, panel.byProducts())
+		}
 		materials = append(materials, attestation.Artifact{URI: cacheManifestURI(a.Name()), Digest: rec.digest})
 		products := []attestation.Artifact{{URI: a.Name() + ".output", Digest: digests[a.Name()]}}
-		link, err := s.createLink(ctx, job, exec, a.Name(), materials, products, attestation.WithByProducts(rec.byProducts()))
+		link, err := s.createLink(ctx, job, exec, a.Name(), materials, products, attestation.WithByProducts(byProducts))
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())

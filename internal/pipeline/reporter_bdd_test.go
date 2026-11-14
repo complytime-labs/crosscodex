@@ -12,6 +12,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 )
 
 // fakeNATSReporter implements analysis.StageReporter for testing.
@@ -228,6 +229,73 @@ var _ = Describe("DBStageReporter", func() {
 			Expect(err.Error()).To(ContainSubstring("db write failed"))
 
 			// NATS reporter must NOT be called: persistence failure blocks publishing.
+			natsReporter.mu.Lock()
+			defer natsReporter.mu.Unlock()
+			Expect(natsReporter.completed).To(BeEmpty())
+		})
+	})
+
+	Describe("graph deferral", func() {
+		withStages := func(names ...string) {
+			Expect(store.CreateStages(ctx, "job-2", names)).To(Succeed())
+		}
+		completedMetadata := func() map[string]string {
+			natsReporter.mu.Lock()
+			defer natsReporter.mu.Unlock()
+			Expect(natsReporter.completed).To(HaveLen(1))
+			return natsReporter.completed[0].output.Metadata
+		}
+
+		BeforeEach(func() {
+			Expect(store.CreateJob(ctx, &pipeline.Job{JobID: "job-2", TenantID: "tenant-1", Status: pipeline.JobStatusRunning, CreatedBy: "test-user"})).To(Succeed())
+		})
+
+		DescribeTable("marks a pair analyzer's completed event graph_deferred when the job has a critique stage, keeping its metadata",
+			func(analyzerName string) {
+				withStages("classify", analyzerName, results.CritiqueAnalyzer, "synthesis")
+				output := &analyzer.Output{ResultData: []byte(`[]`), Metadata: map[string]string{"total_count": "4"}}
+
+				Expect(reporter.ReportStageCompleted(ctx, analyzerName, "job-2", output)).To(Succeed())
+
+				Expect(completedMetadata()).To(Equal(map[string]string{"total_count": "4", results.GraphDeferredMetadataKey: "true"}))
+				Expect(output.Metadata).To(Equal(map[string]string{"total_count": "4"}), "the engine's output must not change")
+			},
+			Entry("relationship", results.RelationshipAnalyzer),
+			Entry("requires", results.RequiresAnalyzer),
+		)
+
+		DescribeTable("does not mark an event graph_deferred",
+			func(analyzerName string, stages []string) {
+				withStages(stages...)
+				Expect(reporter.ReportStageCompleted(ctx, analyzerName, "job-2", &analyzer.Output{ResultData: []byte(`[]`)})).To(Succeed())
+				Expect(completedMetadata()).NotTo(HaveKey(results.GraphDeferredMetadataKey))
+			},
+			Entry("for relationship when the job has no critique stage",
+				results.RelationshipAnalyzer, []string{results.RelationshipAnalyzer, results.RequiresAnalyzer, "synthesis"}),
+			Entry("for requires when the job has no critique stage",
+				results.RequiresAnalyzer, []string{results.RequiresAnalyzer, "synthesis"}),
+			Entry("for another analyzer of a job with a critique stage",
+				"classify", []string{"classify", results.RelationshipAnalyzer, results.CritiqueAnalyzer}),
+			Entry("for the critique stage itself",
+				results.CritiqueAnalyzer, []string{results.RelationshipAnalyzer, results.CritiqueAnalyzer}),
+		)
+
+		It("fails without persisting or publishing when the job's stages cannot be read", func() {
+			withStages(results.RelationshipAnalyzer, results.CritiqueAnalyzer)
+			store.getStagesErr = errors.New("connection lost")
+
+			err := reporter.ReportStageCompleted(ctx, results.RelationshipAnalyzer, "job-2", &analyzer.Output{ResultData: []byte(`[]`)})
+			Expect(err).To(MatchError(ContainSubstring("connection lost")))
+			Expect(err).To(MatchError(ContainSubstring(`cannot tell whether job job-2 runs the critique stage`)))
+			Expect(err).To(MatchError(ContainSubstring("resume the job")))
+
+			store.mu.Lock()
+			Expect(store.analysisResults["job-2"]).NotTo(HaveKey(results.RelationshipAnalyzer))
+			store.mu.Unlock()
+			store.getStagesErr = nil
+			stages, err := store.GetStages(ctx, "job-2")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stages[0].Status).NotTo(Equal(pipeline.StageStatusCompleted))
 			natsReporter.mu.Lock()
 			defer natsReporter.mu.Unlock()
 			Expect(natsReporter.completed).To(BeEmpty())

@@ -114,7 +114,7 @@ func (w *Worker) handleMessage(ctx context.Context, msg *natsbus.Message) error 
 	var taskErr error
 
 	switch natsbus.TaskType(taskType) {
-	case natsbus.TaskClassify, natsbus.TaskRelate, natsbus.TaskRequires, natsbus.TaskArtifacts:
+	case natsbus.TaskClassify, natsbus.TaskRelate, natsbus.TaskRequires, natsbus.TaskArtifacts, natsbus.TaskCritique:
 		resultPayload, taskErr = w.handleCompletion(ctx, payload, tenantID, jobID)
 	case natsbus.TaskEmbed:
 		resultPayload, taskErr = w.handleEmbedding(ctx, payload, tenantID, jobID)

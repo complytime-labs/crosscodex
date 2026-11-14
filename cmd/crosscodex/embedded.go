@@ -482,7 +482,8 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 	// Create catalog service (satisfies gateway.CatalogBackend)
 	catalogStore := catalog.NewPGStore(tenantConn)
 	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
-	parser := oscal.NewParser("", oscal.WithParserTracer(oscalTracer))
+	parser := oscal.NewParser("", oscal.WithParserTracer(oscalTracer),
+		oscal.WithRequirementPartNames(cfg.Catalog.RequirementPartNames))
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
 	catalogSvc := catalog.NewService(
 		catalog.WithParser(parser),
@@ -524,6 +525,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		gateway.WithIngestionBackend(localIngestion),
 		gateway.WithPipelineBackend(localPipeline),
 		gateway.WithMappingsBackend(mappings),
+		gateway.WithCandidatesBackend(mappings),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(pool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(logger),

@@ -36,7 +36,7 @@ func gatewayClient(ctx context.Context, rt *runtime) crosscodexv1connect.Gateway
 var _ = Describe("gateway backend wiring", func() {
 	const unknownJob = "00000000-0000-0000-0000-000000000000"
 
-	It("role all attaches the mappings and graph backends", func() {
+	It("role all attaches the mappings, crosswalk and graph backends", func() {
 		dsn := os.Getenv("TEST_DATABASE_DSN")
 		if dsn == "" {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
@@ -69,6 +69,18 @@ var _ = Describe("gateway backend wiring", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound),
 			"ListJobMappings for an unknown job must reach the store; Unavailable means gateway.WithMappingsBackend is not wired: %v", err)
+
+		_, err = client.ListJobCandidates(ctx, connect.NewRequest(&pb.ListJobCandidatesRequest{JobId: unknownJob}))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound),
+			"ListJobCandidates for an unknown job must reach the store; Unavailable means gateway.WithCandidatesBackend is not wired: %v", err)
+
+		_, err = client.GetCrosswalk(ctx, connect.NewRequest(&pb.GetCrosswalkRequest{
+			Mode: &pb.GetCrosswalkRequest_JobId{JobId: unknownJob},
+		}))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound),
+			"GetCrosswalk for an unknown job must reach the store; Unavailable means gateway.WithCrosswalkBackend is not wired: %v", err)
 
 		_, err = client.QueryGraph(ctx, connect.NewRequest(&pb.QueryGraphRequest{Cypher: "MATCH (n) RETURN n"}))
 		if err != nil {

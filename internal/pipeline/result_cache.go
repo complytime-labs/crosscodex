@@ -185,29 +185,9 @@ func (s *Service) probeModel(ctx context.Context, tenantID, jobID string, use an
 			s.probeDuration.Record(ctx, float64(time.Since(start).Milliseconds()), attrs)
 		}
 	}()
-	var deployment string
-	if use.Kind == analyzer.ModelEmbedding {
-		resp, err := s.probe.Embed(ctx, &llmclient.EmbeddingRequest{Model: use.Alias, Input: []string{modelProbeText},
-			TenantID: tenantID, JobID: jobID})
-		if err != nil {
-			return analysis.CacheModel{}, err
-		}
-		observed, deployment = resp.Model, resp.Deployment
-	} else {
-		zero := 0.0
-		resp, err := s.probe.Complete(ctx, &llmclient.CompletionRequest{
-			Model:       use.Alias,
-			Messages:    []llmclient.ChatMessage{{Role: llmclient.RoleUser, Content: modelProbeText}},
-			MaxTokens:   1,
-			Temperature: &zero,
-			TenantID:    tenantID,
-			JobID:       jobID,
-			PromptName:  resultcache.ProbePromptName,
-		})
-		if err != nil {
-			return analysis.CacheModel{}, err
-		}
-		observed, deployment = resp.Model, resp.Deployment
+	observed, deployment, err := s.probeObserved(ctx, s.probe, tenantID, jobID, use)
+	if err != nil {
+		return analysis.CacheModel{}, err
 	}
 	cm = analysis.CacheModel{Alias: use.Alias, Revision: s.llmCfg.ModelRevisions[use.Alias]}
 	switch {
@@ -229,6 +209,35 @@ func (s *Service) probeModel(ctx context.Context, tenantID, jobID string, use an
 		cm.Observed, cm.Deployment = observed, deployment
 	}
 	return cm, nil
+}
+
+// probeObserved makes one minimal call through client for use, whose alias is
+// resolved, and returns the model name and deployment ID the gateway
+// reported. client is the result cache's probe client, or the panel probe.
+func (s *Service) probeObserved(ctx context.Context, client llmclient.Client, tenantID, jobID string,
+	use analyzer.ModelUse) (observed, deployment string, err error) {
+	if use.Kind == analyzer.ModelEmbedding {
+		resp, err := client.Embed(ctx, &llmclient.EmbeddingRequest{Model: use.Alias, Input: []string{modelProbeText},
+			TenantID: tenantID, JobID: jobID})
+		if err != nil {
+			return "", "", err
+		}
+		return resp.Model, resp.Deployment, nil
+	}
+	zero := 0.0
+	resp, err := client.Complete(ctx, &llmclient.CompletionRequest{
+		Model:       use.Alias,
+		Messages:    []llmclient.ChatMessage{{Role: llmclient.RoleUser, Content: modelProbeText}},
+		MaxTokens:   1,
+		Temperature: &zero,
+		TenantID:    tenantID,
+		JobID:       jobID,
+		PromptName:  resultcache.ProbePromptName,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return resp.Model, resp.Deployment, nil
 }
 
 // llmUnavailable logs a failed probe once, with its cause, marks

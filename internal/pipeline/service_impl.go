@@ -233,7 +233,7 @@ func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequ
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get stages: %v", err))
 	}
 
-	pbJob := jobToProto(job, stages)
+	pbJob := jobToProto(job, stages, s.panelProvenance(stages))
 	// Summaries are read only when asked for: the gateway asks only after
 	// checking that the caller owns the job or is an admin. The text
 	// reaches only the gateway, whose publicError withholds it.
@@ -303,7 +303,7 @@ func (s *Service) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobs
 			s.logger.WarnContext(ctx, "failed to get stages for job", "job_id", job.JobID, "error", err)
 			stages = nil
 		}
-		pbJobs[i] = jobToProto(job, stages)
+		pbJobs[i] = jobToProto(job, stages, s.panelProvenance(stages))
 	}
 
 	nextPageToken := ""
@@ -735,11 +735,12 @@ func (s *Service) publishJobState(ctx context.Context, tenantID, jobID string, j
 	return s.bus.Publish(ctx, subject, payload)
 }
 
-func jobToProto(job *Job, stages []*Stage) *pb.PipelineJob {
+func jobToProto(job *Job, stages []*Stage, panels map[string]*pb.PanelProvenance) *pb.PipelineJob {
 	pbStages := make([]*pb.JobStage, len(stages))
 	var completedSteps, failedSteps, cancelledSteps int32
 	for i, stage := range stages {
 		pbStages[i] = stageToProto(stage)
+		pbStages[i].Panel = panels[stage.StageName]
 		switch stage.Status {
 		case StageStatusCompleted:
 			completedSteps++

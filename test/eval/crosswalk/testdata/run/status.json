@@ -1,0 +1,13 @@
+{
+  "job_id": "job-synth",
+  "status": "JOB_STATUS_COMPLETED",
+  "analyzers": ["relationship"],
+  "stages": [
+    {"name": "embedding", "status": "JOB_STATUS_COMPLETED", "started_at": "2026-11-08T10:00:00Z", "completed_at": "2026-11-08T10:00:01.5Z"},
+    {"name": "relationship", "status": "JOB_STATUS_COMPLETED", "started_at": "2026-11-08T10:00:01.5Z", "completed_at": "2026-11-08T10:00:04Z"}
+  ],
+  "cache": [
+    {"analyzer": "relationship", "attestation": "attested", "mode": "enabled", "reason": "", "tasks": 3, "hits": 1, "dispatched": 2,
+     "models": [{"alias": "a", "observed_model": "model-a", "deployment": "", "revision": ""}], "producer_job_ids": [], "other_producer_jobs": 0}
+  ]
+}

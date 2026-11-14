@@ -208,7 +208,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				confIdx := rapid.IntRange(1, 3).Draw(t, "conf") // 1-3, skip Unknown
 				conf := relationship.ConfidenceLevel(confIdx)
 
-				raw := fmt.Sprintf("RELATIONSHIP: %s\nJUSTIFICATION: test reason\nCONFIDENCE: %s",
+				raw := fmt.Sprintf("RELATIONSHIP: %s\nJUSTIFICATION: test reason\nSANITY_CHECK: PASS\nCONFIDENCE: %s",
 					rel.String(), conf.String())
 				vote := relationship.ParseResponse(raw)
 
@@ -220,6 +220,23 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				}
 				if vote.Confidence != conf {
 					t.Fatalf("roundtrip confidence: expected %v, got %v", conf, vote.Confidence)
+				}
+			})
+		})
+	})
+
+	Context("ParseResponse — sanity check", func() {
+		It("a FAIL sanity check always yields NO_RELATIONSHIP", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				rel := relationship.RelationshipType(rapid.IntRange(0, 7).Draw(t, "rel"))
+				raw := fmt.Sprintf("RELATIONSHIP: %s\nJUSTIFICATION: topic only\nSANITY_CHECK: FAIL\nCONFIDENCE: HIGH", rel.String())
+				vote := relationship.ParseResponse(raw)
+
+				if vote.ParseStatus != relationship.ParseOK {
+					t.Fatalf("failed to parse canonical response for %s", rel.String())
+				}
+				if vote.Relationship != relationship.RelNoRelationship {
+					t.Fatalf("FAIL sanity check kept %v", vote.Relationship)
 				}
 			})
 		})

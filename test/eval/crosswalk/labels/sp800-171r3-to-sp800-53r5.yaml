@@ -1,0 +1,2768 @@
+# Human-maintained judgements of candidate pairs. A human entry overrides model entries.
+# Seeded 2026-11-12 by independent Opus and Sonnet judges over run A's candidates;
+# agreements carry the Opus rationale, disagreements are disputed and need a human decision.
+# 2026-11-14: every disputed pair was re-judged by fresh Opus and Sonnet judges reading both
+# controls' full text in context; splits were broken by the orchestrating Opus ([opus] only).
+# None of these are human judgements; a human entry for a pair overrides them.
+version: 1
+pairs:
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automating account management tooling does not itself define which account types are allowed or prohibited."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: enforcing usage conditions on accounts governs how existing accounts are used, not which account types are permitted at all."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic runtime account creation and deactivation does not establish the allowed and prohibited account types."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.9"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Permitting shared and group accounts only under stated conditions defines whether that account type is allowed, partially meeting the account-type definition."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require defining the types of system accounts allowed and prohibited, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.d.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: naming the authorized users is a different specification from defining permitted account types."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.f"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: executing account lifecycle actions under policy presumes but does not produce the allowed/prohibited account-type definition."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.i.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: basing access authorization on intended system usage does not define which account types are permitted."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-2.j"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: periodic account compliance review checks accounts after the fact rather than defining allowed account types."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.1"
+    target: "ac-6.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: restricting privileged accounts to certain roles limits who holds them, not the catalogue of allowed and prohibited account types."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Automated mechanisms supporting account management directly help carry out the create, enable, modify, disable and remove actions the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: usage-condition enforcement constrains account use rather than governing account creation, modification or removal under policy."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.3.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Disabling accounts that violate organizational policy is a concrete instance of disabling accounts in accordance with policy criteria."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.4"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: auditing account lifecycle actions records them but does not perform them in accordance with policy and criteria."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.8"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Dynamically creating, activating and deactivating accounts performs the account lifecycle actions the source requires to be governed by policy."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining allowed account types is a separate obligation from performing lifecycle actions on accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.d.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: listing authorized users does not carry out creating, enabling, modifying, disabling or removing accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.f"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require creating, enabling, modifying, disabling and removing accounts according to policy, procedures, prerequisites and criteria."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.j"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reviewing accounts for compliance is an oversight activity, not the governed execution of account lifecycle changes."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.2"
+    target: "ac-2.l"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Aligning account management with termination and transfer processes drives disabling and removing accounts per personnel criteria, partially meeting the lifecycle obligation."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automated account-management mechanisms do not themselves specify who the authorized users are."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: account usage conditions say nothing about which users are authorized on the system."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account provisioning does not specify the set of authorized system users."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining permitted account types differs from specifying the authorized users of the system."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: assigning account managers designates administrators, not the authorized user population."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.d.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require specifying the authorized users of the system, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.d.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: specifying per-account privileges and attributes is a separate element from specifying who the authorized users are."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.i.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Granting access on a valid authorization is an access decision; it does not specify the list of authorized users (that is AC-2d.1)."
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.i.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: authorizing access according to intended system usage does not specify which users are authorized."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.1"
+    target: "ac-2.i.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: authorizing access based on organization-defined attributes does not enumerate the authorized users."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: enforcing account usage conditions does not specify which users belong to which groups and roles."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.6"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic runtime privilege changes do not document the group and role membership of accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamically provisioning accounts is unrelated to specifying group and role membership."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.9"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: restricting shared and group accounts concerns shared credentials, not specifying the group and role membership of individual accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: designating account managers does not specify group and role membership."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Requiring prerequisites and criteria for group and role membership directly shapes and documents who holds which group and role membership."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.d.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: identifying authorized users is a distinct specification from their group and role membership."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.d.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require specifying group and role membership for system accounts, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ac-2.j"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: periodic account review checks compliance but does not itself specify group and role membership."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.2"
+    target: "ia-5.i"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: rotating group-account authenticators on membership change is credential management, not specification of membership."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.6"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic privilege management adjusts privileges at runtime rather than specifying each account's access authorizations."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.7.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Administering privileged accounts under a role- or attribute-based scheme assigns their privileges, partially specifying access authorizations per account."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: assigning account managers does not specify the privileges granted to each account."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.d.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: listing authorized users does not state the privileges each account holds."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.d.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: group and role membership is a separate specification element from per-account access authorizations."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.d.3"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require specifying access authorizations (privileges) for each account, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.i.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: deciding access on a valid authorization consumes rather than specifies each account's privileges."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.i.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: basing access on intended system usage does not record per-account privileges."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.i.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: authorizing access on organization-defined attributes is an access decision, not a per-account privilege specification."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.3.3"
+    target: "ac-2.j"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reviewing accounts for compliance does not specify the access authorizations of each account."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automated account-management tooling does not ensure access is granted only on a valid access authorization."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: account usage conditions restrict use but do not require a valid access authorization before granting access."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account creation does not establish that access rests on a valid access authorization."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining allowed account types is not the requirement to authorize access on a valid access authorization."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.d.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: listing authorized users does not govern the basis on which access is granted."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.d.3"
+    verdict: related
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus unrelated, sonnet related): per-account specified authorizations are the record access is authorized against"
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.i.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require authorizing system access based on a valid access authorization, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.i.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: intended system usage is a different authorization basis from a valid access authorization."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.i.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: authorizing on organization-defined attributes is a separate basis from holding a valid access authorization."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.1"
+    target: "ac-2.j"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: periodic account review does not make the access grant itself depend on a valid authorization."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automated account tooling does not make authorization depend on the intended system usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.11"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Enforcing usage conditions such as time and duration on accounts directly limits access to intended system usage."
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account provisioning does not tie the access grant to intended system usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining allowed account types does not base individual access authorizations on intended usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.d.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: listing authorized users does not require that access be justified by intended system usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.d.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: documenting per-account privileges is a specification task, not authorizing access according to intended usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.i.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: a valid access authorization is a different authorization basis from intended system usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.i.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require authorizing system access based on intended system usage, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "ac-2.i.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: organization-defined attributes are a separate authorization basis from intended system usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.4.2"
+    target: "sc-43.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: authorizing use of restricted system components concerns component usage, not basing account access on intended system usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automated account-management support does not itself monitor how accounts are used."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: enforcing account usage conditions restricts use but does not monitor account activity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.12.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Monitoring system accounts for atypical usage is a concrete form of monitoring the use of system accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.12.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Reporting atypical account usage depends on and evidences ongoing monitoring of account use."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account lifecycle management does not monitor account usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.9"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: conditioning shared and group account use does not monitor how accounts are being used."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining allowed account types does not observe account activity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.g"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require monitoring the use of system accounts, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ac-2.j"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: periodic account compliance review examines account configuration rather than monitoring ongoing account use."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.5"
+    target: "ia-5.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: managing compromise risk from accounts on multiple systems is not monitoring account usage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: generic automated account-management support does not ensure expired accounts are disabled."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.13"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts of high-risk individuals uses a risk trigger, not account expiry."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Automatically disabling or removing temporary and emergency accounts after a set period disables accounts upon expiry for those account types."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.3.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require disabling system accounts that have expired, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts no longer associated with a user is a different trigger from account expiry."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling policy-violating accounts is a different trigger from account expiry."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts for inactivity is a distinct trigger from expiry of the account."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account deactivation is not specifically tied to disabling expired accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.f"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Disabling accounts in accordance with defined criteria encompasses disabling accounts once they reach their expiry criterion."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.1"
+    target: "ac-2.h.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: notifying account managers when accounts are no longer required does not disable expired accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: generic automated account support does not specifically disable accounts after a period of inactivity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: account usage conditions do not cause dormant accounts to be disabled after the inactivity period."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.13"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts upon discovering high-risk individuals is unrelated to an inactivity threshold."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: removing temporary and emergency accounts after a fixed lifetime is age-based, not triggered by inactivity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling expired accounts uses an expiry trigger rather than an inactivity period."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts no longer tied to an individual is a different trigger from inactivity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts for policy violation does not address accounts left inactive for the defined period."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.3.d"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require disabling accounts that have been inactive for an organization-defined period, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account deactivation is not tied to an inactivity threshold."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.2"
+    target: "ac-2.h.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: notifying managers that accounts are no longer required does not disable inactive accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: generic automated account support does not ensure orphaned accounts are disabled."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: enforcing usage conditions does not disable accounts that have lost their associated user."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.13"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts of individuals posing significant risk differs from disabling accounts with no associated individual."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling expired accounts is a distinct trigger from accounts no longer associated with a user."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.3.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require disabling accounts no longer associated with a user or individual, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling policy-violating accounts does not cover accounts orphaned from their user."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: an inactivity threshold is a different trigger from loss of user association."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account management is not specifically aimed at disabling accounts without an associated individual."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.f"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Disabling accounts per defined criteria includes disabling accounts once they are no longer associated with an individual."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.3"
+    target: "ac-2.h.1"
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus unrelated, sonnet related): notifying managers triggers the disable but is not disabling the account"
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automated account support does not by itself disable accounts that violate organizational policy."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: enforcing usage conditions restricts account use rather than disabling accounts found in policy violation."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.13"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts of high-risk individuals targets personnel risk, not accounts in violation of policy."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling expired accounts does not handle accounts that violate organizational policy."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling orphaned accounts is a different trigger from policy violation."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.3.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require disabling accounts that are in violation of organizational policy, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: an inactivity trigger does not address accounts that breach organizational policy."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account deactivation is not tied to detecting policy-violating accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining prohibited account types sets policy but does not disable accounts that violate it."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.4"
+    target: "ac-2.f"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Disabling accounts in accordance with policy and criteria covers disabling accounts that are in violation of organizational policy."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: enforcing account usage conditions does not disable accounts when individuals are found to pose significant risk."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.13"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require disabling the accounts of individuals once significant risks associated with them are discovered."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: account expiry is a different disabling trigger from discovered individual risk."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: orphaned-account disabling does not address accounts of individuals identified as high risk."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts in policy violation keys on the account, not on significant risks discovered about the person."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: inactivity-based disabling does not respond to discovered risks about individuals."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: dynamic account deactivation is not driven by discovering significant personnel risk."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.f"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Disabling accounts according to defined criteria can include the criterion of discovered significant risk about the account holder."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ac-2.l"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: aligning with termination and transfer processes covers departures, not disabling accounts on discovery of individual risk."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.6.5"
+    target: "ia-5.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: managing compromise risk from multi-system accounts is credential risk, not disabling accounts of risky individuals."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automatically disabling temporary accounts does not notify account managers that accounts are no longer required."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling expired accounts takes action but does not notify account managers and designated roles."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling orphaned accounts is not the notification to account managers that accounts are no longer required."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling policy-violating accounts does not provide the required notification to account managers."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling inactive accounts is an enforcement action, not a notification to account managers."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.7.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: revoking inappropriate privileged role assignments does not notify managers that accounts are no longer required."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.h.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require notifying account managers and designated roles within a set period when accounts are no longer required."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.h.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: notification on user termination or transfer uses a different trigger from accounts no longer being required."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.h.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: notification on changed usage or need-to-know is a different trigger from an account no longer being required."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.1"
+    target: "ac-2.l"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: aligning account processes with personnel actions does not itself notify managers that accounts are no longer needed."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ac-2.3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling orphaned accounts does not notify account managers of user terminations or transfers."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ac-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: assigning account managers names recipients but does not deliver termination or transfer notifications."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ac-2.h.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: notification that accounts are no longer required uses a different trigger from users being terminated or transferred."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ac-2.h.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require notifying account managers and designated roles within a set period when users are terminated or transferred."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ac-2.h.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: notification of changed usage or need-to-know is a distinct trigger from termination or transfer."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ac-2.l"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Aligning account management with personnel termination and transfer processes establishes the link that informs account managers of those events."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ac-9.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: telling users about changes to their own account at logon is not notifying account managers of terminations."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ps-4.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Automated mechanisms notifying designated personnel of individual termination actions directly deliver the termination notifications the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ps-5.d"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Notifying designated personnel within a set period upon personnel transfer fulfils the transfer half of the source notification obligation."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.2"
+    target: "ps-7.d"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Requiring external providers to notify the organization of external personnel terminations and transfers supplies termination and transfer notifications for those users."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: enforcing account usage conditions does not notify account managers when an individual's usage or need-to-know changes."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-2.12.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reporting atypical account activity concerns anomalous behaviour, not notifying managers of a changed need-to-know."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: assigning account managers does not deliver notifications about changed usage or need-to-know."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-2.d.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: specifying authorized users does not notify anyone when an individual's need-to-know changes."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-2.h.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: notification that accounts are no longer required uses a different trigger from changed usage or need-to-know."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-2.h.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: termination or transfer notification is a distinct trigger from a change in an individual's need-to-know."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-2.h.3"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require notifying account managers and designated roles within a set period when an individual's system usage or need-to-know changes."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-2.l"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: aligning account management with termination and transfer processes does not cover need-to-know changes for retained staff."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-8.a.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: a logon banner warning that usage may be monitored is a user notice, not a manager notification of changed need-to-know."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.7.3"
+    target: "ac-9.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: informing users at logon of changes to their account parameters does not notify account managers of changed need-to-know."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-11.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: AC-11 guidance states device locks are not a substitute for logging out, so device lock evidence does not show required logout."
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-12"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Automatically terminating user sessions after defined conditions such as inactivity enforces the logout the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-12.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Providing a user-initiated logout capability is the mechanism users need to log out as the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-12.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: displaying a logout confirmation message does not require or cause users to log out after inactivity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-12.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: warning that a session will end is a courtesy message, not the requirement to log out after expected inactivity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-2.11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: generic account usage conditions do not mandate logout after a period of inactivity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-2.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: removing temporary and emergency accounts after a lifetime is account lifecycle, not session logout."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-2.3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: disabling accounts unused for a long period differs from logging users out of sessions after short inactivity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "ac-2.5"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require that users log out after a defined period of expected inactivity or stated circumstances, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.01.8"
+    target: "sc-23.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: invalidating session identifiers hardens logout once it happens but does not require users to log out."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require allowing only authorized access for users and their processes that is necessary for assigned organizational tasks."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6.10"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Preventing non-privileged users from executing privileged functions enforces access limited to what each user's tasks require."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6.1.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Explicitly authorizing which individuals and roles may access security functions restricts that access to those whose tasks need it."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6.1.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Restricting access to security-relevant information to authorized individuals and roles enforces task-necessary access only."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Requiring privileged users to use non-privileged accounts for nonsecurity functions limits their access to what each task needs."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6.3"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Allowing network access to privileged commands only for compelling operational need limits access to what tasks require."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6.5"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Restricting privileged accounts to designated personnel or roles limits privileged access to those whose duties require it."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6.6"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Prohibiting privileged access by non-organizational users removes access those users do not need for assigned tasks."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "ac-6.7.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Reassigning or removing privileges to match mission and business needs keeps user access to only what tasks require."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.1"
+    target: "sa-8.14"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: SA-8(14) builds least privilege into components and processes acting for users, partially evidencing only-necessary authorized access."
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.05.2"
+    target: "ac-17.4.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Authorizing remote execution of privileged commands and remote access to security-relevant information only for defined needs is an authorization of access to security functions and information."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.2"
+    target: "ac-6"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: AC-6 restricts all access to authorized and necessary, which encompasses authorization of access to security functions and security-relevant information."
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.05.2"
+    target: "ac-6.10"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Preventing non-privileged users from executing privileged functions enforces that only authorized users reach security functions."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.2"
+    target: "ac-6.1.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require explicitly authorizing access to organization-defined security functions for designated individuals and roles."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.2"
+    target: "ac-6.1.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require explicitly authorizing access to security-relevant information for designated individuals and roles."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.2"
+    target: "ac-6.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: requiring non-privileged accounts for nonsecurity work governs everyday use, not authorizing access to security functions."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.2"
+    target: "ac-6.3"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Authorizing network access to privileged commands only for compelling operational needs is an explicit authorization of access to security functions."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.2"
+    target: "ac-6.6"
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus unrelated, sonnet related): barring non-organizational privileged access does not authorize access to security functions"
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.05.2"
+    target: "sa-17.7"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: requiring developers to structure components for least privilege is a design obligation, not an access authorization."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.2"
+    target: "sa-8.14"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: applying least privilege as a component design principle does not authorize specific access to security functions or information."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-2.7.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: revoking inappropriate privileged role assignments is a remediation step, not the periodic privilege review."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-6"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the general least-privilege principle does not require a periodic review of role privileges."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-6.10"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: blocking non-privileged users from privileged functions is a technical restriction, not a periodic review of privileges."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-6.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: authorizing access to security functions grants privileges but does not periodically review them."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-6.1.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: authorizing access to security-relevant information is a grant, not a scheduled review validating privilege need."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-6.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: using non-privileged accounts for nonsecurity functions does not review privileges assigned to roles."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-6.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: restricting privileged accounts to designated roles does not review whether role privileges are still needed."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-6.7.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require reviewing privileges assigned to roles or classes of users at a set frequency to validate their need."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "ac-6.7.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reassigning or removing privileges is the follow-on action, not the periodic validation review itself."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.3"
+    target: "cm-5.5.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Periodically reviewing and reevaluating privileges for production changes is a scheduled privilege review validating continued need."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-2.6"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Dynamic privilege management includes immediate revocation and automatic adjustment of privileges, which is reassigning or removing privileges as necessary."
+    date: 2026-11-14
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-2.7.d"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Revoking access when privileged role assignments are no longer appropriate is removal of privileges as necessary."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-6"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the general least-privilege principle does not require reassigning or removing privileges as circumstances change."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-6.10"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: preventing privileged-function execution by non-privileged users does not reassign or remove existing privileges."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-6.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: requiring non-privileged accounts for nonsecurity functions is a usage rule, not privilege reassignment or removal."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-6.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: restricting privileged accounts to designated roles does not reassign or remove privileges when needs change."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-6.6"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: a standing prohibition on non-organizational privileged access is not the act of reassigning or removing privileges."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-6.7.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reviewing role privileges identifies issues but does not itself reassign or remove privileges."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "ac-6.7.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require reassigning or removing privileges as necessary to reflect current needs, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.01.05.4"
+    target: "sa-8.14"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: applying least privilege as a design principle does not reassign or remove privileges already granted."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-12.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: providing audit generation capability for auditable events does not ensure records state the event type."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-12.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Generating audit records that include the AU-3 content means each record states what type of event occurred."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-2.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: selecting which event types to log does not make each audit record record the event type."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-3.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: adding organization-defined additional information is extra content beyond the event-type field."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-3.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require audit records to establish what type of event occurred, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording when an event occurred is a different audit field from the event type."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording where an event occurred is a different audit field from what type of event it was."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording the event source is a different audit field from the event type."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-3.e"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording the event outcome is a different audit field from the event type."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.1"
+    target: "au-3.f"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording the identities associated with an event is a different audit field from the event type."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-12.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: audit generation capability across components does not guarantee records carry a timestamp."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-12.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Generating audit records that include the AU-3 content means each record states when the event occurred."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-2.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: choosing which event types to log does not ensure records carry the time of the event."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-3.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: organization-defined additional audit information is separate from the event timestamp."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording the event type is a different audit field from when the event occurred."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-3.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "Both require audit records to establish when the event occurred, making the target a direct equivalent."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording where the event occurred is a different audit field from its time."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording the event source is a different audit field from its timestamp."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-3.e"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording the event outcome is a different audit field from when it occurred."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.2"
+    target: "au-3.f"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording identities associated with the event is a different audit field from its time."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-12.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-12a only provides a generic audit generation capability on components and says nothing about recording where an event occurred."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-12.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-12c requires generated records to carry AU-3 content, which includes the event location the source requires in each audit record."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: coordinating event-selection criteria with other entities governs which events are logged, not whether records capture the event location."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-3.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-3(1) adds organization-assigned extra fields beyond the baseline, so it does not supply the baseline location-of-event field."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording the event type is a different audit field from recording where the event occurred."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: a timestamp field (when) does not establish the location field (where) the source demands."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-3.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-3c requires audit records to establish where the event occurred, the identical content element the source mandates."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the source-of-event field is listed separately from the location-of-event field, so capturing it does not satisfy the where requirement."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-3.e"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording success or failure outcome does not provide the location-of-event content."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.3"
+    target: "au-3.f"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: identity of associated subjects is a distinct field and does not record where the event happened."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-12.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-12a's generic generation capability does not specify that records carry the event's source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-12.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-12c makes generated records include AU-3 content, which covers the source-of-event element required here."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: cross-organization coordination on what to log does not make records contain the event source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-3.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: organization-defined supplementary fields in AU-3(1) do not provide the base source-of-event element."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the event-type field is separate from and does not convey the source of the event."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: capturing when an event occurred does not identify its source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: event location is a distinct field from event source, so AU-3c does not meet the source-content obligation."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-3.d"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-3d requires audit records to establish the source of the event, exactly the content the source requirement names."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-3.e"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: logging the event outcome does not record which source originated the event."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.4"
+    target: "au-3.f"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-3f covers identities associated with the event, a field separate from the event source required here."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-12.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-12a supplies a generation capability for event types but does not require outcome content in records."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-12.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-12c requires records to include AU-3 content, which includes the event outcome the source mandates."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: coordinating logging selection criteria does not cause records to capture event outcome."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-3.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-3(1) extra organization-assigned information is beyond the base outcome field and does not supply it."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording the type of event does not record whether it succeeded or failed."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: time-of-event content is a separate field from outcome-of-event content."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: location-of-event content does not record the event's outcome."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: source-of-event content is distinct from the outcome element the requirement names."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-3.e"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-3e requires audit records to establish the outcome of the event, the same content element as the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.5"
+    target: "au-3.f"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: identities associated with an event are a separate field and do not capture the event outcome."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-12.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-12(3) lets authorized roles change what is logged, which does not make records carry the identities associated with events."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-12.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-12c requires records to include AU-3 content, including the identities of individuals, subjects or entities tied to each event."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-14.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: capturing user session content under set circumstances is session audit, not a requirement that every audit record name associated identities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-3.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-3(1) covers organization-assigned additional information, not the baseline identity-of-subjects field."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the event-type field does not identify the individuals or entities involved."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: a time-of-event field gives no identity of the subjects or objects tied to the event."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording where an event occurred does not identify which individuals or entities were involved."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the source-of-event element is listed apart from the identity-of-associated-entities element and does not fulfill it."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-3.e"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the event outcome field does not record the identities of associated subjects or objects."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.1.6"
+    target: "au-3.f"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-3f requires records to establish the identity of individuals, subjects or objects associated with the event, matching the source exactly."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-11"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-11 governs how long audit records are kept, not adding supplementary information to their content."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-12.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-12c ties records to the baseline AU-3 content, not to supplementary information added as needed."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-14.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: recording or viewing full user session content is a distinct session-audit capability, not enriching audit records with extra fields."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-3.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-3(1) requires generating audit records with organization-assigned additional information, which is exactly the source's provision of additional audit record content."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the baseline event-type field is not the supplementary information the source asks to add."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the baseline timestamp field is not additional audit information beyond the standard content."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the baseline location field is mandated content, not the as-needed additional information."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the baseline event-source field does not address supplying extra information beyond standard content."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-3.e"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the baseline outcome field is standard content rather than the optional additional information the source covers."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.02.2"
+    target: "au-3.f"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: the baseline identity field is standard content and does not address supplementary audit details."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-6.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6(1) automates the audit review and analysis process, directly supporting the periodic review and analysis of audit records for unusual activity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-6.4"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6(4) provides central review and analysis of audit records across components, which is a means of performing the required review for inappropriate activity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-6.5"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6(5) integrates audit analysis with other data specifically to better identify inappropriate or unusual activity, enhancing the required analysis."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-6.6"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6(6) correlates audit records with physical access monitoring to identify unusual activity, strengthening the audit analysis the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-6.7"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining permitted actions for audit reviewers is access restriction over audit information, not performing the review for unusual activity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-6.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6a requires reviewing and analyzing audit records at a set frequency for inappropriate or unusual activity and its impact, the same obligation as the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-6.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reporting findings to designated personnel is a separate follow-on step from the review and analysis the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-6.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: adjusting review intensity when risk changes is a tuning activity, not performing the frequency-based review itself."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "au-7.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-7a audit reduction and report generation supports on-demand audit record review and analysis, a tool enabling the required review."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.1"
+    target: "ma-4.1.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MA-4(1)b reviews maintenance session audit records to detect anomalous behavior, partially performing audit review for unusual activity."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-1.a.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-1 policy development and dissemination does not report audit review findings to personnel."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-3.f"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: putting subject identities in audit records is record content, not reporting review findings to designated roles."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-6.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6(1) integrates the audit reporting process with automated mechanisms, directly supporting delivery of audit findings to personnel."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-6.4"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: a central review and analysis capability does not itself report findings to organizational personnel."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-6.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: correlating audit analysis with scan or performance data improves detection but does not report findings to roles."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-6.7"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: specifying permitted reviewer actions limits who may act on audit data rather than communicating findings."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-6.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-6a performs the review and analysis but the separate obligation to report findings is not addressed by it."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-6.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6b requires reporting audit review findings to assigned personnel or roles, the same obligation as the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-6.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: scaling review and reporting levels with risk changes does not itself deliver findings to personnel."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.2"
+    target: "au-7.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-7a report generation capability supports audit reporting requirements, producing the reports used to convey findings to personnel."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-12.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-12(1) compiles records from components into a time-correlated system-wide trail, enabling the cross-repository correlation the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-16.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: sharing audit information with external organizations under agreements is not analyzing and correlating internal repositories."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-6.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-6(1) automates review process integration but does not require correlating records across different repositories."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-6.3"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6(3) requires analyzing and correlating audit records across repositories for organization-wide situational awareness, verbatim the source obligation."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-6.4"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "AU-6(4) centrally reviews and analyzes records from multiple components, implementing cross-source analysis toward organization-wide awareness."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-6.5"
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus unrelated, sonnet related): integrates audit analysis with other data types; the source correlates audit repositories (AU-6(3))"
+    date: 2026-11-14
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-6.6"
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus related, sonnet unrelated): correlation with physical-access monitoring is a different obligation from organization-wide audit repository correlation"
+    date: 2026-11-14
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-6.9"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Nontechnical sources such as HR or harassment records are not audit repositories; only the situational-awareness goal is shared."
+    date: 2026-11-14
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-6.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AU-6a is general periodic review for unusual activity, not cross-repository correlation for organization-wide awareness."
+    date: 2026-11-12
+  - source: "SP_800_171_03.03.05.3"
+    target: "au-6.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: adjusting review levels on risk changes does not correlate records across repositories."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-6.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-6a sets component configurations to the most restrictive mode consistent with operations, which configures the system toward only essential capabilities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-7.1.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7(1)a periodically reviews the system for unnecessary functions and services, identifying what to remove to keep only mission-essential capabilities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-7.1.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7(1)b disables or removes unnecessary functions, ports and services, directly limiting the system to mission-essential capabilities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-7.4.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Identifying programs for a deny-by-exception list blocks specific software; it does not configure the system to provide only mission-essential capabilities."
+    date: 2026-11-14
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-7.5.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7(5)a identifies authorized software for allow-listing, constraining the system to the capabilities deemed essential."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-7.6"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: confining user-installed software in limited-privilege environments contains risk rather than limiting the system to essential capabilities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-7.8.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: CM-7(8)b governs approval of exceptions for binary code lacking source, a supply-chain concern rather than configuring only essential capabilities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-7.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7a requires configuring the system to provide only mission-essential capabilities, identical to the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "cm-7.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7b prohibits or restricts nonessential functions, ports, protocols and services, enforcing the essential-capabilities-only configuration."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.1"
+    target: "sc-3.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: SC-3(3) minimizes nonsecurity functions inside the security function isolation boundary, an architecture concern distinct from overall least functionality."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.2"
+    target: "cm-7.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Periodic review to identify unnecessary functions is the source's sibling review item; it does not prohibit or restrict their use."
+    date: 2026-11-14
+  - source: "SP_800_171_03.04.06.2"
+    target: "cm-7.1.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7(1)b disables or removes defined functions, ports, protocols and services, a concrete way of prohibiting their use."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.2"
+    target: "cm-7.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7(2) prevents program execution per usage rules, enforcing prohibition of restricted functions on the system."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.2"
+    target: "cm-7.4.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Identifying unauthorized software programs defines the prohibited set whose use is restricted, a sub-step that satisfies part of the source."
+    date: 2026-11-14
+  - source: "SP_800_171_03.04.06.2"
+    target: "cm-7.9.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Prohibiting use or connection of unauthorized hardware restricts prohibited connections, one of the item types the source requires prohibited or restricted."
+    date: 2026-11-14
+  - source: "SP_800_171_03.04.06.2"
+    target: "cm-7.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Configuring only mission-essential capabilities restricts nonessential functions and services, partial evidence that prohibited functions are restricted."
+    date: 2026-11-14
+  - source: "SP_800_171_03.04.06.2"
+    target: "cm-7.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7b prohibits or restricts use of organization-defined functions, ports, protocols and services, matching the source requirement."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.2"
+    target: "sa-4.9"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: SA-4(9) has developers declare intended ports and services during acquisition, which does not itself prohibit or restrict any of them."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.2"
+    target: "sc-3.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: minimizing nonsecurity code inside the security isolation boundary does not prohibit system ports, protocols or services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.2"
+    target: "sc-43.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: SC-43 sets usage restrictions for potentially harmful component types, not prohibitions on the organization-defined functions, ports and services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.3"
+    target: "ac-6.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: authorizing who may access security functions is privilege management, not reviewing for unnecessary ports and services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.3"
+    target: "cm-7.1.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7(1)a requires periodic system review to identify unnecessary or nonsecure functions, ports, protocols and services, matching the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.3"
+    target: "cm-7.1.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: CM-7(1)b is the follow-on removal step and does not perform the periodic review the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.3"
+    target: "cm-7.4.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: listing software programs for deny-by-exception is not a periodic review of ports, protocols, connections and services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.3"
+    target: "cm-7.5.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: identifying allow-listed software does not constitute periodic review for nonsecure functions and ports."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.3"
+    target: "cm-7.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: configuring essential-only capabilities is a configuration outcome, not the recurring review for unnecessary services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.3"
+    target: "cm-7.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: prohibiting specified functions and services enforces a list but does not perform the periodic identification review."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.3"
+    target: "sa-4.9"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: A developer's one-time declaration of intended ports and services is acquisition input, not a periodic review of the system for unnecessary ones."
+    date: 2026-11-14
+  - source: "SP_800_171_03.04.06.3"
+    target: "sa-9.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: External providers listing ports and services they require does not review the organization's system for unnecessary or nonsecure ones."
+    date: 2026-11-14
+  - source: "SP_800_171_03.04.06.3"
+    target: "sc-3.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: SC-3(3) boundary minimization is not a periodic review of functions, ports and connections."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "ac-6.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AC-6(1) authorizes personnel access to security functions and does not disable unnecessary services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "cm-7.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: CM-7(1)a only identifies unnecessary functions; it does not disable or remove them as the source requires."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "cm-7.1.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7(1)b requires disabling or removing unnecessary or nonsecure functions, ports, protocols and services, matching the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "cm-7.4.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: naming software programs for a deny list does not disable or remove unnecessary ports, protocols or services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "cm-7.8.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: approving exceptions for binary code without source is unrelated to disabling nonsecure functions and services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "cm-7.9.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: identifying hardware components is an inventory step unrelated to removing unnecessary functions and ports."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "cm-7.9.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Blocking unauthorized hardware controls which devices attach; it does not disable or remove unnecessary functions, ports, protocols or services."
+    date: 2026-11-14
+  - source: "SP_800_171_03.04.06.4"
+    target: "cm-7.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7a configures the system to only essential capabilities, which is achieved by disabling or removing unnecessary functions and services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "cm-7.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "CM-7b prohibits or restricts defined functions, ports and services, overlapping with disabling those that are unnecessary or nonsecure."
+    date: 2026-11-12
+  - source: "SP_800_171_03.04.06.4"
+    target: "sc-3.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reducing nonsecurity functions within the security isolation boundary is distinct from removing unnecessary system-wide services."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ac-7.4.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: AC-7(4) permits alternate factors after failed logons, which does not require multiple factors for account access."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-2.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IA-2(1) requires multi-factor authentication for privileged account access, covering the privileged half of the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-2.13"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: out-of-band mechanisms under assigned conditions are not a mandate for multi-factor authentication on all accounts."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-2.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IA-2(2) requires multi-factor authentication for non-privileged account access, covering the non-privileged half of the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-2.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: individual authentication before shared-account use addresses accountability, not use of multiple factors."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-2.6.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IA-2(6)a implements multi-factor authentication to privileged and non-privileged accounts with one factor on a separate device, implementing the source's MFA."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-2.6.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IA-2(6)b implements account MFA with a device meeting strength requirements, which is a form of the MFA the source mandates."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-2.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: replay resistance is a property of the authentication mechanism, not a requirement to use multiple factors."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-5.8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: managing risk from individuals holding accounts on multiple systems does not implement multi-factor authentication."
+    date: 2026-11-12
+  - source: "SP_800_171_03.05.03"
+    target: "ia-8"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: IA-8 requires unique identification of non-organizational users without requiring multiple authentication factors."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-1.a.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: an incident response policy addressing purpose and roles does not track or document specific incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-1.a.1.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: policy consistency with laws and directives does not involve tracking and documenting incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-5"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-5 requires tracking and documenting incidents, the same obligation as the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-5.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-5(1) tracks incidents and collects incident information with automated mechanisms, implementing incident tracking and documentation."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-6.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automated incident reporting concerns notification channels, not tracking and documenting incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-6.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reporting incident-related vulnerabilities to roles is distinct from tracking and documenting the incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-6.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reporting incident information to external authorities does not maintain incident tracking records."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-7"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: an incident help resource advising users does not track or document security incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "ir-8.a.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining reportable incidents in the IR plan is a planning element, not tracking and documenting incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.1"
+    target: "si-4.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: analyzing detected monitoring events is detection work, not tracking and documenting declared incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "ir-5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: IR-5 tracks and documents incidents but does not require reporting suspected incidents within a time period."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "ir-6.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-6(1) reports incidents via automated mechanisms, a means of delivering incident reports to the response capability."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "ir-6.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reporting vulnerabilities associated with incidents is not reporting the suspected incidents themselves within a deadline."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "ir-6.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: sharing incident information with supply chain providers is external coordination, not internal reporting to the IR capability."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "ir-6.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-6a requires personnel to report suspected incidents to the organizational IR capability within a time period, identical to the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "ir-6.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: IR-6b reports to external authorities rather than to the organizational incident response capability."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "ir-7"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: IR-7 provides an advice resource (the source's sibling item d); it does not require reporting suspected incidents within a time period."
+    date: 2026-11-14
+  - source: "SP_800_171_03.06.02.2"
+    target: "ir-8.a.5"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-8a.5 defines reportable incidents, establishing what personnel must report to the IR capability."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "pe-6.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "PE-6c coordinates physical access investigation results with the IR capability, a route by which suspected physical incidents are reported to it."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.2"
+    target: "si-4.7.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "SI-4(7)a notifies incident response personnel of detected suspicious events, reporting suspected incidents to the IR capability."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-1.a.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: an IR policy covering roles and coordination does not itself report incident information to designated authorities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: internally tracking and documenting incidents is not reporting incident information to external authorities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-5.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automated tracking and analysis of incident data is internal handling, not reporting to authorities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-6.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-6(1) reports incidents via automated mechanisms, which can carry the incident reports owed to designated authorities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-6.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reporting incident-linked vulnerabilities to internal roles does not report incident information to authorities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-6.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: supplying incident information to supply chain providers is not reporting to the designated authorities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-6.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: IR-6a covers personnel reporting to the internal IR capability, not reporting onward to authorities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-6.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-6b requires reporting incident information to assigned authorities, verbatim the source obligation."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-7"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: an advice resource for users on handling incidents does not report incident information to authorities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.3"
+    target: "ir-8.a.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Defining reportable incidents in the IR plan does not report incident information to designated authorities."
+    date: 2026-11-14
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-2.a.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: incident response training after system changes is training, not a standing support resource offering advice to users."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-2.a.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: periodic incident response training is distinct from an on-call support resource assisting users with incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: tracking incidents does not provide users an advice and assistance resource."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-6.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: automated incident reporting mechanisms do not offer users advice on handling and reporting incidents."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-6.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reporting vulnerabilities associated with incidents does not provide a user support resource."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-6.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: obliging personnel to report suspected incidents does not provide a resource advising them on doing so."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-6.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: reporting to external authorities is not an internal help resource for system users."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-7"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-7 requires an incident response support resource offering users advice and assistance on handling and reporting incidents, identical to the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-7.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "IR-7(1) uses automated mechanisms to increase availability of incident response information and support, enhancing the required user support resource."
+    date: 2026-11-12
+  - source: "SP_800_171_03.06.02.4"
+    target: "ir-8.a.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: defining reportable incidents in the plan does not furnish users an advice and assistance resource."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: exempting media from marking inside controlled areas concerns labeling, not protecting media transported outside those areas."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-4.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: MP-4a physically controls media stored within controlled areas, not media in transit outside them."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-4.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: MP-4b protects stored media until sanitization, which does not address controls during transport outside controlled areas."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-5.3"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MP-5(3) employs an identified custodian for media transported outside controlled areas, a concrete transport protection control."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-5.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MP-5a requires protecting and controlling system media during transport outside controlled areas, matching the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-5.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MP-5b maintains accountability for media in transport outside controlled areas, part of controlling CUI media during transport."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-5.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Documenting transport activities is the source's sibling item c; it does not protect or control media during transport."
+    date: 2026-11-14
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-5.d"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MP-5d restricts media transport activities to authorized personnel, controlling who handles CUI media in transit."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-7.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: restricting media types on systems governs media use, not protection of media during transport."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.1"
+    target: "mp-8.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: downgrading CUI media before public release is a release-sanitization step, not transport protection."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: marking media with handling caveats is labeling and does not maintain accountability of media in transit."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: marking exemptions for media kept inside controlled areas say nothing about accountability outside them during transport."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-4.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: secure storage within controlled areas does not maintain accountability while media travel outside them."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-4.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: protecting stored media until sanitization does not address accountability during transport."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-5.3"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MP-5(3) assigns an identified custodian to media in transit outside controlled areas, establishing who is accountable for it."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-5.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: MP-5a leaves the transport protections organization-defined and does not itself require tracking accountability of each item."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-5.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MP-5b requires maintaining accountability for system media during transport outside controlled areas, identical to the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-5.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MP-5c documentation of media transport activities produces the custody records that sustain accountability for media in transit."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-5.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: limiting who may transport media is an authorization restriction, not tracking accountability for the media."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.2"
+    target: "mp-7.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: restricting media use on system components is unrelated to accountability of media during transport."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-3.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: applying security markings to media does not document transport activities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-4.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: secure storage of media in controlled areas does not document their transport."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-4.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: protecting media until destruction does not document activities associated with moving them."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-5.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: assigning a custodian during transport does not require recording the transport activities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-5.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: MP-5a requires transport protections but not documentation of transport activities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-5.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Transport accountability per guidance includes tracking or obtaining records of transport activities, which overlaps documenting transport activities."
+    date: 2026-11-14
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-5.c"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "MP-5c requires documenting activities associated with system media transport, the same obligation as the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-5.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: limiting transport activities to authorized personnel does not document those activities."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-7.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: restricting or prohibiting media types on systems does not document media transport."
+    date: 2026-11-12
+  - source: "SP_800_171_03.08.05.3"
+    target: "mp-8.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: identifying media requiring downgrading concerns sanitization, not documenting transport."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.1"
+    target: "ra-1.a.1.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: a risk assessment policy statement of purpose and roles does not perform the assessment of CUI disclosure risk."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.1"
+    target: "ra-1.a.1.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: aligning risk assessment policy with laws does not assess disclosure risk to CUI."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.1"
+    target: "ra-2.a"
+    verdict: unrelated
+    judged_by: [opus]
+    rationale: "tie-break by the orchestrating Opus after a split adjudication (opus related, sonnet unrelated): categorization supplies impact but is not a risk assessment of disclosure (no likelihood)"
+    date: 2026-11-14
+  - source: "SP_800_171_03.11.01.1"
+    target: "ra-3.1.a"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "RA-3(1)a assesses supply chain risks for systems and components, covering the supply chain portion of the source's risk assessment."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.1"
+    target: "ra-3.1.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: An updated supply chain risk assessment presupposes and evidences the supply chain risk assessment the source requires."
+    date: 2026-11-14
+  - source: "SP_800_171_03.11.01.1"
+    target: "ra-3.a.2"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "RA-3a.2 determines likelihood and magnitude of harm from unauthorized disclosure of information processed, stored or transmitted, matching the source's risk assessment."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.1"
+    target: "ra-3.a.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: RA-3a.3 assesses privacy impacts on individuals from PII processing, not risk of CUI disclosure."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.1"
+    target: "ra-3.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: documenting assessment results in a report is a recording step and does not perform the disclosure risk assessment."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.1"
+    target: "sr-2.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: protecting the SCRM plan from disclosure secures a document rather than assessing CUI disclosure risk."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.1"
+    target: "sr-3.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: SR-3b applies supply chain mitigation controls, which is risk response rather than assessing the risk."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "ca-5.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: updating the POA&M tracks remediation of control findings, not refreshing the risk assessment."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "pm-28.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: updating organization-level risk framing assumptions is not updating the system risk assessment."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "pm-9.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: revising the organizational risk management strategy is distinct from updating risk assessments."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "ps-2.c"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: position risk designations rate personnel positions, not the system risk assessment the source updates."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "ra-1.c.1"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: updating the risk assessment policy document does not update the risk assessments themselves."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "ra-1.c.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: updating risk assessment procedures does not refresh the actual risk assessment."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "ra-3.1.b"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "RA-3(1)b updates the supply chain risk assessment at a set frequency, partly fulfilling periodic risk assessment updates."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "ra-3.d"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: RA-3d reviews assessment results but does not require revising the assessment itself."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "ra-3.f"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "RA-3f requires updating the risk assessment at a defined frequency or on significant change, matching the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.11.01.2"
+    target: "sr-2.b"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: updating the SCRM plan revises a management plan, not the risk assessment."
+    date: 2026-11-12
+  - source: "SP_800_171_03.13.08"
+    target: "pm-17.a"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: PM-17 sets policy for CUI protection on external systems and does not implement cryptography for CUI in transit or at rest."
+    date: 2026-11-12
+  - source: "SP_800_171_03.13.08"
+    target: "sc-16.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: binding security attributes to transmitted data supports labeling integrity, not encrypting CUI against disclosure."
+    date: 2026-11-12
+  - source: "SP_800_171_03.13.08"
+    target: "sc-28.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "SC-28(1) implements cryptographic mechanisms to prevent unauthorized disclosure of information at rest, covering the storage half of the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.13.08"
+    target: "sc-28.3"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Protected key storage safeguards keys; it does not encrypt CUI in transit or at rest."
+    date: 2026-11-14
+  - source: "SP_800_171_03.13.08"
+    target: "sc-8"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "SC-8 protects confidentiality of transmitted information, partially addressing the transmission-confidentiality aim of the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.13.08"
+    target: "sc-8.1"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "SC-8(1) implements cryptographic mechanisms to prevent unauthorized disclosure during transmission, covering the transmission half of the source."
+    date: 2026-11-12
+  - source: "SP_800_171_03.13.08"
+    target: "sc-8.2"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: SC-8(2) protects information while being prepared or received, not cryptographic protection during transmission or storage."
+    date: 2026-11-12
+  - source: "SP_800_171_03.13.08"
+    target: "sc-8.3"
+    verdict: related
+    judged_by: [opus, sonnet]
+    rationale: "adjudicated with full control context: Encrypting message headers and routing information is cryptographic transmission confidentiality, partially evidencing encryption of CUI in transit."
+    date: 2026-11-14
+  - source: "SP_800_171_03.13.08"
+    target: "sc-8.4"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: concealing communication patterns defeats traffic analysis rather than preventing disclosure of CUI content."
+    date: 2026-11-12
+  - source: "SP_800_171_03.13.08"
+    target: "sc-8.5"
+    verdict: unrelated
+    judged_by: [opus, sonnet]
+    rationale: "none: a protected distribution system is a physical alternative and not the cryptographic mechanism the source mandates."
+    date: 2026-11-12

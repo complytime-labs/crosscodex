@@ -11,7 +11,10 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-var _ llmclient.Client = DeterministicLLM{}
+var (
+	_ llmclient.Client       = DeterministicLLM{}
+	_ llmclient.ModelCatalog = DeterministicLLM{}
+)
 
 // DeterministicLLM is a hermetic llmclient.Client for end-to-end tests. It
 // lives in internal/testspecs, not pkg/, because its canned replies encode the
@@ -66,14 +69,19 @@ func (DeterministicLLM) Complete(_ context.Context, req *llmclient.CompletionReq
 		// ParseClassification expects "Type|Level".
 		content = "Technical|Operational"
 	case "requires":
-		// requires.ParseResponse keys on "REQUIRES: YES|NO"; a single YES vote
+		// requires.ParseResponse keys on "REQUIRES: YES|NO" plus "SANITY_CHECK: PASS"; a single YES vote
 		// with HIGH confidence clears the consensus threshold.
-		content = "REQUIRES: YES\nJUSTIFICATION: prerequisite control\nCONFIDENCE: HIGH"
+		content = "REQUIRES: YES\nJUSTIFICATION: prerequisite control\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"
 	case "relationship":
 		// relationship.Aggregate omits NO_RELATIONSHIP pairs, so the
 		// relationship analyzer produces an (empty) result row and populates no
 		// vote_summaries rows; only the requires contribution reaches synthesis.
-		content = "RELATIONSHIP: NO_RELATIONSHIP\nCONFIDENCE: HIGH"
+		content = "RELATIONSHIP: NO_RELATIONSHIP\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"
+	case "critique":
+		// critique.ParseCritique needs "VERDICT: UPHOLD|REJECT" and a REASON;
+		// UPHOLD keeps every reviewed verdict, so suites see the pair
+		// analyzers' results unchanged.
+		content = "VERDICT: UPHOLD\nREASON: the shared obligation holds"
 	case resultcache.ProbePromptName:
 		// The per-job model probe reads only resp.Model and resp.Deployment.
 		content = "OK"
@@ -86,7 +94,10 @@ func (DeterministicLLM) Complete(_ context.Context, req *llmclient.CompletionReq
 	}
 
 	return &llmclient.CompletionResponse{
-		Model:      req.Model,
+		// A real-looking upstream name, not the alias echoed back: the panel
+		// diversity check reads the model behind an echoed alias from the
+		// gateway catalog, which this fake does not have.
+		Model:      "deterministic/" + req.Model,
 		Deployment: "deterministic-" + req.Model,
 		Choices: []llmclient.CompletionChoice{
 			{
@@ -126,6 +137,13 @@ func (d DeterministicLLM) Embed(_ context.Context, req *llmclient.EmbeddingReque
 		data[i] = llmclient.EmbeddingData{Index: i, Embedding: vec}
 	}
 	return &llmclient.EmbeddingResponse{Data: data, Model: req.Model, Deployment: "deterministic-" + req.Model}, nil
+}
+
+// ModelCatalog implements llmclient.ModelCatalog with an empty catalog. Complete
+// names the upstream model in every reply, so the panel diversity check never
+// consults it; it exists because the daemon refuses a probe client without one.
+func (DeterministicLLM) ModelCatalog(context.Context) ([]llmclient.ModelDeployment, error) {
+	return nil, nil
 }
 
 // Health returns nil.

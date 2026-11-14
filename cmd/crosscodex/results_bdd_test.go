@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/csv"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -41,6 +42,8 @@ func (f *fakeMappingsClient) ListJobMappings(_ context.Context, req *connectrpc.
 		Stage:             req.Msg.GetStage(),
 		MinConfidence:     req.Msg.GetMinConfidence(),
 		IncludeNonViable:  req.Msg.GetIncludeNonViable(),
+		IncludeVetoed:     req.Msg.GetIncludeVetoed(),
+		ExcludeRejected:   req.Msg.GetExcludeRejected(),
 		RelationshipTypes: req.Msg.GetRelationshipTypes(),
 		ControlId:         req.Msg.GetControlId(),
 		Pagination:        &pb.Pagination{PageSize: req.Msg.GetPagination().GetPageSize(), PageToken: req.Msg.GetPagination().GetPageToken()},
@@ -106,6 +109,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(req.GetStage()).To(Equal(pb.MappingStage_MAPPING_STAGE_SYNTHESIZED))
 			Expect(req.GetMinConfidence()).To(BeZero())
 			Expect(req.GetIncludeNonViable()).To(BeFalse())
+			Expect(req.GetIncludeVetoed()).To(BeFalse())
 			Expect(req.GetRelationshipTypes()).To(BeEmpty())
 			Expect(req.GetControlId()).To(BeEmpty())
 			Expect(req.GetPagination().GetPageSize()).To(Equal(int32(1000)))
@@ -156,6 +160,17 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Entry("export: unknown type", "export", "equivalent", "--type", "bogus"),
 		Entry("export: confidence above 1", "export", "between 0 and 1", "--min-confidence", "1.5"),
 		Entry("export: non-viable with analyzer stage", "export", "synthesized", "--stage", "analyzer", "--include-non-viable"),
+		Entry("export: vetoed pairs with the default stage", "export",
+			"--include-vetoed only applies to the analyzer stage: synthesis never receives vetoed pairs, so add --stage analyzer or drop the flag",
+			"--include-vetoed"),
+		Entry("summary: vetoed pairs, which are not mappings", "summary",
+			"--include-vetoed lists vetoed pairs in `results export --stage analyzer`; summary counts only mappings",
+			"--stage", "analyzer", "--include-vetoed"),
+		Entry("export: excluding rejected pairs with the default stage", "export",
+			"--exclude-rejected only applies to the analyzer stage: synthesized mappings are listed without their critique, so add --stage analyzer or drop the flag",
+			"--exclude-rejected"),
+		Entry("summary: excluding rejected pairs with the default stage", "summary",
+			"--exclude-rejected only applies to the analyzer stage", "--exclude-rejected"),
 	)
 
 	It("stops when the server repeats the page token it was given", func() {
@@ -201,6 +216,25 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Expect(out.Mappings[1]).To(HaveKeyWithValue("confidence", BeNumerically("==", 0)), "zero values are exported")
 	})
 
+	It("omits the critique key from JSON for a mapping without one", func() {
+		fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))}
+		stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+		Expect(err).NotTo(HaveOccurred())
+		var out struct {
+			Mappings []map[string]any `json:"mappings"`
+		}
+		Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "export output is valid JSON: %s", stdout)
+		Expect(out.Mappings).To(HaveLen(1))
+		Expect(out.Mappings[0]).NotTo(HaveKey("critique"))
+		Expect(out.Mappings[0]).To(HaveKeyWithValue("isViable", true))
+	})
+
+	It("does not offer --include-vetoed in summary help", func() {
+		stdout, _, err := execute(newCmd(), "summary", "--help")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).NotTo(ContainSubstring("include-vetoed"))
+	})
+
 	It("exports an empty mapping list as an empty JSON array", func() {
 		stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
 		Expect(err).NotTo(HaveOccurred())
@@ -244,6 +278,85 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(lines[1]).To(HavePrefix("a,s-a,t-a,RELATIONSHIP_TYPE_EQUIVALENT,0.900,,,"))
 		})
 
+		DescribeTable("asks the server to leave out pairs the critique rejected without veto",
+			func(command string) {
+				_, _, err := execute(newCmd(), command, "job-1", "--stage", "analyzer", "--exclude-rejected")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fake.calls[0].GetExcludeRejected()).To(BeTrue())
+			},
+			Entry("export", "export"),
+			Entry("summary, which counts the strict view", "summary"),
+		)
+
+		It("says in summary text and JSON that rejected pairs were left out", func() {
+			stdout, _, err := execute(newCmd(), "summary", "job-1", "--stage", "analyzer", "--exclude-rejected")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).To(ContainSubstring("Summary for job job-1 (analyzer mappings, without pairs the critique rejected)"))
+
+			fake.pages = append(fake.pages, mappingsPage(""))
+			stdout, _, err = execute(newCmd(), "--json", "summary", "job-1", "--stage", "analyzer", "--exclude-rejected")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).To(ContainSubstring(`"exclude_rejected": true`))
+		})
+
+		It("names the critique outcome in the CSV critique column", func() {
+			rejected := mapping("r", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)
+			rejected.Critique = &pb.MappingCritique{Outcome: "rejected", Upheld: 1, Rejected: 2, Reasons: []string{"panel-2 s0 REJECT: too broad"}}
+			fake.pages[0].Mappings = append(fake.pages[0].Mappings, rejected)
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer")
+			Expect(err).NotTo(HaveOccurred())
+			rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
+			Expect(err).NotTo(HaveOccurred())
+			last := len(rows[0]) - 1
+			Expect(rows[2][last]).To(Equal("rejected: 1 upheld, 2 rejected, 0 failed; panel-2 s0 REJECT: too broad"))
+		})
+
+		It("asks for vetoed pairs with --include-vetoed", func() {
+			_, _, err := execute(newCmd(), "export", "job-1", "--stage", "analyzer", "--include-vetoed")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.calls[0].GetIncludeVetoed()).To(BeTrue())
+		})
+
+		It("lists a vetoed mapping with --include-vetoed, its critique cell holding the votes and reasons", func() {
+			vetoed := mapping("v", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)
+			vetoed.Critique = &pb.MappingCritique{Outcome: "vetoed", Vetoed: true, Upheld: 1, Rejected: 2,
+				Reasons: []string{"panel-1 s0 UPHOLD: fine", "panel-2 s0 REJECT: scope\ndiffers", "panel-3 s0 REJECT: =unrelated"}}
+			fake.pages[0].Mappings = append(fake.pages[0].Mappings, vetoed)
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer", "--include-vetoed")
+			Expect(err).NotTo(HaveOccurred())
+			rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rows).To(HaveLen(3))
+			last := len(rows[0]) - 1
+			Expect(rows[1][0]).To(Equal("a"))
+			Expect(rows[1][last]).To(BeEmpty(), "a mapping without a critique has an empty cell")
+			Expect(rows[2][0]).To(Equal("v"))
+			Expect(rows[2][last]).To(Equal("vetoed: 1 upheld, 2 rejected, 0 failed; " +
+				"panel-1 s0 UPHOLD: fine | panel-2 s0 REJECT: scope differs | panel-3 s0 REJECT: =unrelated"))
+		})
+
+		It("ends every analyzer-stage CSV header with the critique column, keeping the other columns in place", func() {
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer")
+			Expect(err).NotTo(HaveOccurred())
+			header := strings.Split(strings.Split(stdout, "\n")[0], ",")
+			Expect(header[:8]).To(Equal([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence",
+				"viability_score", "is_viable", "job_source_catalog_id"}))
+			Expect(header[len(header)-1]).To(Equal("critique"))
+		})
+
+		It("exports a mapping's critique in JSON", func() {
+			fake.pages[0].Mappings[0].Critique = &pb.MappingCritique{Upheld: 2, Rejected: 1, Reasons: []string{"panel-2 s0 REJECT: no"}}
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json", "--stage", "analyzer")
+			Expect(err).NotTo(HaveOccurred())
+			var out struct {
+				Mappings []map[string]any `json:"mappings"`
+			}
+			Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "export output is valid JSON: %s", stdout)
+			Expect(out.Mappings[0]).To(HaveKeyWithValue("critique", SatisfyAll(
+				HaveKeyWithValue("vetoed", false), HaveKeyWithValue("rejected", BeNumerically("==", 1)),
+				HaveKeyWithValue("reasons", ConsistOf("panel-2 s0 REJECT: no")))))
+		})
+
 		It("omits the viability fields from JSON", func() {
 			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json", "--stage", "analyzer")
 			Expect(err).NotTo(HaveOccurred())
@@ -254,6 +367,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(out.Mappings).To(HaveLen(1))
 			Expect(out.Mappings[0]).To(HaveKeyWithValue("confidence", BeNumerically("~", 0.9, 1e-6)))
 			Expect(out.Mappings[0]).NotTo(HaveKey("viabilityScore"))
+			Expect(out.Mappings[0]).NotTo(HaveKey("critique"))
 			Expect(out.Mappings[0]).NotTo(HaveKey("isViable"))
 		})
 	})
@@ -675,5 +789,139 @@ var _ = Describe("Results Commands", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("read bundle file"))
 		})
+	})
+})
+
+// fakeCandidatesClient serves ListJobCandidates from a queue of pages and
+// records every request; other GatewayServiceClient methods panic through
+// the nil embed.
+type fakeCandidatesClient struct {
+	crosscodexv1connect.GatewayServiceClient
+	pages []*pb.ListJobCandidatesResponse
+	calls []*pb.ListJobCandidatesRequest
+}
+
+func (f *fakeCandidatesClient) ListJobCandidates(_ context.Context, req *connectrpc.Request[pb.ListJobCandidatesRequest]) (*connectrpc.Response[pb.ListJobCandidatesResponse], error) {
+	// Copy: the CLI mutates one request across pages.
+	f.calls = append(f.calls, &pb.ListJobCandidatesRequest{
+		JobId:      req.Msg.GetJobId(),
+		ControlId:  req.Msg.GetControlId(),
+		Pagination: &pb.Pagination{PageSize: req.Msg.GetPagination().GetPageSize(), PageToken: req.Msg.GetPagination().GetPageToken()},
+	})
+	return connectrpc.NewResponse(f.pages[len(f.calls)-1]), nil
+}
+
+func candidatesPage(next string, analysis *pb.JobAnalysis, cs ...*pb.RelationshipCandidate) *pb.ListJobCandidatesResponse {
+	return &pb.ListJobCandidatesResponse{Candidates: cs, PageInfo: &pb.PageInfo{NextPageToken: next}, Analysis: analysis}
+}
+
+func candidate(src, tgt string, score float32, generators ...string) *pb.RelationshipCandidate {
+	c := &pb.RelationshipCandidate{SourceControlId: src, TargetControlId: tgt, SimilarityScore: score}
+	for _, g := range generators {
+		c.Contributions = append(c.Contributions, &pb.CandidateContribution{Generator: g, Score: 0.5, Weight: 1})
+	}
+	return c
+}
+
+var _ = Describe("results candidates", func() {
+	var fake *fakeCandidatesClient
+
+	run := func(args ...string) (string, error) {
+		cmd := newResultsCmd(&cliState{client: fake})
+		cmd.PersistentFlags().Bool("json", false, "output as JSON") // root-level in production
+		stdout, _, err := execute(cmd, append([]string{"candidates"}, args...)...)
+		return stdout, err
+	}
+
+	BeforeEach(func() {
+		fake = &fakeCandidatesClient{pages: []*pb.ListJobCandidatesResponse{candidatesPage("", nil)}}
+	})
+
+	It("exports JSON across pages with every field present", func() {
+		analysis := &pb.JobAnalysis{Bidirectional: true}
+		fake.pages = []*pb.ListJobCandidatesResponse{
+			candidatesPage("p2", analysis, candidate("a", "b", 0.75, "bm25", "dense")),
+			candidatesPage("", nil, candidate("c", "d", 0)),
+		}
+		stdout, err := run("job-1", "--format", "json")
+		Expect(err).NotTo(HaveOccurred())
+
+		var out struct {
+			JobID      string           `json:"job_id"`
+			Analysis   map[string]any   `json:"analysis"`
+			Candidates []map[string]any `json:"candidates"`
+		}
+		Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "valid JSON: %s", stdout)
+		Expect(out.JobID).To(Equal("job-1"))
+		Expect(out.Analysis).To(HaveKeyWithValue("bidirectional", true), "the first page's analysis is kept")
+		Expect(out.Candidates).To(HaveLen(2))
+		Expect(out.Candidates[0]).To(HaveKeyWithValue("sourceControlId", "a"))
+		Expect(out.Candidates[0]).To(HaveKeyWithValue("targetControlId", "b"))
+		Expect(out.Candidates[0]).To(HaveKeyWithValue("similarityScore", 0.75))
+		Expect(out.Candidates[0]).To(HaveKeyWithValue("contributions", HaveLen(2)))
+		Expect(out.Candidates[0]["contributions"].([]any)[0]).To(And(
+			HaveKeyWithValue("generator", "bm25"), HaveKey("score"), HaveKey("weight"), HaveKey("metadata")))
+		Expect(out.Candidates[1]).To(HaveKeyWithValue("similarityScore", 0.0), "a zero score is exported, not omitted")
+		Expect(out.Candidates[1]).To(HaveKeyWithValue("contributions", BeEmpty()))
+		Expect(fake.calls).To(HaveLen(2))
+		Expect(fake.calls[0].GetPagination().GetPageSize()).To(Equal(int32(1000)))
+		Expect(fake.calls[1].GetPagination().GetPageToken()).To(Equal("p2"))
+	})
+
+	It("writes null analysis when the response carries none", func() {
+		stdout, err := run("job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(ContainSubstring(`"analysis": null`))
+		Expect(stdout).To(ContainSubstring(`"candidates": []`))
+	})
+
+	It("sends --control in the request", func() {
+		_, err := run("job-1", "--control", "AC-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.calls[0].GetJobId()).To(Equal("job-1"))
+		Expect(fake.calls[0].GetControlId()).To(Equal("AC-1"))
+	})
+
+	It("exports CSV with generators joined by semicolons and catalog IDs made spreadsheet-safe", func() {
+		fake.pages = []*pb.ListJobCandidatesResponse{
+			candidatesPage("", nil, candidate("-AC-1", "t-1", 0.5, "bm25", "dense"), candidate("a", "b", 0.25)),
+		}
+		stdout, err := run("job-1", "--format", "csv")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.Split(strings.TrimSpace(stdout), "\n")).To(Equal([]string{
+			"source_control_id,target_control_id,similarity_score,generators",
+			"'-AC-1,t-1,0.500,bm25;dense",
+			"a,b,0.250,",
+		}))
+	})
+
+	It("writes to --output instead of stdout", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "cand.json")
+		stdout, err := run("job-1", "--output", path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(BeEmpty())
+		b, err := os.ReadFile(path)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(b)).To(ContainSubstring(`"job_id": "job-1"`))
+	})
+
+	It("stops when the server repeats the page token it was given", func() {
+		fake.pages = []*pb.ListJobCandidatesResponse{candidatesPage("tok", nil), candidatesPage("tok", nil), candidatesPage("tok", nil)}
+		_, err := run("job-1")
+		Expect(err).To(MatchError(And(
+			ContainSubstring(`list candidates for job job-1: server returned page token "tok" again`),
+			ContainSubstring("crosscodexd bug"))))
+		Expect(fake.calls).To(HaveLen(2))
+	})
+
+	It("rejects an unknown format, listing the valid ones, without calling the server", func() {
+		_, err := run("job-1", "--format", "xml")
+		Expect(err).To(MatchError(ContainSubstring(`invalid --format "xml": use one of json, csv`)))
+		Expect(fake.calls).To(BeEmpty())
+	})
+
+	It("asks for a job id when none is given", func() {
+		_, err := run()
+		Expect(err).To(MatchError(ContainSubstring("job-id")))
 	})
 })

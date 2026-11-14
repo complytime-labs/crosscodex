@@ -25,6 +25,8 @@ type Service struct {
 	pipeline      PipelineBackend
 	graph         GraphBackend
 	mappings      MappingsBackend
+	candidates    CandidatesBackend
+	crosswalk     CrosswalkBackend
 	feedback      FeedbackBackend
 	admin         AdminBackend
 	attestor      attestation.Generator
@@ -99,6 +101,22 @@ func WithGraphBackend(b GraphBackend) ServiceOption {
 
 func WithMappingsBackend(b MappingsBackend) ServiceOption {
 	return func(s *Service) { s.mappings = b }
+}
+
+// WithCandidatesBackend wires the backend behind ListJobCandidates. It has no
+// pkg/config field: the daemon passes its results service (the same value as
+// WithMappingsBackend), and without it ListJobCandidates fails closed with an
+// unavailable error.
+func WithCandidatesBackend(b CandidatesBackend) ServiceOption {
+	return func(s *Service) { s.candidates = b }
+}
+
+// WithCrosswalkBackend wires the backend behind GetCrosswalk. It has no
+// pkg/config field: the daemon passes its graph service (the same value as
+// WithGraphBackend), and without it GetCrosswalk fails closed with an
+// unavailable error.
+func WithCrosswalkBackend(b CrosswalkBackend) ServiceOption {
+	return func(s *Service) { s.crosswalk = b }
 }
 
 func WithFeedbackBackend(b FeedbackBackend) ServiceOption {

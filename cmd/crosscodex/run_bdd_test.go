@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	connectrpc "connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
@@ -370,6 +372,33 @@ var _ = Describe("run status", func() {
 		Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
 		Expect(got).To(HaveKeyWithValue("analyzers", []any{"classify", "embedding"}))
 		Expect(got).To(HaveKeyWithValue("job_id", "job-1"))
+	})
+
+	It("adds each stage's name, status and timings to the JSON output", func() {
+		job := jobWithStages()
+		job.Stages = []*pb.JobStage{
+			{StageName: "embedding", Status: pb.JobStatus_JOB_STATUS_COMPLETED,
+				StartedAt:   timestamppb.New(time.Date(2026, 11, 8, 10, 0, 0, 123456789, time.UTC)),
+				CompletedAt: timestamppb.New(time.Date(2026, 11, 8, 10, 0, 5, 0, time.UTC))},
+			{StageName: "relationship", Status: pb.JobStatus_JOB_STATUS_RUNNING,
+				StartedAt: timestamppb.New(time.Date(2026, 11, 8, 10, 0, 5, 0, time.UTC))},
+			{StageName: "synthesis", Status: pb.JobStatus_JOB_STATUS_PENDING},
+		}
+		var got struct {
+			Stages []map[string]any `json:"stages"`
+		}
+		Expect(json.Unmarshal([]byte(runStatus(job, "--json")), &got)).To(Succeed())
+		Expect(got.Stages).To(Equal([]map[string]any{
+			{"name": "embedding", "status": "JOB_STATUS_COMPLETED", "started_at": "2026-11-08T10:00:00.123456789Z", "completed_at": "2026-11-08T10:00:05Z"},
+			{"name": "relationship", "status": "JOB_STATUS_RUNNING", "started_at": "2026-11-08T10:00:05Z", "completed_at": ""},
+			{"name": "synthesis", "status": "JOB_STATUS_PENDING", "started_at": "", "completed_at": ""},
+		}))
+	})
+
+	It("gives an empty stages list for a job without stages", func() {
+		var got map[string]any
+		Expect(json.Unmarshal([]byte(runStatus(jobWithStages(), "--json")), &got)).To(Succeed())
+		Expect(got).To(HaveKeyWithValue("stages", BeEmpty()))
 	})
 
 	It("prints one result cache line per analyzer, aligned, and the summaries in JSON", func() {

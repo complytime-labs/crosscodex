@@ -56,3 +56,29 @@ func (s *Service) FailJob(ctx context.Context, tenantID, jobID string, job *Job,
 func NewTenantError(sentinel error, message string) error {
 	return &tenantError{sentinel: sentinel, message: message}
 }
+
+// CheckPanelDiversity bridges checkPanelDiversity to the external specs for
+// stage's panel of aliases; it returns the upstream model of each alias.
+func (s *Service) CheckPanelDiversity(ctx context.Context, tenantID, jobID, stage string, aliases []string, allowShared bool) (map[string]string, error) {
+	ids, err := s.checkPanelDiversity(ctx, tenantID, jobID, panelSpec{Stage: stage, Aliases: aliases, AllowShared: allowShared})
+	return modelsOf(ids), err
+}
+
+// PanelIdentity is what the check found for one alias.
+type PanelIdentity = panelIdentity
+
+// CheckPanelIdentities is CheckPanelDiversity returning everything found per alias.
+func (s *Service) CheckPanelIdentities(ctx context.Context, tenantID, jobID, stage string, aliases []string, allowShared bool) (map[string]PanelIdentity, error) {
+	return s.checkPanelDiversity(ctx, tenantID, jobID, panelSpec{Stage: stage, Aliases: aliases, AllowShared: allowShared})
+}
+
+// PanelByProducts exposes the byproducts a panel analyzer's link records;
+// ids is nil for a panel that was not checked.
+func PanelByProducts(aliases []string, allowShared bool, ids map[string]PanelIdentity) map[string]any {
+	return panelRecordOf(panelSpec{Aliases: aliases, AllowShared: allowShared}, ids).byProducts()
+}
+
+// PanelProvenance bridges panelProvenance to the external specs.
+func (s *Service) PanelProvenance(stages []*Stage) map[string]*pb.PanelProvenance {
+	return s.panelProvenance(stages)
+}

@@ -9,9 +9,14 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
-// candidateDependentAnalyzers require candidate data (requires_candidates /
-// relationship_candidates) to exist before GenerateWork runs.
-var candidateDependentAnalyzers = map[string]bool{"requires": true, "relationship": true}
+// candidateDependentAnalyzers run in the pipeline's second pass, after
+// candidate generation, with the pair parameters (every control's text) and
+// no per-control input. requires and relationship need candidate data
+// (requires_candidates / relationship_candidates) to exist before
+// GenerateWork runs. critique reviews their results, so it needs the same
+// parameters and must run in their pass: in the first pass the engine would
+// skip it, its dependencies not having run yet.
+var candidateDependentAnalyzers = map[string]bool{"requires": true, "relationship": true, "critique": true}
 
 // buildStageNames returns a job's stages: the registered analyzers in
 // dagOrder, with a candidate_generation stage inserted before the first

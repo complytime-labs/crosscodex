@@ -62,6 +62,14 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 			return fmt.Errorf("failed to create error counter: %w", err)
 		}
 
+		c.modelCatalogCounter, err = meter.Int64Counter(
+			"llmclient.model_catalog.total",
+			metric.WithDescription("Total number of gateway model catalog reads"),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create model catalog counter: %w", err)
+		}
+
 		return nil
 	}
 }

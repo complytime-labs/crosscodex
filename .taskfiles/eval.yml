@@ -1,0 +1,61 @@
+version: "3"
+
+vars:
+  EVAL_BIN_DIR: "{{.ROOT_DIR}}/.test-output/eval/bin"
+
+tasks:
+  build:
+    internal: true
+    desc: Build the crosscodex CLI and the crosswalk-eval tool into .test-output/eval/bin
+    dir: "{{.ROOT_DIR}}"
+    run: once
+    cmds:
+      - mkdir -p {{.EVAL_BIN_DIR}}
+      # CGO_ENABLED=0 mirrors the release binary, as test/deploy/smoke_up.sh does.
+      - CGO_ENABLED=0 go build -o {{.EVAL_BIN_DIR}}/crosscodex ./cmd/crosscodex
+      - go build -ldflags "-X main.commit=$(git describe --always --dirty)" -o {{.EVAL_BIN_DIR}}/crosswalk-eval ./test/eval/crosswalk/cmd/crosswalk-eval
+
+  crosswalk:
+    desc: "Score crosswalk quality against a profile's references on a running gateway (PROFILE=, optional LABEL=, BASELINE=, MODE=llm, NO_CACHE=1)"
+    dir: "{{.ROOT_DIR}}"
+    deps:
+      - :dev:fetch:oscal-docs
+      - build
+    requires:
+      vars: [PROFILE]
+    preconditions:
+      - sh: command -v jq >/dev/null 2>&1
+        msg: "jq not found - install it (for example 'dnf install jq' or 'apt-get install jq'); the runner needs it to read job status"
+    # Defaults target the stack from `task deploy:smoke:up`; override
+    # EVAL_ENDPOINT / EVAL_CA / EVAL_CERT / EVAL_KEY for another gateway.
+    # EVAL_TIMEOUT and EVAL_POLL (seconds) default in run.sh.
+    env:
+      ROOT_DIR: "{{.ROOT_DIR}}"
+      PROFILE: "{{.PROFILE}}"
+      LABEL: '{{.LABEL | default ""}}'
+      BASELINE: '{{.BASELINE | default ""}}'
+      MODE: '{{.MODE | default ""}}'
+      NO_CACHE: '{{.NO_CACHE | default ""}}'
+      EVAL_ENDPOINT: '{{.EVAL_ENDPOINT | default (printf "https://localhost:%s" .SMOKE_GATEWAY_PORT)}}'
+      EVAL_CA: '{{.EVAL_CA | default (printf "%s/ca.pem" .SMOKE_CERTS_DIR)}}'
+      EVAL_CERT: '{{.EVAL_CERT | default (printf "%s/client.pem" .SMOKE_CERTS_DIR)}}'
+      EVAL_KEY: '{{.EVAL_KEY | default (printf "%s/client-key.pem" .SMOKE_CERTS_DIR)}}'
+      CROSSCODEX_BIN: "{{.EVAL_BIN_DIR}}/crosscodex"
+      EVAL_BIN: "{{.EVAL_BIN_DIR}}/crosswalk-eval"
+    cmds:
+      - bash {{.ROOT_DIR}}/test/eval/crosswalk/run.sh
+
+  crosswalk:discover:
+    desc: "Show which citations in a source catalog's links resolve against a target catalog, to write a profile's references (SOURCE=, TARGET= catalog files)"
+    dir: "{{.ROOT_DIR}}"
+    deps:
+      - :dev:fetch:oscal-docs
+      - build
+    requires:
+      vars: [SOURCE, TARGET]
+    # Passed through the environment so the values are never re-parsed by a shell.
+    env:
+      SOURCE: "{{.SOURCE}}"
+      TARGET: "{{.TARGET}}"
+    cmds:
+      - '{{.EVAL_BIN_DIR}}/crosswalk-eval discover --source "$SOURCE" --target "$TARGET"'

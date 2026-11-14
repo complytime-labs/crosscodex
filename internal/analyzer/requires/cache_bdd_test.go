@@ -57,6 +57,18 @@ var _ = Describe("requires result reuse", func() {
 		Expect(newAnalyzer().CacheModels()).To(Equal([]analyzer.ModelUse{{Alias: "m", Kind: analyzer.ModelCompletion}}))
 	})
 
+	DescribeTable("declares its panel",
+		func(allow bool) {
+			a := newAnalyzer(func(c *config.RequiresConfig) {
+				c.Models = []string{"panel-1", "panel-2"}
+				c.AllowSharedPanelModels = allow
+			})
+			Expect(a.Panel()).To(Equal(analyzer.Panel{Aliases: []string{"panel-1", "panel-2"}, AllowShared: allow}))
+		},
+		Entry("with the allowance off", false),
+		Entry("with the allowance on", true),
+	)
+
 	It("gives N voters on one pair N distinct keys", func() {
 		keys := keysIn("job-1")
 		Expect(keys).To(HaveLen(3))
@@ -96,8 +108,9 @@ var _ = Describe("requires result reuse", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(newAnalyzer().CacheableResult(result)).To(want)
 		},
-		Entry("a parsed decision", map[string]any{"model": "m", "response": "REQUIRES: NO\nCONFIDENCE: HIGH"}, Succeed()),
+		Entry("a parsed decision", map[string]any{"model": "m", "response": "REQUIRES: NO\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"}, Succeed()),
 		Entry("a response with no YES or NO decision", map[string]any{"model": "m", "response": "REQUIRES: MAYBE"}, MatchError(ContainSubstring("does not parse"))),
+		Entry("a response with no SANITY_CHECK line", map[string]any{"model": "m", "response": "REQUIRES: NO\nCONFIDENCE: HIGH"}, MatchError(ContainSubstring("SANITY_CHECK"))),
 		Entry("a result without a response", map[string]any{"model": "m"}, MatchError(ContainSubstring("no response text"))),
 	)
 })

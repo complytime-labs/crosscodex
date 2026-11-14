@@ -167,57 +167,70 @@ var _ = Describe("Text Preparation", func() {
 	})
 
 	Describe("prepareText", func() {
-		It("prepends ancestor title when provided", func() {
-			result := embedding.ExportPrepareText("Enforce access controls.", "ACCESS CONTROL", 0)
-			Expect(result).To(HavePrefix("[ACCESS CONTROL] "))
-			Expect(result).To(ContainSubstring("Enforce access controls."))
-		})
-
-		It("does not prepend when ancestor title is empty", func() {
-			result := embedding.ExportPrepareText("Enforce access controls.", "", 0)
-			Expect(result).NotTo(HavePrefix("["))
-			Expect(result).To(Equal("Enforce access controls."))
-		})
+		DescribeTable("composes the pieces present",
+			func(context, title, statement, want string) {
+				Expect(embedding.ExportPrepareText(context, title, statement, 0)).To(Equal(want))
+			},
+			Entry("context, title and statement", "ACCESS CONTROL > Accounts", "Review", "Enforce.", "[ACCESS CONTROL > Accounts] Review: Enforce."),
+			Entry("context and statement without title", "ACCESS CONTROL", "", "Enforce.", "[ACCESS CONTROL] Enforce."),
+			Entry("title and statement without context", "", "Review", "Enforce.", "Review: Enforce."),
+			Entry("statement alone", "", "", "Enforce.", "Enforce."),
+			Entry("context with empty statement", "ROOT", "", "", "[ROOT]"),
+			Entry("nothing at all", "", "", "", ""),
+		)
 
 		It("cleans OSCAL artifacts in the text", func() {
-			result := embedding.ExportPrepareText("{{ insert: param }} defines policy.", "", 0)
+			result := embedding.ExportPrepareText("", "", "{{ insert: param }} defines policy.", 0)
 			Expect(result).NotTo(ContainSubstring("{{"))
 			Expect(result).To(ContainSubstring("defines policy."))
 		})
 
+		DescribeTable("cleans each piece apart so an artifact in one does not erase the others",
+			func(context, title, statement, want string) {
+				Expect(embedding.ExportPrepareText(context, title, statement, 0)).To(Equal(want))
+			},
+			Entry("a title holding a PDF artifact keeps the statement",
+				"Root", "PO 12345 Something", "Enforce.", "[Root] Enforce."),
+			Entry("a context segment holding a PDF artifact keeps the other segments, title and statement",
+				"Root > TEMPO 12345 > Leaf", "Review", "Enforce.", "[Root > TEM > Leaf] Review: Enforce."),
+			Entry("a context segment the cleaning empties is dropped",
+				"Root > PO 12345 > Leaf", "Review", "Enforce.", "[Root > Leaf] Review: Enforce."),
+		)
+
 		It("truncates to maxChars runes", func() {
-			longText := "abcdefghijklmnopqrstuvwxyz"
-			result := embedding.ExportPrepareText(longText, "", 10)
+			result := embedding.ExportPrepareText("", "", "abcdefghijklmnopqrstuvwxyz", 10)
 			Expect(utf8.RuneCountInString(result)).To(Equal(10))
 		})
 
 		It("does not truncate when maxChars is 0", func() {
-			text := "short text"
-			result := embedding.ExportPrepareText(text, "", 0)
-			Expect(result).To(Equal("short text"))
+			Expect(embedding.ExportPrepareText("", "", "short text", 0)).To(Equal("short text"))
 		})
 
 		It("handles multi-byte runes correctly during truncation", func() {
-			text := "\u00e9\u00e9\u00e9\u00e9\u00e9"
-			result := embedding.ExportPrepareText(text, "", 3)
+			result := embedding.ExportPrepareText("", "", "\u00e9\u00e9\u00e9\u00e9\u00e9", 3)
 			Expect(utf8.RuneCountInString(result)).To(Equal(3))
 			Expect(utf8.ValidString(result)).To(BeTrue())
 		})
 
-		It("handles ancestor + cleaning + truncation together", func() {
-			result := embedding.ExportPrepareText("text {{ insert: param }}", "ROOT", 10)
-			Expect(utf8.RuneCountInString(result)).To(BeNumerically("<=", 10))
-			Expect(result).To(HavePrefix("[ROOT] "))
-		})
+		DescribeTable("over budget",
+			func(context, title, statement string, maxChars int, want string) {
+				Expect(embedding.ExportPrepareText(context, title, statement, maxChars)).To(Equal(want))
+			},
+			Entry("drops the root-most context segment first and marks the cut",
+				"Root > Mid > Leaf", "T", "stmt", 25, "[\u2026 > Mid > Leaf] T: stmt"),
+			Entry("keeps only the nearest segment when two do not fit",
+				"Root > Mid > Leaf", "T", "stmt", 20, "[\u2026 > Leaf] T: stmt"),
+			Entry("drops the context entirely before truncating the statement",
+				"Root > Mid > Leaf", "T", "statement", 12, "T: statement"),
+			Entry("truncates the statement once the context is gone",
+				"Root > Mid", "T", "statement", 8, "T: state"),
+			Entry("truncates into the title only when the title alone exceeds the budget",
+				"Root", "LongTitle", "stmt", 4, "Long"),
+		)
 
-		It("handles empty statement", func() {
-			result := embedding.ExportPrepareText("", "ROOT", 0)
-			Expect(result).To(Equal("[ROOT]"))
-		})
-
-		It("handles empty statement and empty ancestor", func() {
-			result := embedding.ExportPrepareText("", "", 0)
-			Expect(result).To(Equal(""))
+		It("never exceeds maxChars runes when context is dropped", func() {
+			result := embedding.ExportPrepareText("Root > Mid > Leaf", "Title", "A fairly long statement body.", 25)
+			Expect(utf8.RuneCountInString(result)).To(BeNumerically("<=", 25))
 		})
 	})
 })
@@ -539,6 +552,22 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				Expect(payload.Fields["content_hash"].GetStringValue()).NotTo(BeEmpty())
 			})
 
+			It("embeds the control's context, title and statement in that order", func() {
+				control := &pb.Control{
+					ControlId:  "cat/AC-2",
+					Identifier: "AC-2",
+					Title:      "Title",
+					Statement:  "stmt",
+					Parts:      map[string]string{"class": "compliance-requirement", "context": "A > B"},
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				payload, ok := tasks[0].Payload.(*structpb.Struct)
+				Expect(ok).To(BeTrue(), "payload should be *structpb.Struct")
+				Expect(payload.Fields["text"].GetStringValue()).To(Equal("[A > B] Title: stmt"))
+			})
+
 			It("produces multiple tasks for multiple models", func() {
 				multiModelA := embedding.New(mockClient, mockVec, mockStore,
 					config.EmbeddingConfig{
@@ -578,6 +607,25 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 			})
 		})
 
+		Context("with a container row", func() {
+			It("skips a container row without an embedding", func() {
+				control := &pb.Control{
+					ControlId:  "nist-800-53/AC",
+					Identifier: "AC",
+					Statement:  "",
+					Parts:      map[string]string{"class": "compliance-section", "node-kind": "container"},
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+
+				result, ok := tasks[0].Payload.(*pb.AnalysisResult)
+				Expect(ok).To(BeTrue())
+				Expect(result.Attributes["skipped"]).To(Equal("true"))
+			})
+		})
+
 		Context("with a withdrawn control that has a statement", func() {
 			It("produces a pre-built skip result (no embedding)", func() {
 				control := &pb.Control{
@@ -610,9 +658,9 @@ var _ = Describe("EmbeddingAnalyzer", func() {
 				Expect(ok).To(BeTrue())
 				Expect(result.Attributes["skipped"]).To(Equal("true"))
 			},
-			Entry("empty statement, no ancestor", "", map[string]string{"class": "compliance-requirement"}),
-			Entry("whitespace-only statement, with ancestor", " \n\t ",
-				map[string]string{"class": "compliance-requirement", "ancestor_title": "Business Environment"}),
+			Entry("empty statement, no context", "", map[string]string{"class": "compliance-requirement"}),
+			Entry("whitespace-only statement, with context", " \n\t ",
+				map[string]string{"class": "compliance-requirement", "context": "Business Environment"}),
 		)
 
 		Context("without tenant context", func() {

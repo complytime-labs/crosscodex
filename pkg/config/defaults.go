@@ -80,6 +80,7 @@ observability:
     protocol: ""
     interval: 30s
 catalog:
+  requirement_part_names: [statement]
   structuring:
     section_pattern: ""
     decompose: true
@@ -108,6 +109,7 @@ prompt:
 analysis:
   engine:
     task_timeout: 5m
+    success_timeout: 10m
     max_retries: 3
     retry_backoff: 1s
   classification:
@@ -141,6 +143,7 @@ analysis:
       high: 1.0
       medium: 0.67
       low: 0.33
+    allow_shared_panel_models: false
   requires:
     enabled: false
     models: []
@@ -152,6 +155,23 @@ analysis:
     max_error_rate: 0.34
     max_source_chars: 1500
     max_target_chars: 800
+    allow_shared_panel_models: false
+  critique:
+    enabled: true
+    models:
+      - panel-1
+      - panel-2
+      - panel-3
+    samples_per_model: 1
+    allow_even_samples: false
+    sampling_temperature: 0.3
+    max_tokens: 300
+    consensus_threshold: 0.66
+    max_error_rate: 0.34
+    max_source_chars: 1500
+    max_target_chars: 800
+    allow_shared_panel_models: false
+    veto: false
   candidates:
     min_embedding_coverage: 0.8
     embed_model: snowflake-arctic-embed2

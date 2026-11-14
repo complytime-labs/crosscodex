@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"text/tabwriter"
+	"unicode"
 
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -99,16 +103,19 @@ rejected as an unsupported catalog format.`,
 			}
 
 			catalogID := resp.Msg.GetCatalogId()
+			textless := textlessResults(resp.Msg.GetTextlessControls())
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Catalog imported\n")
 					fmt.Fprintf(w, "Catalog ID: %s\n", catalogID)
 					fmt.Fprintf(w, "Document ID: %s\n", resp.Msg.GetDocumentId())
+					printTextlessControls(w, textless)
 					fmt.Fprintf(w, "Next: crosscodex run start --source %s --target <catalog-id>\n", catalogID)
 				},
-				map[string]string{
-					"catalog_id":  catalogID,
-					"document_id": resp.Msg.GetDocumentId(),
+				catalogImportResult{
+					CatalogID:        catalogID,
+					DocumentID:       resp.Msg.GetDocumentId(),
+					TextlessControls: textless,
 				},
 			)
 		},
@@ -127,6 +134,87 @@ rejected as an unsupported catalog format.`,
 	cmd.Flags().Bool("raw", false, "Let the server detect the format instead of assuming OSCAL")
 
 	return cmd
+}
+
+// catalogImportResult is the --json output of catalog import.
+type catalogImportResult struct {
+	CatalogID  string `json:"catalog_id"`
+	DocumentID string `json:"document_id"`
+	// TextlessControls lists every control imported without requirement text;
+	// an empty array, never null, when there are none.
+	TextlessControls []textlessResult `json:"textless_controls"`
+}
+
+type textlessResult struct {
+	Identifier string   `json:"identifier"`
+	PartNames  []string `json:"part_names"`
+}
+
+func textlessResults(controls []*pb.TextlessControl) []textlessResult {
+	out := make([]textlessResult, len(controls))
+	for i, c := range controls {
+		out[i] = textlessResult{Identifier: c.GetIdentifier(), PartNames: append([]string{}, c.GetPartNames()...)}
+	}
+	return out
+}
+
+// maxTextlessListed bounds the identifiers the human output names; --json
+// carries the full list.
+const maxTextlessListed = 10
+
+// terminalSafe escapes every non-printable rune of a catalog-derived string
+// (ESC, newline, C1 controls, bidi overrides such as U+202E, zero-width and
+// line-separator runes) as \x1b, \n, \u202e and the like, so a hostile catalog
+// cannot spoof or hide terminal output. Printable text, including non-ASCII
+// letters, is unchanged.
+func terminalSafe(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			q := strconv.QuoteRune(r)
+			b.WriteString(q[1 : len(q)-1])
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// printTextlessControls tells the user which imported controls will not be
+// analysed and how to fix it. It prints nothing when there are none.
+func printTextlessControls(w io.Writer, controls []textlessResult) {
+	if len(controls) == 0 {
+		return
+	}
+	listed := make([]string, 0, maxTextlessListed)
+	parts := map[string]struct{}{}
+	for i, c := range controls {
+		if i < maxTextlessListed {
+			listed = append(listed, terminalSafe(c.Identifier))
+		}
+		for _, name := range c.PartNames {
+			parts[terminalSafe(name)] = struct{}{}
+		}
+	}
+
+	subject := fmt.Sprintf("%d controls have", len(controls))
+	if len(controls) == 1 {
+		subject = "1 control has"
+	}
+	more := "."
+	if rest := len(controls) - len(listed); rest > 0 {
+		more = fmt.Sprintf(", and %d more.", rest)
+	}
+	fmt.Fprintf(w, "%s no requirement text and will not be analysed: %s%s\n", subject, strings.Join(listed, ", "), more)
+
+	if len(parts) > 0 {
+		names := make([]string, 0, len(parts))
+		for name := range parts {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		fmt.Fprintf(w, "Their parts are named: %s. If one of these holds the requirement, add it to catalog.requirement_part_names and re-import.\n", strings.Join(names, ", "))
+	}
 }
 
 func newCatalogListCmd(state *cliState) *cobra.Command {

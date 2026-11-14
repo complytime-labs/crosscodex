@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -22,23 +23,109 @@ var _ = Describe("PGControlsReader", func() {
 		Expect(conn.Begins()).To(BeZero(), "the tenant must be refused before any transaction starts")
 	})
 
-	It("excludes sections and withdrawn controls in the query", func() {
-		var gotQuery string
-		var gotArgs []any
+	It("leaves out sections and withdrawn controls and keeps a control without text for controlsWithText", func() {
+		// Columns: control_id, identifier, title, statement, class, parent_id, container_key, props.
 		mockTx := &dbtest.Tx{
 			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
-				gotQuery, gotArgs = query, args
-				return dbtest.Rows(nil), nil
+				if strings.Contains(query, "catalog_containers") {
+					return dbtest.Rows(nil), nil
+				}
+				return dbtest.Rows(nil,
+					[]any{"cat-1/sec", "sec", "Overview", "Read on.", "compliance-section", "", "", []byte(`{}`)},
+					[]any{"cat-1/old", "old", "", "Gone.", "", "", "", []byte(`{"status":"withdrawn"}`)},
+					[]any{"cat-1/blank", "blank", "", " ", "", "", "", []byte(`null`)},
+					[]any{"cat-1/kept", "kept", "", "Do it.", "", "", "", []byte(nil)},
+				), nil
 			},
 			QueryRowFunc: func(ctx context.Context, query string, args ...any) db.Row {
 				return dbtest.Row(sql.ErrNoRows)
 			},
 		}
 		reader := pipeline.NewPGControlsReader(&dbtest.Conn{Tx: mockTx})
-		_, err := reader.ControlData(context.Background(), "tenant-1", "catalog-1", "job-1")
+		data, err := reader.ControlData(context.Background(), "tenant-1", "cat-1", "job-1")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(gotQuery).To(ContainSubstring("props->>$4::text"))
-		Expect(gotArgs).To(ContainElements("status", "withdrawn"))
+		Expect(data).To(HaveLen(2))
+		Expect(data).To(HaveKey("cat-1/kept"))
+		Expect(data).To(HaveKey("cat-1/blank"))
+	})
+
+	It("resolves each control's context from its raw parent_id, including excluded parents", func() {
+		// Columns: control_id, identifier, title, statement, class, parent_id, container_key, props.
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				if strings.Contains(query, "catalog_containers") {
+					return dbtest.Rows(nil), nil
+				}
+				return dbtest.Rows(nil,
+					[]any{"cat-1/ac-2", "ac-2", "Account Management", "", "compliance-section", "ac", "", []byte(`{}`)},
+					[]any{"cat-1/ac", "ac", "Access Control", "", "compliance-section", "", "", []byte(`{}`)},
+					[]any{"cat-1/ac-2.a", "ac-2.a", "", "Define account types.", "", "ac-2", "", []byte(`{}`)},
+					[]any{"cat-1/ac-2.7", "ac-2.7", "Privileged Accounts", "Manage them.", "", "ac-2", "", []byte(`{}`)},
+					[]any{"cat-1/orphan", "orphan", "", "No known parent.", "", "cat-1/ac-2", "", []byte(`{}`)},
+				), nil
+			},
+			QueryRowFunc: func(ctx context.Context, query string, args ...any) db.Row {
+				return dbtest.Row(sql.ErrNoRows)
+			},
+		}
+		reader := pipeline.NewPGControlsReader(&dbtest.Conn{Tx: mockTx})
+		data, err := reader.ControlData(context.Background(), "tenant-1", "cat-1", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(HaveLen(3), "excluded rows supply titles but are not emitted")
+		Expect(data["cat-1/ac-2.a"].Ancestor).To(Equal("Access Control (ac) > Account Management (ac-2)"))
+		Expect(data["cat-1/ac-2.7"].Ancestor).To(Equal("Access Control (ac) > Account Management (ac-2)"))
+		Expect(data["cat-1/orphan"].Ancestor).To(BeEmpty())
+	})
+
+	It("continues a top-level control's context into its containers and never emits a container", func() {
+		var containerArgs []any
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				if strings.Contains(query, "catalog_containers") {
+					containerArgs = args
+					// Columns: container_key, parent_key, title, identifier, label.
+					return dbtest.Rows(nil,
+						[]any{"g1", "", "Access Control", "ac", "AC"},
+						[]any{"g1.1", "g1", "Account Rules", "", ""},
+					), nil
+				}
+				// Columns: control_id, identifier, title, statement, class, parent_id, container_key, props.
+				return dbtest.Rows(nil,
+					[]any{"cat-1/ac-1", "ac-1", "Policy", "Write a policy.", "", "", "g1", []byte(`{}`)},
+					[]any{"cat-1/ac-1.a", "ac-1.a", "", "Review it.", "", "ac-1", "g1", []byte(`{}`)},
+					[]any{"cat-1/ac-2", "ac-2", "Accounts", "Manage accounts.", "", "", "g1.1", []byte(`{}`)},
+					[]any{"cat-1/ghost", "ghost", "", "Unknown container.", "", "", "g9", []byte(`{}`)},
+					[]any{"cat-1/loose", "loose", "", "Ungrouped.", "", "", "", []byte(`{}`)},
+				), nil
+			},
+			QueryRowFunc: func(ctx context.Context, query string, args ...any) db.Row {
+				return dbtest.Row(sql.ErrNoRows)
+			},
+		}
+		reader := pipeline.NewPGControlsReader(&dbtest.Conn{Tx: mockTx})
+		data, err := reader.ControlData(context.Background(), "tenant-1", "cat-1", "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(containerArgs).To(Equal([]any{"tenant-1", "cat-1"}), "containers are read tenant- and catalog-scoped")
+		Expect(data).To(HaveLen(5), "only controls are emitted, never containers")
+		Expect(data["cat-1/ac-1"].Ancestor).To(Equal("Access Control (AC)"))
+		Expect(data["cat-1/ac-1.a"].Ancestor).To(Equal("Access Control (AC) > Policy (ac-1)"))
+		Expect(data["cat-1/ac-2"].Ancestor).To(Equal("Access Control (AC) > Account Rules"), "nested containers are walked root first")
+		Expect(data["cat-1/ghost"].Ancestor).To(BeEmpty())
+		Expect(data["cat-1/loose"].Ancestor).To(BeEmpty())
+	})
+
+	It("returns an error when the containers query fails", func() {
+		mockTx := &dbtest.Tx{
+			QueryFunc: func(ctx context.Context, query string, args ...any) (db.Rows, error) {
+				if strings.Contains(query, "catalog_containers") {
+					return nil, errors.New("boom")
+				}
+				return dbtest.Rows(nil), nil
+			},
+		}
+		reader := pipeline.NewPGControlsReader(&dbtest.Conn{Tx: mockTx})
+		_, err := reader.ControlData(context.Background(), "tenant-1", "cat-1", "job-1")
+		Expect(err).To(MatchError(ContainSubstring("querying containers")))
 	})
 
 	It("returns an error when Begin fails", func() {

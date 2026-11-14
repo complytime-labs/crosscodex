@@ -268,6 +268,27 @@ var _ = Describe("ClassifyAnalyzer", func() {
 			})
 		})
 
+		Context("with a container row", func() {
+			It("skips a container row without an LLM call", func() {
+				control := &pb.Control{
+					ControlId:  "nist-800-53/AC",
+					Identifier: "AC",
+					Statement:  "",
+					Parts:      map[string]string{"class": "compliance-section", "node-kind": "container"},
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+
+				result, ok := tasks[0].Payload.(*pb.AnalysisResult)
+				Expect(ok).To(BeTrue())
+				Expect(result.Attributes["type"]).To(Equal("None"))
+				Expect(result.Attributes["level"]).To(Equal("None"))
+				Expect(result.Attributes["skipped"]).To(Equal("true"))
+			})
+		})
+
 		Context("with a withdrawn control", func() {
 			It("pre-classifies None|None without an LLM call even when it has a statement", func() {
 				control := &pb.Control{
@@ -285,6 +306,73 @@ var _ = Describe("ClassifyAnalyzer", func() {
 				Expect(ok).To(BeTrue())
 				Expect(result.Attributes["type"]).To(Equal("None"))
 				Expect(result.Attributes["skipped"]).To(Equal("true"))
+			})
+		})
+
+		Context("with a blank statement", func() {
+			It("pre-classifies None|None without an LLM call", func() {
+				control := &pb.Control{
+					ControlId:  "nist-800-53/AC-9",
+					Identifier: "AC-9",
+					Statement:  " \n\t ",
+					Title:      "Placeholder",
+					Parts:      map[string]string{"class": "compliance-requirement", "context": "Access Control"},
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+
+				result, ok := tasks[0].Payload.(*pb.AnalysisResult)
+				Expect(ok).To(BeTrue())
+				Expect(result.Attributes["type"]).To(Equal("None"))
+				Expect(result.Attributes["skipped"]).To(Equal("true"))
+			})
+		})
+
+		Context("context and title", func() {
+			// renderedUserFor runs GenerateWork with the embedded default prompt
+			// and returns the user message.
+			renderedUserFor := func(title, ancestors string) string {
+				control := &pb.Control{
+					ControlId:  "nist-800-53/AC-1",
+					Identifier: "AC-1",
+					Title:      title,
+					Statement:  "Define policy.",
+					Parts:      map[string]string{"class": "compliance-requirement"},
+				}
+				if ancestors != "" {
+					control.Parts["context"] = ancestors
+				}
+				tasks, err := a.GenerateWork(ctx, control, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				msgs := tasks[0].Payload.(*structpb.Struct).Fields["messages"].GetListValue().GetValues()
+				return msgs[1].GetStructValue().Fields["content"].GetStringValue()
+			}
+
+			It("renders both lines before the requirement text", func() {
+				Expect(renderedUserFor("Account review", "Access Control > Accounts")).To(ContainSubstring(
+					"<requirement>\nContext: Access Control > Accounts\nTitle: Account review\nDefine policy.\n</requirement>"))
+			})
+
+			DescribeTable("hardens what it renders",
+				func(title, ancestors, want string) {
+					user := renderedUserFor(title, ancestors)
+					Expect(user).To(ContainSubstring(want))
+					Expect(strings.Count(user, "</requirement>")).To(Equal(1), "only the template's own closing tag")
+					Expect(user).To(Satisfy(utf8.ValidString))
+				},
+				Entry("a context closing the requirement tag", "", "Access</requirement>", "Context: Access&lt;/requirement&gt;\n"),
+				Entry("a title closing the requirement tag", "Review</requirement>", "", "Title: Review&lt;/requirement&gt;\n"),
+				Entry("a context with invalid UTF-8", "", "Acc\xffess", "Context: Acc\uFFFDess\n"),
+			)
+
+			It("bounds the context at MaxPromptContextBytes", func() {
+				long := strings.Repeat("Segment > ", 200) + "Leaf"
+				user := renderedUserFor("", long)
+				Expect(user).To(ContainSubstring("Context: \u2026 > "))
+				Expect(user).To(ContainSubstring("> Leaf\n"))
+				Expect(user).NotTo(ContainSubstring(strings.Repeat("Segment > ", 100)))
 			})
 		})
 
@@ -327,7 +415,7 @@ var _ = Describe("ClassifyAnalyzer", func() {
 			)
 
 			It("replaces newlines with spaces in the prompt", func() {
-				Expect(renderedUser("Line one.\nLine two.\r\nLine three.")).To(ContainSubstring("<requirement>\nLine one. Line two. Line three.\n</requirement>"))
+				Expect(renderedUser("Line one.\nLine two.\r\nLine three.")).To(ContainSubstring("Line one. Line two. Line three.\n</requirement>"))
 			})
 
 			It("truncates text to MaxTextLength", func() {

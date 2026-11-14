@@ -46,7 +46,8 @@ var dbAggregateQueries = map[DataClass]string{
 	ClassCatalogs: `SELECT json_build_object(
   'catalog',         (SELECT row_to_json(c) FROM catalogs c WHERE c.catalog_id = $1),
   'classifications', COALESCE((SELECT json_agg(row_to_json(cl) ORDER BY cl.control_id, cl.type) FROM classifications cl WHERE cl.catalog_id = $1), '[]'::json),
-  'controls',        COALESCE((SELECT json_agg(row_to_json(ct) ORDER BY ct.control_id)          FROM controls ct        WHERE ct.catalog_id = $1), '[]'::json)
+  'controls',        COALESCE((SELECT json_agg(row_to_json(ct) ORDER BY ct.control_id)          FROM controls ct        WHERE ct.catalog_id = $1), '[]'::json),
+  'containers',      COALESCE((SELECT json_agg(row_to_json(cc) ORDER BY cc.container_key)       FROM catalog_containers cc WHERE cc.catalog_id = $1), '[]'::json)
 )`,
 }
 

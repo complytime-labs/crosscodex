@@ -49,19 +49,21 @@ func FuzzGenerateCatalogID(f *testing.F) {
 	})
 }
 
-func FuzzValidateItems(f *testing.F) {
-	f.Add(`[{"ID":"ac-1"},{"ID":"ac-2"}]`)
-	f.Add(`[{"ID":"ac-1"},{"ID":"ac-1"}]`)
-	f.Add(`[{"ID":"x","ParentID":"x"}]`)
-	f.Add(`[]`)
-	f.Add(`[{"ID":""}]`)
+func FuzzValidateTree(f *testing.F) {
+	f.Add(`{"Items":[{"ID":"ac-1"},{"ID":"ac-2"}]}`)
+	f.Add(`{"Items":[{"ID":"ac-1"},{"ID":"ac-1"}]}`)
+	f.Add(`{"Items":[{"ID":"x","ParentID":"x"}]}`)
+	f.Add(`{"Containers":[{"Key":"g1"},{"Key":"g1.1","ParentKey":"g1"}],"Items":[{"ID":"a","ContainerKey":"g1.1"}]}`)
+	f.Add(`{"Containers":[{"Key":"g1","ParentKey":"g1"}],"Items":[{"ID":"a","ContainerKey":"g9"}]}`)
+	f.Add(`{}`)
+	f.Add(`{"Items":[{"ID":""}]}`)
 
 	f.Fuzz(func(t *testing.T, data string) {
-		var items []oscal.ControlItem
-		if err := json.Unmarshal([]byte(data), &items); err != nil {
+		var tree oscal.Tree
+		if err := json.Unmarshal([]byte(data), &tree); err != nil {
 			return // skip invalid JSON
 		}
 		// Must never panic.
-		_ = catalog.ExportValidateItems(items)
+		_ = catalog.ExportValidateTree(&tree)
 	})
 }

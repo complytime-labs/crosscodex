@@ -28,18 +28,29 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
-// fakeReader records the Filter it receives and returns the configured result.
+// fakeReader records the filters it receives and returns the configured results.
 type fakeReader struct {
 	page   results.Page
 	err    error
 	calls  int
 	filter results.Filter
+
+	candidatePage   results.CandidatePage
+	candidateErr    error
+	candidateCalls  int
+	candidateFilter results.CandidateFilter
 }
 
 func (f *fakeReader) ListMappings(_ context.Context, flt results.Filter) (results.Page, error) {
 	f.calls++
 	f.filter = flt
 	return f.page, f.err
+}
+
+func (f *fakeReader) ListCandidates(_ context.Context, flt results.CandidateFilter) (results.CandidatePage, error) {
+	f.candidateCalls++
+	f.candidateFilter = flt
+	return f.candidatePage, f.candidateErr
 }
 
 func validRequest() *pb.ListJobMappingsRequest {
@@ -118,6 +129,15 @@ var _ = Describe("Service.ListMappings", func() {
 		Entry("non-viable on the analyzer stage", func(r *pb.ListJobMappingsRequest) {
 			r.Stage, r.IncludeNonViable = pb.MappingStage_MAPPING_STAGE_ANALYZER, true
 		}, connect.CodeInvalidArgument, "include_non_viable applies only to the synthesized stage"),
+		Entry("vetoed pairs on the synthesized stage", func(r *pb.ListJobMappingsRequest) {
+			r.Stage, r.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_SYNTHESIZED, true
+		}, connect.CodeInvalidArgument, "include_vetoed applies only to the analyzer stage: synthesis never receives vetoed pairs; request the analyzer stage to list them"),
+		Entry("vetoed pairs on the default stage", func(r *pb.ListJobMappingsRequest) {
+			r.Stage, r.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_UNSPECIFIED, true
+		}, connect.CodeInvalidArgument, "include_vetoed applies only to the analyzer stage"),
+		Entry("excluding rejected pairs on the synthesized stage", func(r *pb.ListJobMappingsRequest) {
+			r.Stage, r.ExcludeRejected = pb.MappingStage_MAPPING_STAGE_SYNTHESIZED, true
+		}, connect.CodeInvalidArgument, "exclude_rejected applies only to the analyzer stage: synthesized mappings are listed without their critique; request the analyzer stage to filter them"),
 		Entry("unspecified relationship type", func(r *pb.ListJobMappingsRequest) {
 			r.RelationshipTypes = []pb.RelationshipType{pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED}
 		}, connect.CodeInvalidArgument, "EQUIVALENT"),
@@ -213,6 +233,24 @@ var _ = Describe("Service.ListMappings", func() {
 			_, err := call(context.Background(), req)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(reader.filter.Stage).To(Equal(results.StageAnalyzer))
+			Expect(reader.filter.IncludeVetoed).To(BeFalse())
+		})
+
+		It("passes include_vetoed through on the analyzer stage", func() {
+			req := validRequest()
+			req.Stage, req.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_ANALYZER, true
+			_, err := call(context.Background(), req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reader.filter.IncludeVetoed).To(BeTrue())
+		})
+
+		It("passes exclude_rejected through on the analyzer stage, alone or with include_vetoed", func() {
+			req := validRequest()
+			req.Stage, req.ExcludeRejected, req.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_ANALYZER, true, true
+			_, err := call(context.Background(), req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reader.filter.ExcludeRejected).To(BeTrue())
+			Expect(reader.filter.IncludeVetoed).To(BeTrue())
 		})
 
 		It("allows a cross-job read of one control on the synthesized stage", func() {
@@ -257,6 +295,21 @@ var _ = Describe("Service.ListMappings", func() {
 			decoded, err := results.DecodeCursor(resp.PageInfo.NextPageToken)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(decoded).To(Equal(&next))
+		})
+
+		It("carries a mapping's critique and leaves it unset on a mapping without one", func() {
+			reader.page = results.Page{Mappings: []results.Mapping{
+				{JobID: "j", SourceID: "s", TargetID: "t", RelationshipType: "SUBSET_OF", Critique: &analyzerresults.CritiqueResult{
+					Kind: analyzerresults.RelationshipAnalyzer, SourceControlID: "s", TargetControlID: "t", Upheld: 1, Rejected: 2, Failed: 0,
+					Outcome: analyzerresults.CritiqueVetoed, Vetoed: true, Reasons: []string{"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: no", "panel-3 s0 REJECT: no"}}},
+				{JobID: "j", SourceID: "s", TargetID: "u", RelationshipType: "SUBSET_OF"},
+			}}
+			resp, err := call(context.Background(), validRequest())
+			Expect(err).NotTo(HaveOccurred())
+			want := &pb.MappingCritique{Vetoed: true, Upheld: 1, Rejected: 2, Outcome: "vetoed",
+				Reasons: []string{"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: no", "panel-3 s0 REJECT: no"}}
+			Expect(proto.Equal(resp.Mappings[0].Critique, want)).To(BeTrue(), "critique %v", resp.Mappings[0].Critique)
+			Expect(resp.Mappings[1].Critique).To(BeNil())
 		})
 
 		It("leaves the next token empty on the last page", func() {
@@ -386,6 +439,191 @@ var _ = Describe("Service.ListMappings", func() {
 			resp, err := call(context.Background(), validRequest())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.GetAnalysis()).To(BeNil())
+		})
+	})
+})
+
+var _ = Describe("Service.ListCandidates", func() {
+	var (
+		reader  *fakeReader
+		logs    *bytes.Buffer
+		service *results.Service
+	)
+	BeforeEach(func() {
+		reader = &fakeReader{}
+		logs = &bytes.Buffer{}
+		service = results.NewService(reader, results.WithLogger(slog.New(slog.NewJSONHandler(logs, nil))))
+	})
+
+	validCandidatesRequest := func() *pb.ListJobCandidatesRequest {
+		return &pb.ListJobCandidatesRequest{
+			TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
+			JobId:         "job-1",
+		}
+	}
+	call := func(ctx context.Context, msg *pb.ListJobCandidatesRequest) (*pb.ListJobCandidatesResponse, error) {
+		resp, err := service.ListCandidates(ctx, connect.NewRequest(msg))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	}
+
+	DescribeTable("rejects invalid requests without reading",
+		func(mutate func(*pb.ListJobCandidatesRequest), code connect.Code, substr string) {
+			req := validCandidatesRequest()
+			mutate(req)
+			_, err := call(context.Background(), req)
+			Expect(connect.CodeOf(err)).To(Equal(code))
+			Expect(err.Error()).To(ContainSubstring(substr))
+			Expect(reader.candidateCalls).To(BeZero())
+		},
+		Entry("missing tenant context", func(r *pb.ListJobCandidatesRequest) { r.TenantContext = nil },
+			connect.CodeInvalidArgument, "tenant_context.tenant_id is required"),
+		Entry("malformed tenant id", func(r *pb.ListJobCandidatesRequest) { r.TenantContext.TenantId = "../other" },
+			connect.CodeInvalidArgument, "invalid tenant_context.tenant_id"),
+		Entry("empty job id", func(r *pb.ListJobCandidatesRequest) { r.JobId = "" },
+			connect.CodeInvalidArgument, "job_id is required"),
+		Entry("negative page size", func(r *pb.ListJobCandidatesRequest) { r.Pagination = &pb.Pagination{PageSize: -1} },
+			connect.CodeInvalidArgument, "page_size must be between 1 and 1000"),
+		Entry("oversized page", func(r *pb.ListJobCandidatesRequest) { r.Pagination = &pb.Pagination{PageSize: 1001} },
+			connect.CodeInvalidArgument, "page_size must be between 1 and 1000"),
+		Entry("forged page token", func(r *pb.ListJobCandidatesRequest) { r.Pagination = &pb.Pagination{PageToken: "!!not-a-token"} },
+			connect.CodeInvalidArgument, "next_page_token"),
+		Entry("page token of another job", func(r *pb.ListJobCandidatesRequest) {
+			r.Pagination = &pb.Pagination{PageToken: results.EncodeCursor(results.Cursor{JobID: "job-2", SourceID: "s", TargetID: "t"})}
+		}, connect.CodeInvalidArgument, "page_token belongs to a different job"),
+	)
+
+	It("refuses a tenant_context that differs from the authenticated tenant", func() {
+		ctx, err := tenant.WithTenant(context.Background(), "tenant-b")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = call(ctx, validCandidatesRequest())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+		Expect(err.Error()).To(ContainSubstring("tenant_context does not match the authenticated tenant"))
+		Expect(reader.candidateCalls).To(BeZero())
+	})
+
+	It("applies the default page size", func() {
+		_, err := call(context.Background(), validCandidatesRequest())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reader.candidateFilter).To(Equal(results.CandidateFilter{TenantID: "tenant-a", JobID: "job-1", PageSize: 50}))
+	})
+
+	It("passes every field through", func() {
+		cursor := results.Cursor{JobID: "job-1", SourceID: "s", TargetID: "t"}
+		req := validCandidatesRequest()
+		req.ControlId = "AC-1"
+		req.Pagination = &pb.Pagination{PageSize: 7, PageToken: results.EncodeCursor(cursor)}
+		_, err := call(context.Background(), req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reader.candidateFilter).To(Equal(results.CandidateFilter{
+			TenantID: "tenant-a", JobID: "job-1", ControlID: "AC-1", PageSize: 7, After: &cursor,
+		}))
+	})
+
+	It("converts similarity, contributions and analysis and sets the next token", func() {
+		next := results.Cursor{JobID: "job-1", SourceID: "s1", TargetID: "t1"}
+		reader.candidatePage = results.CandidatePage{
+			Candidates: []results.Candidate{
+				{JobID: "job-1", SourceID: "s1", TargetID: "t1", Similarity: 87.5, Contributions: []results.Contribution{
+					{Generator: "embedding", Score: 0.9, Weight: 0.6, Metadata: map[string]string{"rank": "2"}},
+					{Generator: "bm25", Score: 3.5, Weight: 0.4},
+				}},
+				{JobID: "job-1", SourceID: "s2", TargetID: "t2"},
+			},
+			Next: &next,
+			Analysis: &results.JobAnalysis{
+				Source: results.CatalogSummary{ID: "cat-src", Name: "SSDF", Imported: true},
+				Target: results.CatalogSummary{ID: "cat-tgt"},
+			},
+		}
+		resp, err := call(context.Background(), validCandidatesRequest())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Candidates).To(HaveLen(2))
+
+		first := resp.Candidates[0]
+		Expect(first.SourceControlId).To(Equal("s1"))
+		Expect(first.TargetControlId).To(Equal("t1"))
+		Expect(first.SimilarityScore).To(Equal(float32(87.5)))
+		Expect(first.Contributions).To(HaveLen(2))
+		Expect(first.Contributions[0].Generator).To(Equal("embedding"))
+		Expect(first.Contributions[0].Score).To(Equal(0.9))
+		Expect(first.Contributions[0].Weight).To(Equal(0.6))
+		Expect(first.Contributions[0].Metadata).To(Equal(map[string]string{"rank": "2"}))
+		Expect(first.Contributions[1].Generator).To(Equal("bm25"))
+		Expect(resp.Candidates[1].Contributions).To(BeEmpty())
+
+		Expect(resp.Analysis.GetSourceCatalog().GetCatalogId()).To(Equal("cat-src"))
+		Expect(resp.Analysis.GetSourceCatalog().GetImported()).To(BeTrue())
+		Expect(resp.Analysis.GetTargetCatalog().GetCatalogId()).To(Equal("cat-tgt"))
+
+		decoded, err := results.DecodeCursor(resp.PageInfo.NextPageToken)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(decoded).To(Equal(&next))
+	})
+
+	It("leaves the next token empty and the analysis unset on the last page without one", func() {
+		resp, err := call(context.Background(), validCandidatesRequest())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.PageInfo.GetNextPageToken()).To(BeEmpty())
+		Expect(resp.Analysis).To(BeNil())
+	})
+
+	Describe("reader errors", func() {
+		It("maps a missing job to the mappings NotFound message", func() {
+			reader.candidateErr = results.ErrJobNotFound
+			_, err := call(context.Background(), validCandidatesRequest())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+			Expect(err.Error()).To(ContainSubstring(`job "job-1" not found for this tenant`))
+			Expect(err.Error()).To(ContainSubstring("crosscodex run status"))
+		})
+
+		It("maps a job that has not completed to FailedPrecondition with the next step", func() {
+			reader.candidateErr = &results.JobNotCompletedError{JobID: "job-1", Status: "running"}
+			_, err := call(context.Background(), validCandidatesRequest())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err.Error()).To(ContainSubstring("candidates are available once it completes"))
+		})
+
+		It("maps an invalid page token to InvalidArgument", func() {
+			reader.candidateErr = fmt.Errorf("decode cursor: %w", results.ErrInvalidPageToken)
+			_, err := call(context.Background(), validCandidatesRequest())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		})
+
+		It("hides corrupt provenance behind Internal and logs the cause once under the right method", func() {
+			reader.candidateErr = fmt.Errorf("row s1->t1: %w: generator is not a string", results.ErrCorruptProvenance)
+			_, err := call(context.Background(), validCandidatesRequest())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+			Expect(err.Error()).NotTo(ContainSubstring("provenance"))
+			Expect(err.Error()).NotTo(ContainSubstring("s1->t1"))
+			Expect(strings.Count(logs.String(), "generator is not a string")).To(Equal(1))
+			Expect(logs.String()).To(ContainSubstring(`"method":"ListCandidates"`))
+		})
+	})
+
+	Describe("telemetry", func() {
+		It("traces the call and counts the returned candidates", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+			service = results.NewService(reader, results.WithTelemetry(tp.TracerProvider().Tracer("test"), tp.MeterProvider().Meter("test")))
+			reader.candidatePage = results.CandidatePage{Candidates: []results.Candidate{
+				{JobID: "j", SourceID: "s", TargetID: "t"}, {JobID: "j", SourceID: "s", TargetID: "u"},
+			}}
+			_, err = call(context.Background(), validCandidatesRequest())
+			Expect(err).NotTo(HaveOccurred())
+
+			span := telemetrytest.FindSpan(tp.GetSpans(), "results.ListCandidates")
+			Expect(span).NotTo(BeNil())
+			for key, want := range map[string]string{"tenant.id": "tenant-a", "job.id": "job-1"} {
+				v, ok := telemetrytest.SpanAttribute(span, key)
+				Expect(ok).To(BeTrue(), key)
+				Expect(v.AsString()).To(Equal(want))
+			}
+			Expect(intCounterByAttr(tp, "results.requests.total", "status", "ok")).To(Equal(int64(1)))
+			Expect(intCounterByAttr(tp, "results.candidates.returned.total", "", "")).To(Equal(int64(2)))
 		})
 	})
 })

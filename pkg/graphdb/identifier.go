@@ -60,7 +60,7 @@ func CheckLabel(kind, s string) error {
 }
 
 // CheckRelationshipQuery applies CheckLabel to every label q sets and
-// CheckPropertyKeys to its property filter.
+// CheckPropertyKeys to its edge, source and target property filters.
 func CheckRelationshipQuery(q RelationshipQuery) error {
 	for _, l := range [][2]string{{"source label", q.SourceLabel}, {"target label", q.TargetLabel}, {"edge label", q.EdgeLabel}} {
 		if l[1] == "" {
@@ -70,7 +70,12 @@ func CheckRelationshipQuery(q RelationshipQuery) error {
 			return err
 		}
 	}
-	return CheckPropertyKeys(q.Properties)
+	for _, props := range []map[string]any{q.Properties, q.SourceProperties, q.TargetProperties} {
+		if err := CheckPropertyKeys(props); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CheckPropertyKeys applies CheckIdentifier to every key in props, in sorted

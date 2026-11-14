@@ -4,13 +4,19 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/pkg/crosswalk"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/google/uuid"
 )
@@ -162,4 +168,167 @@ var _ = Describe("Catalog readers integration", func() {
 		Expect(err).To(MatchError(ErrCatalogNotFound), "tenant A read tenant B's catalog name")
 		Expect(err.Error()).NotTo(ContainSubstring("Secret Framework"))
 	})
+})
+
+// ancestorCatalogJSON is a minimal OSCAL catalog: group ac holds control ac-2,
+// whose statement has an addressable part (identifier ac-2.a), and its enhancement ac-2.7.
+const ancestorCatalogJSON = `{"catalog":{"uuid":"11111111-1111-4111-8111-111111111111",
+"metadata":{"title":"Ancestors","last-modified":"2024-01-01T00:00:00Z","version":"1","oscal-version":"1.1.2"},
+"groups":[{"id":"ac","class":"family","title":"Access Control","props":[{"name":"label","value":"AC"}],"controls":[
+ {"id":"ac-2","class":"SP800-53","title":"Account Management","props":[{"name":"label","value":"AC-2"}],
+  "parts":[{"id":"ac-2_smt","name":"statement","prose":"Manage accounts:","parts":[{"id":"ac-2.a","name":"item","props":[{"name":"label","value":"a."}],"prose":"Define account types."}]}],
+  "controls":[{"id":"ac-2.7","class":"SP800-53-enhancement","title":"Privileged User Accounts","parts":[{"id":"ac-2.7_smt","name":"statement","prose":"Establish privileged accounts."}]}]}
+]}]}}`
+
+// seedParsedCatalog stores tree the way internal/catalog's ParseCatalog and
+// store do: catalog_containers rows keyed by the parser's position key, and
+// controls rows whose control_id is "<catalog_id>/<item id>", parent_id the raw
+// item ParentID (NULL when empty) and container_key the item ContainerKey
+// (NULL when empty). internal packages cannot import each other, so the
+// mapping is mirrored here. Superuser: RLS bypassed, tenant_id explicit.
+func seedParsedCatalog(ctx context.Context, idb *integrationDB, tenantID, catalogID string, tree *oscal.Tree) {
+	ExpectWithOffset(1, idb.suPool.Exec(ctx, `
+		INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path)
+		VALUES ($1, $2, 'Ancestors', 'v1', 'test', 'unused')
+	`, catalogID, tenantID)).To(Succeed(), "seed catalog")
+	for _, c := range tree.Containers {
+		ExpectWithOffset(1, idb.suPool.Exec(ctx, `
+			INSERT INTO catalog_containers (tenant_id, catalog_id, container_key, identifier, title, label, parent_key)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))
+		`, tenantID, catalogID, c.Key, c.Identifier, c.Title, c.Label, c.ParentKey)).To(Succeed(), "seed container %s", c.Key)
+	}
+	for _, item := range tree.Items {
+		propsJSON, err := json.Marshal(item.Props)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred())
+		ExpectWithOffset(1, idb.suPool.Exec(ctx, `
+			INSERT INTO controls (tenant_id, control_id, catalog_id, identifier, title, statement, class, parent_id, group_id, container_key, props)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11)
+		`, tenantID, catalogID+"/"+item.ID, catalogID, item.ID, item.Title, item.Text, item.Class, item.ParentID, item.GroupID, item.ContainerKey, propsJSON)).To(Succeed(), "seed %s", item.ID)
+	}
+}
+
+var _ = Describe("Analysis input from imported catalogs", func() {
+	It("composes each control's context and text from its parent items and container, as the restricted role", func() {
+		ctx := context.Background()
+		idb := openIntegrationDB(ctx, 2)
+
+		tenantA := fmt.Sprintf("ancestors-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, idb.suPool, tenantA, "ancestors")).To(Succeed(), "ensure tenant")
+
+		tree, err := oscal.NewParser("").Parse(ctx, strings.NewReader(ancestorCatalogJSON))
+		Expect(err).NotTo(HaveOccurred())
+		catalogID := "cat-" + uuid.NewString()
+		seedParsedCatalog(ctx, idb, tenantA, catalogID, tree)
+
+		ctxA, err := tenant.WithTenant(ctx, tenantA)
+		Expect(err).NotTo(HaveOccurred())
+
+		controls, err := (&pgCatalogControlsReader{db: idb.tenantConn}).Controls(ctxA, tenantA, catalogID)
+		Expect(err).NotTo(HaveOccurred())
+		byIdentifier := map[string]*pb.Control{}
+		for _, c := range controls {
+			byIdentifier[c.GetIdentifier()] = c
+		}
+		Expect(controls).To(HaveLen(len(tree.Items)), "containers are not emitted as controls")
+		Expect(byIdentifier["ac-2"].GetParts()).To(HaveKeyWithValue("context", "Access Control (AC)"), "a top-level control's context is its container")
+		Expect(byIdentifier["ac-2.a"].GetParts()).To(HaveKeyWithValue("context", "Access Control (AC) > Account Management (AC-2)"))
+		Expect(byIdentifier["ac-2.a"].GetStatement()).To(Equal("Manage accounts: Define account types."), "a statement part is led in by its control's prose")
+		Expect(byIdentifier["ac-2.7"].GetParts()).To(HaveKeyWithValue("context", "Access Control (AC) > Account Management (AC-2)"))
+		Expect(byIdentifier["ac-2.7"].GetStatement()).To(Equal("Establish privileged accounts."), "an enhancement gets no lead-in from its base control")
+		Expect(byIdentifier["ac-2.7"].GetTitle()).To(Equal("Privileged User Accounts"))
+
+		data, err := (&pgControlsReader{db: idb.tenantConn}).ControlData(ctxA, tenantA, catalogID, "no-such-job")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(HaveKey(catalogID + "/ac-2.a"))
+		Expect(data[catalogID+"/ac-2.a"].Ancestor).To(Equal("Access Control (AC) > Account Management (AC-2)"))
+		Expect(data[catalogID+"/ac-2.a"].Text).To(Equal("Manage accounts: Define account types."))
+		Expect(data).NotTo(HaveKey(catalogID+"/ac-2"), "a control with statement items is a section and is not emitted, yet still gives its items context")
+		Expect(data[catalogID+"/ac-2.7"].Ancestor).To(Equal("Access Control (AC) > Account Management (AC-2)"))
+	})
+
+	It("does not resolve a container of another tenant", func() {
+		ctx := context.Background()
+		idb := openIntegrationDB(ctx, 2)
+
+		owner := fmt.Sprintf("ancestors-%s", uuid.New().String())
+		other := fmt.Sprintf("ancestors-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, idb.suPool, owner, "owner")).To(Succeed())
+		Expect(db.EnsureTenant(ctx, idb.suPool, other, "other")).To(Succeed())
+
+		tree, err := oscal.NewParser("").Parse(ctx, strings.NewReader(ancestorCatalogJSON))
+		Expect(err).NotTo(HaveOccurred())
+		catalogID := "cat-" + uuid.NewString()
+		seedParsedCatalog(ctx, idb, owner, catalogID, tree)
+
+		ctxOther, err := tenant.WithTenant(ctx, other)
+		Expect(err).NotTo(HaveOccurred())
+		controls, err := (&pgCatalogControlsReader{db: idb.tenantConn}).Controls(ctxOther, other, catalogID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(controls).To(BeEmpty(), "another tenant sees none of the catalog")
+		data, err := (&pgControlsReader{db: idb.tenantConn}).ControlData(ctxOther, other, catalogID, "no-such-job")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(data).To(BeEmpty())
+	})
+
+	DescribeTable("composes context and text from the groups and parts of real catalogs",
+		func(fixture, controlID, wantContext, partID, wantPartContext, wantPartStatement string) {
+			ctx := context.Background()
+			idb := openIntegrationDB(ctx, 2)
+
+			tenantA := fmt.Sprintf("ancestors-%s", uuid.New().String())
+			Expect(db.EnsureTenant(ctx, idb.suPool, tenantA, "ancestors")).To(Succeed(), "ensure tenant")
+
+			f, err := os.Open(filepath.Join("..", "..", "pkg", "oscal", "testdata", "tree", fixture))
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = f.Close() }()
+			tree, err := oscal.NewParser("").Parse(ctx, f)
+			Expect(err).NotTo(HaveOccurred())
+			catalogID := "cat-" + uuid.NewString()
+			seedParsedCatalog(ctx, idb, tenantA, catalogID, tree)
+
+			ctxA, err := tenant.WithTenant(ctx, tenantA)
+			Expect(err).NotTo(HaveOccurred())
+			controls, err := (&pgCatalogControlsReader{db: idb.tenantConn}).Controls(ctxA, tenantA, catalogID)
+			Expect(err).NotTo(HaveOccurred())
+			byIdentifier := map[string]*pb.Control{}
+			for _, c := range controls {
+				byIdentifier[c.GetIdentifier()] = c
+			}
+			Expect(byIdentifier).To(HaveKey(controlID))
+			Expect(byIdentifier[controlID].GetParts()).To(HaveKeyWithValue("context", wantContext))
+			if partID != "" {
+				Expect(byIdentifier).To(HaveKey(partID))
+				Expect(byIdentifier[partID].GetParts()).To(HaveKeyWithValue("context", wantPartContext))
+				Expect(byIdentifier[partID].GetStatement()).To(Equal(wantPartStatement))
+			}
+
+			// Every top-level grouped control, in either reader, ends its
+			// context with its innermost container.
+			segmentOfKey := map[string]string{}
+			for _, c := range tree.Containers {
+				segmentOfKey[c.Key] = crosswalk.LineageSegment(c.Title, c.Label, c.Identifier)
+			}
+			data, err := (&pgControlsReader{db: idb.tenantConn}).ControlData(ctxA, tenantA, catalogID, "no-such-job")
+			Expect(err).NotTo(HaveOccurred())
+			grouped := 0
+			for _, item := range tree.Items {
+				if item.ParentID != "" || item.ContainerKey == "" {
+					continue
+				}
+				grouped++
+				got := byIdentifier[item.ID].GetParts()["context"]
+				Expect(got).To(HaveSuffix(segmentOfKey[item.ContainerKey]), "context of %s", item.ID)
+				if cd, ok := data[catalogID+"/"+item.ID]; ok {
+					Expect(cd.Ancestor).To(Equal(got), "Ancestor of %s", item.ID)
+				}
+			}
+			Expect(grouped).To(BeNumerically(">", 0), "the fixture has grouped top-level controls")
+		},
+		Entry("SP 800-53r5 family", "sp800-53r5.json", "ac-2", "Access Control (AC)",
+			"ac-2.d.1", "Access Control (AC) > Account Management (AC-2)", "Specify: Authorized users of the system;"),
+		Entry("ISM nested groups", "ism-e8.json", "ism-1654",
+			"Guidelines for system hardening > Operating system hardening > Hardening operating system configurations", "", "", ""),
+		Entry("ISM sibling group", "ism-e8.json", "ism-0843",
+			"Guidelines for system hardening > Operating system hardening > Application control", "", "", ""),
+	)
 })

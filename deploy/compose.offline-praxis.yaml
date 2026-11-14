@@ -20,6 +20,15 @@ services:
       retries: 30
       start_period: 10s
 
+  crosscodexd:
+    # The offline model server is one model, so the panel aliases cannot resolve
+    # to different model families; allow the daemon to run them anyway. The
+    # production stack (compose.yaml alone) leaves these false.
+    environment:
+      CROSSCODEX_ANALYSIS_RELATIONSHIP_ALLOW_SHARED_PANEL_MODELS: "true"
+      CROSSCODEX_ANALYSIS_REQUIRES_ALLOW_SHARED_PANEL_MODELS: "true"
+      CROSSCODEX_ANALYSIS_CRITIQUE_ALLOW_SHARED_PANEL_MODELS: "true"
+
   praxis:
     depends_on:
       ollama:

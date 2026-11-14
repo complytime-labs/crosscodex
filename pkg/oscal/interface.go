@@ -5,9 +5,9 @@ import (
 	"io"
 )
 
-// Parser parses native OSCAL JSON catalogs into ControlItems.
+// Parser parses native OSCAL JSON catalogs into a Tree.
 type Parser interface {
-	Parse(ctx context.Context, data io.Reader) ([]ControlItem, error)
+	Parse(ctx context.Context, data io.Reader) (*Tree, error)
 	FindControl(items []ControlItem, controlID string) (*ControlItem, error)
 }
 
@@ -53,7 +53,7 @@ var DefaultKeywords = []string{
 }
 
 type Assembler interface {
-	Assemble(ctx context.Context, items []ControlItem, meta CatalogMeta) ([]byte, error)
+	Assemble(ctx context.Context, tree *Tree, meta CatalogMeta) ([]byte, error)
 }
 
 type CatalogMeta struct {

@@ -595,6 +595,14 @@ func (c *ageClient) queryRelationshipsInternal(
 	for _, k := range slices.Sorted(maps.Keys(q.Properties)) {
 		conditions = append(conditions, fmt.Sprintf("e.%s = %s", escapeCypher(k), cypherValue(q.Properties[k])))
 	}
+	for _, f := range []struct {
+		variable string
+		props    map[string]any
+	}{{"s", q.SourceProperties}, {"t", q.TargetProperties}} {
+		for _, k := range slices.Sorted(maps.Keys(f.props)) {
+			conditions = append(conditions, fmt.Sprintf("%s.%s = %s", f.variable, escapeCypher(k), cypherValue(f.props[k])))
+		}
+	}
 
 	whereClause := ""
 	if len(conditions) > 0 {

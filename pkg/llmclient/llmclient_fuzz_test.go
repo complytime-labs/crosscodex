@@ -120,3 +120,30 @@ func FuzzMessagesFromPayload(f *testing.F) {
 		}
 	})
 }
+
+func FuzzParseModelCatalog(f *testing.F) {
+	// Valid LiteLLM catalog
+	f.Add([]byte(`{"data":[{"model_name":"panel-1","litellm_params":{"model":"openai/m","api_base":"http://x"},"model_info":{"id":"d1"}}]}`))
+	// Invalid shapes
+	f.Add([]byte(``))
+	f.Add([]byte(`[]`))
+	f.Add([]byte(`{"data":null}`))
+	f.Add([]byte(`{"data":[7,"x",{"model_name":5},{"litellm_params":[]}]}`))
+	// Boundary: empty list, deep nesting
+	f.Add([]byte(`{"data":[]}`))
+	f.Add([]byte(`{"data":[{"model_info":{"id":{"a":{"b":{"c":[[[[1]]]]}}}}}]}`))
+	// Attack: control characters, duplicate keys, huge number
+	f.Add([]byte("{\"data\":[{\"model_name\":\"a\\u0000\\u001b[2J\",\"model_name\":\"b\"}]}"))
+	f.Add([]byte(`{"data":[{"model_info":{"id":1e999999}}]}`))
+
+	f.Fuzz(func(t *testing.T, body []byte) {
+		got, err := llmclient.ParseModelCatalog(body)
+		if err != nil {
+			return
+		}
+		// Invariant on accepted input: bounded entry count.
+		if len(got) > 10000 {
+			t.Fatalf("kept %d entries", len(got))
+		}
+	})
+}

@@ -1,0 +1,61 @@
+{
+  "catalog": {
+    "uuid": "91a4f8a5-8408-46df-b00f-76bf23887f85",
+    "metadata": {
+      "title": "Catalog for cis_rhel9",
+      "last-modified": "2025-09-26T15:27:16.940834+08:00",
+      "version": "1.0",
+      "oscal-version": "1.1.3"
+    },
+    "groups": [
+      {
+        "id": "cis_rhel9_1",
+        "title": "Controls for section cis_rhel9_1",
+        "controls": [
+          {
+            "id": "cis_rhel9_1-1",
+            "title": "Control for cis_rhel9_1-1",
+            "controls": [
+              {
+                "id": "cis_rhel9_1-1.1",
+                "title": "Control for cis_rhel9_1-1.1",
+                "controls": [
+                  {
+                    "id": "cis_rhel9_1-1.1.1",
+                    "class": "CAC_IMPORT",
+                    "title": "Ensure Cramfs Kernel Module Is Not Available (Automated)",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "1.1.1.1"
+                      },
+                      {
+                        "name": "sort-id",
+                        "value": "cis_rhel9_1-01.01.01"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "cis_rhel9_1-1.1.2",
+                    "class": "CAC_IMPORT",
+                    "title": "Ensure Freevxfs Kernel Module Is Not Available (Automated)",
+                    "props": [
+                      {
+                        "name": "label",
+                        "value": "1.1.1.2"
+                      },
+                      {
+                        "name": "sort-id",
+                        "value": "cis_rhel9_1-01.01.02"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

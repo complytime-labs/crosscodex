@@ -61,7 +61,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
-	Context("validateItems — duplicate detection", func() {
+	Context("validateTree — duplicate detection", func() {
 		It("returns error when at least two items share the same ID", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				dupID := rapid.StringMatching(`^[a-z][a-z0-9-]{1,10}$`).Draw(t, "dupID")
@@ -80,7 +80,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				// Add the duplicate.
 				items = append(items, oscal.ControlItem{ID: dupID})
 
-				err := catalog.ExportValidateItems(items)
+				err := catalog.ExportValidateTree(&oscal.Tree{Items: items})
 				if err == nil {
 					t.Fatalf("expected duplicate error for ID %q, got nil", dupID)
 				}
@@ -101,7 +101,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					// ParentID must differ from ID. Use empty string.
 					items = append(items, oscal.ControlItem{ID: id, ParentID: ""})
 				}
-				err := catalog.ExportValidateItems(items)
+				err := catalog.ExportValidateTree(&oscal.Tree{Items: items})
 				if err != nil {
 					t.Fatalf("expected nil error for unique IDs, got: %v", err)
 				}
@@ -109,12 +109,12 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
-	Context("validateItems — self-reference detection", func() {
+	Context("validateTree — self-reference detection", func() {
 		It("returns error when ParentID equals ID and both are non-empty", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				id := rapid.StringMatching(`^[a-z][a-z0-9-]{1,10}$`).Draw(t, "id")
 				items := []oscal.ControlItem{{ID: id, ParentID: id}}
-				err := catalog.ExportValidateItems(items)
+				err := catalog.ExportValidateTree(&oscal.Tree{Items: items})
 				if err == nil {
 					t.Fatalf("expected self-reference error for ID %q, got nil", id)
 				}

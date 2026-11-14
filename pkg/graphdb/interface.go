@@ -83,6 +83,9 @@ import (
 //     wrapping ErrEdgeExists. Empty IDs are not deduplicated.
 //   - CreateRequiresEdge writes id = RequiresEdge.EdgeID() and
 //     valid_from = AnalyzedAt, so it is deduplicated and visible to QueryAsOf.
+//     A non-nil Critique adds critique_upheld, critique_rejected and, when
+//     non-empty, critique_note (its Note) and critique_outcome (its
+//     Outcome); a nil one adds none of them.
 //   - BulkCreateEdges is all-or-nothing: on any error nothing is persisted and
 //     the returned ID slice is nil. Empty input with a valid tenant returns
 //     nil, nil; a malformed tenant is rejected even when the input is empty.
@@ -90,6 +93,10 @@ import (
 //   - QueryRelationships returns edges without valid_to and does not check
 //     node validity. QueryAsOf filters edges only: valid_from <= t and
 //     (valid_to unset or t < valid_to).
+//   - RelationshipQuery.Properties filters the edge's stored properties;
+//     SourceProperties and TargetProperties filter the endpoint nodes' stored
+//     properties by equality. A node lacking a key never matches it. Empty
+//     maps apply no filter. Both query methods apply all three.
 //   - Traverse returns every path of length 1..MaxDepth (0 = unlimited) that
 //     does not reuse an edge. Direction "inbound" and "both" are honored; any
 //     other value means outbound. A missing start node yields no paths and no

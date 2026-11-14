@@ -107,10 +107,19 @@ testcases:
         ca_cert: "{{.ca_cert}}"
         client_cert: "{{.client_cert}}"
         client_key: "{{.client_key}}"
-        cypher: "MATCH ()-[r:PARENT_OF]->() RETURN r"
-        expected: "2"
+        cypher: "MATCH (n:Container) RETURN n"
+        expected: "1"
         assertions:
-          - result.count ShouldEqual "2"
+          - result.count ShouldEqual "1"
+
+      - type: age-count
+        ca_cert: "{{.ca_cert}}"
+        client_cert: "{{.client_cert}}"
+        client_key: "{{.client_key}}"
+        cypher: "MATCH ()-[r:PARENT_OF]->() RETURN r"
+        expected: "3"
+        assertions:
+          - result.count ShouldEqual "3"
 
       - type: exec
         script: |

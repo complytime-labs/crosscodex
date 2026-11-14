@@ -118,7 +118,7 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		Expect(tx.QueryRow(tenantCtx,
 			"SELECT count(*) FROM controls WHERE catalog_id = $1", catalogID).Scan(&controlCount)).
 			To(Succeed(), "count controls")
-		Expect(controlCount).To(Equal(3), "controls in relational DB")
+		Expect(controlCount).To(Equal(3), "controls in relational DB (the group is a container, not a controls row)")
 
 		// --- AGE assertions via the typed graphdb client ---
 		// Graph materialization is asynchronous relative to the job reaching
@@ -130,8 +130,9 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		g := rt.shared.graphDB_
 
 		Eventually(func(inner Gomega) {
-			// Control nodes: ac-2 (section), ac-2.a, ac-2.b (requirements).
-			// Node IDs are fmt.Sprintf("%s/%s", catalogID, item.ID).
+			// Control nodes: ac-2 (section), ac-2.a, ac-2.b (requirements), and
+			// the group as one Container node (position key g1).
+			// Control node IDs are fmt.Sprintf("%s/%s", catalogID, item.ID).
 			for _, id := range []string{"ac-2", "ac-2.a", "ac-2.b"} {
 				nodeID := catalogID + "/" + id
 				n, err := g.GetNode(ctx, tenantID, nodeID)
@@ -140,10 +141,16 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 				inner.Expect(n.Label).To(Equal("Control"), fmt.Sprintf("node %s label", nodeID))
 			}
 
-			// PARENT_OF edges: ac-2 -> ac-2.a, ac-2 -> ac-2.b (2 total).
+			containerNodeID := catalogID + "/containers/g1"
+			container, err := g.GetNode(ctx, tenantID, containerNodeID)
+			inner.Expect(err).NotTo(HaveOccurred(), "GetNode %s", containerNodeID)
+			inner.Expect(container.Label).To(Equal("Container"), "container node label")
+			inner.Expect(container.Properties).To(HaveKeyWithValue("node_kind", "container"))
+
+			// PARENT_OF edges: g1 -> ac-2, ac-2 -> ac-2.a, ac-2 -> ac-2.b (3 total).
 			parentOf, err := g.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{EdgeLabel: "PARENT_OF"})
 			inner.Expect(err).NotTo(HaveOccurred(), "query PARENT_OF")
-			inner.Expect(parentOf).To(HaveLen(2), "PARENT_OF edges")
+			inner.Expect(parentOf).To(HaveLen(3), "PARENT_OF edges")
 
 			// requires=YES under the deterministic fake -> at least one REQUIRES
 			// edge. Waiting for this to land also guarantees the analysis stage

@@ -1,0 +1,66 @@
+{
+  "catalog": {
+    "uuid": "22222222-2222-4222-8222-222222222222",
+    "metadata": {
+      "title": "Statement items",
+      "last-modified": "2025-01-01T00:00:00Z",
+      "version": "1",
+      "oscal-version": "1.1.3"
+    },
+    "groups": [
+      {
+        "id": "sa",
+        "title": "Group SA",
+        "controls": [
+          {
+            "id": "sa-1",
+            "title": "Control with items",
+            "parts": [
+              {
+                "id": "sa-1_smt",
+                "name": "statement",
+                "parts": [
+                  {"id": "sa-1_smt.a", "name": "item", "prose": "Item a."},
+                  {
+                    "id": "sa-1_smt.b",
+                    "name": "item",
+                    "prose": "Item b.",
+                    "parts": [{"id": "sa-1_smt.b.1", "name": "item", "prose": "Item b1."}]
+                  }
+                ]
+              }
+            ],
+            "controls": [
+              {
+                "id": "sa-1.2",
+                "title": "Enhancement with items",
+                "parts": [
+                  {
+                    "id": "sa-1.2_smt",
+                    "name": "statement",
+                    "parts": [{"id": "sa-1.2_smt.a", "name": "item", "prose": "Enhancement item a."}]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "np-1",
+            "title": "Control whose item IDs do not follow the pattern",
+            "parts": [
+              {
+                "id": "np-1_stmtx",
+                "name": "statement",
+                "parts": [
+                  {"id": "first", "name": "item", "prose": "First."},
+                  {"id": "second", "name": "item", "prose": "Second."}
+                ]
+              }
+            ]
+          },
+          {"id": "pl-9", "title": "Control without statement"}
+        ]
+      }
+    ]
+  }
+}

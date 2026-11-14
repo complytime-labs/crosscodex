@@ -236,6 +236,43 @@ message JobStage {
   int32 retry_count = 6;
   Error error = 7;
   repeated ResourceRef outputs = 8;
+  // Set for a panel analyzer stage (relationship, requires, critique) that
+  // has started its analysis, and for a completed one whose record is
+  // missing (independence "not recorded"). Unset for every other stage.
+  PanelProvenance panel = 9;
+}
+
+// PanelProvenance is what the panel diversity check found for one panel
+// analyzer stage: the upstream model each alias reported, and whether the
+// shared-model allowance was in effect. It is recorded when the check runs,
+// so it survives a resume.
+message PanelProvenance {
+  // One of: "independent" (every alias reported a different model),
+  // "allowed shared or unknown upstream model" (the allowance let a shared or
+  // unknown model through), "panel independence unchecked" (the daemon had no
+  // panel probe), "panel independence not recorded" (the stage completed
+  // before the daemon recorded this).
+  string independence = 1;
+  // analysis.<stage>.allow_shared_panel_models when the check ran.
+  bool allow_shared = 2;
+  // alias -> upstream model, sorted by alias; observed_model is empty when
+  // the gateway did not name the model.
+  repeated PanelModel models = 3;
+}
+
+message PanelModel {
+  string alias = 1;
+  string observed_model = 2;
+  // Where observed_model came from: "reply" (the gateway named it in the
+  // probe's reply), "catalog" (read from the gateway's model catalog, by the
+  // probe's deployment ID) or "unknown".
+  string source = 3;
+  // The deployment ID the gateway served the alias's probe with; empty when
+  // it sent none. Never a deployment URL or key.
+  string deployment_id = 4;
+  // Why the model is unknown when the catalog could not name it, such as
+  // "catalog refused"; empty otherwise.
+  string fault = 5;
 }
 
 message GetJobRequest {

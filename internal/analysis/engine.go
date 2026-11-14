@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
@@ -480,15 +482,16 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		}
 
 		collectReq := CollectRequest{
-			TaskType:     taskType,
-			JobID:        req.JobID,
-			ExpectedIDs:  expectedIDs,
-			Tasks:        dispatchTasks,
-			Timeout:      e.cfg.TaskTimeout,
-			StageTimeout: e.stageTimeout,
-			MaxRetries:   e.cfg.MaxRetries,
-			Backoff:      e.cfg.RetryBackoff,
-			Dispatcher:   e.dispatcher,
+			TaskType:       taskType,
+			JobID:          req.JobID,
+			ExpectedIDs:    expectedIDs,
+			Tasks:          dispatchTasks,
+			Timeout:        e.cfg.TaskTimeout,
+			StageTimeout:   e.stageTimeout,
+			SuccessTimeout: e.cfg.SuccessTimeout,
+			MaxRetries:     e.cfg.MaxRetries,
+			Backoff:        e.cfg.RetryBackoff,
+			Dispatcher:     e.dispatcher,
 		}
 
 		// PrepareCollect: subscribe to result subject BEFORE dispatching tasks.
@@ -502,8 +505,14 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		}
 
 		// Dispatch tasks: publish to work subject. Results will be published to the
-		// already-subscribed result subject, so no message can be lost.
-		if err := e.dispatcher.Dispatch(ctx, dispatchTasks, taskType, req.JobID, handle.CollectionID); err != nil {
+		// already-subscribed result subject, so no message can be lost. The
+		// tasks go out grouped by model (see orderByModel); the collection
+		// above keeps the generated order, so only the queue order changes.
+		var panel []string
+		if p, ok := analyzer.AsPanelled(ra); ok {
+			panel = p.Panel().Aliases
+		}
+		if err := e.dispatcher.Dispatch(ctx, orderByModel(dispatchTasks, panel), taskType, req.JobID, handle.CollectionID); err != nil {
 			// AwaitResults never runs, so its deferred release and abandon do
 			// not either. Some tasks may already be out, so abandon them,
 			// after release so no retry follows the abandon.
@@ -524,6 +533,20 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			// stage stores nothing; it is not sealed either.
 			if ctx.Err() == nil && sc.puts() {
 				e.putResults(ctx, sc, collected)
+			}
+			var nse *NoSuccessError
+			if errors.As(err, &nse) {
+				// Truncated answers are not an unanswering gateway: give
+				// them their own class and remedy. The collector returns
+				// every failed result it counted, the last one included.
+				if errors.Is(nse.LastError, llmclient.ErrOutputTruncated) {
+					if se := e.outputTruncated(ctx, name, req.JobID, collected); se != nil {
+						stop(se)
+						return
+					}
+				}
+				stop(e.noSuccess(ctx, name, req.JobID, nse))
+				return
 			}
 			stop(fmt.Errorf("analysis: analyzer %q collect failed for job %q: %w: %w",
 				name, req.JobID, ErrAnalyzerFailed, err))
@@ -640,6 +663,31 @@ func (s *executionState) isCompleted(name string) bool {
 	return false
 }
 
+// noSuccess returns the stage error for a collection that received only
+// failed task results, and no success, for analysis.engine.success_timeout
+// since the first failure after its last success. Its class is
+// llm_unavailable and retryable. The message cannot tell from a sanitized
+// error category whether the gateway stopped answering or the model's
+// answers fail, so it names both, with what to do for each.
+func (e *Engine) noSuccess(ctx context.Context, name, jobID string, nse *NoSuccessError) *StageError {
+	e.logger.ErrorContext(ctx, "the stage received only failed task results, and no successful one, for analysis.engine.success_timeout, "+
+		"so it stopped. Check the LLM gateway and model server, and the task errors logged before this",
+		"analyzer", name, "job_id", jobID, "window", nse.Window, "failures", nse.Failures,
+		"last_success", nse.LastSuccess, "error", nse)
+	ref := TraceReference(ctx, jobID)
+	return &StageError{Analyzer: name, Sentinel: ErrNoSuccessfulResult, Cause: nse, Message: fmt.Sprintf(
+		"Stage %q stopped: it received only failed task results, and no successful one, for %s: %d task results failed since %s, "+
+			"the last with error %v (error class llm_unavailable). Either the LLM gateway or model server is not answering, "+
+			"or the model answers but its answers fail, so the remaining tasks would most likely fail too. "+
+			"If the gateway or model server is down or unreachable, check it, then resume the job with "+
+			"\"crosscodex run retry --from-failure %s\", which keeps its completed stages. "+
+			"If the model answers but its answers fail, give your operator %s to find the errors in the crosscodexd log, "+
+			"fix the model or its gateway alias, then resume the job the same way. "+
+			"If the model server is healthy but legitimately takes longer than %s between successful answers, "+
+			"raise analysis.engine.success_timeout in the crosscodexd configuration and restart crosscodexd.",
+		name, nse.Window, nse.Failures, nse.since(), nse.LastError, jobID, ref, nse.Window)}
+}
+
 // outputTruncated returns the stage error for results in which any task's
 // model gave no answer within max_tokens, or nil. Such a stage fails instead
 // of aggregating the answered tasks: the budget or the model's reasoning is
@@ -673,4 +721,46 @@ func (e *Engine) outputTruncated(ctx context.Context, name, jobID string, result
 			"in deploy/README.md), or raise %s in the crosscodexd configuration and restart crosscodexd. Then resume the job "+
 			"with \"crosscodex run retry --from-failure %s\", which keeps its completed stages. If this persists, give your operator %s.",
 		name, truncated, len(results), setting, jobID, TraceReference(ctx, jobID))}
+}
+
+// orderByModel returns a copy of tasks grouped by the model alias each
+// payload names (its "model" field), for dispatch. A worker takes tasks in
+// queue order, and a model server that loads models on demand swaps models
+// whenever consecutive tasks name different ones; analyzers generate a
+// panel's tasks per item (pair or control), every model in turn, so
+// dispatching them as generated costs a swap on nearly every task. Grouped,
+// a stage costs about one swap per model.
+//
+// The groups follow panel (the analyzer's configured aliases, nil for an
+// analyzer without a panel), then any other model in first-seen order; a
+// task without a model is a group of its own. The sort is stable, so tasks
+// of one model keep their generated order. Only the order changes: the
+// tasks, and the results they produce, are the same. tasks is not modified.
+func orderByModel(tasks []analyzer.Task, panel []string) []analyzer.Task {
+	rank := make(map[string]int, len(panel))
+	for i, alias := range panel {
+		if _, ok := rank[alias]; !ok {
+			rank[alias] = i
+		}
+	}
+	modelOf := func(t analyzer.Task) string {
+		s, ok := t.Payload.(*structpb.Struct)
+		if !ok {
+			return ""
+		}
+		return s.GetFields()["model"].GetStringValue()
+	}
+	next := len(panel)
+	for _, t := range tasks {
+		m := modelOf(t)
+		if _, ok := rank[m]; !ok {
+			rank[m] = next
+			next++
+		}
+	}
+	ordered := slices.Clone(tasks)
+	slices.SortStableFunc(ordered, func(a, b analyzer.Task) int {
+		return rank[modelOf(a)] - rank[modelOf(b)]
+	})
+	return ordered
 }

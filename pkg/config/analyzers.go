@@ -8,6 +8,7 @@ var analyzerSections = map[string]string{
 	"artifacts":    "analysis.artifacts",
 	"requires":     "analysis.requires",
 	"relationship": "analysis.relationship",
+	"critique":     "analysis.critique",
 }
 
 // AnalyzerSetting returns the dotted config path of setting in production

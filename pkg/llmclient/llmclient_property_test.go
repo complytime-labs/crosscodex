@@ -1,6 +1,7 @@
 package llmclient_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"time"
 
@@ -17,6 +18,45 @@ import (
 // This file only registers Describe nodes; Ginkgo collects them automatically.
 
 var _ = Describe("Property Specifications", Ordered, func() {
+
+	Context("ParseModelCatalog", func() {
+		It("round-trips any entries and never keeps a field it does not read", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				n := rapid.IntRange(0, 20).Draw(t, "n")
+				want := make([]llmclient.ModelDeployment, n)
+				entries := make([]map[string]any, n)
+				for i := range n {
+					want[i] = llmclient.ModelDeployment{
+						Alias: rapid.String().Draw(t, "alias"), ID: rapid.String().Draw(t, "id"), Model: rapid.String().Draw(t, "model")}
+					entries[i] = map[string]any{
+						"model_name":     want[i].Alias,
+						"litellm_params": map[string]any{"model": want[i].Model, "api_base": rapid.String().Draw(t, "base")},
+						"model_info":     map[string]any{"id": want[i].ID},
+					}
+				}
+				body, err := json.Marshal(map[string]any{"data": entries})
+				if err != nil {
+					t.Fatalf("marshal: %v", err)
+				}
+				got, err := llmclient.ParseModelCatalog(body)
+				if err != nil {
+					t.Fatalf("parse: %v", err)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("got %v, want %v", got, want)
+				}
+			})
+		})
+
+		It("never panics and never returns both entries and an error", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				got, err := llmclient.ParseModelCatalog(rapid.SliceOf(rapid.Byte()).Draw(t, "body"))
+				if err != nil && got != nil {
+					t.Fatalf("error %v with %d entries", err, len(got))
+				}
+			})
+		})
+	})
 
 	Context("shouldRetry — status code classification", func() {
 		It("always retries on HTTP 429", func() {

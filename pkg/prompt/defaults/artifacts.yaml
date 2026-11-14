@@ -1,5 +1,5 @@
 name: artifacts
-version: 1.1.0
+version: 1.2.0
 metadata:
   domain: analysis
   analyzer_type: artifacts
@@ -26,7 +26,8 @@ templates:
     <control_metadata>
     ID: ${control_id}
     Framework: ${framework}
-    Control Domain: ${ancestor_title}
+    Context: ${context}
+    Title: ${title}
     </control_metadata>
     <requirement>
     ${requirement_text}

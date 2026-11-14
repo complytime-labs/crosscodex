@@ -125,6 +125,27 @@ service GatewayService {
     };
   }
 
+  // List a job's relationship candidates: the pairs candidate generation
+  // proposed to the relationship analyzer, before any model judged them.
+  // INTERNAL: CandidatesBackend.ListCandidates
+  rpc ListJobCandidates(ListJobCandidatesRequest) returns (ListJobCandidatesResponse) {
+    option (google.api.http) = {
+      get: "/v1/jobs/{job_id}/candidates"
+    };
+  }
+
+  // Export a crosswalk: the related control pairs between catalogs, merged
+  // across the tenant's completed jobs. The gateway selects the completed
+  // jobs for the mode and passes them to the backend; edges of running,
+  // failed or cancelled jobs never appear. Unknown and other-tenant catalogs
+  // or jobs answer the same NotFound.
+  // INTERNAL: CrosswalkBackend.GetCrosswalk
+  rpc GetCrosswalk(GetCrosswalkRequest) returns (GetCrosswalkResponse) {
+    option (google.api.http) = {
+      get: "/v1/crosswalk"
+    };
+  }
+
   // Query graph
   // INTERNAL: graph.Query (restricted Cypher subset for safety)
   rpc QueryGraph(QueryGraphRequest) returns (QueryGraphResponse) {
@@ -178,6 +199,220 @@ service GatewayService {
 
 // Gateway-specific request types
 
+// CrosswalkStage selects which stored verdicts a crosswalk lists.
+enum CrosswalkStage {
+  // Same as CROSSWALK_STAGE_SYNTHESIZED.
+  CROSSWALK_STAGE_UNSPECIFIED = 0;
+  // The synthesized mappings: the relationship analyzer's verdicts after
+  // synthesis consensus (the default).
+  CROSSWALK_STAGE_SYNTHESIZED = 1;
+  // The relationship analyzer's own verdicts, before synthesis.
+  CROSSWALK_STAGE_ANALYZER = 2;
+}
+
+// CrosswalkPair names the two catalogs of pair mode.
+message CrosswalkPair {
+  // Catalog IDs. They must differ: a catalog's internal mappings are
+  // exported with GetCrosswalkRequest.job_id. Either direction of any
+  // completed job between the two catalogs contributes.
+  string catalog_a = 1;
+  string catalog_b = 2;
+}
+
+// CrosswalkTransitive names the catalogs of transitive mode. All three must
+// differ.
+message CrosswalkTransitive {
+  // The catalog the derived rows start from.
+  string catalog_a = 1;
+  // The catalog the derived rows end at.
+  string catalog_c = 2;
+  // The catalog whose controls link A to C: A to hub and hub to C verdicts
+  // compose into derived A to C rows. Direct A to C rows are included too.
+  string hub_catalog_id = 3;
+}
+
+// CrosswalkJob is one completed job that contributes to a crosswalk.
+message CrosswalkJob {
+  string job_id = 1;
+  // The job's catalog_id and target_catalog_id (equal for a job within one
+  // catalog; a job stored before cross-catalog analysis has no target and
+  // reads as within its source).
+  string source_catalog_id = 2;
+  string target_catalog_id = 3;
+  // True when the job also paired target controls with source controls.
+  bool bidirectional = 4;
+  // The latest stage completion time; unset when no stage recorded one.
+  google.protobuf.Timestamp completed_at = 5;
+}
+
+// CrosswalkSide is one end of a crosswalk row, readable without decoding IDs.
+message CrosswalkSide {
+  // The control's graph node ID.
+  string node_id = 1;
+  string catalog_id = 2;
+  // The catalog's name: as recorded when the contributing job was created
+  // when CrosswalkProvenance.catalogs marks it a snapshot, else its current
+  // name.
+  string framework = 3;
+  // The item's identifier in the catalog (its OSCAL id): stable and unique,
+  // but not necessarily what the source document prints; see label.
+  string identifier = 4;
+  // The identifier of the control's parent in the catalog's control tree. A
+  // top-level control in a group gets its container's identifier (empty when
+  // the group has none); empty for an ungrouped top-level control.
+  string parent_identifier = 5;
+  // The control's own title; empty when the control has none, never an
+  // ancestor's.
+  string title = 6;
+  string statement = 7;
+  // The control's titled ancestors, root first, each as "<title>
+  // (<identifier>)", or "<title>" when the ancestor has no identifier (for
+  // example an ID-less group), joined by " > ". Untitled ancestors are omitted;
+  // empty when no ancestor has a title.
+  string context = 8;
+  // The item's published label, verbatim from the catalog (for example
+  // "AC-2(7)", or "d." for a statement part); empty when the catalog gives
+  // none.
+  string label = 9;
+  // The parent's published label, same rules as label; empty when the item
+  // has no parent or the parent has no label.
+  string parent_label = 10;
+}
+
+// CrosswalkRow is one related control pair.
+message CrosswalkRow {
+  CrosswalkSide source = 1;
+  CrosswalkSide target = 2;
+  // The merged verdict, read from source to target.
+  RelationshipType relationship_type = 3;
+  // The exact word for the verdict, for example "subset of"; a derived row
+  // whose composition has no named type reads
+  // "related (derived, type unknown)" with relationship_type unspecified.
+  string relationship = 4;
+  // The confidence of the job that decided the verdict, in [0, 1]. For a
+  // derived row it is the highest path confidence among the supporting paths
+  // (a path's confidence is the product of its legs').
+  float confidence = 5;
+  // How the row was obtained: "direct" (a stored verdict, or one inverted
+  // into the source-to-target reading), "reverse" (a target-to-source
+  // verdict with no named inverse, reported as stored) or "derived"
+  // (composed through a hub control, transitive mode).
+  string direction = 6;
+  // For a derived row, every hub control on the pair's paths, sorted, joined
+  // by "; "; empty otherwise.
+  string hub_identifier = 7;
+  // Jobs that judged this pair; a bidirectional job counts once, even when
+  // its two directions disagree. For a derived row, the distinct jobs across
+  // every leg of every path.
+  int32 jobs_judged = 8;
+  // Jobs with a verdict equal to the row's after normalizing to the
+  // source-to-target reading. When one job's two directions disagree, the
+  // job decides the row with its higher-confidence verdict (then the greater
+  // relationship type). For a derived row, the distinct jobs across the legs
+  // of the supporting paths.
+  int32 jobs_agreeing = 9;
+  // Every verdict other than the one that decided the row, newest first, as
+  // "<word>@<confidence> (<job>)" joined by "; ", including verdicts equal to
+  // the row's and both directions of a bidirectional job; empty when the row
+  // has one verdict and for derived rows.
+  string other_verdicts = 10;
+  // The job that decided the row. For a derived row, the newest deciding job
+  // among the supporting paths.
+  string latest_job_id = 11;
+  // Review notes joined by "; "; empty when nothing is flagged. Notes report
+  // and never change the verdict. Three kinds: a one-to-many 'equivalent'
+  // (one control equivalent to several in another catalog); a derived row
+  // whose via paths disagree on the type; a derived row whose named verdict
+  // rests on a minority of its paths.
+  string review = 12;
+  // For a derived row, the number of hub paths whose composition gives the
+  // row's verdict; when the verdict is "type unknown" every path supports it.
+  // 0 on non-derived rows.
+  int32 paths_supporting = 13;
+  // For a derived row, the number of all of the pair's hub paths. 0 on
+  // non-derived rows.
+  int32 paths_total = 14;
+  // For a derived row, the hubs' published labels in the same order and
+  // joined by the same "; " as hub_identifier; a hub without a label
+  // contributes an empty string so positions line up (two unlabelled hubs
+  // read "; "). Empty on non-derived rows, which have no hubs.
+  string hub_label = 15;
+}
+
+// CrosswalkProvenance records exactly what produced a crosswalk, so a reader
+// can reproduce it.
+message CrosswalkProvenance {
+  // pair, job, one_to_many or transitive.
+  string mode = 1;
+  CrosswalkStage stage = 2;
+  // The catalogs the crosswalk covers, as the gateway resolved them.
+  repeated CatalogSummary catalogs = 3;
+  // The completed jobs that judged at least one row of the full result
+  // (after filters, before pagination).
+  repeated string job_ids = 4;
+  // The number of rows before pagination.
+  int64 rows = 5;
+  // Edges skipped because an endpoint control is gone (catalog re-imported
+  // or deleted).
+  int64 skipped_missing_controls = 6;
+  string server_version = 7;
+  google.protobuf.Timestamp generated_at = 8;
+  // Every completed job the request selected, sorted; job_ids is a subset.
+  repeated string selected_job_ids = 9;
+}
+
+// GetCrosswalkRequest selects a crosswalk by mode, then narrows it with the
+// filters. Exactly one mode must be set; the tenant comes from the
+// authenticated identity.
+message GetCrosswalkRequest {
+  TenantContext tenant_context = 1;
+  oneof mode {
+    // Every pair judged between two catalogs, any completed job, either
+    // direction, merged.
+    CrosswalkPair pair = 2;
+    // One completed job's verdicts.
+    string job_id = 3;
+    // One catalog against every catalog it has completed jobs with.
+    string one_to_many_catalog_id = 4;
+    // Rows from catalog A to catalog C derived through a hub catalog, plus
+    // the direct A to C rows.
+    CrosswalkTransitive transitive = 5;
+  }
+  // Defaults to synthesized, which serves only the mappings synthesis judged
+  // viable (as ExportResults does); set include_non_viable to add the rest.
+  CrosswalkStage stage = 6;
+  // Drop rows below this confidence; in [0, 1].
+  float min_confidence = 7;
+  // Keep only these relationship types. NO_RELATIONSHIP is rejected: the
+  // relationship analyzer does not store it, so a crosswalk lists related
+  // pairs only.
+  repeated RelationshipType relationship_types = 8;
+  // Page size at most 1000. A page token is bound to the selection (jobs,
+  // stage and filters) that issued it: if that selection changed since (a job
+  // completed or was removed), the request fails with INVALID_ARGUMENT and the
+  // export must be re-run.
+  Pagination pagination = 9;
+  // Set by the gateway from the tenant's completed jobs; client values are
+  // ignored.
+  repeated CrosswalkJob jobs = 10;
+  // Set by the gateway: the catalogs the mode names, with the names and
+  // versions to show; client values are ignored.
+  repeated CatalogSummary catalogs = 11;
+  // SYNTHESIZED stage only: also return the mappings synthesis filtered out as
+  // not viable. Default false. Ignored for the ANALYZER stage, whose mappings
+  // have no viability.
+  bool include_non_viable = 12;
+}
+
+// GetCrosswalkResponse returns one page of rows. An empty rows list with
+// provenance.job_ids empty means the catalogs are known but have no completed
+// job between them.
+message GetCrosswalkResponse {
+  repeated CrosswalkRow rows = 1;
+  PageInfo page_info = 2;
+  CrosswalkProvenance provenance = 3;
+}
+
 message HealthRequest {
   string service = 1;  // Optional: specific service
 }
@@ -200,6 +435,12 @@ message SubmitDocumentRequest {
 message SubmitDocumentResponse {
   string document_id = 2;
   string catalog_id = 4;
+  // Every imported control that is not withdrawn and has neither requirement
+  // text nor a usable title, in document order, with no cap. They keep their
+  // place in the catalog but are not analysed; part_names lists the
+  // control's parts that hold prose, the candidates for
+  // catalog.requirement_part_names.
+  repeated TextlessControl textless_controls = 5;
 
   reserved 1, 3;
   reserved "job_id", "status";

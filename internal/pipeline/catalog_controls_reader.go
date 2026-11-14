@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -26,10 +25,9 @@ func NewPGCatalogControlsReader(conn db.TenantConnection) CatalogControlsReader 
 }
 
 // Controls reads all of a catalog's controls, ordered by control_id for
-// determinism, with Parts["class"] set from the class column and
-// Parts["ancestor_title"] set from the parent control's title (empty when no
-// parent). Props (arbitrary control metadata) are merged into Parts first so
-// class/ancestor_title always win on key collision.
+// determinism, composed by composeControls: Parts carries the props, "class"
+// and "context", and Title and Statement are the analysis input. Containers
+// supply context but are never emitted.
 func (r *pgCatalogControlsReader) Controls(ctx context.Context, tenantID, catalogID string) ([]*pb.Control, error) {
 	if err := tenant.ValidateTenantID(tenantID); err != nil {
 		return nil, fmt.Errorf("pgCatalogControlsReader.Controls: %w", err)
@@ -41,58 +39,12 @@ func (r *pgCatalogControlsReader) Controls(ctx context.Context, tenantID, catalo
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	rows, err := tx.Query(ctx, `
-		SELECT control_id, identifier, COALESCE(title, ''), COALESCE(statement, ''), COALESCE(class, ''), COALESCE(parent_id, ''), props
-		FROM controls
-		WHERE tenant_id = $1 AND catalog_id = $2
-		ORDER BY control_id
-	`, tenantID, catalogID)
+	rows, containers, err := readCatalog(ctx, tx, tenantID, catalogID)
 	if err != nil {
-		return nil, fmt.Errorf("pgCatalogControlsReader.Controls: querying controls: %w", err)
-	}
-	defer rows.Close()
-
-	type row struct {
-		controlID, identifier, title, statement, class, parentID string
-		propsJSON                                                []byte
-	}
-	var raw []row
-	titleByID := make(map[string]string)
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.controlID, &r.identifier, &r.title, &r.statement, &r.class, &r.parentID, &r.propsJSON); err != nil {
-			return nil, fmt.Errorf("pgCatalogControlsReader.Controls: scanning row: %w", err)
-		}
-		titleByID[r.controlID] = r.title
-		raw = append(raw, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("pgCatalogControlsReader.Controls: rows error: %w", err)
+		return nil, fmt.Errorf("pgCatalogControlsReader.Controls: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("pgCatalogControlsReader.Controls: commit failed: %w", err)
 	}
-
-	controls := make([]*pb.Control, len(raw))
-	for i, r := range raw {
-		parts := make(map[string]string)
-		if len(r.propsJSON) > 0 {
-			if err := json.Unmarshal(r.propsJSON, &parts); err != nil {
-				return nil, fmt.Errorf("pgCatalogControlsReader.Controls: unmarshaling props for %s: %w", r.controlID, err)
-			}
-		}
-		parts["class"] = r.class
-		if ancestorTitle, ok := titleByID[r.parentID]; ok {
-			parts["ancestor_title"] = ancestorTitle
-		}
-		controls[i] = &pb.Control{
-			ControlId:  r.controlID,
-			CatalogId:  catalogID,
-			Identifier: r.identifier,
-			Title:      r.title,
-			Statement:  r.statement,
-			Parts:      parts,
-		}
-	}
-	return controls, nil
+	return composeControls(catalogID, rows, containers), nil
 }

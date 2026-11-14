@@ -1,0 +1,6 @@
+name: synth-csv
+source: test/eval/crosswalk/testdata/source_a.json
+target: test/eval/crosswalk/testdata/synthetic_catalog.json
+controls: [s-1, s-2]
+references:
+  csv: test/eval/crosswalk/testdata/refs.csv

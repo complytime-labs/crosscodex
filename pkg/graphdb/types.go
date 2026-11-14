@@ -30,11 +30,17 @@ type Relationship struct {
 	Target Node
 }
 
+// RelationshipQuery selects edges by label and equality filters. Properties
+// matches the edge's stored properties; SourceProperties and TargetProperties
+// match the source and target node's stored properties. Empty or nil maps
+// apply no filter, and every key must pass CheckIdentifier.
 type RelationshipQuery struct {
-	SourceLabel string
-	TargetLabel string
-	EdgeLabel   string
-	Properties  map[string]any
+	SourceLabel      string
+	TargetLabel      string
+	EdgeLabel        string
+	Properties       map[string]any
+	SourceProperties map[string]any
+	TargetProperties map[string]any
 }
 
 type TraversalQuery struct {

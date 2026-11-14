@@ -31,6 +31,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
+	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache/pgstore"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -308,7 +309,8 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
 	catalogSvc := catalog.NewService(
-		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer))),
+		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer),
+			oscal.WithRequirementPartNames(cfg.Catalog.RequirementPartNames))),
 		catalog.WithStore(catalog.NewPGStore(dbpkg.NewTenantPool(shared.appPool))),
 		catalog.WithStorage(storageProvider),
 		catalog.WithBus(shared.natsClient),
@@ -318,13 +320,16 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	)
 	ingestion := backend.NewPassthroughIngestion(storageProvider)
 
+	resultsSvc := newMappingsBackend(shared)
+
 	gatewayTracer, gatewayMeter := telemetry.Instrumentation("internal/gateway")
 	opts := []gateway.ServiceOption{
 		gateway.WithAuthn(registry),
 		gateway.WithIngestionBackend(ingestion),
 		gateway.WithCatalogBackend(catalogSvc),
 		gateway.WithPipelineBackend(pipelineBackend),
-		gateway.WithMappingsBackend(newMappingsBackend(shared)),
+		gateway.WithMappingsBackend(resultsSvc),
+		gateway.WithCandidatesBackend(resultsSvc),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(slog.Default()),
@@ -342,7 +347,8 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		return errors.New("attach gateway: graph service is not built; attachGraph must run before attachAllGateway so the gateway can serve graph queries")
 	}
 	gatewaySvc, err := buildIngestGateway(ctx, config.RoleAll, cfg, shared, backendPipeline,
-		gateway.WithGraphBackend(rt.graphService))
+		gateway.WithGraphBackend(rt.graphService),
+		gateway.WithCrosswalkBackend(rt.graphService))
 	if err != nil {
 		return err
 	}
@@ -579,6 +585,7 @@ var taskTypesByAnalyzer = map[string]natsbus.TaskType{
 	"artifacts":    natsbus.TaskArtifacts,
 	"requires":     natsbus.TaskRequires,
 	"relationship": natsbus.TaskRelate,
+	"critique":     natsbus.TaskCritique,
 }
 
 // buildPipelineService constructs a production pipeline.Service. Fails
@@ -663,16 +670,38 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 
 	converter := pipelineattestation.NewConverter()
 
-	return pipeline.New(
-		store, engine, registry, synth, attestors, converter, shared.natsClient, storageProvider,
-		cfg.Pipeline, candGen,
+	probeOpts, err := llmProbeOptions(cfg, cacheStore, shared)
+	if err != nil {
+		return nil, err
+	}
+	opts := append([]pipeline.Option{
 		pipeline.WithCatalogControlsReader(pipeline.NewPGCatalogControlsReader(tenantConn)),
 		pipeline.WithCatalogNameReader(pipeline.NewPGCatalogNameReader(tenantConn, pipeline.WithPGCatalogNameReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn, pipeline.WithPGEmbeddingsReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
-		pipeline.WithResultCache(cacheStore, cfg.Analysis.ResultCache, cfg.LLM, shared.probeClient),
 		pipeline.WithTelemetry(tp, mp),
+	}, probeOpts...)
+	return pipeline.New(
+		store, engine, registry, synth, attestors, converter, shared.natsClient, storageProvider,
+		cfg.Pipeline, candGen, opts...,
 	), nil
+}
+
+// llmProbeOptions are the pipeline options that probe the LLM gateway before
+// a job's analysis: the result cache's model probe and the panel diversity
+// check (#260). Both use the daemon's probe client. Dropping
+// WithPanelProbe silently turns the panel check off, so
+// llm_probe_options_bdd_test.go asserts it is here.
+func llmProbeOptions(cfg *config.Config, cacheStore resultcache.Store, shared *sharedResources) ([]pipeline.Option, error) {
+	panelProbe, ok := shared.probeClient.(pipeline.PanelProbeClient)
+	if !ok {
+		return nil, fmt.Errorf("pipeline: the LLM probe client %T cannot read the gateway's model catalog, "+
+			"which the panel diversity check needs", shared.probeClient)
+	}
+	return []pipeline.Option{
+		pipeline.WithResultCache(cacheStore, cfg.Analysis.ResultCache, cfg.LLM, shared.probeClient),
+		pipeline.WithPanelProbe(panelProbe),
+	}, nil
 }
 
 // logAttestationPosture logs, once at startup, each scope whose pipeline
@@ -744,9 +773,13 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 // Compile-time proof that the results service can back the gateway. It lives
 // here, the composition root, because internal/results must not import
 // internal/gateway.
-var _ gateway.MappingsBackend = (*results.Service)(nil)
+var (
+	_ gateway.MappingsBackend   = (*results.Service)(nil)
+	_ gateway.CandidatesBackend = (*results.Service)(nil)
+)
 
-// newMappingsBackend builds the mappings reader both gateway wirings share.
+// newMappingsBackend builds the results reader both gateway wirings share. It
+// backs the mappings and the candidates RPCs.
 func newMappingsBackend(shared *sharedResources) *results.Service {
 	tracer, meter := telemetry.Instrumentation("internal/results")
 	return results.NewService(

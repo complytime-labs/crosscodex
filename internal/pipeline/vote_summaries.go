@@ -34,10 +34,20 @@ type VoteSummaryPair struct {
 // synthesis.ConsensusRequires as Consensus; relationship rows carry their
 // RelationshipType.
 //
+// A pair the job's critique vetoed (outputs[results.CritiqueAnalyzer]) gets
+// no row for that analyzer: vetoes apply per analyzer, so a pair vetoed as a
+// relationship keeps its requires row and the reverse. Synthesis, the
+// synthesized mappings and their graph edges all read these rows, so a
+// vetoed verdict reaches none of them.
+//
 // One analyzer listing the same pair twice is corrupt persisted output: its
 // rows would collide on the key and synthesis would rank the pair twice.
 // That is an error, like unparseable result data, rather than a silent pick.
-func buildVoteSummaryPairs(outputs map[string]*analyzer.Output) ([]VoteSummaryPair, error) {
+func buildVoteSummaryPairs(outputs map[string]*analyzer.Output, jobID string) ([]VoteSummaryPair, error) {
+	relVerdicts, reqVerdicts, err := critiqueDecisions(outputs, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("buildVoteSummaryPairs: %w", err)
+	}
 	var pairs []VoteSummaryPair
 	seen := make(map[[3]string]struct{})
 	add := func(p VoteSummaryPair) error {
@@ -58,6 +68,9 @@ func buildVoteSummaryPairs(outputs map[string]*analyzer.Output) ([]VoteSummaryPa
 			return nil, fmt.Errorf("buildVoteSummaryPairs: unmarshaling requires results: %w", err)
 		}
 		for _, r := range reqResults {
+			if reqVerdicts.Vetoed(r.SourceID, r.TargetID) {
+				continue
+			}
 			if err := add(VoteSummaryPair{
 				SourceID: r.SourceID, TargetID: r.TargetID, Analyzer: results.RequiresAnalyzer,
 				Consensus: synthesis.ConsensusRequires, Confidence: r.Confidence,
@@ -73,6 +86,9 @@ func buildVoteSummaryPairs(outputs map[string]*analyzer.Output) ([]VoteSummaryPa
 			return nil, fmt.Errorf("buildVoteSummaryPairs: unmarshaling relationship results: %w", err)
 		}
 		for _, r := range relResults {
+			if relVerdicts.Vetoed(r.SourceID, r.TargetID) {
+				continue
+			}
 			if err := add(VoteSummaryPair{
 				SourceID: r.SourceID, TargetID: r.TargetID, Analyzer: results.RelationshipAnalyzer,
 				Consensus: r.RelationshipType, Confidence: r.Confidence,

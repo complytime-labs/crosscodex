@@ -7,6 +7,15 @@
 # host and pulls its models before bring-up, so an unreachable provider fails
 # fast. Production compose.yaml is untouched.
 services:
+  crosscodexd:
+    # smoke_up.sh sets these to true only for a single-model Ollama (no
+    # OLLAMA_PANEL_MODELS), where the panel aliases cannot differ. Otherwise
+    # they stay false and the daemon checks the panel's model diversity.
+    environment:
+      CROSSCODEX_ANALYSIS_RELATIONSHIP_ALLOW_SHARED_PANEL_MODELS: ${CROSSCODEX_ANALYSIS_RELATIONSHIP_ALLOW_SHARED_PANEL_MODELS:-false}
+      CROSSCODEX_ANALYSIS_REQUIRES_ALLOW_SHARED_PANEL_MODELS: ${CROSSCODEX_ANALYSIS_REQUIRES_ALLOW_SHARED_PANEL_MODELS:-false}
+      CROSSCODEX_ANALYSIS_CRITIQUE_ALLOW_SHARED_PANEL_MODELS: ${CROSSCODEX_ANALYSIS_CRITIQUE_ALLOW_SHARED_PANEL_MODELS:-false}
+
   litellm:
     # Map host.containers.internal to the host gateway so a loopback OLLAMA_HOST
     # override (an Ollama on the host) is reachable from this bridge-networked

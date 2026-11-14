@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -32,6 +33,7 @@ func newResultsCmd(state *cliState) *cobra.Command {
 
 	resultsCmd.AddCommand(newResultsSummaryCmd(state))
 	resultsCmd.AddCommand(newResultsExportCmd(state))
+	resultsCmd.AddCommand(newResultsCandidatesCmd(state))
 	resultsCmd.AddCommand(newResultsQueryCmd(state))
 	resultsCmd.AddCommand(newResultsDebugCmd(state))
 	resultsCmd.AddCommand(newResultsReviewCmd(state))
@@ -49,6 +51,9 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID := args[0]
 
+			if includeVetoed, _ := cmd.Flags().GetBool("include-vetoed"); includeVetoed {
+				return errSummaryIncludeVetoed
+			}
 			req, err := mappingRequestFromFlags(cmd, jobID)
 			if err != nil {
 				return err
@@ -64,10 +69,14 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 			}
 			// Canonical lowercase name, not the raw flag, which is case-insensitive.
 			stage := strings.ToLower(strings.TrimPrefix(req.GetStage().String(), "MAPPING_STAGE_"))
+			scope := stage + " mappings"
+			if req.GetExcludeRejected() {
+				scope += ", without pairs the critique rejected"
+			}
 
 			return emit(cmd,
 				func(w io.Writer, color bool) {
-					fmt.Fprintf(w, "Summary for job %s (%s mappings)\n\n", jobID, stage)
+					fmt.Fprintf(w, "Summary for job %s (%s)\n\n", jobID, scope)
 					fmt.Fprintf(w, "Total mappings: %d\n\n", len(mappings))
 					fmt.Fprintf(w, "By relationship type:\n")
 					for _, relType := range slices.Sorted(maps.Keys(counts)) {
@@ -84,6 +93,8 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 					"total":         len(mappings),
 					"by_type":       counts,
 					"mapping_count": len(mappings),
+					// A strict count must not read as the full one.
+					"exclude_rejected": req.GetExcludeRejected(),
 				},
 			)
 		},
@@ -92,13 +103,18 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a job-id",
 		find:  "crosscodex results summary <job-id>",
-		usage: "crosscodex results summary <job-id> [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable]",
+		usage: "crosscodex results summary <job-id> [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable] [--exclude-rejected]",
 		examples: []string{
 			"crosscodex results summary abc123",
 			"crosscodex results sum abc123 --stage analyzer --type equivalent",
 		},
 	})
 	addMappingFlags(cmd)
+	// Shared with export, where it lists vetoed pairs; summary refuses it
+	// (errSummaryIncludeVetoed), so its help does not offer it.
+	if err := cmd.Flags().MarkHidden("include-vetoed"); err != nil {
+		panic(err)
+	}
 
 	return cmd
 }
@@ -123,7 +139,13 @@ func addMappingFlags(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("type", nil, "only these relationship types (repeatable, case-insensitive)")
 	cmd.Flags().String("control", "", "only mappings whose source or target is this control id")
 	cmd.Flags().Bool("include-non-viable", false, "include pairs synthesis filtered out (synthesized stage only)")
+	cmd.Flags().Bool("include-vetoed", false, "include pairs the critique stage vetoed, with its votes and reasons (analyzer stage only)")
+	cmd.Flags().Bool("exclude-rejected", false, "leave out pairs the critique rejected but did not veto (analysis.critique.veto off), for the strict view (analyzer stage only)")
 }
+
+// errSummaryIncludeVetoed refuses --include-vetoed on summary: a vetoed pair
+// is not a mapping, so counting it would overstate the job's mappings.
+var errSummaryIncludeVetoed = errors.New("--include-vetoed lists vetoed pairs in `results export --stage analyzer`; summary counts only mappings, so drop the flag")
 
 // mappingRequestFromFlags validates the shared mapping flags and builds the
 // request, so mistakes surface here with guidance before any network call.
@@ -144,6 +166,16 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 		return nil, fmt.Errorf("--include-non-viable only applies to the synthesized stage: analyzer mappings have no viability, so drop the flag or use --stage synthesized")
 	}
 
+	includeVetoed, _ := cmd.Flags().GetBool("include-vetoed")
+	if includeVetoed && stage != pb.MappingStage_MAPPING_STAGE_ANALYZER {
+		return nil, fmt.Errorf("--include-vetoed only applies to the analyzer stage: synthesis never receives vetoed pairs, so add --stage analyzer or drop the flag")
+	}
+
+	excludeRejected, _ := cmd.Flags().GetBool("exclude-rejected")
+	if excludeRejected && stage != pb.MappingStage_MAPPING_STAGE_ANALYZER {
+		return nil, fmt.Errorf("--exclude-rejected only applies to the analyzer stage: synthesized mappings are listed without their critique, so add --stage analyzer or drop the flag")
+	}
+
 	typeNames, _ := cmd.Flags().GetStringSlice("type")
 	types := make([]pb.RelationshipType, 0, len(typeNames))
 	for _, name := range typeNames {
@@ -160,6 +192,8 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 		Stage:             stage,
 		MinConfidence:     float32(minConfidence),
 		IncludeNonViable:  includeNonViable,
+		IncludeVetoed:     includeVetoed,
+		ExcludeRejected:   excludeRejected,
 		RelationshipTypes: types,
 		ControlId:         controlID,
 	}, nil
@@ -241,17 +275,58 @@ func analysisValues(a *pb.JobAnalysis) []string {
 	}
 }
 
+// critiqueCell renders a mapping's critique for the CSV critique column:
+// "<outcome>: <u> upheld, <r> rejected, <f> failed; <reason> | ...", or "" for
+// a mapping without one. The reasons are model output, so the cell goes
+// through csvCellUpTo, uncapped: the server already bounds each reason.
+func critiqueCell(c *pb.MappingCritique) string {
+	if c == nil {
+		return ""
+	}
+	cell := fmt.Sprintf("%s: %d upheld, %d rejected, %d failed", c.GetOutcome(), c.GetUpheld(), c.GetRejected(), c.GetFailed())
+	if reasons := c.GetReasons(); len(reasons) > 0 {
+		cell += "; " + strings.Join(reasons, " | ")
+	}
+	return csvCellUpTo(cell, math.MaxInt)
+}
+
 // csvCell makes an uploader-derived value safe as a CSV cell. CSV is often
 // read on a terminal, so the value is cleaned to one line; a spreadsheet runs
 // a cell starting with = + - @ (or tab or CR, which cleaning already trims)
 // as a formula (CWE-1236), so such a value gets a leading single quote.
 // Server-generated cells (mapping IDs, numbers, enums) do not need it.
 func csvCell(s string) string {
-	s = intanalyzer.CleanDisplay(s, maxUntrustedDisplayBytes)
+	return csvCellUpTo(s, maxUntrustedDisplayBytes)
+}
+
+// csvCellUpTo is csvCell with the cleaned value capped at maxBytes, for
+// cells whose full text matters (a crosswalk's control statements).
+func csvCellUpTo(s string, maxBytes int) string {
+	s = intanalyzer.CleanDisplay(s, maxBytes)
 	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
 		return "'" + s
 	}
 	return s
+}
+
+// openOutput returns the writer for --output: the file at path, created or
+// truncated, or the command's stdout when path is empty. The returned close
+// function must be deferred with a pointer to the command's named error
+// result; it joins a close error into it, since a failed close can mean the
+// file was not fully written.
+func openOutput(cmd *cobra.Command, path string) (io.Writer, func(err *error), error) {
+	if path == "" {
+		return cmd.OutOrStdout(), func(*error) {}, nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create output file: %w", err)
+	}
+	return f, func(runErr *error) {
+		if closeErr := f.Close(); closeErr != nil {
+			*runErr = errors.Join(*runErr, fmt.Errorf("close output file %s: %w", path, closeErr))
+		}
+	}, nil
 }
 
 // exportFormats lists the --format values export accepts.
@@ -276,7 +351,19 @@ belong to the job's target catalog. A CSV cell from a catalog
 (control and catalog IDs, names, versions) that would start with = + - or @
 gets a leading single quote, so a spreadsheet does not run it as a formula.
 With --stage analyzer, which has no viability, JSON omits viabilityScore and
-isViable and CSV leaves viability_score and is_viable empty.`,
+isViable and CSV leaves viability_score and is_viable empty.
+
+With --stage analyzer, when the job ran the critique stage, JSON carries each
+mapping's critique (outcome, vetoed, upheld, rejected, failed, reasons). The
+outcome is upheld, split, rejected (enough critics rejected it, but
+analysis.critique.veto was off, so it is kept and flagged), vetoed or failed.
+Its CSV ends with a critique column ("rejected: 1 upheld, 2 rejected,
+0 failed; <reasons>"; empty for a mapping the critique did not review).
+Vetoed pairs are not mappings and are left out; with --include-vetoed they
+are listed too. With
+--stage analyzer --exclude-rejected, rejected pairs are left out, for the
+strict view of a job run with veto off. The reasons are the critics' own
+words.`,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			jobID := args[0]
 			format, _ := cmd.Flags().GetString("format")
@@ -298,40 +385,40 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 			// are not a verdict, so they are left out.
 			noViability := req.GetStage() == pb.MappingStage_MAPPING_STAGE_ANALYZER
 
-			var out io.Writer
-			if outputFile != "" {
-				f, createErr := os.Create(outputFile)
-				if createErr != nil {
-					return fmt.Errorf("failed to create output file: %w", createErr)
-				}
-				defer func() {
-					if closeErr := f.Close(); closeErr != nil {
-						err = errors.Join(err, fmt.Errorf("close output file %s: %w", outputFile, closeErr))
-					}
-				}()
-				out = f
-			} else {
-				out = cmd.OutOrStdout()
+			out, closeOutput, err := openOutput(cmd, outputFile)
+			if err != nil {
+				return err
 			}
+			defer closeOutput(&err)
 
 			switch format {
 			case "json":
 				// encoding/json would print enums as numbers and drop false and
 				// zero fields; protojson with EmitUnpopulated keeps every field
-				// and the enum names.
+				// and the enum names. Fields that are not a verdict are then
+				// dropped: viability on the analyzer stage, and the critique of
+				// a mapping the critique did not review (null would read as one).
 				raw := make([]json.RawMessage, len(mappings))
 				for i, m := range mappings {
 					b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(m)
 					if err != nil {
 						return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
 					}
+					var drop []string
 					if noViability {
+						drop = append(drop, "viabilityScore", "isViable")
+					}
+					if m.GetCritique() == nil {
+						drop = append(drop, "critique")
+					}
+					if len(drop) > 0 {
 						var fields map[string]json.RawMessage
 						if err := json.Unmarshal(b, &fields); err != nil {
 							return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
 						}
-						delete(fields, "viabilityScore")
-						delete(fields, "isViable")
+						for _, f := range drop {
+							delete(fields, f)
+						}
 						if b, err = json.Marshal(fields); err != nil {
 							return fmt.Errorf("encode mapping %s as JSON: %w", m.GetMappingId(), err)
 						}
@@ -359,7 +446,16 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 				w := csv.NewWriter(out)
 				defer w.Flush()
 
-				header := append([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}, analysisColumns...)
+				// The analyzer stage carries each mapping's critique, so its
+				// CSV ends with a critique column; last, so the other columns
+				// stay where scripts expect them. The synthesized listing has
+				// no critique and no such column.
+				header := []string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}
+				withCritique := req.GetStage() == pb.MappingStage_MAPPING_STAGE_ANALYZER
+				header = append(header, analysisColumns...)
+				if withCritique {
+					header = append(header, "critique")
+				}
 				if err := w.Write(header); err != nil {
 					return fmt.Errorf("write CSV header: %w", err)
 				}
@@ -369,7 +465,7 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 					if !noViability {
 						viabilityScore, isViable = fmt.Sprintf("%.3f", m.GetViabilityScore()), fmt.Sprintf("%t", m.GetIsViable())
 					}
-					if err := w.Write(append([]string{
+					row := []string{
 						m.GetMappingId(),
 						csvCell(m.GetSourceControlId()),
 						csvCell(m.GetTargetControlId()),
@@ -377,7 +473,12 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 						fmt.Sprintf("%.3f", m.GetConfidence()),
 						viabilityScore,
 						isViable,
-					}, jobValues...)); err != nil {
+					}
+					row = append(row, jobValues...)
+					if withCritique {
+						row = append(row, critiqueCell(m.GetCritique()))
+					}
+					if err := w.Write(row); err != nil {
 						return fmt.Errorf("write CSV row: %w", err)
 					}
 				}
@@ -395,7 +496,7 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a job-id",
 		find:  "crosscodex results export <job-id>",
-		usage: "crosscodex results export <job-id> [--format json|csv] [--output file] [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable]",
+		usage: "crosscodex results export <job-id> [--format json|csv] [--output file] [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable] [--include-vetoed] [--exclude-rejected]",
 		examples: []string{
 			"crosscodex results export abc123",
 			"crosscodex results export abc123 --format csv --output mappings.csv",
@@ -405,6 +506,151 @@ isViable and CSV leaves viability_score and is_viable empty.`,
 	cmd.Flags().String("format", "json", "output format (json or csv)")
 	cmd.Flags().String("output", "", "output file path (default: stdout)")
 	addMappingFlags(cmd)
+
+	return cmd
+}
+
+// listAllCandidates reads every page of a job's relationship candidates and
+// the job's analysis, which the server sends on every page; the first page's
+// is kept. It mutates req.Pagination to walk the page tokens.
+func listAllCandidates(ctx context.Context, client crosscodexv1connect.GatewayServiceClient, req *pb.ListJobCandidatesRequest) ([]*pb.RelationshipCandidate, *pb.JobAnalysis, error) {
+	var all []*pb.RelationshipCandidate
+	var analysis *pb.JobAnalysis
+	pageToken := ""
+	seen := map[string]bool{}
+	for {
+		req.Pagination = &pb.Pagination{PageSize: mappingPageSize, PageToken: pageToken}
+		resp, err := client.ListJobCandidates(ctx, connectrpc.NewRequest(req))
+		if err != nil {
+			return nil, nil, fmt.Errorf("list candidates for job %s: %w", req.GetJobId(), err)
+		}
+		all = append(all, resp.Msg.GetCandidates()...)
+		if analysis == nil {
+			analysis = resp.Msg.GetAnalysis()
+		}
+		seen[pageToken] = true
+		pageToken = resp.Msg.GetPageInfo().GetNextPageToken()
+		if pageToken == "" {
+			return all, analysis, nil
+		}
+		if seen[pageToken] {
+			return nil, nil, fmt.Errorf("list candidates for job %s: server returned page token %q again; stopping to avoid an endless loop. Report this as a crosscodexd bug", req.GetJobId(), pageToken)
+		}
+	}
+}
+
+func newResultsCandidatesCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "candidates <job-id>",
+		Short: "Export the pairs candidate generation proposed, to JSON or CSV",
+		Long: `Export every source-target pair candidate generation proposed to the
+relationship analyzer for a completed job, whether or not the analyzer later
+mapped it. Use it to check how well candidate generation covers a crosswalk.
+
+similarity_score is the embedding cosine similarity on a 0 to 100 scale; it is
+0 when no embedding exists for the pair. Contributions list one entry per
+generator that proposed the pair, with the generator's own score and the
+weight rank fusion gave it. They are empty unless the candidate strategy is
+rank fusion, so with another strategy JSON shows "contributions": [] and the
+CSV generators column is empty.
+
+JSON wraps the candidates with the job's source and target catalogs and
+direction under "analysis", as results export does. CSV has the columns
+source_control_id, target_control_id, similarity_score and generators, where
+generators joins the proposing generators with ";". A CSV control ID that
+would start with = + - or @ gets a leading single quote, so a spreadsheet does
+not run it as a formula.`,
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			jobID := args[0]
+			format, _ := cmd.Flags().GetString("format")
+			outputFile, _ := cmd.Flags().GetString("output")
+			controlID, _ := cmd.Flags().GetString("control")
+
+			if !slices.Contains(exportFormats, format) {
+				return fmt.Errorf("invalid --format %q: use one of %s", format, strings.Join(exportFormats, ", "))
+			}
+
+			candidates, analysis, err := listAllCandidates(cmd.Context(), state.client, &pb.ListJobCandidatesRequest{JobId: jobID, ControlId: controlID})
+			if err != nil {
+				return err
+			}
+
+			out, closeOutput, err := openOutput(cmd, outputFile)
+			if err != nil {
+				return err
+			}
+			defer closeOutput(&err)
+
+			if format == "csv" {
+				w := csv.NewWriter(out)
+				defer w.Flush()
+
+				if err := w.Write([]string{"source_control_id", "target_control_id", "similarity_score", "generators"}); err != nil {
+					return fmt.Errorf("write CSV header: %w", err)
+				}
+				for _, c := range candidates {
+					generators := make([]string, len(c.GetContributions()))
+					for i, contribution := range c.GetContributions() {
+						generators[i] = contribution.GetGenerator()
+					}
+					if err := w.Write([]string{
+						csvCell(c.GetSourceControlId()),
+						csvCell(c.GetTargetControlId()),
+						fmt.Sprintf("%.3f", c.GetSimilarityScore()),
+						strings.Join(generators, ";"),
+					}); err != nil {
+						return fmt.Errorf("write CSV row: %w", err)
+					}
+				}
+				w.Flush()
+				if err := w.Error(); err != nil {
+					return fmt.Errorf("write CSV: %w", err)
+				}
+				return nil
+			}
+
+			// protojson with EmitUnpopulated keeps zero scores and empty
+			// contributions that encoding/json would drop.
+			raw := make([]json.RawMessage, len(candidates))
+			for i, c := range candidates {
+				b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(c)
+				if err != nil {
+					return fmt.Errorf("encode candidate %s -> %s as JSON: %w", c.GetSourceControlId(), c.GetTargetControlId(), err)
+				}
+				raw[i] = b
+			}
+			analysisJSON := json.RawMessage("null")
+			if analysis != nil {
+				b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(analysis)
+				if err != nil {
+					return fmt.Errorf("encode the analysis of job %s as JSON: %w", jobID, err)
+				}
+				analysisJSON = b
+			}
+			enc := json.NewEncoder(out)
+			enc.SetIndent("", "  ")
+			return enc.Encode(map[string]any{
+				"job_id":     jobID,
+				"analysis":   analysisJSON,
+				"candidates": raw,
+			})
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
+		noun:  "a job-id",
+		find:  "crosscodex results candidates <job-id>",
+		usage: "crosscodex results candidates <job-id> [--format json|csv] [--output file] [--control <id>]",
+		examples: []string{
+			"crosscodex results candidates abc123",
+			"crosscodex results candidates abc123 --format csv --output candidates.csv",
+			"crosscodex results candidates abc123 --control AC-1",
+		},
+	})
+
+	cmd.Flags().String("format", "json", "output format (json or csv)")
+	cmd.Flags().String("output", "", "output file path (default: stdout)")
+	cmd.Flags().String("control", "", "only candidates whose source or target is this control id")
 
 	return cmd
 }

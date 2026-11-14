@@ -44,6 +44,8 @@ type client struct {
 	embedCounter      metric.Int64Counter
 	embedLatency      metric.Int64Histogram
 	errorCounter      metric.Int64Counter
+	// modelCatalogCounter counts ModelCatalog reads by success.
+	modelCatalogCounter metric.Int64Counter
 
 	// Audit
 	emitter AuditEmitter

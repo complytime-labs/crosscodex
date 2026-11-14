@@ -1753,6 +1753,64 @@ var _ = Describe("Executor", func() {
 			Expect(synth.executions[0].inputs).To(BeEmpty())
 		})
 
+		// Critique reviews the pair analyzers' results, so it runs in their pass,
+		// after them and with the same control-text parameters.
+		It("runs critique in the candidate-dependent pass, after its pair analyzer, with the pair parameters", func() {
+			deps := map[string][]string{"embedding": {"classify"}, "relationship": {"embedding"}, "critique": {"relationship"}}
+			reg := analyzer.NewRegistry()
+			var critiqueParams map[string]string
+			var mu sync.Mutex
+			for _, name := range []string{"classify", "embedding", "relationship", "critique"} {
+				stub := newControlStub(name, deps[name]...)
+				stub.GenerateWorkFunc = func(_ context.Context, _ *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					if name == "critique" {
+						mu.Lock()
+						critiqueParams = cfg.Parameters
+						mu.Unlock()
+					}
+					return []analyzer.Task{{TaskID: name + "-task", Payload: &emptypb.Empty{}}}, nil
+				}
+				Expect(analyzer.Register[*pb.Control](reg, stub)).To(Succeed())
+			}
+			eng := analysis.New(reg, twoPassDispatcher, &executorTestCollector{},
+				config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Millisecond},
+				map[string]natsbus.TaskType{"classify": "classify", "embedding": "embedding", "relationship": "relate", "critique": "critique"},
+				analysis.WithStageReporter(pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)))
+			gen := &fakeCandidateGen{}
+			svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+				config.PipelineConfig{MaxConcurrentJobs: 10},
+				gen,
+				pipeline.WithCatalogControlsReader(twoPassCatalog),
+				pipeline.WithCatalogNameReader(fakeCatalogNameReader{"two-pass-cat-1": {name: "Two-pass Catalog"}}),
+			)
+			DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })
+
+			resp, err := svc.CreateJob(ctx, connect.NewRequest(&pb.CreateJobRequest{
+				Config: &pb.JobConfig{CatalogId: "two-pass-cat-1", TargetCatalogId: "two-pass-cat-1"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, resp.Msg.JobId)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}).Should(Equal(pipeline.JobStatusCompleted))
+
+			stages, err := store.GetStages(ctx, resp.Msg.JobId)
+			Expect(err).NotTo(HaveOccurred())
+			var names []string
+			for _, st := range stages {
+				names = append(names, st.StageName)
+			}
+			Expect(names).To(Equal([]string{"classify", "embedding", "candidate_generation", "relationship", "critique", "synthesis", "graph"}))
+			Expect(stages).To(HaveEach(HaveField("Status", pipeline.StageStatusCompleted)))
+			Expect(dispatchCount("critique")).To(Equal(1))
+			mu.Lock()
+			defer mu.Unlock()
+			Expect(critiqueParams).To(HaveKey("source_text_c1"))
+		})
+
 		It("runs candidate generation between the pre- and candidate-dependent passes", func() {
 			gen := &fakeCandidateGen{}
 			gen.dispatchCountFn = func() int {
@@ -2063,6 +2121,96 @@ var _ = Describe("Executor", func() {
 			Expect(pairs[[3]string{"AC-1", "AC-2", "requires"}].Consensus).To(Equal("requires"))
 			Expect(pairs).To(HaveKey([3]string{"AC-1", "AC-2", "relationship"}))
 			Expect(pairs[[3]string{"AC-1", "AC-2", "relationship"}].Consensus).To(Equal("supports"))
+		})
+
+		// Review Focus 5: a job resumed after its critique completed reuses the
+		// stored critique; it neither re-runs it nor republishes its event, and
+		// the vetoes it applies drop each kind's vetoed pairs independently.
+		It("on resume after critique completed, dispatches no critique and keeps vetoed pairs out of vote summaries and synthesis", func() {
+			reg := analyzer.NewRegistry()
+			for name, deps := range map[string][]string{"classify": nil, "embedding": {"classify"}, "artifacts": nil,
+				"requires": {"embedding"}, "relationship": {"embedding"}, "critique": {"requires", "relationship"}} {
+				stub := newControlStub(name, deps...)
+				stub.GenerateWorkFunc = func(context.Context, *pb.Control, analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
+					return []analyzer.Task{{TaskID: name + "-task", Payload: &emptypb.Empty{}}}, nil
+				}
+				Expect(analyzer.Register[*pb.Control](reg, stub)).To(Succeed())
+			}
+			resumeDispatcher := &executorTestDispatcher{}
+			eng := analysis.New(reg, resumeDispatcher, &executorTestCollector{},
+				config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Millisecond},
+				map[string]natsbus.TaskType{"classify": "classify", "embedding": "embedding", "artifacts": "artifacts",
+					"requires": "requires", "relationship": "relate", "critique": "critique"},
+				analysis.WithStageReporter(pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)))
+			svc = pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+				config.PipelineConfig{MaxConcurrentJobs: 10}, nil)
+
+			Expect(store.CreateJob(ctx, &pipeline.Job{JobID: jobID, TenantID: tenantID, Status: pipeline.JobStatusRunning,
+				Config: catalogJobConfig, CreatedAt: time.Now(), UpdatedAt: time.Now()})).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{
+				"classify", "embedding", "artifacts", "candidate_generation", "requires", "relationship", "critique", "synthesis", "graph",
+			})).To(Succeed())
+			store.mu.Lock()
+			for _, st := range store.stages[jobID] {
+				if st.StageName == "candidate_generation" {
+					st.Status = pipeline.StageStatusCompleted
+				}
+			}
+			store.mu.Unlock()
+			complete := func(name string, v any) {
+				data, err := json.Marshal(v)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.CompleteAnalysisStage(ctx, jobID, name, data, "")).To(Succeed())
+			}
+			complete("classify", []results.ClassifyResult{})
+			complete("embedding", []results.EmbedResult{})
+			complete("requires", []results.RequiresResult{
+				{SourceID: "AC-1", TargetID: "AC-2", Confidence: 0.9}, {SourceID: "AC-3", TargetID: "AC-4", Confidence: 0.9}})
+			props := map[string]string{results.SemanticMatchContributionTypeKey: "", results.SemanticMatchUnanimousKey: "true"}
+			complete("relationship", []results.SemanticMatchResult{
+				{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "SUBSET_OF", Confidence: 0.8, Properties: props},
+				{SourceID: "AC-3", TargetID: "AC-4", RelationshipType: "SUBSET_OF", Confidence: 0.8, Properties: props}})
+			complete("critique", []results.CritiqueResult{
+				{Kind: "relationship", SourceControlID: "AC-1", TargetControlID: "AC-2", Rejected: 3, Outcome: results.CritiqueVetoed, Vetoed: true},
+				{Kind: "requires", SourceControlID: "AC-3", TargetControlID: "AC-4", Rejected: 3, Outcome: results.CritiqueVetoed, Vetoed: true},
+				{Kind: "relationship", SourceControlID: "AC-3", TargetControlID: "AC-4", Upheld: 2, Rejected: 1, Outcome: results.CritiqueSplit}})
+
+			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			Expect(svc.Start(runCtx)).To(Succeed())
+			Eventually(func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, jobID)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+			resumeDispatcher.mu.Lock()
+			var dispatched []natsbus.TaskType
+			for _, d := range resumeDispatcher.dispatches {
+				dispatched = append(dispatched, d.taskType)
+			}
+			resumeDispatcher.mu.Unlock()
+			Expect(dispatched).NotTo(ContainElements(natsbus.TaskType("critique")))
+			Expect(dispatched).NotTo(ContainElements(natsbus.TaskType("requires"), natsbus.TaskType("relate")))
+			for _, p := range bus.Published() {
+				Expect(string(p.Data)).NotTo(ContainSubstring(`"analyzer":"critique"`), "the critique event was published again")
+			}
+
+			store.mu.Lock()
+			pairs := maps.Keys(store.voteSummaries[jobID])
+			store.mu.Unlock()
+			Expect(slices.Collect(pairs)).To(ConsistOf([3]string{"AC-1", "AC-2", "requires"}, [3]string{"AC-3", "AC-4", "relationship"}))
+
+			synth.mu.Lock()
+			defer synth.mu.Unlock()
+			Expect(synth.executions).To(HaveLen(1))
+			var inputs [][3]string
+			for _, in := range synth.executions[0].inputs {
+				inputs = append(inputs, [3]string{in.SourceID, in.TargetID, in.Analyzer})
+			}
+			Expect(inputs).To(ConsistOf([3]string{"AC-1", "AC-2", "requires"}, [3]string{"AC-3", "AC-4", "relationship"}))
 		})
 	})
 
@@ -2406,8 +2554,8 @@ var _ = Describe("Executor", func() {
 				pairNames = catalogNames
 				pairJobConfig = `{"catalog_id":"cat-1"}`
 				pairControls = &fakeCatalogControlsReader{controls: []*pb.Control{
-					{ControlId: "c1", CatalogId: "cat-1", Statement: "Keep an asset inventory.", Parts: map[string]string{"ancestor_title": "Identify"}},
-					{ControlId: "c2", CatalogId: "cat-1", Statement: "Review the inventory yearly.", Parts: map[string]string{"ancestor_title": "Protect"}},
+					{ControlId: "c1", CatalogId: "cat-1", Title: "Asset Management", Statement: "Keep an asset inventory.", Parts: map[string]string{"context": "Identify"}},
+					{ControlId: "c2", CatalogId: "cat-1", Statement: "Review the inventory yearly.", Parts: map[string]string{"context": "Protect"}},
 				}}
 			})
 
@@ -2495,16 +2643,20 @@ var _ = Describe("Executor", func() {
 					"job_id":              jobID,
 					"source_text_c1":      "Keep an asset inventory.",
 					"target_text_c1":      "Keep an asset inventory.",
-					"source_ancestor_c1":  "Identify",
-					"target_ancestor_c1":  "Identify",
+					"source_context_c1":   "Identify",
+					"target_context_c1":   "Identify",
+					"source_title_c1":     "Asset Management",
+					"target_title_c1":     "Asset Management",
 					"source_type_c1":      "Technical",
 					"target_type_c1":      "Technical",
 					"source_level_c1":     "Operational",
 					"target_level_c1":     "Operational",
 					"source_text_c2":      "Review the inventory yearly.",
 					"target_text_c2":      "Review the inventory yearly.",
-					"source_ancestor_c2":  "Protect",
-					"target_ancestor_c2":  "Protect",
+					"source_context_c2":   "Protect",
+					"target_context_c2":   "Protect",
+					"source_title_c2":     "",
+					"target_title_c2":     "",
 					"source_type_c2":      "Procedural",
 					"target_type_c2":      "Procedural",
 					"source_level_c2":     "Tactical",
@@ -2524,7 +2676,7 @@ var _ = Describe("Executor", func() {
 				return j.Status
 			}
 
-			It("passes every control's text, ancestor and classification under both pair ends", func() {
+			It("passes every control's text, context, title and classification under both pair ends", func() {
 				startPairJob(classified, false)
 
 				Eventually(jobStatus, "2s", "50ms").Should(Equal(pipeline.JobStatusCompleted))

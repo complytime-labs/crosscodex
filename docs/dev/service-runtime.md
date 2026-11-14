@@ -45,7 +45,7 @@ Split roles (`gateway`, `pipeline`, `worker`, `graph`, and the `analysis`/`synth
 
 `gateway.NewService` serves only the backends it is given; an RPC whose backend is absent returns `Unavailable`.
 
-| Role | Mappings backend (`ListJobMappings`, `GetControlMappings`) | Graph backend (`QueryGraph`, `FindSimilar`) |
+| Role | Mappings and candidates backend (`ListJobMappings`, `GetControlMappings`, `ListJobCandidates`) | Graph backend (`QueryGraph`, `FindSimilar`) |
 |------|------|------|
 | `all` | `results.Service` via `newMappingsBackend`, in `buildIngestGateway` | `rt.graphService`, which `attachGraph` builds first; `attachAllGateway` passes it to `buildIngestGateway` |
 | `gateway` | `results.Service` via `newMappingsBackend`, in `buildIngestGateway` | not attached |
@@ -57,7 +57,7 @@ The feedback backend (`SubmitVote`, `GetReviewQueue`) is not implemented in any 
 
 Mappings come from PostgreSQL, not the graph. `internal/results.PGStore` reads `vote_summaries` (rows with analyzer name `relationship`, for the `synthesized` stage) and `analysis_results` (analyzer `relationship`, for the `analyzer` stage) in one tenant transaction on the restricted application role, so RLS confines the read to the caller's tenant. `vote_summaries` holds one row per analyzer contribution (primary key `job_id, source_id, target_id, analyzer_name`), so a pair with both `requires` and `relationship` results does not collide.
 
-`results.Service` implements `gateway.MappingsBackend`; the assertion lives in `cmd/crosscodexd/bootstrap.go` because `internal/results` must not import `internal/gateway`. Storage sits behind the `results.Reader` interface (`ListMappings(ctx, Filter) (Page, error)`). `PGStore` is the only implementation; a different store replaces only the `Reader` passed to `results.NewService`. An implementation must confine reads to the tenant in `ctx` and return `ErrJobNotFound`, `*JobNotCompletedError` and `ErrInvalidPageToken` for the corresponding cases, which `Service` maps to Connect errors. `GetControlMappings` uses the same reader at the synthesized stage across the tenant's completed jobs; it rejects `limit` outside 0..1000 and returns no `next_page_token` (the request has no `page_token`), so callers wanting more page through `ListJobMappings`.
+`results.Service` implements `gateway.MappingsBackend` and `gateway.CandidatesBackend` (the same instance serves both); the assertions live in `cmd/crosscodexd/bootstrap.go` because `internal/results` must not import `internal/gateway`. Storage sits behind the `results.Reader` interface (`ListMappings(ctx, Filter) (Page, error)` and `ListCandidates(ctx, CandidateFilter) (CandidatePage, error)`). `PGStore` is the only implementation; a different store replaces only the `Reader` passed to `results.NewService`. An implementation must confine reads to the tenant in `ctx` and return `ErrJobNotFound`, `*JobNotCompletedError` and `ErrInvalidPageToken` for the corresponding cases, which `Service` maps to Connect errors. `GetControlMappings` uses the same reader at the synthesized stage across the tenant's completed jobs; it rejects `limit` outside 0..1000 and returns no `next_page_token` (the request has no `page_token`), so callers wanting more page through `ListJobMappings`.
 
 ## Health checks
 

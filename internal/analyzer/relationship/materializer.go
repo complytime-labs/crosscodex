@@ -37,6 +37,10 @@ const (
 // payload. The two use different edge ID kinds, so wiring this materializer
 // into a graph that internal/graph also writes adds separate edges instead of
 // colliding with them (see "Graph writers" in docs/dev/design-principles.md).
+// It also reads no critique result, so it would rebuild the edges of pairs the
+// job's critique vetoed: before it is wired, it must drop them with
+// results.Apply(results.RelationshipAnalyzer, crit) on the job's stored
+// critique result, as internal/graph does.
 type GraphMaterializer struct {
 	graph  graphdb.GraphDB
 	store  storage.Provider

@@ -27,7 +27,7 @@ tasks:
   unit:
     desc: Run unit tests with spec tree output
     vars:
-      PKGS: '{{.PKGS | default "./pkg/... ./internal/... ./cmd/..."}}'
+      PKGS: '{{.PKGS | default "./pkg/... ./internal/... ./cmd/... ./test/eval/..."}}'
     deps:
       - :dev:deps
       - :dev:generate
@@ -71,7 +71,7 @@ tasks:
         exit $status
 
   tooling:
-    desc: Run Venom suites for repo tooling scripts (e2e daemon teardown, deploy preconditions, cert generators, OpenAI-compatible smoke provider, container detection)
+    desc: Run Venom suites for repo tooling scripts (e2e daemon teardown, deploy preconditions, cert generators, OpenAI-compatible smoke provider, container detection, the eval:crosswalk runner)
     dir: "{{.ROOT_DIR}}"
     preconditions:
       - sh: command -v venom >/dev/null 2>&1
@@ -85,7 +85,7 @@ tasks:
     vars:
       FUZZ_TIME: '{{.FUZZ_TIME | default "10s"}}'
       FUZZ_TIMEOUT: '{{.FUZZ_TIMEOUT | default "2m"}}'
-      PKGS: '{{.PKGS | default "./pkg/... ./internal/... ./cmd/..."}}'
+      PKGS: '{{.PKGS | default "./pkg/... ./internal/... ./cmd/... ./test/eval/..."}}'
     deps:
       - :dev:deps
       - :dev:generate

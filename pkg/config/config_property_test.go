@@ -195,6 +195,26 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
+	Context("CritiqueConfig — panel alias uniqueness", func() {
+		It("rejects a models list exactly when it repeats an alias", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				models := rapid.SliceOfN(rapid.SampledFrom([]string{"panel-1", "panel-2", "panel-3", "panel-4"}), 1, 6).Draw(t, "models")
+				cfg := config.CritiqueConfig{
+					Enabled: true, Models: models, SamplesPerModel: 1, ConsensusThreshold: 0.66,
+					MaxErrorRate: 0.34, MaxSourceChars: 1, MaxTargetChars: 1, MaxTokens: 1,
+				}
+				err := cfg.Validate()
+				repeats := len(slices.Compact(slices.Sorted(slices.Values(models)))) != len(models)
+				if repeats && (err == nil || !strings.Contains(err.Error(), "twice")) {
+					t.Fatalf("models %v repeat an alias but Validate returned %v", models, err)
+				}
+				if !repeats && err != nil {
+					t.Fatalf("models %v are distinct but Validate returned %v", models, err)
+				}
+			})
+		})
+	})
+
 	Context("ForTenant — returns global config when no override", func() {
 		It("all 5 fields match global values for unknown tenant", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {

@@ -130,6 +130,14 @@ func (w *keyWalker) walk(n *yaml.Node, t reflect.Type, path string, scope *overr
 			return
 		}
 		w.eachPair(n, t, path, func(key, val *yaml.Node) {
+			// The key is decoded too: a mapping or sequence used as a key
+			// cannot become the map's key type. It has no text, so it is
+			// reported at the map's own path.
+			keyPath := path
+			if key.Kind == yaml.ScalarNode {
+				keyPath = mapKeyPath(path, key.Value)
+			}
+			w.checkType(key, t.Key(), keyPath)
 			w.walk(val, t.Elem(), mapKeyPath(path, key.Value), scope)
 		})
 	case reflect.Slice, reflect.Array:

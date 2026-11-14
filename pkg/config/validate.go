@@ -55,6 +55,7 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 		validateAnalysis(&cfg.Analysis, tracker),
 		cfg.Worker.validate(tracker),
 		cfg.Pipeline.validate(tracker),
+		validateSuccessWindow(&cfg.Analysis.Engine, &cfg.Pipeline, tracker),
 		validateSynthesis(&cfg.Synthesis, tracker),
 		cfg.Retention.validate(tracker),
 		validateBackup(&cfg.Backup, &cfg.Storage.Objects, tracker),
@@ -253,8 +254,22 @@ func validateAttestation(a *AttestationConfig, tracker *sourceTracker) error {
 	return p.err()
 }
 
+// oscalTokenPattern is the OSCAL token datatype, the type of a part's name.
+var oscalTokenPattern = regexp.MustCompile(`^(\p{L}|_)(\p{L}|\p{N}|[.\-_])*$`)
+
 func validateCatalog(cat *CatalogConfig, tracker *sourceTracker) error {
 	var p problems
+	if len(cat.RequirementPartNames) == 0 {
+		p.add("catalog.requirement_part_names", "catalog.requirement_part_names%s is empty: at least one name is required, because no name means no control has requirement text; list the OSCAL part names that hold it, such as [statement]: %w",
+			formatSource(tracker, "catalog.requirement_part_names"), ErrInvalidConfig)
+	}
+	for i, name := range cat.RequirementPartNames {
+		if !oscalTokenPattern.MatchString(name) {
+			path := fmt.Sprintf("catalog.requirement_part_names[%d]", i)
+			p.add(path, "%s %q%s is not a valid OSCAL token: it must start with a letter or _, then contain only letters, digits, '.', '-' or '_'; use the part name exactly as the catalog spells it: %w",
+				path, name, formatSource(tracker, "catalog.requirement_part_names"), ErrInvalidConfig)
+		}
+	}
 	s := &cat.Structuring
 	if s.MinDecomposeWords < 0 {
 		p.add("catalog.structuring.min_decompose_words", "catalog.structuring.min_decompose_words %d%s must be non-negative: %w",
@@ -409,6 +424,9 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 		p.add("analysis.relationship.models", "analysis.relationship.models%s must not be empty when enabled: %w",
 			formatSource(tracker, "analysis.relationship.models"), ErrInvalidConfig)
 	}
+	if r.Enabled {
+		p = append(p, validateDistinctPanelModels("analysis.relationship.models", r.Models, tracker))
+	}
 	p = append(p, validateConfidenceWeights(&r.ConfidenceWeights, tracker))
 	for _, at := range r.ActionableTypes {
 		if !validRelationshipTypes[at] {
@@ -420,6 +438,7 @@ func validateAnalysis(a *AnalysisConfig, tracker *sourceTracker) error {
 	p = append(p,
 		a.Engine.validate(tracker),
 		a.Requires.validate(tracker),
+		a.Critique.validate(tracker),
 		a.Artifacts.validate(tracker),
 		a.ArtifactAdjudication.validate(tracker),
 		a.Candidates.validate(tracker),
@@ -795,6 +814,85 @@ func validateConfidenceWeights(w *RelationshipConfidenceWeights, tracker *source
 				less.name, less.value, formatSource(tracker, pfx+less.name), more.name, more.value,
 				strings.ToUpper(less.name), strings.ToUpper(more.name), less.name, more.name, ErrInvalidConfig)
 		}
+	}
+	return p.err()
+}
+
+// validateDistinctPanelModels rejects a panel models list (path is its dotted
+// config path) that names one alias twice: a repeated alias is one voter
+// counted twice, not a second opinion. It reports the first repeat only, so
+// one mistake is one problem. Sharing an upstream model between different
+// aliases is a separate, runtime check governed by allow_shared_panel_models.
+func validateDistinctPanelModels(path string, models []string, tracker *sourceTracker) error {
+	var p problems
+	first := make(map[string]int, len(models))
+	for j, m := range models {
+		i, seen := first[m]
+		if !seen {
+			first[m] = j
+			continue
+		}
+		p.add(path, "%s lists %q twice (entries %d and %d)%s; each panel model must be a different alias. Remove the duplicate: %w",
+			path, m, i, j, formatSource(tracker, path), ErrInvalidConfig)
+		break
+	}
+	return p.err()
+}
+
+// panelSettings are the fields RequiresConfig and CritiqueConfig share.
+type panelSettings struct {
+	Models              []string
+	SamplesPerModel     int
+	AllowEvenSamples    bool
+	SamplingTemperature float64
+	MaxTokens           int
+	ConsensusThreshold  float64
+	MaxErrorRate        float64
+	MaxSourceChars      int
+	MaxTargetChars      int
+}
+
+// validatePanelSettings checks an enabled panel's shared settings. section is
+// the dotted config section (e.g. "analysis.critique"); every problem is
+// reported under it.
+func validatePanelSettings(section string, s panelSettings, tracker *sourceTracker) error {
+	pfx := section + "."
+	var p problems
+	if len(s.Models) == 0 {
+		p.add(pfx+"models", section+".models%s must not be empty when enabled: %w",
+			formatSource(tracker, pfx+"models"), ErrInvalidConfig)
+	}
+	p = append(p, validateDistinctPanelModels(pfx+"models", s.Models, tracker))
+	if s.SamplesPerModel <= 0 {
+		p.add(pfx+"samples_per_model", section+".samples_per_model %d%s must be positive: %w",
+			s.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
+	} else if !s.AllowEvenSamples && s.SamplesPerModel%2 == 0 {
+		p.add(pfx+"samples_per_model", section+".samples_per_model %d%s must be odd unless allow_even_samples=true: %w",
+			s.SamplesPerModel, formatSource(tracker, pfx+"samples_per_model"), ErrInvalidConfig)
+	}
+	if math.IsNaN(s.ConsensusThreshold) || s.ConsensusThreshold < 0.5 || s.ConsensusThreshold > 1.0 {
+		p.add(pfx+"consensus_threshold", section+".consensus_threshold %g%s must be in range [0.5, 1.0]: %w",
+			s.ConsensusThreshold, formatSource(tracker, pfx+"consensus_threshold"), ErrInvalidConfig)
+	}
+	if math.IsNaN(s.MaxErrorRate) || s.MaxErrorRate < 0.0 || s.MaxErrorRate > 1.0 {
+		p.add(pfx+"max_error_rate", section+".max_error_rate %g%s must be in range [0.0, 1.0]: %w",
+			s.MaxErrorRate, formatSource(tracker, pfx+"max_error_rate"), ErrInvalidConfig)
+	}
+	if s.MaxSourceChars <= 0 {
+		p.add(pfx+"max_source_chars", section+".max_source_chars %d%s must be positive: %w",
+			s.MaxSourceChars, formatSource(tracker, pfx+"max_source_chars"), ErrInvalidConfig)
+	}
+	if s.MaxTargetChars <= 0 {
+		p.add(pfx+"max_target_chars", section+".max_target_chars %d%s must be positive: %w",
+			s.MaxTargetChars, formatSource(tracker, pfx+"max_target_chars"), ErrInvalidConfig)
+	}
+	if s.MaxTokens <= 0 {
+		p.add(pfx+"max_tokens", section+".max_tokens %d%s must be positive: %w",
+			s.MaxTokens, formatSource(tracker, pfx+"max_tokens"), ErrInvalidConfig)
+	}
+	if math.IsNaN(s.SamplingTemperature) || s.SamplingTemperature < 0.0 || s.SamplingTemperature > 2.0 {
+		p.add(pfx+"sampling_temperature", section+".sampling_temperature %g%s must be in range [0.0, 2.0]: %w",
+			s.SamplingTemperature, formatSource(tracker, pfx+"sampling_temperature"), ErrInvalidConfig)
 	}
 	return p.err()
 }

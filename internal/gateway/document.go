@@ -127,8 +127,9 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 	s.recordMetrics(ctx, input.rpcName, start, connect.Code(0))
 
 	return connect.NewResponse(&pb.SubmitDocumentResponse{
-		DocumentId: docID,
-		CatalogId:  catalogID,
+		DocumentId:       docID,
+		CatalogId:        catalogID,
+		TextlessControls: parseResp.Msg.GetTextlessControls(),
 	}), nil
 }
 

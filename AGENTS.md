@@ -31,7 +31,14 @@ Use `task` for everything; never run raw `go build` / `go test`.
 
 - Relational tables and object storage are authoritative; the graph is a materialized view rebuilt by materializers. Graph writes must be idempotent.
 - Edge endpoints are structure: pass them to `CreateEdge(ctx, tenant, sourceID, targetID, edge)`, never as edge properties. Never put `tenant_id` on edges (the graph name is the partition). Read endpoints from `Relationship.Source` / `.Target`.
+- Catalog groups are `Container` nodes projected from `catalog_containers` (never `controls` rows), linked by `PARENT_OF` to child groups and top-level controls.
 - The relationship enum (`pkg/config/validate.go` `validRelationshipTypes`, `internal/analyzer/relationship/types.go`, currently the 8 NIST IR 8477 types) is extensible. Extend it when a real relationship doesn't fit; keep structurally different signals outside it (see `internal/synthesis.ConsensusRequires`). The long-term target includes ReqIF and SysML v2 Requirements, so keep node/edge property schemas and the enum easy to extend rather than compliance-catalog-specific.
+
+## Data sources
+
+- Catalogs, frameworks, models and servers named in an issue are samples, not the spec. Code never encodes their IDs, ID formats, link conventions, resource titles or model names; real ones appear only as data (config, profiles, test fixtures).
+- Derive formats from the data (e.g. resolve identifiers against the target catalog's IDs and `label` props, take hierarchy from the control tree). Where data can't decide, make the choice declarative and fail closed: report what didn't resolve or was ambiguous, never score it as a miss or guess.
+- Code that parses or matches catalog content is tested with fixtures covering at least two real encodings (SSDF and SP 800-171r3 cite SP 800-53 differently: link text vs back-matter title, `SA-15(7)` vs `AC-02(03)`).
 
 ## Protobuf
 

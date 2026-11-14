@@ -2,7 +2,9 @@ package oscal_test
 
 import (
 	"strings"
+	"unicode"
 
+	oscalTypes "github.com/defenseunicorns/go-oscal/src/types/oscal-1-1-3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"pgregory.net/rapid"
@@ -14,6 +16,54 @@ import (
 // This file only registers Describe nodes; Ginkgo collects them automatically.
 
 var _ = Describe("Property Specifications", func() {
+	Context("UsableTitle", func() {
+		It("returns either empty or the trimmed title", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				title := rapid.String().Draw(t, "title")
+				identifier := rapid.String().Draw(t, "identifier")
+				label := rapid.String().Draw(t, "label")
+				got := oscal.UsableTitle(title, identifier, label)
+				if got != "" && got != strings.TrimSpace(title) {
+					t.Fatalf("UsableTitle(%q, %q, %q) = %q, want \"\" or %q", title, identifier, label, got, strings.TrimSpace(title))
+				}
+			})
+		})
+
+		It("rejects an identifier used as its own title", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				id := rapid.String().Filter(func(s string) bool {
+					return strings.IndexFunc(s, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0
+				}).Draw(t, "id")
+				if got := oscal.UsableTitle(id, id, ""); got != "" {
+					t.Fatalf("UsableTitle(%q, %q, \"\") = %q, want \"\"", id, id, got)
+				}
+			})
+		})
+
+		It("rejects a numbered identifier respelt with other separators and case", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				words := rapid.SliceOfN(rapid.StringMatching(`[a-zA-Z]{1,8}`), 1, 4).Draw(t, "words")
+				number := rapid.StringMatching(`[0-9]{1,3}(\.[0-9]{1,3}){0,2}`).Draw(t, "number")
+				identifier := strings.Join(append(words, number), "_")
+				title := strings.ToUpper(strings.Join(words, " ")) + " " + number
+				if got := oscal.UsableTitle(title, identifier, ""); got != "" {
+					t.Fatalf("UsableTitle(%q, %q, \"\") = %q, want \"\"", title, identifier, got)
+				}
+			})
+		})
+
+		It("keeps a digit-free title that matches a slug identifier only by letters", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				words := rapid.SliceOfN(rapid.StringMatching(`[a-zA-Z]{1,8}`), 2, 4).Draw(t, "words")
+				identifier := strings.ToLower(strings.Join(words, "_"))
+				title := strings.Join(words, " ")
+				if got := oscal.UsableTitle(title, identifier, ""); got != title {
+					t.Fatalf("UsableTitle(%q, %q, \"\") = %q, want %q", title, identifier, got, title)
+				}
+			})
+		})
+	})
+
 	Context("CleanProse — template resolution", func() {
 		It("never leaves matched template pairs in output", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
@@ -100,6 +150,32 @@ var _ = Describe("Property Specifications", func() {
 				for i, item := range items {
 					Expect(item.ID).To(HavePrefix(baseID),
 						"item %d ID %q does not start with baseID %q", i, item.ID, baseID)
+				}
+			})
+		})
+	})
+
+	Context("CollectParams — parameter rendering", func() {
+		It("renders a label-only parameter as an assignment containing the label", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				label := rapid.StringMatching(`[a-zA-Z0-9][a-zA-Z0-9 ,-]{0,40}`).Draw(t, "label")
+				ctrl := oscalTypes.Control{ID: "x-1", Params: &[]oscalTypes.Parameter{{ID: "p", Label: label}}}
+
+				got := oscal.CollectParams(nil, ctrl)["p"]
+				if !strings.HasPrefix(got, "[Assignment: ") || !strings.Contains(got, label) {
+					t.Fatalf("label %q rendered as %q", label, got)
+				}
+			})
+		})
+
+		It("renders a set value verbatim, whatever the label", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				value := rapid.StringMatching(`[a-zA-Z0-9][a-zA-Z0-9 ,-]{0,40}`).Draw(t, "value")
+				label := rapid.StringMatching(`[a-zA-Z0-9 ]{0,40}`).Draw(t, "label")
+				ctrl := oscalTypes.Control{ID: "x-1", Params: &[]oscalTypes.Parameter{{ID: "p", Label: label, Values: &[]string{value}}}}
+
+				if got := oscal.CollectParams(nil, ctrl)["p"]; got != value {
+					t.Fatalf("value %q (label %q) rendered as %q", value, label, got)
 				}
 			})
 		})

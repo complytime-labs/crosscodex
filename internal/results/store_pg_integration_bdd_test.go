@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/complytime-labs/crosscodex/internal/results"
+	analyzerresults "github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
@@ -114,9 +115,28 @@ func (e storeEnv) seedVote(tenantID, jobID, src, tgt, consensus string, confiden
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, jobID, src, tgt, contribution, consensus, confidence, viability, tenantID)).To(Succeed())
 }
 
+// seedCandidate inserts a relationship_candidates row with the given
+// provenance JSON, as the pipeline's WriteRelationshipCandidates does.
+func (e storeEnv) seedCandidate(tenantID, jobID, src, tgt string, similarity float64, provenance string) {
+	Expect(e.su.Exec(context.Background(), `INSERT INTO relationship_candidates (tenant_id, job_id, source_id, target_id, similarity_score, provenance)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb)`, tenantID, jobID, src, tgt, similarity, provenance)).To(Succeed())
+}
+
+func (e storeEnv) candidateCount(jobID string) int {
+	var n int
+	Expect(e.su.QueryRow(context.Background(), `SELECT count(*) FROM relationship_candidates WHERE job_id = $1`, jobID).Scan(&n)).To(Succeed())
+	return n
+}
+
 func (e storeEnv) seedAnalysis(tenantID, jobID, data string) {
 	Expect(e.su.Exec(context.Background(), `INSERT INTO analysis_results (tenant_id, job_id, analyzer_name, result_data)
 		VALUES ($1, $2, 'relationship', $3::jsonb)`, tenantID, jobID, data)).To(Succeed())
+}
+
+// seedCritique inserts the critique analyzer's result for jobID.
+func (e storeEnv) seedCritique(tenantID, jobID, data string) {
+	Expect(e.su.Exec(context.Background(), `INSERT INTO analysis_results (tenant_id, job_id, analyzer_name, result_data)
+		VALUES ($1, $2, 'critique', $3::jsonb)`, tenantID, jobID, data)).To(Succeed())
 }
 
 func keys(p results.Page) []string {
@@ -304,6 +324,109 @@ var _ = Describe("PGStore", func() {
 			Expect(page.Mappings).To(BeEmpty())
 		})
 
+		Describe("with a critique", func() {
+			// AC-1>B-1 is vetoed as a relationship; AC-2>B-1 is split as a
+			// relationship and vetoed only as requires, which leaves its mapping.
+			BeforeEach(func() {
+				env.seedCritique(env.tenantA, job, `[
+					{"kind":"relationship","source_control_id":"AC-1","target_control_id":"B-1","upheld":0,"rejected":3,"failed":0,
+					 "outcome":"vetoed","vetoed":true,"reasons":["panel-1 s0 REJECT: a","panel-2 s0 REJECT: b","panel-3 s0 REJECT: c"]},
+					{"kind":"relationship","source_control_id":"AC-2","target_control_id":"B-1","upheld":2,"rejected":1,"failed":0,
+					 "outcome":"split","vetoed":false,"reasons":["panel-1 s0 UPHOLD: x","panel-2 s0 REJECT: y","panel-3 s0 UPHOLD: z"]},
+					{"kind":"requires","source_control_id":"AC-2","target_control_id":"B-1","upheld":0,"rejected":3,"failed":0,
+					 "outcome":"vetoed","vetoed":true,"reasons":[]}]`)
+			})
+
+			It("leaves vetoed pairs out and carries the relationship critique of the kept ones", func() {
+				page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageAnalyzer))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keys(page)).To(Equal([]string{"AC-2>B-1"}))
+				Expect(page.Mappings[0].Critique).NotTo(BeNil())
+				Expect(page.Mappings[0].Critique.Outcome).To(Equal(analyzerresults.CritiqueSplit))
+				Expect(page.Mappings[0].Critique.Kind).To(Equal(analyzerresults.RelationshipAnalyzer))
+			})
+
+			It("lists vetoed pairs with their votes and reasons on request", func() {
+				f := filter(env.tenantA, job, results.StageAnalyzer)
+				f.IncludeVetoed = true
+				page, err := env.store.ListMappings(env.ctxA, f)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(keys(page)).To(Equal([]string{"AC-1>B-1", "AC-2>B-1"}))
+				Expect(page.Mappings[0].Critique).To(Equal(&analyzerresults.CritiqueResult{Kind: "relationship",
+					SourceControlID: "AC-1", TargetControlID: "B-1", Rejected: 3, Outcome: "vetoed", Vetoed: true,
+					Reasons: []string{"panel-1 s0 REJECT: a", "panel-2 s0 REJECT: b", "panel-3 s0 REJECT: c"}}))
+			})
+
+			Describe("rejected without veto", func() {
+				// AC-1>B-1 is rejected with analysis.critique.veto off (kept,
+				// flagged); AC-2>B-1 is split; AC-3>B-1 is vetoed (a job can't
+				// hold both, but the filters are independent).
+				var advisory string
+				BeforeEach(func() {
+					advisory = env.seedJob(env.tenantA, "completed")
+					env.seedAnalysis(env.tenantA, advisory, `[
+						{"source_id":"AC-1","target_id":"B-1","relationship_type":"EQUIVALENT","confidence":0.9},
+						{"source_id":"AC-2","target_id":"B-1","relationship_type":"SUPPORTS","confidence":0.8},
+						{"source_id":"AC-3","target_id":"B-1","relationship_type":"SUPPORTS","confidence":0.7}]`)
+					env.seedCritique(env.tenantA, advisory, `[
+						{"kind":"relationship","source_control_id":"AC-1","target_control_id":"B-1","upheld":1,"rejected":2,"failed":0,
+						 "outcome":"rejected","vetoed":false,"reasons":["panel-1 s0 UPHOLD: a","panel-2 s0 REJECT: b","panel-3 s0 REJECT: c"]},
+						{"kind":"relationship","source_control_id":"AC-2","target_control_id":"B-1","upheld":2,"rejected":1,"failed":0,
+						 "outcome":"split","vetoed":false,"reasons":["panel-1 s0 UPHOLD: x","panel-2 s0 REJECT: y","panel-3 s0 UPHOLD: z"]},
+						{"kind":"relationship","source_control_id":"AC-3","target_control_id":"B-1","upheld":0,"rejected":3,"failed":0,
+						 "outcome":"vetoed","vetoed":true,"reasons":[]}]`)
+				})
+
+				It("keeps a rejected pair by default, flagged with its outcome", func() {
+					page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, advisory, results.StageAnalyzer))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keys(page)).To(Equal([]string{"AC-1>B-1", "AC-2>B-1"}))
+					Expect(page.Mappings[0].Critique.Outcome).To(Equal(analyzerresults.CritiqueRejected))
+				})
+
+				It("leaves a rejected pair out with ExcludeRejected and keeps the split one", func() {
+					f := filter(env.tenantA, advisory, results.StageAnalyzer)
+					f.ExcludeRejected = true
+					page, err := env.store.ListMappings(env.ctxA, f)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keys(page)).To(Equal([]string{"AC-2>B-1"}))
+				})
+
+				It("lists vetoed pairs and leaves rejected ones out with both filters", func() {
+					f := filter(env.tenantA, advisory, results.StageAnalyzer)
+					f.ExcludeRejected, f.IncludeVetoed = true, true
+					page, err := env.store.ListMappings(env.ctxA, f)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keys(page)).To(Equal([]string{"AC-2>B-1", "AC-3>B-1"}))
+				})
+			})
+
+			DescribeTable("fails, naming the job, the pair and the remedy, when a vote count cannot be a panel's",
+				func(count string) {
+					bad := env.seedJob(env.tenantA, "completed")
+					env.seedAnalysis(env.tenantA, bad, `[{"source_id":"AC-1","target_id":"B-1","relationship_type":"EQUIVALENT","confidence":0.9}]`)
+					env.seedCritique(env.tenantA, bad, `[{"kind":"relationship","source_control_id":"AC-1","target_control_id":"B-1",`+
+						`"upheld":`+count+`,"rejected":0,"failed":0,"outcome":"upheld","vetoed":false,"reasons":[]}]`)
+					page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, bad, results.StageAnalyzer))
+					Expect(err).To(MatchError(ContainSubstring(bad)))
+					Expect(err).To(MatchError(ContainSubstring("AC-1 -> B-1 an impossible vote count")))
+					Expect(err).To(MatchError(ContainSubstring("re-run the job")))
+					Expect(page.Mappings).To(BeEmpty())
+				},
+				Entry("negative", "-1"),
+				Entry("beyond int32", "2147483648"),
+			)
+
+			It("fails, naming the job, when the critique result is corrupt", func() {
+				bad := env.seedJob(env.tenantA, "completed")
+				env.seedAnalysis(env.tenantA, bad, `[]`)
+				env.seedCritique(env.tenantA, bad, `{"x":1}`)
+				_, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, bad, results.StageAnalyzer))
+				Expect(err).To(MatchError(ContainSubstring(bad)))
+				Expect(err).To(MatchError(ContainSubstring("critique result")))
+			})
+		})
+
 		It("refuses the analyzer stage without a job, saying what to pass instead", func() {
 			page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, "", results.StageAnalyzer))
 			Expect(err).To(HaveOccurred())
@@ -485,6 +608,110 @@ var _ = Describe("PGStore", func() {
 			page, err = env.store.ListMappings(env.ctxA, acrossJobs)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(page.Analysis).To(BeNil())
+		})
+	})
+
+	Describe("candidates", func() {
+		const prov = `[{"GeneratorName":"embedding","Score":0.8,"Weight":0.6,"Metadata":{"rank":"1"}},
+			{"GeneratorName":"keyword","Score":0.25,"Weight":0.4,"Metadata":{"rank":"3"}}]`
+		var job string
+
+		candidateFilter := func(ctx string, jobID string) results.CandidateFilter {
+			return results.CandidateFilter{TenantID: ctx, JobID: jobID, PageSize: 100}
+		}
+		pairs := func(p results.CandidatePage) []string {
+			out := make([]string, 0, len(p.Candidates))
+			for _, c := range p.Candidates {
+				out = append(out, c.SourceID+">"+c.TargetID)
+			}
+			return out
+		}
+
+		BeforeEach(func() {
+			job = env.seedJob(env.tenantA, "completed")
+			env.seedCandidate(env.tenantA, job, "A3", "B1", 70, prov)
+			env.seedCandidate(env.tenantA, job, "A1", "B2", 90, prov)
+			env.seedCandidate(env.tenantA, job, "A2", "B1", 80, `[]`)
+		})
+
+		It("pages two of three candidates, then the third, ordered by source and target", func() {
+			f := candidateFilter(env.tenantA, job)
+			f.PageSize = 2
+			first, err := env.store.ListCandidates(env.ctxA, f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairs(first)).To(Equal([]string{"A1>B2", "A2>B1"}))
+			Expect(first.Next).NotTo(BeNil())
+
+			f.After = first.Next
+			second, err := env.store.ListCandidates(env.ctxA, f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairs(second)).To(Equal([]string{"A3>B1"}))
+			Expect(second.Next).To(BeNil())
+		})
+
+		It("decodes similarity and contributions", func() {
+			page, err := env.store.ListCandidates(env.ctxA, candidateFilter(env.tenantA, job))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Candidates[0]).To(Equal(results.Candidate{
+				JobID: job, SourceID: "A1", TargetID: "B2", Similarity: 90,
+				Contributions: []results.Contribution{
+					{Generator: "embedding", Score: 0.8, Weight: 0.6, Metadata: map[string]string{"rank": "1"}},
+					{Generator: "keyword", Score: 0.25, Weight: 0.4, Metadata: map[string]string{"rank": "3"}},
+				},
+			}))
+			Expect(page.Candidates[1].Contributions).To(BeEmpty())
+		})
+
+		It("filters by control on either side", func() {
+			f := candidateFilter(env.tenantA, job)
+			f.ControlID = "B1"
+			page, err := env.store.ListCandidates(env.ctxA, f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairs(page)).To(Equal([]string{"A2>B1", "A3>B1"}))
+
+			f.ControlID = "A1"
+			page, err = env.store.ListCandidates(env.ctxA, f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairs(page)).To(Equal([]string{"A1>B2"}))
+		})
+
+		It("reports the job's analysis", func() {
+			cat := env.seedCatalog(env.tenantA, "Cat", "1")
+			withCatalog := env.seedJobWithConfig(env.tenantA, "completed", fmt.Sprintf(`{"catalog_id":%q,"target_catalog_id":%q}`, cat, cat))
+			page, err := env.store.ListCandidates(env.ctxA, candidateFilter(env.tenantA, withCatalog))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Candidates).To(BeEmpty())
+			Expect(page.Analysis).NotTo(BeNil())
+			Expect(page.Analysis.Source.ID).To(Equal(cat))
+		})
+
+		It("hides another tenant's job", func() {
+			_, err := env.store.ListCandidates(env.ctxB, candidateFilter(env.tenantB, job))
+			Expect(err).To(MatchError(results.ErrJobNotFound))
+		})
+
+		It("refuses a filter whose tenant differs from the context", func() {
+			_, err := env.store.ListCandidates(env.ctxB, candidateFilter(env.tenantA, job))
+			Expect(err).To(HaveOccurred())
+			Expect(err).NotTo(MatchError(results.ErrJobNotFound))
+		})
+
+		It("refuses a job that has not completed", func() {
+			running := env.seedJob(env.tenantA, "running")
+			env.seedCandidate(env.tenantA, running, "A1", "B1", 50, `[]`)
+			_, err := env.store.ListCandidates(env.ctxA, candidateFilter(env.tenantA, running))
+			var notDone *results.JobNotCompletedError
+			Expect(errors.As(err, &notDone)).To(BeTrue())
+			Expect(notDone.Status).To(Equal("running"))
+		})
+
+		It("fails on corrupt provenance and leaves the rows unchanged", func() {
+			env.seedCandidate(env.tenantA, job, "A9", "B9", 10, `{"GeneratorName":"embedding"}`)
+			before := env.candidateCount(job)
+			_, err := env.store.ListCandidates(env.ctxA, candidateFilter(env.tenantA, job))
+			Expect(err).To(MatchError(results.ErrCorruptProvenance))
+			Expect(err).To(MatchError(ContainSubstring("A9 -> B9")))
+			Expect(env.candidateCount(job)).To(Equal(before))
 		})
 	})
 })

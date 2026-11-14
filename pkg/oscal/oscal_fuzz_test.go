@@ -1,6 +1,8 @@
 package oscal_test
 
 import (
+	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -87,5 +89,53 @@ func FuzzValidateSchema(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Must not panic. Use empty schemaPath (will fail gracefully).
 		_ = oscal.ValidateSchema(data, "")
+	})
+}
+
+func FuzzParse(f *testing.F) {
+	const head = `{"catalog":{"uuid":"11111111-1111-4111-8111-111111111111","metadata":{"title":"t",` +
+		`"last-modified":"2024-01-01T00:00:00Z","version":"1","oscal-version":"1.1.3"},`
+	// Minimal valid catalog.
+	f.Add([]byte(head + `"controls":[{"id":"c-1","title":"C","parts":[{"id":"c-1_smt","name":"statement","prose":"P."}]}]}}`))
+	// Items nested six deep inside the statement.
+	f.Add([]byte(head + `"controls":[{"id":"d","title":"D","parts":[{"id":"d_smt","name":"statement","prose":"L","parts":[` +
+		`{"id":"d_smt.a","name":"item","parts":[{"id":"d_smt.a.1","name":"item","parts":[{"id":"d_smt.a.1.i","name":"item","parts":[` +
+		`{"id":"d_smt.a.1.i.x","name":"item","parts":[{"id":"d_smt.a.1.i.x.y","name":"item","parts":[` +
+		`{"id":"d_smt.a.1.i.x.y.z","name":"item","prose":"Leaf."}]}]}]}]}]}]}]}]}}`))
+	// Unnamed and ID-less parts.
+	f.Add([]byte(head + `"controls":[{"id":"u","title":"u","parts":[{"name":"statement","prose":"S","parts":[` +
+		`{"prose":"no id or name"},{"name":"item","prose":"no id"},{"id":"other","prose":"no name"}]},{"prose":"top, unnamed"}]}]}}`))
+	// Label props with class and namespace variants.
+	f.Add([]byte(head + `"groups":[{"id":"g","title":"G","props":[{"name":"label","value":"G","ns":"http://example.com/ns"}],` +
+		`"controls":[{"id":"l-1","title":"L-1","props":[{"name":"label","value":"L-01","class":"zero-padded"},` +
+		`{"name":"label","value":"L-1","ns":"http://csrc.nist.gov/ns/oscal"}],"parts":[{"id":"l-1_ovw","name":"overview","prose":"O."}]}]}]}}`))
+	// Invalid JSON.
+	f.Add([]byte(`{"catalog":`))
+	// Empty catalog.
+	f.Add([]byte(`{"catalog":{}}`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		tree, err := oscal.NewParser("").Parse(context.Background(), bytes.NewReader(data))
+		if err != nil {
+			return
+		}
+		seen := make(map[string]bool, len(tree.Items))
+		for i, item := range tree.Items {
+			if item.ID == "" {
+				t.Fatalf("item %d has an empty ID", i)
+			}
+			if seen[item.ID] {
+				t.Fatalf("item ID %q occurs more than once", item.ID)
+			}
+			if item.ParentID != "" && !seen[item.ParentID] {
+				t.Fatalf("item %q names parent %q, which is not an earlier item", item.ID, item.ParentID)
+			}
+			seen[item.ID] = true
+		}
+		for _, tc := range tree.Textless {
+			if !seen[tc.Identifier] {
+				t.Fatalf("textless control %q is not an item", tc.Identifier)
+			}
+		}
 	})
 }

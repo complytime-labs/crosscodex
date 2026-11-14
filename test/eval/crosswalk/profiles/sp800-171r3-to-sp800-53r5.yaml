@@ -1,0 +1,26 @@
+# SP 800-171 r3 requirements scored against the SP 800-53 r5 controls the
+# catalog cites for them. 10 source controls, 8 families (03.01, 03.03, 03.04,
+# 03.05, 03.06, 03.08, 03.11, 03.13).
+# Resolved references, checked exactly by profiles_bdd_test.go:
+# references: 28
+name: sp800-171r3-to-sp800-53r5
+source: catalogs/NIST_SP800-171_rev3_catalog.json
+target: catalogs/NIST_SP-800-53_rev5_catalog.json
+controls:
+  - SP_800_171_03.01.01
+  - SP_800_171_03.01.05
+  - SP_800_171_03.03.02
+  - SP_800_171_03.03.05
+  - SP_800_171_03.04.06
+  - SP_800_171_03.05.03
+  - SP_800_171_03.06.02
+  - SP_800_171_03.08.05
+  - SP_800_171_03.11.01
+  - SP_800_171_03.13.08
+references:
+  oscal_links:
+    rel: reference
+    # Each reference link names a resource titled with the SP 800-53 control.
+    resource:
+      rlink: 'SP_800_53_5_1_1'
+    identifier: resource_title

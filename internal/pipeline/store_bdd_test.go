@@ -260,6 +260,21 @@ func (f *fakeStore) UpdateStageStatus(ctx context.Context, jobID, stageName stri
 	return pipeline.ErrNotFound
 }
 
+func (f *fakeStore) SetStagePanelRecord(ctx context.Context, jobID, stageName, record string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, stage := range f.stages[jobID] {
+		if stage.StageName == stageName {
+			stage.PanelRecord = record
+			return nil
+		}
+	}
+	return pipeline.ErrNotFound
+}
+
 func (f *fakeStore) UpdateStageError(ctx context.Context, jobID, stageName string, stageErr error) error {
 	if err := ctx.Err(); err != nil {
 		return err

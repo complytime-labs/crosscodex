@@ -26,15 +26,15 @@ func FuzzCleanForEmbedding(f *testing.F) {
 }
 
 func FuzzPrepareText(f *testing.F) {
-	f.Add("statement", "ancestor", 1500)
-	f.Add("", "", 0)
-	f.Add("text", "", -1)
-	f.Add("{{ insert: param }}", "ROOT", 10)
-	f.Add("\x00\xff", "\x00", 5)
+	f.Add("statement", "Root > Leaf", "title", 1500)
+	f.Add("", "", "", 0)
+	f.Add("text", "", "", -1)
+	f.Add("{{ insert: param }}", "ROOT", "T", 10)
+	f.Add("\x00\xff", "\x00 > \x00", "\x00", 5)
 
-	f.Fuzz(func(t *testing.T, statement, ancestor string, maxChars int) {
+	f.Fuzz(func(t *testing.T, statement, context, title string, maxChars int) {
 		// Must not panic on any input.
-		_ = embedding.ExportPrepareText(statement, ancestor, maxChars)
+		_ = embedding.ExportPrepareText(context, title, statement, maxChars)
 	})
 }
 

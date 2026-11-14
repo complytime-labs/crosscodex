@@ -78,6 +78,7 @@ var _ = Describe("Handler", func() {
 			Entry("relate", natsbus.TaskRelate),
 			Entry("requires", natsbus.TaskRequires),
 			Entry("artifacts", natsbus.TaskArtifacts),
+			Entry("critique", natsbus.TaskCritique),
 		)
 	})
 

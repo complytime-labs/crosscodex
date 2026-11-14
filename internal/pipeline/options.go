@@ -33,6 +33,10 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 					"uncached: no usable deployment ID, or only the alias named; failed)"))
 			s.probeDuration, _ = meter.Float64Histogram("pipeline.result_cache.probe.duration_ms",
 				metric.WithDescription("Per-job model probe duration"), metric.WithUnit("ms"))
+			s.panelChecks, _ = meter.Int64Counter("crosscodex.pipeline.panel_checks",
+				metric.WithDescription("Panel diversity checks by stage and outcome (independent; shared: two aliases answered as one model; "+
+					"allowed: shared or unknown but analysis.<stage>.allow_shared_panel_models is set; unknown: an alias's upstream model is not named; "+
+					"failed: a probe call failed)"))
 			s.checkpointOps, _ = meter.Int64Counter("pipeline.result_cache.checkpoints.total",
 				metric.WithDescription("Result-cache checkpoint operations (sign, store, verify) by outcome"))
 			s.checkpointDuration, _ = meter.Float64Histogram("pipeline.result_cache.checkpoint.duration_ms",
@@ -62,6 +66,22 @@ func WithResultCache(store resultcache.Store, cfg config.ResultCacheConfig, llm 
 		s.cacheCfg = cfg
 		s.llmCfg = llm
 		s.probe = probe
+	}
+}
+
+// WithPanelProbe wires the client that probes the aliases of each panel
+// analyzer (analyzer.Panelled) before the analysis runs, so the job is refused
+// when two aliases answer as the same upstream model or an alias's upstream
+// model is unknown (#260). The client must also read the gateway's model
+// catalog (PanelProbeClient), because a LiteLLM gateway names the model
+// behind an alias only there; a client that cannot is refused by the compiler,
+// not at call time. Production wires it in the daemon
+// (cmd/crosscodexd llmProbeOptions) to its probe client; the embedded start
+// builds no pipeline and does not. Without it the check is skipped and each
+// panel stage's record says "panel independence unchecked".
+func WithPanelProbe(c PanelProbeClient) Option {
+	return func(s *Service) {
+		s.panelProbe = c
 	}
 }
 
@@ -115,3 +135,6 @@ func WithEmbeddingConfig(cfg config.EmbeddingConfig) Option {
 		s.embeddingConfig = cfg
 	}
 }
+
+// PanelProbeWired reports whether WithPanelProbe was applied.
+func (s *Service) PanelProbeWired() bool { return s.panelProbe != nil }

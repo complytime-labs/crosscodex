@@ -145,9 +145,16 @@ type CollectRequest struct {
 	// collection, which ticks do not extend; past it the collection fails
 	// with ErrStageTimeout. It must be positive.
 	StageTimeout time.Duration
-	MaxRetries   int
-	Backoff      time.Duration
-	Dispatcher   Dispatcher
+	// SuccessTimeout (analysis.engine.success_timeout) fails the
+	// collection with a NoSuccessError once its results have been failures
+	// only, with no success, for this long, counted from the first failure
+	// after the last success, while its own failures are still arriving
+	// (the latest within Timeout). Ticks never reset it. It must be
+	// positive.
+	SuccessTimeout time.Duration
+	MaxRetries     int
+	Backoff        time.Duration
+	Dispatcher     Dispatcher
 }
 
 // CollectionHandle holds the subscription and channels for a two-phase collect operation.
@@ -162,8 +169,14 @@ type CollectionHandle struct {
 	doneChan    chan struct{}
 	pending     map[string]bool
 	mu          *sync.Mutex
-	subject     string
-	Req         CollectRequest // Exported for test mocks
+	// watch is the collection's run of failures since its last success,
+	// guarded by mu, and failed signals each failure to AwaitResults.
+	// PrepareCollect always sets both; they are nil on a handle built by a
+	// test Collector, which then gets no no-success check.
+	watch   *successWatch
+	failed  chan struct{}
+	subject string
+	Req     CollectRequest // Exported for test mocks
 
 	// CollectionID identifies this collection, and only this one, to the
 	// workers: PrepareCollect sets it to a fresh random UUID, the engine

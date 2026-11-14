@@ -36,7 +36,10 @@ func validateRequest(tenantID string, empty bool, missing string) error {
 	return nil
 }
 
-var _ llmclient.Client = (*Fake)(nil)
+var (
+	_ llmclient.Client       = (*Fake)(nil)
+	_ llmclient.ModelCatalog = (*Fake)(nil)
+)
 
 // Fake fakes llmclient.Client. Complete and Embed validate requests like the
 // real client (nil request, missing or invalid tenant ID, empty messages or
@@ -53,11 +56,14 @@ type Fake struct {
 	CompleteFunc func(ctx context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error)
 	// EmbedFunc, if set, alone decides what Embed returns.
 	EmbedFunc func(ctx context.Context, req *llmclient.EmbeddingRequest) (*llmclient.EmbeddingResponse, error)
+	// ModelCatalogFunc, if set, alone decides what ModelCatalog returns.
+	ModelCatalogFunc func(ctx context.Context) ([]llmclient.ModelDeployment, error)
 	// HealthErr is returned by every Health call.
 	HealthErr error
 
 	mu        sync.Mutex
 	completes []llmclient.CompletionRequest // deep copies, see cloneCompletion
+	catalogs  int
 }
 
 // Complete validates and records the request, then returns what CompleteFunc decides, or an
@@ -91,6 +97,26 @@ func (f *Fake) Embed(ctx context.Context, req *llmclient.EmbeddingRequest) (*llm
 		return nil, unscripted("Embed")
 	}
 	return f.EmbedFunc(ctx, req)
+}
+
+// ModelCatalog counts the call, then returns what ModelCatalogFunc decides,
+// or an ErrUnscripted error when it is unset. Script
+// llmclient.ErrModelCatalogUnsupported to fake a gateway without a catalog.
+func (f *Fake) ModelCatalog(ctx context.Context) ([]llmclient.ModelDeployment, error) {
+	f.mu.Lock()
+	f.catalogs++
+	f.mu.Unlock()
+	if f.ModelCatalogFunc == nil {
+		return nil, unscripted("ModelCatalog")
+	}
+	return f.ModelCatalogFunc(ctx)
+}
+
+// ModelCatalogCalls is how many times ModelCatalog was called.
+func (f *Fake) ModelCatalogCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.catalogs
 }
 
 // Health returns HealthErr.

@@ -111,10 +111,14 @@ func staleBaselineError(version int64, what string) error {
 var baselineColumns = []struct{ table, column string }{
 	{"jobs", "error_class"},
 	{"job_stages", "cache_attempt"},
+	{"job_stages", "panel_record"},
 	{"llm_result_cache", "cache_key"},
 	{"llm_result_cache", "producer_attempt"},
 	{"job_cache_entries", "attempt"},
 	{"job_cache_stats", "attempt"},
+	{"catalog_containers", "container_key"},
+	{"catalog_containers", "label"},
+	{"controls", "container_key"},
 }
 
 // baselineFunctionColumns are result columns of set-returning functions

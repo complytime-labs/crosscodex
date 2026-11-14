@@ -133,15 +133,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-2", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1", "t-2"},
-				Tasks:        tasks,
-				Timeout:      1 * time.Second,
-				StageTimeout: time.Hour,
-				MaxRetries:   3,
-				Backoff:      10 * time.Millisecond,
-				Dispatcher:   fakeDisp,
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1", "t-2"},
+				Tasks:          tasks,
+				Timeout:        1 * time.Second,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     3,
+				Backoff:        10 * time.Millisecond,
+				Dispatcher:     fakeDisp,
 			}
 
 			go func() {
@@ -165,15 +166,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1"},
-				Tasks:        tasks,
-				Timeout:      1 * time.Second,
-				StageTimeout: time.Hour,
-				MaxRetries:   2,
-				Backoff:      1 * time.Millisecond,
-				Dispatcher:   fakeDisp,
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1"},
+				Tasks:          tasks,
+				Timeout:        1 * time.Second,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     2,
+				Backoff:        1 * time.Millisecond,
+				Dispatcher:     fakeDisp,
 			}
 
 			go func() {
@@ -207,15 +209,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1"},
-				Tasks:        tasks,
-				Timeout:      1 * time.Second,
-				StageTimeout: time.Hour,
-				MaxRetries:   3,
-				Backoff:      1 * time.Millisecond,
-				Dispatcher:   fakeDisp,
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1"},
+				Tasks:          tasks,
+				Timeout:        1 * time.Second,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     3,
+				Backoff:        1 * time.Millisecond,
+				Dispatcher:     fakeDisp,
 			}
 
 			go func() {
@@ -245,15 +248,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1"},
-				Tasks:        tasks,
-				Timeout:      1 * time.Second,
-				StageTimeout: time.Hour,
-				MaxRetries:   2,
-				Backoff:      1 * time.Millisecond,
-				Dispatcher:   analysis.NewNATSDispatcher(dispatchBus),
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1"},
+				Tasks:          tasks,
+				Timeout:        1 * time.Second,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     2,
+				Backoff:        1 * time.Millisecond,
+				Dispatcher:     analysis.NewNATSDispatcher(dispatchBus),
 			}
 
 			go func() {
@@ -284,15 +288,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1"},
-				Tasks:        tasks,
-				Timeout:      1 * time.Second,
-				StageTimeout: time.Hour,
-				MaxRetries:   1,
-				Backoff:      1 * time.Millisecond,
-				Dispatcher:   fakeDisp,
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1"},
+				Tasks:          tasks,
+				Timeout:        1 * time.Second,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     1,
+				Backoff:        1 * time.Millisecond,
+				Dispatcher:     fakeDisp,
 			}
 
 			go func() {
@@ -319,15 +324,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-2", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1", "t-2"},
-				Tasks:        tasks,
-				Timeout:      50 * time.Millisecond,
-				StageTimeout: time.Hour,
-				MaxRetries:   3,
-				Backoff:      10 * time.Millisecond,
-				Dispatcher:   fakeDisp,
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1", "t-2"},
+				Tasks:          tasks,
+				Timeout:        50 * time.Millisecond,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     3,
+				Backoff:        10 * time.Millisecond,
+				Dispatcher:     fakeDisp,
 			}
 
 			go func() {
@@ -362,12 +368,12 @@ var _ = Describe("NATSCollector", func() {
 			}
 			busyReq := analysis.CollectRequest{
 				TaskType: natsbus.TaskRequires, JobID: "job-1", ExpectedIDs: busyIDs, Tasks: busyTasks,
-				Timeout: 500 * time.Millisecond, StageTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
+				Timeout: 500 * time.Millisecond, StageTimeout: time.Hour, SuccessTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
 			}
 			slowReq := analysis.CollectRequest{
 				TaskType: natsbus.TaskRelate, JobID: "job-1", ExpectedIDs: []string{"r-1"},
 				Tasks:   []analyzer.Task{{TaskID: "r-1", TaskType: "relate", Payload: &structpb.Struct{}}},
-				Timeout: 500 * time.Millisecond, StageTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
+				Timeout: 500 * time.Millisecond, StageTimeout: time.Hour, SuccessTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
 			}
 			busySubject, err := natsbus.ResultSubject("test-tenant", natsbus.TaskRequires, "job-1")
 			Expect(err).NotTo(HaveOccurred())
@@ -420,7 +426,7 @@ var _ = Describe("NATSCollector", func() {
 			req := analysis.CollectRequest{
 				TaskType: natsbus.TaskClassify, JobID: "job-1", ExpectedIDs: []string{"t-1"},
 				Tasks:   []analyzer.Task{{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}}},
-				Timeout: 300 * time.Millisecond, StageTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
+				Timeout: 300 * time.Millisecond, StageTimeout: time.Hour, SuccessTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
 			}
 			handle, err := collector.PrepareCollect(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
@@ -470,7 +476,7 @@ var _ = Describe("NATSCollector", func() {
 					{TaskID: "t-1", TaskType: "relate", Payload: &structpb.Struct{}},
 					{TaskID: "t-lost", TaskType: "relate", Payload: &structpb.Struct{}},
 				},
-				Timeout: 200 * time.Millisecond, StageTimeout: 600 * time.Millisecond,
+				Timeout: 200 * time.Millisecond, StageTimeout: 600 * time.Millisecond, SuccessTimeout: time.Hour,
 				MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
 			}
 			handle, err := collector.PrepareCollect(ctx, req)
@@ -513,7 +519,7 @@ var _ = Describe("NATSCollector", func() {
 				req := analysis.CollectRequest{
 					TaskType: natsbus.TaskClassify, JobID: "job-1", ExpectedIDs: []string{"t-1"},
 					Tasks:   []analyzer.Task{{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}}},
-					Timeout: time.Second, StageTimeout: stageTimeout, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
+					Timeout: time.Second, StageTimeout: stageTimeout, SuccessTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
 				}
 				handle, err := collector.PrepareCollect(ctx, req)
 				Expect(err).To(MatchError(analysis.ErrNoStageTimeout))
@@ -530,7 +536,7 @@ var _ = Describe("NATSCollector", func() {
 			req := analysis.CollectRequest{
 				TaskType: natsbus.TaskClassify, JobID: "job-1", ExpectedIDs: []string{"t-1"},
 				Tasks:   []analyzer.Task{{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}}},
-				Timeout: 1 * time.Second, StageTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
+				Timeout: 1 * time.Second, StageTimeout: time.Hour, SuccessTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
 			}
 			handle, err := collector.PrepareCollect(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
@@ -555,7 +561,7 @@ var _ = Describe("NATSCollector", func() {
 			req := analysis.CollectRequest{
 				TaskType: natsbus.TaskClassify, JobID: "job-1", ExpectedIDs: []string{"t-1"},
 				Tasks:   []analyzer.Task{{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}}},
-				Timeout: 1 * time.Second, StageTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
+				Timeout: 1 * time.Second, StageTimeout: time.Hour, SuccessTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
 			}
 			_, err := collector.PrepareCollect(ctx, req)
 			Expect(err).To(MatchError(natsbus.ErrSubscribeFailed))
@@ -577,15 +583,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-6", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1", "t-2", "t-3", "t-4", "t-5", "t-6"},
-				Tasks:        tasks,
-				Timeout:      500 * time.Millisecond,
-				StageTimeout: time.Hour,
-				MaxRetries:   3,
-				Backoff:      10 * time.Millisecond,
-				Dispatcher:   fakeDisp,
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1", "t-2", "t-3", "t-4", "t-5", "t-6"},
+				Tasks:          tasks,
+				Timeout:        500 * time.Millisecond,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     3,
+				Backoff:        10 * time.Millisecond,
+				Dispatcher:     fakeDisp,
 			}
 
 			handle, err := collector.PrepareCollect(ctx, req)
@@ -613,15 +620,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-2", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1", "t-2"},
-				Tasks:        tasks,
-				Timeout:      10 * time.Second,
-				StageTimeout: time.Hour,
-				MaxRetries:   3,
-				Backoff:      10 * time.Millisecond,
-				Dispatcher:   fakeDisp,
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1", "t-2"},
+				Tasks:          tasks,
+				Timeout:        10 * time.Second,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     3,
+				Backoff:        10 * time.Millisecond,
+				Dispatcher:     fakeDisp,
 			}
 
 			go func() {
@@ -643,7 +651,7 @@ var _ = Describe("NATSCollector", func() {
 			req := analysis.CollectRequest{
 				TaskType: natsbus.TaskClassify, JobID: "job-1", ExpectedIDs: []string{"t-1"},
 				Tasks:   []analyzer.Task{{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}}},
-				Timeout: 1 * time.Second, StageTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
+				Timeout: 1 * time.Second, StageTimeout: time.Hour, SuccessTimeout: time.Hour, MaxRetries: 3, Backoff: 10 * time.Millisecond, Dispatcher: fakeDisp,
 			}
 			handle, err := collector.PrepareCollect(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
@@ -660,15 +668,16 @@ var _ = Describe("NATSCollector", func() {
 				{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}},
 			}
 			req := analysis.CollectRequest{
-				TaskType:     natsbus.TaskClassify,
-				JobID:        "job-1",
-				ExpectedIDs:  []string{"t-1"},
-				Tasks:        tasks,
-				Timeout:      1 * time.Second,
-				StageTimeout: time.Hour,
-				MaxRetries:   3,
-				Backoff:      10 * time.Millisecond,
-				Dispatcher:   fakeDisp,
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1"},
+				Tasks:          tasks,
+				Timeout:        1 * time.Second,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     3,
+				Backoff:        10 * time.Millisecond,
+				Dispatcher:     fakeDisp,
 			}
 
 			go func() {

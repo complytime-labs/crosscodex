@@ -1,12 +1,15 @@
 package relationship
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -48,6 +51,12 @@ Before classifying, reason through these steps:
 The core test: if an organisation implements the target requirement, does that
 meaningfully contribute to satisfying the source requirement's underlying obligation?
 If the answer is no — even if the controls share language — use NO_RELATIONSHIP.
+
+Sharing a topic, keywords or a control family is not a relationship.
+Name the specific obligation both requirements share.
+Sanity-check it before answering: say what implementing the target does toward the source.
+Would an auditor accept evidence of the target as evidence toward the source?
+If you cannot name the obligation or the check fails, answer NO_RELATIONSHIP.
 
 Choosing between the overlap types:
 - CONTRIBUTES_TO: both requirements address the SAME subject matter (same type of
@@ -139,7 +148,7 @@ func (a *RelationshipAnalyzer) ResultSchema() proto.Message {
 // input is unused: the pipeline runs this candidate-dependent pass once per
 // job, so each pair's texts come from cfg.Parameters ("source_text_<id>",
 // "target_text_<id>"), as do its classification ("source_type_<id>",
-// "source_level_<id>", "source_ancestor_<id>" and the target_ equivalents).
+// "source_level_<id>", "source_context_<id>", "source_title_<id>" and the target_ equivalents).
 // A pair whose source or target text is missing or empty returns an error
 // wrapping intanalyzer.ErrMissingControlText and produces no tasks.
 func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
@@ -230,7 +239,7 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
-		// IDs, framework names, types, levels and ancestor titles are short
+		// IDs, framework names, types, levels and titles are short
 		// values: PromptValue caps each at MaxPromptValueBytes, so a catalog
 		// name cannot carry a statement-sized payload.
 		short := func(v string) string { return intanalyzer.PromptValue(v, intanalyzer.MaxPromptValueBytes) }
@@ -249,10 +258,12 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 			"target_framework": short(cfg.Parameters["target_framework_"+pair.TargetControlID]),
 			"source_type":      short(cfg.Parameters["source_type_"+pair.SourceControlID]),
 			"source_level":     short(cfg.Parameters["source_level_"+pair.SourceControlID]),
-			"source_ancestor":  short(cfg.Parameters["source_ancestor_"+pair.SourceControlID]),
+			"source_context":   intanalyzer.PromptContext(cfg.Parameters["source_context_"+pair.SourceControlID], intanalyzer.MaxPromptContextBytes),
+			"source_title":     short(cfg.Parameters["source_title_"+pair.SourceControlID]),
 			"target_type":      short(cfg.Parameters["target_type_"+pair.TargetControlID]),
 			"target_level":     short(cfg.Parameters["target_level_"+pair.TargetControlID]),
-			"target_ancestor":  short(cfg.Parameters["target_ancestor_"+pair.TargetControlID]),
+			"target_context":   intanalyzer.PromptContext(cfg.Parameters["target_context_"+pair.TargetControlID], intanalyzer.MaxPromptContextBytes),
+			"target_title":     short(cfg.Parameters["target_title_"+pair.TargetControlID]),
 		}
 
 		systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)
@@ -327,6 +338,14 @@ func (a *RelationshipAnalyzer) CacheModels() []analyzer.ModelUse {
 	return uses
 }
 
+var _ analyzer.Panelled = (*RelationshipAnalyzer)(nil)
+
+// Panel implements analyzer.Panelled: the aliases in analysis.relationship.models
+// and analysis.relationship.allow_shared_panel_models.
+func (a *RelationshipAnalyzer) Panel() analyzer.Panel {
+	return analyzer.Panel{Aliases: slices.Clone(a.cfg.Models), AllowShared: a.cfg.AllowSharedPanelModels}
+}
+
 // CacheIdentity implements analyzer.Cacheable from the task's payload,
 // whose sample_index keeps each voter's identity distinct. similarity_score
 // is not sent to the model, so it is not part of the identity.
@@ -343,7 +362,7 @@ func (a *RelationshipAnalyzer) CacheableResult(result *structpb.Struct) error {
 		return errors.New("the result has no response text")
 	}
 	if ParseResponse(raw).ParseStatus != ParseOK {
-		return errors.New("the relationship response does not parse: it names no known RELATIONSHIP")
+		return errors.New("the relationship response does not parse: it names no known RELATIONSHIP or has no SANITY_CHECK: PASS or FAIL")
 	}
 	return nil
 }
@@ -444,6 +463,7 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, taskResults []anal
 			SourceID: ids[0], TargetID: ids[1],
 			RelationshipType: c.Relationship.String(),
 			Confidence:       c.ConfidenceFraction,
+			Justifications:   winningJustifications(groups[key], c.Relationship, a.cfg.Models),
 			Properties: map[string]string{
 				results.SemanticMatchContributionTypeKey: c.ContributionType.String(),
 				results.SemanticMatchUnanimousKey:        strconv.FormatBool(c.Unanimous),
@@ -468,4 +488,29 @@ func (a *RelationshipAnalyzer) Aggregate(ctx context.Context, taskResults []anal
 		Metadata:     metadata,
 		ResultData:   resultData,
 	}, nil
+}
+
+// winningJustifications returns the justification of every valid vote for
+// rel, in panel order (models as configured, then sample number), so the
+// critique stage reads the panel's reasons for the decision it reviews. Each
+// is model output stored in jsonb, so it is cleaned with CleanText and cut to
+// MaxStoredJustificationBytes. Votes with no justification are left out.
+func winningJustifications(votes map[string]*Vote, rel RelationshipType, models []string) []string {
+	var winners []*Vote
+	for _, v := range votes {
+		if v == nil || v.ParseStatus == ParseFail || v.ParseStatus == ParseError || v.Relationship != rel {
+			continue
+		}
+		winners = append(winners, v)
+	}
+	slices.SortFunc(winners, func(a, b *Vote) int {
+		return cmp.Or(cmp.Compare(slices.Index(models, a.Model), slices.Index(models, b.Model)), cmp.Compare(a.SampleIndex, b.SampleIndex))
+	})
+	var out []string
+	for _, v := range winners {
+		if j := strings.TrimSpace(intanalyzer.CleanText(v.Justification, intanalyzer.MaxStoredJustificationBytes)); j != "" {
+			out = append(out, j)
+		}
+	}
+	return out
 }

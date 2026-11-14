@@ -1,7 +1,10 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,6 +35,12 @@ func validAnalysisConfig() config.AnalysisConfig {
 		Requires:       config.RequiresConfig{Enabled: true, Models: []string{"m"}, SamplesPerModel: 1, ConsensusThreshold: 0.5, MaxSourceChars: 100, MaxTargetChars: 100, MaxTokens: 100},
 		Artifacts:      config.ArtifactsConfig{Enabled: true, Models: []string{"m"}, SamplesPerModel: 1, MaxTokens: 100, MaxTextChars: 100, FuzzyThreshold: 0.6},
 	}
+}
+
+// critiqueConfig is an enabled critique panel that passes validation.
+func critiqueConfig() config.CritiqueConfig {
+	return config.CritiqueConfig{Enabled: true, Models: []string{"m"}, SamplesPerModel: 1, ConsensusThreshold: 0.66,
+		MaxErrorRate: 0.34, MaxSourceChars: 100, MaxTargetChars: 100, MaxTokens: 100}
 }
 
 func newProductionRegistryForTest(tp trace.TracerProvider, mp metric.MeterProvider) (*analyzer.Registry, error) {
@@ -124,6 +133,87 @@ var _ = Describe("NewProductionRegistry", func() {
 			c.Embedding.Enabled = false
 		}, `depends on "embedding"`, "analysis.embedding.enabled"),
 	)
+
+	Describe("the critique stage", func() {
+		DescribeTable("registers critique depending on exactly the enabled pair analyzers",
+			func(relationshipOn, requiresOn bool, want []string) {
+				cfg := validAnalysisConfig()
+				cfg.Relationship.Enabled, cfg.Requires.Enabled = relationshipOn, requiresOn
+				cfg.Critique = critiqueConfig()
+				reg, err := newProductionRegistryWithConfig(cfg, nil, nil)
+				Expect(err).NotTo(HaveOccurred())
+				a, err := reg.Get("critique")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(a.DependsOn()).To(ConsistOf(want))
+				dag, err := reg.BuildDAG(context.Background())
+				Expect(err).NotTo(HaveOccurred())
+				Expect(dag.Order()[len(dag.Order())-1]).To(Equal("critique"), "critique runs after the verdicts it reviews")
+			},
+			Entry("both", true, true, []string{"relationship", "requires"}),
+			Entry("relationship only", true, false, []string{"relationship"}),
+			Entry("requires only", false, true, []string{"requires"}),
+		)
+
+		It("does not register a disabled critique", func() {
+			reg, err := newProductionRegistryWithConfig(validAnalysisConfig(), nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reg.Get("critique")
+			Expect(err).To(MatchError(analyzer.ErrNotFound))
+		})
+
+		It("does not register critique with no pair analyzer to review, and says so once", func() {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			DeferCleanup(slog.SetDefault, previous)
+
+			cfg := validAnalysisConfig()
+			cfg.Relationship.Enabled, cfg.Requires.Enabled = false, false
+			cfg.Critique = critiqueConfig()
+			reg, err := newProductionRegistryWithConfig(cfg, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reg.Get("critique")
+			Expect(err).To(MatchError(analyzer.ErrNotFound))
+			Expect(strings.Count(logs.String(), "analysis.critique is enabled")).To(Equal(1))
+			Expect(logs.String()).To(ContainSubstring("level=INFO"))
+			Expect(logs.String()).To(ContainSubstring("analysis.critique is enabled but relationship and requires are both disabled, " +
+				"so critique has nothing to review and is not registered; enable a pair analyzer or set analysis.critique.enabled: false"))
+		})
+
+		It("is a panel the diversity check covers, with its own allowance", func() {
+			cfg := validAnalysisConfig()
+			cfg.Critique = critiqueConfig()
+			cfg.Critique.AllowSharedPanelModels = true
+			reg, err := newProductionRegistryWithConfig(cfg, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			a, err := reg.Get("critique")
+			Expect(err).NotTo(HaveOccurred())
+			p, ok := analyzer.AsPanelled(a)
+			Expect(ok).To(BeTrue())
+			Expect(p.Panel()).To(Equal(analyzer.Panel{Aliases: []string{"m"}, AllowShared: true}))
+		})
+
+		It("forwards the tracer provider into critique and reads the job's verdicts through the tenant connection", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(tp.Shutdown, context.Background())
+			cfg := validAnalysisConfig()
+			cfg.Critique = critiqueConfig()
+			reg, err := newProductionRegistryWithConfig(cfg, tp.TracerProvider(), tp.MeterProvider())
+			Expect(err).NotTo(HaveOccurred())
+			a, err := reg.Get("critique")
+			Expect(err).NotTo(HaveOccurred())
+
+			tasks, err := a.GenerateWorkFromProto(testspecs.SetupTenantContext("acme-corp"), &pb.Control{},
+				analyzer.AnalyzerConfig{Parameters: map[string]string{"job_id": "job-1"}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tasks).To(BeEmpty())
+			span := telemetrytest.FindSpan(tp.GetSpans(), "critique.GenerateWork")
+			Expect(span).NotTo(BeNil())
+			Expect(span.InstrumentationScope().Name).To(Equal("crosscodex/internal/analyzer/critique"))
+			Expect(telemetrytest.FindSpan(tp.GetSpans(), "pipeline.store.get_completed_analysis_results")).NotTo(BeNil())
+		})
+	})
 
 	Describe("telemetry forwarding", func() {
 		It("records a registration on the registry's own counter for each analyzer", func() {

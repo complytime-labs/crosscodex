@@ -20,7 +20,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
-	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -34,9 +33,6 @@ const (
 
 	// promptName is the name of the prompt spec in the prompt registry.
 	promptName = "classify"
-
-	// sectionClass matches oscal.ClassSection for auto-classification.
-	sectionClass = "compliance-section"
 
 	// resultTypeClassification is the result_type for AnalysisResult.
 	resultTypeClassification = "classification"
@@ -103,8 +99,8 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 
 	taskID := fmt.Sprintf("%s-%s", analyzerName, controlID)
 
-	// Section and withdrawn auto-classification: no LLM call needed.
-	if input.GetParts()["class"] == sectionClass || input.GetParts()[oscal.PropStatus] == oscal.PropStatusWithdrawn {
+	// Section, withdrawn and blank-statement auto-classification: no LLM call needed.
+	if !intanalyzer.Analysable(input) {
 		span.SetAttributes(attribute.Bool("classification.skipped", true))
 		if a.classifyCounter != nil {
 			a.classifyCounter.Add(ctx, 1, metric.WithAttributes(
@@ -153,6 +149,8 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 
 	fewShotStr := formatFewShotExamples(spec.FewShot)
 	vars := map[string]string{
+		"context":           intanalyzer.PromptContext(input.GetParts()["context"], intanalyzer.MaxPromptContextBytes),
+		"title":             intanalyzer.PromptValue(input.GetTitle(), intanalyzer.MaxPromptValueBytes),
 		"requirement":       text,
 		"few_shot_examples": fewShotStr,
 	}

@@ -20,7 +20,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
-	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -100,15 +99,15 @@ func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 		attribute.String("control.id", controlID),
 	)
 
-	// Auto-skip sections (non-leaf), withdrawn controls and controls with a blank
-	// statement.
+	// Auto-skip controls that are not Analysable: sections (non-leaf), withdrawn
+	// controls and controls with a blank statement.
 	// Blank statements are withdrawn or placeholder controls (e.g. CSF 2.0
-	// ID.BE). Without an ancestor their text is empty and the worker rejects
+	// ID.BE). Without a context their text is empty and the worker rejects
 	// the task as invalid_payload (retried 3x); with one the text is just
-	// "[ancestor]", which says nothing about the control. Candidate
+	// "[context]", which says nothing about the control. Candidate
 	// generation and coverage already exclude them, so nothing reads their
 	// vectors.
-	if input.GetParts()["class"] == oscal.ClassSection || input.GetParts()[oscal.PropStatus] == oscal.PropStatusWithdrawn || strings.TrimSpace(input.GetStatement()) == "" {
+	if !intanalyzer.Analysable(input) {
 		span.SetAttributes(attribute.Bool("embedding.skipped", true))
 		if a.embedCounter != nil {
 			a.embedCounter.Add(ctx, 1, metric.WithAttributes(
@@ -133,8 +132,7 @@ func (a *EmbeddingAnalyzer) GenerateWork(ctx context.Context, input *pb.Control,
 	}
 
 	// Prepare text for embedding.
-	ancestorTitle := input.GetParts()["ancestor_title"]
-	text := prepareText(input.GetStatement(), ancestorTitle, a.cfg.MaxChars)
+	text := prepareText(input.GetParts()["context"], input.GetTitle(), input.GetStatement(), a.cfg.MaxChars)
 	contentHash := llmclient.ContentHash(text)
 
 	// Produce one task per model.

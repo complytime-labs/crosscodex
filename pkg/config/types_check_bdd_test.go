@@ -35,6 +35,8 @@ var _ = Describe("Values of the wrong type", func() {
 			"pipeline.stage_timeout", "2:18", "into time.Duration"),
 		Entry("text for a bool", "llm:\n  gateway_mode: maybe\n",
 			"llm.gateway_mode", "2:17", "into bool"),
+		Entry("text for the critique veto switch", "analysis:\n  critique:\n    veto: sometimes\n",
+			"analysis.critique.veto", "3:11", "into bool"),
 		Entry("a value where a section belongs", "logging: debug\n",
 			"logging", "1:10", "into config.LoggingConfig"),
 		Entry("a value where a list belongs", "llm:\n  allowed_models: granite\n",
@@ -46,6 +48,16 @@ var _ = Describe("Values of the wrong type", func() {
 		Entry("a wrong type reached through a merge key", "llm:\n  tenant_overrides:\n    acme-corp: &o\n      timeout: soon\n    beta-inc:\n      <<: *o\n",
 			"llm.tenant_overrides.acme-corp.timeout", "4:16", "into int"),
 	)
+
+	It("is reported for a mapping used as a map key, such as a tenant override's name", func() {
+		// The reference resolver's own decode also rejects such a key, with an
+		// untagged yaml error, so this load carries that error too.
+		file, _, err := loadConfigFile("synthesis:\n  tenant_overrides: {{}}\n")
+		Expect(err).To(MatchError(config.ErrWrongType))
+		Expect(err).To(MatchError(ContainSubstring("synthesis.tenant_overrides at " + file + ":2:22")))
+		Expect(err).To(MatchError(ContainSubstring("into string")))
+		Expect(paths(err)).To(ConsistOf("synthesis.tenant_overrides"))
+	})
 
 	It("is reported together with invalid values and unknown keys, each once", func() {
 		_, _, err := loadConfigFile("pipeline:\n  max_concurrent_jobs: many\n  stage_timeout: soon\nlogging:\n  level: loud\nloging: {}\n")

@@ -35,8 +35,9 @@ func validConfig() *config.Config {
 		Pipeline: config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: 5 * time.Minute},
 		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10000, MaxInFlight: 1},
 		Graph:    config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges},
+		Catalog:  config.CatalogConfig{RequirementPartNames: []string{"statement"}},
 		Analysis: config.AnalysisConfig{
-			Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
+			Engine:               config.EngineConfig{TaskTimeout: 5 * time.Minute, SuccessTimeout: 5 * time.Minute, MaxRetries: 3, RetryBackoff: time.Second},
 			Classification:       config.ClassificationConfig{Enabled: true, MaxTextLength: 2000, MaxTokens: 20},
 			Embedding:            config.EmbeddingConfig{Enabled: true, Models: []string{"snowflake-arctic-embed2"}, MaxChars: 1500, BatchSize: 50},
 			Relationship:         config.RelationshipConfig{MaxSourceChars: 1500, MaxTargetChars: 800, MaxTokens: 300, SamplesPerModel: 1, SamplingTemperature: 0.3, ConfidenceWeights: config.RelationshipConfidenceWeights{High: 1.0, Medium: 0.67, Low: 0.33}},

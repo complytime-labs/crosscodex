@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
@@ -45,15 +47,16 @@ var _ catalog.Store = (*catalog.PGStore)(nil)
 // ---------------------------------------------------------------------------
 
 type mockParser struct {
-	items []oscal.ControlItem
-	err   error
+	containers []oscal.Container
+	items      []oscal.ControlItem
+	err        error
 }
 
-func (m *mockParser) Parse(_ context.Context, _ io.Reader) ([]oscal.ControlItem, error) {
+func (m *mockParser) Parse(_ context.Context, _ io.Reader) (*oscal.Tree, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return m.items, nil
+	return &oscal.Tree{Containers: m.containers, Items: m.items}, nil
 }
 
 func (m *mockParser) FindControl(items []oscal.ControlItem, controlID string) (*oscal.ControlItem, error) {
@@ -68,8 +71,8 @@ func (m *mockParser) FindControl(items []oscal.ControlItem, controlID string) (*
 type mockStore struct {
 	catalogRecords   map[string]*catalog.CatalogRecord
 	controlRecords   map[string]*catalog.ControlRecord
-	upsertCatalogFn  func(context.Context, catalog.CatalogRecord) error
-	upsertControlsFn func(context.Context, []catalog.ControlRecord) error
+	containerRecords []catalog.ContainerRecord
+	upsertErr        error // returned by UpsertCatalogWithTree before it records anything
 }
 
 func newMockStore() *mockStore {
@@ -77,14 +80,6 @@ func newMockStore() *mockStore {
 		catalogRecords: make(map[string]*catalog.CatalogRecord),
 		controlRecords: make(map[string]*catalog.ControlRecord),
 	}
-}
-
-func (m *mockStore) UpsertCatalog(ctx context.Context, cat catalog.CatalogRecord) error {
-	if m.upsertCatalogFn != nil {
-		return m.upsertCatalogFn(ctx, cat)
-	}
-	m.catalogRecords[cat.CatalogID] = &cat
-	return nil
 }
 
 func (m *mockStore) GetCatalog(_ context.Context, catalogID string) (*catalog.CatalogRecord, error) {
@@ -99,13 +94,17 @@ func (m *mockStore) ListCatalogs(_ context.Context, _ catalog.ListOptions) ([]ca
 	return nil, catalog.PageInfo{}, nil
 }
 
-func (m *mockStore) UpsertControls(ctx context.Context, controls []catalog.ControlRecord) error {
-	if m.upsertControlsFn != nil {
-		return m.upsertControlsFn(ctx, controls)
+// UpsertCatalogWithTree mirrors the store's one transaction: a set upsertErr
+// records nothing.
+func (m *mockStore) UpsertCatalogWithTree(_ context.Context, cat catalog.CatalogRecord, containers []catalog.ContainerRecord, controls []catalog.ControlRecord) error {
+	if m.upsertErr != nil {
+		return m.upsertErr
 	}
+	m.catalogRecords[cat.CatalogID] = &cat
 	for _, ctrl := range controls {
 		m.controlRecords[ctrl.ControlID] = &ctrl
 	}
+	m.containerRecords = append(m.containerRecords, containers...)
 	return nil
 }
 
@@ -151,7 +150,21 @@ var storeCtx = func() context.Context {
 }()
 
 var _ = Describe("PGStore", func() {
-	Describe("UpsertCatalog", func() {
+	Describe("UpsertCatalogWithTree", func() {
+		cat := catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant}
+
+		// ownership answers the catalog upsert with the catalog's ID and any
+		// other query (the ownership check of a container or control's
+		// catalog) with owned.
+		ownership := func(owned db.Row) func(context.Context, string, ...any) db.Row {
+			return func(_ context.Context, query string, _ ...any) db.Row {
+				if strings.Contains(query, "INSERT INTO catalogs") {
+					return dbtest.Row(nil, "cat-1")
+				}
+				return owned
+			}
+		}
+
 		It("returns error when Begin fails", func() {
 			beginErr := errors.New("connection refused")
 			conn := &dbtest.Conn{
@@ -161,9 +174,8 @@ var _ = Describe("PGStore", func() {
 			}
 			store := catalog.NewPGStore(conn)
 
-			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "test", TenantID: storeTenant})
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, beginErr)).To(BeTrue())
+			err := store.UpsertCatalogWithTree(storeCtx, cat, nil, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1", CatalogID: "cat-1"}})
+			Expect(err).To(MatchError(beginErr))
 		})
 
 		It("commits on success", func() {
@@ -174,7 +186,25 @@ var _ = Describe("PGStore", func() {
 			conn := &dbtest.Conn{Tx: tx}
 			store := catalog.NewPGStore(conn)
 
-			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
+			err := store.UpsertCatalogWithTree(storeCtx, cat, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tx.Commits()).To(Equal(1))
+		})
+
+		It("commits a catalog with its control when the catalog is the tenant's", func() {
+			tx := &dbtest.Tx{
+				QueryRowFunc: ownership(dbtest.Row(nil, 1)),
+				ExecFunc:     func(context.Context, string, ...any) error { return nil },
+			}
+			store := catalog.NewPGStore(&dbtest.Conn{Tx: tx})
+
+			ctrl := catalog.ControlRecord{
+				TenantID:  storeTenant,
+				ControlID: "ctrl-1",
+				CatalogID: "cat-1",
+				Title:     "Test Control",
+			}
+			err := store.UpsertCatalogWithTree(storeCtx, cat, nil, []catalog.ControlRecord{ctrl})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tx.Commits()).To(Equal(1))
 		})
@@ -184,12 +214,10 @@ var _ = Describe("PGStore", func() {
 			tx := &dbtest.Tx{
 				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(upsertErr) },
 			}
-			conn := &dbtest.Conn{Tx: tx}
-			store := catalog.NewPGStore(conn)
+			store := catalog.NewPGStore(&dbtest.Conn{Tx: tx})
 
-			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, upsertErr)).To(BeTrue())
+			err := store.UpsertCatalogWithTree(storeCtx, cat, nil, nil)
+			Expect(err).To(MatchError(upsertErr))
 			Expect(tx.Commits()).To(Equal(0))
 		})
 
@@ -199,12 +227,31 @@ var _ = Describe("PGStore", func() {
 			tx := &dbtest.Tx{
 				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(sql.ErrNoRows) },
 			}
-			conn := &dbtest.Conn{Tx: tx}
-			store := catalog.NewPGStore(conn)
+			store := catalog.NewPGStore(&dbtest.Conn{Tx: tx})
 
-			err := store.UpsertCatalog(storeCtx, catalog.CatalogRecord{CatalogID: "cat-1", TenantID: storeTenant})
+			err := store.UpsertCatalogWithTree(storeCtx, cat, nil, nil)
 			Expect(err).To(MatchError(ContainSubstring("belongs to another tenant")))
 			Expect(err).To(MatchError(ContainSubstring("nothing was written")))
+			Expect(tx.Commits()).To(Equal(0))
+		})
+
+		It("refuses the batch without writing a control when its catalog is not the tenant's", func() {
+			tx := &dbtest.Tx{QueryRowFunc: ownership(dbtest.Row(sql.ErrNoRows))}
+			store := catalog.NewPGStore(&dbtest.Conn{Tx: tx})
+
+			err := store.UpsertCatalogWithTree(storeCtx, cat, nil, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1", CatalogID: "foreign"}})
+			Expect(err).To(MatchError(ContainSubstring(`catalog "foreign" is not a catalog of tenant "store-unit"`)))
+			Expect(tx.Execs()).To(BeEmpty())
+			Expect(tx.Commits()).To(Equal(0))
+		})
+
+		It("refuses the batch without writing a container when its catalog is not the tenant's", func() {
+			tx := &dbtest.Tx{QueryRowFunc: ownership(dbtest.Row(sql.ErrNoRows))}
+			store := catalog.NewPGStore(&dbtest.Conn{Tx: tx})
+
+			err := store.UpsertCatalogWithTree(storeCtx, cat, []catalog.ContainerRecord{{TenantID: storeTenant, Key: "g1", CatalogID: "foreign"}}, nil)
+			Expect(err).To(MatchError(ContainSubstring(`catalog "foreign" is not a catalog of tenant "store-unit"`)))
+			Expect(tx.Execs()).To(BeEmpty())
 			Expect(tx.Commits()).To(Equal(0))
 		})
 	})
@@ -222,10 +269,10 @@ var _ = Describe("PGStore", func() {
 		DescribeTable("refuses every method when the context has no tenant",
 			func(call func(catalog.Store, context.Context) error) {
 				err := call(catalog.NewPGStore(noBegin()), context.Background())
-				Expect(errors.Is(err, tenant.ErrNoTenant)).To(BeTrue(), "got %v", err)
+				Expect(err).To(MatchError(tenant.ErrNoTenant))
 			},
-			Entry("UpsertCatalog", func(s catalog.Store, ctx context.Context) error {
-				return s.UpsertCatalog(ctx, catalog.CatalogRecord{CatalogID: "c", TenantID: storeTenant})
+			Entry("UpsertCatalogWithTree", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertCatalogWithTree(ctx, catalog.CatalogRecord{CatalogID: "c", TenantID: storeTenant}, nil, nil)
 			}),
 			Entry("GetCatalog", func(s catalog.Store, ctx context.Context) error {
 				_, err := s.GetCatalog(ctx, "c")
@@ -234,9 +281,6 @@ var _ = Describe("PGStore", func() {
 			Entry("ListCatalogs", func(s catalog.Store, ctx context.Context) error {
 				_, _, err := s.ListCatalogs(ctx, catalog.ListOptions{})
 				return err
-			}),
-			Entry("UpsertControls", func(s catalog.Store, ctx context.Context) error {
-				return s.UpsertControls(ctx, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1"}})
 			}),
 			Entry("GetControl", func(s catalog.Store, ctx context.Context) error {
 				_, err := s.GetControl(ctx, "c1")
@@ -253,79 +297,23 @@ var _ = Describe("PGStore", func() {
 				err := call(catalog.NewPGStore(noBegin()), storeCtx)
 				Expect(err).To(MatchError(ContainSubstring(`does not match the request tenant "store-unit"`)))
 			},
-			Entry("UpsertCatalog", func(s catalog.Store, ctx context.Context) error {
-				return s.UpsertCatalog(ctx, catalog.CatalogRecord{CatalogID: "c", TenantID: "other-tenant"})
+			Entry("a catalog of another tenant", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertCatalogWithTree(ctx, catalog.CatalogRecord{CatalogID: "c", TenantID: "other-tenant"}, nil, nil)
 			}),
-			Entry("UpsertCatalog with an empty tenant", func(s catalog.Store, ctx context.Context) error {
-				return s.UpsertCatalog(ctx, catalog.CatalogRecord{CatalogID: "c"})
+			Entry("a catalog with an empty tenant", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertCatalogWithTree(ctx, catalog.CatalogRecord{CatalogID: "c"}, nil, nil)
 			}),
-			Entry("UpsertControls when any record differs", func(s catalog.Store, ctx context.Context) error {
-				return s.UpsertControls(ctx, []catalog.ControlRecord{
+			Entry("a container of another tenant", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertCatalogWithTree(ctx, catalog.CatalogRecord{CatalogID: "c", TenantID: storeTenant},
+					[]catalog.ContainerRecord{{TenantID: "other-tenant", Key: "g1"}}, nil)
+			}),
+			Entry("a control when any record differs", func(s catalog.Store, ctx context.Context) error {
+				return s.UpsertCatalogWithTree(ctx, catalog.CatalogRecord{CatalogID: "c", TenantID: storeTenant}, nil, []catalog.ControlRecord{
 					{TenantID: storeTenant, ControlID: "c1"},
 					{TenantID: "other-tenant", ControlID: "c2"},
 				})
 			}),
 		)
-	})
-
-	Describe("UpsertControls", func() {
-		It("succeeds without calling Begin for empty slice", func() {
-			conn := &dbtest.Conn{
-				BeginFunc: func(context.Context) (db.Transaction, error) {
-					Fail("Begin should not be called for empty controls slice")
-					return nil, nil
-				},
-			}
-			store := catalog.NewPGStore(conn)
-
-			Expect(store.UpsertControls(storeCtx, nil)).To(Succeed())
-			Expect(store.UpsertControls(storeCtx, []catalog.ControlRecord{})).To(Succeed())
-		})
-
-		It("returns error when Begin fails", func() {
-			beginErr := errors.New("pool exhausted")
-			conn := &dbtest.Conn{
-				BeginFunc: func(context.Context) (db.Transaction, error) { return nil, beginErr },
-			}
-			store := catalog.NewPGStore(conn)
-
-			err := store.UpsertControls(storeCtx, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1"}})
-			Expect(err).To(HaveOccurred())
-			Expect(errors.Is(err, beginErr)).To(BeTrue())
-		})
-
-		It("commits on success", func() {
-			// The ownership check finds the catalog, then the upsert runs.
-			tx := &dbtest.Tx{
-				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(nil, 1) },
-				ExecFunc:     func(context.Context, string, ...any) error { return nil },
-			}
-			conn := &dbtest.Conn{Tx: tx}
-			store := catalog.NewPGStore(conn)
-
-			ctrl := catalog.ControlRecord{
-				TenantID:  storeTenant,
-				ControlID: "ctrl-1",
-				CatalogID: "cat-1",
-				Title:     "Test Control",
-			}
-			err := store.UpsertControls(storeCtx, []catalog.ControlRecord{ctrl})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(tx.Commits()).To(Equal(1))
-		})
-
-		It("refuses the batch without writing when a catalog is not the tenant's", func() {
-			tx := &dbtest.Tx{
-				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(sql.ErrNoRows) },
-			}
-			conn := &dbtest.Conn{Tx: tx}
-			store := catalog.NewPGStore(conn)
-
-			err := store.UpsertControls(storeCtx, []catalog.ControlRecord{{TenantID: storeTenant, ControlID: "c1", CatalogID: "foreign"}})
-			Expect(err).To(MatchError(ContainSubstring(`catalog "foreign" is not a catalog of tenant "store-unit"`)))
-			Expect(tx.Execs()).To(BeEmpty())
-			Expect(tx.Commits()).To(Equal(0))
-		})
 	})
 })
 
@@ -461,6 +449,213 @@ var _ = Describe("Service", func() {
 				Entry("a version", map[string]interface{}{"title": "SP 800-53", "version": "5.1.1"}, "5.1.1"),
 				Entry("none", map[string]interface{}{"title": "SP 800-53"}, ""),
 			)
+		})
+
+		Context("with two controls sharing an ID", func() {
+			It("rejects the import with an actionable message and stores nothing", func() {
+				svc = catalog.NewService(catalog.WithParser(oscal.NewParser("")), catalog.WithStore(ms), catalog.WithStorage(stg))
+				doc := `{"catalog":{"uuid":"11111111-1111-4111-8111-111111111111",` +
+					`"metadata":{"title":"t","last-modified":"2024-01-01T00:00:00Z","version":"1","oscal-version":"1.1.3"},` +
+					`"groups":[{"id":"ac","title":"Access Control","controls":[` +
+					`{"id":"ac-1","title":"One","parts":[{"name":"statement","prose":"p"}]},` +
+					`{"id":"ac-1","title":"Clash","parts":[{"name":"statement","prose":"p"}]}]}]}}`
+				Expect(stg.Put(context.Background(), "doc-3", strings.NewReader(doc))).To(Succeed())
+
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-3",
+				}))
+				Expect(err).To(HaveOccurred())
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(err.Error()).To(ContainSubstring(`duplicate control ID "ac-1"`))
+				Expect(err.Error()).To(ContainSubstring("unique"))
+				Expect(ms.catalogRecords).To(BeEmpty())
+				Expect(ms.controlRecords).To(BeEmpty())
+				Expect(ms.containerRecords).To(BeEmpty())
+			})
+		})
+
+		Context("with a group and a control sharing an ID", func() {
+			It("imports both: containers are keyed by position, not by ID", func() {
+				svc = catalog.NewService(catalog.WithParser(oscal.NewParser("")), catalog.WithStore(ms), catalog.WithStorage(stg))
+				doc := `{"catalog":{"uuid":"11111111-1111-4111-8111-111111111111",` +
+					`"metadata":{"title":"t","last-modified":"2024-01-01T00:00:00Z","version":"1","oscal-version":"1.1.3"},` +
+					`"groups":[{"id":"ac","title":"Access Control","controls":[` +
+					`{"id":"ac","title":"Same ID","parts":[{"name":"statement","prose":"p"}]}]}]}}`
+				Expect(stg.Put(context.Background(), "doc-3", strings.NewReader(doc))).To(Succeed())
+
+				resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-3",
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ms.controlRecords).To(HaveLen(1))
+				Expect(ms.containerRecords).To(ConsistOf(catalog.ContainerRecord{
+					TenantID: "tenant-1", CatalogID: resp.Msg.CatalogId, Key: "g1", Identifier: "ac", Title: "Access Control",
+				}))
+				for _, rec := range ms.controlRecords {
+					Expect(rec.ContainerKey).To(Equal("g1"))
+				}
+			})
+		})
+
+		Context("with containers but no controls", func() {
+			It("fails with the no-controls error and stores nothing", func() {
+				svc = catalog.NewService(catalog.WithParser(oscal.NewParser("")), catalog.WithStore(ms), catalog.WithStorage(stg))
+				doc := `{"catalog":{"uuid":"11111111-1111-4111-8111-111111111111",` +
+					`"metadata":{"title":"t","last-modified":"2024-01-01T00:00:00Z","version":"1","oscal-version":"1.1.3"},` +
+					`"groups":[{"id":"ac","title":"Access Control"}]}}`
+				Expect(stg.Put(context.Background(), "doc-4", strings.NewReader(doc))).To(Succeed())
+
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-4",
+				}))
+				Expect(err).To(HaveOccurred())
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(err.Error()).To(ContainSubstring(oscal.ErrNoControls.Error()))
+				Expect(ms.catalogRecords).To(BeEmpty())
+				Expect(ms.controlRecords).To(BeEmpty())
+				Expect(ms.containerRecords).To(BeEmpty())
+			})
+		})
+
+		Context("with an untitled group", func() {
+			It("rejects the catalog, says how to fix the group and stores nothing", func() {
+				svc = catalog.NewService(catalog.WithParser(oscal.NewParser("")), catalog.WithStore(ms), catalog.WithStorage(stg))
+				doc := `{"catalog":{"uuid":"11111111-1111-4111-8111-111111111111",` +
+					`"metadata":{"title":"t","last-modified":"2024-01-01T00:00:00Z","version":"1","oscal-version":"1.1.3"},` +
+					`"groups":[{"id":"default","title":"","controls":[{"id":"c1","title":"C1","parts":[{"name":"statement","prose":"p"}]}]}]}}`
+				Expect(stg.Put(context.Background(), "doc-6", strings.NewReader(doc))).To(Succeed())
+
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-6",
+				}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(err.Error()).To(ContainSubstring(`group "default" at position g1 has no title`))
+				Expect(err.Error()).To(ContainSubstring("Give the group a title"))
+				Expect(ms.catalogRecords).To(BeEmpty())
+				Expect(ms.controlRecords).To(BeEmpty())
+				Expect(ms.containerRecords).To(BeEmpty())
+			})
+		})
+
+		Context("with containers", func() {
+			It("stores them with the controls, tenant and catalog stamped", func() {
+				parser := &mockParser{
+					containers: []oscal.Container{
+						{Key: "g1", Identifier: "ac", Title: "Access Control", Label: "AC"},
+						{Key: "g1.1", Title: "Sub", ParentKey: "g1"},
+					},
+					items: []oscal.ControlItem{{ID: "ac-1", Title: "Policy", Text: "t", Class: oscal.ClassRequirement, ContainerKey: "g1.1"}},
+				}
+				svc = catalog.NewService(catalog.WithParser(parser), catalog.WithStore(ms), catalog.WithStorage(stg))
+				Expect(stg.Put(context.Background(), "doc-5", strings.NewReader(`{"catalog":{"uuid":"u"}}`))).To(Succeed())
+
+				resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-5",
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ms.containerRecords).To(Equal([]catalog.ContainerRecord{
+					{TenantID: "tenant-1", CatalogID: resp.Msg.CatalogId, Key: "g1", Identifier: "ac", Title: "Access Control", Label: "AC"},
+					{TenantID: "tenant-1", CatalogID: resp.Msg.CatalogId, Key: "g1.1", Title: "Sub", ParentKey: "g1"},
+				}))
+				Expect(ms.controlRecords).To(HaveLen(1))
+				for _, rec := range ms.controlRecords {
+					Expect(rec.ContainerKey).To(Equal("g1.1"))
+				}
+			})
+
+			It("stores nothing when the tree store fails", func() {
+				ms.upsertErr = errors.New("boom")
+				parser := &mockParser{
+					containers: []oscal.Container{{Key: "g1", Title: "G"}},
+					items:      []oscal.ControlItem{{ID: "ac-1", ContainerKey: "g1"}},
+				}
+				svc = catalog.NewService(catalog.WithParser(parser), catalog.WithStore(ms), catalog.WithStorage(stg))
+				Expect(stg.Put(context.Background(), "doc-5", strings.NewReader(`{"catalog":{"uuid":"u"}}`))).To(Succeed())
+
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-5",
+				}))
+				Expect(err).To(HaveOccurred())
+				Expect(ms.catalogRecords).To(BeEmpty(), "the catalog row is written in the same transaction as its tree")
+				Expect(ms.containerRecords).To(BeEmpty())
+				Expect(ms.controlRecords).To(BeEmpty())
+			})
+
+			It("rejects an item ID containing a slash and stores nothing", func() {
+				parser := &mockParser{items: []oscal.ControlItem{{ID: "containers/g1", Title: "T", Class: oscal.ClassRequirement}}}
+				svc = catalog.NewService(catalog.WithParser(parser), catalog.WithStore(ms), catalog.WithStorage(stg))
+				Expect(stg.Put(context.Background(), "doc-5", strings.NewReader(`{"catalog":{"uuid":"u"}}`))).To(Succeed())
+
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-5",
+				}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(err.Error()).To(ContainSubstring(`item ID "containers/g1"`))
+				Expect(err.Error()).To(ContainSubstring("re-import"))
+				Expect(ms.catalogRecords).To(BeEmpty())
+				Expect(ms.controlRecords).To(BeEmpty())
+				Expect(ms.containerRecords).To(BeEmpty())
+			})
+		})
+
+		Context("with controls that carry no requirement text", func() {
+			It("returns every one, uncapped, and counts them", func() {
+				fixture, err := os.ReadFile("../../pkg/oscal/testdata/tree/ai-rmf.json")
+				Expect(err).NotTo(HaveOccurred())
+				parsed, err := oscal.NewParser("").Parse(context.Background(), bytes.NewReader(fixture))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(parsed.Textless).NotTo(BeEmpty(), "the fixture must exercise the report")
+
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+				svc = catalog.NewService(
+					catalog.WithParser(oscal.NewParser("")), catalog.WithStore(ms), catalog.WithStorage(stg),
+					catalog.WithMeter(tp.MeterProvider().Meter("test")),
+				)
+				Expect(stg.Put(context.Background(), "doc-1", bytes.NewReader(fixture))).To(Succeed())
+
+				resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-1",
+				}))
+				Expect(err).NotTo(HaveOccurred())
+
+				got := resp.Msg.GetTextlessControls()
+				Expect(got).To(HaveLen(len(parsed.Textless)))
+				for i, want := range parsed.Textless {
+					Expect(got[i].GetIdentifier()).To(Equal(want.Identifier))
+					Expect(got[i].GetPartNames()).To(Equal(want.PartNames))
+				}
+
+				counter, err := telemetrytest.CounterValue(telemetrytest.FindMetric(tp.GetMetrics(), "crosscodex.catalog.textless_controls"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(counter).To(BeEquivalentTo(len(parsed.Textless)))
+			})
+
+			It("reports none for a catalog whose controls all have text", func() {
+				svc = catalog.NewService(
+					catalog.WithParser(&mockParser{items: []oscal.ControlItem{
+						{ID: "ac-1", Title: "Access Control Policy", Text: "Develop policy", Class: oscal.ClassRequirement},
+					}}),
+					catalog.WithStore(ms), catalog.WithStorage(stg),
+				)
+				Expect(stg.Put(context.Background(), "doc-1", bytes.NewReader([]byte(`{"catalog":{"uuid":"u"}}`)))).To(Succeed())
+
+				resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-1",
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Msg.GetTextlessControls()).To(BeEmpty())
+			})
 		})
 
 		Context("with non-OSCAL document", func() {
@@ -647,36 +842,48 @@ var _ = Describe("isOSCALJSON", func() {
 	)
 })
 
-var _ = Describe("validateItems", func() {
-	DescribeTable("validates control items",
-		func(items []oscal.ControlItem, shouldErr bool) {
-			err := catalog.ExportValidateItems(items)
-			if shouldErr {
-				Expect(err).To(HaveOccurred())
-			} else {
-				Expect(err).NotTo(HaveOccurred())
-			}
+var _ = Describe("validateTree", func() {
+	valid := func() *oscal.Tree {
+		return &oscal.Tree{
+			Containers: []oscal.Container{{Key: "g1", Identifier: "ac"}, {Key: "g1.1", ParentKey: "g1"}},
+			Items: []oscal.ControlItem{
+				{ID: "ac-1", ContainerKey: "g1.1"},
+				{ID: "ac-1.a", ParentID: "ac-1", ContainerKey: "g1.1"},
+			},
+		}
+	}
+
+	It("accepts a well-formed tree", func() {
+		Expect(catalog.ExportValidateTree(valid())).To(Succeed())
+	})
+
+	It("accepts a flat tree", func() {
+		Expect(catalog.ExportValidateTree(&oscal.Tree{Items: []oscal.ControlItem{{ID: "ac-1"}}})).To(Succeed())
+	})
+
+	DescribeTable("rejects an invalid tree, naming the offender and the fix",
+		func(mutate func(*oscal.Tree), wantOffender string) {
+			tree := valid()
+			mutate(tree)
+			err := catalog.ExportValidateTree(tree)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(wantOffender))
+			Expect(err.Error()).To(ContainSubstring("re-import"))
 		},
-		Entry("valid items",
-			[]oscal.ControlItem{
-				{ID: "ac-1", ParentID: ""},
-				{ID: "ac-2", ParentID: "ac-1"},
-			},
-			false,
-		),
-		Entry("duplicate ID",
-			[]oscal.ControlItem{
-				{ID: "ac-1", ParentID: ""},
-				{ID: "ac-1", ParentID: ""},
-			},
-			true,
-		),
-		Entry("self-referential parent",
-			[]oscal.ControlItem{
-				{ID: "ac-1", ParentID: "ac-1"},
-			},
-			true,
-		),
+		Entry("duplicate item ID",
+			func(t *oscal.Tree) { t.Items = append(t.Items, oscal.ControlItem{ID: "ac-1"}) }, `duplicate control ID "ac-1"`),
+		Entry("duplicate container key",
+			func(t *oscal.Tree) { t.Containers = append(t.Containers, oscal.Container{Key: "g1"}) }, `duplicate container key "g1"`),
+		Entry("unknown item parent",
+			func(t *oscal.Tree) { t.Items[1].ParentID = "nope" }, `unknown parent "nope"`),
+		Entry("unknown container key",
+			func(t *oscal.Tree) { t.Items[0].ContainerKey = "g9" }, `unknown container "g9"`),
+		Entry("unknown container parent key",
+			func(t *oscal.Tree) { t.Containers[1].ParentKey = "g7" }, `unknown parent container "g7"`),
+		Entry("self-referential item parent",
+			func(t *oscal.Tree) { t.Items[0].ParentID = "ac-1" }, `item "ac-1" names itself`),
+		Entry("self-referential container parent",
+			func(t *oscal.Tree) { t.Containers[0].ParentKey = "g1" }, `container "g1" names itself`),
 	)
 })
 

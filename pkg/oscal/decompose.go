@@ -3,6 +3,7 @@ package oscal
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	oscalTypes "github.com/defenseunicorns/go-oscal/src/types/oscal-1-1-3"
@@ -27,124 +28,90 @@ var (
 	tierUppercase = regexp.MustCompile(`(?m)^\s*([A-Z])\.\s+(.+)$`)
 )
 
-// DecomposeStatements breaks an OSCAL control with statement items into
-// parent (ClassSection) + children (ClassRequirement).
+// DefaultRequirementPartNames is the requirement part name list used when the
+// parser is given none: the OSCAL "statement" part. Callers must not mutate
+// it; copy it to derive another list.
+var DefaultRequirementPartNames = []string{"statement"}
+
+// DecomposeStatements turns an OSCAL control into its control row and one row
+// per part of its requirement part.
 //
-// Logic:
-//  1. Find the "statement" part (part where Name == "statement")
-//  2. If no statement or no items within it → return single ControlItem with ClassRequirement
-//  3. Collect "item" parts from within the statement
-//  4. Create parent ControlItem: original control with ClassSection, prose = statement's top-level prose only
-//  5. For each item part:
-//     - If the item has its own sub-items → item becomes ClassSection, sub-items become ClassRequirement
-//     - If no sub-items → item becomes ClassRequirement
-//  6. ID derivation: strip `_smt` or `_stmt` suffix from part ID (e.g., `ac-2_smt.a` → `ac-2.a`)
-//  7. Fallback ID: `{controlID}.{index}` when part ID doesn't follow the pattern
+// The requirement part is found by findRequirementPart: for each name in
+// requirementParts, in order, the first direct child part of the control with
+// that name whose subtree holds non-blank prose. No other part (guidance,
+// overview, ...) contributes text, so a control without a requirement part
+// gets a single ClassRequirement row with blank text.
 //
-// Parent-child linkage: children set `ParentID` to parent's ID and have `Props["parent-id"]` set.
-func DecomposeStatements(ctrl oscalTypes.Control, groupID string, params map[string]string) []ControlItem {
-	controlID := ctrl.ID
-	title := ctrl.Title
-
-	// Find the statement part
-	statement := findStatement(ctrl)
-	if statement == nil {
-		// No statement part → return single item with ClassRequirement
-		return []ControlItem{{
-			ID:      controlID,
-			Title:   title,
-			Text:    CleanProse(extractControlProse(ctrl), params),
-			Class:   ClassRequirement,
-			GroupID: groupID,
-			Props:   make(map[string]string),
-		}}
-	}
-
-	// Collect item parts from within the statement
-	items := collectItems(*statement)
-	if len(items) == 0 {
-		// Statement exists but has no items → return single item with ClassRequirement
-		return []ControlItem{{
-			ID:      controlID,
-			Title:   title,
-			Text:    CleanProse(statement.Prose, params),
-			Class:   ClassRequirement,
-			GroupID: groupID,
-			Props:   make(map[string]string),
-		}}
-	}
-
-	// Create parent ControlItem with ClassSection
-	parent := ControlItem{
-		ID:      controlID,
-		Title:   title,
-		Text:    CleanProse(statement.Prose, params),
-		Class:   ClassSection,
+// When the requirement part has no child parts, the control is a single
+// ClassRequirement row carrying the part's prose. Otherwise every child part,
+// whatever its name, is walked to any depth. The control row and each part row
+// with children is a ClassSection, its prose a lead-in, unless that prose is
+// not blank while every part below it is blank: then it is a ClassRequirement
+// carrying the prose (isSection). A leaf is a ClassRequirement row. Each row's
+// ID is derived from its part ID against its parent row's ID
+// (deriveChildID); it records Props "parent-id" and "source-part" and the
+// part's published label and sort-id. Parts decoded from JSON are a finite
+// tree, so the walk terminates without a depth bound.
+func DecomposeStatements(ctrl oscalTypes.Control, groupID string, params map[string]string, requirementParts []string) []ControlItem {
+	control := ControlItem{
+		ID:      ctrl.ID,
+		Title:   ctrl.Title,
+		Class:   ClassRequirement,
 		GroupID: groupID,
 		Props:   make(map[string]string),
 	}
+	setPublishedProps(control.Props, ctrl.Props)
 
-	result := []ControlItem{parent}
+	req := findRequirementPart(ctrl, requirementParts)
+	if req == nil {
+		return []ControlItem{control}
+	}
+	control.Text = CleanProse(req.Prose, params)
+	if req.Parts == nil || len(*req.Parts) == 0 {
+		return []ControlItem{control}
+	}
+	if isSection(control.Text, *req.Parts) {
+		control.Class = ClassSection
+	}
+	return appendPartRows([]ControlItem{control}, ctrl.ID, *req.Parts, groupID, params)
+}
 
-	// Process each item
-	for idx, item := range items {
-		childID := deriveChildID(controlID, item, idx)
-
-		// Check if item has sub-items
-		subItems := collectItems(item)
-
-		if len(subItems) > 0 {
-			// Item has sub-items → item becomes ClassSection
-			itemSection := ControlItem{
-				ID:       childID,
-				Title:    "", // Items don't have titles
-				Text:     CleanProse(item.Prose, params),
-				Class:    ClassSection,
-				ParentID: controlID,
-				GroupID:  groupID,
-				Props: map[string]string{
-					"parent-id":   controlID,
-					"source-part": item.ID,
-				},
-			}
-			result = append(result, itemSection)
-
-			// Process sub-items as ClassRequirement
-			for subIdx, subItem := range subItems {
-				subChildID := deriveChildID(childID, subItem, subIdx)
-				subRequirement := ControlItem{
-					ID:       subChildID,
-					Title:    "",
-					Text:     CleanProse(subItem.Prose, params),
-					Class:    ClassRequirement,
-					ParentID: childID,
-					GroupID:  groupID,
-					Props: map[string]string{
-						"parent-id":   childID,
-						"source-part": subItem.ID,
-					},
-				}
-				result = append(result, subRequirement)
-			}
-		} else {
-			// No sub-items → item becomes ClassRequirement
-			itemRequirement := ControlItem{
-				ID:       childID,
-				Title:    "",
-				Text:     CleanProse(item.Prose, params),
-				Class:    ClassRequirement,
-				ParentID: controlID,
-				GroupID:  groupID,
-				Props: map[string]string{
-					"parent-id":   controlID,
-					"source-part": item.ID,
-				},
-			}
-			result = append(result, itemRequirement)
+// appendPartRows appends a row for each part, in document order, each followed
+// by the rows of its own child parts.
+func appendPartRows(rows []ControlItem, parentID string, parts []oscalTypes.Part, groupID string, params map[string]string) []ControlItem {
+	for idx, part := range parts {
+		hasChildren := part.Parts != nil && len(*part.Parts) > 0
+		text := CleanProse(part.Prose, params)
+		row := ControlItem{
+			ID:       deriveChildID(parentID, part, idx),
+			Text:     text,
+			Class:    ClassRequirement,
+			ParentID: parentID,
+			GroupID:  groupID,
+			Props: map[string]string{
+				"parent-id":   parentID,
+				"source-part": part.ID,
+			},
+		}
+		if hasChildren && isSection(text, *part.Parts) {
+			row.Class = ClassSection
+		}
+		setPublishedProps(row.Props, part.Props)
+		rows = append(rows, row)
+		if hasChildren {
+			rows = appendPartRows(rows, row.ID, *part.Parts, groupID, params)
 		}
 	}
+	return rows
+}
 
-	return result
+// isSection reports whether a row with the given prose and child parts is a
+// section: its prose only leads in to requirement text below it. A row whose
+// prose is not blank but whose children hold none is itself the requirement;
+// were it a section, analysis would skip its prose and nothing would report
+// it.
+func isSection(text string, children []oscalTypes.Part) bool {
+	return strings.TrimSpace(text) == "" || slices.ContainsFunc(children, hasProse)
 }
 
 // DecomposeText applies a 5-tier regex cascade to split unstructured text into sub-requirements.
@@ -301,31 +268,55 @@ func extractItems(text string, pattern *regexp.Regexp, minWords int) []extracted
 	return items
 }
 
-// findStatement finds the statement part within a control.
-func findStatement(ctrl oscalTypes.Control) *oscalTypes.Part {
+// findRequirementPart returns the control's requirement part: for each name in
+// order, the first direct child part with that name whose subtree has prose.
+// It returns nil when no name yields one.
+func findRequirementPart(ctrl oscalTypes.Control, names []string) *oscalTypes.Part {
 	if ctrl.Parts == nil {
 		return nil
 	}
-	for _, part := range *ctrl.Parts {
-		if part.Name == "statement" {
-			return &part
+	for _, name := range names {
+		for i := range *ctrl.Parts {
+			part := &(*ctrl.Parts)[i]
+			if part.Name == name && hasProse(*part) {
+				return part
+			}
 		}
 	}
 	return nil
 }
 
-// collectItems collects parts with Name=="item" from a given part.
-func collectItems(part oscalTypes.Part) []oscalTypes.Part {
-	if part.Parts == nil {
-		return nil
+// hasProse reports whether the part or any part below it has non-blank prose.
+func hasProse(part oscalTypes.Part) bool {
+	if strings.TrimSpace(part.Prose) != "" {
+		return true
 	}
-	var items []oscalTypes.Part
-	for _, p := range *part.Parts {
-		if p.Name == "item" {
-			items = append(items, p)
+	if part.Parts == nil {
+		return false
+	}
+	for _, child := range *part.Parts {
+		if hasProse(child) {
+			return true
 		}
 	}
-	return items
+	return false
+}
+
+// prosePartNames returns the sorted, deduplicated names of the control's
+// direct child parts whose subtree has prose. Unnamed parts are skipped: a
+// blank name cannot be configured as a requirement part name.
+func prosePartNames(ctrl oscalTypes.Control) []string {
+	if ctrl.Parts == nil {
+		return nil
+	}
+	var names []string
+	for _, part := range *ctrl.Parts {
+		if part.Name != "" && hasProse(part) {
+			names = append(names, part.Name)
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
 }
 
 // deriveChildID derives a child ID by stripping _smt/_stmt suffix from part ID.
@@ -337,47 +328,33 @@ func collectItems(part oscalTypes.Part) []oscalTypes.Part {
 //   - ac-2.a → ac-2.a (no suffix to strip)
 //   - empty → {parentID}.{index}
 func deriveChildID(parentID string, part oscalTypes.Part, index int) string {
-	partID := part.ID
-	if partID == "" {
-		return fmt.Sprintf("%s.%d", parentID, index+1)
+	if id, ok := idFromPartID(parentID, part.ID); ok {
+		return id
 	}
+	return fmt.Sprintf("%s.%d", parentID, index+1)
+}
 
-	// Try to strip _smt or _stmt suffix
+// idFromPartID derives a child ID from the part's own ID, stripping a _smt or
+// _stmt suffix or keeping an ID that already extends parentID. ok is false
+// when the part ID is empty or follows neither pattern, and the caller must
+// number the part by position instead.
+func idFromPartID(parentID, partID string) (id string, ok bool) {
+	if partID == "" {
+		return "", false
+	}
 	if strings.Contains(partID, "_smt.") {
-		return strings.Replace(partID, "_smt.", ".", 1)
+		return strings.Replace(partID, "_smt.", ".", 1), true
 	}
 	if strings.Contains(partID, "_stmt.") {
-		return strings.Replace(partID, "_stmt.", ".", 1)
+		return strings.Replace(partID, "_stmt.", ".", 1), true
 	}
-
-	// Check if it already looks like a derived ID (has a dot after parent)
 	if strings.HasPrefix(partID, parentID+".") {
-		return partID
+		return partID, true
 	}
-
-	// Fallback: use index
-	return fmt.Sprintf("%s.%d", parentID, index+1)
+	return "", false
 }
 
 // wordCount counts words in a string using strings.Fields.
 func wordCount(s string) int {
 	return len(strings.Fields(s))
-}
-
-// extractControlProse extracts prose from a control's parts (fallback for controls without statement).
-func extractControlProse(ctrl oscalTypes.Control) string {
-	if ctrl.Parts == nil || len(*ctrl.Parts) == 0 {
-		return ""
-	}
-
-	var prose strings.Builder
-	for _, part := range *ctrl.Parts {
-		if part.Prose != "" {
-			if prose.Len() > 0 {
-				prose.WriteString("\n\n")
-			}
-			prose.WriteString(part.Prose)
-		}
-	}
-	return prose.String()
 }

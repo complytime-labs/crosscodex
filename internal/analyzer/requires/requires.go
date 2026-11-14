@@ -1,13 +1,16 @@
 package requires
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -49,32 +52,35 @@ Before classifying, reason through these steps:
 
 The core test: if an organisation has NOT implemented the target control, is
 the source control impossible or significantly impaired to implement? If yes,
-the target is a prerequisite. If the source can stand alone, use NO_DEPENDENCY.
+the target is a prerequisite. If the source can stand alone, answer NO.
 
-Choosing between dependency types:
-- REQUIRES: the source control cannot be meaningfully implemented or assessed
+Sharing a topic, keywords or a control family is not a dependency.
+Name the specific obligation the source cannot meet without the target.
+Sanity-check it before answering.
+Would an auditor agree the source is impaired without the target?
+If you cannot name the obligation or the check fails, answer NO.
+
+Choosing the answer:
+- YES: the source control cannot be meaningfully implemented or assessed
   without the target control already being in place. The target is a hard
   operational prerequisite.
   Test: "If the target were removed, would the source become unimplementable
-  or fundamentally incomplete?" If YES -> REQUIRES.
-- BENEFITS_FROM: the target control improves or strengthens the source, but
-  the source can still be implemented without it. The target is a soft
-  dependency.
+  or fundamentally incomplete?" If YES -> answer YES.
+- NO: the target may improve or strengthen the source, but the source can still
+  be implemented without it. A target that only helps, where the source still
+  works without it, is NO. Controls that share vocabulary or sit in the same
+  domain but can be implemented independently are also NO.
   Test: "Would the source be weakened but still functional without the target?"
-  If YES -> BENEFITS_FROM.
-- NO_DEPENDENCY: no operational prerequisite relationship exists. The controls
-  may share vocabulary or be in the same domain but can be implemented
-  independently.`
+  If YES -> answer NO.`
 
 // dependencyDefinitions is the static dependency type definitions text.
-const dependencyDefinitions = `Dependency Definitions:
-REQUIRES: Hard prerequisite. The source control cannot be meaningfully
+const dependencyDefinitions = `Answer Definitions:
+YES: Hard prerequisite. The source control cannot be meaningfully
   implemented or assessed without the target already in place. Removing the
   target makes the source unimplementable or fundamentally incomplete.
-BENEFITS_FROM: Soft dependency. The target strengthens or improves the source
-  implementation, but the source remains functional without it.
-NO_DEPENDENCY: No operational prerequisite. Controls can be implemented
-  independently regardless of shared vocabulary or domain adjacency.`
+NO: No operational prerequisite. The target may strengthen or improve the
+  source, but the source remains functional without it; controls can be
+  implemented independently regardless of shared vocabulary or domain adjacency.`
 
 // RequiresAnalyzer classifies prerequisite dependency relationships between
 // pairs of compliance controls using multi-sample LLM panel voting.
@@ -135,7 +141,7 @@ func (a *RequiresAnalyzer) ResultSchema() proto.Message {
 // input is unused: the pipeline runs this candidate-dependent pass once per
 // job, so each pair's texts come from cfg.Parameters ("source_text_<id>",
 // "target_text_<id>"), as do its classification ("source_type_<id>",
-// "source_level_<id>", "source_ancestor_<id>" and the target_ equivalents).
+// "source_level_<id>", "source_context_<id>", "source_title_<id>" and the target_ equivalents).
 // A pair whose source or target text is missing or empty returns an error
 // wrapping intanalyzer.ErrMissingControlText and produces no tasks.
 func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, cfg analyzer.AnalyzerConfig) ([]analyzer.Task, error) {
@@ -226,7 +232,7 @@ func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
 		}
-		// IDs, framework names, types, levels and ancestor titles are short
+		// IDs, framework names, types, levels and titles are short
 		// values: PromptValue caps each at MaxPromptValueBytes, so a catalog
 		// name cannot carry a statement-sized payload.
 		short := func(v string) string { return intanalyzer.PromptValue(v, intanalyzer.MaxPromptValueBytes) }
@@ -245,10 +251,12 @@ func (a *RequiresAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 			"target_framework": short(cfg.Parameters["target_framework_"+pair.TargetControlID]),
 			"source_type":      short(cfg.Parameters["source_type_"+pair.SourceControlID]),
 			"source_level":     short(cfg.Parameters["source_level_"+pair.SourceControlID]),
-			"source_ancestor":  short(cfg.Parameters["source_ancestor_"+pair.SourceControlID]),
+			"source_context":   intanalyzer.PromptContext(cfg.Parameters["source_context_"+pair.SourceControlID], intanalyzer.MaxPromptContextBytes),
+			"source_title":     short(cfg.Parameters["source_title_"+pair.SourceControlID]),
 			"target_type":      short(cfg.Parameters["target_type_"+pair.TargetControlID]),
 			"target_level":     short(cfg.Parameters["target_level_"+pair.TargetControlID]),
-			"target_ancestor":  short(cfg.Parameters["target_ancestor_"+pair.TargetControlID]),
+			"target_context":   intanalyzer.PromptContext(cfg.Parameters["target_context_"+pair.TargetControlID], intanalyzer.MaxPromptContextBytes),
+			"target_title":     short(cfg.Parameters["target_title_"+pair.TargetControlID]),
 		}
 
 		systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)
@@ -323,6 +331,14 @@ func (a *RequiresAnalyzer) CacheModels() []analyzer.ModelUse {
 	return uses
 }
 
+var _ analyzer.Panelled = (*RequiresAnalyzer)(nil)
+
+// Panel implements analyzer.Panelled: the aliases in analysis.requires.models
+// and analysis.requires.allow_shared_panel_models.
+func (a *RequiresAnalyzer) Panel() analyzer.Panel {
+	return analyzer.Panel{Aliases: slices.Clone(a.cfg.Models), AllowShared: a.cfg.AllowSharedPanelModels}
+}
+
 // CacheIdentity implements analyzer.Cacheable from the task's payload,
 // whose sample_index keeps each voter's identity distinct. aggregate_score
 // is not sent to the model, so it is not part of the identity.
@@ -339,7 +355,7 @@ func (a *RequiresAnalyzer) CacheableResult(result *structpb.Struct) error {
 		return errors.New("the result has no response text")
 	}
 	if ParseResponse("", raw).Decision == nil {
-		return errors.New("the requires response does not parse: it has no REQUIRES: YES or NO decision")
+		return errors.New("the requires response does not parse: it has no REQUIRES: YES or NO decision or no SANITY_CHECK: PASS or FAIL")
 	}
 	return nil
 }
@@ -402,6 +418,7 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 	type pairGroup struct {
 		source, target string
 		votes          []consensus.Vote
+		positions      []panelPosition // votes[i]'s place in the panel
 		models         map[string]bool
 	}
 	groups := make(map[string]*pairGroup)
@@ -411,7 +428,7 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 		if r.Error != nil {
 			continue
 		}
-		source, target, model, _, ok := intanalyzer.ParsePairTaskID(r.TaskID, analyzerName, a.cfg.Models)
+		source, target, model, sample, ok := intanalyzer.ParsePairTaskID(r.TaskID, analyzerName, a.cfg.Models)
 		if !ok {
 			continue
 		}
@@ -427,6 +444,7 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 			order = append(order, key)
 		}
 		g.votes = append(g.votes, ParseResponse(r.TaskID, raw))
+		g.positions = append(g.positions, panelPosition{model: slices.Index(a.cfg.Models, model), sample: sample})
 		g.models[model] = true
 	}
 
@@ -458,6 +476,7 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 			SourceID: g.source, TargetID: g.target,
 			Confidence: res.ConfidenceFraction, Unanimous: res.Unanimous,
 			ValidVotes: res.ValidVoteCount, TotalVotes: res.TotalVoteCount, Models: models,
+			Justifications: yesJustifications(g.votes, g.positions),
 		})
 	}
 
@@ -476,4 +495,33 @@ func (a *RequiresAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 		Metadata:     metadata,
 		ResultData:   resultData,
 	}, nil
+}
+
+// panelPosition is a vote's place in the panel: its model's index in
+// analysis.requires.models and its sample number.
+type panelPosition struct{ model, sample int }
+
+// yesJustifications returns the justification of every valid YES vote in
+// panel order (models as configured, then sample number), so the critique
+// stage reads the panel's reasons for the edge it reviews. positions[i] is
+// votes[i]'s place. Each justification is model output stored in jsonb, so
+// it is cleaned with CleanText and cut to MaxStoredJustificationBytes. Votes
+// with no justification are left out.
+func yesJustifications(votes []consensus.Vote, positions []panelPosition) []string {
+	order := make([]int, 0, len(votes))
+	for i, v := range votes {
+		if v.Decision != nil && *v.Decision {
+			order = append(order, i)
+		}
+	}
+	slices.SortFunc(order, func(a, b int) int {
+		return cmp.Or(cmp.Compare(positions[a].model, positions[b].model), cmp.Compare(positions[a].sample, positions[b].sample))
+	})
+	var out []string
+	for _, i := range order {
+		if j := strings.TrimSpace(intanalyzer.CleanText(votes[i].Justification, intanalyzer.MaxStoredJustificationBytes)); j != "" {
+			out = append(out, j)
+		}
+	}
+	return out
 }

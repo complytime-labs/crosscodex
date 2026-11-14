@@ -77,13 +77,16 @@ func startSharedTestNATS(t GinkgoTInterface) string {
 // validRelationshipTypes), which can never legally contain "requires" --
 // requires-derived rows are counted as actionable unconditionally by
 // synthesis.NewAssessor (see internal/synthesis.ConsensusRequires), not via
-// this list.
+// this list. Every analyzer runs on the one e2eModel alias, so the relationship
+// and requires panels are declared single-model (AllowSharedPanelModels):
+// the daemon wires the panel diversity check, which refuses a one-alias panel.
 func e2eAnalysisConfig() config.AnalysisConfig {
 	return config.AnalysisConfig{
 		Engine: config.EngineConfig{
-			TaskTimeout:  2 * time.Minute,
-			MaxRetries:   2,
-			RetryBackoff: time.Second,
+			TaskTimeout:    2 * time.Minute,
+			SuccessTimeout: 10 * time.Minute,
+			MaxRetries:     2,
+			RetryBackoff:   time.Second,
 		},
 		Classification: config.ClassificationConfig{
 			Enabled: true, Model: e2eModel, MaxTextLength: 10000, Temperature: 0, MaxTokens: 512,
@@ -95,7 +98,8 @@ func e2eAnalysisConfig() config.AnalysisConfig {
 			Enabled: true, Models: []string{e2eModel},
 			MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512,
 			SamplesPerModel: 1, SamplingTemperature: 0,
-			ConfidenceWeights: config.RelationshipConfidenceWeights{High: 1.0, Medium: 0.67, Low: 0.33},
+			ConfidenceWeights:      config.RelationshipConfidenceWeights{High: 1.0, Medium: 0.67, Low: 0.33},
+			AllowSharedPanelModels: true,
 		},
 		Candidates: config.CandidateConfig{
 			Generators:           []config.CandidateGeneratorEntry{{Name: "semantic", Enabled: true, Weight: 1.0}},
@@ -107,6 +111,7 @@ func e2eAnalysisConfig() config.AnalysisConfig {
 			Enabled: true, Models: []string{e2eModel}, SamplesPerModel: 1,
 			ConsensusThreshold: 0.5, MaxErrorRate: 0.5,
 			MaxSourceChars: 10000, MaxTargetChars: 10000, MaxTokens: 512, SamplingTemperature: 0,
+			AllowSharedPanelModels: true,
 		},
 		Artifacts: config.ArtifactsConfig{
 			Enabled: true, Models: []string{e2eModel}, SamplesPerModel: 1,

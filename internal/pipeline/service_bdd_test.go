@@ -96,7 +96,7 @@ func startStuckClassifyJob(ctx context.Context, store pipeline.Store, tenantID, 
 	bus := &natsbustest.Fake{}
 	dispatcher := &executorTestDispatcher{}
 	eng := analysis.New(reg, dispatcher, analysis.NewNATSCollector(bus),
-		config.EngineConfig{TaskTimeout: time.Hour, RetryBackoff: time.Millisecond},
+		config.EngineConfig{TaskTimeout: time.Hour, SuccessTimeout: time.Hour, RetryBackoff: time.Millisecond},
 		map[string]natsbus.TaskType{"classify": natsbus.TaskClassify},
 		analysis.WithStageTimeout(time.Hour),
 		analysis.WithStageReporter(pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)))
@@ -1803,6 +1803,8 @@ var _ = Describe("Service", func() {
 			Entry("a model probe that failed", fmt.Errorf("x: %w", pipeline.ErrLLMUnavailable), pipeline.JobErrorLLMUnavailable),
 			Entry("a stage whose model gave no answer within max_tokens",
 				&analysis.StageError{Sentinel: llmclient.ErrOutputTruncated, Message: "no answer"}, pipeline.JobErrorLLMOutputTruncated),
+			Entry("a stage that got no successful LLM result within success_timeout",
+				&analysis.StageError{Sentinel: analysis.ErrNoSuccessfulResult, Message: "no success"}, pipeline.JobErrorLLMUnavailable),
 			Entry("a model probe stage error, by its class alone",
 				&analysis.StageError{Sentinel: pipeline.ErrLLMUnavailable, Cause: resultcache.ErrCorrupt}, pipeline.JobErrorLLMUnavailable),
 			Entry("an unreadable cache and a corrupt one in two analyzers, by the class a retry cannot fix",

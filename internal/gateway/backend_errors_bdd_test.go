@@ -248,6 +248,18 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 				ListJobMappings(ctx, connect.NewRequest(&pb.ListJobMappingsRequest{JobId: "job-1"}))
 			return e
 		})),
+		Entry("ListJobCandidates", "ListJobCandidates", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
+			_, e := newService(gateway.WithCandidatesBackend(&mockCandidates{err: err})).
+				ListJobCandidates(ctx, connect.NewRequest(&pb.ListJobCandidatesRequest{JobId: "job-1"}))
+			return e
+		})),
+		Entry("GetCrosswalk", "GetCrosswalk", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
+			_, e := newService(gateway.WithCrosswalkBackend(&mockCrosswalk{err: err})).
+				GetCrosswalk(ctx, connect.NewRequest(&pb.GetCrosswalkRequest{
+					Mode: &pb.GetCrosswalkRequest_Pair{Pair: &pb.CrosswalkPair{CatalogA: "cat-a", CatalogB: "cat-b"}},
+				}))
+			return e
+		})),
 		Entry("GetControlMappings", "GetControlMappings", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
 			_, e := newService(gateway.WithMappingsBackend(&mockMappings{err: err})).
 				GetControlMappings(ctx, connect.NewRequest(&pb.GetControlMappingsRequest{ControlId: "ac-1"}))

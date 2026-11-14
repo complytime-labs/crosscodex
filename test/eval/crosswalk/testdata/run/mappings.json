@@ -1,0 +1,9 @@
+{
+  "job_id": "job-synth",
+  "analysis": {"sourceCatalog": {"catalogId": "cat-src", "name": "Source A"}, "targetCatalog": {"catalogId": "cat-tgt", "name": "Synthetic"}, "bidirectional": false},
+  "mappings": [
+    {"mappingId": "m1", "sourceControlId": "cat-src/s-1", "targetControlId": "cat-tgt/ab-2", "relationshipType": "RELATIONSHIP_TYPE_EQUIVALENT", "confidence": 0.75, "contributions": []},
+    {"mappingId": "m2", "sourceControlId": "cat-src/s-2", "targetControlId": "cat-tgt/ab-2", "relationshipType": "RELATIONSHIP_TYPE_SUBSET_OF", "confidence": 0.5, "contributions": []},
+    {"mappingId": "m3", "sourceControlId": "cat-src/s-1", "targetControlId": "cat-tgt/cd-1", "relationshipType": "RELATIONSHIP_TYPE_NO_RELATIONSHIP", "confidence": 0.9, "contributions": []}
+  ]
+}

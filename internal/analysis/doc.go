@@ -35,6 +35,35 @@
 // external synchronization — the Engine itself holds no mutable shared
 // state, but the underlying DAG construction is not goroutine-safe.
 //
+// # Dispatch Order
+//
+// The Engine dispatches a stage's tasks grouped by the model alias each
+// payload names, in the analyzer's panel order (analyzer.Panelled), then
+// any other model in first-seen order, keeping generated order within a
+// model. Workers consume the queue in order, and a model server that loads
+// models on demand pays a model swap whenever consecutive tasks name
+// different models; analyzers generate a panel's tasks per pair or control,
+// every model in turn, so the generated order swaps on nearly every task.
+// Only the queue order changes: the collection expects the same tasks, and
+// results are collected in arrival order as before.
+//
+// Two orders are not grouped. Retries are redispatched one at a time by the
+// Collector, after a backoff, as each failure arrives, so there is no batch
+// to order. Stages at the same DAG level run concurrently and share the
+// worker queue, so their tasks still interleave; each stage's own tasks are
+// grouped, but the queue as a whole is not.
+//
+// Grouping changes one stage outcome, deliberately. A panel model that fails
+// every call now returns its failures back to back, with no success from the
+// other models in between, so once they have run for SuccessTimeout (see Stall
+// Detection below) the stage fails with that model's error class
+// (llm_unavailable, or llm_output_truncated) and its advice. Interleaved,
+// the other models' successes kept resetting the window and max_error_rate
+// absorbed the failing third, so the stage finished silently on a two-model
+// panel. A panel member failing every call is a configuration fault: fix or
+// remove that model, or raise analysis.engine.success_timeout. A model whose
+// failures are intermittent among its own successes does not trip it.
+//
 // # Error Handling
 //
 // Three layers: per-task retry (exponential backoff with jitter), per-analyzer
@@ -66,10 +95,31 @@
 // at most until that cap. A collection without a positive StageTimeout is
 // refused with ErrNoStageTimeout.
 //
+// Error results reset the idle timer too, and so do the ticks they cause, so
+// a stage whose every LLM call fails (the model gateway is down) would grind
+// through its tasks until the stage cap. CollectRequest.SuccessTimeout
+// (analysis.engine.success_timeout) stops it: once the collection's results
+// have been failures only, with no success, for SuccessTimeout, counted from
+// the first failure after its last success, while its own failures are still
+// arriving (the latest within Timeout), it fails with a NoSuccessError
+// (ErrNoSuccessfulResult). The engine fails the stage with a StageError of
+// that class, which the pipeline classifies as llm_unavailable, or, when the
+// last failure was a truncated answer, with the llmclient.ErrOutputTruncated
+// stage error and its advice. Every error result counts, retried or not;
+// ticks and other collections' results never reset it. A collection whose
+// own results stop, starved behind another's queue or silent, is left to
+// Timeout and StageTimeout. A failure more than Timeout after the previous
+// one restarts the window, so a resumed collection trips only after a full
+// window of failures arriving again. A
+// collection without a positive SuccessTimeout is refused with
+// ErrNoSuccessTimeout. Because a stage is dispatched grouped by model (see
+// Dispatch Order), one panel model failing every call meets this window
+// with no other model's success in between, and fails the stage.
+//
 // # Abandoned Collections
 //
 // A collection that ends without every expected result (ErrTaskTimeout,
-// ErrStageTimeout, a cancelled context, which is how CancelJob reaches a
+// ErrStageTimeout, ErrNoSuccessfulResult, a cancelled context, which is how CancelJob reaches a
 // running stage, or a failed Dispatch) leaves tasks queued on the worker
 // pool whose results nobody will read, and each one is a billed LLM call.
 // The collection then publishes exactly one tenant-scoped control message on

@@ -1,0 +1,52 @@
+{
+  "catalog": {
+    "uuid": "33333333-3333-4333-8333-333333333333",
+    "metadata": {
+      "title": "Source with statement items",
+      "last-modified": "2026-01-01T00:00:00Z",
+      "version": "1",
+      "oscal-version": "1.1.3"
+    },
+    "controls": [
+      {
+        "id": "s-1",
+        "title": "Items with the _smt part-ID pattern",
+        "parts": [
+          {
+            "id": "s-1_smt",
+            "name": "statement",
+            "parts": [
+              {"id": "s-1_smt.a", "name": "item", "prose": "Item a."},
+              {"id": "s-1_smt.b", "name": "item", "prose": "Item b."}
+            ]
+          }
+        ]
+      },
+      {
+        "id": "s-2",
+        "title": "Items whose part IDs do not follow the pattern (numbered by the importer)",
+        "parts": [
+          {
+            "id": "s-2_stmtx",
+            "name": "statement",
+            "parts": [
+              {"id": "p1", "name": "item", "prose": "First."},
+              {"id": "p2", "name": "item", "prose": "Second."}
+            ]
+          }
+        ]
+      },
+      {
+        "id": "s-9",
+        "title": "Not a profile control",
+        "parts": [
+          {
+            "id": "s-9_smt",
+            "name": "statement",
+            "parts": [{"id": "s-9_smt.a", "name": "item", "prose": "Item a."}]
+          }
+        ]
+      }
+    ]
+  }
+}

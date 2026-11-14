@@ -88,6 +88,17 @@ testcases:
         assertions:
           - result.count ShouldEqual "3"
 
+  - name: Container nodes materialized in AGE
+    steps:
+      - type: age-count
+        ca_cert: "{{.ca_cert}}"
+        client_cert: "{{.client_cert}}"
+        client_key: "{{.client_key}}"
+        cypher: "MATCH (n:Container) RETURN n"
+        expected: "1"
+        assertions:
+          - result.count ShouldEqual "1"
+
   - name: PARENT_OF edges materialized in AGE
     steps:
       - type: age-count
@@ -95,6 +106,6 @@ testcases:
         client_cert: "{{.client_cert}}"
         client_key: "{{.client_key}}"
         cypher: "MATCH ()-[r:PARENT_OF]->() RETURN r"
-        expected: "2"
+        expected: "3"
         assertions:
-          - result.count ShouldEqual "2"
+          - result.count ShouldEqual "3"

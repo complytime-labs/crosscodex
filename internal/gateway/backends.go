@@ -44,6 +44,22 @@ type MappingsBackend interface {
 	ListMappings(ctx context.Context, req *connect.Request[pb.ListJobMappingsRequest]) (*connect.Response[pb.ListJobMappingsResponse], error)
 }
 
+// CandidatesBackend lists a job's relationship candidates from the stored
+// pipeline results. The gateway sets the request's tenant_context from the
+// authenticated identity before calling it.
+type CandidatesBackend interface {
+	ListCandidates(ctx context.Context, req *connect.Request[pb.ListJobCandidatesRequest]) (*connect.Response[pb.ListJobCandidatesResponse], error)
+}
+
+// CrosswalkBackend walks the graph for a crosswalk. The gateway has already
+// validated the request, resolved the catalogs and selected the tenant's
+// completed jobs (the request's jobs and catalogs fields), and set
+// tenant_context from the authenticated identity; the backend lists only edges
+// of those jobs.
+type CrosswalkBackend interface {
+	GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetCrosswalkRequest]) (*connect.Response[pb.GetCrosswalkResponse], error)
+}
+
 // TenantStatusChecker reports whether a tenant may make requests. The auth
 // interceptor refuses every non-health request from a tenant it reports
 // inactive (suspended or not provisioned).

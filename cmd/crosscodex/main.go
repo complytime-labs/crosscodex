@@ -130,6 +130,7 @@ Get started:
 	addTo("analysis", newCatalogCmd(state))
 	addTo("analysis", newRunCmd(state))
 	addTo("analysis", newResultsCmd(state))
+	addTo("analysis", newCrosswalkCmd(state))
 	addTo("prompt", newPromptCmd(state))
 	addTo("additional", newAdminCmd(state))
 	addTo("additional", newVersionCmd(state))

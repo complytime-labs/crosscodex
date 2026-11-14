@@ -60,6 +60,8 @@ var _ = Describe("catalog tenant foreign keys", Ordered, func() {
 	inserts := map[string]string{
 		"controls": `INSERT INTO controls (tenant_id, control_id, catalog_id, identifier)
 			VALUES ($1, 'catfk-1', $2, 'catfk-1')`,
+		"catalog_containers": `INSERT INTO catalog_containers (tenant_id, catalog_id, container_key)
+			VALUES ($1, $2, 'g1')`,
 		"embeddings": `INSERT INTO embeddings (tenant_id, catalog_id, control_id, model, vector)
 			VALUES ($1, $2, 'catfk-1', 'm', '[1,2]')`,
 		"classifications": `INSERT INTO classifications (tenant_id, catalog_id, control_id, type, level)
@@ -80,6 +82,7 @@ var _ = Describe("catalog tenant foreign keys", Ordered, func() {
 			Expect(n).To(BeZero(), "the refused insert must leave %s unchanged", table)
 		},
 		Entry("controls", "controls"),
+		Entry("catalog_containers", "catalog_containers"),
 		Entry("embeddings", "embeddings"),
 		Entry("classifications", "classifications"),
 	)
@@ -89,6 +92,7 @@ var _ = Describe("catalog tenant foreign keys", Ordered, func() {
 			Expect(insertRolledBack(inserts[table], tenantA, catalogA)).To(Succeed())
 		},
 		Entry("controls", "controls"),
+		Entry("catalog_containers", "catalog_containers"),
 		Entry("embeddings", "embeddings"),
 		Entry("classifications", "classifications"),
 	)
@@ -110,6 +114,7 @@ var _ = Describe("catalog tenant foreign keys", Ordered, func() {
 			}))
 		},
 		Entry("controls", "controls"),
+		Entry("catalog_containers", "catalog_containers"),
 		Entry("embeddings", "embeddings"),
 		Entry("classifications", "classifications"),
 	)

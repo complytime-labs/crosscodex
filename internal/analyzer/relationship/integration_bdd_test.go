@@ -27,9 +27,9 @@ var _ = Describe("Parser to Consensus Integration", func() {
 	Context("multi-model panel with unanimous SUPERSET_OF", func() {
 		It("produces unanimous consensus with full confidence", func() {
 			responses := []string{
-				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Source encompasses target.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Broader scope in source.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Target is a subset of source.\nCONFIDENCE: MEDIUM",
+				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Source encompasses target.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Broader scope in source.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Target is a subset of source.\nSANITY_CHECK: PASS\nCONFIDENCE: MEDIUM",
 			}
 			models := []string{"model-a", "model-b", "model-c"}
 
@@ -55,9 +55,9 @@ var _ = Describe("Parser to Consensus Integration", func() {
 	Context("split vote produces plurality winner with correct confidence", func() {
 		It("selects CONTRIBUTES_TO with INTEGRAL_TO from 2-of-3 majority", func() {
 			responses := []string{
-				"RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nJUSTIFICATION: Integral dependency.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nJUSTIFICATION: Cannot satisfy source without target.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: PARTIAL\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Only tangential overlap.\nCONFIDENCE: MEDIUM",
+				"RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nJUSTIFICATION: Integral dependency.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: CONTRIBUTES_TO\nCONTRIBUTION_TYPE: INTEGRAL_TO\nJUSTIFICATION: Cannot satisfy source without target.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: PARTIAL\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Only tangential overlap.\nSANITY_CHECK: PASS\nCONFIDENCE: MEDIUM",
 			}
 			models := []string{"model-a", "model-b", "model-c"}
 
@@ -81,10 +81,10 @@ var _ = Describe("Parser to Consensus Integration", func() {
 	Context("mixed valid and garbage responses", func() {
 		It("excludes garbage from valid votes and selects plurality winner", func() {
 			responses := []string{
-				"RELATIONSHIP: EQUIVALENT\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Same scope.\nCONFIDENCE: HIGH",
-				"RELATIONSHIP: EQUIVALENT\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Identical intent.\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: EQUIVALENT\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Same scope.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: EQUIVALENT\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Identical intent.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
 				"I don't know how to classify this relationship.",
-				"RELATIONSHIP: NO_RELATIONSHIP\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Different domains.\nCONFIDENCE: LOW",
+				"RELATIONSHIP: NO_RELATIONSHIP\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Different domains.\nSANITY_CHECK: PASS\nCONFIDENCE: LOW",
 			}
 			models := []string{"model-a", "model-b", "model-c", "model-d"}
 
@@ -159,7 +159,7 @@ var _ = Describe("Full Pipeline Flow", func() {
 
 			// Simulate LLM response — all respond SUPERSET_OF.
 			rawResponse := fmt.Sprintf(
-				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Source %s encompasses target %s.\nCONFIDENCE: HIGH",
+				"RELATIONSHIP: SUPERSET_OF\nCONTRIBUTION_TYPE: N/A\nJUSTIFICATION: Source %s encompasses target %s.\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH",
 				srcID, tgtID,
 			)
 
@@ -258,7 +258,7 @@ var _ = Describe("Aggregate with Realistic Data", func() {
 			Version: "1.0.0",
 			Templates: prompt.TemplateSet{
 				System: "System: ${classification_guidance} ${relationship_definitions}",
-				User:   "User: ${source_text} ${target_text} ${source_id} ${target_id} ${source_framework} ${target_framework} ${source_type} ${source_level} ${source_ancestor} ${target_type} ${target_level} ${target_ancestor} ${few_shot_examples}",
+				User:   "User: ${source_text} ${target_text} ${source_id} ${target_id} ${source_framework} ${target_framework} ${source_type} ${source_level} ${source_context} ${source_title} ${target_type} ${target_level} ${target_context} ${target_title} ${few_shot_examples}",
 			},
 		})
 
@@ -372,10 +372,12 @@ var _ = Describe("Prompt Template Validation", func() {
 				"target_framework":         "NIST-800-53",
 				"source_type":              "Technical",
 				"source_level":             "Tactical",
-				"source_ancestor":          "Access Control",
+				"source_context":           "Access Control",
+				"source_title":             "T-source",
 				"target_type":              "Technical",
 				"target_level":             "Tactical",
-				"target_ancestor":          "Access Control",
+				"target_context":           "Access Control",
+				"target_title":             "T-target",
 			}
 
 			systemRendered, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)
@@ -399,30 +401,37 @@ var _ = Describe("Prompt Template Validation", func() {
 	})
 
 	Context("few-shot examples cover relationship types", func() {
-		It("covers all actionable relationship types (NO_RELATIONSHIP intentionally omitted)", func() {
+		It("covers six actionable types and shows a failed sanity check answering NO_RELATIONSHIP", func() {
 			spec, err := reg.Resolve(ctx, "relationship")
 			Expect(err).NotTo(HaveOccurred())
 
 			typeSet := make(map[string]bool)
+			downgraded := false
 			for _, example := range spec.FewShot {
 				vote := relationship.ParseResponse(example.Output)
 				if vote.ParseStatus == relationship.ParseOK {
 					typeSet[vote.Relationship.String()] = true
 				}
+				if strings.Contains(example.Output, "SANITY_CHECK: FAIL") {
+					Expect(vote.Relationship.String()).To(Equal("NO_RELATIONSHIP"), "a failed sanity check answers NO_RELATIONSHIP")
+					downgraded = true
+				}
 			}
 
-			// The few-shot examples cover 7 of 8 types. NO_RELATIONSHIP is
-			// intentionally omitted — it is the default/fallback and does not
-			// need a positive example to teach the model.
+			// The sceptical prompt (relationship.yaml 1.3.0) replaced its
+			// PARTIAL example with one whose sanity check fails and answers
+			// NO_RELATIONSHIP; the other six actionable types each keep a
+			// positive example.
 			expectedTypes := []string{
 				"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF", "CONTRIBUTES_TO",
-				"COMPLEMENTS", "PARTIAL", "CONFLICTS_WITH",
+				"COMPLEMENTS", "CONFLICTS_WITH", "NO_RELATIONSHIP",
 			}
 			for _, rt := range expectedTypes {
 				Expect(typeSet).To(HaveKey(rt),
 					fmt.Sprintf("missing relationship type in few-shot examples: %s", rt))
 			}
 			Expect(typeSet).To(HaveLen(7))
+			Expect(downgraded).To(BeTrue(), "no example with a failed sanity check")
 		})
 	})
 })

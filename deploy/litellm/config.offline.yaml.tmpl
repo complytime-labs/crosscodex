@@ -6,9 +6,12 @@
 # For the default local run api_base becomes http://ollama:11434/v1 (the
 # overlay's compose-network service name); a remote OLLAMA_HOST is used directly.
 #
-# This mirrors the production deploy/litellm/config.yaml aliases (default +
-# embed) so the daemon requests the same model names, but routes them to a
+# This mirrors the production deploy/litellm/config.yaml aliases (default,
+# panel-1..3 + embed) so the daemon requests the same model names, but routes them to a
 # local Ollama instead of OpenAI — the smoke test needs no real API key.
+# panel-1..3 all map to the chat model unless OLLAMA_PANEL_MODELS lists three
+# names, so with the default the daemon needs allow_shared_panel_models (set by
+# deploy/compose.offline.yaml).
 #
 # Uses the openai/ provider prefix (not ollama/) so LiteLLM routes through the
 # httpx OpenAI client over plain HTTP; Ollama's /v1 endpoint is OpenAI-compatible.
@@ -20,6 +23,21 @@ model_list:
   - model_name: default
     litellm_params:
       model: openai/OLLAMA_CHAT_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+  - model_name: panel-1
+    litellm_params:
+      model: openai/OLLAMA_PANEL_1_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+  - model_name: panel-2
+    litellm_params:
+      model: openai/OLLAMA_PANEL_2_MODEL
+      api_base: OLLAMA_API_BASE
+      api_key: "sk-unused"
+  - model_name: panel-3
+    litellm_params:
+      model: openai/OLLAMA_PANEL_3_MODEL
       api_base: OLLAMA_API_BASE
       api_key: "sk-unused"
   - model_name: embed

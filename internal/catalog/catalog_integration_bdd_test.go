@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -18,11 +19,15 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"connectrpc.com/connect"
+
+	crosscodexv1 "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -141,6 +146,15 @@ func setupCatalog(conn *sql.DB, tenantID, catalogID, name string) {
 	Expect(tx.Commit()).To(Succeed(), "commit")
 }
 
+// catalogRecord returns a minimal catalog record for specs that only need a
+// catalog to hold the controls they import.
+func catalogRecord(tenantID, catalogID, name string) catalog.CatalogRecord {
+	return catalog.CatalogRecord{
+		CatalogID: catalogID, TenantID: tenantID, Name: name,
+		Version: "1.0", SourceType: "oscal", ObjectPath: "test", CreatedAt: time.Now().UTC(),
+	}
+}
+
 // ftsControl returns a plain compliance-requirement control, ID'd
 // "<catalogID>/<identifier>", for the full-text-search specs.
 func ftsControl(tenantID, catalogID, identifier, title, statement string) catalog.ControlRecord {
@@ -160,6 +174,12 @@ type twoTenants struct {
 	tenantA, tenantB   string
 	catalogA, catalogB string
 	controlA, controlB string
+}
+
+// catalogRecordA is the record of tenant A's seeded catalog, for specs that
+// import into it.
+func (s twoTenants) catalogRecordA() catalog.CatalogRecord {
+	return catalogRecord(s.tenantA, s.catalogA, "Alpha Scoped")
 }
 
 func (s twoTenants) ctx(tenantID string) context.Context {
@@ -199,7 +219,7 @@ func seedTwoTenants() twoTenants {
 
 // catalogDeletingConn deletes catalogID through the owner pool just before
 // the first controls insert of each transaction it begins, so a spec can
-// land a concurrent catalog delete between UpsertControls' ownership check
+// land a concurrent catalog delete between a control's catalog ownership check
 // and its insert.
 type catalogDeletingConn struct {
 	db.Connection
@@ -290,14 +310,13 @@ var _ = Describe("PGStore Integration", func() {
 		})
 	})
 
-	Describe("UpsertControls", func() {
+	Describe("UpsertCatalogWithTree controls", func() {
 		It("inserts controls with JSONB props and verifies persistence", func() {
 			tenantID := "ctrl-test-alpha"
 			catalogID := fmt.Sprintf("ctrl-cat-%d", time.Now().UnixNano())
 
 			setupTenant(tenantID, "Control Alpha")
 			rawConn := appUserConn()
-			setupCatalog(rawConn, tenantID, catalogID, "Control Test Catalog")
 
 			controls := []catalog.ControlRecord{
 				{
@@ -327,7 +346,7 @@ var _ = Describe("PGStore Integration", func() {
 			store := catalog.NewPGStore(conn)
 			ctx, err := tenant.WithTenant(context.Background(), tenantID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.UpsertControls(ctx, controls)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, catalogRecord(tenantID, catalogID, "Control Test Catalog"), nil, controls)).To(Succeed())
 
 			execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
 				var count int
@@ -355,7 +374,6 @@ var _ = Describe("PGStore Integration", func() {
 
 			setupTenant(tenantID, "Upsert Test")
 			rawConn := appUserConn()
-			setupCatalog(rawConn, tenantID, catalogID, "Upsert Catalog")
 
 			conn := tenantConn()
 			store := catalog.NewPGStore(conn)
@@ -370,7 +388,8 @@ var _ = Describe("PGStore Integration", func() {
 				Class: "compliance-requirement", Props: map[string]string{},
 				CreatedAt: time.Now().UTC(),
 			}}
-			Expect(store.UpsertControls(ctx, initial)).To(Succeed())
+			rec := catalogRecord(tenantID, catalogID, "Upsert Catalog")
+			Expect(store.UpsertCatalogWithTree(ctx, rec, nil, initial)).To(Succeed())
 
 			updated := []catalog.ControlRecord{{
 				TenantID: tenantID, ControlID: controlID,
@@ -379,7 +398,7 @@ var _ = Describe("PGStore Integration", func() {
 				Class: "compliance-requirement", Props: map[string]string{"version": "2"},
 				CreatedAt: time.Now().UTC(),
 			}}
-			Expect(store.UpsertControls(ctx, updated)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, rec, nil, updated)).To(Succeed())
 
 			execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
 				var title, statement string
@@ -412,7 +431,6 @@ var _ = Describe("PGStore Integration", func() {
 			catalogID = fmt.Sprintf("fts-cat-%d", time.Now().UnixNano())
 			setupTenant(tenantID, "FTS Test")
 			rawConn = appUserConn()
-			setupCatalog(rawConn, tenantID, catalogID, "FTS Catalog")
 
 			controls := []catalog.ControlRecord{
 				ftsControl(tenantID, catalogID, "ac-1", "Access Control Policy", "Develop, document, and disseminate an access control policy."),
@@ -424,7 +442,7 @@ var _ = Describe("PGStore Integration", func() {
 			store := catalog.NewPGStore(conn)
 			ctx, err := tenant.WithTenant(context.Background(), tenantID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.UpsertControls(ctx, controls)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, catalogRecord(tenantID, catalogID, "FTS Catalog"), nil, controls)).To(Succeed())
 		})
 
 		It("ranks 'access control' with ac-1 highest", func() {
@@ -587,25 +605,25 @@ var _ = Describe("PGStore Integration", func() {
 				store := catalog.NewPGStore(newConn())
 				ctx := s.ctx(s.tenantA)
 
-				err := store.UpsertCatalog(ctx, catalog.CatalogRecord{
+				err := store.UpsertCatalogWithTree(ctx, catalog.CatalogRecord{
 					CatalogID: s.catalogB, TenantID: s.tenantA, Name: "hijacked",
 					Version: "9", SourceType: "oscal", ObjectPath: "x", CreatedAt: time.Now().UTC(),
-				})
+				}, nil, nil)
 				Expect(err).To(MatchError(ContainSubstring("belongs to another tenant")))
 
-				err = store.UpsertCatalog(ctx, catalog.CatalogRecord{
+				err = store.UpsertCatalogWithTree(ctx, catalog.CatalogRecord{
 					CatalogID: "scope-foreign-" + s.tenantB, TenantID: s.tenantB, Name: "foreign",
 					Version: "1", SourceType: "oscal", ObjectPath: "x", CreatedAt: time.Now().UTC(),
-				})
+				}, nil, nil)
 				Expect(err).To(MatchError(ContainSubstring("does not match the request tenant")))
 
-				err = store.UpsertControls(ctx, []catalog.ControlRecord{{
+				err = store.UpsertCatalogWithTree(ctx, s.catalogRecordA(), nil, []catalog.ControlRecord{{
 					TenantID: s.tenantB, ControlID: s.controlB, CatalogID: s.catalogB,
 					Identifier: "sc-1", Title: "hijacked", Statement: "hijacked", CreatedAt: time.Now().UTC(),
 				}})
 				Expect(err).To(MatchError(ContainSubstring("does not match the request tenant")))
 
-				err = store.UpsertControls(ctx, []catalog.ControlRecord{{
+				err = store.UpsertCatalogWithTree(ctx, s.catalogRecordA(), nil, []catalog.ControlRecord{{
 					TenantID: s.tenantA, ControlID: s.controlA, CatalogID: s.catalogB,
 					Identifier: "sc-1", Title: "moved", Statement: "moved", CreatedAt: time.Now().UTC(),
 				}})
@@ -630,7 +648,7 @@ var _ = Describe("PGStore Integration", func() {
 			Entry("app_user tenant pool", tenantConn),
 		)
 
-		It("refuses controls whose catalog is deleted after the ownership check", func() {
+		It("refuses controls whose other catalog is deleted after the ownership check", func() {
 			n := time.Now().UnixNano()
 			tenantID, catalogID := fmt.Sprintf("scope-race-%d", n), fmt.Sprintf("scope-race-cat-%d", n)
 			setupTenant(tenantID, "Race Scoped")
@@ -640,8 +658,11 @@ var _ = Describe("PGStore Integration", func() {
 			ctx, err := tenant.WithTenant(context.Background(), tenantID)
 			Expect(err).NotTo(HaveOccurred())
 
+			// The imported catalog is written in the same transaction, so a delete
+			// of it would wait on that transaction's row lock; the race is a
+			// control naming another catalog of the tenant.
 			store := catalog.NewPGStore(catalogDeletingConn{Connection: suPool, catalogID: catalogID})
-			err = store.UpsertControls(ctx, []catalog.ControlRecord{{
+			err = store.UpsertCatalogWithTree(ctx, catalogRecord(tenantID, catalogID+"-import", "import"), nil, []catalog.ControlRecord{{
 				TenantID: tenantID, ControlID: catalogID + "/sc-1", CatalogID: catalogID,
 				Identifier: "sc-1", Title: "raced", Statement: "raced", CreatedAt: time.Now().UTC(),
 			}})
@@ -656,14 +677,236 @@ var _ = Describe("PGStore Integration", func() {
 		})
 	})
 
+	Describe("UpsertCatalogWithTree", func() {
+		container := func(tenantID, catalogID, key, identifier, title, parentKey string) catalog.ContainerRecord {
+			return catalog.ContainerRecord{
+				TenantID: tenantID, CatalogID: catalogID, Key: key,
+				Identifier: identifier, Title: title, ParentKey: parentKey,
+			}
+		}
+		// tree is a two-level group tree with a grouped and an ungrouped control.
+		tree := func(s twoTenants) ([]catalog.ContainerRecord, []catalog.ControlRecord) {
+			grouped := ftsControl(s.tenantA, s.catalogA, "tree-1", "Grouped", "Grouped statement.")
+			grouped.ContainerKey = "g1.1"
+			loose := ftsControl(s.tenantA, s.catalogA, "tree-2", "Loose", "Loose statement.")
+			return []catalog.ContainerRecord{
+				container(s.tenantA, s.catalogA, "g1", "ac", "Access Control", ""),
+				container(s.tenantA, s.catalogA, "g1.1", "", "Untagged Child", "g1"),
+			}, []catalog.ControlRecord{grouped, loose}
+		}
+		count := func(table, tenantID string) int {
+			var n int
+			Expect(suPool.QueryRow(context.Background(),
+				fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE tenant_id = $1", table), tenantID).Scan(&n)).To(Succeed())
+			return n
+		}
+
+		It("stores containers and controls, and re-running it leaves the row counts unchanged", func() {
+			s := seedTwoTenants()
+			store := catalog.NewPGStore(tenantConn())
+			containers, controls := tree(s)
+
+			Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, controls)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, controls)).To(Succeed())
+
+			Expect(count("catalog_containers", s.tenantA)).To(Equal(2))
+			Expect(count("controls", s.tenantA)).To(Equal(3), "the two tree controls plus the seeded one")
+
+			var identifier, title string
+			var parent *string
+			Expect(suPool.QueryRow(context.Background(),
+				"SELECT identifier, title, parent_key FROM catalog_containers WHERE tenant_id = $1 AND catalog_id = $2 AND container_key = 'g1.1'",
+				s.tenantA, s.catalogA).Scan(&identifier, &title, &parent)).To(Succeed())
+			Expect(identifier).To(BeEmpty())
+			Expect(title).To(Equal("Untagged Child"))
+			Expect(parent).To(HaveValue(Equal("g1")))
+
+			got, err := store.GetControl(s.ctx(s.tenantA), s.catalogA+"/tree-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.ContainerKey).To(Equal("g1.1"))
+			got, err = store.GetControl(s.ctx(s.tenantA), s.catalogA+"/tree-2")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.ContainerKey).To(BeEmpty(), "an ungrouped control reads back with no container key")
+		})
+
+		It("updates a container's title on re-import", func() {
+			s := seedTwoTenants()
+			store := catalog.NewPGStore(tenantConn())
+			containers, controls := tree(s)
+			Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, controls)).To(Succeed())
+
+			containers[0].Title = "Renamed"
+			Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, controls)).To(Succeed())
+
+			var title string
+			Expect(suPool.QueryRow(context.Background(),
+				"SELECT title FROM catalog_containers WHERE tenant_id = $1 AND container_key = 'g1'", s.tenantA).Scan(&title)).To(Succeed())
+			Expect(title).To(Equal("Renamed"))
+		})
+
+		It("accepts containers without controls", func() {
+			s := seedTwoTenants()
+			store := catalog.NewPGStore(tenantConn())
+			containers, _ := tree(s)
+			Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, nil)).To(Succeed())
+			Expect(count("catalog_containers", s.tenantA)).To(Equal(2))
+		})
+
+		DescribeTable("refuses a batch that reaches another tenant or catalog and stores nothing",
+			func(mutate func(s twoTenants, containers []catalog.ContainerRecord, controls []catalog.ControlRecord), wantErr string) {
+				s := seedTwoTenants()
+				store := catalog.NewPGStore(tenantConn())
+				containers, controls := tree(s)
+				mutate(s, containers, controls)
+
+				err := store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, controls)
+				Expect(err).To(MatchError(ContainSubstring(wantErr)))
+				Expect(count("catalog_containers", s.tenantA)).To(BeZero())
+				Expect(count("catalog_containers", s.tenantB)).To(BeZero())
+				Expect(count("controls", s.tenantA)).To(Equal(1), "only the seeded control remains")
+			},
+			Entry("a container of another tenant",
+				func(s twoTenants, containers []catalog.ContainerRecord, _ []catalog.ControlRecord) {
+					containers[1].TenantID = s.tenantB
+				}, "does not match the request tenant"),
+			Entry("a container in a catalog of another tenant",
+				func(s twoTenants, containers []catalog.ContainerRecord, _ []catalog.ControlRecord) {
+					containers[1].CatalogID = s.catalogB
+				}, "is not a catalog of tenant"),
+			Entry("a control in a catalog of another tenant",
+				func(s twoTenants, _ []catalog.ContainerRecord, controls []catalog.ControlRecord) {
+					controls[1].CatalogID = s.catalogB
+				}, "is not a catalog of tenant"),
+		)
+
+		Describe("importing a new catalog", func() {
+			newCatalog := func(s twoTenants, name string) catalog.CatalogRecord {
+				return catalog.CatalogRecord{
+					CatalogID: "import-" + s.tenantA, TenantID: s.tenantA, Name: name,
+					Version: "1", SourceType: "oscal", ObjectPath: "x", CreatedAt: time.Now().UTC(),
+				}
+			}
+			// importTree is tree(s) moved onto the catalog newCatalog creates.
+			importTree := func(s twoTenants) ([]catalog.ContainerRecord, []catalog.ControlRecord) {
+				containers, controls := tree(s)
+				catalogID := "import-" + s.tenantA
+				for i := range containers {
+					containers[i].CatalogID = catalogID
+				}
+				for i := range controls {
+					controls[i].CatalogID = catalogID
+					controls[i].ControlID = catalogID + "/" + controls[i].Identifier
+				}
+				return containers, controls
+			}
+			catalogName := func(catalogID string) (string, bool) {
+				var name string
+				err := suPool.QueryRow(context.Background(), "SELECT name FROM catalogs WHERE catalog_id = $1", catalogID).Scan(&name)
+				if errors.Is(err, sql.ErrNoRows) {
+					return "", false
+				}
+				Expect(err).NotTo(HaveOccurred())
+				return name, true
+			}
+
+			It("stores the catalog, its containers and its controls together", func() {
+				s := seedTwoTenants()
+				store := catalog.NewPGStore(tenantConn())
+				containers, controls := importTree(s)
+
+				Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), newCatalog(s, "first"), containers, controls)).To(Succeed())
+
+				name, ok := catalogName("import-" + s.tenantA)
+				Expect(ok).To(BeTrue())
+				Expect(name).To(Equal("first"))
+				Expect(count("catalog_containers", s.tenantA)).To(Equal(2))
+				Expect(count("controls", s.tenantA)).To(Equal(3), "the two tree controls plus the seeded one")
+			})
+
+			It("stores no catalog row when a control insert fails", func() {
+				s := seedTwoTenants()
+				store := catalog.NewPGStore(tenantConn())
+				containers, controls := importTree(s)
+				controls[1].Title = "NUL \x00 is not valid text"
+
+				err := store.UpsertCatalogWithTree(s.ctx(s.tenantA), newCatalog(s, "first"), containers, controls)
+				Expect(err).To(MatchError(ContainSubstring("upsert control " + controls[1].ControlID)))
+				_, ok := catalogName("import-" + s.tenantA)
+				Expect(ok).To(BeFalse(), "the catalog row rolls back with the failed control")
+				Expect(count("catalog_containers", s.tenantA)).To(BeZero())
+				Expect(count("controls", s.tenantA)).To(Equal(1), "only the seeded control remains")
+			})
+
+			It("leaves an imported catalog unchanged when its re-import fails", func() {
+				s := seedTwoTenants()
+				store := catalog.NewPGStore(tenantConn())
+				containers, controls := importTree(s)
+				Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), newCatalog(s, "first"), containers, controls)).To(Succeed())
+
+				containers[0].Title = "Renamed"
+				controls[1].Title = "NUL \x00 is not valid text"
+				err := store.UpsertCatalogWithTree(s.ctx(s.tenantA), newCatalog(s, "second"), containers, controls)
+				Expect(err).To(HaveOccurred())
+
+				name, _ := catalogName("import-" + s.tenantA)
+				Expect(name).To(Equal("first"), "the catalog row keeps its earlier metadata")
+				var title string
+				Expect(suPool.QueryRow(context.Background(),
+					"SELECT title FROM catalog_containers WHERE tenant_id = $1 AND catalog_id = $2 AND container_key = 'g1'",
+					s.tenantA, "import-"+s.tenantA).Scan(&title)).To(Succeed())
+				Expect(title).To(Equal("Access Control"), "the container keeps its earlier title")
+			})
+
+			It("refuses a catalog record for another tenant and stores nothing", func() {
+				s := seedTwoTenants()
+				store := catalog.NewPGStore(tenantConn())
+				containers, controls := importTree(s)
+				rec := newCatalog(s, "first")
+				rec.TenantID = s.tenantB
+
+				err := store.UpsertCatalogWithTree(s.ctx(s.tenantA), rec, containers, controls)
+				Expect(err).To(MatchError(ContainSubstring("does not match the request tenant")))
+				_, ok := catalogName("import-" + s.tenantA)
+				Expect(ok).To(BeFalse())
+				Expect(count("catalog_containers", s.tenantA)).To(BeZero())
+			})
+		})
+
+		Describe("row-level security as the restricted role", func() {
+			It("shows tenant B none of tenant A's containers and refuses a row forged for tenant A", func() {
+				s := seedTwoTenants()
+				store := catalog.NewPGStore(tenantConn())
+				containers, controls := tree(s)
+				Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, controls)).To(Succeed())
+
+				conn := appUserConn()
+				var visible int
+				execAsTenant(conn, s.tenantB, func(tx *sql.Tx) {
+					Expect(tx.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM catalog_containers").Scan(&visible)).To(Succeed())
+				})
+				Expect(visible).To(BeZero(), "tenant B must not see tenant A's containers")
+
+				ctx := context.Background()
+				tx, err := conn.BeginTx(ctx, nil)
+				Expect(err).NotTo(HaveOccurred())
+				defer func() { _ = tx.Rollback() }()
+				_, err = tx.ExecContext(ctx, "SELECT set_config('app.current_tenant', $1, true)", s.tenantB)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = tx.ExecContext(ctx,
+					"INSERT INTO catalog_containers (tenant_id, catalog_id, container_key) VALUES ($1, $2, 'forged')",
+					s.tenantA, s.catalogA)
+				Expect(err).To(MatchError(ContainSubstring("row-level security")))
+				Expect(count("catalog_containers", s.tenantA)).To(Equal(2), "tenant A's rows are unchanged")
+			})
+		})
+	})
+
 	Describe("SearchViaStore", func() {
 		It("returns results through the Store interface with tenant context", func() {
 			tenantID := "store-search-test"
 			catalogID := fmt.Sprintf("store-search-cat-%d", time.Now().UnixNano())
 
 			setupTenant(tenantID, "Store Search")
-			rawConn := appUserConn()
-			setupCatalog(rawConn, tenantID, catalogID, "Search Catalog")
 
 			conn := tenantConn()
 			store := catalog.NewPGStore(conn)
@@ -675,7 +918,7 @@ var _ = Describe("PGStore Integration", func() {
 				ftsControl(tenantID, catalogID, "au-1", "Audit Policy", "Maintain audit logs for all system events."),
 			}
 
-			Expect(store.UpsertControls(ctx, controls)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, catalogRecord(tenantID, catalogID, "Search Catalog"), nil, controls)).To(Succeed())
 
 			results, pageInfo, err := store.SearchControls(ctx, catalog.SearchQuery{
 				Query: "access control policy",
@@ -733,7 +976,7 @@ var _ = Describe("PGStore Integration", func() {
 
 	// --- Store-abstraction tests ---
 
-	Describe("UpsertCatalogViaStore", func() {
+	Describe("UpsertCatalogWithTree catalog round trip", func() {
 		It("creates and updates catalog records through the Store interface", func() {
 			tenantID := "store-upsert-cat"
 			setupTenant(tenantID, "Store Upsert Catalog")
@@ -760,7 +1003,7 @@ var _ = Describe("PGStore Integration", func() {
 				ExtractorVersion: "1.0.0",
 			}
 
-			Expect(store.UpsertCatalog(ctx, rec)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, rec, nil, nil)).To(Succeed())
 
 			got, err := store.GetCatalog(ctx, catalogID)
 			Expect(err).NotTo(HaveOccurred())
@@ -772,7 +1015,7 @@ var _ = Describe("PGStore Integration", func() {
 
 			// Upsert again with updated name — should update, not create new
 			rec.Name = "Updated Catalog Name"
-			Expect(store.UpsertCatalog(ctx, rec)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, rec, nil, nil)).To(Succeed())
 
 			got, err = store.GetCatalog(ctx, catalogID)
 			Expect(err).NotTo(HaveOccurred())
@@ -816,7 +1059,7 @@ var _ = Describe("PGStore Integration", func() {
 					ObjectPath: "/list/test",
 					CreatedAt:  time.Now().UTC(),
 				}
-				Expect(store.UpsertCatalog(ctx, rec)).To(Succeed())
+				Expect(store.UpsertCatalogWithTree(ctx, rec, nil, nil)).To(Succeed())
 			}
 
 			records, pageInfo, err := store.ListCatalogs(ctx, catalog.ListOptions{})
@@ -836,8 +1079,6 @@ var _ = Describe("PGStore Integration", func() {
 			tenantID := "store-controlcount"
 			catalogID := fmt.Sprintf("cc-cat-%d", time.Now().UnixNano())
 			setupTenant(tenantID, "Control Count")
-			rawConn := appUserConn()
-			setupCatalog(rawConn, tenantID, catalogID, "Control Count Catalog")
 
 			conn := tenantConn()
 			store := catalog.NewPGStore(conn)
@@ -858,7 +1099,7 @@ var _ = Describe("PGStore Integration", func() {
 					GroupID: "ac", Props: map[string]string{}, CreatedAt: time.Now().UTC(),
 				},
 			}
-			Expect(store.UpsertControls(ctx, controls)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, catalogRecord(tenantID, catalogID, "Control Count Catalog"), nil, controls)).To(Succeed())
 
 			got, err := store.GetCatalog(ctx, catalogID)
 			Expect(err).NotTo(HaveOccurred())
@@ -883,8 +1124,6 @@ var _ = Describe("PGStore Integration", func() {
 			tenantID := "store-getctrl"
 			catalogID := fmt.Sprintf("getctrl-cat-%d", time.Now().UnixNano())
 			setupTenant(tenantID, "Get Control")
-			rawConn := appUserConn()
-			setupCatalog(rawConn, tenantID, catalogID, "GetCtrl Catalog")
 			conn := tenantConn()
 			store := catalog.NewPGStore(conn)
 			ctx, err := tenant.WithTenant(context.Background(), tenantID)
@@ -892,7 +1131,7 @@ var _ = Describe("PGStore Integration", func() {
 
 			controlID := fmt.Sprintf("%s/ac-1", catalogID)
 
-			Expect(store.UpsertControls(ctx, []catalog.ControlRecord{{
+			Expect(store.UpsertCatalogWithTree(ctx, catalogRecord(tenantID, catalogID, "GetCtrl Catalog"), nil, []catalog.ControlRecord{{
 				TenantID:   tenantID,
 				ControlID:  controlID,
 				CatalogID:  catalogID,
@@ -927,7 +1166,6 @@ var _ = Describe("PGStore Integration", func() {
 
 			setupTenant(tenantID, "FTS Weight")
 			rawConn := appUserConn()
-			setupCatalog(rawConn, tenantID, catalogID, "Weight Catalog")
 
 			controls := []catalog.ControlRecord{
 				ftsControl(tenantID, catalogID, "title-match", "Encryption Policy", "Implement data protection measures."),
@@ -938,7 +1176,7 @@ var _ = Describe("PGStore Integration", func() {
 			store := catalog.NewPGStore(conn)
 			ctx, err := tenant.WithTenant(context.Background(), tenantID)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.UpsertControls(ctx, controls)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, catalogRecord(tenantID, catalogID, "Weight Catalog"), nil, controls)).To(Succeed())
 
 			execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
 				rows, err := tx.QueryContext(context.Background(), `
@@ -975,6 +1213,65 @@ var _ = Describe("PGStore Integration", func() {
 // ---------------------------------------------------------------------------
 
 var _ = Describe("E2E Integration", func() {
+	Describe("ReimportGroupedCatalog", func() {
+		It("keeps one container row per group and the enhancement parent link across a re-import", func() {
+			tenantID := "e2e-reimport-tree"
+			setupTenant(tenantID, "E2E Reimport Tree")
+			rawConn := appUserConn()
+
+			fixtureData, err := os.ReadFile("../../pkg/oscal/testdata/tree/sp800-53r5.json")
+			Expect(err).NotTo(HaveOccurred(), "read fixture")
+			stg := &storagetest.Fake{}
+			Expect(stg.Put(context.Background(), "doc-tree", bytes.NewReader(fixtureData))).To(Succeed())
+
+			svc := catalog.NewService(
+				catalog.WithParser(oscal.NewParser("")),
+				catalog.WithStore(catalog.NewPGStore(tenantConn())),
+				catalog.WithStorage(stg),
+			)
+			ctx, err := tenant.WithTenant(context.Background(), tenantID)
+			Expect(err).NotTo(HaveOccurred())
+			importOnce := func() string {
+				resp, err := svc.ParseCatalog(ctx, connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: tenantID},
+					DocumentId:    "doc-tree",
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				return resp.Msg.CatalogId
+			}
+			countRows := func(table, catalogID string) (n int) {
+				execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT COUNT(*) FROM "+table+" WHERE catalog_id = $1", catalogID).Scan(&n)).To(Succeed())
+				})
+				return n
+			}
+
+			catalogID := importOnce()
+			controlsBefore := countRows("controls", catalogID)
+			containersBefore := countRows("catalog_containers", catalogID)
+			Expect(containersBefore).To(BeNumerically(">", 0), "the catalog's groups are stored as containers")
+			Expect(importOnce()).To(Equal(catalogID), "re-import of the same document keeps its catalog ID")
+			Expect(countRows("controls", catalogID)).To(Equal(controlsBefore))
+			Expect(countRows("catalog_containers", catalogID)).To(Equal(containersBefore))
+
+			execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
+				var identifier, parent, containerKey string
+				var groupRows int
+				Expect(tx.QueryRowContext(context.Background(),
+					"SELECT identifier FROM catalog_containers WHERE catalog_id = $1 AND container_key = 'g1'", catalogID).Scan(&identifier)).To(Succeed())
+				Expect(identifier).To(Equal("ac"))
+				Expect(tx.QueryRowContext(context.Background(),
+					"SELECT COUNT(*) FROM controls WHERE control_id = $1", catalogID+"/ac").Scan(&groupRows)).To(Succeed())
+				Expect(groupRows).To(BeZero(), "a group has no controls row")
+				Expect(tx.QueryRowContext(context.Background(),
+					"SELECT parent_id, container_key FROM controls WHERE control_id = $1", catalogID+"/ac-2.7").Scan(&parent, &containerKey)).To(Succeed())
+				Expect(parent).To(Equal("ac-2"))
+				Expect(containerKey).To(Equal("g1"))
+			})
+		})
+	})
+
 	Describe("ParseCatalogAndSearch", func() {
 		It("parses OSCAL fixture through real parser, persists, and searches", func() {
 			tenantID := "e2e-oscal"
@@ -985,8 +1282,9 @@ var _ = Describe("E2E Integration", func() {
 			Expect(err).NotTo(HaveOccurred(), "read fixture")
 
 			parser := oscal.NewParser("")
-			items, err := parser.Parse(context.Background(), bytes.NewReader(fixtureData))
+			tree, err := parser.Parse(context.Background(), bytes.NewReader(fixtureData))
 			Expect(err).NotTo(HaveOccurred())
+			items := tree.Items
 			Expect(items).NotTo(BeEmpty(), "parser returned 0 items")
 
 			// Verify parser produced expected controls
@@ -1020,9 +1318,10 @@ var _ = Describe("E2E Integration", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ac1.Text).NotTo(ContainSubstring("{{ insert:"),
 				"ac-1 still has unresolved template")
-			Expect(ac1.Text).To(ContainSubstring("organization-defined personnel or roles"))
+			Expect(ac1.Text).To(ContainSubstring("security officer"))
+			Expect(ac1.Text).NotTo(ContainSubstring("organization-defined personnel or roles"))
 
-			// Persist: create catalog, then upsert controls via Store
+			// Persist: create the catalog and its controls via Store
 			catalogID := fmt.Sprintf("e2e-cat-%d", time.Now().UnixNano())
 			conn := tenantConn()
 			store := catalog.NewPGStore(conn)
@@ -1041,8 +1340,6 @@ var _ = Describe("E2E Integration", func() {
 				ContentHash:   "e2e-fixture-hash",
 				ExtractorName: "oscal-parser",
 			}
-			Expect(store.UpsertCatalog(ctx, catRec)).To(Succeed())
-
 			controlRecords := make([]catalog.ControlRecord, len(items))
 			for i, item := range items {
 				controlRecords[i] = catalog.ControlRecord{
@@ -1059,7 +1356,7 @@ var _ = Describe("E2E Integration", func() {
 					CreatedAt:  time.Now().UTC(),
 				}
 			}
-			Expect(store.UpsertControls(ctx, controlRecords)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, catRec, nil, controlRecords)).To(Succeed())
 
 			// Verify all controls persisted
 			execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
@@ -1134,7 +1431,7 @@ var _ = Describe("E2E Integration", func() {
 			for i := range controlRecords {
 				controlRecords[i].Title += " (updated)"
 			}
-			Expect(store.UpsertControls(ctx, controlRecords)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, catRec, nil, controlRecords)).To(Succeed())
 
 			// Verify count didn't change (upsert, not duplicate)
 			execAsTenant(rawConn, tenantID, func(tx *sql.Tx) {
@@ -1227,7 +1524,6 @@ var _ = Describe("E2E Integration", func() {
 			setupTenant(tenantID, "E2E Upsert")
 			rawConn := appUserConn()
 			catalogID := fmt.Sprintf("e2e-upsert-cat-%d", time.Now().UnixNano())
-			setupCatalog(rawConn, tenantID, catalogID, "Upsert E2E Catalog")
 			conn := tenantConn()
 			store := catalog.NewPGStore(conn)
 			ctx, err := tenant.WithTenant(context.Background(), tenantID)
@@ -1257,7 +1553,8 @@ var _ = Describe("E2E Integration", func() {
 					Props: map[string]string{"parent-id": "ac-2"}, CreatedAt: time.Now().UTC(),
 				},
 			}
-			Expect(store.UpsertControls(ctx, initial)).To(Succeed())
+			rec := catalogRecord(tenantID, catalogID, "Upsert E2E Catalog")
+			Expect(store.UpsertCatalogWithTree(ctx, rec, nil, initial)).To(Succeed())
 
 			// Snapshot initial state
 			var initialAC1Stmt, initialAC2Class string
@@ -1306,7 +1603,7 @@ var _ = Describe("E2E Integration", func() {
 					Props: map[string]string{"parent-id": "ac-2"}, CreatedAt: time.Now().UTC(),
 				},
 			}
-			Expect(store.UpsertControls(ctx, reimport)).To(Succeed())
+			Expect(store.UpsertCatalogWithTree(ctx, rec, nil, reimport)).To(Succeed())
 
 			// Verify: AC-1 statement text changed
 			By("checking AC-1 statement was updated")

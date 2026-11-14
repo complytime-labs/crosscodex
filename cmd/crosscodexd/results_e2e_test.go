@@ -22,6 +22,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	analyzerresults "github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
@@ -39,7 +40,7 @@ func (c equivalentRelationshipLLMClient) Complete(ctx context.Context, req *llmc
 	if err != nil || req.PromptName != "relationship" {
 		return resp, err
 	}
-	resp.Choices[0].Message.Content = "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: same control intent\nCONFIDENCE: HIGH"
+	resp.Choices[0].Message.Content = "RELATIONSHIP: EQUIVALENT\nJUSTIFICATION: same control intent\nSANITY_CHECK: PASS\nCONFIDENCE: HIGH"
 	return resp, nil
 }
 
@@ -193,14 +194,26 @@ var _ = Describe("crosscodex results: mappings read back from a completed all-ro
 			edges, err := g.QueryRelationships(context.Background(), tenantID,
 				graphdb.RelationshipQuery{EdgeLabel: "SEMANTIC_MATCH"})
 			inner.Expect(err).NotTo(HaveOccurred(), "query SEMANTIC_MATCH")
+			// A pair has an analyzer edge (ID = mapping_id) and a synthesized
+			// edge (stage=synthesized, its own ID kind); an edge without a
+			// stage is an analyzer edge.
 			edgeIDs := make(map[[2]string]string, len(edges))
+			synthesizedIDs := make(map[[2]string]string, len(edges))
 			for _, e := range edges {
-				edgeIDs[[2]string{e.Source.ID, e.Target.ID}] = e.Edge.ID
+				pair := [2]string{e.Source.ID, e.Target.ID}
+				if e.Edge.Properties[analyzerresults.StageProperty] == analyzerresults.StageSynthesized {
+					synthesizedIDs[pair] = e.Edge.ID
+				} else {
+					edgeIDs[pair] = e.Edge.ID
+				}
 			}
 			for _, m := range mappings {
 				pair := [2]string{m.SourceControlID, m.TargetControlID}
 				inner.Expect(edgeIDs).To(HaveKeyWithValue(pair, m.MappingID),
 					"SEMANTIC_MATCH edge for %s -> %s", m.SourceControlID, m.TargetControlID)
+				inner.Expect(synthesizedIDs).To(HaveKeyWithValue(pair,
+					graphdb.DerivedID(analyzerresults.SemanticMatchSynthesizedIDKind, jobID, m.SourceControlID, m.TargetControlID)),
+					"synthesized SEMANTIC_MATCH edge for %s -> %s", m.SourceControlID, m.TargetControlID)
 			}
 		}, 60*time.Second, 500*time.Millisecond).Should(Succeed(), "mapping IDs match graph edge IDs")
 	})

@@ -115,6 +115,24 @@ var _ = Describe("Archiver", func() {
 		Expect(string(body)).NotTo(ContainSubstring("embeddings"))
 	})
 
+	It("asks for the catalog's containers under the containers key, bound to the catalog id", func() {
+		var query string
+		var args []any
+		conn := &dbtest.Conn{Tx: &dbtest.Tx{
+			ExecFunc: func(context.Context, string, ...any) error { return nil },
+			QueryRowFunc: func(_ context.Context, q string, a ...any) db.Row {
+				query, args = q, a
+				return dbtest.Row(nil, []byte(`{"catalog":{"catalog_id":"cat-1"}}`))
+			},
+		}}
+		a := retention.NewArchiver(conn, nil, &storagetest.Fake{})
+		Expect(a.Archive(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassCatalogs, ID: "cat-1"})).To(Succeed())
+		Expect(query).To(ContainSubstring("'containers'"))
+		Expect(query).To(ContainSubstring("FROM catalog_containers"))
+		Expect(query).NotTo(ContainSubstring("cat-1"))
+		Expect(args).To(Equal([]any{"cat-1"}))
+	})
+
 	It("errors for an unsupported DB archival class", func() {
 		// embeddings are never collected as a standalone class (purge-only as a
 		// catalog dependent); a candidate that somehow carries it is unsupported.

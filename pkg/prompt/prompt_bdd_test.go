@@ -230,7 +230,7 @@ var _ = Describe("Embedded Defaults", func() {
 		Expect(specs["section-detect"].Version).To(Equal("1.0.0"))
 		Expect(specs["section-detect"].Templates.System).NotTo(BeEmpty())
 		Expect(specs["section-detect"].Templates.User).To(Equal("${document_chunk}"))
-		Expect(specs["classify"].Version).To(Equal("1.1.0"))
+		Expect(specs["classify"].Version).To(Equal("1.2.0"))
 	})
 })
 
@@ -1195,10 +1195,11 @@ var _ = Describe("SubstitutePlaceholders (extended)", func() {
 })
 
 var _ = Describe("Embedded Defaults (extended)", func() {
-	It("loads exactly eight defaults", func() {
+	It("loads exactly nine defaults", func() {
 		specs, err := prompt.ExportLoadEmbeddedDefaults()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(specs).To(HaveLen(8))
+		Expect(specs).To(HaveLen(9))
+		Expect(specs).To(HaveKeyWithValue("critique", HaveField("Version", "1.0.0")))
 		Expect(specs).To(HaveKey("artifacts"))
 		Expect(specs).To(HaveKey("requires"))
 		Expect(specs).To(HaveKey("relationship"))

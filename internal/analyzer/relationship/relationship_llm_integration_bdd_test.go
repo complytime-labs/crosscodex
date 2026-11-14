@@ -132,10 +132,12 @@ var _ = Describe("Relationship LLM Integration", func() {
 				"target_framework":  "SOX-IT",
 				"source_type":       "Technical",
 				"source_level":      "Tactical",
-				"source_ancestor":   "Access Control",
+				"source_context":    "Access Control",
+				"source_title":      "T-source",
 				"target_type":       "Technical",
 				"target_level":      "Tactical",
-				"target_ancestor":   "IT General Controls",
+				"target_context":    "IT General Controls",
+				"target_title":      "T-target",
 				"few_shot_examples": intanalyzer.FormatFewShotExamples(spec.FewShot),
 			}
 			userMsg, substErr := prompt.SubstitutePlaceholders(spec.Templates.User, userVars)

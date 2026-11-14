@@ -81,7 +81,7 @@ var _ = Describe("Classify Infrastructure Integration", func() {
 			Expect(fields["control_id"].GetStringValue()).To(Equal("nist-800-53/AC-1"))
 			Expect(fields["model"].GetStringValue()).To(Equal("test-model"))
 			Expect(fields["prompt_name"].GetStringValue()).To(Equal("classify"))
-			Expect(fields["prompt_version"].GetStringValue()).To(Equal("1.1.0"))
+			Expect(fields["prompt_version"].GetStringValue()).To(Equal("1.2.0"))
 			Expect(fields["content_hash"].GetStringValue()).NotTo(BeEmpty())
 		})
 

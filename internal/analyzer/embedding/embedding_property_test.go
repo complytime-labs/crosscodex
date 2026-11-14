@@ -84,11 +84,13 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	})
 
 	Context("prepareText — truncation bound", func() {
-		It("runeCount(prepareText(text, '', n)) <= n for all n > 0", func() {
+		It("runeCount(prepareText(context, title, text, n)) <= n for all n > 0", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				context := rapid.String().Draw(t, "context")
+				title := rapid.String().Draw(t, "title")
 				text := rapid.String().Draw(t, "text")
 				maxChars := rapid.IntRange(1, 5000).Draw(t, "maxChars")
-				result := embedding.ExportPrepareText(text, "", maxChars)
+				result := embedding.ExportPrepareText(context, title, text, maxChars)
 				runeCount := utf8.RuneCountInString(result)
 				if runeCount > maxChars {
 					t.Fatalf("prepareText output %d runes exceeds maxChars %d", runeCount, maxChars)

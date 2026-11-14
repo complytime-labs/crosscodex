@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -82,12 +83,27 @@ func (s *Service) Stop(ctx context.Context) error {
 	return nil
 }
 
-// pipelineEvent is the JSON payload published by NATSStageReporter.
+// pipelineEvent is the JSON payload published by NATSStageReporter. Metadata
+// is the completed analyzer's output metadata.
 type pipelineEvent struct {
-	Analyzer  string `json:"analyzer"`
-	JobID     string `json:"job_id"`
-	Stage     string `json:"stage"`
-	Timestamp string `json:"timestamp"`
+	Analyzer  string            `json:"analyzer"`
+	JobID     string            `json:"job_id"`
+	Stage     string            `json:"stage"`
+	Timestamp string            `json:"timestamp"`
+	Metadata  map[string]string `json:"metadata"`
+}
+
+// graphDeferred reports whether the pipeline deferred this relationship or
+// requires event's edges to the job's critique event (see
+// results.GraphDeferredMetadataKey). Only those two analyzers' edges are
+// written by the critique handler, so the mark is ignored on any other event.
+func (e pipelineEvent) graphDeferred() bool {
+	switch e.Analyzer {
+	case results.RelationshipAnalyzer, results.RequiresAnalyzer:
+		return e.Metadata[results.GraphDeferredMetadataKey] == "true"
+	default:
+		return false
+	}
 }
 
 // handleEvent processes a single pipeline stage completion event.
@@ -141,6 +157,16 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 		attribute.String("analyzer", event.Analyzer),
 		attribute.String("job.id", event.JobID),
 	)
+
+	// The job runs the critique stage: its event writes this stage's
+	// surviving edges, since an edge written now could not be removed after
+	// a veto.
+	if event.graphDeferred() {
+		s.logger.DebugContext(ctx, "graph edges deferred to the critique stage", "analyzer", event.Analyzer, "job_id", event.JobID)
+		s.recordEvent(ctx, event.Analyzer, "deferred")
+		span.SetStatus(codes.Ok, "deferred")
+		return nil
+	}
 
 	handle, ok := s.handlerFor(event.Analyzer)
 	if !ok {

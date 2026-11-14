@@ -1,0 +1,390 @@
+{
+  "catalog": {
+    "uuid": "2cbeb73c-3204-4a37-b490-610f8d758fb3",
+    "metadata": {
+      "title": "Artificial Intelligence Risk Management Framework (AI RMF 1.0)",
+      "published": "2026-10-22T16:00:00.00000-00:00",
+      "last-modified": "2026-10-22T11:30:00.00000-00:00",
+      "version": "1.0.0",
+      "oscal-version": "v1.2.3",
+      "props": [
+        {
+          "name": "framework-identifier",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "AI_100"
+        },
+        {
+          "name": "framework-version-identifier",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "AI_100_1_0_0"
+        },
+        {
+          "name": "generated-by",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "Cybersecurity And Privacy Open Reference Datasets In OSCAL (CAPORDINO)"
+        },
+        {
+          "name": "publication-status",
+          "ns": "https://csrc.nist.gov/ns/cprt",
+          "value": "Final"
+        }
+      ],
+      "links": [
+        {
+          "href": "#0041ecae-3350-46f1-bbe9-944dd0204306",
+          "rel": "alternate"
+        },
+        {
+          "href": "#4fb7d3fd-e54f-49df-b71d-bbe0e562b90d",
+          "rel": "canonical"
+        },
+        {
+          "href": "#8639fd79-b9de-4651-b091-941b1941c3e9",
+          "rel": "cprt"
+        }
+      ],
+      "roles": [
+        {
+          "id": "creator",
+          "title": "OSCAL Document Creator"
+        },
+        {
+          "id": "publisher",
+          "title": "AI RMF Publisher"
+        },
+        {
+          "id": "contact-creator",
+          "title": "Contact Electronic Version Creator"
+        },
+        {
+          "id": "contact-publisher",
+          "title": "Contact Publisher"
+        }
+      ],
+      "parties": [
+        {
+          "uuid": "98c78f9b-5d50-4b01-b47f-d16801e8d0ab",
+          "type": "organization",
+          "name": "OSCAL Program",
+          "short-name": "NIST OSCAL",
+          "email-addresses": [
+            "oscal@nist.gov"
+          ],
+          "addresses": [
+            {
+              "addr-lines": [
+                "National Institute of Standards and Technology",
+                "Attn: Computer Security Division",
+                "Information Technology Laboratory",
+                "100 Bureau Drive (Mail Stop 203.)"
+              ],
+              "city": "Gaithersburg",
+              "state": "MD",
+              "postal-code": "20899-203."
+            }
+          ]
+        },
+        {
+          "uuid": "a5eeec5c-3679-499a-9161-23a58375c97b",
+          "type": "organization",
+          "name": "National Institute of Standards and Technology",
+          "short-name": "NIST",
+          "email-addresses": [
+            "AIframework@nist.gov"
+          ],
+          "addresses": [
+            {
+              "addr-lines": [
+                "National Institute of Standards and Technology",
+                "Attn: Computer Security Division",
+                "Information Technology Laboratory",
+                "100 Bureau Drive (Mail Stop 203.)"
+              ],
+              "city": "Gaithersburg",
+              "state": "MD",
+              "postal-code": "20899-203."
+            }
+          ]
+        }
+      ],
+      "responsible-parties": [
+        {
+          "role-id": "creator",
+          "party-uuids": [
+            "98c78f9b-5d50-4b01-b47f-d16801e8d0ab"
+          ]
+        },
+        {
+          "role-id": "publisher",
+          "party-uuids": [
+            "a5eeec5c-3679-499a-9161-23a58375c97b"
+          ]
+        },
+        {
+          "role-id": "contact-creator",
+          "party-uuids": [
+            "98c78f9b-5d50-4b01-b47f-d16801e8d0ab"
+          ]
+        },
+        {
+          "role-id": "contact-publisher",
+          "party-uuids": [
+            "a5eeec5c-3679-499a-9161-23a58375c97b"
+          ]
+        }
+      ]
+    },
+    "groups": [
+      {
+        "id": "MANAGE",
+        "class": "function",
+        "title": "MANAGE",
+        "props": [
+          {
+            "name": "sort-id",
+            "value": "00002"
+          }
+        ],
+        "parts": [
+          {
+            "id": "MANAGE_ovw",
+            "name": "overview",
+            "prose": "Risks are prioritized and acted upon based on a projected impact."
+          }
+        ],
+        "controls": [
+          {
+            "id": "MANAGE_4",
+            "class": "category",
+            "title": "MANAGE 4",
+            "props": [
+              {
+                "name": "sort-id",
+                "value": "00002.00004"
+              }
+            ],
+            "parts": [
+              {
+                "id": "MANAGE_4_smt",
+                "name": "statement",
+                "prose": "Risk treatments including response and recovery, and communication plans to the identified and measured AI risks are documented and monitored regularly."
+              }
+            ],
+            "controls": [
+              {
+                "id": "MANAGE_4.1",
+                "class": "subcategory",
+                "title": "MANAGE 4.1",
+                "props": [
+                  {
+                    "name": "sort-id",
+                    "value": "00002.00004.00001"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "#13f80f0c-2855-499f-be04-d937768b8f65",
+                    "rel": "resource"
+                  },
+                  {
+                    "href": "#2b0a4dee-9dbd-413e-b192-ccd4af47a776",
+                    "rel": "resource"
+                  },
+                  {
+                    "href": "#984312cb-537f-4183-b6a9-2c26aaee664f",
+                    "rel": "reference"
+                  }
+                ],
+                "parts": [
+                  {
+                    "id": "MANAGE_4.1_ovw",
+                    "name": "overview",
+                    "prose": "Post-deployment AI system monitoring plans are implemented, including mechanisms for capturing and evaluating input from users and other relevant AI actors, appeal and override, decommissioning, incident response, recovery, and change management."
+                  },
+                  {
+                    "id": "SA-MANAGE_4.1",
+                    "name": "statement",
+                    "class": "suggested_action",
+                    "parts": [
+                      {
+                        "id": "SA-MANAGE_4.1-1",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Establish and maintain procedures to monitor AI system performance for risks and negative and positive impacts associated with trustworthiness characteristics."
+                      },
+                      {
+                        "id": "SA-MANAGE_4.1-2",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Perform post-deployment TEVV tasks to evaluate AI system validity and reliability, bias and fairness, privacy, and security and resilience."
+                      },
+                      {
+                        "id": "SA-MANAGE_4.1-3",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Evaluate AI system trustworthiness in conditions similar to deployment context of use, and prior to deployment."
+                      },
+                      {
+                        "id": "SA-MANAGE_4.1-4",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Establish and implement red-teaming exercises at a prescribed cadence and evaluate their efficacy."
+                      },
+                      {
+                        "id": "SA-MANAGE_4.1-5",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Establish procedures for tracking dataset modifications such as data deletion or rectification requests."
+                      },
+                      {
+                        "id": "SA-MANAGE_4.1-6",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Establish mechanisms for regular communication and feedback between relevant AI actors and internal or external stakeholders to capture information about system performance, trustworthiness and impact."
+                      },
+                      {
+                        "id": "SA-MANAGE_4.1-7",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Share information about errors, near-misses, and attack patterns with incident databases, other organizations with similar systems, and system users and stakeholders."
+                      },
+                      {
+                        "id": "SA-MANAGE_4.1-8",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Respond to and document detected or reported negative impacts or issues in AI system performance and trustworthiness."
+                      },
+                      {
+                        "id": "SA-MANAGE_4.1-9",
+                        "name": "item",
+                        "class": "suggested_action",
+                        "prose": "Decommission systems that exceed establish risk tolerances."
+                      }
+                    ]
+                  },
+                  {
+                    "id": "A-MANAGE_4.1",
+                    "name": "guidance",
+                    "class": "about",
+                    "prose": "AI system performance and trustworthiness can change due to a variety of factors. Regular AI system monitoring can help deployers identify performance degradations, adversarial attacks, unexpected and unusual behavior, near-misses, and impacts. Including pre- and post-deployment external feedback about AI system performance can enhance organizational awareness about positive and negative impacts, and reduce the time to respond to risks and harms."
+                  },
+                  {
+                    "id": "D-MANAGE_4.1-1",
+                    "name": "guidance",
+                    "class": "documentation",
+                    "prose": "To what extent has the entity documented the post-deployment AI system’s testing methodology, metrics, and performance outcomes?"
+                  },
+                  {
+                    "id": "D-MANAGE_4.1-2",
+                    "name": "guidance",
+                    "class": "documentation",
+                    "prose": "How easily accessible and current is the information available to external stakeholders?"
+                  }
+                ]
+              },
+              {
+                "id": "MANAGE_4.2",
+                "class": "subcategory",
+                "title": "MANAGE 4.2",
+                "props": [
+                  {
+                    "name": "sort-id",
+                    "value": "00002.00004.00002"
+                  }
+                ],
+                "links": [
+                  {
+                    "href": "#13f80f0c-2855-499f-be04-d937768b8f65",
+                    "rel": "resource"
+                  },
+                  {
+                    "href": "#99ff8c49-f615-41d7-a82f-a880eb62cc64",
+                    "rel": "resource"
+                  },
+                  {
+                    "href": "#924aa810-02df-49ed-89bf-d60b29d62543",
+                    "rel": "reference"
+                  },
+                  {
+                    "href": "#a42175dc-4784-4347-8349-5938212dfb4c",
+                    "rel": "reference"
+                  },
+                  {
+                    "href": "#f37a4c68-386f-4d65-8250-207d97666ca0",
+                    "rel": "reference"
+                  }
+                ],
+                "parts": [
+                  {
+                    "id": "MANAGE_4.2_ovw",
+                    "name": "overview",
+                    "prose": "Measurable activities for continual improvements are integrated into AI system updates and include regular engagement with interested parties, including relevant AI actors."
+                  },
+                  {
+                    "id": "SA-MANAGE_4.2",
+                    "name": "statement",
+                    "class": "suggested_action"
+                  },
+                  {
+                    "id": "A-MANAGE_4.2-1",
+                    "name": "guidance",
+                    "class": "about",
+                    "prose": "Regular monitoring processes enable system updates to enhance performance and functionality in accordance with regulatory and legal frameworks, and organizational and contextual values and norms. These processes also facilitate analyses of root causes, system degradation, drift, near-misses, and failures, and incident response and documentation. AI actors across the lifecycle have many opportunities to capture and incorporate external feedback about system performance, limitations, and impacts, and implement continuous improvements. Improvements may not always be to model pipeline or system processes, and may instead be based on metrics beyond accuracy or other quality performance measures. In these cases, improvements may entail adaptations to business or organizational procedures or practices. Organizations are encouraged to develop improvements that will maintain traceability and transparency for developers, end users, auditors, and relevant AI actors."
+                  },
+                  {
+                    "id": "A-MANAGE_4.2-2",
+                    "name": "guidance",
+                    "class": "about",
+                    "prose": "Integrate trustworthiness characteristics into protocols and metrics used for continual improvement."
+                  },
+                  {
+                    "id": "A-MANAGE_4.2-3",
+                    "name": "guidance",
+                    "class": "about",
+                    "prose": "Establish processes for evaluating and integrating feedback into AI system improvements."
+                  },
+                  {
+                    "id": "A-MANAGE_4.2-4",
+                    "name": "guidance",
+                    "class": "about",
+                    "prose": "Assess and evaluate alignment of proposed improvements with relevant regulatory and legal frameworks."
+                  },
+                  {
+                    "id": "A-MANAGE_4.2-5",
+                    "name": "guidance",
+                    "class": "about",
+                    "prose": "Assess and evaluate alignment of proposed improvements connected to the values and norms within the context of use."
+                  },
+                  {
+                    "id": "A-MANAGE_4.2-6",
+                    "name": "guidance",
+                    "class": "about",
+                    "prose": "Document the basis for decisions made relative to tradeoffs between trustworthy characteristics, system risks, and system opportunities."
+                  },
+                  {
+                    "id": "D-MANAGE_4.2-1",
+                    "name": "guidance",
+                    "class": "documentation",
+                    "prose": "How will user and other forms of stakeholder engagement be integrated into the model development process and regular performance review once deployed?"
+                  },
+                  {
+                    "id": "D-MANAGE_4.2-2",
+                    "name": "guidance",
+                    "class": "documentation",
+                    "prose": "To what extent can users or parties affected by the outputs of the AI system test the AI system and provide feedback?"
+                  },
+                  {
+                    "id": "D-MANAGE_4.2-3",
+                    "name": "guidance",
+                    "class": "documentation",
+                    "prose": "To what extent has the entity defined and documented the regulatory environment—including minimum requirements in laws and regulations?"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -27,8 +27,9 @@ var _ = Describe("E2E catalog fixture", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer f.Close()
 
-		items, err := oscal.NewParser("").Parse(context.Background(), f)
+		tree, err := oscal.NewParser("").Parse(context.Background(), f)
 		Expect(err).NotTo(HaveOccurred())
+		items := tree.Items
 
 		byID := map[string]oscal.ControlItem{}
 		for _, it := range items {
@@ -36,9 +37,12 @@ var _ = Describe("E2E catalog fixture", func() {
 		}
 		Expect(items).To(HaveLen(3), "item count: got %d, want 3 (%v)", len(items), byID)
 
+		Expect(tree.Containers).To(Equal([]oscal.Container{{Key: "g1", Identifier: "ac", Title: "Access Control"}}),
+			"the fixture's one group is the container the items sit in")
+
 		parent, ok := byID["ac-2"]
-		Expect(ok && parent.Class == oscal.ClassSection && parent.ParentID == "").To(BeTrue(),
-			"ac-2: got %+v, want ClassSection with no parent", parent)
+		Expect(ok && parent.Class == oscal.ClassSection && parent.ParentID == "" && parent.ContainerKey == "g1").To(BeTrue(),
+			"ac-2: got %+v, want a top-level ClassSection control in container g1", parent)
 
 		for _, child := range []string{"ac-2.a", "ac-2.b"} {
 			c, ok := byID[child]
