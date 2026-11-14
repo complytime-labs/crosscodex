@@ -347,11 +347,13 @@ type reviewed struct {
 
 // Aggregate groups task results by (kind, pair) and decides each pair. It
 // counts UPHOLD and REJECT votes. Task errors, unparseable responses and
-// panel votes with no result count as Failed. A pair is vetoed when Rejected
-// / (Upheld + Rejected) >= consensus_threshold. When the pair has no valid
-// vote, or Failed / panel size exceeds max_error_rate, its critique failed:
-// it is kept (Vetoed false). Each result's Outcome is upheld, split (kept
-// with at least one REJECT), vetoed or failed. Output.ResultData is a JSON
+// panel votes with no result count as Failed. A pair whose Rejected /
+// (Upheld + Rejected) >= consensus_threshold is vetoed when
+// analysis.critique.veto is on and kept as rejected (Vetoed false) when it is
+// off. When the pair has no valid vote, or Failed / panel size exceeds
+// max_error_rate, its critique failed: it is kept (Vetoed false). Each
+// result's Outcome is upheld, split (kept with at least one REJECT),
+// rejected, vetoed or failed. Output.ResultData is a JSON
 // []results.CritiqueResult sorted by kind, source and target. Reasons hold one
 // entry per panel vote, in panel order (models as configured, then sample
 // number), each labelled "<model> s<N>". Metadata error_count counts the task
@@ -435,6 +437,7 @@ func (a *CritiqueAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 		attribute.Int("critique.errors", errorCount),
 		attribute.Int("critique.upheld", counts[results.CritiqueUpheld]),
 		attribute.Int("critique.split", counts[results.CritiqueSplit]),
+		attribute.Int("critique.rejected", counts[results.CritiqueRejected]),
 		attribute.Int("critique.vetoed", counts[results.CritiqueVetoed]),
 		attribute.Int("critique.failed", counts[results.CritiqueFailed]),
 	)
@@ -445,10 +448,16 @@ func (a *CritiqueAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 			"error_count":    strconv.Itoa(errorCount),
 			"upheld_count":   strconv.Itoa(counts[results.CritiqueUpheld]),
 			"split_count":    strconv.Itoa(counts[results.CritiqueSplit]),
+			"rejected_count": strconv.Itoa(counts[results.CritiqueRejected]),
 			"vetoed_count":   strconv.Itoa(counts[results.CritiqueVetoed]),
 			"failed_count":   strconv.Itoa(counts[results.CritiqueFailed]),
 			"prompt_name":    promptName,
 			"prompt_version": promptVersion,
+			// The settings the outcomes were decided with, recorded even when
+			// no pair reached the threshold, so a job's audit trail says
+			// whether it could veto.
+			"veto":                strconv.FormatBool(a.cfg.Veto),
+			"consensus_threshold": strconv.FormatFloat(a.cfg.ConsensusThreshold, 'f', -1, 64),
 		},
 		ResultData: resultData,
 	}, nil
@@ -473,7 +482,11 @@ func (a *CritiqueAnalyzer) decide(g *reviewed) results.CritiqueResult {
 	case valid == 0 || a.failedOver(res.Failed):
 		res.Outcome = results.CritiqueFailed
 	case float64(res.Rejected)/float64(valid) >= a.cfg.ConsensusThreshold:
-		res.Vetoed, res.Outcome = true, results.CritiqueVetoed
+		if a.cfg.Veto {
+			res.Vetoed, res.Outcome = true, results.CritiqueVetoed
+		} else {
+			res.Outcome = results.CritiqueRejected
+		}
 	case res.Rejected > 0:
 		res.Outcome = results.CritiqueSplit
 	default:

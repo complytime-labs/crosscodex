@@ -8,15 +8,17 @@ import (
 	"strings"
 )
 
-// CritiqueUpheldProperty, CritiqueRejectedProperty and CritiqueNoteProperty
-// are the properties a kept SEMANTIC_MATCH or REQUIRES edge carries when its
-// job ran the critique stage: the critique's UPHOLD and REJECT vote counts and,
-// when non-empty, CritiqueResult.Note. Edges of jobs without a critique carry
-// none of them.
+// CritiqueUpheldProperty, CritiqueRejectedProperty, CritiqueNoteProperty and
+// CritiqueOutcomeProperty are the properties a kept SEMANTIC_MATCH or REQUIRES
+// edge carries when its job ran the critique stage: the critique's UPHOLD and
+// REJECT vote counts, CritiqueResult.Note when non-empty, and
+// CritiqueResult.Outcome (so a verdict the critics rejected without veto is
+// visible as "rejected"). Edges of jobs without a critique carry none of them.
 const (
 	CritiqueUpheldProperty   = "critique_upheld"
 	CritiqueRejectedProperty = "critique_rejected"
 	CritiqueNoteProperty     = "critique_note"
+	CritiqueOutcomeProperty  = "critique_outcome"
 )
 
 // GraphDeferredMetadataKey is the stage-completed event metadata key the
@@ -59,16 +61,17 @@ const critiqueRejectVerdict = "REJECT: "
 
 // Note is the review note of a kept verdict: "critique split: <r> of <n>
 // rejected — <first reject reason>" for a split critique, where n is the panel
-// size, and "critique failed: <f> of <n> votes invalid" for a failed one. The
+// size, the same as "critique rejected: ..." for one rejected without veto,
+// and "critique failed: <f> of <n> votes invalid" for a failed one. The
 // reason is the first REJECT entry of Reasons as "<model> s<N>: <reason>"; a
-// split critique without one names only the counts. Upheld and vetoed
-// critiques have no note: an upheld verdict needs no review and a vetoed one
-// is dropped.
+// split or rejected critique without one names only the counts. Upheld and
+// vetoed critiques have no note: an upheld verdict needs no review and a
+// vetoed one is dropped.
 func (c CritiqueResult) Note() string {
 	panel := c.Upheld + c.Rejected + c.Failed
 	switch c.Outcome {
-	case CritiqueSplit:
-		note := fmt.Sprintf("critique split: %d of %d rejected", c.Rejected, panel)
+	case CritiqueSplit, CritiqueRejected:
+		note := fmt.Sprintf("critique %s: %d of %d rejected", c.Outcome, c.Rejected, panel)
 		if reason, ok := c.firstRejectReason(); ok {
 			note += " — " + reason
 		}

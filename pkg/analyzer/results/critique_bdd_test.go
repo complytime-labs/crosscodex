@@ -19,8 +19,8 @@ func critiqueOf(kind, src, tgt, outcome string, upheld, rejected, failed int, re
 
 var _ = Describe("critique verdicts", func() {
 	It("names the edge properties and the deferral metadata key the pipeline and the graph share", func() {
-		Expect([]string{results.CritiqueUpheldProperty, results.CritiqueRejectedProperty, results.CritiqueNoteProperty}).
-			To(Equal([]string{"critique_upheld", "critique_rejected", "critique_note"}))
+		Expect([]string{results.CritiqueUpheldProperty, results.CritiqueRejectedProperty, results.CritiqueNoteProperty, results.CritiqueOutcomeProperty}).
+			To(Equal([]string{"critique_upheld", "critique_rejected", "critique_note", "critique_outcome"}))
 		Expect(results.GraphDeferredMetadataKey).To(Equal("graph_deferred"))
 	})
 
@@ -44,6 +44,15 @@ var _ = Describe("critique verdicts", func() {
 			Entry("a requires veto leaves the pair's relationship verdict", results.RelationshipAnalyzer, "c", "d", false),
 			Entry("the reversed pair is a different pair", results.RelationshipAnalyzer, "b", "a", false),
 		)
+
+		It("keeps a pair the critique rejected without veto, with its result", func() {
+			c := critiqueOf(results.RelationshipAnalyzer, "a", "b", results.CritiqueRejected, 0, 3, 0, "panel-1 s0 REJECT: x")
+			v := results.Apply(results.RelationshipAnalyzer, []results.CritiqueResult{c})
+			Expect(v.Vetoed("a", "b")).To(BeFalse())
+			got, ok := v.Result("a", "b")
+			Expect(ok).To(BeTrue())
+			Expect(got.Outcome).To(Equal("rejected"))
+		})
 
 		It("keeps a pair the critique produced no result for, with no note", func() {
 			v := results.Apply(results.RelationshipAnalyzer, crit)
@@ -103,6 +112,10 @@ var _ = Describe("critique verdicts", func() {
 			"critique failed: 2 of 3 votes invalid"),
 		Entry("a vetoed critique has no note: the pair is dropped",
 			critiqueOf(results.RelationshipAnalyzer, "a", "b", results.CritiqueVetoed, 0, 3, 0, "panel-1 s0 REJECT: x"), ""),
+		Entry("an advisory rejection names the rejections and the first reject reason",
+			critiqueOf(results.RequiresAnalyzer, "a", "b", results.CritiqueRejected, 1, 2, 0,
+				"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: not a prerequisite", "panel-3 s0 REJECT: unrelated"),
+			"critique rejected: 2 of 3 rejected — panel-2 s0: not a prerequisite"),
 	)
 
 	Describe("DecodeCritique", func() {

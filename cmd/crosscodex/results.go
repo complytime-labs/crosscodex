@@ -69,10 +69,14 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 			}
 			// Canonical lowercase name, not the raw flag, which is case-insensitive.
 			stage := strings.ToLower(strings.TrimPrefix(req.GetStage().String(), "MAPPING_STAGE_"))
+			scope := stage + " mappings"
+			if req.GetExcludeRejected() {
+				scope += ", without pairs the critique rejected"
+			}
 
 			return emit(cmd,
 				func(w io.Writer, color bool) {
-					fmt.Fprintf(w, "Summary for job %s (%s mappings)\n\n", jobID, stage)
+					fmt.Fprintf(w, "Summary for job %s (%s)\n\n", jobID, scope)
 					fmt.Fprintf(w, "Total mappings: %d\n\n", len(mappings))
 					fmt.Fprintf(w, "By relationship type:\n")
 					for _, relType := range slices.Sorted(maps.Keys(counts)) {
@@ -89,6 +93,8 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 					"total":         len(mappings),
 					"by_type":       counts,
 					"mapping_count": len(mappings),
+					// A strict count must not read as the full one.
+					"exclude_rejected": req.GetExcludeRejected(),
 				},
 			)
 		},
@@ -97,7 +103,7 @@ func newResultsSummaryCmd(state *cliState) *cobra.Command {
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a job-id",
 		find:  "crosscodex results summary <job-id>",
-		usage: "crosscodex results summary <job-id> [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable]",
+		usage: "crosscodex results summary <job-id> [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable] [--exclude-rejected]",
 		examples: []string{
 			"crosscodex results summary abc123",
 			"crosscodex results sum abc123 --stage analyzer --type equivalent",
@@ -134,6 +140,7 @@ func addMappingFlags(cmd *cobra.Command) {
 	cmd.Flags().String("control", "", "only mappings whose source or target is this control id")
 	cmd.Flags().Bool("include-non-viable", false, "include pairs synthesis filtered out (synthesized stage only)")
 	cmd.Flags().Bool("include-vetoed", false, "include pairs the critique stage vetoed, with its votes and reasons (analyzer stage only)")
+	cmd.Flags().Bool("exclude-rejected", false, "leave out pairs the critique rejected but did not veto (analysis.critique.veto off), for the strict view (analyzer stage only)")
 }
 
 // errSummaryIncludeVetoed refuses --include-vetoed on summary: a vetoed pair
@@ -164,6 +171,11 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 		return nil, fmt.Errorf("--include-vetoed only applies to the analyzer stage: synthesis never receives vetoed pairs, so add --stage analyzer or drop the flag")
 	}
 
+	excludeRejected, _ := cmd.Flags().GetBool("exclude-rejected")
+	if excludeRejected && stage != pb.MappingStage_MAPPING_STAGE_ANALYZER {
+		return nil, fmt.Errorf("--exclude-rejected only applies to the analyzer stage: synthesized mappings are listed without their critique, so add --stage analyzer or drop the flag")
+	}
+
 	typeNames, _ := cmd.Flags().GetStringSlice("type")
 	types := make([]pb.RelationshipType, 0, len(typeNames))
 	for _, name := range typeNames {
@@ -181,6 +193,7 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 		MinConfidence:     float32(minConfidence),
 		IncludeNonViable:  includeNonViable,
 		IncludeVetoed:     includeVetoed,
+		ExcludeRejected:   excludeRejected,
 		RelationshipTypes: types,
 		ControlId:         controlID,
 	}, nil
@@ -263,18 +276,14 @@ func analysisValues(a *pb.JobAnalysis) []string {
 }
 
 // critiqueCell renders a mapping's critique for the CSV critique column:
-// "<vetoed|kept>: <u> upheld, <r> rejected, <f> failed; <reason> | ...", or ""
-// for a mapping without one. The reasons are model output, so the cell goes
+// "<outcome>: <u> upheld, <r> rejected, <f> failed; <reason> | ...", or "" for
+// a mapping without one. The reasons are model output, so the cell goes
 // through csvCellUpTo, uncapped: the server already bounds each reason.
 func critiqueCell(c *pb.MappingCritique) string {
 	if c == nil {
 		return ""
 	}
-	verdict := "kept"
-	if c.GetVetoed() {
-		verdict = "vetoed"
-	}
-	cell := fmt.Sprintf("%s: %d upheld, %d rejected, %d failed", verdict, c.GetUpheld(), c.GetRejected(), c.GetFailed())
+	cell := fmt.Sprintf("%s: %d upheld, %d rejected, %d failed", c.GetOutcome(), c.GetUpheld(), c.GetRejected(), c.GetFailed())
 	if reasons := c.GetReasons(); len(reasons) > 0 {
 		cell += "; " + strings.Join(reasons, " | ")
 	}
@@ -344,12 +353,17 @@ gets a leading single quote, so a spreadsheet does not run it as a formula.
 With --stage analyzer, which has no viability, JSON omits viabilityScore and
 isViable and CSV leaves viability_score and is_viable empty.
 
-When the job ran the critique stage, the pairs it vetoed are not mappings and
-are left out. With --stage analyzer --include-vetoed they are listed too: JSON
-carries each mapping's critique (vetoed, upheld, rejected, failed, reasons)
-and CSV adds a critique column ("vetoed: 0 upheld, 3 rejected, 0 failed;
-<reasons>"; empty for a mapping the critique did not review). The reasons are
-the critics' own words.`,
+With --stage analyzer, when the job ran the critique stage, JSON carries each
+mapping's critique (outcome, vetoed, upheld, rejected, failed, reasons). The
+outcome is upheld, split, rejected (enough critics rejected it, but
+analysis.critique.veto was off, so it is kept and flagged), vetoed or failed.
+Its CSV ends with a critique column ("rejected: 1 upheld, 2 rejected,
+0 failed; <reasons>"; empty for a mapping the critique did not review).
+Vetoed pairs are not mappings and are left out; with --include-vetoed they
+are listed too. With
+--stage analyzer --exclude-rejected, rejected pairs are left out, for the
+strict view of a job run with veto off. The reasons are the critics' own
+words.`,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			jobID := args[0]
 			format, _ := cmd.Flags().GetString("format")
@@ -432,13 +446,16 @@ the critics' own words.`,
 				w := csv.NewWriter(out)
 				defer w.Flush()
 
-				// The critique column is added only on request, so the default
-				// columns stay where scripts expect them.
+				// The analyzer stage carries each mapping's critique, so its
+				// CSV ends with a critique column; last, so the other columns
+				// stay where scripts expect them. The synthesized listing has
+				// no critique and no such column.
 				header := []string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}
-				if req.GetIncludeVetoed() {
+				withCritique := req.GetStage() == pb.MappingStage_MAPPING_STAGE_ANALYZER
+				header = append(header, analysisColumns...)
+				if withCritique {
 					header = append(header, "critique")
 				}
-				header = append(header, analysisColumns...)
 				if err := w.Write(header); err != nil {
 					return fmt.Errorf("write CSV header: %w", err)
 				}
@@ -457,10 +474,11 @@ the critics' own words.`,
 						viabilityScore,
 						isViable,
 					}
-					if req.GetIncludeVetoed() {
+					row = append(row, jobValues...)
+					if withCritique {
 						row = append(row, critiqueCell(m.GetCritique()))
 					}
-					if err := w.Write(append(row, jobValues...)); err != nil {
+					if err := w.Write(row); err != nil {
 						return fmt.Errorf("write CSV row: %w", err)
 					}
 				}
@@ -478,7 +496,7 @@ the critics' own words.`,
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a job-id",
 		find:  "crosscodex results export <job-id>",
-		usage: "crosscodex results export <job-id> [--format json|csv] [--output file] [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable] [--include-vetoed]",
+		usage: "crosscodex results export <job-id> [--format json|csv] [--output file] [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable] [--include-vetoed] [--exclude-rejected]",
 		examples: []string{
 			"crosscodex results export abc123",
 			"crosscodex results export abc123 --format csv --output mappings.csv",

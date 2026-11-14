@@ -135,6 +135,9 @@ var _ = Describe("Service.ListMappings", func() {
 		Entry("vetoed pairs on the default stage", func(r *pb.ListJobMappingsRequest) {
 			r.Stage, r.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_UNSPECIFIED, true
 		}, connect.CodeInvalidArgument, "include_vetoed applies only to the analyzer stage"),
+		Entry("excluding rejected pairs on the synthesized stage", func(r *pb.ListJobMappingsRequest) {
+			r.Stage, r.ExcludeRejected = pb.MappingStage_MAPPING_STAGE_SYNTHESIZED, true
+		}, connect.CodeInvalidArgument, "exclude_rejected applies only to the analyzer stage: synthesized mappings are listed without their critique; request the analyzer stage to filter them"),
 		Entry("unspecified relationship type", func(r *pb.ListJobMappingsRequest) {
 			r.RelationshipTypes = []pb.RelationshipType{pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED}
 		}, connect.CodeInvalidArgument, "EQUIVALENT"),
@@ -241,6 +244,15 @@ var _ = Describe("Service.ListMappings", func() {
 			Expect(reader.filter.IncludeVetoed).To(BeTrue())
 		})
 
+		It("passes exclude_rejected through on the analyzer stage, alone or with include_vetoed", func() {
+			req := validRequest()
+			req.Stage, req.ExcludeRejected, req.IncludeVetoed = pb.MappingStage_MAPPING_STAGE_ANALYZER, true, true
+			_, err := call(context.Background(), req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reader.filter.ExcludeRejected).To(BeTrue())
+			Expect(reader.filter.IncludeVetoed).To(BeTrue())
+		})
+
 		It("allows a cross-job read of one control on the synthesized stage", func() {
 			req := validRequest()
 			req.JobId, req.ControlId = "", "AC-1"
@@ -294,7 +306,7 @@ var _ = Describe("Service.ListMappings", func() {
 			}}
 			resp, err := call(context.Background(), validRequest())
 			Expect(err).NotTo(HaveOccurred())
-			want := &pb.MappingCritique{Vetoed: true, Upheld: 1, Rejected: 2,
+			want := &pb.MappingCritique{Vetoed: true, Upheld: 1, Rejected: 2, Outcome: "vetoed",
 				Reasons: []string{"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: no", "panel-3 s0 REJECT: no"}}
 			Expect(proto.Equal(resp.Mappings[0].Critique, want)).To(BeTrue(), "critique %v", resp.Mappings[0].Critique)
 			Expect(resp.Mappings[1].Critique).To(BeNil())

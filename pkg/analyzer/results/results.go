@@ -113,8 +113,12 @@ const (
 	CritiqueUpheld = "upheld"
 	// CritiqueSplit: the verdict is kept, but at least one critic rejected it.
 	CritiqueSplit = "split"
-	// CritiqueVetoed: enough critics rejected the verdict to drop it.
+	// CritiqueVetoed: enough critics rejected the verdict to drop it
+	// (analysis.critique.veto on).
 	CritiqueVetoed = "vetoed"
+	// CritiqueRejected: enough critics rejected the verdict to veto it, but
+	// analysis.critique.veto was off, so the verdict is kept and flagged.
+	CritiqueRejected = "rejected"
 	// CritiqueFailed: the critique failed (no valid vote, or failed votes
 	// over analysis.critique.max_error_rate), so the verdict is kept unreviewed.
 	CritiqueFailed = "failed"
@@ -125,11 +129,12 @@ const (
 // "requires"). Upheld, Rejected and Failed count the panel's votes (Failed:
 // task errors, responses without a valid VERDICT line and votes with no
 // result), so they sum to the panel size. Outcome says what the critique
-// decided (CritiqueUpheld, CritiqueSplit, CritiqueVetoed or CritiqueFailed)
-// without the run's config. Vetoed is Outcome == CritiqueVetoed: Rejected /
-// (Upheld + Rejected) reached analysis.critique.consensus_threshold with at
-// least one valid vote, and the failures stayed within
-// analysis.critique.max_error_rate. Reasons holds one entry per panel vote,
+// decided (CritiqueUpheld, CritiqueSplit, CritiqueRejected, CritiqueVetoed
+// or CritiqueFailed) without the run's config. Rejected / (Upheld + Rejected)
+// reaching analysis.critique.consensus_threshold, with at least one valid
+// vote and the failures within analysis.critique.max_error_rate, is
+// CritiqueVetoed when analysis.critique.veto was on and CritiqueRejected
+// (kept, flagged) when it was off. Vetoed is Outcome == CritiqueVetoed. Reasons holds one entry per panel vote,
 // in panel order, kept or vetoed, so the result is the audit record of the
 // decision: "<model> s<N> <UPHOLD|REJECT|FAILED>: <reason>", which Note reads.
 // Each entry's reason is model output stored as data (cleaned with

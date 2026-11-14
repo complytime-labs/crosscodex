@@ -37,6 +37,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			cfg := config.CritiqueConfig{
 				Models: models, SamplesPerModel: rapid.IntRange(1, 3).Draw(t, "samples"),
 				ConsensusThreshold: rapid.Float64Range(0.5, 1.0).Draw(t, "threshold"),
+				Veto:               rapid.Bool().Draw(t, "veto"),
 				MaxErrorRate:       rapid.Float64Range(0, 1).Draw(t, "max_error_rate"),
 			}
 			a := critique.New(nil, nil, nil, cfg)
@@ -82,7 +83,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					t.Fatalf("%s %s--%s: %d reasons for a panel of %d", r.Kind, r.SourceControlID, r.TargetControlID, len(r.Reasons), panel)
 				}
 				switch r.Outcome {
-				case results.CritiqueUpheld, results.CritiqueSplit, results.CritiqueVetoed, results.CritiqueFailed:
+				case results.CritiqueUpheld, results.CritiqueSplit, results.CritiqueRejected, results.CritiqueVetoed, results.CritiqueFailed:
 				default:
 					t.Fatalf("%s %s--%s: unknown outcome %q", r.Kind, r.SourceControlID, r.TargetControlID, r.Outcome)
 				}
@@ -103,6 +104,19 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				}
 				if r.Vetoed && float64(r.Rejected)/float64(r.Upheld+r.Rejected) < cfg.ConsensusThreshold {
 					t.Fatalf("%s %s--%s vetoed below the threshold", r.Kind, r.SourceControlID, r.TargetControlID)
+				}
+				if r.Vetoed && !cfg.Veto {
+					t.Fatalf("%s %s--%s vetoed with analysis.critique.veto off", r.Kind, r.SourceControlID, r.TargetControlID)
+				}
+				reached := r.Upheld+r.Rejected > 0 && float64(r.Rejected)/float64(r.Upheld+r.Rejected) >= cfg.ConsensusThreshold
+				if reached && !cfg.Veto && r.Outcome != results.CritiqueRejected && r.Outcome != results.CritiqueFailed {
+					t.Fatalf("%s %s--%s: %q at %d of %d valid votes with veto off, want rejected", r.Kind, r.SourceControlID, r.TargetControlID,
+						r.Outcome, r.Rejected, r.Upheld+r.Rejected)
+				}
+				if r.Outcome == results.CritiqueRejected && (cfg.Veto ||
+					float64(r.Rejected)/float64(r.Upheld+r.Rejected) < cfg.ConsensusThreshold) {
+					t.Fatalf("%s %s--%s rejected with veto %v at %d of %d valid votes", r.Kind, r.SourceControlID, r.TargetControlID,
+						cfg.Veto, r.Rejected, r.Upheld+r.Rejected)
 				}
 			}
 		})

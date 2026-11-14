@@ -23,15 +23,18 @@ type RequiresEdge struct {
 	TenantID        string    // Tenant identifier
 	JobID           string    // Analysis job identifier
 	// Critique is the critique stage's review of the edge's verdict, written
-	// as the critique_upheld, critique_rejected and, when Note is non-empty,
-	// critique_note properties. Nil for a job that ran no critique: the edge
+	// as the critique_upheld, critique_rejected and, when non-empty,
+	// critique_note and critique_outcome properties. Nil for a job that ran no critique: the edge
 	// then has none of them.
 	Critique *EdgeCritique
 }
 
-// EdgeCritique is the critique stage's review of a kept edge: its UPHOLD and
-// REJECT vote counts and the review note (empty when none is needed).
+// EdgeCritique is the critique stage's review of a kept edge: its outcome
+// (upheld, split, rejected or failed; a vetoed verdict writes no edge), its
+// UPHOLD and REJECT vote counts and the review note (empty when none is
+// needed).
 type EdgeCritique struct {
+	Outcome  string
 	Upheld   int
 	Rejected int
 	Note     string

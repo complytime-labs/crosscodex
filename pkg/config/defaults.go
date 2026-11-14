@@ -171,6 +171,7 @@ analysis:
     max_source_chars: 1500
     max_target_chars: 800
     allow_shared_panel_models: false
+    veto: false
   candidates:
     min_embedding_coverage: 0.8
     embed_model: snowflake-arctic-embed2

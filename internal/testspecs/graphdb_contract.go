@@ -1373,10 +1373,11 @@ func GraphDBContractBehavior(setup GraphDBSetup) func() {
 				gomega.Expect(got.Properties).NotTo(gomega.HaveKey("critique_upheld"))
 				gomega.Expect(got.Properties).NotTo(gomega.HaveKey("critique_rejected"))
 				gomega.Expect(got.Properties).NotTo(gomega.HaveKey("critique_note"))
+				gomega.Expect(got.Properties).NotTo(gomega.HaveKey("critique_outcome"))
 			})
 
-			ginkgo.It("writes the critique's vote counts and note", func() {
-				req.Critique = &graphdb.EdgeCritique{Upheld: 2, Rejected: 1, Note: "critique split: 1 of 3 rejected — panel-2 s0: it's 'quoted'"}
+			ginkgo.It("writes the critique's outcome, vote counts and note", func() {
+				req.Critique = &graphdb.EdgeCritique{Outcome: "split", Upheld: 2, Rejected: 1, Note: "critique split: 1 of 3 rejected — panel-2 s0: it's 'quoted'"}
 				gomega.Expect(db.CreateRequiresEdge(ctx, tenant, req)).To(gomega.Succeed())
 
 				got, err := db.GetEdge(ctx, tenant, req.EdgeID())
@@ -1384,10 +1385,11 @@ func GraphDBContractBehavior(setup GraphDBSetup) func() {
 				gomega.Expect(got.Properties).To(gomega.HaveKeyWithValue("critique_upheld", float64(2)))
 				gomega.Expect(got.Properties).To(gomega.HaveKeyWithValue("critique_rejected", float64(1)))
 				gomega.Expect(got.Properties).To(gomega.HaveKeyWithValue("critique_note", req.Critique.Note))
+				gomega.Expect(got.Properties).To(gomega.HaveKeyWithValue("critique_outcome", "split"))
 			})
 
 			ginkgo.It("writes no critique_note for a critique without one", func() {
-				req.Critique = &graphdb.EdgeCritique{Upheld: 3}
+				req.Critique = &graphdb.EdgeCritique{Outcome: "upheld", Upheld: 3}
 				gomega.Expect(db.CreateRequiresEdge(ctx, tenant, req)).To(gomega.Succeed())
 
 				got, err := db.GetEdge(ctx, tenant, req.EdgeID())

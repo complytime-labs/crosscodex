@@ -20,6 +20,13 @@ type CritiqueConfig struct {
 	// makes the stage fail when they do.
 	// Set it for offline or single-model deployments. Global-only.
 	AllowSharedPanelModels bool `yaml:"allow_shared_panel_models" json:"allow_shared_panel_models"`
+	// Veto drops a verdict the critique rejects (REJECT share of valid votes
+	// at or over ConsensusThreshold): it is then not a mapping and writes no
+	// graph edge. False (the default) keeps the verdict and records the
+	// critique outcome "rejected", so users see the critics' doubt and can
+	// filter it with `results export --stage analyzer --exclude-rejected`.
+	// Global-only.
+	Veto bool `yaml:"veto" json:"veto"`
 }
 
 // Validate checks CritiqueConfig for consistency and required fields.

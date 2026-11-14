@@ -105,8 +105,22 @@ var _ = Describe("Synthesis materialization", func() {
 		Expect(props["ctrl-1"]).To(HaveKeyWithValue(results.CritiqueUpheldProperty, BeNumerically("==", 2)))
 		Expect(props["ctrl-1"]).To(HaveKeyWithValue(results.CritiqueRejectedProperty, BeNumerically("==", 1)))
 		Expect(props["ctrl-1"]).To(HaveKeyWithValue(results.CritiqueNoteProperty, "critique split: 1 of 3 rejected — panel-1 s0: too broad"))
+		Expect(props["ctrl-1"]).To(HaveKeyWithValue(results.CritiqueOutcomeProperty, "split"))
 		Expect(props["ctrl-2"]).NotTo(HaveKey(results.CritiqueUpheldProperty))
+		Expect(props["ctrl-2"]).NotTo(HaveKey(results.CritiqueOutcomeProperty))
 		Expect(props["ctrl-2"]).NotTo(HaveKey(results.CritiqueNoteProperty))
+	})
+
+	It("writes the synthesized edge of a pair the critique rejected without veto, flagged rejected", func() {
+		rejected := mapping("ctrl-1", "ctrl-2", "EQUIVALENT")
+		rejected["critique"] = results.CritiqueResult{Kind: results.RelationshipAnalyzer, SourceControlID: "ctrl-1", TargetControlID: "ctrl-2",
+			Upheld: 1, Rejected: 2, Outcome: results.CritiqueRejected, Reasons: []string{"panel-2 s0 REJECT: too broad"}}
+		Expect(deliver("synthesis", []map[string]any{rejected})).To(Succeed())
+
+		got := edges()
+		Expect(got).To(HaveLen(1))
+		Expect(got[0].Edge.Properties).To(HaveKeyWithValue(results.CritiqueOutcomeProperty, "rejected"))
+		Expect(got[0].Edge.Properties).To(HaveKeyWithValue(results.CritiqueNoteProperty, "critique rejected: 2 of 3 rejected — panel-2 s0: too broad"))
 	})
 
 	It("keeps a pair's analyzer edge and synthesized edge apart", func() {

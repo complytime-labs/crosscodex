@@ -21,7 +21,7 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 			meter := mp.Meter("crosscodex")
 			a.verdictCounter, _ = meter.Int64Counter(
 				"crosscodex.critique.verdicts",
-				metric.WithDescription("Critiqued verdicts by outcome: upheld, split, vetoed or failed"),
+				metric.WithDescription("Critiqued verdicts by outcome: upheld, split, rejected, vetoed or failed"),
 			)
 			a.duration, _ = meter.Float64Histogram(
 				"crosscodex.critique.duration_ms",

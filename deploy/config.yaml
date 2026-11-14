@@ -132,11 +132,13 @@ analysis:
     samples_per_model: 1
     max_tokens: 2048
   # Critique re-judges each mapping the relationship and requires panels
-  # produced, with the same three models, and drops a pair the panel rejects
-  # (consensus_threshold, default 0.66). Cost: one extra LLM call per model
-  # (here 3) for every surviving pair, so it adds roughly the call volume of
-  # one more pair analyzer; a failed critique call keeps the pair and notes
-  # it. To skip the extra calls and the delay, set `enabled: false`.
+  # produced, with the same three models. A pair the panel rejects
+  # (consensus_threshold, default 0.66) is kept and flagged with critique
+  # outcome "rejected"; `veto: true` drops it instead. Cost: one extra LLM
+  # call per model (here 3) for every accepted pair, so it adds roughly the
+  # call volume of one more pair analyzer; a failed critique call keeps the
+  # pair and notes it. To skip the extra calls and the delay, set
+  # `enabled: false`.
   critique:
     enabled: true
     models:
@@ -145,6 +147,7 @@ analysis:
       - panel-3
     samples_per_model: 1
     max_tokens: 2048
+    veto: false
 worker:
   # Tasks this crosscodexd runs at once (default 1: one LLM call at a time,
   # across every job). Match it to the model server's parallel slots

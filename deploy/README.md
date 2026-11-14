@@ -136,7 +136,7 @@ Set `tls.mode` last: `config set` refuses a change that stops a working configur
 
 - `relationship` produces the job's mappings. Its panel is `panel-1`, `panel-2` and `panel-3`, one sample each (`samples_per_model: 1`), so each mapping's confidence reflects whether three different models agree.
 - `requires` produces REQUIRES (prerequisite) edges, which are not mappings. Its panel is the same three aliases, so an edge needs a majority of the votes (`consensus_threshold`), not one answer.
-- `critique` re-reads every verdict those two accepted, with the same three aliases, and vetoes the ones its panel rejects (`consensus_threshold` 0.66). A vetoed pair is not a mapping and writes no edge.
+- `critique` re-reads every verdict those two accepted, with the same three aliases, and flags the ones its panel rejects (`consensus_threshold` 0.66) with critique outcome `rejected`; they stay mappings. With `analysis.critique.veto: true` it drops them instead: a vetoed pair is not a mapping and writes no edge.
 
 So pair calls ≤ source controls × `max_per_source` (10) × 6 (3 relationship + 3 requires), plus 3 critique calls for each accepted pair, plus one classify and one embed call per control of both catalogs; `--bidirectional` adds the reverse direction. For example, a 100-control source catalog costs about 6,000 pair calls, plus up to 3 per accepted pair for the critique. Results are reused across your tenant's jobs, so re-running an unchanged job costs little. The top-level README's "Cost" note has the full formula.
 

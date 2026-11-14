@@ -291,4 +291,23 @@ var _ = Describe("PGResolver synthesis stage", func() {
 		Expect(mappings[1].SourceID).To(Equal("c2"))
 		Expect(mappings[1].Critique).To(BeNil(), "a requires critique is not a relationship critique")
 	})
+
+	It("serves a pair the critique rejected without veto, with its critique", func() {
+		crit := []results.CritiqueResult{{Kind: results.RelationshipAnalyzer, SourceControlID: "c1", TargetControlID: "c2", Upheld: 1, Rejected: 2,
+			Outcome: results.CritiqueRejected, Reasons: []string{"panel-1 s0 REJECT: x"}}}
+		data, err := json.Marshal(crit)
+		Expect(err).NotTo(HaveOccurred())
+		tx := &dbtest.Tx{
+			QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(nil, data) },
+			QueryFunc: func(context.Context, string, ...any) (db.Rows, error) {
+				return dbtest.Rows(nil, []any{"c1", "c2", "EQUIVALENT", 0.9, 0.7}), nil
+			},
+		}
+		got, err := graph.NewPGResolver(&dbtest.Conn{Tx: tx}).Resolve(ctx, graph.ResourceRef{URI: "pg://results/job-1/synthesis"})
+		Expect(err).NotTo(HaveOccurred())
+		var mappings []results.SynthesizedMapping
+		Expect(json.Unmarshal(got, &mappings)).To(Succeed())
+		Expect(mappings).To(HaveLen(1))
+		Expect(mappings[0].Critique).To(Equal(&crit[0]))
+	})
 })

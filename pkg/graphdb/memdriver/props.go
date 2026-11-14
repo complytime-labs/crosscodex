@@ -113,6 +113,9 @@ func requiresProps(r graphdb.RequiresEdge) map[string]any {
 		if c.Note != "" {
 			props["critique_note"] = c.Note
 		}
+		if c.Outcome != "" {
+			props["critique_outcome"] = c.Outcome
+		}
 	}
 	return props
 }

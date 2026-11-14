@@ -84,7 +84,8 @@ import (
 //   - CreateRequiresEdge writes id = RequiresEdge.EdgeID() and
 //     valid_from = AnalyzedAt, so it is deduplicated and visible to QueryAsOf.
 //     A non-nil Critique adds critique_upheld, critique_rejected and, when
-//     its Note is non-empty, critique_note; a nil one adds none of them.
+//     non-empty, critique_note (its Note) and critique_outcome (its
+//     Outcome); a nil one adds none of them.
 //   - BulkCreateEdges is all-or-nothing: on any error nothing is persisted and
 //     the returned ID slice is nil. Empty input with a valid tenant returns
 //     nil, nil; a malformed tenant is rejected even when the input is empty.

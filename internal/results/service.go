@@ -234,6 +234,9 @@ func (s *Service) buildFilter(ctx context.Context, msg *pb.ListJobMappingsReques
 	if msg.GetIncludeVetoed() && stage != StageAnalyzer {
 		return ctx, Filter{}, invalidArgument("include_vetoed applies only to the analyzer stage: synthesis never receives vetoed pairs; request the analyzer stage to list them")
 	}
+	if msg.GetExcludeRejected() && stage != StageAnalyzer {
+		return ctx, Filter{}, invalidArgument("exclude_rejected applies only to the analyzer stage: synthesized mappings are listed without their critique; request the analyzer stage to filter them")
+	}
 
 	types, err := relationshipNames(msg.GetRelationshipTypes())
 	if err != nil {
@@ -261,6 +264,7 @@ func (s *Service) buildFilter(ctx context.Context, msg *pb.ListJobMappingsReques
 		MinConfidence:     minConfidence,
 		IncludeNonViable:  msg.GetIncludeNonViable(),
 		IncludeVetoed:     msg.GetIncludeVetoed(),
+		ExcludeRejected:   msg.GetExcludeRejected(),
 		RelationshipTypes: types,
 		PageSize:          pageSize,
 		After:             after,
@@ -415,7 +419,7 @@ func (s *Service) toResponse(ctx context.Context, page Page) *pb.ListJobMappings
 			// The store refuses counts outside [0, MaxInt32] as a corrupt
 			// critique result, so the conversions cannot overflow.
 			cm.Critique = &pb.MappingCritique{Vetoed: c.Vetoed, Upheld: int32(c.Upheld), Rejected: int32(c.Rejected),
-				Failed: int32(c.Failed), Reasons: c.Reasons}
+				Failed: int32(c.Failed), Reasons: c.Reasons, Outcome: c.Outcome}
 		}
 		resp.Mappings = append(resp.Mappings, cm)
 	}

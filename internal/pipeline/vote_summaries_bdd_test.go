@@ -71,6 +71,24 @@ var _ = Describe("buildVoteSummaryPairs", func() {
 		))
 	})
 
+	It("keeps the pairs the critique rejected without veto", func() {
+		requiresJSON, _ := json.Marshal([]results.RequiresResult{{SourceID: "AC-3", TargetID: "AC-4", Confidence: 0.9}})
+		relJSON, _ := json.Marshal([]results.SemanticMatchResult{{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "SUBSET_OF", Confidence: 0.8}})
+		critJSON, _ := json.Marshal([]results.CritiqueResult{
+			{Kind: results.RelationshipAnalyzer, SourceControlID: "AC-1", TargetControlID: "AC-2", Rejected: 3, Outcome: results.CritiqueRejected},
+			{Kind: results.RequiresAnalyzer, SourceControlID: "AC-3", TargetControlID: "AC-4", Rejected: 3, Outcome: results.CritiqueRejected}})
+		pairs, err := buildVoteSummaryPairs(map[string]*analyzer.Output{
+			results.RequiresAnalyzer:     {ResultData: requiresJSON},
+			results.RelationshipAnalyzer: {ResultData: relJSON},
+			results.CritiqueAnalyzer:     {ResultData: critJSON},
+		}, "job-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pairs).To(ConsistOf(
+			VoteSummaryPair{SourceID: "AC-3", TargetID: "AC-4", Analyzer: "requires", Consensus: synthesis.ConsensusRequires, Confidence: 0.9},
+			VoteSummaryPair{SourceID: "AC-1", TargetID: "AC-2", Analyzer: "relationship", Consensus: "SUBSET_OF", Confidence: 0.8},
+		))
+	})
+
 	It("rejects a critique result that does not decode as corrupt, naming the remedy", func() {
 		relJSON, _ := json.Marshal([]results.SemanticMatchResult{{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "SUBSET_OF"}})
 		_, err := buildVoteSummaryPairs(map[string]*analyzer.Output{

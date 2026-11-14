@@ -9,7 +9,8 @@
 #           EVAL_CERT EVAL_KEY
 # Optional: LABEL (default: UTC timestamp), BASELINE (report.json to compare),
 #           MODE=llm (print only the summary line), NO_CACHE=1 (run start
-#           --no-cache), EVAL_TIMEOUT (seconds, default 3600), EVAL_POLL
+#           --no-cache), EVAL_TIMEOUT (seconds, default 86400: a mapping run on a
+#           local model takes hours), EVAL_POLL
 #           (seconds, default 10), PROFILES_DIR, LABELS_DIR and EVAL_OUT_DIR (defaults
 #           under ROOT_DIR; the tooling suite overrides them). A score uses
 #           LABELS_DIR/PROFILE.yaml when it exists; without it no labels apply.
@@ -31,7 +32,7 @@ LABEL="${LABEL:-}"
 BASELINE="${BASELINE:-}"
 MODE="${MODE:-}"
 NO_CACHE="${NO_CACHE:-}"
-EVAL_TIMEOUT="${EVAL_TIMEOUT:-3600}"
+EVAL_TIMEOUT="${EVAL_TIMEOUT:-86400}"
 EVAL_POLL="${EVAL_POLL:-10}"
 PROFILES_DIR="${PROFILES_DIR:-${ROOT_DIR}/test/eval/crosswalk/profiles}"
 LABELS_DIR="${LABELS_DIR:-${ROOT_DIR}/test/eval/crosswalk/labels}"

@@ -24,6 +24,8 @@ testcases:
         env: "PROFILE=synth-run LABEL=t1"
         assertions:
           - result.systemout ShouldContainSubstring exit=0
+          # A real mapping run takes hours; the default wait covers a day.
+          - result.systemout ShouldContainSubstring "timeout 86400s"
       - type: exec
         script: |
           w="{{.root}}/.test-output/eval/tooling-run/happy"

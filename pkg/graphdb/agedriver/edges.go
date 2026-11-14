@@ -78,6 +78,9 @@ func (c *ageClient) CreateRequiresEdge(ctx context.Context, tenant string, reqEd
 		if c.Note != "" {
 			pairs = append(pairs, propertyPair{"critique_note", fmt.Sprintf("'%s'", escapeCypher(c.Note))})
 		}
+		if c.Outcome != "" {
+			pairs = append(pairs, propertyPair{"critique_outcome", fmt.Sprintf("'%s'", escapeCypher(c.Outcome))})
+		}
 	}
 
 	cypher := fmt.Sprintf(

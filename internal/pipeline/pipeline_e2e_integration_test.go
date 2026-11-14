@@ -346,9 +346,11 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 	fakeLLM := testspecs.DeterministicLLM{EmbeddingDim: embeddingDim}
 	var workerLLM llmclient.Client = fakeLLM
 	if opts.critique {
+		// Veto on: the critique specs below assert the vetoed pair is dropped.
 		analysisConfig.Critique = config.CritiqueConfig{
 			Enabled: true, Models: []string{e2eModel}, SamplesPerModel: 1, MaxTokens: 512,
 			ConsensusThreshold: 0.66, MaxErrorRate: 0.5, MaxSourceChars: 10000, MaxTargetChars: 10000,
+			Veto: true,
 		}
 		workerLLM = critiqueLLM{DeterministicLLM: fakeLLM}
 	}

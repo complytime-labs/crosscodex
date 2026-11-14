@@ -77,7 +77,7 @@ func (s *Service) materializeRelationship(ctx context.Context, tenantID, jobID s
 
 // writeSemanticMatches writes one SEMANTIC_MATCH edge per relationship result
 // that verdicts does not veto. An edge whose pair has a critique carries its
-// vote counts and note (see critiqueProperties).
+// outcome, vote counts and note (see critiqueProperties).
 func (s *Service) writeSemanticMatches(ctx context.Context, tenantID, jobID string, matches []results.SemanticMatchResult, verdicts results.Verdicts) error {
 	for _, r := range matches {
 		if verdicts.Vetoed(r.SourceID, r.TargetID) {
@@ -109,13 +109,16 @@ func (s *Service) writeSemanticMatches(ctx context.Context, tenantID, jobID stri
 	return nil
 }
 
-// critiqueProperties sets c's vote counts and, when it has one, its note on an
-// edge's properties.
+// critiqueProperties sets c's outcome, vote counts and, when it has one, its
+// note on an edge's properties.
 func critiqueProperties(c results.CritiqueResult, props map[string]any) {
 	props[results.CritiqueUpheldProperty] = c.Upheld
 	props[results.CritiqueRejectedProperty] = c.Rejected
 	if note := c.Note(); note != "" {
 		props[results.CritiqueNoteProperty] = note
+	}
+	if c.Outcome != "" {
+		props[results.CritiqueOutcomeProperty] = c.Outcome
 	}
 }
 
@@ -128,8 +131,8 @@ func (s *Service) materializeRequires(ctx context.Context, tenantID, jobID strin
 }
 
 // writeRequires writes one REQUIRES edge per requires result that verdicts
-// does not veto. An edge whose pair has a critique carries its vote counts and
-// note.
+// does not veto. An edge whose pair has a critique carries its outcome, vote
+// counts and note.
 func (s *Service) writeRequires(ctx context.Context, tenantID, jobID string, reqResults []results.RequiresResult, verdicts results.Verdicts) error {
 	for _, r := range reqResults {
 		if verdicts.Vetoed(r.SourceID, r.TargetID) {
@@ -148,7 +151,7 @@ func (s *Service) writeRequires(ctx context.Context, tenantID, jobID string, req
 			JobID:      jobID,
 		}
 		if c, ok := verdicts.Result(r.SourceID, r.TargetID); ok {
-			reqEdge.Critique = &graphdb.EdgeCritique{Upheld: c.Upheld, Rejected: c.Rejected, Note: c.Note()}
+			reqEdge.Critique = &graphdb.EdgeCritique{Outcome: c.Outcome, Upheld: c.Upheld, Rejected: c.Rejected, Note: c.Note()}
 		}
 
 		err := s.graph.CreateRequiresEdge(ctx, tenantID, reqEdge)

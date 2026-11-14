@@ -50,10 +50,12 @@ func (f *fakeVerdicts) Verdicts(_ context.Context, tenantID, jobID string) ([]cr
 // panelConfig is the critique config the specs start from: the default
 // three-alias panel, one sample each.
 func panelConfig() config.CritiqueConfig {
+	// Veto on, so the specs of the veto rule see verdicts dropped; the
+	// advisory default (veto off) has its own specs.
 	return config.CritiqueConfig{
 		Enabled: true, Models: []string{"panel-1", "panel-2", "panel-3"}, SamplesPerModel: 1,
 		SamplingTemperature: 0.3, MaxTokens: 300, ConsensusThreshold: 0.66, MaxErrorRate: 0.34,
-		MaxSourceChars: 1500, MaxTargetChars: 800,
+		MaxSourceChars: 1500, MaxTargetChars: 800, Veto: true,
 	}
 }
 
@@ -366,6 +368,58 @@ var _ = Describe("CritiqueAnalyzer", func() {
 			Entry("1 invalid within max_error_rate, 2 REJECT: vetoed", []string{invalid, reject, reject}, "vetoed", true, 0, 2, 1),
 			Entry("1 invalid within max_error_rate, 2 UPHOLD: upheld", []string{invalid, uphold, uphold}, "upheld", false, 2, 0, 1),
 			Entry("2 invalid over max_error_rate, 1 REJECT: failed and kept", []string{invalid, reject, invalid}, "failed", false, 0, 1, 2),
+		)
+
+		DescribeTable("with veto off, decides each verdict without vetoing any",
+			func(responses []string, outcome string, upheld, rejected, failed int) {
+				cfg := panelConfig()
+				cfg.Veto = false
+				a = critique.New(nil, nil, verdicts, cfg)
+				var trs []analyzer.TaskResult
+				for i, r := range responses {
+					trs = append(trs, voteResult(taskID(fmt.Sprintf("panel-%d", i+1)), r))
+				}
+				out, err := a.Aggregate(ctx, trs)
+				Expect(err).NotTo(HaveOccurred())
+				got := decoded(out)
+				Expect(got).To(HaveLen(1))
+				Expect(got[0]).To(MatchFields(IgnoreExtras, Fields{
+					"Outcome": Equal(outcome), "Vetoed": BeFalse(), "Upheld": Equal(upheld), "Rejected": Equal(rejected), "Failed": Equal(failed),
+				}))
+			},
+			Entry("3 REJECT: rejected", []string{reject, reject, reject}, "rejected", 0, 3, 0),
+			Entry("2 REJECT and 1 UPHOLD at threshold 0.66: rejected", []string{reject, uphold, reject}, "rejected", 1, 2, 0),
+			Entry("1 invalid within max_error_rate, 2 REJECT: rejected", []string{invalid, reject, reject}, "rejected", 0, 2, 1),
+			Entry("1 REJECT and 2 UPHOLD: split", []string{uphold, reject, uphold}, "split", 2, 1, 0),
+			Entry("2 invalid over max_error_rate, 1 REJECT: failed", []string{invalid, reject, invalid}, "failed", 0, 1, 2),
+		)
+
+		It("counts rejected verdicts in the stage metadata, apart from vetoed ones", func() {
+			cfg := panelConfig()
+			cfg.Veto = false
+			a = critique.New(nil, nil, verdicts, cfg)
+			out, err := a.Aggregate(ctx, []analyzer.TaskResult{
+				voteResult(taskID("panel-1"), reject), voteResult(taskID("panel-2"), reject), voteResult(taskID("panel-3"), reject),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out.Metadata).To(HaveKeyWithValue("rejected_count", "1"))
+			Expect(out.Metadata).To(HaveKeyWithValue("vetoed_count", "0"))
+		})
+
+		DescribeTable("records the veto setting and threshold the stage decided with, so an auditor can read them even when no pair reached the threshold",
+			func(veto bool, want string) {
+				cfg := panelConfig()
+				cfg.Veto = veto
+				a = critique.New(nil, nil, verdicts, cfg)
+				out, err := a.Aggregate(ctx, []analyzer.TaskResult{
+					voteResult(taskID("panel-1"), uphold), voteResult(taskID("panel-2"), uphold), voteResult(taskID("panel-3"), uphold),
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out.Metadata).To(HaveKeyWithValue("veto", want))
+				Expect(out.Metadata).To(HaveKeyWithValue("consensus_threshold", "0.66"))
+			},
+			Entry("veto off", false, "false"),
+			Entry("veto on", true, "true"),
 		)
 
 		It("does not veto 2 REJECT and 1 UPHOLD at threshold 0.7", func() {

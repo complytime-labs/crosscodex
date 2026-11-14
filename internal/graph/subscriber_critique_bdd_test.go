@@ -177,6 +177,7 @@ var _ = Describe("Subscriber critique verdicts", func() {
 			Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueUpheldProperty, float64(2)))
 			Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueRejectedProperty, float64(1)))
 			Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueNoteProperty, "critique split: 1 of 3 rejected — panel-2 s0: scope differs"))
+			Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueOutcomeProperty, "split"))
 		})
 
 		It("puts the vote counts but no note on an upheld pair's REQUIRES edge", func() {
@@ -185,7 +186,27 @@ var _ = Describe("Subscriber critique verdicts", func() {
 			Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueUpheldProperty, float64(3)))
 			Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueRejectedProperty, float64(0)))
 			Expect(e.Properties).NotTo(HaveKey(results.CritiqueNoteProperty))
+			Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueOutcomeProperty, "upheld"))
 		})
+
+		DescribeTable("keeps a pair the critique rejected without veto, flagged with its outcome and note",
+			func(label string) {
+				put(results.CritiqueAnalyzer, []results.CritiqueResult{
+					critique(results.RelationshipAnalyzer, "b", "c", results.CritiqueRejected, 1, 2,
+						"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: too broad", "panel-3 s0 REJECT: no"),
+					critique(results.RequiresAnalyzer, "b", "c", results.CritiqueRejected, 1, 2,
+						"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: too broad", "panel-3 s0 REJECT: no"),
+				})
+				Expect(deliver(results.CritiqueAnalyzer, nil)).To(Succeed())
+				e, ok := edges(label)[[2]string{"b", "c"}]
+				Expect(ok).To(BeTrue(), "%s edge b->c", label)
+				Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueOutcomeProperty, "rejected"))
+				Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueRejectedProperty, float64(2)))
+				Expect(e.Properties).To(HaveKeyWithValue(results.CritiqueNoteProperty, "critique rejected: 2 of 3 rejected — panel-2 s0: too broad"))
+			},
+			Entry("SEMANTIC_MATCH", results.SemanticMatchEdgeLabel),
+			Entry("REQUIRES", "REQUIRES"),
+		)
 
 		It("keeps a pair the critique has no result for, without critique properties", func() {
 			Expect(deliver(results.CritiqueAnalyzer, nil)).To(Succeed())

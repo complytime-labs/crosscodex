@@ -89,6 +89,16 @@ are accepted.
   produced rows: read the labelled precision of a run only as far as coverage
   supports. Labels for pairs a run did not produce are ignored.
 
+## Results
+
+`results/` holds dated records of measurements worth comparing against
+later: what ran, the scores, the findings and how to reproduce them. Add one
+when a change is judged by an eval, and name it `YYYY-MM-DD-<topic>.md`.
+Each record names the labels it was scored with, so rescore its runs before
+comparing them with a later labels file.
+
+- [2026-11-14: independent panels, sceptical prompts and critique (#260)](results/2026-11-14-panel-skepticism.md)
+
 ## Adding a profile
 
 A profile (`profiles/<name>.yaml`) names a source and target catalog, a fixed

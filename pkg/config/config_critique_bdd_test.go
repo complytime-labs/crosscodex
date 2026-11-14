@@ -143,6 +143,15 @@ var _ = Describe("panel and critique defaults", func() {
 		Expect(c.ConsensusThreshold).To(Equal(0.66))
 	})
 
+	It("keeps rejected verdicts by default instead of vetoing them", func() {
+		Expect(loadDefaults().Analysis.Critique.Veto).To(BeFalse())
+	})
+
+	It("binds the veto env var", func() {
+		GinkgoT().Setenv("CROSSCODEX_ANALYSIS_CRITIQUE_VETO", "true")
+		Expect(loadDefaults().Analysis.Critique.Veto).To(BeTrue())
+	})
+
 	DescribeTable("loads a valid override of each critique field from the user config",
 		func(yamlLine string, got func(config.CritiqueConfig) any, want any) {
 			dir := GinkgoT().TempDir()
@@ -166,6 +175,7 @@ var _ = Describe("panel and critique defaults", func() {
 		Entry("max_source_chars", "max_source_chars: 900", func(c config.CritiqueConfig) any { return c.MaxSourceChars }, 900),
 		Entry("max_target_chars", "max_target_chars: 400", func(c config.CritiqueConfig) any { return c.MaxTargetChars }, 400),
 		Entry("allow_shared_panel_models", "allow_shared_panel_models: true", func(c config.CritiqueConfig) any { return c.AllowSharedPanelModels }, true),
+		Entry("veto", "veto: true", func(c config.CritiqueConfig) any { return c.Veto }, true),
 	)
 
 	DescribeTable("binds the allow_shared_panel_models env var",

@@ -41,6 +41,7 @@ type Filter struct {
 	MinConfidence     float64  // inclusive
 	IncludeNonViable  bool     // StageSynthesized only
 	IncludeVetoed     bool     // StageAnalyzer only: also list the pairs the job's critique vetoed
+	ExcludeRejected   bool     // StageAnalyzer only: leave out the pairs the critique rejected without veto
 	RelationshipTypes []string // analyzer names, e.g. "EQUIVALENT"; never empty
 	PageSize          int      // > 0
 	After             *Cursor  // nil = first page

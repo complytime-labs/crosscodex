@@ -357,6 +357,50 @@ var _ = Describe("PGStore", func() {
 					Reasons: []string{"panel-1 s0 REJECT: a", "panel-2 s0 REJECT: b", "panel-3 s0 REJECT: c"}}))
 			})
 
+			Describe("rejected without veto", func() {
+				// AC-1>B-1 is rejected with analysis.critique.veto off (kept,
+				// flagged); AC-2>B-1 is split; AC-3>B-1 is vetoed (a job can't
+				// hold both, but the filters are independent).
+				var advisory string
+				BeforeEach(func() {
+					advisory = env.seedJob(env.tenantA, "completed")
+					env.seedAnalysis(env.tenantA, advisory, `[
+						{"source_id":"AC-1","target_id":"B-1","relationship_type":"EQUIVALENT","confidence":0.9},
+						{"source_id":"AC-2","target_id":"B-1","relationship_type":"SUPPORTS","confidence":0.8},
+						{"source_id":"AC-3","target_id":"B-1","relationship_type":"SUPPORTS","confidence":0.7}]`)
+					env.seedCritique(env.tenantA, advisory, `[
+						{"kind":"relationship","source_control_id":"AC-1","target_control_id":"B-1","upheld":1,"rejected":2,"failed":0,
+						 "outcome":"rejected","vetoed":false,"reasons":["panel-1 s0 UPHOLD: a","panel-2 s0 REJECT: b","panel-3 s0 REJECT: c"]},
+						{"kind":"relationship","source_control_id":"AC-2","target_control_id":"B-1","upheld":2,"rejected":1,"failed":0,
+						 "outcome":"split","vetoed":false,"reasons":["panel-1 s0 UPHOLD: x","panel-2 s0 REJECT: y","panel-3 s0 UPHOLD: z"]},
+						{"kind":"relationship","source_control_id":"AC-3","target_control_id":"B-1","upheld":0,"rejected":3,"failed":0,
+						 "outcome":"vetoed","vetoed":true,"reasons":[]}]`)
+				})
+
+				It("keeps a rejected pair by default, flagged with its outcome", func() {
+					page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, advisory, results.StageAnalyzer))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keys(page)).To(Equal([]string{"AC-1>B-1", "AC-2>B-1"}))
+					Expect(page.Mappings[0].Critique.Outcome).To(Equal(analyzerresults.CritiqueRejected))
+				})
+
+				It("leaves a rejected pair out with ExcludeRejected and keeps the split one", func() {
+					f := filter(env.tenantA, advisory, results.StageAnalyzer)
+					f.ExcludeRejected = true
+					page, err := env.store.ListMappings(env.ctxA, f)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keys(page)).To(Equal([]string{"AC-2>B-1"}))
+				})
+
+				It("lists vetoed pairs and leaves rejected ones out with both filters", func() {
+					f := filter(env.tenantA, advisory, results.StageAnalyzer)
+					f.ExcludeRejected, f.IncludeVetoed = true, true
+					page, err := env.store.ListMappings(env.ctxA, f)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(keys(page)).To(Equal([]string{"AC-2>B-1", "AC-3>B-1"}))
+				})
+			})
+
 			DescribeTable("fails, naming the job, the pair and the remedy, when a vote count cannot be a panel's",
 				func(count string) {
 					bad := env.seedJob(env.tenantA, "completed")

@@ -137,9 +137,9 @@ message ControlMapping {
 // MappingCritique is the critique panel's review of one relationship verdict.
 // upheld + rejected + failed is the panel size.
 message MappingCritique {
-  // The panel rejected the verdict, so it is not a mapping: it is left out of
-  // the graph, synthesis and default listings. Listed only with
-  // ListJobMappingsRequest.include_vetoed.
+  // The panel rejected the verdict and analysis.critique.veto was on, so it is
+  // not a mapping: it is left out of the graph, synthesis and default
+  // listings. Listed only with ListJobMappingsRequest.include_vetoed.
   bool vetoed = 1;
   // Votes that upheld the verdict.
   int32 upheld = 2;
@@ -151,6 +151,11 @@ message MappingCritique {
   // <UPHOLD|REJECT|FAILED>: <reason>". The reasons are model output: escape
   // them before rendering.
   repeated string reasons = 5;
+  // What the critique decided: "upheld" (no vote rejected it), "split" (kept,
+  // some votes rejected it), "rejected" (enough votes rejected it to veto, but
+  // analysis.critique.veto was off, so it is kept and flagged), "vetoed"
+  // (dropped) or "failed" (too few valid votes; kept unreviewed).
+  string outcome = 6;
 }
 
 message AnalyzerContribution {
@@ -224,6 +229,12 @@ message ListJobMappingsRequest {
   // its critique (ControlMapping.critique.vetoed is true). SYNTHESIZED never
   // holds vetoed pairs, so setting this with it is INVALID_ARGUMENT.
   bool include_vetoed = 9;
+  // ANALYZER only: leave out the pairs the critique rejected without veto
+  // (ControlMapping.critique.outcome "rejected"), for the strict view of a job
+  // run with analysis.critique.veto off. It selects a different outcome from
+  // include_vetoed, so both may be set. Setting it with SYNTHESIZED is
+  // INVALID_ARGUMENT.
+  bool exclude_rejected = 10;
 }
 
 // ListJobMappingsResponse returns one page of mappings ordered by job, source,

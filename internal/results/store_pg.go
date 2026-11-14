@@ -367,7 +367,8 @@ func listSynthesized(ctx context.Context, tx db.Transaction, f Filter) ([]Mappin
 // fetches and decodes the job's whole result_data: walking N pages costs N
 // decodes. s.analyzerBytes reports the size of the last document decoded.
 // When the job ran the critique stage, each mapping carries its relationship
-// critique, and the pairs it vetoed are left out unless f.IncludeVetoed.
+// critique, the pairs it vetoed are left out unless f.IncludeVetoed, and the
+// pairs it rejected without veto are left out when f.ExcludeRejected.
 func (s *PGStore) listAnalyzer(ctx context.Context, tx db.Transaction, f Filter) ([]Mapping, error) {
 	if f.JobID == "" {
 		return nil, errors.New("list mappings: the analyzer stage needs a job ID; pass a job ID or request the synthesized stage")
@@ -415,9 +416,13 @@ func (s *PGStore) listAnalyzer(ctx context.Context, tx db.Transaction, f Filter)
 		if !f.IncludeVetoed && verdicts.Vetoed(m.SourceID, m.TargetID) {
 			continue
 		}
+		c, critiqued := verdicts.Result(m.SourceID, m.TargetID)
+		if critiqued && f.ExcludeRejected && c.Outcome == analyzerresults.CritiqueRejected {
+			continue
+		}
 		mapping := Mapping{JobID: f.JobID, SourceID: m.SourceID, TargetID: m.TargetID,
 			RelationshipType: m.RelationshipType, Confidence: m.Confidence}
-		if c, ok := verdicts.Result(m.SourceID, m.TargetID); ok {
+		if critiqued {
 			mapping.Critique = &c
 		}
 		out = append(out, mapping)

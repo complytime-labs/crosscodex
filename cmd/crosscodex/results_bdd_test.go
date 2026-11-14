@@ -43,6 +43,7 @@ func (f *fakeMappingsClient) ListJobMappings(_ context.Context, req *connectrpc.
 		MinConfidence:     req.Msg.GetMinConfidence(),
 		IncludeNonViable:  req.Msg.GetIncludeNonViable(),
 		IncludeVetoed:     req.Msg.GetIncludeVetoed(),
+		ExcludeRejected:   req.Msg.GetExcludeRejected(),
 		RelationshipTypes: req.Msg.GetRelationshipTypes(),
 		ControlId:         req.Msg.GetControlId(),
 		Pagination:        &pb.Pagination{PageSize: req.Msg.GetPagination().GetPageSize(), PageToken: req.Msg.GetPagination().GetPageToken()},
@@ -165,6 +166,11 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Entry("summary: vetoed pairs, which are not mappings", "summary",
 			"--include-vetoed lists vetoed pairs in `results export --stage analyzer`; summary counts only mappings",
 			"--stage", "analyzer", "--include-vetoed"),
+		Entry("export: excluding rejected pairs with the default stage", "export",
+			"--exclude-rejected only applies to the analyzer stage: synthesized mappings are listed without their critique, so add --stage analyzer or drop the flag",
+			"--exclude-rejected"),
+		Entry("summary: excluding rejected pairs with the default stage", "summary",
+			"--exclude-rejected only applies to the analyzer stage", "--exclude-rejected"),
 	)
 
 	It("stops when the server repeats the page token it was given", func() {
@@ -272,15 +278,48 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(lines[1]).To(HavePrefix("a,s-a,t-a,RELATIONSHIP_TYPE_EQUIVALENT,0.900,,,"))
 		})
 
+		DescribeTable("asks the server to leave out pairs the critique rejected without veto",
+			func(command string) {
+				_, _, err := execute(newCmd(), command, "job-1", "--stage", "analyzer", "--exclude-rejected")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(fake.calls[0].GetExcludeRejected()).To(BeTrue())
+			},
+			Entry("export", "export"),
+			Entry("summary, which counts the strict view", "summary"),
+		)
+
+		It("says in summary text and JSON that rejected pairs were left out", func() {
+			stdout, _, err := execute(newCmd(), "summary", "job-1", "--stage", "analyzer", "--exclude-rejected")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).To(ContainSubstring("Summary for job job-1 (analyzer mappings, without pairs the critique rejected)"))
+
+			fake.pages = append(fake.pages, mappingsPage(""))
+			stdout, _, err = execute(newCmd(), "--json", "summary", "job-1", "--stage", "analyzer", "--exclude-rejected")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).To(ContainSubstring(`"exclude_rejected": true`))
+		})
+
+		It("names the critique outcome in the CSV critique column", func() {
+			rejected := mapping("r", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)
+			rejected.Critique = &pb.MappingCritique{Outcome: "rejected", Upheld: 1, Rejected: 2, Reasons: []string{"panel-2 s0 REJECT: too broad"}}
+			fake.pages[0].Mappings = append(fake.pages[0].Mappings, rejected)
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer")
+			Expect(err).NotTo(HaveOccurred())
+			rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
+			Expect(err).NotTo(HaveOccurred())
+			last := len(rows[0]) - 1
+			Expect(rows[2][last]).To(Equal("rejected: 1 upheld, 2 rejected, 0 failed; panel-2 s0 REJECT: too broad"))
+		})
+
 		It("asks for vetoed pairs with --include-vetoed", func() {
 			_, _, err := execute(newCmd(), "export", "job-1", "--stage", "analyzer", "--include-vetoed")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(fake.calls[0].GetIncludeVetoed()).To(BeTrue())
 		})
 
-		It("adds a critique CSV column with --include-vetoed, holding the votes and reasons of a critiqued mapping", func() {
+		It("lists a vetoed mapping with --include-vetoed, its critique cell holding the votes and reasons", func() {
 			vetoed := mapping("v", pb.RelationshipType_RELATIONSHIP_TYPE_SUBSET_OF)
-			vetoed.Critique = &pb.MappingCritique{Vetoed: true, Upheld: 1, Rejected: 2,
+			vetoed.Critique = &pb.MappingCritique{Outcome: "vetoed", Vetoed: true, Upheld: 1, Rejected: 2,
 				Reasons: []string{"panel-1 s0 UPHOLD: fine", "panel-2 s0 REJECT: scope\ndiffers", "panel-3 s0 REJECT: =unrelated"}}
 			fake.pages[0].Mappings = append(fake.pages[0].Mappings, vetoed)
 			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer", "--include-vetoed")
@@ -288,19 +327,21 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rows).To(HaveLen(3))
-			Expect(rows[0][:9]).To(Equal([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence",
-				"viability_score", "is_viable", "critique", "job_source_catalog_id"}))
+			last := len(rows[0]) - 1
 			Expect(rows[1][0]).To(Equal("a"))
-			Expect(rows[1][7]).To(BeEmpty(), "a mapping without a critique has an empty cell")
+			Expect(rows[1][last]).To(BeEmpty(), "a mapping without a critique has an empty cell")
 			Expect(rows[2][0]).To(Equal("v"))
-			Expect(rows[2][7]).To(Equal("vetoed: 1 upheld, 2 rejected, 0 failed; " +
+			Expect(rows[2][last]).To(Equal("vetoed: 1 upheld, 2 rejected, 0 failed; " +
 				"panel-1 s0 UPHOLD: fine | panel-2 s0 REJECT: scope differs | panel-3 s0 REJECT: =unrelated"))
 		})
 
-		It("has no critique CSV column without --include-vetoed", func() {
+		It("ends every analyzer-stage CSV header with the critique column, keeping the other columns in place", func() {
 			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(strings.Split(stdout, "\n")[0]).NotTo(ContainSubstring("critique"))
+			header := strings.Split(strings.Split(stdout, "\n")[0], ",")
+			Expect(header[:8]).To(Equal([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence",
+				"viability_score", "is_viable", "job_source_catalog_id"}))
+			Expect(header[len(header)-1]).To(Equal("critique"))
 		})
 
 		It("exports a mapping's critique in JSON", func() {

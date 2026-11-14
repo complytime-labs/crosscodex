@@ -35,6 +35,8 @@ var _ = Describe("Values of the wrong type", func() {
 			"pipeline.stage_timeout", "2:18", "into time.Duration"),
 		Entry("text for a bool", "llm:\n  gateway_mode: maybe\n",
 			"llm.gateway_mode", "2:17", "into bool"),
+		Entry("text for the critique veto switch", "analysis:\n  critique:\n    veto: sometimes\n",
+			"analysis.critique.veto", "3:11", "into bool"),
 		Entry("a value where a section belongs", "logging: debug\n",
 			"logging", "1:10", "into config.LoggingConfig"),
 		Entry("a value where a list belongs", "llm:\n  allowed_models: granite\n",
