@@ -1,0 +1,54 @@
+docs/dev/embeddings.md
+  s_5ee391b76088ae::t_4ccce21107b2ae 39
+pkg/config/types.go
+  s_5ee391b76088ae::t_5002e1b26a9a7f 1122-1130
+  s_5ee391b76088ae::t_38bad5fa3f58a5 1147-1151
+pkg/config/helpers_test.go
+  s_5ee391b76088ae::t_7b9d6ed879dfe4 37
+pkg/config/graph_bdd_test.go
+  s_5ee391b76088ae::t_7ea1156c1c9fb1 50-86
+api/proto/crosscodex/v1/gateway.proto
+  s_5ee391b76088ae::t_f7d741365565f8 512-513
+pkg/config/validate.go
+  s_5ee391b76088ae::t_3b6d04c6f19fc4 497-500
+internal/graph/read_bdd_test.go
+  s_5ee391b76088ae::t_3e8c56f72be31e 534-569
+cmd/crosscodexd/bootstrap.go
+  s_5ee391b76088ae::t_328963f2ef68dd 559
+cmd/crosscodexd/graph_wiring_bdd_test.go
+  s_5ee391b76088ae::t_300ab68a883f23 74-99
+pkg/config/defaults.go
+  s_5ee391b76088ae::t_c01e94673e395a 223
+internal/graph/export_test.go
+  s_5ee391b76088ae::t_6b005b0118cb92 37-39
+README.md
+  s_5ee391b76088ae::t_12062641572443 24
+  s_5ee391b76088ae::t_d64daab3f9981f 697
+internal/graph/options.go
+  s_5ee391b76088ae::t_de4bcfe0e0429b 43-55
+internal/graph/service.go
+  s_5ee391b76088ae::t_f4e732fb426570 72
+  s_5ee391b76088ae::t_e59a519f3bdc1f 41-44
+internal/graph/read.go
+  s_5ee391b76088ae::t_0e8876a27527f9 196-200
+api/proto/crosscodex/v1/graph.proto
+  s_5ee391b76088ae::t_3b2fab45923681 233-234
+internal/graph/options_bdd_test.go
+  s_5ee391b76088ae::t_ad6539b34c8338 11-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "62c8f2ac69cf9f04ffd5bbd22fad4fc9d10d5bee",
+  "prompts": {},
+  "sessions": {
+    "s_5ee391b76088ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f9e64aa-4a04-4dc1-afeb-0a663d65fe4b",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
