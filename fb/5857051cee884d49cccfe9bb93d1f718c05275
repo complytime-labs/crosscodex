@@ -1,0 +1,153 @@
+internal/graph/errors.go
+  s_9a8e5e4b4a6a7e::t_0553479d915f60 14-16
+internal/graph/options_bdd_test.go
+  s_18a7e94e1e1c46::t_e655a52846d869 1-10,33-53
+  s_5ee391b76088ae::t_ad6539b34c8338 11-32
+cmd/crosscodexd/bootstrap.go
+  s_18a7e94e1e1c46::t_61d2c6bccf8a81 558
+  s_5ee391b76088ae::t_328963f2ef68dd 559
+internal/graph/service.go
+  s_9a8e5e4b4a6a7e::t_0553479d915f60 52-53
+  s_18a7e94e1e1c46::t_79147744e6f39d 37-40,65-71
+  s_5ee391b76088ae::t_f4e732fb426570 72
+  s_5ee391b76088ae::t_e59a519f3bdc1f 41-44
+pkg/config/validate.go
+  s_18a7e94e1e1c46::t_9d5ef29b284e45 493-496
+  s_5ee391b76088ae::t_3b6d04c6f19fc4 497-500
+docs/dev/embeddings.md
+  s_9a8e5e4b4a6a7e::t_77490e9c569500 20-38,40-50
+  s_5ee391b76088ae::t_4ccce21107b2ae 39
+internal/graph/catalog_projection_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_7a68e60003cdcd 52-59
+  s_9a8e5e4b4a6a7e::t_23e8b617b5066d 33,49-51
+  s_9a8e5e4b4a6a7e::t_c1562b10ea1274 45-48
+internal/graph/export_test.go
+  s_18a7e94e1e1c46::t_d3e4615a650a84 36,40-41
+  s_5ee391b76088ae::t_6b005b0118cb92 37-39
+pkg/config/graph_bdd_test.go
+  s_18a7e94e1e1c46::t_b3393c1b17ddfb 49,87-111,113-122
+  s_9a8e5e4b4a6a7e::t_c1562b10ea1274 112
+  s_5ee391b76088ae::t_7ea1156c1c9fb1 50-86
+internal/graph/options.go
+  s_9a8e5e4b4a6a7e::t_0553479d915f60 96-97
+  s_18a7e94e1e1c46::t_3e8294cc551f31 56-68
+  s_5ee391b76088ae::t_de4bcfe0e0429b 43-55
+pkg/vectordb/interface.go
+  s_bb84c6e4c4ce39::t_dfd6a07d8af08a 42-46
+pkg/vectordb/vectordbtest/doc.go
+  s_bb84c6e4c4ce39::t_e4ec640ade41a4 44,48
+  s_9a8e5e4b4a6a7e::t_ec0b2866600af8 45-46,49-51
+internal/graph/controls_reader.go
+  s_9a8e5e4b4a6a7e::t_0553479d915f60 49-52,54-56,71-73,109-176,219-220
+  s_9a8e5e4b4a6a7e::t_d2d90094ebe75c 92-93
+  s_9a8e5e4b4a6a7e::t_6088dc8aef1b97 210
+internal/graph/convert.go
+  s_9a8e5e4b4a6a7e::t_63cb3d5f36adee 184-192,197
+pkg/vectordb/vectordbtest/vectordbtest_bdd_test.go
+  s_bb84c6e4c4ce39::t_3ce05cdd7abbf2 54-57,84-87,112-115,173-179,214-235
+api/proto/crosscodex/v1/gateway.proto
+  s_9a8e5e4b4a6a7e::t_892502c7b7927c 507-510,515-517
+  s_5ee391b76088ae::t_f7d741365565f8 512-513
+internal/graph/controls_reader_integration_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_7a68e60003cdcd 151-170,176
+  s_9a8e5e4b4a6a7e::t_6d4b043252afe6 177
+internal/gateway/graph.go
+  s_9a8e5e4b4a6a7e::t_892502c7b7927c 89
+internal/graph/graph_property_test.go
+  s_9a8e5e4b4a6a7e::t_c2218ad7b3abd5 244,247,259,270-275
+pkg/vectordb/vectordb_integration_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_b701ed214a50b9 264,272
+  s_9a8e5e4b4a6a7e::t_f3bdd2f5644a01 450-455,457-489,491-495
+  s_9a8e5e4b4a6a7e::t_3d61d50d2c5a87 490
+  s_bb84c6e4c4ce39::t_aa04dfab69f245 355-395
+  s_9a8e5e4b4a6a7e::t_e0d3abb77ce479 258-263,265-271,273-283
+pkg/vectordb/vectordbtest/fake.go
+  s_bb84c6e4c4ce39::t_c7a633c1f315eb 59-62,116-127
+pkg/vectordb/vectordb_property_test.go
+  s_bb84c6e4c4ce39::t_3159719015e92e 4-5,12,57-76
+internal/gateway/gateway_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_dea4b06c4dab73 1037-1063
+pkg/vectordb/vectordbtest/vectordbtest_property_test.go
+  s_bb84c6e4c4ce39::t_48823cd15ed2c4 84-105
+cmd/crosscodexd/graph_wiring_bdd_test.go
+  s_18a7e94e1e1c46::t_b0f7ebbba3cb93 107,109,128,131-132
+  s_9a8e5e4b4a6a7e::t_a9fe01afd39506 20-21,100-106,108,110-127,129-130
+  s_5ee391b76088ae::t_300ab68a883f23 74-99
+internal/graph/read_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_5264eed7013516 5-7,20,22,381-393,395-417,427-445,447-453,455-462,464-466,482-493,495-501,503,506-508,510-525,527-533,570-585,587-588,590-592,595-619,621-627,629-638,641-649,651-659,661-662,665-668,671,674-685,687-715
+  s_9a8e5e4b4a6a7e::t_c96ed621249246 420-426,469-471,473-474,476-481,620,639-640,650,686
+  s_5ee391b76088ae::t_3e8c56f72be31e 534-569
+pkg/config/defaults.go
+  s_18a7e94e1e1c46::t_73f308da1ea4ed 222
+  s_5ee391b76088ae::t_c01e94673e395a 223
+pkg/config/types.go
+  s_18a7e94e1e1c46::t_5e8e5febf2eeb9 1113-1121,1135-1137,1142-1146
+  s_5ee391b76088ae::t_5002e1b26a9a7f 1122-1130
+  s_5ee391b76088ae::t_38bad5fa3f58a5 1147-1151
+api/proto/crosscodex/v1/graph.proto
+  s_9a8e5e4b4a6a7e::t_19941c3af8d7d5 238-244
+  s_5ee391b76088ae::t_3b2fab45923681 233-234
+pkg/vectordb/pgvector.go
+  s_9a8e5e4b4a6a7e::t_ee309c62ce0828 537-538
+  s_bb84c6e4c4ce39::t_e5e146fdf3c101 549-604
+  s_9a8e5e4b4a6a7e::t_8a47f97352f583 469-471,473-475,478-481,487-496,535-536
+  s_9a8e5e4b4a6a7e::t_72244c96996c3c 504
+internal/graph/controls_reader_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_7a68e60003cdcd 84-168
+README.md
+  s_9a8e5e4b4a6a7e::t_77490e9c569500 19-20,23,25
+  s_9a8e5e4b4a6a7e::t_ec0b2866600af8 21-22
+  s_18a7e94e1e1c46::t_d76a32c4a71ee9 696
+  s_5ee391b76088ae::t_12062641572443 24
+  s_5ee391b76088ae::t_d64daab3f9981f 697
+internal/graph/read.go
+  s_9a8e5e4b4a6a7e::t_63cb3d5f36adee 4,8-10,18,161-166,172-173,178-182,184,187-192,202-214,216-219,222,224,226-235,237,239-275,280-281,287-390
+  s_9a8e5e4b4a6a7e::t_665b238d676b41 391
+  s_5ee391b76088ae::t_0e8876a27527f9 196-200
+internal/graph/rpc_errors_bdd_test.go
+  s_9a8e5e4b4a6a7e::t_23e8b617b5066d 85-86
+internal/graph/testhelpers_test.go
+  s_bb84c6e4c4ce39::t_80cf61315f9648 137,141-147
+pkg/config/helpers_test.go
+  s_5ee391b76088ae::t_7b9d6ed879dfe4 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb5857051cee884d49cccfe9bb93d1f718c05275",
+  "prompts": {},
+  "sessions": {
+    "s_18a7e94e1e1c46": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab4fc3147a6abd1e2",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_5ee391b76088ae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f9e64aa-4a04-4dc1-afeb-0a663d65fe4b",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_9a8e5e4b4a6a7e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7fcaf031-1d40-4d00-8001-92dace96bfdb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_bb84c6e4c4ce39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c679fed-791c-4482-b165-7d4148695927",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
