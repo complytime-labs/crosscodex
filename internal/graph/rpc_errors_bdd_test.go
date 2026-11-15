@@ -82,6 +82,8 @@ var _ = Describe("RPC error messages", func() {
 				_, e := svc.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
 					TenantContext: tc,
 					Query:         &pb.SimilaritySearchRequest_QueryEmbedding{QueryEmbedding: &pb.EmbeddingQuery{Embeddings: []float32{0.1}}},
+					CatalogIds:    []string{"c1"},
+					Model:         "m",
 				}))
 				return e
 			},

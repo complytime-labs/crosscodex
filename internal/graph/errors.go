@@ -11,4 +11,7 @@ var (
 
 	// ErrResolverNotFound is returned when no resolver is registered for a URI scheme.
 	ErrResolverNotFound = errors.New("no resolver registered for scheme")
+
+	// ErrControlNotFound is returned when the tenant has no control with the requested node ID.
+	ErrControlNotFound = errors.New("control not found")
 )

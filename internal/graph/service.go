@@ -34,6 +34,14 @@ type Service struct {
 	// graph drivers never see an unbounded batch.
 	maxBulkEdges int
 
+	// maxSimilarityCatalogs bounds the catalogs one SimilaritySearch request
+	// may name, since each costs a vector query on the shared database.
+	maxSimilarityCatalogs int
+
+	// maxSimilarityLimit bounds the per-catalog result limit of one
+	// SimilaritySearch request, since each catalog's rows are held in memory.
+	maxSimilarityLimit int
+
 	// metrics
 	rpcCounter         metric.Int64Counter
 	rpcLatency         metric.Float64Histogram
@@ -41,7 +49,8 @@ type Service struct {
 	materializeLatency metric.Float64Histogram
 	edgesSkipped       metric.Int64Counter
 
-	// controls feeds the catalog subscription; nil leaves it unsubscribed.
+	// controls feeds the catalog subscription and similarity search; nil
+	// leaves the subscription off.
 	controls ControlsReader
 
 	// subscriber lifecycle (used in Task 4)
@@ -53,12 +62,14 @@ type Service struct {
 // New creates a Graph Service.
 func New(graph graphdb.GraphDB, vectors vectordb.VectorDB, bus natsbus.Client, opts ...Option) *Service {
 	s := &Service{
-		graph:        graph,
-		vectors:      vectors,
-		bus:          bus,
-		resolvers:    NewResolverRegistry(),
-		logger:       slog.Default(),
-		maxBulkEdges: config.DefaultGraphMaxBulkEdges,
+		graph:                 graph,
+		vectors:               vectors,
+		bus:                   bus,
+		resolvers:             NewResolverRegistry(),
+		logger:                slog.Default(),
+		maxBulkEdges:          config.DefaultGraphMaxBulkEdges,
+		maxSimilarityCatalogs: config.DefaultGraphMaxSimilarityCatalogs,
+		maxSimilarityLimit:    config.DefaultGraphMaxSimilarityLimit,
 	}
 	for _, opt := range opts {
 		opt(s)

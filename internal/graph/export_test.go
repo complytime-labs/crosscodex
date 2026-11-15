@@ -33,3 +33,9 @@ type (
 	ExportResourceRef      = ResourceRef
 	ExportResolverRegistry = ResolverRegistry
 )
+
+// ExportMaxSimilarityLimit reads the result limit WithMaxSimilarityLimit sets.
+func ExportMaxSimilarityLimit(s *Service) int { return s.maxSimilarityLimit }
+
+// ExportMaxSimilarityCatalogs reads the catalog limit WithMaxSimilarityCatalogs sets.
+func ExportMaxSimilarityCatalogs(s *Service) int { return s.maxSimilarityCatalogs }

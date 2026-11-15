@@ -555,6 +555,8 @@ func attachGraph(cfg *config.Config, shared *sharedResources, rt *runtime) error
 	rt.graphService = graph.New(shared.graphDB_, shared.vectorDB, shared.natsClient,
 		graph.WithResolver(resolver), graph.WithTelemetry(tp, mp),
 		graph.WithMaxBulkEdges(cfg.Graph.MaxBulkEdges),
+		graph.WithMaxSimilarityCatalogs(cfg.Graph.MaxSimilarityCatalogs),
+		graph.WithMaxSimilarityLimit(cfg.Graph.MaxSimilarityLimit),
 		graph.WithControlsReader(graph.NewPGControlsReader(tenantConn, graph.WithPGControlsReaderTelemetry(tp, mp))))
 	rt.healthServer = newHealthServer(cfg.Health.Addr, dbPingCheck(shared.appPool))
 	return nil

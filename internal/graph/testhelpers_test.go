@@ -134,7 +134,15 @@ type mockVectorDB struct {
 	storeEmbeddingFunc func(ctx context.Context, tenantID string, embedding vectordb.Embedding) error
 	storeBatchFunc     func(ctx context.Context, tenantID string, embeddings []vectordb.Embedding) error
 	findSimilarFunc    func(ctx context.Context, tenantID string, query vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error)
+	getEmbeddingsFunc  func(ctx context.Context, tenantID, catalogID, controlID string) ([]vectordb.Embedding, error)
 	deleteByModelFunc  func(ctx context.Context, tenantID, catalogID, model string) error
+}
+
+func (m *mockVectorDB) GetEmbeddings(ctx context.Context, tenantID, catalogID, controlID string) ([]vectordb.Embedding, error) {
+	if m.getEmbeddingsFunc != nil {
+		return m.getEmbeddingsFunc(ctx, tenantID, catalogID, controlID)
+	}
+	return nil, vectordb.ErrNotFound
 }
 
 func (m *mockVectorDB) StoreEmbedding(ctx context.Context, tenantID string, embedding vectordb.Embedding) error {

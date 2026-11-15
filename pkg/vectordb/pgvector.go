@@ -466,20 +466,33 @@ func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query
 		db.searchCounter.Add(ctx, 1)
 	}
 
-	// Check model existence separately from the similarity query.
-	// This distinguishes "model doesn't exist" (ErrModelNotFound) from
+	// Check model existence and stored width separately from the similarity
+	// query. This distinguishes "model doesn't exist" (ErrModelNotFound) and
+	// "query width differs from the stored vectors" (ErrInvalidDimension) from
 	// "model exists but no similar results" (empty slice), giving callers
-	// actionable error information. The extra round-trip is acceptable
-	// because similarity searches are not latency-critical hot paths.
+	// actionable errors instead of pgvector's "different vector dimensions".
+	// The extra round-trip is acceptable because similarity searches are not
+	// latency-critical hot paths.
 	var results []SimilarityResult
 	err := db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		var count int
-		checkQuery := `SELECT COUNT(*) FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND model = $3`
-		if err := tx.QueryRowContext(ctx, checkQuery, tenantID, query.CatalogID, query.Model).Scan(&count); err != nil {
+		var count, minDims, maxDims int
+		checkQuery := `SELECT COUNT(*), COALESCE(MIN(vector_dims(vector)), 0), COALESCE(MAX(vector_dims(vector)), 0)
+			FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND model = $3`
+		if err := tx.QueryRowContext(ctx, checkQuery, tenantID, query.CatalogID, query.Model).Scan(&count, &minDims, &maxDims); err != nil {
 			return fmt.Errorf("failed to check model existence: %w", err)
 		}
 		if count == 0 {
 			return ErrModelNotFound
+		}
+		// The vector column is dimensionless, so a model re-served at a new
+		// width can leave mixed rows. That is corrupt data, not a caller error,
+		// so it stays a plain (internal) error.
+		if minDims != maxDims {
+			return fmt.Errorf("catalog %q stores vectors of mixed widths (%d and %d) under model %q", query.CatalogID, minDims, maxDims, query.Model)
+		}
+		if len(query.Vector) != minDims {
+			return fmt.Errorf("%w: query has %d dimensions; catalog %q stores %d under model %q",
+				ErrInvalidDimension, len(query.Vector), query.CatalogID, minDims, query.Model)
 		}
 
 		// Execute similarity search using pgvector cosine distance operator (<=>)
@@ -488,7 +501,7 @@ func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query
 		SELECT control_id, 1 - (vector <=> $1) as similarity
 		FROM embeddings
 		WHERE tenant_id = $2 AND catalog_id = $3 AND model = $4
-		ORDER BY vector <=> $1
+		ORDER BY vector <=> $1, control_id
 		LIMIT $5`
 
 		rows, err := tx.QueryContext(ctx, sqlQuery,
@@ -519,6 +532,10 @@ func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query
 		span.SetStatus(codes.Error, "model not found")
 		return nil, err
 	}
+	if errors.Is(err, ErrInvalidDimension) {
+		span.SetStatus(codes.Error, "invalid dimension")
+		return nil, err
+	}
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err
@@ -527,6 +544,62 @@ func (db *PgVectorStore) FindSimilar(ctx context.Context, tenantID string, query
 	span.SetAttributes(attribute.Int("results.count", len(results)))
 	span.SetStatus(codes.Ok, "similarity search completed")
 	return results, nil
+}
+
+// GetEmbeddings returns the control's embedding under every model, ordered by
+// model so callers see a stable sequence. Returns ErrNotFound if the control
+// has no embeddings for this tenant (another tenant's rows are invisible).
+func (db *PgVectorStore) GetEmbeddings(ctx context.Context, tenantID, catalogID, controlID string) ([]Embedding, error) {
+	ctx, span := db.startSpan(ctx, "vectordb.get_embeddings")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("tenant.id", tenantID),
+		attribute.String("catalog.id", catalogID),
+		attribute.String("control.id", controlID),
+	)
+
+	if err := validateTenantContext(ctx, span, tenantID); err != nil {
+		return nil, err
+	}
+
+	var embeddings []Embedding
+	err := db.inTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT model, vector FROM embeddings WHERE tenant_id = $1 AND catalog_id = $2 AND control_id = $3 ORDER BY model`,
+			tenantID, catalogID, controlID)
+		if err != nil {
+			return fmt.Errorf("failed to query embeddings: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			e := Embedding{CatalogID: catalogID, ControlID: controlID}
+			var vectorStr string
+			if err := rows.Scan(&e.Model, &vectorStr); err != nil {
+				return fmt.Errorf("failed to scan embedding: %w", err)
+			}
+			if e.Vector, err = parseVectorString(vectorStr); err != nil {
+				return fmt.Errorf("failed to parse vector for model %q: %w", e.Model, err)
+			}
+			embeddings = append(embeddings, e)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("error iterating embeddings: %w", err)
+		}
+		if len(embeddings) == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	span.SetAttributes(attribute.Int("results.count", len(embeddings)))
+	span.SetStatus(codes.Ok, "embeddings retrieved")
+	return embeddings, nil
 }
 
 // DeleteByModel removes all embeddings for a specific catalog and model.

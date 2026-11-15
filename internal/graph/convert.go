@@ -181,13 +181,20 @@ func queryValueToProto(v graphdb.QueryValue) *pb.GraphValue {
 	return gv
 }
 
-// similarityResultToProto converts a vectordb.SimilarityResult to a proto SimilarityMatch.
-func similarityResultToProto(r vectordb.SimilarityResult, tc *pb.TenantContext) *pb.SimilarityMatch {
+// similarityResultToProto converts a vectordb.SimilarityResult found in
+// catalogID to a proto SimilarityMatch. The catalog_id property names that
+// catalog, overriding any metadata key of the same name.
+func similarityResultToProto(r vectordb.SimilarityResult, catalogID string, tc *pb.TenantContext) *pb.SimilarityMatch {
+	props := stringifyProps(r.Metadata)
+	if props == nil {
+		props = make(map[string]string, 1)
+	}
+	props["catalog_id"] = catalogID
 	return &pb.SimilarityMatch{
 		Node: &pb.Node{
 			NodeId:        r.ControlID,
 			TenantContext: tc,
-			Properties:    stringifyProps(r.Metadata),
+			Properties:    props,
 		},
 		SimilarityScore: r.Similarity,
 		Distance:        1.0 - r.Similarity,

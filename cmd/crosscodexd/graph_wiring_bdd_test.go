@@ -17,6 +17,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/vectordb"
+	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
 )
 
 // attachGraph only constructs values, so it runs here against memdriver to
@@ -67,6 +69,65 @@ var _ = Describe("attachGraph config wiring", func() {
 		resp, err := bulk(7)
 		Expect(err).NotTo(HaveOccurred(), "a request at the configured limit is accepted")
 		Expect(resp.Msg.GetCreatedCount()).To(Equal(int32(7)))
+	})
+
+	It("caps SimilaritySearch limit at graph.max_similarity_limit", func() {
+		ctx := testspecs.SetupTenantContext(tenantID)
+		var searched int
+		vectors := &vectordbtest.Fake{FindSimilarFunc: func(_ context.Context, _ string, _ vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
+			searched++
+			return nil, nil
+		}}
+		cfg := &config.Config{}
+		cfg.Graph.MaxSimilarityCatalogs = 2
+		cfg.Graph.MaxSimilarityLimit = 3
+		rt := &runtime{}
+		Expect(attachGraph(cfg, &sharedResources{graphDB_: memdriver.New(), vectorDB: vectors}, rt)).To(Succeed())
+
+		_, err := rt.graphService.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
+			TenantContext: &pb.TenantContext{TenantId: tenantID},
+			Query:         &pb.SimilaritySearchRequest_QueryEmbedding{QueryEmbedding: &pb.EmbeddingQuery{Embeddings: []float32{0.1, 0.2}}},
+			Model:         "m",
+			CatalogIds:    []string{"c1"},
+			Limit:         4,
+		}))
+		Expect(err).To(HaveOccurred(), "limit 4 must exceed graph.max_similarity_limit=3; was the option dropped from attachGraph?")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("graph.max_similarity_limit"))
+		Expect(searched).To(BeZero())
+	})
+
+	It("caps SimilaritySearch catalogs at graph.max_similarity_catalogs", func() {
+		ctx := testspecs.SetupTenantContext(tenantID)
+		var searched []string
+		vectors := &vectordbtest.Fake{FindSimilarFunc: func(_ context.Context, _ string, q vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
+			searched = append(searched, q.CatalogID)
+			return nil, nil
+		}}
+		cfg := &config.Config{}
+		cfg.Graph.MaxSimilarityCatalogs = 2
+		rt := &runtime{}
+		Expect(attachGraph(cfg, &sharedResources{graphDB_: memdriver.New(), vectorDB: vectors}, rt)).To(Succeed())
+
+		search := func(catalogs ...string) error {
+			_, err := rt.graphService.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
+				TenantContext: &pb.TenantContext{TenantId: tenantID},
+				Query:         &pb.SimilaritySearchRequest_QueryEmbedding{QueryEmbedding: &pb.EmbeddingQuery{Embeddings: []float32{0.1, 0.2}}},
+				Model:         "m",
+				CatalogIds:    catalogs,
+			}))
+			return err
+		}
+
+		err := search("c1", "c2", "c3")
+		Expect(err).To(HaveOccurred(), "3 catalogs must exceed graph.max_similarity_catalogs=2; was the option dropped from attachGraph?")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("graph.max_similarity_catalogs"))
+		Expect(err.Error()).To(ContainSubstring("limit of 2"))
+		Expect(searched).To(BeEmpty(), "a rejected request must search no catalog")
+
+		Expect(search("c1", "c2")).To(Succeed(), "a request at the configured limit is accepted")
+		Expect(searched).To(Equal([]string{"c1", "c2"}))
 	})
 
 	It("subscribes the graph service to catalog parsed events", func() {

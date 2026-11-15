@@ -16,6 +16,13 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Similarity search (#271):
+
+- `SimilaritySearch` with `query_embedding` now requires `catalog_ids` and `model`, and a vector whose width differs from the stored one returns `InvalidArgument` (was `Internal`). Before, it searched a nonexistent `"generic"` catalog and returned `NotFound`.
+- `FindSimilar` / `SimilaritySearch` by `control_id` now returns real matches from the control's catalog, or from `catalog_ids`. Before, it sent an empty vector, the store rejected it and the caller got `Internal`. It returns `NotFound` when the control has no stored embedding. If the control has embeddings from several models it returns `InvalidArgument` listing them; pass `model` on `SimilaritySearch` to choose one. See [docs/dev/embeddings.md](docs/dev/embeddings.md#similarity-search).
+- New `graph.max_similarity_catalogs` (default 100, range 1-10000, global only) bounds the catalogs in one search.
+- New `graph.max_similarity_limit` (default 1000, range 1-10000, global only) is the largest `limit` a search may ask for per catalog. A larger `limit` returns `InvalidArgument` naming the maximum; before, it was unbounded.
+
 Independent panels, sanity check and critique (#260):
 
 - **Stages stop when the model stops answering.** New `analysis.engine.success_timeout` (default 10m, range (0, 24h], at most `pipeline.stage_timeout`; a config that sets it longer no longer loads). A stage that receives only failed task results, and no successful one, for that long now fails with error class `llm_unavailable` and abandons its queued tasks. If its last failure was an answer cut off at `max_tokens`, it fails as `llm_output_truncated` with that advice instead. Before, each failed result reset `analysis.engine.task_timeout`, so a stage whose every LLM call failed ran until `pipeline.stage_timeout` (24h). The window starts at the first failure after the stage's last success, and the stage fails only while its own failures keep arriving (each within `task_timeout` of the previous; a longer gap restarts the window). It must be at least `task_timeout`. A stage waiting behind another stage's queue, which receives no results of its own, is not failed by it. If your model server legitimately takes longer than 10m between successful answers while some calls fail, raise it. Resume a failed job with `crosscodex run retry --from-failure <job-id>`.
@@ -686,6 +693,8 @@ pipeline:
 
 graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)
+  max_similarity_catalogs: 100            # Most catalogs per SimilaritySearch request, range [1, 10000]; requests naming more are rejected (global-only)
+  max_similarity_limit: 1000              # Largest per-catalog limit a SimilaritySearch request may ask for, range [1, 10000]; larger limits are rejected (global-only)
 
 catalog:
   requirement_part_names: [statement]     # Ordered OSCAL part names that hold a control's requirement text; the first a control has wins; at least one, each an OSCAL token (global-only)

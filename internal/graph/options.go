@@ -40,6 +40,32 @@ func WithMaxBulkEdges(n int) Option {
 	}
 }
 
+// WithMaxSimilarityLimit sets the largest per-catalog result limit one
+// SimilaritySearch request may ask for. Wired from config
+// graph.max_similarity_limit (config.GraphConfig.MaxSimilarityLimit), whose
+// validation keeps n in [1, 10000]. Options cannot return errors, so a value
+// below 1 is ignored and the service keeps config.DefaultGraphMaxSimilarityLimit.
+func WithMaxSimilarityLimit(n int) Option {
+	return func(s *Service) {
+		if n >= 1 {
+			s.maxSimilarityLimit = n
+		}
+	}
+}
+
+// WithMaxSimilarityCatalogs sets the most catalogs one SimilaritySearch request
+// may search. Wired from config graph.max_similarity_catalogs
+// (config.GraphConfig.MaxSimilarityCatalogs), whose validation keeps n in
+// [1, 10000]. Options cannot return errors, so a value below 1 is ignored and
+// the service keeps config.DefaultGraphMaxSimilarityCatalogs.
+func WithMaxSimilarityCatalogs(n int) Option {
+	return func(s *Service) {
+		if n >= 1 {
+			s.maxSimilarityCatalogs = n
+		}
+	}
+}
+
 // WithLogger sets the structured logger. A nil logger is ignored, keeping
 // slog.Default().
 func WithLogger(logger *slog.Logger) Option {
@@ -67,7 +93,8 @@ func WithResolverRegistry(registry *ResolverRegistry) Option {
 }
 
 // WithControlsReader sets the reader the catalog subscription uses to project
-// a parsed catalog's controls into Control nodes. Wired by cmd/crosscodexd
+// a parsed catalog's controls into Control nodes, and similarity search uses
+// to find a control's catalog. Wired by cmd/crosscodexd
 // attachGraph from the app tenant pool; without it the graph role does not
 // subscribe to catalog events.
 func WithControlsReader(r ControlsReader) Option {

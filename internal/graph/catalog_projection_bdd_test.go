@@ -30,6 +30,7 @@ type fakeControlsReader struct {
 	containers            []graph.CatalogContainer
 	err                   error
 	containersErr         error
+	getErr                error
 	calls                 int
 	gotTenant, gotCatalog string
 }
@@ -39,6 +40,21 @@ func (f *fakeControlsReader) ListCatalogControls(ctx context.Context, catalogID 
 	f.gotTenant, _ = tenant.FromContext(ctx)
 	f.gotCatalog = catalogID
 	return f.controls, f.err
+}
+
+func (f *fakeControlsReader) GetCatalogControl(ctx context.Context, controlID string) (graph.CatalogControl, error) {
+	if _, err := tenant.FromContext(ctx); err != nil {
+		return graph.CatalogControl{}, err
+	}
+	if f.getErr != nil {
+		return graph.CatalogControl{}, f.getErr
+	}
+	for _, c := range f.controls {
+		if c.ControlID == controlID {
+			return c, nil
+		}
+	}
+	return graph.CatalogControl{}, graph.ErrControlNotFound
 }
 
 func (f *fakeControlsReader) ListCatalogContainers(ctx context.Context, catalogID string) ([]graph.CatalogContainer, error) {

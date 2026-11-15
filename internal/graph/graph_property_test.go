@@ -241,9 +241,10 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	})
 
 	Context("SimilarityResultToProto", func() {
-		It("converts a vectordb.SimilarityResult into a proto match", func() {
+		It("converts a vectordb.SimilarityResult into a proto match naming its catalog", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				controlID := rapid.StringMatching(`[a-z][a-z0-9-]{1,10}`).Draw(t, "control_id")
+				catalogID := rapid.StringMatching(`[a-z][a-z0-9-]{1,10}`).Draw(t, "catalog_id")
 				similarity := rapid.Float32Range(0.0, 1.0).Draw(t, "similarity")
 
 				result := vectordb.SimilarityResult{
@@ -255,7 +256,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				}
 
 				tc := &pb.TenantContext{TenantId: "test-tenant"}
-				match := graph.ExportSimilarityResultToProto(result, tc)
+				match := graph.ExportSimilarityResultToProto(result, catalogID, tc)
 
 				if match.Node.GetNodeId() != controlID {
 					t.Fatalf("ControlID mismatch: got %s, want %s", match.Node.GetNodeId(), controlID)
@@ -265,6 +266,12 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				}
 				if match.Distance != 1.0-similarity {
 					t.Fatalf("Distance mismatch: got %f, want %f", match.Distance, 1.0-similarity)
+				}
+				if got := match.Node.GetProperties()["catalog_id"]; got != catalogID {
+					t.Fatalf("catalog_id property: got %q, want %q", got, catalogID)
+				}
+				if got := match.Node.GetProperties()["catalog"]; got != "nist-800-53" {
+					t.Fatalf("metadata property catalog: got %q, want %q", got, "nist-800-53")
 				}
 			})
 		})

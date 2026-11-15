@@ -504,9 +504,17 @@ message QueryGraphResponse {
 }
 
 message FindSimilarRequest {
-  // TenantContext from auth
+  // Graph node ID of the control, "<catalog_id>/<identifier>". The
+  // google.api.http path annotation on FindSimilar cannot carry it (the ID
+  // contains "/"); no REST transcoder is mounted, so only Connect callers
+  // reach this RPC.
   string control_id = 1;
+  // Results per catalog (0 = 10). Above graph.max_similarity_limit
+  // (default 1000) is InvalidArgument.
   int32 limit = 2;
+  // Catalogs to search. Empty: the control's own catalog. A control with
+  // embeddings under several models is rejected with InvalidArgument naming
+  // them; FindSimilar cannot pick a model.
   repeated string catalog_ids = 3;
 }
 

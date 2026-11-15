@@ -1034,6 +1034,33 @@ var _ = Describe("Graph handlers", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp).NotTo(BeNil())
 		})
+
+		It("forwards catalog_ids and the control ID to the graph backend", func() {
+			var got *pb.SimilaritySearchRequest
+			svc := newTestService(gateway.WithGraphBackend(&mockGraph{
+				similaritySearchFn: func(_ context.Context, req *connect.Request[pb.SimilaritySearchRequest]) (*connect.Response[pb.SimilaritySearchResponse], error) {
+					got = req.Msg
+					return connect.NewResponse(&pb.SimilaritySearchResponse{}), nil
+				},
+			}))
+			_, err := svc.FindSimilar(userCtx("user-a"), connect.NewRequest(&pb.FindSimilarRequest{
+				ControlId:  "cat-a/ac-1",
+				CatalogIds: []string{"cat-a", "cat-b"},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.GetCatalogIds()).To(Equal([]string{"cat-a", "cat-b"}))
+			Expect(got.GetControlId()).To(Equal("cat-a/ac-1"))
+		})
+
+		It("passes a backend NotFound through with its code", func() {
+			svc := newTestService(gateway.WithGraphBackend(&mockGraph{
+				similaritySearchFn: func(context.Context, *connect.Request[pb.SimilaritySearchRequest]) (*connect.Response[pb.SimilaritySearchResponse], error) {
+					return nil, connect.NewError(connect.CodeNotFound, errors.New(`control "cat-a/ac-1" not found`))
+				},
+			}))
+			_, err := svc.FindSimilar(userCtx("user-a"), connect.NewRequest(&pb.FindSimilarRequest{ControlId: "cat-a/ac-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+		})
 	})
 })
 

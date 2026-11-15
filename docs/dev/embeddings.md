@@ -17,6 +17,37 @@ The initial schema (`001_initial_schema`) creates `embeddings.vector` as a dimen
 
 Migrations are applied by `crosscodexd migrate`, never by the daemon (embedded `*.sql` files are auto-discovered through `//go:embed`). See [Database Migrations](migrations.md) for migration authoring and runtime behavior.
 
+## Similarity Search
+
+`GraphService.SimilaritySearch` (and the gateway's `FindSimilar`, which forwards `control_id`, `limit` and `catalog_ids`) reads rows of the `embeddings` table of the calling tenant. Each search runs under exactly one model, over the catalogs it names. There is no default catalog or model: nothing is guessed, and a search that cannot be resolved fails.
+
+Two query forms (`internal/graph/read.go`):
+
+| | `control_id` | `query_embedding` |
+| --- | --- | --- |
+| Query vector | the control's stored embedding, found through its `controls` row (`control_id` is the graph node ID, `<catalog_id>/<identifier>`) | the vector in the request |
+| `catalog_ids` | optional; empty means the control's own catalog | required |
+| `model` | optional; empty means the control's only stored model | required |
+| Rows fetched per catalog | `limit + 1`, so dropping the control itself still leaves `limit` | `limit` |
+| The control itself | left out of the results (matched on catalog and control ID) | not applicable |
+
+`limit` defaults to 10 when it is 0 or negative. Matches from all catalogs are merged by descending similarity (ties by catalog, then control ID) and cut to `limit`. Each match's node ID is the stored `control_id`, and its properties carry `catalog_id`.
+
+A request fails as a whole; it never returns a partial result.
+
+- `catalog_ids` entries must be non-empty. Duplicates are dropped. More distinct catalogs than `graph.max_similarity_catalogs` (default 100, range 1-10000, global only) is `InvalidArgument`, because a search costs one vector query per catalog.
+- `limit` (default 10) above `graph.max_similarity_limit` (default 1000, range 1-10000, global only) is `InvalidArgument` naming the maximum, because each catalog's rows are held in memory. The limit applies per catalog.
+- `query_embedding` must be non-empty, finite and not all zeros (cosine similarity is undefined), and needs `catalog_ids` and `model`.
+- A control that does not exist, or has no stored embedding, is `NotFound`. A control with embeddings under several models and no `model` is `InvalidArgument` listing them; `FindSimilar` cannot name a model, so such a control can only be searched through `SimilaritySearch`. A `model` the control has no embedding under is `NotFound` listing the stored ones.
+- A catalog with no embeddings under the model is `NotFound` (`catalog "<c>" has no embeddings under model "<m>"`). The message is the same for a missing catalog and another tenant's, so it reveals nothing across tenants.
+
+### Width check
+
+Because the column is dimensionless, `PgVectorStore.FindSimilar` compares the query's width with the stored vectors before ranking them, instead of letting pgvector fail with "different vector dimensions":
+
+- query width differs from the stored width: `InvalidArgument`, `query has N dimensions; catalog "<c>" stores M under model "<m>"`. Re-embed the query with the model named in the request.
+- the catalog holds vectors of different widths under that model (a model re-served at a new width): an internal error naming the widths. The data is inconsistent, not the request; re-embed the catalog.
+
 ## Switching or Adding an Embedding Model
 
 To switch to a different embedding model or add a second model alongside the current one:

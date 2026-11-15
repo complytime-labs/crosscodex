@@ -56,6 +56,10 @@ type Fake struct {
 	// FindSimilarFunc, if set, alone decides what FindSimilar returns for a
 	// query that passes validation; unset, FindSimilar returns ErrUnscripted.
 	FindSimilarFunc func(ctx context.Context, tenantID string, query vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error)
+	// GetEmbeddingsFunc, if set, alone decides what GetEmbeddings returns for a
+	// call that passes the tenant check; unset, GetEmbeddings returns
+	// ErrUnscripted.
+	GetEmbeddingsFunc func(ctx context.Context, tenantID, catalogID, controlID string) ([]vectordb.Embedding, error)
 	// DeleteByModelFunc, if set, alone decides what DeleteByModel returns;
 	// unset, DeleteByModel returns ErrUnscripted.
 	DeleteByModelFunc func(ctx context.Context, tenantID, catalogID, model string) error
@@ -107,6 +111,18 @@ func (f *Fake) FindSimilar(ctx context.Context, tenantID string, query vectordb.
 		return nil, unscripted("FindSimilar")
 	}
 	return f.FindSimilarFunc(ctx, tenantID, query)
+}
+
+// GetEmbeddings validates the tenant, then returns what GetEmbeddingsFunc
+// decides, or an ErrUnscripted error when it is unset.
+func (f *Fake) GetEmbeddings(ctx context.Context, tenantID, catalogID, controlID string) ([]vectordb.Embedding, error) {
+	if err := validateTenant(ctx, tenantID); err != nil {
+		return nil, err
+	}
+	if f.GetEmbeddingsFunc == nil {
+		return nil, unscripted("GetEmbeddings")
+	}
+	return f.GetEmbeddingsFunc(ctx, tenantID, catalogID, controlID)
 }
 
 // DeleteByModel validates the tenant, then returns what DeleteByModelFunc

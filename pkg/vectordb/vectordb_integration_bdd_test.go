@@ -255,6 +255,32 @@ var _ = Describe("VectorDB Integration", func() {
 					"results[%d].Similarity = %f, want <= 1", i, r.Similarity)
 			}
 		})
+
+		It("breaks similarity ties by control ID at the limit cutoff", func() {
+			tied := testVector(0.9, 0.1, 0.1, 0.1, 0.1)
+			// Inserted out of order so physical order cannot pass by chance.
+			for _, id := range []string{"TIE-3", "TIE-1", "TIE-2"} {
+				Expect(store.StoreEmbedding(ctx, "test-tenant", vectordb.Embedding{
+					CatalogID: "nist-800-53",
+					ControlID: id,
+					Model:     "text-embedding-ada-002",
+					Vector:    tied,
+				})).To(Succeed())
+			}
+
+			results, err := store.FindSimilar(ctx, "test-tenant", vectordb.FindSimilarQuery{
+				CatalogID: "nist-800-53",
+				Model:     "text-embedding-ada-002",
+				Vector:    tied,
+				Limit:     2,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			ids := make([]string, len(results))
+			for i, r := range results {
+				ids[i] = r.ControlID
+			}
+			Expect(ids).To(Equal([]string{"TIE-1", "TIE-2"}))
+		})
 	})
 
 	Context("ModelIsolation", func() {
@@ -326,6 +352,47 @@ var _ = Describe("VectorDB Integration", func() {
 		)
 	})
 
+	Context("GetEmbeddings", func() {
+		It("returns one embedding per model, ordered by model, with the stored vectors", func() {
+			vecB, vecA := testVector(0.1, 0.2), testVector(0.3, 0.4)
+			for _, e := range []vectordb.Embedding{
+				{CatalogID: "nist-800-53", ControlID: "AC-1", Model: "m-b", Vector: vecB},
+				{CatalogID: "nist-800-53", ControlID: "AC-1", Model: "m-a", Vector: vecA},
+			} {
+				Expect(store.StoreEmbedding(ctx, "test-tenant", e)).To(Succeed())
+			}
+
+			got, err := store.GetEmbeddings(ctx, "test-tenant", "nist-800-53", "AC-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(HaveLen(2))
+			Expect([]string{got[0].Model, got[1].Model}).To(Equal([]string{"m-a", "m-b"}))
+			Expect(got[0].CatalogID).To(Equal("nist-800-53"))
+			Expect(got[0].ControlID).To(Equal("AC-1"))
+			Expect(got[0].Vector).To(Equal(vecA))
+			Expect(got[1].Vector).To(Equal(vecB))
+		})
+
+		It("returns ErrNotFound for a control with no embeddings", func() {
+			got, err := store.GetEmbeddings(ctx, "test-tenant", "nist-800-53", "no-such-control")
+			Expect(err).To(MatchError(vectordb.ErrNotFound))
+			Expect(got).To(BeNil())
+		})
+
+		It("does not return another tenant's embeddings", func() {
+			ctxB, err := tenant.WithTenant(context.Background(), "tenant-2")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.StoreEmbedding(ctxB, "tenant-2", vectordb.Embedding{
+				CatalogID: tenantCatalog["tenant-2"], ControlID: "A.6.1", Model: "m-a", Vector: testVector(0.5),
+			})).To(Succeed())
+
+			_, err = store.GetEmbeddings(ctx, "test-tenant", tenantCatalog["tenant-2"], "A.6.1")
+			Expect(err).To(MatchError(vectordb.ErrNotFound))
+			own, err := store.GetEmbeddings(ctxB, "tenant-2", tenantCatalog["tenant-2"], "A.6.1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(own).To(HaveLen(1))
+		})
+	})
+
 	Context("ModelAgnosticDimensions", func() {
 		It("persists an embedding whose width is not testVectorDim (384)", func() {
 			err := store.StoreEmbedding(ctx, "test-tenant", vectordb.Embedding{
@@ -380,9 +447,52 @@ var _ = Describe("VectorDB Integration", func() {
 				CatalogID: "nist-800-53", Model: modelA,
 				Vector: dimVector(768, 0.4), Limit: 10,
 			})
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("dimension"))
+			Expect(err).To(MatchError(vectordb.ErrInvalidDimension))
+			Expect(err).To(MatchError(And(
+				ContainSubstring("query has 768 dimensions"),
+				ContainSubstring("stores 384"),
+				ContainSubstring("nist-800-53"),
+				ContainSubstring(modelA))))
 		})
+
+		It("still reports an unknown model as ErrModelNotFound, not a width error", func() {
+			_, err := store.FindSimilar(ctx, "test-tenant", vectordb.FindSimilarQuery{
+				CatalogID: "nist-800-53", Model: "no-such-model",
+				Vector: dimVector(768, 0.4), Limit: 10,
+			})
+			Expect(err).To(MatchError(vectordb.ErrModelNotFound))
+		})
+	})
+
+	Context("MixedWidthsUnderOneModel", func() {
+		const model = "drifted-model"
+
+		BeforeEach(func() {
+			// embeddings.vector is dimensionless, so a model re-served at a new width can leave mixed rows.
+			Expect(store.StoreEmbedding(ctx, "test-tenant", vectordb.Embedding{
+				CatalogID: "nist-800-53", ControlID: "AC-1", Model: model, Vector: dimVector(3, 0.1, 0.2, 0.3),
+			})).To(Succeed())
+			Expect(store.StoreEmbedding(ctx, "test-tenant", vectordb.Embedding{
+				CatalogID: "nist-800-53", ControlID: "AC-2", Model: model, Vector: dimVector(4, 0.1, 0.2, 0.3, 0.4),
+			})).To(Succeed())
+		})
+
+		DescribeTable("fails with an internal error naming both widths, whichever width is queried",
+			func(queryWidth int) {
+				_, err := store.FindSimilar(ctx, "test-tenant", vectordb.FindSimilarQuery{
+					CatalogID: "nist-800-53", Model: model,
+					Vector: dimVector(queryWidth, 0.1), Limit: 10,
+				})
+				Expect(err).To(HaveOccurred())
+				Expect(err).NotTo(MatchError(vectordb.ErrInvalidDimension))
+				Expect(err).NotTo(MatchError(vectordb.ErrModelNotFound))
+				Expect(err).To(MatchError(And(
+					ContainSubstring("mixed widths (3 and 4)"),
+					ContainSubstring("nist-800-53"), ContainSubstring(model))))
+			},
+			Entry("query matches the narrower width", 3),
+			Entry("query matches the wider width", 4),
+		)
 	})
 })
 

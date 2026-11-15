@@ -490,6 +490,14 @@ func validateGraph(g *GraphConfig, tracker *sourceTracker) error {
 		return fieldErrorf("graph.max_bulk_edges", "graph.max_bulk_edges %d%s must be in range [1, %d]; it bounds the edges in one BulkCreateEdges request (default %d): %w",
 			g.MaxBulkEdges, formatSource(tracker, "graph.max_bulk_edges"), maxGraphMaxBulkEdges, DefaultGraphMaxBulkEdges, ErrInvalidConfig)
 	}
+	if g.MaxSimilarityCatalogs < 1 || g.MaxSimilarityCatalogs > maxGraphMaxSimilarityCatalogs {
+		return fieldErrorf("graph.max_similarity_catalogs", "graph.max_similarity_catalogs %d%s must be in range [1, %d]; it bounds the catalogs in one SimilaritySearch request (default %d): %w",
+			g.MaxSimilarityCatalogs, formatSource(tracker, "graph.max_similarity_catalogs"), maxGraphMaxSimilarityCatalogs, DefaultGraphMaxSimilarityCatalogs, ErrInvalidConfig)
+	}
+	if g.MaxSimilarityLimit < 1 || g.MaxSimilarityLimit > maxGraphMaxSimilarityLimit {
+		return fieldErrorf("graph.max_similarity_limit", "graph.max_similarity_limit %d%s must be in range [1, %d]; it bounds the results one SimilaritySearch request may ask for per catalog (default %d): %w",
+			g.MaxSimilarityLimit, formatSource(tracker, "graph.max_similarity_limit"), maxGraphMaxSimilarityLimit, DefaultGraphMaxSimilarityLimit, ErrInvalidConfig)
+	}
 	return nil
 }
 

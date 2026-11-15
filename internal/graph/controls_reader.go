@@ -46,9 +46,14 @@ type CatalogContainer struct {
 	ParentKey  string // key of the enclosing container; empty for a top-level one
 }
 
-// ControlsReader lists a catalog's controls and containers for the tenant in
-// ctx. Relational rows are authoritative; the graph is projected from them.
+// ControlsReader reads controls and containers for the tenant in ctx. It
+// serves the catalog projection (listings) and similarity search (one control
+// by node ID). Relational rows are authoritative; the graph is projected from
+// them.
 type ControlsReader interface {
+	// GetCatalogControl returns the control with node ID controlID, or
+	// ErrControlNotFound when the tenant has no such control.
+	GetCatalogControl(ctx context.Context, controlID string) (CatalogControl, error)
 	ListCatalogControls(ctx context.Context, catalogID string) ([]CatalogControl, error)
 	ListCatalogContainers(ctx context.Context, catalogID string) ([]CatalogContainer, error)
 }
@@ -62,6 +67,9 @@ type PGControlsReader struct {
 
 	listCounter metric.Int64Counter
 	listLatency metric.Float64Histogram
+
+	getCounter metric.Int64Counter
+	getLatency metric.Float64Histogram
 
 	containerCounter metric.Int64Counter
 	containerLatency metric.Float64Histogram
@@ -81,6 +89,8 @@ func WithPGControlsReaderTelemetry(tp trace.TracerProvider, mp metric.MeterProvi
 			m := mp.Meter("crosscodex")
 			r.listCounter, _ = m.Int64Counter("graph.controls.list.total")
 			r.listLatency, _ = m.Float64Histogram("graph.controls.list.duration_ms")
+			r.getCounter, _ = m.Int64Counter("graph.control.get.total")
+			r.getLatency, _ = m.Float64Histogram("graph.control.get.duration_ms")
 			r.containerCounter, _ = m.Int64Counter("graph.containers.list.total")
 			r.containerLatency, _ = m.Float64Histogram("graph.containers.list.duration_ms")
 		}
@@ -94,6 +104,74 @@ func NewPGControlsReader(conn db.TenantConnection, opts ...PGControlsReaderOptio
 		opt(r)
 	}
 	return r
+}
+
+// controlColumns is the SELECT list scanControl reads, in order.
+const controlColumns = `control_id, catalog_id, identifier, COALESCE(title, ''), COALESCE(statement, ''),
+			       COALESCE(class, ''), COALESCE(parent_id, ''), COALESCE(props->>'node-kind', ''), COALESCE(props->>'label', ''), COALESCE(props->>'sort-id', ''), COALESCE(container_key, '')`
+
+func scanControl(rows db.Rows) (CatalogControl, error) {
+	var c CatalogControl
+	err := rows.Scan(&c.ControlID, &c.CatalogID, &c.Identifier, &c.Title, &c.Statement, &c.Class, &c.ParentID, &c.NodeKind, &c.Label, &c.SortID, &c.ContainerKey)
+	return c, err
+}
+
+// GetCatalogControl returns the control with node ID controlID.
+func (r *PGControlsReader) GetCatalogControl(ctx context.Context, controlID string) (CatalogControl, error) {
+	start := time.Now()
+	ctx, span := telemetry.StartSpan(r.tracer, ctx, "graph.control.get")
+	defer span.End()
+	span.SetAttributes(attribute.String("control.id", controlID))
+
+	c, err := r.getCatalogControl(ctx, span, controlID)
+	if err != nil {
+		recordListing(ctx, r.getCounter, r.getLatency, start, "error")
+		span.SetStatus(codes.Error, err.Error())
+		return CatalogControl{}, err
+	}
+	recordListing(ctx, r.getCounter, r.getLatency, start, "ok")
+	span.SetStatus(codes.Ok, "")
+	return c, nil
+}
+
+func (r *PGControlsReader) getCatalogControl(ctx context.Context, span trace.Span, controlID string) (CatalogControl, error) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return CatalogControl{}, fmt.Errorf("get control %s: %w", controlID, err)
+	}
+	span.SetAttributes(attribute.String("tenant.id", tenantID))
+
+	// A tenant connection sets app.current_tenant only inside a transaction.
+	tx, err := r.conn.Begin(ctx)
+	if err != nil {
+		return CatalogControl{}, fmt.Errorf("get control %s: %w", controlID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.Query(ctx, `SELECT `+controlColumns+`
+			FROM controls WHERE tenant_id = $1 AND control_id = $2`, tenantID, controlID)
+	if err != nil {
+		return CatalogControl{}, fmt.Errorf("get control %s: %w", controlID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return CatalogControl{}, fmt.Errorf("iterate control %s: %w", controlID, err)
+		}
+		return CatalogControl{}, fmt.Errorf("get control %s: %w", controlID, ErrControlNotFound)
+	}
+	c, err := scanControl(rows)
+	if err != nil {
+		return CatalogControl{}, fmt.Errorf("scan control %s: %w", controlID, err)
+	}
+	if err := rows.Err(); err != nil {
+		return CatalogControl{}, fmt.Errorf("iterate control %s: %w", controlID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return CatalogControl{}, fmt.Errorf("commit reading control %s: %w", controlID, err)
+	}
+	return c, nil
 }
 
 // ListCatalogControls returns every control of catalogID, ordered by control_id.
@@ -129,9 +207,7 @@ func (r *PGControlsReader) listCatalogControls(ctx context.Context, span trace.S
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	rows, err := tx.Query(ctx, `
-		SELECT control_id, catalog_id, identifier, COALESCE(title, ''), COALESCE(statement, ''),
-		       COALESCE(class, ''), COALESCE(parent_id, ''), COALESCE(props->>'node-kind', ''), COALESCE(props->>'label', ''), COALESCE(props->>'sort-id', ''), COALESCE(container_key, '')
+	rows, err := tx.Query(ctx, `SELECT `+controlColumns+`
 		FROM controls WHERE catalog_id = $1 AND tenant_id = $2 ORDER BY control_id`, catalogID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list controls of catalog %s: %w", catalogID, err)
@@ -140,8 +216,8 @@ func (r *PGControlsReader) listCatalogControls(ctx context.Context, span trace.S
 
 	var out []CatalogControl
 	for rows.Next() {
-		var c CatalogControl
-		if err := rows.Scan(&c.ControlID, &c.CatalogID, &c.Identifier, &c.Title, &c.Statement, &c.Class, &c.ParentID, &c.NodeKind, &c.Label, &c.SortID, &c.ContainerKey); err != nil {
+		c, err := scanControl(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan control of catalog %s: %w", catalogID, err)
 		}
 		out = append(out, c)

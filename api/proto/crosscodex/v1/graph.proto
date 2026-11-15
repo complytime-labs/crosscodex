@@ -230,9 +230,18 @@ message SimilaritySearchRequest {
     EmbeddingQuery query_embedding = 2;
     string control_id = 3;
   }
+  // Results per catalog (0 = 10). Above graph.max_similarity_limit
+  // (default 1000) is InvalidArgument.
   int32 limit = 4;
   NodeType node_type = 5;
   reserved 6;
+  // Catalogs to search. Required with query_embedding. With control_id,
+  // empty means the control's own catalog.
+  repeated string catalog_ids = 7;
+  // Embedding model to search under. Required with query_embedding. With
+  // control_id, empty means the control's only stored model; a control with
+  // several stored models must name one.
+  string model = 8;
 }
 
 message SimilaritySearchResponse {
