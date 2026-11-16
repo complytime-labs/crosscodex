@@ -1,0 +1,23 @@
+pkg/oscal/oscal_print_artifacts_bdd_test.go
+  s_73e5dddbd46266::t_77c13701380aa7 49-51
+pkg/oscal/structurer.go
+  s_73e5dddbd46266::t_77c13701380aa7 239,242-244
+README.md
+  s_73e5dddbd46266::t_77c13701380aa7 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "944a9b447bae18ef9f50ded1776d3272ad60d1c2",
+  "prompts": {},
+  "sessions": {
+    "s_73e5dddbd46266": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1fdc30e7-667a-4cb9-981e-a3d04e2503e2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
