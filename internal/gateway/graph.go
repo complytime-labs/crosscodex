@@ -86,6 +86,7 @@ func (s *Service) FindSimilar(ctx context.Context, req *connect.Request[pb.FindS
 		Query:         &pb.SimilaritySearchRequest_ControlId{ControlId: req.Msg.GetControlId()},
 		Limit:         req.Msg.GetLimit(),
 		NodeType:      pb.NodeType_NODE_TYPE_CONTROL,
+		CatalogIds:    req.Msg.GetCatalogIds(),
 	}
 
 	searchResp, err := s.graph.SimilaritySearch(ctx, connect.NewRequest(searchReq))

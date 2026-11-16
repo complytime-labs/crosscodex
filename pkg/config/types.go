@@ -1110,15 +1110,45 @@ const DefaultGraphMaxBulkEdges = 1000
 // transaction already takes seconds.
 const maxGraphMaxBulkEdges = 10000
 
+// DefaultGraphMaxSimilarityCatalogs is the compiled default for
+// graph.max_similarity_catalogs, also applied by internal/graph when no limit
+// is configured.
+const DefaultGraphMaxSimilarityCatalogs = 100
+
+// maxGraphMaxSimilarityCatalogs caps graph.max_similarity_catalogs; each
+// catalog in a SimilaritySearch request costs one vector query.
+const maxGraphMaxSimilarityCatalogs = 10000
+
+// DefaultGraphMaxSimilarityLimit is the compiled default for
+// graph.max_similarity_limit, also applied by internal/graph when no limit is
+// configured.
+const DefaultGraphMaxSimilarityLimit = 1000
+
+// maxGraphMaxSimilarityLimit caps graph.max_similarity_limit; each catalog in
+// a SimilaritySearch request returns up to that many rows into memory.
+const maxGraphMaxSimilarityLimit = 10000
+
 // GraphConfig configures the graph service (role "graph").
 //
 // Every field is global-only: there is no tenant_overrides map. MaxBulkEdges
 // bounds how long one request holds a write transaction and connection on the
-// graph database all tenants share, so it is sized per deployment.
+// graph database all tenants share, and MaxSimilarityCatalogs bounds the
+// vector queries one request runs on that same shared database, so both are
+// sized per deployment.
 type GraphConfig struct {
 	// MaxBulkEdges is the most edges one BulkCreateEdges RPC may carry; larger
 	// requests are rejected with InvalidArgument. Range [1, 10000].
 	MaxBulkEdges int `yaml:"max_bulk_edges" json:"max_bulk_edges"`
+
+	// MaxSimilarityCatalogs is the most catalogs one SimilaritySearch RPC may
+	// search; requests naming more are rejected with InvalidArgument. Range
+	// [1, 10000].
+	MaxSimilarityCatalogs int `yaml:"max_similarity_catalogs" json:"max_similarity_catalogs"`
+
+	// MaxSimilarityLimit is the largest per-catalog result limit one
+	// SimilaritySearch (or FindSimilar) RPC may ask for; a larger limit is
+	// rejected with InvalidArgument. Range [1, 10000].
+	MaxSimilarityLimit int `yaml:"max_similarity_limit" json:"max_similarity_limit"`
 }
 
 // SynthesisConfig configures the synthesis service.

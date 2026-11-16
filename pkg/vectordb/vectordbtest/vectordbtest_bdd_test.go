@@ -51,6 +51,10 @@ var _ = Describe("Fake", func() {
 				return nil, nil
 			}
 			f.DeleteByModelFunc = func(context.Context, string, string, string) error { reached = true; return nil }
+			f.GetEmbeddingsFunc = func(context.Context, string, string, string) ([]vectordb.Embedding, error) {
+				reached = true
+				return nil, nil
+			}
 			return &reached
 		}
 		query := vectordb.FindSimilarQuery{CatalogID: "cat", Model: "m", Vector: []float32{1}, Limit: 1}
@@ -77,6 +81,10 @@ var _ = Describe("Fake", func() {
 			Entry("DeleteByModel", func(ctx context.Context, f *vectordbtest.Fake, t string) error {
 				return f.DeleteByModel(ctx, t, "cat", "m")
 			}),
+			Entry("GetEmbeddings", func(ctx context.Context, f *vectordbtest.Fake, t string) error {
+				_, err := f.GetEmbeddings(ctx, t, "cat", "AC-1")
+				return err
+			}),
 		)
 
 		DescribeTable("rejects a tenant argument that differs from the context tenant",
@@ -100,6 +108,10 @@ var _ = Describe("Fake", func() {
 			}),
 			Entry("DeleteByModel", func(ctx context.Context, f *vectordbtest.Fake, t string) error {
 				return f.DeleteByModel(ctx, t, "cat", "m")
+			}),
+			Entry("GetEmbeddings", func(ctx context.Context, f *vectordbtest.Fake, t string) error {
+				_, err := f.GetEmbeddings(ctx, t, "cat", "AC-1")
+				return err
 			}),
 		)
 	})
@@ -158,6 +170,13 @@ var _ = Describe("Fake", func() {
 			Expect(err).To(MatchError(ContainSubstring("Fake.FindSimilarFunc is not set")))
 		})
 
+		It("GetEmbeddings returns ErrUnscripted naming the Func", func() {
+			res, err := fake.GetEmbeddings(ctx, "tenant-a", "cat", "AC-1")
+			Expect(res).To(BeNil())
+			Expect(err).To(MatchError(vectordbtest.ErrUnscripted))
+			Expect(err).To(MatchError(ContainSubstring("Fake.GetEmbeddingsFunc is not set")))
+		})
+
 		It("DeleteByModel returns ErrUnscripted naming the Func", func() {
 			err := fake.DeleteByModel(ctx, "tenant-a", "cat", "m")
 			Expect(err).To(MatchError(vectordbtest.ErrUnscripted))
@@ -190,6 +209,28 @@ var _ = Describe("Fake", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal(want))
 			Expect(fake.DeleteByModel(ctx, "tenant-a", "cat", "m")).To(MatchError(errScripted))
+		})
+
+		It("returns the GetEmbeddingsFunc result verbatim and hands it the caller's arguments", func() {
+			want := []vectordb.Embedding{
+				{CatalogID: "cat", ControlID: "AC-1", Model: "m-a", Vector: []float32{1, 2}},
+				{CatalogID: "cat", ControlID: "AC-1", Model: "m-b", Vector: []float32{3}},
+			}
+			fake.GetEmbeddingsFunc = func(_ context.Context, tenantID, catalogID, controlID string) ([]vectordb.Embedding, error) {
+				Expect([]string{tenantID, catalogID, controlID}).To(Equal([]string{"tenant-a", "cat", "AC-1"}))
+				return want, nil
+			}
+			got, err := fake.GetEmbeddings(ctx, "tenant-a", "cat", "AC-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(want))
+		})
+
+		It("returns a scripted GetEmbeddings ErrNotFound intact", func() {
+			fake.GetEmbeddingsFunc = func(context.Context, string, string, string) ([]vectordb.Embedding, error) {
+				return nil, vectordb.ErrNotFound
+			}
+			_, err := fake.GetEmbeddings(ctx, "tenant-a", "cat", "AC-1")
+			Expect(err).To(MatchError(vectordb.ErrNotFound))
 		})
 
 		It("returns scripted sentinel errors intact", func() {

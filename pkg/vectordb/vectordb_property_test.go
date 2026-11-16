@@ -1,12 +1,15 @@
 package vectordb_test
 
 import (
+	"context"
+	"database/sql"
 	"math"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"pgregory.net/rapid"
 
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 )
 
@@ -49,6 +52,26 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			parsed, err := vectordb.ParseVectorString("[]")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(parsed).To(BeNil())
+		})
+	})
+
+	Context("GetEmbeddings — tenant validation", func() {
+		It("a context tenant differing from the argument always errors before touching the DB", func() {
+			// &sql.DB{} has no driver: reaching it would panic, not return an error.
+			store, err := vectordb.NewPgVectorStore(&sql.DB{})
+			Expect(err).NotTo(HaveOccurred())
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				ctxTenant := rapid.StringMatching(`^[a-z][a-z0-9-]{2,12}$`).Draw(t, "ctxTenant")
+				param := rapid.StringMatching(`^[a-z][a-z0-9-]{2,12}$`).Filter(func(s string) bool { return s != ctxTenant }).Draw(t, "param")
+				ctx, err := tenant.WithTenant(context.Background(), ctxTenant)
+				if err != nil {
+					t.Skip("generated tenant ID rejected by tenant.WithTenant")
+				}
+				got, err := store.GetEmbeddings(ctx, param, rapid.String().Draw(t, "catalog"), rapid.String().Draw(t, "control"))
+				if err == nil || got != nil {
+					t.Fatalf("GetEmbeddings(ctx tenant %q, param %q) = (%v, %v), want nil and a mismatch error", ctxTenant, param, got, err)
+				}
+			})
 		})
 	})
 })

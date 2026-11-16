@@ -41,13 +41,14 @@
 //
 //   - Every method is scripted by a <Method>Func field with the method's
 //     exact signature (Fake.StoreEmbeddingFunc, Fake.StoreBatchFunc,
-//     Fake.FindSimilarFunc, Fake.DeleteByModelFunc). When set, it alone
-//     decides the result; an accepted store call is recorded either way.
+//     Fake.FindSimilarFunc, Fake.GetEmbeddingsFunc, Fake.DeleteByModelFunc).
+//     When set, it alone decides the result; an accepted store call is
+//     recorded either way.
 //   - StoreEmbedding and StoreBatch have a natural default: with no Func they
-//     record the call and return nil, as a store that succeeds. FindSimilar
-//     and DeleteByModel have none, so with no Func they return an error
-//     wrapping ErrUnscripted that names the field to set. A fake never
-//     panics.
+//     record the call and return nil, as a store that succeeds. FindSimilar,
+//     GetEmbeddings and DeleteByModel have none, so with no Func they return
+//     an error wrapping ErrUnscripted that names the field to set. A fake
+//     never panics.
 //   - A Fake records only what some spec asserts on, through a method that
 //     returns a copy (see Gaps for Metadata) (Fake.Stored: the tenant and
 //     embeddings of every accepted StoreEmbedding or StoreBatch call, in call

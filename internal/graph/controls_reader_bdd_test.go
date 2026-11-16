@@ -81,6 +81,91 @@ var _ = Describe("PGControlsReader", func() {
 		Expect(tx.Commits()).To(Equal(1))
 	})
 
+	Describe("GetCatalogControl", func() {
+		It("reads one control inside a tenant transaction, bound to the control ID and the ctx tenant", func() {
+			rows = dbtest.Rows(nil, controlRows[0])
+			got, err := graph.NewPGControlsReader(conn).GetCatalogControl(ctx, catalogID+"/ac-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(graph.CatalogControl{ControlID: catalogID + "/ac-1", CatalogID: catalogID, Identifier: "ac-1", Title: "Policy",
+				Statement: "Develop a policy.", Class: "SP800-53", NodeKind: "control", Label: "AC-1", SortID: "ac-01", ContainerKey: "g1"}))
+			Expect(gotArgs).To(Equal([]any{"tenant-a", catalogID + "/ac-1"}), "query must bind the ctx tenant_id and control_id")
+			Expect(rows.Closed()).To(BeTrue())
+			Expect(tx.Commits()).To(Equal(1))
+		})
+
+		It("returns ErrControlNotFound, naming the caller's ID, when no row matches", func() {
+			rows = dbtest.Rows(nil)
+			_, err := graph.NewPGControlsReader(conn).GetCatalogControl(ctx, catalogID+"/nope")
+			Expect(err).To(MatchError(graph.ErrControlNotFound))
+			Expect(err.Error()).To(ContainSubstring(catalogID + "/nope"))
+			Expect(tx.Commits()).To(Equal(0))
+			Expect(tx.Rollbacks()).To(Equal(1))
+		})
+
+		It("refuses a ctx without a tenant before touching the connection", func() {
+			_, err := graph.NewPGControlsReader(conn).GetCatalogControl(context.Background(), catalogID+"/ac-1")
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+			Expect(beginSeen).To(BeFalse())
+		})
+
+		DescribeTable("wraps database failures with the control ID and rolls back",
+			func(setup func(), want error, rollbacks int) {
+				rows = dbtest.Rows(nil, controlRows[0])
+				setup()
+				_, err := graph.NewPGControlsReader(conn).GetCatalogControl(ctx, catalogID+"/ac-1")
+				Expect(err).To(MatchError(want))
+				Expect(err).NotTo(MatchError(graph.ErrControlNotFound))
+				Expect(err.Error()).To(ContainSubstring(catalogID + "/ac-1"))
+				Expect(tx.Commits()).To(Equal(0))
+				Expect(tx.Rollbacks()).To(Equal(rollbacks))
+			},
+			Entry("begin", func() { beginErr = db.ErrTenantRequired }, db.ErrTenantRequired, 0),
+			Entry("query", func() { queryErr = errQueryFailed }, errQueryFailed, 1),
+			Entry("scan", func() { rows.ScanErr = errQueryFailed }, errQueryFailed, 1),
+			Entry("iteration", func() { rows = dbtest.Rows(errQueryFailed) }, errQueryFailed, 1),
+		)
+
+		It("records a span with tenant and control, and ok and error metrics", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+			reader := graph.NewPGControlsReader(conn,
+				graph.WithPGControlsReaderTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+
+			rows = dbtest.Rows(nil, controlRows[0])
+			_, err = reader.GetCatalogControl(ctx, catalogID+"/ac-1")
+			Expect(err).NotTo(HaveOccurred())
+			rows = dbtest.Rows(nil)
+			_, err = reader.GetCatalogControl(ctx, catalogID+"/nope")
+			Expect(err).To(HaveOccurred())
+
+			span := telemetrytest.FindSpan(tp.GetSpans(), "graph.control.get")
+			Expect(span).NotTo(BeNil())
+			v, ok := telemetrytest.SpanAttribute(span, "tenant.id")
+			Expect(ok).To(BeTrue())
+			Expect(v.AsString()).To(Equal("tenant-a"))
+			v, ok = telemetrytest.SpanAttribute(span, "control.id")
+			Expect(ok).To(BeTrue())
+			Expect(v.AsString()).NotTo(BeEmpty())
+
+			m := telemetrytest.FindMetric(tp.GetMetrics(), "graph.control.get.total")
+			Expect(m).NotTo(BeNil())
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			Expect(ok).To(BeTrue())
+			byStatus := map[string]int64{}
+			for _, dp := range sum.DataPoints {
+				s, _ := dp.Attributes.Value("status")
+				byStatus[s.AsString()] = dp.Value
+			}
+			Expect(byStatus).To(Equal(map[string]int64{"ok": 1, "error": 1}))
+			d := telemetrytest.FindMetric(tp.GetMetrics(), "graph.control.get.duration_ms")
+			Expect(d).NotTo(BeNil())
+			n, err := telemetrytest.Float64HistogramCount(d)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n).To(Equal(uint64(2)))
+		})
+	})
+
 	Describe("ListCatalogContainers", func() {
 		BeforeEach(func() { rows = dbtest.Rows(nil, containerRows...) })
 

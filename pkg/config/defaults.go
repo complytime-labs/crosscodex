@@ -219,6 +219,8 @@ pipeline:
   endpoint: ""
 graph:
   max_bulk_edges: 1000
+  max_similarity_catalogs: 100
+  max_similarity_limit: 1000
 retention:
   defaults:
     attestation: "7y"

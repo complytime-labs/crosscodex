@@ -46,3 +46,77 @@ var _ = Describe("GraphConfig.MaxBulkEdges", func() {
 		Entry("above the upper bound", "10001"),
 	)
 })
+
+var _ = Describe("GraphConfig.MaxSimilarityLimit", func() {
+	It("defaults to DefaultGraphMaxSimilarityLimit", func() {
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Graph.MaxSimilarityLimit).To(Equal(config.DefaultGraphMaxSimilarityLimit))
+		Expect(config.DefaultGraphMaxSimilarityLimit).To(Equal(1000))
+	})
+
+	DescribeTable("accepts a valid override",
+		func(value string, want int) {
+			GinkgoT().Setenv("CROSSCODEX_GRAPH_MAX_SIMILARITY_LIMIT", value)
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Graph.MaxSimilarityLimit).To(Equal(want))
+		},
+		Entry("lower bound", "1", 1),
+		Entry("typical", "50", 50),
+		Entry("upper bound", "10000", 10000),
+	)
+
+	DescribeTable("rejects an out-of-range value with an actionable message",
+		func(value string) {
+			GinkgoT().Setenv("CROSSCODEX_GRAPH_MAX_SIMILARITY_LIMIT", value)
+			_, err := config.NewLoader().Load(context.Background())
+			Expect(err).To(HaveOccurred())
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("graph.max_similarity_limit " + value))
+			Expect(err.Error()).To(ContainSubstring("CROSSCODEX_GRAPH_MAX_SIMILARITY_LIMIT"))
+			Expect(err.Error()).To(ContainSubstring("must be in range [1, 10000]"))
+			expectOnlyFieldError(err, "graph.max_similarity_limit")
+		},
+		Entry("zero", "0"),
+		Entry("negative", "-5"),
+		Entry("above the upper bound", "10001"),
+	)
+})
+
+var _ = Describe("GraphConfig.MaxSimilarityCatalogs", func() {
+	It("defaults to DefaultGraphMaxSimilarityCatalogs", func() {
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Graph.MaxSimilarityCatalogs).To(Equal(config.DefaultGraphMaxSimilarityCatalogs))
+		Expect(config.DefaultGraphMaxSimilarityCatalogs).To(Equal(100))
+	})
+
+	DescribeTable("accepts a valid override",
+		func(value string, want int) {
+			GinkgoT().Setenv("CROSSCODEX_GRAPH_MAX_SIMILARITY_CATALOGS", value)
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Graph.MaxSimilarityCatalogs).To(Equal(want))
+		},
+		Entry("lower bound", "1", 1),
+		Entry("typical", "5", 5),
+		Entry("upper bound", "10000", 10000),
+	)
+
+	DescribeTable("rejects an out-of-range value with an actionable message",
+		func(value string) {
+			GinkgoT().Setenv("CROSSCODEX_GRAPH_MAX_SIMILARITY_CATALOGS", value)
+			_, err := config.NewLoader().Load(context.Background())
+			Expect(err).To(HaveOccurred())
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("graph.max_similarity_catalogs " + value))
+			Expect(err.Error()).To(ContainSubstring("CROSSCODEX_GRAPH_MAX_SIMILARITY_CATALOGS"))
+			Expect(err.Error()).To(ContainSubstring("must be in range [1, 10000]"))
+			expectOnlyFieldError(err, "graph.max_similarity_catalogs")
+		},
+		Entry("zero", "0"),
+		Entry("negative", "-5"),
+		Entry("above the upper bound", "10001"),
+	)
+})

@@ -81,4 +81,26 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 		})
 	})
+
+	It("GetEmbeddings hands GetEmbeddingsFunc exactly the drawn arguments", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			ctx, err := tenant.WithTenant(context.Background(), "tenant-p")
+			if err != nil {
+				t.Fatalf("WithTenant: %v", err)
+			}
+			catalogID := rapid.String().Draw(t, "catalog")
+			controlID := rapid.String().Draw(t, "control")
+			var gotTenant, gotCatalog, gotControl string
+			fake := &vectordbtest.Fake{GetEmbeddingsFunc: func(_ context.Context, tenantID, c, k string) ([]vectordb.Embedding, error) {
+				gotTenant, gotCatalog, gotControl = tenantID, c, k
+				return nil, nil
+			}}
+			if _, err := fake.GetEmbeddings(ctx, "tenant-p", catalogID, controlID); err != nil {
+				t.Fatalf("GetEmbeddings: %v", err)
+			}
+			if gotTenant != "tenant-p" || gotCatalog != catalogID || gotControl != controlID {
+				t.Fatalf("Func saw (%q, %q, %q), want (tenant-p, %q, %q)", gotTenant, gotCatalog, gotControl, catalogID, controlID)
+			}
+		})
+	})
 })

@@ -2,6 +2,9 @@ package graph_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"math"
 	"time"
 
 	"connectrpc.com/connect"
@@ -14,7 +17,9 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
+	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
 )
 
 var _ = Describe("Read RPCs", func() {
@@ -373,121 +378,341 @@ var _ = Describe("Read RPCs", func() {
 	})
 
 	Describe("SimilaritySearch", func() {
-		It("rejects missing tenant context", func() {
-			resp, err := svc.SimilaritySearch(context.Background(), connect.NewRequest(&pb.SimilaritySearchRequest{}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
+		const tenantID = "test-tenant"
+		tc := &pb.TenantContext{TenantId: tenantID}
+		vec := []float32{0.1, 0.2, 0.3}
 
-		It("rejects missing query", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
+		var (
+			ctx     context.Context
+			ssvc    *graph.Service
+			reader  *fakeControlsReader
+			stored  []vectordb.Embedding
+			found   map[string][]vectordb.SimilarityResult
+			findErr map[string]error
+			queries []vectordb.FindSimilarQuery
+		)
 
-		It("performs vector similarity search", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			mockVectors.findSimilarFunc = func(ctx context.Context, tenantID string, query vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
-				return []vectordb.SimilarityResult{
-					{ControlID: "control-1", Similarity: 0.95, Metadata: map[string]any{}},
-					{ControlID: "control-2", Similarity: 0.85, Metadata: map[string]any{}},
-				}, nil
-			}
-
-			resp, err := svc.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				Query: &pb.SimilaritySearchRequest_QueryEmbedding{
-					QueryEmbedding: &pb.EmbeddingQuery{
-						Embeddings: []float32{0.1, 0.2, 0.3},
-					},
+		BeforeEach(func() {
+			ctx = testspecs.SetupTenantContext(tenantID)
+			reader = &fakeControlsReader{controls: []graph.CatalogControl{
+				{ControlID: "c1/a", CatalogID: "c1"},
+				{ControlID: "c1/b", CatalogID: "c1"},
+			}}
+			stored = []vectordb.Embedding{{CatalogID: "c1", ControlID: "c1/a", Model: "m", Vector: vec}}
+			found = map[string][]vectordb.SimilarityResult{}
+			findErr = map[string]error{}
+			queries = nil
+			fake := &vectordbtest.Fake{
+				GetEmbeddingsFunc: func(_ context.Context, _, catalogID, controlID string) ([]vectordb.Embedding, error) {
+					if catalogID == "c1" && controlID == "c1/a" {
+						return stored, nil
+					}
+					return nil, vectordb.ErrNotFound
 				},
-				Limit: 10,
-			}))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resp).NotTo(BeNil())
-			Expect(resp.Msg.Matches).To(HaveLen(2))
-			Expect(resp.Msg.Matches[0].Node.NodeId).To(Equal("control-1"))
-			Expect(resp.Msg.Matches[0].SimilarityScore).To(BeNumerically("~", 0.95, 0.01))
-		})
-
-		It("performs control-based similarity search", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			mockVectors.findSimilarFunc = func(ctx context.Context, tenantID string, query vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
-				Expect(query.CatalogID).To(Equal("control-1"))
-				return []vectordb.SimilarityResult{
-					{ControlID: "control-2", Similarity: 0.92, Metadata: map[string]any{}},
-				}, nil
+				FindSimilarFunc: func(_ context.Context, _ string, q vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
+					queries = append(queries, q)
+					return found[q.CatalogID], findErr[q.CatalogID]
+				},
 			}
-
-			resp, err := svc.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				Query:         &pb.SimilaritySearchRequest_ControlId{ControlId: "control-1"},
-				Limit:         5,
-			}))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resp).NotTo(BeNil())
-			Expect(resp.Msg.Matches).To(HaveLen(1))
+			ssvc = graph.New(&mockGraphDB{}, fake, nil, graph.WithControlsReader(reader))
 		})
 
-		It("defaults limit to 10 when not specified", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			var capturedQuery vectordb.FindSimilarQuery
+		// recordFind is a FindSimilarFunc that records the query, so a spec asserting
+		// "nothing was searched" on its own fake cannot pass vacuously.
+		recordFind := func(_ context.Context, _ string, q vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
+			queries = append(queries, q)
+			return nil, nil
+		}
 
-			mockVectors.findSimilarFunc = func(ctx context.Context, tenantID string, query vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
-				capturedQuery = query
+		byControl := func(id string, catalogs ...string) *pb.SimilaritySearchRequest {
+			return &pb.SimilaritySearchRequest{TenantContext: tc, Query: &pb.SimilaritySearchRequest_ControlId{ControlId: id}, CatalogIds: catalogs}
+		}
+		byVector := func(v []float32, model string, catalogs ...string) *pb.SimilaritySearchRequest {
+			return &pb.SimilaritySearchRequest{
+				TenantContext: tc,
+				Query:         &pb.SimilaritySearchRequest_QueryEmbedding{QueryEmbedding: &pb.EmbeddingQuery{Embeddings: v}},
+				Model:         model,
+				CatalogIds:    catalogs,
+			}
+		}
+		search := func(req *pb.SimilaritySearchRequest) (*connect.Response[pb.SimilaritySearchResponse], error) {
+			return ssvc.SimilaritySearch(ctx, connect.NewRequest(req))
+		}
+		// matched lists each match as "<catalog_id> <node_id>", in response order.
+		matched := func(resp *connect.Response[pb.SimilaritySearchResponse]) []string {
+			out := make([]string, 0, len(resp.Msg.GetMatches()))
+			for _, m := range resp.Msg.GetMatches() {
+				out = append(out, m.GetNode().GetProperties()["catalog_id"]+" "+m.GetNode().GetNodeId())
+			}
+			return out
+		}
+		message := func(err error) string {
+			var ce *connect.Error
+			Expect(errors.As(err, &ce)).To(BeTrue(), "expected a *connect.Error, got %v", err)
+			return ce.Message()
+		}
+
+		It("searches the control's own catalog with its stored embedding and leaves the control out", func() {
+			found["c1"] = []vectordb.SimilarityResult{
+				{ControlID: "c1/a", Similarity: 1.0}, {ControlID: "c1/b", Similarity: 0.9}, {ControlID: "c1/c", Similarity: 0.8},
+			}
+			req := byControl("c1/a")
+			req.Limit = 10
+
+			resp, err := search(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(queries).To(Equal([]vectordb.FindSimilarQuery{{CatalogID: "c1", Model: "m", Vector: vec, Limit: 11}}))
+			Expect(matched(resp)).To(Equal([]string{"c1 c1/b", "c1 c1/c"}))
+			Expect(resp.Msg.GetMatches()[0].GetSimilarityScore()).To(BeNumerically("~", 0.9, 1e-6))
+		})
+
+		It("keeps the requested number of matches when the control's own row is dropped at the cutoff", func() {
+			found["c1"] = []vectordb.SimilarityResult{
+				{ControlID: "c1/a", Similarity: 1.0}, {ControlID: "c1/b", Similarity: 0.9}, {ControlID: "c1/c", Similarity: 0.8},
+			}
+			req := byControl("c1/a")
+			req.Limit = 2
+
+			resp, err := search(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(queries).To(Equal([]vectordb.FindSimilarQuery{{CatalogID: "c1", Model: "m", Vector: vec, Limit: 3}}))
+			Expect(matched(resp)).To(Equal([]string{"c1 c1/b", "c1 c1/c"}))
+		})
+
+		It("merges the named catalogs by descending similarity and keeps the first limit", func() {
+			found["c2"] = []vectordb.SimilarityResult{{ControlID: "c2/b", Similarity: 0.9}, {ControlID: "c2/a", Similarity: 0.6}}
+			found["c3"] = []vectordb.SimilarityResult{{ControlID: "c3/a", Similarity: 0.8}, {ControlID: "c3/b", Similarity: 0.3}}
+			req := byControl("c1/a", "c2", "c3")
+			req.Limit = 2
+
+			resp, err := search(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(matched(resp)).To(Equal([]string{"c2 c2/b", "c3 c3/a"}))
+			Expect(queries).To(Equal([]vectordb.FindSimilarQuery{
+				{CatalogID: "c2", Model: "m", Vector: vec, Limit: 3},
+				{CatalogID: "c3", Model: "m", Vector: vec, Limit: 3},
+			}))
+		})
+
+		It("orders equal similarities by catalog, then control ID", func() {
+			found["c3"] = []vectordb.SimilarityResult{{ControlID: "a", Similarity: 0.9}}
+			found["c2"] = []vectordb.SimilarityResult{{ControlID: "z", Similarity: 0.9}, {ControlID: "b", Similarity: 0.9}}
+
+			resp, err := search(byVector(vec, "m", "c3", "c2"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(matched(resp)).To(Equal([]string{"c2 b", "c2 z", "c3 a"}))
+		})
+
+		It("leaves the control out of its own catalog only, keeping the same control ID found in another catalog", func() {
+			found["c1"] = []vectordb.SimilarityResult{{ControlID: "c1/a", Similarity: 1.0}, {ControlID: "c1/b", Similarity: 0.5}}
+			found["c2"] = []vectordb.SimilarityResult{{ControlID: "c1/a", Similarity: 0.8}}
+
+			resp, err := search(byControl("c1/a", "c1", "c2"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(matched(resp)).To(Equal([]string{"c2 c1/a", "c1 c1/b"}))
+		})
+
+		It("searches each named catalog once, in first-occurrence order", func() {
+			_, err := search(byControl("c1/a", "c2", "c3", "c2"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(queries).To(HaveLen(2))
+			Expect(queries[0].CatalogID).To(Equal("c2"))
+			Expect(queries[1].CatalogID).To(Equal("c3"))
+		})
+
+		It("counts distinct catalogs against graph.max_similarity_catalogs", func() {
+			ssvc = graph.New(&mockGraphDB{}, &vectordbtest.Fake{FindSimilarFunc: func(_ context.Context, _ string, q vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
+				queries = append(queries, q)
 				return nil, nil
+			}}, nil, graph.WithMaxSimilarityCatalogs(2))
+
+			_, err := search(byVector(vec, "m", "c1", "c2", "c1", "c2"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(queries).To(HaveLen(2))
+		})
+
+		Context("with graph.max_similarity_limit", func() {
+			limited := func(limit int32) *pb.SimilaritySearchRequest {
+				req := byVector(vec, "m", "c1", "c2")
+				req.Limit = limit
+				return req
 			}
 
-			_, _ = svc.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				Query: &pb.SimilaritySearchRequest_QueryEmbedding{
-					QueryEmbedding: &pb.EmbeddingQuery{Embeddings: []float32{0.1}},
-				},
-			}))
-			Expect(capturedQuery.Limit).To(Equal(10))
+			BeforeEach(func() {
+				ssvc = graph.New(&mockGraphDB{}, &vectordbtest.Fake{FindSimilarFunc: func(_ context.Context, _ string, q vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
+					queries = append(queries, q)
+					return nil, nil
+				}}, nil, graph.WithMaxSimilarityLimit(5))
+			})
+
+			It("rejects a limit above it before any vector query, naming the key and the maximum", func() {
+				resp, err := search(limited(6))
+				Expect(resp).To(BeNil())
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(message(err)).To(And(ContainSubstring("limit 6"), ContainSubstring("graph.max_similarity_limit"), ContainSubstring("at most 5")))
+				Expect(queries).To(BeEmpty())
+			})
+
+			It("rejects an int32-maximum limit", func() {
+				_, err := search(limited(math.MaxInt32))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(queries).To(BeEmpty())
+			})
+
+			It("accepts a limit equal to it", func() {
+				_, err := search(limited(5))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(queries).To(HaveLen(2))
+				Expect(queries[0].Limit).To(Equal(5))
+			})
 		})
 
-		It("returns FailedPrecondition when vectorDB is nil", func() {
-			nilVectorSvc := graph.New(mockGraph, nil, nil)
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := nilVectorSvc.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				Query: &pb.SimilaritySearchRequest_QueryEmbedding{
-					QueryEmbedding: &pb.EmbeddingQuery{Embeddings: []float32{0.1}},
-				},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
-		})
+		DescribeTable("asks the vector store for the default limit when limit is unset",
+			func(req *pb.SimilaritySearchRequest, want int) {
+				_, err := search(req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(queries).To(HaveLen(1))
+				Expect(queries[0].Limit).To(Equal(want))
+			},
+			Entry("10 plus the control's own row with control_id", byControl("c1/a"), 11),
+			Entry("10 with query_embedding", byVector(vec, "m", "c1"), 10),
+		)
 
-		It("rejects empty embedding", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			resp, err := svc.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				Query: &pb.SimilaritySearchRequest_QueryEmbedding{
-					QueryEmbedding: &pb.EmbeddingQuery{Embeddings: []float32{}},
-				},
-			}))
-			Expect(resp).To(BeNil())
-			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
-		})
-
-		It("propagates vectordb errors", func() {
-			ctx := testspecs.SetupTenantContext("test-tenant")
-			mockVectors.findSimilarFunc = func(ctx context.Context, tenantID string, query vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
-				return nil, vectordb.ErrNotFound
+		It("searches under the named model when the control has several", func() {
+			other := []float32{0.4, 0.5, 0.6}
+			stored = []vectordb.Embedding{
+				{CatalogID: "c1", ControlID: "c1/a", Model: "m1", Vector: vec},
+				{CatalogID: "c1", ControlID: "c1/a", Model: "m2", Vector: other},
 			}
-			resp, err := svc.SimilaritySearch(ctx, connect.NewRequest(&pb.SimilaritySearchRequest{
-				TenantContext: &pb.TenantContext{TenantId: "test-tenant"},
-				Query: &pb.SimilaritySearchRequest_QueryEmbedding{
-					QueryEmbedding: &pb.EmbeddingQuery{Embeddings: []float32{0.1, 0.2}},
+			req := byControl("c1/a")
+			req.Model = "m2"
+
+			_, err := search(req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(queries).To(Equal([]vectordb.FindSimilarQuery{{CatalogID: "c1", Model: "m2", Vector: other, Limit: 11}}))
+		})
+
+		It("searches with the caller's vector and model in every named catalog", func() {
+			found["c2"] = []vectordb.SimilarityResult{{ControlID: "x", Similarity: 0.4, Metadata: map[string]any{"title": "X"}}}
+
+			resp, err := search(byVector(vec, "m", "c2"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(queries).To(Equal([]vectordb.FindSimilarQuery{{CatalogID: "c2", Model: "m", Vector: vec, Limit: 10}}))
+			Expect(resp.Msg.GetMatches()[0].GetNode().GetProperties()).To(Equal(map[string]string{"title": "X", "catalog_id": "c2"}))
+		})
+
+		DescribeTable("rejects the request, names the fix and searches nothing",
+			func(setup func(), req *pb.SimilaritySearchRequest, code connect.Code, msgs ...string) {
+				setup()
+				resp, err := search(req)
+				Expect(resp).To(BeNil())
+				Expect(connect.CodeOf(err)).To(Equal(code))
+				for _, m := range msgs {
+					Expect(message(err)).To(ContainSubstring(m))
+				}
+				Expect(queries).To(BeEmpty())
+			},
+			Entry("without tenant context", func() {}, &pb.SimilaritySearchRequest{}, connect.CodeInvalidArgument, "tenant_context is required"),
+			Entry("without a query", func() {}, &pb.SimilaritySearchRequest{TenantContext: tc}, connect.CodeInvalidArgument, "query_embedding or control_id is required"),
+			Entry("without a vector store", func() { ssvc = graph.New(&mockGraphDB{}, nil, nil, graph.WithControlsReader(reader)) },
+				byControl("c1/a"), connect.CodeFailedPrecondition, "vector search not configured"),
+			Entry("with an empty control_id", func() {}, byControl(""), connect.CodeInvalidArgument, "control_id is required"),
+			Entry("control_id without a controls reader", func() { ssvc = graph.New(&mockGraphDB{}, &vectordbtest.Fake{FindSimilarFunc: recordFind}, nil) },
+				byControl("c1/a"), connect.CodeFailedPrecondition, "control lookup not configured"),
+			Entry("control_id of an unknown control", func() {}, byControl("c1/zz"), connect.CodeNotFound, `control "c1/zz" not found`),
+			Entry("control_id of a control with no stored embedding", func() {}, byControl("c1/b"), connect.CodeNotFound,
+				`control "c1/b" has no stored embedding`, "run an analysis that includes its catalog"),
+			Entry("a model the control has no embedding under",
+				func() {
+					stored = []vectordb.Embedding{{ControlID: "c1/a", Model: "m1", Vector: vec}, {ControlID: "c1/a", Model: "m2", Vector: vec}}
 				},
-			}))
+				&pb.SimilaritySearchRequest{TenantContext: tc, Query: &pb.SimilaritySearchRequest_ControlId{ControlId: "c1/a"}, Model: "x"},
+				connect.CodeNotFound, `"x"`, "m1", "m2"),
+			Entry("no model for a control with several stored",
+				func() {
+					stored = []vectordb.Embedding{{ControlID: "c1/a", Model: "m1", Vector: vec}, {ControlID: "c1/a", Model: "m2", Vector: vec}}
+				},
+				byControl("c1/a"), connect.CodeInvalidArgument, "m1", "m2", "model"),
+			Entry("query_embedding without catalog_ids", func() {}, byVector(vec, "m"), connect.CodeInvalidArgument,
+				"query_embedding search needs catalog_ids: name the catalogs whose embeddings to search"),
+			Entry("query_embedding without model", func() {}, byVector(vec, "", "c1"), connect.CodeInvalidArgument, "query_embedding search needs model"),
+			Entry("query_embedding with an empty vector", func() {}, byVector(nil, "m", "c1"), connect.CodeInvalidArgument,
+				"query_embedding is empty: send the vector to search with"),
+			Entry("query_embedding with a NaN component", func() {}, byVector([]float32{0.1, float32(math.NaN())}, "m", "c1"),
+				connect.CodeInvalidArgument, "query_embedding must be finite and non-zero"),
+			Entry("query_embedding with an infinite component", func() {}, byVector([]float32{float32(math.Inf(1)), 0.1}, "m", "c1"),
+				connect.CodeInvalidArgument, "query_embedding must be finite and non-zero"),
+			Entry("query_embedding of all zeros", func() {}, byVector([]float32{0, 0, 0}, "m", "c1"),
+				connect.CodeInvalidArgument, "query_embedding must be finite and non-zero"),
+			Entry("an empty catalog_ids entry", func() {}, byControl("c1/a", "c2", ""), connect.CodeInvalidArgument, "catalog_ids[1] is empty"),
+			Entry("more distinct catalogs than graph.max_similarity_catalogs",
+				func() {
+					ssvc = graph.New(&mockGraphDB{}, &vectordbtest.Fake{FindSimilarFunc: recordFind}, nil, graph.WithMaxSimilarityCatalogs(2))
+				},
+				byVector(vec, "m", "c1", "c2", "c3"), connect.CodeInvalidArgument, "graph.max_similarity_catalogs", "limit of 2"),
+		)
+
+		It("fails the whole search, with no partial result, when one catalog has no embeddings under the model", func() {
+			found["c2"] = []vectordb.SimilarityResult{{ControlID: "c2/a", Similarity: 0.9}}
+			findErr["c3"] = fmt.Errorf("find similar: %w", vectordb.ErrModelNotFound)
+
+			resp, err := search(byControl("c1/a", "c2", "c3"))
 			Expect(resp).To(BeNil())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+			Expect(message(err)).To(Equal(`catalog "c3" has no embeddings under model "m"`))
+		})
+
+		It("passes a vector width mismatch through as InvalidArgument", func() {
+			findErr["c1"] = fmt.Errorf("find similar: query has 2 dimensions, catalog stores 3: %w", vectordb.ErrInvalidDimension)
+
+			resp, err := search(byVector([]float32{0.1, 0.2}, "m", "c1"))
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(message(err)).To(Equal(findErr["c1"].Error()))
+		})
+
+		DescribeTable("hides a lookup failure behind an internal error",
+			func(setup func()) {
+				setup()
+				resp, err := search(byControl("c1/a"))
+				Expect(resp).To(BeNil())
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+				Expect(message(err)).NotTo(ContainSubstring("SQLSTATE"))
+				Expect(queries).To(BeEmpty())
+			},
+			Entry("reading the control", func() { reader.getErr = errors.New("read control: SQLSTATE 08006") }),
+			Entry("reading its embeddings", func() {
+				ssvc = graph.New(&mockGraphDB{}, &vectordbtest.Fake{
+					FindSimilarFunc: recordFind,
+					GetEmbeddingsFunc: func(context.Context, string, string, string) ([]vectordb.Embedding, error) {
+						return nil, errors.New("get embeddings: SQLSTATE 08006")
+					},
+				}, nil, graph.WithControlsReader(reader))
+			}),
+		)
+
+		It("records the form, model and catalog count on its span", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+			ssvc = graph.New(&mockGraphDB{}, &vectordbtest.Fake{FindSimilarFunc: func(context.Context, string, vectordb.FindSimilarQuery) ([]vectordb.SimilarityResult, error) {
+				return nil, nil
+			}}, nil, graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+
+			_, err = search(byVector(vec, "m", "c1", "c2"))
+			Expect(err).NotTo(HaveOccurred())
+
+			span := telemetrytest.FindSpan(tp.GetSpans(), "graph.SimilaritySearch")
+			Expect(span).NotTo(BeNil())
+			v, ok := telemetrytest.SpanAttribute(span, "similarity.form")
+			Expect(ok).To(BeTrue())
+			Expect(v.AsString()).To(Equal("query_embedding"))
+			v, ok = telemetrytest.SpanAttribute(span, "similarity.model")
+			Expect(ok).To(BeTrue())
+			Expect(v.AsString()).To(Equal("m"))
+			v, ok = telemetrytest.SpanAttribute(span, "similarity.catalogs")
+			Expect(ok).To(BeTrue())
+			Expect(v.AsInt64()).To(Equal(int64(2)))
 		})
 	})
 

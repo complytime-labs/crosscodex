@@ -39,6 +39,11 @@ type VectorDB interface {
 	// Returns results ordered by similarity score (descending).
 	FindSimilar(ctx context.Context, tenant string, query FindSimilarQuery) ([]SimilarityResult, error)
 
+	// GetEmbeddings returns every stored embedding of one control, one per
+	// model, ordered by model, with CatalogID, ControlID, Model and Vector set.
+	// Returns ErrNotFound if the control has no embeddings for this tenant.
+	GetEmbeddings(ctx context.Context, tenant, catalogID, controlID string) ([]Embedding, error)
+
 	// DeleteByModel removes all embeddings for a specific catalog and model.
 	// Useful for reprocessing when switching embedding models.
 	DeleteByModel(ctx context.Context, tenant, catalogID, model string) error

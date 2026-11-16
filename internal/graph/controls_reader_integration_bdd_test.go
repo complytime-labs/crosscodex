@@ -148,10 +148,32 @@ var _ = Describe("PGControlsReader tenant isolation", Ordered, func() {
 		Expect(containers[0].Title).To(Equal("Tenant B Access Control Group"))
 	})
 
+	It("reads one control by node ID with every column mapped", func() {
+		got, err := reader.GetCatalogControl(ctxA, catalogA+"/ac-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(graph.CatalogControl{ControlID: catalogA + "/ac-1", CatalogID: catalogA, Identifier: "ac-1", Title: "Policy and Procedures",
+			Statement: "Develop a policy.", Class: "SP800-53", NodeKind: "control", Label: "AC-1", SortID: "ac-01", ContainerKey: "g1.1"}))
+	})
+
+	It("reports an unknown control ID as not found", func() {
+		_, err := reader.GetCatalogControl(ctxA, catalogA+"/nope")
+		Expect(err).To(MatchError(graph.ErrControlNotFound))
+	})
+
+	It("reports a control that exists only in another tenant as not found", func() {
+		_, err := reader.GetCatalogControl(ctxA, catalogB+"/ac-1")
+		Expect(err).To(MatchError(graph.ErrControlNotFound))
+		got, err := reader.GetCatalogControl(ctxB, catalogB+"/ac-1")
+		Expect(err).NotTo(HaveOccurred(), "the control must exist for its own tenant, so the miss above is isolation")
+		Expect(got.Title).To(Equal("Tenant B Policy"))
+	})
+
 	It("refuses a ctx without a tenant", func() {
 		_, err := reader.ListCatalogControls(context.Background(), catalogA)
 		Expect(errors.Is(err, tenant.ErrNoTenant)).To(BeTrue(), "got %v", err)
 		_, err = reader.ListCatalogContainers(context.Background(), catalogA)
+		Expect(err).To(MatchError(tenant.ErrNoTenant))
+		_, err = reader.GetCatalogControl(context.Background(), catalogA+"/ac-1")
 		Expect(err).To(MatchError(tenant.ErrNoTenant))
 	})
 })
