@@ -477,6 +477,30 @@ var _ = Describe("ClassifyAnalyzer", func() {
 			Expect(output.Metadata["classified_count"]).To(Equal("1"))
 			Expect(output.Metadata["skipped_count"]).To(Equal("1"))
 			Expect(output.Metadata["total_count"]).To(Equal("2"))
+			Expect(output.Metadata["skipped_blank_statement_count"]).To(Equal("0"))
+		})
+
+		It("reports how many skips were for a blank statement", func() {
+			controls := []*pb.Control{
+				{ControlId: "c/AC", Identifier: "AC", Parts: map[string]string{"class": "compliance-section"}},
+				{ControlId: "c/AC-3.1", Identifier: "AC-3.1", Statement: "Leftover text.",
+					Parts: map[string]string{"class": "compliance-requirement", "status": "withdrawn"}},
+				{ControlId: "c/AC-9", Identifier: "AC-9", Statement: " \n\t ",
+					Parts: map[string]string{"class": "compliance-requirement"}},
+			}
+			var results []analyzer.TaskResult
+			for _, c := range controls {
+				tasks, err := a.GenerateWork(ctx, c, analyzer.AnalyzerConfig{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tasks).To(HaveLen(1))
+				Expect(tasks[0].PreBuiltResult).To(BeTrue())
+				results = append(results, analyzer.TaskResult{TaskID: tasks[0].TaskID, TaskType: tasks[0].TaskType, Result: tasks[0].Payload})
+			}
+
+			output, err := a.Aggregate(ctx, results)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output.Metadata["skipped_count"]).To(Equal("3"))
+			Expect(output.Metadata["skipped_blank_statement_count"]).To(Equal("1"))
 		})
 
 		It("counts errors", func() {

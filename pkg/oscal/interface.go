@@ -44,6 +44,11 @@ type StructureOptions struct {
 	MaxValidationChars int
 	AllowedFormats     []string
 	MaxHeadingRepeats  int
+	// PrintArtifactPatterns are RE2 patterns, compiled with the multiline
+	// flag, whose matches Structure removes from each item's title and text
+	// before keyword filtering and decomposition. Empty means no clean-up.
+	// Fed by config catalog.structuring.print_artifact_patterns.
+	PrintArtifactPatterns []string
 }
 
 var DefaultKeywords = []string{

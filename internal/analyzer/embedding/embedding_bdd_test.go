@@ -77,49 +77,17 @@ var _ = Describe("Text Preparation", func() {
 			Expect(result).To(ContainSubstring("controls."))
 		})
 
-		It("removes VerDate PDF artifacts", func() {
-			input := "Some text\nVerDate Sep 11 2014 10:47 Jan 20, 2023\nMore text"
-			result := embedding.ExportCleanForEmbedding(input)
-			Expect(result).NotTo(ContainSubstring("VerDate"))
-			Expect(result).To(ContainSubstring("Some text"))
-			Expect(result).To(ContainSubstring("More text"))
-		})
-
-		It("removes Jkt PDF artifacts", func() {
-			input := "Text before\nJkt 099006 PO 00000\nText after"
-			result := embedding.ExportCleanForEmbedding(input)
-			Expect(result).NotTo(ContainSubstring("Jkt"))
-		})
-
-		It("removes PO PDF artifacts", func() {
-			input := "Text before\nPO 00000 Frm 00042\nText after"
-			result := embedding.ExportCleanForEmbedding(input)
-			Expect(result).NotTo(ContainSubstring("PO 00000"))
-		})
-
-		It("removes Frm PDF artifacts", func() {
-			input := "Text before\nFrm 00042 Fmt 6633\nText after"
-			result := embedding.ExportCleanForEmbedding(input)
-			Expect(result).NotTo(ContainSubstring("Frm"))
-		})
-
-		It("removes Fmt PDF artifacts", func() {
-			input := "Text before\nFmt 6633 Sfmt 6633\nText after"
-			result := embedding.ExportCleanForEmbedding(input)
-			Expect(result).NotTo(ContainSubstring("Fmt"))
-		})
-
-		It("removes Sfmt PDF artifacts", func() {
-			input := "Text before\nSfmt 6633\nText after"
-			result := embedding.ExportCleanForEmbedding(input)
-			Expect(result).NotTo(ContainSubstring("Sfmt"))
-		})
-
-		It("removes G:\\COMP paths", func() {
-			input := "Text before\nG:\\COMP\\PUBL\\Title47.xml\nText after"
-			result := embedding.ExportCleanForEmbedding(input)
-			Expect(result).NotTo(ContainSubstring("G:\\COMP"))
-		})
+		// Print-artefact clean-up belongs to the document path
+		// (oscal.StructureOptions.PrintArtifactPatterns); an OSCAL statement
+		// is often one line, so stripping here would erase it.
+		DescribeTable("keeps text that resembles a print artefact",
+			func(input string) {
+				Expect(embedding.ExportCleanForEmbedding(input)).To(Equal(input))
+			},
+			Entry("a one-line statement citing a PO number", "Obtain approval for PO 12345 before release."),
+			Entry("a GPO page header line", "Text before\nVerDate Sep 11 2014 10:47 Jan 20, 2023 Jkt 099006 PO 00000 Frm 00042 Fmt 6633 Sfmt 6633\nText after"),
+			Entry("a G:\\COMP path", "Text before\nG:\\COMP\\PUBL\\Title47.xml\nText after"),
+		)
 
 		It("removes markdown table separators", func() {
 			input := "Header\n|---|---|\nData"
@@ -156,10 +124,10 @@ var _ = Describe("Text Preparation", func() {
 		})
 
 		It("handles combined artifacts", func() {
-			input := "Control {{ insert: param }} text\nVerDate Sep 2014 10:47\n\n\n\nMore text  here"
+			input := "Control {{ insert: param }} text\n|---|---|\n\n\n\nMore text  here"
 			result := embedding.ExportCleanForEmbedding(input)
 			Expect(result).NotTo(ContainSubstring("{{"))
-			Expect(result).NotTo(ContainSubstring("VerDate"))
+			Expect(result).NotTo(ContainSubstring("|---|"))
 			Expect(result).To(ContainSubstring("Control"))
 			Expect(result).To(ContainSubstring("text"))
 			Expect(result).To(ContainSubstring("More text here"))
@@ -189,12 +157,14 @@ var _ = Describe("Text Preparation", func() {
 			func(context, title, statement, want string) {
 				Expect(embedding.ExportPrepareText(context, title, statement, 0)).To(Equal(want))
 			},
-			Entry("a title holding a PDF artifact keeps the statement",
-				"Root", "PO 12345 Something", "Enforce.", "[Root] Enforce."),
-			Entry("a context segment holding a PDF artifact keeps the other segments, title and statement",
-				"Root > TEMPO 12345 > Leaf", "Review", "Enforce.", "[Root > TEM > Leaf] Review: Enforce."),
+			Entry("a title holding a table separator keeps the statement",
+				"Root", "|---| Something", "Enforce.", "[Root] Enforce."),
+			Entry("a context segment holding a table separator keeps the other segments, title and statement",
+				"Root > TE|-|MPO > Leaf", "Review", "Enforce.", "[Root > TE > Leaf] Review: Enforce."),
 			Entry("a context segment the cleaning empties is dropped",
-				"Root > PO 12345 > Leaf", "Review", "Enforce.", "[Root > Leaf] Review: Enforce."),
+				"Root > |---| > Leaf", "Review", "Enforce.", "[Root > Leaf] Review: Enforce."),
+			Entry("a title citing a PO number is kept",
+				"Root", "PO 12345 Something", "Enforce.", "[Root] PO 12345 Something: Enforce."),
 		)
 
 		It("truncates to maxChars runes", func() {

@@ -293,6 +293,18 @@ func validateCatalog(cat *CatalogConfig, tracker *sourceTracker) error {
 				s.SectionPattern, formatSource(tracker, "catalog.structuring.section_pattern"), ErrInvalidConfig)
 		}
 	}
+	for i, pattern := range s.PrintArtifactPatterns {
+		path := fmt.Sprintf("catalog.structuring.print_artifact_patterns[%d]", i)
+		re, err := regexp.Compile("(?m)" + pattern)
+		switch {
+		case err != nil:
+			p.add(path, "%s %q%s is not valid regex: %v: %w",
+				path, pattern, formatSource(tracker, "catalog.structuring.print_artifact_patterns"), err, ErrInvalidConfig)
+		case re.MatchString(""):
+			p.add(path, "%s %q%s matches empty text, so it would match at every position; anchor it to the artefact it removes, such as ^Page \\d+$: %w",
+				path, pattern, formatSource(tracker, "catalog.structuring.print_artifact_patterns"), ErrInvalidConfig)
+		}
+	}
 	return p.err()
 }
 

@@ -91,6 +91,7 @@ catalog:
     max_validation_chars: 800
     allowed_formats: []
     max_heading_repeats: 3
+    print_artifact_patterns: []
 attestation:
   enabled: true
   private_key_path: ""
