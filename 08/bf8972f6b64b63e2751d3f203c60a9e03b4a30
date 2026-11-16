@@ -1,0 +1,29 @@
+pkg/crosswalk/crosswalk_property_test.go
+  s_b8a4839fe7391f::t_601a49163767e3 197-229
+internal/graph/crosswalk.go
+  s_b8a4839fe7391f::t_ad77aaf086385a 294,296-298,300-306,310-314,318,323-325
+pkg/crosswalk/load.go
+  s_b8a4839fe7391f::t_a11fe488d41888 1-220
+pkg/crosswalk/load_bdd_test.go
+  s_b8a4839fe7391f::t_11ebeff136c002 1-242
+pkg/crosswalk/doc.go
+  s_b8a4839fe7391f::t_3cafd52d4b6216 5-8
+pkg/crosswalk/review.go
+  s_b8a4839fe7391f::t_a11fe488d41888 25-26,31-32,37-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "08bf8972f6b64b63e2751d3f203c60a9e03b4a30",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
