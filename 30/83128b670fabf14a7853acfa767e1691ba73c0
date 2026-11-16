@@ -1,0 +1,82 @@
+internal/pipeline/options.go
+  s_b8a4839fe7391f::t_3c341db530d16f 11,89-110
+  s_b8a4839fe7391f::t_ea1d1eb6a18a7c 111
+internal/pipeline/store_integration_test.go
+  s_b8a4839fe7391f::t_1686e1db70b02a 385-411
+  s_b8a4839fe7391f::t_35cab6b5c29cba 165,169,226,228,278,366-367
+internal/pipeline/service_bdd_test.go
+  s_b8a4839fe7391f::t_dd43be470909a7 1351
+internal/analyzer/critique/critique.go
+  s_b8a4839fe7391f::t_f27c043ccfc1d5 110-112
+internal/analyzer/classify/classify_bdd_test.go
+  s_b8a4839fe7391f::t_35b3f004bda225 483-489
+internal/analyzer/relationship/relationship_bdd_test.go
+  s_b8a4839fe7391f::t_911e8ceab4087c 382-388
+internal/analyzer/classify/classify.go
+  s_b8a4839fe7391f::t_f27c043ccfc1d5 72-74
+internal/analyzer/requires/requires.go
+  s_b8a4839fe7391f::t_f27c043ccfc1d5 127-129
+pkg/db/migrations/001_initial_schema.up.sql
+  s_b8a4839fe7391f::t_acea74fbc0c5fb 344-350
+pkg/analyzer/panel.go
+  s_b8a4839fe7391f::t_819980f23ed9f6 32-50
+pkg/analyzer/panel_bdd_test.go
+  s_b8a4839fe7391f::t_9ae653a689a71a 42-71
+internal/analyzer/artifacts/artifacts.go
+  s_b8a4839fe7391f::t_f27c043ccfc1d5 105-108
+internal/pipeline/store.go
+  s_b8a4839fe7391f::t_acea74fbc0c5fb 716,733,819,850,903-906,909,912
+  s_b8a4839fe7391f::t_949952b46141a4 46-49
+internal/pipeline/types.go
+  s_b8a4839fe7391f::t_acea74fbc0c5fb 76-79
+internal/pipeline/store_bdd_test.go
+  s_b8a4839fe7391f::t_e767e8a440231b 377,385
+  s_b8a4839fe7391f::t_36c3f207cbd545 776-796
+  s_b8a4839fe7391f::t_55704bc7f799d8 403-404,406-410
+  s_b8a4839fe7391f::t_1686e1db70b02a 698-720,747,769,808,829,845,851,862
+internal/pipeline/reporter.go
+  s_b8a4839fe7391f::t_2f085d14d5739f 148
+  s_b8a4839fe7391f::t_3c341db530d16f 28-30,142-147,149-151
+internal/pipeline/service.go
+  s_b8a4839fe7391f::t_3c341db530d16f 67
+  s_b8a4839fe7391f::t_3bfc6f68a5c30b 20
+internal/analyzer/requires/requires_bdd_test.go
+  s_b8a4839fe7391f::t_886aa4cddac7c2 523-529
+internal/analyzer/artifacts/artifacts_bdd_test.go
+  s_b8a4839fe7391f::t_a76fbdd0e5928a 485-495
+internal/analyzer/critique/critique_bdd_test.go
+  s_b8a4839fe7391f::t_b2bb84df448880 436-442
+internal/pipeline/stage_record_bdd_test.go
+  s_b8a4839fe7391f::t_d4fccd31a94087 1-243
+internal/pipeline/executor_bdd_test.go
+  s_b8a4839fe7391f::t_35cab6b5c29cba 1984-1985,2073-2074,2079,2088,2163,2632
+internal/pipeline/stage_record.go
+  s_b8a4839fe7391f::t_3c341db530d16f 1-96
+internal/analyzer/relationship/relationship.go
+  s_b8a4839fe7391f::t_f27c043ccfc1d5 134-136
+cmd/crosscodexd/bootstrap.go
+  s_b8a4839fe7391f::t_f9f5d230c5ff40 685-686
+internal/pipeline/export_test.go
+  s_b8a4839fe7391f::t_1686e1db70b02a 9,45-47
+  s_b8a4839fe7391f::t_0da188d6fb0297 48-49
+internal/pipeline/cache_summary_bdd_test.go
+  s_b8a4839fe7391f::t_35cab6b5c29cba 135,150,272,275,309,312,317,326
+pkg/db/role_check.go
+  s_b8a4839fe7391f::t_acea74fbc0c5fb 115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3083128b670fabf14a7853acfa767e1691ba73c0",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
