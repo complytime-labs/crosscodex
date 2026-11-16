@@ -102,6 +102,10 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 	// Section, withdrawn and blank-statement auto-classification: no LLM call needed.
 	if !intanalyzer.Analysable(input) {
 		span.SetAttributes(attribute.Bool("classification.skipped", true))
+		reason := skipReasonBlankStatement
+		if intanalyzer.Excluded(input) {
+			reason = skipReasonExcluded
+		}
 		if a.classifyCounter != nil {
 			a.classifyCounter.Add(ctx, 1, metric.WithAttributes(
 				attribute.String("classify.result", "skipped"),
@@ -111,10 +115,11 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 			ResultId:   taskID,
 			ResultType: resultTypeClassification,
 			Attributes: map[string]string{
-				"control_id": controlID,
-				"type":       TypeNone.String(),
-				"level":      LevelNone.String(),
-				"skipped":    "true",
+				"control_id":  controlID,
+				"type":        TypeNone.String(),
+				"level":       LevelNone.String(),
+				"skipped":     "true",
+				"skip_reason": reason,
 			},
 			Confidence: 1.0,
 		}
@@ -209,6 +214,12 @@ func (a *ClassifyAnalyzer) GenerateWork(ctx context.Context, input *pb.Control, 
 	}}, nil
 }
 
+// Values of a pre-built result's "skip_reason" attribute.
+const (
+	skipReasonExcluded       = "excluded" // a section or withdrawn control
+	skipReasonBlankStatement = "blank_statement"
+)
+
 var _ analyzer.Cacheable = (*ClassifyAnalyzer)(nil)
 
 // CacheModels implements analyzer.Cacheable: classification calls one
@@ -252,6 +263,12 @@ func (a *ClassifyAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 	defer span.End()
 
 	classifiedCount, skippedCount, errorCount := intanalyzer.CountResults(taskResults)
+	blankCount := 0
+	for _, r := range taskResults {
+		if ar, ok := r.Result.(*pb.AnalysisResult); ok && r.Error == nil && ar.Attributes["skip_reason"] == skipReasonBlankStatement {
+			blankCount++
+		}
+	}
 
 	total := len(taskResults)
 
@@ -269,6 +286,9 @@ func (a *ClassifyAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 		"error_count":      strconv.Itoa(errorCount),
 		"prompt_name":      promptName,
 		"prompt_version":   promptVersion,
+		// The part of skipped_count that had no statement text, which
+		// usually points at an import problem rather than a structural row.
+		"skipped_blank_statement_count": strconv.Itoa(blankCount),
 	}
 
 	if a.classifyCounter != nil {
@@ -288,6 +308,7 @@ func (a *ClassifyAnalyzer) Aggregate(ctx context.Context, taskResults []analyzer
 		attribute.Int("classify.total", total),
 		attribute.Int("classify.classified", classifiedCount),
 		attribute.Int("classify.skipped", skippedCount),
+		attribute.Int("classify.skipped_blank_statement", blankCount),
 		attribute.Int("classify.errors", errorCount),
 	)
 	span.SetStatus(codes.Ok, "")

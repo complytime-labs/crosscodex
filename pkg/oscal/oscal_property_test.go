@@ -1,6 +1,8 @@
 package oscal_test
 
 import (
+	"context"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -111,6 +113,38 @@ var _ = Describe("Property Specifications", func() {
 				text := rapid.String().Draw(t, "text")
 				result := oscal.CleanForEmbedding(text)
 				Expect(result).NotTo(MatchRegexp(`\n{3,}`))
+			})
+		})
+	})
+
+	Context("Structure — print-artefact clean-up", func() {
+		It("removes header lines from prose but never leaves an item blank", func() {
+			opts := oscal.StructureOptions{PrintArtifactPatterns: examplePrintArtifactPatterns}
+			structurer := oscal.NewStructurer(nil, nil)
+			headers := []string{gpoHeader, "G:\\COMP\\INTEL\\NSA1947.XML", deFooter}
+			prose := []string{"The agency shall review access.", "Obtain approval for PO 12345.", "Siehe Seite 3 von 12 im Anhang."}
+			lines := append(append([]string{}, headers...), prose...)
+
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				drawn := rapid.SliceOfN(rapid.SampledFrom(lines), 1, 8).Draw(t, "lines")
+				items, err := structurer.Structure(context.Background(), oscal.StructuredDoc{RawText: strings.Join(drawn, "\n")}, opts)
+				if err != nil {
+					t.Fatalf("Structure: %v", err)
+				}
+				hasProse := false
+				for _, l := range drawn {
+					hasProse = hasProse || slices.Contains(prose, l)
+				}
+				for _, item := range items {
+					if strings.TrimSpace(item.Text) == "" {
+						t.Fatalf("item %s has blank text from lines %q", item.ID, drawn)
+					}
+					for _, h := range headers {
+						if hasProse && slices.Contains(strings.Split(item.Text, "\n"), h) {
+							t.Fatalf("item %s kept header line %q beside prose: %q", item.ID, h, item.Text)
+						}
+					}
+				}
 			})
 		})
 	})

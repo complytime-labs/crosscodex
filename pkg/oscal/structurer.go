@@ -2,6 +2,8 @@ package oscal
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
@@ -51,13 +53,23 @@ func NewStructurer(completer Completer, registry prompt.Registry, opts ...Struct
 //     - TierFallback (paragraph splitting) — always succeeds
 //  2. First tier that returns (items, true) wins
 //  3. If all tiers fail (should be rare), return ErrStructureFailed
-//  4. Apply keyword filtering if opts.FilterByKeywords is true
-//  5. Apply decomposition if opts.Decompose is true
+//  4. Strip opts.PrintArtifactPatterns from each item's title and text
+//  5. Apply keyword filtering if opts.FilterByKeywords is true
+//  6. Apply decomposition if opts.Decompose is true
+//
+// An unusable print-artefact pattern returns ErrInvalidPrintArtifactPattern
+// before any tier runs.
 func (s *defaultStructurer) Structure(ctx context.Context, doc StructuredDoc, opts StructureOptions) ([]ControlItem, error) {
 	if s.tracer != nil {
 		var span trace.Span
 		_, span = s.tracer.Start(ctx, "oscal.Structure")
 		defer span.End()
+	}
+
+	// Compiled before any tier runs, so a bad pattern costs no LLM call.
+	artifacts, err := compilePrintArtifactPatterns(opts.PrintArtifactPatterns)
+	if err != nil {
+		return nil, err
 	}
 
 	var items []ControlItem
@@ -66,51 +78,59 @@ func (s *defaultStructurer) Structure(ctx context.Context, doc StructuredDoc, op
 	// Tier 1: Regex
 	items, found = TierRegex(doc, opts)
 	if found {
-		return s.postProcess(items, opts), nil
+		return s.postProcess(items, opts, artifacts), nil
 	}
 
 	// Tier 2: Heading
 	items, found = TierHeading(doc, opts)
 	if found {
-		return s.postProcess(items, opts), nil
+		return s.postProcess(items, opts, artifacts), nil
 	}
 
 	// Tier 2b: Table
 	items, found = TierTable(doc, opts)
 	if found {
-		return s.postProcess(items, opts), nil
+		return s.postProcess(items, opts, artifacts), nil
 	}
 
 	// Tier 3: Pattern
 	items, found = TierPattern(doc, opts)
 	if found {
-		return s.postProcess(items, opts), nil
+		return s.postProcess(items, opts, artifacts), nil
 	}
 
 	// Tier 4: LLM Detect
 	items, found = TierLLMDetect(doc, opts, s.completer, s.registry)
 	if found {
-		return s.postProcess(items, opts), nil
+		return s.postProcess(items, opts, artifacts), nil
 	}
 
 	// Tier 5: LLM Extract
 	items, found = TierLLMExtract(doc, opts, s.completer, s.registry)
 	if found {
-		return s.postProcess(items, opts), nil
+		return s.postProcess(items, opts, artifacts), nil
 	}
 
 	// Tier 6: Fallback
 	items, found = TierFallback(doc, opts)
 	if found && len(items) > 0 {
-		return s.postProcess(items, opts), nil
+		return s.postProcess(items, opts, artifacts), nil
 	}
 
 	// All tiers failed (should be rare)
 	return nil, ErrStructureFailed
 }
 
-// postProcess applies keyword filtering and decomposition to extracted items.
-func (s *defaultStructurer) postProcess(items []ControlItem, opts StructureOptions) []ControlItem {
+// postProcess strips print artefacts, then applies keyword filtering and
+// decomposition to extracted items.
+func (s *defaultStructurer) postProcess(items []ControlItem, opts StructureOptions, artifacts []*regexp.Regexp) []ControlItem {
+	if len(artifacts) > 0 {
+		for i := range items {
+			items[i].Title = stripPrintArtifacts(items[i].Title, artifacts)
+			items[i].Text = stripPrintArtifacts(items[i].Text, artifacts)
+		}
+	}
+
 	// Apply keyword filtering if enabled
 	if opts.FilterByKeywords {
 		items = s.filterByKeywords(items, opts)
@@ -182,4 +202,44 @@ func (s *defaultStructurer) applyDecomposition(items []ControlItem, opts Structu
 	}
 
 	return result
+}
+
+// compilePrintArtifactPatterns compiles print-artefact patterns with the
+// multiline flag and the checks pkg/config applies, so a caller that skipped
+// config validation fails here instead of erasing text.
+func compilePrintArtifactPatterns(patterns []string) ([]*regexp.Regexp, error) {
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
+	for i, pattern := range patterns {
+		re, err := regexp.Compile("(?m)" + pattern)
+		if err != nil {
+			return nil, fmt.Errorf("catalog.structuring.print_artifact_patterns[%d] %q is not valid regex: %v; fix or remove it: %w",
+				i, pattern, err, ErrInvalidPrintArtifactPattern)
+		}
+		if re.MatchString("") {
+			return nil, fmt.Errorf("catalog.structuring.print_artifact_patterns[%d] %q matches empty text, so it would match at every position; anchor it to the artefact it removes: %w",
+				i, pattern, ErrInvalidPrintArtifactPattern)
+		}
+		compiled = append(compiled, re)
+	}
+	return compiled, nil
+}
+
+// stripPrintArtifacts removes every pattern's matches from text. It returns
+// text unchanged when only whitespace would remain: a pattern that covers a
+// whole statement is more likely matching real prose than a running header,
+// and a statement is never erased.
+func stripPrintArtifacts(text string, patterns []*regexp.Regexp) string {
+	stripped := text
+	for _, re := range patterns {
+		stripped = re.ReplaceAllString(stripped, "")
+	}
+	if stripped == text {
+		return text
+	}
+	if strings.TrimSpace(stripped) == "" {
+		return text
+	}
+	// Only the line breaks a removed line leaves at the edges: indentation
+	// is the text's own.
+	return strings.Trim(stripped, "\r\n")
 }

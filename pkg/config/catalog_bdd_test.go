@@ -58,3 +58,45 @@ var _ = Describe("CatalogConfig.RequirementPartNames", func() {
 		Entry("is empty", ""),
 	)
 })
+
+var _ = Describe("CatalogConfig.Structuring.PrintArtifactPatterns", func() {
+	load := func(yaml string) (*config.Config, error) {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		path := filepath.Join(GinkgoT().TempDir(), "config.yaml")
+		writeTestFile(path, yaml)
+		return config.NewLoader().Load(context.Background(), config.WithConfigPath(path))
+	}
+
+	It("defaults to no patterns, so no publisher's layout is assumed", func() {
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Catalog.Structuring.PrintArtifactPatterns).To(BeEmpty())
+	})
+
+	DescribeTable("accepts a valid override",
+		func(yaml string, want []string) {
+			cfg, err := load(yaml)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Catalog.Structuring.PrintArtifactPatterns).To(Equal(want))
+		},
+		Entry("one pattern",
+			"catalog:\n  structuring:\n    print_artifact_patterns: ['^Page \\d+ of \\d+$']\n", []string{`^Page \d+ of \d+$`}),
+		Entry("several patterns, order kept",
+			"catalog:\n  structuring:\n    print_artifact_patterns: ['^Seite \\d+ von \\d+$\\n?', '\\[DRAFT\\]']\n", []string{`^Seite \d+ von \d+$\n?`, `\[DRAFT\]`}),
+		Entry("an empty list keeps the clean-up off",
+			"catalog:\n  structuring:\n    print_artifact_patterns: []\n", []string{}),
+	)
+
+	DescribeTable("rejects a pattern and names the entry",
+		func(pattern, reason string) {
+			_, err := load("catalog:\n  structuring:\n    print_artifact_patterns: ['^ok$', '" + pattern + "']\n")
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("catalog.structuring.print_artifact_patterns[1]"))
+			Expect(err.Error()).To(ContainSubstring(reason))
+			expectOnlyFieldError(err, "catalog.structuring.print_artifact_patterns[1]")
+		},
+		Entry("invalid regex", "(unclosed", "is not valid regex"),
+		Entry("a pattern matching empty text", "x*", "matches empty text"),
+		Entry("an empty pattern", "", "matches empty text"),
+	)
+})

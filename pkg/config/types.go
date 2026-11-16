@@ -336,6 +336,16 @@ type StructuringConfig struct {
 	MaxValidationChars int      `yaml:"max_validation_chars" json:"max_validation_chars"`
 	AllowedFormats     []string `yaml:"allowed_formats" json:"allowed_formats"`
 	MaxHeadingRepeats  int      `yaml:"max_heading_repeats" json:"max_heading_repeats"`
+	// PrintArtifactPatterns are regular expressions (RE2, compiled with the
+	// multiline flag so ^ and $ anchor at line boundaries) whose matches are
+	// removed from the titles and text of controls structured from a
+	// document; they never apply to OSCAL imports or search queries. Each
+	// publisher prints its own running headers, footers and file paths, so
+	// none are built in: the default is [] (no clean-up). A pattern may
+	// remove a whole line (end it with $\n?) or a span within one. A text
+	// the patterns would leave blank is kept whole. A pattern that matches
+	// empty text is rejected. Feeds oscal.StructureOptions.PrintArtifactPatterns.
+	PrintArtifactPatterns []string `yaml:"print_artifact_patterns" json:"print_artifact_patterns"`
 }
 
 // AttestationConfig configures in-toto attestation generation and verification.

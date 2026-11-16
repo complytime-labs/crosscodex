@@ -16,6 +16,12 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Print-artefact clean-up and blank classify skips (#277):
+
+- Embedding text no longer has US Federal Register print artefacts stripped. Before, any line holding `VerDate`, `Jkt <n>`, `PO <5 digits>`, `Frm <n>`, `Fmt <n>`, `Sfmt <n>` or `G:\COMP\` was deleted before embedding, on every catalog and on search queries, so a one-line OSCAL statement such as "see PO 12345" was embedded as empty text. Those statements now embed in full. A new analysis job recomputes the affected embeddings (their cache key covers the text); catalog search embeddings stored by an earlier build keep the old text until the catalog is re-imported.
+- Print-artefact clean-up is now opt-in and applies only to controls structured from a document, through the new `catalog.structuring.print_artifact_patterns` (global-only; default `[]`, no clean-up). No publisher's layout is built in: list the running headers, footers or paths of the documents you import (see [Print-artefact patterns](#print-artefact-patterns)). Each match is removed from a structured control's title and text, except that a text the patterns would leave blank is kept whole. A pattern that is not valid regex or matches empty text fails config loading, naming the entry.
+- The `classify` stage summary gains `skipped_blank_statement_count`, the part of `skipped_count` that had no statement text, and pre-built skip results carry `skip_reason` (`excluded` for a section or withdrawn control, `blank_statement` otherwise). Blank statements were already skipped without an LLM call.
+
 Similarity search (#271):
 
 - `SimilaritySearch` with `query_embedding` now requires `catalog_ids` and `model`, and a vector whose width differs from the stored one returns `InvalidArgument` (was `Internal`). Before, it searched a nonexistent `"generic"` catalog and returned `NotFound`.
@@ -698,6 +704,8 @@ graph:
 
 catalog:
   requirement_part_names: [statement]     # Ordered OSCAL part names that hold a control's requirement text; the first a control has wins; at least one, each an OSCAL token (global-only)
+  structuring:
+    print_artifact_patterns: []           # RE2 (multiline) patterns removed from controls structured from a document, never from OSCAL imports; default [] (none); a pattern matching empty text is rejected (global-only). See "Print-artefact patterns"
 
 synthesis:
   confidence_threshold: 0.5               # Minimum confidence for viable mappings (see "Confidence" under "Read a job's mappings")
@@ -714,6 +722,26 @@ synthesis:
     contested_warn: 0.20                  # Contested pairs warning threshold
     actionable_warn: 0.30                 # Actionable coverage warning threshold
 ```
+
+#### Print-artefact patterns
+
+Documents converted from PDF can carry a publisher's running headers, footers and file paths in their text. `catalog.structuring.print_artifact_patterns` removes them from controls structured from a document. It never touches OSCAL imports or search queries, and none are on by default. Each entry is an RE2 pattern compiled with the multiline flag, so `^` and `$` match at line boundaries. End a pattern with `$\n?` to remove a whole line with its line break, or leave out the anchors to remove a span within a line. Keep patterns specific: a pattern that matches ordinary prose removes it, unless it would leave the control's text blank, in which case the text is kept whole.
+
+```yaml
+catalog:
+  structuring:
+    print_artifact_patterns:
+      # US GPO (Federal Register, CFR) page header, on one line
+      - '^.*\bVerDate\b.*\bJkt\s+\d+.*\bPO\s+\d{5}.*\bFrm\s+\d+.*\bFmt\s+\d+.*\bSfmt\s+\d+.*$\n?'
+      # US Code compilation file path
+      - '^[ \t]*G:\\COMP\\.*$\n?'
+      # A German page footer such as "Seite 3 von 12"
+      - '^[ \t]*Seite \d+ von \d+[ \t]*$\n?'
+      # A draft marker anywhere in a line
+      - ' ?\[DRAFT\]'
+```
+
+A header the extractor wraps across lines does not match a one-line pattern; write the pattern for the layout your documents have.
 
 #### Analyzer `enabled` settings
 
