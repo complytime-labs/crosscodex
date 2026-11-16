@@ -1,0 +1,29 @@
+README.md
+  s_73e5dddbd46266::t_94ddb3c9dd2ae4 22,708,726-745
+pkg/config/catalog_bdd_test.go
+  s_73e5dddbd46266::t_26164c36abd32f 70,73,82,84-86
+pkg/config/defaults.go
+  s_73e5dddbd46266::t_b845d6e24307b2 94
+pkg/config/types.go
+  s_73e5dddbd46266::t_2df1c9b3aab6df 342-347
+pkg/oscal/oscal_print_artifacts_bdd_test.go
+  s_73e5dddbd46266::t_a986fc0d226bf4 12-19,21-29,43,45,56-64,77,92-93,95,97
+pkg/oscal/oscal_property_test.go
+  s_73e5dddbd46266::t_882ef3ef160c0d 5,122,124-126,136,142-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "91a620df082e49dc6026bb3f6b6b536b32f2ee07",
+  "prompts": {},
+  "sessions": {
+    "s_73e5dddbd46266": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1fdc30e7-667a-4cb9-981e-a3d04e2503e2",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
