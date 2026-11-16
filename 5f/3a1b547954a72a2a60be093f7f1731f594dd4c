@@ -1,0 +1,65 @@
+.taskfiles/test/integration.yml
+  s_b8a4839fe7391f::t_3d0e9efdc0efdb 123,241
+  s_b8a4839fe7391f::t_2bcb06cc63109c 243-259
+  s_b8a4839fe7391f::t_c02f4f206eb7e0 242
+pkg/cleaning/export_test.go
+  s_b8a4839fe7391f::t_c2cb276945b1bc 1-5
+pkg/cleaning/store_pg.go
+  s_b8a4839fe7391f::t_92a3dc43468a9f 164-165
+  s_b8a4839fe7391f::t_65e3e0c3f45314 1-163,166-617
+pkg/cleaning/store_integration_bdd_test.go
+  s_b8a4839fe7391f::t_49be03806e9dbe 1-253
+pkg/cleaning/cleaningtest/cleaningtest_suite_test.go
+  s_b8a4839fe7391f::t_5fa636ce6cbf91 1-13
+pkg/cleaning/cleaningtest/fake.go
+  s_b8a4839fe7391f::t_0a157bb5067cc5 1-267,270-272,276-449
+  s_b8a4839fe7391f::t_f3f84de310051e 268-269,273-275
+pkg/cleaning/cleaning_fuzz_test.go
+  s_b8a4839fe7391f::t_c2cb276945b1bc 104-105,110-126
+  s_b8a4839fe7391f::t_92a3dc43468a9f 106-109
+pkg/db/migrations/001_initial_schema.up.sql
+  s_b8a4839fe7391f::t_c61f7b5e79f683 1157-1172,1176-1238
+  s_b8a4839fe7391f::t_1e088a4ed5db11 1173-1175
+pkg/cleaning/cleaningtest/doc.go
+  s_b8a4839fe7391f::t_0edf8b7b1e69f8 1-84
+pkg/cleaning/store.go
+  s_b8a4839fe7391f::t_994c180a03d61e 1-124
+pkg/cleaning/cleaningtest/cleaningtest_bdd_test.go
+  s_b8a4839fe7391f::t_f145ee66112968 81-82
+  s_b8a4839fe7391f::t_92a3dc43468a9f 197-200
+  s_b8a4839fe7391f::t_b02045777c3059 1-80,83-196,201-222
+pkg/cleaning/store_pg_bdd_test.go
+  s_b8a4839fe7391f::t_8a2503ba908c3e 101
+  s_b8a4839fe7391f::t_192599a1002ef5 1-2
+  s_b8a4839fe7391f::t_7ed7239583bcdb 140-141,168,171,173,175
+  s_b8a4839fe7391f::t_cbc385f1753221 3-100,102-139,142-167,169-170,172,174,176-241
+pkg/cleaning/cleaningtest/contract.go
+  s_b8a4839fe7391f::t_31ab19633e0820 49-50,65-69
+  s_b8a4839fe7391f::t_92a3dc43468a9f 182-185,195-198,200,391-393
+  s_b8a4839fe7391f::t_13d45c5badeb40 1-48,51-64,70-88,91-181,186-194,199,201-328,331-369,389,407,418-568
+  s_b8a4839fe7391f::t_70e148756e733d 329-330
+  s_b8a4839fe7391f::t_c6afffa580df42 370-388,390,394-406,408-417
+  s_b8a4839fe7391f::t_af7d3cbe85c074 89-90
+pkg/db/role_check.go
+  s_b8a4839fe7391f::t_b29ce782b337c5 123-124
+pkg/db/migrations/001_initial_schema.down.sql
+  s_b8a4839fe7391f::t_e67efaef2492eb 71-72
+pkg/cleaning/cleaningtest/cleaningtest_property_test.go
+  s_b8a4839fe7391f::t_743ca8a0e2e0f5 1-146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "5f3a1b547954a72a2a60be093f7f1731f594dd4c",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
