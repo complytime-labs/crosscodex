@@ -91,6 +91,21 @@ var _ = Describe("PGFindingStore contract", func() {
 		createTenants(a, b)
 		return cleaningtest.FindingStoreEnv{
 			Store: cleaning.NewPGFindingStore(db.NewTenantPool(appPool)),
+			Runs: func(tenantID string) []cleaning.RunRecord {
+				rows, err := suPool.Query(context.Background(), `SELECT plan_token, plan, attestation, applied_at
+					FROM edge_cleaning_runs WHERE tenant_id = $1 ORDER BY applied_at, plan_token COLLATE "C"`, tenantID)
+				Expect(err).NotTo(HaveOccurred())
+				defer rows.Close() //nolint:errcheck
+				var out []cleaning.RunRecord
+				for rows.Next() {
+					var r cleaning.RunRecord
+					Expect(rows.Scan(&r.PlanToken, &r.Plan, &r.Attestation, &r.AppliedAt)).To(Succeed())
+					r.AppliedAt = r.AppliedAt.UTC()
+					out = append(out, r)
+				}
+				Expect(rows.Err()).NotTo(HaveOccurred())
+				return out
+			},
 			SeedReviewer: func(tenantID, reviewerID, status string) {
 				ctx := context.Background()
 				Expect(suPool.Exec(ctx, `INSERT INTO reviewers (tenant_id, reviewer_id, created_by) VALUES ($1, $2, 'test')`,
@@ -146,7 +161,7 @@ var _ = Describe("PGFindingStore against Postgres", func() {
 	It("refuses edge IDs over the real edge_ids bound with ErrFindingTooLarge and leaves the row unchanged", func() {
 		f := cleaningtest.ContractFinding(1, cleaning.SignalStalePrompt, cleaning.StatusRetired, "cat-x", "cat-y")
 		f.GraphApplied = false
-		Expect(store.ApplyRun(ctxA, tenantA, cleaning.RunWrite{Upserts: cleaningtest.NewUpserts(f)})).To(Succeed())
+		Expect(store.ApplyRun(ctxA, tenantA, cleaning.RunWrite{Run: cleaningtest.ContractRun(1), Upserts: cleaningtest.NewUpserts(f)})).To(Succeed())
 		err := store.MarkProjected(ctxA, tenantA, f.ID, []string{strings.Repeat("e", 128<<20)})
 		Expect(err).To(MatchError(cleaning.ErrFindingTooLarge))
 		Expect(err).To(MatchError(ContainSubstring("the edge_ids column would hold 134217732 bytes of JSON, over the 134217728-byte limit")))
@@ -160,39 +175,86 @@ var _ = Describe("PGFindingStore against Postgres", func() {
 	Describe("immutability", func() {
 		BeforeEach(func() {
 			f := cleaningtest.ContractFinding(1, cleaning.SignalConflictsWith, cleaning.StatusRetired, "cat-x", "cat-y")
+			run := cleaningtest.ContractRun(1)
 			Expect(store.ApplyRun(ctxA, tenantA, cleaning.RunWrite{
+				Run:     run,
 				Upserts: cleaningtest.NewUpserts(f),
-				Decisions: []cleaning.Decision{{ID: "d-1", FindingID: f.ID, Verdict: cleaning.VerdictRetire,
-					DecidedBy: cleaning.DecidedByPolicy, RunID: "run", Rationale: "policy",
-					Request: []byte("{}"), Attestation: []byte("sig")}},
+				Decisions: []cleaning.Decision{cleaningtest.PolicyDecision(cleaning.Decision{ID: "d-1", FindingID: f.ID,
+					Verdict: cleaning.VerdictRetire, Rationale: "policy", Request: []byte("{}"), Attestation: []byte("sig")}, run)},
 			})).To(Succeed())
 		})
 
-		DescribeTable("refuses app_user changes to decisions with 42501 and leaves them unchanged",
-			func(stmt string) {
-				before := tableJSON("edge_finding_decisions")
+		DescribeTable("refuses app_user changes to runs and decisions with 42501 and leaves them unchanged",
+			func(table, stmt string) {
+				before := tableJSON(table)
 				err := asApp(tenantA, stmt)
 				Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "got %v", err)
-				Expect(tableJSON("edge_finding_decisions")).To(Equal(before))
+				Expect(tableJSON(table)).To(Equal(before))
 			},
-			Entry("UPDATE", `UPDATE edge_finding_decisions SET decided_by = 'mallory'`),
-			Entry("DELETE", `DELETE FROM edge_finding_decisions`),
-			Entry("TRUNCATE", `TRUNCATE edge_finding_decisions`),
+			Entry("UPDATE of a decision", "edge_finding_decisions", `UPDATE edge_finding_decisions SET decided_by = 'mallory'`),
+			Entry("DELETE of a decision", "edge_finding_decisions", `DELETE FROM edge_finding_decisions`),
+			Entry("TRUNCATE of decisions", "edge_finding_decisions", `TRUNCATE edge_finding_decisions`),
+			Entry("UPDATE of a run", "edge_cleaning_runs", `UPDATE edge_cleaning_runs SET plan = '\x00'`),
+			Entry("DELETE of a run", "edge_cleaning_runs", `DELETE FROM edge_cleaning_runs`),
+			Entry("TRUNCATE of runs", "edge_cleaning_runs", `TRUNCATE edge_cleaning_runs`),
 		)
 
-		DescribeTable("refuses even the owner's changes to decisions with an actionable message",
-			func(stmt string) {
-				before := tableJSON("edge_finding_decisions")
+		DescribeTable("refuses even the owner's changes to runs and decisions with an actionable message",
+			func(table, stmt, record, remedy string) {
+				before := tableJSON(table)
 				err := suPool.Exec(context.Background(), stmt)
 				Expect(db.IsPgErrorCode(err, "42501")).To(BeTrue(), "got %v", err)
-				Expect(err).To(MatchError(ContainSubstring("append-only record of who decided what")))
-				Expect(err).To(MatchError(ContainSubstring("record a new one")))
-				Expect(tableJSON("edge_finding_decisions")).To(Equal(before))
+				Expect(err).To(MatchError(ContainSubstring(record)))
+				Expect(err).To(MatchError(ContainSubstring(remedy)))
+				Expect(tableJSON(table)).To(Equal(before))
 			},
-			Entry("UPDATE", `UPDATE edge_finding_decisions SET decided_by = 'mallory'`),
-			Entry("DELETE", `DELETE FROM edge_finding_decisions`),
-			Entry("TRUNCATE", `TRUNCATE edge_finding_decisions`),
+			Entry("UPDATE of a decision", "edge_finding_decisions", `UPDATE edge_finding_decisions SET decided_by = 'mallory'`,
+				"append-only record of who decided what", "record a new one"),
+			Entry("DELETE of a decision", "edge_finding_decisions", `DELETE FROM edge_finding_decisions`,
+				"append-only record of who decided what", "record a new one"),
+			Entry("TRUNCATE of decisions", "edge_finding_decisions", `TRUNCATE edge_finding_decisions`,
+				"append-only record of who decided what", "record a new one"),
+			Entry("UPDATE of a run", "edge_cleaning_runs", `UPDATE edge_cleaning_runs SET plan = '\x00'`,
+				"append-only record of applied cleaning runs", "apply a new run"),
+			Entry("DELETE of a run", "edge_cleaning_runs", `DELETE FROM edge_cleaning_runs`,
+				"append-only record of applied cleaning runs", "apply a new run"),
 		)
+
+		// Decisions reference runs, so Postgres refuses a plain TRUNCATE of
+		// runs before the refusal trigger runs, and CASCADE reaches the
+		// triggers of both tables.
+		DescribeTable("refuses even the owner's TRUNCATE of runs, saying why, and leaves runs and decisions unchanged",
+			func(stmt, code, why string) {
+				runs, decisions := tableJSON("edge_cleaning_runs"), tableJSON("edge_finding_decisions")
+				err := suPool.Exec(context.Background(), stmt)
+				Expect(db.IsPgErrorCode(err, code)).To(BeTrue(), "got %v", err)
+				Expect(err).To(MatchError(ContainSubstring(why)))
+				Expect(tableJSON("edge_cleaning_runs")).To(Equal(runs))
+				Expect(tableJSON("edge_finding_decisions")).To(Equal(decisions))
+			},
+			Entry("plain, by the foreign key", `TRUNCATE edge_cleaning_runs`, "0A000", "referenced in a foreign key constraint"),
+			Entry("with CASCADE, by the append-only triggers", `TRUNCATE edge_cleaning_runs CASCADE`, "42501", "append-only record"),
+		)
+
+		It("refuses a policy decision that names no recorded run, even written directly", func() {
+			before := tableJSON("edge_finding_decisions")
+			var finding string
+			Expect(suPool.QueryRow(context.Background(), `SELECT finding_id FROM edge_findings WHERE tenant_id = $1`, tenantA).
+				Scan(&finding)).To(Succeed())
+			ctx := context.Background()
+			tx, err := appDB.BeginTx(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = tx.Rollback() }()
+			_, err = tx.ExecContext(ctx, "SELECT public.enter_tenant($1)", tenantA)
+			Expect(err).NotTo(HaveOccurred())
+			run := cleaningtest.ContractRun(1)
+			_, err = tx.ExecContext(ctx, `INSERT INTO edge_finding_decisions
+				(tenant_id, decision_id, finding_id, verdict, decided_by, run_id, rationale, request, attestation, decided_at)
+				VALUES ($1, 'd-orphan', $2, 'retire', 'policy', $3, 'r', '\x00', '\x00', $4)`,
+				tenantA, finding, run.PlanToken, run.AppliedAt.Add(time.Second))
+			Expect(db.IsPgErrorCode(err, "23503")).To(BeTrue(), "got %v", err)
+			Expect(tableJSON("edge_finding_decisions")).To(Equal(before))
+		})
 
 		It("refuses app_user DELETE on findings with 42501 and leaves them unchanged", func() {
 			before := tableJSON("edge_findings")
@@ -229,16 +291,17 @@ var _ = Describe("PGFindingStore against Postgres", func() {
 		)
 
 		It("hides the rows from another tenant's app_user session", func() {
-			var n int
 			ctx := context.Background()
 			tx, err := appDB.BeginTx(ctx, nil)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = tx.Rollback() }()
 			_, err = tx.ExecContext(ctx, "SELECT public.enter_tenant($1)", tenantB)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM edge_findings) + (SELECT count(*) FROM edge_finding_decisions)`).
-				Scan(&n)).To(Succeed())
-			Expect(n).To(BeZero())
+			for _, table := range []string{"edge_findings", "edge_finding_decisions", "edge_cleaning_runs"} {
+				var n int
+				Expect(tx.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&n)).To(Succeed())
+				Expect(n).To(BeZero(), table)
+			}
 		})
 	})
 

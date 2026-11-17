@@ -121,6 +121,10 @@ type Plan struct {
 	RetireEdgeIDs []string
 	Summary       Summary
 	Token         string
+	// Canonical is the JSON Token is the hex SHA-256 of. An applied run
+	// stores it in its RunRecord, so the record proves the scope, the
+	// effective policy and each change the run applied.
+	Canonical []byte
 }
 
 // hashParts returns the hex SHA-256 of parts, each length-prefixed so that no
@@ -341,13 +345,13 @@ func BuildPlan(found []Finding, stored []StoredFinding, pol config.CleaningTenan
 		}
 	}
 
-	token, err := planToken(scope, pol, planned)
+	canonical, token, err := canonicalPlan(scope, pol, planned)
 	if err != nil {
 		return Plan{}, err
 	}
 	return Plan{
 		Scope: scope, Findings: planned, Retire: retire, RetireEdgeIDs: sortedUnique(retireEdges),
-		Summary: sum, Token: token,
+		Summary: sum, Token: token, Canonical: canonical,
 	}, nil
 }
 
@@ -403,10 +407,10 @@ func planDetected(f Finding, id string, byID map[string]StoredFinding, pol confi
 	return p, true, nil
 }
 
-// planToken is the hex SHA-256 of the canonical JSON of the scope, the
-// effective policy and each finding as [ID, EvidenceHash, Action, Change, To,
-// EdgeIDs], in the given (ID-sorted) order.
-func planToken(scope Scope, pol config.CleaningTenantConfig, planned []PlannedFinding) (string, error) {
+// canonicalPlan returns the canonical JSON of the scope, the effective policy
+// and each finding as [ID, EvidenceHash, Action, Change, To, EdgeIDs], in the
+// given (ID-sorted) order, and its hex SHA-256, the plan token.
+func canonicalPlan(scope Scope, pol config.CleaningTenantConfig, planned []PlannedFinding) ([]byte, string, error) {
 	findings := make([][]any, len(planned))
 	for i, p := range planned {
 		edges := p.EdgeIDs
@@ -421,8 +425,8 @@ func planToken(scope Scope, pol config.CleaningTenantConfig, planned []PlannedFi
 		Findings [][]any                     `json:"findings"`
 	}{scope, pol, findings})
 	if err != nil {
-		return "", fmt.Errorf("encode plan token: %w", err)
+		return nil, "", fmt.Errorf("encode plan token: %w", err)
 	}
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
+	return b, hex.EncodeToString(sum[:]), nil
 }

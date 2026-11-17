@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
@@ -106,6 +107,7 @@ var (
 type engineState struct {
 	Findings  []cleaning.StoredFinding
 	Decisions [][]cleaning.Decision
+	Runs      []cleaning.RunRecord
 	Live      []string
 }
 
@@ -123,7 +125,7 @@ func liveEdgeIDs(ctx context.Context, g graphdb.GraphDB) []string {
 func snapshot(ctx context.Context, store *cleaningtest.Fake, g graphdb.GraphDB) engineState {
 	fs, err := store.Findings(ctx, engTenant, cleaning.Scope{})
 	Expect(err).NotTo(HaveOccurred())
-	s := engineState{Findings: fs, Live: liveEdgeIDs(ctx, g)}
+	s := engineState{Findings: fs, Runs: store.Runs(engTenant), Live: liveEdgeIDs(ctx, g)}
 	for _, f := range fs {
 		_, ds, err := store.GetFinding(ctx, engTenant, f.ID)
 		Expect(err).NotTo(HaveOccurred())
@@ -355,6 +357,13 @@ var _ = Describe("Engine", func() {
 				Expect(d.ID).To(Equal(hex.EncodeToString(sum[:])))
 			}
 
+			Expect(s.Runs).To(Equal([]cleaning.RunRecord{{
+				PlanToken: plan.Token, Plan: plan.Canonical, Attestation: decisions[0].Attestation, AppliedAt: engNow,
+			}}))
+			for _, d := range decisions {
+				Expect(d.DecidedAt).To(Equal(engNow))
+			}
+
 			link, err := signer.Verify(ctx, decisions[0].Attestation)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(link.Step).To(Equal("cleaning.run"))
@@ -364,6 +373,49 @@ var _ = Describe("Engine", func() {
 				products = append(products, attestation.Artifact{URI: "crosscodex:finding/" + p.ID, Digest: p.EvidenceHash})
 			}
 			Expect(link.Products).To(ConsistOf(products))
+		})
+
+		It("records a verifiable run that retires nothing, naming the plan and policy that set each status", func() {
+			cfg.Signals.ConflictsWith.Action = config.CleaningActionHuman
+			eng = newEngine(signer)
+			plan := applyFixture()
+
+			s := snap()
+			for _, f := range s.Findings {
+				Expect(f.Status).To(BeElementOf(cleaning.StatusPending, cleaning.StatusReported), "finding %s", f.ID)
+			}
+			for _, ds := range s.Decisions {
+				Expect(ds).To(BeEmpty())
+			}
+			Expect(s.Runs).To(HaveLen(1))
+			run := s.Runs[0]
+			Expect(run.PlanToken).To(Equal(plan.Token))
+			Expect(run.AppliedAt).To(Equal(engNow))
+			sum := sha256.Sum256(run.Plan)
+			Expect(hex.EncodeToString(sum[:])).To(Equal(run.PlanToken))
+			var canonical struct {
+				Policy config.CleaningTenantConfig `json:"policy"`
+			}
+			Expect(json.Unmarshal(run.Plan, &canonical)).To(Succeed())
+			Expect(canonical.Policy).To(Equal(cfg.ForTenant(engTenant)))
+
+			link, err := signer.Verify(ctx, run.Attestation)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(link.Step).To(Equal("cleaning.run"))
+			Expect(link.Materials).To(ConsistOf(attestation.Artifact{URI: "crosscodex:cleaning-plan", Digest: run.PlanToken}))
+			var products []attestation.Artifact
+			for _, p := range plan.Findings {
+				products = append(products, attestation.Artifact{URI: "crosscodex:finding/" + p.ID, Digest: p.EvidenceHash})
+			}
+			Expect(link.Products).To(ConsistOf(products))
+		})
+
+		It("records no run when the plan has no findings", func() {
+			applyFixture()
+			before := snap()
+			again := applyFixture()
+			Expect(again.Findings).To(BeEmpty())
+			Expect(snap()).To(Equal(before))
 		})
 
 		It("yields no changes when the run is previewed again", func() {

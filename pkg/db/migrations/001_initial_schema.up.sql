@@ -1167,15 +1167,26 @@ CREATE TRIGGER artifact_pair_verdicts_refuse_truncate
 -- rather than the evidence bound. The graph is a projection of these rows:
 -- graph_applied is false until a run's or decision's edge changes are written.
 --
+-- edge_cleaning_runs is the append-only record of every applied cleaning
+-- run, kept whether or not the run retires anything (issue #290), so every
+-- status a run set traces to a signed record. plan is the canonical plan
+-- (scope, effective policy, each finding's change) byte for byte, plan_token
+-- its hex SHA-256, and attestation the run's signed cleaning.run in-toto link,
+-- whose material digest is plan_token. A plan token is not unique: a later
+-- run can make the same changes from the same state, so applied_at is part of
+-- the key.
+--
 -- edge_finding_decisions is the append-only record of every decision:
--- decided_by is 'policy' (run_id holds the run's plan token) or a reviewer ID
--- (run_id NULL); request is the canonical request and attestation its signed
--- in-toto link, both stored byte for byte.
+-- decided_by is 'policy' (run_id holds the run's plan token, decided_at its
+-- applied_at, and the pair references the run) or a reviewer ID (run_id
+-- NULL); request is the canonical request and attestation its signed in-toto
+-- link, both stored byte for byte.
 --
 -- app_user is a restricted role so that a compromised daemon cannot rewrite
--- who decided what: it may read, insert and update findings (never delete
--- them) but only read and append decisions, and the refusal triggers on
--- edge_finding_decisions hold for every role, the owner included.
+-- which run or who decided what: it may read, insert and update findings
+-- (never delete them) but only read and append runs and decisions, and the
+-- refusal triggers on edge_cleaning_runs and edge_finding_decisions hold for
+-- every role, the owner included.
 CREATE TABLE IF NOT EXISTS edge_findings (
     tenant_id      TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE RESTRICT,
     finding_id     TEXT NOT NULL,
@@ -1203,6 +1214,32 @@ CREATE POLICY tenant_isolation ON edge_findings
 -- No DELETE: a finding that is no longer detected becomes 'cleared'.
 GRANT SELECT, INSERT, UPDATE ON edge_findings TO app_user;
 
+CREATE TABLE IF NOT EXISTS edge_cleaning_runs (
+    tenant_id   TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE RESTRICT,
+    plan_token  TEXT NOT NULL,
+    plan        BYTEA NOT NULL,
+    attestation BYTEA NOT NULL,
+    applied_at  TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (tenant_id, plan_token, applied_at)
+);
+
+ALTER TABLE edge_cleaning_runs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON edge_cleaning_runs
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+-- SELECT and INSERT only: runs are never changed or removed.
+GRANT SELECT, INSERT ON edge_cleaning_runs TO app_user;
+
+CREATE TRIGGER edge_cleaning_runs_refuse_update
+    BEFORE UPDATE OR DELETE ON public.edge_cleaning_runs
+    FOR EACH ROW EXECUTE FUNCTION public.refuse_change(
+        'edge_cleaning_runs is an append-only record of applied cleaning runs; rows are never changed or removed. To change findings, apply a new run or record a reviewer decision.');
+CREATE TRIGGER edge_cleaning_runs_refuse_truncate
+    BEFORE TRUNCATE ON public.edge_cleaning_runs
+    FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_change(
+        'edge_cleaning_runs is an append-only record of applied cleaning runs, so TRUNCATE is refused. To change findings, apply a new run or record a reviewer decision.');
+
 CREATE TABLE IF NOT EXISTS edge_finding_decisions (
     tenant_id   TEXT NOT NULL,
     decision_id TEXT NOT NULL,
@@ -1216,6 +1253,9 @@ CREATE TABLE IF NOT EXISTS edge_finding_decisions (
     decided_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, decision_id),
     FOREIGN KEY (tenant_id, finding_id) REFERENCES edge_findings (tenant_id, finding_id),
+    -- A policy decision belongs to a recorded run; a reviewer's (run_id NULL)
+    -- is not checked.
+    FOREIGN KEY (tenant_id, run_id, decided_at) REFERENCES edge_cleaning_runs (tenant_id, plan_token, applied_at),
     -- A policy decision names the run that made it; a reviewer's names none.
     CONSTRAINT edge_finding_decisions_provenance CHECK ((decided_by = 'policy') = (run_id IS NOT NULL))
 );

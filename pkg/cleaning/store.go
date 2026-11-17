@@ -2,6 +2,8 @@ package cleaning
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,11 +102,78 @@ type RunUpsert struct {
 	ExpectState string
 }
 
-// RunWrite is what an applied cleaning run records, in one transaction:
-// Upserts first, then Decisions, which may refer to the upserted findings.
+// RunRecord is one append-only edge_cleaning_runs row: the signed record of
+// one applied cleaning run, kept whether or not the run made a decision, so
+// every status a run set (reported, pending, cleared, retired) traces to the
+// policy and plan that set it.
+type RunRecord struct {
+	// PlanToken is the run's Plan.Token, the hex SHA-256 of Plan.
+	PlanToken string
+	// Plan is the run's Plan.Canonical: the scope, the effective policy and
+	// each finding's change. It and Attestation, the run's signed
+	// cleaning.run in-toto link, are stored and returned byte for byte.
+	Plan, Attestation []byte
+	// AppliedAt is when the run was applied. Each policy decision of the
+	// run has it as DecidedAt, and the decision's foreign key matches the
+	// two as stored, so pass a time already at microsecond precision (as
+	// Engine.stamp does): the driver truncates finer times.
+	AppliedAt time.Time
+}
+
+// Validate reports whether a store may record r: a plan and an attestation,
+// a plan token that is the plan's SHA-256, and an applied time.
+func (r RunRecord) Validate() error {
+	if len(r.Plan) == 0 || len(r.Attestation) == 0 {
+		return fmt.Errorf("run %s: plan and attestation are required so the run can be verified later; nothing was written", r.PlanToken)
+	}
+	if sum := sha256.Sum256(r.Plan); hex.EncodeToString(sum[:]) != r.PlanToken {
+		return fmt.Errorf("run %s: the plan token is not the SHA-256 of the stored plan, so the record could not be verified; "+
+			"record Plan.Canonical with its Plan.Token; nothing was written", r.PlanToken)
+	}
+	if r.AppliedAt.IsZero() {
+		return fmt.Errorf("run %s: an applied time is required; nothing was written", r.PlanToken)
+	}
+	return nil
+}
+
+// RunWrite is what an applied cleaning run records, in one transaction: Run
+// first, then Upserts, then Decisions, which may refer to the upserted
+// findings and are the run's policy decisions.
 type RunWrite struct {
+	Run       RunRecord
 	Upserts   []RunUpsert
 	Decisions []Decision
+}
+
+// Validate reports whether a store may record w: Run passes
+// RunRecord.Validate, each upserted finding StoredFinding.Validate, and each
+// decision Decision.Validate and is a policy decision of Run (its RunID is
+// Run.PlanToken and its DecidedAt Run.AppliedAt). It does not check stored
+// state.
+func (w RunWrite) Validate() error {
+	if err := w.Run.Validate(); err != nil {
+		return err
+	}
+	for _, u := range w.Upserts {
+		if err := u.Finding.Validate(); err != nil {
+			return err
+		}
+	}
+	for _, d := range w.Decisions {
+		if d.DecidedBy != DecidedByPolicy {
+			return fmt.Errorf("decision %s is decided by %q: ApplyRun records only policy decisions; record a reviewer's decision with Decide; nothing was written",
+				d.ID, d.DecidedBy)
+		}
+		if err := d.Validate(); err != nil {
+			return err
+		}
+		if d.RunID != w.Run.PlanToken || !d.DecidedAt.Equal(w.Run.AppliedAt) {
+			return fmt.Errorf("decision %s names run %s at %s, not the run being applied (%s at %s): "+
+				"a policy decision is recorded with the run that made it, stamped with its applied time; nothing was written",
+				d.ID, d.RunID, d.DecidedAt.Format(time.RFC3339Nano), w.Run.PlanToken, w.Run.AppliedAt.Format(time.RFC3339Nano))
+		}
+	}
+	return nil
 }
 
 // FindingStore is the authoritative, tenant-scoped record of findings and
@@ -130,15 +199,15 @@ type FindingStore interface {
 	// GetFinding returns a finding and its decisions, oldest first. A
 	// finding the tenant does not have wraps ErrFindingNotFound.
 	GetFinding(ctx context.Context, tenantID, findingID string) (StoredFinding, []Decision, error)
-	// ApplyRun writes each upsert's Finding (UpdatedAt is set by the store,
-	// any other field is written as given), then inserts w.Decisions, all or
-	// nothing. Each finding must pass StoredFinding.Validate. Each upsert's
+	// ApplyRun records w.Run, writes each upsert's Finding (UpdatedAt is set
+	// by the store, any other field is written as given), then inserts
+	// w.Decisions, all or nothing. w must pass RunWrite.Validate, and no run
+	// with the same PlanToken and AppliedAt may be stored. Each upsert's
 	// ExpectState must still hold, checked under a row lock: "" means the
 	// finding is not stored, otherwise it is the stored finding's
 	// StateToken; a run planned from another state wraps ErrStateChanged.
-	// Each decision must pass Decision.Validate, be a policy decision
-	// (DecidedBy is DecidedByPolicy, with the run's RunID), refer to a stored
-	// finding and have an ID not already stored.
+	// Each decision must refer to a stored finding and have an ID not
+	// already stored.
 	ApplyRun(ctx context.Context, tenantID string, w RunWrite) error
 	// Decide records a reviewer's decision d, whose DecidedBy must be an
 	// active reviewer of the tenant (else ErrReviewerNotRegistered or

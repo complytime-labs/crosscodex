@@ -9,7 +9,8 @@ user instructions (CLI, config, roles) see "Edge Cleaning" in the top-level
 Code: `pkg/cleaning` (detection, planning, store, engine, graph operations),
 `internal/cleaning` (the `EdgeCleaningService` handler),
 `cmd/crosscodex/admin_cleaning.go` (CLI), `api/proto/crosscodex/v1/cleaning.proto`
-(contract) and the `edge_findings` / `edge_finding_decisions` tables in
+(contract) and the `edge_cleaning_runs` / `edge_findings` /
+`edge_finding_decisions` tables in
 `pkg/db/migrations/001_initial_schema.up.sql`.
 
 ## Overview
@@ -29,7 +30,8 @@ restores them under the tenant's policy or a reviewer's decision.
   **job-level** finding (`stale_prompt`, `stale_model`) is raised about one
   job instead: it concerns no verdict, and its evidence names the job.
 
-`edge_findings` and `edge_finding_decisions` are authoritative. The graph is a
+`edge_cleaning_runs`, `edge_findings` and `edge_finding_decisions` are
+authoritative. The graph is a
 projection of them: retiring supersedes edges (`SupersedeFact`), restoring
 creates new ones, and nothing is deleted. The package never calls an LLM.
 
@@ -241,9 +243,13 @@ the two leaves a row that says what is still to do.
 4. Sign one `cleaning.run` link: material `crosscodex:cleaning-plan` with the
    plan token as digest, one product `crosscodex:finding/<id>` per finding with
    its evidence hash.
-5. `ApplyRun`, one transaction: upsert every planned finding, then insert one
-   policy decision (`retire`, `decided_by = 'policy'`, `run_id` = plan token,
-   the run link as attestation) per finding going to `retired`. Retired
+5. `ApplyRun`, one transaction: insert the run record (`edge_cleaning_runs`:
+   plan token, `Plan.Canonical`, the run link, applied time), upsert every
+   planned finding, then insert one policy decision (`retire`,
+   `decided_by = 'policy'`, `run_id` = plan token, `decided_at` = the run's
+   applied time, the run link as attestation) per finding going to `retired`.
+   A plan without findings stops before step 4: it changes nothing, so it is
+   neither signed nor recorded. Retired
    findings are written with `graph_applied = false`; others need no graph
    change and are written `true`. Each upsert carries the state it was
    planned from: a new finding must not exist yet (a unique violation means
@@ -338,10 +344,27 @@ rows, so after a restore it still names the original analyzer edge, which is
 superseded. #230 must resolve a mapping to its live edge, not assume the
 `mapping_id` is live.
 
-## Append-only decisions
+## Append-only runs and decisions
+
+`edge_cleaning_runs` is the record of every applied run, whether or not it
+retired anything (#290). A run is keyed by tenant, plan token and applied
+time, because a later run can make the same changes from the same state and
+so share the token. Its `plan` column holds the canonical plan the token
+hashes (scope, effective policy, and each finding's ID, evidence hash, action,
+change, new status and edge IDs), and `attestation` the signed `cleaning.run`
+link whose material digest is the token and whose products are the run's
+findings. To prove which policy and plan moved a finding to `reported`,
+`pending`, `cleared` or `retired`, find the run whose link names
+`crosscodex:finding/<id>` among its products, check that the SHA-256 of
+`plan` is `plan_token`, verify the link, and read the policy from `plan`. No
+RPC exposes runs yet; read the table directly. A run row grows with its plan
+(every planned finding's edge IDs, and one link product per finding), and
+nothing bounds it beyond what the plan's findings already are; a run that
+retires findings also copies its link into each decision row.
 
 `edge_finding_decisions` is the record of who decided what, when, and under
-which signed request. It is append-only because projection reads each
+which signed request. A policy decision also carries the run's link, so it
+verifies on its own without a join. It is append-only because projection reads each
 finding's latest decision for the change's time and the restored edge IDs, so
 an edited decision would silently change history and make a resumed
 projection disagree with the first one. A decision is reversed by recording
@@ -359,23 +382,28 @@ be made again on the new findings.
 
 Enforcement, from the outside in:
 
-- `app_user` has `SELECT, INSERT` only on `edge_finding_decisions`, and
-  `SELECT, INSERT, UPDATE` on `edge_findings` (a finding no longer detected
-  becomes `cleared`, never deleted).
+- `app_user` has `SELECT, INSERT` only on `edge_cleaning_runs` and
+  `edge_finding_decisions`, and `SELECT, INSERT, UPDATE` on `edge_findings`
+  (a finding no longer detected becomes `cleared`, never deleted).
 - `refuse_change` triggers refuse `UPDATE`, `DELETE` and `TRUNCATE` on
-  `edge_finding_decisions` for every role, the owner included.
+  `edge_cleaning_runs` and `edge_finding_decisions` for every role, the owner
+  included. A plain `TRUNCATE` of runs fails earlier, on the foreign key
+  from decisions.
 - `CHECK ((decided_by = 'policy') = (run_id IS NOT NULL))`: a policy decision
   names the run that made it, a reviewer's names none. `Decision.Validate`,
   `ApplyRun` (policy decisions only) and `Decide` (reviewer decisions only)
   enforce the same before writing.
-- A foreign key ties each decision to its finding; RLS on both tables keys on
-  `app.current_tenant`.
+- A foreign key ties each decision to its finding, and a policy decision's
+  `(run_id, decided_at)` to its run; RLS on all three tables keys on
+  `app.current_tenant`. `RunWrite.Validate` refuses a policy decision whose
+  run ID or time is not the run's, so the foreign key is the last line.
 - A reviewer decision runs `require_active_reviewer` inside its transaction,
   so a deleted or unregistered reviewer cannot decide
   (`ErrReviewerDeleted`, `ErrReviewerNotRegistered`).
 
 Only retirements made by a run get a decision row. A run that moves findings
-to `reported`, `pending` or `cleared` updates `edge_findings` only.
+to `reported`, `pending` or `cleared` updates `edge_findings` and records its
+run; the run record is what attests those moves.
 
 ### Writes are validated against the reader
 
@@ -410,13 +438,16 @@ Specs exercise the targets and edge IDs bound at a lowered limit through
 `SetStoredListLimit` in `export_test.go`, so no unit spec builds a 128 MiB
 value; one integration spec checks the real bound against PostgreSQL.
 `Decision.Validate` checks the verdict, that request and attestation are
-present, and the provenance rule. The `cleaningtest` fake enforces the same,
+present, and the provenance rule. `RunRecord.Validate` checks that plan and
+attestation are present, that the token is the plan's SHA-256 and that the
+applied time is set, and `RunWrite.Validate` combines all three with the
+run-decision match. The `cleaningtest` fake enforces the same,
 and `cleaningtest.FindingStoreContract` runs against both the fake and the
 PostgreSQL store.
 
 ## Retention
 
-The retention engine does not purge `edge_findings` or
+The retention engine does not purge `edge_cleaning_runs`, `edge_findings` or
 `edge_finding_decisions`: they are not in `dbAggregates`
 (`pkg/retention/purge.go`) and have no foreign key to `jobs` or `catalogs`.
 Like `artifact_pair_verdicts`, they are audit records. Because evidence is
