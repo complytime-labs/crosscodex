@@ -1,0 +1,38 @@
+pkg/cleaning/plan.go
+  s_b8a4839fe7391f::t_6fe275fff1be95 152-156,161
+pkg/cleaning/engine_bdd_test.go
+  s_b8a4839fe7391f::t_584ef8aca27e8d 629-651
+  s_b8a4839fe7391f::t_3c755f8e790033 449-476,478-503
+  s_b8a4839fe7391f::t_af3414b00270bb 763-798
+  s_b8a4839fe7391f::t_8333f2273b9c00 580-617
+  s_b8a4839fe7391f::t_e7ac03f12968e1 477
+pkg/cleaning/telemetry.go
+  s_b8a4839fe7391f::t_753d41b1ae339f 87-93
+pkg/cleaning/engine_project.go
+  s_b8a4839fe7391f::t_7b50ecf0c8c415 13-14,48-53
+pkg/cleaning/engine_decide.go
+  s_b8a4839fe7391f::t_549775688c2db9 211
+  s_b8a4839fe7391f::t_ce6706477a94dd 101,134
+pkg/cleaning/engine.go
+  s_b8a4839fe7391f::t_ce6706477a94dd 40-44,54-57
+pkg/cleaning/plan_bdd_test.go
+  s_b8a4839fe7391f::t_2cd13a3bd117b3 367-377
+pkg/cleaning/doc.go
+  s_b8a4839fe7391f::t_f5dbeba0ea5a9d 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d548f4c1298ecf150d7c2bf931b4e1cb45525fc7",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
