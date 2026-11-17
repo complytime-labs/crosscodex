@@ -1,0 +1,76 @@
+pkg/cleaning/cleaningtest/fake.go
+  s_c271b97e58c3bd::t_0bd91035c09c82 87
+  s_c271b97e58c3bd::t_0ded2d5ec76557 265-266
+  s_c271b97e58c3bd::t_1cad57d7541fec 63,274-275,280-287,310,314-330,467-472
+pkg/cleaning/cleaningtest/cleaningtest_property_test.go
+  s_c271b97e58c3bd::t_02fcf79eb219a1 154-160
+  s_c271b97e58c3bd::t_8bb2dc2df047b6 55,107,129
+pkg/cleaning/store.go
+  s_c271b97e58c3bd::t_b0715d2c438019 202-205,209-210
+  s_c271b97e58c3bd::t_523d922068350a 105-115,120-141,143,148-177
+  s_c271b97e58c3bd::t_07fea207d55f70 5-6
+  s_c271b97e58c3bd::t_b39b85566a7a7e 116-119
+  s_c271b97e58c3bd::t_849d3026b4387d 178
+pkg/cleaning/store_pg.go
+  s_c271b97e58c3bd::t_676eabe6579749 545-546,548-551,553-554
+  s_c271b97e58c3bd::t_80992d580535b1 460-470
+pkg/cleaning/cleaningtest/contract.go
+  s_c271b97e58c3bd::t_40a27d3c35f426 31-34
+  s_c271b97e58c3bd::t_242938f63c55c8 144,146-149
+  s_c271b97e58c3bd::t_3fc2318638fc46 191
+  s_c271b97e58c3bd::t_c0c5beb5a3896b 267
+  s_c271b97e58c3bd::t_cce992bec6b95a 429-432,437-438,440
+  s_c271b97e58c3bd::t_0cb829a729fadd 6
+  s_c271b97e58c3bd::t_4d046f4760748d 294,301-302
+  s_c271b97e58c3bd::t_abe727fbc80904 389,399-400,402,408-411,413-423
+  s_c271b97e58c3bd::t_725f489db9a7bf 455
+  s_c271b97e58c3bd::t_12608d6250290d 181
+  s_c271b97e58c3bd::t_39253784db7036 203-207,210
+  s_c271b97e58c3bd::t_da54f58806722b 514-531
+  s_c271b97e58c3bd::t_a57c757899f69e 103-123
+  s_c271b97e58c3bd::t_4b944045835fa4 145
+  s_c271b97e58c3bd::t_2c6a4ef4193d14 412
+  s_c271b97e58c3bd::t_5e3e49109f784b 424
+pkg/cleaning/cleaningtest/cleaningtest_bdd_test.go
+  s_c271b97e58c3bd::t_aaae2485596974 32,79,119,130,147,159,179
+pkg/cleaning/cleaningtest/doc.go
+  s_c271b97e58c3bd::t_7a2203e80bc712 8-9,16,19-22,34-35
+pkg/cleaning/engine.go
+  s_c271b97e58c3bd::t_f7d0a13509c6be 134-139,395-401,414
+pkg/cleaning/plan.go
+  s_c271b97e58c3bd::t_5f11e1d70f4f22 124-127,348,354,410-413,428,431
+pkg/db/migrations/001_initial_schema.down.sql
+  s_c271b97e58c3bd::t_05eefdbf69e952 73
+pkg/db/migrations/001_initial_schema.up.sql
+  s_c271b97e58c3bd::t_915d7206028120 1170-1178,1180-1183,1186-1189,1217-1242,1256-1258
+pkg/db/role_check.go
+  s_c271b97e58c3bd::t_a002fa4dc19806 125
+README.md
+  s_c271b97e58c3bd::t_61d0b13881ba38 19-23
+docs/dev/cleaning.md
+  s_c271b97e58c3bd::t_4667e091967486 12-13,33-34,246-252,347-363,366-367,385-387,389-391,396-399,405-406,441-444,450
+docs/dev/design-principles.md
+  s_c271b97e58c3bd::t_bfc486d937ec60 103
+pkg/cleaning/engine_bdd_test.go
+  s_c271b97e58c3bd::t_67261a962f65df 9,110,128,360-366,378-420
+pkg/cleaning/store_integration_bdd_test.go
+  s_c271b97e58c3bd::t_dc3ce2c49aa496 94-108,164,178,180,182-183,187-189,192,194-199,202-204,207-233,235-236,239-258,300-304
+pkg/cleaning/store_pg_bdd_test.go
+  s_c271b97e58c3bd::t_af81328c05250c 271-273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d446a420933eca409400eb82782bae333067600f",
+  "prompts": {},
+  "sessions": {
+    "s_c271b97e58c3bd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "178f9b1d-ccd1-4284-acde-e1cf30732947",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
