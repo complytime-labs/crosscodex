@@ -194,4 +194,37 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 	})
+
+	It("groups equivalence edges deterministically, with at least two in-range members sharing the node", func() {
+		edgeGen := rapid.Custom(func(t *rapid.T) crosswalk.EquivalenceEdge {
+			return crosswalk.EquivalenceEdge{
+				SourceNode:    rapid.SampledFrom([]string{"s1", "s2"}).Draw(t, "sn"),
+				SourceCatalog: "x",
+				TargetNode:    rapid.SampledFrom([]string{"t1", "t2", "t3"}).Draw(t, "tn"),
+				TargetCatalog: rapid.SampledFrom([]string{"y", "z"}).Draw(t, "tc"),
+			}
+		})
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			edges := rapid.SliceOfN(edgeGen, 0, 12).Draw(t, "edges")
+			groups := crosswalk.EquivalenceGroups(edges)
+			if !reflect.DeepEqual(groups, crosswalk.EquivalenceGroups(edges)) {
+				t.Fatalf("grouping is not deterministic for %v", edges)
+			}
+			for _, g := range groups {
+				if len(g.Members) < 2 {
+					t.Fatalf("group %v has fewer than 2 members", g)
+				}
+				for _, m := range g.Members {
+					e := edges[m]
+					node, other := e.TargetNode, e.SourceCatalog
+					if g.NodeIsSource {
+						node, other = e.SourceNode, e.TargetCatalog
+					}
+					if node != g.Node || other != g.OtherCatalog {
+						t.Fatalf("member %d (%v) does not belong to group %v", m, e, g)
+					}
+				}
+			}
+		})
+	})
 })

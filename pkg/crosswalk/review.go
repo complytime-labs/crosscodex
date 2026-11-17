@@ -22,39 +22,36 @@ import (
 // Verdicts are never rewritten: notes only report. Callers pass the full
 // filtered row set so notes do not depend on the page.
 func EquivalenceNotes(rows []*pb.CrosswalkRow) []string {
-	type key struct{ node, otherCatalog string }
-	targetGroups := map[key][]int{} // (source node, target catalog) -> row indexes
-	sourceGroups := map[key][]int{} // (target node, source catalog) -> row indexes
+	var edges []EquivalenceEdge
+	var rowOf []int // edges index -> rows index
 	for i, r := range rows {
 		if r.RelationshipType != pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT || r.Direction != string(Direct) {
 			continue
 		}
-		tk := key{r.Source.NodeId, r.Target.CatalogId}
-		targetGroups[tk] = append(targetGroups[tk], i)
-		sk := key{r.Target.NodeId, r.Source.CatalogId}
-		sourceGroups[sk] = append(sourceGroups[sk], i)
+		edges = append(edges, EquivalenceEdge{r.Source.NodeId, r.Source.CatalogId, r.Target.NodeId, r.Target.CatalogId})
+		rowOf = append(rowOf, i)
 	}
 
 	targetNotes := make([]string, len(rows))
 	sourceNotes := make([]string, len(rows))
-	describe := func(groups map[key][]int, word string, subject, listed func(*pb.CrosswalkRow) string, out []string) {
-		for _, idx := range groups {
-			if len(idx) < 2 {
-				continue
-			}
-			ids := make([]string, len(idx))
-			for j, i := range idx {
-				ids[j] = listed(rows[i])
-			}
-			slices.Sort(ids)
-			note := fmt.Sprintf("one of %d 'equivalent' %s for %s: %s", len(idx), word, subject(rows[idx[0]]), strings.Join(ids, ", "))
-			for _, i := range idx {
-				out[i] = note
-			}
+	for _, g := range EquivalenceGroups(edges) {
+		word, out := "sources", sourceNotes
+		subject := func(r *pb.CrosswalkRow) string { return r.Target.Identifier }
+		listed := func(r *pb.CrosswalkRow) string { return r.Source.Identifier }
+		if g.NodeIsSource {
+			word, out = "targets", targetNotes
+			subject, listed = listed, subject
+		}
+		ids := make([]string, len(g.Members))
+		for j, m := range g.Members {
+			ids[j] = listed(rows[rowOf[m]])
+		}
+		slices.Sort(ids)
+		note := fmt.Sprintf("one of %d 'equivalent' %s for %s: %s", len(ids), word, subject(rows[rowOf[g.Members[0]]]), strings.Join(ids, ", "))
+		for _, m := range g.Members {
+			out[rowOf[m]] = note
 		}
 	}
-	describe(targetGroups, "targets", func(r *pb.CrosswalkRow) string { return r.Source.Identifier }, func(r *pb.CrosswalkRow) string { return r.Target.Identifier }, targetNotes)
-	describe(sourceGroups, "sources", func(r *pb.CrosswalkRow) string { return r.Target.Identifier }, func(r *pb.CrosswalkRow) string { return r.Source.Identifier }, sourceNotes)
 
 	notes := make([]string, len(rows))
 	for i := range rows {
