@@ -1,0 +1,23 @@
+cmd/crosscodex/admin_cleaning.go
+  s_b8a4839fe7391f::t_f78f4b88a787a9 100-102,122,128,159,418
+pkg/cleaning/graphops.go
+  s_b8a4839fe7391f::t_c0f2e0da4cc876 49-54
+cmd/crosscodex/admin_cleaning_bdd_test.go
+  s_b8a4839fe7391f::t_f78f4b88a787a9 162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0f36b0f41c99e0ee0939ba04d64ac04e60e80817",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
