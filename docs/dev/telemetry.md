@@ -221,6 +221,11 @@ For components whose telemetry option takes a `(trace.Tracer, metric.Meter)` pai
 | `artifacts.adjudicate.completions.in_flight` | Int64UpDownCounter | internal/analyzer/artifacts | LLM completions in flight |
 | `artifacts.verdictstore.operations.total` | Int64Counter | internal/analyzer/artifacts | Verdict store calls by `operation` and `status` (`ok`, `error`) |
 | `artifacts.verdictstore.operation.duration_ms` | Int64Histogram | internal/analyzer/artifacts | Verdict store call duration in milliseconds, by `operation` and `status` |
+| `cleaning.findings.total` | Int64Counter | pkg/cleaning | Findings an edge-cleaning apply wrote, by `signal` and `action` |
+| `cleaning.operation.duration_ms` | Float64Histogram | pkg/cleaning | Cleaning engine call duration in milliseconds, by `operation` (`preview`, `apply`, `resume`, `list_findings`, `get_finding`, `decide`) and `outcome` (`ok`, `error`); its count is the operations counter |
+| `cleaning.findings.pending` | Int64Gauge | pkg/cleaning | Findings in the tenant's review queue (status `pending`), by `tenant.id`; set after a successful apply or decision |
+| `cleaning.findingstore.operations.total` | Int64Counter | pkg/cleaning | Finding store calls by `operation` and `status` (`ok`, `error`) |
+| `cleaning.findingstore.operation.duration_ms` | Int64Histogram | pkg/cleaning | Finding store call duration in milliseconds, by `operation` and `status` |
 | `crosscodex.gateway.auth.failures.total` | Int64Counter     | internal/gateway   | Rejected requests by `reason`: `no_tls`, `auth_failed`, `tenant_inactive` (suspended or not provisioned), `tenant_status_error` (status lookup failed) |
 
 `crosscodexd admin backup *` does not call `telemetry.Init` (see the uninstrumented-paths table above), so these instruments exist but are never exported today. The same holds for `db.tenant_admin.*` under `crosscodexd admin tenant *`, and for the `artifacts.adjudicat*` and `artifacts.verdictstore.*` instruments under `crosscodexd admin adjudicate artifacts`.
