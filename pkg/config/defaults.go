@@ -213,6 +213,22 @@ synthesis:
     no_rel_low: 0.80
     contested_warn: 0.20
     actionable_warn: 0.30
+cleaning:
+  max_retire_per_run: 1000
+  signals:
+    equivalence_fanout:
+      action: report
+    cross_job_contradiction:
+      action: report
+    low_agreement:
+      action: report
+      min_agreement_fraction: 0.5
+    conflicts_with:
+      action: report
+    stale_prompt:
+      action: report
+    stale_model:
+      action: report
 pipeline:
   max_concurrent_jobs: 10
   stage_timeout: 24h
