@@ -1,0 +1,39 @@
+docs/dev/cleaning.md
+  s_b8a4839fe7391f::t_d8db070c18c0df 352-354
+  s_b8a4839fe7391f::t_19d27938322adf 292-293
+  s_b8a4839fe7391f::t_535daa44a23a13 341-343
+  s_b8a4839fe7391f::t_fa1b25f74aaf34 391
+  s_b8a4839fe7391f::t_b336c58dc4d6f7 1-291,294-340,344-351,355-390,392-404
+docs/dev/design-principles.md
+  s_b8a4839fe7391f::t_a2b8e202884239 320
+  s_b8a4839fe7391f::t_e9b3a09660d63e 318-319,321
+docs/dev/telemetry.md
+  s_b8a4839fe7391f::t_0875784f6ec8c4 224-228
+docs/dev/service-runtime.md
+  s_b8a4839fe7391f::t_0388dce3588d5b 26-27
+README.md
+  s_b8a4839fe7391f::t_a8593ee67cb6a4 1154
+  s_b8a4839fe7391f::t_35699372611525 1168
+  s_b8a4839fe7391f::t_01867f260e94d0 1130
+  s_b8a4839fe7391f::t_c2cf9f4fef3624 1599-1600
+  s_b8a4839fe7391f::t_a534f901a59e5a 1104-1106,1109,1112,1115-1116,1119,1122,1124-1125,1131-1135,1137-1153,1155-1166
+  s_b8a4839fe7391f::t_a7ea2789e45805 19-26
+  s_b8a4839fe7391f::t_f149f43515794b 1136
+  s_b8a4839fe7391f::t_6f200610c66270 1167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "71bad98146d75747013442c48870f8fd0c4246b5",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
