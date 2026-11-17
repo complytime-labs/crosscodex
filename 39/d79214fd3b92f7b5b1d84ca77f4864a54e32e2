@@ -1,0 +1,24 @@
+pkg/authn/authn_bdd_test.go
+  s_b8a4839fe7391f::t_03d061c33bd520 1050-1058
+api/proto/crosscodex/v1/cleaning.proto
+  s_b8a4839fe7391f::t_95656ac663f39a 53,55,58,60,63,65,67,69,74,96,99,102,104,106,108,110,293
+  s_b8a4839fe7391f::t_56162dc8098c54 1-52,54,56-57,59,61-62,64,66,68,70-73,75-95,97-98,100-101,103,105,107,109,111-292,294-325
+pkg/authn/types.go
+  s_b8a4839fe7391f::t_cdcbddf9b220b8 25-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "39d79214fd3b92f7b5b1d84ca77f4864a54e32e2",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
