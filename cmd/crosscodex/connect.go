@@ -83,9 +83,9 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 		if err != nil {
 			return fmt.Errorf("configure client TLS: %w", err)
 		}
-		state.client, state.adminClient = newTLSGatewayClient(hostPort, httpClient)
+		state.client, state.adminClient, state.cleaningClient = newTLSGatewayClient(hostPort, httpClient)
 	} else {
-		state.client, state.adminClient = connectClient(hostPort)
+		state.client, state.adminClient, state.cleaningClient = connectClient(hostPort)
 	}
 	healthErr := healthCheck(ctx, state.client)
 	if healthErr == nil {
@@ -100,7 +100,7 @@ func connect(ctx context.Context, state *cliState, flagEndpoint string) error {
 	pidPath := filepath.Join(stateDir, "daemon.pid")
 	if port, alive := readPIDFile(pidPath); alive && port > 0 {
 		ep := fmt.Sprintf("localhost:%d", port)
-		state.client, state.adminClient = connectClient(ep)
+		state.client, state.adminClient, state.cleaningClient = connectClient(ep)
 		if healthCheck(ctx, state.client) == nil {
 			return nil
 		}
@@ -208,13 +208,14 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	var lastErr error
 	for i := range healthRetries {
 		time.Sleep(healthBaseBackoff * time.Duration(1<<i))
-		client, adminClient, err := connectClientWithTLS(srvAddr, paths)
+		client, adminClient, cleaningClient, err := connectClientWithTLS(srvAddr, paths)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		state.client = client
 		state.adminClient = adminClient
+		state.cleaningClient = cleaningClient
 		if lastErr = healthCheck(ctx, state.client); lastErr == nil {
 			state.daemon = &embeddedDaemon{
 				server:            srv,
@@ -236,10 +237,11 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	return fmt.Errorf("embedded daemon started but failed health check after %d retries: %w", healthRetries, lastErr)
 }
 
-func connectClient(endpoint string) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient) {
+func connectClient(endpoint string) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient, crosscodexv1connect.EdgeCleaningServiceClient) {
 	baseURL := "http://" + endpoint
 	return crosscodexv1connect.NewGatewayServiceClient(http.DefaultClient, baseURL),
-		crosscodexv1connect.NewAdminServiceClient(http.DefaultClient, baseURL)
+		crosscodexv1connect.NewAdminServiceClient(http.DefaultClient, baseURL),
+		crosscodexv1connect.NewEdgeCleaningServiceClient(http.DefaultClient, baseURL)
 }
 
 // healthCheck fails closed: any status other than HEALTHY is an error that
@@ -271,6 +273,7 @@ func healthCheck(ctx context.Context, client crosscodexv1connect.GatewayServiceC
 func disconnect(state *cliState) {
 	state.client = nil
 	state.adminClient = nil
+	state.cleaningClient = nil
 	if state.daemon != nil {
 		state.daemon.stop()
 		state.daemon = nil

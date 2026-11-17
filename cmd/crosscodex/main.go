@@ -19,6 +19,10 @@ type cliState struct {
 	daemon      *embeddedDaemon
 	logLevel    slog.Level
 
+	// cleaningClient calls fail Unimplemented against a daemon that does not
+	// mount EdgeCleaningService (the embedded daemon).
+	cleaningClient crosscodexv1connect.EdgeCleaningServiceClient
+
 	// loadErr is why the configuration did not load, for the config
 	// commands that start without one (see inConfigSubtree); fullCfg and
 	// cfg are nil when it is set. loadAdvice says how to fix it.

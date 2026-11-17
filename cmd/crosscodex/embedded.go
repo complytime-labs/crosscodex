@@ -95,20 +95,20 @@ func ensurePKI(pkiDir string) error {
 	return nil
 }
 
-func connectClientWithTLS(endpoint string, paths embeddedTLSPaths) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient, error) {
+func connectClientWithTLS(endpoint string, paths embeddedTLSPaths) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient, crosscodexv1connect.EdgeCleaningServiceClient, error) {
 	caCert, err := os.ReadFile(paths.CACert)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read CA cert: %w", err)
+		return nil, nil, nil, fmt.Errorf("read CA cert: %w", err)
 	}
 
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caCert) {
-		return nil, nil, fmt.Errorf("failed to parse CA cert")
+		return nil, nil, nil, fmt.Errorf("failed to parse CA cert")
 	}
 
 	clientCert, err := tls.LoadX509KeyPair(paths.ClientCert, paths.ClientKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load client cert: %w", err)
+		return nil, nil, nil, fmt.Errorf("load client cert: %w", err)
 	}
 
 	tlsCfg := &tls.Config{
@@ -126,6 +126,7 @@ func connectClientWithTLS(endpoint string, paths embeddedTLSPaths) (crosscodexv1
 	baseURL := "https://" + endpoint
 	return crosscodexv1connect.NewGatewayServiceClient(httpClient, baseURL),
 		crosscodexv1connect.NewAdminServiceClient(httpClient, baseURL),
+		crosscodexv1connect.NewEdgeCleaningServiceClient(httpClient, baseURL),
 		nil
 }
 

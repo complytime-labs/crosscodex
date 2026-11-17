@@ -35,6 +35,10 @@ type ServerConfig struct {
 	// the gateway's error policy (publicError), which Service's handlers
 	// apply themselves.
 	Admin crosscodexv1connect.AdminServiceHandler
+	// Cleaning, when non-nil, mounts the EdgeCleaningService on the same mux
+	// with the same interceptors and error policy as Admin: internal/cleaning
+	// returns raw store and graph errors.
+	Cleaning crosscodexv1connect.EdgeCleaningServiceHandler
 	// TenantStatus is required: the auth interceptor refuses every
 	// non-health request from a tenant it reports inactive. Nil fails
 	// NewServer (fail closed). The interceptor, and so this check, is
@@ -82,6 +86,14 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 			connect.WithInterceptors(publicErrorInterceptor{service: cfg.Service}),
 		)
 		mux.Handle(adminPath, adminHandler)
+	}
+	if cfg.Cleaning != nil {
+		cleaningPath, cleaningHandler := crosscodexv1connect.NewEdgeCleaningServiceHandler(
+			cfg.Cleaning,
+			connect.WithInterceptors(interceptors...),
+			connect.WithInterceptors(publicErrorInterceptor{service: cfg.Service}),
+		)
+		mux.Handle(cleaningPath, cleaningHandler)
 	}
 	mux.HandleFunc("GET /api/version", versionHandler)
 	mux.HandleFunc("GET /healthz", healthzHandler(cfg.Service))

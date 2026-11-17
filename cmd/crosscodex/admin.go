@@ -28,6 +28,7 @@ the tenant the caller is authenticated for.`,
 
 	adminCmd.AddCommand(newAdminRetentionCmd(state))
 	adminCmd.AddCommand(newAdminHoldCmd(state))
+	adminCmd.AddCommand(newAdminCleaningCmd(state))
 
 	return adminCmd
 }

@@ -1047,6 +1047,15 @@ var _ = Describe("RBAC", func() {
 			Entry("duplicates are harmless", []string{"admin", "admin"}, []string{"admin", "admin"}, false),
 			Entry("long role string", []string{"super-long-role-name-that-is-still-valid"}, []string{"super-long-role-name-that-is-still-valid"}, false),
 		)
+
+		It("does not treat an admin as a reviewer", func() {
+			err := authn.RequireRole(authn.Identity{Roles: []string{authn.RoleAdmin}}, authn.RoleReviewer)
+			Expect(err).To(MatchError(authn.ErrInsufficientRole))
+		})
+
+		It("accepts the reviewer role for a reviewer", func() {
+			Expect(authn.RequireRole(authn.Identity{Roles: []string{authn.RoleReviewer}}, authn.RoleReviewer)).To(Succeed())
+		})
 	})
 
 	Describe("IsAdmin", func() {

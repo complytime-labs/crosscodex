@@ -82,11 +82,13 @@ func tlsHTTPClient(ctx context.Context, cfg config.TLSConfig) (*http.Client, err
 	}}, nil
 }
 
-// newTLSGatewayClient dials the gateway and admin services over https with the
-// given TLS client. Both share the resolved base URL and http client so the
-// admin RPCs travel the same transport as the gateway RPCs.
-func newTLSGatewayClient(hostPort string, httpClient *http.Client) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient) {
+// newTLSGatewayClient dials the gateway, admin and edge-cleaning services over
+// https with the given TLS client. All share the resolved base URL and http
+// client so the admin and cleaning RPCs travel the same transport as the
+// gateway RPCs.
+func newTLSGatewayClient(hostPort string, httpClient *http.Client) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient, crosscodexv1connect.EdgeCleaningServiceClient) {
 	baseURL := "https://" + hostPort
 	return crosscodexv1connect.NewGatewayServiceClient(httpClient, baseURL),
-		crosscodexv1connect.NewAdminServiceClient(httpClient, baseURL)
+		crosscodexv1connect.NewAdminServiceClient(httpClient, baseURL),
+		crosscodexv1connect.NewEdgeCleaningServiceClient(httpClient, baseURL)
 }

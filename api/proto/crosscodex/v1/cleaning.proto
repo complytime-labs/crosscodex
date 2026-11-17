@@ -1,0 +1,386 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+import "google/protobuf/timestamp.proto";
+
+import "crosscodex/v1/common.proto";
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+// EdgeCleaningService finds accumulated mapping verdicts that are probably
+// wrong or redundant, and lets a person retire, dismiss or restore them.
+//
+// A verdict is one job's judgement of one source/target control pair. It is
+// named <job_id>:<source_node_id>:<target_node_id> (see VerdictRef). A finding
+// is something a detection signal raised about one or more verdicts.
+//
+// Two flows:
+//
+//  1. Preview, then apply (RunCleaning, admin). Preview detects findings and
+//     returns the plan and a plan_token; nothing is written. Apply repeats the
+//     run with that token; the server recomputes the plan and refuses unless
+//     it is identical, so what is applied is what was previewed. If the graph
+//     step fails part-way, run RunCleaning with CLEANING_MODE_RESUME.
+//  2. Read, then decide (ListFindings, GetFinding, DecideFinding). Read a
+//     finding to get its state_token, then decide with that token. Retire
+//     supersedes the verdict's live edges, never deletes them, so history stays
+//     queryable by time.
+//
+// Every request carries TenantContext, which must be the authenticated
+// tenant. A finding of another tenant is reported as NOT_FOUND, the same as
+// one that does not exist. Dependency errors reach the caller through the
+// gateway's error policy and reveal nothing about other tenants.
+//
+// Roles: RunCleaning needs admin. ListFindings and GetFinding need reviewer or
+// admin. DecideFinding needs the reviewer role, which an admin does not have
+// unless also assigned it, and an active entry in the tenant's reviewers
+// registry. See RoleReviewer in pkg/authn: the role cannot yet be granted
+// (#232), so DecideFinding is refused in every deployment until then (#288
+// tracks a future IdP and authorization engine).
+//
+// Apply and decide record signed in-toto attestations and are refused unless
+// attestation.private_key_path and attestation.public_key_path are both
+// configured. Resume needs no signer: it only projects changes already
+// recorded and attested.
+service EdgeCleaningService {
+  // RunCleaning previews, applies or resumes a cleaning pass. Requires admin.
+  //
+  // CLEANING_MODE_PREVIEW writes nothing and returns the plan and plan_token.
+  // CLEANING_MODE_APPLY needs expect_token from a preview. CLEANING_MODE_RESUME
+  // needs no token and only projects decisions already recorded and attested.
+  //
+  // Refusals (the whole request is refused and nothing more is written):
+  //  - Token mismatch: the graph, findings or cleaning policy changed since
+  //    the preview. Preview again and apply the new token.
+  //  - Unprojected changes: recorded changes are not yet applied to the
+  //    graph, so preview, apply and decide are refused. Run again with
+  //    CLEANING_MODE_RESUME.
+  //  - Signing disabled: set attestation.private_key_path and
+  //    attestation.public_key_path.
+  //  - Retire cap: the plan would retire more verdicts than
+  //    cleaning.max_retire_per_run. Narrow the scope, or raise the cap if the
+  //    volume is expected.
+  //  - Edge not live: an edge the plan would retire is missing or already
+  //    superseded. Preview again.
+  //  - Half-specified scope: set both source_catalog_id and
+  //    target_catalog_id, or neither.
+  //  - Changed state: a finding changed while the run was written. Preview
+  //    again and apply the new token.
+  //  - Tenant mismatch: tenant_context is not the authenticated tenant. Send
+  //    the request for your own tenant.
+  // All pre-checks run before any write, so a refused apply changes nothing.
+  //
+  // Graph update stopped part-way (FAILED_PRECONDITION): an apply recorded
+  // its changes, or a resume was finishing them, and the graph update failed.
+  // The recorded changes stand. The message says how many findings were
+  // applied to the graph out of how many, and to run
+  // 'crosscodex admin cleaning run --resume' (CLEANING_MODE_RESUME) to finish.
+  rpc RunCleaning(RunCleaningRequest) returns (RunCleaningResponse);
+
+  // ListFindings returns findings filtered by signal,
+  // status and catalog pair. Requires reviewer or admin.
+  //
+  // A page_size over the maximum is INVALID_ARGUMENT, as is a half-specified
+  // scope (set both catalogs or neither).
+  rpc ListFindings(ListFindingsRequest) returns (ListFindingsResponse);
+
+  // GetFinding returns one finding with its evidence, its decision history
+  // and the state_token to quote when deciding. Requires reviewer or admin.
+  // A finding that does not exist, or belongs to another tenant, is
+  // NOT_FOUND.
+  rpc GetFinding(GetFindingRequest) returns (GetFindingResponse);
+
+  // DecideFinding records one human decision on a finding: retire, dismiss
+  // or restore. Requires the reviewer role (not admin alone) and the
+  // authenticated subject must be an active entry in the reviewers registry;
+  // the subject is the decider, no request field names one.
+  //
+  // Refusals (nothing is written):
+  //  - Reviewer role missing (PERMISSION_DENIED): the message names the
+  //    reviewer role, auth.x509_mappings and #232. The role is not yet
+  //    grantable, so this is the answer in every deployment until #232 lands.
+  //  - Reviewer not registered or deleted: register the reviewer on the host
+  //    (an on-host identity operation) or ask an operator to restore the
+  //    registration.
+  //  - Invalid transition: the finding's status does not allow this decision.
+  //    Read the finding for its status and allowed decisions.
+  //  - Invalid decision: verdict is not retire, dismiss or restore, or
+  //    retire_verdicts was sent with dismiss or restore.
+  //  - Verdict not in the finding: a retire_verdicts entry is not one of the
+  //    finding's verdicts. Take them from GetFinding.
+  //  - Retire needs verdicts: the finding has no verdicts a retire would
+  //    remove, so name them in retire_verdicts.
+  //  - Stale state token: the finding changed since it was read. Call
+  //    GetFinding again and decide with the new state_token.
+  //  - Edge not live: a verdict to retire has no live edge, because it was
+  //    retired since the finding was read or its edges are gone. Reload the
+  //    finding and decide again.
+  //  - Unprojected changes: run RunCleaning with CLEANING_MODE_RESUME first.
+  //  - Signing disabled: set attestation.private_key_path and
+  //    attestation.public_key_path.
+  //  - Tenant mismatch: tenant_context is not the authenticated tenant. Send
+  //    the request for your own tenant.
+  //  - Empty rationale (INVALID_ARGUMENT): every decision records why it was
+  //    made. Send a non-blank rationale.
+  //  - Cross-tenant or unknown finding (NOT_FOUND).
+  //
+  // Graph update stopped part-way (FAILED_PRECONDITION): the decision was
+  // recorded and stands, but the graph update failed. The message names the
+  // decision, says how many findings were applied to the graph out of how
+  // many, and to run 'crosscodex admin cleaning run --resume' (an admin
+  // runs RunCleaning with CLEANING_MODE_RESUME) to finish. Do not decide
+  // again: until the resume, every decision is refused as unprojected.
+  rpc DecideFinding(DecideFindingRequest) returns (DecideFindingResponse);
+}
+
+// CleaningMode selects what RunCleaning does.
+enum CleaningMode {
+  // Invalid: a mode must be chosen. Rejected with INVALID_ARGUMENT.
+  CLEANING_MODE_UNSPECIFIED = 0;
+  // Detect and plan only. Writes nothing. Returns plan_token.
+  CLEANING_MODE_PREVIEW = 1;
+  // Write the previewed plan. Requires expect_token.
+  CLEANING_MODE_APPLY = 2;
+  // Project recorded, attested decisions onto the graph after a part-way
+  // failure. Needs no token.
+  CLEANING_MODE_RESUME = 3;
+}
+
+// CatalogPairScope limits a pass or a listing to one catalog pair. Set both
+// fields or neither; setting one is INVALID_ARGUMENT. Absent, all catalog
+// pairs that completed jobs have mapped are covered.
+message CatalogPairScope {
+  string source_catalog_id = 1;
+  string target_catalog_id = 2;
+}
+
+message RunCleaningRequest {
+  TenantContext tenant_context = 1;
+  CleaningMode mode = 2;
+  // Plan token from a preview. Required for CLEANING_MODE_APPLY and ignored
+  // by the other modes. An empty value with APPLY is refused as a missing
+  // argument; a stale one (the plan changed since the preview) is refused as
+  // a token mismatch, with an instruction to preview again.
+  string expect_token = 3;
+  // Optional catalog pair to limit a preview or an apply to. A resume
+  // projects every recorded change, so a scope with either catalog set is
+  // INVALID_ARGUMENT with CLEANING_MODE_RESUME.
+  CatalogPairScope scope = 4;
+}
+
+message RunCleaningResponse {
+  // Hash over the ordered findings (identity, evidence hash, action, target
+  // edge IDs) and the effective cleaning policy. Pass it as expect_token to
+  // apply. Set by a preview; an apply returns the token of what it wrote.
+  string plan_token = 1;
+  // What the pass would do, or did: findings that are new, changed or cleared.
+  repeated PlannedFinding findings = 2;
+  // Number of verdicts the pass retires. Checked against
+  // cleaning.max_retire_per_run.
+  int32 retire_verdicts = 3;
+  // What detection looked at.
+  CleaningSummary summary = 4;
+  // Number of findings CLEANING_MODE_RESUME projected onto the graph. Zero
+  // for a preview and for an apply: an apply projects its findings whose
+  // to_status is retired, or fails and leaves them for a resume.
+  int32 projected = 5;
+  AuditMetadata audit = 6;
+}
+
+// VerdictRef names one verdict: one job's judgement of one source/target
+// control pair. The CLI writes it <job_id>:<source_node_id>:<target_node_id>,
+// so none of the three may contain ':' and the whole form is at most 256
+// bytes; verdicts that cannot be written this way are counted in
+// CleaningSummary.unaddressable_verdicts.
+message VerdictRef {
+  string job_id = 1;
+  string source_node_id = 2;
+  string target_node_id = 3;
+}
+
+// VerdictEvidence is a verdict with everything needed to read it without
+// decoding internal IDs.
+message VerdictEvidence {
+  VerdictRef ref = 1;
+  // When the job that produced the verdict completed.
+  google.protobuf.Timestamp job_completed_at = 2;
+  ControlRef source = 3;
+  ControlRef target = 4;
+  // Relationship type by name, for example the NIST IR 8477 type.
+  string relationship = 5;
+  // Agreement between the job's samples, 0 to 1. Absent when the job did not
+  // record one.
+  optional double agreement = 6;
+  // Graph edges this verdict produced.
+  repeated string edge_ids = 7;
+}
+
+// ControlRef identifies a control in human terms.
+message ControlRef {
+  // The control's identifier in its catalog.
+  string identifier = 1;
+  // The label shown to people, for example the control's number.
+  string label = 2;
+  string title = 3;
+  // Catalog name and version.
+  string catalog = 4;
+}
+
+// FindingJob is the job a job-level finding (stale_prompt, stale_model) is
+// about. Its size does not grow with the job: it counts the job's verdicts
+// instead of listing them.
+message FindingJob {
+  string job_id = 1;
+  // When the job completed.
+  google.protobuf.Timestamp completed_at = 2;
+  // The job's source and target catalogs: the recorded name and version,
+  // else the catalog ID.
+  string source_catalog = 3;
+  string target_catalog = 4;
+  // How many of the job's live verdicts the run that last wrote the finding
+  // read.
+  int64 verdicts_in_scope = 5;
+}
+
+// Finding is what a signal raised about one or more verdicts, or about one
+// job.
+message Finding {
+  string finding_id = 1;
+  // Name of the signal that raised it.
+  string signal = 2;
+  // Lifecycle status. The status decides which decisions are allowed.
+  string status = 3;
+  // The verdicts the finding is about. Empty for a job-level finding, which
+  // sets job instead.
+  repeated VerdictEvidence verdicts = 4;
+  // Verdicts a retire would remove. When empty, a retire decision must name
+  // them in retire_verdicts, except on a job-level finding: a retire of it
+  // removes the job's live verdicts, or the subset retire_verdicts names, and
+  // targets then lists what was retired.
+  repeated VerdictRef targets = 5;
+  // Signal-specific facts, as strings. A job-level finding's "stages" lists
+  // its stale stages, and "<stage>.recorded" / "<stage>.current" their
+  // compared values.
+  map<string, string> detail = 6;
+  // Hash of the evidence, so a reader can tell whether it changed.
+  string evidence_hash = 7;
+  google.protobuf.Timestamp updated_at = 8;
+  // The job a job-level finding is about; unset on any other finding.
+  FindingJob job = 9;
+}
+
+// PlannedFinding is a finding with what a pass would do to it.
+message PlannedFinding {
+  Finding finding = 1;
+  // What the pass does with the finding's policy action, for example retire
+  // or queue for review.
+  string action = 2;
+  // How the finding changes: new, changed or cleared.
+  string change = 3;
+  // The status the finding takes if the plan is applied.
+  string to_status = 4;
+}
+
+// CleaningSummary says what detection examined.
+message CleaningSummary {
+  // Verdicts examined.
+  int32 verdicts = 1;
+  // Catalog pairs examined.
+  int32 pairs = 2;
+  // Verdicts from jobs with no recorded prompt.
+  int32 unknown_prompt = 3;
+  // Verdicts from jobs with no recorded model.
+  int32 unknown_model = 4;
+  // Graph edges skipped because they could not be read or matched.
+  int64 skipped_edges = 5;
+  // Verdicts left out of detection because their IDs cannot be written as
+  // <job>:<source>:<target>, for example an ID containing ':' or a name over
+  // 256 bytes. They are never retired or decided; fix the IDs at the source.
+  int32 unaddressable_verdicts = 6;
+}
+
+message ListFindingsRequest {
+  TenantContext tenant_context = 1;
+  // Only findings of this signal: equivalence_fanout,
+  // cross_job_contradiction, low_agreement, conflicts_with, stale_prompt or
+  // stale_model. Empty for all; any other value is INVALID_ARGUMENT.
+  string signal = 2;
+  // Only findings in this status: reported, pending, retired, dismissed,
+  // restored or cleared. Empty for all; any other value is INVALID_ARGUMENT.
+  string status = 3;
+  // Only findings over this catalog pair. Set both catalogs or neither.
+  CatalogPairScope scope = 4;
+  // page_size default 50, max 1000 (larger or negative is INVALID_ARGUMENT),
+  // as for CrosswalkService and ResultsService.
+  Pagination pagination = 5;
+}
+
+message ListFindingsResponse {
+  repeated Finding findings = 1;
+  PageInfo page_info = 2;
+}
+
+message GetFindingRequest {
+  TenantContext tenant_context = 1;
+  // Required (INVALID_ARGUMENT when empty).
+  string finding_id = 2;
+}
+
+// Decision is one recorded decision on a finding: a policy decision made by
+// an applied cleaning run, or a reviewer's decision made with DecideFinding.
+message Decision {
+  string decision_id = 1;
+  // retire, dismiss or restore.
+  string verdict = 2;
+  // "policy" for a decision an applied run made under the cleaning policy;
+  // otherwise the authenticated subject of the reviewer who decided.
+  string decided_by = 3;
+  // The applied cleaning run that recorded a policy decision; empty for a
+  // reviewer's decision.
+  string run_id = 4;
+  string rationale = 5;
+  google.protobuf.Timestamp decided_at = 6;
+  // SHA-256 of the in-toto attestation signed over this decision.
+  string attestation_sha256 = 7;
+}
+
+message GetFindingResponse {
+  Finding finding = 1;
+  // Decision history.
+  repeated Decision decisions = 2;
+  // Quote as expect_state_token in DecideFinding. It hashes the finding's
+  // status, evidence hash and edge IDs, so it changes when any of them does.
+  string state_token = 3;
+  AuditMetadata audit = 4;
+}
+
+message DecideFindingRequest {
+  TenantContext tenant_context = 1;
+  // Required (INVALID_ARGUMENT when empty).
+  string finding_id = 2;
+  // retire, dismiss or restore. Which are allowed depends on the finding's
+  // status; see Finding.status.
+  string verdict = 3;
+  // Why. Required: an empty or whitespace-only rationale is INVALID_ARGUMENT.
+  // Stored with the decision and signed.
+  string rationale = 4;
+  // state_token from GetFinding. Required (INVALID_ARGUMENT when empty). A
+  // decision on a finding that changed since it was read is refused.
+  string expect_state_token = 5;
+  // Verdicts to retire. Only for a retire of a finding whose targets are
+  // empty; must be among the finding's verdicts. On a job-level finding they
+  // narrow the retire, and must be among the job's live verdicts. Not allowed
+  // with dismiss or restore. An entry with an empty part, or a part
+  // containing ':', is INVALID_ARGUMENT.
+  repeated VerdictRef retire_verdicts = 6;
+}
+
+message DecideFindingResponse {
+  // The finding after the decision.
+  Finding finding = 1;
+  string decision_id = 2;
+  // The finding's new state_token, for a further decision.
+  string state_token = 3;
+  AuditMetadata audit = 4;
+}
