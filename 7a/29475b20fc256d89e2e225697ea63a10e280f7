@@ -1,0 +1,25 @@
+pkg/cleaning/cleaningtest/contract.go
+  s_c271b97e58c3bd::t_d9ae3b22541063 416-430
+  s_c271b97e58c3bd::t_df8fcee6f3536e 575-583
+  s_c271b97e58c3bd::t_422a2e05e21220 145-146
+pkg/cleaning/cleaningtest/doc.go
+  s_c271b97e58c3bd::t_ccbc01b87eef0b 38-42
+pkg/cleaning/cleaningtest/fake.go
+  s_c271b97e58c3bd::t_a402e6fc392239 260,281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "7a29475b20fc256d89e2e225697ea63a10e280f7",
+  "prompts": {},
+  "sessions": {
+    "s_c271b97e58c3bd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "178f9b1d-ccd1-4284-acde-e1cf30732947",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
