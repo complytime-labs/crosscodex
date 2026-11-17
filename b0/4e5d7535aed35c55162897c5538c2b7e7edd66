@@ -1,0 +1,37 @@
+pkg/cleaning/engine_project.go
+  s_b8a4839fe7391f::t_7a2e16c9d279a9 1-69
+pkg/cleaning/engine_bdd_test.go
+  s_b8a4839fe7391f::t_a28ce56dec3110 303-316
+  s_b8a4839fe7391f::t_63af1708fba46e 1-14,16-189,196-302,317-385,388-596,598-645,647-649
+  s_b8a4839fe7391f::t_d6b5e26cdb1d6f 15,190-195,386-387,597
+  s_b8a4839fe7391f::t_6c081317c407ba 646
+pkg/cleaning/engine.go
+  s_b8a4839fe7391f::t_11c70c49d46c6a 1-70,75-422,424,426-443
+  s_b8a4839fe7391f::t_2413f8d03d772f 423,425
+  s_b8a4839fe7391f::t_84330dc9fd1499 71-74
+pkg/cleaning/engine_decide.go
+  s_b8a4839fe7391f::t_a5b1a87615339f 115-116
+  s_b8a4839fe7391f::t_2413f8d03d772f 5-6,232-233
+  s_b8a4839fe7391f::t_898100a65bbab8 10
+  s_b8a4839fe7391f::t_233de7727f6dda 1-4,7-9,11-114,117-231,234-244
+pkg/cleaning/telemetry.go
+  s_b8a4839fe7391f::t_c59ea10588666d 1-4,6-88,90-112
+  s_b8a4839fe7391f::t_6737eca56397ae 5
+  s_b8a4839fe7391f::t_b8f033d1a45ce6 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b04e5d7535aed35c55162897c5538c2b7e7edd66",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
