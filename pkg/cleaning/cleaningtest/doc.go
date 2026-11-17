@@ -5,21 +5,21 @@
 //
 // Fake fakes cleaning.FindingStore as a stateful in-memory store that follows
 // the semantics of the Postgres-backed store (cleaning.NewPGFindingStore) and
-// of the edge_findings and edge_finding_decisions tables it writes
-// (migration 001_initial_schema):
+// of the edge_cleaning_runs, edge_findings and edge_finding_decisions tables
+// it writes (migration 001_initial_schema):
 //
 //   - Tenant scope. The real store runs every call in a tenant-scoped
 //     transaction. Every Fake method returns an error wrapping
 //     tenant.ErrNoTenant when ctx carries no tenant, and an error saying the
 //     tenants do not match when the ctx tenant differs from tenantID, before
 //     it touches state or runs a Func.
-//   - Row-level security. Findings and decisions are kept per tenant; one
+//   - Row-level security. Runs, findings and decisions are kept per tenant; one
 //     tenant's finding ID is ErrFindingNotFound to another, and the same ID
 //     may exist in both.
-//   - ApplyRun refuses, before touching state, any finding
-//     cleaning.StoredFinding.Validate refuses and any decision that is not a
-//     policy decision or that cleaning.Decision.Validate refuses. It then
-//     writes each upsert whose ExpectState holds ("" when the finding is not
+//   - ApplyRun refuses, before touching state, any write
+//     cleaning.RunWrite.Validate refuses. It then records the run, refusing
+//     one whose PlanToken and AppliedAt are already stored (primary key);
+//     Fake.Runs reads the records back. It writes each upsert whose ExpectState holds ("" when the finding is not
 //     stored, else its StateToken; otherwise ErrStateChanged), stamping
 //     UpdatedAt from Fake.Now, and appends each decision, refusing a finding
 //     not stored (foreign key) or an ID already stored in the tenant
@@ -31,11 +31,15 @@
 //     ErrFindingNotFound) and its state token (different: ErrStateChanged),
 //     then the decision's ID as ApplyRun does. On success the finding takes
 //     next's Status, Targets and EdgeIDs with GraphApplied false.
-//   - Refusals the real store words itself (a stale run, a decision on a
+//   - Refusals the real store words itself (a stale run, a run already
+//     recorded, a decision on a
 //     finding not stored or already recorded, a non-policy decision in a
 //     run, a policy decision in Decide) use the same text in the Fake.
-//   - Times are stored as the database stores them: rounded to the
-//     microsecond, in UTC. A zero Decision.DecidedAt becomes Fake.Now.
+//   - Times are stored as the database stores them, in UTC. A time the
+//     caller passes (Decision.DecidedAt, RunRecord.AppliedAt) is truncated
+//     to the microsecond, as the pgx driver encodes it; a zero
+//     Decision.DecidedAt becomes Fake.Now, rounded to the microsecond as the
+//     database's own clock is.
 //   - Findings and ListFindings apply cleaning.Scope's unordered catalog-pair
 //     rule and refuse a pair with one side set; ListFindings refuses a page
 //     size below 1 and pages by ID (the next-page token is the last ID of a

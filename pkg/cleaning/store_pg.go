@@ -457,6 +457,17 @@ INSERT INTO edge_finding_decisions
     (tenant_id, decision_id, finding_id, verdict, decided_by, run_id, rationale, request, attestation, decided_at)
 VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, COALESCE($10::timestamptz, now()))`
 
+const insertRunSQL = `
+INSERT INTO edge_cleaning_runs (tenant_id, plan_token, plan, attestation, applied_at)
+VALUES ($1, $2, $3, $4, $5)`
+
+// runRecorded is the refusal of a run whose plan token and applied time are
+// already stored; the fake words it the same way.
+func runRecorded(r RunRecord) error {
+	return fmt.Errorf("run %s applied at %s is already recorded; apply a new preview instead of replaying this one; nothing was written",
+		r.PlanToken, r.AppliedAt.Format(time.RFC3339Nano))
+}
+
 const lockFindingSQL = getFindingSQL + ` FOR UPDATE`
 
 // encodeJSON returns v's JSON as a string for a ::jsonb parameter. Callers
@@ -531,21 +542,17 @@ func insertDecision(ctx context.Context, tx db.Transaction, tenantID string, d D
 
 func (s *PGFindingStore) ApplyRun(ctx context.Context, tenantID string, w RunWrite) error {
 	return s.observe(ctx, "ApplyRun", tenantID, func(ctx context.Context) error {
-		for _, u := range w.Upserts {
-			if err := u.Finding.Validate(); err != nil {
-				return fmt.Errorf("apply run: %w", err)
-			}
-		}
-		for _, d := range w.Decisions {
-			if d.DecidedBy != DecidedByPolicy {
-				return fmt.Errorf("apply run: decision %s is decided by %q: ApplyRun records only policy decisions; record a reviewer's decision with Decide; nothing was written",
-					d.ID, d.DecidedBy)
-			}
-			if err := d.Validate(); err != nil {
-				return fmt.Errorf("apply run: %w", err)
-			}
+		if err := w.Validate(); err != nil {
+			return fmt.Errorf("apply run: %w", err)
 		}
 		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			err := tx.Exec(ctx, insertRunSQL, tenantID, w.Run.PlanToken, w.Run.Plan, w.Run.Attestation, w.Run.AppliedAt)
+			if db.IsPgErrorCode(err, "23505") {
+				return fmt.Errorf("apply run: %w", runRecorded(w.Run))
+			}
+			if err != nil {
+				return fmt.Errorf("apply run: record run %s: %w", w.Run.PlanToken, err)
+			}
 			for _, u := range w.Upserts {
 				if err := writeUpsert(ctx, tx, tenantID, u); err != nil {
 					return fmt.Errorf("apply run: %w", err)

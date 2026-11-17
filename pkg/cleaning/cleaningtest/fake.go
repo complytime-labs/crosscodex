@@ -60,6 +60,7 @@ type Fake struct {
 	loaded    bool
 	findings  map[string]map[string]cleaning.StoredFinding // tenant -> ID -> finding; never aliased outside the Fake
 	decisions map[string][]cleaning.Decision               // tenant -> decisions in insertion order
+	runs      map[string][]cleaning.RunRecord              // tenant -> run records in insertion order
 }
 
 // checkTenant mirrors the real store's inTx: ctx must carry a tenant equal
@@ -83,6 +84,7 @@ func (f *Fake) load() {
 	f.loaded = true
 	f.findings = map[string]map[string]cleaning.StoredFinding{}
 	f.decisions = map[string][]cleaning.Decision{}
+	f.runs = map[string][]cleaning.RunRecord{}
 	for tenantID, seeded := range f.Seed {
 		f.findings[tenantID] = map[string]cleaning.StoredFinding{}
 		for _, s := range seeded {
@@ -255,13 +257,13 @@ func (f *Fake) insertDecision(ds []cleaning.Decision, found map[string]cleaning.
 	if d.DecidedAt.IsZero() {
 		d.DecidedAt = f.now()
 	} else {
-		d.DecidedAt = d.DecidedAt.Round(time.Microsecond).UTC()
+		d.DecidedAt = d.DecidedAt.Truncate(time.Microsecond).UTC()
 	}
 	return append(ds, d), nil
 }
 
-// ApplyRun writes w.Upserts against their expected states, then inserts
-// w.Decisions, all or nothing.
+// ApplyRun records w.Run, writes w.Upserts against their expected states,
+// then inserts w.Decisions, all or nothing.
 func (f *Fake) ApplyRun(ctx context.Context, tenantID string, w cleaning.RunWrite) error {
 	if err := checkTenant(ctx, tenantID); err != nil {
 		return err
@@ -269,23 +271,20 @@ func (f *Fake) ApplyRun(ctx context.Context, tenantID string, w cleaning.RunWrit
 	if f.ApplyRunFunc != nil {
 		return f.ApplyRunFunc(ctx, tenantID, w)
 	}
-	for _, u := range w.Upserts {
-		if err := u.Finding.Validate(); err != nil {
-			return fmt.Errorf("apply run: %w", err)
-		}
-	}
-	for _, d := range w.Decisions {
-		if d.DecidedBy != cleaning.DecidedByPolicy {
-			return fmt.Errorf("apply run: decision %s is decided by %q: ApplyRun records only policy decisions; record a reviewer's decision with Decide; nothing was written",
-				d.ID, d.DecidedBy)
-		}
-		if err := d.Validate(); err != nil {
-			return fmt.Errorf("apply run: %w", err)
-		}
+	if err := w.Validate(); err != nil {
+		return fmt.Errorf("apply run: %w", err)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.load()
+	run := cloneRun(w.Run)
+	run.AppliedAt = run.AppliedAt.Truncate(time.Microsecond).UTC()
+	if slices.ContainsFunc(f.runs[tenantID], func(r cleaning.RunRecord) bool {
+		return r.PlanToken == run.PlanToken && r.AppliedAt.Equal(run.AppliedAt)
+	}) {
+		return fmt.Errorf("apply run: run %s applied at %s is already recorded; apply a new preview instead of replaying this one; nothing was written",
+			w.Run.PlanToken, w.Run.AppliedAt.Format(time.RFC3339Nano))
+	}
 	found := maps.Clone(f.findings[tenantID])
 	if found == nil {
 		found = map[string]cleaning.StoredFinding{}
@@ -308,7 +307,25 @@ func (f *Fake) ApplyRun(ctx context.Context, tenantID string, w cleaning.RunWrit
 		}
 	}
 	f.findings[tenantID], f.decisions[tenantID] = found, ds
+	f.runs[tenantID] = append(f.runs[tenantID], run)
 	return nil
+}
+
+// Runs returns tenantID's run records, ordered by AppliedAt then PlanToken,
+// as edge_cleaning_runs holds them (AppliedAt in UTC at microsecond
+// precision). It stands in for the privileged read an auditor makes; the
+// FindingStore interface has no method that reads runs.
+func (f *Fake) Runs(tenantID string) []cleaning.RunRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]cleaning.RunRecord, 0, len(f.runs[tenantID]))
+	for _, r := range f.runs[tenantID] {
+		out = append(out, cloneRun(r))
+	}
+	slices.SortFunc(out, func(a, b cleaning.RunRecord) int {
+		return cmp.Or(a.AppliedAt.Compare(b.AppliedAt), cmp.Compare(a.PlanToken, b.PlanToken))
+	})
+	return out
 }
 
 // Decide records a reviewer's decision against an unchanged finding.
@@ -446,4 +463,10 @@ func cloneDecision(d cleaning.Decision) cleaning.Decision {
 	d.Request = slices.Clone(d.Request)
 	d.Attestation = slices.Clone(d.Attestation)
 	return d
+}
+
+func cloneRun(r cleaning.RunRecord) cleaning.RunRecord {
+	r.Plan = slices.Clone(r.Plan)
+	r.Attestation = slices.Clone(r.Attestation)
+	return r
 }

@@ -52,7 +52,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			ctx := propCtx(t)
 			stored := drawFindings(t)
 			fake := &cleaningtest.Fake{}
-			if err := fake.ApplyRun(ctx, "tenant-a", cleaning.RunWrite{Upserts: cleaningtest.NewUpserts(stored...)}); err != nil {
+			if err := fake.ApplyRun(ctx, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(1), Upserts: cleaningtest.NewUpserts(stored...)}); err != nil {
 				t.Fatalf("ApplyRun: %v", err)
 			}
 			filter := cleaning.FindingFilter{PageSize: rapid.IntRange(1, 5).Draw(t, "pageSize")}
@@ -104,7 +104,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			ctx := propCtx(t)
 			fake := &cleaningtest.Fake{}
 			before := drawFindings(t)
-			if err := fake.ApplyRun(ctx, "tenant-a", cleaning.RunWrite{Upserts: cleaningtest.NewUpserts(before...)}); err != nil {
+			if err := fake.ApplyRun(ctx, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(1), Upserts: cleaningtest.NewUpserts(before...)}); err != nil {
 				t.Fatalf("ApplyRun: %v", err)
 			}
 			run := drawFindings(t)
@@ -126,7 +126,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			for i, f := range run {
 				upserts[i] = cleaning.RunUpsert{Finding: f, ExpectState: stateOf[f.ID]}
 			}
-			err := fake.ApplyRun(ctx, "tenant-a", cleaning.RunWrite{Upserts: upserts})
+			err := fake.ApplyRun(ctx, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(2), Upserts: upserts})
 			if refused != (err != nil) {
 				t.Fatalf("refused=%v but ApplyRun returned %v", refused, err)
 			}
@@ -150,6 +150,13 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				if want[f.ID] != f.Status {
 					t.Fatalf("finding %s has status %q, want %q", f.ID, f.Status, want[f.ID])
 				}
+			}
+			wantRuns := 2
+			if refused {
+				wantRuns = 1
+			}
+			if n := len(fake.Runs("tenant-a")); n != wantRuns {
+				t.Fatalf("stored %d runs, want %d", n, wantRuns)
 			}
 		})
 	})

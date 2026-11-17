@@ -131,9 +131,12 @@ func (e *Engine) Preview(ctx context.Context, tenantID string, scope Scope) (_ P
 // Apply recomputes the plan for scope and, when its token is expectToken,
 // records it and applies its retirements to the graph. Every check (token,
 // signer, retire cap, live target edges) passes before anything is written.
-// Retired findings are recorded unprojected with one policy decision each,
-// all sharing one signed cleaning.run link; then the graph is updated. A
-// graph failure returns a *ProjectionError and leaves the rest for Resume.
+// A plan with findings is recorded as one signed run (RunRecord) with its
+// findings; retired findings are recorded unprojected with one policy
+// decision each, all sharing the run's cleaning.run link; then the graph is
+// updated. A plan without findings changes nothing, so it is neither signed
+// nor recorded. A graph failure returns a *ProjectionError and leaves the
+// rest for Resume.
 func (e *Engine) Apply(ctx context.Context, tenantID string, scope Scope, expectToken string) (_ Plan, err error) {
 	ctx, finish, err := e.begin(ctx, "Apply", "apply", tenantID)
 	if err != nil {
@@ -389,11 +392,13 @@ type policyRequest struct {
 	DecidedAt    string   `json:"decided_at"`
 }
 
-// runWrite builds what an apply records: every planned finding against the
-// state it was planned from, and for each retired one a policy decision. One
-// cleaning.run link attests the run: its material is the plan (digest: the
-// token, the SHA-256 of the canonical plan) and each finding is a product
-// with its evidence hash.
+// runWrite builds what an apply records: the run, every planned finding
+// against the state it was planned from, and for each retired one a policy
+// decision. One cleaning.run link attests the run: its material is the plan
+// (digest: the token, the SHA-256 of the canonical plan) and each finding is
+// a product with its evidence hash. The run record keeps the link with the
+// canonical plan, whether or not the run retires anything; each policy
+// decision carries the same link so it verifies on its own.
 func (e *Engine) runWrite(ctx context.Context, tenantID string, plan Plan, stored map[string]StoredFinding) (RunWrite, error) {
 	products := make([]attestation.Artifact, len(plan.Findings))
 	for i, p := range plan.Findings {
@@ -406,7 +411,7 @@ func (e *Engine) runWrite(ctx context.Context, tenantID string, plan Plan, store
 	}
 
 	decidedAt := e.stamp()
-	var w RunWrite
+	w := RunWrite{Run: RunRecord{PlanToken: plan.Token, Plan: plan.Canonical, Attestation: link.Raw, AppliedAt: decidedAt}}
 	for _, p := range plan.Findings {
 		expect := ""
 		if s, ok := stored[p.ID]; ok {

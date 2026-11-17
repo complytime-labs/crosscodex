@@ -16,6 +16,11 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Signed record of every applied cleaning run (#290):
+
+- **Database.** The new append-only table `edge_cleaning_runs` is folded into the baseline migration `001_initial_schema`, and `edge_finding_decisions` gains a foreign key from a policy decision to its run. A database created by an earlier build must be recreated (`task deploy:down VOLUMES=1`, start the stack, `crosscodexd migrate`); `crosscodexd` refuses to start on the old schema, reporting `edge_cleaning_runs.plan_token` as missing.
+- **Behaviour.** `crosscodex admin cleaning run --apply` now records one signed run (the canonical plan, including the effective policy, and its `cleaning.run` link) whenever the plan has findings, so moves to `reported`, `pending` and `cleared` are attested too, not only retirements. A plan with no findings is still neither signed nor recorded. Runs are read from the table; no RPC returns them yet. See "Append-only runs and decisions" in [`docs/dev/cleaning.md`](docs/dev/cleaning.md).
+
 Edge cleaning (#272):
 
 - **Database.** `job_stages` gains the column `stage_record`, and the new tables `edge_findings` and `edge_finding_decisions` are folded into the baseline migration `001_initial_schema`. A database created by an earlier build must be recreated (`task deploy:down VOLUMES=1`, start the stack, `crosscodexd migrate`); `crosscodexd` refuses to start on the old schema and names the missing column. Re-import your catalogs and re-run your jobs.

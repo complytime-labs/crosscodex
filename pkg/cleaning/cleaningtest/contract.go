@@ -3,6 +3,7 @@ package cleaningtest
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,10 @@ type FindingStoreEnv struct {
 	// "deleted", as 'crosscodexd admin reviewer add' (and 'delete') would.
 	// Every SeedReviewer call precedes the first Store call of the spec.
 	SeedReviewer func(tenantID, reviewerID, status string)
+	// Runs returns tenantID's run records, ordered by AppliedAt then
+	// PlanToken, read through the privileged path: the store has no method
+	// that reads them, so an auditor reads edge_cleaning_runs directly.
+	Runs func(tenantID string) []cleaning.RunRecord
 }
 
 // FindingStoreSetup returns a store for one spec. It runs inside a
@@ -95,6 +100,27 @@ func errContaining(substr string) gomegatypes.GomegaMatcher {
 	return gomega.MatchError(gomega.ContainSubstring(substr))
 }
 
+// ContractRun returns a valid run record numbered n: a small JSON plan naming
+// n, its hex SHA-256 as PlanToken, a non-empty attestation and an AppliedAt
+// n seconds after the contract's base time (whole seconds, so it survives
+// the database's precision). Distinct n give distinct runs.
+func ContractRun(n int) cleaning.RunRecord {
+	plan := fmt.Appendf(nil, `{"run":%d}`, n)
+	sum := sha256.Sum256(plan)
+	return cleaning.RunRecord{
+		PlanToken: hex.EncodeToString(sum[:]), Plan: plan,
+		Attestation: fmt.Appendf(nil, "link-%d", n), AppliedAt: contractTime.Add(time.Duration(n) * time.Second),
+	}
+}
+
+// PolicyDecision returns d as a policy decision of run: DecidedBy is
+// cleaning.DecidedByPolicy, RunID the run's plan token and DecidedAt its
+// AppliedAt.
+func PolicyDecision(d cleaning.Decision, run cleaning.RunRecord) cleaning.Decision {
+	d.DecidedBy, d.RunID, d.DecidedAt = cleaning.DecidedByPolicy, run.PlanToken, run.AppliedAt
+	return d
+}
+
 // NewUpserts returns fs as RunUpserts of findings not stored yet.
 func NewUpserts(fs ...cleaning.StoredFinding) []cleaning.RunUpsert {
 	out := make([]cleaning.RunUpsert, len(fs))
@@ -115,9 +141,13 @@ func NewUpserts(fs ...cleaning.StoredFinding) []cleaning.RunUpsert {
 //   - ApplyRun: creates or updates each finding against its expected state
 //     (a stale state, or a "must not exist" for a stored finding, is
 //     ErrStateChanged), round-trips every field (a job-level finding too,
-//     with targets and edge IDs each over 2 MiB), stamps UpdatedAt, and
-//     writes nothing, with an actionable message, when any finding or
-//     decision is refused: what StoredFinding.Validate refuses (unknown
+//     with targets and edge IDs each over 2 MiB), stamps UpdatedAt, records
+//     the run byte for byte whether or not it makes decisions, truncates
+//     AppliedAt and DecidedAt (here and in Decide) to the microsecond, keeps two runs of one plan at different times
+//     apart, and writes nothing, with an actionable message, when the run,
+//     any finding or any decision is refused: what RunRecord.Validate
+//     refuses, a run already recorded, a policy decision naming another run
+//     or time, what StoredFinding.Validate refuses (unknown
 //     signal or status, a subject that does not match the signal, an ID that
 //     is not FindingID, an invalid verdict key, evidence over its size
 //     bound), a decision on an unknown finding, what
@@ -149,6 +179,7 @@ func FindingStoreContract(setup FindingStoreSetup) {
 			tenA, tenB string
 			ctxA, ctxB context.Context
 			reviewer   string
+			runs       int // run records nextRun has handed out this spec
 		)
 
 		ginkgo.BeforeEach(func() {
@@ -158,6 +189,7 @@ func FindingStoreContract(setup FindingStoreSetup) {
 			token := hex.EncodeToString(raw)
 			tenA, tenB = ContractTenants(token)
 			reviewer = "alice"
+			runs = 0
 			env = setup(token)
 			store = env.Store
 			env.SeedReviewer(tenA, reviewer, "active")
@@ -169,9 +201,14 @@ func FindingStoreContract(setup FindingStoreSetup) {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
+		// nextRun returns a run record no earlier call in the spec returned.
+		nextRun := func() cleaning.RunRecord {
+			runs++
+			return ContractRun(runs)
+		}
 		// apply creates fs, none of which may be stored yet.
 		apply := func(ctx context.Context, tenantID string, fs ...cleaning.StoredFinding) {
-			gomega.Expect(store.ApplyRun(ctx, tenantID, cleaning.RunWrite{Upserts: NewUpserts(fs...)})).To(gomega.Succeed())
+			gomega.Expect(store.ApplyRun(ctx, tenantID, cleaning.RunWrite{Run: nextRun(), Upserts: NewUpserts(fs...)})).To(gomega.Succeed())
 		}
 		get := func(id string) (cleaning.StoredFinding, []cleaning.Decision) {
 			f, ds, err := store.GetFinding(ctxA, tenA, id)
@@ -228,7 +265,7 @@ func FindingStoreContract(setup FindingStoreSetup) {
 				"ApplyRun": func(ctx context.Context, t string) error {
 					changed := seeded
 					changed.Status = cleaning.StatusCleared
-					return store.ApplyRun(ctx, t, cleaning.RunWrite{Upserts: []cleaning.RunUpsert{
+					return store.ApplyRun(ctx, t, cleaning.RunWrite{Run: nextRun(), Upserts: []cleaning.RunUpsert{
 						{Finding: changed, ExpectState: cleaning.StateToken(seeded)},
 					}})
 				},
@@ -255,12 +292,15 @@ func FindingStoreContract(setup FindingStoreSetup) {
 					f, ds := get(seeded.ID)
 					gomega.Expect(withoutStamp(f)).To(gomega.Equal(seeded))
 					gomega.Expect(ds).To(gomega.BeEmpty())
+					gomega.Expect(env.Runs(tenA)).To(gomega.Equal([]cleaning.RunRecord{ContractRun(1)}))
 				})
 				ginkgo.It(name+" refuses a tenant argument other than the context's and changes nothing", func() {
 					gomega.Expect(calls[name](ctxB, tenA)).To(errContaining("does not match"))
 					f, ds := get(seeded.ID)
 					gomega.Expect(withoutStamp(f)).To(gomega.Equal(seeded))
 					gomega.Expect(ds).To(gomega.BeEmpty())
+					gomega.Expect(env.Runs(tenA)).To(gomega.Equal([]cleaning.RunRecord{ContractRun(1)}))
+					gomega.Expect(env.Runs(tenB)).To(gomega.BeEmpty())
 				})
 			}
 
@@ -347,7 +387,7 @@ func FindingStoreContract(setup FindingStoreSetup) {
 				hash, err := cleaning.EvidenceHash(changed.Evidence)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				changed.EvidenceHash = hash
-				gomega.Expect(store.ApplyRun(ctxA, tenA, cleaning.RunWrite{Upserts: []cleaning.RunUpsert{
+				gomega.Expect(store.ApplyRun(ctxA, tenA, cleaning.RunWrite{Run: nextRun(), Upserts: []cleaning.RunUpsert{
 					{Finding: changed, ExpectState: cleaning.StateToken(f)},
 				}})).To(gomega.Succeed())
 				all := allA()
@@ -357,29 +397,63 @@ func FindingStoreContract(setup FindingStoreSetup) {
 
 			ginkgo.It("records policy decisions with their run ID", func() {
 				f := ContractFinding(1, cleaning.SignalConflictsWith, cleaning.StatusRetired, "cat-x", "cat-y")
-				d := decision("d-policy", f, cleaning.VerdictRetire)
-				d.DecidedBy, d.RunID = cleaning.DecidedByPolicy, "plan-token"
+				run := nextRun()
+				d := PolicyDecision(decision("d-policy", f, cleaning.VerdictRetire), run)
 				gomega.Expect(store.ApplyRun(ctxA, tenA, cleaning.RunWrite{
-					Upserts: NewUpserts(f), Decisions: []cleaning.Decision{d},
+					Run: run, Upserts: NewUpserts(f), Decisions: []cleaning.Decision{d},
 				})).To(gomega.Succeed())
 				_, ds := get(f.ID)
 				gomega.Expect(ds).To(gomega.Equal([]cleaning.Decision{d}))
+			})
+
+			ginkgo.It("records the run byte for byte when it makes no decision", func() {
+				f := ContractFinding(1, cleaning.SignalLowAgreement, cleaning.StatusPending, "cat-x", "cat-y")
+				run := nextRun()
+				gomega.Expect(store.ApplyRun(ctxA, tenA, cleaning.RunWrite{Run: run, Upserts: NewUpserts(f)})).To(gomega.Succeed())
+				gomega.Expect(env.Runs(tenA)).To(gomega.Equal([]cleaning.RunRecord{run}))
+			})
+
+			ginkgo.It("truncates a run's AppliedAt and its decisions' DecidedAt to the microsecond, as the driver sends them", func() {
+				f := ContractFinding(1, cleaning.SignalConflictsWith, cleaning.StatusRetired, "cat-x", "cat-y")
+				run := nextRun()
+				run.AppliedAt = run.AppliedAt.Add(1900 * time.Nanosecond)
+				d := PolicyDecision(decision("d-policy", f, cleaning.VerdictRetire), run)
+				gomega.Expect(store.ApplyRun(ctxA, tenA, cleaning.RunWrite{
+					Run: run, Upserts: NewUpserts(f), Decisions: []cleaning.Decision{d},
+				})).To(gomega.Succeed())
+				stored := run.AppliedAt.Truncate(time.Microsecond)
+				gomega.Expect(env.Runs(tenA)).To(gomega.HaveExactElements(
+					gomega.HaveField("AppliedAt", gomega.Equal(stored))))
+				_, ds := get(f.ID)
+				gomega.Expect(ds).To(gomega.HaveExactElements(gomega.HaveField("DecidedAt", gomega.Equal(stored))))
+			})
+
+			ginkgo.It("records two runs of the same plan applied at different times", func() {
+				first := nextRun()
+				again := first
+				again.AppliedAt = first.AppliedAt.Add(time.Hour)
+				for _, run := range []cleaning.RunRecord{first, again} {
+					gomega.Expect(store.ApplyRun(ctxA, tenA, cleaning.RunWrite{Run: run})).To(gomega.Succeed())
+				}
+				gomega.Expect(env.Runs(tenA)).To(gomega.Equal([]cleaning.RunRecord{first, again}))
 			})
 
 			ginkgo.DescribeTable("writes nothing when any part of the run is refused",
 				func(mutate func(w *cleaning.RunWrite), want gomegatypes.GomegaMatcher) {
 					kept := ContractFinding(1, cleaning.SignalLowAgreement, cleaning.StatusReported, "cat-x", "cat-y")
 					apply(ctxA, tenA, kept)
-					d0 := decision("d-0", kept, cleaning.VerdictRetire)
-					d0.DecidedBy, d0.RunID = cleaning.DecidedByPolicy, "run-0"
-					gomega.Expect(store.ApplyRun(ctxA, tenA, cleaning.RunWrite{Decisions: []cleaning.Decision{d0}})).To(gomega.Succeed())
+					run0 := nextRun()
+					d0 := PolicyDecision(decision("d-0", kept, cleaning.VerdictRetire), run0)
+					gomega.Expect(store.ApplyRun(ctxA, tenA, cleaning.RunWrite{Run: run0, Decisions: []cleaning.Decision{d0}})).To(gomega.Succeed())
+					runsBefore := env.Runs(tenA)
 
 					changed := kept
 					changed.Status = cleaning.StatusCleared
 					fresh := ContractFinding(2, cleaning.SignalStaleModel, cleaning.StatusReported, "cat-x", "cat-y")
-					d1 := decision("d-1", fresh, cleaning.VerdictRetire)
-					d1.DecidedBy, d1.RunID = cleaning.DecidedByPolicy, "run-1"
+					run1 := nextRun()
+					d1 := PolicyDecision(decision("d-1", fresh, cleaning.VerdictRetire), run1)
 					w := cleaning.RunWrite{
+						Run: run1,
 						Upserts: []cleaning.RunUpsert{
 							{Finding: changed, ExpectState: cleaning.StateToken(kept)},
 							{Finding: fresh},
@@ -394,6 +468,7 @@ func FindingStoreContract(setup FindingStoreSetup) {
 					gomega.Expect(withoutStamp(all[0])).To(gomega.Equal(kept))
 					_, ds := get(kept.ID)
 					gomega.Expect(ds).To(gomega.Equal([]cleaning.Decision{d0}))
+					gomega.Expect(env.Runs(tenA)).To(gomega.Equal(runsBefore))
 				},
 				ginkgo.Entry("a finding with an unknown status",
 					func(w *cleaning.RunWrite) { w.Upserts[1].Finding.Status = "bogus" },
@@ -452,6 +527,24 @@ func FindingStoreContract(setup FindingStoreSetup) {
 				}, errContaining("record a reviewer's decision with Decide")),
 				ginkgo.Entry("a reviewer's decision carrying a run ID", func(w *cleaning.RunWrite) { w.Decisions[0].DecidedBy = "alice" },
 					errContaining("record a reviewer's decision with Decide")),
+				ginkgo.Entry("a policy decision naming another run", func(w *cleaning.RunWrite) { w.Decisions[0].RunID = ContractRun(99).PlanToken },
+					gomega.And(errContaining("not the run being applied"), errContaining("nothing was written"))),
+				ginkgo.Entry("a policy decision stamped at another time than its run", func(w *cleaning.RunWrite) {
+					w.Decisions[0].DecidedAt = w.Run.AppliedAt.Add(time.Second)
+				}, gomega.And(errContaining("not the run being applied"), errContaining("nothing was written"))),
+				ginkgo.Entry("a run whose plan token is not the SHA-256 of its plan", func(w *cleaning.RunWrite) {
+					w.Run.Plan = []byte(`{"run":"tampered"}`)
+				}, gomega.And(errContaining("SHA-256"), errContaining("nothing was written"))),
+				ginkgo.Entry("a run without a plan", func(w *cleaning.RunWrite) { w.Run.Plan = nil },
+					errContaining("plan and attestation are required")),
+				ginkgo.Entry("a run without an attestation", func(w *cleaning.RunWrite) { w.Run.Attestation = nil },
+					errContaining("plan and attestation are required")),
+				ginkgo.Entry("a run without an applied time", func(w *cleaning.RunWrite) { w.Run.AppliedAt = time.Time{} },
+					errContaining("applied time")),
+				ginkgo.Entry("a run already recorded", func(w *cleaning.RunWrite) {
+					w.Run = ContractRun(2)
+					w.Decisions[0] = PolicyDecision(w.Decisions[0], w.Run)
+				}, gomega.And(errContaining("already recorded"), errContaining("nothing was written"))),
 			)
 		})
 
@@ -477,6 +570,15 @@ func FindingStoreContract(setup FindingStoreSetup) {
 				un, err := store.Unprojected(ctxA, tenA)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(ids(un)).To(gomega.Equal([]string{f.ID}))
+			})
+
+			ginkgo.It("truncates DecidedAt to the microsecond, as the driver sends it", func() {
+				d := decision("d-1", f, cleaning.VerdictRetire)
+				d.DecidedAt = d.DecidedAt.Add(1900 * time.Nanosecond)
+				gomega.Expect(store.Decide(ctxA, tenA, d, cleaning.StateToken(f), next)).To(gomega.Succeed())
+				_, ds := get(f.ID)
+				gomega.Expect(ds).To(gomega.HaveExactElements(
+					gomega.HaveField("DecidedAt", gomega.Equal(d.DecidedAt.Truncate(time.Microsecond)))))
 			})
 
 			ginkgo.It("keeps decisions oldest first", func() {

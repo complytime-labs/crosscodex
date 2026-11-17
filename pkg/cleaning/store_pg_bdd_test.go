@@ -268,7 +268,9 @@ var _ = Describe("PGFindingStore", func() {
 				return err
 			}),
 			Entry("GetFinding", "GetFinding", func(c context.Context) error { _, _, err := store.GetFinding(c, tenantID, "x"); return err }),
-			Entry("ApplyRun", "ApplyRun", func(c context.Context) error { return store.ApplyRun(c, tenantID, cleaning.RunWrite{}) }),
+			Entry("ApplyRun", "ApplyRun", func(c context.Context) error {
+				return store.ApplyRun(c, tenantID, cleaning.RunWrite{Run: cleaningtest.ContractRun(1)})
+			}),
 			Entry("Decide", "Decide", func(c context.Context) error {
 				d := cleaning.Decision{ID: "d", FindingID: f.ID, Verdict: cleaning.VerdictDismiss, DecidedBy: "alice",
 					Request: []byte("{}"), Attestation: []byte("sig")}

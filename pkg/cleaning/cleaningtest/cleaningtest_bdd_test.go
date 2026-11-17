@@ -29,6 +29,7 @@ var _ = Describe("Fake", func() {
 		fake := &cleaningtest.Fake{}
 		return cleaningtest.FindingStoreEnv{
 			Store: fake,
+			Runs:  fake.Runs,
 			SeedReviewer: func(tenantID, reviewerID, status string) {
 				if fake.Reviewers == nil {
 					fake.Reviewers = map[string]map[string]string{}
@@ -75,7 +76,7 @@ var _ = Describe("Fake-only behavior", func() {
 	Describe("Now", func() {
 		It("stamps UpdatedAt and a zero DecidedAt", func() {
 			fake.Reviewers = map[string]map[string]string{"tenant-a": {"alice": "active"}}
-			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Upserts: cleaningtest.NewUpserts(f)})).To(Succeed())
+			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(1), Upserts: cleaningtest.NewUpserts(f)})).To(Succeed())
 			next := f
 			next.Status = cleaning.StatusDismissed
 			d := cleaning.Decision{ID: "d", FindingID: f.ID, Verdict: cleaning.VerdictDismiss, DecidedBy: "alice",
@@ -115,7 +116,7 @@ var _ = Describe("Fake-only behavior", func() {
 	Describe("Reviewers", func() {
 		It("refuses a reviewer status other than active or deleted", func() {
 			fake.Reviewers = map[string]map[string]string{"tenant-a": {"alice": "suspended"}}
-			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Upserts: cleaningtest.NewUpserts(f)})).To(Succeed())
+			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(2), Upserts: cleaningtest.NewUpserts(f)})).To(Succeed())
 			d := cleaning.Decision{ID: "d", FindingID: f.ID, Verdict: cleaning.VerdictDismiss, DecidedBy: "alice",
 				Request: []byte("{}"), Attestation: []byte("sig")}
 			Expect(fake.Decide(ctxA, "tenant-a", d, cleaning.StateToken(f), f)).To(MatchError(ContainSubstring("suspended")))
@@ -126,7 +127,7 @@ var _ = Describe("Fake-only behavior", func() {
 		It("keeps stored findings apart from what callers pass and receive", func() {
 			in := f
 			in.EdgeIDs = []string{"e1"}
-			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Upserts: cleaningtest.NewUpserts(in)})).To(Succeed())
+			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(3), Upserts: cleaningtest.NewUpserts(in)})).To(Succeed())
 			in.EdgeIDs[0] = "mutated-in"
 			out, _, err := fake.GetFinding(ctxA, "tenant-a", f.ID)
 			Expect(err).NotTo(HaveOccurred())
@@ -143,7 +144,7 @@ var _ = Describe("Fake-only behavior", func() {
 
 		It("keeps a stored job-level finding's job apart from what callers receive", func() {
 			job := cleaningtest.ContractFinding(2, cleaning.SignalStaleModel, cleaning.StatusReported, "cat-x", "cat-y")
-			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Upserts: cleaningtest.NewUpserts(job)})).To(Succeed())
+			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(4), Upserts: cleaningtest.NewUpserts(job)})).To(Succeed())
 			out, _, err := fake.GetFinding(ctxA, "tenant-a", job.ID)
 			Expect(err).NotTo(HaveOccurred())
 			out.Evidence.Job.VerdictsInScope = 99
@@ -155,7 +156,7 @@ var _ = Describe("Fake-only behavior", func() {
 
 	Describe("Funcs", func() {
 		BeforeEach(func() {
-			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Upserts: cleaningtest.NewUpserts(f)})).To(Succeed())
+			Expect(fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(5), Upserts: cleaningtest.NewUpserts(f)})).To(Succeed())
 		})
 
 		DescribeTable("alone decide the result and leave the store unchanged",
@@ -175,7 +176,7 @@ var _ = Describe("Fake-only behavior", func() {
 			}, func() error {
 				changed := f
 				changed.Status = cleaning.StatusCleared
-				return fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Upserts: []cleaning.RunUpsert{
+				return fake.ApplyRun(ctxA, "tenant-a", cleaning.RunWrite{Run: cleaningtest.ContractRun(6), Upserts: []cleaning.RunUpsert{
 					{Finding: changed, ExpectState: cleaning.StateToken(f)},
 				}})
 			}),
