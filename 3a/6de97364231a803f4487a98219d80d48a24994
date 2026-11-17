@@ -1,0 +1,21 @@
+docs/dev/cleaning.md
+  s_b8a4839fe7391f::t_70ba5a51a2316f 28-30,81-82,88-98,136-137,146-148,155-157,190-197,200-205,219-225,386-401
+README.md
+  s_b8a4839fe7391f::t_1923b9508e501b 1133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3a6de97364231a803f4487a98219d80d48a24994",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
