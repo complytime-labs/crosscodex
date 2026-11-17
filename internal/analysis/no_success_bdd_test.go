@@ -226,9 +226,16 @@ var _ = Describe("The no-success window (analysis.engine.success_timeout)", func
 				}
 			})
 			done = make(chan starvedOutcome, 1)
+			// Join the AwaitResults goroutine before the next spec reassigns
+			// done: "does not fail…" never receives, so nothing else orders
+			// this goroutine's send before that write.
+			awaitCtx, cancelAwait := context.WithCancel(ctx)
+			exited := make(chan struct{})
+			DeferCleanup(func() { cancelAwait(); <-exited })
 			go func() {
 				defer GinkgoRecover()
-				results, err := collector.AwaitResults(ctx, handle)
+				defer close(exited)
+				results, err := collector.AwaitResults(awaitCtx, handle)
 				done <- starvedOutcome{results: results, err: err}
 			}()
 			Consistently(done, 400*time.Millisecond, 20*time.Millisecond).ShouldNot(Receive(),

@@ -131,6 +131,9 @@ func New(llm llmclient.Client, prompts prompt.Registry, candidates CandidateProv
 // Name returns "relationship".
 func (a *RelationshipAnalyzer) Name() string { return analyzerName }
 
+// PromptName returns the prompt Aggregate records as Output.Metadata["prompt_name"] (analyzer.Prompted).
+func (a *RelationshipAnalyzer) PromptName() string { return promptName }
+
 // DependsOn returns ["embedding"] — relationship analysis requires embedding
 // similarity results to determine candidate pairs.
 func (a *RelationshipAnalyzer) DependsOn() []string { return []string{"embedding"} }

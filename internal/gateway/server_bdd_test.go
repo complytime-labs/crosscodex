@@ -346,3 +346,74 @@ var _ = Describe("Server error boundary", func() {
 		Expect(strings.Count(logs.String(), "secret_admin")).To(Equal(1))
 	})
 })
+
+// fakeCleaningService answers ListFindings with a fixed error and counts the
+// calls that reach it; every other EdgeCleaningService RPC is the generated
+// Unimplemented stub.
+type fakeCleaningService struct {
+	crosscodexv1connect.UnimplementedEdgeCleaningServiceHandler
+	err   error
+	calls int
+}
+
+func (f *fakeCleaningService) ListFindings(context.Context, *connect.Request[pb.ListFindingsRequest]) (*connect.Response[pb.ListFindingsResponse], error) {
+	f.calls++
+	return nil, f.err
+}
+
+var _ = Describe("Server EdgeCleaningService mount", func() {
+	const secret = "pq: password authentication failed for user secret_admin"
+
+	startCleaning := func(svc *gateway.Service, cleaning crosscodexv1connect.EdgeCleaningServiceHandler) crosscodexv1connect.EdgeCleaningServiceClient {
+		srv, err := gateway.NewServer(context.Background(), gateway.ServerConfig{
+			Addr:         "127.0.0.1:0",
+			Service:      svc,
+			Cleaning:     cleaning,
+			TenantStatus: &fakeTenantStatus{active: true},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(srv.Start()).To(Succeed())
+		DeferCleanup(func() { _ = srv.Shutdown(context.Background()) })
+		return crosscodexv1connect.NewEdgeCleaningServiceClient(http.DefaultClient, "http://"+srv.Addr())
+	}
+
+	It("refuses an unauthenticated call before the handler runs", func() {
+		reg, err := authn.NewRegistry(nil, []authn.Authenticator{
+			fixedIdentity{id: &authn.Identity{Subject: "alice", TenantID: "acme", Method: authn.AuthMethodMTLS}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		handler := &fakeCleaningService{err: errors.New("reached")}
+		client := startCleaning(gateway.NewService(gateway.WithAuthn(reg)), handler)
+
+		_, err = client.ListFindings(context.Background(), connect.NewRequest(&pb.ListFindingsRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+		Expect(handler.calls).To(BeZero())
+	})
+
+	It("withholds an engine error the caller cannot act on", func() {
+		logs := &bytes.Buffer{}
+		handler := &fakeCleaningService{err: fmt.Errorf("list findings: %w", errors.New(secret))}
+		client := startCleaning(gateway.NewService(gateway.WithLogger(slog.New(slog.NewTextHandler(logs, nil)))), handler)
+
+		_, err := client.ListFindings(context.Background(), connect.NewRequest(&pb.ListFindingsRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+		Expect(err.Error()).NotTo(ContainSubstring("secret_admin"))
+		Expect(strings.Count(logs.String(), "secret_admin")).To(Equal(1), "the full error must be logged exactly once")
+		Expect(logs.String()).To(ContainSubstring("method=" + crosscodexv1connect.EdgeCleaningServiceListFindingsProcedure))
+	})
+
+	It("passes an engine error the caller can act on through unchanged", func() {
+		handler := &fakeCleaningService{err: connect.NewError(connect.CodeInvalidArgument, errors.New("status filter is unknown"))}
+		client := startCleaning(gateway.NewService(), handler)
+
+		_, err := client.ListFindings(context.Background(), connect.NewRequest(&pb.ListFindingsRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("status filter is unknown"))
+	})
+
+	It("does not serve EdgeCleaningService when no handler is configured", func() {
+		client := startCleaning(gateway.NewService(), nil)
+		_, err := client.ListFindings(context.Background(), connect.NewRequest(&pb.ListFindingsRequest{}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
+	})
+})

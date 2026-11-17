@@ -17,6 +17,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/admin"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
+	intcleaning "github.com/complytime-labs/crosscodex/internal/cleaning"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/internal/graph"
@@ -25,7 +26,9 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/results"
 	"github.com/complytime-labs/crosscodex/internal/synthesis"
 	"github.com/complytime-labs/crosscodex/internal/worker"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
+	"github.com/complytime-labs/crosscodex/pkg/cleaning"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
@@ -366,18 +369,50 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	}
 	rt.retentionPurgePool = purgePool
 
+	cleaningSigner, err := newCleaningSigner(cfg)
+	if err != nil {
+		return err
+	}
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	cleaningStore := cleaning.NewPGFindingStore(dbpkg.NewTenantPool(shared.appPool), cleaning.WithFindingStoreTelemetry(tp, mp))
+	cleaningEngine := cleaning.NewEngine(cleaningStore, shared.graphDB_, &cfg.Cleaning,
+		rt.pipelineService.CurrentStageRecord, cleaningSigner, cleaning.WithEngineTelemetry(tp, mp))
+
 	server, err := gateway.NewServer(ctx, gateway.ServerConfig{
 		TenantStatus: gateway.NewPoolTenantStatus(shared.appPool),
 		Addr:         cfg.Server.Addr,
 		TLS:          cfg.TLS,
 		Service:      gatewaySvc,
 		Admin:        adminSvc,
+		Cleaning:     intcleaning.NewService(cleaningEngine),
 	})
 	if err != nil {
 		return fmt.Errorf("create gateway server: %w", err)
 	}
 	rt.gatewayServer = server
 	return nil
+}
+
+// newCleaningSigner builds the generator that signs edge-cleaning decisions.
+// It returns no signer, and no error, when either attestation key path is
+// unset: the engine then refuses every write with an actionable message. Key
+// paths that are set but do not load are an error, so a typo stops the daemon
+// instead of silently disabling signed cleaning.
+func newCleaningSigner(cfg *config.Config) (attestation.Generator, error) {
+	priv, pub := cfg.Attestation.PrivateKeyPath, cfg.Attestation.PublicKeyPath
+	if priv == "" || pub == "" {
+		return nil, nil
+	}
+	keys, err := attestation.LoadFileKeys(priv, pub, cfg.TLS.FIPS.Enabled)
+	if err != nil {
+		return nil, fmt.Errorf("cleaning signer: load attestation.private_key_path and attestation.public_key_path: %w", err)
+	}
+	tr, mt := telemetry.Instrumentation("pkg/attestation")
+	gen, err := attestation.NewGenerator(keys, attestation.WithTelemetry(tr, mt), attestation.WithFIPSMode(cfg.TLS.FIPS.Enabled))
+	if err != nil {
+		return nil, fmt.Errorf("cleaning signer: %w", err)
+	}
+	return gen, nil
 }
 
 // disabledArchive is a storage.Provider used when no archive backend is
@@ -682,6 +717,8 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn, pipeline.WithPGEmbeddingsReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
 		pipeline.WithTelemetry(tp, mp),
+		pipeline.WithPromptRegistry(prompts),
+		pipeline.WithStageReporter(dbReporter),
 	}, probeOpts...)
 	return pipeline.New(
 		store, engine, registry, synth, attestors, converter, shared.natsClient, storageProvider,

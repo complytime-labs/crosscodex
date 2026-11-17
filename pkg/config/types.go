@@ -31,6 +31,7 @@ type Config struct {
 	Pipeline      PipelineConfig      `yaml:"pipeline"      json:"pipeline"`
 	Graph         GraphConfig         `yaml:"graph"         json:"graph"`
 	Synthesis     SynthesisConfig     `yaml:"synthesis"     json:"synthesis"`
+	Cleaning      CleaningConfig      `yaml:"cleaning"      json:"cleaning"`
 	Retention     RetentionConfig     `yaml:"retention"     json:"retention"`
 	Backup        BackupConfig        `yaml:"backup"        json:"backup"`
 	Role          string              `yaml:"role"          json:"role"`
@@ -1227,6 +1228,110 @@ func (c *SynthesisConfig) ForTenant(tenantID string) SynthesisTenantConfig {
 		}
 	}
 	return tc
+}
+
+// Cleaning signal actions. A signal flags a verdict as suspect; the action
+// says what the cleaning engine does about it.
+const (
+	CleaningActionReport = "report" // list the finding only
+	CleaningActionHuman  = "human"  // queue the finding for a reviewer
+	CleaningActionRetire = "retire" // retire the verdict automatically
+)
+
+// SignalPolicy is the action for one cleaning signal.
+type SignalPolicy struct {
+	Action string `yaml:"action" json:"action"`
+	// MinAgreementFraction applies only to low_agreement: a verdict whose
+	// agreeing fraction of samples falls below it is flagged. Range (0, 1].
+	MinAgreementFraction float64 `yaml:"min_agreement_fraction,omitempty" json:"min_agreement_fraction,omitempty"`
+}
+
+// CleaningSignals holds the policy for each cleaning signal.
+type CleaningSignals struct {
+	EquivalenceFanout     SignalPolicy `yaml:"equivalence_fanout"      json:"equivalence_fanout"`
+	CrossJobContradiction SignalPolicy `yaml:"cross_job_contradiction" json:"cross_job_contradiction"`
+	LowAgreement          SignalPolicy `yaml:"low_agreement"           json:"low_agreement"`
+	ConflictsWith         SignalPolicy `yaml:"conflicts_with"          json:"conflicts_with"`
+	StalePrompt           SignalPolicy `yaml:"stale_prompt"            json:"stale_prompt"`
+	StaleModel            SignalPolicy `yaml:"stale_model"             json:"stale_model"`
+}
+
+// CleaningConfig configures the edge-cleaning passes.
+type CleaningConfig struct {
+	// MaxRetirePerRun caps how many verdicts one cleaning run may retire.
+	MaxRetirePerRun int                         `yaml:"max_retire_per_run" json:"max_retire_per_run"`
+	Signals         CleaningSignals             `yaml:"signals"            json:"signals"`
+	TenantOverrides map[string]CleaningOverride `yaml:"tenant_overrides"   json:"tenant_overrides"`
+}
+
+// SignalPolicyOverride overrides one signal's policy for a tenant.
+// Nil fields inherit the global value.
+type SignalPolicyOverride struct {
+	Action               *string  `yaml:"action"                         json:"action"`
+	MinAgreementFraction *float64 `yaml:"min_agreement_fraction"         json:"min_agreement_fraction"`
+}
+
+// CleaningSignalOverrides holds per-signal tenant overrides; nil inherits.
+type CleaningSignalOverrides struct {
+	EquivalenceFanout     *SignalPolicyOverride `yaml:"equivalence_fanout"      json:"equivalence_fanout"`
+	CrossJobContradiction *SignalPolicyOverride `yaml:"cross_job_contradiction" json:"cross_job_contradiction"`
+	LowAgreement          *SignalPolicyOverride `yaml:"low_agreement"           json:"low_agreement"`
+	ConflictsWith         *SignalPolicyOverride `yaml:"conflicts_with"          json:"conflicts_with"`
+	StalePrompt           *SignalPolicyOverride `yaml:"stale_prompt"            json:"stale_prompt"`
+	StaleModel            *SignalPolicyOverride `yaml:"stale_model"             json:"stale_model"`
+}
+
+// CleaningOverride allows per-tenant cleaning settings.
+// Nil pointer fields inherit the global CleaningConfig value.
+type CleaningOverride struct {
+	MaxRetirePerRun *int                     `yaml:"max_retire_per_run" json:"max_retire_per_run"`
+	Signals         *CleaningSignalOverrides `yaml:"signals"            json:"signals"`
+}
+
+// CleaningTenantConfig is the fully-resolved view for a specific tenant.
+type CleaningTenantConfig struct {
+	MaxRetirePerRun int
+	Signals         CleaningSignals
+}
+
+// ForTenant resolves the fully-typed view for a specific tenant.
+func (c *CleaningConfig) ForTenant(tenantID string) CleaningTenantConfig {
+	tc := CleaningTenantConfig{MaxRetirePerRun: c.MaxRetirePerRun, Signals: c.Signals}
+	override, ok := c.TenantOverrides[tenantID]
+	if !ok {
+		return tc
+	}
+	if override.MaxRetirePerRun != nil {
+		tc.MaxRetirePerRun = *override.MaxRetirePerRun
+	}
+	if override.Signals != nil {
+		for i, o := range override.Signals.policies() {
+			if o == nil {
+				continue
+			}
+			sp := tc.Signals.policies()[i]
+			if o.Action != nil {
+				sp.Action = *o.Action
+			}
+			if o.MinAgreementFraction != nil {
+				sp.MinAgreementFraction = *o.MinAgreementFraction
+			}
+		}
+	}
+	return tc
+}
+
+// signalNames lists the signals in policies() order.
+var signalNames = [...]string{"equivalence_fanout", "cross_job_contradiction", "low_agreement", "conflicts_with", "stale_prompt", "stale_model"}
+
+// policies returns pointers to each signal's policy, in signalNames order.
+func (s *CleaningSignals) policies() [len(signalNames)]*SignalPolicy {
+	return [...]*SignalPolicy{&s.EquivalenceFanout, &s.CrossJobContradiction, &s.LowAgreement, &s.ConflictsWith, &s.StalePrompt, &s.StaleModel}
+}
+
+// policies returns each signal's override (nil when absent), in signalNames order.
+func (s *CleaningSignalOverrides) policies() [len(signalNames)]*SignalPolicyOverride {
+	return [...]*SignalPolicyOverride{s.EquivalenceFanout, s.CrossJobContradiction, s.LowAgreement, s.ConflictsWith, s.StalePrompt, s.StaleModel}
 }
 
 // DaemonConfig is the derived view for crosscodexd.

@@ -520,6 +520,13 @@ var _ = Describe("RequiresAnalyzer", func() {
 			Expect(output.Metadata["prompt_version"]).To(Equal("1.0.0"))
 		})
 
+		It("names the prompt its Aggregate records as prompt_name", func() {
+			output, err := a.Aggregate(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(a.PromptName()).To(Equal(output.Metadata["prompt_name"]))
+			Expect(a.PromptName()).NotTo(BeEmpty())
+		})
+
 		It("counts errors in results", func() {
 			results := []analyzer.TaskResult{
 				{TaskID: "requires-AC-1--IA-2-qwen3:8b-s0", TaskType: "requires", Error: fmt.Errorf("llm timeout")},

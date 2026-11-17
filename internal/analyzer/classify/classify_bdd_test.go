@@ -480,6 +480,13 @@ var _ = Describe("ClassifyAnalyzer", func() {
 			Expect(output.Metadata["skipped_blank_statement_count"]).To(Equal("0"))
 		})
 
+		It("names the prompt its Aggregate records as prompt_name", func() {
+			output, err := a.Aggregate(ctx, []analyzer.TaskResult{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(a.PromptName()).To(Equal(output.Metadata["prompt_name"]))
+			Expect(a.PromptName()).NotTo(BeEmpty())
+		})
+
 		It("reports how many skips were for a blank statement", func() {
 			controls := []*pb.Control{
 				{ControlId: "c/AC", Identifier: "AC", Parts: map[string]string{"class": "compliance-section"}},

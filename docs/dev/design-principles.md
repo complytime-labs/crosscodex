@@ -100,6 +100,7 @@ Temporal properties (`valid_from`, `valid_to`, `analyzed_at`) are stored with `g
 > 4. Re-import each of the tenant's catalogs (`crosscodex catalog import <file>`) so control nodes and `PARENT_OF` edges exist again; the graph role's catalog projection (`internal/graph/catalog_projection.go`), triggered by the parsed event that catalog ingest publishes, is the only place that creates them, never the analyzer materializers. The graph role must be running when the catalogs are re-imported, or the event is lost.
 > 5. Start each of the tenant's analyses again over the re-imported catalogs, with the same source, target and direction (`crosscodex run start --source <catalog-id> --target <catalog-id>`) and let it run to completion so the graph service (`internal/graph/subscriber_handlers.go`) recreates the `SEMANTIC_MATCH`, `REQUIRES`, `DEMANDS`, and `IS_TYPE` edges from the new results.
 > 6. Once the analysis jobs finish, run `crosscodexd admin reconcile artifacts --tenant <tenant>` so the rebuilt graph regains its `ArtifactGroup`, `MEMBER_OF` and `SAME_AS` elements, then run `crosscodexd admin adjudicate artifacts --tenant <tenant> --reproject` to re-project its SAME_AS verdicts.
+> 7. Edge-cleaning decisions are not re-applied: no command replays `edge_finding_decisions` into a rebuilt graph, and `crosscodex admin cleaning run --resume` only finishes findings with `graph_applied = false`. Afterwards the new jobs' `SEMANTIC_MATCH` edges are all live, while the tenant's old findings still read `retired` or `restored` (with `graph_applied = true` and `edge_ids` naming edges that no longer exist). Run a cleaning pass (`crosscodex admin cleaning run`, then `--apply`) to raise findings on the new jobs' verdicts: signals whose action is `retire` retire them again, but every reviewer decision has to be made again on the new findings. See "Append-only decisions" in `docs/dev/cleaning.md`.
 >
 > The graph is still a materialized view, so no data is lost — but step 5 re-runs the LLM-backed analyzers from scratch rather than replaying already-stored results, so expect it to take as long (and cost as much) as the original analysis.
 >
@@ -314,6 +315,10 @@ Application code runs under a restricted database role, not the table owner. The
 ### No Partial Success on Safety-Critical Operations
 
 When a batch operation (UPDATE, DELETE) touches rows with mixed protection states (some completed, some not), the entire statement must fail — not silently succeed for the unprotected rows. PostgreSQL's per-row BEFORE triggers provide this guarantee, but tests must verify it explicitly because it's the kind of behavior that breaks silently if someone refactors triggers into rules or policies.
+
+### Validate at Write When Rows Cannot Be Deleted
+
+When a table's rows can never be deleted and its reader is strict, refuse at write time every row the reader would reject. Otherwise one bad row fails every later read of the tenant's data, and the application role has no grant to remove it. The write boundary is the only place where the error can still be fixed by the caller. So the writer runs the reader's own checks, including size bounds measured as the database will render the value, and a test double of the store enforces them too. Edge cleaning is the reference: `StoredFinding.Validate` and `Decision.Validate` mirror `ParseEvidence` and the stored-key decoder (see [cleaning.md](cleaning.md#writes-are-validated-against-the-reader)).
 
 ### Prefer Discovery Over Hard Coding
 

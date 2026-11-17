@@ -57,6 +57,7 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 		cfg.Pipeline.validate(tracker),
 		validateSuccessWindow(&cfg.Analysis.Engine, &cfg.Pipeline, tracker),
 		validateSynthesis(&cfg.Synthesis, tracker),
+		validateCleaning(&cfg.Cleaning, tracker),
 		cfg.Retention.validate(tracker),
 		validateBackup(&cfg.Backup, &cfg.Storage.Objects, tracker),
 		validateGraph(&cfg.Graph, tracker),
@@ -540,6 +541,76 @@ func validateRole(cfg *Config, tracker *sourceTracker) error {
 	}
 	cfg.Role = canonical
 	return nil
+}
+
+// validCleaningActions are the accepted signal actions.
+var validCleaningActions = map[string]bool{CleaningActionReport: true, CleaningActionHuman: true, CleaningActionRetire: true}
+
+// validateCleaningSignal checks one signal's policy. path is the signal's
+// config path and src the provenance suffix (empty for tenant overrides).
+// action and fraction are nil when unset; an unset action is not checked
+// because an override inherits it.
+func validateCleaningSignal(p *problems, path, name string, action *string, fraction *float64, src func(string) string) {
+	if action != nil {
+		switch {
+		case !validCleaningActions[*action]:
+			p.add(path+".action", "%s.action %q%s must be report, human or retire: %w", path, *action, src(path+".action"), ErrInvalidConfig)
+		case name == "equivalence_fanout" && *action == CleaningActionRetire:
+			p.add(path+".action", "%s.action%s: equivalence_fanout cannot retire: nothing in the data says which of several \"equivalent\" targets is wrong. Use report or human, and let a reviewer choose which verdicts to retire: %w",
+				path, src(path+".action"), ErrInvalidConfig)
+		}
+	}
+	if fraction == nil {
+		return
+	}
+	fp := path + ".min_agreement_fraction"
+	switch {
+	case name != "low_agreement":
+		p.add(fp, "%s %g%s applies only to low_agreement: %w", fp, *fraction, src(fp), ErrInvalidConfig)
+	case math.IsNaN(*fraction) || *fraction <= 0 || *fraction > 1:
+		p.add(fp, "%s %g%s must be greater than 0 and at most 1: %w", fp, *fraction, src(fp), ErrInvalidConfig)
+	}
+}
+
+func validateCleaning(c *CleaningConfig, tracker *sourceTracker) error {
+	var p problems
+	if c.MaxRetirePerRun < 1 {
+		p.add("cleaning.max_retire_per_run", "cleaning.max_retire_per_run %d%s must be positive: %w",
+			c.MaxRetirePerRun, formatSource(tracker, "cleaning.max_retire_per_run"), ErrInvalidConfig)
+	}
+	src := func(path string) string { return formatSource(tracker, path) }
+	for i, sp := range c.Signals.policies() {
+		name := signalNames[i]
+		// A global min_agreement_fraction of 0 means unset, except on
+		// low_agreement where the engine needs a real threshold.
+		var fraction *float64
+		if name == "low_agreement" || sp.MinAgreementFraction != 0 {
+			fraction = &sp.MinAgreementFraction
+		}
+		validateCleaningSignal(&p, "cleaning.signals."+name, name, &sp.Action, fraction, src)
+	}
+
+	for _, key := range slices.Sorted(maps.Keys(c.TenantOverrides)) {
+		override := c.TenantOverrides[key]
+		base := mapKeyPath("cleaning.tenant_overrides", key)
+		if err := tenant.ValidateTenantID(key); err != nil {
+			p.add(base, "cleaning.tenant_overrides key %q is not a valid tenant ID: %w", key, ErrInvalidConfig)
+			continue
+		}
+		if override.MaxRetirePerRun != nil && *override.MaxRetirePerRun < 1 {
+			p.add(base+".max_retire_per_run", "%s.max_retire_per_run %d must be positive: %w", base, *override.MaxRetirePerRun, ErrInvalidConfig)
+		}
+		if override.Signals == nil {
+			continue
+		}
+		noSrc := func(string) string { return "" }
+		for i, o := range override.Signals.policies() {
+			if o != nil {
+				validateCleaningSignal(&p, base+".signals."+signalNames[i], signalNames[i], o.Action, o.MinAgreementFraction, noSrc)
+			}
+		}
+	}
+	return p.err()
 }
 
 func validateSynthesis(s *SynthesisConfig, tracker *sourceTracker) error {

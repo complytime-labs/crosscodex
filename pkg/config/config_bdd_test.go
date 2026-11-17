@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -3224,3 +3225,186 @@ var _ = Describe("SynthesisConfig validation", func() {
 		})
 	})
 })
+
+var _ = Describe("CleaningConfig", func() {
+	strPtr := func(v string) *string { return &v }
+	float64Ptr := func(v float64) *float64 { return &v }
+	intPtr := func(v int) *int { return &v }
+
+	It("defaults report every signal, 0.5 low-agreement fraction and a 1000 retire cap", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(cfg.Cleaning.MaxRetirePerRun).To(Equal(1000))
+		s := cfg.Cleaning.Signals
+		for _, sp := range []config.SignalPolicy{s.EquivalenceFanout, s.CrossJobContradiction, s.LowAgreement, s.ConflictsWith, s.StalePrompt, s.StaleModel} {
+			Expect(sp.Action).To(Equal("report"))
+		}
+		Expect(s.LowAgreement.MinAgreementFraction).To(Equal(0.5))
+	})
+
+	It("ForTenant inherits globals when the tenant has no override", func() {
+		cfg := validConfig()
+		Expect(cfg.Cleaning.ForTenant("acme-corp")).To(Equal(config.CleaningTenantConfig{
+			MaxRetirePerRun: cfg.Cleaning.MaxRetirePerRun,
+			Signals:         cfg.Cleaning.Signals,
+		}))
+	})
+
+	It("ForTenant applies set override fields and inherits nil ones", func() {
+		cfg := validConfig()
+		cfg.Cleaning.TenantOverrides = map[string]config.CleaningOverride{
+			"acme-corp": {
+				MaxRetirePerRun: intPtr(5),
+				Signals: &config.CleaningSignalOverrides{
+					LowAgreement: &config.SignalPolicyOverride{Action: strPtr("retire"), MinAgreementFraction: float64Ptr(0.8)},
+					StaleModel:   &config.SignalPolicyOverride{Action: strPtr("human")},
+				},
+			},
+		}
+		Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+
+		got := cfg.Cleaning.ForTenant("acme-corp")
+		Expect(got.MaxRetirePerRun).To(Equal(5))
+		Expect(got.Signals.LowAgreement).To(Equal(config.SignalPolicy{Action: "retire", MinAgreementFraction: 0.8}))
+		Expect(got.Signals.StaleModel).To(Equal(config.SignalPolicy{Action: "human"}))
+		Expect(got.Signals.StalePrompt).To(Equal(cfg.Cleaning.Signals.StalePrompt))
+		Expect(cfg.Cleaning.ForTenant("other").Signals.LowAgreement).To(Equal(cfg.Cleaning.Signals.LowAgreement))
+	})
+
+	It("ForTenant keeps the global fraction when an override sets only the action", func() {
+		cfg := validConfig()
+		cfg.Cleaning.TenantOverrides = map[string]config.CleaningOverride{
+			"acme-corp": {Signals: &config.CleaningSignalOverrides{LowAgreement: &config.SignalPolicyOverride{Action: strPtr("human")}}},
+		}
+		got := cfg.Cleaning.ForTenant("acme-corp").Signals.LowAgreement
+		Expect(got).To(Equal(config.SignalPolicy{Action: "human", MinAgreementFraction: 0.5}))
+	})
+
+	It("rejects an invalid tenant ID key under that key's path", func() {
+		cfg := validConfig()
+		cfg.Cleaning.TenantOverrides = map[string]config.CleaningOverride{"INVALID": {}}
+		err := config.ExportValidateConfig(cfg)
+		Expect(err).To(MatchError(config.ErrInvalidConfig))
+		Expect(err).To(MatchError(ContainSubstring(`cleaning.tenant_overrides key "INVALID" is not a valid tenant ID`)))
+		expectOnlyFieldError(err, "cleaning.tenant_overrides.INVALID")
+	})
+
+	const fanoutMsg = `equivalence_fanout cannot retire: nothing in the data says which of several "equivalent" targets is wrong. Use report or human, and let a reviewer choose which verdicts to retire`
+
+	// Each signal is exercised both globally and under tenant_overrides.acme-corp.
+	DescribeTable("rejects invalid signal policies",
+		func(mutate func(*config.Config), field, msg string) {
+			cfg := validConfig()
+			mutate(cfg)
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring(msg))
+			expectOnlyFieldError(err, field)
+		},
+		Entry("global: unknown equivalence_fanout action",
+			func(c *config.Config) { c.Cleaning.Signals.EquivalenceFanout.Action = "delete" },
+			"cleaning.signals.equivalence_fanout.action", "must be report, human or retire"),
+		Entry("global: empty cross_job_contradiction action",
+			func(c *config.Config) { c.Cleaning.Signals.CrossJobContradiction.Action = "" },
+			"cleaning.signals.cross_job_contradiction.action", "must be report, human or retire"),
+		Entry("global: unknown low_agreement action",
+			func(c *config.Config) { c.Cleaning.Signals.LowAgreement.Action = "Retire" },
+			"cleaning.signals.low_agreement.action", "must be report, human or retire"),
+		Entry("global: unknown conflicts_with action",
+			func(c *config.Config) { c.Cleaning.Signals.ConflictsWith.Action = "drop" },
+			"cleaning.signals.conflicts_with.action", "must be report, human or retire"),
+		Entry("global: unknown stale_prompt action",
+			func(c *config.Config) { c.Cleaning.Signals.StalePrompt.Action = "auto" },
+			"cleaning.signals.stale_prompt.action", "must be report, human or retire"),
+		Entry("global: unknown stale_model action",
+			func(c *config.Config) { c.Cleaning.Signals.StaleModel.Action = "x" },
+			"cleaning.signals.stale_model.action", "must be report, human or retire"),
+		Entry("global: equivalence_fanout retire",
+			func(c *config.Config) { c.Cleaning.Signals.EquivalenceFanout.Action = "retire" },
+			"cleaning.signals.equivalence_fanout.action", fanoutMsg),
+		Entry("global: low_agreement fraction zero",
+			func(c *config.Config) { c.Cleaning.Signals.LowAgreement.MinAgreementFraction = 0 },
+			"cleaning.signals.low_agreement.min_agreement_fraction", "must be greater than 0 and at most 1"),
+		Entry("global: low_agreement fraction above one",
+			func(c *config.Config) { c.Cleaning.Signals.LowAgreement.MinAgreementFraction = 1.1 },
+			"cleaning.signals.low_agreement.min_agreement_fraction", "must be greater than 0 and at most 1"),
+		Entry("global: low_agreement fraction NaN",
+			func(c *config.Config) { c.Cleaning.Signals.LowAgreement.MinAgreementFraction = math.NaN() },
+			"cleaning.signals.low_agreement.min_agreement_fraction", "must be greater than 0 and at most 1"),
+		Entry("global: fraction on stale_model",
+			func(c *config.Config) { c.Cleaning.Signals.StaleModel.MinAgreementFraction = 0.5 },
+			"cleaning.signals.stale_model.min_agreement_fraction", "applies only to low_agreement"),
+		Entry("global: fraction on equivalence_fanout",
+			func(c *config.Config) { c.Cleaning.Signals.EquivalenceFanout.MinAgreementFraction = 0.5 },
+			"cleaning.signals.equivalence_fanout.min_agreement_fraction", "applies only to low_agreement"),
+		Entry("global: zero max_retire_per_run",
+			func(c *config.Config) { c.Cleaning.MaxRetirePerRun = 0 },
+			"cleaning.max_retire_per_run", "must be positive"),
+		Entry("global: negative max_retire_per_run",
+			func(c *config.Config) { c.Cleaning.MaxRetirePerRun = -1 },
+			"cleaning.max_retire_per_run", "must be positive"),
+
+		Entry("tenant: unknown equivalence_fanout action",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{EquivalenceFanout: &config.SignalPolicyOverride{Action: strPtr("delete")}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.equivalence_fanout.action", "must be report, human or retire"),
+		Entry("tenant: unknown cross_job_contradiction action",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{CrossJobContradiction: &config.SignalPolicyOverride{Action: strPtr("")}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.cross_job_contradiction.action", "must be report, human or retire"),
+		Entry("tenant: unknown low_agreement action",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{LowAgreement: &config.SignalPolicyOverride{Action: strPtr("x")}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.low_agreement.action", "must be report, human or retire"),
+		Entry("tenant: unknown conflicts_with action",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{ConflictsWith: &config.SignalPolicyOverride{Action: strPtr("x")}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.conflicts_with.action", "must be report, human or retire"),
+		Entry("tenant: unknown stale_prompt action",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{StalePrompt: &config.SignalPolicyOverride{Action: strPtr("x")}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.stale_prompt.action", "must be report, human or retire"),
+		Entry("tenant: unknown stale_model action",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{StaleModel: &config.SignalPolicyOverride{Action: strPtr("x")}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.stale_model.action", "must be report, human or retire"),
+		Entry("tenant: equivalence_fanout retire",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{EquivalenceFanout: &config.SignalPolicyOverride{Action: strPtr("retire")}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.equivalence_fanout.action", fanoutMsg),
+		Entry("tenant: low_agreement fraction zero",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{LowAgreement: &config.SignalPolicyOverride{MinAgreementFraction: float64Ptr(0)}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.low_agreement.min_agreement_fraction", "must be greater than 0 and at most 1"),
+		Entry("tenant: low_agreement fraction above one",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{LowAgreement: &config.SignalPolicyOverride{MinAgreementFraction: float64Ptr(1.5)}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.low_agreement.min_agreement_fraction", "must be greater than 0 and at most 1"),
+		Entry("tenant: fraction on stale_prompt",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = tenantSignal(config.CleaningSignalOverrides{StalePrompt: &config.SignalPolicyOverride{MinAgreementFraction: float64Ptr(0.5)}})
+			},
+			"cleaning.tenant_overrides.acme-corp.signals.stale_prompt.min_agreement_fraction", "applies only to low_agreement"),
+		Entry("tenant: zero max_retire_per_run",
+			func(c *config.Config) {
+				c.Cleaning.TenantOverrides = map[string]config.CleaningOverride{"acme-corp": {MaxRetirePerRun: intPtr(0)}}
+			},
+			"cleaning.tenant_overrides.acme-corp.max_retire_per_run", "must be positive"),
+	)
+})
+
+func tenantSignal(s config.CleaningSignalOverrides) map[string]config.CleaningOverride {
+	return map[string]config.CleaningOverride{"acme-corp": {Signals: &s}}
+}

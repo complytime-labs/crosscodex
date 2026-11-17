@@ -102,6 +102,10 @@ func New(llm llmclient.Client, prompts prompt.Registry, cfg config.ArtifactsConf
 
 func (a *ArtifactsAnalyzer) Name() string        { return analyzerName }
 func (a *ArtifactsAnalyzer) DependsOn() []string { return []string{} }
+
+// PromptName returns the prompt Aggregate records as Output.Metadata["prompt_name"] (analyzer.Prompted).
+func (a *ArtifactsAnalyzer) PromptName() string { return promptName }
+
 func (a *ArtifactsAnalyzer) ResultSchema() proto.Message {
 	return &pb.AnalysisResult{}
 }

@@ -68,6 +68,8 @@ DROP FUNCTION IF EXISTS public.provision_tenant(text, text);
 DROP TABLE IF EXISTS job_cache_stats;
 DROP TABLE IF EXISTS job_cache_entries;
 DROP TABLE IF EXISTS llm_result_cache;
+DROP TABLE IF EXISTS edge_finding_decisions;
+DROP TABLE IF EXISTS edge_findings;
 DROP TABLE IF EXISTS artifact_pair_verdicts;
 DROP TABLE IF EXISTS retention_holds;
 DROP TABLE IF EXISTS catalog_containers;

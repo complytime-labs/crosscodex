@@ -380,6 +380,24 @@ var _ = Describe("Tenant System", Ordered, func() {
 			Expect(id).To(Equal("acme-corp"))
 			Expect(tenant.UserFromContext(ctx)).To(Equal("bob"))
 		})
+
+		It("WithoutUser drops the user and keeps the tenant", func() {
+			ctx, err := tenant.WithTenant(context.Background(), "acme-corp")
+			Expect(err).NotTo(HaveOccurred())
+			ctx = tenant.WithoutUser(tenant.WithUser(ctx, "bob"))
+
+			Expect(tenant.UserFromContext(ctx)).To(BeEmpty())
+			id, err := tenant.FromContext(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(id).To(Equal("acme-corp"))
+		})
+
+		It("WithoutUser on a context with no user or tenant adds neither", func() {
+			ctx := tenant.WithoutUser(context.Background())
+			Expect(tenant.UserFromContext(ctx)).To(BeEmpty())
+			_, err := tenant.FromContext(ctx)
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+		})
 	})
 })
 

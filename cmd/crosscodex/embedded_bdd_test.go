@@ -221,7 +221,7 @@ var _ = Describe("connectClientWithTLS", func() {
 			ServerCert: "/nonexistent/server.pem",
 			ServerKey:  "/nonexistent/server-key.pem",
 		}
-		client, _, err := connectClientWithTLS("localhost:0", paths)
+		client, _, _, err := connectClientWithTLS("localhost:0", paths)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("read CA cert"))
 		Expect(client).To(BeNil())
@@ -235,7 +235,7 @@ var _ = Describe("connectClientWithTLS", func() {
 		paths := pkiPaths(pkiDir)
 		Expect(os.WriteFile(paths.CACert, []byte("not-valid-pem"), 0o644)).To(Succeed())
 
-		client, _, err := connectClientWithTLS("localhost:0", paths)
+		client, _, _, err := connectClientWithTLS("localhost:0", paths)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("failed to parse CA cert"))
 		Expect(client).To(BeNil())
@@ -249,7 +249,7 @@ var _ = Describe("connectClientWithTLS", func() {
 		paths := pkiPaths(pkiDir)
 		Expect(os.WriteFile(paths.ClientCert, []byte("not-a-cert"), 0o644)).To(Succeed())
 
-		client, _, err := connectClientWithTLS("localhost:0", paths)
+		client, _, _, err := connectClientWithTLS("localhost:0", paths)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("load client cert"))
 		Expect(client).To(BeNil())
@@ -261,7 +261,7 @@ var _ = Describe("connectClientWithTLS", func() {
 		Expect(ensurePKI(pkiDir)).To(Succeed())
 
 		paths := pkiPaths(pkiDir)
-		client, _, err := connectClientWithTLS("localhost:0", paths)
+		client, _, _, err := connectClientWithTLS("localhost:0", paths)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(client).NotTo(BeNil())
 	})

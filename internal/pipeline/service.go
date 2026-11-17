@@ -17,6 +17,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 )
@@ -63,6 +64,7 @@ type Service struct {
 	cacheStore resultcache.Store
 	cacheCfg   config.ResultCacheConfig
 	llmCfg     config.LLMConfig
+	prompts    prompt.Registry
 	probe      llmclient.Client
 
 	// Panel diversity (#260), wired by WithPanelProbe: the client that probes

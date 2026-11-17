@@ -374,6 +374,7 @@ func (f *fakeStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string
 			stage.CompletedAt = nil
 			stage.ErrorMessage = ""
 			stage.CacheAttempt = ""
+			stage.StageRecord = ""
 			stage.RetryCount++
 		}
 	}
@@ -381,7 +382,7 @@ func (f *fakeStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string
 	return nil
 }
 
-func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt string) error {
+func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt, stageRecord string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -399,12 +400,14 @@ func (f *fakeStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerNa
 
 	found := false
 	for _, stage := range stages {
-		if stage.StageName == analyzerName {
-			stage.Status = pipeline.StageStatusCompleted
-			stage.CacheAttempt = cacheAttempt
-			found = true
-			break
+		if stage.StageName != analyzerName {
+			continue
 		}
+		stage.Status = pipeline.StageStatusCompleted
+		stage.CacheAttempt = cacheAttempt
+		stage.StageRecord = stageRecord
+		found = true
+		break
 	}
 	if !found {
 		return pipeline.ErrNotFound
@@ -692,6 +695,29 @@ var _ = Describe("PGStore compile-time check", func() {
 	})
 })
 
+var _ = Describe("PGStore.ResetStagesFrom", func() {
+	It("clears the stage record of every stage it resets, so a rerun is not judged by the old prompt", func() {
+		ctx, err := tenant.WithTenant(context.Background(), "tenant-1")
+		Expect(err).NotTo(HaveOccurred())
+		var resetQueries []string
+		mockDB := &dbtest.Conn{Tx: &dbtest.Tx{
+			ExecFunc: func(ctx context.Context, query string, args ...any) error {
+				if strings.Contains(query, "UPDATE job_stages") {
+					resetQueries = append(resetQueries, query)
+				}
+				return nil
+			},
+		}}
+
+		Expect(pipeline.NewPGStore(mockDB, nil).ResetStagesFrom(ctx, "job-1", "a", []string{"a", "b"})).To(Succeed())
+
+		Expect(resetQueries).To(HaveLen(2))
+		for _, q := range resetQueries {
+			Expect(q).To(ContainSubstring("stage_record = NULL"))
+		}
+	})
+})
+
 var _ = Describe("CompleteAnalysisStage", func() {
 	var (
 		mockDB *dbtest.Conn
@@ -718,7 +744,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "", "")
 		Expect(err).NotTo(HaveOccurred())
 
 		// SET tenant + upsert + stage update, all in the same transaction.
@@ -740,11 +766,32 @@ var _ = Describe("CompleteAnalysisStage", func() {
 					return nil
 				},
 			}
-			Expect(store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), attempt)).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), attempt, "")).To(Succeed())
 			Expect(stageArgs).To(ContainElement(want))
 		},
 		Entry("a sealed attempt", "0b6f2b4e-6c1a-4f43-9b8e-6d2c1f0a9e11", Equal("0b6f2b4e-6c1a-4f43-9b8e-6d2c1f0a9e11")),
 		Entry("no attempt", "", BeNil()),
+	)
+
+	DescribeTable("marks the stage completed with its stage record, or NULL",
+		func(record string, want OmegaMatcher) {
+			var stageQuery string
+			var stageArgs []any
+			mockDB.Tx = &dbtest.Tx{
+				ExecFunc: func(ctx context.Context, query string, args ...any) error {
+					if strings.Contains(query, "job_stages") {
+						stageQuery, stageArgs = query, args
+					}
+					return nil
+				},
+			}
+			Expect(store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "", record)).To(Succeed())
+			Expect(stageQuery).To(ContainSubstring("stage_record = "))
+			Expect(stageArgs).To(ContainElement(want))
+		},
+		Entry("a record", `{"prompt_name":"requires","prompt_version":"1","models":{}}`,
+			Equal(`{"prompt_name":"requires","prompt_version":"1","models":{}}`)),
+		Entry("no record", "", BeNil()),
 	)
 
 	It("rolls back and returns an error when the upsert fails", func() {
@@ -758,7 +805,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "", "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("upserting result"))
 		Expect(mockTx.Rollbacks()).To(Equal(1))
@@ -779,7 +826,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "", "")
 		Expect(err).To(HaveOccurred())
 		Expect(stageUpdated).To(BeFalse())
 	})
@@ -795,13 +842,13 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "", "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("updating stage status"))
 	})
 
 	It("returns an error when jobID is empty", func() {
-		err := store.CompleteAnalysisStage(ctx, "", "requires", []byte(`[]`), "")
+		err := store.CompleteAnalysisStage(ctx, "", "requires", []byte(`[]`), "", "")
 		Expect(err).To(HaveOccurred())
 	})
 
@@ -812,7 +859,7 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		}
 		mockDB.Tx = mockTx
 
-		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "")
+		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "", "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("commit failed"))
 	})

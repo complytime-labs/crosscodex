@@ -341,6 +341,13 @@ CREATE TABLE IF NOT EXISTS job_stages (
     -- runs and for stages that predate it; it survives a resume and is
     -- cleared with the rest of the stage on a reset.
     panel_record TEXT,
+    -- stage_record is the JSON (pkg/cleaning.StageRecord) naming the prompt,
+    -- prompt version and per-alias model revisions that produced an analyzer
+    -- stage's result, written with its completion, so a later cleaning pass
+    -- can tell a verdict from a stale prompt or model. NULL for a stage that
+    -- rendered no prompt and for stages that predate it, which are unknown,
+    -- never stale; cleared with the rest of the stage on a reset.
+    stage_record TEXT,
     PRIMARY KEY (job_id, stage_name)
 );
 
@@ -1146,6 +1153,93 @@ CREATE TRIGGER artifact_pair_verdicts_refuse_truncate
     BEFORE TRUNCATE ON public.artifact_pair_verdicts
     FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_change(
         'artifact_pair_verdicts rows are permanent judgements and are never deleted, so TRUNCATE is refused. To retire a tenant run ''crosscodexd admin tenant delete'' (soft delete); to retire a reviewer run ''crosscodexd admin reviewer delete''.');
+
+-- ============================================================================
+-- Edge cleaning findings and decisions
+-- ============================================================================
+-- edge_findings holds the current state of each finding a cleaning pass
+-- raised over accumulated mapping edges (issue #272). finding_id is
+-- cleaning.FindingID: the hex SHA-256 of the signal and its subject key, the
+-- verdicts the finding concerns or, for stale_prompt and stale_model, the job
+-- named in evidence, so a re-run upserts the row instead of duplicating it.
+-- targets and edge_ids list what a retire removes; for a job-level finding
+-- they grow with the job, so the application bounds them by jsonb's own limit
+-- rather than the evidence bound. The graph is a projection of these rows:
+-- graph_applied is false until a run's or decision's edge changes are written.
+--
+-- edge_finding_decisions is the append-only record of every decision:
+-- decided_by is 'policy' (run_id holds the run's plan token) or a reviewer ID
+-- (run_id NULL); request is the canonical request and attestation its signed
+-- in-toto link, both stored byte for byte.
+--
+-- app_user is a restricted role so that a compromised daemon cannot rewrite
+-- who decided what: it may read, insert and update findings (never delete
+-- them) but only read and append decisions, and the refusal triggers on
+-- edge_finding_decisions hold for every role, the owner included.
+CREATE TABLE IF NOT EXISTS edge_findings (
+    tenant_id      TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE RESTRICT,
+    finding_id     TEXT NOT NULL,
+    signal         TEXT NOT NULL CHECK (signal IN ('equivalence_fanout', 'cross_job_contradiction', 'low_agreement',
+                                                   'conflicts_with', 'stale_prompt', 'stale_model')),
+    source_catalog TEXT NOT NULL,
+    target_catalog TEXT NOT NULL,
+    evidence       JSONB NOT NULL,
+    evidence_hash  TEXT NOT NULL,
+    concerns       JSONB NOT NULL,
+    targets        JSONB NOT NULL,
+    edge_ids       JSONB NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('reported', 'pending', 'retired', 'dismissed', 'restored', 'cleared')),
+    graph_applied  BOOLEAN NOT NULL DEFAULT true,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, finding_id)
+);
+
+ALTER TABLE edge_findings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON edge_findings
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+-- No DELETE: a finding that is no longer detected becomes 'cleared'.
+GRANT SELECT, INSERT, UPDATE ON edge_findings TO app_user;
+
+CREATE TABLE IF NOT EXISTS edge_finding_decisions (
+    tenant_id   TEXT NOT NULL,
+    decision_id TEXT NOT NULL,
+    finding_id  TEXT NOT NULL,
+    verdict     TEXT NOT NULL CHECK (verdict IN ('retire', 'dismiss', 'restore')),
+    decided_by  TEXT NOT NULL,
+    run_id      TEXT,
+    rationale   TEXT NOT NULL,
+    request     BYTEA NOT NULL,
+    attestation BYTEA NOT NULL,
+    decided_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, decision_id),
+    FOREIGN KEY (tenant_id, finding_id) REFERENCES edge_findings (tenant_id, finding_id),
+    -- A policy decision names the run that made it; a reviewer's names none.
+    CONSTRAINT edge_finding_decisions_provenance CHECK ((decided_by = 'policy') = (run_id IS NOT NULL))
+);
+
+-- Serves GetFinding's decision history and the foreign key's checks.
+CREATE INDEX IF NOT EXISTS idx_edge_finding_decisions_finding
+    ON edge_finding_decisions (tenant_id, finding_id, decided_at);
+
+ALTER TABLE edge_finding_decisions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON edge_finding_decisions
+    USING (tenant_id = current_setting('app.current_tenant', true));
+
+-- SELECT and INSERT only: decisions are never changed or removed.
+GRANT SELECT, INSERT ON edge_finding_decisions TO app_user;
+
+CREATE TRIGGER edge_finding_decisions_refuse_update
+    BEFORE UPDATE OR DELETE ON public.edge_finding_decisions
+    FOR EACH ROW EXECUTE FUNCTION public.refuse_change(
+        'edge_finding_decisions is an append-only record of who decided what; rows are never changed or removed. To reverse a decision record a new one (restore reverses a retire).');
+CREATE TRIGGER edge_finding_decisions_refuse_truncate
+    BEFORE TRUNCATE ON public.edge_finding_decisions
+    FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_change(
+        'edge_finding_decisions is an append-only record of who decided what, so TRUNCATE is refused. To reverse a decision record a new one (restore reverses a retire).');
 
 -- ============================================================================
 -- Tenant administration

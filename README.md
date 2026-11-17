@@ -16,6 +16,14 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Edge cleaning (#272):
+
+- **Database.** `job_stages` gains the column `stage_record`, and the new tables `edge_findings` and `edge_finding_decisions` are folded into the baseline migration `001_initial_schema`. A database created by an earlier build must be recreated (`task deploy:down VOLUMES=1`, start the stack, `crosscodexd migrate`); `crosscodexd` refuses to start on the old schema and names the missing column. Re-import your catalogs and re-run your jobs.
+- **New `reviewer` role.** `EdgeCleaningService.DecideFinding` (`crosscodex admin cleaning decide`) needs it; `admin` does not include it. It cannot be granted yet (#232), so decisions are refused in every deployment until then. `RunCleaning` needs `admin`; `ListFindings` and `GetFinding` need `reviewer` or `admin`.
+- **New `cleaning` config section** (`max_retire_per_run`, `signals.<signal>.action`, `signals.low_agreement.min_agreement_fraction`, all tenant-overridable). The defaults report every signal and retire nothing. See [Edge Cleaning](#edge-cleaning-crosscodex-admin-cleaning).
+- **A restored edge has a new ID.** Restoring a retired verdict creates new edges whose IDs derive from the retired edge and the restore decision; the original edge keeps its ID and stays superseded. `mapping_id` in `results` output is still derived from the job and control pair, so it names the original, superseded analyzer edge, not the restored one.
+- **Signing.** `run --apply` and `decide` need `attestation.private_key_path` and `attestation.public_key_path`, even with `attestation.enabled: false`. Role `all` now loads those keys at startup whenever both are set, and refuses to start if they do not load.
+
 Print-artefact clean-up and blank classify skips (#277):
 
 - Embedding text no longer has US Federal Register print artefacts stripped. Before, any line holding `VerDate`, `Jkt <n>`, `PO <5 digits>`, `Frm <n>`, `Fmt <n>`, `Sfmt <n>` or `G:\COMP\` was deleted before embedding, on every catalog and on search queries, so a one-line OSCAL statement such as "see PO 12345" was embedded as empty text. Those statements now embed in full. A new analysis job recomputes the affected embeddings (their cache key covers the text); catalog search embeddings stored by an earlier build keep the old text until the catalog is re-imported.
@@ -1091,6 +1099,75 @@ crosscodex admin hold list --tenant acme
 crosscodex admin hold release --tenant acme --name "litigation-2026-014"
 ```
 
+### Edge Cleaning (`crosscodex admin cleaning`)
+
+Detect redundant, contradictory and stale mapping verdicts, then review them. A verdict is one job's judgement of one control pair, written as `<job>:<source>:<target>`; a finding is what a signal raised about one or more verdicts. Retiring a verdict supersedes its graph edges (sets `valid_to`); nothing is deleted, so as-of queries still show the history. Retiring changes only the graph (the `crosscodex crosswalk` export and graph queries): `crosscodex results`, which reads `vote_summaries`, still lists retired verdicts, unmarked.
+
+Only `crosscodexd` in role `all` serves `EdgeCleaningService`. Against the embedded daemon or a daemon in another role, the commands fail with `Unimplemented`, as the other admin commands do.
+
+```sh
+# 1. Preview (changes nothing). The output ends with the exact apply command.
+crosscodex admin cleaning run --tenant acme
+
+# 2. Apply the previewed plan; the token binds the apply to that plan.
+crosscodex admin cleaning run --apply --expect <token> --tenant acme
+
+#    If the graph write of an apply or decision stopped part-way, finish it.
+#    No token, no catalog scope.
+crosscodex admin cleaning run --resume --tenant acme
+
+# 3. List findings; filter with --signal, --status, --source-catalog with --target-catalog.
+crosscodex admin cleaning findings --tenant acme --status pending
+
+# 4. Read one finding. The output ends with the exact decide command and state token.
+crosscodex admin cleaning show <finding-id> --tenant acme
+
+# 5. Decide with that state token.
+crosscodex admin cleaning decide <finding-id> --verdict dismiss \
+  --rationale "false positive" --expect <state-token> --tenant acme
+```
+
+- **Preview and apply.** `run --apply` recomputes the plan and refuses it, writing nothing, unless its token equals the preview's. The token covers the scope, the tenant's effective cleaning policy and every planned finding with its evidence and edges, so a policy change, or a graph or findings change that alters the plan, refuses the apply: preview again. `--source-catalog` and `--target-catalog` (both or neither) limit a run to one catalog pair, in either direction; pass the same pair to the apply.
+- **Unfinished graph writes.** If the graph write of an apply or decision stops part-way, the command fails with `FailedPrecondition`, saying how many findings were applied to the graph out of how many and to run `run --resume`; a failed decide also says the decision was recorded, so do not decide again. While any recorded change is not yet applied to the graph, preview, apply and decide are refused and tell you to run `run --resume`.
+- **Decide.** `--verdict` is `retire`, `dismiss` or `restore`. `retire` is allowed from `reported`, `pending`, `dismissed` or `restored`; `dismiss` from `reported` or `pending`; `restore` from `retired`. A `cleared` finding takes no decision. `--retire-verdict <job>:<source>:<target>` (repeatable, `retire` only) names which of the finding's verdicts to retire; without it, `retire` removes the verdicts the signal targets, and a finding whose signal targets none (`equivalence_fanout`) needs it. A decision against a finding that changed since `show` is refused: run `show` again and use the new state token. `--rationale` is required and may not be blank.
+- **Stale findings are per job.** `stale_prompt` and `stale_model` raise one finding per job, not per verdict: `show`, `findings` and `run` print the job's catalogs, when it completed and how many of its live verdicts the run read, and the detail lists each stale stage's recorded and current value. Its ID depends only on the signal and the job, so retiring or restoring one of the job's verdicts through another finding does not re-raise a dismissed one; a change to a stale stage or its values does. Under action `retire`, and for a reviewer's `retire`, it removes the job's live verdicts (all of them count against `max_retire_per_run` on a run), or only those `--retire-verdict` names, which must be among them; `restore` recreates exactly what was retired, whatever the job's size.
+- **Restore.** Restoring recreates each retired edge as a new live edge with a new ID, derived from the retired edge and the restore decision; the retired edge stays superseded. See the Upgrading note on `mapping_id`.
+- **Statuses.** `reported` (listed only), `pending` (in the review queue), `retired`, `dismissed`, `restored`, and `cleared` (a later pass over its catalog pair no longer detects it).
+- **Roles.** `run` needs `admin`. `findings` and `show` need `reviewer` or `admin`. `decide` needs `reviewer`, which `admin` does not include, and the caller must be an active reviewer of the tenant (`crosscodexd admin reviewer add`). The `reviewer` role cannot yet be granted, because the daemon does not read `auth.x509_mappings` (#232), so every `decide` is refused with `PermissionDenied` for now.
+- **Signing.** Apply and decide sign what they record as in-toto links with `attestation.private_key_path` and `attestation.public_key_path`, whatever `attestation.enabled` says. With either path empty, apply and decide are refused with a message naming both settings; preview, resume, `findings` and `show` still work. With both set but not loadable as a key pair, `crosscodexd` in role `all` refuses to start.
+- **JSON.** `--json` prints the response with the proto field names (snake_case), including zero counts and empty lists; protojson renders 64-bit integers such as `summary.skipped_edges` as strings.
+
+The policy lives in the `cleaning` config section. Each signal's `action` is `report` (record the finding), `human` (queue it as `pending` for a reviewer) or `retire` (retire its target verdicts on apply). Defaults:
+
+```yaml
+cleaning:
+  max_retire_per_run: 1000        # at least 1; an apply that would retire more verdicts is refused
+  signals:
+    equivalence_fanout:           # a control EQUIVALENT to two or more controls of one other catalog
+      action: report              # report or human; retire is rejected
+    cross_job_contradiction:      # jobs disagree on a pair; targets every verdict but the latest job's
+      action: report
+    low_agreement:                # the panel's agreement_fraction is below the threshold
+      action: report
+      min_agreement_fraction: 0.5 # (0, 1]; valid only on low_agreement
+    conflicts_with:               # a CONFLICTS_WITH verdict
+      action: report
+    stale_prompt:                 # a job stage's prompt version differs from the one the tenant resolves now
+      action: report
+    stale_model:                  # a job stage's panel aliases or llm.model_revisions changed since
+      action: report
+  tenant_overrides:
+    acme:
+      max_retire_per_run: 200
+      signals:
+        conflicts_with:
+          action: human
+```
+
+Every field is tenant-overridable: `max_retire_per_run` and each signal's `action` and `min_agreement_fraction`. An unset override field inherits the global value, and overrides are validated like the globals. A stage that predates recording, or a prompt version unknown on either side, is never stale.
+
+See [Edge Cleaning](docs/dev/cleaning.md) for the signal rules, tokens, write order and the audit record.
+
 ### Database Migration (`crosscodexd migrate`)
 
 `crosscodexd` never migrates. Before the first start, and after every upgrade, run:
@@ -1520,7 +1597,8 @@ recorded in the database's audit log. Without the keys or
   `crosscodexd admin tenant resume` to reactivate it. A hidden tenant must be
   unhidden first.
 - **`reviewer add`:** registers a reviewer so `adjudicate artifacts decide`
-  accepts them. Prints `added`, or `already registered`. A deleted
+  and, once the `reviewer` role can be granted (#232), `crosscodex admin
+  cleaning decide` accept them. Prints `added`, or `already registered`. A deleted
   reviewer is restored with `reviewer restore`, not added again.
 - **`reviewer delete` / `restore`:** a deleted reviewer's verdicts stay, but
   `decide` refuses new ones from them. Restoring makes them active again.

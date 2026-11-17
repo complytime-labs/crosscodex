@@ -23,6 +23,8 @@ This document covers how `crosscodexd` picks a service role at startup, what eac
 
 `config.ResolveRole` validates a requested role name against `config.CanonicalRoles` (`all`, `gateway`, `pipeline`, `worker`, `graph`) and the alias map, returning an error listing every accepted value if the input matches neither.
 
+Only `all` mounts `AdminService` and `EdgeCleaningService` on its gateway server (`attachAllGateway` sets `gateway.ServerConfig.Admin` and `.Cleaning`; `attachGateway` and the embedded daemon set neither), so a client calling them on the `gateway` role or the embedded daemon gets `Unimplemented`. `EdgeCleaningService` gets the same interceptors and `publicErrorInterceptor` as `AdminService`, because `internal/cleaning` returns raw store and graph errors. `attachAllGateway` also builds the cleaning signer from `attestation.private_key_path` and `attestation.public_key_path`, independent of `attestation.enabled`: with either path empty the engine runs without a signer and refuses apply and decide; with both set, keys that do not load stop startup. See [Edge Cleaning](cleaning.md).
+
 ### Aliases: `analysis`, `synthesis`
 
 `analysis` and `synthesis` are deployment-facing names that resolve to the `pipeline` role: both execute synchronously inside `pipeline.Service`, so whichever process actually runs `pipeline.Service` (the standalone `pipeline` role, or `all`) is what executes them. There is no plan to split them into their own NATS-decoupled services — see [complytime-labs/crosscodex#132](https://github.com/complytime-labs/crosscodex/issues/132)'s "out of scope" section.

@@ -43,8 +43,10 @@ type Store interface {
 	// never be marked completed without its result already durably committed,
 	// or a resumed job would skip it forever. cacheAttempt is the
 	// result-cache attempt that sealed the stage (analysis.MetadataCacheAttempt),
-	// stored with the completion; "" stores NULL.
-	CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt string) error
+	// stored with the completion; "" stores NULL. stageRecord is the
+	// cleaning.StageRecord JSON naming the prompt and models behind the
+	// result (Stage.StageRecord), stored the same way; "" stores NULL.
+	CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt, stageRecord string) error
 
 	// GetCompletedAnalysisResults loads persisted analyzer outputs for the
 	// given job and analyzer names. Used to pre-seed a resumed execution's
@@ -711,7 +713,7 @@ func (s *PGStore) GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 
 	query := `
 		SELECT job_id, stage_name, status, started_at, completed_at, retry_count, error_message, tenant_id,
-			COALESCE(cache_attempt, ''), COALESCE(panel_record, '')
+			COALESCE(cache_attempt, ''), COALESCE(panel_record, ''), COALESCE(stage_record, '')
 		FROM job_stages
 		WHERE job_id = $1 AND tenant_id = $2
 		ORDER BY stage_name
@@ -728,7 +730,7 @@ func (s *PGStore) GetStages(ctx context.Context, jobID string) ([]*Stage, error)
 	var stages []*Stage
 	for rows.Next() {
 		var stage Stage
-		if err := rows.Scan(&stage.JobID, &stage.StageName, &stage.Status, &stage.StartedAt, &stage.CompletedAt, &stage.RetryCount, &stage.ErrorMessage, &stage.TenantID, &stage.CacheAttempt, &stage.PanelRecord); err != nil {
+		if err := rows.Scan(&stage.JobID, &stage.StageName, &stage.Status, &stage.StartedAt, &stage.CompletedAt, &stage.RetryCount, &stage.ErrorMessage, &stage.TenantID, &stage.CacheAttempt, &stage.PanelRecord, &stage.StageRecord); err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, fmt.Errorf("PGStore.GetStages: scan failed: %w", err)
@@ -814,7 +816,7 @@ func (s *PGStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, 
 
 	query := `
 		UPDATE job_stages
-		SET status = $1, started_at = NULL, completed_at = NULL, error_message = '', retry_count = retry_count + 1, cache_attempt = NULL, panel_record = NULL
+		SET status = $1, started_at = NULL, completed_at = NULL, error_message = '', retry_count = retry_count + 1, cache_attempt = NULL, panel_record = NULL, stage_record = NULL
 		WHERE job_id = $2 AND stage_name = $3 AND tenant_id = $4
 	`
 
@@ -845,7 +847,7 @@ func (s *PGStore) ResetStagesFrom(ctx context.Context, jobID, fromStage string, 
 	return nil
 }
 
-func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt string) error {
+func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName string, resultData []byte, cacheAttempt, stageRecord string) error {
 	if jobID == "" {
 		return fmt.Errorf("PGStore.CompleteAnalysisStage: %w", ErrInvalidJobID)
 	}
@@ -898,12 +900,16 @@ func (s *PGStore) CompleteAnalysisStage(ctx context.Context, jobID, analyzerName
 	if cacheAttempt != "" {
 		attempt = cacheAttempt
 	}
+	var record any
+	if stageRecord != "" {
+		record = stageRecord
+	}
 	stageQuery := `
 		UPDATE job_stages
-		SET status = $1, completed_at = $2, cache_attempt = $6
+		SET status = $1, completed_at = $2, cache_attempt = $6, stage_record = $7
 		WHERE job_id = $3 AND stage_name = $4 AND tenant_id = $5
 	`
-	if err := tx.Exec(ctx, stageQuery, StageStatusCompleted, time.Now(), jobID, analyzerName, tenantID, attempt); err != nil {
+	if err := tx.Exec(ctx, stageQuery, StageStatusCompleted, time.Now(), jobID, analyzerName, tenantID, attempt, record); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("PGStore.CompleteAnalysisStage: updating stage status: %w", err)

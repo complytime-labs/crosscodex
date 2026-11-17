@@ -6,6 +6,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
+	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 )
 
@@ -39,6 +40,11 @@ func (s *Service) PrepareResultCache(ctx context.Context, job *Job, attestor *At
 		return analysis.CacheSettings{}, err
 	}
 	return s.prepareResultCache(ctx, job, cats, &jobExecution{attestor: attestor, subject: jobSubject(job), dag: dag}, names, controls)
+}
+
+// StageRecordFor bridges stageRecordFor to the external specs.
+func (s *Service) StageRecordFor(name string, output analyzer.Output) (string, error) {
+	return s.stageRecordFor(name, output)
 }
 
 // MaxAttestationObjectBytes exposes maxAttestationObjectBytes, the largest

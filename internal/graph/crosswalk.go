@@ -37,18 +37,6 @@ const (
 // pairKey identifies one (A control, B control) pair.
 type pairKey struct{ a, b string }
 
-// pairVerdicts collects the verdicts on one pair, with the endpoint nodes in
-// the A-to-B reading.
-type pairVerdicts struct {
-	aNode, bNode graphdb.Node
-	// verdicts holds every edge's verdict. A bidirectional job stores the pair
-	// as two edges and contributes both; crosswalk.Merge counts the job once.
-	verdicts []crosswalk.Verdict
-	// critiqueNotes holds the distinct critique notes of the pair's edges,
-	// in the order the edges were read.
-	critiqueNotes []string
-}
-
 // walkedRow is a crosswalk row plus the IDs of every job whose verdict it
 // draws on; provenance job_ids is the union over the rows that survive the
 // filters.
@@ -303,94 +291,38 @@ func crosswalkPage(p *pb.Pagination) (size, offset int, digest string, err error
 // calls fillParents on the rows it returns, so parents cost one lookup per
 // returned control, not per walked control.
 func (s *Service) walkPair(ctx context.Context, tenantID, a, b string, jobs []*pb.CrosswalkJob, stage string, includeNonViable bool) ([]walkedRow, int64, error) {
-	jobByID := make(map[string]*pb.CrosswalkJob, len(jobs))
+	completedAt := make(map[string]time.Time, len(jobs))
 	for _, j := range jobs {
-		jobByID[j.GetJobId()] = j
+		var t time.Time
+		if ts := j.GetCompletedAt(); ts != nil {
+			t = ts.AsTime()
+		}
+		completedAt[j.GetJobId()] = t
 	}
-
-	directions := []struct{ src, tgt string }{{a, b}}
-	if a != b {
-		directions = append(directions, struct{ src, tgt string }{b, a})
-	}
-
-	var skipped int64
-	pairs := map[pairKey]*pairVerdicts{}
-	for _, d := range directions {
-		q := graphdb.RelationshipQuery{
-			EdgeLabel:        results.SemanticMatchEdgeLabel,
-			SourceProperties: map[string]any{"catalog_id": d.src},
-			TargetProperties: map[string]any{"catalog_id": d.tgt},
-		}
-		// Edges written before the stage property existed are analyzer edges,
-		// which an equality filter on the property cannot match.
-		if stage == results.StageSynthesized {
-			q.Properties = map[string]any{results.StageProperty: stage}
-		}
-		rels, err := s.graph.QueryRelationships(ctx, tenantID, q)
-		if err != nil {
-			return nil, 0, fmt.Errorf("query %s edges from %s to %s: %w", results.SemanticMatchEdgeLabel, d.src, d.tgt, err)
-		}
-		reversed := d.src != a
-		for _, rel := range rels {
-			job := jobByID[propString(rel.Edge.Properties, "job_id")]
-			if job == nil || edgeStage(rel.Edge) != stage {
-				continue
-			}
-			// Synthesis rejects some pairs but still stores them; like
-			// results export, serve only the viable ones unless asked.
-			if stage == results.StageSynthesized && !includeNonViable && !propBool(rel.Edge.Properties, "is_viable") {
-				continue
-			}
-			typ := parseRelationshipType(propString(rel.Edge.Properties, "relationship_type"))
-			if typ == pb.RelationshipType_RELATIONSHIP_TYPE_NO_RELATIONSHIP {
-				continue
-			}
-			aNode, bNode := rel.Source, rel.Target
-			if reversed {
-				aNode, bNode = bNode, aNode
-			}
-			if !readableControl(aNode) || !readableControl(bNode) {
-				skipped++
-				continue
-			}
-			key := pairKey{aNode.ID, bNode.ID}
-			pv := pairs[key]
-			if pv == nil {
-				pv = &pairVerdicts{aNode: aNode, bNode: bNode}
-				pairs[key] = pv
-			}
-			var completedAt time.Time
-			if t := job.GetCompletedAt(); t != nil {
-				completedAt = t.AsTime()
-			}
-			pv.verdicts = append(pv.verdicts, crosswalk.Verdict{
-				JobID:       job.GetJobId(),
-				CompletedAt: completedAt,
-				Type:        typ,
-				Confidence:  rel.Edge.Confidence,
-				Reversed:    reversed,
-			})
-			if note := propString(rel.Edge.Properties, results.CritiqueNoteProperty); note != "" && !slices.Contains(pv.critiqueNotes, note) {
-				pv.critiqueNotes = append(pv.critiqueNotes, note)
-			}
-		}
+	pairs, skipped, err := crosswalk.LoadPair(ctx, s.graph, tenantID, crosswalk.PairQuery{
+		A: a, B: b, Jobs: completedAt, Stage: stage, IncludeNonViable: includeNonViable,
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 
 	rows := make([]walkedRow, 0, len(pairs))
-	for _, pv := range pairs {
-		ids := make([]string, len(pv.verdicts))
-		for i, v := range pv.verdicts {
+	for _, pe := range pairs {
+		verdicts := make([]crosswalk.Verdict, len(pe.Verdicts))
+		ids := make([]string, len(pe.Verdicts))
+		for i, v := range pe.Verdicts {
+			verdicts[i] = v.Verdict
 			ids[i] = v.JobID
 		}
 		slices.Sort(ids)
-		merged := crosswalk.Merge(pv.verdicts)
+		merged := crosswalk.Merge(verdicts)
 		word := crosswalk.Word(merged.Type)
 		if merged.Direction == crosswalk.Reverse {
 			word = "reverse: " + word
 		}
-		rows = append(rows, walkedRow{jobs: slices.Compact(ids), critiqueNotes: pv.critiqueNotes, row: &pb.CrosswalkRow{
-			Source:           crosswalkSide(pv.aNode),
-			Target:           crosswalkSide(pv.bNode),
+		rows = append(rows, walkedRow{jobs: slices.Compact(ids), critiqueNotes: pe.CritiqueNotes, row: &pb.CrosswalkRow{
+			Source:           crosswalkSide(pe.A),
+			Target:           crosswalkSide(pe.B),
 			RelationshipType: merged.Type,
 			Relationship:     word,
 			Confidence:       float32(merged.Confidence),
@@ -628,22 +560,6 @@ func lineageOf(chain []graphdb.Node) (parent, parentLabel, breadcrumb string) {
 	return parent, parentLabel, strings.Join(parts, " > ")
 }
 
-// edgeStage reads an edge's stage; an edge without the property is an
-// analyzer edge.
-func edgeStage(e graphdb.Edge) string {
-	if st := propString(e.Properties, results.StageProperty); st != "" {
-		return st
-	}
-	return results.StageAnalyzer
-}
-
-// readableControl reports whether a node carries what a crosswalk row needs: an
-// ID and the control's published identifier. A node without them belongs to a
-// catalog that was re-imported or emptied after the edge was written.
-func readableControl(n graphdb.Node) bool {
-	return n.ID != "" && propString(n.Properties, "identifier") != ""
-}
-
 func crosswalkSide(n graphdb.Node) *pb.CrosswalkSide {
 	return &pb.CrosswalkSide{
 		NodeId:     n.ID,
@@ -653,24 +569,6 @@ func crosswalkSide(n graphdb.Node) *pb.CrosswalkSide {
 		Title:      propString(n.Properties, "title"),
 		Statement:  propString(n.Properties, "statement"),
 	}
-}
-
-// parseRelationshipType reads a stored relationship type, either the bare name
-// ("SUBSET_OF") or the proto enum name. An unknown name yields UNSPECIFIED, so
-// the row is reported rather than dropped.
-func parseRelationshipType(name string) pb.RelationshipType {
-	if v, ok := pb.RelationshipType_value["RELATIONSHIP_TYPE_"+name]; ok {
-		return pb.RelationshipType(v)
-	}
-	if v, ok := pb.RelationshipType_value[name]; ok {
-		return pb.RelationshipType(v)
-	}
-	return pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED
-}
-
-func propBool(props map[string]any, key string) bool {
-	b, _ := props[key].(bool)
-	return b
 }
 
 func propString(props map[string]any, key string) string {

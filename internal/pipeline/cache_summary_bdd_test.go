@@ -132,7 +132,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 		raw, err := cp.Sign(ctx, ref, m.Digest())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cp.Store(ctx, ref, raw)).To(Succeed())
-		Expect(store.CompleteAnalysisStage(ctx, summaryJob, analyzerName, []byte(`[]`), attempt)).To(Succeed())
+		Expect(store.CompleteAnalysisStage(ctx, summaryJob, analyzerName, []byte(`[]`), attempt, "")).To(Succeed())
 		return attempt
 	}
 	// link signs and stores analyzerName's attestation link with the
@@ -147,7 +147,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 			attestation.WithByProducts(map[string]any{"result_cache.mode": mode, "result_cache.reason": reason, "result_cache.attempt": ""}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(objects.Put(ctx, "attestations/test-tenant/"+summaryJob+"/links/"+analyzerName+".json", bytes.NewReader(l.Raw))).To(Succeed())
-		Expect(store.CompleteAnalysisStage(ctx, summaryJob, analyzerName, []byte(`[]`), "")).To(Succeed())
+		Expect(store.CompleteAnalysisStage(ctx, summaryJob, analyzerName, []byte(`[]`), "", "")).To(Succeed())
 	}
 	getJob := func(c context.Context) []*pb.AnalyzerCacheSummary {
 		resp, err := service().GetJob(c, connect.NewRequest(&pb.GetJobRequest{JobId: summaryJob, IncludeCacheSummaries: true}))
@@ -269,10 +269,10 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 			Expect(s.GetOtherProducerJobs()).To(BeZero())
 		},
 		Entry("the attempt it names has no checkpoint", func() {
-			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), uuid.NewString())).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), uuid.NewString(), "")).To(Succeed())
 		}),
 		Entry("it names something that is not an attempt", func() {
-			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), "../links/graph")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), "../links/graph", "")).To(Succeed())
 		}),
 		Entry("its checkpoint is signed by a key the daemon no longer trusts", func() {
 			kp, err := attestation.NewEphemeralKeyProvider()
@@ -306,15 +306,15 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 			raw, err := cp.Sign(ctx, ref, m.Digest())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cp.Store(ctx, ref, raw)).To(Succeed())
-			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), attempt)).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), attempt, "")).To(Succeed())
 		}),
 		Entry("it kept no records and the stopped job has no link for it", func() {
-			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), "", "")).To(Succeed())
 			Expect(store.UpdateJobStatus(ctx, summaryJob, pipeline.JobStatusFailed, errors.New("stopped"))).To(Succeed())
 		}),
 		Entry("its link pins a result other than the one stored now", func() {
 			link("classify", "disabled", "off for the tenant")
-			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[{"replaced":true}]`), "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[{"replaced":true}]`), "", "")).To(Succeed())
 		}),
 		Entry("its link records no mode", func() { link("classify", "", "") }),
 		Entry("its link records a cached mode, though the stage names no sealing attempt", func() {
@@ -323,7 +323,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 	)
 
 	It("shows a completed stage that kept no records as in progress while the job runs and its link is not signed yet", func() {
-		Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), "")).To(Succeed())
+		Expect(store.CompleteAnalysisStage(ctx, summaryJob, "classify", []byte(`[]`), "", "")).To(Succeed())
 		s := summaryOf(getJob(ctx), "classify")
 		Expect(s.GetAttestation()).To(Equal(pb.ResultCacheAttestation_RESULT_CACHE_ATTESTATION_IN_PROGRESS))
 		Expect(s.GetMode()).To(Equal(pb.ResultCacheMode_RESULT_CACHE_MODE_UNSPECIFIED))
