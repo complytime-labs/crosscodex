@@ -1,0 +1,22 @@
+pkg/cleaning/graphops_integration_bdd_test.go
+  s_b8a4839fe7391f::t_90706d702ffc80 1-7,9-112,124-172
+  s_b8a4839fe7391f::t_cf4f286f4664fb 8,113-123
+.taskfiles/test/integration.yml
+  s_b8a4839fe7391f::t_7a53be2b3964ae 244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "83b189f30048bccfd23eded0d4d169ab9f006d99",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
