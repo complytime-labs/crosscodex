@@ -1,0 +1,81 @@
+api/proto/crosscodex/v1/cleaning.proto
+  s_b8a4839fe7391f::t_69f6bdae27f573 230-247,254-255,258-260,262-264,269-270
+  s_b8a4839fe7391f::t_33dedfea8f78fa 372-375
+pkg/cleaning/plan.go
+  s_b8a4839fe7391f::t_0beec6fb6283f2 139-143,145-148,150-152,165-171,178-180,234-235,237-239,264-267,270-273,334-340,367-369
+pkg/db/migrations/001_initial_schema.up.sql
+  s_b8a4839fe7391f::t_9e565b2f25eb4d 1162-1168
+pkg/cleaning/plan_bdd_test.go
+  s_b8a4839fe7391f::t_acf4d440fbab1d 58-75,77
+  s_b8a4839fe7391f::t_cb8ddd197c53c9 407-427
+  s_b8a4839fe7391f::t_87f52e43b7d338 7-8
+  s_b8a4839fe7391f::t_17c90108130b5d 484-574
+  s_b8a4839fe7391f::t_741ec7e023a152 330
+  s_b8a4839fe7391f::t_7a8d8e930c6e7e 272-329,331-336
+cmd/crosscodex/admin_cleaning_bdd_test.go
+  s_b8a4839fe7391f::t_8d36f5b8585425 6,8,74-89,149-157,268-274,324-330
+  s_b8a4839fe7391f::t_19d4ef6b1e54bd 331-332
+internal/cleaning/convert.go
+  s_b8a4839fe7391f::t_1dc7ea0b16835b 97-102
+pkg/cleaning/cleaningtest/cleaningtest_bdd_test.go
+  s_b8a4839fe7391f::t_ffc4cd5556edf4 143-153
+pkg/cleaning/store.go
+  s_b8a4839fe7391f::t_0beec6fb6283f2 12-27,31-34,176-183,191-204,221-237,239-248,253-255
+pkg/cleaning/store_pg.go
+  s_b8a4839fe7391f::t_741ec7e023a152 131-137,178,181,184-185,647-649
+pkg/cleaning/cleaningtest/contract.go
+  s_b8a4839fe7391f::t_ddfadfb24c5d63 527,529-530,681-683
+  s_b8a4839fe7391f::t_4be15db9b2b605 303-309
+  s_b8a4839fe7391f::t_f5966773d27497 380-387
+  s_b8a4839fe7391f::t_6b4d812a8f5bac 398-399
+  s_b8a4839fe7391f::t_d21072e80ffe9f 67-77,85,87
+  s_b8a4839fe7391f::t_7c16a43a8ff4e2 50-52
+pkg/cleaning/engine_decide.go
+  s_b8a4839fe7391f::t_9e13a14d24c883 21-24,99,186-199,202,210,218-223,227,234-256,258-264
+pkg/cleaning/detect.go
+  s_b8a4839fe7391f::t_6ace2188a76da5 28-30,33-34,37-44,46-48,87-90,131,138-145,319,328-346
+  s_b8a4839fe7391f::t_b487a883dfecd4 347
+pkg/cleaning/cleaningtest/fake.go
+  s_b8a4839fe7391f::t_38d1d6578423b8 429-432
+cmd/crosscodex/admin_cleaning.go
+  s_b8a4839fe7391f::t_3ec4c3546b9a8d 419-425,439-441,473-475,511-515
+  s_b8a4839fe7391f::t_d550c696ca5a50 290-292
+pkg/cleaning/cleaning_property_test.go
+  s_b8a4839fe7391f::t_24226555ff949b 161-171
+  s_b8a4839fe7391f::t_ed90c92ac78cc9 273-298
+pkg/cleaning/verdict.go
+  s_b8a4839fe7391f::t_63d525a8facff9 75-76,82-95,115-118,120-121,124-139,162-163,182-184,186
+  s_b8a4839fe7391f::t_fafe0cd88e413e 185
+pkg/cleaning/export_test.go
+  s_b8a4839fe7391f::t_741ec7e023a152 4-6
+internal/cleaning/service.go
+  s_b8a4839fe7391f::t_1dc7ea0b16835b 278
+internal/cleaning/service_bdd_test.go
+  s_b8a4839fe7391f::t_9775ace1792e2a 371-399,793
+pkg/cleaning/cleaning_fuzz_test.go
+  s_b8a4839fe7391f::t_90d883724159a5 77-78
+pkg/cleaning/detect_bdd_test.go
+  s_b8a4839fe7391f::t_bb43da10593959 515-527,539-540,545-554
+  s_b8a4839fe7391f::t_63cafa124248d3 312
+  s_b8a4839fe7391f::t_d43be3ffb44bca 329-335,337-341
+  s_b8a4839fe7391f::t_4f2458bc1b24a9 292-297
+pkg/cleaning/engine_stale_bdd_test.go
+  s_b8a4839fe7391f::t_442d7e75869c41 9,181,280
+  s_b8a4839fe7391f::t_110f1c6e285fd9 1-8,10-180,182-279,281-295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1b930e33476e4cc681d0c7bfa3b5065a336ea2fe",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
