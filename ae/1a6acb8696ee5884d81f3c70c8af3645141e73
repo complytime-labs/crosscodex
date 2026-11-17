@@ -1,0 +1,26 @@
+docs/dev/design-principles.md
+  s_b8a4839fe7391f::t_6588102b0b6a05 103
+docs/dev/cleaning.md
+  s_b8a4839fe7391f::t_26e701a452d448 317-331
+  s_b8a4839fe7391f::t_18056299cbbc02 34-38
+  s_b8a4839fe7391f::t_7c793f460732c0 229-230,247-254,261-264
+README.md
+  s_b8a4839fe7391f::t_85670a091e3b7c 1104
+  s_b8a4839fe7391f::t_937a6bcbc5b3cb 1131-1132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ae1a6acb8696ee5884d81f3c70c8af3645141e73",
+  "prompts": {},
+  "sessions": {
+    "s_b8a4839fe7391f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "010fd510-a3d0-4095-b80a-407516399056",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
