@@ -67,4 +67,24 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 	})
+
+	Context("WithoutUser", func() {
+		It("drops any user and keeps any tenant", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				id := rapid.StringMatching(`[a-z][a-z0-9-]{1,50}[a-z0-9]`).Draw(t, "tenant-id")
+				user := rapid.String().Draw(t, "user")
+				ctx, err := tenant.WithTenant(context.Background(), id)
+				if err != nil {
+					t.Fatalf("WithTenant(%q): %v", id, err)
+				}
+				ctx = tenant.WithoutUser(tenant.WithUser(ctx, user))
+				if got := tenant.UserFromContext(ctx); got != "" {
+					t.Fatalf("user %q survived WithoutUser as %q", user, got)
+				}
+				if got, err := tenant.FromContext(ctx); err != nil || got != id {
+					t.Fatalf("tenant after WithoutUser = %q, %v; want %q", got, err, id)
+				}
+			})
+		})
+	})
 })

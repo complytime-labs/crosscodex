@@ -119,6 +119,8 @@ var baselineColumns = []struct{ table, column string }{
 	{"catalog_containers", "container_key"},
 	{"catalog_containers", "label"},
 	{"controls", "container_key"},
+	{"edge_findings", "finding_id"},
+	{"edge_finding_decisions", "decision_id"},
 }
 
 // baselineFunctionColumns are result columns of set-returning functions

@@ -34,6 +34,13 @@ func WithUser(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, userKey{}, userID)
 }
 
+// WithoutUser returns a context carrying ctx's tenant and values but no user:
+// UserFromContext returns "" for it. Use it only where a read is tenant-wide
+// by contract and the per-user row filter must not apply.
+func WithoutUser(ctx context.Context) context.Context {
+	return context.WithValue(ctx, userKey{}, "")
+}
+
 // UserFromContext extracts the user ID from the context.
 // Returns an empty string if no user is present — user is optional.
 func UserFromContext(ctx context.Context) string {
