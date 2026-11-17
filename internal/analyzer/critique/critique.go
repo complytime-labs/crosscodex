@@ -107,6 +107,9 @@ func New(llm llmclient.Client, prompts prompt.Registry, verdicts VerdictProvider
 // Name returns "critique".
 func (a *CritiqueAnalyzer) Name() string { return analyzerName }
 
+// PromptName returns the prompt Aggregate records as Output.Metadata["prompt_name"] (analyzer.Prompted).
+func (a *CritiqueAnalyzer) PromptName() string { return promptName }
+
 // DependsOn returns the analyzers set by WithDependencies: the enabled ones
 // among relationship and requires.
 func (a *CritiqueAnalyzer) DependsOn() []string { return slices.Clone(a.dependsOn) }

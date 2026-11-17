@@ -25,6 +25,9 @@ type DBStageReporter struct {
 	store  Store
 	logger *slog.Logger
 	tracer trace.Tracer
+	// recordStage builds the stage record stored with a completion, set by
+	// WithStageReporter. Nil stores none.
+	recordStage func(analyzerName string, output analyzer.Output) (string, error)
 }
 
 // NewDBStageReporter creates a DBStageReporter that writes to both DB and NATS.
@@ -136,7 +139,16 @@ func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName
 	if len(resultData) == 0 {
 		resultData = []byte("null")
 	}
-	if err := r.store.CompleteAnalysisStage(ctx, jobID, analyzerName, resultData, output.Metadata[analysis.MetadataCacheAttempt]); err != nil {
+	var stageRecord string
+	if r.recordStage != nil {
+		var err error
+		if stageRecord, err = r.recordStage(analyzerName, *output); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return fmt.Errorf("pipeline.ReportStageCompleted: recording the prompt and models of stage %s: %w. The stage fails; correct that, then resume the job", analyzerName, err)
+		}
+	}
+	if err := r.store.CompleteAnalysisStage(ctx, jobID, analyzerName, resultData, output.Metadata[analysis.MetadataCacheAttempt], stageRecord); err != nil {
 		r.logger.ErrorContext(ctx, "failed to persist analysis result",
 			"analyzer", analyzerName, "job_id", jobID, "error", err)
 		span.RecordError(err)

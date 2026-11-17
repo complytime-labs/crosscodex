@@ -341,6 +341,13 @@ CREATE TABLE IF NOT EXISTS job_stages (
     -- runs and for stages that predate it; it survives a resume and is
     -- cleared with the rest of the stage on a reset.
     panel_record TEXT,
+    -- stage_record is the JSON (pkg/cleaning.StageRecord) naming the prompt,
+    -- prompt version and per-alias model revisions that produced an analyzer
+    -- stage's result, written with its completion, so a later cleaning pass
+    -- can tell a verdict from a stale prompt or model. NULL for a stage that
+    -- rendered no prompt and for stages that predate it, which are unknown,
+    -- never stale; cleared with the rest of the stage on a reset.
+    stage_record TEXT,
     PRIMARY KEY (job_id, stage_name)
 );
 

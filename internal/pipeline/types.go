@@ -73,6 +73,10 @@ type Stage struct {
 	// analyzer stage (see panelRecord), or "" before it ran or for a stage
 	// that predates it.
 	PanelRecord string
+	// StageRecord is the JSON (cleaning.StageRecord) naming the prompt and
+	// model revisions that produced the stage's result, or "" for a stage
+	// that rendered no prompt, has not completed, or predates the record.
+	StageRecord string
 }
 
 type JobFilter struct {

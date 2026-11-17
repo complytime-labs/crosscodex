@@ -1981,8 +1981,8 @@ var _ = Describe("Executor", func() {
 			// embedding durably (job_stages row + analysis_results row) before
 			// crashing. A fresh executeJob (this call to svc.Start) must treat
 			// them as already done, not re-dispatch them.
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`), "")).To(Succeed())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`), "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`), "", "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`), "", "")).To(Succeed())
 
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -2070,13 +2070,13 @@ var _ = Describe("Executor", func() {
 			// embedding, requires, and relationship durably (requires and
 			// relationship with real result payloads) before crashing.
 			// artifacts did not finish before the crash.
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`), "")).To(Succeed())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`), "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", []byte(`[]`), "", "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "embedding", []byte(`[]`), "", "")).To(Succeed())
 			requiresJSON, err := json.Marshal([]results.RequiresResult{
 				{SourceID: "AC-1", TargetID: "AC-2", Confidence: 0.9},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "requires", requiresJSON, "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "requires", requiresJSON, "", "")).To(Succeed())
 			relJSON, err := json.Marshal([]results.SemanticMatchResult{
 				{SourceID: "AC-1", TargetID: "AC-2", RelationshipType: "supports", Confidence: 0.8,
 					Properties: map[string]string{
@@ -2085,7 +2085,7 @@ var _ = Describe("Executor", func() {
 					}},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(store.CompleteAnalysisStage(ctx, jobID, "relationship", relJSON, "")).To(Succeed())
+			Expect(store.CompleteAnalysisStage(ctx, jobID, "relationship", relJSON, "", "")).To(Succeed())
 
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -2160,7 +2160,7 @@ var _ = Describe("Executor", func() {
 			complete := func(name string, v any) {
 				data, err := json.Marshal(v)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(store.CompleteAnalysisStage(ctx, jobID, name, data, "")).To(Succeed())
+				Expect(store.CompleteAnalysisStage(ctx, jobID, name, data, "", "")).To(Succeed())
 			}
 			complete("classify", []results.ClassifyResult{})
 			complete("embedding", []results.EmbedResult{})
@@ -2629,7 +2629,7 @@ var _ = Describe("Executor", func() {
 				Expect(store.CreateJob(ctx, job)).To(Succeed())
 				Expect(store.CreateStages(ctx, jobID, []string{"classify", "candidate_generation", "requires", "relationship", "synthesis", "graph"})).To(Succeed())
 				if resumed {
-					Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", classifyResult, "")).To(Succeed())
+					Expect(store.CompleteAnalysisStage(ctx, jobID, "classify", classifyResult, "", "")).To(Succeed())
 				}
 
 				runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

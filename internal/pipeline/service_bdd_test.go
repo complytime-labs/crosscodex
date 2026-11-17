@@ -1348,7 +1348,7 @@ var _ = Describe("Service", func() {
 			// analyzer writes.
 			Expect(store.CompleteAnalysisStage(ctx, "job-corrupt-rel", "relationship", []byte(
 				`[{"source_id":"AC-1","target_id":"AC-2","relationship_type":"CONTRIBUTES_TO","confidence":0.9,`+
-					`"properties":{"contribution_type":"BOGUS","unanimous":"true"}}]`), "")).To(Succeed())
+					`"properties":{"contribution_type":"BOGUS","unanimous":"true"}}]`), "", "")).To(Succeed())
 			Expect(store.UpdateStageStatus(ctx, "job-corrupt-rel", "synthesis", pipeline.StageStatusFailed)).To(Succeed())
 
 			_, err = corruptSvc.RetryJob(ctx, connect.NewRequest(&pb.RetryJobRequest{

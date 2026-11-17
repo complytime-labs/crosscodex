@@ -682,6 +682,8 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		pipeline.WithEmbeddingsReader(pipeline.NewPGEmbeddingsReader(tenantConn, pipeline.WithPGEmbeddingsReaderTelemetry(tp, mp))),
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
 		pipeline.WithTelemetry(tp, mp),
+		pipeline.WithPromptRegistry(prompts),
+		pipeline.WithStageReporter(dbReporter),
 	}, probeOpts...)
 	return pipeline.New(
 		store, engine, registry, synth, attestors, converter, shared.natsClient, storageProvider,

@@ -482,6 +482,17 @@ var _ = Describe("ArtifactsAnalyzer", func() {
 	})
 
 	Describe("Aggregate", func() {
+		It("names the prompt its Aggregate records as prompt_name", func() {
+			a = artifacts.New(nil, nil, cfg)
+			ctx, err := tenant.WithTenant(context.Background(), "test-tenant")
+			Expect(err).NotTo(HaveOccurred())
+
+			output, err := a.Aggregate(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(a.PromptName()).To(Equal(output.Metadata["prompt_name"]))
+			Expect(a.PromptName()).NotTo(BeEmpty())
+		})
+
 		It("counts results and includes metadata", func() {
 			a = artifacts.New(nil, nil, cfg)
 			ctx, err := tenant.WithTenant(context.Background(), "test-tenant")

@@ -433,6 +433,13 @@ var _ = Describe("CritiqueAnalyzer", func() {
 			Expect(decoded(out)[0].Vetoed).To(BeFalse())
 		})
 
+		It("names the prompt its Aggregate records as prompt_name", func() {
+			out, err := a.Aggregate(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(a.PromptName()).To(Equal(out.Metadata["prompt_name"]))
+			Expect(a.PromptName()).NotTo(BeEmpty())
+		})
+
 		It("produces an empty result for no task results", func() {
 			out, err := a.Aggregate(ctx, nil)
 			Expect(err).NotTo(HaveOccurred())

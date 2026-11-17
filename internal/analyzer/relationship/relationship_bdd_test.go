@@ -379,6 +379,13 @@ var _ = Describe("RelationshipAnalyzer", func() {
 			Expect(output.Metadata).To(HaveKey("prompt_name"))
 		})
 
+		It("names the prompt its Aggregate records as prompt_name", func() {
+			output, err := a.Aggregate(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(a.PromptName()).To(Equal(output.Metadata["prompt_name"]))
+			Expect(a.PromptName()).NotTo(BeEmpty())
+		})
+
 		// It verifies that Aggregate computes consensus per pair and
 		// JSON-encodes the surviving pairs into Output.ResultData, in the
 		// shape the graph subscriber expects (results.SemanticMatchResult).

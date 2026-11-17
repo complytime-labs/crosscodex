@@ -124,6 +124,9 @@ func New(llm llmclient.Client, prompts prompt.Registry, candidates CandidateProv
 // Name returns "requires".
 func (a *RequiresAnalyzer) Name() string { return analyzerName }
 
+// PromptName returns the prompt Aggregate records as Output.Metadata["prompt_name"] (analyzer.Prompted).
+func (a *RequiresAnalyzer) PromptName() string { return promptName }
+
 // DependsOn returns ["embedding"] -- requires analysis needs embedding
 // similarity results to determine candidate prerequisite pairs.
 func (a *RequiresAnalyzer) DependsOn() []string { return []string{"embedding"} }

@@ -29,3 +29,22 @@ func AsPanelled(ra RegisteredAnalyzer) (Panelled, bool) {
 	p, ok := ra.(Panelled)
 	return p, ok
 }
+
+// Prompted is the optional interface an analyzer implements when its Aggregate
+// reports the prompt it rendered. PromptName is the registry name of that
+// prompt, equal to the Output.Metadata["prompt_name"] its Aggregate writes.
+// Implementations must be safe for concurrent use.
+type Prompted interface {
+	PromptName() string
+}
+
+// AsPrompted returns ra's analyzer as a Prompted, and false when it renders
+// no prompt. It sees through the registry's wrapper.
+func AsPrompted(ra RegisteredAnalyzer) (Prompted, bool) {
+	if u, ok := ra.(unwrapper); ok {
+		p, ok := u.unwrap().(Prompted)
+		return p, ok
+	}
+	p, ok := ra.(Prompted)
+	return p, ok
+}

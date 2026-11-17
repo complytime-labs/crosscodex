@@ -69,6 +69,9 @@ func New(llm llmclient.Client, prompts prompt.Registry, cfg config.Classificatio
 // Name returns "classify".
 func (a *ClassifyAnalyzer) Name() string { return analyzerName }
 
+// PromptName returns the prompt Aggregate records as Output.Metadata["prompt_name"] (analyzer.Prompted).
+func (a *ClassifyAnalyzer) PromptName() string { return promptName }
+
 // DependsOn returns nil -- classification has no upstream dependencies.
 func (a *ClassifyAnalyzer) DependsOn() []string { return nil }
 

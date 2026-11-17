@@ -8,6 +8,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 )
 
@@ -82,6 +83,29 @@ func WithResultCache(store resultcache.Store, cfg config.ResultCacheConfig, llm 
 func WithPanelProbe(c PanelProbeClient) Option {
 	return func(s *Service) {
 		s.panelProbe = c
+	}
+}
+
+// WithPromptRegistry wires the prompt registry CurrentStageRecord resolves each
+// stage's prompt version from, so a cleaning pass can tell a stage produced by
+// a stale prompt. Wiring contract: cmd/crosscodexd passes the same registry it
+// gives NewProductionRegistry, so the version read here is the one the
+// analyzers record. Without it CurrentStageRecord returns an error for a stage
+// that renders a prompt; a missing registry never reads as "unknown".
+func WithPromptRegistry(r prompt.Registry) Option {
+	return func(s *Service) {
+		s.prompts = r
+	}
+}
+
+// WithStageReporter makes r store, with each analyzer stage it completes, the
+// stage record built from this Service (stageRecordFor): the prompt, its
+// version and the panel's model revisions. cmd/crosscodexd passes the reporter
+// it gave the engine; a reporter not wired here stores no record, so every
+// stage reads as unknown to a cleaning pass.
+func WithStageReporter(r *DBStageReporter) Option {
+	return func(s *Service) {
+		r.recordStage = s.stageRecordFor
 	}
 }
 
