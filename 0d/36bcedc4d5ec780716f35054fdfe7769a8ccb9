@@ -1,0 +1,27 @@
+pkg/oscal/convert.go
+  s_bfef2db2a67c3d::t_e07cd2b183e640 27-28,33-46,54-56
+pkg/oscal/oscal_bdd_test.go
+  s_bfef2db2a67c3d::t_796c86471aea27 331-340
+pkg/oscal/oscal_withdrawn_bdd_test.go
+  s_bfef2db2a67c3d::t_796c86471aea27 45-54,71-75
+pkg/oscal/oscal_fuzz_test.go
+  s_bfef2db2a67c3d::t_796c86471aea27 20
+pkg/oscal/params.go
+  s_bfef2db2a67c3d::t_e07cd2b183e640 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0d36bcedc4d5ec780716f35054fdfe7769a8ccb9",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
