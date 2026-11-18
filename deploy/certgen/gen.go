@@ -22,15 +22,9 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
@@ -51,10 +45,10 @@ func main() {
 			IPs:                ips,
 			MinRemaining:       24 * time.Hour,
 			RequireFingerprint: true,
-			VerifyExtra:        verifyAttestationKeypair,
+			VerifyExtra:        testcerts.VerifyAttestationKeypair,
 		},
 		Generate:   generate,
-		WriteExtra: writeAttestationKeypair,
+		WriteExtra: testcerts.WriteAttestationKeypair,
 	}
 
 	if len(os.Args) == 3 && os.Args[1] == "--verify" {
@@ -101,75 +95,4 @@ func generate() (*testcerts.PKI, error) {
 		ClientCert: bundle.Client.CertPEM,
 		ClientKey:  bundle.Client.KeyPEM,
 	}, nil
-}
-
-// writeAttestationKeypair generates the ECDSA P-256 in-toto attestation
-// signing keypair the pipeline role requires and writes it alongside the TLS
-// PKI. attestation-key.pem holds the SEC1 "EC PRIVATE KEY" that
-// attestation.FileKeyProvider parses with x509.ParseECPrivateKey;
-// attestation-pub.pem holds the PKIX "PUBLIC KEY" it parses with
-// x509.ParsePKIXPublicKey. The "-key.pem" suffix makes deploy:certs:load apply
-// the same group-read-only 0640 mode it uses for the TLS private keys. These
-// keys are deliberately outside testcerts' fingerprint: they are only ever
-// written together with a new CA (which changes the fingerprint and forces a
-// reload), and verifyAttestationKeypair guards their presence and pairing.
-func writeAttestationKeypair(dir string) error {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("generate attestation key: %w", err)
-	}
-
-	privDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return fmt.Errorf("marshal attestation private key: %w", err)
-	}
-	privPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER})
-	if err := os.WriteFile(filepath.Join(dir, "attestation-key.pem"), privPEM, 0o600); err != nil {
-		return fmt.Errorf("write attestation private key: %w", err)
-	}
-
-	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	if err != nil {
-		return fmt.Errorf("marshal attestation public key: %w", err)
-	}
-	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
-	if err := os.WriteFile(filepath.Join(dir, "attestation-pub.pem"), pubPEM, 0o644); err != nil {
-		return fmt.Errorf("write attestation public key: %w", err)
-	}
-
-	return nil
-}
-
-// verifyAttestationKeypair checks both attestation files parse the way
-// attestation.FileKeyProvider parses them and hold the same key.
-func verifyAttestationKeypair(dir string) error {
-	privPEM, err := os.ReadFile(filepath.Join(dir, "attestation-key.pem"))
-	if err != nil {
-		return fmt.Errorf("read attestation-key.pem: %w", err)
-	}
-	privBlock, _ := pem.Decode(privPEM)
-	if privBlock == nil {
-		return fmt.Errorf("attestation-key.pem: not valid PEM")
-	}
-	key, err := x509.ParseECPrivateKey(privBlock.Bytes)
-	if err != nil {
-		return fmt.Errorf("attestation-key.pem: parse: %w", err)
-	}
-
-	pubPEM, err := os.ReadFile(filepath.Join(dir, "attestation-pub.pem"))
-	if err != nil {
-		return fmt.Errorf("read attestation-pub.pem: %w", err)
-	}
-	pubBlock, _ := pem.Decode(pubPEM)
-	if pubBlock == nil {
-		return fmt.Errorf("attestation-pub.pem: not valid PEM")
-	}
-	pub, err := x509.ParsePKIXPublicKey(pubBlock.Bytes)
-	if err != nil {
-		return fmt.Errorf("attestation-pub.pem: parse: %w", err)
-	}
-	if !key.PublicKey.Equal(pub) {
-		return fmt.Errorf("attestation-pub.pem does not match attestation-key.pem")
-	}
-	return nil
 }
