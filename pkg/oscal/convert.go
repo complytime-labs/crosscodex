@@ -24,11 +24,26 @@ const (
 
 // withdrawnProps returns the Props of a withdrawn control: PropStatus plus the
 // incorporated-into / moved-to targets. It returns nil for any other control.
+// A control is withdrawn when its status prop or its class is "withdrawn"
+// (any case), or when it has a moved-to link and no prose in any part.
 // NIST spells the OSCAL status "Withdrawn" (SP 800-53 r4) and "withdrawn"
 // (r5, SP 800-171 r3), link rels with "-" or "_" and hrefs with or without a
 // leading "#"; all are normalised.
 func withdrawnProps(ctrl oscalTypes.Control) map[string]string {
-	withdrawn := false
+	targets := map[string][]string{}
+	if ctrl.Links != nil {
+		for _, l := range *ctrl.Links {
+			rel := strings.ReplaceAll(l.Rel, "_", "-")
+			if rel != PropIncorporatedInto && rel != PropMovedTo {
+				continue
+			}
+			if id := strings.TrimPrefix(l.Href, "#"); id != "" {
+				targets[rel] = append(targets[rel], id)
+			}
+		}
+	}
+
+	withdrawn := strings.EqualFold(strings.TrimSpace(ctrl.Class), PropStatusWithdrawn)
 	if ctrl.Props != nil {
 		for _, p := range *ctrl.Props {
 			if p.Name == PropStatus && strings.EqualFold(strings.TrimSpace(p.Value), PropStatusWithdrawn) {
@@ -36,24 +51,14 @@ func withdrawnProps(ctrl oscalTypes.Control) map[string]string {
 			}
 		}
 	}
+	if len(targets[PropMovedTo]) > 0 && (ctrl.Parts == nil || !slices.ContainsFunc(*ctrl.Parts, hasProse)) {
+		withdrawn = true
+	}
 	if !withdrawn {
 		return nil
 	}
 
 	props := map[string]string{PropStatus: PropStatusWithdrawn}
-	if ctrl.Links == nil {
-		return props
-	}
-	targets := map[string][]string{}
-	for _, l := range *ctrl.Links {
-		rel := strings.ReplaceAll(l.Rel, "_", "-")
-		if rel != PropIncorporatedInto && rel != PropMovedTo {
-			continue
-		}
-		if id := strings.TrimPrefix(l.Href, "#"); id != "" {
-			targets[rel] = append(targets[rel], id)
-		}
-	}
 	for rel, ids := range targets {
 		props[rel] = strings.Join(ids, ",")
 	}

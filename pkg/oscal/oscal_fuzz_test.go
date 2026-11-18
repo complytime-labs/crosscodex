@@ -17,6 +17,7 @@ func FuzzCleanProse(f *testing.F) {
 	f.Add("{{ insert: param, missing-id }}")
 	f.Add("Multiple {{ insert: param, a }} and {{ insert: param, b }}.")
 	f.Add("Unmatched }} brace is fine")
+	f.Add("{{ insert: param, pé }} and {{ insert: param, 参数1 }}")
 
 	f.Fuzz(func(t *testing.T, text string) {
 		// Must not panic; params=nil is a valid call
