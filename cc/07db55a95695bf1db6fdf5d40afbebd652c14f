@@ -1,0 +1,27 @@
+README.md
+  s_c26452eb943603::t_bdfd2fdf380759 749
+internal/analysis/collector.go
+  s_c26452eb943603::t_31e5eb42286539 709-717,725,727,729
+internal/analysis/collector_bdd_test.go
+  s_c26452eb943603::t_28ba01f52c3ad3 6,267,806-820
+internal/analysis/export_test.go
+  s_c26452eb943603::t_45550345c69e02 3-5
+internal/analysis/reporter.go
+  s_c26452eb943603::t_9bc1b63f4b426d 154-165,168-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "cc07db55a95695bf1db6fdf5d40afbebd652c14f",
+  "prompts": {},
+  "sessions": {
+    "s_c26452eb943603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae5269ee9f77f11f0",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
