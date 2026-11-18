@@ -1,0 +1,43 @@
+README.md
+  s_bfef2db2a67c3d::t_719516b7fd5e27 563,566-570
+cmd/crosscodexd/bootstrap.go
+  s_bfef2db2a67c3d::t_ce388e14b8a53a 250-251,259-260,305,623-653,657-659,673-674,685
+cmd/crosscodexd/bootstrap_bdd_test.go
+  s_bfef2db2a67c3d::t_678b44aa9e2a57 16,25-28,63,66,74-79,81-208,223
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_bfef2db2a67c3d::t_a62b3ee0badfea 179-180
+internal/pipeline/executor_bdd_test.go
+  s_bfef2db2a67c3d::t_b3ee34357ffb1b 1241-1266
+pkg/config/config_bdd_test.go
+  s_bfef2db2a67c3d::t_cdbc4e7b2b1409 724,1402-1423
+pkg/config/config_fuzz_test.go
+  s_bfef2db2a67c3d::t_85d7d7353d7f31 68,89-90,100
+pkg/config/validate.go
+  s_bfef2db2a67c3d::t_207f9847e79345 133-137
+pkg/storage/doc.go
+  s_bfef2db2a67c3d::t_b83c547e4533d4 35-50
+pkg/storage/router.go
+  s_bfef2db2a67c3d::t_77666f01a62534 1-128
+pkg/storage/storage.go
+  s_bfef2db2a67c3d::t_c6d05819c9cc29 9-11,26-42,47-52,55-58,63,65,67,70-73,75
+pkg/storage/storage_bdd_test.go
+  s_bfef2db2a67c3d::t_0aff9c5ae87cd1 16,32,1215-1375
+pkg/storage/storage_property_test.go
+  s_bfef2db2a67c3d::t_de9a76aa290709 4,15-16,101-158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "c18b0b972ffadcb9561cac2eaaa40414d692c610",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
