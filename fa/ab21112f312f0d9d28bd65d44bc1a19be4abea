@@ -1,0 +1,29 @@
+cmd/crosscodex/connect.go
+  s_bfef2db2a67c3d::t_be4e6d32eb57ab 143
+cmd/crosscodex/embedded.go
+  s_bfef2db2a67c3d::t_ea8c2c84aad83e 61-64,71,73,103-129
+cmd/crosscodex/embedded_bdd_test.go
+  s_bfef2db2a67c3d::t_e0c9981b5c0a5e 27,68-102,441-481
+deploy/certgen/gen.go
+  s_bfef2db2a67c3d::t_37ed30abcf12f6 48,51
+internal/testcerts/attestation_keys.go
+  s_bfef2db2a67c3d::t_938b1327751d1d 1-92
+internal/testcerts/attestation_keys_bdd_test.go
+  s_bfef2db2a67c3d::t_3c12126498676a 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "faab21112f312f0d9d28bd65d44bc1a19be4abea",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
