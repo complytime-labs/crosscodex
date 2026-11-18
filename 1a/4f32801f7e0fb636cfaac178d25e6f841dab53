@@ -1,0 +1,45 @@
+README.md
+  s_bfef2db2a67c3d::t_18c6b4d4d803b3 988,1000
+cmd/crosscodex/results.go
+  s_bfef2db2a67c3d::t_3e9e3aaab33600 813-816,841,850-851,894
+cmd/crosscodex/results_bdd_test.go
+  s_bfef2db2a67c3d::t_031d97492ea626 771
+docs/dev/attestation.md
+  s_bfef2db2a67c3d::t_133de99b7375df 225,268,348
+docs/dev/design-principles.md
+  s_bfef2db2a67c3d::t_ada0e9bf5f413d 164
+internal/pipeline/attest_cache_bdd_test.go
+  s_bfef2db2a67c3d::t_07fba8e60e309b 7-8,30,163,189,198-222,248,264,273,285
+internal/pipeline/cache_checkpoints.go
+  s_bfef2db2a67c3d::t_feba63e56b6fd1 42-43,73-74,78-79,162,214,273
+internal/pipeline/cache_checkpoints_bdd_test.go
+  s_bfef2db2a67c3d::t_c5a30cf6681114 133,162,285-286,310,388,414-415
+internal/pipeline/cache_summary_bdd_test.go
+  s_bfef2db2a67c3d::t_a63fe75078c42b 149,286,350,365
+internal/pipeline/executor.go
+  s_bfef2db2a67c3d::t_32484789e83c43 1023-1025,1027
+internal/pipeline/executor_bdd_test.go
+  s_bfef2db2a67c3d::t_c30907e8c765c0 996,1041,1082,1199,1208,1210,1581
+internal/pipeline/pipeline_integration_test.go
+  s_bfef2db2a67c3d::t_840f9002e25e7f 180
+internal/pipeline/result_cache_e2e_integration_test.go
+  s_bfef2db2a67c3d::t_829a17dda4dc30 95,279
+internal/pipeline/service_bdd_test.go
+  s_bfef2db2a67c3d::t_4c3a35a70a5da3 1143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1a4f32801f7e0fb636cfaac178d25e6f841dab53",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
