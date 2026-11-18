@@ -1,0 +1,19 @@
+internal/pipeline/catalog_readers_integration_test.go
+  s_38ba00021191d9::t_d49bed7008938c 328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "bc80913e9b9c707034a911c717a7e278733d5c8b",
+  "prompts": {},
+  "sessions": {
+    "s_38ba00021191d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a085139b9dc310154",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
