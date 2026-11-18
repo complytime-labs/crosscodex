@@ -4,32 +4,52 @@ docs/dev/design-principles.md
   s_bfef2db2a67c3d::t_8b915ba61741dc 256
 internal/catalog/catalog_bdd_test.go
   s_bfef2db2a67c3d::t_067094879591fa 502-521
+  s_bfef2db2a67c3d::t_09d41408dddce6 502-521
 internal/catalog/catalog_integration_bdd_test.go
   s_bfef2db2a67c3d::t_d2e62f1f950757 692-693,695,749-770
+  s_bfef2db2a67c3d::t_acd116647cb8d1 692-693,695,749-768
+  s_bfef2db2a67c3d::t_d276164177ff08 769-770
 internal/catalog/service.go
   s_bfef2db2a67c3d::t_aa1b79f490f8bf 350
+  s_bfef2db2a67c3d::t_d91f055542e216 350
 internal/catalog/store.go
   s_bfef2db2a67c3d::t_8a77dc36cdbd68 72-73,81,418,420,426,431
+  s_bfef2db2a67c3d::t_d91f055542e216 418,420,426,431
+  s_bfef2db2a67c3d::t_42deb8310b112a 72,81
+  s_bfef2db2a67c3d::t_08d03404fb75e1 73
 internal/graph/catalog_projection.go
   s_bfef2db2a67c3d::t_196f0345e0ceb3 104-106
+  s_bfef2db2a67c3d::t_d91f055542e216 104-106
 internal/graph/catalog_projection_bdd_test.go
   s_bfef2db2a67c3d::t_b0f0c1a908e5d6 350,367,373
+  s_bfef2db2a67c3d::t_29514ce8aa9295 350,367,373
 internal/graph/controls_reader.go
   s_bfef2db2a67c3d::t_1ab5ade7a26c40 46,270,280
+  s_bfef2db2a67c3d::t_d91f055542e216 46,270,280
 internal/graph/controls_reader_bdd_test.go
   s_bfef2db2a67c3d::t_225a0c1b1eb81b 28-29,176
+  s_bfef2db2a67c3d::t_29514ce8aa9295 28-29,176
 internal/graph/controls_reader_integration_bdd_test.go
   s_bfef2db2a67c3d::t_d05013de2f13ed 78,80-82,84-86,126
+  s_bfef2db2a67c3d::t_29514ce8aa9295 78,80-82,84-86,126
 pkg/db/migrations/001_initial_schema.up.sql
   s_bfef2db2a67c3d::t_8cae6ec49014fd 763
+  s_bfef2db2a67c3d::t_42deb8310b112a 763
 pkg/oscal/assemble.go
   s_bfef2db2a67c3d::t_db11df0c2a6944 79,114,191-193
+  s_bfef2db2a67c3d::t_5ea68147f9e096 79,114,191-193
 pkg/oscal/catalog.go
   s_bfef2db2a67c3d::t_6f8799293ac393 117-121,129-134,140,176,225-244
+  s_bfef2db2a67c3d::t_c12989d63d9f74 235
+  s_bfef2db2a67c3d::t_5ea68147f9e096 117-121,129-134,140,176,225-234,236-242
+  s_bfef2db2a67c3d::t_e45c23a2222a30 243-244
 pkg/oscal/oscal_tree_bdd_test.go
   s_bfef2db2a67c3d::t_51a6a2f5f8ae7d 164-166,175-182,415-419,551-626
+  s_bfef2db2a67c3d::t_26fd98814a61ab 164-166,175-182,415-419,568,581-586
+  s_bfef2db2a67c3d::t_d89311a7f17e96 551-567,569-580,587-626
 pkg/oscal/types.go
   s_bfef2db2a67c3d::t_0f77f5b0c0094f 26-29
+  s_bfef2db2a67c3d::t_d91f055542e216 26-29
 ---
 {
   "schema_version": "authorship/3.0.0",
