@@ -1,0 +1,22 @@
+pkg/natsbus/streams_bdd_test.go
+  s_290b9f730df96c::t_5a5edba457a30b 49-56,61-73,295-353
+  s_290b9f730df96c::t_42d4904b9ef323 354
+pkg/natsbus/client.go
+  s_290b9f730df96c::t_5a5edba457a30b 576-578
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "02e7fb4fde2880ff135bc5bbd5f166df7582cb3a",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
