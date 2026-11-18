@@ -1,0 +1,30 @@
+pkg/storage/router.go
+  s_bfef2db2a67c3d::t_eed6c9f795d995 27-28
+  s_bfef2db2a67c3d::t_8881ba03a2d0b6 1-26,29-128
+pkg/storage/storage_bdd_test.go
+  s_bfef2db2a67c3d::t_69cd5673a340ad 16,32,1215-1374
+  s_bfef2db2a67c3d::t_14c09784f2e8e8 1375
+pkg/storage/storage_property_test.go
+  s_bfef2db2a67c3d::t_69cd5673a340ad 4,15-16,101-155
+  s_bfef2db2a67c3d::t_adcd438ebb6bc5 156-158
+pkg/storage/storage.go
+  s_bfef2db2a67c3d::t_882863b53a8f02 9-11,26-42,47-52,55-58,63,65,67,70-73,75
+pkg/storage/doc.go
+  s_bfef2db2a67c3d::t_882863b53a8f02 35-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "dcd8fc7ae7faf175dc7d574e0eb23709c8f45b49",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
