@@ -23,7 +23,10 @@ type Container struct {
 	Identifier string // Source ID, "" when the source group has none
 	Title      string
 	Label      string // Published label (group "label" prop), "" when the source gives none
-	ParentKey  string // Key of the enclosing container, "" for a top-level one
+	// Prose is the group's own text (its parts' prose in pre-order, group params
+	// substituted, joined by a blank line); "" when the group has none.
+	Prose     string
+	ParentKey string // Key of the enclosing container, "" for a top-level one
 }
 
 // Tree is a parsed catalog: its containers in pre-order (parents first) and

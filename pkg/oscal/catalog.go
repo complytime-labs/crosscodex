@@ -114,6 +114,11 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 	// group is a placeholder, not structure: storing it would put an empty
 	// heading into breadcrumbs and prompts, so the import fails closed instead.
 	var untitled error
+	// groupParams[key] is the group's params with its ancestors' before them
+	// (outermost first), so a nearer group's param of the same ID overrides.
+	// A parameter reaches only the controls and prose inside its group, never
+	// the rest of the catalog.
+	groupParams := make(map[string][]oscalTypes.Parameter)
 	WalkGroups(catalog, func(group oscalTypes.Group, key, parentKey string) {
 		if untitled == nil && strings.TrimSpace(group.Title) == "" {
 			untitled = fmt.Errorf("%w: group %q at position %s has no title. "+
@@ -121,11 +126,18 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 				"or move its controls to the catalog's top level", ErrInvalidFormat, group.ID, key)
 		}
 		label, _ := selectProp(group.Props, PropLabel)
+		chain := slices.Clone(groupParams[parentKey])
+		if group.Params != nil {
+			chain = append(chain, *group.Params...)
+		}
+		groupParams[key] = chain
+		scoped := oscalTypes.Control{Params: &chain}
 		containers = append(containers, Container{
 			Key:        key,
 			Identifier: group.ID,
 			Title:      group.Title,
 			Label:      label,
+			Prose:      groupProse(group, collectParams(catalog, scoped, catalogWide)),
 			ParentKey:  parentKey,
 		})
 	})
@@ -161,7 +173,7 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 		inherited = append(inherited[:depth], own)
 		ancestors = append(ancestors[:depth], ctrl.ID)
 		scoped := ctrl
-		merged := slices.Concat(inherited...)
+		merged := slices.Concat(groupParams[groupKey], slices.Concat(inherited...))
 		scoped.Params = &merged
 		params := collectParams(catalog, scoped, catalogWide)
 		decomposed := DecomposeStatements(ctrl, groupID, params, p.requirementParts)
@@ -208,6 +220,26 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 	}
 
 	return &Tree{Containers: containers, Items: items, Textless: textless}, nil
+}
+
+// groupProse is the prose of a group's own parts in pre-order, each cleaned
+// with params, the non-empty ones joined by a blank line.
+func groupProse(group oscalTypes.Group, params map[string]string) string {
+	var paragraphs []string
+	var visit func(parts *[]oscalTypes.Part)
+	visit = func(parts *[]oscalTypes.Part) {
+		if parts == nil {
+			return
+		}
+		for _, part := range *parts {
+			if text := strings.TrimSpace(CleanProse(part.Prose, params)); text != "" {
+				paragraphs = append(paragraphs, text)
+			}
+			visit(part.Parts)
+		}
+	}
+	visit(group.Parts)
+	return strings.Join(paragraphs, "\n\n")
 }
 
 // itemOrigin names an item for a duplicate-ID error. A statement part with no

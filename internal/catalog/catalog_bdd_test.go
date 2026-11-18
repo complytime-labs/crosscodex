@@ -499,6 +499,26 @@ var _ = Describe("Service", func() {
 			})
 		})
 
+		Context("with a group that has its own prose", func() {
+			It("hands the group's prose to the store with its group parameters substituted", func() {
+				svc = catalog.NewService(catalog.WithParser(oscal.NewParser("")), catalog.WithStore(ms), catalog.WithStorage(stg))
+				doc := `{"catalog":{"uuid":"11111111-1111-4111-8111-111111111111",` +
+					`"metadata":{"title":"t","last-modified":"2024-01-01T00:00:00Z","version":"1","oscal-version":"1.1.3"},` +
+					`"groups":[{"id":"ac","title":"Access Control","params":[{"id":"p1","label":"scope"}],` +
+					`"parts":[{"name":"overview","prose":"Applies to {{ insert: param, p1 }}."}],` +
+					`"controls":[{"id":"ac-1","title":"T","parts":[{"name":"statement","prose":"p"}]}]}]}}`
+				Expect(stg.Put(context.Background(), "doc-prose", strings.NewReader(doc))).To(Succeed())
+
+				_, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: "tenant-1"},
+					DocumentId:    "doc-prose",
+				}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ms.containerRecords).To(HaveLen(1))
+				Expect(ms.containerRecords[0].Prose).To(Equal("Applies to [Assignment: scope]."))
+			})
+		})
+
 		Context("with containers but no controls", func() {
 			It("fails with the no-controls error and stores nothing", func() {
 				svc = catalog.NewService(catalog.WithParser(oscal.NewParser("")), catalog.WithStore(ms), catalog.WithStorage(stg))

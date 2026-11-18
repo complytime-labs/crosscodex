@@ -161,13 +161,23 @@ var _ = Describe("Parser control tree", func() {
 
 	DescribeTable("emits one container per top-level group, keyed by position",
 		func(fixture string, want oscal.Container) {
-			Expect(containersByKey(parseFixtureTree(fixture))).To(HaveKeyWithValue(want.Key, want))
+			got := containersByKey(parseFixtureTree(fixture))[want.Key]
+			got.Prose = ""
+			Expect(got).To(Equal(want))
 		},
 		Entry("SP 800-53r5 family", "sp800-53r5.json", oscal.Container{Key: "g1", Identifier: "ac", Title: "Access Control", Label: "AC"}),
 		Entry("SSDF practice group", "ssdf.json", oscal.Container{Key: "g1", Identifier: "PO", Title: "Prepare the Organization", Label: "Prepare the Organization (PO)"}),
 		Entry("SP 800-171r3 family", "sp800-171r3.json", oscal.Container{Key: "g1", Identifier: "SP_800_171_03.01", Title: "Access Control", Label: "Access Control (03.01)"}),
 		Entry("ISM ID-less top group", "ism-e8.json", oscal.Container{Key: "g1", Title: "Guidelines for system hardening"}),
 		Entry("ISM ID-less subgroup", "ism-e8.json", oscal.Container{Key: "g1.1", Title: "Operating system hardening", ParentKey: "g1"}),
+	)
+
+	DescribeTable("keeps the prose of a group that has an overview part",
+		func(fixture, key string) {
+			Expect(containersByKey(parseFixtureTree(fixture))[key].Prose).NotTo(BeEmpty())
+		},
+		Entry("SSDF practice group", "ssdf.json", "g1"),
+		Entry("ISM subgroup", "ism-e8.json", "g1.1"),
 	)
 
 	It("lists containers parents first", func() {
@@ -402,7 +412,11 @@ var _ = Describe("Assemble control tree round trip", func() {
 					if parentKey != "" {
 						key = parentKey + "." + strconv.Itoa(i+1)
 					}
-					got = append(got, oscal.Container{Key: key, Identifier: g.ID, Title: g.Title, ParentKey: parentKey})
+					prose := ""
+					if g.Parts != nil && len(*g.Parts) == 1 && (*g.Parts)[0].Name == "overview" {
+						prose = (*g.Parts)[0].Prose
+					}
+					got = append(got, oscal.Container{Key: key, Identifier: g.ID, Title: g.Title, Prose: prose, ParentKey: parentKey})
 					walk(g.Groups, key)
 				}
 			}
@@ -532,5 +546,81 @@ var _ = Describe("Assemble empty arrays", func() {
 		_, data := assembleCatalog(parseFixtureTree("ssdf.json"))
 		Expect(topLevelKeys(data)).To(HaveKey("groups"))
 		Expect(topLevelKeys(data)).NotTo(HaveKey("controls"))
+	})
+})
+
+// paramControl is a control whose statement inserts gp1, with the given own params JSON ("" for none).
+func paramControl(id, ownParams string) string {
+	params := ""
+	if ownParams != "" {
+		params = `,"params":[` + ownParams + `]`
+	}
+	return `{"id":"` + id + `","title":"T ` + id + `","parts":[{"name":"statement","prose":"Use {{ insert: param, gp1 }}."}]` + params + `}`
+}
+
+func groupParam(id, label string) string {
+	return `{"id":"` + id + `","label":"` + label + `"}`
+}
+
+var _ = Describe("Group parameters and prose", func() {
+	groups := `"groups":[` +
+		`{"id":"g","title":"G","params":[` + groupParam("gp1", "from g") + `],` +
+		`"controls":[` + paramControl("in-g", "") + `],` +
+		`"groups":[{"id":"h","title":"H","controls":[` + paramControl("in-h", "") + `]}]},` +
+		`{"id":"k","title":"K","controls":[` + paramControl("in-k", "") + `]}]`
+	items := parseJSON(inlineCatalog(groups))
+
+	DescribeTable("renders a group parameter in the controls inside that group only",
+		func(id, want string) {
+			Expect(items[id].Text).To(Equal(want))
+		},
+		Entry("control in the defining group", "in-g", "Use [Assignment: from g]."),
+		Entry("control in a nested group", "in-h", "Use [Assignment: from g]."),
+		Entry("control in a sibling group", "in-k", "Use [gp1]."),
+	)
+
+	It("lets a control's own parameter win over its group's", func() {
+		own := parseJSON(inlineCatalog(`"groups":[{"id":"g","title":"G","params":[` + groupParam("gp1", "from g") + `],` +
+			`"controls":[` + paramControl("own", groupParam("gp1", "from control")) + `]}]`))
+		Expect(own["own"].Text).To(Equal("Use [Assignment: from control]."))
+	})
+
+	It("lets the nearest group's parameter win over an outer group's", func() {
+		nested := parseJSON(inlineCatalog(`"groups":[{"id":"g","title":"G","params":[` + groupParam("gp1", "outer") + `],` +
+			`"groups":[{"id":"h","title":"H","params":[` + groupParam("gp1", "inner") + `],` +
+			`"controls":[` + paramControl("deep", "") + `]}]}]`))
+		Expect(nested["deep"].Text).To(Equal("Use [Assignment: inner]."))
+	})
+
+	It("keeps a group's own prose with its parameters substituted", func() {
+		tree := parseJSONTree(inlineCatalog(`"groups":[{"id":"g","title":"G","params":[` + groupParam("gp1", "from g") + `],` +
+			`"parts":[{"name":"overview","prose":"First {{ insert: param, gp1 }}.","parts":[{"name":"guidance","prose":"Second."}]},` +
+			`{"name":"overview","prose":"Third."}],` +
+			`"groups":[{"id":"h","title":"H","controls":[` + inlineControl("c1") + `]}]}]`))
+		containers := containersByKey(tree)
+		Expect(containers["g1"].Prose).To(Equal("First [Assignment: from g].\n\nSecond.\n\nThird."))
+		Expect(containers["g1.1"].Prose).To(BeEmpty(), "a group's prose is its own, not inherited by subgroups")
+	})
+
+	It("leaves an unresolved insert in group prose visible rather than guessing", func() {
+		tree := parseJSONTree(inlineCatalog(`"groups":[{"id":"g","title":"G",` +
+			`"parts":[{"name":"overview","prose":"See {{ insert: param, nowhere }}."}],"controls":[` + inlineControl("c1") + `]}]`))
+		Expect(containersByKey(tree)["g1"].Prose).To(Equal("See [nowhere]."))
+	})
+
+	It("round-trips group prose through assemble and parse", func() {
+		tree := parseJSONTree(inlineCatalog(`"groups":[{"id":"g","title":"G",` +
+			`"parts":[{"name":"overview","prose":"Group text."}],"controls":[` + inlineControl("c1") + `]}]`))
+		cat, _ := assembleCatalog(tree)
+		g := findGroup(cat.Groups, "g")
+		Expect(g.Parts).NotTo(BeNil())
+		Expect(*g.Parts).To(HaveLen(1))
+		Expect((*g.Parts)[0].Name).To(Equal("overview"))
+		Expect((*g.Parts)[0].Prose).To(Equal("Group text."))
+	})
+
+	It("emits no group part for a group without prose", func() {
+		cat, _ := assembleCatalog(parseJSONTree(inlineCatalog(`"groups":[{"id":"g","title":"G","controls":[` + inlineControl("c1") + `]}]`)))
+		Expect(findGroup(cat.Groups, "g").Parts).To(BeNil())
 	})
 })

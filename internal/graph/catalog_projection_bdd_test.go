@@ -347,6 +347,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 			reader.controls[1].Label = "AC-2(7)"
 			reader.controls[1].SortID = "ac-02.07"
 			reader.containers[1].Label = "Access Control Family"
+			reader.containers[1].Prose = "Controls on access."
 			build()
 			Expect(deliver(subject)).To(Succeed())
 
@@ -363,11 +364,13 @@ var _ = Describe("Catalog parsed event projection", func() {
 			group, err := mem.GetNode(ctx, tenantID, containerID("g1"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(group.Properties).To(HaveKeyWithValue("label", "Access Control Family"))
+			Expect(group.Properties).To(HaveKeyWithValue("prose", "Controls on access."))
 			Expect(group.Properties).NotTo(HaveKey("sort_id"))
 
 			unlabelled, err := mem.GetNode(ctx, tenantID, containerID("g1.1"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(unlabelled.Properties).NotTo(HaveKey("label"))
+			Expect(unlabelled.Properties).NotTo(HaveKey("prose"))
 			Expect(unlabelled.Properties).NotTo(HaveKey("sort_id"))
 		})
 

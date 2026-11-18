@@ -253,7 +253,7 @@ ORDER BY event_id;
 
 The stored control set is a tree of titled nodes that no single source format owns. Adapters map into it: OSCAL today; ReqIF, SysML v2 Requirements and document headings later. Each `controls` row states its role in `Props["node-kind"]`; containers are a separate table and carry `node_kind` `container` only on their graph node:
 
-- `container`: only organizes (OSCAL group, ReqIF chapter, SysML v2 package); never carries requirement text. Stored in `catalog_containers`, keyed by position within the catalog (`g1`, `g1.1`), with an optional source identifier (OSCAL groups need not have an `id`); never a row in `controls`.
+- `container`: only organizes (OSCAL group, ReqIF chapter, SysML v2 package); never carries requirement text. It may carry the group's own overview prose (`catalog_containers.prose`, the `prose` Container node property when non-empty, and catalog export), which is stored and projected but never analysed as a requirement. Stored in `catalog_containers`, keyed by position within the catalog (`g1`, `g1.1`), with an optional source identifier (OSCAL groups need not have an `id`); never a row in `controls`.
 - `control`: carries a requirement, possibly nested under another control (OSCAL enhancement).
 - `statement-part`: a decomposed piece of a control's text.
 

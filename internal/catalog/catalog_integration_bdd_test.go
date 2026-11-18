@@ -689,8 +689,10 @@ var _ = Describe("PGStore Integration", func() {
 			grouped := ftsControl(s.tenantA, s.catalogA, "tree-1", "Grouped", "Grouped statement.")
 			grouped.ContainerKey = "g1.1"
 			loose := ftsControl(s.tenantA, s.catalogA, "tree-2", "Loose", "Loose statement.")
+			documented := container(s.tenantA, s.catalogA, "g1", "ac", "Access Control", "")
+			documented.Prose = "Controls on access."
 			return []catalog.ContainerRecord{
-				container(s.tenantA, s.catalogA, "g1", "ac", "Access Control", ""),
+				documented,
 				container(s.tenantA, s.catalogA, "g1.1", "", "Untagged Child", "g1"),
 			}, []catalog.ControlRecord{grouped, loose}
 		}
@@ -742,6 +744,28 @@ var _ = Describe("PGStore Integration", func() {
 			Expect(suPool.QueryRow(context.Background(),
 				"SELECT title FROM catalog_containers WHERE tenant_id = $1 AND container_key = 'g1'", s.tenantA).Scan(&title)).To(Succeed())
 			Expect(title).To(Equal("Renamed"))
+		})
+
+		It("stores a container's prose, reads an empty one back as empty, and refreshes it on re-import", func() {
+			s := seedTwoTenants()
+			store := catalog.NewPGStore(tenantConn())
+			containers, controls := tree(s)
+			proseOf := func(key string) string {
+				var prose string
+				Expect(suPool.QueryRow(context.Background(),
+					"SELECT prose FROM catalog_containers WHERE tenant_id = $1 AND catalog_id = $2 AND container_key = $3",
+					s.tenantA, s.catalogA, key).Scan(&prose)).To(Succeed())
+				return prose
+			}
+			Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, controls)).To(Succeed())
+			Expect(proseOf("g1")).To(Equal("Controls on access."))
+			Expect(proseOf("g1.1")).To(BeEmpty())
+
+			containers[0].Prose = ""
+			containers[1].Prose = "Added later."
+			Expect(store.UpsertCatalogWithTree(s.ctx(s.tenantA), s.catalogRecordA(), containers, controls)).To(Succeed())
+			Expect(proseOf("g1")).To(BeEmpty(), "re-import clears prose the source no longer has")
+			Expect(proseOf("g1.1")).To(Equal("Added later."))
 		})
 
 		It("accepts containers without controls", func() {
