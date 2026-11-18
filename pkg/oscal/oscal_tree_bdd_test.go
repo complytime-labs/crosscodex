@@ -101,13 +101,53 @@ var _ = Describe("Parser control tree", func() {
 		},
 		Entry("SP 800-53r5 base control", "sp800-53r5.json", "ac-2", oscal.PropNodeKindControl),
 		Entry("SP 800-53r5 enhancement", "sp800-53r5.json", "ac-2.7", oscal.PropNodeKindControl),
-		Entry("SP 800-53r5 statement item", "sp800-53r5.json", "ac-2.7.a", oscal.PropNodeKindStatementPart),
+		Entry("SP 800-53r5 statement item", "sp800-53r5.json", "ac-2.7_smt.a", oscal.PropNodeKindStatementPart),
 		Entry("SSDF single-item task", "ssdf.json", "PO.1.1", oscal.PropNodeKindControl),
-		Entry("SP 800-171r3 statement item", "sp800-171r3.json", "SP_800_171_03.01.01.1", oscal.PropNodeKindStatementPart),
+		Entry("SP 800-171r3 statement item", "sp800-171r3.json", "SR-03.01.01.a", oscal.PropNodeKindStatementPart),
+	)
+
+	DescribeTable("keeps a statement part's id exactly as the source writes it",
+		func(fixture string) {
+			raw, err := os.ReadFile(filepath.Join("testdata", "tree", fixture))
+			Expect(err).NotTo(HaveOccurred())
+			var doc any
+			Expect(json.Unmarshal(raw, &doc)).To(Succeed())
+			sourceIDs := map[string]bool{}
+			var collect func(node any, inPart bool)
+			collect = func(node any, inPart bool) {
+				switch v := node.(type) {
+				case map[string]any:
+					if id, ok := v["id"].(string); ok && inPart {
+						sourceIDs[id] = true
+					}
+					for key, child := range v {
+						collect(child, inPart || key == "parts")
+					}
+				case []any:
+					for _, child := range v {
+						collect(child, inPart)
+					}
+				}
+			}
+			collect(doc, false)
+
+			statementParts := 0
+			for _, it := range parseFixtureTree(fixture).Items {
+				if it.Props[oscal.PropNodeKind] != oscal.PropNodeKindStatementPart {
+					continue
+				}
+				statementParts++
+				Expect(sourceIDs).To(HaveKey(it.ID), "item ID is not a part id in the source")
+				Expect(it.ID).To(Equal(it.Props["source-part"]))
+			}
+			Expect(statementParts).To(BeNumerically(">", 0))
+		},
+		Entry("SP 800-171r3", "sp800-171r3.json"),
+		Entry("SP 800-53r5", "sp800-53r5.json"),
 	)
 
 	It("keeps statement parts under their own control", func() {
-		Expect(parseFixture("sp800-53r5.json")["ac-2.7.a"].ParentID).To(Equal("ac-2.7"))
+		Expect(parseFixture("sp800-53r5.json")["ac-2.7_smt.a"].ParentID).To(Equal("ac-2.7"))
 	})
 
 	DescribeTable("gives every parsed item the control or statement-part kind and never the container kind",
@@ -144,7 +184,7 @@ var _ = Describe("Parser control tree", func() {
 		},
 		Entry("control root", "sp800-53r5.json", "ac-2", "g1"),
 		Entry("enhancement", "sp800-53r5.json", "ac-2.7", "g1"),
-		Entry("statement part", "sp800-53r5.json", "ac-2.7.a", "g1"),
+		Entry("statement part", "sp800-53r5.json", "ac-2.7_smt.a", "g1"),
 		Entry("control in a nested ID-less group", "ism-e8.json", "ism-1654", "g1.1.1"),
 	)
 
@@ -344,7 +384,7 @@ var _ = Describe("Assemble control tree round trip", func() {
 			}
 		}
 		collect(enh.Parts)
-		Expect(ids).To(ContainElement("ac-2.7.a"))
+		Expect(ids).To(ContainElement("ac-2.7_smt.a"))
 	})
 
 	DescribeTable("preserves group nesting, identifiers and titles",

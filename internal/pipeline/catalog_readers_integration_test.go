@@ -325,7 +325,7 @@ var _ = Describe("Analysis input from imported catalogs", func() {
 			Expect(grouped).To(BeNumerically(">", 0), "the fixture has grouped top-level controls")
 		},
 		Entry("SP 800-53r5 family", "sp800-53r5.json", "ac-2", "Access Control (AC)",
-			"ac-2.d.1", "Access Control (AC) > Account Management (AC-2)", "Specify: Authorized users of the system;"),
+			"ac-2_smt.d.1", "Access Control (AC) > Account Management (AC-2)", "Specify: Authorized users of the system;"),
 		Entry("ISM nested groups", "ism-e8.json", "ism-1654",
 			"Guidelines for system hardening > Operating system hardening > Hardening operating system configurations", "", "", ""),
 		Entry("ISM sibling group", "ism-e8.json", "ism-0843",

@@ -109,24 +109,24 @@ var _ = Describe("Parser", func() {
 			Expect(ac2.Title).To(Equal("Account Management"))
 		})
 
-		It("emits AC-2.a as ClassRequirement with correct parent", func() {
-			ac2a := findItem(items, "ac-2.a")
+		It("emits AC-2_smt.a as ClassRequirement with correct parent", func() {
+			ac2a := findItem(items, "ac-2_smt.a")
 			Expect(ac2a).NotTo(BeNil(), "AC-2.a not found")
 			Expect(ac2a.Class).To(Equal(oscal.ClassRequirement))
 			Expect(ac2a.ParentID).To(Equal("ac-2"))
 		})
 
-		It("emits AC-2.c as ClassSection (has sub-items)", func() {
-			ac2c := findItem(items, "ac-2.c")
+		It("emits AC-2_smt.c as ClassSection (has sub-items)", func() {
+			ac2c := findItem(items, "ac-2_smt.c")
 			Expect(ac2c).NotTo(BeNil(), "AC-2.c not found")
 			Expect(ac2c.Class).To(Equal(oscal.ClassSection))
 		})
 
-		It("emits AC-2.c.1 as ClassRequirement with parent AC-2.c", func() {
-			ac2c1 := findItem(items, "ac-2.c.1")
+		It("emits AC-2_smt.c.1 as ClassRequirement with parent AC-2_smt.c", func() {
+			ac2c1 := findItem(items, "ac-2_smt.c.1")
 			Expect(ac2c1).NotTo(BeNil(), "AC-2.c.1 not found")
 			Expect(ac2c1.Class).To(Equal(oscal.ClassRequirement))
-			Expect(ac2c1.ParentID).To(Equal("ac-2.c"))
+			Expect(ac2c1.ParentID).To(Equal("ac-2_smt.c"))
 		})
 	})
 
@@ -282,7 +282,7 @@ var _ = Describe("Parser", func() {
 			},
 			Entry("finds existing control", "ac-2", true),
 			Entry("finds sub-control", "ac-2.1", true),
-			Entry("finds child item", "ac-2.a", true),
+			Entry("finds child item", "ac-2_smt.a", true),
 			Entry("returns error for nonexistent control", "nonexistent", false),
 		)
 	})

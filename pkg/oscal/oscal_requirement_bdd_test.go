@@ -79,7 +79,7 @@ var _ = Describe("Requirement part", func() {
 			for _, it := range oscal.DecomposeStatements(deep, "g", nil, oscal.DefaultRequirementPartNames) {
 				ids = append(ids, it.ID)
 			}
-			Expect(ids).To(Equal([]string{"x-1", "x-1.a", "x-1.a.1", "x-1.a.1.i"}))
+			Expect(ids).To(Equal([]string{"x-1", "x-1_smt.a", "x-1_smt.a.1", "x-1_smt.a.1.i"}))
 		})
 
 		DescribeTable("classifies each row by whether its part has children",
@@ -90,19 +90,19 @@ var _ = Describe("Requirement part", func() {
 				Expect(it.Text).To(Equal(text))
 			},
 			Entry("the control is a section holding the statement lead-in", "x-1", oscal.ClassSection, "", "The system:"),
-			Entry("the outer wrapper is a section under the control", "x-1.a", oscal.ClassSection, "x-1", "Outer:"),
-			Entry("the inner wrapper is a section under the outer one", "x-1.a.1", oscal.ClassSection, "x-1.a", "Inner:"),
-			Entry("the leaf is a requirement under the inner wrapper", "x-1.a.1.i", oscal.ClassRequirement, "x-1.a.1", "Leaf requirement."),
+			Entry("the outer wrapper is a section under the control", "x-1_smt.a", oscal.ClassSection, "x-1", "Outer:"),
+			Entry("the inner wrapper is a section under the outer one", "x-1_smt.a.1", oscal.ClassSection, "x-1_smt.a", "Inner:"),
+			Entry("the leaf is a requirement under the inner wrapper", "x-1_smt.a.1.i", oscal.ClassRequirement, "x-1_smt.a.1", "Leaf requirement."),
 		)
 
 		It("records the parent and source part of a deep row", func() {
-			props := decompose(deep)["x-1.a.1.i"].Props
-			Expect(props).To(HaveKeyWithValue("parent-id", "x-1.a.1"))
+			props := decompose(deep)["x-1_smt.a.1.i"].Props
+			Expect(props).To(HaveKeyWithValue("parent-id", "x-1_smt.a.1"))
 			Expect(props).To(HaveKeyWithValue("source-part", "x-1_smt.a.1.i"))
 		})
 
 		It("keeps the published label and sort-id of a deep row", func() {
-			props := decompose(deep)["x-1.a.1.i"].Props
+			props := decompose(deep)["x-1_smt.a.1.i"].Props
 			Expect(props).To(HaveKeyWithValue(oscal.PropLabel, "i."))
 			Expect(props).To(HaveKeyWithValue(oscal.PropSortID, "x-01.a.1.i"))
 		})
@@ -113,7 +113,7 @@ var _ = Describe("Requirement part", func() {
 					leafPart("x-2_smt.a", "objective", "Accounts are reviewed."),
 				),
 			)
-			it := decompose(ctrl)["x-2.a"]
+			it := decompose(ctrl)["x-2_smt.a"]
 			Expect(it.Class).To(Equal(oscal.ClassRequirement))
 			Expect(it.Text).To(Equal("Accounts are reviewed."))
 		})
@@ -137,9 +137,9 @@ var _ = Describe("Requirement part", func() {
 					Expect(it.Text).To(Equal(text))
 				},
 				Entry("a part row with prose over blank parts is a requirement carrying it",
-					"x-4.a", oscal.ClassRequirement, "Review accounts."),
-				Entry("its blank child is still a row", "x-4.a.1", oscal.ClassRequirement, ""),
-				Entry("a blank part row over blank parts stays a section", "x-4.b", oscal.ClassSection, ""),
+					"x-4_smt.a", oscal.ClassRequirement, "Review accounts."),
+				Entry("its blank child is still a row", "x-4_smt.a.1", oscal.ClassRequirement, ""),
+				Entry("a blank part row over blank parts stays a section", "x-4_smt.b", oscal.ClassSection, ""),
 				Entry("the control over a part with prose stays a section", "x-4", oscal.ClassSection, "The system:"),
 			)
 
@@ -185,7 +185,7 @@ var _ = Describe("Requirement part", func() {
 			ctrl := controlWithParts("y-3", "Nested",
 				wrapperPart("y-3_smt", "statement", "", leafPart("y-3_smt.a", "item", "Nested prose.")),
 			)
-			Expect(decompose(ctrl)).To(HaveKey("y-3.a"))
+			Expect(decompose(ctrl)).To(HaveKey("y-3_smt.a"))
 		})
 
 		It("tries the names in order", func() {
@@ -214,7 +214,7 @@ var _ = Describe("Requirement part", func() {
 
 		It("still decomposes MANAGE_4.1 by its statement when statement comes first", func() {
 			tree := parseFixtureTreeWith("ai-rmf.json", oscal.WithRequirementPartNames([]string{"statement", "overview"}))
-			Expect(itemsByID(tree)).To(HaveKey("MANAGE_4.1.1"))
+			Expect(itemsByID(tree)).To(HaveKey("SA-MANAGE_4.1-1"))
 		})
 
 		It("is reported textless because its title only repeats its identifier", func() {
@@ -337,7 +337,7 @@ var _ = Describe("Requirement part", func() {
 	})
 
 	Describe("item identity", func() {
-		It("names both items and the fix when a positional part ID collides with an enhancement", func() {
+		It("names the part as importer-derived and asks for an id when its position collides with an enhancement", func() {
 			doc := inlineCatalog(`"controls":[{"id":"ac-2","title":"Account Management","parts":[` +
 				`{"id":"ac-2_smt","name":"statement","prose":"The organization:","parts":[{"name":"item","prose":"Reviews accounts."}]}],` +
 				`"controls":[` + inlineControl("ac-2.1") + `]}]`)
@@ -346,9 +346,52 @@ var _ = Describe("Requirement part", func() {
 			Expect(tree).To(BeNil())
 			Expect(err.Error()).To(ContainSubstring(`duplicate control ID "ac-2.1"`))
 			Expect(err.Error()).To(ContainSubstring(`control "ac-2.1"`))
-			Expect(err.Error()).To(ContainSubstring(`numbered by position from a part of control "ac-2"`))
+			Expect(err.Error()).To(ContainSubstring(`has no id`))
 			Expect(err.Error()).To(ContainSubstring("give that part an id"))
 		})
+
+		It("names the part as importer-derived when its label collides with an enhancement", func() {
+			doc := inlineCatalog(`"controls":[{"id":"c4","title":"C","parts":[` +
+				`{"id":"c4_smt","name":"statement","prose":"L:","parts":[` +
+				`{"name":"item","props":[{"name":"label","value":"1"}],"prose":"One."}]}],` +
+				`"controls":[` + inlineControl("c4.1") + `]}]`)
+			tree, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+			Expect(err).To(MatchError(oscal.ErrInvalidFormat))
+			Expect(tree).To(BeNil())
+			Expect(err.Error()).To(ContainSubstring(`duplicate control ID "c4.1"`))
+			Expect(err.Error()).To(ContainSubstring(`has no id`))
+			Expect(err.Error()).To(ContainSubstring("give that part an id"))
+		})
+
+		It("tells the author to rename one when two parts genuinely share an id", func() {
+			doc := inlineCatalog(`"controls":[{"id":"c5","title":"C","parts":[` +
+				`{"id":"c5_smt","name":"statement","prose":"L:","parts":[` +
+				`{"id":"shared","name":"item","prose":"One."},{"id":"shared","name":"item","prose":"Two."}]}]}]`)
+			_, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+			Expect(err).To(MatchError(oscal.ErrInvalidFormat))
+			Expect(err.Error()).To(ContainSubstring(`duplicate control ID "shared"`))
+			Expect(err.Error()).To(ContainSubstring(`(part id "shared")`))
+			Expect(err.Error()).To(ContainSubstring("Rename one in the source catalog"))
+			Expect(err.Error()).NotTo(ContainSubstring("has no id"))
+		})
+
+		DescribeTable("names an id-less part from its label, else its position",
+			func(partJSON, wantID string) {
+				doc := inlineCatalog(`"controls":[{"id":"c1","title":"C","parts":[` +
+					`{"id":"c1_smt","name":"statement","prose":"L:","parts":[` + partJSON + `]}]}]`)
+				tree, err := oscal.NewParser("").Parse(context.Background(), strings.NewReader(doc))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(itemsByID(tree)).To(HaveKey(wantID))
+			},
+			Entry("a label with a trailing dot",
+				`{"name":"item","props":[{"name":"label","value":"a."}],"prose":"A."}`, "c1.a"),
+			Entry("a parenthesized label",
+				`{"name":"item","props":[{"name":"label","value":"(1)"}],"prose":"One."}`, "c1.1"),
+			Entry("no label",
+				`{"name":"item","prose":"A."}`, "c1.1"),
+			Entry("a verbatim id beats the label",
+				`{"id":"mine","name":"item","props":[{"name":"label","value":"a."}],"prose":"A."}`, "mine"),
+		)
 
 		DescribeTable("rejects a catalog whose items cannot be told apart",
 			func(controls, wantMsg string) {
@@ -358,9 +401,9 @@ var _ = Describe("Requirement part", func() {
 			},
 			Entry("two controls share an ID",
 				inlineControl("d-1")+","+inlineControl("d-1"), `duplicate control ID "d-1"`),
-			Entry("a statement part derives the ID of a later control",
+			Entry("a statement part verbatim id equals a later control",
 				`{"id":"d-2","title":"D","parts":[{"id":"d-2_smt","name":"statement","prose":"L:",`+
-					`"parts":[{"id":"d-2_smt.a","name":"item","prose":"A."}]}]},`+inlineControl("d-2.a"),
+					`"parts":[{"id":"d-2.a","name":"item","prose":"A."}]}]},`+inlineControl("d-2.a"),
 				`duplicate control ID "d-2.a"`),
 			Entry("a control has no ID",
 				`{"id":"","title":"Untitled","parts":[{"name":"statement","prose":"P."}]}`, `control titled "Untitled" has no id`),

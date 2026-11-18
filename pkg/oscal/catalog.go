@@ -210,10 +210,10 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 	return &Tree{Containers: containers, Items: items, Textless: textless}, nil
 }
 
-// itemOrigin names an item for a duplicate-ID error. A statement part
-// numbered by position, because its source part's id is empty or unpatterned,
-// has an ID that appears nowhere in the source, so it also gets a hint saying
-// which part to give an id.
+// itemOrigin names an item for a duplicate-ID error. A statement part with no
+// id of its own gets its ID from the importer (its label, else its position),
+// so that ID appears nowhere in the source; the hint says which part to give an
+// id.
 type itemOrigin struct {
 	name string
 	hint string
@@ -223,21 +223,20 @@ func describeItem(item ControlItem, ctrlID string) itemOrigin {
 	if item.Props[PropNodeKind] == PropNodeKindControl {
 		return itemOrigin{name: fmt.Sprintf("control %q", item.ID)}
 	}
-	source := item.Props["source-part"]
-	if _, ok := idFromPartID(item.ParentID, source); ok {
-		return itemOrigin{name: fmt.Sprintf("statement part %q of control %q (part id %q)", item.ID, ctrlID, source)}
+	if item.Props["source-part"] != "" {
+		return itemOrigin{name: fmt.Sprintf("statement part %q of control %q (part id %q)", item.ID, ctrlID, item.Props["source-part"])}
 	}
 	return itemOrigin{
 		name: fmt.Sprintf("statement part %q of control %q", item.ID, ctrlID),
-		hint: fmt.Sprintf("%q is not in the source catalog: it was numbered by position from a part of control %q "+
-			"whose id (%q) is empty or neither contains \"_smt.\" nor starts with %q; "+
-			"give that part an id in the source catalog that starts with %q and re-import. ",
-			item.ID, ctrlID, source, item.ParentID+".", item.ParentID+"."),
+		hint: fmt.Sprintf("%q is not in the source catalog: the importer derived it because a part of control %q "+
+			"has no id (from the part's label, else its position under %q); "+
+			"give that part an id in the source catalog and re-import. ",
+			item.ID, ctrlID, item.ParentID),
 	}
 }
 
 // duplicateIDError reports two items sharing an ID, naming both and, for a
-// positionally numbered part, how to give it an ID of its own.
+// part whose ID the importer derived, how to give it an ID of its own.
 func duplicateIDError(id string, first, second itemOrigin) error {
 	fix := "Rename one in the source catalog and re-import"
 	if first.hint != "" || second.hint != "" {

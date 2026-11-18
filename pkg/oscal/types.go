@@ -2,7 +2,7 @@ package oscal
 
 // ControlItem is the internal domain representation of a compliance control.
 type ControlItem struct {
-	ID       string // Control identifier (e.g., "ac-2", "ac-2.a")
+	ID       string // Control identifier as the source gives it, or derived from a part label when it has none
 	Title    string // Human-readable title
 	Text     string // Full statement prose (params substituted)
 	Class    string // One of ClassSection, ClassRequirement, ClassContext
