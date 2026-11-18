@@ -11,6 +11,7 @@ import (
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
+	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -29,7 +30,8 @@ type Service struct {
 	crosswalk     CrosswalkBackend
 	feedback      FeedbackBackend
 	admin         AdminBackend
-	attestor      attestation.Generator
+	attestor      AttestorResolver
+	attestStore   storage.Provider
 	tracer        trace.Tracer
 	meter         metric.Meter
 	logger        *slog.Logger
@@ -127,8 +129,22 @@ func WithAdminBackend(b AdminBackend) ServiceOption {
 	return func(s *Service) { s.admin = b }
 }
 
-func WithAttestor(a attestation.Generator) ServiceOption {
-	return func(s *Service) { s.attestor = a }
+// AttestorResolver returns the generator that signs tenantID's catalog
+// imports, or nil when attestation is disabled for that tenant.
+type AttestorResolver func(tenantID string) attestation.Generator
+
+// WithAttestor makes every catalog import (SubmitDocument, StreamDocument)
+// sign an in-toto ingest link with resolve's generator for the caller's
+// tenant and store it in store, which must route each call to the tenant on
+// its context. It has no pkg/config field of its own: the daemon and the
+// embedded CLI build resolve from the attestation section (through
+// internal/pipeline.NewAttestors, so imports and jobs share each tenant's key
+// pair). Without it, imports are not attested.
+func WithAttestor(resolve AttestorResolver, store storage.Provider) ServiceOption {
+	return func(s *Service) {
+		s.attestor = resolve
+		s.attestStore = store
+	}
 }
 
 func WithTelemetry(t trace.Tracer, m metric.Meter) ServiceOption {

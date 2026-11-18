@@ -18,7 +18,6 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
-	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 )
 
@@ -69,49 +68,6 @@ func (m *mockIngestion) DiscardDocument(ctx context.Context, documentID string) 
 		return m.discardFn(ctx, documentID)
 	}
 	return nil
-}
-
-// recordingAttestor records CreateLink calls. The gateway calls nothing
-// else on attestation.Generator, so the other methods fail loudly.
-type recordingAttestor struct {
-	links []recordedLink
-}
-
-type recordedLink struct {
-	step                string
-	materials, products []attestation.Artifact
-}
-
-var errUnusedAttestor = errors.New("recordingAttestor: method not used by the gateway")
-
-func (r *recordingAttestor) CreateLink(_ context.Context, step string, materials, products []attestation.Artifact, _ ...attestation.LinkOption) (*attestation.SignedLink, error) {
-	r.links = append(r.links, recordedLink{step: step, materials: materials, products: products})
-	return &attestation.SignedLink{}, nil
-}
-
-func (r *recordingAttestor) CreateLayout(context.Context, attestation.LayoutOptions) (*attestation.SignedLayout, error) {
-	return nil, errUnusedAttestor
-}
-
-func (r *recordingAttestor) Verify(context.Context, []byte) (*attestation.VerifiedLink, error) {
-	return nil, errUnusedAttestor
-}
-
-func (r *recordingAttestor) VerifyLayout(context.Context, []byte) (*attestation.VerifiedLayout, error) {
-	return nil, errUnusedAttestor
-}
-
-func (r *recordingAttestor) VerifyChain(context.Context, *attestation.SignedLayout, []*attestation.SignedLink, attestation.Artifact) (*attestation.VerifiedChain, error) {
-	return nil, errUnusedAttestor
-}
-
-// artifactURIs lists the URIs of artifacts, for comparing links.
-func artifactURIs(artifacts []attestation.Artifact) []string {
-	uris := make([]string, 0, len(artifacts))
-	for _, a := range artifacts {
-		uris = append(uris, a.URI)
-	}
-	return uris
 }
 
 type mockCatalog struct {
@@ -672,20 +628,6 @@ var _ = Describe("SubmitDocument", func() {
 			Expect(resp.GetTextlessControls()[24].GetIdentifier()).To(Equal("C-24"))
 			Expect(resp.GetTextlessControls()[0].GetPartNames()).To(Equal([]string{"overview"}))
 		}
-	})
-
-	It("attests the document as material and the catalog as the only product", func() {
-		att := &recordingAttestor{}
-		svc := newTestService(gateway.WithAttestor(att))
-
-		_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
-			Source: &pb.SubmitDocumentRequest_Content{Content: []byte("test doc")},
-		}))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(att.links).To(HaveLen(1))
-		Expect(att.links[0].step).To(Equal("gateway.SubmitDocument"))
-		Expect(artifactURIs(att.links[0].materials)).To(Equal([]string{"document://tenant-a/doc-1"}))
-		Expect(artifactURIs(att.links[0].products)).To(Equal([]string{"catalog://tenant-a/cat-1"}))
 	})
 
 	// A plain backend error is withheld as Internal; backend_errors_bdd_test.go

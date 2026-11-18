@@ -130,10 +130,10 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 		g := rt.shared.graphDB_
 
 		Eventually(func(inner Gomega) {
-			// Control nodes: ac-2 (section), ac-2.a, ac-2.b (requirements), and
+			// Control nodes: ac-2 (section), ac-2_smt.a, ac-2_smt.b (requirements), and
 			// the group as one Container node (position key g1).
 			// Control node IDs are fmt.Sprintf("%s/%s", catalogID, item.ID).
-			for _, id := range []string{"ac-2", "ac-2.a", "ac-2.b"} {
+			for _, id := range []string{"ac-2", "ac-2_smt.a", "ac-2_smt.b"} {
 				nodeID := catalogID + "/" + id
 				n, err := g.GetNode(ctx, tenantID, nodeID)
 				inner.Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("GetNode %s", nodeID))
@@ -147,7 +147,7 @@ var _ = Describe("crosscodexd RoleAll: inline OSCAL submission -> relational + A
 			inner.Expect(container.Label).To(Equal("Container"), "container node label")
 			inner.Expect(container.Properties).To(HaveKeyWithValue("node_kind", "container"))
 
-			// PARENT_OF edges: g1 -> ac-2, ac-2 -> ac-2.a, ac-2 -> ac-2.b (3 total).
+			// PARENT_OF edges: g1 -> ac-2, ac-2 -> ac-2_smt.a, ac-2 -> ac-2_smt.b (3 total).
 			parentOf, err := g.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{EdgeLabel: "PARENT_OF"})
 			inner.Expect(err).NotTo(HaveOccurred(), "query PARENT_OF")
 			inner.Expect(parentOf).To(HaveLen(3), "PARENT_OF edges")

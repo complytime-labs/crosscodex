@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -15,8 +16,11 @@ import (
 	"github.com/spf13/cobra"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/internal/testcerts"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/storage"
 )
 
 var _ = Describe("Embedded daemon startup (S1/S3)", func() {
@@ -151,6 +155,32 @@ var _ = Describe("Catalog round-trip (S2)", func() {
 		after, err := listCatalogs(ctx, sharedState.client)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(HaveLen(countBefore), "re-import must not add a catalog row")
+	})
+
+	It("stores a signed ingest attestation of the import, verifiable with the PKI directory's public key", func() {
+		data := fixture("minimal-catalog.json")
+
+		resp, err := importCatalog(ctx, sharedState.client, data, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "minimal")
+		Expect(err).NotTo(HaveOccurred())
+
+		r, err := sharedState.daemon.resources.storage.Get(ctx, "attestation/ingest/"+resp.GetDocumentId())
+		Expect(err).NotTo(HaveOccurred())
+		raw, err := io.ReadAll(r)
+		Expect(r.Close()).To(Succeed())
+		Expect(err).NotTo(HaveOccurred())
+
+		pubPath := sharedState.fullCfg.Attestation.PublicKeyPath
+		Expect(filepath.Base(pubPath)).To(Equal(testcerts.AttestationPubFile), "the key pair defaults to the PKI directory's")
+		verifier, err := attestation.NewGenerator(&attestation.FileKeyProvider{PublicKeyPath: pubPath})
+		Expect(err).NotTo(HaveOccurred())
+		link, err := verifier.Verify(ctx, raw)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(link.Step).To(Equal("gateway.StreamDocument"))
+		digest := storage.ContentHash(data)
+		Expect(link.Materials).To(ConsistOf(attestation.Artifact{
+			URI: "document://" + embeddedTenantID + "/" + resp.GetDocumentId(), Digest: digest}))
+		Expect(link.Products).To(ConsistOf(HaveField("URI", "catalog://"+embeddedTenantID+"/"+resp.GetCatalogId())))
+		Expect(link.ByProducts).To(HaveKeyWithValue("content_hash", digest))
 	})
 
 	It("reports the imported catalog format (OSCAL) on read-back", func() {

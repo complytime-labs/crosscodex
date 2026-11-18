@@ -18,7 +18,7 @@ var _ = Describe("Published labels and sort-ids", func() {
 		})
 
 		It("takes the label of a statement part", func() {
-			Expect(parseFixture("sp800-53r5.json")["ac-2.d.1"].Props).To(HaveKeyWithValue(oscal.PropLabel, "1."))
+			Expect(parseFixture("sp800-53r5.json")["ac-2_smt.d.1"].Props).To(HaveKeyWithValue(oscal.PropLabel, "1."))
 		})
 
 		It("takes the label of a group", func() {

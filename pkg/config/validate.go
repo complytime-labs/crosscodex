@@ -130,6 +130,11 @@ func validateStorage(s *StorageConfig, tracker *sourceTracker) error {
 		p.add("storage.objects.backend", "storage.objects.backend %q%s must be one of local, s3: %w",
 			s.Objects.Backend, formatSource(tracker, "storage.objects.backend"), ErrInvalidConfig)
 	}
+	if s.Objects.Backend == "s3" && s.Objects.Bucket == "" {
+		p.addFrom(tracker.sourceOf("storage.objects.backend"), "storage.objects.bucket",
+			"storage.objects.bucket is required when storage.objects.backend is s3%s; set it (or CROSSCODEX_STORAGE_OBJECTS_BUCKET) to the bucket that holds every tenant's objects: %w",
+			formatSource(tracker, "storage.objects.backend"), ErrMissingRequired)
+	}
 	return p.err()
 }
 

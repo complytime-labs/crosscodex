@@ -87,15 +87,29 @@ var _ = Describe("NewAttestors", func() {
 		Expect(config.FieldErrors(err)).To(ConsistOf(HaveField("Path", "attestation.private_key_path")))
 	})
 
-	It("refuses a key pair that does not load, naming the scope and the file", func() {
-		_, pub := writeKeyPair(elliptic.P256(), "half")
-		absent := filepath.Join(dir, "absent-key.pem")
-		_, err := pipeline.NewAttestors(config.AttestationConfig{
-			Enabled: true, PrivateKeyPath: absent, PublicKeyPath: pub, ExpiryDuration: time.Hour,
-		}, false, nil, nil)
-		Expect(err).To(MatchError(attestation.ErrKeyNotFound))
-		Expect(err.Error()).To(And(ContainSubstring("attestation: load the attestation key pair"), ContainSubstring(absent)))
-	})
+	DescribeTable("refuses a key pair that does not load, naming the settings, the file and both remedies",
+		func(override bool, wantSetting string) {
+			_, pub := writeKeyPair(elliptic.P256(), "half")
+			absent := filepath.Join(dir, "absent-key.pem")
+			cfg := config.AttestationConfig{Enabled: true, PrivateKeyPath: absent, PublicKeyPath: pub, ExpiryDuration: time.Hour}
+			if override {
+				good, goodPub := writeKeyPair(elliptic.P256(), "good")
+				cfg.PrivateKeyPath, cfg.PublicKeyPath = good, goodPub
+				cfg.TenantOverrides = map[string]config.AttestationOverride{
+					"tenant-b": {PrivateKeyPath: &absent, PublicKeyPath: &pub},
+				}
+			}
+
+			_, err := pipeline.NewAttestors(cfg, false, nil, nil)
+			Expect(err).To(MatchError(attestation.ErrKeyNotFound))
+			Expect(err.Error()).To(And(
+				ContainSubstring(wantSetting+".private_key_path"), ContainSubstring(wantSetting+".public_key_path"),
+				ContainSubstring(absent), ContainSubstring("Supply an ECDSA key pair at those paths"),
+				ContainSubstring(wantSetting+".enabled: false")))
+		},
+		Entry("the global settings", false, "attestation"),
+		Entry("a tenant override", true, `attestation.tenant_overrides["tenant-b"]`),
+	)
 
 	It("refuses a key on a curve FIPS does not approve when tls.fips.enabled is set, and accepts it otherwise", func() {
 		priv, pub := writeKeyPair(elliptic.P224(), "p224")
@@ -132,4 +146,22 @@ var _ = Describe("NewAttestors", func() {
 		ok, _ = signs(own, attestors.Default)
 		Expect(ok).To(BeFalse(), "the tenant's links must be signed with its own key")
 	})
+})
+
+var _ = Describe("Attestors.ForTenant", func() {
+	global, own := &pipeline.Attestor{ExpiresIn: time.Hour}, &pipeline.Attestor{ExpiresIn: 2 * time.Hour}
+
+	DescribeTable("resolves a tenant's override before the global attestor",
+		func(attestors pipeline.Attestors, tenantID string, want *pipeline.Attestor) {
+			Expect(attestors.ForTenant(tenantID)).To(BeIdenticalTo(want))
+		},
+		Entry("a tenant without an override gets the global attestor",
+			pipeline.Attestors{Default: global, Tenants: map[string]*pipeline.Attestor{"tenant-b": own}}, "tenant-a", global),
+		Entry("a tenant with an override gets its own",
+			pipeline.Attestors{Default: global, Tenants: map[string]*pipeline.Attestor{"tenant-b": own}}, "tenant-b", own),
+		Entry("a tenant whose override disables attestation gets none",
+			pipeline.Attestors{Default: global, Tenants: map[string]*pipeline.Attestor{"tenant-b": nil}}, "tenant-b", (*pipeline.Attestor)(nil)),
+		Entry("no tenant gets one when attestation is disabled globally",
+			pipeline.Attestors{}, "tenant-a", (*pipeline.Attestor)(nil)),
+	)
 })

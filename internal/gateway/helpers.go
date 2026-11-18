@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/rpcserver"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
-	"github.com/complytime-labs/crosscodex/pkg/telemetry"
+	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -114,22 +115,44 @@ func (i publicErrorInterceptor) WrapStreamingHandler(next connect.StreamingHandl
 	}
 }
 
-// emitAttestation creates an in-toto attestation link. On error the failure
-// is recorded to the active span but does not fail the request.
-func (s *Service) emitAttestation(ctx context.Context, step string, materials, products []attestation.Artifact, byProducts map[string]any) {
+// attestIngest signs an in-toto link for one catalog import, step, with the
+// generator WithAttestor resolves for the tenant on ctx, and stores it at
+// attestation/ingest/<docID> (docID is the document's own storage key, such
+// as documents/<uuid>.json) in that tenant's object store, under the
+// attestation/ prefix retention collects. The link's material is the
+// uploaded document, with the SHA-256 of content as its digest (also the
+// content_hash byproduct); its product is the catalog. The generator adds
+// the trace ID. It does nothing when no attestor is configured or the
+// tenant's attestation is disabled, and otherwise fails closed: a tenant
+// missing from ctx, an import with no uploaded bytes to digest, or a link
+// that is not signed or stored is an error.
+func (s *Service) attestIngest(ctx context.Context, step, docID, catalogID string, content []byte, byProducts map[string]any) error {
 	if s.attestor == nil {
-		return
+		return nil
 	}
-	traceID := telemetry.TraceIDFromContext(ctx)
-	link, err := s.attestor.CreateLink(ctx, step, materials, products, attestation.WithByProducts(byProducts))
+	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
-		if s.tracer != nil {
-			trace.SpanFromContext(ctx).RecordError(err, trace.WithAttributes(
-				attribute.String("error.type", "attestation_failed"),
-				attribute.String("trace_id", traceID),
-			))
-		}
-	} else {
-		_ = link
+		return fmt.Errorf("resolve the tenant whose import to attest: %w", err)
 	}
+	gen := s.attestor(tenantID)
+	if gen == nil {
+		return nil
+	}
+	if len(content) == 0 {
+		return fmt.Errorf("document %s has no uploaded bytes to digest", docID)
+	}
+	digest := storage.ContentHash(content)
+	byProducts["content_hash"] = digest
+	link, err := gen.CreateLink(ctx, step,
+		[]attestation.Artifact{{URI: fmt.Sprintf("document://%s/%s", tenantID, docID), Digest: digest}},
+		[]attestation.Artifact{{URI: fmt.Sprintf("catalog://%s/%s", tenantID, catalogID)}},
+		attestation.WithByProducts(byProducts))
+	if err != nil {
+		return fmt.Errorf("sign the ingest link of document %s: %w", docID, err)
+	}
+	key := "attestation/ingest/" + docID
+	if err := s.attestStore.Put(ctx, key, bytes.NewReader(link.Raw)); err != nil {
+		return fmt.Errorf("store the ingest link at %s: %w", key, err)
+	}
+	return nil
 }

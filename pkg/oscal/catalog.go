@@ -114,6 +114,11 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 	// group is a placeholder, not structure: storing it would put an empty
 	// heading into breadcrumbs and prompts, so the import fails closed instead.
 	var untitled error
+	// groupParams[key] is the group's params with its ancestors' before them
+	// (outermost first), so a nearer group's param of the same ID overrides.
+	// A parameter reaches only the controls and prose inside its group, never
+	// the rest of the catalog.
+	groupParams := make(map[string][]oscalTypes.Parameter)
 	WalkGroups(catalog, func(group oscalTypes.Group, key, parentKey string) {
 		if untitled == nil && strings.TrimSpace(group.Title) == "" {
 			untitled = fmt.Errorf("%w: group %q at position %s has no title. "+
@@ -121,11 +126,18 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 				"or move its controls to the catalog's top level", ErrInvalidFormat, group.ID, key)
 		}
 		label, _ := selectProp(group.Props, PropLabel)
+		chain := slices.Clone(groupParams[parentKey])
+		if group.Params != nil {
+			chain = append(chain, *group.Params...)
+		}
+		groupParams[key] = chain
+		scoped := oscalTypes.Control{Params: &chain}
 		containers = append(containers, Container{
 			Key:        key,
 			Identifier: group.ID,
 			Title:      group.Title,
 			Label:      label,
+			Prose:      groupProse(group, collectParams(catalog, scoped, catalogWide)),
 			ParentKey:  parentKey,
 		})
 	})
@@ -161,7 +173,7 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 		inherited = append(inherited[:depth], own)
 		ancestors = append(ancestors[:depth], ctrl.ID)
 		scoped := ctrl
-		merged := slices.Concat(inherited...)
+		merged := slices.Concat(groupParams[groupKey], slices.Concat(inherited...))
 		scoped.Params = &merged
 		params := collectParams(catalog, scoped, catalogWide)
 		decomposed := DecomposeStatements(ctrl, groupID, params, p.requirementParts)
@@ -210,10 +222,30 @@ func (p *oscalParser) parse(ctx context.Context, data io.Reader) (*Tree, error) 
 	return &Tree{Containers: containers, Items: items, Textless: textless}, nil
 }
 
-// itemOrigin names an item for a duplicate-ID error. A statement part
-// numbered by position, because its source part's id is empty or unpatterned,
-// has an ID that appears nowhere in the source, so it also gets a hint saying
-// which part to give an id.
+// groupProse is the prose of a group's own parts in pre-order, each cleaned
+// with params, the non-empty ones joined by a blank line.
+func groupProse(group oscalTypes.Group, params map[string]string) string {
+	var paragraphs []string
+	var visit func(parts *[]oscalTypes.Part)
+	visit = func(parts *[]oscalTypes.Part) {
+		if parts == nil {
+			return
+		}
+		for _, part := range *parts {
+			if text := strings.TrimSpace(CleanProse(part.Prose, params)); text != "" {
+				paragraphs = append(paragraphs, text)
+			}
+			visit(part.Parts)
+		}
+	}
+	visit(group.Parts)
+	return strings.Join(paragraphs, "\n\n")
+}
+
+// itemOrigin names an item for a duplicate-ID error. A statement part with no
+// id of its own gets its ID from the importer (its label, else its position),
+// so that ID appears nowhere in the source; the hint says which part to give an
+// id.
 type itemOrigin struct {
 	name string
 	hint string
@@ -223,21 +255,20 @@ func describeItem(item ControlItem, ctrlID string) itemOrigin {
 	if item.Props[PropNodeKind] == PropNodeKindControl {
 		return itemOrigin{name: fmt.Sprintf("control %q", item.ID)}
 	}
-	source := item.Props["source-part"]
-	if _, ok := idFromPartID(item.ParentID, source); ok {
-		return itemOrigin{name: fmt.Sprintf("statement part %q of control %q (part id %q)", item.ID, ctrlID, source)}
+	if item.Props["source-part"] != "" {
+		return itemOrigin{name: fmt.Sprintf("statement part %q of control %q (part id %q)", item.ID, ctrlID, item.Props["source-part"])}
 	}
 	return itemOrigin{
 		name: fmt.Sprintf("statement part %q of control %q", item.ID, ctrlID),
-		hint: fmt.Sprintf("%q is not in the source catalog: it was numbered by position from a part of control %q "+
-			"whose id (%q) is empty or neither contains \"_smt.\" nor starts with %q; "+
-			"give that part an id in the source catalog that starts with %q and re-import. ",
-			item.ID, ctrlID, source, item.ParentID+".", item.ParentID+"."),
+		hint: fmt.Sprintf("%q is not in the source catalog: the importer derived it because a part of control %q "+
+			"has no id (from the part's label, else its position under %q); "+
+			"give that part an id in the source catalog and re-import. ",
+			item.ID, ctrlID, item.ParentID),
 	}
 }
 
 // duplicateIDError reports two items sharing an ID, naming both and, for a
-// positionally numbered part, how to give it an ID of its own.
+// part whose ID the importer derived, how to give it an ID of its own.
 func duplicateIDError(id string, first, second itemOrigin) error {
 	fix := "Rename one in the source catalog and re-import"
 	if first.hint != "" || second.hint != "" {

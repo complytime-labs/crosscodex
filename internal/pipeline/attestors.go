@@ -39,9 +39,9 @@ type Attestors struct {
 	StorageRetryDelay time.Duration
 }
 
-// forTenant returns the Attestor for tenantID's jobs, or nil when they are
-// not attested.
-func (a Attestors) forTenant(tenantID string) *Attestor {
+// ForTenant returns the Attestor for tenantID's jobs and catalog imports, or
+// nil when they are not attested.
+func (a Attestors) ForTenant(tenantID string) *Attestor {
 	if att, ok := a.Tenants[tenantID]; ok {
 		return att
 	}
@@ -70,7 +70,8 @@ func NewAttestors(cfg config.AttestationConfig, fips bool, tracer trace.Tracer, 
 			var err error
 			kp, err = attestation.LoadFileKeys(tc.PrivateKeyPath, tc.PublicKeyPath, fips)
 			if err != nil {
-				return nil, fmt.Errorf("%s: load the attestation key pair: %w", scope, err)
+				return nil, fmt.Errorf("%[1]s: load the key pair at %[1]s.private_key_path and %[1]s.public_key_path: %[2]w. "+
+					"Supply an ECDSA key pair at those paths, or set %[1]s.enabled: false to run without attestation", scope, err)
 			}
 			keys[pair] = kp
 		}

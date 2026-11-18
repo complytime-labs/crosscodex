@@ -32,6 +32,22 @@
 //	}
 //	defer provider.Close()
 //
+// A daemon serving many tenants builds one Provider that routes each call to
+// the tenant's own backend, chosen from storage.objects.backend. The tenant
+// comes from the context:
+//
+//	router := storage.NewTenantRouter(func(tenantID string) (storage.Provider, error) {
+//	    return storage.NewFromConfig(cfg.Storage.Objects, tenantID,
+//	        storage.WithTelemetry(tracer, meter))
+//	})
+//	defer router.Close()
+//
+//	ctx, err := tenant.WithTenant(ctx, "tenant-1")
+//	err = router.Put(ctx, "documents/doc1.json", bytes.NewReader(data))
+//
+// The router opens each tenant's provider on first use and owns it; Close
+// closes them all. A context without a tenant is rejected.
+//
 // Check if an object exists before fetching:
 //
 //	exists, err := provider.Exists(ctx, "documents/doc1.json")

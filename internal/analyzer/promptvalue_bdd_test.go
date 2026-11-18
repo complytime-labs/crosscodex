@@ -74,3 +74,41 @@ var _ = Describe("PromptText", func() {
 		Entry("only invisible characters leave nothing", "\u202e\u200b \t", 100, ""),
 	)
 })
+
+// isExportStripped reports whether CleanExport must have removed r.
+func isExportStripped(r rune) bool {
+	switch {
+	case r <= 0x1F && r != '\t' && r != '\n', r >= 0x7F && r <= 0x9F:
+		return true
+	case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069, r >= 0xE0000 && r <= 0xE007F:
+		return true
+	}
+	return false
+}
+
+var _ = Describe("CleanExport", func() {
+	DescribeTable("keeps script text and line structure and removes what hides or acts",
+		func(in, want string) { Expect(analyzer.CleanExport(in, 100)).To(Equal(want)) },
+		Entry("a ZWNJ is kept", "می\u200cخواهم", "می\u200cخواهم"),
+		Entry("line breaks are kept", "a. one\nb. two", "a. one\nb. two"),
+		Entry("CRLF becomes LF", "x\r\ny", "x\ny"),
+		Entry("a lone CR becomes LF", "x\ry", "x\ny"),
+		Entry("a lone CR does not glue words", "Line one\rLine two", "Line one\nLine two"),
+		Entry("bidi override and isolate are removed", "a\u202eb\u2066c", "abc"),
+		Entry("the ESC of a terminal escape is removed", "\x1b[31mred", "[31mred"),
+		Entry("a C1 control is removed", "a\u009bb", "ab"),
+		Entry("DEL is removed", "a\x7fb", "ab"),
+		Entry("a tag character is removed", "a\U000E0041b", "ab"),
+		Entry("invalid UTF-8 is repaired", "\xffz", "�z"),
+		Entry("an RLM is kept", "\u200fx", "\u200fx"),
+		Entry("a ZWJ is kept", "a\u200db", "a\u200db"),
+		Entry("a soft hyphen is kept", "a\u00adb", "a\u00adb"),
+		Entry("tabs are kept inside the text", "a\tb", "a\tb"),
+		Entry("the ends are trimmed", " \n a \n", "a"),
+	)
+
+	It("caps the result at maxBytes on a rune boundary", func() {
+		Expect(analyzer.CleanExport("aé", 2)).To(Equal("a"))
+		Expect(analyzer.CleanExport("ab\x1bc", 3)).To(Equal("abc"))
+	})
+})

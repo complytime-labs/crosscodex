@@ -25,8 +25,8 @@ var _ = Describe("PGControlsReader", func() {
 	}
 
 	containerRows := [][]any{
-		{catalogID, "g1", "ac", "Access Control", "AC", ""},
-		{catalogID, "g1.1", "", "Policies", "", "g1"},
+		{catalogID, "g1", "ac", "Access Control", "AC", "Controls on access.", ""},
+		{catalogID, "g1.1", "", "Policies", "", "", "g1"},
 	}
 
 	var (
@@ -173,7 +173,7 @@ var _ = Describe("PGControlsReader", func() {
 			got, err := graph.NewPGControlsReader(conn).ListCatalogContainers(ctx, catalogID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal([]graph.CatalogContainer{
-				{CatalogID: catalogID, Key: "g1", Identifier: "ac", Title: "Access Control", Label: "AC"},
+				{CatalogID: catalogID, Key: "g1", Identifier: "ac", Title: "Access Control", Label: "AC", Prose: "Controls on access."},
 				{CatalogID: catalogID, Key: "g1.1", Title: "Policies", ParentKey: "g1"},
 			}))
 			Expect(gotArgs).To(Equal([]any{catalogID, "tenant-a"}), "query must bind catalog_id and the ctx tenant_id")

@@ -130,7 +130,7 @@ var _ = Describe("Result-cache checkpoints", Ordered, func() {
 	plant := func(gen attestation.Generator, attempt, step string, materials, products []attestation.Artifact) string {
 		link, err := gen.CreateLink(ctx, step, materials, products)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred())
-		key := pipeline.CheckpointKey(tenantA, "job-1", classify, attempt)
+		key := pipeline.CheckpointKey("job-1", classify, attempt)
 		ExpectWithOffset(1, objects.Put(ctx, key, bytes.NewReader(link.Raw))).To(Succeed())
 		return key
 	}
@@ -159,7 +159,7 @@ var _ = Describe("Result-cache checkpoints", Ordered, func() {
 			ref := refOf("job-1", classify)
 			seal(cp, ref, digest)
 
-			raw, ok := objects.Objects()[pipeline.CheckpointKey(tenantA, "job-1", classify, ref.Attempt)]
+			raw, ok := objects.Objects()[pipeline.CheckpointKey("job-1", classify, ref.Attempt)]
 			Expect(ok).To(BeTrue())
 			verified, err := trustedGen.Verify(ctx, raw)
 			Expect(err).NotTo(HaveOccurred())
@@ -282,8 +282,8 @@ var _ = Describe("Result-cache checkpoints", Ordered, func() {
 		It("ignores objects that are not named after a canonical attempt, such as a crashed write's temporary file", func() {
 			ref := refOf("job-1", classify)
 			seal(cp, ref, digest)
-			raw := objects.Objects()[pipeline.CheckpointKey(tenantA, "job-1", classify, ref.Attempt)]
-			dir := strings.TrimSuffix(pipeline.CheckpointKey(tenantA, "job-1", classify, ref.Attempt), ref.Attempt+".json")
+			raw := objects.Objects()[pipeline.CheckpointKey("job-1", classify, ref.Attempt)]
+			dir := strings.TrimSuffix(pipeline.CheckpointKey("job-1", classify, ref.Attempt), ref.Attempt+".json")
 			Expect(objects.Put(ctx, dir+".tmp-123", bytes.NewReader(raw))).To(Succeed())
 			Expect(objects.Put(ctx, dir+"not-a-uuid.json", bytes.NewReader(raw))).To(Succeed())
 
@@ -307,7 +307,7 @@ var _ = Describe("Result-cache checkpoints", Ordered, func() {
 		It("fails as corrupt when a checkpoint's signature does not verify under the trusted key", func() {
 			ref := refOf("job-1", classify)
 			seal(cp, ref, digest)
-			key := pipeline.CheckpointKey(tenantA, "job-1", classify, ref.Attempt)
+			key := pipeline.CheckpointKey("job-1", classify, ref.Attempt)
 			raw := objects.Objects()[key]
 			// Sign a different digest into the payload, keeping the signature
 			// (and its trusted key ID) as it was.
@@ -385,7 +385,7 @@ var _ = Describe("Result-cache checkpoints", Ordered, func() {
 			func(extra int, refused bool) {
 				ref := refOf("job-1", classify)
 				seal(cp, ref, digest)
-				key := pipeline.CheckpointKey(tenantA, "job-1", classify, ref.Attempt)
+				key := pipeline.CheckpointKey("job-1", classify, ref.Attempt)
 				raw := objects.Objects()[key]
 				// JSON allows trailing whitespace, so the padded checkpoint
 				// is still the genuine, verifying envelope.
@@ -411,8 +411,8 @@ var _ = Describe("Result-cache checkpoints", Ordered, func() {
 		It("fails as corrupt when another job's genuine checkpoint is copied under this job", func() {
 			other := refOf("job-0", classify)
 			seal(svc.CacheCheckpointsFor(&pipeline.Job{JobID: "job-0", TenantID: tenantA, Config: []byte(`{}`)}, att, classify), other, digest)
-			raw := objects.Objects()[pipeline.CheckpointKey(tenantA, "job-0", classify, other.Attempt)]
-			Expect(objects.Put(ctx, pipeline.CheckpointKey(tenantA, "job-1", classify, other.Attempt), bytes.NewReader(raw))).To(Succeed())
+			raw := objects.Objects()[pipeline.CheckpointKey("job-0", classify, other.Attempt)]
+			Expect(objects.Put(ctx, pipeline.CheckpointKey("job-1", classify, other.Attempt), bytes.NewReader(raw))).To(Succeed())
 
 			_, err := cp.Verified(ctx, classify, []string{"job-1"})
 			Expect(err).To(MatchError(resultcache.ErrCorrupt))

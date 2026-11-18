@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
-	"github.com/complytime-labs/crosscodex/pkg/attestation"
+	"github.com/complytime-labs/crosscodex/internal/rpcserver"
 )
 
 func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.SubmitDocumentRequest]) (*connect.Response[pb.SubmitDocumentResponse], error) {
@@ -112,17 +114,26 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		return nil, connect.NewError(connect.CodeInternal, errors.New("catalog backend returned empty catalog_id"))
 	}
 
-	materials := []attestation.Artifact{
-		{URI: fmt.Sprintf("document://%s/%s", identity.TenantID, docID), Digest: ""},
-	}
-	products := []attestation.Artifact{
-		{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, catalogID), Digest: ""},
-	}
 	byProducts := map[string]any{
 		"catalog_format": input.catalogFormat.String(),
 		"catalog_name":   input.catalogName,
 	}
-	s.emitAttestation(ctx, "gateway."+input.rpcName, materials, products, byProducts)
+	if err := s.attestIngest(ctx, "gateway."+input.rpcName, docID, catalogID, input.convertReq.GetContent(), byProducts); err != nil {
+		// The cause can name storage buckets, hosts or key files (CWE-209):
+		// it is logged here, once, and the caller gets a reference to it.
+		ref := rpcserver.NewErrorReference()
+		s.logger.ErrorContext(ctx, "catalog import attestation failed", "method", input.rpcName, "error_ref", ref,
+			"trace_id", rpcserver.LocalTraceID(ctx), "tenant", identity.TenantID, "subject", identity.Subject,
+			"document_id", docID, "catalog_id", catalogID, "error", err)
+		span := trace.SpanFromContext(ctx)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "catalog import attestation failed, error_ref "+ref)
+		s.recordMetrics(ctx, input.rpcName, start, connect.CodeUnavailable)
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+			"catalog %q was imported but not attested: its in-toto ingest attestation could not be signed or stored, "+
+				"so nothing yet proves which upload produced it. To attest it, re-run the same import; "+
+				"if that keeps failing, give error reference %s to an operator", catalogID, ref))
+	}
 
 	s.recordMetrics(ctx, input.rpcName, start, connect.Code(0))
 

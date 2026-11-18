@@ -3,13 +3,11 @@ package gateway
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"connectrpc.com/connect"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
-	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -43,25 +41,6 @@ func (s *Service) SubmitVote(ctx context.Context, req *connect.Request[pb.Submit
 		s.recordMetrics(ctx, "SubmitVote", start, connect.CodeOf(err))
 		return nil, err
 	}
-
-	// Attestation: emit link for human feedback event
-	materials := []attestation.Artifact{
-		{URI: fmt.Sprintf("mapping://%s/%s", identity.TenantID, req.Msg.GetMappingId()), Digest: ""},
-	}
-	products := []attestation.Artifact{
-		{URI: fmt.Sprintf("vote://%s/%s", identity.TenantID, resp.Msg.GetVoteId()), Digest: ""},
-	}
-	byProducts := map[string]any{
-		"vote_type": req.Msg.GetVoteType().String(),
-		"user_id":   identity.Subject,
-	}
-	if req.Msg.GetSuggestedType() != pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED {
-		byProducts["suggested_type"] = req.Msg.GetSuggestedType().String()
-	}
-	if req.Msg.GetRationale() != "" {
-		byProducts["rationale_length"] = len(req.Msg.GetRationale())
-	}
-	s.emitAttestation(ctx, "gateway.SubmitVote", materials, products, byProducts)
 
 	s.recordMetrics(ctx, "SubmitVote", start, connect.Code(0))
 	return resp, nil

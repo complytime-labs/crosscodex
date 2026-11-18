@@ -44,13 +44,13 @@ var _ = Describe("E2E catalog fixture", func() {
 		Expect(ok && parent.Class == oscal.ClassSection && parent.ParentID == "" && parent.ContainerKey == "g1").To(BeTrue(),
 			"ac-2: got %+v, want a top-level ClassSection control in container g1", parent)
 
-		for _, child := range []string{"ac-2.a", "ac-2.b"} {
+		for _, child := range []string{"ac-2_smt.a", "ac-2_smt.b"} {
 			c, ok := byID[child]
 			Expect(ok && c.ParentID == "ac-2" && c.Class == oscal.ClassRequirement).To(BeTrue(),
 				"%s: got %+v, want ClassRequirement child of ac-2", child, c)
 		}
 
-		Expect(byID["ac-2.a"].Text == byID["ac-2.b"].Text && byID["ac-2.a"].Text != "").To(BeTrue(),
+		Expect(byID["ac-2_smt.a"].Text == byID["ac-2_smt.b"].Text && byID["ac-2_smt.a"].Text != "").To(BeTrue(),
 			"children must share identical non-empty Text to form a requires candidate pair")
 	})
 })

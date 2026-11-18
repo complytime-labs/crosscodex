@@ -65,6 +65,7 @@ func FuzzBuildNodeFromPath(f *testing.F) {
 func FuzzValidateConfig(f *testing.F) {
 	f.Add("off", "local", "8760h")
 	f.Add("mutual", "s3", "1h")
+	f.Add("off", "s3", "8760h")
 	f.Add("server-only", "local", "24h")
 	f.Add("INVALID", "INVALID", "0s")
 	f.Add("", "", "8760h")
@@ -85,8 +86,8 @@ func FuzzValidateConfig(f *testing.F) {
 		err = config.ExportValidateConfig(cfg)
 		reported := map[string]bool{}
 		if err != nil {
-			if !errors.Is(err, config.ErrInvalidConfig) || !config.FieldErrorsComplete(err) {
-				t.Fatalf("rejection is not made of FieldErrors wrapping ErrInvalidConfig: %v", err)
+			if !errors.Is(err, config.ErrInvalidConfig) && !errors.Is(err, config.ErrMissingRequired) || !config.FieldErrorsComplete(err) {
+				t.Fatalf("rejection is not made of FieldErrors wrapping ErrInvalidConfig or ErrMissingRequired: %v", err)
 			}
 			for _, fe := range config.FieldErrors(err) {
 				reported[fe.Path] = true
@@ -96,6 +97,7 @@ func FuzzValidateConfig(f *testing.F) {
 		want := map[string]bool{
 			"tls.mode":                    tlsMode != "" && tlsMode != "off",
 			"storage.objects.backend":     storageBackend != "" && storageBackend != "local" && storageBackend != "s3",
+			"storage.objects.bucket":      storageBackend == "s3",
 			"attestation.expiry_duration": expiry <= 0,
 		}
 		for path, bad := range want {

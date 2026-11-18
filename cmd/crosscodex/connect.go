@@ -140,6 +140,7 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 		return fmt.Errorf("bootstrap PKI: %w", err)
 	}
 	paths := pkiPaths(pkiDir)
+	defaultAttestationKeyPaths(state.fullCfg, pkiDir)
 
 	// Logger level derives from the CLI verbosity flags / config baseline
 	// (see resolveLogLevel); defaults to WARN when no flags or config apply.

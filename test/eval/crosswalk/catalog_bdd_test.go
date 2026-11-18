@@ -130,35 +130,34 @@ var _ = Describe("TargetIndex statement items", func() {
 		x = crosswalk.NewTargetIndex(c)
 	})
 
-	// sa-1 items follow the "<id>_smt.<x>" part-ID pattern; np-1 items do not,
-	// so the importer numbers them.
-	DescribeTable("knows the item IDs the importer derives, rolling each up to its outermost control",
+	// An item's ID is its part's id exactly as the catalog writes it.
+	DescribeTable("knows the item IDs the importer takes from the parts, rolling each up to its outermost control",
 		func(id, wantBase string) {
 			Expect(x.Has(id)).To(BeTrue())
 			Expect(x.Base(id)).To(Equal(wantBase))
 		},
-		Entry("item under a control", "sa-1.a", "sa-1"),
-		Entry("sub-item under an item", "sa-1.b.1", "sa-1"),
-		Entry("item under an enhancement", "sa-1.2.a", "sa-1"),
-		Entry("item with a part ID outside the pattern", "np-1.1", "np-1"),
-		Entry("second such item", "np-1.2", "np-1"),
+		Entry("item under a control", "sa-1_smt.a", "sa-1"),
+		Entry("sub-item under an item", "sa-1_smt.b.1", "sa-1"),
+		Entry("item under an enhancement", "sa-1.2_smt.a", "sa-1"),
+		Entry("item whose part ID does not follow the sa-1 pattern", "first", "np-1"),
+		Entry("second such item", "second", "np-1"),
 		Entry("the control itself", "sa-1", "sa-1"),
 		Entry("an enhancement", "sa-1.2", "sa-1"),
 		Entry("a control without a statement", "pl-9", "pl-9"),
 	)
 
-	DescribeTable("does not know an ID that is neither a control nor a derived item",
+	DescribeTable("does not know an ID that is neither a control nor an item",
 		func(id string) {
 			Expect(x.Has(id)).To(BeFalse())
 			Expect(x.Base(id)).To(BeEmpty())
 		},
-		Entry("the raw part ID", "sa-1_smt.a"),
+		Entry("a part id with its _smt suffix stripped", "sa-1.a"),
 		Entry("an item of no control", "sa-1.z"),
-		Entry("a fallback index past the items", "np-1.3"),
+		Entry("a position past the items", "np-1.3"),
 	)
 
 	It("does not resolve an item identifier, so references stay on controls", func() {
-		Expect(x.Resolve("sa-1.a").State).To(Equal(crosswalk.Unresolved))
+		Expect(x.Resolve("sa-1_smt.a").State).To(Equal(crosswalk.Unresolved))
 		Expect(x.Resolve("sa-1").State).To(Equal(crosswalk.Resolved))
 	})
 })
@@ -176,10 +175,10 @@ var _ = Describe("TargetIndex.Owner", func() {
 		},
 		Entry("a control", "sa-1", "sa-1"),
 		Entry("an enhancement", "sa-1.2", "sa-1.2"),
-		Entry("an item of a control", "sa-1.a", "sa-1"),
-		Entry("a sub-item", "sa-1.b.1", "sa-1"),
-		Entry("an item of an enhancement", "sa-1.2.a", "sa-1.2"),
-		Entry("an item with a part ID outside the pattern", "np-1.2", "np-1"),
+		Entry("an item of a control", "sa-1_smt.a", "sa-1"),
+		Entry("a sub-item", "sa-1_smt.b.1", "sa-1"),
+		Entry("an item of an enhancement", "sa-1.2_smt.a", "sa-1.2"),
+		Entry("an item with a part ID outside the pattern", "second", "np-1"),
 		Entry("an unknown ID", "nope", ""),
 	)
 })

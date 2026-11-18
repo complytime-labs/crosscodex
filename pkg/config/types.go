@@ -383,12 +383,13 @@ type AttestationConfig struct {
 // again.
 //
 // crosscodexd calls this, through internal/pipeline.NewAttestors, in the
-// roles that run the pipeline. Config loading does not: the crosscodex CLI
-// and the other roles load the same configuration and never sign.
+// roles that run the pipeline or serve catalog import, and so does the
+// crosscodex CLI's embedded daemon. Config loading does not: the other roles
+// and CLI commands load the same configuration and never sign.
 func (a *AttestationConfig) RequireKeys() error {
 	var p problems
-	const remedy = "the pipeline signs each job's in-toto attestation with this key pair. " +
-		"Set both paths to an ECDSA key pair, or set %s: false to run jobs without attestation: %w"
+	const remedy = "the pipeline signs each job's in-toto attestation, and catalog import each import's, with this key pair. " +
+		"Set both paths to an ECDSA key pair, or set %s: false to run without attestation: %w"
 	globalMissing := a.Enabled && (a.PrivateKeyPath == "" || a.PublicKeyPath == "")
 	if globalMissing {
 		p.add("attestation.private_key_path",

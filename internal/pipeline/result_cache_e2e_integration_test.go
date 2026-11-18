@@ -92,7 +92,7 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 	}
 
 	checkpointsOf := func(jobID, analyzerName string) []string {
-		objs, err := env.storage.List(context.Background(), checkpointDir(env.tenantA, jobID, analyzerName))
+		objs, err := env.storage.List(context.Background(), checkpointDir(jobID, analyzerName))
 		ExpectWithOffset(1, err).NotTo(HaveOccurred())
 		keys := make([]string, len(objs))
 		for i, o := range objs {
@@ -276,12 +276,12 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 		return ""
 	}
 	classifyLink := func(jobID string) *attestation.VerifiedLink {
-		rc, err := env.storage.Get(context.Background(), "attestations/"+env.tenantA+"/"+jobID+"/links/classify.json")
+		rc, err := env.storage.Get(context.Background(), "attestation/"+jobID+"/links/classify.json")
 		ExpectWithOffset(1, err).NotTo(HaveOccurred())
 		raw, err := io.ReadAll(rc)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred())
 		ExpectWithOffset(1, rc.Close()).To(Succeed())
-		v, err := env.svc.attestors.forTenant(env.tenantA).Generator.Verify(env.ctxA, raw)
+		v, err := env.svc.attestors.ForTenant(env.tenantA).Generator.Verify(env.ctxA, raw)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred())
 		return v
 	}

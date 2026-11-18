@@ -39,8 +39,8 @@ var checkpointDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // attestor: step cacheCheckpointStep, the job (jobSubject) as its material,
 // and one product, checkpointURI(tenant, job, analyzer, attempt) with the
 // attempt's manifest digest. That product binds the tenant, job, analyzer,
-// attempt and digest; it is stored at checkpointKey of the same four, and
-// Verified accepts a checkpoint only where its product says it belongs.
+// attempt and digest; it is stored at checkpointKey of the job, analyzer and
+// attempt (the object store is the tenant's), and Verified accepts a checkpoint only where its product says it belongs.
 type cacheCheckpoints struct {
 	s         *Service
 	job       *Job
@@ -70,13 +70,13 @@ func (s *Service) newCacheCheckpoints(job *Job, attestor *Attestor, analyzers []
 
 // checkpointDir is the object storage prefix of a job's checkpoints of one
 // analyzer, beside the job's attestation links.
-func checkpointDir(tenantID, jobID, analyzerName string) string {
-	return fmt.Sprintf("attestations/%s/%s/cache-checkpoints/%s/", tenantID, jobID, analyzerName)
+func checkpointDir(jobID, analyzerName string) string {
+	return fmt.Sprintf("attestation/%s/cache-checkpoints/%s/", jobID, analyzerName)
 }
 
 // checkpointKey is the object storage key of one attempt's checkpoint.
-func checkpointKey(tenantID, jobID, analyzerName, attempt string) string {
-	return checkpointDir(tenantID, jobID, analyzerName) + attempt + ".json"
+func checkpointKey(jobID, analyzerName, attempt string) string {
+	return checkpointDir(jobID, analyzerName) + attempt + ".json"
 }
 
 // checkpointURI is the URI of a checkpoint's product: the attempt it vouches
@@ -159,7 +159,7 @@ func (c *cacheCheckpoints) Store(ctx context.Context, ref resultcache.AttemptRef
 	// The digest remembered for the link is the one the stored bytes sign,
 	// read back from them, so it cannot differ from what is stored. An
 	// envelope that is not ref's checkpoint is a caller bug, not tampering.
-	key := checkpointKey(tenantID, ref.JobID, ref.Analyzer, ref.Attempt)
+	key := checkpointKey(ref.JobID, ref.Analyzer, ref.Attempt)
 	digest, err := c.verifyCheckpoint(ctx, signed, key, tenantID, ref.JobID, ref.Analyzer, ref.Attempt)
 	if err != nil {
 		return fmt.Errorf("refusing to store the cache checkpoint of analyzer %q attempt %s: it is not that attempt's checkpoint: %v",
@@ -211,7 +211,7 @@ func (c *cacheCheckpoints) Verified(ctx context.Context, analyzerName string, pr
 		if !pathSegment(producer) {
 			continue
 		}
-		dir := checkpointDir(tenantID, producer, analyzerName)
+		dir := checkpointDir(producer, analyzerName)
 		objects, err := c.s.storage.List(ctx, dir)
 		if err != nil {
 			return analysis.VerifiedCheckpoints{}, fmt.Errorf("listing the cache checkpoints of job %s at %q: %w", producer, dir, err)
@@ -270,7 +270,7 @@ func (c *cacheCheckpoints) ownCheckpoint(ctx context.Context, analyzerName, atte
 	if !canonicalAttempt(attempt) {
 		return "", fmt.Errorf("%w: %q", errInvalidAttempt, attempt)
 	}
-	key := checkpointKey(c.job.TenantID, c.job.JobID, analyzerName, attempt)
+	key := checkpointKey(c.job.JobID, analyzerName, attempt)
 	raw, err := c.s.readAttestation(ctx, key)
 	switch {
 	case errors.Is(err, storage.ErrNotFound):

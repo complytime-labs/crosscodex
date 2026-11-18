@@ -43,6 +43,7 @@ type CatalogContainer struct {
 	Identifier string // the group's source ID; empty when the source gave none
 	Title      string
 	Label      string // the group's published label; empty when the source gave none
+	Prose      string // the group's own text; empty when it has none
 	ParentKey  string // key of the enclosing container; empty for a top-level one
 }
 
@@ -266,7 +267,7 @@ func (r *PGControlsReader) listCatalogContainers(ctx context.Context, span trace
 	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.Query(ctx, `
-		SELECT catalog_id, container_key, identifier, title, label, COALESCE(parent_key, '')
+		SELECT catalog_id, container_key, identifier, title, label, prose, COALESCE(parent_key, '')
 		FROM catalog_containers WHERE catalog_id = $1 AND tenant_id = $2 ORDER BY container_key`, catalogID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list containers of catalog %s: %w", catalogID, err)
@@ -276,7 +277,7 @@ func (r *PGControlsReader) listCatalogContainers(ctx context.Context, span trace
 	var out []CatalogContainer
 	for rows.Next() {
 		var c CatalogContainer
-		if err := rows.Scan(&c.CatalogID, &c.Key, &c.Identifier, &c.Title, &c.Label, &c.ParentKey); err != nil {
+		if err := rows.Scan(&c.CatalogID, &c.Key, &c.Identifier, &c.Title, &c.Label, &c.Prose, &c.ParentKey); err != nil {
 			return nil, fmt.Errorf("scan container of catalog %s: %w", catalogID, err)
 		}
 		out = append(out, c)

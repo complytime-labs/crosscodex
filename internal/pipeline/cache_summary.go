@@ -54,7 +54,7 @@ func (s *Service) cacheSummaries(ctx context.Context, job *Job, stages []*Stage)
 	if !s.cacheWired || s.cacheStore == nil {
 		return nil, nil
 	}
-	attestor := s.attestors.forTenant(job.TenantID)
+	attestor := s.attestors.ForTenant(job.TenantID)
 	if attestor == nil {
 		return nil, nil
 	}

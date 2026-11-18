@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -1208,5 +1210,166 @@ var _ = Describe("ValidateKey", func() {
 	)
 	It("accepts a nested relative key", func() {
 		Expect(storage.ValidateKey("artifacts/2026/x.json")).To(Succeed())
+	})
+})
+
+var _ = Describe("NewTenantRouter", func() {
+	var (
+		fakes map[string]*storagetest.Fake
+		opens atomic.Int32
+		mu    sync.Mutex
+		fail  error
+		fakeA *storagetest.Fake
+		fakeB *storagetest.Fake
+		route storage.Provider
+	)
+
+	tenantCtx := func(id string) context.Context {
+		ctx, err := tenant.WithTenant(context.Background(), id)
+		Expect(err).NotTo(HaveOccurred())
+		return ctx
+	}
+
+	BeforeEach(func() {
+		fakeA, fakeB = &storagetest.Fake{}, &storagetest.Fake{}
+		fakes = map[string]*storagetest.Fake{"t-a": fakeA, "t-b": fakeB}
+		opens.Store(0)
+		fail = nil
+		route = storage.NewTenantRouter(func(id string) (storage.Provider, error) {
+			opens.Add(1)
+			mu.Lock()
+			defer mu.Unlock()
+			if fail != nil {
+				return nil, fail
+			}
+			return fakes[id], nil
+		})
+	})
+
+	It("keeps each tenant's objects in its own provider", func() {
+		Expect(route.Put(tenantCtx("t-a"), "doc.json", strings.NewReader("a"))).To(Succeed())
+		Expect(route.Put(tenantCtx("t-b"), "other.json", strings.NewReader("b"))).To(Succeed())
+
+		Expect(fakeA.Objects()).To(HaveKeyWithValue("doc.json", []byte("a")))
+		Expect(fakeA.Objects()).NotTo(HaveKey("other.json"))
+		Expect(fakeB.Objects()).To(HaveKeyWithValue("other.json", []byte("b")))
+		Expect(fakeB.Objects()).NotTo(HaveKey("doc.json"))
+	})
+
+	It("does not show one tenant another tenant's object", func() {
+		Expect(route.Put(tenantCtx("t-a"), "doc.json", strings.NewReader("a"))).To(Succeed())
+
+		exists, err := route.Exists(tenantCtx("t-b"), "doc.json")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(exists).To(BeFalse())
+	})
+
+	DescribeTable("rejects a context without a tenant before opening anything",
+		func(call func(storage.Provider, context.Context) error) {
+			err := call(route, context.Background())
+
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+			Expect(err).To(MatchError(ContainSubstring("tenant.WithTenant")))
+			Expect(opens.Load()).To(BeZero())
+			Expect(fakeA.Objects()).To(BeEmpty())
+		},
+		Entry("Get", func(p storage.Provider, ctx context.Context) error { _, err := p.Get(ctx, "k"); return err }),
+		Entry("Put", func(p storage.Provider, ctx context.Context) error { return p.Put(ctx, "k", strings.NewReader("x")) }),
+		Entry("Delete", func(p storage.Provider, ctx context.Context) error { return p.Delete(ctx, "k") }),
+		Entry("List", func(p storage.Provider, ctx context.Context) error { _, err := p.List(ctx, ""); return err }),
+		Entry("Exists", func(p storage.Provider, ctx context.Context) error { _, err := p.Exists(ctx, "k"); return err }),
+		Entry("Stat", func(p storage.Provider, ctx context.Context) error { _, err := p.Stat(ctx, "k"); return err }),
+	)
+
+	It("returns an open failure wrapped with the tenant ID and retries on the next call", func() {
+		openErr := errors.New("bucket unreachable")
+		mu.Lock()
+		fail = openErr
+		mu.Unlock()
+
+		_, err := route.Exists(tenantCtx("t-a"), "k")
+		Expect(err).To(MatchError(openErr))
+		Expect(err).To(MatchError(ContainSubstring(`"t-a"`)))
+		Expect(opens.Load()).To(Equal(int32(1)))
+
+		mu.Lock()
+		fail = nil
+		mu.Unlock()
+		Expect(route.Put(tenantCtx("t-a"), "k", strings.NewReader("x"))).To(Succeed())
+		Expect(opens.Load()).To(Equal(int32(2)))
+		Expect(fakeA.Objects()).To(HaveKey("k"))
+	})
+
+	It("opens a tenant's provider once under concurrent first calls", func() {
+		ctx := tenantCtx("t-a")
+		var wg sync.WaitGroup
+		for range 32 {
+			wg.Add(1)
+			go func() {
+				defer GinkgoRecover()
+				defer wg.Done()
+				_, err := route.Exists(ctx, "k")
+				Expect(err).NotTo(HaveOccurred())
+			}()
+		}
+		wg.Wait()
+
+		Expect(opens.Load()).To(Equal(int32(1)))
+	})
+
+	Describe("Close", func() {
+		It("closes every opened provider and joins their errors", func() {
+			errA, errB := errors.New("flush a failed"), errors.New("flush b failed")
+			fakeA.CloseErr, fakeB.CloseErr = errA, errB
+			_, err := route.Exists(tenantCtx("t-a"), "k")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = route.Exists(tenantCtx("t-b"), "k")
+			Expect(err).NotTo(HaveOccurred())
+
+			err = route.Close()
+
+			Expect(err).To(MatchError(errA))
+			Expect(err).To(MatchError(errB))
+			_, errAfterClose := fakeA.Exists(context.Background(), "k")
+			Expect(errAfterClose).To(MatchError(storage.ErrProviderClosed))
+			_, errAfterClose = fakeB.Exists(context.Background(), "k")
+			Expect(errAfterClose).To(MatchError(storage.ErrProviderClosed))
+		})
+
+		DescribeTable("makes every method return ErrProviderClosed and open nothing more",
+			func(call func(storage.Provider, context.Context) error) {
+				Expect(route.Close()).To(Succeed())
+
+				Expect(call(route, tenantCtx("t-a"))).To(MatchError(storage.ErrProviderClosed))
+				Expect(opens.Load()).To(BeZero())
+			},
+			Entry("Get", func(p storage.Provider, ctx context.Context) error { _, err := p.Get(ctx, "k"); return err }),
+			Entry("Put", func(p storage.Provider, ctx context.Context) error { return p.Put(ctx, "k", strings.NewReader("x")) }),
+			Entry("Delete", func(p storage.Provider, ctx context.Context) error { return p.Delete(ctx, "k") }),
+			Entry("List", func(p storage.Provider, ctx context.Context) error { _, err := p.List(ctx, ""); return err }),
+			Entry("Exists", func(p storage.Provider, ctx context.Context) error { _, err := p.Exists(ctx, "k"); return err }),
+			Entry("Stat", func(p storage.Provider, ctx context.Context) error { _, err := p.Stat(ctx, "k"); return err }),
+		)
+
+		It("returns nil on a second Close", func() {
+			Expect(route.Close()).To(Succeed())
+			Expect(route.Close()).To(Succeed())
+		})
+	})
+
+	It("records a span on Put for a NewFromConfig provider built with WithTelemetry", func() {
+		tp, err := telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+		cfg := config.ObjectStorageConfig{Backend: "local", BasePath: GinkgoT().TempDir()}
+		telemetryRoute := storage.NewTenantRouter(func(id string) (storage.Provider, error) {
+			return storage.NewFromConfig(cfg, id, storage.WithTelemetry(
+				tp.TracerProvider().Tracer("storage-test"), tp.MeterProvider().Meter("storage-test")))
+		})
+		DeferCleanup(telemetryRoute.Close)
+
+		Expect(telemetryRoute.Put(tenantCtx("t-a"), "doc.json", strings.NewReader("a"))).To(Succeed())
+
+		Expect(telemetrytest.FindSpan(tp.GetSpans(), "storage.Put")).NotTo(BeNil())
 	})
 })

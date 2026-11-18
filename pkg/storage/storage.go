@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
@@ -20,27 +23,56 @@ func xdgDataHome() string {
 	return filepath.Join(os.Getenv("HOME"), ".local", "share")
 }
 
+type configOptions struct {
+	tracer trace.Tracer
+	meter  metric.Meter
+}
+
+// ConfigOption configures NewFromConfig.
+type ConfigOption func(*configOptions)
+
+// WithTelemetry instruments the provider NewFromConfig returns, whichever
+// backend it selects (WithLocalTelemetry or WithS3Telemetry).
+func WithTelemetry(tracer trace.Tracer, meter metric.Meter) ConfigOption {
+	return func(o *configOptions) {
+		o.tracer = tracer
+		o.meter = meter
+	}
+}
+
 // NewFromConfig creates a Provider based on the given configuration.
 // It dispatches to NewLocal or NewS3 based on cfg.Backend.
 // For local backends, if BasePath is empty it defaults to
 // $XDG_DATA_HOME/crosscodex/objects.
-func NewFromConfig(cfg config.ObjectStorageConfig, tenantID string) (Provider, error) {
+func NewFromConfig(cfg config.ObjectStorageConfig, tenantID string, opts ...ConfigOption) (Provider, error) {
+	var o configOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	instrumented := o.tracer != nil && o.meter != nil
 	switch ProviderType(cfg.Backend) {
 	case ProviderTypeLocal:
+		var localOpts []LocalOption
+		if instrumented {
+			localOpts = append(localOpts, WithLocalTelemetry(o.tracer, o.meter))
+		}
 		basePath := cfg.BasePath
 		if basePath == "" {
 			basePath = filepath.Join(xdgDataHome(), "crosscodex", "objects")
 		}
-		return NewLocal(basePath, tenantID)
+		return NewLocal(basePath, tenantID, localOpts...)
 	case ProviderTypeS3:
-		var opts []S3Option
+		var s3Opts []S3Option
 		if cfg.Region != "" {
-			opts = append(opts, WithRegion(cfg.Region))
+			s3Opts = append(s3Opts, WithRegion(cfg.Region))
 		}
 		if cfg.Endpoint != "" {
-			opts = append(opts, WithEndpoint(cfg.Endpoint))
+			s3Opts = append(s3Opts, WithEndpoint(cfg.Endpoint))
 		}
-		return NewS3(cfg.Bucket, tenantID, opts...)
+		if instrumented {
+			s3Opts = append(s3Opts, WithS3Telemetry(o.tracer, o.meter))
+		}
+		return NewS3(cfg.Bucket, tenantID, s3Opts...)
 	default:
 		return nil, fmt.Errorf("unsupported storage backend: %q", cfg.Backend)
 	}

@@ -25,6 +25,11 @@ var (
 	// human reviewer sees; tag characters can otherwise smuggle hidden text
 	// to the model.
 	promptInvisibles = regexp.MustCompile(`\p{Cf}+`)
+	// exportStripped matches what CleanExport removes: C0 controls except
+	// tab and newline, DEL, C1 controls, bidi embeddings and overrides,
+	// bidi isolates and tag characters. Other Cf characters (ZWJ, ZWNJ,
+	// LRM, RLM, ALM, soft hyphen) are kept because scripts need them.
+	exportStripped = regexp.MustCompile(`[\x00-\x08\x0B-\x1F\x7F\x{80}-\x{9F}\x{202A}-\x{202E}\x{2066}-\x{2069}\x{E0000}-\x{E007F}]+`)
 	// promptEscaper entity-encodes the characters that could open or close a
 	// prompt tag.
 	promptEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
@@ -59,6 +64,20 @@ func CleanDisplay(s string, maxBytes int) string {
 	// bytes of a split sequence would otherwise splice them into a new rune such as U+202E.
 	s = strings.ToValidUTF8(s, "\uFFFD")
 	s = promptBreaks.ReplaceAllString(promptInvisibles.ReplaceAllString(s, ""), " ")
+	return strings.TrimSpace(CleanText(s, maxBytes))
+}
+
+// CleanExport makes untrusted text safe for a CSV, XLSX or Markdown cell
+// without changing what a reader sees: it repairs invalid UTF-8, turns CRLF
+// and lone CR into LF, removes exportStripped characters (terminal escapes, bidi
+// overrides, tag characters), keeps tabs, newlines and script joiners, caps
+// the result at maxBytes on a rune boundary and trims it. maxBytes must be
+// >= 0.
+func CleanExport(s string, maxBytes int) string {
+	s = strings.ToValidUTF8(s, "�")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = exportStripped.ReplaceAllString(s, "")
 	return strings.TrimSpace(CleanText(s, maxBytes))
 }
 

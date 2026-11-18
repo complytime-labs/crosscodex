@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode"
 
 	oscalTypes "github.com/defenseunicorns/go-oscal/src/types/oscal-1-1-3"
 )
@@ -319,39 +321,34 @@ func prosePartNames(ctrl oscalTypes.Control) []string {
 	return slices.Compact(names)
 }
 
-// deriveChildID derives a child ID by stripping _smt/_stmt suffix from part ID.
-// Falls back to {parentID}.{index} when part ID doesn't follow the pattern.
-//
-// Examples:
-//   - ac-2_smt.a → ac-2.a
-//   - ac-2_stmt.a → ac-2.a
-//   - ac-2.a → ac-2.a (no suffix to strip)
-//   - empty → {parentID}.{index}
+// deriveChildID returns the ID of a part's row. A part with an id keeps it
+// verbatim: the source chose it, and any rewrite could collide with another
+// item or hide where the row came from. A part without an id is named from its
+// published label, {parentID}.{label} with the label reduced by labelToken, or
+// failing that by position, {parentID}.{index+1}.
 func deriveChildID(parentID string, part oscalTypes.Part, index int) string {
-	if id, ok := idFromPartID(parentID, part.ID); ok {
-		return id
+	if part.ID != "" {
+		return part.ID
 	}
-	return fmt.Sprintf("%s.%d", parentID, index+1)
+	if label, ok := selectProp(part.Props, PropLabel); ok {
+		if token := labelToken(label); token != "" {
+			return parentID + "." + token
+		}
+	}
+	return parentID + "." + strconv.Itoa(index+1)
 }
 
-// idFromPartID derives a child ID from the part's own ID, stripping a _smt or
-// _stmt suffix or keeping an ID that already extends parentID. ok is false
-// when the part ID is empty or follows neither pattern, and the caller must
-// number the part by position instead.
-func idFromPartID(parentID, partID string) (id string, ok bool) {
-	if partID == "" {
-		return "", false
-	}
-	if strings.Contains(partID, "_smt.") {
-		return strings.Replace(partID, "_smt.", ".", 1), true
-	}
-	if strings.Contains(partID, "_stmt.") {
-		return strings.Replace(partID, "_stmt.", ".", 1), true
-	}
-	if strings.HasPrefix(partID, parentID+".") {
-		return partID, true
-	}
-	return "", false
+// labelToken reduces a label such as "a." or "(1)" to the characters an item
+// ID may carry (letters, digits, ".", "-", "_") and trims leading and trailing
+// dots, so "a." becomes "a" and "(1)" becomes "1".
+func labelToken(label string) string {
+	token := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '-' || r == '_' {
+			return r
+		}
+		return -1
+	}, label)
+	return strings.Trim(token, ".")
 }
 
 // wordCount counts words in a string using strings.Fields.

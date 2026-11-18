@@ -136,14 +136,14 @@ var _ = Describe("Score", func() {
 				Expect(r.Recall.ReachableExact).To(Equal(rate(foundExact, 1)))
 				Expect(r.Recall.ReachableBase).To(Equal(rate(foundBase, 1)))
 			},
-			Entry("item with an _smt part ID, exact target", "s-1.a", "ab-2.3", 1, 1),
-			Entry("item numbered by the importer, exact target", "s-1.b", "ab-2.3", 1, 1),
-			Entry("item, target in the same base tree", "s-1.a", "ab-2", 0, 1),
-			Entry("item, target elsewhere", "s-1.a", "cd-1", 0, 0),
+			Entry("item with an _smt part ID, exact target", "s-1_smt.a", "ab-2.3", 1, 1),
+			Entry("second item, exact target", "s-1_smt.b", "ab-2.3", 1, 1),
+			Entry("item, target in the same base tree", "s-1_smt.a", "ab-2", 0, 1),
+			Entry("item, target elsewhere", "s-1_smt.a", "cd-1", 0, 0),
 		)
 
 		It("credits an item of another profile control to that control", func() {
-			ms := []crosswalk.Mapping{mapping("s-2.2", "ab-2.3", equivalent, 0.8)}
+			ms := []crosswalk.Mapping{mapping("p2", "ab-2.3", equivalent, 0.8)}
 			in := itemInput("ab-2.3", ms, candidatesFor(ms))
 			in.Refs.Resolved[0] = ref("s-2", "ab-2.3")
 			in.Refs.ResolvedRaw = rawFor(in.Refs.Resolved)
@@ -152,8 +152,8 @@ var _ = Describe("Score", func() {
 
 		It("counts two items of one control mapping one target once, without a duplicate error", func() {
 			ms := []crosswalk.Mapping{
-				mapping("s-1.a", "ab-2.3", equivalent, 0.8),
-				mapping("s-1.b", "ab-2.3", subsetOf, 0.6),
+				mapping("s-1_smt.a", "ab-2.3", equivalent, 0.8),
+				mapping("s-1_smt.b", "ab-2.3", subsetOf, 0.6),
 			}
 			r := mustScore(itemInput("ab-2.3", ms, candidatesFor(ms)))
 			Expect(r.Recall.FoundExact).To(Equal(rate(1, 1)))
@@ -161,16 +161,16 @@ var _ = Describe("Score", func() {
 		})
 
 		It("still requires each mapping to be a candidate as exported", func() {
-			ms := []crosswalk.Mapping{mapping("s-1.a", "ab-2.3", equivalent, 0.8)}
-			cs := []crosswalk.Candidate{cand("s-1.b", "ab-2.3", "embedding")}
+			ms := []crosswalk.Mapping{mapping("s-1_smt.a", "ab-2.3", equivalent, 0.8)}
+			cs := []crosswalk.Candidate{cand("s-1_smt.b", "ab-2.3", "embedding")}
 			_, err := crosswalk.Score(itemInput("ab-2.3", ms, cs))
-			Expect(err).To(MatchError(And(ContainSubstring("s-1.a -> ab-2.3"), ContainSubstring("not a candidate"))))
+			Expect(err).To(MatchError(And(ContainSubstring("s-1_smt.a -> ab-2.3"), ContainSubstring("not a candidate"))))
 		})
 
 		It("still rejects two identical exported mappings", func() {
-			ms := []crosswalk.Mapping{mapping("s-1.a", "ab-2.3", equivalent, 0.8), mapping("s-1.a", "ab-2.3", subsetOf, 0.6)}
+			ms := []crosswalk.Mapping{mapping("s-1_smt.a", "ab-2.3", equivalent, 0.8), mapping("s-1_smt.a", "ab-2.3", subsetOf, 0.6)}
 			_, err := crosswalk.Score(itemInput("ab-2.3", ms, candidatesFor(ms[:1])))
-			Expect(err).To(MatchError(ContainSubstring("s-1.a -> ab-2.3 appears 2 times")))
+			Expect(err).To(MatchError(ContainSubstring("s-1_smt.a -> ab-2.3 appears 2 times")))
 		})
 
 		DescribeTable("rejects a source that is neither a profile control nor one of its items, naming it",
@@ -181,8 +181,8 @@ var _ = Describe("Score", func() {
 			},
 			Entry("an item of a control outside the profile", "s-9.a"),
 			Entry("a control outside the profile", "s-9"),
-			Entry("an item the importer does not derive", "s-1.z"),
-			Entry("a raw part ID", "s-1_smt.a"),
+			Entry("an item the source does not have", "s-1.z"),
+			Entry("a part id with its _smt suffix stripped", "s-1.a"),
 		)
 	})
 
@@ -202,30 +202,30 @@ var _ = Describe("Score", func() {
 				Expect(r.Recall.ReachableExact).To(Equal(rate(foundExact, 1)))
 				Expect(r.Recall.ReachableBase).To(Equal(rate(foundBase, 1)))
 			},
-			Entry("a top-level item of the referenced control", "sa-1.a", 1, 1),
-			Entry("a nested item of the referenced control", "sa-1.b.1", 1, 1),
+			Entry("a top-level item of the referenced control", "sa-1_smt.a", 1, 1),
+			Entry("a nested item of the referenced control", "sa-1_smt.b.1", 1, 1),
 			Entry("the referenced control itself", "sa-1", 1, 1),
 		)
 
 		It("credits an item of an enhancement to the enhancement for exact and to its base control for base", func() {
-			in := itemInput("sa-1", "sa-1.2.a")
+			in := itemInput("sa-1", "sa-1.2_smt.a")
 			r := mustScore(in)
 			Expect(r.Recall.FoundExact).To(Equal(rate(0, 1)))
 			Expect(r.Recall.FoundBase).To(Equal(rate(1, 1)))
-			in = itemInput("sa-1.2", "sa-1.2.a")
+			in = itemInput("sa-1.2", "sa-1.2_smt.a")
 			Expect(mustScore(in).Recall.FoundExact).To(Equal(rate(1, 1)))
 		})
 
 		It("keeps the raw item pair for the candidate check", func() {
-			ms := []crosswalk.Mapping{mapping("s-1", "sa-1.a", equivalent, 0.8)}
-			in := scoreInput([]crosswalk.Reference{ref("s-1", "sa-1")}, ms, []crosswalk.Candidate{cand("s-1", "sa-1.b.1", "embedding")})
+			ms := []crosswalk.Mapping{mapping("s-1", "sa-1_smt.a", equivalent, 0.8)}
+			in := scoreInput([]crosswalk.Reference{ref("s-1", "sa-1")}, ms, []crosswalk.Candidate{cand("s-1", "sa-1_smt.b.1", "embedding")})
 			in.Target = mustCatalog(statementCatalog)
 			_, err := crosswalk.Score(in)
-			Expect(err).To(MatchError(And(ContainSubstring("s-1 -> sa-1.a"), ContainSubstring("not a candidate"))))
+			Expect(err).To(MatchError(And(ContainSubstring("s-1 -> sa-1_smt.a"), ContainSubstring("not a candidate"))))
 		})
 
 		It("counts two items of one target control once, without a duplicate error", func() {
-			ms := []crosswalk.Mapping{mapping("s-1", "sa-1.a", equivalent, 0.8), mapping("s-1", "sa-1.b.1", subsetOf, 0.6)}
+			ms := []crosswalk.Mapping{mapping("s-1", "sa-1_smt.a", equivalent, 0.8), mapping("s-1", "sa-1_smt.b.1", subsetOf, 0.6)}
 			in := scoreInput([]crosswalk.Reference{ref("s-1", "sa-1")}, ms, candidatesFor(ms))
 			in.Target = mustCatalog(statementCatalog)
 			r := mustScore(in)

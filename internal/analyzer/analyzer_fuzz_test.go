@@ -115,3 +115,30 @@ func FuzzCleanDisplay(f *testing.F) {
 		}
 	})
 }
+
+func FuzzCleanExport(f *testing.F) {
+	for _, s := range []string{
+		"می\u200cخواهم",          // valid: Persian with ZWNJ
+		"a. one\nb. two",         // valid: line breaks
+		"x\r\ny",                 // boundary: CRLF
+		"a\u202eb\u2066c",        // attack: bidi override and isolate
+		"\x1b[31mred",            // attack: terminal escape
+		"a\U000E0041b",           // attack: tag character
+		"\xffz",                  // invalid UTF-8
+		"\u200fx",                // boundary: RLM kept
+		strings.Repeat("é", 300), // boundary: past the cap, multi-byte
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		got := analyzer.CleanExport(raw, 64)
+		if !utf8.ValidString(got) || len(got) > 64 || got != strings.TrimSpace(got) {
+			t.Fatalf("CleanExport(%q) = %q", raw, got)
+		}
+		for _, r := range got {
+			if isExportStripped(r) {
+				t.Fatalf("CleanExport(%q) = %q contains %U", raw, got, r)
+			}
+		}
+	})
+}

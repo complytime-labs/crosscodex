@@ -161,7 +161,7 @@ An analyzer's LLM results are reused per tenant across jobs (#243). This section
   - **Signing under the lock.** When a stage stops, success or failure, the engine compares the database's rows for its attempt with its own in-process record. It does this under `SELECT … FOR UPDATE` on the job row, which conflicts with the freeze trigger's `FOR SHARE`. If they match, it signs a checkpoint there over the manifest digest (`Store.Checkpoint`, `CacheCheckpoints.Sign`).
   - **Storing after the lock.** It stores the checkpoint after the lock is released (`CacheCheckpoints.Store`). Storage retries therefore never hold the lock, and a checkpoint signed but not stored leaves the attempt untrusted.
   - **On a mismatch** it refuses to sign (`result_cache_corrupt`, or `result_cache_unavailable` when a write's outcome was unknown).
-  - **Format and location.** A checkpoint is an in-toto link with step `result-cache-checkpoint`, the job as its material, and one product `result-cache:<tenant>/<job>/<analyzer>/<attempt>` carrying the digest. It is stored at `attestations/<tenant>/<job>/cache-checkpoints/<analyzer>/<attempt>.json`.
+  - **Format and location.** A checkpoint is an in-toto link with step `result-cache-checkpoint`, the job as its material, and one product `result-cache:<tenant>/<job>/<analyzer>/<attempt>` carrying the digest. It is stored at `attestation/<job>/cache-checkpoints/<analyzer>/<attempt>.json` in the tenant's object store.
 - **Verifying a hit.** The engine:
   1. lists each producer's checkpoints and verifies their signatures under the tenant's key;
   2. reads the cache rows and those attempts' manifests in one REPEATABLE READ snapshot, taking no lock (checkpoints loaded before the snapshot make a planted row fail the digest, and a later row is invisible);
@@ -253,7 +253,7 @@ ORDER BY event_id;
 
 The stored control set is a tree of titled nodes that no single source format owns. Adapters map into it: OSCAL today; ReqIF, SysML v2 Requirements and document headings later. Each `controls` row states its role in `Props["node-kind"]`; containers are a separate table and carry `node_kind` `container` only on their graph node:
 
-- `container`: only organizes (OSCAL group, ReqIF chapter, SysML v2 package); never carries requirement text. Stored in `catalog_containers`, keyed by position within the catalog (`g1`, `g1.1`), with an optional source identifier (OSCAL groups need not have an `id`); never a row in `controls`.
+- `container`: only organizes (OSCAL group, ReqIF chapter, SysML v2 package); never carries requirement text. It may carry the group's own overview prose (`catalog_containers.prose`, the `prose` Container node property when non-empty, and catalog export), which is stored and projected but never analysed as a requirement. Stored in `catalog_containers`, keyed by position within the catalog (`g1`, `g1.1`), with an optional source identifier (OSCAL groups need not have an `id`); never a row in `controls`.
 - `control`: carries a requirement, possibly nested under another control (OSCAL enhancement).
 - `statement-part`: a decomposed piece of a control's text.
 

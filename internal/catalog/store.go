@@ -69,7 +69,8 @@ type ControlRecord struct {
 // ContainerRecord represents a grouping node in the catalog_containers table.
 // Key is the parser's position key, unique within the catalog; ParentKey is ""
 // for a top-level container (stored as NULL); Identifier is "" when the source
-// group has no ID; Label is "" when the source group publishes none.
+// group has no ID; Label is "" when the source group publishes none; Prose is ""
+// when the group has no text of its own.
 type ContainerRecord struct {
 	TenantID   string
 	CatalogID  string
@@ -77,6 +78,7 @@ type ContainerRecord struct {
 	Identifier string
 	Title      string
 	Label      string
+	Prose      string
 	ParentKey  string
 }
 
@@ -413,19 +415,20 @@ func upsertTreeTx(ctx context.Context, tx db.Transaction, tenantID string, conta
 	// Containers go first: controls.container_key refers to them by key.
 	containerQuery := `
 		INSERT INTO catalog_containers (
-			tenant_id, catalog_id, container_key, identifier, title, label, parent_key
+			tenant_id, catalog_id, container_key, identifier, title, label, prose, parent_key
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7
+			$1, $2, $3, $4, $5, $6, $7, $8
 		)
 		ON CONFLICT (tenant_id, catalog_id, container_key) DO UPDATE SET
 			identifier = EXCLUDED.identifier,
 			title = EXCLUDED.title,
 			label = EXCLUDED.label,
+			prose = EXCLUDED.prose,
 			parent_key = EXCLUDED.parent_key
 	`
 	for _, c := range containers {
 		if err := tx.Exec(ctx, containerQuery,
-			c.TenantID, c.CatalogID, c.Key, c.Identifier, c.Title, c.Label, nullIfEmpty(c.ParentKey),
+			c.TenantID, c.CatalogID, c.Key, c.Identifier, c.Title, c.Label, c.Prose, nullIfEmpty(c.ParentKey),
 		); err != nil {
 			// A foreign-key violation past the check above means the
 			// catalog was deleted concurrently; tenants are never deleted.

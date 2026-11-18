@@ -23,6 +23,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/internal/results"
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
@@ -58,14 +59,19 @@ func pkiPaths(pkiDir string) embeddedTLSPaths {
 // development PKI only when needed. Concurrent CLI invocations are safe:
 // testcerts.Ensure serializes them with a lock beside pkiDir, and the set is
 // swapped in whole, so none sees a mixed or partial set. A set the CLI did not
-// generate (no .fingerprint) is used if valid and never replaced.
+// generate (no .fingerprint) is used if valid and never replaced. A set the CLI
+// generated also carries the attestation signing key pair; one that predates it
+// fails verification and is regenerated whole. A supplied set is TLS-only, so
+// it is not required to carry keys (see requireManagedAttestationKeys).
 func ensurePKI(pkiDir string) error {
 	_, err := testcerts.Ensure(pkiDir, testcerts.EnsureOptions{
 		// The CLI dials localhost:<port>, so that is the one SAN a set needs.
 		Verify: testcerts.VerifyOptions{
 			DNSNames:     []string{"localhost"},
 			MinRemaining: 24 * time.Hour,
+			VerifyExtra:  requireManagedAttestationKeys,
 		},
+		WriteExtra: testcerts.WriteAttestationKeypair,
 		Generate: func() (*testcerts.PKI, error) {
 			bundle, err := pkigen.GenerateDevPKI(
 				pkigen.WithOrganization("CrossCodex Embedded"),
@@ -93,6 +99,33 @@ func ensurePKI(pkiDir string) error {
 		return fmt.Errorf("embedded PKI in %s: %w", pkiDir, err)
 	}
 	return nil
+}
+
+// requireManagedAttestationKeys verifies the attestation key pair in dir only
+// for a set the CLI generated (it has a .fingerprint). A set the operator
+// supplied has TLS material only, and Ensure never rewrites it.
+func requireManagedAttestationKeys(dir string) error {
+	fingerprint, err := testcerts.ReadFingerprint(dir)
+	if err != nil {
+		return err
+	}
+	if fingerprint == "" {
+		return nil
+	}
+	return testcerts.VerifyAttestationKeypair(dir)
+}
+
+// defaultAttestationKeyPaths points attestation at the key pair ensurePKI
+// provisions in pkiDir when attestation is enabled and the user set neither
+// path. A user-set path is never overridden, so a bad one still fails loudly
+// where the keys are loaded.
+func defaultAttestationKeyPaths(cfg *config.Config, pkiDir string) {
+	a := &cfg.Attestation
+	if !a.Enabled || a.PrivateKeyPath != "" || a.PublicKeyPath != "" {
+		return
+	}
+	a.PrivateKeyPath = filepath.Join(pkiDir, testcerts.AttestationKeyFile)
+	a.PublicKeyPath = filepath.Join(pkiDir, testcerts.AttestationPubFile)
 }
 
 func connectClientWithTLS(endpoint string, paths embeddedTLSPaths) (crosscodexv1connect.GatewayServiceClient, crosscodexv1connect.AdminServiceClient, crosscodexv1connect.EdgeCleaningServiceClient, error) {
@@ -426,6 +459,14 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		logger = slog.Default()
 	}
 
+	// Catalog import is the embedded daemon's only signer. A key pair that
+	// does not load refuses startup before the database is touched.
+	attTracer, attMeter := telemetry.Instrumentation("pkg/attestation")
+	attestors, err := pipeline.NewAttestors(cfg.Attestation, cfg.TLS.FIPS.Enabled, attTracer, attMeter)
+	if err != nil {
+		return nil, nil, fmt.Errorf("embedded daemon: %w", err)
+	}
+
 	resources := &embeddedResources{}
 
 	// Run migrations
@@ -528,6 +569,12 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		gateway.WithMappingsBackend(mappings),
 		gateway.WithCandidatesBackend(mappings),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(pool)),
+		gateway.WithAttestor(func(tenantID string) attestation.Generator {
+			if att := attestors.ForTenant(tenantID); att != nil {
+				return att.Generator
+			}
+			return nil
+		}, localStorage),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(logger),
 		gateway.WithTelemetry(gatewayTracer, gatewayMeter),

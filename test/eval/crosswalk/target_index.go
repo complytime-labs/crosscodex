@@ -33,7 +33,7 @@ type Resolution struct {
 // control under the Canonical form of its ID and of every label prop, so the
 // catalog alone defines which identifier spellings are understood.
 //
-// The importer also stores each control's statement items (pl-2.a.10 under
+// The importer also stores each control's statement items (pl-2_smt.a.10 under
 // pl-2) as controls, and the analyzers map those items, so Has and Base know
 // them too. Resolve does not: references cite OSCAL controls.
 type TargetIndex struct {

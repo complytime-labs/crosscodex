@@ -101,6 +101,9 @@ func (s *Service) projectCatalog(ctx context.Context, tenantID, catalogID string
 		if c.Label != "" {
 			node.Properties["label"] = c.Label
 		}
+		if c.Prose != "" {
+			node.Properties["prose"] = c.Prose
+		}
 		if _, err := s.graph.UpsertNode(ctx, tenantID, node); err != nil {
 			errs = append(errs, fmt.Errorf("upsert Container node %s: %w", node.ID, err))
 		}

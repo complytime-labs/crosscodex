@@ -760,6 +760,7 @@ CREATE TABLE IF NOT EXISTS catalog_containers (
     identifier    TEXT NOT NULL DEFAULT '',
     title         TEXT NOT NULL DEFAULT '',
     label         TEXT NOT NULL DEFAULT '',
+    prose         TEXT NOT NULL DEFAULT '',
     parent_key    TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, catalog_id, container_key),

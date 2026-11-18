@@ -176,6 +176,8 @@ func baseTestConfig(suDSN string) *config.Config {
 		// Built without the loader, so no default applies; an empty list
 		// would make the parser read no requirement part.
 		Catalog: config.CatalogConfig{RequirementPartNames: oscal.DefaultRequirementPartNames},
+		// The loader's default backend; specs set the base path they need.
+		Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
 	}
 	Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "crosscodexd migrate")
 	return cfg

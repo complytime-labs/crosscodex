@@ -75,15 +75,15 @@ var _ = Describe("PGControlsReader tenant isolation", Ordered, func() {
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, '')::jsonb) ON CONFLICT DO NOTHING`,
 				tenantID, catalogID+"/"+identifier, catalogID, identifier, title, statement, class, parentID, containerKey, props)).To(Succeed())
 		}
-		seedContainer := func(tenantID, catalogID, key, identifier, title, label, parentKey string) {
+		seedContainer := func(tenantID, catalogID, key, identifier, title, label, prose, parentKey string) {
 			Expect(suPool.Exec(ctx,
-				`INSERT INTO catalog_containers (tenant_id, catalog_id, container_key, identifier, title, label, parent_key)
-				 VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')) ON CONFLICT DO NOTHING`,
-				tenantID, catalogID, key, identifier, title, label, parentKey)).To(Succeed())
+				`INSERT INTO catalog_containers (tenant_id, catalog_id, container_key, identifier, title, label, prose, parent_key)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')) ON CONFLICT DO NOTHING`,
+				tenantID, catalogID, key, identifier, title, label, prose, parentKey)).To(Succeed())
 		}
-		seedContainer(tenantA, catalogA, "g1", "ac", "Access Control", "AC", "")
-		seedContainer(tenantA, catalogA, "g1.1", "", "Policies", "", "g1")
-		seedContainer(tenantB, catalogB, "g1", "ac", "Tenant B Access Control Group", "", "")
+		seedContainer(tenantA, catalogA, "g1", "ac", "Access Control", "AC", "Controls on access.", "")
+		seedContainer(tenantA, catalogA, "g1.1", "", "Policies", "", "", "g1")
+		seedContainer(tenantB, catalogB, "g1", "ac", "Tenant B Access Control Group", "", "", "")
 		seedControl(tenantA, catalogA, "ac-1", "Policy and Procedures", "Develop a policy.", "SP800-53", "", "g1.1", `{"node-kind":"control","label":"AC-1","sort-id":"ac-01"}`)
 		seedControl(tenantA, catalogA, "ac-1_smt", "", "Develop.", "", "ac-1", "g1.1", "")
 		seedControl(tenantB, catalogB, "ac-1", "Tenant B Policy", "", "SP800-53", "", "g1", "")
@@ -123,7 +123,7 @@ var _ = Describe("PGControlsReader tenant isolation", Ordered, func() {
 		got, err := reader.ListCatalogContainers(ctxA, catalogA)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal([]graph.CatalogContainer{
-			{CatalogID: catalogA, Key: "g1", Identifier: "ac", Title: "Access Control", Label: "AC"},
+			{CatalogID: catalogA, Key: "g1", Identifier: "ac", Title: "Access Control", Label: "AC", Prose: "Controls on access."},
 			{CatalogID: catalogA, Key: "g1.1", Title: "Policies", ParentKey: "g1"},
 		}))
 	})

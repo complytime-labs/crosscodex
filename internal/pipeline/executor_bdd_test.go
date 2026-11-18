@@ -993,7 +993,7 @@ var _ = Describe("Executor", func() {
 			Expect(attestor.layoutCalls).NotTo(BeEmpty())
 
 			// Verify layout stored in object store.
-			layoutPath := fmt.Sprintf("attestations/%s/%s/layout.json", tenantID, jobID)
+			layoutPath := fmt.Sprintf("attestation/%s/layout.json", jobID)
 			exists, err := storage.Exists(ctx, layoutPath)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeTrue())
@@ -1038,7 +1038,7 @@ var _ = Describe("Executor", func() {
 
 			// Verify links stored in object store.
 			for _, stageName := range []string{"analyzer-a", "analyzer-b", "synthesis", "graph"} {
-				linkPath := fmt.Sprintf("attestations/%s/%s/links/%s.json", tenantID, jobID, stageName)
+				linkPath := fmt.Sprintf("attestation/%s/links/%s.json", jobID, stageName)
 				exists, err := storage.Exists(ctx, linkPath)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(exists).To(BeTrue())
@@ -1079,7 +1079,7 @@ var _ = Describe("Executor", func() {
 			}, "1s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
 
 			// Verify bundle stored.
-			bundlePath := fmt.Sprintf("attestations/%s/%s/bundle.json", tenantID, jobID)
+			bundlePath := fmt.Sprintf("attestation/%s/bundle.json", jobID)
 			exists, err := storage.Exists(ctx, bundlePath)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeTrue())
@@ -1196,7 +1196,7 @@ var _ = Describe("Executor", func() {
 				ContainSubstring("its attestation does not verify"),
 				ContainSubstring(`step "analyzer-a" and step "analyzer-b"`),
 				ContainSubstring("crosscodex run start --source cat-1 --target cat-1")))
-			exists, err := storage.Exists(ctx, fmt.Sprintf("attestations/%s/%s/bundle.json", tenantID, jobID))
+			exists, err := storage.Exists(ctx, fmt.Sprintf("attestation/%s/bundle.json", jobID))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeFalse())
 			stages, err := store.GetStages(ctx, jobID)
@@ -1205,9 +1205,9 @@ var _ = Describe("Executor", func() {
 		})
 
 		Describe("attestation", func() {
-			bundleKey := func() string { return fmt.Sprintf("attestations/%s/%s/bundle.json", tenantID, jobID) }
+			bundleKey := func() string { return fmt.Sprintf("attestation/%s/bundle.json", jobID) }
 			linkKey := func(step string) string {
-				return fmt.Sprintf("attestations/%s/%s/links/%s.json", tenantID, jobID, step)
+				return fmt.Sprintf("attestation/%s/links/%s.json", jobID, step)
 			}
 			// serviceWith returns a Service over the BeforeEach analyzers
 			// that attests with attestors and stores objects in stor.
@@ -1237,6 +1237,32 @@ var _ = Describe("Executor", func() {
 				"analyzer-a": pipeline.StageStatusCompleted, "analyzer-b": pipeline.StageStatusCompleted,
 				"synthesis": pipeline.StageStatusCompleted, "graph": pipeline.StageStatusCompleted,
 			}
+
+			// The daemon routes object storage by the tenant on each call's
+			// context, and the startup context carries none: the resumed job
+			// must put its own tenant on every storage call.
+			It("stores the attestation of a job resumed at startup only in its own tenant's object store", func() {
+				const otherTenant = "t-b"
+				byTenant := map[string]*storagetest.Fake{tenantID: storage, otherTenant: {}}
+				router := storagepkg.NewTenantRouter(func(id string) (storagepkg.Provider, error) {
+					f, ok := byTenant[id]
+					if !ok {
+						return nil, fmt.Errorf("no object store for tenant %q", id)
+					}
+					return f, nil
+				})
+				job := newRunningJob()
+				job.TenantID = otherTenant
+				Expect(store.CreateJob(ctx, job)).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+
+				Expect(serviceWith(attestedBy(attestor), router).Start(context.Background())).To(Succeed())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(byTenant[otherTenant].Objects()).To(HaveKey(bundleKey()))
+				Expect(byTenant[otherTenant].Objects()).To(HaveKey(linkKey("analyzer-a")))
+				Expect(storage.Objects()).To(BeEmpty())
+			})
 
 			It("stores a bundle that verifies, with one link per step, each analyzer's signed over its stored result", func() {
 				runJob(svc)
@@ -1552,7 +1578,7 @@ var _ = Describe("Executor", func() {
 
 				Expect(storage.Delete(ctx, bundleKey())).To(Succeed())
 				Expect(store.UpdateJobStatus(ctx, jobID, pipeline.JobStatusRunning, nil)).To(Succeed())
-				donorLink := storage.Objects()[fmt.Sprintf("attestations/%s/%s/links/synthesis.json", tenantID, donorID)]
+				donorLink := storage.Objects()[fmt.Sprintf("attestation/%s/links/synthesis.json", donorID)]
 				Expect(donorLink).NotTo(BeEmpty())
 				Expect(storage.Put(ctx, linkKey("synthesis"), bytes.NewReader(donorLink))).To(Succeed())
 				before := maps.Clone(storage.Objects())

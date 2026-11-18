@@ -315,7 +315,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		// The tenant is unique to this spec, so the counts are exact.
 		g := graphRT.shared.graphDB_
 		parentID := catalogID + "/ac-2"
-		childA, childB := catalogID+"/ac-2.a", catalogID+"/ac-2.b"
+		childA, childB := catalogID+"/ac-2_smt.a", catalogID+"/ac-2_smt.b"
 		groupID := catalogID + "/containers/g1"
 		Eventually(func(inner Gomega) {
 			for _, nodeID := range []string{parentID, childA, childB} {

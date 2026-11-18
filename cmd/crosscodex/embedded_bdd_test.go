@@ -24,6 +24,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -62,6 +63,41 @@ var _ = Describe("ensurePKI", func() {
 		// Fingerprint must exist
 		_, err = os.Stat(filepath.Join(pkiDir, ".fingerprint"))
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("provisions a matching attestation key pair beside the TLS set", func() {
+		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
+		Expect(testcerts.VerifyAttestationKeypair(pkiDir)).To(Succeed())
+		info, err := os.Stat(filepath.Join(pkiDir, testcerts.AttestationKeyFile))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(info.Mode().Perm()).To(Equal(os.FileMode(0o600)))
+	})
+
+	It("regenerates a set generated before attestation keys existed", func() {
+		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+		Expect(os.Remove(filepath.Join(pkiDir, testcerts.AttestationKeyFile))).To(Succeed())
+		Expect(os.Remove(filepath.Join(pkiDir, testcerts.AttestationPubFile))).To(Succeed())
+
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
+		Expect(testcerts.VerifyAttestationKeypair(pkiDir)).To(Succeed())
+	})
+
+	It("keeps a user-supplied TLS-only set unchanged, without adding attestation keys", func() {
+		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+		Expect(os.Remove(filepath.Join(pkiDir, ".fingerprint"))).To(Succeed())
+		Expect(os.Remove(filepath.Join(pkiDir, testcerts.AttestationKeyFile))).To(Succeed())
+		Expect(os.Remove(filepath.Join(pkiDir, testcerts.AttestationPubFile))).To(Succeed())
+
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
+		Expect(filepath.Join(pkiDir, testcerts.AttestationKeyFile)).NotTo(BeAnExistingFile())
+		Expect(filepath.Join(pkiDir, ".fingerprint")).NotTo(BeAnExistingFile())
 	})
 
 	It("reuses existing valid certs", func() {
@@ -402,6 +438,47 @@ var _ = Describe("buildEmbeddedService", func() {
 	})
 })
 
+var _ = Describe("defaultAttestationKeyPaths", func() {
+	const pkiDir = "/state/pki"
+
+	DescribeTable("applies the PKI-dir key pair only when attestation is on and no path is set",
+		func(in config.AttestationConfig, wantPriv, wantPub string) {
+			cfg := &config.Config{Attestation: in}
+
+			defaultAttestationKeyPaths(cfg, pkiDir)
+
+			Expect(cfg.Attestation.PrivateKeyPath).To(Equal(wantPriv))
+			Expect(cfg.Attestation.PublicKeyPath).To(Equal(wantPub))
+		},
+		Entry("enabled with no paths gets the PKI-dir pair",
+			config.AttestationConfig{Enabled: true},
+			pkiDir+"/attestation-key.pem", pkiDir+"/attestation-pub.pem"),
+		Entry("explicit paths are kept",
+			config.AttestationConfig{Enabled: true, PrivateKeyPath: "/k/priv.pem", PublicKeyPath: "/k/pub.pem"},
+			"/k/priv.pem", "/k/pub.pem"),
+		Entry("a lone private path is kept so RequireKeys reports the missing half",
+			config.AttestationConfig{Enabled: true, PrivateKeyPath: "/k/priv.pem"},
+			"/k/priv.pem", ""),
+		Entry("a lone public path is kept so RequireKeys reports the missing half",
+			config.AttestationConfig{Enabled: true, PublicKeyPath: "/k/pub.pem"},
+			"", "/k/pub.pem"),
+		Entry("disabled attestation leaves the paths empty",
+			config.AttestationConfig{Enabled: false}, "", ""),
+	)
+
+	It("yields a pair attestation.LoadFileKeys accepts after ensurePKI", func() {
+		dir := filepath.Join(GinkgoT().TempDir(), "pki")
+		Expect(ensurePKI(dir)).To(Succeed())
+		cfg := &config.Config{Attestation: config.AttestationConfig{Enabled: true}}
+
+		defaultAttestationKeyPaths(cfg, dir)
+
+		Expect(cfg.Attestation.RequireKeys()).To(Succeed())
+		_, err := attestation.LoadFileKeys(cfg.Attestation.PrivateKeyPath, cfg.Attestation.PublicKeyPath, false)
+		Expect(err).NotTo(HaveOccurred())
+	})
+})
+
 var _ = Describe("startEmbeddedDaemon telemetry initialization", func() {
 	var stateDir string
 
@@ -434,6 +511,52 @@ var _ = Describe("startEmbeddedDaemon telemetry initialization", func() {
 		Expect(filepath.Join(stateDir, "pki")).NotTo(BeADirectory(),
 			"an invalid observability config must stop startup before PKI bootstrap")
 		Expect(otel.GetTextMapPropagator().Fields()).To(BeEmpty())
+	})
+})
+
+// The embedded daemon signs an ingest attestation for every catalog import,
+// so a key pair that does not load stops startup before the database is
+// touched (the DSN below is never dialled).
+var _ = Describe("embedded attestation key guard", func() {
+	const unusedDSN = "postgres://unused@127.0.0.1:1/unused?sslmode=disable"
+
+	It("refuses an explicit attestation.private_key_path that does not exist, naming the setting and the file", func() {
+		dir := GinkgoT().TempDir()
+		missing := filepath.Join(dir, "absent-key.pem")
+		cfg := &config.Config{}
+		cfg.Database.DSN = unusedDSN
+		cfg.Attestation = config.AttestationConfig{
+			Enabled: true, PrivateKeyPath: missing, PublicKeyPath: filepath.Join(dir, "absent-pub.pem"),
+		}
+
+		svc, resources, err := buildEmbeddedService(context.Background(), cfg, nil)
+		Expect(svc).To(BeNil())
+		Expect(resources).To(BeNil())
+		Expect(err).To(MatchError(attestation.ErrKeyNotFound))
+		Expect(err.Error()).To(And(ContainSubstring("attestation.private_key_path"), ContainSubstring(missing),
+			ContainSubstring("attestation.enabled: false")))
+	})
+
+	It("refuses an operator-supplied PKI directory without a key pair, naming the defaulted path and both remedies", func() {
+		DeferCleanup(testspecs.IsolateTelemetryGlobals())
+		stateDir := GinkgoT().TempDir()
+		pkiDir := filepath.Join(stateDir, "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+		for _, name := range []string{".fingerprint", testcerts.AttestationKeyFile, testcerts.AttestationPubFile} {
+			Expect(os.Remove(filepath.Join(pkiDir, name))).To(Succeed())
+		}
+		cfg := &config.Config{}
+		cfg.Database.DSN = unusedDSN
+		cfg.Attestation = config.AttestationConfig{Enabled: true}
+		state := &cliState{fullCfg: cfg}
+
+		err := startEmbeddedDaemon(context.Background(), state, stateDir, filepath.Join(stateDir, "daemon.pid"))
+		Expect(err).To(MatchError(attestation.ErrKeyNotFound))
+		Expect(err.Error()).To(And(
+			ContainSubstring(filepath.Join(pkiDir, testcerts.AttestationKeyFile)),
+			ContainSubstring("attestation.private_key_path"), ContainSubstring("Supply an ECDSA key pair at those paths"),
+			ContainSubstring("attestation.enabled: false")))
+		Expect(state.daemon).To(BeNil())
 	})
 })
 

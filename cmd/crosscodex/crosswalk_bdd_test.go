@@ -209,7 +209,7 @@ var _ = Describe("crosscodex crosswalk", func() {
 		},
 		Entry("CSV with BOM, header and quoted cells", "csv", "pair.csv"),
 		Entry("JSON with provenance and ordered keys", "json", "pair.json"),
-		Entry("Markdown with cleaned line breaks, escaped pipes and parentheses and no formula quote", "md", "pair.md"),
+		Entry("Markdown with line breaks as <br>, escaped pipes and parentheses and no formula quote", "md", "pair.md"),
 	)
 
 	It("writes the target framework of each row when one catalog is mapped against several", func() {
@@ -301,8 +301,8 @@ var _ = Describe("crosscodex crosswalk", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(records).To(HaveLen(3))
 		Expect(records[0]).To(Equal(crosswalkColumns))
-		Expect(records[2][6]).To(Equal(`'=HYPERLINK("http://x") second | line, "quoted"`))
-		Expect(strings.Count(stdout, "\n")).To(Equal(3), "newlines in a cell are cleaned, so each record is one line")
+		Expect(records[2][6]).To(Equal("'=HYPERLINK(\"http://x\")\nsecond | line, \"quoted\""))
+		Expect(strings.Count(stdout, "\n")).To(Equal(4), "the header, two records and the quoted newline inside one cell")
 	})
 
 	It("formula-guards a label in CSV and keeps one record per row", func() {
@@ -317,6 +317,64 @@ var _ = Describe("crosscodex crosswalk", func() {
 		stdout, _, err := run("cat-a", "cat-b", "--format", "md")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(strings.Split(stdout, "\n")[3]).To(ContainSubstring(`| =SUM\(A1\)\|x |`))
+	})
+
+	Describe("script text and line structure", func() {
+		const statement = "می\u200cخواهم\na. one\nb. two"
+
+		withStatement := func(text string) {
+			rows := crosswalkRows()
+			rows[0].Source.Statement = text
+			fake.pages = []*pb.GetCrosswalkResponse{crosswalkPage("", rows...)}
+		}
+
+		It("keeps a ZWNJ and line breaks in a CSV cell", func() {
+			withStatement(statement)
+			stdout, _, err := run("cat-a", "cat-b")
+			Expect(err).NotTo(HaveOccurred())
+			records, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(stdout, "\xEF\xBB\xBF"))).ReadAll()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(records[1][7]).To(Equal(statement))
+		})
+
+		It("keeps a ZWNJ and line breaks in an XLSX cell", func() {
+			withStatement(statement)
+			path := filepath.Join(GinkgoT().TempDir(), "crosswalk.xlsx")
+			_, _, err := run("cat-a", "cat-b", "--format", "xlsx", "--output", path)
+			Expect(err).NotTo(HaveOccurred())
+			book, err := excelize.OpenFile(path)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(book.Close)
+			Expect(book.GetCellValue("crosswalk", "H2")).To(Equal(statement))
+		})
+
+		It("keeps a ZWNJ in a Markdown cell and turns a line break into <br>", func() {
+			withStatement(statement)
+			stdout, _, err := run("cat-a", "cat-b", "--format", "md")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.Count(stdout, "\n")).To(Equal(4))
+			Expect(strings.Split(stdout, "\n")[2]).To(ContainSubstring("می\u200cخواهم<br>a. one<br>b. two"))
+		})
+
+		It("renders a literal <br> in Markdown input as text", func() {
+			withStatement("a<br>b")
+			stdout, _, err := run("cat-a", "cat-b", "--format", "md")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.Split(stdout, "\n")[2]).To(ContainSubstring("a&lt;br&gt;b"))
+		})
+
+		DescribeTable("formula-guards the cleaned CSV value, not the raw one",
+			func(raw, want string) {
+				withStatement(raw)
+				stdout, _, err := run("cat-a", "cat-b")
+				Expect(err).NotTo(HaveOccurred())
+				records, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(stdout, "\xEF\xBB\xBF"))).ReadAll()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(records[1][7]).To(Equal(want))
+			},
+			Entry("a formula after a blank line", " \n=SUM(A1)", "'=SUM(A1)"),
+			Entry("a formula after a control character", "\x01=1", "'=1"),
+		)
 	})
 
 	It("keeps a long statement whole in CSV", func() {
@@ -356,9 +414,9 @@ var _ = Describe("crosscodex crosswalk", func() {
 		Entry("an image tag cannot act as a beacon", "<img src=x>", "&lt;img src=x&gt;", "<img"),
 		Entry("a link cannot be formed", "[click](http://evil)", `\[click\]\(http://evil\)`, "[click]("),
 		Entry("an image cannot be formed", "![i](u)", `\!\[i\]\(u\)`, "![i]("),
-		Entry("an ANSI escape is removed", "x\x1b[31mred", `x \[31mred`, "\x1b"),
+		Entry("an ANSI escape is removed", "x\x1b[31mred", `x\[31mred`, "\x1b"),
 		Entry("a bidi override is removed", "ab\u202ecd", "abcd", "\u202e"),
-		Entry("a zero-width space is removed", "ab\u200bcd", "abcd", "\u200b"),
+		Entry("a tag character is removed", "ab\U000E0041cd", "abcd", "\U000E0041"),
 		Entry("an ampersand entity is not decoded", "&lt;b&gt;", "&amp;lt;b&amp;gt;"),
 		Entry("emphasis and code markers are escaped", "*a* _b_ `c`", "\\*a\\* \\_b\\_ \\`c\\`"),
 	)

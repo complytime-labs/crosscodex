@@ -76,6 +76,7 @@ func (a *assembler) Assemble(ctx context.Context, tree *Tree, meta CatalogMeta) 
 type groupNode struct {
 	id       string
 	title    string
+	prose    string
 	groups   []*groupNode
 	controls []*controlNode
 }
@@ -110,7 +111,7 @@ func buildTree(tree *Tree) (groups []oscalTypes.Group, topControls []oscalTypes.
 	// Register containers first so children can reference a container that
 	// appears later in the input; parenting below uses first-appearance order.
 	for _, c := range tree.Containers {
-		node := &groupNode{id: c.Identifier, title: c.Title}
+		node := &groupNode{id: c.Identifier, title: c.Title, prose: c.Prose}
 		byKey[c.Key] = node
 		if _, taken := byGroupID[c.Identifier]; c.Identifier != "" && !taken {
 			byGroupID[c.Identifier] = node
@@ -187,6 +188,9 @@ func buildTree(tree *Tree) (groups []oscalTypes.Group, topControls []oscalTypes.
 // buildGroup converts a groupNode, and recursively its subgroups, to an OSCAL Group.
 func buildGroup(g *groupNode, childrenMap map[string][]ControlItem) oscalTypes.Group {
 	group := oscalTypes.Group{ID: g.id, Title: g.title}
+	if g.prose != "" {
+		group.Parts = &[]oscalTypes.Part{{Name: "overview", Prose: g.prose}}
+	}
 	if len(g.controls) > 0 {
 		controls := make([]oscalTypes.Control, 0, len(g.controls))
 		for _, c := range g.controls {

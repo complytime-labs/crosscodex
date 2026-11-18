@@ -17,6 +17,7 @@ func FuzzCleanProse(f *testing.F) {
 	f.Add("{{ insert: param, missing-id }}")
 	f.Add("Multiple {{ insert: param, a }} and {{ insert: param, b }}.")
 	f.Add("Unmatched }} brace is fine")
+	f.Add("{{ insert: param, pé }} and {{ insert: param, 参数1 }}")
 
 	f.Fuzz(func(t *testing.T, text string) {
 		// Must not panic; params=nil is a valid call
@@ -105,6 +106,14 @@ func FuzzParse(f *testing.F) {
 	// Unnamed and ID-less parts.
 	f.Add([]byte(head + `"controls":[{"id":"u","title":"u","parts":[{"name":"statement","prose":"S","parts":[` +
 		`{"prose":"no id or name"},{"name":"item","prose":"no id"},{"id":"other","prose":"no name"}]},{"prose":"top, unnamed"}]}]}}`))
+	// Part named from its label, with and without a verbatim id.
+	f.Add([]byte(head + `"controls":[{"id":"c1","title":"C","parts":[{"name":"statement","prose":"L","parts":[` +
+		`{"name":"item","props":[{"name":"label","value":"a."}],"prose":"A."},{"id":"mine","name":"item","props":[{"name":"label","value":"(1)"}],"prose":"B."},` +
+		`{"name":"item","props":[{"name":"label","value":"()."}],"prose":"C."}]}]}]}}`))
+	// A part labelled "1" collides with the enhancement c4.1.
+	f.Add([]byte(head + `"controls":[{"id":"c4","title":"C","parts":[{"name":"statement","prose":"L","parts":[` +
+		`{"name":"item","props":[{"name":"label","value":"1"}],"prose":"One."}]}],` +
+		`"controls":[{"id":"c4.1","title":"E","parts":[{"name":"statement","prose":"E."}]}]}]}}`))
 	// Label props with class and namespace variants.
 	f.Add([]byte(head + `"groups":[{"id":"g","title":"G","props":[{"name":"label","value":"G","ns":"http://example.com/ns"}],` +
 		`"controls":[{"id":"l-1","title":"L-1","props":[{"name":"label","value":"L-01","class":"zero-padded"},` +

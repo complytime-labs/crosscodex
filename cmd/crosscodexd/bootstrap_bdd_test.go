@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -21,6 +22,10 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
+	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
 )
 
 // attachAllGateway delegates its config guards to buildIngestGateway (specified
@@ -55,9 +60,10 @@ var _ = Describe("attachAllGateway config guards", func() {
 // needed to reach them.
 var _ = Describe("buildIngestGateway config guards", func() {
 	DescribeTable("fails closed, naming the role, when a required setting is empty",
-		func(role, defaultTenant, basePath, want string) {
+		func(role, defaultTenant, backend, basePath, want string) {
 			cfg := &config.Config{}
 			cfg.Tenants.DefaultTenant = defaultTenant
+			cfg.Storage.Objects.Backend = backend
 			cfg.Storage.Objects.BasePath = basePath
 
 			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
@@ -65,13 +71,163 @@ var _ = Describe("buildIngestGateway config guards", func() {
 			Expect(err).To(MatchError(want))
 		},
 		Entry("gateway role without a default tenant",
-			config.RoleGateway, "", "/tmp/does-not-matter", "gateway role: tenants.default_tenant must be set"),
-		Entry("gateway role without a storage base path",
-			config.RoleGateway, "crosscodexd-test", "", "gateway role: storage.objects.base_path must be set"),
+			config.RoleGateway, "", "local", "/tmp/does-not-matter", "gateway role: tenants.default_tenant must be set"),
+		Entry("gateway role, local backend without a storage base path",
+			config.RoleGateway, "crosscodexd-test", "local", "", "gateway role: storage.objects.base_path must be set"),
+		Entry("gateway role without a storage backend",
+			config.RoleGateway, "crosscodexd-test", "", "/tmp/does-not-matter",
+			`gateway role: storage.objects.backend "" is not supported. Set it to "local" or "s3"`),
 		Entry("all role without a default tenant",
-			config.RoleAll, "", "/tmp/does-not-matter", "all role: tenants.default_tenant must be set"),
-		Entry("all role without a storage base path",
-			config.RoleAll, "crosscodexd-test", "", "all role: storage.objects.base_path must be set"),
+			config.RoleAll, "", "local", "/tmp/does-not-matter", "all role: tenants.default_tenant must be set"),
+		Entry("all role, local backend without a storage base path",
+			config.RoleAll, "crosscodexd-test", "local", "", "all role: storage.objects.base_path must be set"),
+		Entry("all role without a storage backend",
+			config.RoleAll, "crosscodexd-test", "", "/tmp/does-not-matter",
+			`all role: storage.objects.backend "" is not supported. Set it to "local" or "s3"`),
+	)
+
+	// The s3 backend keeps objects in a bucket, so base_path does not apply:
+	// the builder gets past the storage guard to the TLS guard after it.
+	DescribeTable("does not require a storage base path for the s3 backend",
+		func(role string) {
+			cfg := &config.Config{}
+			cfg.Tenants.DefaultTenant = "crosscodexd-test"
+			cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "s3", Bucket: "crosscodex-objects"}
+
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			Expect(svc).To(BeNil())
+			Expect(err).To(MatchError(ContainSubstring("catalog import authenticates clients by X.509 certificate")))
+		},
+		Entry("gateway role", config.RoleGateway),
+		Entry("all role", config.RoleAll),
+	)
+})
+
+// Catalog import signs an ingest attestation for every import, so the
+// gateway-serving roles refuse to start, before any database access, when
+// attestation is enabled without a key pair.
+var _ = Describe("buildIngestGateway attestation guard", func() {
+	DescribeTable("refuses attestation enabled without a key pair, naming the role, the setting and both remedies",
+		func(role string) {
+			cfg := &config.Config{}
+			cfg.Tenants.DefaultTenant = "crosscodexd-test"
+			cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "local", BasePath: GinkgoT().TempDir()}
+			cfg.Attestation = config.AttestationConfig{Enabled: true, ExpiryDuration: time.Hour}
+
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			Expect(svc).To(BeNil())
+			Expect(err).To(MatchError(config.ErrMissingRequired))
+			Expect(err.Error()).To(And(HavePrefix(role+" role: "),
+				ContainSubstring("attestation.private_key_path"), ContainSubstring("attestation.enabled: false")))
+		},
+		Entry("gateway role", config.RoleGateway),
+		Entry("all role", config.RoleAll),
+	)
+})
+
+// objectStore is the daemon's object storage for every role that keeps
+// objects: it opens storage.objects for the tenant on each call's context,
+// never for tenants.default_tenant alone.
+var _ = Describe("objectStore", func() {
+	const key = "uploads/doc-1.json"
+	tenantCtx := func(id string) context.Context {
+		ctx, err := tenant.WithTenant(context.Background(), id)
+		Expect(err).NotTo(HaveOccurred())
+		return ctx
+	}
+	localConfig := func() *config.Config {
+		cfg := &config.Config{}
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "local", BasePath: GinkgoT().TempDir()}
+		return cfg
+	}
+
+	It("stores a tenant's object under that tenant's directory of base_path, not the default tenant's", func() {
+		cfg := localConfig()
+		store := objectStore(cfg)
+		DeferCleanup(store.Close)
+
+		Expect(store.Put(tenantCtx("t-b"), key, strings.NewReader("payload"))).To(Succeed())
+
+		got, err := os.ReadFile(filepath.Join(cfg.Storage.Objects.BasePath, "t-b", key))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(got)).To(Equal("payload"))
+		Expect(filepath.Join(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant, key)).NotTo(BeAnExistingFile())
+	})
+
+	It("refuses a call without a tenant on its context and writes nothing", func() {
+		cfg := localConfig()
+		store := objectStore(cfg)
+		DeferCleanup(store.Close)
+
+		err := store.Put(context.Background(), key, strings.NewReader("payload"))
+		Expect(err).To(MatchError(tenant.ErrNoTenant))
+		Expect(err.Error()).To(ContainSubstring("tenant.WithTenant"))
+		entries, err := os.ReadDir(cfg.Storage.Objects.BasePath)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(entries).To(BeEmpty())
+	})
+
+	// Static credentials and a disabled instance-metadata lookup keep the
+	// SDK off the network; the only address it dials is the endpoint, where
+	// nothing listens.
+	It("sends a tenant's object to the configured s3 endpoint", func() {
+		GinkgoT().Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+		GinkgoT().Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+		GinkgoT().Setenv("AWS_EC2_METADATA_DISABLED", "true")
+		cfg := &config.Config{}
+		cfg.Storage.Objects = config.ObjectStorageConfig{
+			Backend: "s3", Bucket: "crosscodex-objects", Region: "us-east-1", Endpoint: "http://127.0.0.1:1",
+		}
+		store := objectStore(cfg)
+		DeferCleanup(store.Close)
+
+		err := store.Put(tenantCtx("t-b"), key, strings.NewReader("payload"))
+		Expect(err).To(MatchError(ContainSubstring("127.0.0.1:1")))
+	})
+})
+
+// buildPipelineService opens object storage lazily, per tenant, so building
+// it with the s3 backend contacts no endpoint; a base_path check applies only
+// to the local backend.
+var _ = Describe("buildPipelineService object storage", func() {
+	pipelineConfig := func(objects config.ObjectStorageConfig) *config.Config {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		cfg.Attestation.Enabled = false
+		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		cfg.Storage.Objects = objects
+		return cfg
+	}
+	fakeShared := func() *sharedResources {
+		llm := &llmclienttest.Fake{}
+		return &sharedResources{
+			llmClient: llm, probeClient: llm, vectorDB: &vectordbtest.Fake{}, natsClient: &natsbustest.Fake{},
+		}
+	}
+
+	It("builds with the s3 backend and no base_path, without contacting the endpoint", func() {
+		cfg := pipelineConfig(config.ObjectStorageConfig{
+			Backend: "s3", Bucket: "crosscodex-objects", Endpoint: "http://127.0.0.1:1",
+		})
+
+		svc, err := buildPipelineService(cfg, fakeShared())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(svc).NotTo(BeNil())
+	})
+
+	DescribeTable("refuses an object storage setting it cannot start with",
+		func(objects config.ObjectStorageConfig, want string) {
+			svc, err := buildPipelineService(pipelineConfig(objects), fakeShared())
+			Expect(svc).To(BeNil())
+			Expect(err).To(MatchError(want))
+		},
+		Entry("the local backend without a base path",
+			config.ObjectStorageConfig{Backend: "local"}, "pipeline: storage.objects.base_path must be set"),
+		Entry("no backend",
+			config.ObjectStorageConfig{BasePath: "/tmp/does-not-matter"},
+			`pipeline: storage.objects.backend "" is not supported. Set it to "local" or "s3"`),
 	)
 })
 
@@ -86,7 +242,7 @@ var _ = Describe("buildIngestGateway client-certificate guard", func() {
 		func(role, mode string, wantRefused bool) {
 			cfg := &config.Config{}
 			cfg.Tenants.DefaultTenant = "Not A Valid Tenant!"
-			cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+			cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "local", BasePath: GinkgoT().TempDir()}
 			if mode != "off" {
 				cfg.TLS = config.TLSConfig{
 					Mode: mode,

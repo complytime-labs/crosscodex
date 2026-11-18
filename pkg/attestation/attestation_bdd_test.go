@@ -487,6 +487,18 @@ var _ = Describe("CreateLink", Ordered, func() {
 		Expect(link.TraceID).To(BeEmpty()) // noop tracer produces "00000000..."
 	})
 
+	It("leaves the caller's span recording when the generator has no tracer", func() {
+		tp, err := telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+		ctx, span := tp.TracerProvider().Tracer("test").Start(context.Background(), "caller")
+
+		_, err = gen.CreateLink(ctx, "step", []attestation.Artifact{{URI: "a.json", Digest: "aaa"}}, []attestation.Artifact{{URI: "b.json", Digest: "bbb"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(span.IsRecording()).To(BeTrue(), "CreateLink must not end a span it did not start")
+		span.End()
+	})
+
 	It("materials and products round-trip through sign/verify", func() {
 		ctx := context.Background()
 		materials := []attestation.Artifact{

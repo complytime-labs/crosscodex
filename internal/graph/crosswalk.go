@@ -46,6 +46,9 @@ type walkedRow struct {
 	// critiqueNotes are the critique notes of the row's edges, appended to
 	// its review after the other notes.
 	critiqueNotes []string
+	// sourceSortID and targetSortID are the Control nodes' published sort_id
+	// properties, empty when a control carries none.
+	sourceSortID, targetSortID string
 }
 
 // GetCrosswalk implements gateway.CrosswalkBackend for the job, pair,
@@ -179,7 +182,12 @@ func (s *Service) GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetC
 			side.Framework = cmp.Or(frameworks[side.CatalogId], side.CatalogId)
 		}
 	}
-	sortCrosswalkRows(rows)
+	sortIDs := map[string]string{}
+	for _, w := range walked {
+		sortIDs[w.row.Source.NodeId] = w.sourceSortID
+		sortIDs[w.row.Target.NodeId] = w.targetSortID
+	}
+	sortCrosswalkRows(rows, sortIDs)
 
 	total := len(rows)
 	if offset > total {
@@ -320,18 +328,19 @@ func (s *Service) walkPair(ctx context.Context, tenantID, a, b string, jobs []*p
 		if merged.Direction == crosswalk.Reverse {
 			word = "reverse: " + word
 		}
-		rows = append(rows, walkedRow{jobs: slices.Compact(ids), critiqueNotes: pe.CritiqueNotes, row: &pb.CrosswalkRow{
-			Source:           crosswalkSide(pe.A),
-			Target:           crosswalkSide(pe.B),
-			RelationshipType: merged.Type,
-			Relationship:     word,
-			Confidence:       float32(merged.Confidence),
-			Direction:        string(merged.Direction),
-			JobsJudged:       int32(merged.JobsJudged),
-			JobsAgreeing:     int32(merged.JobsAgreeing),
-			OtherVerdicts:    crosswalk.FormatOthers(merged.Others),
-			LatestJobId:      merged.LatestJob,
-		}})
+		rows = append(rows, walkedRow{jobs: slices.Compact(ids), critiqueNotes: pe.CritiqueNotes,
+			sourceSortID: propString(pe.A.Properties, "sort_id"), targetSortID: propString(pe.B.Properties, "sort_id"), row: &pb.CrosswalkRow{
+				Source:           crosswalkSide(pe.A),
+				Target:           crosswalkSide(pe.B),
+				RelationshipType: merged.Type,
+				Relationship:     word,
+				Confidence:       float32(merged.Confidence),
+				Direction:        string(merged.Direction),
+				JobsJudged:       int32(merged.JobsJudged),
+				JobsAgreeing:     int32(merged.JobsAgreeing),
+				OtherVerdicts:    crosswalk.FormatOthers(merged.Others),
+				LatestJobId:      merged.LatestJob,
+			}})
 	}
 	return rows, skipped, nil
 }
@@ -384,8 +393,9 @@ func (s *Service) walkTransitive(ctx context.Context, tenantID, a, hub, c string
 	}
 
 	type derivedPair struct {
-		source, target *pb.CrosswalkSide
-		paths          []crosswalk.Path
+		source, target             *pb.CrosswalkSide
+		sourceSortID, targetSortID string
+		paths                      []crosswalk.Path
 	}
 	// hubLabels maps a hub control's identifier to its published label.
 	hubLabels := map[string]string{}
@@ -409,7 +419,7 @@ func (s *Service) walkTransitive(ctx context.Context, tenantID, a, hub, c string
 			key := pairKey{ab.Source.NodeId, bc.Target.NodeId}
 			dp := derived[key]
 			if dp == nil {
-				dp = &derivedPair{source: ab.Source, target: bc.Target}
+				dp = &derivedPair{source: ab.Source, target: bc.Target, sourceSortID: abw.sourceSortID, targetSortID: bcw.targetSortID}
 				derived[key] = dp
 				order = append(order, key)
 			}
@@ -430,7 +440,7 @@ func (s *Service) walkTransitive(ctx context.Context, tenantID, a, hub, c string
 		if col.Type != pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED {
 			word = crosswalk.Word(col.Type)
 		}
-		rows = append(rows, walkedRow{jobs: col.Jobs, row: &pb.CrosswalkRow{
+		rows = append(rows, walkedRow{jobs: col.Jobs, sourceSortID: dp.sourceSortID, targetSortID: dp.targetSortID, row: &pb.CrosswalkRow{
 			Source:           dp.source,
 			Target:           dp.target,
 			RelationshipType: col.Type,
@@ -585,26 +595,44 @@ func filterCrosswalkRows(rows []walkedRow, minConfidence float32, types []pb.Rel
 	})
 }
 
+// controlOrder orders two controls by sort_id when bySortID is set (ties, and
+// every comparison otherwise, fall back to natural identifier order).
+func controlOrder(bySortID bool, xNode, yNode, xIdent, yIdent string, sortIDs map[string]string) int {
+	if bySortID {
+		if c := cmp.Compare(sortIDs[xNode], sortIDs[yNode]); c != 0 {
+			return c
+		}
+	}
+	return naturalCompare(xIdent, yIdent)
+}
+
 // sortCrosswalkRows orders rows by target framework (constant within a pair),
-// source identifier, the pair's best confidence (descending), then target
-// identifier and node IDs, which keeps each (source, target) pair contiguous.
+// source order, the pair's best confidence (descending), then target order and
+// node IDs, which keeps each (source, target) pair contiguous.
+// sortIDs maps node ID to the published sort_id. Sources are ordered by sort_id
+// only when every source in rows has one, else naturally by identifier;
+// targets likewise, independently. The rule is per side, not per pair, because
+// comparing by sort_id only where both controls have one is not transitive on
+// mixed data and would make the order depend on the input order.
 // A pair has at most one direct and one derived row (transitive mode), the
 // direct row first, so an inferred row never reads as the pair's main answer.
 // Outside transitive mode a pair has one row, so its best confidence is its
 // own and the order is by confidence alone.
-func sortCrosswalkRows(rows []*pb.CrosswalkRow) {
+func sortCrosswalkRows(rows []*pb.CrosswalkRow, sortIDs map[string]string) {
 	type pair struct{ src, tgt string }
 	best := map[pair]float32{}
 	for _, r := range rows {
 		k := pair{r.Source.NodeId, r.Target.NodeId}
 		best[k] = max(best[k], r.Confidence)
 	}
+	srcBySortID := !slices.ContainsFunc(rows, func(r *pb.CrosswalkRow) bool { return sortIDs[r.Source.NodeId] == "" })
+	tgtBySortID := !slices.ContainsFunc(rows, func(r *pb.CrosswalkRow) bool { return sortIDs[r.Target.NodeId] == "" })
 	slices.SortFunc(rows, func(x, y *pb.CrosswalkRow) int {
 		return cmp.Or(
 			cmp.Compare(x.Target.Framework, y.Target.Framework),
-			cmp.Compare(x.Source.Identifier, y.Source.Identifier),
+			controlOrder(srcBySortID, x.Source.NodeId, y.Source.NodeId, x.Source.Identifier, y.Source.Identifier, sortIDs),
 			cmp.Compare(best[pair{y.Source.NodeId, y.Target.NodeId}], best[pair{x.Source.NodeId, x.Target.NodeId}]),
-			cmp.Compare(x.Target.Identifier, y.Target.Identifier),
+			controlOrder(tgtBySortID, x.Target.NodeId, y.Target.NodeId, x.Target.Identifier, y.Target.Identifier, sortIDs),
 			cmp.Compare(x.Source.NodeId, y.Source.NodeId),
 			cmp.Compare(x.Target.NodeId, y.Target.NodeId),
 			cmp.Compare(derivedRank(x), derivedRank(y)),

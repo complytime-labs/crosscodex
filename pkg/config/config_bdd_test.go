@@ -721,6 +721,7 @@ logging:
 				GinkgoT().Setenv("CROSSCODEX_LLM_GATEWAY_URL", "https://env:9000")
 				GinkgoT().Setenv("CROSSCODEX_LLM_TIMEOUT", "120")
 				GinkgoT().Setenv("CROSSCODEX_STORAGE_OBJECTS_BACKEND", "s3")
+				GinkgoT().Setenv("CROSSCODEX_STORAGE_OBJECTS_BUCKET", "crosscodex-objects")
 				GinkgoT().Setenv("CROSSCODEX_TLS_FIPS_ENABLED", "true")
 
 				loader := config.NewLoader()
@@ -1397,6 +1398,28 @@ logging:
 			Expect(msg).To(ContainSubstring("tls.mode"))
 			Expect(msg).To(ContainSubstring("storage.objects.backend"))
 			Expect(msg).To(ContainSubstring("logging.format"))
+		})
+
+		DescribeTable("accepts the object storage bucket settings",
+			func(backend, bucket string) {
+				cfg := validConfig()
+				cfg.Storage.Objects.Backend = backend
+				cfg.Storage.Objects.Bucket = bucket
+				Expect(config.ExportValidateConfig(cfg)).To(Succeed())
+			},
+			Entry("the default local backend without a bucket", "local", ""),
+			Entry("the s3 backend with a bucket", "s3", "crosscodex-objects"),
+		)
+
+		It("refuses the s3 backend without a bucket, naming the setting to set", func() {
+			cfg := validConfig()
+			cfg.Storage.Objects.Backend = "s3"
+
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(MatchError(config.ErrMissingRequired))
+			expectOnlyFieldError(err, "storage.objects.bucket")
+			Expect(err.Error()).To(ContainSubstring(
+				"storage.objects.bucket is required when storage.objects.backend is s3; set it (or CROSSCODEX_STORAGE_OBJECTS_BUCKET)"))
 		})
 	})
 

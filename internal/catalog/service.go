@@ -347,6 +347,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 				Identifier: c.Identifier,
 				Title:      c.Title,
 				Label:      c.Label,
+				Prose:      c.Prose,
 				ParentKey:  c.ParentKey,
 			}
 		}

@@ -66,8 +66,9 @@ func startTestDaemon() (*cliState, func()) {
 
 	cfg := &config.Config{}
 	cfg.Database.DSN = suDSN
-	// Built without the loader: set the default the parser would otherwise lack.
+	// Built without the loader: set the defaults it would otherwise lack.
 	cfg.Catalog.RequirementPartNames = oscal.DefaultRequirementPartNames
+	cfg.Attestation.Enabled = true
 
 	state := &cliState{fullCfg: cfg}
 	pidPath := filepath.Join(stateDir, "daemon.pid")

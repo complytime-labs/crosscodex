@@ -1140,7 +1140,7 @@ var _ = Describe("Service", func() {
 	// stored; completed is immutable, so a bundle lost to a late cancel or
 	// shutdown could never be produced afterwards.
 	Describe("terminal transitions", func() {
-		const bundleKey = "attestations/test-tenant/%s/bundle.json"
+		const bundleKey = "attestation/%s/bundle.json"
 
 		// attestedService runs one classify analyzer (no tasks) over a real
 		// attestation generator, so links and bundles are real, against

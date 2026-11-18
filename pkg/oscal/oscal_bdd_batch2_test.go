@@ -768,14 +768,14 @@ var _ = Describe("Decompose", func() {
 
 			// Child 1
 			child1 := result[1]
-			Expect(child1.ID).To(Equal("ac-2.a"))
+			Expect(child1.ID).To(Equal("ac-2_smt.a"))
 			Expect(child1.Class).To(Equal(oscal.ClassRequirement))
 			Expect(child1.ParentID).To(Equal("ac-2"))
 			Expect(child1.Props["parent-id"]).To(Equal("ac-2"))
 
 			// Child 2
 			child2 := result[2]
-			Expect(child2.ID).To(Equal("ac-2.b"))
+			Expect(child2.ID).To(Equal("ac-2_smt.b"))
 			Expect(child2.Class).To(Equal(oscal.ClassRequirement))
 		})
 
@@ -820,17 +820,17 @@ var _ = Describe("Decompose", func() {
 			Expect(result[0].Class).To(Equal(oscal.ClassSection))
 
 			itemA := result[1]
-			Expect(itemA.ID).To(Equal("ac-3.a"))
+			Expect(itemA.ID).To(Equal("ac-3_smt.a"))
 			Expect(itemA.Class).To(Equal(oscal.ClassSection))
 			Expect(itemA.ParentID).To(Equal("ac-3"))
 
 			subItem1 := result[2]
-			Expect(subItem1.ID).To(Equal("ac-3.a.1"))
+			Expect(subItem1.ID).To(Equal("ac-3_smt.a.1"))
 			Expect(subItem1.Class).To(Equal(oscal.ClassRequirement))
-			Expect(subItem1.ParentID).To(Equal("ac-3.a"))
+			Expect(subItem1.ParentID).To(Equal("ac-3_smt.a"))
 
 			subItem2 := result[3]
-			Expect(subItem2.ID).To(Equal("ac-3.a.2"))
+			Expect(subItem2.ID).To(Equal("ac-3_smt.a.2"))
 			Expect(subItem2.Class).To(Equal(oscal.ClassRequirement))
 		})
 
@@ -882,10 +882,12 @@ var _ = Describe("Decompose", func() {
 				Expect(result[1].ID).To(Equal(wantIDs[0]))
 				Expect(result[2].ID).To(Equal(wantIDs[1]))
 			},
-			Entry("strips _smt and _stmt suffixes",
-				"ac-2", []string{"ac-2_smt.a", "ac-2_stmt.b"}, []string{"ac-2.a", "ac-2.b"}),
-			Entry("uses fallback ID when part ID is empty or non-standard",
-				"ac-4", []string{"", "custom-id"}, []string{"ac-4.1", "ac-4.2"}),
+			Entry("keeps part IDs verbatim, whatever their pattern",
+				"ac-2", []string{"ac-2_smt.a", "ac-2_stmt.b"}, []string{"ac-2_smt.a", "ac-2_stmt.b"}),
+			Entry("keeps an unpatterned part ID",
+				"ac-4", []string{"custom-id", "other"}, []string{"custom-id", "other"}),
+			Entry("numbers id-less, label-less parts by position",
+				"ac-5", []string{"", ""}, []string{"ac-5.1", "ac-5.2"}),
 		)
 	})
 
@@ -962,16 +964,28 @@ var _ = Describe("Decompose", func() {
 
 	Describe("deriveChildID", func() {
 		DescribeTable("derives child IDs correctly",
-			func(parentID string, partID string, index int, expected string) {
-				part := oscalTypes.Part{ID: partID}
+			func(parentID string, part oscalTypes.Part, index int, expected string) {
 				Expect(oscal.ExportDeriveChildID(parentID, part, index)).To(Equal(expected))
 			},
-			Entry("strips _smt suffix", "ac-2", "ac-2_smt.a", 0, "ac-2.a"),
-			Entry("strips _stmt suffix", "ac-2", "ac-2_stmt.a", 0, "ac-2.a"),
-			Entry("keeps dot-suffix as-is", "ac-2", "ac-2.a", 0, "ac-2.a"),
-			Entry("uses fallback for empty ID", "ac-2", "", 0, "ac-2.1"),
-			Entry("uses index-based fallback for non-standard ID", "ac-2", "custom-id", 1, "ac-2.2"),
-			Entry("handles nested parent ID", "ac-3.a", "ac-3.a_smt.1", 0, "ac-3.a.1"),
+			Entry("keeps an _smt part ID verbatim", "ac-2", oscalTypes.Part{ID: "ac-2_smt.a"}, 0, "ac-2_smt.a"),
+			Entry("keeps an _stmt part ID verbatim", "ac-2", oscalTypes.Part{ID: "ac-2_stmt.a"}, 0, "ac-2_stmt.a"),
+			Entry("keeps an ID extending the parent", "ac-2", oscalTypes.Part{ID: "ac-2.a"}, 0, "ac-2.a"),
+			Entry("keeps an unrelated ID", "ac-2", oscalTypes.Part{ID: "custom-id"}, 1, "custom-id"),
+			Entry("prefers the id over the label", "ac-2", partWithLabel("x1", "a."), 0, "x1"),
+			Entry("takes a label with a trailing dot", "c1", partWithLabel("", "a."), 0, "c1.a"),
+			Entry("takes a parenthesized label", "c1", partWithLabel("", "(1)"), 3, "c1.1"),
+			Entry("keeps dots, dashes and underscores in a label", "c1", partWithLabel("", "a.1-b_c"), 0, "c1.a.1-b_c"),
+			Entry("numbers by position without id or label", "c1", oscalTypes.Part{}, 2, "c1.3"),
+			Entry("numbers by position when the label has no usable character", "c1", partWithLabel("", "()."), 0, "c1.1"),
+			Entry("ignores a label in a foreign namespace", "c1", foreignLabelPart("a."), 1, "c1.2"),
 		)
 	})
 })
+
+func partWithLabel(id, label string) oscalTypes.Part {
+	return oscalTypes.Part{ID: id, Props: &[]oscalTypes.Property{{Name: "label", Value: label}}}
+}
+
+func foreignLabelPart(label string) oscalTypes.Part {
+	return oscalTypes.Part{Props: &[]oscalTypes.Property{{Name: "label", Value: label, Ns: "http://example.test/ns"}}}
+}
