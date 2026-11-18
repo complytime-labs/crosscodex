@@ -1,6 +1,9 @@
 package graph_test
 
 import (
+	"cmp"
+	"fmt"
+	"slices"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -272,6 +275,58 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				}
 				if got := match.Node.GetProperties()["catalog"]; got != "nist-800-53" {
 					t.Fatalf("metadata property catalog: got %q, want %q", got, "nist-800-53")
+				}
+			})
+		})
+	})
+
+	Context("naturalCompare", func() {
+		It("is antisymmetric, reflexive, and zero only for equal strings", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				gen := rapid.StringMatching(`[a-c0-9.() -]{0,12}`)
+				a := gen.Draw(t, "a")
+				b := gen.Draw(t, "b")
+				ab, ba := graph.ExportNaturalCompare(a, b), graph.ExportNaturalCompare(b, a)
+				if cmp.Compare(ab, 0) != -cmp.Compare(ba, 0) {
+					t.Fatalf("not antisymmetric: f(%q,%q)=%d f(%q,%q)=%d", a, b, ab, b, a, ba)
+				}
+				if graph.ExportNaturalCompare(a, a) != 0 {
+					t.Fatalf("f(%q,%q) != 0", a, a)
+				}
+				if ab == 0 && a != b {
+					t.Fatalf("f(%q,%q) == 0 for different strings", a, b)
+				}
+			})
+		})
+	})
+
+	Context("sortCrosswalkRows", func() {
+		It("yields the same order for any permutation of the rows", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				n := rapid.IntRange(0, 8).Draw(t, "n")
+				sortIDs := map[string]string{}
+				rows := make([]*pb.CrosswalkRow, n)
+				for i := range rows {
+					id := fmt.Sprintf("n%d", i)
+					sortIDs[id] = rapid.SampledFrom([]string{"", "1", "2", "10"}).Draw(t, "sort_id")
+					rows[i] = &pb.CrosswalkRow{
+						Source: &pb.CrosswalkSide{NodeId: id, Identifier: rapid.StringMatching(`[a-b][0-9]{0,2}`).Draw(t, "ident"), Framework: "F"},
+						Target: &pb.CrosswalkSide{NodeId: "t", Identifier: "t", Framework: "G"},
+					}
+				}
+				order := func(rs []*pb.CrosswalkRow) []string {
+					out := make([]string, len(rs))
+					for i, r := range rs {
+						out[i] = r.Source.NodeId
+					}
+					return out
+				}
+				want := slices.Clone(rows)
+				graph.ExportSortCrosswalkRows(want, sortIDs)
+				got := rapid.Permutation(rows).Draw(t, "permutation")
+				graph.ExportSortCrosswalkRows(got, sortIDs)
+				if !slices.Equal(order(got), order(want)) {
+					t.Fatalf("order depends on input order: %v vs %v", order(got), order(want))
 				}
 			})
 		})

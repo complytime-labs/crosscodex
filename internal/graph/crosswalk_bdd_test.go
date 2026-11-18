@@ -687,6 +687,55 @@ var _ = Describe("GetCrosswalk", func() {
 			Expect(order).To(Equal([]string{"AC-1.a>SC-2", "AC-1.a>SC-1", "AC-2>SC-2"}))
 		})
 
+		Describe("source order", func() {
+			// addSource adds a catalog A control, with a published sort_id when
+			// sortID is set, matched to b1 by j1.
+			addSource := func(id, identifier, sortID string) {
+				props := map[string]any{"catalog_id": catA, "identifier": identifier, "title": "title " + id, "statement": "statement " + id}
+				if sortID != "" {
+					props["sort_id"] = sortID
+				}
+				Expect(mem.CreateNode(ctx, tenantID, graphdb.Node{ID: id, Label: "Control", Properties: props, ValidFrom: t0})).To(Succeed())
+				link("j1", id, "b1", results.StageSynthesized, pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, 0.9)
+			}
+			sourceOrder := func(prefix string) []string {
+				var order []string
+				for _, r := range get(pairReq()).Rows {
+					if strings.HasPrefix(r.Source.Identifier, prefix) {
+						order = append(order, r.Source.Identifier)
+					}
+				}
+				return slices.Compact(order)
+			}
+
+			It("orders identifiers naturally, so ac-2 precedes ac-10", func() {
+				addSource("n10", "ac-10", "")
+				addSource("n2", "ac-2", "")
+				Expect(sourceOrder("ac-")).To(Equal([]string{"ac-2", "ac-10"}))
+			})
+
+			It("orders by sort_id, against identifier order, once every source carries one", func() {
+				addSource("nb", "b-1", "1")
+				addSource("na", "a-1", "2")
+				for _, r := range get(pairReq()).Rows {
+					if !strings.HasPrefix(r.Source.Identifier, "AC-") {
+						continue
+					}
+					_, err := mem.UpsertNode(ctx, tenantID, graphdb.Node{ID: r.Source.NodeId, Label: "Control", ValidFrom: t0, Properties: map[string]any{
+						"catalog_id": catA, "identifier": r.Source.Identifier, "title": r.Source.Title, "statement": r.Source.Statement, "sort_id": "9" + r.Source.Identifier,
+					}})
+					Expect(err).NotTo(HaveOccurred())
+				}
+				Expect(sourceOrder("")).To(HaveExactElements("b-1", "a-1", "AC-1.a", "AC-2"))
+			})
+
+			It("orders naturally while any source lacks a sort_id", func() {
+				addSource("nb", "b-1", "1")
+				addSource("na", "a-1", "2")
+				Expect(sourceOrder("")).To(HaveExactElements("AC-1.a", "AC-2", "a-1", "b-1"))
+			})
+		})
+
 		It("pages stably over the sorted rows", func() {
 			first := get(pairReq(func(m *pb.GetCrosswalkRequest) { m.Pagination = &pb.Pagination{PageSize: 2} }))
 			Expect(first.Rows).To(HaveLen(2))

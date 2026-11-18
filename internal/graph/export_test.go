@@ -20,6 +20,8 @@ var ExportSimilarityResultToProto = similarityResultToProto
 var ExportExtractTenant = (*Service).extractTenant
 var ExportHandleEvent = (*Service).handleEvent
 var ExportParseCatalogSubject = parseCatalogSubject
+var ExportNaturalCompare = naturalCompare
+var ExportSortCrosswalkRows = sortCrosswalkRows
 
 // ExportContextWithIdentity injects an authn.Identity into a context
 // using the shared authn.WithIdentity helper, allowing external _test packages
