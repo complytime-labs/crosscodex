@@ -1,0 +1,47 @@
+pkg/config/defaults.go
+  s_33c2fc1e4ef123::t_c0352fac1c73b9 49
+pkg/config/helpers_test.go
+  s_33c2fc1e4ef123::t_70003059aa4381 35
+pkg/config/nats_bdd_test.go
+  s_33c2fc1e4ef123::t_a666ca032d995b 1-43
+pkg/config/types.go
+  s_33c2fc1e4ef123::t_1ca9aa3bab720b 247-251
+pkg/config/validate.go
+  s_33c2fc1e4ef123::t_01d77d8b59aba3 64,94-102
+pkg/natsbus/client.go
+  s_33c2fc1e4ef123::t_12339cd3949eba 28-31,77-80,207-260,267,274,279,282-284,286-288
+pkg/natsbus/doc.go
+  s_33c2fc1e4ef123::t_271f2845bc513f 43-47
+pkg/natsbus/errors.go
+  s_33c2fc1e4ef123::t_3b6cb881eb1089 15-21
+pkg/natsbus/export_test.go
+  s_33c2fc1e4ef123::t_86ee3972b9ce02 9,107-116
+pkg/natsbus/interface.go
+  s_33c2fc1e4ef123::t_14b18527bf024b 27-34
+pkg/natsbus/natsbus_integration_bdd_test.go
+  s_33c2fc1e4ef123::t_5801382d514cc8 37-38,216-303
+pkg/natsbus/natsbustest/doc.go
+  s_33c2fc1e4ef123::t_54334d5e171a2e 13,52,57
+pkg/natsbus/natsbustest/fake.go
+  s_33c2fc1e4ef123::t_e6700de84d61c9 31-33,38,57-58,71-73,116,123,133,146,155-168,170
+pkg/natsbus/natsbustest/natsbustest_bdd_test.go
+  s_33c2fc1e4ef123::t_a63a0774a06fd2 6,100-136
+pkg/natsbus/natsbustest/natsbustest_property_test.go
+  s_33c2fc1e4ef123::t_fa775a5273ec57 95-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a7f4c00077d1de9b0b86211b3fb9172ebcae3763",
+  "prompts": {},
+  "sessions": {
+    "s_33c2fc1e4ef123": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8e505dd98ffaa164",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
