@@ -1,0 +1,25 @@
+cmd/crosscodex/crosswalk_render.go
+  s_bfef2db2a67c3d::t_2a7e17036180b2 188
+internal/analyzer/eligibility_property_test.go
+  s_bfef2db2a67c3d::t_2a7e17036180b2 56-67
+  s_bfef2db2a67c3d::t_046448c76cbd26 55
+  s_bfef2db2a67c3d::t_be56ea3fe17dad 68
+README.md
+  s_bfef2db2a67c3d::t_2a7e17036180b2 409-411
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "8d42ba7e9f92851d0d4fcf549dcc0065d05114d2",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
