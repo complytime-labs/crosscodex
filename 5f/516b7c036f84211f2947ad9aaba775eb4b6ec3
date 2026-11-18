@@ -8,6 +8,7 @@ cmd/crosscodexd/pipeline_role_integration_test.go
   s_bfef2db2a67c3d::t_8e69d2492f1cfe 318
 internal/pipeline/catalog_readers_integration_test.go
   s_bfef2db2a67c3d::t_02914a320d119f 328
+  s_38ba00021191d9::t_d49bed7008938c 328
 pkg/oscal/catalog.go
   s_bfef2db2a67c3d::t_e565173107d81e 213-216,226-227,231-234,239
 pkg/oscal/decompose.go
@@ -43,6 +44,14 @@ test/eval/crosswalk/target_index.go
   "base_commit_sha": "5f516b7c036f84211f2947ad9aaba775eb4b6ec3",
   "prompts": {},
   "sessions": {
+    "s_38ba00021191d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a085139b9dc310154",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
     "s_bfef2db2a67c3d": {
       "agent_id": {
         "tool": "claude",
