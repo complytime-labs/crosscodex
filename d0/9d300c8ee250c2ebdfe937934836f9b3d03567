@@ -1,0 +1,19 @@
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_bfef2db2a67c3d::t_f21e7a2cf6b499 179-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d09d300c8ee250c2ebdfe937934836f9b3d03567",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
