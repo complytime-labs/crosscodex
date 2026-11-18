@@ -18,8 +18,14 @@ internal/gateway/analysis_bdd_test.go
   s_bfef2db2a67c3d::t_5ea0c72eadb60a 257
 internal/gateway/document.go
   s_bfef2db2a67c3d::t_baaa2776576d5c 10-11,14,121-136
+  s_bfef2db2a67c3d::t_901eeb38fb3463 128
+  s_bfef2db2a67c3d::t_95cbbcc30f89e5 10-11,129-130
 internal/gateway/document_attestation_bdd_test.go
   s_bfef2db2a67c3d::t_e517bc89f3dba5 1-223
+  s_bfef2db2a67c3d::t_95cbbcc30f89e5 151-153
+  s_bfef2db2a67c3d::t_901eeb38fb3463 159
+  s_bfef2db2a67c3d::t_1dc1046704070c 18,150,154-158,160-163
+  s_bfef2db2a67c3d::t_4d2b3fd9da71a1 164
 internal/gateway/helpers.go
   s_bfef2db2a67c3d::t_4fa5e7f589d662 4,13,118-129,131,133,135-155,157
 internal/gateway/service.go
