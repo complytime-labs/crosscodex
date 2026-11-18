@@ -1,0 +1,21 @@
+internal/analyzer/promptvalue_bdd_test.go
+  s_bfef2db2a67c3d::t_bd2ff02ab9d48a 95-96
+internal/analyzer/promptvalue.go
+  s_bfef2db2a67c3d::t_3f0552fb814575 72,79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0224bfb3970c63b655bd9cd7cc3352e112d69b7c",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
