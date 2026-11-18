@@ -2,16 +2,24 @@ README.md
   s_bfef2db2a67c3d::t_a48472c16ad10f 409
 internal/graph/crosswalk.go
   s_bfef2db2a67c3d::t_397428369628ca 49-51,185-190,331-343,396-398,422,443,598-608,610-616,621,628-629,633,635
+  s_bfef2db2a67c3d::t_141eab60cc12e5 628-629
+  s_bfef2db2a67c3d::t_2df597751a7ae2 598-602,610-616,633,635
 internal/graph/crosswalk_bdd_test.go
   s_bfef2db2a67c3d::t_c073f73a374c46 690-738
+  s_bfef2db2a67c3d::t_a44238a86f04b8 708,721-722,724-727
+  s_bfef2db2a67c3d::t_79db816acbb100 717,720,723,728-734
+  s_bfef2db2a67c3d::t_a1403d1dad012e 735
 internal/graph/export_test.go
   s_bfef2db2a67c3d::t_97ba5d7e7775ad 23-24
 internal/graph/graph_property_test.go
   s_bfef2db2a67c3d::t_34dab97d5a9b1d 4-6,282-333
+  s_bfef2db2a67c3d::t_141eab60cc12e5 5-6,302-330
+  s_bfef2db2a67c3d::t_380fba967e2780 331-333
 internal/graph/natural.go
   s_bfef2db2a67c3d::t_845805bfbdb65b 1-46
 internal/graph/natural_bdd_test.go
   s_bfef2db2a67c3d::t_f83568134696ab 1-69
+  s_bfef2db2a67c3d::t_141eab60cc12e5 60-61,63,65-66
 ---
 {
   "schema_version": "authorship/3.0.0",
