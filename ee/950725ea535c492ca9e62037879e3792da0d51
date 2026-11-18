@@ -1,13 +1,18 @@
 pkg/oscal/convert.go
   s_bfef2db2a67c3d::t_36488c7718a508 27-28,33-46,54-56
+  s_bfef2db2a67c3d::t_e07cd2b183e640 27-28,33-46,54-56
 pkg/oscal/oscal_bdd_test.go
   s_bfef2db2a67c3d::t_9c5915052a18d8 331-340
+  s_bfef2db2a67c3d::t_796c86471aea27 331-340
 pkg/oscal/oscal_fuzz_test.go
   s_bfef2db2a67c3d::t_6be2633aef25ed 20
+  s_bfef2db2a67c3d::t_796c86471aea27 20
 pkg/oscal/oscal_withdrawn_bdd_test.go
   s_bfef2db2a67c3d::t_cf765c00f4e939 45-54,71-75
+  s_bfef2db2a67c3d::t_796c86471aea27 45-54,71-75
 pkg/oscal/params.go
   s_bfef2db2a67c3d::t_f221b99a984970 7
+  s_bfef2db2a67c3d::t_e07cd2b183e640 7
 ---
 {
   "schema_version": "authorship/3.0.0",
