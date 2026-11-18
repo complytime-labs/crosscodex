@@ -22,8 +22,10 @@ internal/analyzer/eligibility_property_test.go
   s_bfef2db2a67c3d::t_c17084d1ac6d2d 35-69
 internal/analyzer/promptvalue.go
   s_bfef2db2a67c3d::t_bef4efeacb9200 28-32,70-83
+  s_bfef2db2a67c3d::t_3f0552fb814575 72,79
 internal/analyzer/promptvalue_bdd_test.go
   s_bfef2db2a67c3d::t_16c7c169b1233f 77-114
+  s_bfef2db2a67c3d::t_bd2ff02ab9d48a 95-96
 ---
 {
   "schema_version": "authorship/3.0.0",
