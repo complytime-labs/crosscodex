@@ -1,0 +1,25 @@
+README.md
+  s_bfef2db2a67c3d::t_8857ba164e9f3f 67
+  s_bfef2db2a67c3d::t_650d834dcfd7c2 1007
+  s_bfef2db2a67c3d::t_c48d28461b62fd 409
+docs/dev/attestation.md
+  s_bfef2db2a67c3d::t_650d834dcfd7c2 233,326
+docs/dev/design-principles.md
+  s_bfef2db2a67c3d::t_8857ba164e9f3f 256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3a981e2eadf6c1f171c6c1f13a3eebc9e9cfca2c",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
