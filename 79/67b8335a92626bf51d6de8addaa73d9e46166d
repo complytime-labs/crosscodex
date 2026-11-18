@@ -1,0 +1,59 @@
+pkg/natsbus/streams_bdd_test.go
+  s_290b9f730df96c::t_a072523fb34527 252-255
+  s_290b9f730df96c::t_dda6d2c0c003d4 6,13-14,24-26,33-35,39-42,47-67,151-251,256-290
+pkg/natsbus/types.go
+  s_290b9f730df96c::t_b621064ab6d931 91-95
+docs/dev/audit-streams.md
+  s_290b9f730df96c::t_121a345f4bbe5e 39
+pkg/natsbus/client.go
+  s_290b9f730df96c::t_bf84f23d83a70d 7-8
+  s_290b9f730df96c::t_f47c38de2a1309 419,527-552,554-555,562-624,652-667
+README.md
+  s_290b9f730df96c::t_121a345f4bbe5e 19-23
+pkg/config/defaults.go
+  s_5d4cb82086d190::t_966732b0050d0f 55
+pkg/config/helpers_test.go
+  s_5d4cb82086d190::t_84c563a26f127a 35
+pkg/config/nats_bdd_test.go
+  s_5d4cb82086d190::t_5a13edb078370f 44-70
+pkg/config/types.go
+  s_5d4cb82086d190::t_16622925e59001 259-262,266
+pkg/config/validate.go
+  s_5d4cb82086d190::t_1359b99d474c2f 100-103
+pkg/natsbus/dial_bdd_test.go
+  s_5d4cb82086d190::t_0a38d3d86b4fa5 135-174
+pkg/natsbus/errors.go
+  s_5d4cb82086d190::t_a93d223be9fb74 37-41
+pkg/natsbus/natsbus_bdd_test.go
+  s_5d4cb82086d190::t_992674590ce748 583-600
+pkg/natsbus/natsbus_helpers_integration_test.go
+  s_5d4cb82086d190::t_017c49b7fb89bb 28
+pkg/natsbus/natsbus_integration_bdd_test.go
+  s_5d4cb82086d190::t_770ad00f5c52c0 19,217-231
+pkg/natsbus/subjects.go
+  s_5d4cb82086d190::t_7debc690d1d91e 16-21,121-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "7967b8335a92626bf51d6de8addaa73d9e46166d",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_5d4cb82086d190": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a790b9e062be6c29d",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
