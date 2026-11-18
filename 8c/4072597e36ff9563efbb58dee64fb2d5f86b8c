@@ -1,0 +1,21 @@
+pkg/attestation/helpers.go
+  s_bfef2db2a67c3d::t_901eeb38fb3463 17,36-37,42
+pkg/attestation/attestation_bdd_test.go
+  s_bfef2db2a67c3d::t_2a7f3fa3abadf1 490-501
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "8c4072597e36ff9563efbb58dee64fb2d5f86b8c",
+  "prompts": {},
+  "sessions": {
+    "s_bfef2db2a67c3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8fa976a-c7ff-4530-aba8-9e46c195e847",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
