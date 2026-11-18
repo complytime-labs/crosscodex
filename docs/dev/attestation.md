@@ -222,7 +222,7 @@ When enabled, validates that all signing keys use FIPS-approved algorithms (ECDS
 
 ## Storage Paths
 
-The pipeline stores each attested job's objects under `attestations/<tenant>/<job-id>/`:
+The pipeline stores each attested job's objects under `attestation/<job-id>/` in the tenant's object store (the provider is already per tenant, so the key has no tenant segment; the prefix is the one `pkg/retention` collects for the `attestation` class):
 
 - `layout.json`: the signed layout.
 - `links/<step>.json`: one signed link per layout step.
@@ -265,7 +265,7 @@ The pipeline also adds `<name>.cache_manifest` to every analyzer step's expected
 - The material is the `resultcache.Manifest` digest that the signed cache checkpoint of the attempt that completed the stage signs (the digest of the checkpoint's product), not a digest of the checkpoint file.
 - For a stage that kept no cache records, the material is the empty manifest's digest.
 
-Cache checkpoints are separate in-toto links with step `result-cache-checkpoint`, stored under `attestations/<tenant>/<job>/cache-checkpoints/`. They are not part of the job's chain. See [LLM Result Reuse](design-principles.md#llm-result-reuse).
+Cache checkpoints are separate in-toto links with step `result-cache-checkpoint`, stored under `attestation/<job>/cache-checkpoints/`. They are not part of the job's chain. See [LLM Result Reuse](design-principles.md#llm-result-reuse).
 
 ### Recomputing a cache manifest digest
 
@@ -345,7 +345,7 @@ An auditor verifying a compliance determination would:
 
 1. Find the compliance decision in the `AUDIT_DECISIONS` NATS stream.
 2. Extract the `X-Trace-Id` provenance header to get the trace ID.
-3. Find the job's bundle in object storage at `attestations/<tenant>/<job-id>/bundle.json`; each link's byproducts carry the trace ID.
+3. Find the job's bundle in object storage at `attestation/<job-id>/bundle.json` in the tenant's object store; each link's byproducts carry the trace ID.
 4. Verify the bundle: `crosscodex results verify bundle.json --public-key <attestation public key> --tenant <tenant> --job-id <job-id>` runs `ParseBundle` and `VerifyChain` with subject `job:<tenant>/<job-id>`, which covers the binding to that job, the layout signature and expiry, every link signature, one link per step and the hash chain, and prints the config digest the links record; compare it with the SHA-256 of the job's `jobs.config`. It reads only the file, not the database.
 5. Optionally, view the full trace in Jaeger using the same trace ID to see timing, service interactions, and error details.
 

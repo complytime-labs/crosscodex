@@ -985,7 +985,7 @@ CrossCodex supports dual builds (standard and FIPS) from the same source:
 
 ### Cryptographic Attestation
 
-When attestation is enabled for a job's tenant (`attestation.enabled`, `attestation.tenant_overrides`), the pipeline records an in-toto attestation of the job in object storage under `attestations/<tenant>/<job-id>/`:
+When attestation is enabled for a job's tenant (`attestation.enabled`, `attestation.tenant_overrides`), the pipeline records an in-toto attestation of the job in object storage under `attestation/<job-id>/` in the tenant's object store (for the `local` backend, `<storage.objects.base_path>/<tenant>/attestation/<job-id>/`), the prefix retention's `attestation` class collects:
 
 - **Layout** (`layout.json`): signed before any analyzer runs; one step per enabled analyzer, then `synthesis` and `graph`.
 - **Links** (`links/<step>.json`): one signed link per step. Every link records the job, `job:<tenant>/<job-id>`, with the SHA-256 of the job's stored config, and every layout step expects it, so an attestation cannot be passed off as another job's. An analyzer's link records the SHA-256 of its stored result and of the results it consumed; synthesis records every analyzer's result and its own output (the SHA-256 of the JSON of the result it computed, not of rows an auditor can read back from the database); graph records the synthesis output. `candidate_generation` has no link.
@@ -997,7 +997,7 @@ The job fails instead of completing unattested. Every error names the step and o
 |---|---|---|
 | Layout or a link cannot be signed | Fails (the step's stage too, for synthesis and graph); a layout failure fails it before any analyzer runs | Fix the key pair and restart `crosscodexd`, then `crosscodex run retry --from-failure <job-id>` or start a new job. If you fixed it by rotating to a new key pair, start a new job: the links the job already stored were signed with the old key and no longer verify, so a retry fails |
 | Object storage refuses a write after `attestation.storage_retries` retries | Fails | Fix storage, then `crosscodex run retry --from-failure <job-id>` or start a new job |
-| A stored link is missing, does not verify, or is for another job on resume, or the chain does not verify | Fails, with every stored object left as it was; `run retry --from-failure` refuses it | Start a new job; check whether objects under `attestations/` were changed |
+| A stored link is missing, does not verify, or is for another job on resume, or the chain does not verify | Fails, with every stored object left as it was; `run retry --from-failure` refuses it | Start a new job; check whether objects under `attestation/` were changed |
 
 Publishing the bundle to the audit stream is best effort: a failure is logged, since the stored bundle is the record. When attestation is disabled, no signer is built, no attestation object is written, and the daemon logs at startup that jobs are unattested.
 

@@ -177,7 +177,7 @@ var _ = Describe("Pipeline Integration", func() {
 			Expect(attestor.linkCount()).To(BeNumerically(">=", 5))
 
 			// Verify attestation bundle stored.
-			bundlePath := "attestations/integration-tenant/integration-job-001/bundle.json"
+			bundlePath := "attestation/integration-job-001/bundle.json"
 			exists, err := storage.Exists(ctx, bundlePath)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeTrue())

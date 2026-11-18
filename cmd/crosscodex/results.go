@@ -810,8 +810,10 @@ func newResultsVerifyCmd(_ *cliState) *cobra.Command {
 		Long: `Verify the attestation bundle the pipeline stored for one job, offline.
 
 The bundle is the job's bundle.json, stored under the daemon's object
-storage (storage.objects.base_path) at attestations/<tenant>/<job-id>/bundle.json;
-copy it out of storage first. --public-key is the attestation public key the
+storage as attestation/<job-id>/bundle.json in the tenant's store, which for the
+local backend is <storage.objects.base_path>/<tenant>/attestation/<job-id>/bundle.json
+and for the s3 backend the object <tenant>/attestation/<job-id>/bundle.json in the
+bucket storage.objects.bucket; copy it out of storage first. --public-key is the attestation public key the
 pipeline signed with (attestation.public_key_path, or the tenant's override).
 --tenant and --job-id name the job the bundle must be for: the pipeline binds
 every layout step and link to "job:<tenant>/<job-id>", so a bundle copied or
@@ -836,7 +838,7 @@ database still holds the results it attests.`,
 			jobID, _ := cmd.Flags().GetString("job-id")
 			if tenantID == "" || jobID == "" {
 				return fmt.Errorf("results verify needs --tenant and --job-id: the job the bundle must be for, as in " +
-					"its path attestations/<tenant>/<job-id>/bundle.json. A bundle proves nothing about a job it is not bound to. Nothing was verified")
+					"its object key attestation/<job-id>/bundle.json in that tenant's object store. A bundle proves nothing about a job it is not bound to. Nothing was verified")
 			}
 
 			bundleData, err := os.ReadFile(bundleFile)
@@ -845,8 +847,8 @@ database still holds the results it attests.`,
 			}
 			layout, links, err := attestation.ParseBundle(bundleData)
 			if err != nil {
-				return fmt.Errorf("%s: %w. Pass a job's bundle, stored at attestations/<tenant>/<job-id>/bundle.json "+
-					"under the daemon's storage.objects.base_path", bundleFile, err)
+				return fmt.Errorf("%s: %w. Pass a job's bundle, stored at <storage.objects.base_path>/<tenant>/attestation/<job-id>/bundle.json "+
+					"for the local backend, or <tenant>/attestation/<job-id>/bundle.json in the storage.objects.bucket bucket for the s3 backend", bundleFile, err)
 			}
 
 			gen, err := attestation.NewGenerator(&attestation.FileKeyProvider{PublicKeyPath: publicKeyPath})
@@ -889,7 +891,7 @@ database still holds the results it attests.`,
 
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a bundle file path",
-		find:  "copy attestations/<tenant>/<job-id>/bundle.json out of the daemon's object storage",
+		find:  "copy <storage.objects.base_path>/<tenant>/attestation/<job-id>/bundle.json (local backend) or <tenant>/attestation/<job-id>/bundle.json in the storage.objects.bucket bucket (s3 backend) out of the daemon's object storage",
 		usage: "crosscodex results verify <bundle-file> --public-key <path> --tenant <tenant> --job-id <job-id>",
 		examples: []string{
 			"crosscodex results verify bundle.json --public-key deploy/certs/attestation-pub.pem --tenant default --job-id 0b6e...",

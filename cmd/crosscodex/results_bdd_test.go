@@ -768,7 +768,7 @@ var _ = Describe("Results Commands", func() {
 			path := writeFile("link.json", linkA.Raw)
 			_, _, err := execute(newRootCmd(), "results", "verify", path, "--public-key", pubKey, "--tenant", "acme", "--job-id", "job-1")
 			Expect(err).To(MatchError(attestation.ErrInvalidBundle))
-			Expect(err.Error()).To(ContainSubstring("attestations/<tenant>/<job-id>/bundle.json"))
+			Expect(err.Error()).To(ContainSubstring("attestation/<job-id>/bundle.json"))
 		})
 
 		It("refuses a file that is not JSON", func() {

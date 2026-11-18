@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache/resultcachetest"
+	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -157,7 +160,7 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 		}
 	}
 	classifyLink := func() *attestation.VerifiedLink {
-		raw, ok := objects.Objects()["attestations/test-tenant/"+attestCacheJob+"/links/classify.json"]
+		raw, ok := objects.Objects()["attestation/"+attestCacheJob+"/links/classify.json"]
 		Expect(ok).To(BeTrue(), "the classify link is stored")
 		v, err := signer.Verify(ctx, raw)
 		Expect(err).NotTo(HaveOccurred())
@@ -183,13 +186,38 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 		Expect(j.Status).To(Equal(pipeline.JobStatusCompleted), j.ErrorMessage)
 		attempt := classifyStage().CacheAttempt
 		Expect(uuid.Parse(attempt)).Error().NotTo(HaveOccurred())
-		Expect(objects.Objects()).To(HaveKey(pipeline.CheckpointKey("test-tenant", attestCacheJob, "classify", attempt)))
+		Expect(objects.Objects()).To(HaveKey(pipeline.CheckpointKey(attestCacheJob, "classify", attempt)))
 
 		link := classifyLink()
 		Expect(cacheMaterial(link)).To(Equal(sealedDigest(attempt)))
 		Expect(link.ByProducts).To(HaveKeyWithValue("result_cache.mode", "enabled"))
 		Expect(link.ByProducts).To(HaveKeyWithValue("result_cache.attempt", attempt))
 		Expect(link.ByProducts).To(HaveKey("result_cache.reason"))
+	})
+
+	It("stores every attestation object where retention's attestation collector finds it", func() {
+		Expect(run().Status).To(Equal(pipeline.JobStatusCompleted))
+		attempt := classifyStage().CacheAttempt
+		policy, err := retention.NewPolicy(config.RetentionConfig{Defaults: config.RetentionTiers{Attestation: "1d"}})
+		Expect(err).NotTo(HaveOccurred())
+
+		found, err := retention.NewObjectCollector(objects, retention.ClassAttestation, "test-tenant").
+			Collect(ctx, policy, time.Now().Add(10*365*24*time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+
+		var keys []string
+		for _, c := range found {
+			keys = append(keys, c.ObjectKey)
+		}
+		stored := objects.Objects()
+		Expect(stored).NotTo(BeEmpty())
+		Expect(keys).To(ConsistOf(slices.Collect(maps.Keys(stored))))
+		Expect(keys).To(ContainElements(
+			"attestation/"+attestCacheJob+"/layout.json",
+			"attestation/"+attestCacheJob+"/bundle.json",
+			pipeline.CheckpointKey(attestCacheJob, "classify", attempt)))
+		Expect(pipeline.CheckpointKey(attestCacheJob, "classify", attempt)).To(
+			Equal("attestation/" + attestCacheJob + "/cache-checkpoints/classify/" + attempt + ".json"))
 	})
 
 	It("signs disabled mode and pins the no-record material when the tenant disables the cache", func() {
@@ -217,7 +245,7 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 
 	It("signs an earlier-run analyzer with no recorded attempt and no signed record as unrecorded, never inferring a mode", func() {
 		Expect(run().Status).To(Equal(pipeline.JobStatusCompleted))
-		Expect(objects.Delete(ctx, pipeline.CheckpointKey("test-tenant", attestCacheJob, "classify", classifyStage().CacheAttempt))).To(Succeed())
+		Expect(objects.Delete(ctx, pipeline.CheckpointKey(attestCacheJob, "classify", classifyStage().CacheAttempt))).To(Succeed())
 		setClassifyAttempt("")
 		j := rerun()
 		Expect(j.Status).To(Equal(pipeline.JobStatusCompleted), j.ErrorMessage)
@@ -233,7 +261,7 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 			attempt := classifyStage().CacheAttempt
 			before, err := cache.Manifest(ctx, attestCacheJob, "classify", attempt)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(objects.Delete(ctx, "attestations/test-tenant/"+attestCacheJob+"/links/classify.json")).To(Succeed())
+			Expect(objects.Delete(ctx, "attestation/"+attestCacheJob+"/links/classify.json")).To(Succeed())
 			tamper(attempt)
 
 			j := rerun()
@@ -242,7 +270,7 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 			Expect(store.failureCause(attestCacheJob)).To(ContainSubstring(want))
 			Expect(store.failureCause(attestCacheJob)).To(ContainSubstring(`analyzer "classify"`))
 			Expect(store.failureCause(attestCacheJob)).To(ContainSubstring("crosscodex run start --source cat-1 --target cat-1"))
-			Expect(objects.Objects()).NotTo(HaveKey("attestations/test-tenant/" + attestCacheJob + "/links/classify.json"))
+			Expect(objects.Objects()).NotTo(HaveKey("attestation/" + attestCacheJob + "/links/classify.json"))
 			after, err := cache.Manifest(ctx, attestCacheJob, "classify", attempt)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(after.Digest()).To(Equal(before.Digest()))
@@ -254,7 +282,7 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 			setClassifyAttempt("../../links/graph")
 		}, "is not a canonical UUID"),
 		Entry("the checkpoint was replaced", func(attempt string) {
-			Expect(objects.Put(ctx, pipeline.CheckpointKey("test-tenant", attestCacheJob, "classify", attempt),
+			Expect(objects.Put(ctx, pipeline.CheckpointKey(attestCacheJob, "classify", attempt),
 				strings.NewReader("not a checkpoint"))).To(Succeed())
 		}, "does not verify"),
 		Entry("the checkpoint is signed by a key the daemon no longer trusts", func(string) {

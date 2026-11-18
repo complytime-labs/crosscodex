@@ -146,7 +146,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 			[]attestation.Artifact{{URI: analyzerName + ".output", Digest: storedResultDigest}},
 			attestation.WithByProducts(map[string]any{"result_cache.mode": mode, "result_cache.reason": reason, "result_cache.attempt": ""}))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(objects.Put(ctx, "attestations/test-tenant/"+summaryJob+"/links/"+analyzerName+".json", bytes.NewReader(l.Raw))).To(Succeed())
+		Expect(objects.Put(ctx, "attestation/"+summaryJob+"/links/"+analyzerName+".json", bytes.NewReader(l.Raw))).To(Succeed())
 		Expect(store.CompleteAnalysisStage(ctx, summaryJob, analyzerName, []byte(`[]`), "", "")).To(Succeed())
 	}
 	getJob := func(c context.Context) []*pb.AnalyzerCacheSummary {
@@ -283,7 +283,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 		}),
 		Entry("its checkpoint was replaced", func() {
 			attempt := seal("classify", gen, enabled, reuse()...)
-			Expect(objects.Put(ctx, pipeline.CheckpointKey("test-tenant", summaryJob, "classify", attempt),
+			Expect(objects.Put(ctx, pipeline.CheckpointKey(summaryJob, "classify", attempt),
 				strings.NewReader("not a checkpoint"))).To(Succeed())
 		}),
 		Entry("a stats row was planted in its attempt after signing", func() {
@@ -347,7 +347,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 	It("still returns the job when object storage fails, showing the analyzers it cannot verify as unattested and logging the cause once", func() {
 		seal("classify", gen, enabled, reuse()...)
 		link("embedding", "disabled", "off for the tenant")
-		objects.failOn = "attestations/"
+		objects.failOn = "attestation/"
 		sums := getJob(tenant.WithUser(ctx, "user-a"))
 		for _, name := range []string{"classify", "embedding"} {
 			s := summaryOf(sums, name)
@@ -362,7 +362,7 @@ var _ = Describe("Cache summaries in GetJob", Ordered, func() {
 
 	It("logs a checkpoint that fails its integrity check, telling the tenant nothing of it", func() {
 		attempt := seal("classify", gen, enabled, reuse()...)
-		Expect(objects.Put(ctx, pipeline.CheckpointKey("test-tenant", summaryJob, "classify", attempt),
+		Expect(objects.Put(ctx, pipeline.CheckpointKey(summaryJob, "classify", attempt),
 			strings.NewReader(strings.Repeat("x", pipeline.MaxAttestationObjectBytes+1)))).To(Succeed())
 		s := summaryOf(getJob(ctx), "classify")
 		Expect(s.GetAttestation()).To(Equal(pb.ResultCacheAttestation_RESULT_CACHE_ATTESTATION_UNATTESTED))

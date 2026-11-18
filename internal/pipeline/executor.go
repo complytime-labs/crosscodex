@@ -1020,9 +1020,11 @@ func completedStageSet(stages []*Stage) map[string]bool {
 }
 
 // attestationKey is the object storage key of a job's attestation object
-// name: layout.json, links/<step>.json or bundle.json.
+// name: layout.json, links/<step>.json or bundle.json. It is under the
+// attestation/ prefix retention collects, and has no tenant segment because
+// the storage provider is already the tenant's.
 func attestationKey(job *Job, name string) string {
-	return fmt.Sprintf("attestations/%s/%s/%s", job.TenantID, job.JobID, name)
+	return fmt.Sprintf("attestation/%s/%s", job.JobID, name)
 }
 
 // newJobCommand is the command that starts a new job over job's catalogs,
