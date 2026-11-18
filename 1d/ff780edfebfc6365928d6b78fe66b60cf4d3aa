@@ -1,0 +1,83 @@
+pkg/natsbus/natsbus_bdd_test.go
+  s_290b9f730df96c::t_830e7004f5ca4e 639-659
+internal/pipeline/executor_bdd_test.go
+  s_290b9f730df96c::t_a21af6e0237e33 1417-1431
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_290b9f730df96c::t_4c00d11d509ade 99-106,131-138,172,179-184,245,253-267
+docs/dev/audit-streams.md
+  s_290b9f730df96c::t_47d5e4bdc1b5fb 26-27
+cmd/crosscodexd/e2e_integration_test.go
+  s_290b9f730df96c::t_33a29d9308adad 147
+README.md
+  s_290b9f730df96c::t_f18bd1fbb62fc0 23
+  s_290b9f730df96c::t_47d5e4bdc1b5fb 1016
+pkg/natsbus/subjects.go
+  s_290b9f730df96c::t_7996365c175cef 121-129
+internal/testspecs/helpers.go
+  s_290b9f730df96c::t_1f1a9e7d21b658 83-84
+pkg/natsbus/types.go
+  s_290b9f730df96c::t_2955689e0d3368 50-53
+internal/analysis/reporter.go
+  s_290b9f730df96c::t_2955689e0d3368 162-163,170-171
+pkg/llmclient/errors.go
+  s_290b9f730df96c::t_2955689e0d3368 14-18
+internal/catalog/service.go
+  s_290b9f730df96c::t_4c00d11d509ade 416-418,423-430
+internal/worker/handler.go
+  s_290b9f730df96c::t_2955689e0d3368 321-323
+internal/analysis/collector.go
+  s_290b9f730df96c::t_2955689e0d3368 716,731-732,751-752,757-758
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_290b9f730df96c::t_33a29d9308adad 37,111,226,254,352
+pkg/natsbus/natsbus_property_test.go
+  s_290b9f730df96c::t_830e7004f5ca4e 90-92
+cmd/crosscodexd/llm_gateway_probe_bdd_test.go
+  s_290b9f730df96c::t_853a97e04358c5 87,313
+docs/dev/attestation.md
+  s_290b9f730df96c::t_47d5e4bdc1b5fb 303
+internal/worker/audit.go
+  s_290b9f730df96c::t_a65366cccfe49c 6,18-19,27,37,58-62,64-66,73,77-82,87,93,95-96
+internal/analysis/collector_bdd_test.go
+  s_290b9f730df96c::t_bd7228dce7cc6a 316-322,826-827
+pkg/llmclient/interface.go
+  s_290b9f730df96c::t_2955689e0d3368 26-29
+internal/pipeline/executor.go
+  s_290b9f730df96c::t_a21af6e0237e33 1402-1411
+cmd/crosscodexd/ingest_age_e2e_test.go
+  s_290b9f730df96c::t_72484d8019b79c 242-244
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_290b9f730df96c::t_33a29d9308adad 47
+internal/worker/payload_bdd_test.go
+  s_290b9f730df96c::t_bd7228dce7cc6a 294-295
+pkg/llmclient/client.go
+  s_290b9f730df96c::t_2f95356cead716 133,135-137,195,197-199
+  s_290b9f730df96c::t_2955689e0d3368 149,151-153,210,212-214,492-496,498,516,521,523
+cmd/crosscodexd/llm_audit_wiring_bdd_test.go
+  s_290b9f730df96c::t_ea507de93f1ff0 51
+pkg/llmclient/llmclient_bdd_test.go
+  s_290b9f730df96c::t_b74d5d05b08cd1 1390,1413-1424,1426-1450,1856
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_290b9f730df96c::t_72484d8019b79c 302-304
+internal/worker/audit_bdd_test.go
+  s_290b9f730df96c::t_a65366cccfe49c 83,103-104,214,223
+  s_290b9f730df96c::t_1f1a9e7d21b658 17,230-256
+  s_290b9f730df96c::t_c99ca4a87208e3 257
+internal/worker/doc.go
+  s_290b9f730df96c::t_47d5e4bdc1b5fb 78-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1dff780edfebfc6365928d6b78fe66b60cf4d3aa",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
