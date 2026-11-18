@@ -9,7 +9,6 @@ import (
 	"connectrpc.com/connect"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
-	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -113,15 +112,6 @@ func (s *Service) StartAnalysis(ctx context.Context, req *connect.Request[pb.Sta
 		s.recordMetrics(ctx, "StartAnalysis", start, connect.CodeInternal)
 		return nil, connect.NewError(connect.CodeInternal, errors.New("pipeline backend returned empty job_id"))
 	}
-
-	materials := []attestation.Artifact{{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, sourceID)}}
-	if targetID != sourceID {
-		materials = append(materials, attestation.Artifact{URI: fmt.Sprintf("catalog://%s/%s", identity.TenantID, targetID)})
-	}
-	s.emitAttestation(ctx, "gateway.StartAnalysis",
-		materials,
-		[]attestation.Artifact{{URI: fmt.Sprintf("job://%s/%s", identity.TenantID, jobID)}},
-		nil)
 
 	s.recordMetrics(ctx, "StartAnalysis", start, connect.Code(0))
 	return connect.NewResponse(&pb.StartAnalysisResponse{

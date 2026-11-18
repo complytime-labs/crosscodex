@@ -116,23 +116,6 @@ var _ = Describe("StartAnalysis", func() {
 		Expect(jobReqs[0].GetConfig().GetBidirectional()).To(BeFalse())
 	})
 
-	DescribeTable("attests every catalog the job reads as a material and the job as product",
-		func(req *pb.StartAnalysisRequest, wantMaterials []string) {
-			att := &recordingAttestor{}
-			svc := newTestService(gateway.WithCatalogBackend(knownCatalog()), gateway.WithPipelineBackend(pipeline), gateway.WithAttestor(att))
-
-			_, err := svc.StartAnalysis(userCtx("user-a"), connect.NewRequest(req))
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(att.links).To(HaveLen(1))
-			Expect(att.links[0].step).To(Equal("gateway.StartAnalysis"))
-			Expect(artifactURIs(att.links[0].materials)).To(Equal(wantMaterials))
-			Expect(artifactURIs(att.links[0].products)).To(Equal([]string{"job://tenant-a/job-1"}))
-		},
-		Entry("a crosswalk: source then target", crosswalk(), []string{"catalog://tenant-a/cat-1", "catalog://tenant-a/cat-2"}),
-		Entry("within one catalog: that catalog once", &pb.StartAnalysisRequest{SourceCatalogId: "cat-1", TargetCatalogId: "cat-1"}, []string{"catalog://tenant-a/cat-1"}),
-	)
-
 	It("records the target catalog on the span", func() {
 		tp, err := telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
@@ -271,12 +254,10 @@ var _ = Describe("StartAnalysis", func() {
 		empty := &mockPipeline{createJobFn: func(context.Context, *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
 			return connect.NewResponse(&pb.CreateJobResponse{}), nil
 		}}
-		att := &recordingAttestor{}
-		svc := newTestService(gateway.WithCatalogBackend(knownCatalog()), gateway.WithPipelineBackend(empty), gateway.WithAttestor(att))
+		svc := newTestService(gateway.WithCatalogBackend(knownCatalog()), gateway.WithPipelineBackend(empty))
 
 		_, err := svc.StartAnalysis(userCtx("user-a"), connect.NewRequest(crosswalk()))
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
-		Expect(att.links).To(BeEmpty())
 	})
 
 	DescribeTable("returns Unavailable when a required backend is not configured and creates no job",

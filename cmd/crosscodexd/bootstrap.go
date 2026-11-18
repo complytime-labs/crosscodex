@@ -248,7 +248,10 @@ func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
 // buildIngestGateway builds the gateway.Service that serves catalog import for
 // role (all or gateway): single-tenant X.509 authn, pass-through ingestion
 // into the caller's tenant's object storage (objectStore), and a catalog
-// service that persists controls and publishes them for graph projection. It holds no graph credentials; the
+// service that persists controls and publishes them for graph projection.
+// Each import's in-toto ingest attestation is signed with its tenant's
+// attestation key pair (pipeline.NewAttestors, so a key pair that does not
+// load refuses startup) and stored in the same object storage. It holds no graph credentials; the
 // graph role projects Control nodes. Refuses a default tenant that
 // `crosscodexd migrate` has not provisioned or that is deleted. extra
 // appends role-specific backends (role all adds graph queries).
@@ -257,6 +260,13 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 		return nil, fmt.Errorf("%s role: tenants.default_tenant must be set", role)
 	}
 	if err := checkObjectStorage(cfg.Storage.Objects); err != nil {
+		return nil, fmt.Errorf("%s role: %w", role, err)
+	}
+	// Every catalog import is attested with its tenant's key pair, so a
+	// missing or unloadable one refuses startup rather than every import.
+	attTracer, attMeter := telemetry.Instrumentation("pkg/attestation")
+	attestors, err := pipeline.NewAttestors(cfg.Attestation, cfg.TLS.FIPS.Enabled, attTracer, attMeter)
+	if err != nil {
 		return nil, fmt.Errorf("%s role: %w", role, err)
 	}
 	// Catalog import resolves the caller's tenant from its X.509 client
@@ -329,6 +339,12 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 		gateway.WithMappingsBackend(resultsSvc),
 		gateway.WithCandidatesBackend(resultsSvc),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
+		gateway.WithAttestor(func(tenantID string) attestation.Generator {
+			if att := attestors.ForTenant(tenantID); att != nil {
+				return att.Generator
+			}
+			return nil
+		}, storageProvider),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(slog.Default()),
 		gateway.WithTelemetry(gatewayTracer, gatewayMeter),

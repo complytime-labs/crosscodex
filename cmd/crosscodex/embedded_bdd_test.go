@@ -514,6 +514,52 @@ var _ = Describe("startEmbeddedDaemon telemetry initialization", func() {
 	})
 })
 
+// The embedded daemon signs an ingest attestation for every catalog import,
+// so a key pair that does not load stops startup before the database is
+// touched (the DSN below is never dialled).
+var _ = Describe("embedded attestation key guard", func() {
+	const unusedDSN = "postgres://unused@127.0.0.1:1/unused?sslmode=disable"
+
+	It("refuses an explicit attestation.private_key_path that does not exist, naming the setting and the file", func() {
+		dir := GinkgoT().TempDir()
+		missing := filepath.Join(dir, "absent-key.pem")
+		cfg := &config.Config{}
+		cfg.Database.DSN = unusedDSN
+		cfg.Attestation = config.AttestationConfig{
+			Enabled: true, PrivateKeyPath: missing, PublicKeyPath: filepath.Join(dir, "absent-pub.pem"),
+		}
+
+		svc, resources, err := buildEmbeddedService(context.Background(), cfg, nil)
+		Expect(svc).To(BeNil())
+		Expect(resources).To(BeNil())
+		Expect(err).To(MatchError(attestation.ErrKeyNotFound))
+		Expect(err.Error()).To(And(ContainSubstring("attestation.private_key_path"), ContainSubstring(missing),
+			ContainSubstring("attestation.enabled: false")))
+	})
+
+	It("refuses an operator-supplied PKI directory without a key pair, naming the defaulted path and both remedies", func() {
+		DeferCleanup(testspecs.IsolateTelemetryGlobals())
+		stateDir := GinkgoT().TempDir()
+		pkiDir := filepath.Join(stateDir, "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+		for _, name := range []string{".fingerprint", testcerts.AttestationKeyFile, testcerts.AttestationPubFile} {
+			Expect(os.Remove(filepath.Join(pkiDir, name))).To(Succeed())
+		}
+		cfg := &config.Config{}
+		cfg.Database.DSN = unusedDSN
+		cfg.Attestation = config.AttestationConfig{Enabled: true}
+		state := &cliState{fullCfg: cfg}
+
+		err := startEmbeddedDaemon(context.Background(), state, stateDir, filepath.Join(stateDir, "daemon.pid"))
+		Expect(err).To(MatchError(attestation.ErrKeyNotFound))
+		Expect(err.Error()).To(And(
+			ContainSubstring(filepath.Join(pkiDir, testcerts.AttestationKeyFile)),
+			ContainSubstring("attestation.private_key_path"), ContainSubstring("Supply an ECDSA key pair at those paths"),
+			ContainSubstring("attestation.enabled: false")))
+		Expect(state.daemon).To(BeNil())
+	})
+})
+
 // failedJobStore serves one failed job of tenant "embedded" with no stages;
 // every other pipeline.Store method panics through the nil embed.
 type failedJobStore struct {

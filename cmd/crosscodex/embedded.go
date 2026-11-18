@@ -23,6 +23,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/internal/results"
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
+	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
@@ -458,6 +459,14 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		logger = slog.Default()
 	}
 
+	// Catalog import is the embedded daemon's only signer. A key pair that
+	// does not load refuses startup before the database is touched.
+	attTracer, attMeter := telemetry.Instrumentation("pkg/attestation")
+	attestors, err := pipeline.NewAttestors(cfg.Attestation, cfg.TLS.FIPS.Enabled, attTracer, attMeter)
+	if err != nil {
+		return nil, nil, fmt.Errorf("embedded daemon: %w", err)
+	}
+
 	resources := &embeddedResources{}
 
 	// Run migrations
@@ -560,6 +569,12 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 		gateway.WithMappingsBackend(mappings),
 		gateway.WithCandidatesBackend(mappings),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(pool)),
+		gateway.WithAttestor(func(tenantID string) attestation.Generator {
+			if att := attestors.ForTenant(tenantID); att != nil {
+				return att.Generator
+			}
+			return nil
+		}, localStorage),
 		gateway.WithMaxUploadSize(cfg.Server.MaxUploadSize),
 		gateway.WithLogger(logger),
 		gateway.WithTelemetry(gatewayTracer, gatewayMeter),

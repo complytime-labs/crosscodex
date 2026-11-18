@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // validateFIPSKey checks that the signing key uses a FIPS-approved algorithm.
@@ -32,12 +33,13 @@ func validateFIPSKey(signer crypto.Signer) error {
 	}
 }
 
-// startSpan starts a trace span if a tracer is configured. Returns a no-op span if not.
+// startSpan starts a trace span if a tracer is configured. Returns a no-op span if not, so callers
+// that end the span never end the caller's own.
 func (g *generator) startSpan(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
 	if g.tracer != nil {
 		return g.tracer.Start(ctx, name, opts...)
 	}
-	return ctx, trace.SpanFromContext(ctx)
+	return ctx, tracenoop.Span{}
 }
 
 // recordMetrics records operation counter and latency. Nil-guarded.

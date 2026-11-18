@@ -534,6 +534,8 @@ Additional XDG directories:
 
 The embedded daemon generates `pki/` on first use and replaces it whole when it is invalid or within a day of expiry; concurrent CLI invocations share one set. To use your own certificates instead, put `ca.pem`, `ca-key.pem`, `server.pem` (with a `localhost` SAN), `server-key.pem`, `client.pem` and `client-key.pem` in `pki/` without a `.fingerprint` file. The CLI then uses them as long as they verify and never replaces them; if they don't, it stops with the reason. Remove the directory to go back to a generated set.
 
+The embedded daemon signs an attestation of every catalog import (see [Cryptographic Attestation](#cryptographic-attestation)). With `attestation.enabled: true` (the default) and neither `attestation.private_key_path` nor `attestation.public_key_path` set, it uses `pki/attestation-key.pem` and `pki/attestation-pub.pem`, which a generated set includes. A set you supply has no key pair, so either put an ECDSA key pair at those two paths, set both key paths, or set `attestation.enabled: false`; otherwise the daemon refuses to start and names the missing file.
+
 ### Configuration Resolution Order
 
 Values merge in ascending priority (last wins):
@@ -582,9 +584,9 @@ tls:
   cert: /etc/crosscodex/tls/server.crt
   key: /etc/crosscodex/tls/server.key
 
-# Attestation (roles all and pipeline refuse to start if an enabled scope's keys are missing or do not load)
+# Attestation (roles all, pipeline and gateway, and the embedded daemon, refuse to start if an enabled scope's keys are missing or do not load)
 attestation:
-  enabled: true                   # false: jobs complete unattested (logged at startup)
+  enabled: true                   # false: jobs and catalog imports complete unattested (jobs: logged at startup)
   private_key_path: /etc/crosscodex/attestation-key.pem   # ECDSA (SEC1 "EC PRIVATE KEY")
   public_key_path: /etc/crosscodex/attestation-pub.pem    # PKIX "PUBLIC KEY" of the same key
   expiry_duration: 8760h          # layout validity; `results verify` rejects an expired layout
@@ -592,7 +594,7 @@ attestation:
   storage_retry_delay: 2s         # wait before each retry, [0, 1m]; global-only
   tenant_overrides:
     sandbox:
-      enabled: false              # this tenant's jobs run unattested
+      enabled: false              # this tenant's jobs and imports run unattested
 
 # Multi-tenant X.509 certificate-to-tenant mapping
 tenants:
@@ -1000,6 +1002,8 @@ The job fails instead of completing unattested. Every error names the step and o
 | A stored link is missing, does not verify, or is for another job on resume, or the chain does not verify | Fails, with every stored object left as it was; `run retry --from-failure` refuses it | Start a new job; check whether objects under `attestation/` were changed |
 
 Publishing the bundle to the audit stream is best effort: a failure is logged, since the stored bundle is the record. When attestation is disabled, no signer is built, no attestation object is written, and the daemon logs at startup that jobs are unattested.
+
+Every catalog import (`crosscodex catalog import`, RPCs `SubmitDocument` and `StreamDocument`) of a tenant with attestation enabled is attested too, by the gateway (roles `all` and `gateway`) or the embedded daemon, with the same key pair as that tenant's jobs. So roles `gateway` and `all`, not only `pipeline`, need `attestation.private_key_path` and `attestation.public_key_path` whenever `attestation.enabled` is true (or set `attestation.enabled: false`); otherwise they refuse to start. It stores one signed in-toto link at `attestation/ingest/<document-id>` in the tenant's object store, where `<document-id>` is the `document_id` the import returns, the uploaded document's own storage key (today `documents/<uuid>.json`, so the link is `attestation/ingest/documents/<uuid>.json`). The link's step is `gateway.SubmitDocument` or `gateway.StreamDocument`; its material is `document://<tenant>/<document-id>` with the SHA-256 of the uploaded bytes as its digest; its product is `catalog://<tenant>/<catalog-id>`; its byproducts are `content_hash` (the same SHA-256), `trace_id`, `catalog_format` and `catalog_name` (always present; `attestation.include_byproducts: false` only drops the generator's `span_id`, `timestamp` and `hostname`). If the link cannot be signed or stored, the import fails with `Unavailable`: the catalog was imported but not attested, and the message names the catalog and an error reference the daemon logged the cause under. Re-run the same import to attest it: the catalog ID derives from the content, so the catalog is updated in place.
 
 To verify a job offline, copy its `bundle.json` out of object storage and run:
 

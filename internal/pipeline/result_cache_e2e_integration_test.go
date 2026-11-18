@@ -281,7 +281,7 @@ var _ = Describe("Result reuse end-to-end", Ordered, func() {
 		raw, err := io.ReadAll(rc)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred())
 		ExpectWithOffset(1, rc.Close()).To(Succeed())
-		v, err := env.svc.attestors.forTenant(env.tenantA).Generator.Verify(env.ctxA, raw)
+		v, err := env.svc.attestors.ForTenant(env.tenantA).Generator.Verify(env.ctxA, raw)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred())
 		return v
 	}

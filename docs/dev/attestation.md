@@ -228,23 +228,9 @@ The pipeline stores each attested job's objects under `attestation/<job-id>/` in
 - `links/<step>.json`: one signed link per layout step.
 - `bundle.json`: the layout and every link (`MarshalBundle`), written once the chain verifies.
 
-`storage.JobAttestationKey` and `storage.ContentKey` below are general key helpers; the pipeline does not use them.
+The gateway stores each attested catalog import's link at `attestation/ingest/<document-id>` in the same store (see [Catalog Import Attestation](#catalog-import-attestation)).
 
-Attestation artifacts can also be stored at two complementary path types:
-
-### Job-Structured Paths (Discoverability)
-
-`storage.JobAttestationKey(jobID, filename)` generates paths like:
-- `jobs/<jobID>/attestation/layout.json`
-- `jobs/<jobID>/attestation/<step>.link.json`
-- `jobs/<jobID>/attestation/input_manifest.sha256`
-
-### Content-Addressed Paths (Integrity)
-
-`storage.ContentKey(data)` generates paths like:
-- `attestation/<sha256-hash>.json`
-
-Both paths store the same artifact. Job-structured paths enable browsing by job; content-addressed paths enable integrity verification (the key itself proves the content hasn't been modified).
+`storage.JobAttestationKey` and `storage.ContentKey` are general key helpers with no non-test callers; nothing writes attestation artifacts at the keys they produce. `JobAttestationKey` (`jobs/<job-id>/attestation/<filename>`) is outside the `attestation/` prefix that `pkg/retention` collects for the `attestation` class, so objects stored there would not be retained as attestations. `ContentKey` (`attestation/<sha256-hash>.json`) is inside it but is likewise unused. Do not rely on either layout; the keys above are the ones in use.
 
 Tenant prefixing is handled by the storage `Provider` layer, not by the key generation functions.
 
@@ -304,7 +290,7 @@ This adapter keeps `pkg/attestation` and `pkg/analyzer` decoupled. The pipeline 
 
 ## Pipeline Attestation (Fail Closed)
 
-`internal/pipeline` attests a job only when its tenant resolves to an `Attestor` (`Attestors.forTenant`): `attestation.enabled`, overridden per tenant by `attestation.tenant_overrides`. `pipeline.NewAttestors` builds them at startup and fails closed: it runs `RequireKeys`, loads each distinct key pair once with `LoadFileKeys` (FIPS mode from `tls.fips.enabled`), and builds one generator per scope with its `include_byproducts` and `expiry_duration`. Roles `all` and `pipeline` refuse to start on any error. A disabled scope gets no `Attestor`, no key is read for it, and `crosscodexd` logs at startup which scopes are unattested.
+`internal/pipeline` attests a job only when its tenant resolves to an `Attestor` (`Attestors.ForTenant`): `attestation.enabled`, overridden per tenant by `attestation.tenant_overrides`. `pipeline.NewAttestors` builds them at startup and fails closed: it runs `RequireKeys`, loads each distinct key pair once with `LoadFileKeys` (FIPS mode from `tls.fips.enabled`), and builds one generator per scope with its `include_byproducts` and `expiry_duration`. Roles `all` and `pipeline` refuse to start on any error. A disabled scope gets no `Attestor`, no key is read for it, and `crosscodexd` logs at startup which scopes are unattested.
 
 Every layout step expects, and every link records, the job's subject: `job:<tenant>/<job-id>` with the SHA-256 of the job's config as stored (`jobs.config`). Finalization passes it to `VerifyChain`, and a stored link that records another job is refused, so a link or bundle cannot be replayed into another job, even within a tenant that shares the global key.
 
@@ -328,13 +314,28 @@ Retries happen in process, within the job's context, so a cancel or shutdown sto
 
 `RetryJob` refuses, with `FailedPrecondition` and the job left unchanged, a job whose failure a retry cannot fix. The class is decided by sentinel when the job fails (`pipeline.ClassifyJobError`: `ErrAttestationInvalid`, `ErrAnalyzersChanged`, `ErrMissingCatalogID`) and stored in `jobs.error_class`, because the stored message is text and must not be matched.
 
+## Catalog Import Attestation
+
+`internal/gateway` attests every catalog import (`SubmitDocument`, `StreamDocument`) of a tenant whose attestation is enabled. `gateway.WithAttestor` takes an `AttestorResolver` (tenant ID to `attestation.Generator`, nil when the tenant's attestation is disabled) and the object store. `internal/gateway` cannot import `internal/pipeline`, so `crosscodexd` (`buildIngestGateway`, roles `all` and `gateway`) and the CLI's embedded daemon (`buildEmbeddedService`) build the resolver over `pipeline.NewAttestors(...).ForTenant`: imports and jobs share each tenant's key pair, and startup fails closed on the same key errors. The daemon's store is `objectStore(cfg)`, which routes each call to the tenant on its context; the embedded daemon's is its local store. The embedded daemon defaults the key paths to `<pki dir>/attestation-key.pem` and `<pki dir>/attestation-pub.pem` (`defaultAttestationKeyPaths`) when attestation is enabled and neither is set.
+
+After the catalog is parsed, `attestIngest` signs one link and stores `link.Raw` at `attestation/ingest/<document-id>`, where `<document-id>` is the ID the ingestion backend generated, which is the document's own storage key (`documents/<uuid>.json` for the pass-through backend, so the link is `attestation/ingest/documents/<uuid>.json`), never a client value. The link:
+
+- step `gateway.SubmitDocument` or `gateway.StreamDocument`;
+- material `document://<tenant>/<document-id>` with digest SHA-256 (hex) of the uploaded bytes;
+- product `catalog://<tenant>/<catalog-id>` (no digest);
+- byproducts `content_hash` (the material digest), `trace_id` (added by the generator from the handler span), `catalog_format` and `catalog_name`. These are supplied by the gateway and always present; `attestation.include_byproducts: false` only drops the generator's own `span_id`, `timestamp` and `hostname`.
+
+The import fails closed: a tenant missing from the context, a link that is not signed, or a link that is not stored fails the RPC with `Unavailable`. The catalog is already persisted by then, so the message says it was imported but not attested and to re-run the same import (the catalog ID derives from the content, so the re-run updates it in place). The cause can name buckets, hosts or key files, so it is logged once at the gateway with an error reference, and the client gets only that reference (CWE-209).
+
+`StartAnalysis` and `SubmitVote` sign nothing at the gateway: a job's attestation is the pipeline's, and votes are not attested.
+
 ## Operations Requiring Attestations
 
 Four categories of compliance-critical operations must generate attestations when the services are implemented:
 
 | Operation         | Service              | What the Attestation Proves                                    |
 |-------------------|----------------------|----------------------------------------------------------------|
-| Catalog ingestion | Ingestion Service    | OSCAL document authenticity, validation result, source hash    |
+| Catalog ingestion | Gateway (catalog import) | Which uploaded bytes (SHA-256) produced the catalog; trace ID |
 | Control mappings  | Analysis / Synthesis | AI-generated mapping accuracy, model used, input/output hashes |
 | Risk assessments  | Analysis Service     | Evaluation results, evidence collected, criteria applied       |
 | Policy violations | (enforcement)        | Actions taken, audit trail, affected controls                  |
@@ -354,7 +355,6 @@ An auditor verifying a compliance determination would:
 - **Service implementations**: The internal services (`internal/ingestion`, `internal/catalog`, `internal/analysis`, `internal/synthesis`) that would call the attestation API.
 - **`AuditMetadata.correlation_id` population**: Each service must set this field from `telemetry.TraceIDFromContext(ctx)` when constructing protobuf messages.
 - **Bundle retrieval by job ID**: `crosscodex results verify` verifies a bundle file copied out of object storage. No RPC exposes attestation objects, so fetching a job's bundle through the gateway needs a new tenant-scoped RPC.
-- **Gateway attestations**: `gateway.WithAttestor` is not wired by `crosscodexd`, and `emitAttestation` discards the link it creates.
 
 ## Security Considerations
 

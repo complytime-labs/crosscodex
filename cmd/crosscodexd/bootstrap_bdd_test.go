@@ -103,6 +103,28 @@ var _ = Describe("buildIngestGateway config guards", func() {
 	)
 })
 
+// Catalog import signs an ingest attestation for every import, so the
+// gateway-serving roles refuse to start, before any database access, when
+// attestation is enabled without a key pair.
+var _ = Describe("buildIngestGateway attestation guard", func() {
+	DescribeTable("refuses attestation enabled without a key pair, naming the role, the setting and both remedies",
+		func(role string) {
+			cfg := &config.Config{}
+			cfg.Tenants.DefaultTenant = "crosscodexd-test"
+			cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "local", BasePath: GinkgoT().TempDir()}
+			cfg.Attestation = config.AttestationConfig{Enabled: true, ExpiryDuration: time.Hour}
+
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			Expect(svc).To(BeNil())
+			Expect(err).To(MatchError(config.ErrMissingRequired))
+			Expect(err.Error()).To(And(HavePrefix(role+" role: "),
+				ContainSubstring("attestation.private_key_path"), ContainSubstring("attestation.enabled: false")))
+		},
+		Entry("gateway role", config.RoleGateway),
+		Entry("all role", config.RoleAll),
+	)
+})
+
 // objectStore is the daemon's object storage for every role that keeps
 // objects: it opens storage.objects for the tenant on each call's context,
 // never for tenants.default_tenant alone.

@@ -136,7 +136,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 	completed := completedStageSet(stages)
 
 	// Attestation state for this job execution.
-	exec := &jobExecution{attestor: s.attestors.forTenant(tenantID), subject: jobSubject(job)}
+	exec := &jobExecution{attestor: s.attestors.ForTenant(tenantID), subject: jobSubject(job)}
 
 	// Phase 2: Analysis and its attestation. The stored links of the
 	// pipeline steps an earlier run completed are verified first, before
