@@ -185,7 +185,7 @@ func renderJSON(w io.Writer, prov *pb.CrosswalkProvenance, rows []*pb.CrosswalkR
 
 // markdownCellMaxRunes bounds a Markdown cell so one long control statement
 // cannot make the table unreadable; CSV and JSON keep the whole text (after
-// display cleaning for CSV) and XLSX keeps it up to a sheet cell's capacity.
+// export cleaning for CSV) and XLSX keeps it up to a sheet cell's capacity.
 const markdownCellMaxRunes = 200
 
 // markdownEscaper HTML-escapes and then Markdown-escapes in one pass, so no
@@ -199,17 +199,18 @@ var markdownEscaper = strings.NewReplacer(
 )
 
 // markdownCell makes untrusted text safe as one Markdown table cell for a
-// renderer that allows HTML: the CSV/XLSX display cleaning (which also turns
-// line breaks into spaces and drops terminal escapes and invisible or
-// bidirectional characters), a cut to markdownCellMaxRunes runes ending in
-// "…" (done on the raw text so an escape is never split), then escaping. No
-// raw HTML survives, so the renderer emits none besides what it writes itself.
+// renderer that allows HTML: the CSV/XLSX export cleaning (which drops
+// terminal escapes and bidirectional overrides and keeps script joiners and
+// line breaks), a cut to markdownCellMaxRunes runes ending in "…" (done on the
+// raw text so an escape is never split), then escaping, then each line break
+// becomes "<br>" so the row stays on one table line. The only raw HTML in a
+// cell is that "<br>"; the renderer emits none besides what it writes itself.
 func markdownCell(s string) string {
-	s = intanalyzer.CleanDisplay(s, math.MaxInt)
+	s = intanalyzer.CleanExport(s, math.MaxInt)
 	if utf8.RuneCountInString(s) > markdownCellMaxRunes {
 		s = string([]rune(s)[:markdownCellMaxRunes]) + "…"
 	}
-	return markdownEscaper.Replace(s)
+	return strings.ReplaceAll(markdownEscaper.Replace(s), "\n", "<br>")
 }
 
 // renderMarkdown writes a pipe table: the header, the separator and one line

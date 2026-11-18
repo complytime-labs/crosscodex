@@ -81,8 +81,8 @@ var _ = Describe("csvCell", func() {
 		Expect(csvCell("AC-1 = Access Control")).To(Equal("AC-1 = Access Control"))
 	})
 
-	It("cleans a value to one line before checking it", func() {
-		Expect(csvCell("Evil\x1b]0;pwned\x07\nCatalog")).To(Equal("Evil ]0;pwned Catalog"))
+	It("removes terminal escapes but keeps line breaks", func() {
+		Expect(csvCell("Evil\x1b]0;pwned\x07\nCatalog")).To(Equal("Evil]0;pwned\nCatalog"))
 	})
 })
 
@@ -332,7 +332,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(rows[1][last]).To(BeEmpty(), "a mapping without a critique has an empty cell")
 			Expect(rows[2][0]).To(Equal("v"))
 			Expect(rows[2][last]).To(Equal("vetoed: 1 upheld, 2 rejected, 0 failed; " +
-				"panel-1 s0 UPHOLD: fine | panel-2 s0 REJECT: scope differs | panel-3 s0 REJECT: =unrelated"))
+				"panel-1 s0 UPHOLD: fine | panel-2 s0 REJECT: scope\ndiffers | panel-3 s0 REJECT: =unrelated"))
 		})
 
 		It("ends every analyzer-stage CSV header with the critique column, keeping the other columns in place", func() {
@@ -489,12 +489,13 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 				fake.pages[0].Analysis.SourceCatalog.Version = "1\u202e0"
 			})
 
-			It("exports them to CSV as one clean line", func() {
+			It("exports them to CSV without the escape or override, keeping the line break in one quoted cell", func() {
 				stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
 				Expect(err).NotTo(HaveOccurred())
-				lines := strings.Split(strings.TrimSpace(stdout), "\n")
-				Expect(lines).To(HaveLen(2))
-				Expect(lines[1]).To(HaveSuffix(",cat-src,Evil ]0;pwned Catalog,10,cat-tgt,NIST SP 800-53,,false,true,true"))
+				records, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(records).To(HaveLen(2))
+				Expect(records[1]).To(ContainElements("cat-src", "Evil]0;pwned\nCatalog", "10"))
 				Expect(stdout).NotTo(ContainSubstring("\x1b"))
 			})
 

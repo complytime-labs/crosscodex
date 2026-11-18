@@ -291,7 +291,8 @@ func critiqueCell(c *pb.MappingCritique) string {
 }
 
 // csvCell makes an uploader-derived value safe as a CSV cell. CSV is often
-// read on a terminal, so the value is cleaned to one line; a spreadsheet runs
+// read on a terminal, so terminal escapes and bidi overrides are removed (line
+// breaks and script joiners are kept); a spreadsheet runs
 // a cell starting with = + - @ (or tab or CR, which cleaning already trims)
 // as a formula (CWE-1236), so such a value gets a leading single quote.
 // Server-generated cells (mapping IDs, numbers, enums) do not need it.
@@ -302,7 +303,7 @@ func csvCell(s string) string {
 // csvCellUpTo is csvCell with the cleaned value capped at maxBytes, for
 // cells whose full text matters (a crosswalk's control statements).
 func csvCellUpTo(s string, maxBytes int) string {
-	s = intanalyzer.CleanDisplay(s, maxBytes)
+	s = intanalyzer.CleanExport(s, maxBytes)
 	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
 		return "'" + s
 	}

@@ -60,7 +60,8 @@ func FuzzRenderCSV(f *testing.F) {
 
 // FuzzRenderMarkdown checks that any control text leaves the table as the
 // header, the separator and exactly one line per row, with no unescaped pipe
-// inside a cell and no HTML tag opened by control text.
+// inside a cell and no HTML tag opened by control text (the "<br>" the renderer
+// writes for a line break is the only "<" allowed).
 func FuzzRenderMarkdown(f *testing.F) {
 	for _, seed := range fuzzCrosswalkSeeds {
 		f.Add(seed)
@@ -79,8 +80,8 @@ func FuzzRenderMarkdown(f *testing.F) {
 		if len(lines) != len(rows)+2 {
 			t.Fatalf("got %d lines, want %d: %q", len(lines), len(rows)+2, out)
 		}
-		if strings.Contains(out, "<") {
-			t.Fatalf("output contains a raw '<': %q", out)
+		if strings.Contains(strings.ReplaceAll(out, "<br>", ""), "<") {
+			t.Fatalf("output contains a raw '<' other than <br>: %q", out)
 		}
 		for i, line := range lines {
 			// Cells are joined by " | " and escaped pipes are "\|": removing
