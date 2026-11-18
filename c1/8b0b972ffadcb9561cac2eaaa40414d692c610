@@ -6,6 +6,7 @@ cmd/crosscodexd/bootstrap_bdd_test.go
   s_bfef2db2a67c3d::t_678b44aa9e2a57 16,25-28,63,66,74-79,81-208,223
 cmd/crosscodexd/bootstrap_integration_test.go
   s_bfef2db2a67c3d::t_a62b3ee0badfea 179-180
+  s_bfef2db2a67c3d::t_f21e7a2cf6b499 179-180
 internal/pipeline/executor_bdd_test.go
   s_bfef2db2a67c3d::t_b3ee34357ffb1b 1241-1266
 pkg/config/config_bdd_test.go
