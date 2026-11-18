@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"pgregory.net/rapid"
 
 	"github.com/complytime-labs/crosscodex/pkg/storage"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // Suite bootstrap lives in storage_bdd_test.go (TestStorageBDD).
@@ -92,6 +95,64 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				expected := fmt.Sprintf("jobs/%s/attestation/%s", jobID, filename)
 				Expect(key).To(Equal(expected),
 					"JobAttestationKey mismatch")
+			})
+		})
+	})
+
+	Context("NewTenantRouter — tenant routing", func() {
+		It("opens once per distinct tenant and keeps each key in its tenant's provider", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				fakes := map[string]*storagetest.Fake{}
+				opens := map[string]int{}
+				route := storage.NewTenantRouter(func(id string) (storage.Provider, error) {
+					opens[id]++
+					fakes[id] = &storagetest.Fake{}
+					return fakes[id], nil
+				})
+				defer route.Close()
+
+				type put struct{ tenantID, key string }
+				puts := rapid.SliceOfN(rapid.Custom(func(t *rapid.T) put {
+					return put{
+						tenantID: fmt.Sprintf("tenant-%d", rapid.IntRange(1, 4).Draw(t, "tenant")),
+						key:      rapid.StringMatching(`[a-z]{1,10}`).Draw(t, "key"),
+					}
+				}), 1, 20).Draw(t, "puts")
+
+				owners := map[string]map[string]bool{}
+				for _, p := range puts {
+					ctx, err := tenant.WithTenant(context.Background(), p.tenantID)
+					if err != nil {
+						t.Fatalf("WithTenant(%q): %v", p.tenantID, err)
+					}
+					if err := route.Put(ctx, p.key, strings.NewReader("x")); err != nil {
+						t.Fatalf("Put(%q, %q): %v", p.tenantID, p.key, err)
+					}
+					if owners[p.key] == nil {
+						owners[p.key] = map[string]bool{}
+					}
+					owners[p.key][p.tenantID] = true
+				}
+
+				for id, n := range opens {
+					if n != 1 {
+						t.Fatalf("open called %d times for %q, want 1", n, id)
+					}
+				}
+				for id, fake := range fakes {
+					for key := range fake.Objects() {
+						if !owners[key][id] {
+							t.Fatalf("key %q is in %q but was never put there", key, id)
+						}
+					}
+				}
+				for key, tenants := range owners {
+					for id := range tenants {
+						if _, ok := fakes[id].Objects()[key]; !ok {
+							t.Fatalf("key %q missing from %q", key, id)
+						}
+					}
+				}
 			})
 		})
 	})

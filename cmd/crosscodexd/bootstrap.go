@@ -247,8 +247,8 @@ func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
 
 // buildIngestGateway builds the gateway.Service that serves catalog import for
 // role (all or gateway): single-tenant X.509 authn, pass-through ingestion
-// into local storage, and a catalog service that persists controls and
-// publishes them for graph projection. It holds no graph credentials; the
+// into the caller's tenant's object storage (objectStore), and a catalog
+// service that persists controls and publishes them for graph projection. It holds no graph credentials; the
 // graph role projects Control nodes. Refuses a default tenant that
 // `crosscodexd migrate` has not provisioned or that is deleted. extra
 // appends role-specific backends (role all adds graph queries).
@@ -256,8 +256,8 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	if cfg.Tenants.DefaultTenant == "" {
 		return nil, fmt.Errorf("%s role: tenants.default_tenant must be set", role)
 	}
-	if cfg.Storage.Objects.BasePath == "" {
-		return nil, fmt.Errorf("%s role: storage.objects.base_path must be set", role)
+	if err := checkObjectStorage(cfg.Storage.Objects); err != nil {
+		return nil, fmt.Errorf("%s role: %w", role, err)
 	}
 	// Catalog import resolves the caller's tenant from its X.509 client
 	// certificate. Resolve the same "gateway-server" target gateway.NewServer
@@ -302,12 +302,7 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 		return nil, fmt.Errorf("create auth registry: %w", err)
 	}
 
-	storageTracer, storageMeter := telemetry.Instrumentation("pkg/storage")
-	storageProvider, err := storage.NewLocal(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant,
-		storage.WithLocalTelemetry(storageTracer, storageMeter))
-	if err != nil {
-		return nil, fmt.Errorf("create storage provider: %w", err)
-	}
+	storageProvider := objectStore(cfg)
 
 	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
@@ -625,16 +620,43 @@ var taskTypesByAnalyzer = map[string]natsbus.TaskType{
 	"critique":     natsbus.TaskCritique,
 }
 
+// objectStore is the daemon's object storage. It opens storage.objects for
+// the tenant on each call's context, once per tenant, so every tenant's
+// objects stay under its own directory or key prefix; a call without a
+// tenant on its context fails with tenant.ErrNoTenant. The returned
+// Provider owns the per-tenant providers it opens.
+func objectStore(cfg *config.Config) storage.Provider {
+	objects := cfg.Storage.Objects
+	tracer, meter := telemetry.Instrumentation("pkg/storage")
+	return storage.NewTenantRouter(func(tenantID string) (storage.Provider, error) {
+		return storage.NewFromConfig(objects, tenantID, storage.WithTelemetry(tracer, meter))
+	})
+}
+
+// checkObjectStorage refuses a storage.objects the daemon cannot start
+// with. Only the local backend needs base_path: left empty,
+// storage.NewFromConfig would fall back to a per-user data directory, which
+// the daemon must not pick silently. pkg/config validation refuses an s3
+// backend without a bucket.
+func checkObjectStorage(objects config.ObjectStorageConfig) error {
+	switch storage.ProviderType(objects.Backend) {
+	case storage.ProviderTypeLocal:
+		if objects.BasePath == "" {
+			return errors.New("storage.objects.base_path must be set")
+		}
+	case storage.ProviderTypeS3:
+	default:
+		return fmt.Errorf(`storage.objects.backend %q is not supported. Set it to "local" or "s3"`, objects.Backend)
+	}
+	return nil
+}
+
 // buildPipelineService constructs a production pipeline.Service. Fails
 // closed if attestation is enabled for any tenant without a key pair that
 // loads (pipeline.NewAttestors), since every attested job would then fail,
-// or if a default tenant or a storage base path aren't configured --
-// storage.Provider is bound to one tenant and
-// one root directory at construction (see the design doc's storage
-// tenant-scoping note; this mirrors cmd/crosscodex's embedded mode, which
-// has the same single-tenant storage limitation). Without this check, an
-// empty base path would resolve via filepath.Abs("") to the process's
-// current working directory instead of failing fast. Shared by
+// or if a default tenant or usable object storage (checkObjectStorage)
+// aren't configured. Object storage is opened per tenant from each job's
+// context (objectStore). Shared by
 // attachPipeline (standalone pipeline role) and bootstrap's RoleAll case
 // (in-process, no separate listener), so this construction logic exists in
 // exactly one place.
@@ -648,8 +670,8 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 	if cfg.Tenants.DefaultTenant == "" {
 		return nil, errors.New("pipeline: tenants.default_tenant must be set")
 	}
-	if cfg.Storage.Objects.BasePath == "" {
-		return nil, errors.New("pipeline: storage.objects.base_path must be set")
+	if err := checkObjectStorage(cfg.Storage.Objects); err != nil {
+		return nil, fmt.Errorf("pipeline: %w", err)
 	}
 
 	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
@@ -660,12 +682,7 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		return nil, fmt.Errorf("create prompt registry: %w", err)
 	}
 
-	storageTracer, storageMeter := telemetry.Instrumentation("pkg/storage")
-	storageProvider, err := storage.NewLocal(cfg.Storage.Objects.BasePath, cfg.Tenants.DefaultTenant,
-		storage.WithLocalTelemetry(storageTracer, storageMeter))
-	if err != nil {
-		return nil, fmt.Errorf("create storage provider: %w", err)
-	}
+	storageProvider := objectStore(cfg)
 
 	store := pipeline.NewPGStore(tenantConn, shared.appPool, pipeline.WithStoreTelemetry(tp, mp))
 

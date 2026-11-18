@@ -1238,6 +1238,32 @@ var _ = Describe("Executor", func() {
 				"synthesis": pipeline.StageStatusCompleted, "graph": pipeline.StageStatusCompleted,
 			}
 
+			// The daemon routes object storage by the tenant on each call's
+			// context, and the startup context carries none: the resumed job
+			// must put its own tenant on every storage call.
+			It("stores the attestation of a job resumed at startup only in its own tenant's object store", func() {
+				const otherTenant = "t-b"
+				byTenant := map[string]*storagetest.Fake{tenantID: storage, otherTenant: {}}
+				router := storagepkg.NewTenantRouter(func(id string) (storagepkg.Provider, error) {
+					f, ok := byTenant[id]
+					if !ok {
+						return nil, fmt.Errorf("no object store for tenant %q", id)
+					}
+					return f, nil
+				})
+				job := newRunningJob()
+				job.TenantID = otherTenant
+				Expect(store.CreateJob(ctx, job)).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+
+				Expect(serviceWith(attestedBy(attestor), router).Start(context.Background())).To(Succeed())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(byTenant[otherTenant].Objects()).To(HaveKey(bundleKey()))
+				Expect(byTenant[otherTenant].Objects()).To(HaveKey(linkKey("analyzer-a")))
+				Expect(storage.Objects()).To(BeEmpty())
+			})
+
 			It("stores a bundle that verifies, with one link per step, each analyzer's signed over its stored result", func() {
 				runJob(svc)
 				DeferCleanup(func() { Expect(svc.Stop(context.Background())).To(Succeed()) })

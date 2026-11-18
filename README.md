@@ -560,10 +560,14 @@ llm:
   model_revisions:                      # alias → revision label, part of every result-cache key (global-only); change it to force cache misses. Required to cache an alias the gateway names only by itself, with no deployment ID
     default: "2026-11-01"
 
-# Storage
+# Storage (crosscodexd only: embedded mode always stores objects under its data directory)
 storage:
   objects:
-    backend: local                # local | s3
+    backend: local                # local | s3; each tenant's objects go under its own <tenant>/ directory or key prefix
+    base_path: /var/lib/crosscodex/objects  # local: required by crosscodexd, objects at <base_path>/<tenant>/
+    bucket: ""                    # s3: required; objects at s3://<bucket>/<tenant>/
+    region: ""                    # s3: optional; the AWS SDK's default region otherwise
+    endpoint: ""                  # s3: optional; an S3-compatible server (path-style), e.g. MinIO
 
 # Database
 database:
