@@ -126,6 +126,7 @@ var _ = Describe("Cross-Stack mTLS Interop (nginx + OpenSSL)", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "container-test",
+				Mappings:      []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
 			})
 			Expect(err).NotTo(HaveOccurred())
 

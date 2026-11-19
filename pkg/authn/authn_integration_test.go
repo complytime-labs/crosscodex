@@ -183,6 +183,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "default-tenant",
+				Mappings:      []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -274,6 +275,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "registry-tenant",
+				Mappings:      []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
 			})
 			Expect(err).NotTo(HaveOccurred())
 

@@ -12,6 +12,9 @@
 //	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 //	    SingleTenant:  true,
 //	    DefaultTenant: "default",
+//	    Mappings: []authn.X509Mapping{
+//	        {Match: authn.X509Match{CN: "ops-*"}, Roles: []string{authn.RoleAdmin}},
+//	    },
 //	})
 //	if err != nil {
 //	    log.Fatal(err)

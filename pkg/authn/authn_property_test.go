@@ -33,16 +33,28 @@ func generateTestCertForProperty(cn, org, ou string) *x509.Certificate {
 }
 
 var _ = Describe("Property Specifications", Ordered, func() {
-	Context("matchCert — AND semantics with isEmpty", func() {
+	Context("X509Match.Matches — AND semantics with isEmpty", func() {
 		It("matches every certificate when all match fields are empty (isEmpty behavior)", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
 				cn := rapid.StringMatching(`[a-z]{3,10}`).Draw(t, "cn")
 				org := rapid.StringMatching(`[a-z]{3,10}`).Draw(t, "org")
 				cert := generateTestCertForProperty(cn, org, "unit")
 				emptyMatch := authn.X509Match{}
-				result := authn.MatchCert(cert, emptyMatch)
+				result := emptyMatch.Matches(cert)
 				if !result {
 					t.Fatalf("empty match should match any cert, got false for CN=%q", cn)
+				}
+			})
+		})
+
+		It("matches a certificate against a match built from its own subject", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				cn := rapid.StringMatching(`[a-z]{3,10}`).Draw(t, "cn")
+				org := rapid.StringMatching(`[a-z]{3,10}`).Draw(t, "org")
+				cert := generateTestCertForProperty(cn, org, "unit")
+				match := authn.X509Match{CN: cn, Organization: org, OrgUnit: "unit"}
+				if !match.Matches(cert) {
+					t.Fatalf("match built from subject CN=%q O=%q should match its own cert", cn, org)
 				}
 			})
 		})
@@ -54,9 +66,9 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				// Set CN to something that won't match
 				wrongCN := rapid.StringMatching(`[A-Z]{3,10}`).Draw(t, "wrong-cn")
 				match := authn.X509Match{CN: wrongCN}
-				result := authn.MatchCert(cert, match)
+				result := match.Matches(cert)
 				if result {
-					t.Fatalf("matchCert should reject when CN %q does not match cert CN %q", wrongCN, cn)
+					t.Fatalf("Matches should reject when CN %q does not match cert CN %q", wrongCN, cn)
 				}
 			})
 		})

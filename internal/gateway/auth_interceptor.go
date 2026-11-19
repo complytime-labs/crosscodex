@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,28 +17,18 @@ import (
 
 type ctxKey int
 
-const (
-	ctxKeyTLSState ctxKey = iota
-	ctxKeyClientIP
-)
-
-func tlsStateFromContext(ctx context.Context) *tls.ConnectionState {
-	state, _ := ctx.Value(ctxKeyTLSState).(*tls.ConnectionState)
-	return state
-}
+const ctxKeyClientIP ctxKey = iota
 
 func clientIPFromContext(ctx context.Context) string {
 	ip, _ := ctx.Value(ctxKeyClientIP).(string)
 	return ip
 }
 
-func tlsMiddleware(next http.Handler) http.Handler {
+// clientIPMiddleware stores the peer address; TLS state is stored by
+// authn.TLSStateMiddleware.
+func clientIPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		if r.TLS != nil {
-			ctx = context.WithValue(ctx, ctxKeyTLSState, r.TLS)
-		}
-		ctx = context.WithValue(ctx, ctxKeyClientIP, r.RemoteAddr)
+		ctx := context.WithValue(r.Context(), ctxKeyClientIP, r.RemoteAddr)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -67,7 +56,7 @@ func (i *connectAuthInterceptor) WrapUnary(next connect.UnaryFunc) connect.Unary
 			return next(ctx, req)
 		}
 
-		tlsState := tlsStateFromContext(ctx)
+		tlsState := authn.TLSStateFromContext(ctx)
 		if tlsState == nil {
 			i.service.recordAuthFailure(ctx, "no_tls")
 			return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("TLS required"))
@@ -146,7 +135,7 @@ func (i *connectAuthInterceptor) WrapStreamingHandler(next connect.StreamingHand
 			return next(ctx, conn)
 		}
 
-		tlsState := tlsStateFromContext(ctx)
+		tlsState := authn.TLSStateFromContext(ctx)
 		if tlsState == nil {
 			i.service.recordAuthFailure(ctx, "no_tls")
 			return connect.NewError(connect.CodeUnauthenticated, errors.New("TLS required"))

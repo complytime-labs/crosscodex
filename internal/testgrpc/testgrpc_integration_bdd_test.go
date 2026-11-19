@@ -229,6 +229,7 @@ var _ = Describe("gRPC Integration", func() {
 			authenticator, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: tenantID,
+				Mappings:      []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
 			})
 			Expect(err).NotTo(HaveOccurred())
 

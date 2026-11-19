@@ -179,6 +179,9 @@ func embeddedAuthRegistry() (*authn.Registry, error) {
 	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 		SingleTenant:  true,
 		DefaultTenant: embeddedTenantID,
+		// Embedded mode keeps its admin-for-any-CA-signed-cert behaviour;
+		// the explicit mapping replaces the removed implicit grant.
+		Mappings: []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
