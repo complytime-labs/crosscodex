@@ -414,15 +414,17 @@ var _ = Describe("Durable materialization consumer", func() {
 		logs = &bytes.Buffer{}
 	})
 
-	It("consumes stage events and barriers from MATERIALIZE with the configured delivery limits", func() {
+	It("consumes stage events and barriers from MATERIALIZE with no server-side delivery limit", func() {
 		build(mem)
 
+		// The materializer enforces max_deliver itself: a server limit would
+		// strand an event whose last delivery's ack is lost in the work queue.
 		Expect(materializer().Config).To(Equal(natsbus.ConsumerConfig{
 			Stream:         natsbus.MaterializeStream,
 			Durable:        materializerConsumer,
 			FilterSubjects: []string{"crosscodex.pipeline.*.*.stage.completed"},
 			AckWait:        time.Minute,
-			MaxDeliver:     maxDeliver,
+			MaxDeliver:     -1,
 			RedeliverDelay: 2 * time.Second,
 		}))
 		barrier := consumerSub(bus, barrierConsumer)
@@ -496,6 +498,20 @@ var _ = Describe("Durable materialization consumer", func() {
 		Expect(err).NotTo(MatchError(natsbus.ErrPermanent))
 		Expect(materializer().Naked()).To(Equal(1))
 		Expect(materializer().Termed()).To(BeZero())
+	})
+
+	It("handles a delivery past max_deliver as a last delivery, storing a failed outcome and terming the event", func() {
+		build(failingEdgeGraph{GraphDB: mem})
+
+		err := bus.Deliver(stageEvent(tenantID, "relationship", maxDeliver+2))
+
+		Expect(err).To(MatchError(natsbus.ErrPermanent))
+		Expect(err.Error()).To(ContainSubstring("last delivery (%d)", maxDeliver+2))
+		Expect(materializer().Termed()).To(Equal(1))
+		Expect(materializer().Naked()).To(BeZero())
+		pubs := bus.Published()
+		Expect(pubs).To(HaveLen(1))
+		Expect(pubs[0].Subject).To(Equal("crosscodex.audit." + tenantID + ".events.job-1.graph.failed"))
 	})
 
 	It("ignores an event with no analyzer without counting an error", func() {

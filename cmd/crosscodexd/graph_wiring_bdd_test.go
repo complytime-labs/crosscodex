@@ -151,7 +151,7 @@ var _ = Describe("attachGraph config wiring", func() {
 			natsbus.ConsumerConfig{
 				Stream: natsbus.MaterializeStream, Durable: "graph-materializer",
 				FilterSubjects: []string{"crosscodex.pipeline.*.*.stage.completed", "crosscodex.catalog.*.*.parsed"},
-				AckWait:        3 * time.Minute, MaxDeliver: 7, RedeliverDelay: 4 * time.Second,
+				AckWait:        3 * time.Minute, MaxDeliver: -1, RedeliverDelay: 4 * time.Second,
 			},
 			natsbus.ConsumerConfig{
 				Stream: natsbus.MaterializeStream, Durable: "graph-barrier",

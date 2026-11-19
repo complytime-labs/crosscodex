@@ -45,12 +45,17 @@ func (s *Service) Start(ctx context.Context) error {
 	if s.controls != nil {
 		filters = append(filters, catalogSubject)
 	}
+	// The server never stops redelivering: the handlers enforce
+	// s.delivery.MaxDeliver themselves (see lastDelivery). A server-side limit
+	// would strand an event in the work queue, where the job's barrier waits
+	// on it until its deadline, whenever its last delivery is not settled: a
+	// lost ack, a crash mid-handler, or a failed outcome that was not stored.
 	sub, err := s.bus.ConsumeDurable(ctx, natsbus.ConsumerConfig{
 		Stream:         natsbus.MaterializeStream,
 		Durable:        materializerConsumer,
 		FilterSubjects: filters,
 		AckWait:        s.delivery.AckWait,
-		MaxDeliver:     s.delivery.MaxDeliver,
+		MaxDeliver:     -1,
 		RedeliverDelay: s.delivery.RedeliverDelay,
 	}, s.handleMaterialize)
 	if err != nil {
@@ -117,8 +122,11 @@ func (s *Service) handleMaterialize(ctx context.Context, msg *natsbus.Message) e
 	return s.handleEvent(ctx, msg)
 }
 
-// lastDelivery reports whether msg is on its last delivery, after which the
-// server will not redeliver it whatever the handler returns.
+// lastDelivery reports whether msg is on or past its last delivery, the
+// handler-enforced s.delivery.MaxDeliver. The server keeps redelivering a
+// message the handler does not settle, so a delivery past the limit (its
+// predecessor's ack was lost, or the failed outcome was not stored) is handled
+// as a last delivery too.
 func (s *Service) lastDelivery(msg *natsbus.Message) bool {
 	// MaxDeliver is at least 1 (see WithMaterializeConfig), so the
 	// conversion cannot wrap.
@@ -286,9 +294,10 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 }
 
 // failEvent returns the error that settles an event whose results could not
-// be written. Before its last delivery the event is redelivered. On the last,
-// a "failed" graph outcome naming the analyzer is stored first, so the job's
-// barrier sees the failure even if nothing is listening now, and the event is
+// be written. Before its last delivery the event is redelivered. On the last
+// (or a later one, see lastDelivery), a "failed" graph outcome naming the
+// analyzer is stored first, so the job's barrier sees the failure even if
+// nothing is listening now, and the event is
 // then terminated. If the outcome is not stored the event is naked instead,
 // leaving it in the stream, so the job's barrier keeps waiting rather than
 // reporting the graph materialized.
@@ -303,7 +312,7 @@ func (s *Service) failEvent(ctx context.Context, msg *natsbus.Message, tenantID 
 	// The outcome is read by the job's tenant: it names the analyzer and
 	// where to look, never the driver error.
 	reason := fmt.Sprintf("graph materialization of the %s results failed on all %d deliveries; "+
-		"see the graph role logs for job %s", event.Analyzer, s.delivery.MaxDeliver, event.JobID)
+		"see the graph role logs for job %s", event.Analyzer, msg.Metadata.NumDelivered, event.JobID)
 	if err := s.publishOutcome(ctx, tenantID, event.JobID, natsbus.GraphOutcomeFailed, event.Analyzer, reason); err != nil {
 		s.recordEvent(ctx, event.Analyzer, "error")
 		return fmt.Errorf("last delivery of the %s results for job %s failed, and its failed graph outcome was not stored, "+
@@ -312,7 +321,7 @@ func (s *Service) failEvent(ctx context.Context, msg *natsbus.Message, tenantID 
 	}
 	s.recordEvent(ctx, event.Analyzer, "failed")
 	return fmt.Errorf("%w: last delivery (%d) of the %s results for job %s failed and a failed graph outcome was stored: %w",
-		natsbus.ErrPermanent, s.delivery.MaxDeliver, event.Analyzer, event.JobID, cause)
+		natsbus.ErrPermanent, msg.Metadata.NumDelivered, event.Analyzer, event.JobID, cause)
 }
 
 // publishOutcome durably publishes a job's graph outcome to AUDIT_EVENTS.

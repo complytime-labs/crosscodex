@@ -154,9 +154,13 @@ func (c *client) handleDurable(parent context.Context, cfg ConsumerConfig, handl
 }
 
 // finishDurable sends outcome to the server and records the process metrics.
-// A failed ack is logged and counted as "<outcome>_failed": the server
-// redelivers after AckWait, so nothing is lost, at worst handled twice, which
-// handlers must tolerate anyway.
+// A failed ack is logged and counted as "<outcome>_failed". The server then
+// redelivers the message after AckWait only if cfg.MaxDeliver allows another
+// delivery, so a handler may see a message twice and must tolerate that. A
+// failed ack on the last delivery leaves the message unsettled: the server
+// never redelivers it, and a work-queue stream keeps it until its max age. A
+// consumer that must settle every message sets MaxDeliver to -1 and enforces
+// its own limit from Metadata.NumDelivered.
 func (c *client) finishDurable(ctx context.Context, cfg ConsumerConfig, msg jetstream.Msg, outcome string, start time.Time) {
 	var err error
 	switch outcome {
@@ -168,7 +172,7 @@ func (c *client) finishDurable(ctx context.Context, cfg ConsumerConfig, msg jets
 		err = msg.Term()
 	}
 	if err != nil {
-		c.opts.logger.Error("acknowledging message failed; the server will redeliver it after AckWait",
+		c.opts.logger.Error("acknowledging message failed; the server redelivers it after AckWait unless this was its last delivery",
 			"subject", msg.Subject(), "outcome", outcome, "error", err)
 		outcome += "_failed"
 	}

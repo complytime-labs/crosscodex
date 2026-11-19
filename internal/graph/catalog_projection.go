@@ -72,7 +72,7 @@ func (s *Service) handleCatalogEvent(ctx context.Context, msg *natsbus.Message) 
 		span.SetStatus(codes.Error, err.Error())
 		if s.lastDelivery(msg) {
 			return fmt.Errorf("%w: project catalog %s failed on its last delivery (%d); re-import the catalog to project it again: %w",
-				natsbus.ErrPermanent, catalogID, s.delivery.MaxDeliver, err)
+				natsbus.ErrPermanent, catalogID, msg.Metadata.NumDelivered, err)
 		}
 		return fmt.Errorf("project catalog %s (delivery %d of %d; will be redelivered): %w",
 			catalogID, msg.Metadata.NumDelivered, s.delivery.MaxDeliver, err)

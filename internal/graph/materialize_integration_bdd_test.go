@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +56,28 @@ func (g *crashOnEdge) CreateEdge(ctx context.Context, tenantID, sourceID, target
 		return errors.New("graph role crashed")
 	}
 	return g.GraphDB.CreateEdge(ctx, tenantID, sourceID, targetID, edge)
+}
+
+// unstoredOutcomes passes calls to the natsbus.Client it embeds, except the
+// first n durable publishes of a graph outcome, which fail as if AUDIT_EVENTS
+// had not stored them.
+type unstoredOutcomes struct {
+	natsbus.Client
+	mu sync.Mutex
+	n  int
+}
+
+func (c *unstoredOutcomes) PublishDurable(ctx context.Context, subject string, data []byte, headers map[string][]string) error {
+	c.mu.Lock()
+	refuse := strings.HasSuffix(subject, ".graph."+natsbus.GraphOutcomeFailed) && c.n > 0
+	if refuse {
+		c.n--
+	}
+	c.mu.Unlock()
+	if refuse {
+		return fmt.Errorf("publish %s: %w", subject, natsbus.ErrNotStored)
+	}
+	return c.Client.PublishDurable(ctx, subject, data, headers)
 }
 
 var _ = Describe("Durable materialization on JetStream", func() {
@@ -148,6 +172,37 @@ var _ = Describe("Durable materialization on JetStream", func() {
 		for id, n := range ids {
 			Expect(n).To(Equal(1), "edge %s materialized %d times", id, n)
 		}
+	})
+
+	It("redelivers an event past max_deliver until its failed outcome is stored, leaving MATERIALIZE empty", func() {
+		delivery.MaxDeliver = 2
+		c := newClient()
+		filter, err := natsbus.GraphOutcomeFilter(tenantID, jobID)
+		Expect(err).NotTo(HaveOccurred())
+		outcomes := make(chan *natsbus.Message, 4)
+		sub, err := c.Subscribe(ctx, filter, func(_ context.Context, msg *natsbus.Message) error {
+			outcomes <- msg
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(sub.Unsubscribe)
+
+		By("failing every graph write, and the failed outcome's first store on the last delivery")
+		mem := newMemGraph(ctx, tenantID, "ctrl-1", "ctrl-2", "ctrl-3")
+		role := graph.New(failingEdgeGraph{GraphDB: mem}, &mockVectorDB{}, &unstoredOutcomes{Client: c, n: 1},
+			graph.WithResolverRegistry(registry), graph.WithMaterializeConfig(delivery))
+		Expect(role.Start(ctx)).To(Succeed())
+		DeferCleanup(func() { _ = role.Stop(context.Background()) })
+		publishStage(c)
+
+		var msg *natsbus.Message
+		Eventually(outcomes).WithTimeout(20 * time.Second).Should(Receive(&msg))
+		var got natsbus.GraphOutcome
+		Expect(json.Unmarshal(msg.Data, &got)).To(Succeed())
+		Expect(got.Outcome).To(Equal(natsbus.GraphOutcomeFailed))
+		Expect(got.Analyzer).To(Equal("relationship"))
+		Eventually(queued(c)).WithTimeout(10*time.Second).WithPolling(100*time.Millisecond).Should(BeZero(),
+			"the event must be terminated once its failed outcome is stored, not stranded in MATERIALIZE")
 	})
 
 	It("answers the job's barrier with materialized once the job's events are handled, ignoring an earlier run's failure", func() {

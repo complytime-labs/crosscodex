@@ -268,8 +268,11 @@ type NATSMaterializeConfig struct {
 	// before the graph role gives up on it: a failure on the last delivery
 	// publishes a "failed" graph outcome for the job and terminates the
 	// event, and an edge whose endpoint node is still missing on the last
-	// delivery is skipped. Must be at least 1. Default: 5. The barrier
-	// consumer is unlimited and ignores it.
+	// delivery is skipped. The graph role enforces it, not the server: the
+	// consumer redelivers an unsettled event without limit, so a delivery
+	// past it (the last one's ack was lost, the role crashed during it, or
+	// its failed outcome was not stored) is handled as a last delivery too.
+	// Must be at least 1. Default: 5. The barrier consumer ignores it.
 	MaxDeliver int `yaml:"max_deliver" json:"max_deliver"`
 
 	// AckWait is how long the server waits for a handler to finish one
