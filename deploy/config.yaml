@@ -20,6 +20,11 @@ tls:
   ca: /certs/ca.pem
   cert: /certs/client.pem
   key: /certs/client-key.pem
+  # Client certificates allowed to assert a tenant to the standalone pipeline
+  # role: the gateway's outbound client cert, which is this same client.pem.
+  service_identities:
+    - cn: client
+      organization: CrossCodex
   targets:
     # The gateway HTTPS listener must present the SERVER cert (ServerAuth EKU,
     # SANs covering localhost/127.0.0.1/service names). The global cert above is

@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -53,16 +54,45 @@ func (clientInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc)
 
 // UnaryServerInterceptor extracts the tenant (and optional user) header set
 // by UnaryClientInterceptor and injects it into ctx via tenant.WithTenant.
-// Fails closed with CodeUnauthenticated if the tenant header is missing or
-// invalid.
-func UnaryServerInterceptor() connect.Interceptor {
-	return &serverInterceptor{}
+//
+// The headers are an assertion of identity, so they are honored only when the
+// peer's TLS client certificate (read from authn.TLSStateFromContext, which
+// the server must populate with authn.TLSStateMiddleware) matches one of
+// identities. Fails closed: no TLS state or no peer certificate is
+// CodeUnauthenticated; a certificate matching no identity (including an empty
+// identities list) is CodePermissionDenied; a missing or invalid tenant
+// header is CodeUnauthenticated. The handler is never reached on any failure.
+func UnaryServerInterceptor(identities []authn.X509Match) connect.Interceptor {
+	return &serverInterceptor{identities: identities}
 }
 
-type serverInterceptor struct{}
+type serverInterceptor struct {
+	identities []authn.X509Match
+}
 
-func (serverInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+// authorizePeer returns nil when ctx carries a client certificate matching a
+// service identity.
+func (i serverInterceptor) authorizePeer(ctx context.Context) error {
+	state := authn.TLSStateFromContext(ctx)
+	if state == nil || len(state.PeerCertificates) == 0 {
+		return connect.NewError(connect.CodeUnauthenticated,
+			errors.New("tenant headers require a TLS client certificate, but none was presented. Connect over mTLS with a certificate listed in tls.service_identities.")) //nolint:staticcheck // ST1005: the exact sentence is the specified, user-facing message
+	}
+	leaf := state.PeerCertificates[0]
+	for _, id := range i.identities {
+		if id.Matches(leaf) {
+			return nil
+		}
+	}
+	return connect.NewError(connect.CodePermissionDenied,
+		fmt.Errorf("tenant headers are accepted only from a service identity: the client certificate CN=%s is not listed in tls.service_identities. Add the gateway's client certificate subject there.", leaf.Subject.CommonName)) //nolint:staticcheck // ST1005: the exact sentence is the specified, user-facing message
+}
+
+func (i serverInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		if err := i.authorizePeer(ctx); err != nil {
+			return nil, err
+		}
 		tenantID := req.Header().Get(MetadataKeyTenantID)
 		if tenantID == "" {
 			return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("missing tenant header"))
@@ -82,8 +112,14 @@ func (serverInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) c
 	return next
 }
 
-func (serverInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
-	return next
+// WrapStreamingHandler rejects every streaming RPC: no service behind this
+// interceptor defines one, and a pass-through would skip the identity and
+// tenant checks. Fails closed until streaming gets the same checks.
+func (serverInterceptor) WrapStreamingHandler(connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(context.Context, connect.StreamingHandlerConn) error {
+		return connect.NewError(connect.CodeUnimplemented,
+			errors.New("streaming RPCs are not supported on tenant-scoped services"))
+	}
 }
 
 var (

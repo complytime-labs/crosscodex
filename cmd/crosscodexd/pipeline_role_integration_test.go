@@ -82,6 +82,13 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		workerCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RoleWorker)
 		startGraphRole(ctx, dsn, natsURL)
 
+		// The pipeline and gateway roles refuse a default tenant migrate has
+		// not provisioned, so provision it before bootstrapping either.
+		suPool, err := db.NewPool(db.PoolConfig{DSN: dsn, MaxOpenConns: 5, Extensions: []string{"age", "vector"}})
+		Expect(err).NotTo(HaveOccurred())
+		defer suPool.Close()
+		Expect(db.EnsureTenant(ctx, suPool, tenantID, "crosscodexd split e2e")).To(Succeed())
+
 		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
 		defer pipelineRT.close()
@@ -96,13 +103,6 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		defer workerRT.close()
 		Expect(workerRT.start(ctx)).To(Succeed(), "start worker role")
 		defer func() { _ = workerRT.stop(context.Background()) }()
-
-		// The gateway role refuses a default tenant migrate has not
-		// provisioned, so provision it before bootstrapping the gateway.
-		suPool, err := db.NewPool(db.PoolConfig{DSN: dsn, MaxOpenConns: 5, Extensions: []string{"age", "vector"}})
-		Expect(err).NotTo(HaveOccurred())
-		defer suPool.Close()
-		Expect(db.EnsureTenant(ctx, suPool, tenantID, "crosscodexd split e2e")).To(Succeed())
 
 		gwCfg := baseTestConfig(dsn)
 		gwCfg.Role = config.RoleGateway
@@ -207,6 +207,8 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		pipelineCfg.Pipeline.Addr = "127.0.0.1:0"
 		pipelineCfg.Health.Addr = "127.0.0.1:0"
 		pipelineCfg.TLS = testServerTLS()
+		// The pipeline role refuses a default tenant migrate has not provisioned.
+		Expect(migrateDatabase(ctx, pipelineCfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
@@ -360,6 +362,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		// Real mTLS on the listener: attachPipeline now requires it, and both
 		// checks below exercise the TLS boundary rather than plaintext.
 		cfg.TLS = testServerTLS()
+		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		rt, err := bootstrap(ctx, cfg, WithLLMClient(testspecs.DeterministicLLM{EmbeddingDim: e2eEmbeddingDim}))
 		Expect(err).NotTo(HaveOccurred())

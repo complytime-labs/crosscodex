@@ -442,3 +442,37 @@ var _ = Describe("buildPipelineService attestation guards", func() {
 		Expect(logs.String()).NotTo(ContainSubstring("attestation is disabled (attestation.enabled: false)"))
 	})
 })
+
+// Any certificate the CA signed could name any tenant in x-tenant-id, so the
+// pipeline role honors that header only from tls.service_identities. With none
+// listed it would deny every request, so it refuses to start instead, before
+// the database is touched (the zero sharedResources has no pool).
+var _ = Describe("attachPipeline service identities guard", func() {
+	pipelineConfig := func(identities []config.X509MatchConfig) *config.Config {
+		cfg := &config.Config{}
+		cfg.Pipeline.Addr = "127.0.0.1:0"
+		cfg.TLS = config.TLSConfig{
+			Mode:              "mutual",
+			CA:                testTLSWiringCAPath,
+			Cert:              testTLSWiringClientCertPath,
+			Key:               testTLSWiringClientKeyPath,
+			ServiceIdentities: identities,
+		}
+		return cfg
+	}
+
+	It("refuses to start with no service identities, naming the setting and a subject to add", func() {
+		rt := &runtime{}
+		err := attachPipeline(context.Background(), pipelineConfig(nil), &sharedResources{}, rt)
+		Expect(err).To(MatchError(errNoServiceIdentities))
+		Expect(err).To(MatchError(ContainSubstring("tls.service_identities")))
+		Expect(err).To(MatchError(ContainSubstring("cn: client")))
+		Expect(rt.pipelineServer).To(BeNil(), "no listener may be built")
+	})
+
+	It("gets past the guard when a service identity is listed", func() {
+		cfg := pipelineConfig([]config.X509MatchConfig{{CN: "client", Organization: "CrossCodex"}})
+		err := attachPipeline(context.Background(), cfg, &sharedResources{}, &runtime{})
+		Expect(err).To(MatchError(ContainSubstring("tenants.default_tenant must be set")))
+	})
+})

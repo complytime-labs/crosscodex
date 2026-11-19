@@ -206,6 +206,8 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 		pipelineCfg.TLS = testServerTLS()
 		workerCfg := configureRole(config.RoleWorker)
 		startGraphRole(ctx, dsn, natsURL)
+		// The pipeline role refuses a default tenant migrate has not provisioned.
+		Expect(migrateDatabase(ctx, pipelineCfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
