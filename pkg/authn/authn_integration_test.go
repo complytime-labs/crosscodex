@@ -218,7 +218,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 					{
 						Match:  authn.X509Match{SANEmail: "*@partner.com"},
 						Tenant: "partner-org",
-						Roles:  []string{"reader"},
+						Roles:  []string{authn.RoleReviewer},
 					},
 				},
 			})
@@ -247,7 +247,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(identity.TenantID).To(Equal("partner-org"))
-			Expect(identity.Roles).To(Equal([]string{"reader"}))
+			Expect(identity.Roles).To(Equal([]string{authn.RoleReviewer}))
 			Expect(identity.Subject).To(Equal("partner-client"))
 		})
 
