@@ -1,0 +1,19 @@
+pkg/authn/authn_integration_test.go
+  s_3df4aa6a70e168::t_20cf2ff8b3b872 221,250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b5048d9355524ba35debd07d5e6ceb56b4903c52",
+  "prompts": {},
+  "sessions": {
+    "s_3df4aa6a70e168": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b97b53fd-9301-4f51-8c7f-bea7094e1ede",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
