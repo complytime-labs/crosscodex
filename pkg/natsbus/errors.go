@@ -36,8 +36,9 @@ var (
 
 	// ErrPermanent is returned (or wrapped) by a durable-consumer handler to say
 	// the message can never be processed: it is terminated, not redelivered, and
-	// in a work-queue stream it is removed. Any other handler error is retried
-	// after ConsumerConfig.RedeliverDelay, up to MaxDeliver.
+	// in a work-queue stream it is removed. ErrSkip also terminates; any other
+	// handler error is retried after ConsumerConfig.RedeliverDelay, up to
+	// MaxDeliver.
 	ErrPermanent = errors.New("message cannot be processed; not redelivered")
 
 	// ErrSkip is returned (or wrapped) by a durable-consumer handler for a

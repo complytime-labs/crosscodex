@@ -62,7 +62,9 @@ type Client interface {
 	// Redelivery stops after cfg.MaxDeliver deliveries. Termination takes
 	// precedence over redelivery when an error wraps both. Message.Metadata carries
 	// Stream, Sequence and NumDelivered. A message that fails the provenance or
-	// content-hash check is terminated and counted, never delivered to handler.
+	// content-hash check, or whose tenant header is missing or fails
+	// tenant.ValidateTenantID, is terminated and counted, never delivered to
+	// handler.
 	// Unsubscribe stops at once; Drain stops fetching and lets in-flight messages
 	// finish but does not wait for them.
 	ConsumeDurable(ctx context.Context, cfg ConsumerConfig, handler MessageHandler) (Subscription, error)
