@@ -46,6 +46,24 @@ type Client interface {
 	// same queue group.
 	QueueSubscribe(ctx context.Context, subject string, queue string, handler MessageHandler) (Subscription, error)
 
+	// ConsumeDurable creates or updates the durable pull consumer cfg describes
+	// (explicit acks) and calls handler for each message until the returned
+	// Subscription stops. The handler's context carries the message's tenant
+	// (validated) and the publisher's trace context. Outcome: nil acks; an
+	// error wrapping ErrPermanent terminates the message (removed from a
+	// work-queue stream); any other error redelivers it after
+	// cfg.RedeliverDelay, up to cfg.MaxDeliver. Message.Metadata carries
+	// Stream, Sequence and NumDelivered. A message that fails the provenance or
+	// content-hash check is terminated and counted, never delivered to handler.
+	// Unsubscribe stops at once; Drain finishes in-flight messages first.
+	ConsumeDurable(ctx context.Context, cfg ConsumerConfig, handler MessageHandler) (Subscription, error)
+
+	// SubjectMessageCount returns how many messages stream holds on subject,
+	// which may be a wildcard pattern. A work-queue stream holds only messages
+	// not yet acknowledged, so a nonzero count means work is still queued.
+	// Errors wrap ErrStreamNotFound when stream does not exist.
+	SubjectMessageCount(ctx context.Context, stream, subject string) (uint64, error)
+
 	// PublishWorkerProgress publishes one tick on WorkerProgressSubject with
 	// an empty payload and no headers. It needs no tenant in ctx, which is
 	// used only for the local span; nothing from ctx goes on the wire.

@@ -2,6 +2,7 @@ package natsbustest_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 
@@ -185,6 +186,41 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 		})
 	})
+	It("a durable consumer's acked, naked and termed counts sum to its deliveries", func() {
+		outcomes := rapid.SampledFrom([]error{nil, natsbus.ErrPermanent, errors.New("transient")})
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			fake := &natsbustest.Fake{}
+			script := rapid.SliceOf(outcomes).Draw(t, "script")
+			next := 0
+			sub, err := fake.ConsumeDurable(context.Background(),
+				natsbus.ConsumerConfig{Stream: "S", Durable: "d", FilterSubjects: []string{"a.*"}},
+				func(context.Context, *natsbus.Message) error { next++; return script[next-1] })
+			if err != nil {
+				t.Fatalf("consume: %v", err)
+			}
+			wantAck, wantNak, wantTerm := 0, 0, 0
+			for _, o := range script {
+				switch {
+				case o == nil:
+					wantAck++
+				case errors.Is(o, natsbus.ErrPermanent):
+					wantTerm++
+				default:
+					wantNak++
+				}
+				_ = fake.Deliver(&natsbus.Message{Subject: "a.x"})
+			}
+			s := sub.(*natsbustest.Sub)
+			if s.Acked() != wantAck || s.Naked() != wantNak || s.Termed() != wantTerm {
+				t.Fatalf("outcomes acked/naked/termed = %d/%d/%d, want %d/%d/%d",
+					s.Acked(), s.Naked(), s.Termed(), wantAck, wantNak, wantTerm)
+			}
+			if got := s.Acked() + s.Naked() + s.Termed(); got != len(script) {
+				t.Fatalf("outcomes sum to %d, want %d deliveries", got, len(script))
+			}
+		})
+	})
+
 	It("a tick subscription is signalled exactly by deliveries to WorkerProgressSubject", func() {
 		subjects := rapid.SampledFrom([]string{
 			natsbus.WorkerProgressSubject,

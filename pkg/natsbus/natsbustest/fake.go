@@ -56,9 +56,10 @@ func clonePublication(p Publication) Publication {
 // PublishWithHeaders return the tenant error when the context carries no
 // tenant (PublishDurable included). PublishWorkerProgress needs no tenant, like the real client.
 // Publish, PublishWithHeaders, PublishDurable and PublishWorkerProgress record and return nil;
-// Subscribe, QueueSubscribe and SubscribeWorkerProgress record a Sub and
-// return it; Close returns nil.
-// Unset CreateStreamFunc, DeleteStreamFunc and AuditStreamRetentionFunc
+// Subscribe, QueueSubscribe, SubscribeWorkerProgress and ConsumeDurable record
+// a Sub and return it; Close returns nil.
+// Unset CreateStreamFunc, DeleteStreamFunc, AuditStreamRetentionFunc and
+// SubjectMessageCountFunc
 // return ErrUnscripted. The zero value is ready to use. Set the exported
 // fields before the first call; the methods are then safe for concurrent use.
 type Fake struct {
@@ -86,6 +87,9 @@ type Fake struct {
 	PublishWorkerProgressErr error
 	// SubscribeWorkerProgressFunc is SubscribeFunc for SubscribeWorkerProgress.
 	SubscribeWorkerProgressFunc func(ctx context.Context, handler func()) (natsbus.Subscription, error)
+	// SubjectMessageCountFunc decides what SubjectMessageCount returns; unset is
+	// ErrUnscripted.
+	SubjectMessageCountFunc func(ctx context.Context, stream, subject string) (uint64, error)
 	// CreateStreamFunc decides what CreateStream returns; unset is ErrUnscripted.
 	CreateStreamFunc func(ctx context.Context, cfg natsbus.StreamConfig) error
 	// DeleteStreamFunc decides what DeleteStream returns; unset is ErrUnscripted.
@@ -245,6 +249,49 @@ func (f *Fake) SubscribeWorkerProgress(ctx context.Context, handler func()) (nat
 	return f.finishSubscribe(sub, got, err)
 }
 
+// ConsumeDurable validates cfg like the real client, then records a Sub that
+// Deliver matches against every cfg.FilterSubjects pattern (every subject when
+// there are none). The Sub counts each delivery by the outcome the real
+// consumer would apply to the handler's result: nil is acked, an error
+// wrapping natsbus.ErrPermanent is termed, any other error is naked. Fake
+// never redelivers; a test redelivers by calling Deliver again.
+func (f *Fake) ConsumeDurable(_ context.Context, cfg natsbus.ConsumerConfig, handler natsbus.MessageHandler) (natsbus.Subscription, error) {
+	if err := f.checkOpen("consume " + cfg.Durable); err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	sub := &Sub{Config: cfg}
+	sub.handler = func(ctx context.Context, msg *natsbus.Message) error {
+		err := handler(ctx, msg)
+		sub.mu.Lock()
+		defer sub.mu.Unlock()
+		switch {
+		case err == nil:
+			sub.acked++
+		case errors.Is(err, natsbus.ErrPermanent):
+			sub.termed++
+		default:
+			sub.naked++
+		}
+		return err
+	}
+	return f.register(sub), nil
+}
+
+// SubjectMessageCount returns what SubjectMessageCountFunc decides, or an
+// ErrUnscripted error when it is unset.
+func (f *Fake) SubjectMessageCount(ctx context.Context, stream, subject string) (uint64, error) {
+	if err := f.checkOpen("count messages in " + stream); err != nil {
+		return 0, err
+	}
+	if f.SubjectMessageCountFunc == nil {
+		return 0, unscripted("SubjectMessageCount")
+	}
+	return f.SubjectMessageCountFunc(ctx, stream, subject)
+}
+
 // finishSubscribe applies a subscribe Func's result: an error means no
 // subscription exists; otherwise the Func's Subscription, or sub when it
 // returned none, is what the caller gets, and sub is always recorded.
@@ -266,8 +313,8 @@ func (f *Fake) register(sub *Sub) *Sub {
 	return sub
 }
 
-// Subscriptions returns every subscription Subscribe and QueueSubscribe
-// recorded, in call order, including unsubscribed and drained ones.
+// Subscriptions returns every subscription Subscribe, QueueSubscribe,
+// SubscribeWorkerProgress and ConsumeDurable recorded, in call order, including unsubscribed and drained ones.
 func (f *Fake) Subscriptions() []*Sub {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -293,7 +340,7 @@ func (f *Fake) Deliver(msg *natsbus.Message) error {
 
 	var errs []error
 	for _, s := range subs {
-		if s.handler == nil || !s.live() || !server.SubjectMatchesFilter(msg.Subject, s.Subject) {
+		if s.handler == nil || !s.live() || !s.matches(msg.Subject) {
 			continue
 		}
 		errs = append(errs, s.handler(context.Background(), msg))
@@ -347,11 +394,14 @@ func (f *Fake) Close() error {
 }
 
 // Sub fakes natsbus.Subscription. Fake creates one per accepted Subscribe or
-// QueueSubscribe, and one per accepted SubscribeWorkerProgress. The methods
-// are safe for concurrent use.
+// QueueSubscribe, SubscribeWorkerProgress or ConsumeDurable. The methods are
+// safe for concurrent use.
 type Sub struct {
-	// Subject is the subscription's subject pattern.
+	// Subject is the subscription's subject pattern; empty for ConsumeDurable,
+	// which matches Config.FilterSubjects instead.
 	Subject string
+	// Config is the ConsumerConfig of a ConsumeDurable Sub, zero otherwise.
+	Config natsbus.ConsumerConfig
 	// Queue is the queue group, empty for Subscribe.
 	Queue string
 	// UnsubscribeErr is returned by Unsubscribe.
@@ -365,6 +415,44 @@ type Sub struct {
 	mu           sync.Mutex
 	unsubscribed bool
 	drained      bool
+	acked        int
+	naked        int
+	termed       int
+}
+
+// matches reports whether subject reaches this Sub: any filter subject of a
+// durable consumer (all subjects when it has none), else the Subject pattern.
+func (s *Sub) matches(subject string) bool {
+	if s.Config.Durable == "" {
+		return server.SubjectMatchesFilter(subject, s.Subject)
+	}
+	if len(s.Config.FilterSubjects) == 0 {
+		return true
+	}
+	return slices.ContainsFunc(s.Config.FilterSubjects, func(filter string) bool {
+		return server.SubjectMatchesFilter(subject, filter)
+	})
+}
+
+// Acked is how many handled messages the consumer would have acknowledged.
+func (s *Sub) Acked() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.acked
+}
+
+// Naked is how many handled messages the consumer would have redelivered.
+func (s *Sub) Naked() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.naked
+}
+
+// Termed is how many handled messages the consumer would have terminated.
+func (s *Sub) Termed() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.termed
 }
 
 // Unsubscribe marks the Sub unsubscribed, even when it returns UnsubscribeErr.

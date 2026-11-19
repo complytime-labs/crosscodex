@@ -34,6 +34,12 @@ var (
 	// ErrEmbeddedStart indicates the embedded NATS server failed to start.
 	ErrEmbeddedStart = errors.New("failed to start embedded NATS server")
 
+	// ErrPermanent is returned (or wrapped) by a durable-consumer handler to say
+	// the message can never be processed: it is terminated, not redelivered, and
+	// in a work-queue stream it is removed. Any other handler error is retried
+	// after ConsumerConfig.RedeliverDelay, up to MaxDeliver.
+	ErrPermanent = errors.New("message cannot be processed; not redelivered")
+
 	// ErrStreamDrift indicates a live JetStream stream differs from the
 	// configuration this process would create it with. Startup refuses it
 	// rather than overwrite a stream another role or an operator owns.

@@ -2,6 +2,7 @@ package natsbus
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -93,6 +94,31 @@ type StreamConfig struct {
 	MaxAge    time.Duration // Maximum message age; 0 = unlimited
 	Replicas  int           // Replication factor
 	WorkQueue bool          // true: work-queue retention (a message is removed once acknowledged); false: limits retention
+}
+
+// ConsumerConfig defines a durable JetStream pull consumer. The caller owns
+// the consumer: ConsumeDurable creates or updates it to match this config.
+type ConsumerConfig struct {
+	Stream         string        // Stream to consume; must exist
+	Durable        string        // Durable consumer name; state survives restarts
+	FilterSubjects []string      // Subjects to receive; empty = every subject in the stream
+	AckWait        time.Duration // Time to handle a message before redelivery; 0 = server default
+	MaxDeliver     int           // Maximum delivery attempts per message; -1 = unlimited
+	RedeliverDelay time.Duration // Delay before redelivery after a handler error (Nak)
+}
+
+// Validate reports why cfg cannot create a consumer. Errors wrap
+// ErrSubscribeFailed.
+func (cfg ConsumerConfig) Validate() error {
+	if cfg.Stream == "" || cfg.Durable == "" {
+		return fmt.Errorf("%w: consumer needs a stream and a durable name (got stream %q, durable %q); set both in ConsumerConfig",
+			ErrSubscribeFailed, cfg.Stream, cfg.Durable)
+	}
+	if cfg.MaxDeliver < -1 {
+		return fmt.Errorf("%w: consumer %s MaxDeliver is %d; use -1 for unlimited or a positive count",
+			ErrSubscribeFailed, cfg.Durable, cfg.MaxDeliver)
+	}
+	return nil
 }
 
 // Subscription represents an active message subscription.
