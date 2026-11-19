@@ -10,7 +10,7 @@
 // so a spec cannot pass on a call production would refuse:
 //
 //   - After Close, every method except Close returns natsbus.ErrConnectionClosed.
-//   - Publish and PublishWithHeaders require a tenant in the context
+//   - Publish, PublishWithHeaders and PublishDurable require a tenant in the context
 //     (tenant.FromContext); without one they return the tenant error.
 //   - PublishWorkerProgress and SubscribeWorkerProgress, the tenant-free
 //     worker progress signal, need no tenant and are bound to
@@ -49,12 +49,12 @@
 //
 //   - A method that returns data or whose result depends on its arguments is
 //     scripted by a <Method>Func field with the method's exact signature
-//     (Fake.CreateStreamFunc, Fake.PublishFunc). When set, it alone decides
+//     (Fake.CreateStreamFunc, Fake.PublishFunc, Fake.PublishDurableFunc). When set, it alone decides
 //     the result; an accepted call is still recorded if the fake records that
 //     method. An argument-free error-only method is scripted by a
 //     <Method>Err field instead: Fake.PublishWorkerProgressErr (its context
 //     only parents a span), Sub.UnsubscribeErr and Sub.DrainErr.
-//   - Publish, PublishWithHeaders and PublishWorkerProgress record and return
+//   - Publish, PublishWithHeaders, PublishDurable and PublishWorkerProgress record and return
 //     nil, Subscribe, QueueSubscribe and SubscribeWorkerProgress record and
 //     return a Sub, and Close returns nil. These
 //     are the natural defaults. An unset CreateStreamFunc, DeleteStreamFunc or

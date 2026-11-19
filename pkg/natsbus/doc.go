@@ -40,4 +40,9 @@
 //	}
 //
 //	err = client.Publish(ctx, subject, payload)
+//
+// Publish is core NATS: fire-and-forget, lost if no subscriber or the server
+// is down. For messages that must not be lost, use PublishDurable, which waits
+// for a JetStream stream to acknowledge storage and returns an error wrapping
+// ErrNotStored when none does (including when no stream captures the subject).
 package natsbus

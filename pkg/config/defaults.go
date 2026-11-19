@@ -46,6 +46,7 @@ nats:
   url: ""
   cluster: ""
   tls: false
+  publish_ack_timeout: 10s
   embedded:
     store_dir: ""
   streams:

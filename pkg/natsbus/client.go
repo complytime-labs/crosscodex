@@ -25,6 +25,10 @@ type client struct {
 	embedded *embeddedServer
 	opts     clientOptions
 
+	// ackTimeout bounds PublishDurable's wait for the JetStream PubAck
+	// (nats.publish_ack_timeout).
+	ackTimeout time.Duration
+
 	mu     sync.Mutex
 	closed bool
 
@@ -70,9 +74,10 @@ func New(cfg config.NATSConfig, opts ...Option) (Client, error) {
 	}
 
 	c := &client{
-		opts:   o,
-		tracer: o.tracer,
-		meter:  o.meter,
+		opts:       o,
+		tracer:     o.tracer,
+		meter:      o.meter,
+		ackTimeout: cfg.PublishAckTimeout,
 	}
 
 	var connectURL string
@@ -199,44 +204,94 @@ func (c *client) PublishWithHeaders(ctx context.Context, subject string, data []
 	start := time.Now()
 	ctx, span := c.startSpan(ctx, "natsbus.Publish")
 	defer span.End()
+
+	msg, err := c.buildMessage(ctx, span, subject, data, headers)
+	if err != nil {
+		return err
+	}
+	if err := c.conn.PublishMsg(msg); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("publish to %s: %w: %w", subject, ErrPublishFailed, err)
+	}
+	c.recordPublish(ctx, start)
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
+// PublishDurable publishes through JetStream and waits for the stream's
+// acknowledgement under the configured publish ack timeout. A subject that
+// no stream captures yields no acknowledgement and so fails.
+func (c *client) PublishDurable(ctx context.Context, subject string, data []byte, headers map[string][]string) error {
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "natsbus.PublishDurable")
+	defer span.End()
+
+	msg, err := c.buildMessage(ctx, span, subject, data, headers)
+	if err != nil {
+		return err
+	}
+	if c.ackTimeout <= 0 {
+		// Programmatic configs bypass pkg/config validation; fail closed
+		// rather than publish under an already-expired deadline.
+		span.SetStatus(codes.Error, "publish ack timeout not positive")
+		return fmt.Errorf("publish to %s: %w: %w: nats.publish_ack_timeout is %s; set it to a positive duration such as 10s",
+			subject, ErrPublishFailed, ErrNotStored, c.ackTimeout)
+	}
+
+	ackCtx, cancel := context.WithTimeout(ctx, c.ackTimeout)
+	defer cancel()
+	if _, err := c.js.PublishMsg(ackCtx, msg); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		if errors.Is(err, jetstream.ErrNoStreamResponse) {
+			return fmt.Errorf("publish to %s: %w: %w: no JetStream stream captures this subject, so the message was not stored; create a stream whose subjects include it: %w",
+				subject, ErrPublishFailed, ErrNotStored, err)
+		}
+		return fmt.Errorf("publish to %s: %w: %w: %w", subject, ErrPublishFailed, ErrNotStored, err)
+	}
+	c.recordPublish(ctx, start)
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
+// buildMessage applies the checks and header merge common to every publish:
+// the connection must be open and ctx must carry a tenant. Provenance
+// headers override user headers of the same name. On error it marks span
+// failed.
+func (c *client) buildMessage(ctx context.Context, span trace.Span, subject string, data []byte, headers map[string][]string) (*nats.Msg, error) {
 	span.SetAttributes(attribute.String("messaging.subject", subject))
 
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		span.SetStatus(codes.Error, "connection closed")
-		return fmt.Errorf("publish to %s: %w", subject, ErrConnectionClosed)
+		return nil, fmt.Errorf("publish to %s: %w", subject, ErrConnectionClosed)
 	}
 	c.mu.Unlock()
 
 	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
 		span.SetStatus(codes.Error, "tenant required")
-		return fmt.Errorf("publish to %s: tenant required: %w", subject, err)
+		return nil, fmt.Errorf("publish to %s: tenant required: %w", subject, err)
 	}
 	span.SetAttributes(attribute.String("tenant.id", tenantID))
 
 	provHeaders := injectProvenance(ctx, data, tenantID)
-	allHeaders := mergeHeaders(headers, provHeaders)
-
-	msg := &nats.Msg{
+	return &nats.Msg{
 		Subject: subject,
 		Data:    data,
-		Header:  nats.Header(allHeaders),
-	}
+		Header:  nats.Header(mergeHeaders(headers, provHeaders)),
+	}, nil
+}
 
-	if err := c.conn.PublishMsg(msg); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("publish to %s: %w: %w", subject, ErrPublishFailed, err)
-	}
+// recordPublish records the publish counter and latency for a successful
+// publish that began at start.
+func (c *client) recordPublish(ctx context.Context, start time.Time) {
 	if c.publishCounter != nil {
 		c.publishCounter.Add(ctx, 1)
 	}
 	if c.publishLatency != nil {
 		c.publishLatency.Record(ctx, time.Since(start).Milliseconds())
 	}
-	span.SetStatus(codes.Ok, "")
-	return nil
 }
 
 // Subscribe creates a subscription to the specified subject.

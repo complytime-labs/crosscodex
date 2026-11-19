@@ -28,12 +28,14 @@ var (
 	_ natsbus.Subscription = (*Sub)(nil)
 )
 
-// Publication is one message accepted by Publish or PublishWithHeaders.
-// Headers is nil when the call carried none (Publish, or a nil map).
+// Publication is one message accepted by Publish, PublishWithHeaders or
+// PublishDurable. Headers is nil when the call carried none (Publish, or a nil
+// map). Durable is true only for PublishDurable.
 type Publication struct {
 	Subject string
 	Data    []byte
 	Headers map[string][]string
+	Durable bool
 }
 
 func clonePublication(p Publication) Publication {
@@ -52,8 +54,8 @@ func clonePublication(p Publication) Publication {
 // boundary before any Func runs, without recording the call: every method but
 // Close returns natsbus.ErrConnectionClosed after Close, and Publish and
 // PublishWithHeaders return the tenant error when the context carries no
-// tenant. PublishWorkerProgress needs no tenant, like the real client.
-// Publish, PublishWithHeaders and PublishWorkerProgress record and return nil;
+// tenant (PublishDurable included). PublishWorkerProgress needs no tenant, like the real client.
+// Publish, PublishWithHeaders, PublishDurable and PublishWorkerProgress record and return nil;
 // Subscribe, QueueSubscribe and SubscribeWorkerProgress record a Sub and
 // return it; Close returns nil.
 // Unset CreateStreamFunc, DeleteStreamFunc and AuditStreamRetentionFunc
@@ -66,6 +68,9 @@ type Fake struct {
 	// PublishWithHeadersFunc, if set, alone decides what PublishWithHeaders
 	// returns. Every accepted publish is recorded in Published.
 	PublishWithHeadersFunc func(ctx context.Context, subject string, data []byte, headers map[string][]string) error
+	// PublishDurableFunc, if set, alone decides what PublishDurable returns.
+	// Every accepted publish is recorded in Published with Durable true.
+	PublishDurableFunc func(ctx context.Context, subject string, data []byte, headers map[string][]string) error
 	// SubscribeFunc, if set, alone decides what Subscribe returns. A nil
 	// Subscription with a nil error means "succeed with the recorded Sub". If
 	// it returns an error, no subscription exists: the call is not recorded
@@ -108,14 +113,14 @@ func (f *Fake) checkOpen(wrap string) error {
 
 // publish applies the real client's closed and tenant checks, records the
 // publication, and reports whether it was accepted.
-func (f *Fake) publish(ctx context.Context, subject string, data []byte, headers map[string][]string) error {
+func (f *Fake) publish(ctx context.Context, subject string, data []byte, headers map[string][]string, durable bool) error {
 	if err := f.checkOpen("publish to " + subject); err != nil {
 		return err
 	}
 	if _, err := tenant.FromContext(ctx); err != nil {
 		return fmt.Errorf("publish to %s: tenant required: %w", subject, err)
 	}
-	pub := clonePublication(Publication{Subject: subject, Data: data, Headers: headers})
+	pub := clonePublication(Publication{Subject: subject, Data: data, Headers: headers, Durable: durable})
 	f.mu.Lock()
 	f.published = append(f.published, pub)
 	f.mu.Unlock()
@@ -125,7 +130,7 @@ func (f *Fake) publish(ctx context.Context, subject string, data []byte, headers
 // Publish validates and records the message, then returns what PublishFunc
 // decides, or nil when it is unset.
 func (f *Fake) Publish(ctx context.Context, subject string, data []byte) error {
-	if err := f.publish(ctx, subject, data, nil); err != nil {
+	if err := f.publish(ctx, subject, data, nil, false); err != nil {
 		return err
 	}
 	if f.PublishFunc != nil {
@@ -138,7 +143,7 @@ func (f *Fake) Publish(ctx context.Context, subject string, data []byte) error {
 // PublishWithHeadersFunc decides, or nil when it is unset. Fake does not add
 // provenance headers.
 func (f *Fake) PublishWithHeaders(ctx context.Context, subject string, data []byte, headers map[string][]string) error {
-	if err := f.publish(ctx, subject, data, headers); err != nil {
+	if err := f.publish(ctx, subject, data, headers, false); err != nil {
 		return err
 	}
 	if f.PublishWithHeadersFunc != nil {
@@ -147,8 +152,22 @@ func (f *Fake) PublishWithHeaders(ctx context.Context, subject string, data []by
 	return nil
 }
 
+// PublishDurable validates and records the message with Durable set, then
+// returns what PublishDurableFunc decides, or nil when it is unset. Fake does
+// not add provenance headers. Script an ErrNotStored failure through
+// PublishDurableFunc.
+func (f *Fake) PublishDurable(ctx context.Context, subject string, data []byte, headers map[string][]string) error {
+	if err := f.publish(ctx, subject, data, headers, true); err != nil {
+		return err
+	}
+	if f.PublishDurableFunc != nil {
+		return f.PublishDurableFunc(ctx, subject, data, headers)
+	}
+	return nil
+}
+
 // Published returns every accepted publication from Publish,
-// PublishWithHeaders and PublishWorkerProgress, in call order. The publications are deep copies, so a
+// PublishWithHeaders, PublishDurable and PublishWorkerProgress, in call order. The publications are deep copies, so a
 // caller mutating one does not alter the record.
 func (f *Fake) Published() []Publication {
 	f.mu.Lock()

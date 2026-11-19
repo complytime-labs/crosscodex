@@ -6,6 +6,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -101,6 +102,16 @@ func ExportTelemetryFields(c Client) TelemetryFields {
 		HasProcessCounter: cc.processCounter != nil,
 		HasProcessLatency: cc.processLatency != nil,
 	}
+}
+
+// ExportJetStream returns the JetStream handle of a client built by New, so
+// specs can inspect stored messages. It returns nil for any other Client.
+func ExportJetStream(c Client) jetstream.JetStream {
+	cc, ok := c.(*client)
+	if !ok {
+		return nil
+	}
+	return cc.js
 }
 
 // ExportEmbeddedServer wraps embeddedServer for external test access.

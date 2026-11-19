@@ -12,6 +12,13 @@ var (
 	// ErrPublishFailed indicates message publication failed.
 	ErrPublishFailed = errors.New("failed to publish message")
 
+	// ErrNotStored indicates a durable publish was not confirmed stored by
+	// JetStream: no stream captures the subject, the acknowledgement failed
+	// or timed out, or the publish ack timeout is misconfigured. Errors
+	// wrapping it also wrap ErrPublishFailed. The message may or may not
+	// have reached a stream; a caller that cannot lose it must retry or fail.
+	ErrNotStored = errors.New("message not stored")
+
 	// ErrSubscribeFailed indicates subscription creation failed.
 	ErrSubscribeFailed = errors.New("failed to create subscription")
 

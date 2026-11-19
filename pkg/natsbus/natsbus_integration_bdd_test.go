@@ -34,7 +34,8 @@ func newEmbeddedClient() natsbus.Client {
 		Embedded: config.NATSEmbeddedConfig{
 			StoreDir: storeDir,
 		},
-		Streams: defaultTestStreamsConfig(),
+		Streams:           defaultTestStreamsConfig(),
+		PublishAckTimeout: 10 * time.Second,
 	}
 
 	client, err := natsbus.New(cfg)
@@ -209,6 +210,94 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			Eventually(receivedByA.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(5)))
 			Consistently(receivedByB.Load, 500*time.Millisecond, 10*time.Millisecond).Should(BeZero(),
 				"isolation violated: tenant B received messages meant for tenant A")
+		})
+	})
+
+	Describe("PublishDurable", func() {
+		const subject = "crosscodex.test.durable.item"
+
+		// newStream creates a stream capturing subject and returns its name.
+		newStream := func(client natsbus.Client) string {
+			Expect(client.CreateStream(context.Background(), natsbus.StreamConfig{
+				Name: "TEST_DURABLE", Subjects: []string{"crosscodex.test.durable.>"}, Replicas: 1,
+			})).To(Succeed())
+			return "TEST_DURABLE"
+		}
+
+		It("stores a durable publish in the stream that captures its subject", func() {
+			client := newEmbeddedClient()
+			name := newStream(client)
+			ctx := testTenantCtx("acme-corp")
+
+			Expect(client.PublishDurable(ctx, subject, []byte("payload"), nil)).To(Succeed())
+
+			stream, err := natsbus.ExportJetStream(client).Stream(ctx, name)
+			Expect(err).NotTo(HaveOccurred())
+			info, err := stream.Info(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.State.Msgs).To(BeEquivalentTo(1))
+		})
+
+		It("returns ErrNotStored when no stream captures the subject", func() {
+			client := newEmbeddedClient()
+			ctx := testTenantCtx("acme-corp")
+
+			err := client.PublishDurable(ctx, "crosscodex.test.uncaptured.item", []byte("payload"), nil)
+			Expect(err).To(MatchError(natsbus.ErrNotStored))
+			Expect(err).To(MatchError(natsbus.ErrPublishFailed))
+		})
+
+		It("fails closed, wrapping ErrNotStored, when publish_ack_timeout is not positive", func() {
+			client, err := natsbus.New(config.NATSConfig{
+				Embedded: config.NATSEmbeddedConfig{StoreDir: filepath.Join(GinkgoT().TempDir(), "nats-store")},
+				Streams:  defaultTestStreamsConfig(),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(client.Close)
+			newStream(client)
+
+			err = client.PublishDurable(testTenantCtx("acme-corp"), subject, []byte("payload"), nil)
+			Expect(err).To(MatchError(natsbus.ErrNotStored))
+			Expect(err).To(MatchError(ContainSubstring("nats.publish_ack_timeout")))
+		})
+
+		It("rejects a durable publish without a tenant and stores nothing", func() {
+			client := newEmbeddedClient()
+			name := newStream(client)
+
+			err := client.PublishDurable(context.Background(), subject, []byte("payload"), nil)
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+
+			stream, serr := natsbus.ExportJetStream(client).Stream(context.Background(), name)
+			Expect(serr).NotTo(HaveOccurred())
+			info, serr := stream.Info(context.Background())
+			Expect(serr).NotTo(HaveOccurred())
+			Expect(info.State.Msgs).To(BeZero())
+		})
+
+		It("carries the same provenance headers as PublishWithHeaders", func() {
+			client := newEmbeddedClient()
+			newStream(client)
+			ctx := testTenantCtx("acme-corp")
+			ch := subscribeOne(client, ctx, subject)
+			payload := []byte("payload")
+			userHeaders := map[string][]string{"X-Custom": {"v"}}
+
+			Expect(client.PublishWithHeaders(ctx, subject, payload, userHeaders)).To(Succeed())
+			core := receiveOne(ch, 5*time.Second)
+			Expect(core).NotTo(BeNil())
+
+			ch = subscribeOne(client, ctx, subject)
+			Expect(client.PublishDurable(ctx, subject, payload, userHeaders)).To(Succeed())
+			durable := receiveOne(ch, 5*time.Second)
+			Expect(durable).NotTo(BeNil())
+
+			assertProvenanceHeaders(durable, payload, "acme-corp")
+			Expect(durable.Headers).To(HaveKeyWithValue("X-Custom", []string{"v"}))
+			for key := range core.Headers {
+				Expect(durable.Headers).To(HaveKey(key))
+			}
+			Expect(durable.Headers).To(HaveLen(len(core.Headers)))
 		})
 	})
 

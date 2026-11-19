@@ -24,6 +24,14 @@ type Client interface {
 	// Provenance headers are injected automatically.
 	Publish(ctx context.Context, subject string, data []byte) error
 
+	// PublishDurable publishes through JetStream and waits for the stream's
+	// acknowledgement, so a nil error means the message is stored. Headers and
+	// provenance are as for PublishWithHeaders. The wait is bounded by
+	// nats.publish_ack_timeout. Errors wrap ErrPublishFailed and ErrNotStored,
+	// including when no stream captures subject. Use it for messages that must
+	// not be lost (audit, materialization events); Publish is fire-and-forget.
+	PublishDurable(ctx context.Context, subject string, data []byte, headers map[string][]string) error
+
 	// PublishWithHeaders sends a message with additional custom headers.
 	// Provenance headers are injected automatically and merged with
 	// the provided headers. Provenance headers take precedence on conflict.

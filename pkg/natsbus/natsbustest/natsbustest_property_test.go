@@ -92,6 +92,33 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
+	It("PublishDurable records each tenant-scoped call once with Durable true", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			ctx, err := tenant.WithTenant(context.Background(), "tenant-a")
+			if err != nil {
+				t.Fatalf("tenant context: %v", err)
+			}
+			subjects := rapid.SliceOf(subjectGen("subject")).Draw(t, "subjects")
+
+			fake := &natsbustest.Fake{}
+			for _, s := range subjects {
+				if err := fake.PublishDurable(ctx, s, []byte(s), nil); err != nil {
+					t.Fatalf("PublishDurable: %v", err)
+				}
+			}
+
+			got := fake.Published()
+			if len(got) != len(subjects) {
+				t.Fatalf("recorded %d publications for %d calls", len(got), len(subjects))
+			}
+			for i, s := range subjects {
+				if got[i].Subject != s || !got[i].Durable {
+					t.Fatalf("publication %d = %+v, want durable publication on %q", i, got[i], s)
+				}
+			}
+		})
+	})
+
 	It("Deliver reaches every live matching subscription and no other", func() {
 		rapid.Check(GinkgoT(), func(t *rapid.T) {
 			ctx := context.Background()

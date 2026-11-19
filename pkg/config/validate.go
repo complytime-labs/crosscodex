@@ -61,6 +61,7 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 		cfg.Retention.validate(tracker),
 		validateBackup(&cfg.Backup, &cfg.Storage.Objects, tracker),
 		validateGraph(&cfg.Graph, tracker),
+		validateNATS(&cfg.NATS, tracker),
 		validateTenants(&cfg.Tenants, tracker),
 		validateRole(cfg, tracker),
 	)
@@ -89,6 +90,15 @@ func (p *problems) addFrom(source, path, format string, args ...any) {
 }
 
 func (p problems) err() error { return errors.Join(p...) }
+
+func validateNATS(nats *NATSConfig, tracker *sourceTracker) error {
+	var p problems
+	if nats.PublishAckTimeout <= 0 {
+		p.add("nats.publish_ack_timeout", "nats.publish_ack_timeout %s%s must be positive: it bounds how long a durable publish waits for JetStream to confirm storage, so set a positive duration such as 10s: %w",
+			nats.PublishAckTimeout, formatSource(tracker, "nats.publish_ack_timeout"), ErrInvalidConfig)
+	}
+	return p.err()
+}
 
 func validateTLS(tls *TLSConfig, tracker *sourceTracker) error {
 	var p problems

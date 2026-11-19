@@ -32,6 +32,7 @@ func validConfig() *config.Config {
 			ExpiryDuration:    8760 * time.Hour,
 			IncludeByProducts: true,
 		},
+		NATS:     config.NATSConfig{PublishAckTimeout: 10 * time.Second},
 		Pipeline: config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: 5 * time.Minute},
 		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10000, MaxInFlight: 1},
 		Graph:    config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges, MaxSimilarityCatalogs: config.DefaultGraphMaxSimilarityCatalogs, MaxSimilarityLimit: config.DefaultGraphMaxSimilarityLimit},

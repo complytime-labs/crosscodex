@@ -3,6 +3,7 @@ package natsbustest_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -95,6 +96,43 @@ var _ = Describe("Fake", func() {
 				return f.PublishWithHeaders(ctx, "s", []byte("d"), nil)
 			}),
 		)
+
+		It("records PublishDurable with Durable set, and no other publish method does", func() {
+			Expect(fake.Publish(ctx, "a", []byte("one"))).To(Succeed())
+			Expect(fake.PublishDurable(ctx, "b", []byte("two"), map[string][]string{"K": {"v"}})).To(Succeed())
+
+			Expect(fake.Published()).To(Equal([]natsbustest.Publication{
+				{Subject: "a", Data: []byte("one")},
+				{Subject: "b", Data: []byte("two"), Headers: map[string][]string{"K": {"v"}}, Durable: true},
+			}))
+		})
+
+		It("lets PublishDurableFunc alone decide the result and still records the call", func() {
+			fake.PublishDurableFunc = func(context.Context, string, []byte, map[string][]string) error {
+				return fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+			}
+			err := fake.PublishDurable(ctx, "s", []byte("d"), nil)
+			Expect(err).To(MatchError(natsbus.ErrNotStored))
+			Expect(err).To(MatchError(natsbus.ErrPublishFailed))
+			Expect(fake.Published()).To(HaveLen(1))
+		})
+
+		It("rejects a durable publish without a tenant, before the Func and without recording", func() {
+			reached := false
+			fake.PublishDurableFunc = func(context.Context, string, []byte, map[string][]string) error {
+				reached = true
+				return nil
+			}
+			Expect(fake.PublishDurable(context.Background(), "s", nil, nil)).To(MatchError(tenant.ErrNoTenant))
+			Expect(reached).To(BeFalse())
+			Expect(fake.Published()).To(BeEmpty())
+		})
+
+		It("rejects a durable publish after Close", func() {
+			Expect(fake.Close()).To(Succeed())
+			Expect(fake.PublishDurable(ctx, "s", nil, nil)).To(MatchError(natsbus.ErrConnectionClosed))
+			Expect(fake.Published()).To(BeEmpty())
+		})
 
 		It("rejects a publish without a tenant in the context, before the Func and without recording", func() {
 			reached := false

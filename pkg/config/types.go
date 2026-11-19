@@ -244,6 +244,11 @@ type NATSConfig struct {
 	TLS      bool               `yaml:"tls" json:"tls"`           // Enable TLS
 	Embedded NATSEmbeddedConfig `yaml:"embedded" json:"embedded"` // Embedded server settings
 	Streams  NATSStreamsConfig  `yaml:"streams" json:"streams"`   // JetStream stream settings
+
+	// PublishAckTimeout bounds how long an acknowledged (durable) publish
+	// waits for JetStream to confirm the message is stored. Must be positive.
+	// Default: 10s. Global-only; not tenant-overridable.
+	PublishAckTimeout time.Duration `yaml:"publish_ack_timeout" json:"publish_ack_timeout"`
 }
 
 // NATSEmbeddedConfig configures the embedded NATS server.
