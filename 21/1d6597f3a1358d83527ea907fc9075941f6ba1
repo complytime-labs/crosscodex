@@ -1,0 +1,38 @@
+pkg/natsbus/types.go
+  s_290b9f730df96c::t_3af9836205c40b 103-121
+pkg/natsbus/natsbus_property_test.go
+  s_290b9f730df96c::t_86ee37da8ed36a 119-146
+  s_290b9f730df96c::t_066f3405cbd00b 7
+pkg/natsbus/client.go
+  s_290b9f730df96c::t_3af9836205c40b 687
+pkg/natsbus/natsbus_bdd_test.go
+  s_290b9f730df96c::t_4f082018dcb6e8 601-642,644-648,650-652
+  s_290b9f730df96c::t_dbb8db7f81f554 649
+  s_290b9f730df96c::t_94efad38aaaaf7 643
+pkg/natsbus/subjects.go
+  s_290b9f730df96c::t_3af9836205c40b 22-36,155-177
+  s_290b9f730df96c::t_a7ee2d31295a87 178
+pkg/natsbus/natsbustest/fake.go
+  s_290b9f730df96c::t_7377bef3d09d23 60,84-88,265,296-300
+pkg/natsbus/natsbustest/natsbustest_bdd_test.go
+  s_290b9f730df96c::t_95e2cdf701ba6b 208-236
+pkg/natsbus/natsbustest/natsbustest_property_test.go
+  s_290b9f730df96c::t_7377bef3d09d23 6
+  s_290b9f730df96c::t_95e2cdf701ba6b 225-257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "211d6597f3a1358d83527ea907fc9075941f6ba1",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
