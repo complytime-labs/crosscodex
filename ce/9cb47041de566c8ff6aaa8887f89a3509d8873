@@ -1,0 +1,26 @@
+internal/graph/server_bdd_test.go
+  s_7e89139204344e::t_1475fd9101998a 1-219,221-229,233-267,269-281
+  s_7e89139204344e::t_5e08e747e631e2 220,230-232,268
+.golangci.yml
+  s_7e89139204344e::t_3ef8ba0cefe059 51-52
+AGENTS.md
+  s_7e89139204344e::t_3ef8ba0cefe059 27
+internal/graph/server.go
+  s_7e89139204344e::t_c44e759ec2cfeb 1-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ce9cb47041de566c8ff6aaa8887f89a3509d8873",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
