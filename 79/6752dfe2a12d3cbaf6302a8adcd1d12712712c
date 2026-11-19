@@ -1,0 +1,22 @@
+cmd/crosscodexd/graph_role_integration_test.go
+  s_7e89139204344e::t_21b326dbf3d210 1-189,193,199-273
+  s_7e89139204344e::t_4cc2c9720f942e 190-192,194-198
+cmd/crosscodexd/e2e_integration_test.go
+  s_7e89139204344e::t_7b875add1effa7 51-53,60-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "796752dfe2a12d3cbaf6302a8adcd1d12712712c",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
