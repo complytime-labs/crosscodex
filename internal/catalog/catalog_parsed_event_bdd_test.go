@@ -96,13 +96,14 @@ var _ = Describe("ParseCatalog parsed event", func() {
 	)
 
 	var (
-		ctx    context.Context
-		log    *callLog
-		store  *memStore
-		st     *storagetest.Fake
-		bus    *natsbustest.Fake
-		failOn string
-		parser *editingParser
+		auditFails bool
+		ctx        context.Context
+		log        *callLog
+		store      *memStore
+		st         *storagetest.Fake
+		bus        *natsbustest.Fake
+		failOn     string
+		parser     *editingParser
 	)
 
 	BeforeEach(func() {
@@ -127,6 +128,14 @@ var _ = Describe("ParseCatalog parsed event", func() {
 			log.add("publish " + subject)
 			return nil
 		}}
+		auditFails = false
+		bus.PublishDurableFunc = func(_ context.Context, subject string, _ []byte, _ map[string][]string) error {
+			if auditFails {
+				return errors.New("nats: no responders")
+			}
+			log.add("durable " + subject)
+			return nil
+		}
 		parser = &editingParser{Parser: oscal.NewParser("")}
 	})
 
@@ -160,14 +169,19 @@ var _ = Describe("ParseCatalog parsed event", func() {
 		}))
 	}
 
-	It("publishes the catalog parsed event with the catalog ID and control count, and still publishes the audit event", func() {
+	It("publishes the catalog parsed event with the catalog ID and control count, and stores the audit event durably", func() {
 		resp, err := parse(newService(WithStore(store), WithBus(bus)))
 		Expect(err).NotTo(HaveOccurred())
 		catalogID := resp.Msg.GetCatalogId()
 
 		subject, err := natsbus.CatalogParsedSubject(tenantID, catalogID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(publishedSubjects()).To(ConsistOf(subject, "audit.catalog.parsed"))
+		auditSubject, err := natsbus.CatalogAuditSubject(tenantID, catalogID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(publishedSubjects()).To(ConsistOf(subject, auditSubject))
+		for _, p := range bus.Published() {
+			Expect(p.Durable).To(Equal(p.Subject == auditSubject), "only the audit record is published durably: %s", p.Subject)
+		}
 
 		var payload struct {
 			CatalogID    string `json:"catalog_id"`
@@ -228,7 +242,7 @@ var _ = Describe("ParseCatalog parsed event", func() {
 	It("does not publish the parsed event when no store is configured, because no rows exist to project", func() {
 		_, err := parse(newService(WithBus(bus)))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(publishedSubjects()).To(ConsistOf("audit.catalog.parsed"))
+		Expect(publishedSubjects()).To(ConsistOf(HavePrefix("crosscodex.audit.e2e.events.catalog.")))
 	})
 
 	It("does not publish the parsed event for a catalog with no controls, because the graph role rejects an empty projection", func() {
@@ -236,6 +250,20 @@ var _ = Describe("ParseCatalog parsed event", func() {
 		_, err := parse(newService(WithStore(store), WithBus(bus)))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(store.controls).To(BeEmpty())
-		Expect(publishedSubjects()).To(ConsistOf("audit.catalog.parsed"))
+		Expect(publishedSubjects()).To(ConsistOf(HavePrefix("crosscodex.audit.e2e.events.catalog.")))
+	})
+
+	It("fails the import when the audit record is not stored, saying the catalog was stored and re-import is safe", func() {
+		auditFails = true
+		resp, err := parse(newService(WithStore(store), WithBus(bus)))
+
+		Expect(resp).To(BeNil())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+		Expect(store.catalogs).To(HaveLen(1))
+		Expect(err.Error()).To(ContainSubstring(store.catalogs[0].CatalogID))
+		Expect(err.Error()).To(ContainSubstring("was stored but its audit record was not"))
+		Expect(err.Error()).To(ContainSubstring("re-import is safe"))
+		Expect(err.Error()).NotTo(ContainSubstring("nats:"), "bus internals are logged, not returned")
+		Expect(store.controls).To(HaveLen(3), "the stored rows stay in place; re-import upserts them")
 	})
 })

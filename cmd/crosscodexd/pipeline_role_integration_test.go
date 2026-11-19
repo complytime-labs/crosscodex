@@ -34,7 +34,7 @@ import (
 func splitRoleConfig(dsn, natsURL, tenantID, role string) *config.Config {
 	cfg := baseTestConfig(dsn)
 	cfg.Role = role
-	cfg.NATS = config.NATSConfig{URL: natsURL}
+	cfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 	cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: e2eModel, EmbeddingModel: e2eModel}
 	cfg.Analysis = e2eAnalysisConfig()
 	cfg.Prompt = config.PromptConfig{
@@ -108,7 +108,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		gwCfg.Server.Addr = "127.0.0.1:0"
 		gwCfg.Pipeline.Endpoint = pipelineAddr
 		gwCfg.TLS = testClientTLS()
-		gwCfg.NATS = config.NATSConfig{URL: natsURL}
+		gwCfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 		gwCfg.Tenants.DefaultTenant = tenantID
 		gwCfg.Storage.Objects.BasePath = GinkgoT().TempDir()
 
@@ -223,7 +223,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		// the gateway publishes the parsed catalog and stops there.
 		graphCfg := baseTestConfig(dsn)
 		graphCfg.Role = config.RoleGraph
-		graphCfg.NATS = config.NATSConfig{URL: natsURL}
+		graphCfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 		graphCfg.Health.Addr = "127.0.0.1:0"
 
 		graphRT, err := bootstrap(ctx, graphCfg)
@@ -251,7 +251,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		gwCfg.TLS.Targets = map[string]config.TLSOverride{
 			"gateway-server": {Cert: testTLSServerCertPath, Key: testTLSServerKeyPath},
 		}
-		gwCfg.NATS = config.NATSConfig{URL: natsURL}
+		gwCfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 		gwCfg.Tenants.DefaultTenant = tenantID
 		gwCfg.Storage.Objects.BasePath = GinkgoT().TempDir()
 
@@ -349,7 +349,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline
-		cfg.NATS = config.NATSConfig{URL: natsURL}
+		cfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: e2eModel, EmbeddingModel: e2eModel}
 		cfg.Analysis = e2eAnalysisConfig()
 		cfg.Prompt = config.PromptConfig{

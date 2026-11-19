@@ -11,6 +11,11 @@ var (
 	// billed, the call, so the client never retries it.
 	ErrTimeout = errors.New("LLM request timed out")
 
+	// ErrAuditFailed indicates the LLM call completed but its audit record
+	// was not stored, so the result is withheld. The call was probably
+	// billed: callers must not retry it.
+	ErrAuditFailed = errors.New("LLM audit record not stored")
+
 	// ErrRateLimitExceeded indicates the rate limit was exceeded after retries.
 	ErrRateLimitExceeded = errors.New("rate limit exceeded")
 

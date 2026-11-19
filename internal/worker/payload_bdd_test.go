@@ -291,6 +291,8 @@ var _ = Describe("errorCategory", func() {
 		Entry("LLM call with no answer within max_tokens", fmt.Errorf("%w: %w", ErrLLMCall, llmclient.ErrOutputTruncated), natsbus.ResultErrorOutputTruncated),
 		Entry("an LLM call that timed out", fmt.Errorf("%w: %w", ErrLLMCall, llmclient.ErrTimeout), natsbus.ResultErrorTimeout),
 		Entry("an LLM call rate-limited past every attempt", fmt.Errorf("%w: %w", ErrLLMCall, llmclient.ErrRateLimitExceeded), natsbus.ResultErrorRateLimited),
+		Entry("an LLM call whose audit record was not stored", fmt.Errorf("%w: %w", ErrLLMCall, llmclient.ErrAuditFailed), natsbus.ResultErrorAuditFailed),
+		Entry("an audit failure outranks the call error it hides", fmt.Errorf("%w: %w; %w", ErrLLMCall, llmclient.ErrTimeout, llmclient.ErrAuditFailed), natsbus.ResultErrorAuditFailed),
 		Entry("tenant config error", ErrTenantConfig, "tenant_config_error"),
 		Entry("wrapped tenant config error", fmt.Errorf("wrap: %w", ErrTenantConfig), "tenant_config_error"),
 		Entry("unknown error", errors.New("something else"), "unknown"),

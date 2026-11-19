@@ -80,7 +80,8 @@ func SetupTestNATS() (natsbus.Client, TestCleanup) {
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 
 	cfg := config.NATSConfig{
-		URL: "", // Empty URL means embedded mode
+		URL:               "", // Empty URL means embedded mode
+		PublishAckTimeout: 10 * time.Second,
 		Embedded: config.NATSEmbeddedConfig{
 			StoreDir: storeDir,
 		},

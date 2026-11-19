@@ -48,6 +48,7 @@ var _ = Describe("buildSharedResources LLM audit wiring", func() {
 		cfg.NATS.Embedded.StoreDir = GinkgoT().TempDir()
 		cfg.NATS.Streams.AuditLLMRetention = 90 * 24 * time.Hour
 		cfg.NATS.Streams.AuditEventsRetention = 30 * 24 * time.Hour
+		cfg.NATS.PublishAckTimeout = 10 * time.Second
 		cfg.LLM.GatewayURL = gateway.URL
 
 		res, err := buildSharedResources(ctx, cfg, requiredResources{nats: true, llm: true})

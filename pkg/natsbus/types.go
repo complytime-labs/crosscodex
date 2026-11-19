@@ -47,6 +47,10 @@ const (
 	// ResultErrorInvalidPayload: the task payload was malformed. Never
 	// retried: the same payload fails the same way.
 	ResultErrorInvalidPayload = "invalid_payload"
+	// ResultErrorAuditFailed: the LLM call completed but its audit record
+	// was not stored (llmclient.ErrAuditFailed). Never retried: the call was
+	// made and probably billed.
+	ResultErrorAuditFailed = "audit_failed"
 )
 
 // taskTypes lists every TaskType constant, in declaration order.

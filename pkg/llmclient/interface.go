@@ -23,9 +23,10 @@ type Client interface {
 	Close() error
 }
 
-// AuditEmitter publishes LLM audit events. Implementations should be
-// best-effort: log and continue on emission failure, never fail the
-// primary LLM operation.
+// AuditEmitter publishes LLM audit events. An LLM call must not go
+// unaudited: EmitLLMAudit must return an error unless the event is stored
+// durably. The client then withholds the result and returns ErrAuditFailed,
+// so implementations must return every failure, never swallow it.
 //
 // The gateway layer provides a natsbus-backed implementation.
 // The llmclient package never imports natsbus directly.

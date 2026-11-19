@@ -75,9 +75,10 @@
 //	llm, err := llmclient.New(cfg.LLM, llmclient.WithAuditEmitter(emitter))
 //	w := worker.New(bus, llm, cfg.Worker, worker.WithAbandonTTL(cfg.Pipeline.StageTimeout))
 //
-// Audit events are published best-effort: publish failures are logged and
-// counted via the crosscodex.worker.audit.failures.total metric, but never
-// propagated to the caller.
+// Audit events are stored durably: a failure to store one is logged, counted
+// via the crosscodex.worker.audit.failures.total metric, and returned to the
+// caller, so the LLM call fails with llmclient.ErrAuditFailed and is not
+// retried.
 //
 // # NATS Handler Contract
 //

@@ -313,6 +313,13 @@ var _ = Describe("NATSCollector", func() {
 				Expect(taskErr).To(MatchError(analysis.ErrTaskInvalid))
 			})
 
+			It("does not redispatch a task whose audit failed", func() {
+				redispatches, taskErr := collectWith(collector, true, 3, natsbus.ResultErrorAuditFailed)
+				Expect(redispatches).To(BeZero())
+				Expect(taskErr).To(MatchError(llmclient.ErrAuditFailed))
+				Expect(taskErr.Error()).To(ContainSubstring("task_audit_failed"))
+			})
+
 			It("does not echo an unknown error code back", func() {
 				_, taskErr := collectWith(collector, false, 0, "secret detail")
 				Expect(taskErr).To(MatchError(analysis.ErrTaskFailed))
@@ -816,5 +823,7 @@ var _ = DescribeTable("a stage event names its error with the collector's fixed 
 	Entry("an invalid payload", fmt.Errorf("stage: %w", analysis.ErrTaskInvalid), "task_invalid"),
 	Entry("a rate limit", fmt.Errorf("stage: %w", llmclient.ErrRateLimitExceeded), "task_rate_limited"),
 	Entry("a truncated answer", fmt.Errorf("stage: %w", llmclient.ErrOutputTruncated), "task_output_truncated"),
+	Entry("an unstored audit record", fmt.Errorf("stage: %w", llmclient.ErrAuditFailed), "task_audit_failed"),
+	Entry("an unstored audit record that hides a timeout", fmt.Errorf("stage: %w; %w", llmclient.ErrTimeout, llmclient.ErrAuditFailed), "task_audit_failed"),
 	Entry("an unknown error with secret text", errors.New("secret detail"), "task_failed"),
 )

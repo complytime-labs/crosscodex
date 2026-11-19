@@ -636,6 +636,27 @@ var _ = Describe("NATSBus System", Ordered, func() {
 				}),
 			)
 		})
+
+		Context("when building CatalogAuditSubject", func() {
+			DescribeTable("builds a subject the AUDIT_EVENTS stream captures, and rejects bad tokens",
+				func(tenant, catalogID, want string, wantErr error) {
+					got, err := natsbus.CatalogAuditSubject(tenant, catalogID)
+					if wantErr != nil {
+						Expect(err).To(MatchError(wantErr))
+						Expect(got).To(BeEmpty())
+						return
+					}
+					Expect(err).NotTo(HaveOccurred())
+					Expect(got).To(Equal(want))
+				},
+				Entry("valid catalog", "acme-corp", "0123456789abcdef",
+					"crosscodex.audit.acme-corp.events.catalog.0123456789abcdef.parsed", nil),
+				Entry("empty catalog ID", "acme-corp", "", "", natsbus.ErrInvalidSubject),
+				Entry("catalog ID with dot", "acme-corp", "cat.x", "", natsbus.ErrInvalidSubject),
+				Entry("catalog ID with wildcard", "acme-corp", "cat>", "", natsbus.ErrInvalidSubject),
+				Entry("invalid tenant", "a.b", "0123456789abcdef", "", natsbus.ErrInvalidSubject),
+			)
+		})
 	})
 
 	Describe("Provenance Edge Cases", func() {

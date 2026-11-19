@@ -1414,6 +1414,21 @@ var _ = Describe("Executor", func() {
 				Expect(synth.executions).To(HaveLen(1))
 			})
 
+			It("fails the job when the attestation bundle event is not stored, saying the bundle is stored and the job can be retried from its failure", func() {
+				bus.PublishDurableFunc = func(context.Context, string, []byte, map[string][]string) error {
+					return fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+				}
+				runJob(serviceWith(attestedBy(attestor), storage))
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(errorOf()).To(And(
+					ContainSubstring("its attestation bundle is stored, but its audit record was not stored"),
+					ContainSubstring("audit streams exist"),
+					ContainSubstring("crosscodex run retry --from-failure test-job-001")))
+				Expect(stageStatuses()).To(Equal(allCompleted), "no stage reruns; only finalization failed")
+				Expect(storage.Objects()).To(HaveKey(bundleKey()), "the stored bundle is unchanged")
+			})
+
 			It("fails the job with a retryable error when storage keeps refusing the bundle, and retrying it from its failure stores the bundle without rerunning a stage", func() {
 				flaky := &flakyBundleStorage{Fake: storage}
 				flaky.failures.Store(1000)

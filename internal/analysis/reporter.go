@@ -159,12 +159,16 @@ var _ StageReporter = noopReporter{}
 //   - ErrNoSuccessfulResult (a NoSuccessError): task_timeout, keeping the
 //     category these stages reported before categories were sentinel-based;
 //     the window elapsing with no success is a timeout of the stage.
+//   - llmclient.ErrAuditFailed: task_audit_failed (checked first: an
+//     unaudited call outranks any other cause).
 //   - llmclient.ErrRateLimitExceeded: task_rate_limited.
 //   - llmclient.ErrOutputTruncated: task_output_truncated.
 //   - ErrTaskInvalid: task_invalid.
 //   - anything else: task_failed.
 func stageErrorCategory(err error) string {
 	switch {
+	case errors.Is(err, llmclient.ErrAuditFailed):
+		return categoryAuditFailed
 	case errors.Is(err, llmclient.ErrTimeout), errors.Is(err, ErrTaskTimeout), errors.Is(err, ErrStageTimeout),
 		errors.Is(err, ErrNoSuccessfulResult), errors.Is(err, context.DeadlineExceeded):
 		return categoryTimeout

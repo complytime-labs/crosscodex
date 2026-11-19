@@ -118,6 +118,15 @@ func CatalogParsedSubject(tenantID, catalogID string) (string, error) {
 		"catalog", tenantID, catalogID, "parsed")
 }
 
+// CatalogAuditSubject builds the subject of the audit record catalog ingest
+// publishes after it has stored a catalog; the AUDIT_EVENTS stream captures it.
+//
+//	crosscodex.audit.{tenant_id}.events.catalog.{catalog_id}.parsed
+func CatalogAuditSubject(tenantID, catalogID string) (string, error) {
+	return buildSubject(tenantID, validateToken(catalogID, "catalog ID"),
+		"audit", tenantID, string(AuditEvents), "catalog", catalogID, "parsed")
+}
+
 // MaterializeBarrierSubject builds the subject the pipeline executor publishes
 // when every materialization input of a job has been published; the graph role
 // consumes it from the MATERIALIZE stream to know the job's inputs are complete.

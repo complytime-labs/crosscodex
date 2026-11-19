@@ -318,6 +318,9 @@ func (w *Worker) recordError(ctx context.Context, taskType, category string) {
 
 func errorCategory(err error) string {
 	switch {
+	// First: an unaudited call must never be retried, whatever else failed.
+	case errors.Is(err, llmclient.ErrAuditFailed):
+		return natsbus.ResultErrorAuditFailed
 	case errors.Is(err, ErrInvalidPayload):
 		return natsbus.ResultErrorInvalidPayload
 	case errors.Is(err, llmclient.ErrOutputTruncated):

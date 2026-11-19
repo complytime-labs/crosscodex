@@ -144,7 +144,7 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 			cfg.Role = role
 			// External mode: both runtimes dial the one shared server started
 			// above instead of each starting their own embedded instance.
-			cfg.NATS = config.NATSConfig{URL: natsURL}
+			cfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 			// The real client buildSharedResources constructs is replaced by
 			// WithLLMClient(fakeLLM) below, but its startup probe still dials
 			// GatewayURL, so it must answer.

@@ -87,6 +87,9 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					{"CatalogParsedSubject", func() (string, error) {
 						return natsbus.CatalogParsedSubject(tenantID, jobID)
 					}},
+					{"CatalogAuditSubject", func() (string, error) {
+						return natsbus.CatalogAuditSubject(tenantID, jobID)
+					}},
 				}
 
 				for _, b := range builders {

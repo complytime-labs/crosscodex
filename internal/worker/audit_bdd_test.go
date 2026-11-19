@@ -14,6 +14,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 )
 
 var _ = Describe("NATSAuditEmitter", func() {
@@ -79,7 +80,7 @@ var _ = Describe("NATSAuditEmitter", func() {
 		Expect(decoded.TokensUsed).To(Equal(100))
 	})
 
-	It("returns nil on invalid tenant ID (best-effort) and publishes nothing", func() {
+	It("returns an error on an invalid tenant ID and publishes nothing", func() {
 		ctx := testspecs.SetupTenantContext("tenant-abc")
 
 		// Subscribe to the wildcard that would catch any mistakenly published audit message.
@@ -99,7 +100,8 @@ var _ = Describe("NATSAuditEmitter", func() {
 			JobID:    "job-123",
 		}
 		err = emitter.EmitLLMAudit(ctx, event)
-		Expect(err).NotTo(HaveOccurred())
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("building the audit subject"))
 
 		// Confirm no message was published to any audit subject.
 		Consistently(func() *natsbus.Message {
@@ -209,7 +211,7 @@ var _ = Describe("NATSAuditEmitter", func() {
 			"TraceID must be preserved through publish/subscribe roundtrip")
 	})
 
-	It("returns nil after NATS client is closed (best-effort)", func() {
+	It("returns the error after the NATS client is closed", func() {
 		ctx := testspecs.SetupTenantContext("tenant-abc")
 		cleanup() // close the NATS client
 
@@ -218,10 +220,38 @@ var _ = Describe("NATSAuditEmitter", func() {
 			JobID:    "job-123",
 		}
 		err := emitter.EmitLLMAudit(ctx, event)
-		Expect(err).NotTo(HaveOccurred())
+		Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
 
 		// Re-create so AfterEach cleanup doesn't double-close
 		bus, cleanup = testspecs.SetupTestNATS()
 		emitter = NewNATSAuditEmitter(bus, testspecs.GinkgoLogger())
+	})
+})
+
+var _ = Describe("NATSAuditEmitter durability", func() {
+	event := &llmclient.AuditEvent{TenantID: "tenant-abc", JobID: "job-1", Model: "gpt-4", Operation: llmclient.OpComplete}
+
+	It("publishes durably to the audit LLM subject", func() {
+		fake := &natsbustest.Fake{}
+		emitter := NewNATSAuditEmitter(fake, testspecs.GinkgoLogger())
+
+		Expect(emitter.EmitLLMAudit(testspecs.SetupTenantContext("tenant-abc"), event)).To(Succeed())
+
+		pubs := fake.Published()
+		Expect(pubs).To(HaveLen(1))
+		Expect(pubs[0].Subject).To(Equal("crosscodex.audit.tenant-abc.llm.job-1"))
+		Expect(pubs[0].Durable).To(BeTrue())
+	})
+
+	It("returns the publish error instead of logging it", func() {
+		fake := &natsbustest.Fake{PublishDurableFunc: func(context.Context, string, []byte, map[string][]string) error {
+			return fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+		}}
+		emitter := NewNATSAuditEmitter(fake, testspecs.GinkgoLogger())
+
+		err := emitter.EmitLLMAudit(testspecs.SetupTenantContext("tenant-abc"), event)
+
+		Expect(err).To(MatchError(natsbus.ErrNotStored))
+		Expect(err.Error()).To(ContainSubstring("the audit stream did not acknowledge the event"))
 	})
 })

@@ -713,6 +713,7 @@ const (
 	categoryTimeout         = "task_timeout"
 	categoryRateLimited     = "task_rate_limited"
 	categoryOutputTruncated = "task_output_truncated"
+	categoryAuditFailed     = "task_audit_failed"
 )
 
 // classifyResult maps a worker's X-Error code to the collector's error
@@ -727,6 +728,8 @@ func classifyResult(code string) error {
 		return fmt.Errorf("%s: %w", categoryTimeout, llmclient.ErrTimeout)
 	case natsbus.ResultErrorRateLimited:
 		return fmt.Errorf("%s: %w", categoryRateLimited, llmclient.ErrRateLimitExceeded)
+	case natsbus.ResultErrorAuditFailed:
+		return fmt.Errorf("%s: %w", categoryAuditFailed, llmclient.ErrAuditFailed)
 	case natsbus.ResultErrorInvalidPayload:
 		return ErrTaskInvalid
 	default:
@@ -745,11 +748,14 @@ const (
 // non-retryable cause is a new case in the first switch.
 //
 // Not retried: a truncated answer and an invalid payload, which fail the
-// same way every time, and a timeout unless retryOnTimeout, since the
+// same way every time, an audit failure (the call was made and probably
+// billed, with no record), and a timeout unless retryOnTimeout, since the
 // provider may already have billed it. A rate limit and any other failure
 // are retried (the caller bounds them by max_retries and backs off).
 func retryCause(err error, retryOnTimeout bool) (cause string, retry bool) {
 	switch {
+	case errors.Is(err, llmclient.ErrAuditFailed):
+		return causeOther, false
 	case errors.Is(err, llmclient.ErrOutputTruncated):
 		return causeOther, false
 	case errors.Is(err, ErrTaskInvalid):

@@ -130,9 +130,11 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 		span.SetStatus(codes.Error, err.Error())
 		c.recordErrorMetric(ctx)
 		c.recordCompletionMetrics(ctx, start, false, req.Model, req.TenantID)
-		c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
+		if auditErr := c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
 			promptHash, req.PromptName, req.PromptVersion,
-			0, time.Since(start), false, err.Error())
+			0, time.Since(start), false, err.Error()); auditErr != nil {
+			return nil, fmt.Errorf("%w; the audit record of this failure was also not stored: %w", err, auditErr)
+		}
 		return nil, err
 	}
 	resp.Deployment = header.Get(DeploymentHeader)
@@ -144,9 +146,11 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 	)
 	span.SetStatus(codes.Ok, "")
 	c.recordCompletionMetrics(ctx, start, true, req.Model, req.TenantID)
-	c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
+	if err := c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
 		promptHash, req.PromptName, req.PromptVersion,
-		resp.Usage.TotalTokens, time.Since(start), true, "")
+		resp.Usage.TotalTokens, time.Since(start), true, ""); err != nil {
+		return nil, err
+	}
 
 	return &resp, nil
 }
@@ -188,9 +192,11 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 		span.SetStatus(codes.Error, err.Error())
 		c.recordErrorMetric(ctx)
 		c.recordEmbedMetrics(ctx, start, false, req.Model, req.TenantID)
-		c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
+		if auditErr := c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
 			promptHash, "", "",
-			0, time.Since(start), false, err.Error())
+			0, time.Since(start), false, err.Error()); auditErr != nil {
+			return nil, fmt.Errorf("%w; the audit record of this failure was also not stored: %w", err, auditErr)
+		}
 		return nil, err
 	}
 	resp.Deployment = header.Get(DeploymentHeader)
@@ -201,9 +207,11 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 	)
 	span.SetStatus(codes.Ok, "")
 	c.recordEmbedMetrics(ctx, start, true, req.Model, req.TenantID)
-	c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
+	if err := c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
 		promptHash, "", "",
-		resp.Usage.TotalTokens, time.Since(start), true, "")
+		resp.Usage.TotalTokens, time.Since(start), true, ""); err != nil {
+		return nil, err
+	}
 
 	return &resp, nil
 }
@@ -481,11 +489,13 @@ func (c *client) recordErrorMetric(ctx context.Context) {
 	}
 }
 
-// emitAudit sends an audit event via the configured emitter. Best-effort:
-// logs a warning on failure but never returns an error to the caller.
-func (c *client) emitAudit(ctx context.Context, tenantID, jobID, model, operation, promptHash, promptName, promptVersion string, tokensUsed int, duration time.Duration, success bool, errMsg string) {
+// emitAudit sends an audit event via the configured emitter. A failure is
+// returned wrapping ErrAuditFailed: the call is not audited, so the caller
+// withholds its result. With no emitter configured, nothing is audited and
+// nothing fails.
+func (c *client) emitAudit(ctx context.Context, tenantID, jobID, model, operation, promptHash, promptName, promptVersion string, tokensUsed int, duration time.Duration, success bool, errMsg string) error {
 	if c.emitter == nil {
-		return
+		return nil
 	}
 	event := &AuditEvent{
 		Timestamp:     time.Now(),
@@ -503,12 +513,14 @@ func (c *client) emitAudit(ctx context.Context, tenantID, jobID, model, operatio
 		PromptVersion: promptVersion,
 	}
 	if err := c.emitter.EmitLLMAudit(ctx, event); err != nil {
-		slog.WarnContext(ctx, "failed to emit LLM audit event",
+		slog.ErrorContext(ctx, "LLM audit event not stored",
 			"error", err,
 			"operation", operation,
 			"tenant_id", tenantID,
 		)
+		return fmt.Errorf("LLM call completed but its audit record was not stored, so the result is withheld: %w: %w", ErrAuditFailed, err)
 	}
+	return nil
 }
 
 // Verify interface compliance at compile time.

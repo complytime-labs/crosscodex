@@ -1399,14 +1399,16 @@ func (s *Service) finalizeAttestation(ctx context.Context, job *Job, exec *jobEx
 		return fail(err)
 	}
 
-	auditSubject, err := natsbus.AuditSubject(job.TenantID, natsbus.AuditEvents, job.JobID)
-	if err != nil {
-		s.logger.WarnContext(ctx, "failed to build audit subject",
-			"job_id", job.JobID, "error", err)
-	} else if s.bus != nil {
-		if err := s.bus.Publish(ctx, auditSubject, bundle); err != nil {
-			s.logger.WarnContext(ctx, "failed to publish attestation bundle to audit trail; the bundle is stored",
-				"job_id", job.JobID, "error", err)
+	if s.bus != nil {
+		auditSubject, err := natsbus.AuditSubject(job.TenantID, natsbus.AuditEvents, job.JobID)
+		if err != nil {
+			return fail(fmt.Errorf("job %s: its audit subject could not be built: %w: %w. %s",
+				job.JobID, err, ErrAttestationStorage, retryHint(job)))
+		}
+		if err := s.bus.PublishDurable(ctx, auditSubject, bundle, nil); err != nil {
+			return fail(fmt.Errorf("job %s: its attestation bundle is stored, but its audit record was not stored: %w: %w. "+
+				"Check that the event bus is running and its audit streams exist. %s",
+				job.JobID, err, ErrAttestationStorage, retryHint(job)))
 		}
 	}
 

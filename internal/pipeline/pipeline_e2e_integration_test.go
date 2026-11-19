@@ -299,8 +299,9 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 	// Embedded NATS server (in-process JetStream). Shared by the engine's
 	// dispatcher/collector, the pipeline's event publishing, and the worker.
 	bus, err := natsbus.New(config.NATSConfig{
-		URL:      "",
-		Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
+		URL:               "",
+		PublishAckTimeout: 10 * time.Second,
+		Embedded:          config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
 	})
 	Expect(err).NotTo(HaveOccurred(), "create embedded NATS")
 	DeferCleanup(bus.Close)

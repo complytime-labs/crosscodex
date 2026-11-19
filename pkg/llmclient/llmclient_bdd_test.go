@@ -1387,7 +1387,7 @@ var _ = Describe("Audit Emission", func() {
 		Expect(evt.PromptVersion).To(BeEmpty())
 	})
 
-	It("does not fail the primary operation when audit emission fails", func() {
+	It("withholds the response and returns ErrAuditFailed when the audit record is not stored", func() {
 		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{
@@ -1410,9 +1410,44 @@ var _ = Describe("Audit Emission", func() {
 			Messages: []llmclient.ChatMessage{{Role: "user", Content: "audit fails"}},
 			TenantID: "test-tenant",
 		})
+		Expect(err).To(MatchError(llmclient.ErrAuditFailed))
+		Expect(err.Error()).To(ContainSubstring("result is withheld"))
+		Expect(resp).To(BeNil())
+	})
+
+	It("withholds an embedding when the audit record is not stored", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data": [{"index": 0, "embedding": [0.1, 0.2]}], "model": "emb", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`)
+		}))
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(&failingAuditEmitter{}))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.Choices).To(HaveLen(1))
-		Expect(resp.Choices[0].Message.Content).To(Equal("still works"))
+		DeferCleanup(func() { client.Close() })
+
+		resp, err := client.Embed(testspecs.SetupTenantContext("test-tenant"), &llmclient.EmbeddingRequest{
+			Model: "emb", Input: []string{"x"}, TenantID: "test-tenant",
+		})
+		Expect(err).To(MatchError(llmclient.ErrAuditFailed))
+		Expect(resp).To(BeNil())
+	})
+
+	It("keeps the call error visible when the audit of a failed call is also not stored", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(&failingAuditEmitter{}))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		_, err = client.Complete(testspecs.SetupTenantContext("test-tenant"), &llmclient.CompletionRequest{
+			Model:    "gpt-4",
+			Messages: []llmclient.ChatMessage{{Role: "user", Content: "x"}},
+			TenantID: "test-tenant",
+		})
+		Expect(err).To(MatchError(llmclient.ErrAuthentication))
+		Expect(err).To(MatchError(llmclient.ErrAuditFailed))
 	})
 })
 
@@ -1818,7 +1853,7 @@ func (m *mockAuditEmitter) EmitLLMAudit(_ context.Context, event *llmclient.Audi
 	return nil
 }
 
-// failingAuditEmitter always returns an error, for testing best-effort emission.
+// failingAuditEmitter always returns an error, for testing that an unstored audit record fails the operation.
 type failingAuditEmitter struct{}
 
 func (f *failingAuditEmitter) EmitLLMAudit(_ context.Context, _ *llmclient.AuditEvent) error {
