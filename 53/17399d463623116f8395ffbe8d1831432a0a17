@@ -1,0 +1,31 @@
+internal/analysis/engine_bdd_test.go
+  s_782aa7015bdc06::t_59865d900f9dd4 1034-1080
+internal/analysis/reporter.go
+  s_782aa7015bdc06::t_4ef14d3fb03e38 143-151
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_782aa7015bdc06::t_c4d7fe19efa0ed 8,119-120,131,134-136,173,184,208,213,233
+internal/catalog/service.go
+  s_782aa7015bdc06::t_c64c70d8027d76 477-478
+internal/pipeline/errors.go
+  s_782aa7015bdc06::t_c6add2b70a97db 39-44
+internal/pipeline/executor.go
+  s_782aa7015bdc06::t_010840b5199da7 659,726,743-756,803,819,844-848,993-996,998,1005,1022,1025-1030,1035
+internal/pipeline/executor_bdd_test.go
+  s_782aa7015bdc06::t_f7e606140b4342 785-866,1500-1504
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "5317399d463623116f8395ffbe8d1831432a0a17",
+  "prompts": {},
+  "sessions": {
+    "s_782aa7015bdc06": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa65ed4e65a0c8383",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
