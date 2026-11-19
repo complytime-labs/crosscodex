@@ -55,7 +55,8 @@ type Client interface {
 	// cfg.RedeliverDelay, up to cfg.MaxDeliver. Message.Metadata carries
 	// Stream, Sequence and NumDelivered. A message that fails the provenance or
 	// content-hash check is terminated and counted, never delivered to handler.
-	// Unsubscribe stops at once; Drain finishes in-flight messages first.
+	// Unsubscribe stops at once; Drain stops fetching and lets in-flight messages
+	// finish but does not wait for them.
 	ConsumeDurable(ctx context.Context, cfg ConsumerConfig, handler MessageHandler) (Subscription, error)
 
 	// SubjectMessageCount returns how many messages stream holds on subject,

@@ -253,8 +253,10 @@ func (f *Fake) SubscribeWorkerProgress(ctx context.Context, handler func()) (nat
 // Deliver matches against every cfg.FilterSubjects pattern (every subject when
 // there are none). The Sub counts each delivery by the outcome the real
 // consumer would apply to the handler's result: nil is acked, an error
-// wrapping natsbus.ErrPermanent is termed, any other error is naked. Fake
-// never redelivers; a test redelivers by calling Deliver again.
+// wrapping natsbus.ErrPermanent is termed, any other error is naked. The
+// handler's ctx carries msg.Metadata.TenantID; a message whose tenant ID is
+// empty or invalid is termed without calling the handler, and Deliver returns
+// the tenant error. Fake never redelivers; a test redelivers by calling Deliver again.
 func (f *Fake) ConsumeDurable(_ context.Context, cfg natsbus.ConsumerConfig, handler natsbus.MessageHandler) (natsbus.Subscription, error) {
 	if err := f.checkOpen("consume " + cfg.Durable); err != nil {
 		return nil, err
@@ -264,7 +266,16 @@ func (f *Fake) ConsumeDurable(_ context.Context, cfg natsbus.ConsumerConfig, han
 	}
 	sub := &Sub{Config: cfg}
 	sub.handler = func(ctx context.Context, msg *natsbus.Message) error {
-		err := handler(ctx, msg)
+		// Like the real consumer: the handler's ctx carries the message's tenant,
+		// and a message whose tenant is unusable is termed without a handler call.
+		ctx, err := tenant.WithTenant(ctx, msg.Metadata.TenantID)
+		if err != nil {
+			sub.mu.Lock()
+			sub.termed++
+			sub.mu.Unlock()
+			return fmt.Errorf("terminating message on %s: %w", msg.Subject, err)
+		}
+		err = handler(ctx, msg)
 		sub.mu.Lock()
 		defer sub.mu.Unlock()
 		switch {
@@ -325,8 +336,11 @@ func (f *Fake) Subscriptions() []*Sub {
 // live Sub whose subject pattern matches msg.Subject, passing msg to each (it
 // is not copied). Like the real client, whose handler context is built from
 // context.Background(), handlers get a context that carries none of the
-// values (tenant, user, trace) of any caller context; the tenant reaches a
-// handler only through msg.Metadata.TenantID. Deliver calls every handler
+// values (tenant, user, trace) of any caller context; for Subscribe,
+// QueueSubscribe and SubscribeWorkerProgress the tenant reaches a handler only
+// through msg.Metadata.TenantID. A ConsumeDurable handler instead gets the
+// message's tenant in its context, as the real consumer provides it (see
+// ConsumeDurable). Deliver calls every handler
 // even when some fail and returns their errors joined with errors.Join. It
 // ignores Close and skips subscriptions with a nil handler, and returns an
 // error for a nil msg.

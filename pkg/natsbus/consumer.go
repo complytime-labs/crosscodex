@@ -85,49 +85,29 @@ func (c *client) ConsumeDurable(ctx context.Context, cfg ConsumerConfig, handler
 	return &durableSubscription{cc: cc, cancel: cancel}, nil
 }
 
-// handleDurable applies provenance and content-hash checks to msg, runs
-// handler, and acknowledges msg by the handler's outcome. A message failing a
-// check is terminated: redelivery cannot fix it.
+// handleDurable verifies msg with verifyMessage, runs handler, and
+// acknowledges msg by the handler's outcome. A message failing verification is
+// terminated: redelivery cannot fix it.
 func (c *client) handleDurable(parent context.Context, cfg ConsumerConfig, handler MessageHandler, msg jetstream.Msg) {
 	start := time.Now()
 	headers := map[string][]string(msg.Headers())
 
-	meta, err := extractProvenance(headers)
-	if err != nil {
-		c.opts.logger.Error("terminating message: missing provenance",
-			"stream", cfg.Stream, "consumer", cfg.Durable, "subject", msg.Subject(), "error", err)
-		c.finishDurable(parent, cfg, msg, outcomeTerm, start)
-		return
-	}
-	ctx, err := tenant.WithTenant(parent, meta.TenantID)
-	if err != nil {
-		c.opts.logger.Error("terminating message: invalid tenant",
-			"stream", cfg.Stream, "consumer", cfg.Durable, "subject", msg.Subject(), "error", err)
-		c.finishDurable(parent, cfg, msg, outcomeTerm, start)
-		return
-	}
-	if sc, scErr := reconstructSpanContext(headers); scErr == nil && sc.IsValid() {
-		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
-	}
-
-	ctx, span := c.startSpan(ctx, "natsbus.process",
-		trace.WithSpanKind(trace.SpanKindConsumer),
-		trace.WithAttributes(
-			attribute.String("messaging.subject", msg.Subject()),
-			attribute.String("messaging.stream", cfg.Stream),
-			attribute.String("messaging.consumer", cfg.Durable),
-			attribute.String("tenant.id", meta.TenantID),
-		),
+	v, err := c.verifyMessage(parent, "terminating", msg.Subject(), msg.Data(), headers,
+		attribute.String("messaging.stream", cfg.Stream),
+		attribute.String("messaging.consumer", cfg.Durable),
 	)
-	defer span.End()
-
-	if actual := contentHash(msg.Data()); actual != meta.ContentHash {
-		c.opts.logger.Error("terminating message: content hash mismatch",
-			"stream", cfg.Stream, "consumer", cfg.Durable, "subject", msg.Subject(),
-			"expected", meta.ContentHash, "actual", actual)
-		span.SetStatus(codes.Error, "content hash mismatch")
-		span.RecordError(ErrContentHashMismatch)
-		c.finishDurable(ctx, cfg, msg, outcomeTerm, start)
+	defer v.span.End()
+	if err != nil {
+		c.finishDurable(v.ctx, cfg, msg, outcomeTerm, start)
+		return
+	}
+	// verifyMessage validated the tenant ID, so this cannot fail; the handler
+	// gets the tenant from ctx like any tenant-scoped caller.
+	ctx, err := tenant.WithTenant(v.ctx, v.meta.TenantID)
+	if err != nil {
+		v.span.RecordError(err)
+		v.span.SetStatus(codes.Error, err.Error())
+		c.finishDurable(v.ctx, cfg, msg, outcomeTerm, start)
 		return
 	}
 
@@ -135,16 +115,17 @@ func (c *client) handleDurable(parent context.Context, cfg ConsumerConfig, handl
 	if err != nil {
 		c.opts.logger.Error("terminating message: no JetStream metadata",
 			"stream", cfg.Stream, "consumer", cfg.Durable, "subject", msg.Subject(), "error", err)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+		v.span.RecordError(err)
+		v.span.SetStatus(codes.Error, err.Error())
 		c.finishDurable(ctx, cfg, msg, outcomeTerm, start)
 		return
 	}
+	meta := v.meta
 	meta.Stream = js.Stream
 	meta.Sequence = js.Sequence.Stream
 	meta.Timestamp = js.Timestamp
 	meta.NumDelivered = js.NumDelivered
-	span.SetAttributes(attribute.Int64("messaging.delivery_attempt", int64(js.NumDelivered)))
+	v.span.SetAttributes(attribute.Int64("messaging.delivery_attempt", int64(js.NumDelivered)))
 
 	handlerErr := handler(ctx, &Message{Subject: msg.Subject(), Data: msg.Data(), Headers: headers, Metadata: meta})
 	outcome := outcomeAck
@@ -158,18 +139,19 @@ func (c *client) handleDurable(parent context.Context, cfg ConsumerConfig, handl
 		c.opts.logger.Error("durable message handler error",
 			"stream", cfg.Stream, "consumer", cfg.Durable, "subject", msg.Subject(),
 			"outcome", outcome, "delivery", js.NumDelivered, "error", handlerErr)
-		span.RecordError(handlerErr)
-		span.SetStatus(codes.Error, handlerErr.Error())
+		v.span.RecordError(handlerErr)
+		v.span.SetStatus(codes.Error, handlerErr.Error())
 	} else {
-		span.SetStatus(codes.Ok, "")
+		v.span.SetStatus(codes.Ok, "")
 	}
-	span.SetAttributes(attribute.String("messaging.outcome", outcome))
+	v.span.SetAttributes(attribute.String("messaging.outcome", outcome))
 	c.finishDurable(ctx, cfg, msg, outcome, start)
 }
 
-// finishDurable sends outcome to the server and records the process metrics. A
-// failed ack is only logged: the server redelivers after AckWait, so nothing is
-// lost, at worst handled twice, which handlers must tolerate anyway.
+// finishDurable sends outcome to the server and records the process metrics.
+// A failed ack is logged and counted as "<outcome>_failed": the server
+// redelivers after AckWait, so nothing is lost, at worst handled twice, which
+// handlers must tolerate anyway.
 func (c *client) finishDurable(ctx context.Context, cfg ConsumerConfig, msg jetstream.Msg, outcome string, start time.Time) {
 	var err error
 	switch outcome {
@@ -183,6 +165,7 @@ func (c *client) finishDurable(ctx context.Context, cfg ConsumerConfig, msg jets
 	if err != nil {
 		c.opts.logger.Error("acknowledging message failed; the server will redeliver it after AckWait",
 			"subject", msg.Subject(), "outcome", outcome, "error", err)
+		outcome += "_failed"
 	}
 	attrs := metric.WithAttributes(attribute.String("outcome", outcome))
 	if c.processCounter != nil {

@@ -110,13 +110,17 @@ type ConsumerConfig struct {
 // Validate reports why cfg cannot create a consumer. Errors wrap
 // ErrSubscribeFailed.
 func (cfg ConsumerConfig) Validate() error {
-	if cfg.Stream == "" || cfg.Durable == "" {
-		return fmt.Errorf("%w: consumer needs a stream and a durable name (got stream %q, durable %q); set both in ConsumerConfig",
-			ErrSubscribeFailed, cfg.Stream, cfg.Durable)
+	if cfg.Stream == "" {
+		return fmt.Errorf("%w: ConsumerConfig.Stream is empty; name the stream to consume", ErrSubscribeFailed)
 	}
-	if cfg.MaxDeliver < -1 {
-		return fmt.Errorf("%w: consumer %s MaxDeliver is %d; use -1 for unlimited or a positive count",
-			ErrSubscribeFailed, cfg.Durable, cfg.MaxDeliver)
+	if cfg.Durable == "" {
+		return fmt.Errorf("%w: ConsumerConfig.Durable is empty; name the durable consumer", ErrSubscribeFailed)
+	}
+	if cfg.MaxDeliver == 0 || cfg.MaxDeliver < -1 {
+		// The server treats 0 as unlimited, so a config that merely forgot the
+		// field would retry a poison message forever; make that explicit.
+		return fmt.Errorf("%w: ConsumerConfig.MaxDeliver is %d for consumer %s; set a positive attempt count, or -1 for unlimited",
+			ErrSubscribeFailed, cfg.MaxDeliver, cfg.Durable)
 	}
 	return nil
 }

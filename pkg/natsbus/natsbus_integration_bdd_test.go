@@ -472,8 +472,9 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 
 			_, err := client.ConsumeDurable(context.Background(), natsbus.ConsumerConfig{Durable: "d"}, h)
 			Expect(err).To(MatchError(natsbus.ErrSubscribeFailed))
+			Expect(err).To(MatchError(ContainSubstring("Stream")))
 
-			_, err = client.ConsumeDurable(context.Background(), natsbus.ConsumerConfig{Stream: "NO_SUCH_STREAM", Durable: "d"}, h)
+			_, err = client.ConsumeDurable(context.Background(), natsbus.ConsumerConfig{Stream: "NO_SUCH_STREAM", Durable: "d", MaxDeliver: 1}, h)
 			Expect(err).To(MatchError(natsbus.ErrSubscribeFailed))
 			Expect(err).To(MatchError(natsbus.ErrStreamNotFound))
 		})

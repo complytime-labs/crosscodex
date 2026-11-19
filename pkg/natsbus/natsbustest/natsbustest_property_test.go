@@ -193,7 +193,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			script := rapid.SliceOf(outcomes).Draw(t, "script")
 			next := 0
 			sub, err := fake.ConsumeDurable(context.Background(),
-				natsbus.ConsumerConfig{Stream: "S", Durable: "d", FilterSubjects: []string{"a.*"}},
+				natsbus.ConsumerConfig{Stream: "S", Durable: "d", MaxDeliver: 5, FilterSubjects: []string{"a.*"}},
 				func(context.Context, *natsbus.Message) error { next++; return script[next-1] })
 			if err != nil {
 				t.Fatalf("consume: %v", err)
@@ -208,7 +208,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				default:
 					wantNak++
 				}
-				_ = fake.Deliver(&natsbus.Message{Subject: "a.x"})
+				_ = fake.Deliver(&natsbus.Message{Subject: "a.x", Metadata: natsbus.MessageMetadata{TenantID: "tenant-a"}})
 			}
 			s := sub.(*natsbustest.Sub)
 			if s.Acked() != wantAck || s.Naked() != wantNak || s.Termed() != wantTerm {

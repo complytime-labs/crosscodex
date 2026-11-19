@@ -692,85 +692,101 @@ func auditStreamConfigs(cfg config.NATSStreamsConfig) []StreamConfig {
 	}
 }
 
-// wrapHandler converts a MessageHandler into a nats.MsgHandler.
-// Messages missing mandatory provenance headers are rejected — the
-// handler is never called and an error is logged with the missing fields.
-// Messages with a content hash mismatch are rejected similarly.
+// verifiedMessage is a message that passed verifyMessage.
+type verifiedMessage struct {
+	ctx  context.Context // carries the publisher's trace context and the process span
+	span trace.Span      // the process span; the caller ends it
+	meta MessageMetadata // provenance fields; JetStream fields are the caller's to fill
+}
+
+// verifyMessage is the one fail-closed gate every received message passes,
+// core or durable: mandatory provenance headers, a valid tenant ID, and a
+// content hash matching the payload. It starts the consumer span first, linked
+// to the publisher's trace, so a rejected message is traced too; the caller
+// owns the span and must end it. On failure it logs "<action> message: <why>"
+// (action is the caller's verb, "rejecting" or "terminating"), marks the span
+// failed, and returns the error, which wraps ErrMissingProvenance,
+// tenant.ErrInvalidTenant or ErrContentHashMismatch. attrs are added to the span.
+func (c *client) verifyMessage(parent context.Context, action, subject string, data []byte, headers map[string][]string, attrs ...attribute.KeyValue) (verifiedMessage, error) {
+	if sc, err := reconstructSpanContext(headers); err == nil && sc.IsValid() {
+		parent = trace.ContextWithRemoteSpanContext(parent, sc)
+	}
+	ctx, span := c.startSpan(parent, "natsbus.process",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(append([]attribute.KeyValue{attribute.String("messaging.subject", subject)}, attrs...)...),
+	)
+	v := verifiedMessage{ctx: ctx, span: span}
+
+	reject := func(why string, err error, logAttrs ...any) (verifiedMessage, error) {
+		c.opts.logger.Error(action+" message: "+why, append([]any{"subject", subject, "error", err}, logAttrs...)...)
+		span.SetStatus(codes.Error, why)
+		span.RecordError(err)
+		return v, err
+	}
+
+	meta, err := extractProvenance(headers)
+	if err != nil {
+		return reject("missing provenance", err)
+	}
+	if err := tenant.ValidateTenantID(meta.TenantID); err != nil {
+		return reject("invalid tenant", err)
+	}
+	span.SetAttributes(attribute.String("tenant.id", meta.TenantID))
+	if actual := contentHash(data); actual != meta.ContentHash {
+		return reject("content hash mismatch", ErrContentHashMismatch, "expected", meta.ContentHash, "actual", actual)
+	}
+	v.meta = meta
+	return v, nil
+}
+
+// wrapHandler converts a MessageHandler into a nats.MsgHandler. A message that
+// fails verifyMessage (missing provenance headers, invalid tenant, content hash
+// mismatch) is dropped: the handler is never called and the reason is logged.
 func (c *client) wrapHandler(handler MessageHandler) nats.MsgHandler {
 	return func(natsMsg *nats.Msg) {
 		headers := map[string][]string(natsMsg.Header)
-		meta, err := extractProvenance(headers)
-		if err != nil && natsMsg.Subject == WorkerProgressSubject {
-			// A catch-all generic subscriber (crosscodex.>) receives every
-			// worker progress tick, which never has provenance. Drop it like
-			// any unprovenanced message, without an error log per tick.
-			c.opts.logger.Debug("dropping worker progress tick at a generic subscriber; use SubscribeWorkerProgress to receive ticks",
-				"subject", natsMsg.Subject)
-			return
+		if natsMsg.Subject == WorkerProgressSubject {
+			if _, err := extractProvenance(headers); err != nil {
+				// A catch-all generic subscriber (crosscodex.>) receives every
+				// worker progress tick, which never has provenance. Drop it like
+				// any unprovenanced message, without an error log per tick.
+				c.opts.logger.Debug("dropping worker progress tick at a generic subscriber; use SubscribeWorkerProgress to receive ticks",
+					"subject", natsMsg.Subject)
+				return
+			}
 		}
+
+		v, err := c.verifyMessage(context.Background(), "rejecting", natsMsg.Subject, natsMsg.Data, headers)
+		defer v.span.End()
 		if err != nil {
-			c.opts.logger.Error("rejecting message: missing provenance",
-				"subject", natsMsg.Subject,
-				"error", err,
-			)
 			return
 		}
-		meta.Timestamp = time.Now()
-
-		// Reconstruct trace context from provenance headers.
-		ctx := context.Background()
-		if sc, scErr := reconstructSpanContext(headers); scErr == nil && sc.IsValid() {
-			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
-		}
-
-		// Start consumer span — links subscriber processing to the publisher trace.
-		ctx, processSpan := c.startSpan(ctx, "natsbus.process",
-			trace.WithSpanKind(trace.SpanKindConsumer),
-			trace.WithAttributes(
-				attribute.String("messaging.subject", natsMsg.Subject),
-				attribute.String("tenant.id", meta.TenantID),
-			),
-		)
-		defer processSpan.End()
-
-		// Verify content hash — fail closed on mismatch.
-		actualHash := contentHash(natsMsg.Data)
-		if actualHash != meta.ContentHash {
-			c.opts.logger.Error("rejecting message: content hash mismatch",
-				"subject", natsMsg.Subject,
-				"expected", meta.ContentHash,
-				"actual", actualHash,
-			)
-			processSpan.SetStatus(codes.Error, "content hash mismatch")
-			processSpan.RecordError(ErrContentHashMismatch)
-			return
-		}
-
+		v.meta.Timestamp = time.Now()
 		msg := &Message{
 			Subject:  natsMsg.Subject,
 			Data:     natsMsg.Data,
 			Headers:  headers,
-			Metadata: meta,
+			Metadata: v.meta,
 		}
 
 		start := time.Now()
-		if err := handler(ctx, msg); err != nil {
+		if err := handler(v.ctx, msg); err != nil {
 			c.opts.logger.Error("message handler error",
 				"subject", natsMsg.Subject,
 				"error", err,
 			)
-			processSpan.RecordError(err)
-			processSpan.SetStatus(codes.Error, err.Error())
+			v.span.RecordError(err)
+			v.span.SetStatus(codes.Error, err.Error())
 		} else {
-			processSpan.SetStatus(codes.Ok, "")
+			v.span.SetStatus(codes.Ok, "")
 		}
 
 		// Record subscriber metrics.
 		if c.processCounter != nil {
-			c.processCounter.Add(ctx, 1)
+			c.processCounter.Add(v.ctx, 1)
 		}
 		if c.processLatency != nil {
-			c.processLatency.Record(ctx, time.Since(start).Milliseconds())
+			c.processLatency.Record(v.ctx, time.Since(start).Milliseconds())
 		}
 	}
 }
