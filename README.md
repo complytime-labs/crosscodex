@@ -619,6 +619,7 @@ analysis:
     success_timeout: 10m                 # (0, 24h], >= task_timeout, <= pipeline.stage_timeout; fail a stage (llm_unavailable) that receives only failed results for this long
     max_retries: 3                       # Redispatches of a failed task
     retry_backoff: 1s                    # Base delay before a redispatch
+    retry_on_timeout: false              # Re-send a timed-out LLM call (it may already be billed); tenant-overridable via tenant_overrides
   classification:
     enabled: true                 # Runs the classify analyzer; embedding needs it
     model: ""                     # Inherits from llm.default_model

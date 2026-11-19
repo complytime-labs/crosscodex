@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // Config is the unified merge target for all configuration layers.
@@ -518,10 +520,11 @@ func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
 	return tc
 }
 
-// AnalysisConfig configures the analysis service. It has no tenant_overrides
-// map, so every setting under it, including the panel settings
-// (allow_shared_panel_models and the critique block), is global: analysis
-// config is global like its siblings and a tenant cannot loosen a panel.
+// AnalysisConfig configures the analysis service. Only analysis.engine and
+// analysis.result_cache have a tenant_overrides map, and engine overrides
+// only retry_on_timeout. Every other setting under it, including the panel
+// settings (allow_shared_panel_models and the critique block), is global:
+// a tenant cannot loosen a panel.
 type AnalysisConfig struct {
 	Engine               EngineConfig               `yaml:"engine" json:"engine"`
 	Classification       ClassificationConfig       `yaml:"classification" json:"classification"`
@@ -580,7 +583,8 @@ func (c *ResultCacheConfig) ForTenant(tenantID string) ResultCacheTenantConfig {
 	return tc
 }
 
-// EngineConfig configures the analysis engine orchestrator.
+// EngineConfig configures the analysis engine orchestrator. Every field
+// except retry_on_timeout is global-only.
 type EngineConfig struct {
 	// TaskTimeout is how long an analyzer stage waits while the whole LLM
 	// worker pool is silent before it fails. Any task result of the stage,
@@ -621,12 +625,40 @@ type EngineConfig struct {
 	// which asks whether the pool is alive, it asks whether this stage's
 	// model calls work. A stage's model call takes up to llm.timeout ×
 	// (llm.max_retries + 1) before its error arrives (2m with the
-	// defaults), so keep this well above that. Global only, like its
-	// siblings. Range (0, 24h], at least task_timeout and at most
+	// defaults), so keep this well above that. Global only. Range (0, 24h], at least task_timeout and at most
 	// pipeline.stage_timeout.
 	SuccessTimeout time.Duration `yaml:"success_timeout" json:"success_timeout"`
 	MaxRetries     int           `yaml:"max_retries" json:"max_retries"`
 	RetryBackoff   time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
+	// RetryOnTimeout makes the engine re-send an LLM call that timed out.
+	// Off by default: a timed-out call may already have been billed, so a
+	// re-send can bill it twice. Tenant-overridable.
+	RetryOnTimeout bool `yaml:"retry_on_timeout" json:"retry_on_timeout"`
+	// TenantOverrides holds per-tenant settings, keyed by tenant ID. Only
+	// retry_on_timeout can be overridden.
+	TenantOverrides map[string]EngineOverride `yaml:"tenant_overrides" json:"tenant_overrides"`
+}
+
+// EngineOverride is one tenant's analysis engine settings. Nil fields
+// inherit the global value.
+type EngineOverride struct {
+	RetryOnTimeout *bool `yaml:"retry_on_timeout" json:"retry_on_timeout"`
+}
+
+// EngineTenantConfig holds the resolved analysis engine settings for a
+// tenant.
+type EngineTenantConfig struct {
+	RetryOnTimeout bool
+}
+
+// ForTenant returns the effective engine settings for a tenant. Fields set
+// in TenantOverrides take precedence; nil fields inherit global values.
+func (c *EngineConfig) ForTenant(tenantID string) EngineTenantConfig {
+	tc := EngineTenantConfig{RetryOnTimeout: c.RetryOnTimeout}
+	if override, ok := c.TenantOverrides[tenantID]; ok && override.RetryOnTimeout != nil {
+		tc.RetryOnTimeout = *override.RetryOnTimeout
+	}
+	return tc
 }
 
 // Validate checks EngineConfig for consistency and required fields.
@@ -672,6 +704,12 @@ func (c *EngineConfig) validate(tracker *sourceTracker) error {
 	if c.RetryBackoff < 0 || c.RetryBackoff > 5*time.Minute {
 		p.add("analysis.engine.retry_backoff", "analysis.engine.retry_backoff %s%s must be in range [0, 5m]: %w",
 			c.RetryBackoff, formatSource(tracker, "analysis.engine.retry_backoff"), ErrInvalidConfig)
+	}
+	for _, key := range slices.Sorted(maps.Keys(c.TenantOverrides)) {
+		if err := tenant.ValidateTenantID(key); err != nil {
+			p.add(mapKeyPath("analysis.engine.tenant_overrides", key), "analysis.engine.tenant_overrides key %q is not a valid tenant ID: it must be %s: %w",
+				key, tenant.IDRule, ErrInvalidConfig)
+		}
 	}
 	return p.err()
 }
