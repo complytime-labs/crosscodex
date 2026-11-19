@@ -1,0 +1,40 @@
+internal/gateway/pipeline_client_bdd_test.go
+  s_7e89139204344e::t_6b29a897613cac 13-14,21,33,38,42-72,99-100,102-103,114-134
+  s_7e89139204344e::t_aa8b292dcac161 88-96
+  s_7e89139204344e::t_ae8365c139bdd2 98,135
+internal/gateway/graph_client.go
+  s_7e89139204344e::t_e45ee164ae74ad 1-7,9,11-18,25,29-40,42-51,56-57,59,63,84-85,94-95,149
+  s_7e89139204344e::t_8eb5fba09c8063 10,119-148
+  s_7e89139204344e::t_da117f809d8e5a 8,19-24,26-28,41,52-55,58,60-62,64-83,86-93,96-118
+internal/gateway/pipeline_client.go
+  s_7e89139204344e::t_3add9db5c2b0e4 10,40-42,53-57,61
+  s_7e89139204344e::t_a53c74efd98252 7,27-37,45-46,50-52,58-60,62-63,65-79,81,86-87,89
+internal/gateway/server.go
+  s_7e89139204344e::t_8eb5fba09c8063 41-43,93-100,102-103
+internal/gateway/graph_client_bdd_test.go
+  s_7e89139204344e::t_e81c58db2c60b5 209
+  s_7e89139204344e::t_d23cc8df53b278 1-91,94-167,172-207,219-221
+  s_7e89139204344e::t_70262082a4e803 92-93,168-171,208,210-218
+internal/gateway/graph.go
+  s_7e89139204344e::t_f38847f66abe0b 36,78
+internal/gateway/crosswalk.go
+  s_7e89139204344e::t_f38847f66abe0b 52
+internal/gateway/server_bdd_test.go
+  s_7e89139204344e::t_8b4fc42364838a 414-469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "06865b17a778e28f3dff9e5a3930f598b493d477",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
