@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -243,8 +245,12 @@ func (c *client) Close() error {
 }
 
 // doWithRetry executes a POST request with exponential backoff retry on
-// transient failures (HTTP 429, 5xx, and network errors), and returns the
-// headers of the successful response it decoded into result.
+// transient failures (HTTP 429, 5xx, and non-timeout network errors), and
+// returns the headers of the successful response it decoded into result.
+// A timeout is never retried, in any mode: the upstream may have processed
+// and billed the call, so it returns ErrTimeout at once. Gateway mode makes a
+// single attempt. A retryable HTTP status that outlasts every attempt is
+// classified like a non-retryable one (429 wraps ErrRateLimitExceeded).
 func (c *client) doWithRetry(ctx context.Context, path string, body []byte, result any) (http.Header, error) {
 	url := strings.TrimRight(c.cfg.GatewayURL, "/") + path
 	maxAttempts := c.cfg.MaxRetries + 1
@@ -282,7 +288,11 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
-			// Network errors are always retryable.
+			var netErr net.Error
+			if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+				return nil, fmt.Errorf("LLM gateway request timed out: %w: %w", ErrTimeout, err)
+			}
+			// Other network errors are retryable.
 			lastErr = fmt.Errorf("LLM gateway request failed: %w: %w", err, ErrGatewayUnavailable)
 			continue
 		}
@@ -318,6 +328,10 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 
 	// Exhausted all retries.
 	if lastErr != nil {
+		var apiErr *APIError
+		if errors.As(lastErr, &apiErr) {
+			lastErr = c.classifyError(apiErr)
+		}
 		return nil, fmt.Errorf("LLM gateway request failed after %d attempts: %w", maxAttempts, lastErr)
 	}
 	return nil, fmt.Errorf("LLM gateway request failed: %w", ErrGatewayUnavailable)

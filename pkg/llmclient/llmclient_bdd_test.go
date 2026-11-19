@@ -624,6 +624,87 @@ var _ = Describe("Client", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("gateway"))
 		})
+
+		// blockingServer holds every request until the client gives up (or
+		// cleanup releases it) and counts the requests it received.
+		blockingServer := func() (*httptest.Server, *atomic.Int32) {
+			var requests atomic.Int32
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			DeferCleanup(srv.Close)
+			DeferCleanup(func() { close(release) })
+			return srv, &requests
+		}
+
+		completeOnce := func(ctx context.Context, cfg config.LLMConfig) error {
+			client, err := llmclient.NewClient(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { client.Close() })
+			_, err = client.Complete(ctx, &llmclient.CompletionRequest{
+				Model:    "gpt-4",
+				Messages: []llmclient.ChatMessage{{Role: "user", Content: "Hi"}},
+				TenantID: "test-tenant",
+			})
+			return err
+		}
+
+		It("does not retry a request that times out, and returns ErrTimeout", func() {
+			srv, requests := blockingServer()
+
+			err := completeOnce(testspecs.SetupTenantContext("test-tenant"), config.LLMConfig{
+				GatewayURL: srv.URL,
+				Timeout:    1,
+				MaxRetries: 3,
+			})
+			Expect(err).To(MatchError(llmclient.ErrTimeout))
+			Expect(err).NotTo(MatchError(llmclient.ErrGatewayUnavailable))
+			Expect(requests.Load()).To(BeEquivalentTo(1))
+		})
+
+		It("returns ErrTimeout when the caller's deadline elapses", func() {
+			srv, requests := blockingServer()
+
+			ctx, cancel := context.WithTimeout(testspecs.SetupTenantContext("test-tenant"), 50*time.Millisecond)
+			DeferCleanup(cancel)
+			err := completeOnce(ctx, config.LLMConfig{
+				GatewayURL: srv.URL,
+				Timeout:    5,
+				MaxRetries: 3,
+			})
+			Expect(err).To(MatchError(llmclient.ErrTimeout))
+			Expect(err).To(MatchError(context.DeadlineExceeded))
+			Expect(requests.Load()).To(BeEquivalentTo(1))
+		})
+
+		DescribeTable("a rate limit that outlasts every attempt wraps ErrRateLimitExceeded",
+			func(gatewayMode bool, wantRequests int32) {
+				var requests atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusTooManyRequests)
+					fmt.Fprint(w, `{"error":{"message":"rate limited","type":"rate_limit"}}`)
+				}))
+				DeferCleanup(srv.Close)
+
+				err := completeOnce(testspecs.SetupTenantContext("test-tenant"), config.LLMConfig{
+					GatewayURL:  srv.URL,
+					Timeout:     5,
+					MaxRetries:  2,
+					GatewayMode: gatewayMode,
+				})
+				Expect(err).To(MatchError(llmclient.ErrRateLimitExceeded))
+				Expect(requests.Load()).To(Equal(wantRequests))
+			},
+			Entry("gateway mode, one attempt", true, int32(1)),
+			Entry("direct mode, max_retries+1 attempts", false, int32(3)),
+		)
 	})
 
 	Describe("Embed", func() {
