@@ -1,0 +1,34 @@
+pkg/authn/types.go
+  s_7e89139204344e::t_2db30e4a4e0c3f 20-26
+pkg/tenant/connectutil/doc.go
+  s_7e89139204344e::t_ca031d7f611917 6-16
+pkg/tenant/connectutil/connectutil_bdd_test.go
+  s_7e89139204344e::t_115708f556ba2e 8,29-61,81-85,87,89-92,94-96,98-100,103-126,173,177,179-191,193-198,200-265
+pkg/tenant/connectutil/connectutil_fuzz_test.go
+  s_7e89139204344e::t_05b566285e8222 1-33
+pkg/tenant/connectutil/connectutil_property_test.go
+  s_7e89139204344e::t_05b566285e8222 1-4,6-27,30-48,50-57
+  s_7e89139204344e::t_ee9101e3475b22 5,28-29,49
+pkg/tenant/connectutil/export_test.go
+  s_7e89139204344e::t_05b566285e8222 1-4
+pkg/tenant/connectutil/connectutil.go
+  s_7e89139204344e::t_fc6dc284a528b3 7-9,26-28,32-41,54-69,71-73,87-93,101-104,144-146,152-210
+  s_7e89139204344e::t_2db30e4a4e0c3f 25,29
+  s_7e89139204344e::t_e77bee0468c8b9 211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "553398a83ea647b601384d7db8c2b490f2f610d8",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
