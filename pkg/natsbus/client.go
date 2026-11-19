@@ -573,6 +573,9 @@ func (c *client) ensureStream(ctx context.Context, sc StreamConfig) error {
 		// Another role created it between the lookup and the create: verify its
 		// settings like any live stream.
 		live, err = c.liveStreamConfig(ctx, sc.Name)
+		if errors.Is(err, jetstream.ErrStreamNotFound) {
+			return fmt.Errorf("stream %s was deleted while crosscodexd was starting; restart to create it: %w", sc.Name, err)
+		}
 	}
 	if err != nil {
 		return err

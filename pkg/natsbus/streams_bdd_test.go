@@ -46,10 +46,31 @@ type fakeJetStream struct {
 	streamErr map[string]error
 	created   []jetstream.StreamConfig
 	updated   []jetstream.StreamConfig
+	// raceWith simulates another role creating a stream between the caller's
+	// lookup and its create: the first CreateStream makes the stream appear
+	// with this config (nil: the stream stays absent, as if deleted again)
+	// and returns ErrStreamNameAlreadyInUse.
+	raceWith *jetstream.StreamConfig
+	race     bool
+	// createErr, when set, is what every CreateStream returns.
+	createErr error
 }
 
 func (f *fakeJetStream) CreateStream(_ context.Context, cfg jetstream.StreamConfig) (jetstream.Stream, error) {
 	f.created = append(f.created, cfg)
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	if f.race {
+		f.race = false
+		if f.streams == nil {
+			f.streams = map[string]*fakeStream{}
+		}
+		if f.raceWith != nil {
+			f.streams[cfg.Name] = &fakeStream{cfg: f.raceWith}
+		}
+		return nil, jetstream.ErrStreamNameAlreadyInUse
+	}
 	if f.streams == nil {
 		f.streams = map[string]*fakeStream{}
 	}
@@ -269,6 +290,66 @@ var _ = Describe("ensureStreams", func() {
 		Expect(err).To(MatchError(ErrStreamDrift))
 		Expect(err.Error()).To(ContainSubstring("max_age"))
 		Expect(err.Error()).To(ContainSubstring("storage"))
+	})
+
+	Describe("when another role creates the stream first", func() {
+		// raced returns a fake that has every stream except AUDIT_LLM, which
+		// appears with raceCfg during the first create.
+		raced := func(raceCfg *jetstream.StreamConfig) *fakeJetStream {
+			js := liveFrom()
+			delete(js.streams, "AUDIT_LLM")
+			js.race = true
+			js.raceWith = raceCfg
+			return js
+		}
+		wantCfg := func() jetstream.StreamConfig {
+			return jetStreamConfig(streamConfigs(streamsCfg)[0])
+		}
+
+		It("refuses the raced-in stream when it differs, updating nothing", func() {
+			differing := wantCfg()
+			differing.MaxAge = time.Hour
+			js := raced(&differing)
+			c := &client{js: js}
+
+			err := c.ensureStreams(context.Background(), streamsCfg)
+
+			Expect(err).To(MatchError(ErrStreamDrift))
+			Expect(err.Error()).To(ContainSubstring("max_age"))
+			Expect(js.updated).To(BeEmpty())
+			Expect(js.created).To(HaveLen(1), "the create must not be retried")
+		})
+
+		It("accepts the raced-in stream when it matches", func() {
+			matching := wantCfg()
+			js := raced(&matching)
+			c := &client{js: js}
+
+			Expect(c.ensureStreams(context.Background(), streamsCfg)).To(Succeed())
+			Expect(js.updated).To(BeEmpty())
+		})
+
+		It("says to restart when the stream is deleted again in the window", func() {
+			js := raced(nil)
+			c := &client{js: js}
+
+			err := c.ensureStreams(context.Background(), streamsCfg)
+
+			Expect(err).To(MatchError(jetstream.ErrStreamNotFound))
+			Expect(err.Error()).To(ContainSubstring("AUDIT_LLM was deleted while crosscodexd was starting; restart to create it"))
+		})
+	})
+
+	It("wraps an unrelated create failure as ErrStreamCreate", func() {
+		boom := errors.New("insufficient resources")
+		js := &fakeJetStream{createErr: boom}
+		c := &client{js: js}
+
+		err := c.ensureStreams(context.Background(), streamsCfg)
+
+		Expect(err).To(MatchError(ErrStreamCreate))
+		Expect(err).To(MatchError(boom))
+		Expect(js.updated).To(BeEmpty())
 	})
 
 	It("propagates a lookup failure without creating anything", func() {
