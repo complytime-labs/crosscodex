@@ -1,0 +1,30 @@
+pkg/config/config_fuzz_test.go
+  s_b71fe208938cab::t_020a6061085799 264-267,292-294,313-337
+  s_b71fe208938cab::t_ba473031ef2e36 338-339
+pkg/config/testdata/fuzz/FuzzResolveReferences/91a0788365051697
+  s_b71fe208938cab::t_60d0a18fa7d580 1-2
+README.md
+  s_b71fe208938cab::t_4c4a76a53ed1ae 152
+pkg/config/merge_keys_bdd_test.go
+  s_b71fe208938cab::t_f3a958024b543f 108-127
+  s_b71fe208938cab::t_8355b3b7ebc7c8 167-173
+pkg/config/references.go
+  s_b71fe208938cab::t_1eedb0191ac11f 33-35,40-42,46-80
+  s_b71fe208938cab::t_9e217dff54e431 81-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "c9c72973780b4bc25eb0b9d8c79ccf357e2a9ee4",
+  "prompts": {},
+  "sessions": {
+    "s_b71fe208938cab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "392998aa-0db6-4bc1-89e1-6c065185df13",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
