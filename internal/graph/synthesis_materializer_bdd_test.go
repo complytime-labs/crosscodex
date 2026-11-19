@@ -10,6 +10,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 )
@@ -51,17 +52,15 @@ var _ = Describe("Synthesis materialization", func() {
 		svc = graph.New(gdb, &mockVectorDB{}, nil, append(opts, graph.WithResolverRegistry(registry))...)
 	}
 
-	deliver := func(stage string, rows any) error {
+	// deliverOn hands the handler the event's delivery-th delivery.
+	deliverOn := func(delivery uint64, stage string, rows any) error {
 		data, err := json.Marshal(rows)
 		Expect(err).NotTo(HaveOccurred())
 		resolver.data = data
-		eventData, err := json.Marshal(map[string]string{"analyzer": stage, "job_id": "job-1", "stage": "completed"})
-		Expect(err).NotTo(HaveOccurred())
-		return graph.ExportHandleEvent(svc, ctx, &natsbus.Message{
-			Subject: "crosscodex.pipeline." + tenantID + ".job-1.stage.completed",
-			Data:    eventData,
-		})
+		return graph.ExportHandleEvent(svc, ctx, stageEvent(tenantID, stage, delivery))
 	}
+
+	deliver := func(stage string, rows any) error { return deliverOn(1, stage, rows) }
 
 	edges := func() []graphdb.Relationship {
 		rels, err := gdb.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{EdgeLabel: results.SemanticMatchEdgeLabel})
@@ -70,7 +69,7 @@ var _ = Describe("Synthesis materialization", func() {
 	}
 
 	BeforeEach(func() {
-		ctx = context.Background()
+		ctx = tenantCtx(tenantID)
 		gdb = &bulkRecordingGraph{GraphDB: newMemGraph(ctx, tenantID, "ctrl-1", "ctrl-2", "ctrl-3")}
 		resolver = &mockResolver{scheme: "pg"}
 		newService()
@@ -154,8 +153,8 @@ var _ = Describe("Synthesis materialization", func() {
 		Expect(edges()).To(HaveLen(2))
 	})
 
-	It("skips a mapping whose endpoint is missing and still writes the rest", func() {
-		Expect(deliver("synthesis", []map[string]any{
+	It("skips a mapping whose endpoint is missing on the last delivery and still writes the rest", func() {
+		Expect(deliverOn(config.DefaultNATSMaterializeMaxDeliver, "synthesis", []map[string]any{
 			mapping("ctrl-missing", "ctrl-2", "EQUIVALENT"), mapping("ctrl-1", "ctrl-2", "EQUIVALENT"),
 		})).To(Succeed())
 

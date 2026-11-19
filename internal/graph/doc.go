@@ -24,18 +24,26 @@
 // # Thread Safety
 //
 // Service is safe for concurrent use. gRPC handlers are inherently concurrent.
-// The NATS subscriber uses a queue group for single-delivery. The resolution
-// pool bounds concurrent I/O.
+// The NATS subscriber is two durable consumers of the MATERIALIZE work-queue
+// stream (graph-materializer and graph-barrier) that every graph role process
+// shares, so each message is handled by one process. The resolution pool
+// bounds concurrent I/O.
 //
 // # Error Handling
 //
-// gRPC errors use canonical status codes. The NATS subscriber is a core-NATS
-// queue subscription, so a handler error is logged and recorded on the
-// natsbus.process span but the event is not redelivered. Because of that, an
-// edge whose endpoint node is missing (graphdb.ErrNodeNotFound) is skipped
-// rather than failing the event, so later edges in the event are still
-// written; each skip increments graph.materialize.edges_skipped.total, adds a
-// span event and logs a warning. Other driver errors still fail the event.
+// gRPC errors use canonical status codes. A materialization event whose
+// handler fails is redelivered after nats.materialize.redeliver_delay, up to
+// nats.materialize.max_deliver deliveries; every graph write is idempotent,
+// so a redelivery writes nothing twice. On the last delivery a failure stores
+// a "failed" graph outcome for the job (natsbus.GraphOutcomeSubject) and
+// terminates the event. An edge whose endpoint node is missing
+// (graphdb.ErrNodeNotFound) does not stop the event's other edges: before the
+// last delivery the event is retried once they are written, so a Control node
+// the catalog projection has not written yet heals; on the last delivery the
+// edge is skipped, which increments graph.materialize.edges_skipped.total,
+// adds a span event and logs a warning. A job's barrier is answered with a
+// "materialized" or "failed" outcome once none of the job's events is left in
+// the stream.
 package graph
 
 import (

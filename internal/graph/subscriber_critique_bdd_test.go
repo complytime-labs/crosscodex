@@ -107,7 +107,7 @@ var _ = Describe("Subscriber critique verdicts", func() {
 	}
 
 	BeforeEach(func() {
-		ctx = context.Background()
+		ctx = tenantCtx(tenantID)
 		gdb = memdriver.New()
 		Expect(gdb.CreateGraph(ctx, tenantID)).To(Succeed())
 		for _, id := range []string{"a", "b", "c", "d"} {

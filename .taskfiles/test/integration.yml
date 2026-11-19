@@ -506,7 +506,7 @@ tasks:
           PACKAGES: "{{.ROOT_DIR}}/pkg/attestation/..."
 
   nats-embedded:
-    desc: Run natsbus integration tests against an embedded NATS server (no containers needed)
+    desc: Run natsbus and graph-role durable consumer integration tests against an in-process NATS server (no containers needed)
     deps: [ensure-deps]
     cmds:
       - mkdir -p {{.TEST_DIR}}
@@ -517,6 +517,13 @@ tasks:
           REPORT: integration-nats-embedded
           COVERAGE: integration-nats-embedded-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/pkg/natsbus/..."
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_graph_nats
+          TIMEOUT: 300s
+          REPORT: integration-graph-nats
+          COVERAGE: integration-graph-nats-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/internal/graph/..."
 
   clean:
     desc: Remove all integration test containers and their volumes

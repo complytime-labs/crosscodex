@@ -16,6 +16,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
@@ -130,24 +131,34 @@ var _ = Describe("attachGraph config wiring", func() {
 		Expect(searched).To(Equal([]string{"c1", "c2"}))
 	})
 
-	It("subscribes the graph service to catalog parsed events", func() {
+	It("consumes MATERIALIZE durably, including catalog parsed events, with nats.materialize's delivery limits", func() {
 		bus := &natsbustest.Fake{}
 		rt := &runtime{}
-		Expect(attachGraph(&config.Config{}, &sharedResources{graphDB_: memdriver.New(), natsClient: bus}, rt)).To(Succeed())
+		cfg := &config.Config{NATS: config.NATSConfig{Materialize: config.NATSMaterializeConfig{
+			MaxDeliver: 7, AckWait: 3 * time.Minute, RedeliverDelay: 4 * time.Second,
+		}}}
+		Expect(attachGraph(cfg, &sharedResources{graphDB_: memdriver.New(), natsClient: bus}, rt)).To(Succeed())
 
 		ctx := context.Background()
 		Expect(rt.graphService.Start(ctx)).To(Succeed())
 		DeferCleanup(func() { _ = rt.graphService.Stop(context.Background()) })
-		type subscription struct{ Subject, Queue string }
-		var got []subscription
+		var got []natsbus.ConsumerConfig
 		for _, sub := range bus.Subscriptions() {
-			got = append(got, subscription{sub.Subject, sub.Queue})
+			got = append(got, sub.Config)
 		}
 		// Exact set: an unexpected subscription or publish must fail here.
 		Expect(got).To(ConsistOf(
-			subscription{"crosscodex.pipeline.*.*.stage.completed", "graph-materializer"},
-			subscription{"crosscodex.catalog.*.*.parsed", "graph-materializer"},
-		), "attachGraph must give the graph service a ControlsReader so it projects catalog controls")
+			natsbus.ConsumerConfig{
+				Stream: natsbus.MaterializeStream, Durable: "graph-materializer",
+				FilterSubjects: []string{"crosscodex.pipeline.*.*.stage.completed", "crosscodex.catalog.*.*.parsed"},
+				AckWait:        3 * time.Minute, MaxDeliver: 7, RedeliverDelay: 4 * time.Second,
+			},
+			natsbus.ConsumerConfig{
+				Stream: natsbus.MaterializeStream, Durable: "graph-barrier",
+				FilterSubjects: []string{"crosscodex.materialize.*.*.barrier"},
+				AckWait:        3 * time.Minute, MaxDeliver: -1, RedeliverDelay: 4 * time.Second,
+			},
+		), "attachGraph must give the graph service a ControlsReader and nats.materialize")
 		Expect(bus.Published()).To(BeEmpty())
 	})
 })

@@ -603,6 +603,7 @@ func attachGraph(cfg *config.Config, shared *sharedResources, rt *runtime) error
 		graph.WithMaxBulkEdges(cfg.Graph.MaxBulkEdges),
 		graph.WithMaxSimilarityCatalogs(cfg.Graph.MaxSimilarityCatalogs),
 		graph.WithMaxSimilarityLimit(cfg.Graph.MaxSimilarityLimit),
+		graph.WithMaterializeConfig(cfg.NATS.Materialize),
 		graph.WithControlsReader(graph.NewPGControlsReader(tenantConn, graph.WithPGControlsReaderTelemetry(tp, mp))))
 	rt.healthServer = newHealthServer(cfg.Health.Addr, dbPingCheck(shared.appPool))
 	return nil

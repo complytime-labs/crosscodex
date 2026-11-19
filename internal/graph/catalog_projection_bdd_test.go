@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/complytime-labs/crosscodex/internal/graph"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
@@ -100,7 +101,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 		gdb    graphdb.GraphDB
 		reader *fakeControlsReader
 		bus    *natsbustest.Fake
-		failOn string
+		failOn string // durable consumer whose creation fails
 		tp     *telemetrytest.TestProvider
 		logs   *bytes.Buffer
 		svc    *graph.Service
@@ -142,28 +143,21 @@ var _ = Describe("Catalog parsed event projection", func() {
 		DeferCleanup(func() { _ = svc.Stop(context.Background()) })
 	}
 
-	// subFor returns the most recent subscription to subject, or nil.
-	subFor := func(subject string) *natsbustest.Sub {
-		subs := bus.Subscriptions()
-		for i := len(subs) - 1; i >= 0; i-- {
-			if subs[i].Subject == subject {
-				return subs[i]
-			}
-		}
-		return nil
-	}
+	materializer := func() *natsbustest.Sub { return consumerSub(bus, materializerConsumer) }
 
-	// deliverPayload calls the catalog handler directly, not through
-	// Fake.Deliver, because the malformed-subject specs feed it subjects the
-	// broker would never route to the wildcard subscription.
-	deliverPayload := func(subj string, data []byte) error {
-		sub := subFor(catalogWildcard)
-		Expect(sub).NotTo(BeNil(), "no handler subscribed to %s", catalogWildcard)
-		return sub.Handle(&natsbus.Message{Subject: subj, Data: data})
+	// deliverFrom calls the materializer consumer's handler directly, not
+	// through Fake.Deliver, because the malformed-subject specs feed it
+	// subjects the broker would never route to the consumer. provenance is the
+	// tenant the message's provenance headers name.
+	deliverFrom := func(provenance, subj string, data []byte, delivery uint64) error {
+		sub := materializer()
+		Expect(sub).NotTo(BeNil(), "no %s consumer", materializerConsumer)
+		return sub.Handle(&natsbus.Message{Subject: subj, Data: data,
+			Metadata: natsbus.MessageMetadata{TenantID: provenance, NumDelivered: delivery}})
 	}
 
 	deliver := func(subj string) error {
-		return deliverPayload(subj, []byte(`{"ignored":true}`))
+		return deliverFrom(tenantID, subj, []byte(`{"ignored":true}`), 1)
 	}
 
 	// nodeCountIn counts the Control nodes present in tenant t's graph among
@@ -214,8 +208,8 @@ var _ = Describe("Catalog parsed event projection", func() {
 		gdb = mem
 		reader = &fakeControlsReader{controls: fixture(), containers: containerFixture()}
 		failOn = ""
-		bus = &natsbustest.Fake{QueueSubscribeFunc: func(_ context.Context, subject, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
-			if subject == failOn {
+		bus = &natsbustest.Fake{ConsumeDurableFunc: func(_ context.Context, cfg natsbus.ConsumerConfig, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
+			if cfg.Durable == failOn {
 				return nil, errors.New("nats: connection closed")
 			}
 			// (nil, nil) succeeds with the Sub the Fake recorded for this call.
@@ -230,49 +224,46 @@ var _ = Describe("Catalog parsed event projection", func() {
 	})
 
 	Describe("subscription", func() {
-		It("subscribes to catalog parsed events in the materializer queue group when a reader is set", func() {
+		It("consumes catalog parsed events on the materializer consumer when a reader is set", func() {
 			build()
-			Expect(subFor(pipelineSubject)).NotTo(BeNil())
-			Expect(subFor(catalogWildcard)).NotTo(BeNil())
-			Expect(subFor(catalogWildcard).Queue).To(Equal("graph-materializer"))
+			Expect(materializer().Config.FilterSubjects).To(ConsistOf(pipelineSubject, catalogWildcard))
 		})
 
-		It("does not subscribe to catalog events without a reader", func() {
+		It("does not consume catalog events without a reader", func() {
 			svc = graph.New(gdb, &mockVectorDB{}, bus)
 			Expect(svc.Start(ctx)).To(Succeed())
-			Expect(bus.Subscriptions()).To(HaveLen(1))
-			Expect(subFor(pipelineSubject)).NotTo(BeNil())
+			Expect(materializer().Config.FilterSubjects).To(Equal([]string{pipelineSubject}))
 			Expect(svc.Stop(ctx)).To(Succeed())
 		})
 
-		It("fails Start, releasing the pipeline subscription, when the catalog subscribe fails", func() {
-			failOn = catalogWildcard
+		It("fails Start, releasing the materializer consumer, when the barrier consumer cannot be created", func() {
+			failOn = barrierConsumer
 			svc = graph.New(gdb, &mockVectorDB{}, bus, graph.WithControlsReader(reader))
 
 			err := svc.Start(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("catalog events"))
-			Expect(subFor(pipelineSubject).Unsubscribed()).To(BeTrue())
+			Expect(err.Error()).To(ContainSubstring(barrierConsumer))
+			Expect(materializer().Unsubscribed()).To(BeTrue())
 			Expect(svc.Stop(ctx)).To(MatchError(graph.ErrNotStarted))
 
 			By("starting cleanly once the bus recovers")
 			failOn = ""
 			Expect(svc.Start(ctx)).To(Succeed())
-			Expect(subFor(catalogWildcard)).NotTo(BeNil())
+			Expect(consumerSub(bus, barrierConsumer)).NotTo(BeNil())
 			Expect(svc.Stop(ctx)).To(Succeed())
 		})
 
-		It("drains both subscriptions on Stop", func() {
+		It("drains both consumers on Stop", func() {
 			build()
 			Expect(svc.Stop(ctx)).To(Succeed())
-			Expect(subFor(pipelineSubject).Drained()).To(BeTrue())
-			Expect(subFor(catalogWildcard).Drained()).To(BeTrue())
+			Expect(materializer().Drained()).To(BeTrue())
+			Expect(consumerSub(bus, barrierConsumer).Drained()).To(BeTrue())
 			Expect(svc.Stop(ctx)).To(MatchError(graph.ErrNotStarted))
 		})
 
-		It("reports a catalog drain failure on Stop", func() {
+		It("reports a barrier consumer drain failure on Stop", func() {
 			build()
-			subFor(catalogWildcard).DrainErr = errors.New("drain failed")
+			consumerSub(bus, barrierConsumer).DrainErr = errors.New("drain failed")
 			err := svc.Stop(ctx)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("drain failed"))
@@ -463,13 +454,15 @@ var _ = Describe("Catalog parsed event projection", func() {
 			Expect(v.AsString()).To(Equal("PARENT_OF"))
 		})
 
-		DescribeTable("drops a malformed subject without reading or writing",
+		DescribeTable("terms a malformed subject without reading or writing",
 			func(subj string) {
 				build()
-				Expect(deliver(subj)).To(Succeed())
+				Expect(deliver(subj)).To(MatchError(natsbus.ErrPermanent))
+				Expect(materializer().Termed()).To(Equal(1))
 				Expect(reader.calls).To(BeZero())
 				Expect(nodeCount()).To(BeZero())
-				Expect(eventPoint("error")).To(Equal(int64(1)))
+				Expect(eventPoint("skipped")).To(Equal(int64(1)))
+				Expect(eventPoint("error")).To(BeZero())
 			},
 			Entry("too few tokens", "crosscodex.catalog.x"),
 			Entry("invalid tenant", "crosscodex.catalog.bad tenant!.cat.parsed"),
@@ -548,7 +541,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 					Expect(mem.CreateGraph(ctx, subjectTenant)).To(Succeed())
 					build()
 
-					Expect(deliverPayload("crosscodex.catalog."+subjectTenant+"."+catalogID+".parsed", []byte(payload))).To(Succeed())
+					Expect(deliverFrom(subjectTenant, "crosscodex.catalog."+subjectTenant+"."+catalogID+".parsed", []byte(payload), 1)).To(Succeed())
 
 					Expect(reader.gotTenant).To(Equal(subjectTenant))
 					Expect(reader.gotCatalog).To(Equal(catalogID))
@@ -564,6 +557,33 @@ var _ = Describe("Catalog parsed event projection", func() {
 				Entry("empty payload", ``),
 				Entry("payload naming another tenant and catalog", `{"tenant_id":"tenant-a","catalog_id":"other"}`),
 			)
+
+			It("terms an event whose subject names another tenant than its provenance, projecting nothing", func() {
+				build()
+
+				err := deliverFrom(otherTenant, subject, []byte(`{"ignored":true}`), 1)
+
+				Expect(err).To(MatchError(natsbus.ErrPermanent))
+				Expect(materializer().Termed()).To(Equal(1))
+				Expect(reader.calls).To(BeZero())
+				Expect(nodeCountIn(tenantID)).To(BeZero())
+				Expect(nodeCountIn(otherTenant)).To(BeZero())
+				Expect(eventPoint("rejected")).To(Equal(int64(1)))
+			})
+		})
+
+		It("naks a failed projection before the last delivery and terms it on the last", func() {
+			reader.err = errors.New("connection reset by peer")
+			build()
+
+			Expect(deliverFrom(tenantID, subject, nil, 1)).NotTo(MatchError(natsbus.ErrPermanent))
+			Expect(materializer().Naked()).To(Equal(1))
+
+			err := deliverFrom(tenantID, subject, nil, config.DefaultNATSMaterializeMaxDeliver)
+			Expect(err).To(MatchError(natsbus.ErrPermanent))
+			Expect(err.Error()).To(ContainSubstring("re-import"))
+			Expect(materializer().Termed()).To(Equal(1))
+			Expect(bus.Published()).To(BeEmpty(), "a catalog belongs to no job, so no job outcome is published")
 		})
 
 		It("records a span with tenant and catalog and counts the event", func() {

@@ -3,6 +3,7 @@ package graph_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -11,8 +12,25 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
-	"github.com/complytime-labs/crosscodex/pkg/natsbus"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 )
+
+// failNthEdgeOnce fails the nth CreateEdge call, once, with a driver error and
+// passes every other call to the memdriver it embeds, so an event is cut off
+// after a partial write.
+type failNthEdgeOnce struct {
+	graphdb.GraphDB
+	n     int
+	calls int
+}
+
+func (g *failNthEdgeOnce) CreateEdge(ctx context.Context, tenantID, sourceID, targetID string, edge graphdb.Edge) error {
+	g.calls++
+	if g.calls == g.n {
+		return errors.New("connection reset by peer")
+	}
+	return g.GraphDB.CreateEdge(ctx, tenantID, sourceID, targetID, edge)
+}
 
 // Regression: redelivering a stage-completed event must not duplicate edges.
 // The subscriber relies on the driver returning ErrEdgeExists for an
@@ -41,12 +59,7 @@ var _ = Describe("Subscriber re-materialization", func() {
 	})
 
 	deliver := func(analyzer string) error {
-		eventData, err := json.Marshal(map[string]string{"analyzer": analyzer, "job_id": "job-1", "stage": "completed"})
-		Expect(err).NotTo(HaveOccurred())
-		return graph.ExportHandleEvent(svc, ctx, &natsbus.Message{
-			Subject: "crosscodex.pipeline." + tenantID + ".job-1.stage.completed",
-			Data:    eventData,
-		})
+		return graph.ExportHandleEvent(svc, tenantCtx(tenantID), stageEvent(tenantID, analyzer, 1))
 	}
 
 	DescribeTable("yields one edge per label when the same results are materialized twice",
@@ -79,6 +92,45 @@ var _ = Describe("Subscriber re-materialization", func() {
 			}},
 		}}),
 	)
+
+	It("writes each edge once when an event is redelivered after a partial write", func() {
+		Expect(gdb.CreateNode(ctx, tenantID, graphdb.Node{ID: "ctrl-3", Label: "Control", ValidFrom: time.Now().UTC()})).To(Succeed())
+		data, err := json.Marshal([]map[string]any{
+			{"source_id": "ctrl-1", "target_id": "ctrl-2", "relationship_type": "EQUIVALENT", "confidence": 0.9},
+			{"source_id": "ctrl-2", "target_id": "ctrl-3", "relationship_type": "EQUIVALENT", "confidence": 0.9},
+			{"source_id": "ctrl-1", "target_id": "ctrl-3", "relationship_type": "EQUIVALENT", "confidence": 0.9},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		resolver.data = data
+		bus := &natsbustest.Fake{}
+		registry := graph.NewResolverRegistry()
+		registry.Register(resolver)
+		svc = graph.New(&failNthEdgeOnce{GraphDB: gdb, n: 2}, &mockVectorDB{}, bus, graph.WithResolverRegistry(registry))
+		Expect(svc.Start(ctx)).To(Succeed())
+		DeferCleanup(func() { _ = svc.Stop(context.Background()) })
+
+		By("cutting the first delivery off after its first edge")
+		Expect(bus.Deliver(stageEvent(tenantID, "relationship", 1))).NotTo(Succeed())
+		rels, err := gdb.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{EdgeLabel: "SEMANTIC_MATCH"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rels).To(HaveLen(1))
+
+		By("completing the event on redelivery without duplicating the edge already written")
+		Expect(bus.Deliver(stageEvent(tenantID, "relationship", 2))).To(Succeed())
+		sub := consumerSub(bus, materializerConsumer)
+		Expect(sub.Naked()).To(Equal(1))
+		Expect(sub.Acked()).To(Equal(1))
+		rels, err = gdb.QueryRelationships(ctx, tenantID, graphdb.RelationshipQuery{EdgeLabel: "SEMANTIC_MATCH"})
+		Expect(err).NotTo(HaveOccurred())
+		ids := map[string]int{}
+		for _, r := range rels {
+			ids[r.Edge.ID]++
+		}
+		Expect(ids).To(HaveLen(3))
+		for id, n := range ids {
+			Expect(n).To(Equal(1), "edge %s written %d times", id, n)
+		}
+	})
 
 	// Control IDs are tenant-supplied and may contain "_", so the edge ID
 	// must not let ("a_b","c") and ("a","b_c") collide and drop one edge.

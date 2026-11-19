@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/complytime-labs/crosscodex/internal/graph"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb/memdriver"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
@@ -29,13 +30,15 @@ func (failingEdgeGraph) CreateEdge(context.Context, string, string, string, grap
 	return errors.New("connection reset by peer")
 }
 
-// Regression (#160): the subscriber runs on a core-NATS queue subscription,
-// so a handler error is never redelivered. An edge whose endpoint node is
-// missing must be skipped and reported, not abort the remaining edges.
+// Regression (#160): an edge whose endpoint node is missing must not abort the
+// remaining edges. Before the last delivery the event is retried, so a Control
+// node the catalog projection has not written yet heals; on the last delivery
+// the edge is skipped and reported.
 var _ = Describe("Subscriber edge with a missing endpoint node", func() {
 	const (
 		tenantID      = "test-tenant"
 		skippedMetric = "graph.materialize.edges_skipped.total"
+		maxDeliver    = 3
 	)
 
 	var (
@@ -68,19 +71,20 @@ var _ = Describe("Subscriber edge with a missing endpoint node", func() {
 		svc = graph.New(gdb, &mockVectorDB{}, nil,
 			graph.WithResolverRegistry(registry),
 			graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
-			graph.WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+			graph.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+			graph.WithMaterializeConfig(config.NATSMaterializeConfig{MaxDeliver: maxDeliver, AckWait: time.Minute, RedeliverDelay: time.Second}))
 	})
 
-	deliver := func(analyzer string, results []map[string]any) error {
+	// deliverOn hands the handler the event's delivery-th delivery.
+	deliverOn := func(delivery uint64, analyzer string, results []map[string]any) error {
 		data, err := json.Marshal(results)
 		Expect(err).NotTo(HaveOccurred())
 		resolver.data = data
-		eventData, err := json.Marshal(map[string]string{"analyzer": analyzer, "job_id": "job-1", "stage": "completed"})
-		Expect(err).NotTo(HaveOccurred())
-		return graph.ExportHandleEvent(svc, ctx, &natsbus.Message{
-			Subject: "crosscodex.pipeline." + tenantID + ".job-1.stage.completed",
-			Data:    eventData,
-		})
+		return graph.ExportHandleEvent(svc, tenantCtx(tenantID), stageEvent(tenantID, analyzer, delivery))
+	}
+
+	deliver := func(analyzer string, results []map[string]any) error {
+		return deliverOn(maxDeliver, analyzer, results)
 	}
 
 	edgeCount := func(label string) int {
@@ -89,7 +93,49 @@ var _ = Describe("Subscriber edge with a missing endpoint node", func() {
 		return len(rels)
 	}
 
-	DescribeTable("skips only the edge whose endpoint is missing and reports it",
+	It("retries an edge whose control node is not projected yet, and skips it only on the last delivery", func() {
+		results := []map[string]any{
+			{"source_id": "ctrl-missing", "target_id": "ctrl-2", "relationship_type": "EQUIVALENT", "confidence": 0.9},
+			{"source_id": "ctrl-1", "target_id": "ctrl-2", "relationship_type": "EQUIVALENT", "confidence": 0.9},
+		}
+
+		By("returning a retryable error before the last delivery, after writing every other edge")
+		for delivery := uint64(1); delivery < maxDeliver; delivery++ {
+			err := deliverOn(delivery, "relationship", results)
+			Expect(err).To(HaveOccurred())
+			Expect(err).NotTo(MatchError(natsbus.ErrPermanent))
+			Expect(err.Error()).To(ContainSubstring("not projected"))
+			Expect(edgeCount("SEMANTIC_MATCH")).To(Equal(1))
+		}
+		Expect(telemetrytest.FindMetric(tp.GetMetrics(), skippedMetric)).To(BeNil(), "a retried edge is not skipped yet")
+		Expect(logs.String()).NotTo(ContainSubstring("level=WARN"))
+
+		By("skipping and reporting it on the last delivery")
+		Expect(deliverOn(maxDeliver, "relationship", results)).To(Succeed())
+		Expect(edgeCount("SEMANTIC_MATCH")).To(Equal(1))
+		m := telemetrytest.FindMetric(tp.GetMetrics(), skippedMetric)
+		Expect(m).NotTo(BeNil())
+		total, err := telemetrytest.CounterValue(m)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(total).To(Equal(int64(1)))
+		Expect(logs.String()).To(ContainSubstring("level=WARN"))
+	})
+
+	It("writes the deferred edge once the control node is projected before a redelivery", func() {
+		results := []map[string]any{
+			{"source_id": "ctrl-late", "target_id": "ctrl-2", "relationship_type": "EQUIVALENT", "confidence": 0.9},
+			{"source_id": "ctrl-1", "target_id": "ctrl-2", "relationship_type": "EQUIVALENT", "confidence": 0.9},
+		}
+		Expect(deliverOn(1, "relationship", results)).NotTo(Succeed())
+
+		Expect(gdb.CreateNode(ctx, tenantID, graphdb.Node{ID: "ctrl-late", Label: "Control", ValidFrom: time.Now().UTC()})).To(Succeed())
+		Expect(deliverOn(2, "relationship", results)).To(Succeed())
+
+		Expect(edgeCount("SEMANTIC_MATCH")).To(Equal(2))
+		Expect(telemetrytest.FindMetric(tp.GetMetrics(), skippedMetric)).To(BeNil())
+	})
+
+	DescribeTable("skips only the edge whose endpoint is missing on the last delivery and reports it",
 		func(analyzer, edgeLabel, sourceID, targetID string, results []map[string]any) {
 			Expect(deliver(analyzer, results)).To(Succeed())
 
@@ -167,7 +213,7 @@ var _ = Describe("Subscriber edge with a missing endpoint node", func() {
 			graph.WithResolverRegistry(registry),
 			graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()))
 
-		err := deliver("relationship", []map[string]any{
+		err := deliverOn(1, "relationship", []map[string]any{
 			{"source_id": "ctrl-1", "target_id": "ctrl-2", "relationship_type": "EQUIVALENT", "confidence": 0.9},
 		})
 		Expect(err).To(MatchError(ContainSubstring("create SEMANTIC_MATCH edge ctrl-1->ctrl-2")))
