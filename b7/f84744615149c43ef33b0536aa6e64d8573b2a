@@ -1,0 +1,28 @@
+pkg/config/auth_bdd_test.go
+  s_290b9f730df96c::t_ddc030864fd1f0 1-137
+pkg/config/validate.go
+  s_290b9f730df96c::t_26bd8d9a957f4a 1136-1137,1141
+  s_290b9f730df96c::t_2a3aea1546d30b 8,67,157-160,1118-1135,1138-1140,1142-1199
+pkg/config/config_fuzz_test.go
+  s_290b9f730df96c::t_26bd8d9a957f4a 207-208
+pkg/config/types.go
+  s_290b9f730df96c::t_8935ee64773903 167-170
+pkg/config/defaults.go
+  s_290b9f730df96c::t_e912ca306320ca 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b7f84744615149c43ef33b0536aa6e64d8573b2a",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
