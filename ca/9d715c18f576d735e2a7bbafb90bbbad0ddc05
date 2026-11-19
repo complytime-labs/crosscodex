@@ -1,0 +1,28 @@
+api/proto/crosscodex/v1/pipeline.proto
+  s_7e89139204344e::t_4ff9e1efc047e3 35-42,349-365
+internal/pipeline/stage_record_rpc.go
+  s_7e89139204344e::t_28e0ffc8586896 1-48,54-63
+  s_7e89139204344e::t_dc3042e8b5acd6 49-53
+api/proto/crosscodex/v1/crosswalk.proto
+  s_7e89139204344e::t_36d549178f7b39 1-18
+internal/pipeline/stage_record_bdd_test.go
+  s_7e89139204344e::t_484d87ed610427 8,189-226,230-257
+  s_7e89139204344e::t_dc3042e8b5acd6 227-229
+  s_7e89139204344e::t_bfcdb009de6426 258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ca9d715c18f576d735e2a7bbafb90bbbad0ddc05",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
