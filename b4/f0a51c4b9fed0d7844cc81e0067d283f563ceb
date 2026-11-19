@@ -1,0 +1,29 @@
+docs/dev/service-runtime.md
+  s_7e89139204344e::t_b5ed4825e15444 152
+docs/dev/cleaning.md
+  s_7e89139204344e::t_b5ed4825e15444 481-485
+pkg/tenant/connectutil/connectutil.go
+  s_7e89139204344e::t_b5ed4825e15444 132
+cmd/crosscodexd/graph_role_integration_test.go
+  s_7e89139204344e::t_b5ed4825e15444 254
+README.md
+  s_7e89139204344e::t_b5ed4825e15444 30
+pkg/tenant/connectutil/connectutil_bdd_test.go
+  s_7e89139204344e::t_a752609d00b12e 279-280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b4f0a51c4b9fed0d7844cc81e0067d283f563ceb",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
