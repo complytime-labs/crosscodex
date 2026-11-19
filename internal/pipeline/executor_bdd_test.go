@@ -781,6 +781,7 @@ var _ = Describe("Executor", func() {
 
 			// Verify NATS events published (running, stage events, completed).
 			Expect(bus.Published()).NotTo(BeEmpty())
+			Expect(bus.Subscriptions()).NotTo(BeEmpty(), "the graph stage must have subscribed to its outcomes")
 			for _, sub := range bus.Subscriptions() {
 				Expect(sub.Unsubscribed()).To(BeTrue(), "job execution subscribes only while its graph stage waits")
 			}
@@ -1422,6 +1423,7 @@ var _ = Describe("Executor", func() {
 			// Verify state events published.
 			// Expect at least: running, synthesis.started, synthesis.completed, graph.started, graph.completed, completed.
 			Expect(len(bus.Published())).To(BeNumerically(">=", 6))
+			Expect(bus.Subscriptions()).NotTo(BeEmpty(), "the graph stage must have subscribed to its outcomes")
 			for _, sub := range bus.Subscriptions() {
 				Expect(sub.Unsubscribed()).To(BeTrue(), "job execution subscribes only while its graph stage waits")
 			}

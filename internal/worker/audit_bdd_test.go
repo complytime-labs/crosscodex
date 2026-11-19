@@ -15,6 +15,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 var _ = Describe("NATSAuditEmitter", func() {
@@ -100,8 +101,8 @@ var _ = Describe("NATSAuditEmitter", func() {
 			JobID:    "job-123",
 		}
 		err = emitter.EmitLLMAudit(ctx, event)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("building the audit subject"))
+		Expect(err).To(MatchError(natsbus.ErrInvalidSubject))
+		Expect(err).To(MatchError(tenant.ErrInvalidTenant))
 
 		// Confirm no message was published to any audit subject.
 		Consistently(func() *natsbus.Message {
