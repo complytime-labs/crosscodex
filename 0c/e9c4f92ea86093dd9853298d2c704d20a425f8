@@ -1,0 +1,25 @@
+pkg/config/validate.go
+  s_7e89139204344e::t_4ee70219441f84 557-568
+  s_7e89139204344e::t_1cdc9758fd6ca1 8
+pkg/config/types.go
+  s_7e89139204344e::t_4ee70219441f84 1285-1291,1295
+  s_7e89139204344e::t_269a9f449b12ed 1292-1294
+pkg/config/graph_bdd_test.go
+  s_7e89139204344e::t_04ba29c5f2edae 123-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0ce9c4f92ea86093dd9853298d2c704d20a425f8",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
