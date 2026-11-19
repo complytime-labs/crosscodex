@@ -30,12 +30,54 @@ import (
 // expansion must not attempt (a merge value that is not a mapping, two merge
 // keys in one mapping, an anchor that contains itself) and refuses a document
 // that expands into excessive aliasing ("billion laughs"), so the resolved
-// copy is never larger than what yaml.v3 would decode anyway.
+// copy is never larger than what yaml.v3 would decode anyway. It then
+// rejects two keys in one mapping that name the same setting once aliases
+// are expanded (see checkRepeatedKeys), which yaml.v3 lets through.
 func resolveReferences(n *yaml.Node, source string) (*yaml.Node, error) {
 	if err := n.Decode(new(any)); err != nil {
 		return nil, fmt.Errorf("resolving anchors, aliases and merge keys in %s: %w", source, err)
 	}
+	if err := checkRepeatedKeys(n); err != nil {
+		return nil, fmt.Errorf("%w: resolving anchors, aliases and merge keys in %s: %w", ErrInvalidConfig, source, err)
+	}
 	return resolveNode(n), nil
+}
+
+// checkRepeatedKeys returns an error for the first mapping below n with two
+// non-merge keys that resolveKey writes as the same name. yaml.v3 rejects a
+// repeated key only when both keys are the same node kind with the same text,
+// so a key written through an alias (`*k:`) next to the key its anchor names
+// decodes with the later value silently winning. Resolution would make the
+// two keys identical, and the layer would set one setting twice. Lines are
+// those of the keys as written, so an alias key is reported where it is used.
+//
+// Aliases are not followed: every anchored node is checked where it is
+// defined, and resolveReferences has already had yaml.v3 reject an anchor
+// that contains itself.
+func checkRepeatedKeys(n *yaml.Node) error {
+	if n.Kind == yaml.MappingNode {
+		first := make(map[string]int)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i]
+			if isMergeKey(k) {
+				continue
+			}
+			key := resolveKey(k)
+			if key.Kind != yaml.ScalarNode {
+				continue
+			}
+			if line, ok := first[key.Value]; ok {
+				return fmt.Errorf("line %d: mapping key %q already defined at line %d; the two keys name the same setting once aliases are expanded, so remove one of them", k.Line, key.Value, line)
+			}
+			first[key.Value] = k.Line
+		}
+	}
+	for _, c := range n.Content {
+		if err := checkRepeatedKeys(c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func resolveNode(n *yaml.Node) *yaml.Node {
