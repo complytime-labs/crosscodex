@@ -1173,6 +1173,135 @@ var _ = Describe("Executor", func() {
 					"the resumed run's barrier counts only failures from this run")
 			})
 
+			// completionEvent is one stored stage.completed event of the job,
+			// with its place among every publication of the run.
+			type completionEvent struct {
+				index    int
+				analyzer string
+				metadata map[string]string
+				durable  bool
+			}
+			// completionEvents returns the job's stage.completed events, and
+			// the publication index of its barrier (-1 if none).
+			completionEvents := func() ([]completionEvent, int) {
+				GinkgoHelper()
+				subject, err := natsbus.PipelineStageSubject(tenantID, jobID, natsbus.StageCompleted)
+				Expect(err).NotTo(HaveOccurred())
+				var events []completionEvent
+				barrierAt := -1
+				for i, p := range bus.Published() {
+					switch p.Subject {
+					case barrierSubject():
+						if barrierAt < 0 {
+							barrierAt = i
+						}
+					case subject:
+						var e struct {
+							Analyzer string            `json:"analyzer"`
+							Metadata map[string]string `json:"metadata"`
+						}
+						Expect(json.Unmarshal(p.Data, &e)).To(Succeed())
+						events = append(events, completionEvent{index: i, analyzer: e.Analyzer, metadata: e.Metadata, durable: p.Durable})
+					}
+				}
+				return events, barrierAt
+			}
+
+			It("re-publishes, before its barrier, the completion events of the stages an earlier run completed, deferring pair edges to the critique", func() {
+				reg := analyzer.NewRegistry()
+				for name, deps := range map[string][]string{"classify": nil, "relationship": {"classify"}, "critique": {"relationship"}} {
+					Expect(analyzer.Register[*pb.Control](reg, newControlStub(name, deps...))).To(Succeed())
+				}
+				eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{},
+					config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},
+					map[string]natsbus.TaskType{"classify": "classify", "relationship": "relate", "critique": "critique"},
+					analysis.WithStageReporter(pipeline.NewDBStageReporter(analysis.NewNATSStageReporter(bus), store)))
+				s := pipeline.New(store, eng, reg, synth, pipeline.Attestors{}, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10}, nil)
+				bus.PublishDurableFunc = answerBarriers(bus, nil)
+
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, []string{
+					"classify", "candidate_generation", "relationship", "critique", "synthesis", "graph"})).To(Succeed())
+				for _, name := range []string{"classify", "relationship", "critique"} {
+					Expect(store.CompleteAnalysisStage(ctx, jobID, name, []byte(`[]`), "", "")).To(Succeed())
+				}
+				for _, name := range []string{"candidate_generation", "synthesis"} {
+					Expect(store.UpdateStageStatus(ctx, jobID, name, pipeline.StageStatusCompleted)).To(Succeed())
+				}
+				Expect(s.Start(ctx)).To(Succeed())
+				DeferCleanup(s.Stop, ctx)
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				events, barrierAt := completionEvents()
+				Expect(barrierAt).To(BeNumerically(">=", 0))
+				republished := map[string]map[string]string{}
+				for _, e := range events {
+					if e.analyzer == "graph" {
+						Expect(e.index).To(BeNumerically(">", barrierAt), "the graph stage's own event follows its answer")
+						continue
+					}
+					Expect(e.index).To(BeNumerically("<", barrierAt), "%s is re-published before the barrier, so the barrier waits for it", e.analyzer)
+					Expect(e.durable).To(BeTrue(), "%s is stored in MATERIALIZE", e.analyzer)
+					Expect(republished).NotTo(HaveKey(e.analyzer), "%s is re-published once", e.analyzer)
+					republished[e.analyzer] = e.metadata
+				}
+				Expect(republished).To(HaveLen(4))
+				Expect(republished).To(HaveKeyWithValue("relationship", HaveKeyWithValue(results.GraphDeferredMetadataKey, "true")),
+					"the job runs the critique, so relationship's edges stay deferred to it")
+				for _, name := range []string{"classify", "critique", "synthesis"} {
+					Expect(republished).To(HaveKey(name))
+					Expect(republished[name]).NotTo(HaveKey(results.GraphDeferredMetadataKey))
+				}
+				Expect(republished).NotTo(HaveKey("candidate_generation"), "it never had a completion event")
+			})
+
+			It("re-publishes nothing on a job's first run", func() {
+				bus.PublishDurableFunc = answerBarriers(bus, nil)
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+				Expect(svc.Start(ctx)).To(Succeed())
+				DeferCleanup(svc.Stop, ctx)
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				events, _ := completionEvents()
+				var names []string
+				for _, e := range events {
+					names = append(names, e.analyzer)
+				}
+				Expect(names).To(ConsistOf("analyzer-a", "analyzer-b", "synthesis", "graph"), "each stage's event, once")
+			})
+
+			It("fails the graph stage, sending no barrier, when a completion event of an earlier run cannot be re-published", func() {
+				completedSubject, err := natsbus.PipelineStageSubject(tenantID, jobID, natsbus.StageCompleted)
+				Expect(err).NotTo(HaveOccurred())
+				bus.PublishDurableFunc = answerBarriers(bus, func(_ context.Context, subject string, _ []byte, _ map[string][]string) error {
+					if subject == completedSubject {
+						return fmt.Errorf("%w: %w: nats: no responders", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+					}
+					return nil
+				})
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+				for _, name := range []string{"analyzer-a", "analyzer-b", "synthesis"} {
+					Expect(store.UpdateStageStatus(ctx, jobID, name, pipeline.StageStatusCompleted)).To(Succeed())
+				}
+				s := pipeline.New(store, engine, registry, synth, pipeline.Attestors{}, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10}, nil)
+				Expect(s.Start(ctx)).To(Succeed())
+				DeferCleanup(s.Stop, ctx)
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(errorOf()).To(And(
+					ContainSubstring("the graph role could not be asked to confirm that the job's graph is materialized"),
+					ContainSubstring("MATERIALIZE stream"),
+					ContainSubstring("crosscodex run retry --from-failure "+jobID)))
+				Expect(errorOf()).NotTo(ContainSubstring("nats:"), "bus internals are logged, not shown to the tenant")
+				Expect(graphStatus()).To(Equal(pipeline.StageStatusFailed))
+				Expect(barriers()).To(BeEmpty())
+				expectUnsubscribed()
+			})
+
 			It("ends the job cancelled, unsubscribed, when it is cancelled while waiting for the graph", func() {
 				startJob(svc)
 
@@ -2535,8 +2664,9 @@ var _ = Describe("Executor", func() {
 		})
 
 		// Review Focus 5: a job resumed after its critique completed reuses the
-		// stored critique; it neither re-runs it nor republishes its event, and
-		// the vetoes it applies drop each kind's vetoed pairs independently.
+		// stored critique; it does not re-run it (its event is re-published
+		// once, by the graph stage, before its barrier), and the vetoes it
+		// applies drop each kind's vetoed pairs independently.
 		It("on resume after critique completed, dispatches no critique and keeps vetoed pairs out of vote summaries and synthesis", func() {
 			reg := analyzer.NewRegistry()
 			for name, deps := range map[string][]string{"classify": nil, "embedding": {"classify"}, "artifacts": nil,
@@ -2605,9 +2735,13 @@ var _ = Describe("Executor", func() {
 			resumeDispatcher.mu.Unlock()
 			Expect(dispatched).NotTo(ContainElements(natsbus.TaskType("critique")))
 			Expect(dispatched).NotTo(ContainElements(natsbus.TaskType("requires"), natsbus.TaskType("relate")))
+			critiqueEvents := 0
 			for _, p := range bus.Published() {
-				Expect(string(p.Data)).NotTo(ContainSubstring(`"analyzer":"critique"`), "the critique event was published again")
+				if strings.Contains(string(p.Data), `"analyzer":"critique"`) {
+					critiqueEvents++
+				}
 			}
+			Expect(critiqueEvents).To(Equal(1), "the critique event is re-published once, not re-run")
 
 			store.mu.Lock()
 			pairs := maps.Keys(store.voteSummaries[jobID])

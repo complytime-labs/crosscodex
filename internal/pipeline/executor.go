@@ -55,6 +55,9 @@ type jobExecution struct {
 	// panels is, per panel analyzer this run was about to start, what its
 	// diversity check found, which its link records.
 	panels map[string]panelRecord
+	// stages are the job's stage rows as this run found them; the graph
+	// stage re-publishes the completion events of those already completed.
+	stages []*Stage
 	// started is when this run of the job began. A retried or resumed job
 	// keeps its job ID, so the graph stage counts only graph outcomes from
 	// this run on (natsbus.MaterializeBarrier.NotBefore).
@@ -142,7 +145,7 @@ func (s *Service) executeJob(ctx context.Context, rj *runningJob, tenantID, jobI
 	completed := completedStageSet(stages)
 
 	// Attestation state for this job execution.
-	exec := &jobExecution{attestor: s.attestors.ForTenant(tenantID), subject: jobSubject(job), started: start}
+	exec := &jobExecution{attestor: s.attestors.ForTenant(tenantID), subject: jobSubject(job), stages: stages, started: start}
 
 	// Phase 2: Analysis and its attestation. The stored links of the
 	// pipeline steps an earlier run completed are verified first, before
@@ -851,7 +854,7 @@ func (s *Service) runGraph(ctx context.Context, job *Job, exec *jobExecution) er
 		exec.links = append(exec.links, link)
 	}
 
-	if err := s.awaitMaterialized(ctx, job, exec.started); err != nil {
+	if err := s.awaitMaterialized(ctx, job, exec); err != nil {
 		// failPipelineStage leaves a cancelled or stopped job to interruptJob.
 		s.failPipelineStage(ctx, job, "graph", err)
 		span.RecordError(err)
@@ -877,7 +880,9 @@ func (s *Service) runGraph(ctx context.Context, job *Job, exec *jobExecution) er
 // awaitMaterialized asks the graph role whether every materialization event
 // of job is written, and waits for its answer. It subscribes to the job's
 // graph outcomes before it stores the barrier, so the answer cannot arrive
-// unheard, and unsubscribes on return. Outcome subjects outlive a run and
+// unheard, and unsubscribes on return. Between the two it re-publishes the
+// completion events of the stages an earlier run completed
+// (republishCompleted), so the barrier also waits for them. Outcome subjects outlive a run and
 // carry no message ID, so an outcome received before started (this run's
 // start), for another job, or from another tenant is ignored, and the first
 // remaining one is the answer: a "failed" outcome an event published on its
@@ -886,8 +891,8 @@ func (s *Service) runGraph(ctx context.Context, job *Job, exec *jobExecution) er
 // ErrGraphMaterializeFailed, ErrGraphMaterializeTimeout or
 // ErrMaterializationNotQueued, or, when ctx ends first, an error wrapping
 // ctx's.
-func (s *Service) awaitMaterialized(ctx context.Context, job *Job, started time.Time) error {
-	tenantID, jobID := job.TenantID, job.JobID
+func (s *Service) awaitMaterialized(ctx context.Context, job *Job, exec *jobExecution) error {
+	tenantID, jobID, started := job.TenantID, job.JobID, exec.started
 	// A Service built without the setting (not from a validated config)
 	// waits the default.
 	timeout := s.cfg.GraphMaterializeTimeout
@@ -954,6 +959,10 @@ func (s *Service) awaitMaterialized(ctx context.Context, job *Job, started time.
 		}
 	}()
 
+	if err := s.republishCompleted(ctx, job, exec.stages); err != nil {
+		return notSent(err)
+	}
+
 	deadline := time.Now().Add(timeout)
 	payload, err := json.Marshal(natsbus.MaterializeBarrier{JobID: jobID, Deadline: deadline, NotBefore: started})
 	if err != nil {
@@ -994,6 +1003,46 @@ func (s *Service) awaitMaterialized(ctx context.Context, job *Job, started time.
 	}
 	return &tenantError{sentinel: ErrGraphMaterializeFailed, message: fmt.Sprintf(
 		"graph materialization failed for job %s: %s. Check the graph role's logs, then re-run the job.", jobID, reason)}
+}
+
+// republishCompleted stores again the stage.completed event of every stage in
+// stages (the rows as this run found them) that an earlier run completed:
+// each analyzer's, as the analysis engine published it, with the graph
+// deferral its job's stages decide (defersGraph), and synthesis's. A retried
+// or resumed job never re-runs those stages, and the barrier counts only
+// failures from this run on, so an earlier run's failed materialization of
+// one of them would otherwise go unnoticed. Graph writes are idempotent, so
+// writing them again is safe; a first run has none to re-publish.
+// candidate_generation and graph have no materialization event.
+func (s *Service) republishCompleted(ctx context.Context, job *Job, stages []*Stage) error {
+	reporter := analysis.NewNATSStageReporter(s.bus, analysis.WithReporterTelemetry(s.tracerProvider, s.meterProvider))
+	for _, st := range stages {
+		if st.Status != StageStatusCompleted {
+			continue
+		}
+		name := st.StageName
+		if name == results.SynthesisStage {
+			if err := s.publishStageEvent(ctx, job.TenantID, job.JobID, name, natsbus.StageCompleted); err != nil {
+				return fmt.Errorf("re-publish the completion of stage %s: %w", name, err)
+			}
+			continue
+		}
+		if _, err := s.registry.Get(name); err != nil {
+			continue // not an analyzer: no materialization event
+		}
+		deferred, err := defersGraph(name, func() ([]*Stage, error) { return stages, nil })
+		if err != nil {
+			return fmt.Errorf("re-publish the completion of stage %s: %w", name, err)
+		}
+		output := &analyzer.Output{}
+		if deferred {
+			output.Metadata = map[string]string{results.GraphDeferredMetadataKey: "true"}
+		}
+		if err := reporter.ReportStageCompleted(ctx, name, job.JobID, output); err != nil {
+			return fmt.Errorf("re-publish the completion of stage %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // maxGraphFailureReason bounds, in bytes, the graph role's reason a failed
