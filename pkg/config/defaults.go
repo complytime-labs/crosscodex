@@ -47,6 +47,10 @@ nats:
   cluster: ""
   tls: false
   publish_ack_timeout: 10s
+  materialize:
+    max_deliver: 5
+    ack_wait: 10m
+    redeliver_delay: 30s
   embedded:
     store_dir: ""
   streams:

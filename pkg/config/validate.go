@@ -101,6 +101,19 @@ func validateNATS(nats *NATSConfig, tracker *sourceTracker) error {
 		p.add("nats.streams.materialize_retention", "nats.streams.materialize_retention %s%s must be positive: it bounds how long an unconsumed graph-materialization input is kept, so set a positive duration such as 168h: %w",
 			nats.Streams.MaterializeRetention, formatSource(tracker, "nats.streams.materialize_retention"), ErrInvalidConfig)
 	}
+	m := nats.Materialize
+	if m.MaxDeliver < 1 {
+		p.add("nats.materialize.max_deliver", "nats.materialize.max_deliver %d%s must be at least 1, such as 5: it is how many times the graph role tries a materialization event before reporting the job's graph as failed, and unlimited would retry a poison event forever: %w",
+			m.MaxDeliver, formatSource(tracker, "nats.materialize.max_deliver"), ErrInvalidConfig)
+	}
+	if m.AckWait <= 0 {
+		p.add("nats.materialize.ack_wait", "nats.materialize.ack_wait %s%s must be positive: it must exceed the time the graph role takes to materialize one event, so set a positive duration such as 10m: %w",
+			m.AckWait, formatSource(tracker, "nats.materialize.ack_wait"), ErrInvalidConfig)
+	}
+	if m.RedeliverDelay <= 0 {
+		p.add("nats.materialize.redeliver_delay", "nats.materialize.redeliver_delay %s%s must be positive: it spaces the retries of a failed materialization event and of a job barrier, so set a positive duration such as 30s: %w",
+			m.RedeliverDelay, formatSource(tracker, "nats.materialize.redeliver_delay"), ErrInvalidConfig)
+	}
 	return p.err()
 }
 

@@ -249,7 +249,48 @@ type NATSConfig struct {
 	// waits for JetStream to confirm the message is stored. Must be positive.
 	// Default: 10s. Global-only; not tenant-overridable.
 	PublishAckTimeout time.Duration `yaml:"publish_ack_timeout" json:"publish_ack_timeout"`
+
+	// Materialize configures the graph role's durable consumers of the
+	// MATERIALIZE stream. Global-only; not tenant-overridable.
+	Materialize NATSMaterializeConfig `yaml:"materialize" json:"materialize"`
 }
+
+// NATSMaterializeConfig configures how the graph role consumes the
+// MATERIALIZE stream: its graph-materializer consumer (stage completions and
+// parsed catalogs) and its graph-barrier consumer (job barriers). Every field
+// is global-only: one durable consumer serves every tenant.
+type NATSMaterializeConfig struct {
+	// MaxDeliver is how many times a materialization event is delivered
+	// before the graph role gives up on it: a failure on the last delivery
+	// publishes a "failed" graph outcome for the job and terminates the
+	// event, and an edge whose endpoint node is still missing on the last
+	// delivery is skipped. Must be at least 1. Default: 5. The barrier
+	// consumer is unlimited and ignores it.
+	MaxDeliver int `yaml:"max_deliver" json:"max_deliver"`
+
+	// AckWait is how long the server waits for a handler to finish one
+	// message before it redelivers it. Handlers send no progress heartbeat,
+	// so AckWait must exceed the worst-case time to materialize one event
+	// (the largest analyzer result of a job): an event still being written
+	// when AckWait ends is redelivered and handled again concurrently. Graph
+	// writes are idempotent, so that second run adds nothing, but it costs a
+	// delivery. Must be positive. Default: 10m.
+	AckWait time.Duration `yaml:"ack_wait" json:"ack_wait"`
+
+	// RedeliverDelay is how long a failed event, or a barrier whose job still
+	// has events queued, waits before its next delivery. It is the barrier's
+	// polling interval, so it bounds how late a job learns its graph is
+	// complete. Must be positive. Default: 30s.
+	RedeliverDelay time.Duration `yaml:"redeliver_delay" json:"redeliver_delay"`
+}
+
+// Compiled defaults for nats.materialize, also applied by internal/graph when
+// a field is not set.
+const (
+	DefaultNATSMaterializeMaxDeliver     = 5
+	DefaultNATSMaterializeAckWait        = 10 * time.Minute
+	DefaultNATSMaterializeRedeliverDelay = 30 * time.Second
+)
 
 // NATSEmbeddedConfig configures the embedded NATS server.
 type NATSEmbeddedConfig struct {
