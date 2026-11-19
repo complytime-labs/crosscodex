@@ -51,6 +51,11 @@ const (
 	// was not stored (llmclient.ErrAuditFailed). Never retried: the call was
 	// made and probably billed.
 	ResultErrorAuditFailed = "audit_failed"
+	// ResultErrorTenantMismatch: the task's provenance tenant header
+	// differed from the tenant in its work subject, so the worker refused it
+	// before any LLM call. Never retried: the same message fails the same
+	// way, and it signals a misrouted or forged message, not a transient fault.
+	ResultErrorTenantMismatch = "tenant_mismatch"
 )
 
 // taskTypes lists every TaskType constant, in declaration order.

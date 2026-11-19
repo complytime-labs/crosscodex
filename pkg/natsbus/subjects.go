@@ -99,6 +99,45 @@ func WorkSubject(tenantID string, taskType TaskType, jobID string) (string, erro
 		"work", tenantID, string(taskType), jobID)
 }
 
+// workSubjectFormat is the schema WorkSubject builds and ParseWorkSubject
+// accepts, quoted in parse errors.
+const workSubjectFormat = subjectPrefix + ".work.<tenant_id>.<task_type>.<job_id>"
+
+// WorkSubjectParts is what a work subject names. TaskType is a string, not a
+// TaskType: WorkSubject accepts any single token, so the parser cannot promise
+// a TaskType constant.
+type WorkSubjectParts struct {
+	TenantID string
+	TaskType string
+	JobID    string
+}
+
+// ParseWorkSubject is the inverse of WorkSubject. Workers call it on every
+// work message to learn the tenant the subject (the one thing NATS publish
+// permissions scope) names, so it validates the subject as untrusted input:
+// it accepts only subjects WorkSubject can build, with a non-empty task type,
+// and returns an ErrInvalidSubject error for anything else.
+func ParseWorkSubject(subject string) (WorkSubjectParts, error) {
+	parts := strings.Split(subject, ".")
+	if len(parts) != 5 || parts[0] != subjectPrefix || parts[1] != "work" {
+		return WorkSubjectParts{}, fmt.Errorf("subject %q is not a work subject %s: %w",
+			subject, workSubjectFormat, ErrInvalidSubject)
+	}
+	// Clone each field: the caller may keep the result past the message.
+	p := WorkSubjectParts{
+		TenantID: strings.Clone(parts[2]),
+		TaskType: strings.Clone(parts[3]),
+		JobID:    strings.Clone(parts[4]),
+	}
+	if err := validateToken(p.TaskType, "task type"); err != nil {
+		return WorkSubjectParts{}, fmt.Errorf("work subject %q: %w", subject, err)
+	}
+	if _, err := WorkSubject(p.TenantID, TaskType(p.TaskType), p.JobID); err != nil {
+		return WorkSubjectParts{}, fmt.Errorf("work subject %q: %w", subject, err)
+	}
+	return p, nil
+}
+
 // ResultSubject builds a result subject.
 //
 //	crosscodex.results.{tenant_id}.{task_type}.{job_id}

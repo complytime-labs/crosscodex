@@ -97,6 +97,36 @@ func FuzzParseAbandonedSubject(f *testing.F) {
 	})
 }
 
+// FuzzParseWorkSubject feeds arbitrary subjects to the parser every worker
+// runs on work messages from the bus. An accepted subject must rebuild to
+// itself, so a parsed tenant, task type and job ID never name anything
+// WorkSubject would refuse.
+func FuzzParseWorkSubject(f *testing.F) {
+	f.Add("crosscodex.work.acme-corp.relate.job-001")
+	f.Add("crosscodex.work.BAD.relate.job-001")
+	f.Add("crosscodex.work.acme-corp..job-001")
+	f.Add("crosscodex.work.acme-corp.relate.>")
+	f.Add("crosscodex.results.acme-corp.relate.job-001")
+	f.Add("")
+	f.Add("crosscodex.work.acme-corp.relate.job-001.extra")
+	f.Add("crosscodex.work.acme-corp.relate." + strings.Repeat("j", natsbus.MaxJobIDLength))
+	f.Add("crosscodex.work.acme-corp.relate." + strings.Repeat("j", natsbus.MaxJobIDLength+1))
+
+	f.Fuzz(func(t *testing.T, subject string) {
+		p, err := natsbus.ParseWorkSubject(subject)
+		if err != nil {
+			return
+		}
+		rebuilt, err := natsbus.WorkSubject(p.TenantID, natsbus.TaskType(p.TaskType), p.JobID)
+		if err != nil {
+			t.Fatalf("accepted subject %q parsed to %+v, which the builder rejects: %v", subject, p, err)
+		}
+		if rebuilt != subject {
+			t.Fatalf("accepted subject %q rebuilt as %q", subject, rebuilt)
+		}
+	})
+}
+
 // FuzzWorkSubjectJobID feeds arbitrary job IDs to a job-ID subject builder.
 // An accepted job ID must be a single subject token within MaxJobIDLength
 // that ends the subject unchanged; a rejected one must say why with

@@ -30,6 +30,10 @@ var (
 	// worker rejected as malformed (natsbus.ResultErrorInvalidPayload). It
 	// is never retried.
 	ErrTaskInvalid = errors.New("task_invalid")
+	// ErrTenantMismatch is the collector's category for a task the worker
+	// refused because its provenance tenant differed from its subject's
+	// (natsbus.ResultErrorTenantMismatch). It is never retried.
+	ErrTenantMismatch = errors.New(categoryTenantMismatch)
 	// ErrTaskFailed is the collector's category for any task failure with
 	// no more specific code, including a code it does not recognise. The
 	// worker's own error text is never carried into it.

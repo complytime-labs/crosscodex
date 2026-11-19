@@ -714,6 +714,7 @@ const (
 	categoryRateLimited     = "task_rate_limited"
 	categoryOutputTruncated = "task_output_truncated"
 	categoryAuditFailed     = "task_audit_failed"
+	categoryTenantMismatch  = "task_tenant_mismatch"
 )
 
 // classifyResult maps a worker's X-Error code to the collector's error
@@ -732,6 +733,8 @@ func classifyResult(code string) error {
 		return fmt.Errorf("%s: %w", categoryAuditFailed, llmclient.ErrAuditFailed)
 	case natsbus.ResultErrorInvalidPayload:
 		return ErrTaskInvalid
+	case natsbus.ResultErrorTenantMismatch:
+		return ErrTenantMismatch
 	default:
 		return ErrTaskFailed
 	}
@@ -747,8 +750,8 @@ const (
 // retryCause names why a task failed and whether it may be re-sent. A new
 // non-retryable cause is a new case in the first switch.
 //
-// Not retried: a truncated answer and an invalid payload, which fail the
-// same way every time, an audit failure (the call was made and probably
+// Not retried: a truncated answer, an invalid payload and a tenant mismatch,
+// which fail the same way every time, an audit failure (the call was made and probably
 // billed, with no record), and a timeout unless retryOnTimeout, since the
 // provider may already have billed it. A rate limit and any other failure
 // are retried (the caller bounds them by max_retries and backs off).
@@ -758,7 +761,7 @@ func retryCause(err error, retryOnTimeout bool) (cause string, retry bool) {
 		return causeOther, false
 	case errors.Is(err, llmclient.ErrOutputTruncated):
 		return causeOther, false
-	case errors.Is(err, ErrTaskInvalid):
+	case errors.Is(err, ErrTaskInvalid), errors.Is(err, ErrTenantMismatch):
 		return causeOther, false
 	case errors.Is(err, llmclient.ErrTimeout):
 		return causeTimeout, retryOnTimeout

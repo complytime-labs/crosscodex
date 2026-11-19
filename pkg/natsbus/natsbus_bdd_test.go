@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -966,5 +967,47 @@ var _ = Describe("WorkerProgressSubject", func() {
 			Expect(logs.String()).To(ContainSubstring("level=ERROR"))
 			Expect(logs.String()).To(ContainSubstring("rejecting message: missing provenance"))
 		})
+	})
+})
+
+var _ = Describe("ParseWorkSubject", func() {
+	DescribeTable("accepts what WorkSubject builds",
+		func(tenantID string, taskType natsbus.TaskType, jobID string) {
+			subject, err := natsbus.WorkSubject(tenantID, taskType, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(natsbus.ParseWorkSubject(subject)).To(Equal(natsbus.WorkSubjectParts{
+				TenantID: tenantID, TaskType: string(taskType), JobID: jobID,
+			}))
+		},
+		Entry("a UUID job", "acme-corp", natsbus.TaskClassify, "9b2f8c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d"),
+		Entry("the longest job ID", "acme-corp", natsbus.TaskEmbed, strings.Repeat("j", natsbus.MaxJobIDLength)),
+		Entry("a task type outside the TaskType constants", "acme-corp", natsbus.TaskType("custom"), "job-1"),
+	)
+
+	DescribeTable("rejects what WorkSubject would not build",
+		func(subject string) {
+			_, err := natsbus.ParseWorkSubject(subject)
+			Expect(err).To(MatchError(natsbus.ErrInvalidSubject))
+		},
+		Entry("empty subject", ""),
+		Entry("a result subject", "crosscodex.results.acme-corp.classify.job-1"),
+		Entry("another prefix", "other.work.acme-corp.classify.job-1"),
+		Entry("too few tokens", "crosscodex.work.acme-corp.classify"),
+		Entry("too many tokens", "crosscodex.work.acme-corp.classify.job-1.extra"),
+		Entry("an uppercase tenant", "crosscodex.work.ACME.classify.job-1"),
+		Entry("an empty tenant", "crosscodex.work..classify.job-1"),
+		Entry("an empty task type", "crosscodex.work.acme-corp..job-1"),
+		Entry("an empty job", "crosscodex.work.acme-corp.classify."),
+		Entry("a wildcard job", "crosscodex.work.acme-corp.classify.*"),
+		Entry("a full-wildcard job", "crosscodex.work.acme-corp.classify.>"),
+		Entry("a job over MaxJobIDLength", "crosscodex.work.acme-corp.classify."+strings.Repeat("j", natsbus.MaxJobIDLength+1)),
+	)
+
+	It("names the work subject schema and wraps ErrInvalidJobID for an over-long job", func() {
+		_, err := natsbus.ParseWorkSubject("crosscodex.work.acme-corp.classify")
+		Expect(err).To(MatchError(ContainSubstring("crosscodex.work.<tenant_id>.<task_type>.<job_id>")))
+
+		_, err = natsbus.ParseWorkSubject("crosscodex.work.acme-corp.classify." + strings.Repeat("j", natsbus.MaxJobIDLength+1))
+		Expect(err).To(MatchError(natsbus.ErrInvalidJobID))
 	})
 })

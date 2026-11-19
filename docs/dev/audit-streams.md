@@ -166,6 +166,19 @@ Every LLM worker subscribes to `crosscodex.control.*.*.*.*.abandoned` (`natsbus.
 
 Tasks already calling the LLM when the abandon arrives finish normally; their results are discarded by the collector, which no longer listens.
 
+### Work Messages: Tenant Agreement
+
+```
+crosscodex.work.{tenant_id}.{task_type}.{job_id}
+```
+
+The work subject is the only tenant claim that NATS publish permissions scope; the `X-Tenant-Id` provenance header is set by the publisher. Before any payload decoding or LLM call, the worker parses the subject with `natsbus.ParseWorkSubject` (the inverse of `natsbus.WorkSubject`) and compares its tenant to the header's:
+
+- **Unparsable subject.** Dropped, logged at error and counted (`worker.errors{error_category="invalid_message"}`). No result is published: the subject names no tenant to answer on.
+- **Header tenant differs from the subject's.** No LLM call. The worker counts `worker.errors{error_category="tenant_mismatch"}` (under the task type from the subject) and publishes an error result on the subject's tenant and job with `X-Error: tenant_mismatch`. The result is never addressed to the header's tenant, so a forged header cannot send anything to another tenant. The collector classifies it as `task_tenant_mismatch` (`analysis.ErrTenantMismatch`) and never retries it. The log, which only operators read, names both tenant IDs.
+
+As with the abandon check, this is a consistency check, not authorization: a publisher that sets the header to match the subject it publishes on passes. Tenant isolation on NATS is subject-level only; per-tenant accounts are not implemented.
+
 ## Trace Context Propagation
 
 NATS messages carry trace context through the `X-Trace-Id` and `X-Span-Id` provenance headers. On the subscriber side, `reconstructSpanContext` parses these into a `trace.SpanContext` with `Remote: true` and `TraceFlags: Sampled`. This context is set on the handler's `context.Context` via `trace.ContextWithRemoteSpanContext`.

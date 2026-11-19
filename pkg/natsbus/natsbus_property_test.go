@@ -175,6 +175,31 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
+	Context("WorkSubject and ParseWorkSubject — round trip", func() {
+		It("parses every subject WorkSubject builds back into the same parts", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				want := natsbus.WorkSubjectParts{
+					TenantID: validTenantGen().Draw(t, "tenant"),
+					TaskType: safeTokenGen().Draw(t, "task-type"),
+					JobID:    safeTokenGen().Draw(t, "job-id"),
+				}
+				subject, err := natsbus.WorkSubject(want.TenantID, natsbus.TaskType(want.TaskType), want.JobID)
+				if err != nil {
+					// The generators can produce IDs the builder rejects
+					// (reserved tenants, over-long jobs); it must reject them.
+					return
+				}
+				got, err := natsbus.ParseWorkSubject(subject)
+				if err != nil {
+					t.Fatalf("ParseWorkSubject rejected built subject %q: %v", subject, err)
+				}
+				if got != want {
+					t.Fatalf("round trip of %q: got %+v, want %+v", subject, got, want)
+				}
+			})
+		})
+	})
+
 	Context("contentHash — determinism", func() {
 		It("returns the same 64-char hex output for the same input", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {

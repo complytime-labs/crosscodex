@@ -172,6 +172,7 @@ var _ StageReporter = noopReporter{}
 //   - llmclient.ErrRateLimitExceeded: task_rate_limited.
 //   - llmclient.ErrOutputTruncated: task_output_truncated.
 //   - ErrTaskInvalid: task_invalid.
+//   - ErrTenantMismatch: task_tenant_mismatch.
 //   - anything else: task_failed.
 func stageErrorCategory(err error) string {
 	switch {
@@ -186,6 +187,8 @@ func stageErrorCategory(err error) string {
 		return categoryOutputTruncated
 	case errors.Is(err, ErrTaskInvalid):
 		return ErrTaskInvalid.Error()
+	case errors.Is(err, ErrTenantMismatch):
+		return categoryTenantMismatch
 	default:
 		return ErrTaskFailed.Error()
 	}

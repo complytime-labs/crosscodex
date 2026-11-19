@@ -313,6 +313,13 @@ var _ = Describe("NATSCollector", func() {
 				Expect(taskErr).To(MatchError(analysis.ErrTaskInvalid))
 			})
 
+			It("does not redispatch a tenant-mismatched task", func() {
+				redispatches, taskErr := collectWith(collector, true, 3, natsbus.ResultErrorTenantMismatch)
+				Expect(redispatches).To(BeZero())
+				Expect(taskErr).To(MatchError(analysis.ErrTenantMismatch))
+				Expect(taskErr.Error()).To(ContainSubstring("task_tenant_mismatch"))
+			})
+
 			It("does not redispatch a task whose audit failed", func() {
 				redispatches, taskErr := collectWith(collector, true, 3, natsbus.ResultErrorAuditFailed)
 				Expect(redispatches).To(BeZero())
@@ -821,6 +828,7 @@ var _ = DescribeTable("a stage event names its error with the collector's fixed 
 	Entry("a bare context deadline", context.DeadlineExceeded, "task_timeout"),
 	Entry("a no-success window", &analysis.NoSuccessError{JobID: "j", Window: time.Minute}, "task_timeout"),
 	Entry("an invalid payload", fmt.Errorf("stage: %w", analysis.ErrTaskInvalid), "task_invalid"),
+	Entry("a tenant mismatch", fmt.Errorf("stage: %w", analysis.ErrTenantMismatch), "task_tenant_mismatch"),
 	Entry("a rate limit", fmt.Errorf("stage: %w", llmclient.ErrRateLimitExceeded), "task_rate_limited"),
 	Entry("a truncated answer", fmt.Errorf("stage: %w", llmclient.ErrOutputTruncated), "task_output_truncated"),
 	Entry("an unstored audit record", fmt.Errorf("stage: %w", llmclient.ErrAuditFailed), "task_audit_failed"),
