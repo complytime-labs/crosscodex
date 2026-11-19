@@ -1,0 +1,21 @@
+pkg/tenant/connectutil/connectutil_bdd_test.go
+  s_7e89139204344e::t_b0231b5611787b 127-140
+pkg/tenant/connectutil/connectutil.go
+  s_7e89139204344e::t_39f1cdd4ed8cb4 65-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3aa527f36c7acc0afaa9e3b980e7e130f8b2fbba",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
