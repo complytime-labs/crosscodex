@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -156,7 +157,27 @@ func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName
 		return fmt.Errorf("pipeline.ReportStageCompleted: persisting result: %w", err)
 	}
 
-	return r.nats.ReportStageCompleted(ctx, analyzerName, jobID, output)
+	publishErr := r.nats.ReportStageCompleted(ctx, analyzerName, jobID, output)
+	if publishErr == nil {
+		return nil
+	}
+	// The result and the completed row are committed together, so the stage
+	// is already completed. The graph role materializes from the event, and a
+	// completed stage is never re-run or re-published on resume, so the stage
+	// is marked failed here: a retry re-runs it (the result cache bounds the
+	// cost) and publishes again.
+	r.logger.ErrorContext(ctx, "analyzer completion event not stored",
+		"analyzer", analyzerName, "job_id", jobID, "error", publishErr)
+	err := &tenantError{sentinel: ErrMaterializationNotQueued, message: fmt.Sprintf(
+		"job %s: analyzer %s finished, but the graph could not be told to materialize it. "+
+			"Check that the event bus is running and its MATERIALIZE stream exists. "+
+			"Then resume this job: crosscodex run retry --from-failure %s", jobID, analyzerName, jobID)}
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	if updateErr := r.store.UpdateStageError(ctx, jobID, analyzerName, err); updateErr != nil {
+		return errors.Join(err, fmt.Errorf("pipeline.ReportStageCompleted: marking stage %s failed so a retry re-runs it: %w", analyzerName, updateErr))
+	}
+	return err
 }
 
 // ReportStageFailed updates DB with error, then publishes to NATS.

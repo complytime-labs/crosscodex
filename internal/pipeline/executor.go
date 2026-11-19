@@ -992,7 +992,9 @@ func (s *Service) interruptJob(ctx context.Context, tenantID, jobID string) {
 // publishStageEvent builds PipelineStageSubject, marshals JSON event, publishes to NATS.
 // stage.completed drives graph materialization, so it is published durably
 // and a failure to store it is returned; started and failed events have no
-// consumer, go over core NATS, and only log on failure.
+// consumer, go over core NATS, and only log on failure. The returned error is
+// therefore meaningful only for StageCompleted; callers of started and failed
+// events discard it.
 func (s *Service) publishStageEvent(ctx context.Context, tenantID, jobID, stageName string, stage natsbus.Stage) error {
 	if s.bus == nil {
 		return nil

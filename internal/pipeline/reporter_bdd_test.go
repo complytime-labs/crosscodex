@@ -13,6 +13,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
+	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 )
 
 // fakeNATSReporter implements analysis.StageReporter for testing.
@@ -148,6 +149,33 @@ var _ = Describe("DBStageReporter", func() {
 			Expect(natsReporter.completed[0].output).To(Equal(output))
 		})
 
+		It("marks the stage failed, so a retry re-runs it, when its completion event is not stored", func() {
+			natsReporter.completeErr = fmt.Errorf("%w: %w: nats: no responders", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+
+			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", &analyzer.Output{})
+
+			Expect(err).To(MatchError(pipeline.ErrMaterializationNotQueued))
+			Expect(err.Error()).To(And(
+				ContainSubstring("analyzer-1"),
+				ContainSubstring("MATERIALIZE stream"),
+				ContainSubstring("crosscodex run retry --from-failure job-1")))
+			Expect(err.Error()).NotTo(ContainSubstring("nats:"), "bus internals are logged, not returned")
+			stages, _ := store.GetStages(ctx, "job-1")
+			Expect(stages[0].Status).To(Equal(pipeline.StageStatusFailed), "a completed row would make resume skip the analyzer and never publish")
+			Expect(stages[0].ErrorMessage).To(ContainSubstring("MATERIALIZE stream"))
+			Expect(stages[0].ErrorMessage).NotTo(ContainSubstring("nats:"))
+		})
+
+		It("returns both errors when the stage cannot be marked failed after its completion event is not stored", func() {
+			natsReporter.completeErr = fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+			store.updateStageErrErr = errors.New("db write failed")
+
+			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", &analyzer.Output{})
+
+			Expect(err).To(MatchError(pipeline.ErrMaterializationNotQueued))
+			Expect(err).To(MatchError(ContainSubstring("db write failed")))
+		})
+
 		It("persists a JSON null and marks the stage completed when ResultData is empty", func() {
 			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", &analyzer.Output{})
 			Expect(err).ToNot(HaveOccurred())
@@ -177,13 +205,6 @@ var _ = Describe("DBStageReporter", func() {
 			natsReporter.mu.Lock()
 			defer natsReporter.mu.Unlock()
 			Expect(natsReporter.completed).To(BeEmpty())
-		})
-
-		It("returns NATS error to caller", func() {
-			natsReporter.completeErr = errors.New("nats publish failed")
-
-			err := reporter.ReportStageCompleted(ctx, "analyzer-1", "job-1", &analyzer.Output{})
-			Expect(err).To(MatchError("nats publish failed"))
 		})
 
 		It("persists the result and calls NATS reporter when ResultData is present", func() {
