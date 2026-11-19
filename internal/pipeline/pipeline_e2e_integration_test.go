@@ -299,8 +299,9 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 	// Embedded NATS server (in-process JetStream). Shared by the engine's
 	// dispatcher/collector, the pipeline's event publishing, and the worker.
 	bus, err := natsbus.New(config.NATSConfig{
-		URL:      "",
-		Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
+		URL:               "",
+		PublishAckTimeout: 10 * time.Second,
+		Embedded:          config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
 	})
 	Expect(err).NotTo(HaveOccurred(), "create embedded NATS")
 	DeferCleanup(bus.Close)
@@ -489,9 +490,39 @@ func newE2EEnv(opts e2eOptions) *e2eEnv {
 			defer cancel()
 			_ = graphSvc.Stop(stopCtx)
 		})
+	} else {
+		answerBarriersOn(bus)
 	}
 
 	return env
+}
+
+// answerBarriersOn stands in for the graph role in the environments that do
+// not run one: it answers every materialization barrier on bus with
+// "materialized" at once, writing no graph, so a job's graph stage completes
+// as it does once a real graph role has written the job's events.
+func answerBarriersOn(bus natsbus.Client) {
+	sub, err := bus.Subscribe(context.Background(), "crosscodex.materialize.*.*.barrier", func(_ context.Context, msg *natsbus.Message) error {
+		var barrier natsbus.MaterializeBarrier
+		if err := json.Unmarshal(msg.Data, &barrier); err != nil {
+			return fmt.Errorf("decode barrier: %w", err)
+		}
+		subject, err := natsbus.GraphOutcomeSubject(msg.Metadata.TenantID, barrier.JobID, natsbus.GraphOutcomeMaterialized)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(natsbus.GraphOutcome{JobID: barrier.JobID, Outcome: natsbus.GraphOutcomeMaterialized})
+		if err != nil {
+			return err
+		}
+		ctx, err := tenant.WithTenant(context.Background(), msg.Metadata.TenantID)
+		if err != nil {
+			return err
+		}
+		return bus.PublishDurable(ctx, subject, data, nil)
+	})
+	Expect(err).NotTo(HaveOccurred(), "subscribe the stand-in graph role to barriers")
+	DeferCleanup(sub.Unsubscribe)
 }
 
 // semanticMatches returns tenant A's SEMANTIC_MATCH edges of jobID written

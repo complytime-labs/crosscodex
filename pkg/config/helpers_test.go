@@ -32,7 +32,12 @@ func validConfig() *config.Config {
 			ExpiryDuration:    8760 * time.Hour,
 			IncludeByProducts: true,
 		},
-		Pipeline: config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: 5 * time.Minute},
+		NATS: config.NATSConfig{
+			PublishAckTimeout: 10 * time.Second,
+			Streams:           config.NATSStreamsConfig{MaterializeRetention: 168 * time.Hour},
+			Materialize:       config.NATSMaterializeConfig{MaxDeliver: 5, AckWait: 10 * time.Minute, RedeliverDelay: 30 * time.Second, BarrierPollInterval: 2 * time.Second},
+		},
+		Pipeline: config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: 5 * time.Minute, GraphMaterializeTimeout: 5 * time.Minute},
 		Worker:   config.WorkerConfig{MaxAbandonedCollections: 10000, MaxInFlight: 1},
 		Graph:    config.GraphConfig{MaxBulkEdges: config.DefaultGraphMaxBulkEdges, MaxSimilarityCatalogs: config.DefaultGraphMaxSimilarityCatalogs, MaxSimilarityLimit: config.DefaultGraphMaxSimilarityLimit},
 		Catalog:  config.CatalogConfig{RequirementPartNames: []string{"statement"}},

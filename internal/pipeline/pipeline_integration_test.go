@@ -56,7 +56,7 @@ var _ = Describe("Pipeline Integration", func() {
 		}
 		attestor = newFakeAttestation()
 		converter = pipelineattestation.NewConverter()
-		bus = &natsbustest.Fake{}
+		bus = newGraphRoleBus()
 		storage = &storagetest.Fake{}
 
 		// Register stub analyzers with dependencies: alpha -> beta -> gamma.

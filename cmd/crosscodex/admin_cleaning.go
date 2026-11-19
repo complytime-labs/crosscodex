@@ -173,8 +173,7 @@ pending) and a catalog pair (--source-catalog with --target-catalog). The
 server rejects an unknown signal or status and names the accepted values.
 When more results exist the output ends with the exact command for the next
 page. Use "crosscodex admin cleaning show <finding-id>" to read one finding,
-then "decide" to record a reviewer decision (the reviewer role is needed and
-cannot yet be granted, see #232).`,
+then "decide" to record a reviewer decision (it needs the reviewer role).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tenant, err := requireTenant(cmd)
 			if err != nil {
@@ -245,8 +244,8 @@ history and its state token.
 
 Flow: show, then decide. The output ends with the exact "decide" command,
 carrying the state token. The server refuses a decision when the finding
-changed since you read it. "decide" needs the reviewer role, which cannot
-yet be granted (#232).`,
+changed since you read it. "decide" needs the reviewer role, which admin
+does not include.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tenant, err := requireTenant(cmd)
@@ -296,8 +295,8 @@ on the finding's status; the server refuses the others and says why.
 
 --rationale is stored with the decision and signed into its attestation.
 --expect is the finding's state token; a finding that changed since it was
-read is refused. This command needs the reviewer role, which cannot yet be
-granted (#232).`,
+read is refused. This command needs the reviewer role, which admin does not
+include: the daemon grants it through auth.x509_mappings.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tenant, err := requireTenant(cmd)

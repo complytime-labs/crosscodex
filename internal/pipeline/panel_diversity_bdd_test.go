@@ -22,7 +22,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
-	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -409,7 +408,7 @@ var _ = Describe("Panel diversity check", func() {
 			inner := cacheableControlStub("classify", analyzer.ModelUse{Alias: "panel-1", Kind: analyzer.ModelCompletion})
 			Expect(analyzer.Register[*pb.Control](jobReg, &panelStub{Stub: &inner.Stub,
 				panel: analyzer.Panel{Aliases: []string{"panel-1", "panel-2"}, AllowShared: allowShared}})).To(Succeed())
-			bus := &natsbustest.Fake{}
+			bus := newGraphRoleBus()
 			dispatcher = &executorTestDispatcher{}
 			engine := analysis.New(jobReg, dispatcher, &executorTestCollector{},
 				config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},

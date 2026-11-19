@@ -2,8 +2,11 @@ package natsbustest_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
 	. "github.com/onsi/ginkgo/v2"
@@ -92,6 +95,33 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 
+	It("PublishDurable records each tenant-scoped call once with Durable true", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			ctx, err := tenant.WithTenant(context.Background(), "tenant-a")
+			if err != nil {
+				t.Fatalf("tenant context: %v", err)
+			}
+			subjects := rapid.SliceOf(subjectGen("subject")).Draw(t, "subjects")
+
+			fake := &natsbustest.Fake{}
+			for _, s := range subjects {
+				if err := fake.PublishDurable(ctx, s, []byte(s), nil); err != nil {
+					t.Fatalf("PublishDurable: %v", err)
+				}
+			}
+
+			got := fake.Published()
+			if len(got) != len(subjects) {
+				t.Fatalf("recorded %d publications for %d calls", len(got), len(subjects))
+			}
+			for i, s := range subjects {
+				if got[i].Subject != s || !got[i].Durable {
+					t.Fatalf("publication %d = %+v, want durable publication on %q", i, got[i], s)
+				}
+			}
+		})
+	})
+
 	It("Deliver reaches every live matching subscription and no other", func() {
 		rapid.Check(GinkgoT(), func(t *rapid.T) {
 			ctx := context.Background()
@@ -158,6 +188,93 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 		})
 	})
+	It("a durable consumer's acked, naked and termed counts sum to its deliveries", func() {
+		outcomes := rapid.SampledFrom([]error{nil, natsbus.ErrPermanent, errors.New("transient")})
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			fake := &natsbustest.Fake{}
+			script := rapid.SliceOf(outcomes).Draw(t, "script")
+			next := 0
+			sub, err := fake.ConsumeDurable(context.Background(),
+				natsbus.ConsumerConfig{Stream: "S", Durable: "d", MaxDeliver: 5, FilterSubjects: []string{"a.*"}},
+				func(context.Context, *natsbus.Message) error { next++; return script[next-1] })
+			if err != nil {
+				t.Fatalf("consume: %v", err)
+			}
+			wantAck, wantNak, wantTerm := 0, 0, 0
+			for _, o := range script {
+				switch {
+				case o == nil:
+					wantAck++
+				case errors.Is(o, natsbus.ErrPermanent):
+					wantTerm++
+				default:
+					wantNak++
+				}
+				_ = fake.Deliver(&natsbus.Message{Subject: "a.x", Metadata: natsbus.MessageMetadata{TenantID: "tenant-a"}})
+			}
+			s := sub.(*natsbustest.Sub)
+			if s.Acked() != wantAck || s.Naked() != wantNak || s.Termed() != wantTerm {
+				t.Fatalf("outcomes acked/naked/termed = %d/%d/%d, want %d/%d/%d",
+					s.Acked(), s.Naked(), s.Termed(), wantAck, wantNak, wantTerm)
+			}
+			if got := s.Acked() + s.Naked() + s.Termed(); got != len(script) {
+				t.Fatalf("outcomes sum to %d, want %d deliveries", got, len(script))
+			}
+		})
+	})
+
+	It("LastMessageTime passes the stream and subject to LastMessageTimeFunc and returns its answer unchanged", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			stream := rapid.StringMatching(`[A-Z_]{1,12}`).Draw(t, "stream")
+			subject := rapid.StringMatching(`[a-z]{1,8}(\.[a-z]{1,8}){0,4}`).Draw(t, "subject")
+			found := rapid.Bool().Draw(t, "found")
+			at := time.Unix(rapid.Int64Range(0, 1<<40).Draw(t, "unix"), 0).UTC()
+			fake := &natsbustest.Fake{LastMessageTimeFunc: func(_ context.Context, gotStream, gotSubject string) (time.Time, bool, error) {
+				if gotStream != stream || gotSubject != subject {
+					t.Fatalf("got (%q, %q), want (%q, %q)", gotStream, gotSubject, stream, subject)
+				}
+				return at, found, nil
+			}}
+			got, gotFound, err := fake.LastMessageTime(context.Background(), stream, subject)
+			if err != nil || gotFound != found || !got.Equal(at) {
+				t.Fatalf("LastMessageTime = (%v, %v, %v), want (%v, %v, nil)", got, gotFound, err, at, found)
+			}
+		})
+	})
+
+	It("ConsumeDurableFunc records exactly the consumers it lets succeed", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			script := rapid.SliceOf(rapid.Bool()).Draw(t, "succeed")
+			fake := &natsbustest.Fake{ConsumeDurableFunc: func(_ context.Context, cfg natsbus.ConsumerConfig, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
+				if strings.HasPrefix(cfg.Durable, "fail-") {
+					return nil, errors.New("scripted")
+				}
+				return nil, nil
+			}}
+			var want []string
+			for i, ok := range script {
+				name := fmt.Sprintf("ok-%d", i)
+				if !ok {
+					name = fmt.Sprintf("fail-%d", i)
+				}
+				_, err := fake.ConsumeDurable(context.Background(), natsbus.ConsumerConfig{Stream: "S", Durable: name, MaxDeliver: 1}, nil)
+				if ok != (err == nil) {
+					t.Fatalf("consumer %s: err=%v, want success=%v", name, err, ok)
+				}
+				if ok {
+					want = append(want, name)
+				}
+			}
+			var got []string
+			for _, s := range fake.Subscriptions() {
+				got = append(got, s.Config.Durable)
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("recorded consumers %v, want %v", got, want)
+			}
+		})
+	})
+
 	It("a tick subscription is signalled exactly by deliveries to WorkerProgressSubject", func() {
 		subjects := rapid.SampledFrom([]string{
 			natsbus.WorkerProgressSubject,

@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -129,9 +129,11 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 		span.SetStatus(codes.Error, err.Error())
 		c.recordErrorMetric(ctx)
 		c.recordCompletionMetrics(ctx, start, false, req.Model, req.TenantID)
-		c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
+		if auditErr := c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
 			promptHash, req.PromptName, req.PromptVersion,
-			0, time.Since(start), false, err.Error())
+			0, time.Since(start), false, err.Error()); auditErr != nil {
+			return nil, fmt.Errorf("%w; the LLM call failed and its audit record was also not stored: %w: %w", err, ErrAuditFailed, auditErr)
+		}
 		return nil, err
 	}
 	resp.Deployment = header.Get(DeploymentHeader)
@@ -141,11 +143,18 @@ func (c *client) Complete(ctx context.Context, req *CompletionRequest) (*Complet
 		attribute.Int("llm.tokens.completion", resp.Usage.CompletionTokens),
 		attribute.Int("llm.tokens.total", resp.Usage.TotalTokens),
 	)
+	if err := c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
+		promptHash, req.PromptName, req.PromptVersion,
+		resp.Usage.TotalTokens, time.Since(start), true, ""); err != nil {
+		err = fmt.Errorf("LLM call completed but its audit record was not stored, so the result is withheld: %w: %w", ErrAuditFailed, err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		c.recordErrorMetric(ctx)
+		c.recordCompletionMetrics(ctx, start, false, req.Model, req.TenantID)
+		return nil, err
+	}
 	span.SetStatus(codes.Ok, "")
 	c.recordCompletionMetrics(ctx, start, true, req.Model, req.TenantID)
-	c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpComplete,
-		promptHash, req.PromptName, req.PromptVersion,
-		resp.Usage.TotalTokens, time.Since(start), true, "")
 
 	return &resp, nil
 }
@@ -187,9 +196,11 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 		span.SetStatus(codes.Error, err.Error())
 		c.recordErrorMetric(ctx)
 		c.recordEmbedMetrics(ctx, start, false, req.Model, req.TenantID)
-		c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
+		if auditErr := c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
 			promptHash, "", "",
-			0, time.Since(start), false, err.Error())
+			0, time.Since(start), false, err.Error()); auditErr != nil {
+			return nil, fmt.Errorf("%w; the LLM call failed and its audit record was also not stored: %w: %w", err, ErrAuditFailed, auditErr)
+		}
 		return nil, err
 	}
 	resp.Deployment = header.Get(DeploymentHeader)
@@ -198,11 +209,18 @@ func (c *client) Embed(ctx context.Context, req *EmbeddingRequest) (*EmbeddingRe
 		attribute.Int("llm.tokens.prompt", resp.Usage.PromptTokens),
 		attribute.Int("llm.tokens.total", resp.Usage.TotalTokens),
 	)
+	if err := c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
+		promptHash, "", "",
+		resp.Usage.TotalTokens, time.Since(start), true, ""); err != nil {
+		err = fmt.Errorf("LLM call completed but its audit record was not stored, so the result is withheld: %w: %w", ErrAuditFailed, err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		c.recordErrorMetric(ctx)
+		c.recordEmbedMetrics(ctx, start, false, req.Model, req.TenantID)
+		return nil, err
+	}
 	span.SetStatus(codes.Ok, "")
 	c.recordEmbedMetrics(ctx, start, true, req.Model, req.TenantID)
-	c.emitAudit(ctx, req.TenantID, req.JobID, req.Model, OpEmbed,
-		promptHash, "", "",
-		resp.Usage.TotalTokens, time.Since(start), true, "")
 
 	return &resp, nil
 }
@@ -243,8 +261,13 @@ func (c *client) Close() error {
 }
 
 // doWithRetry executes a POST request with exponential backoff retry on
-// transient failures (HTTP 429, 5xx, and network errors), and returns the
-// headers of the successful response it decoded into result.
+// transient failures (HTTP 429, 5xx other than 504, and non-timeout network
+// errors), and returns the headers of the successful response it decoded into
+// result. A timeout (the client deadline, or HTTP 408 or 504 from upstream) is
+// never retried, in any mode: the upstream may have processed and billed the
+// call, so it returns ErrTimeout at once. Gateway mode makes a
+// single attempt. A retryable HTTP status that outlasts every attempt is
+// classified like a non-retryable one (429 wraps ErrRateLimitExceeded).
 func (c *client) doWithRetry(ctx context.Context, path string, body []byte, result any) (http.Header, error) {
 	url := strings.TrimRight(c.cfg.GatewayURL, "/") + path
 	maxAttempts := c.cfg.MaxRetries + 1
@@ -282,7 +305,10 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
-			// Network errors are always retryable.
+			if isTimeout(err) {
+				return nil, fmt.Errorf("LLM gateway request timed out: %w: %w", ErrTimeout, err)
+			}
+			// Other network errors are retryable.
 			lastErr = fmt.Errorf("LLM gateway request failed: %w: %w", err, ErrGatewayUnavailable)
 			continue
 		}
@@ -290,6 +316,10 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 		resp.Body.Close()
 		if readErr != nil {
+			// The client timeout also covers the body read.
+			if isTimeout(readErr) {
+				return nil, fmt.Errorf("LLM gateway response timed out: %w: %w", ErrTimeout, readErr)
+			}
 			lastErr = fmt.Errorf("reading response body: %w", readErr)
 			continue
 		}
@@ -318,9 +348,20 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 
 	// Exhausted all retries.
 	if lastErr != nil {
+		var apiErr *APIError
+		if errors.As(lastErr, &apiErr) {
+			lastErr = c.classifyError(apiErr)
+		}
 		return nil, fmt.Errorf("LLM gateway request failed after %d attempts: %w", maxAttempts, lastErr)
 	}
 	return nil, fmt.Errorf("LLM gateway request failed: %w", ErrGatewayUnavailable)
+}
+
+// isTimeout reports whether err is a deadline or network timeout.
+func isTimeout(err error) bool {
+	// Not net.Error: net/http's body-read timeout has Timeout() but is not one.
+	var timeouter interface{ Timeout() bool }
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeouter) && timeouter.Timeout())
 }
 
 // parseAPIError extracts a structured error from the OpenAI error envelope.
@@ -339,9 +380,13 @@ func (c *client) parseAPIError(statusCode int, body []byte) *APIError {
 	}
 }
 
-// classifyError maps HTTP status codes to sentinel errors.
+// classifyError maps HTTP status codes to sentinel errors. 408 and 504 are a
+// timeout upstream of this client (the gateway's or the provider's), handled
+// like a client-side one: ErrTimeout, never retried.
 func (c *client) classifyError(apiErr *APIError) error {
 	switch apiErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		return fmt.Errorf("%w: upstream returned HTTP %d: %w", ErrTimeout, apiErr.StatusCode, apiErr)
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("%w: %s", ErrAuthentication, apiErr.Message)
 	case http.StatusTooManyRequests:
@@ -458,12 +503,18 @@ func (c *client) recordErrorMetric(ctx context.Context) {
 	}
 }
 
-// emitAudit sends an audit event via the configured emitter. Best-effort:
-// logs a warning on failure but never returns an error to the caller.
-func (c *client) emitAudit(ctx context.Context, tenantID, jobID, model, operation, promptHash, promptName, promptVersion string, tokensUsed int, duration time.Duration, success bool, errMsg string) {
+// emitAudit sends an audit event via the configured emitter and returns the
+// emitter's error unchanged; the caller wraps it with ErrAuditFailed and the
+// wording that fits whether the call completed. The emitter gets a context
+// that survives cancellation of the call's: a call that timed out may still
+// have been billed, and its record must be stored (the emitter bounds the
+// wait itself). With no emitter configured, nothing is audited and nothing
+// fails. The emitter logs its own failures.
+func (c *client) emitAudit(ctx context.Context, tenantID, jobID, model, operation, promptHash, promptName, promptVersion string, tokensUsed int, duration time.Duration, success bool, errMsg string) error {
 	if c.emitter == nil {
-		return
+		return nil
 	}
+	ctx = context.WithoutCancel(ctx)
 	event := &AuditEvent{
 		Timestamp:     time.Now(),
 		TenantID:      tenantID,
@@ -479,13 +530,7 @@ func (c *client) emitAudit(ctx context.Context, tenantID, jobID, model, operatio
 		PromptName:    promptName,
 		PromptVersion: promptVersion,
 	}
-	if err := c.emitter.EmitLLMAudit(ctx, event); err != nil {
-		slog.WarnContext(ctx, "failed to emit LLM audit event",
-			"error", err,
-			"operation", operation,
-			"tenant_id", tenantID,
-		)
-	}
+	return c.emitter.EmitLLMAudit(ctx, event)
 }
 
 // Verify interface compliance at compile time.

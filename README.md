@@ -16,6 +16,23 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Client certificates get roles only from `auth.x509_mappings` (#232):
+
+- **Every client certificate needs a mapping; none is admin implicitly.** Roles `all` and `gateway` (and the embedded CLI daemon) used to grant `admin` to any certificate the CA signed. Now a certificate gets the roles of the first `auth.x509_mappings` entry it matches and is refused if it matches none, and the daemon refuses to start while `auth.x509_mappings` is empty. For the certificates `task deploy:certs` generates (deploy/certgen), add `auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]`; the shipped `deploy/config.yaml` already has it. Roles must be `admin` or `reviewer`, and every match needs at least one field. The embedded CLI daemon grants `admin` only to its own client certificate, matched by its exact common name and organization.
+- **`tenants.enabled` is honoured.** With `false`, every identity is in `tenants.default_tenant`, and a mapping's `tenant` must be empty or that tenant. With `true`, each mapping must name a `tenant`, and a caller works in its mapping's tenant.
+- **A reviewer needs a certificate of their own.** `crosscodex admin cleaning decide` needs the `reviewer` role, which `admin` does not include, so issue each reviewer a separate certificate and map it with `roles: [reviewer]`. Don't add `reviewer` to the shared admin mapping: one certificate holding both roles would let one person both apply a cleaning pass and decide its findings.
+- **A split pipeline role needs `tls.service_identities`.** The standalone `pipeline` role now honors the `x-tenant-id` header only from a client certificate listed there, and refuses to start with the list empty or with a `tenants.default_tenant` that `crosscodexd migrate` has not provisioned (or that is deleted). List the gateway's outbound client certificate, e.g. `tls.service_identities: [{cn: client, organization: CrossCodex}]`; the shipped `deploy/config.yaml` already has it. That deployment uses one `client.pem` for every role, the operator and the gateway's service identity, so there the list separates nothing: anyone holding `client.pem` can assert any tenant. With `tenants.enabled: true`, give the gateway a dedicated client certificate, issued to no user and no other role, and list it alone in `tls.service_identities`. Roles `all` and the embedded CLI daemon are unaffected.
+
+Graph materialization is durable, and a job completes only once its graph is written (#231):
+
+- **A split deployment needs a running graph role.** A job's graph stage now completes only when a `graph` role (or `all`) confirms that every materialization event of the job is written. Before, it completed as soon as the events were published, so a job could report `completed` with no graph written. Without a graph role on the pipeline's NATS server, every job fails at its graph stage after the new `pipeline.graph_materialize_timeout` (default `30m`, range `(0, pipeline.stage_timeout]`; global-only) with a message naming the timeout and the missing graph role; raise it if a large job's graph takes longer to write. A `failed` graph outcome fails the job with the graph role's reason. A retried or resumed job re-publishes the completion events of the stages an earlier run completed, so their graph is written and checked again. See [Job completion needs a graph role](docs/dev/service-runtime.md#job-completion-needs-a-graph-role).
+- **Behaviour.** The graph role now reads stage completions and parsed catalogs from the `MATERIALIZE` stream through the durable consumer `graph-materializer`, instead of a core NATS queue group. An event published while no graph role runs waits for one. A failed event is retried; an edge whose control node is not projected yet is retried instead of skipped at once, and is skipped only on the last delivery. When an event fails on its last delivery, the graph role stores a `failed` outcome on `crosscodex.audit.<tenant>.events.<job>.graph.failed` (stream `AUDIT_EVENTS`). A job barrier on `crosscodex.materialize.<tenant>.<job>.barrier` (consumer `graph-barrier`) is answered with `...graph.materialized` or `...graph.failed` once none of the job's events is left in `MATERIALIZE`. An event or barrier whose subject tenant differs from its provenance tenant is dropped.
+- **Config.** New global-only `nats.materialize`: `max_deliver` (default `5`, at least `1`; the graph role enforces it, not the server, so a delivery past it, such as after a lost ack, is handled as the last one), `ack_wait` (default `10m`, positive; must exceed the time to materialize one event, since a longer one is redelivered while it still runs), `redeliver_delay` (default `30s`, positive) and `barrier_poll_interval` (default `2s`, positive; how often a waiting barrier is checked). A barrier counts a `failed` outcome only if `AUDIT_EVENTS` stored it at or after the barrier's `not_before` (the run's start), so a retried job is not failed by its earlier run. `not_before` is read from the pipeline host's clock and compared with NATS server timestamps, so keep pipeline and NATS hosts NTP-synced.
+- **Logging.** A durable handler that returns `natsbus.ErrSkip` (ignored message) or `natsbus.ErrNotReady` (condition not met yet; redelivered) is logged at debug, and `natsbus.ErrPermanent` terminations at warn; other handler errors stay at error.
+- **Streams are verified, not overwritten.** A role creates a missing JetStream stream but never updates a live one. If a live stream's subjects, retention policy, storage, `max_age` or replicas differ from this role's `nats.streams`, startup fails with `ErrStreamDrift` naming each field with its live and configured values. Make `nats.streams` agree in every role, or run `nats stream edit <name> ...` and restart. Streams an earlier build created with different retention now need that one-time edit.
+- **New stream.** New `nats.streams.materialize_retention` (default `168h`, must be positive) sets the `MATERIALIZE` work-queue stream, which is created at startup.
+- **Audit records are stored or the operation fails.** An LLM call whose audit event the `AUDIT_LLM` stream does not acknowledge now fails with `ErrAuditFailed` (task result `audit_failed`, never retried: the call was made and probably billed). Catalog import returns `Unavailable` when its `catalog_parsed` audit record is not stored (the catalog stays stored; re-import is safe), and a job fails when its attestation bundle event is not stored. The catalog audit subject is now `crosscodex.audit.<tenant>.events.catalog.<catalog>.parsed` (was the unscoped `audit.catalog.parsed`, which no stream captured).
+
 Signed record of every applied cleaning run (#290):
 
 - **Database.** The new append-only table `edge_cleaning_runs` is folded into the baseline migration `001_initial_schema`, and `edge_finding_decisions` gains a foreign key from a policy decision to its run. A database created by an earlier build must be recreated (`task deploy:down VOLUMES=1`, start the stack, `crosscodexd migrate`); `crosscodexd` refuses to start on the old schema, reporting `edge_cleaning_runs.plan_token` as missing.
@@ -24,7 +41,7 @@ Signed record of every applied cleaning run (#290):
 Edge cleaning (#272):
 
 - **Database.** `job_stages` gains the column `stage_record`, and the new tables `edge_findings` and `edge_finding_decisions` are folded into the baseline migration `001_initial_schema`. A database created by an earlier build must be recreated (`task deploy:down VOLUMES=1`, start the stack, `crosscodexd migrate`); `crosscodexd` refuses to start on the old schema and names the missing column. Re-import your catalogs and re-run your jobs.
-- **New `reviewer` role.** `EdgeCleaningService.DecideFinding` (`crosscodex admin cleaning decide`) needs it; `admin` does not include it. It cannot be granted yet (#232), so decisions are refused in every deployment until then. `RunCleaning` needs `admin`; `ListFindings` and `GetFinding` need `reviewer` or `admin`.
+- **New `reviewer` role.** `EdgeCleaningService.DecideFinding` (`crosscodex admin cleaning decide`) needs it; `admin` does not include it. Grant it through `auth.x509_mappings` (see the #232 entry above). `RunCleaning` needs `admin`; `ListFindings` and `GetFinding` need `reviewer` or `admin`.
 - **New `cleaning` config section** (`max_retire_per_run`, `signals.<signal>.action`, `signals.low_agreement.min_agreement_fraction`, all tenant-overridable). The defaults report every signal and retire nothing. See [Edge Cleaning](#edge-cleaning-crosscodex-admin-cleaning).
 - **A restored edge has a new ID.** Restoring a retired verdict creates new edges whose IDs derive from the retired edge and the restore decision; the original edge keeps its ID and stays superseded. `mapping_id` in `results` output is still derived from the job and control pair, so it names the original, superseded analyzer edge, not the restored one.
 - **Signing.** `run --apply` and `decide` need `attestation.private_key_path` and `attestation.public_key_path`, even with `attestation.enabled: false`. Role `all` now loads those keys at startup whenever both are set, and refuses to start if they do not load.
@@ -142,6 +159,7 @@ Tenant administration (#31):
 
 Analysis stage limits (#237):
 
+- Timed-out LLM calls are no longer re-sent by default. A call that hits the client's deadline, or that the gateway or provider answers with HTTP 408 or 504, fails its task as `timeout` with one upstream attempt, because the provider may already have billed it. Before, such a task was re-sent up to `analysis.engine.max_retries` times (and in direct mode the client itself also retried a deadline or a 504, up to `llm.max_retries` times). Set `analysis.engine.retry_on_timeout: true` (tenant-overridable through `analysis.engine.tenant_overrides`) to re-send them. A malformed task payload (`task_invalid`), a tenant mismatch and an unstored audit record are never re-sent. `analysis.tasks.retried` gains a `cause` attribute (`timeout`, `rate_limit`, `other`). The per-task bound on upstream calls is in [Task retries](#task-retries).
 - `pipeline.stage_timeout` now caps every analyzer stage. Its default is 24h (was 30m, unused), and `0` is rejected: a config that sets `stage_timeout: 0` or more than `168h` fails to load. Raise it if a catalog's stage legitimately runs longer than 24h.
 - `analysis.engine.task_timeout` changed meaning. Before, it was one deadline for a stage's whole batch of LLM tasks, so any real catalog failed after `task_timeout`. Now it is an idle timeout across the whole worker pool: a stage fails only when no worker anywhere reports progress for that long. Total time per stage is capped by `pipeline.stage_timeout` instead (default 24h).
 - Split deployments: each LLM worker remembers an abandon for its own host's `pipeline.stage_timeout`, and `worker.max_abandoned_collections` is likewise per worker host. Set `pipeline.stage_timeout` on worker hosts to the same value as on pipeline hosts, or larger. A smaller value makes workers forget abandons early and run tasks nobody reads.
@@ -597,20 +615,27 @@ attestation:
     sandbox:
       enabled: false              # this tenant's jobs and imports run unattested
 
-# Multi-tenant X.509 certificate-to-tenant mapping
+# X.509 client certificate -> tenant and roles. Required by roles all and
+# gateway: the first mapping a certificate matches decides; a certificate that
+# matches none is refused. Roles: admin, reviewer. Match fields are globs
+# (cn, organization, org_unit, san_email, san_dns, san_uri), ANDed.
 tenants:
-  enabled: true
+  enabled: true                   # false: omit tenant (or set tenants.default_tenant); every caller is in tenants.default_tenant
 auth:
   x509_mappings:
     - match:
-        organization: "Acme*"
+        cn: "ops-admin"
+        organization: "Acme"
         org_unit: "Engineering"
       tenant: acme-engineering
-      roles: [admin, writer]
+      roles: [admin]
+    # A reviewer gets a certificate of their own: admin does not include
+    # reviewer, and one certificate holding both would let one person apply a
+    # cleaning pass and decide its findings.
     - match:
-        san_email: "*@partner.com"
-      tenant: partner-org
-      roles: [reader]
+        san_email: "alice@acme.example"
+      tenant: acme-engineering
+      roles: [reviewer]
 
 # Analysis
 analysis:
@@ -619,6 +644,7 @@ analysis:
     success_timeout: 10m                 # (0, 24h], >= task_timeout, <= pipeline.stage_timeout; fail a stage (llm_unavailable) that receives only failed results for this long
     max_retries: 3                       # Redispatches of a failed task
     retry_backoff: 1s                    # Base delay before a redispatch
+    retry_on_timeout: false              # Re-send a timed-out LLM call (it may already be billed); tenant-overridable via tenant_overrides
   classification:
     enabled: true                 # Runs the classify analyzer; embedding needs it
     model: ""                     # Inherits from llm.default_model
@@ -716,6 +742,7 @@ worker:
 
 pipeline:
   stage_timeout: 24h                      # (0, 168h]; hard cap on each analyzer stage, which worker progress never extends; fails a stage whose task was lost; worker hosts must set the same or a larger value (they keep abandons that long)
+  graph_materialize_timeout: 30m          # (0, stage_timeout]; how long a job's graph stage waits for a graph role to confirm the job's graph is written before failing the job (global-only)
 
 graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)
@@ -742,6 +769,10 @@ synthesis:
     contested_warn: 0.20                  # Contested pairs warning threshold
     actionable_warn: 0.30                 # Actionable coverage warning threshold
 ```
+
+#### Task retries
+
+The collector retries a failed LLM task by the result code the worker reports. A rate limit that outlasts the gateway's own retries, and any other failure, are re-sent after `analysis.engine.retry_backoff` (doubling each attempt), at most `analysis.engine.max_retries` times, so one task makes at most (1 + `analysis.engine.max_retries`) × A upstream calls, where A is `1 + llm.max_retries` when `llm.gateway_mode` is false (the default), and otherwise 1 + the retries the gateway itself is configured with (the client makes one attempt per call and ignores `llm.max_retries`, as `deploy/config.yaml` sets `gateway_mode: true`). A task that timed out (the client's deadline, or HTTP 408 or 504 from the gateway or provider) is sent once unless `analysis.engine.retry_on_timeout` is true, because the provider may already have billed the call. A truncated answer (`max_tokens` too small) and a malformed payload are never re-sent: the same request fails the same way. `analysis.tasks.retried` counts re-sends by `cause` (`timeout`, `rate_limit`, `other`).
 
 #### Print-artefact patterns
 
@@ -1002,7 +1033,7 @@ The job fails instead of completing unattested. Every error names the step and o
 | Object storage refuses a write after `attestation.storage_retries` retries | Fails | Fix storage, then `crosscodex run retry --from-failure <job-id>` or start a new job |
 | A stored link is missing, does not verify, or is for another job on resume, or the chain does not verify | Fails, with every stored object left as it was; `run retry --from-failure` refuses it | Start a new job; check whether objects under `attestation/` were changed |
 
-Publishing the bundle to the audit stream is best effort: a failure is logged, since the stored bundle is the record. When attestation is disabled, no signer is built, no attestation object is written, and the daemon logs at startup that jobs are unattested.
+Publishing the bundle to the audit stream waits for the stream to store it: if it does not, the job fails (the stored bundle is kept, and `crosscodex run retry --from-failure` finalizes again). When attestation is disabled, no signer is built, no attestation object is written, and the daemon logs at startup that jobs are unattested.
 
 Every catalog import (`crosscodex catalog import`, RPCs `SubmitDocument` and `StreamDocument`) of a tenant with attestation enabled is attested too, by the gateway (roles `all` and `gateway`) or the embedded daemon, with the same key pair as that tenant's jobs. So roles `gateway` and `all`, not only `pipeline`, need `attestation.private_key_path` and `attestation.public_key_path` whenever `attestation.enabled` is true (or set `attestation.enabled: false`); otherwise they refuse to start. It stores one signed in-toto link at `attestation/ingest/<document-id>` in the tenant's object store, where `<document-id>` is the `document_id` the import returns, the uploaded document's own storage key (today `documents/<uuid>.json`, so the link is `attestation/ingest/documents/<uuid>.json`). The link's step is `gateway.SubmitDocument` or `gateway.StreamDocument`; its material is `document://<tenant>/<document-id>` with the SHA-256 of the uploaded bytes as its digest; its product is `catalog://<tenant>/<catalog-id>`; its byproducts are `content_hash` (the same SHA-256), `trace_id`, `catalog_format` and `catalog_name` (always present; `attestation.include_byproducts: false` only drops the generator's `span_id`, `timestamp` and `hostname`). If the link cannot be signed or stored, the import fails with `Unavailable`: the catalog was imported but not attested, and the message names the catalog and an error reference the daemon logged the cause under. Re-run the same import to attest it: the catalog ID derives from the content, so the catalog is updated in place.
 
@@ -1147,7 +1178,7 @@ crosscodex admin cleaning decide <finding-id> --verdict dismiss \
 - **Stale findings are per job.** `stale_prompt` and `stale_model` raise one finding per job, not per verdict: `show`, `findings` and `run` print the job's catalogs, when it completed and how many of its live verdicts the run read, and the detail lists each stale stage's recorded and current value. Its ID depends only on the signal and the job, so retiring or restoring one of the job's verdicts through another finding does not re-raise a dismissed one; a change to a stale stage or its values does. Under action `retire`, and for a reviewer's `retire`, it removes the job's live verdicts (all of them count against `max_retire_per_run` on a run), or only those `--retire-verdict` names, which must be among them; `restore` recreates exactly what was retired, whatever the job's size.
 - **Restore.** Restoring recreates each retired edge as a new live edge with a new ID, derived from the retired edge and the restore decision; the retired edge stays superseded. See the Upgrading note on `mapping_id`.
 - **Statuses.** `reported` (listed only), `pending` (in the review queue), `retired`, `dismissed`, `restored`, and `cleared` (a later pass over its catalog pair no longer detects it).
-- **Roles.** `run` needs `admin`. `findings` and `show` need `reviewer` or `admin`. `decide` needs `reviewer`, which `admin` does not include, and the caller must be an active reviewer of the tenant (`crosscodexd admin reviewer add`). The `reviewer` role cannot yet be granted, because the daemon does not read `auth.x509_mappings` (#232), so every `decide` is refused with `PermissionDenied` for now.
+- **Roles.** `run` needs `admin`. `findings` and `show` need `reviewer` or `admin`. `decide` needs `reviewer`, which `admin` does not include, and the caller must be an active reviewer of the tenant (`crosscodexd admin reviewer add`). Grant `reviewer` with an `auth.x509_mappings` entry for the reviewer's own certificate, not the admin's (see [Key Configuration Examples](#key-configuration-examples)); a caller without it is refused with `PermissionDenied`.
 - **Signing.** Apply and decide sign what they record as in-toto links with `attestation.private_key_path` and `attestation.public_key_path`, whatever `attestation.enabled` says. With either path empty, apply and decide are refused with a message naming both settings; preview, resume, `findings` and `show` still work. With both set but not loadable as a key pair, `crosscodexd` in role `all` refuses to start.
 - **JSON.** `--json` prints the response with the proto field names (snake_case), including zero counts and empty lists; protojson renders 64-bit integers such as `summary.skipped_edges` as strings.
 
@@ -1611,8 +1642,8 @@ recorded in the database's audit log. Without the keys or
   `crosscodexd admin tenant resume` to reactivate it. A hidden tenant must be
   unhidden first.
 - **`reviewer add`:** registers a reviewer so `adjudicate artifacts decide`
-  and, once the `reviewer` role can be granted (#232), `crosscodex admin
-  cleaning decide` accept them. Prints `added`, or `already registered`. A deleted
+  and `crosscodex admin cleaning decide` (which also needs the `reviewer`
+  role) accept them. Prints `added`, or `already registered`. A deleted
   reviewer is restored with `reviewer restore`, not added again.
 - **`reviewer delete` / `restore`:** a deleted reviewer's verdicts stay, but
   `decide` refuses new ones from them. Restoring makes them active again.

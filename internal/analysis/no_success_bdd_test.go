@@ -116,7 +116,7 @@ var _ = Describe("The no-success window (analysis.engine.success_timeout)", func
 			req := request(200, idle, window, 0, time.Millisecond)
 			handle, err := collector.PrepareCollect(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
-			feed(200, func(i int) { deliverResult(bus, fmt.Sprintf("t-%d", i), nil, "llm request timeout") })
+			feed(200, func(i int) { deliverResult(bus, fmt.Sprintf("t-%d", i), nil, natsbus.ResultErrorTimeout) })
 
 			start := time.Now()
 			results, err := collector.AwaitResults(ctx, handle)
@@ -130,7 +130,7 @@ var _ = Describe("The no-success window (analysis.engine.success_timeout)", func
 			Expect(nse.Failures).To(BeNumerically(">", 0))
 			Expect(results).To(HaveLen(nse.Failures), "every failed result received before the trip is returned")
 			Expect(nse.LastSuccess.IsZero()).To(BeTrue(), "no task succeeded since the stage started")
-			Expect(nse.LastError).To(MatchError("task_timeout"))
+			Expect(nse.LastError).To(MatchError(llmclient.ErrTimeout))
 			Expect(err.Error()).To(ContainSubstring("job job-dark"))
 			Expect(err.Error()).To(ContainSubstring("analysis.engine.success_timeout"))
 			for _, r := range results {
@@ -177,7 +177,7 @@ var _ = Describe("The no-success window (analysis.engine.success_timeout)", func
 				deliverResult(bus, fmt.Sprintf("t-%d", i), success, "")
 				return
 			}
-			deliverResult(bus, fmt.Sprintf("t-%d", i), nil, "llm request timeout")
+			deliverResult(bus, fmt.Sprintf("t-%d", i), nil, natsbus.ResultErrorTimeout)
 		})
 
 		results, err := collector.AwaitResults(ctx, handle)

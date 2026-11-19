@@ -34,7 +34,7 @@ import (
 func splitRoleConfig(dsn, natsURL, tenantID, role string) *config.Config {
 	cfg := baseTestConfig(dsn)
 	cfg.Role = role
-	cfg.NATS = config.NATSConfig{URL: natsURL}
+	cfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 	cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: e2eModel, EmbeddingModel: e2eModel}
 	cfg.Analysis = e2eAnalysisConfig()
 	cfg.Prompt = config.PromptConfig{
@@ -80,6 +80,14 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		pipelineCfg.TLS = testServerTLS()
 
 		workerCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RoleWorker)
+		startGraphRole(ctx, dsn, natsURL)
+
+		// The pipeline and gateway roles refuse a default tenant migrate has
+		// not provisioned, so provision it before bootstrapping either.
+		suPool, err := db.NewPool(db.PoolConfig{DSN: dsn, MaxOpenConns: 5, Extensions: []string{"age", "vector"}})
+		Expect(err).NotTo(HaveOccurred())
+		defer suPool.Close()
+		Expect(db.EnsureTenant(ctx, suPool, tenantID, "crosscodexd split e2e")).To(Succeed())
 
 		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
@@ -96,19 +104,12 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		Expect(workerRT.start(ctx)).To(Succeed(), "start worker role")
 		defer func() { _ = workerRT.stop(context.Background()) }()
 
-		// The gateway role refuses a default tenant migrate has not
-		// provisioned, so provision it before bootstrapping the gateway.
-		suPool, err := db.NewPool(db.PoolConfig{DSN: dsn, MaxOpenConns: 5, Extensions: []string{"age", "vector"}})
-		Expect(err).NotTo(HaveOccurred())
-		defer suPool.Close()
-		Expect(db.EnsureTenant(ctx, suPool, tenantID, "crosscodexd split e2e")).To(Succeed())
-
 		gwCfg := baseTestConfig(dsn)
 		gwCfg.Role = config.RoleGateway
 		gwCfg.Server.Addr = "127.0.0.1:0"
 		gwCfg.Pipeline.Endpoint = pipelineAddr
 		gwCfg.TLS = testClientTLS()
-		gwCfg.NATS = config.NATSConfig{URL: natsURL}
+		gwCfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 		gwCfg.Tenants.DefaultTenant = tenantID
 		gwCfg.Storage.Objects.BasePath = GinkgoT().TempDir()
 
@@ -206,6 +207,8 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		pipelineCfg.Pipeline.Addr = "127.0.0.1:0"
 		pipelineCfg.Health.Addr = "127.0.0.1:0"
 		pipelineCfg.TLS = testServerTLS()
+		// The pipeline role refuses a default tenant migrate has not provisioned.
+		Expect(migrateDatabase(ctx, pipelineCfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
@@ -221,16 +224,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 
 		// The graph role is the only Control-node writer: catalog ingest in
 		// the gateway publishes the parsed catalog and stops there.
-		graphCfg := baseTestConfig(dsn)
-		graphCfg.Role = config.RoleGraph
-		graphCfg.NATS = config.NATSConfig{URL: natsURL}
-		graphCfg.Health.Addr = "127.0.0.1:0"
-
-		graphRT, err := bootstrap(ctx, graphCfg)
-		Expect(err).NotTo(HaveOccurred(), "bootstrap graph role")
-		defer graphRT.close()
-		Expect(graphRT.start(ctx)).To(Succeed(), "start graph role")
-		defer func() { _ = graphRT.stop(context.Background()) }()
+		graphRT := startGraphRole(ctx, dsn, natsURL)
 
 		// The gateway role refuses a default tenant migrate has not
 		// provisioned, so provision it before bootstrapping the gateway.
@@ -251,7 +245,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		gwCfg.TLS.Targets = map[string]config.TLSOverride{
 			"gateway-server": {Cert: testTLSServerCertPath, Key: testTLSServerKeyPath},
 		}
-		gwCfg.NATS = config.NATSConfig{URL: natsURL}
+		gwCfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 		gwCfg.Tenants.DefaultTenant = tenantID
 		gwCfg.Storage.Objects.BasePath = GinkgoT().TempDir()
 
@@ -349,7 +343,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RolePipeline
-		cfg.NATS = config.NATSConfig{URL: natsURL}
+		cfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: e2eModel, EmbeddingModel: e2eModel}
 		cfg.Analysis = e2eAnalysisConfig()
 		cfg.Prompt = config.PromptConfig{
@@ -368,6 +362,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		// Real mTLS on the listener: attachPipeline now requires it, and both
 		// checks below exercise the TLS boundary rather than plaintext.
 		cfg.TLS = testServerTLS()
+		Expect(migrateDatabase(ctx, cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		rt, err := bootstrap(ctx, cfg, WithLLMClient(testspecs.DeterministicLLM{EmbeddingDim: e2eEmbeddingDim}))
 		Expect(err).NotTo(HaveOccurred())

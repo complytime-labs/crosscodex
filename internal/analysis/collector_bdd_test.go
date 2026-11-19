@@ -3,11 +3,14 @@ package analysis_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -16,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -237,6 +241,120 @@ var _ = Describe("NATSCollector", func() {
 			fakeDisp.mu.Lock()
 			defer fakeDisp.mu.Unlock()
 			Expect(fakeDisp.redispatches).To(BeEmpty())
+		})
+
+		Describe("retrying by failure cause", func() {
+			// collectWith delivers each code as the result of t-1 in turn
+			// (waiting for each redispatch), then returns the redispatch count and the
+			// collection's final error.
+			collectWith := func(c *analysis.NATSCollector, retryOnTimeout bool, maxRetries int, codes ...string) (int, error) {
+				req := analysis.CollectRequest{
+					TaskType:       natsbus.TaskClassify,
+					JobID:          "job-1",
+					ExpectedIDs:    []string{"t-1"},
+					Tasks:          []analyzer.Task{{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}}},
+					Timeout:        5 * time.Second,
+					StageTimeout:   time.Hour,
+					SuccessTimeout: time.Hour,
+					MaxRetries:     maxRetries,
+					Backoff:        time.Millisecond,
+					RetryOnTimeout: retryOnTimeout,
+					Dispatcher:     fakeDisp,
+				}
+				handle, err := c.PrepareCollect(ctx, req)
+				Expect(err).NotTo(HaveOccurred())
+				go func() {
+					defer GinkgoRecover()
+					for i, code := range codes {
+						if i > 0 {
+							Eventually(func() int {
+								fakeDisp.mu.Lock()
+								defer fakeDisp.mu.Unlock()
+								return len(fakeDisp.redispatches)
+							}).Should(BeNumerically(">=", i))
+						}
+						deliverResult(fakeNATS, "t-1", nil, code)
+					}
+				}()
+				results, err := c.AwaitResults(ctx, handle)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(results).To(HaveLen(1))
+				fakeDisp.mu.Lock()
+				defer fakeDisp.mu.Unlock()
+				return len(fakeDisp.redispatches), results[0].Error
+			}
+
+			It("does not redispatch a timed-out task by default, and says the call may have been billed", func() {
+				redispatches, taskErr := collectWith(collector, false, 3, natsbus.ResultErrorTimeout)
+				Expect(redispatches).To(BeZero())
+				Expect(taskErr).To(MatchError(llmclient.ErrTimeout))
+				Expect(taskErr).NotTo(MatchError(analysis.ErrRetryExhausted))
+				Expect(taskErr.Error()).To(ContainSubstring("analysis.engine.retry_on_timeout"))
+			})
+
+			It("redispatches a timed-out task when retry_on_timeout is set", func() {
+				redispatches, taskErr := collectWith(collector, true, 1, natsbus.ResultErrorTimeout, natsbus.ResultErrorTimeout)
+				Expect(redispatches).To(Equal(1))
+				Expect(taskErr).To(MatchError(analysis.ErrRetryExhausted))
+				Expect(taskErr).To(MatchError(llmclient.ErrTimeout))
+			})
+
+			It("bounds a rate-limit storm at max_retries redispatches", func() {
+				rl := natsbus.ResultErrorRateLimited
+				redispatches, taskErr := collectWith(collector, false, 3, rl, rl, rl, rl)
+				Expect(redispatches).To(Equal(3))
+				Expect(taskErr).To(MatchError(analysis.ErrRetryExhausted))
+				Expect(taskErr).To(MatchError(llmclient.ErrRateLimitExceeded))
+			})
+
+			It("does not redispatch an invalid payload", func() {
+				redispatches, taskErr := collectWith(collector, true, 3, natsbus.ResultErrorInvalidPayload)
+				Expect(redispatches).To(BeZero())
+				Expect(taskErr).To(MatchError(analysis.ErrTaskInvalid))
+			})
+
+			It("does not redispatch a tenant-mismatched task", func() {
+				redispatches, taskErr := collectWith(collector, true, 3, natsbus.ResultErrorTenantMismatch)
+				Expect(redispatches).To(BeZero())
+				Expect(taskErr).To(MatchError(analysis.ErrTenantMismatch))
+				Expect(taskErr.Error()).To(ContainSubstring("task_tenant_mismatch"))
+			})
+
+			It("does not redispatch a task whose audit failed", func() {
+				redispatches, taskErr := collectWith(collector, true, 3, natsbus.ResultErrorAuditFailed)
+				Expect(redispatches).To(BeZero())
+				Expect(taskErr).To(MatchError(llmclient.ErrAuditFailed))
+				Expect(taskErr.Error()).To(ContainSubstring("task_audit_failed"))
+			})
+
+			It("does not echo an unknown error code back", func() {
+				_, taskErr := collectWith(collector, false, 0, "secret detail")
+				Expect(taskErr).To(MatchError(analysis.ErrTaskFailed))
+				Expect(taskErr.Error()).NotTo(ContainSubstring("secret"))
+			})
+
+			It("counts retries by cause", func() {
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+				c := analysis.NewNATSCollector(fakeNATS, analysis.WithCollectorTelemetry(tp.TracerProvider(), tp.MeterProvider()))
+
+				redispatches, _ := collectWith(c, true, 3,
+					natsbus.ResultErrorTimeout, natsbus.ResultErrorRateLimited, "boom", natsbus.ResultErrorOutputTruncated)
+				Expect(redispatches).To(Equal(3))
+
+				m := telemetrytest.FindMetric(tp.GetMetrics(), "analysis.tasks.retried")
+				Expect(m).NotTo(BeNil())
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				Expect(ok).To(BeTrue())
+				byCause := map[string]int64{}
+				for _, dp := range sum.DataPoints {
+					v, ok := dp.Attributes.Value(attribute.Key("cause"))
+					Expect(ok).To(BeTrue(), "every retry carries a cause attribute")
+					byCause[v.AsString()] += dp.Value
+				}
+				Expect(byCause).To(Equal(map[string]int64{"timeout": 1, "rate_limit": 1, "other": 1}))
+			})
 		})
 
 		It("redispatches under the collection's tenant when the NATS handler context carries none", func() {
@@ -699,3 +817,21 @@ var _ = Describe("NATSCollector", func() {
 		})
 	})
 })
+
+var _ = DescribeTable("a stage event names its error with the collector's fixed category",
+	func(err error, expected string) {
+		Expect(analysis.ExportStageErrorCategory(err)).To(Equal(expected))
+	},
+	Entry("an LLM timeout", fmt.Errorf("stage: %w", llmclient.ErrTimeout), "task_timeout"),
+	Entry("the idle task timeout", analysis.ErrTaskTimeout, "task_timeout"),
+	Entry("the stage timeout", fmt.Errorf("stage: %w", analysis.ErrStageTimeout), "task_timeout"),
+	Entry("a bare context deadline", context.DeadlineExceeded, "task_timeout"),
+	Entry("a no-success window", &analysis.NoSuccessError{JobID: "j", Window: time.Minute}, "task_timeout"),
+	Entry("an invalid payload", fmt.Errorf("stage: %w", analysis.ErrTaskInvalid), "task_invalid"),
+	Entry("a tenant mismatch", fmt.Errorf("stage: %w", analysis.ErrTenantMismatch), "task_tenant_mismatch"),
+	Entry("a rate limit", fmt.Errorf("stage: %w", llmclient.ErrRateLimitExceeded), "task_rate_limited"),
+	Entry("a truncated answer", fmt.Errorf("stage: %w", llmclient.ErrOutputTruncated), "task_output_truncated"),
+	Entry("an unstored audit record", fmt.Errorf("stage: %w", llmclient.ErrAuditFailed), "task_audit_failed"),
+	Entry("an unstored audit record that hides a timeout", fmt.Errorf("stage: %w; %w", llmclient.ErrTimeout, llmclient.ErrAuditFailed), "task_audit_failed"),
+	Entry("an unknown error with secret text", errors.New("secret detail"), "task_failed"),
+)

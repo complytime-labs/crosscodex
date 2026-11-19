@@ -34,6 +34,7 @@ tls:
     enabled: false
   cipher_allow: []
   cipher_deny: []
+  service_identities: []
 database:
   dsn: ""
   migration_dsn: ""
@@ -46,11 +47,18 @@ nats:
   url: ""
   cluster: ""
   tls: false
+  publish_ack_timeout: 10s
+  materialize:
+    max_deliver: 5
+    ack_wait: 10m
+    redeliver_delay: 30s
+    barrier_poll_interval: 2s
   embedded:
     store_dir: ""
   streams:
     audit_llm_retention: 2160h
     audit_events_retention: 720h
+    materialize_retention: 168h
 server:
   addr: ":50051"
   workers: 4
@@ -113,6 +121,7 @@ analysis:
     success_timeout: 10m
     max_retries: 3
     retry_backoff: 1s
+    retry_on_timeout: false
   classification:
     enabled: true
     model: ""
@@ -232,6 +241,7 @@ cleaning:
 pipeline:
   max_concurrent_jobs: 10
   stage_timeout: 24h
+  graph_materialize_timeout: 30m
   addr: ""
   endpoint: ""
 graph:

@@ -12,6 +12,13 @@ var (
 	// ErrPublishFailed indicates message publication failed.
 	ErrPublishFailed = errors.New("failed to publish message")
 
+	// ErrNotStored indicates a durable publish was not confirmed stored by
+	// JetStream: no stream captures the subject, the acknowledgement failed
+	// or timed out, or the publish ack timeout is misconfigured. Errors
+	// wrapping it also wrap ErrPublishFailed. The message may or may not
+	// have reached a stream; a caller that cannot lose it must retry or fail.
+	ErrNotStored = errors.New("message not stored")
+
 	// ErrSubscribeFailed indicates subscription creation failed.
 	ErrSubscribeFailed = errors.New("failed to create subscription")
 
@@ -26,6 +33,30 @@ var (
 
 	// ErrEmbeddedStart indicates the embedded NATS server failed to start.
 	ErrEmbeddedStart = errors.New("failed to start embedded NATS server")
+
+	// ErrPermanent is returned (or wrapped) by a durable-consumer handler to say
+	// the message can never be processed: it is terminated, not redelivered, and
+	// in a work-queue stream it is removed. ErrSkip also terminates; any other
+	// handler error is retried after ConsumerConfig.RedeliverDelay, up to
+	// MaxDeliver.
+	ErrPermanent = errors.New("message cannot be processed; not redelivered")
+
+	// ErrSkip is returned (or wrapped) by a durable-consumer handler for a
+	// message it ignores by design, such as an event no handler is meant for.
+	// Like ErrPermanent the message is terminated, but the consumer logs it at
+	// debug rather than as a warning, since nothing is wrong.
+	ErrSkip = errors.New("message skipped by its handler; not redelivered")
+
+	// ErrNotReady is returned (or wrapped) by a durable-consumer handler that
+	// polls a condition not met yet. Like any other error the message is
+	// redelivered after ConsumerConfig.RedeliverDelay, up to MaxDeliver, but
+	// the consumer logs it at debug rather than as an error.
+	ErrNotReady = errors.New("message not ready to be processed; redelivered")
+
+	// ErrStreamDrift indicates a live JetStream stream differs from the
+	// configuration this process would create it with. Startup refuses it
+	// rather than overwrite a stream another role or an operator owns.
+	ErrStreamDrift = errors.New("live stream differs from configuration")
 
 	// ErrStreamCreate indicates a JetStream stream could not be created or updated.
 	ErrStreamCreate = errors.New("failed to create stream")

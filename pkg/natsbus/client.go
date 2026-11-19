@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +26,10 @@ type client struct {
 	js       jetstream.JetStream
 	embedded *embeddedServer
 	opts     clientOptions
+
+	// ackTimeout bounds PublishDurable's wait for the JetStream PubAck
+	// (nats.publish_ack_timeout).
+	ackTimeout time.Duration
 
 	mu     sync.Mutex
 	closed bool
@@ -70,9 +76,10 @@ func New(cfg config.NATSConfig, opts ...Option) (Client, error) {
 	}
 
 	c := &client{
-		opts:   o,
-		tracer: o.tracer,
-		meter:  o.meter,
+		opts:       o,
+		tracer:     o.tracer,
+		meter:      o.meter,
+		ackTimeout: cfg.PublishAckTimeout,
 	}
 
 	var connectURL string
@@ -199,44 +206,94 @@ func (c *client) PublishWithHeaders(ctx context.Context, subject string, data []
 	start := time.Now()
 	ctx, span := c.startSpan(ctx, "natsbus.Publish")
 	defer span.End()
+
+	msg, err := c.buildMessage(ctx, span, subject, data, headers)
+	if err != nil {
+		return err
+	}
+	if err := c.conn.PublishMsg(msg); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("publish to %s: %w: %w", subject, ErrPublishFailed, err)
+	}
+	c.recordPublish(ctx, start)
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
+// PublishDurable publishes through JetStream and waits for the stream's
+// acknowledgement under the configured publish ack timeout. A subject that
+// no stream captures yields no acknowledgement and so fails.
+func (c *client) PublishDurable(ctx context.Context, subject string, data []byte, headers map[string][]string) error {
+	start := time.Now()
+	ctx, span := c.startSpan(ctx, "natsbus.PublishDurable")
+	defer span.End()
+
+	msg, err := c.buildMessage(ctx, span, subject, data, headers)
+	if err != nil {
+		return err
+	}
+	if c.ackTimeout <= 0 {
+		// Programmatic configs bypass pkg/config validation; fail closed
+		// rather than publish under an already-expired deadline.
+		span.SetStatus(codes.Error, "publish ack timeout not positive")
+		return fmt.Errorf("publish to %s: %w: %w: nats.publish_ack_timeout is %s; set it to a positive duration such as 10s",
+			subject, ErrPublishFailed, ErrNotStored, c.ackTimeout)
+	}
+
+	ackCtx, cancel := context.WithTimeout(ctx, c.ackTimeout)
+	defer cancel()
+	if _, err := c.js.PublishMsg(ackCtx, msg); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		if errors.Is(err, jetstream.ErrNoStreamResponse) {
+			return fmt.Errorf("publish to %s: %w: %w: no JetStream stream captures this subject, so the message was not stored; create a stream whose subjects include it: %w",
+				subject, ErrPublishFailed, ErrNotStored, err)
+		}
+		return fmt.Errorf("publish to %s: %w: %w: %w", subject, ErrPublishFailed, ErrNotStored, err)
+	}
+	c.recordPublish(ctx, start)
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
+// buildMessage applies the checks and header merge common to every publish:
+// the connection must be open and ctx must carry a tenant. Provenance
+// headers override user headers of the same name. On error it marks span
+// failed.
+func (c *client) buildMessage(ctx context.Context, span trace.Span, subject string, data []byte, headers map[string][]string) (*nats.Msg, error) {
 	span.SetAttributes(attribute.String("messaging.subject", subject))
 
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		span.SetStatus(codes.Error, "connection closed")
-		return fmt.Errorf("publish to %s: %w", subject, ErrConnectionClosed)
+		return nil, fmt.Errorf("publish to %s: %w", subject, ErrConnectionClosed)
 	}
 	c.mu.Unlock()
 
 	tenantID, err := tenant.FromContext(ctx)
 	if err != nil {
 		span.SetStatus(codes.Error, "tenant required")
-		return fmt.Errorf("publish to %s: tenant required: %w", subject, err)
+		return nil, fmt.Errorf("publish to %s: tenant required: %w", subject, err)
 	}
 	span.SetAttributes(attribute.String("tenant.id", tenantID))
 
 	provHeaders := injectProvenance(ctx, data, tenantID)
-	allHeaders := mergeHeaders(headers, provHeaders)
-
-	msg := &nats.Msg{
+	return &nats.Msg{
 		Subject: subject,
 		Data:    data,
-		Header:  nats.Header(allHeaders),
-	}
+		Header:  nats.Header(mergeHeaders(headers, provHeaders)),
+	}, nil
+}
 
-	if err := c.conn.PublishMsg(msg); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("publish to %s: %w: %w", subject, ErrPublishFailed, err)
-	}
+// recordPublish records the publish counter and latency for a successful
+// publish that began at start.
+func (c *client) recordPublish(ctx context.Context, start time.Time) {
 	if c.publishCounter != nil {
 		c.publishCounter.Add(ctx, 1)
 	}
 	if c.publishLatency != nil {
 		c.publishLatency.Record(ctx, time.Since(start).Milliseconds())
 	}
-	span.SetStatus(codes.Ok, "")
-	return nil
 }
 
 // Subscribe creates a subscription to the specified subject.
@@ -359,20 +416,7 @@ func (c *client) CreateStream(ctx context.Context, cfg StreamConfig) error {
 	)
 	defer span.End()
 
-	jsCfg := jetstream.StreamConfig{
-		Name:      cfg.Name,
-		Subjects:  cfg.Subjects,
-		MaxAge:    cfg.MaxAge,
-		Replicas:  cfg.Replicas,
-		Storage:   jetstream.FileStorage,
-		Retention: jetstream.LimitsPolicy,
-	}
-
-	if jsCfg.Replicas < 1 {
-		jsCfg.Replicas = 1
-	}
-
-	_, err := c.js.CreateOrUpdateStream(ctx, jsCfg)
+	_, err := c.js.CreateOrUpdateStream(ctx, jetStreamConfig(cfg))
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -480,14 +524,105 @@ func (c *client) startSpan(ctx context.Context, name string, opts ...trace.SpanS
 	return trace.SpanFromContext(ctx).TracerProvider().Tracer("natsbus").Start(ctx, name, opts...)
 }
 
-// ensureStreams creates or updates the three audit JetStream streams.
+// jetStreamConfig maps a StreamConfig to the JetStream configuration it is
+// created with (and compared against): file storage, and at least one replica.
+func jetStreamConfig(cfg StreamConfig) jetstream.StreamConfig {
+	jsCfg := jetstream.StreamConfig{
+		Name:      cfg.Name,
+		Subjects:  cfg.Subjects,
+		MaxAge:    cfg.MaxAge,
+		Replicas:  cfg.Replicas,
+		Storage:   jetstream.FileStorage,
+		Retention: jetstream.LimitsPolicy,
+	}
+	if cfg.WorkQueue {
+		jsCfg.Retention = jetstream.WorkQueuePolicy
+	}
+	if jsCfg.Replicas < 1 {
+		jsCfg.Replicas = 1
+	}
+	return jsCfg
+}
+
+// ensureStreams makes every stream this package owns exist. Any role may
+// create a missing stream, but none updates an existing one: with several
+// roles sharing a NATS server and each carrying its own nats.streams, an
+// update would let the last role to start overwrite the others' retention.
+// A live stream that differs from the configuration is refused with
+// ErrStreamDrift.
 func (c *client) ensureStreams(ctx context.Context, streamsCfg config.NATSStreamsConfig) error {
-	for _, cfg := range auditStreamConfigs(streamsCfg) {
-		if err := c.CreateStream(ctx, cfg); err != nil {
+	for _, sc := range streamConfigs(streamsCfg) {
+		if err := c.ensureStream(ctx, sc); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c *client) ensureStream(ctx context.Context, sc StreamConfig) error {
+	want := jetStreamConfig(sc)
+	live, err := c.liveStreamConfig(ctx, sc.Name)
+	if errors.Is(err, jetstream.ErrStreamNotFound) {
+		_, err = c.js.CreateStream(ctx, want)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
+			return fmt.Errorf("create stream %s: %w: %w", sc.Name, ErrStreamCreate, err)
+		}
+		// Another role created it between the lookup and the create: verify its
+		// settings like any live stream.
+		live, err = c.liveStreamConfig(ctx, sc.Name)
+		if errors.Is(err, jetstream.ErrStreamNotFound) {
+			return fmt.Errorf("stream %s was deleted while crosscodexd was starting; restart to create it: %w", sc.Name, err)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if diffs := streamDrift(live, want); len(diffs) > 0 {
+		return fmt.Errorf("%w: stream %s on the NATS server differs from this process's nats.streams configuration, and startup never overwrites a live stream: %s. "+
+			"To fix: make nats.streams in every role's config agree with the live stream, or update the stream (nats stream edit %s ...) and restart",
+			ErrStreamDrift, sc.Name, strings.Join(diffs, "; "), sc.Name)
+	}
+	return nil
+}
+
+func (c *client) liveStreamConfig(ctx context.Context, name string) (jetstream.StreamConfig, error) {
+	stream, err := c.js.Stream(ctx, name)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrStreamNotFound) {
+			return jetstream.StreamConfig{}, err
+		}
+		return jetstream.StreamConfig{}, fmt.Errorf("look up stream %s: %w", name, err)
+	}
+	info, err := stream.Info(ctx)
+	if err != nil {
+		return jetstream.StreamConfig{}, fmt.Errorf("stream info %s: %w", name, err)
+	}
+	return info.Config, nil
+}
+
+// streamDrift lists, one entry per field, how live differs from want on the
+// fields startup verifies. Subjects compare as a set.
+func streamDrift(live, want jetstream.StreamConfig) []string {
+	var diffs []string
+	if !slices.Equal(slices.Sorted(slices.Values(live.Subjects)), slices.Sorted(slices.Values(want.Subjects))) {
+		diffs = append(diffs, fmt.Sprintf("subjects (live %v, configured %v)", live.Subjects, want.Subjects))
+	}
+	if live.Retention != want.Retention {
+		diffs = append(diffs, fmt.Sprintf("retention (live %s, configured %s)", live.Retention, want.Retention))
+	}
+	if live.Storage != want.Storage {
+		diffs = append(diffs, fmt.Sprintf("storage (live %s, configured %s)", live.Storage, want.Storage))
+	}
+	if live.MaxAge != want.MaxAge {
+		diffs = append(diffs, fmt.Sprintf("max_age (live %s, configured %s)", live.MaxAge, want.MaxAge))
+	}
+	if live.Replicas != want.Replicas {
+		diffs = append(diffs, fmt.Sprintf("replicas (live %d, configured %d)", live.Replicas, want.Replicas))
+	}
+	return diffs
 }
 
 // verifyStreams checks that every audit stream exists, without creating or
@@ -517,6 +652,22 @@ func ConfiguredAuditRetention(cfg config.NATSStreamsConfig) map[string]time.Dura
 	return out
 }
 
+// streamConfigs returns every stream a role provisions at startup: the audit
+// streams, then MATERIALIZE.
+func streamConfigs(cfg config.NATSStreamsConfig) []StreamConfig {
+	return append(auditStreamConfigs(cfg), StreamConfig{
+		Name: MaterializeStream,
+		Subjects: []string{
+			subjectPrefix + ".pipeline.*.*.stage.completed",
+			subjectPrefix + ".catalog.*.*.parsed",
+			subjectPrefix + ".materialize.*.*.barrier",
+		},
+		MaxAge:    cfg.MaterializeRetention,
+		Replicas:  1,
+		WorkQueue: true,
+	})
+}
+
 // auditStreamConfigs returns the three audit stream configurations.
 func auditStreamConfigs(cfg config.NATSStreamsConfig) []StreamConfig {
 	return []StreamConfig{
@@ -533,7 +684,7 @@ func auditStreamConfigs(cfg config.NATSStreamsConfig) []StreamConfig {
 			Replicas: 1,
 		},
 		{
-			Name:     "AUDIT_EVENTS",
+			Name:     AuditEventsStream,
 			Subjects: []string{subjectPrefix + ".audit.*.events.>"},
 			MaxAge:   cfg.AuditEventsRetention,
 			Replicas: 1,
@@ -541,85 +692,101 @@ func auditStreamConfigs(cfg config.NATSStreamsConfig) []StreamConfig {
 	}
 }
 
-// wrapHandler converts a MessageHandler into a nats.MsgHandler.
-// Messages missing mandatory provenance headers are rejected — the
-// handler is never called and an error is logged with the missing fields.
-// Messages with a content hash mismatch are rejected similarly.
+// verifiedMessage is a message that passed verifyMessage.
+type verifiedMessage struct {
+	ctx  context.Context // carries the publisher's trace context and the process span
+	span trace.Span      // the process span; the caller ends it
+	meta MessageMetadata // provenance fields; JetStream fields are the caller's to fill
+}
+
+// verifyMessage is the one fail-closed gate every received message passes,
+// core or durable: mandatory provenance headers, a valid tenant ID, and a
+// content hash matching the payload. It starts the consumer span first, linked
+// to the publisher's trace, so a rejected message is traced too; the caller
+// owns the span and must end it. On failure it logs "<action> message: <why>"
+// (action is the caller's verb, "rejecting" or "terminating"), marks the span
+// failed, and returns the error, which wraps ErrMissingProvenance,
+// tenant.ErrInvalidTenant or ErrContentHashMismatch. attrs are added to the span.
+func (c *client) verifyMessage(parent context.Context, action, subject string, data []byte, headers map[string][]string, attrs ...attribute.KeyValue) (verifiedMessage, error) {
+	if sc, err := reconstructSpanContext(headers); err == nil && sc.IsValid() {
+		parent = trace.ContextWithRemoteSpanContext(parent, sc)
+	}
+	ctx, span := c.startSpan(parent, "natsbus.process",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(append([]attribute.KeyValue{attribute.String("messaging.subject", subject)}, attrs...)...),
+	)
+	v := verifiedMessage{ctx: ctx, span: span}
+
+	reject := func(why string, err error, logAttrs ...any) (verifiedMessage, error) {
+		c.opts.logger.Error(action+" message: "+why, append([]any{"subject", subject, "error", err}, logAttrs...)...)
+		span.SetStatus(codes.Error, why)
+		span.RecordError(err)
+		return v, err
+	}
+
+	meta, err := extractProvenance(headers)
+	if err != nil {
+		return reject("missing provenance", err)
+	}
+	if err := tenant.ValidateTenantID(meta.TenantID); err != nil {
+		return reject("invalid tenant", err)
+	}
+	span.SetAttributes(attribute.String("tenant.id", meta.TenantID))
+	if actual := contentHash(data); actual != meta.ContentHash {
+		return reject("content hash mismatch", ErrContentHashMismatch, "expected", meta.ContentHash, "actual", actual)
+	}
+	v.meta = meta
+	return v, nil
+}
+
+// wrapHandler converts a MessageHandler into a nats.MsgHandler. A message that
+// fails verifyMessage (missing provenance headers, invalid tenant, content hash
+// mismatch) is dropped: the handler is never called and the reason is logged.
 func (c *client) wrapHandler(handler MessageHandler) nats.MsgHandler {
 	return func(natsMsg *nats.Msg) {
 		headers := map[string][]string(natsMsg.Header)
-		meta, err := extractProvenance(headers)
-		if err != nil && natsMsg.Subject == WorkerProgressSubject {
-			// A catch-all generic subscriber (crosscodex.>) receives every
-			// worker progress tick, which never has provenance. Drop it like
-			// any unprovenanced message, without an error log per tick.
-			c.opts.logger.Debug("dropping worker progress tick at a generic subscriber; use SubscribeWorkerProgress to receive ticks",
-				"subject", natsMsg.Subject)
-			return
+		if natsMsg.Subject == WorkerProgressSubject {
+			if _, err := extractProvenance(headers); err != nil {
+				// A catch-all generic subscriber (crosscodex.>) receives every
+				// worker progress tick, which never has provenance. Drop it like
+				// any unprovenanced message, without an error log per tick.
+				c.opts.logger.Debug("dropping worker progress tick at a generic subscriber; use SubscribeWorkerProgress to receive ticks",
+					"subject", natsMsg.Subject)
+				return
+			}
 		}
+
+		v, err := c.verifyMessage(context.Background(), "rejecting", natsMsg.Subject, natsMsg.Data, headers)
+		defer v.span.End()
 		if err != nil {
-			c.opts.logger.Error("rejecting message: missing provenance",
-				"subject", natsMsg.Subject,
-				"error", err,
-			)
 			return
 		}
-		meta.Timestamp = time.Now()
-
-		// Reconstruct trace context from provenance headers.
-		ctx := context.Background()
-		if sc, scErr := reconstructSpanContext(headers); scErr == nil && sc.IsValid() {
-			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
-		}
-
-		// Start consumer span — links subscriber processing to the publisher trace.
-		ctx, processSpan := c.startSpan(ctx, "natsbus.process",
-			trace.WithSpanKind(trace.SpanKindConsumer),
-			trace.WithAttributes(
-				attribute.String("messaging.subject", natsMsg.Subject),
-				attribute.String("tenant.id", meta.TenantID),
-			),
-		)
-		defer processSpan.End()
-
-		// Verify content hash — fail closed on mismatch.
-		actualHash := contentHash(natsMsg.Data)
-		if actualHash != meta.ContentHash {
-			c.opts.logger.Error("rejecting message: content hash mismatch",
-				"subject", natsMsg.Subject,
-				"expected", meta.ContentHash,
-				"actual", actualHash,
-			)
-			processSpan.SetStatus(codes.Error, "content hash mismatch")
-			processSpan.RecordError(ErrContentHashMismatch)
-			return
-		}
-
+		v.meta.Timestamp = time.Now()
 		msg := &Message{
 			Subject:  natsMsg.Subject,
 			Data:     natsMsg.Data,
 			Headers:  headers,
-			Metadata: meta,
+			Metadata: v.meta,
 		}
 
 		start := time.Now()
-		if err := handler(ctx, msg); err != nil {
+		if err := handler(v.ctx, msg); err != nil {
 			c.opts.logger.Error("message handler error",
 				"subject", natsMsg.Subject,
 				"error", err,
 			)
-			processSpan.RecordError(err)
-			processSpan.SetStatus(codes.Error, err.Error())
+			v.span.RecordError(err)
+			v.span.SetStatus(codes.Error, err.Error())
 		} else {
-			processSpan.SetStatus(codes.Ok, "")
+			v.span.SetStatus(codes.Ok, "")
 		}
 
 		// Record subscriber metrics.
 		if c.processCounter != nil {
-			c.processCounter.Add(ctx, 1)
+			c.processCounter.Add(v.ctx, 1)
 		}
 		if c.processLatency != nil {
-			c.processLatency.Record(ctx, time.Since(start).Milliseconds())
+			c.processLatency.Record(v.ctx, time.Since(start).Milliseconds())
 		}
 	}
 }

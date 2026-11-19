@@ -183,6 +183,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "default-tenant",
+				Mappings:      []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -217,7 +218,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 					{
 						Match:  authn.X509Match{SANEmail: "*@partner.com"},
 						Tenant: "partner-org",
-						Roles:  []string{"reader"},
+						Roles:  []string{authn.RoleReviewer},
 					},
 				},
 			})
@@ -246,7 +247,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(identity.TenantID).To(Equal("partner-org"))
-			Expect(identity.Roles).To(Equal([]string{"reader"}))
+			Expect(identity.Roles).To(Equal([]string{authn.RoleReviewer}))
 			Expect(identity.Subject).To(Equal("partner-client"))
 		})
 
@@ -274,6 +275,7 @@ var _ = Describe("Authn Integration: Real TLS Handshakes", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "registry-tenant",
+				Mappings:      []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
 			})
 			Expect(err).NotTo(HaveOccurred())
 

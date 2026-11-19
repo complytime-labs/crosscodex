@@ -154,6 +154,10 @@ type CollectRequest struct {
 	SuccessTimeout time.Duration
 	MaxRetries     int
 	Backoff        time.Duration
+	// RetryOnTimeout (analysis.engine.retry_on_timeout) lets a task whose
+	// LLM call timed out be re-sent. Off, it is sent once: the provider
+	// may already have billed the timed-out call.
+	RetryOnTimeout bool
 	Dispatcher     Dispatcher
 }
 

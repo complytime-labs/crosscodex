@@ -40,4 +40,21 @@
 //	}
 //
 //	err = client.Publish(ctx, subject, payload)
+//
+// Publish is core NATS: fire-and-forget, lost if no subscriber or the server
+// is down. For messages that must not be lost, use PublishDurable, which waits
+// for a JetStream stream to acknowledge storage and returns an error wrapping
+// ErrNotStored when none does (including when no stream captures the subject).
+//
+// # Durable consumers
+//
+// [Client.ConsumeDurable] runs a durable JetStream pull consumer with explicit
+// acknowledgements. The handler's result decides the outcome: nil acks, an
+// error wrapping [ErrPermanent] terminates the message (removing it from a
+// work-queue stream), and any other error redelivers it after
+// [ConsumerConfig].RedeliverDelay, up to MaxDeliver (-1 is unlimited). Provenance
+// and content-hash checks apply as for Subscribe, but a failing message is
+// terminated rather than dropped. [Client.SubjectMessageCount] reports how many
+// messages a stream holds on a subject, which in a work queue means work not yet
+// acknowledged. natsbustest.Fake mirrors both.
 package natsbus

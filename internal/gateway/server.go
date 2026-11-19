@@ -18,6 +18,7 @@ import (
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/rpcserver"
 	"github.com/complytime-labs/crosscodex/internal/version"
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
@@ -99,7 +100,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("GET /healthz", healthzHandler(cfg.Service))
 
 	var topHandler http.Handler = mux
-	topHandler = tlsMiddleware(topHandler)
+	topHandler = authn.TLSStateMiddleware(clientIPMiddleware(topHandler))
 
 	// Health probes stay unauthenticated even under mTLS -- the Connect
 	// auth interceptor enforces mTLS on every other RPC, so the listener

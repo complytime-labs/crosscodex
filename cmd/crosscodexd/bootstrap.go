@@ -229,14 +229,49 @@ type noopAuditEmitter struct{}
 
 func (noopAuditEmitter) EmitAuthEvent(_ context.Context, _ *authn.AuthEvent) error { return nil }
 
-// allTenantAuthRegistry builds a single-tenant X.509 registry that maps any
-// valid client certificate to cfg.Tenants.DefaultTenant. This mirrors the
-// embedded CLI's single-node identity model and is what SubmitDocument needs
-// to resolve a tenant for both gateway-serving roles (all and gateway).
-func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
+// errNoX509Mappings refuses a gateway-serving role whose auth.x509_mappings is
+// empty: roles come only from mappings, so every caller would be refused.
+var errNoX509Mappings = errors.New("no client certificate can sign in: auth.x509_mappings is empty, " +
+	"and certificates no longer get admin implicitly. Add a mapping, e.g. for the certificates from deploy/certgen: " +
+	"auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]")
+
+// errNoServiceIdentities refuses a pipeline role whose tls.service_identities
+// is empty: no client certificate could assert a tenant, so every request
+// would be denied.
+var errNoServiceIdentities = errors.New("pipeline role: no client certificate may assert a tenant: tls.service_identities is empty, " +
+	"so the pipeline would deny every request. List the gateway's client certificate subject, for example " +
+	"tls.service_identities: [{cn: client, organization: CrossCodex}]")
+
+// x509Match converts a configured certificate matcher to its authn form.
+func x509Match(m config.X509MatchConfig) authn.X509Match {
+	return authn.X509Match{
+		CN:           m.CN,
+		Organization: m.Organization,
+		OrgUnit:      m.OrgUnit,
+		SANEmail:     m.SANEmail,
+		SANDNS:       m.SANDNS,
+		SANURI:       m.SANURI,
+	}
+}
+
+// allTenantAuthRegistry builds the X.509 registry both gateway-serving roles
+// (all and gateway) authenticate callers with. A client certificate gets the
+// roles of the first auth.x509_mappings entry it matches and no identity if it
+// matches none. With tenants.enabled false every identity's tenant is
+// tenants.default_tenant; otherwise it is the matching mapping's tenant.
+func allTenantAuthRegistry(cfg *config.Config) (*authn.Registry, error) {
+	mappings := make([]authn.X509Mapping, len(cfg.Auth.X509Mappings))
+	for i, m := range cfg.Auth.X509Mappings {
+		mappings[i] = authn.X509Mapping{
+			Match:  x509Match(m.Match),
+			Tenant: m.Tenant,
+			Roles:  m.Roles,
+		}
+	}
 	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
-		SingleTenant:  true,
-		DefaultTenant: defaultTenant,
+		SingleTenant:  !cfg.Tenants.Enabled,
+		DefaultTenant: cfg.Tenants.DefaultTenant,
+		Mappings:      mappings,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
@@ -245,8 +280,38 @@ func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
 	return authn.NewRegistry(noopAuditEmitter{}, []authn.Authenticator{x509Auth}, authn.WithTelemetry(tracer, meter))
 }
 
+// checkDefaultTenant refuses to start role unless tenants.default_tenant is
+// provisioned and not deleted. The default tenant is provisioned by
+// `crosscodexd migrate` (as the schema owner) and the embedded CLI; the daemon
+// only checks it. enter_tenant refuses a deleted tenant.
+func checkDefaultTenant(ctx context.Context, role string, cfg *config.Config, pool dbpkg.Pool) error {
+	tctx, err := tenant.WithTenant(ctx, cfg.Tenants.DefaultTenant)
+	if err != nil {
+		return fmt.Errorf("%s role: tenants.default_tenant: %w", role, err)
+	}
+	tx, err := dbpkg.NewTenantPool(pool).Begin(tctx)
+	if dbpkg.IsPgErrorCode(err, "42501") {
+		return fmt.Errorf("%s role: default tenant %q is deleted. Restore it with crosscodexd admin tenant restore --tenant %s --by <operator> --reason <text>, or set tenants.default_tenant to an active tenant: %w",
+			role, cfg.Tenants.DefaultTenant, cfg.Tenants.DefaultTenant, err)
+	}
+	if err != nil {
+		return fmt.Errorf("%s role: check default tenant %q: %w", role, cfg.Tenants.DefaultTenant, err)
+	}
+	var found int
+	err = tx.QueryRow(tctx, "SELECT 1 FROM tenants WHERE tenant_id = $1", cfg.Tenants.DefaultTenant).Scan(&found)
+	_ = tx.Rollback()
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%s role: default tenant %q does not exist. Run `crosscodexd migrate`, which provisions tenants.default_tenant, then start crosscodexd again", role, cfg.Tenants.DefaultTenant)
+	}
+	if err != nil {
+		return fmt.Errorf("%s role: check default tenant %q: %w", role, cfg.Tenants.DefaultTenant, err)
+	}
+	return nil
+}
+
 // buildIngestGateway builds the gateway.Service that serves catalog import for
-// role (all or gateway): single-tenant X.509 authn, pass-through ingestion
+// role (all or gateway): X.509 authn through auth.x509_mappings (refusing
+// to start without one), pass-through ingestion
 // into the caller's tenant's object storage (objectStore), and a catalog
 // service that persists controls and publishes them for graph projection.
 // Each import's in-toto ingest attestation is signed with its tenant's
@@ -281,35 +346,23 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	if resolvedTLS == nil || resolvedTLS.ClientCAs == nil {
 		return nil, fmt.Errorf(`%s role: catalog import authenticates clients by X.509 certificate, so tls.mode (or tls.targets.gateway-server.mode) must be "mutual" with a CA configured`, role)
 	}
+	if len(cfg.Auth.X509Mappings) == 0 {
+		return nil, fmt.Errorf("%s role: %w", role, errNoX509Mappings)
+	}
 
-	// The default tenant is provisioned by `crosscodexd migrate` (as the
-	// schema owner); the daemon only checks it. enter_tenant refuses a
-	// deleted tenant.
-	tctx, err := tenant.WithTenant(ctx, cfg.Tenants.DefaultTenant)
-	if err != nil {
+	// The registry below rejects a malformed default tenant with a less
+	// specific message, so name the setting first.
+	if err := tenant.ValidateTenantID(cfg.Tenants.DefaultTenant); err != nil {
 		return nil, fmt.Errorf("%s role: tenants.default_tenant: %w", role, err)
 	}
-	tx, err := dbpkg.NewTenantPool(shared.appPool).Begin(tctx)
-	if dbpkg.IsPgErrorCode(err, "42501") {
-		return nil, fmt.Errorf("%s role: default tenant %q is deleted. Restore it with crosscodexd admin tenant restore --tenant %s --by <operator> --reason <text>, or set tenants.default_tenant to an active tenant: %w",
-			role, cfg.Tenants.DefaultTenant, cfg.Tenants.DefaultTenant, err)
-	}
+	// Built before the database check so a mapping it rejects refuses
+	// startup without a database round trip.
+	registry, err := allTenantAuthRegistry(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("%s role: check default tenant %q: %w", role, cfg.Tenants.DefaultTenant, err)
+		return nil, fmt.Errorf("%s role: create auth registry: %w", role, err)
 	}
-	var found int
-	err = tx.QueryRow(tctx, "SELECT 1 FROM tenants WHERE tenant_id = $1", cfg.Tenants.DefaultTenant).Scan(&found)
-	_ = tx.Rollback()
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("%s role: default tenant %q does not exist. Run `crosscodexd migrate`, which provisions tenants.default_tenant, then start crosscodexd again", role, cfg.Tenants.DefaultTenant)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%s role: check default tenant %q: %w", role, cfg.Tenants.DefaultTenant, err)
-	}
-
-	registry, err := allTenantAuthRegistry(cfg.Tenants.DefaultTenant)
-	if err != nil {
-		return nil, fmt.Errorf("create auth registry: %w", err)
+	if err := checkDefaultTenant(ctx, role, cfg, shared.appPool); err != nil {
+		return nil, err
 	}
 
 	storageProvider := objectStore(cfg)
@@ -603,6 +656,7 @@ func attachGraph(cfg *config.Config, shared *sharedResources, rt *runtime) error
 		graph.WithMaxBulkEdges(cfg.Graph.MaxBulkEdges),
 		graph.WithMaxSimilarityCatalogs(cfg.Graph.MaxSimilarityCatalogs),
 		graph.WithMaxSimilarityLimit(cfg.Graph.MaxSimilarityLimit),
+		graph.WithMaterializeConfig(cfg.NATS.Materialize),
 		graph.WithControlsReader(graph.NewPGControlsReader(tenantConn, graph.WithPGControlsReaderTelemetry(tp, mp))))
 	rt.healthServer = newHealthServer(cfg.Health.Addr, dbPingCheck(shared.appPool))
 	return nil
@@ -822,6 +876,23 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 		return errors.New(`pipeline role: tls.mode (or tls.targets.pipeline-server.mode) must be "mutual" with a CA configured — pipeline.Server requires mTLS on every RPC and has no unauthenticated fallback`)
 	}
 
+	// Any certificate the CA signed could otherwise name any tenant in the
+	// x-tenant-id header, so only the gateway's own client certificate may.
+	if len(cfg.TLS.ServiceIdentities) == 0 {
+		return errNoServiceIdentities
+	}
+	serviceIdentities := make([]authn.X509Match, len(cfg.TLS.ServiceIdentities))
+	for i, m := range cfg.TLS.ServiceIdentities {
+		serviceIdentities[i] = x509Match(m)
+	}
+
+	if cfg.Tenants.DefaultTenant == "" {
+		return errors.New("pipeline role: tenants.default_tenant must be set")
+	}
+	if err := checkDefaultTenant(ctx, "pipeline", cfg, shared.appPool); err != nil {
+		return err
+	}
+
 	pipelineSvc, err := buildPipelineService(cfg, shared)
 	if err != nil {
 		return err
@@ -829,9 +900,10 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 	rt.pipelineService = pipelineSvc
 
 	server, err := pipeline.NewServer(ctx, pipeline.ServerConfig{
-		Addr:    cfg.Pipeline.Addr,
-		TLS:     cfg.TLS,
-		Service: pipelineSvc,
+		Addr:              cfg.Pipeline.Addr,
+		TLS:               cfg.TLS,
+		Service:           pipelineSvc,
+		ServiceIdentities: serviceIdentities,
 	})
 	if err != nil {
 		return fmt.Errorf("create pipeline server: %w", err)

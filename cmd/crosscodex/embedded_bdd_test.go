@@ -2,13 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -28,6 +34,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
+	pkigen "github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 )
 
 // ensurePKIHelperDirEnv makes the suite binary run ensurePKI on the named
@@ -303,39 +310,139 @@ var _ = Describe("connectClientWithTLS", func() {
 	})
 })
 
+// embeddedAuthRegistry grants admin only to the client certificate the CLI
+// itself presents, matched by its exact subject read from that certificate.
+// Any other certificate the embedded CA signed gets no identity.
 var _ = Describe("embeddedAuthRegistry", func() {
-	It("creates a registry that authenticates with embedded client certs", func() {
-		dir := GinkgoT().TempDir()
-		pkiDir := filepath.Join(dir, "pki")
-		Expect(ensurePKI(pkiDir)).To(Succeed())
-
-		registry, err := embeddedAuthRegistry()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(registry).NotTo(BeNil())
-
-		// Load and parse client cert to build TLS state
-		paths := pkiPaths(pkiDir)
-		certPEM, err := os.ReadFile(paths.ClientCert)
-		Expect(err).NotTo(HaveOccurred())
-
-		block, _ := pem.Decode(certPEM)
+	parsePEM := func(data []byte) *x509.Certificate {
+		block, _ := pem.Decode(data)
 		Expect(block).NotTo(BeNil())
-		leaf, err := x509.ParseCertificate(block.Bytes)
+		cert, err := x509.ParseCertificate(block.Bytes)
+		Expect(err).NotTo(HaveOccurred())
+		return cert
+	}
+	readCert := func(path string) *x509.Certificate {
+		data, err := os.ReadFile(path)
+		Expect(err).NotTo(HaveOccurred())
+		return parsePEM(data)
+	}
+	authenticate := func(registry *authn.Registry, leaf *x509.Certificate) (*authn.Identity, error) {
+		return registry.Authenticate(context.Background(), &authn.Request{
+			Method:   authn.AuthMethodMTLS,
+			TLSState: &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}},
+		})
+	}
+	// loadCA reads the CA pair a PKI directory holds, so specs can sign
+	// further certificates with it.
+	loadCA := func(pkiDir string) *pkigen.CertKeyPair {
+		certPEM, err := os.ReadFile(filepath.Join(pkiDir, "ca.pem"))
+		Expect(err).NotTo(HaveOccurred())
+		keyPEM, err := os.ReadFile(filepath.Join(pkiDir, "ca-key.pem"))
+		Expect(err).NotTo(HaveOccurred())
+		return &pkigen.CertKeyPair{CertPEM: certPEM, KeyPEM: keyPEM, Cert: parsePEM(certPEM)}
+	}
+
+	It("authenticates the embedded CLI's own certificate as admin", func() {
+		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+		paths := pkiPaths(pkiDir)
+
+		registry, err := embeddedAuthRegistry(paths.ClientCert)
 		Expect(err).NotTo(HaveOccurred())
 
-		req := &authn.Request{
-			Method: authn.AuthMethodMTLS,
-			TLSState: &tls.ConnectionState{
-				PeerCertificates: []*x509.Certificate{leaf},
-			},
-		}
-
-		identity, err := registry.Authenticate(context.Background(), req)
+		identity, err := authenticate(registry, readCert(paths.ClientCert))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(identity.TenantID).To(Equal("embedded"))
-		Expect(identity.Roles).To(ContainElement("admin"))
+		Expect(identity.TenantID).To(Equal(embeddedTenantID))
+		Expect(identity.Roles).To(Equal([]string{authn.RoleAdmin}))
 		Expect(identity.Method).To(Equal(authn.AuthMethodMTLS))
 	})
+
+	DescribeTable("rejects another certificate signed by the embedded CA",
+		func(cn, org string) {
+			pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+			Expect(ensurePKI(pkiDir)).To(Succeed())
+			paths := pkiPaths(pkiDir)
+			client := readCert(paths.ClientCert)
+			Expect(client.Subject.Organization).To(HaveLen(1))
+			if org == "" {
+				org = client.Subject.Organization[0]
+			}
+			other, err := pkigen.GenerateCert(loadCA(pkiDir), pkigen.WithOrganization(org), pkigen.WithDNSNames(cn),
+				pkigen.WithExtKeyUsage(x509.ExtKeyUsageClientAuth))
+			Expect(err).NotTo(HaveOccurred())
+
+			registry, err := embeddedAuthRegistry(paths.ClientCert)
+			Expect(err).NotTo(HaveOccurred())
+			identity, err := authenticate(registry, other.Cert)
+			Expect(identity).To(BeNil())
+			Expect(err).To(MatchError(authn.ErrAuthenticationFailed))
+		},
+		Entry("another common name in the CLI's organization", "intruder", ""),
+		Entry("the CLI's common name in another organization", "client", "Someone Else"),
+		Entry("the server's common name in the CLI's organization", "localhost", ""),
+	)
+
+	// A supplied PKI set may carry any subject; glob characters in it are
+	// matched literally, so a certificate named "*" is not a wildcard.
+	It("matches a supplied client certificate's subject literally", func() {
+		ca, err := pkigen.GenerateCA(pkigen.WithOrganization("Ops [lab]"))
+		Expect(err).NotTo(HaveOccurred())
+		mint := func(cn string) *pkigen.CertKeyPair {
+			c, err := pkigen.GenerateCert(ca, pkigen.WithOrganization("Ops [lab]"), pkigen.WithDNSNames(cn),
+				pkigen.WithExtKeyUsage(x509.ExtKeyUsageClientAuth))
+			Expect(err).NotTo(HaveOccurred())
+			return c
+		}
+		supplied := mint("*")
+		clientPath := filepath.Join(GinkgoT().TempDir(), "client.pem")
+		Expect(os.WriteFile(clientPath, supplied.CertPEM, 0o600)).To(Succeed())
+
+		registry, err := embeddedAuthRegistry(clientPath)
+		Expect(err).NotTo(HaveOccurred())
+
+		identity, err := authenticate(registry, supplied.Cert)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(identity.Roles).To(Equal([]string{authn.RoleAdmin}))
+		identity, err = authenticate(registry, mint("anyone").Cert)
+		Expect(identity).To(BeNil())
+		Expect(err).To(MatchError(authn.ErrAuthenticationFailed))
+	})
+
+	It("refuses a client certificate without a common name, naming the file and the remedy", func() {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		Expect(err).NotTo(HaveOccurred())
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{Organization: []string{"CrossCodex Embedded"}},
+			NotBefore:    time.Now(),
+			NotAfter:     time.Now().Add(time.Hour),
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		Expect(err).NotTo(HaveOccurred())
+		clientPath := filepath.Join(GinkgoT().TempDir(), "client.pem")
+		Expect(os.WriteFile(clientPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)).To(Succeed())
+
+		registry, err := embeddedAuthRegistry(clientPath)
+		Expect(registry).To(BeNil())
+		Expect(err).To(MatchError(And(ContainSubstring(clientPath), ContainSubstring("has no common name"),
+			ContainSubstring("remove the PKI directory"))))
+	})
+
+	DescribeTable("refuses a client certificate it cannot read, naming the file",
+		func(content []byte) {
+			clientPath := filepath.Join(GinkgoT().TempDir(), "client.pem")
+			if content != nil {
+				Expect(os.WriteFile(clientPath, content, 0o600)).To(Succeed())
+			}
+
+			registry, err := embeddedAuthRegistry(clientPath)
+			Expect(registry).To(BeNil())
+			Expect(err).To(MatchError(ContainSubstring(clientPath)))
+		},
+		Entry("missing file", nil),
+		Entry("not PEM", []byte("not-a-cert")),
+		Entry("PEM that is not a certificate", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("junk")})),
+	)
 })
 
 var _ = Describe("gateway.PoolAdminBackend", func() {
@@ -432,7 +539,7 @@ var _ = Describe("localPipelineBackend.RetryJob", func() {
 var _ = Describe("buildEmbeddedService", func() {
 	It("returns an error when database DSN is empty", func() {
 		cfg := &config.Config{}
-		_, _, err := buildEmbeddedService(context.Background(), cfg, nil)
+		_, _, err := buildEmbeddedService(context.Background(), cfg, "", nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("database not configured"))
 	})
@@ -529,7 +636,7 @@ var _ = Describe("embedded attestation key guard", func() {
 			Enabled: true, PrivateKeyPath: missing, PublicKeyPath: filepath.Join(dir, "absent-pub.pem"),
 		}
 
-		svc, resources, err := buildEmbeddedService(context.Background(), cfg, nil)
+		svc, resources, err := buildEmbeddedService(context.Background(), cfg, "", nil)
 		Expect(svc).To(BeNil())
 		Expect(resources).To(BeNil())
 		Expect(err).To(MatchError(attestation.ErrKeyNotFound))

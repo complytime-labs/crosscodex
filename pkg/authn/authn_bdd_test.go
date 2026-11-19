@@ -61,6 +61,12 @@ func (f *failingEmitter) EmitAuthEvent(_ context.Context, _ *authn.AuthEvent) er
 }
 
 // tlsStateWith creates a ConnectionState with the given peer certificates.
+// anyCertAdmin is the narrowest mapping set that lets any certificate in as
+// admin, for specs where the mapping itself is not under test.
+var anyCertAdmin = []authn.X509Mapping{
+	{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}},
+}
+
 func tlsStateWith(certs ...*x509.Certificate) *tls.ConnectionState {
 	return &tls.ConnectionState{PeerCertificates: certs}
 }
@@ -249,9 +255,9 @@ var _ = Describe("Authn Package", Ordered, func() {
 		// Fixtures are assigned in BeforeAll, after the table tree is built, so
 		// entries pass pointers to the fixture variables and the body dereferences
 		// them at run time.
-		DescribeTable("MatchCert per field",
+		DescribeTable("X509Match.Matches per field",
 			func(cert **x509.Certificate, m authn.X509Match, want bool) {
-				Expect(authn.MatchCert(*cert, m)).To(Equal(want))
+				Expect(m.Matches(*cert)).To(Equal(want))
 			},
 			Entry("CN: matches exact CN", &acmeCert, authn.X509Match{CN: "web.acme.internal"}, true),
 			Entry("CN: matches CN with wildcard", &acmeCert, authn.X509Match{CN: "*.acme.internal"}, true),
@@ -275,7 +281,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			Entry("SANURI: returns false when cert has no URI SANs", &acmeCert, authn.X509Match{SANURI: "spiffe://*"}, false),
 		)
 
-		Describe("MatchCert with MatchAnyURI helper", func() {
+		Describe("X509Match.Matches with MatchAnyURI helper", func() {
 			It("matches against URI SAN string form", func() {
 				Expect(authn.MatchAnyURI(
 					"spiffe://cluster.local/ns/prod/sa/worker",
@@ -288,47 +294,47 @@ var _ = Describe("Authn Package", Ordered, func() {
 			})
 		})
 
-		Describe("MatchCert AND semantics", func() {
+		Describe("X509Match.Matches AND semantics", func() {
 			It("requires ALL non-empty fields to match", func() {
 				By("matching when both CN and Organization match")
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
+				Expect(authn.X509Match{
 					CN:           "web.acme.internal",
 					Organization: "Acme Corp",
-				})).To(BeTrue())
+				}.Matches(acmeCert)).To(BeTrue())
 
 				By("failing when CN matches but Organization does not")
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
+				Expect(authn.X509Match{
 					CN:           "web.acme.internal",
 					Organization: "Wrong Corp",
-				})).To(BeFalse())
+				}.Matches(acmeCert)).To(BeFalse())
 
 				By("failing when Organization matches but CN does not")
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
+				Expect(authn.X509Match{
 					CN:           "wrong.host",
 					Organization: "Acme Corp",
-				})).To(BeFalse())
+				}.Matches(acmeCert)).To(BeFalse())
 			})
 
 			It("matches all six fields simultaneously", func() {
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{
+				Expect(authn.X509Match{
 					CN:           "web.acme.internal",
 					Organization: "Acme Corp",
 					OrgUnit:      "Engineering",
 					SANEmail:     "*@acme.com",
 					SANDNS:       "*.acme.internal",
-				})).To(BeTrue())
+				}.Matches(acmeCert)).To(BeTrue())
 			})
 		})
 
-		Describe("MatchCert with empty match (all fields empty)", func() {
+		Describe("X509Match.Matches with empty match (all fields empty)", func() {
 			It("matches any certificate at the primitive level", func() {
-				// matchCert itself still returns true for empty matches (AND
+				// Matches itself still returns true for empty matches (AND
 				// semantics on zero fields). The safety guard is at construction
 				// time — NewX509Authenticator rejects empty matches in
 				// multi-tenant mode to prevent accidental wildcard mappings.
-				Expect(authn.MatchCert(acmeCert, authn.X509Match{})).To(BeTrue())
-				Expect(authn.MatchCert(globexCert, authn.X509Match{})).To(BeTrue())
-				Expect(authn.MatchCert(bareCert, authn.X509Match{})).To(BeTrue())
+				Expect(authn.X509Match{}.Matches(acmeCert)).To(BeTrue())
+				Expect(authn.X509Match{}.Matches(globexCert)).To(BeTrue())
+				Expect(authn.X509Match{}.Matches(bareCert)).To(BeTrue())
 			})
 		})
 
@@ -580,7 +586,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 					SingleTenant: false,
 					Mappings: []authn.X509Mapping{
 						{Match: authn.X509Match{CN: "*"}, Tenant: "valid-tenant", Roles: []string{"admin"}},
-						{Match: authn.X509Match{CN: "*"}, Tenant: "BAD!", Roles: []string{"reader"}},
+						{Match: authn.X509Match{CN: "*"}, Tenant: "BAD!", Roles: []string{"reviewer"}},
 					},
 				})
 				Expect(err).To(HaveOccurred())
@@ -591,16 +597,65 @@ var _ = Describe("Authn Package", Ordered, func() {
 				auth, err := authn.NewX509Authenticator(authn.X509Config{
 					SingleTenant:  true,
 					DefaultTenant: "default-tenant",
+					Mappings:      anyCertAdmin,
 				})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(auth).NotTo(BeNil())
+			})
+
+			DescribeTable("refuses to build an authenticator from unusable mappings",
+				func(cfg authn.X509Config, wantParts ...string) {
+					_, err := authn.NewX509Authenticator(cfg)
+					Expect(err).To(HaveOccurred())
+					for _, part := range wantParts {
+						Expect(err.Error()).To(ContainSubstring(part))
+					}
+				},
+				Entry("no mappings in single-tenant mode",
+					authn.X509Config{SingleTenant: true, DefaultTenant: "solo"},
+					"auth.x509_mappings"),
+				Entry("no mappings in multi-tenant mode",
+					authn.X509Config{},
+					"auth.x509_mappings"),
+				Entry("an unknown role",
+					authn.X509Config{SingleTenant: true, DefaultTenant: "solo", Mappings: []authn.X509Mapping{
+						{Match: authn.X509Match{CN: "*"}, Roles: []string{"superuser"}},
+					}},
+					"mapping 0", `"superuser"`, "admin, reviewer"),
+				Entry("a single-tenant mapping for another tenant",
+					authn.X509Config{SingleTenant: true, DefaultTenant: "solo", Mappings: []authn.X509Mapping{
+						{Match: authn.X509Match{CN: "*"}, Tenant: "other", Roles: []string{"admin"}},
+					}},
+					"mapping 0", "single-tenant"),
+				Entry("an empty match",
+					authn.X509Config{SingleTenant: true, DefaultTenant: "solo", Mappings: []authn.X509Mapping{
+						{Match: authn.X509Match{}, Roles: []string{"admin"}},
+					}},
+					"mapping 0", "empty match"),
+			)
+
+			It("accepts a single-tenant mapping that names the default tenant", func() {
+				_, err := authn.NewX509Authenticator(authn.X509Config{
+					SingleTenant: true, DefaultTenant: "solo",
+					Mappings: []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Tenant: "solo", Roles: []string{"admin"}}},
+				})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("does not name another tenant when rejecting a single-tenant mapping", func() {
+				_, err := authn.NewX509Authenticator(authn.X509Config{
+					SingleTenant: true, DefaultTenant: "solo",
+					Mappings: []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Tenant: "secret-other", Roles: []string{"admin"}}},
+				})
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).NotTo(ContainSubstring("secret-other"))
 			})
 
 			It("rejects empty match in multi-tenant mapping (would match all certs)", func() {
 				_, err := authn.NewX509Authenticator(authn.X509Config{
 					SingleTenant: false,
 					Mappings: []authn.X509Mapping{
-						{Match: authn.X509Match{}, Tenant: "catch-all", Roles: []string{"reader"}},
+						{Match: authn.X509Match{}, Tenant: "catch-all", Roles: []string{"reviewer"}},
 					},
 				})
 				Expect(err).To(HaveOccurred())
@@ -628,11 +683,12 @@ var _ = Describe("Authn Package", Ordered, func() {
 				auth, err = authn.NewX509Authenticator(authn.X509Config{
 					SingleTenant:  true,
 					DefaultTenant: "solo-tenant",
+					Mappings:      anyCertAdmin,
 				})
 				Expect(err).NotTo(HaveOccurred())
 			})
 
-			It("authenticates any cert with default tenant and admin role", func() {
+			It("authenticates a matching cert with default tenant and its mapping's roles", func() {
 				identity, err := auth.Authenticate(context.Background(), &authn.Request{
 					TLSState: tlsStateWith(acmeCert),
 				})
@@ -641,6 +697,41 @@ var _ = Describe("Authn Package", Ordered, func() {
 				Expect(identity.TenantID).To(Equal("solo-tenant"))
 				Expect(identity.Roles).To(Equal([]string{"admin"}))
 				Expect(identity.Method).To(Equal(authn.AuthMethodMTLS))
+			})
+
+			It("grants a single-tenant certificate only the roles of its mapping", func() {
+				scoped, err := authn.NewX509Authenticator(authn.X509Config{
+					SingleTenant:  true,
+					DefaultTenant: "solo-tenant",
+					Mappings: []authn.X509Mapping{
+						{Match: authn.X509Match{Organization: "Acme*"}, Roles: []string{authn.RoleReviewer}},
+					},
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				identity, err := scoped.Authenticate(context.Background(), &authn.Request{
+					TLSState: tlsStateWith(acmeCert),
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(identity.TenantID).To(Equal("solo-tenant"))
+				Expect(identity.Roles).To(Equal([]string{authn.RoleReviewer}))
+			})
+
+			It("rejects a single-tenant certificate no mapping matches", func() {
+				scoped, err := authn.NewX509Authenticator(authn.X509Config{
+					SingleTenant:  true,
+					DefaultTenant: "solo-tenant",
+					Mappings: []authn.X509Mapping{
+						{Match: authn.X509Match{Organization: "Acme*"}, Roles: []string{authn.RoleAdmin}},
+					},
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = scoped.Authenticate(context.Background(), &authn.Request{
+					TLSState: tlsStateWith(globexCert),
+				})
+				Expect(err).To(MatchError(authn.ErrAuthenticationFailed))
+				Expect(err.Error()).To(ContainSubstring(globexCert.Subject.CommonName))
 			})
 
 			It("returns ErrUnsupportedMethod when TLSState is nil", func() {
@@ -668,12 +759,12 @@ var _ = Describe("Authn Package", Ordered, func() {
 						{
 							Match:  authn.X509Match{Organization: "Acme*"},
 							Tenant: "acme-tenant",
-							Roles:  []string{"admin", "writer"},
+							Roles:  []string{"admin", "reviewer"},
 						},
 						{
 							Match:  authn.X509Match{Organization: "Globex*"},
 							Tenant: "globex-tenant",
-							Roles:  []string{"reader"},
+							Roles:  []string{"reviewer"},
 						},
 					},
 				})
@@ -686,7 +777,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(identity.TenantID).To(Equal("acme-tenant"))
-				Expect(identity.Roles).To(Equal([]string{"admin", "writer"}))
+				Expect(identity.Roles).To(Equal([]string{"admin", "reviewer"}))
 			})
 
 			It("resolves second matching rule (Globex)", func() {
@@ -695,7 +786,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(identity.TenantID).To(Equal("globex-tenant"))
-				Expect(identity.Roles).To(Equal([]string{"reader"}))
+				Expect(identity.Roles).To(Equal([]string{"reviewer"}))
 			})
 
 			It("uses first-match-wins ordering", func() {
@@ -703,8 +794,8 @@ var _ = Describe("Authn Package", Ordered, func() {
 				dualAuth, err := authn.NewX509Authenticator(authn.X509Config{
 					SingleTenant: false,
 					Mappings: []authn.X509Mapping{
-						{Match: authn.X509Match{Organization: "*"}, Tenant: "first-wins", Roles: []string{"first"}},
-						{Match: authn.X509Match{Organization: "*"}, Tenant: "second-loses", Roles: []string{"second"}},
+						{Match: authn.X509Match{Organization: "*"}, Tenant: "first-wins", Roles: []string{"admin"}},
+						{Match: authn.X509Match{Organization: "*"}, Tenant: "second-loses", Roles: []string{"reviewer"}},
 					},
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -731,6 +822,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 				auth, err := authn.NewX509Authenticator(authn.X509Config{
 					SingleTenant:  true,
 					DefaultTenant: "claims-tenant",
+					Mappings:      anyCertAdmin,
 				})
 				Expect(err).NotTo(HaveOccurred())
 
@@ -749,6 +841,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 				auth, err := authn.NewX509Authenticator(authn.X509Config{
 					SingleTenant:  true,
 					DefaultTenant: "methods-tenant",
+					Mappings:      anyCertAdmin,
 				})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(auth.SupportedMethods()).To(Equal([]authn.AuthMethod{authn.AuthMethodMTLS}))
@@ -771,6 +864,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "dispatch-tenant",
+				Mappings:      anyCertAdmin,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -793,6 +887,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "skip-tenant",
+				Mappings:      anyCertAdmin,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -816,6 +911,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "stop-tenant",
+				Mappings:      anyCertAdmin,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -823,6 +919,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			x509AuthGood, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "unreachable-tenant",
+				Mappings:      anyCertAdmin,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -871,6 +968,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "audit-tenant",
+				Mappings:      anyCertAdmin,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -899,7 +997,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant: false,
 				Mappings: []authn.X509Mapping{
-					{Match: authn.X509Match{Organization: "NeverMatches"}, Tenant: "never-tenant", Roles: []string{"none"}},
+					{Match: authn.X509Match{Organization: "NeverMatches"}, Tenant: "never-tenant", Roles: []string{"reviewer"}},
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -946,6 +1044,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "nil-emitter-tenant",
+				Mappings:      anyCertAdmin,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -965,6 +1064,7 @@ var _ = Describe("Authn Package", Ordered, func() {
 			x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 				SingleTenant:  true,
 				DefaultTenant: "failing-emitter-tenant",
+				Mappings:      anyCertAdmin,
 			})
 			Expect(err).NotTo(HaveOccurred())
 

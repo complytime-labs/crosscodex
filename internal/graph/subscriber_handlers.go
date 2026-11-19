@@ -311,15 +311,39 @@ func isNodeExists(err error) bool {
 	return errors.Is(err, graphdb.ErrNodeExists) || errors.Is(err, graphdb.ErrEdgeExists)
 }
 
+// pendingEndpoints tracks, for one delivery of an event, the edges whose
+// endpoint node was missing. Before the event's last delivery (final false)
+// such an edge is only counted, and the handler retries the event once every
+// other edge is written, so a Control node the catalog projection has not
+// written yet heals on redelivery.
+type pendingEndpoints struct {
+	final bool
+	count int
+}
+
+// pendingEndpointsKey carries a *pendingEndpoints in a handler's context. The
+// handler goroutine owns it; materializers run sequentially within it.
+type pendingEndpointsKey struct{}
+
 // skipMissingEndpoint reports whether err means an edge endpoint node does
-// not exist, in which case the caller skips that edge and continues. The
-// subscription is core NATS, so failing the event would not redeliver it: it
-// would only drop every later edge in the same event. The skip is recorded
-// as a metric, a span event and a warning, because the edge stays absent
-// until the tenant's graph is rebuilt.
+// not exist, in which case the caller continues with its next edge. Before
+// the event's last delivery (a pendingEndpoints in ctx that is not final) the
+// edge is counted there and retried with the event. Otherwise, as for a
+// catalog projection, whose endpoints come from its own rows, the edge is
+// skipped, and the skip is recorded as a metric, a span event and a warning,
+// because the edge stays absent until the tenant's graph is rebuilt.
 func (s *Service) skipMissingEndpoint(ctx context.Context, tenantID, analyzer, label, sourceID, targetID string, err error) bool {
 	if !errors.Is(err, graphdb.ErrNodeNotFound) {
 		return false
+	}
+	if p, ok := ctx.Value(pendingEndpointsKey{}).(*pendingEndpoints); ok && !p.final {
+		p.count++
+		trace.SpanFromContext(ctx).AddEvent("edge deferred: endpoint node missing", trace.WithAttributes(
+			attribute.String("edge.label", label),
+			attribute.String("edge.source_id", sourceID),
+			attribute.String("edge.target_id", targetID),
+		))
+		return true
 	}
 	if s.edgesSkipped != nil {
 		s.edgesSkipped.Add(ctx, 1, metric.WithAttributes(

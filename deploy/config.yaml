@@ -20,6 +20,14 @@ tls:
   ca: /certs/ca.pem
   cert: /certs/client.pem
   key: /certs/client-key.pem
+  # Client certificates allowed to assert a tenant to the standalone pipeline
+  # role: the gateway's outbound client cert. Here that is the same client.pem
+  # every role and the operator use, so this separates nothing. With
+  # tenants.enabled: true, give the gateway a dedicated client certificate
+  # issued to no user or other role, and list it alone here.
+  service_identities:
+    - cn: client
+      organization: CrossCodex
   targets:
     # The gateway HTTPS listener must present the SERVER cert (ServerAuth EKU,
     # SANs covering localhost/127.0.0.1/service names). The global cert above is
@@ -53,6 +61,18 @@ attestation:
 tenants:
   enabled: false
   default_tenant: default
+# Roles come only from these mappings: a client certificate that matches none
+# is refused, and the daemon refuses to start with none. This one admits the
+# client certificate `task deploy:certs` generates (deploy/certgen: CN client,
+# O CrossCodex) as admin. Recording a cleaning decision needs the reviewer
+# role, which admin does not include: give each reviewer a certificate of
+# their own and a mapping with roles [reviewer].
+auth:
+  x509_mappings:
+    - match:
+        cn: client
+        organization: CrossCodex
+      roles: [admin]
 llm:
   # LLM_GATEWAY=praxis overrides this via CROSSCODEX_LLM_GATEWAY_URL
   # (compose.gateway-praxis.yaml).

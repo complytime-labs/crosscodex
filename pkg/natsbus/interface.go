@@ -24,6 +24,14 @@ type Client interface {
 	// Provenance headers are injected automatically.
 	Publish(ctx context.Context, subject string, data []byte) error
 
+	// PublishDurable publishes through JetStream and waits for the stream's
+	// acknowledgement, so a nil error means the message is stored. Headers and
+	// provenance are as for PublishWithHeaders. The wait is bounded by
+	// nats.publish_ack_timeout. Errors wrap ErrPublishFailed and ErrNotStored,
+	// including when no stream captures subject. Use it for messages that must
+	// not be lost (audit, materialization events); Publish is fire-and-forget.
+	PublishDurable(ctx context.Context, subject string, data []byte, headers map[string][]string) error
+
 	// PublishWithHeaders sends a message with additional custom headers.
 	// Provenance headers are injected automatically and merged with
 	// the provided headers. Provenance headers take precedence on conflict.
@@ -37,6 +45,41 @@ type Client interface {
 	// the subject are distributed round-robin across subscribers in the
 	// same queue group.
 	QueueSubscribe(ctx context.Context, subject string, queue string, handler MessageHandler) (Subscription, error)
+
+	// ConsumeDurable creates or updates the durable pull consumer cfg describes
+	// (explicit acks) and calls handler for each message until the returned
+	// Subscription stops. The handler's context carries the message's tenant
+	// (validated) and the publisher's trace context. Outcome, and the level
+	// the consumer logs a handler error at:
+	//   - nil acks the message.
+	//   - an error wrapping ErrSkip terminates it (removed from a work-queue
+	//     stream), logged at debug: a message the handler ignores by design.
+	//   - an error wrapping ErrPermanent terminates it, logged as a warning.
+	//   - an error wrapping ErrNotReady redelivers it after cfg.RedeliverDelay,
+	//     logged at debug: the handler polls a condition not met yet.
+	//   - any other error redelivers it after cfg.RedeliverDelay, logged as an
+	//     error.
+	// Redelivery stops after cfg.MaxDeliver deliveries. Termination takes
+	// precedence over redelivery when an error wraps both. Message.Metadata carries
+	// Stream, Sequence and NumDelivered. A message that fails the provenance or
+	// content-hash check, or whose tenant header is missing or fails
+	// tenant.ValidateTenantID, is terminated and counted, never delivered to
+	// handler.
+	// Unsubscribe stops at once; Drain stops fetching and lets in-flight messages
+	// finish but does not wait for them.
+	ConsumeDurable(ctx context.Context, cfg ConsumerConfig, handler MessageHandler) (Subscription, error)
+
+	// SubjectMessageCount returns how many messages stream holds on subject,
+	// which may be a wildcard pattern. A work-queue stream holds only messages
+	// not yet acknowledged, so a nonzero count means work is still queued.
+	// Errors wrap ErrStreamNotFound when stream does not exist.
+	SubjectMessageCount(ctx context.Context, stream, subject string) (uint64, error)
+
+	// LastMessageTime returns when stream stored its last message on subject
+	// (a literal subject, not a pattern), and found false with a zero time
+	// when stream holds none. The time is the server's, not the publisher's.
+	// Errors wrap ErrStreamNotFound when stream does not exist.
+	LastMessageTime(ctx context.Context, stream, subject string) (t time.Time, found bool, err error)
 
 	// PublishWorkerProgress publishes one tick on WorkerProgressSubject with
 	// an empty payload and no headers. It needs no tenant in ctx, which is

@@ -95,6 +95,16 @@
 // at most until that cap. A collection without a positive StageTimeout is
 // refused with ErrNoStageTimeout.
 //
+// A failed task result carries a natsbus.ResultError* code in its X-Error
+// header. The collector matches the code exactly (classifyResult; an unknown
+// code is ErrTaskFailed, and the worker's text is never echoed) and retries by
+// cause (retryCause), up to CollectRequest.MaxRetries with backoff: rate
+// limits and other failures are re-sent; a timeout only when
+// CollectRequest.RetryOnTimeout (analysis.engine.retry_on_timeout), as the
+// provider may already have billed it; a truncated answer, an invalid
+// payload (ErrTaskInvalid) and a tenant mismatch (ErrTenantMismatch) never.
+// analysis.tasks.retried counts re-sends by cause.
+//
 // Error results reset the idle timer too, and so do the ticks they cause, so
 // a stage whose every LLM call fails (the model gateway is down) would grind
 // through its tasks until the stage cap. CollectRequest.SuccessTimeout

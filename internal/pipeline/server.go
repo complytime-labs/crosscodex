@@ -12,6 +12,7 @@ import (
 
 	pbconnect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/rpcserver"
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/tenant/connectutil"
 )
@@ -22,6 +23,11 @@ type ServerConfig struct {
 	TLS     config.TLSConfig
 	Service *Service
 	Logger  *slog.Logger
+
+	// ServiceIdentities lists the client certificates (in practice the
+	// gateway's) allowed to assert a tenant via request headers; see
+	// connectutil.UnaryServerInterceptor. Empty denies every request.
+	ServiceIdentities []authn.X509Match
 }
 
 // Server exposes a Service over its own Connect RPC listener, independent
@@ -38,10 +44,10 @@ type Server struct {
 // out of this listener, since health checks go through a separate
 // dedicated listener (see cmd/crosscodexd's newHealthServer), not this
 // one. Every request must also carry a tenant header (see
-// pkg/tenant/connectutil): pipeline trusts the network boundary (mTLS)
-// plus that explicit, required header, rather than re-running end-user
-// authentication itself -- the gateway role already did that once, at the
-// perimeter.
+// pkg/tenant/connectutil), and that header is honored only when the mTLS
+// client certificate matches cfg.ServiceIdentities: any certificate the CA
+// signed could otherwise name any tenant. Pipeline does not re-run end-user
+// authentication; the gateway role already did that once, at the perimeter.
 func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -49,7 +55,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 
 	interceptors := []connect.Interceptor{
 		rpcserver.NewRecoveryInterceptor(cfg.Logger),
-		connectutil.UnaryServerInterceptor(),
+		connectutil.UnaryServerInterceptor(cfg.ServiceIdentities),
 	}
 	if otelInterceptor, err := otelconnect.NewInterceptor(); err == nil {
 		interceptors = append([]connect.Interceptor{otelInterceptor}, interceptors...)
@@ -68,7 +74,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("create pipeline listener: %w", err)
 	}
 
-	return &Server{rpc: rpcserver.New(lis, tlsCfg, mux, cfg.Logger)}, nil
+	return &Server{rpc: rpcserver.New(lis, tlsCfg, authn.TLSStateMiddleware(mux), cfg.Logger)}, nil
 }
 
 func (s *Server) Start() error                       { return s.rpc.Start() }

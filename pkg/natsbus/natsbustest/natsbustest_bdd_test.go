@@ -3,6 +3,7 @@ package natsbustest_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -96,6 +97,43 @@ var _ = Describe("Fake", func() {
 			}),
 		)
 
+		It("records PublishDurable with Durable set, and no other publish method does", func() {
+			Expect(fake.Publish(ctx, "a", []byte("one"))).To(Succeed())
+			Expect(fake.PublishDurable(ctx, "b", []byte("two"), map[string][]string{"K": {"v"}})).To(Succeed())
+
+			Expect(fake.Published()).To(Equal([]natsbustest.Publication{
+				{Subject: "a", Data: []byte("one")},
+				{Subject: "b", Data: []byte("two"), Headers: map[string][]string{"K": {"v"}}, Durable: true},
+			}))
+		})
+
+		It("lets PublishDurableFunc alone decide the result and still records the call", func() {
+			fake.PublishDurableFunc = func(context.Context, string, []byte, map[string][]string) error {
+				return fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+			}
+			err := fake.PublishDurable(ctx, "s", []byte("d"), nil)
+			Expect(err).To(MatchError(natsbus.ErrNotStored))
+			Expect(err).To(MatchError(natsbus.ErrPublishFailed))
+			Expect(fake.Published()).To(HaveLen(1))
+		})
+
+		It("rejects a durable publish without a tenant, before the Func and without recording", func() {
+			reached := false
+			fake.PublishDurableFunc = func(context.Context, string, []byte, map[string][]string) error {
+				reached = true
+				return nil
+			}
+			Expect(fake.PublishDurable(context.Background(), "s", nil, nil)).To(MatchError(tenant.ErrNoTenant))
+			Expect(reached).To(BeFalse())
+			Expect(fake.Published()).To(BeEmpty())
+		})
+
+		It("rejects a durable publish after Close", func() {
+			Expect(fake.Close()).To(Succeed())
+			Expect(fake.PublishDurable(ctx, "s", nil, nil)).To(MatchError(natsbus.ErrConnectionClosed))
+			Expect(fake.Published()).To(BeEmpty())
+		})
+
 		It("rejects a publish without a tenant in the context, before the Func and without recording", func() {
 			reached := false
 			fake.PublishFunc = func(context.Context, string, []byte) error { reached = true; return nil }
@@ -165,6 +203,35 @@ var _ = Describe("Fake", func() {
 			_, err = fake.QueueSubscribe(ctx, "bad", "q", h)
 			Expect(err).To(MatchError(errScripted))
 			Expect(fake.Subscriptions()).To(HaveLen(1))
+		})
+
+		It("lets ConsumeDurableFunc fail selected consumers and still records the rest", func() {
+			fake.ConsumeDurableFunc = func(_ context.Context, cfg natsbus.ConsumerConfig, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
+				if cfg.Durable == "bad" {
+					return nil, errScripted
+				}
+				return nil, nil
+			}
+			h := func(context.Context, *natsbus.Message) error { return nil }
+			sub, err := fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Stream: "S", Durable: "good", MaxDeliver: 1}, h)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(sub).To(BeIdenticalTo(fake.Subscriptions()[0]))
+			sub, err = fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Stream: "S", Durable: "bad", MaxDeliver: 1}, h)
+			Expect(err).To(MatchError(errScripted))
+			Expect(sub).To(BeNil())
+			Expect(fake.Subscriptions()).To(HaveLen(1))
+		})
+
+		It("rejects an invalid consumer config before ConsumeDurableFunc runs", func() {
+			called := false
+			fake.ConsumeDurableFunc = func(context.Context, natsbus.ConsumerConfig, natsbus.MessageHandler) (natsbus.Subscription, error) {
+				called = true
+				return nil, nil
+			}
+			_, err := fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Durable: "d", MaxDeliver: 1}, func(context.Context, *natsbus.Message) error { return nil })
+			Expect(err).To(MatchError(natsbus.ErrSubscribeFailed))
+			Expect(called).To(BeFalse())
+			Expect(fake.Subscriptions()).To(BeEmpty())
 		})
 
 		It("returns the subscription a Func hands back instead of the recorded Sub", func() {
@@ -472,6 +539,180 @@ var _ = Describe("Fake", func() {
 		})
 	})
 
+	Describe("durable consumers", func() {
+		cfg := natsbus.ConsumerConfig{
+			Stream: "MATERIALIZE", Durable: "graph-materializer",
+			FilterSubjects: []string{"a.*", "b.>"}, MaxDeliver: 5,
+		}
+
+		durableMsg := func(subject string) *natsbus.Message {
+			return &natsbus.Message{Subject: subject, Metadata: natsbus.MessageMetadata{TenantID: "tenant-a"}}
+		}
+
+		It("records a Sub carrying the config, matched against every filter subject", func() {
+			var seen []string
+			var mu sync.Mutex
+			sub, err := fake.ConsumeDurable(ctx, cfg, record(&seen, &mu, nil))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(sub).To(BeIdenticalTo(fake.Subscriptions()[0]))
+			Expect(fake.Subscriptions()[0].Config).To(Equal(cfg))
+
+			for _, subject := range []string{"a.x", "b.x.y", "c.x"} {
+				Expect(fake.Deliver(durableMsg(subject))).To(Succeed())
+			}
+			Expect(seen).To(Equal([]string{"a.x", "b.x.y"}))
+		})
+
+		It("receives every subject when no filter is set", func() {
+			var seen []string
+			var mu sync.Mutex
+			_, err := fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Stream: "S", Durable: "d", MaxDeliver: 1}, record(&seen, &mu, nil))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.Deliver(durableMsg("any.thing"))).To(Succeed())
+			Expect(seen).To(Equal([]string{"any.thing"}))
+		})
+
+		It("passes the message, including NumDelivered, to the handler unchanged", func() {
+			var got *natsbus.Message
+			_, err := fake.ConsumeDurable(ctx, cfg, func(_ context.Context, m *natsbus.Message) error { got = m; return nil })
+			Expect(err).NotTo(HaveOccurred())
+			msg := durableMsg("a.x")
+			msg.Metadata.NumDelivered = 3
+			Expect(fake.Deliver(msg)).To(Succeed())
+			Expect(got.Metadata.NumDelivered).To(BeEquivalentTo(3))
+		})
+
+		DescribeTable("records the outcome the real consumer would apply",
+			func(handlerErr error, acked, naked, termed int) {
+				sub, err := fake.ConsumeDurable(ctx, cfg, func(context.Context, *natsbus.Message) error { return handlerErr })
+				Expect(err).NotTo(HaveOccurred())
+				_ = fake.Deliver(durableMsg("a.x"))
+				s := sub.(*natsbustest.Sub)
+				Expect([]int{s.Acked(), s.Naked(), s.Termed()}).To(Equal([]int{acked, naked, termed}))
+			},
+			Entry("nil error is acked", nil, 1, 0, 0),
+			Entry("ErrPermanent is termed", natsbus.ErrPermanent, 0, 0, 1),
+			Entry("a wrapped ErrPermanent is termed", fmt.Errorf("bad: %w", natsbus.ErrPermanent), 0, 0, 1),
+			Entry("ErrSkip is termed", fmt.Errorf("not ours: %w", natsbus.ErrSkip), 0, 0, 1),
+			Entry("ErrNotReady is naked", fmt.Errorf("later: %w", natsbus.ErrNotReady), 0, 1, 0),
+			Entry("any other error is naked", errScripted, 0, 1, 0),
+		)
+
+		It("still returns the handler error from Deliver", func() {
+			_, err := fake.ConsumeDurable(ctx, cfg, func(context.Context, *natsbus.Message) error { return errScripted })
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fake.Deliver(durableMsg("a.x"))).To(MatchError(errScripted))
+		})
+
+		It("counts nothing for a plain subscription", func() {
+			sub, err := fake.Subscribe(ctx, "a.x", func(context.Context, *natsbus.Message) error { return errScripted })
+			Expect(err).NotTo(HaveOccurred())
+			_ = fake.Deliver(durableMsg("a.x"))
+			s := sub.(*natsbustest.Sub)
+			Expect([]int{s.Acked(), s.Naked(), s.Termed()}).To(Equal([]int{0, 0, 0}))
+		})
+
+		It("gives the handler a context carrying the message's tenant, not the caller's", func() {
+			var got string
+			_, err := fake.ConsumeDurable(ctx, cfg, func(hctx context.Context, _ *natsbus.Message) error {
+				got, _ = tenant.FromContext(hctx)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+			msg := durableMsg("a.x")
+			msg.Metadata.TenantID = "tenant-b"
+			Expect(fake.Deliver(msg)).To(Succeed())
+			Expect(got).To(Equal("tenant-b"))
+		})
+
+		DescribeTable("terminates a message with an unusable tenant without calling the handler, as the real consumer does",
+			func(tenantID string) {
+				called := false
+				sub, err := fake.ConsumeDurable(ctx, cfg, func(context.Context, *natsbus.Message) error { called = true; return nil })
+				Expect(err).NotTo(HaveOccurred())
+				msg := durableMsg("a.x")
+				msg.Metadata.TenantID = tenantID
+
+				Expect(fake.Deliver(msg)).To(MatchError(tenant.ErrInvalidTenant))
+
+				s := sub.(*natsbustest.Sub)
+				Expect(called).To(BeFalse())
+				Expect([]int{s.Acked(), s.Naked(), s.Termed()}).To(Equal([]int{0, 0, 1}))
+			},
+			Entry("absent", ""),
+			Entry("malformed", "Not A Tenant!"),
+		)
+
+		It("rejects an invalid config without recording a subscription", func() {
+			_, err := fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Durable: "d"}, func(context.Context, *natsbus.Message) error { return nil })
+			Expect(err).To(MatchError(natsbus.ErrSubscribeFailed))
+			Expect(fake.Subscriptions()).To(BeEmpty())
+		})
+
+		It("stops delivering after Unsubscribe", func() {
+			var seen []string
+			var mu sync.Mutex
+			sub, err := fake.ConsumeDurable(ctx, cfg, record(&seen, &mu, nil))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(sub.Unsubscribe()).To(Succeed())
+			Expect(fake.Deliver(durableMsg("a.x"))).To(Succeed())
+			Expect(seen).To(BeEmpty())
+		})
+	})
+
+	Describe("SubjectMessageCount", func() {
+		It("returns what SubjectMessageCountFunc decides", func() {
+			fake.SubjectMessageCountFunc = func(_ context.Context, stream, subject string) (uint64, error) {
+				Expect([]string{stream, subject}).To(Equal([]string{"S", "a.>"}))
+				return 7, nil
+			}
+			n, err := fake.SubjectMessageCount(ctx, "S", "a.>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n).To(BeEquivalentTo(7))
+		})
+
+		It("returns the scripted error", func() {
+			fake.SubjectMessageCountFunc = func(context.Context, string, string) (uint64, error) { return 0, errScripted }
+			_, err := fake.SubjectMessageCount(ctx, "S", "a")
+			Expect(err).To(MatchError(errScripted))
+		})
+
+		It("returns ErrUnscripted naming the field when unset", func() {
+			_, err := fake.SubjectMessageCount(ctx, "S", "a")
+			Expect(err).To(MatchError(natsbustest.ErrUnscripted))
+			Expect(err).To(MatchError(ContainSubstring("SubjectMessageCountFunc")))
+		})
+	})
+
+	Describe("LastMessageTime", func() {
+		It("returns what LastMessageTimeFunc decides", func() {
+			at := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+			fake.LastMessageTimeFunc = func(_ context.Context, stream, subject string) (time.Time, bool, error) {
+				Expect([]string{stream, subject}).To(Equal([]string{"S", "a.b"}))
+				return at, true, nil
+			}
+			got, found, err := fake.LastMessageTime(ctx, "S", "a.b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(got).To(Equal(at))
+		})
+
+		It("returns the scripted error", func() {
+			fake.LastMessageTimeFunc = func(context.Context, string, string) (time.Time, bool, error) {
+				return time.Time{}, false, errScripted
+			}
+			_, _, err := fake.LastMessageTime(ctx, "S", "a")
+			Expect(err).To(MatchError(errScripted))
+		})
+
+		It("returns ErrUnscripted naming the field when unset", func() {
+			_, found, err := fake.LastMessageTime(ctx, "S", "a")
+			Expect(err).To(MatchError(natsbustest.ErrUnscripted))
+			Expect(err).To(MatchError(ContainSubstring("LastMessageTimeFunc")))
+			Expect(found).To(BeFalse())
+		})
+	})
+
 	Describe("Close", func() {
 		BeforeEach(func() {
 			fake.CreateStreamFunc = func(context.Context, natsbus.StreamConfig) error { return nil }
@@ -505,6 +746,18 @@ var _ = Describe("Fake", func() {
 			Expect(fake.DeleteStream(ctx, "S")).To(MatchError(natsbus.ErrConnectionClosed))
 			_, err = fake.AuditStreamRetention(ctx)
 			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+			_, err = fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Stream: "S", Durable: "d", MaxDeliver: 1}, h)
+			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+			fake.SubjectMessageCountFunc = func(context.Context, string, string) (uint64, error) { reached = true; return 0, nil }
+			_, err = fake.SubjectMessageCount(ctx, "S", "a")
+			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+			fake.LastMessageTimeFunc = func(context.Context, string, string) (time.Time, bool, error) {
+				reached = true
+				return time.Time{}, true, nil
+			}
+			_, found, err := fake.LastMessageTime(ctx, "S", "a")
+			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+			Expect(found).To(BeFalse())
 
 			Expect(reached).To(BeFalse())
 			Expect(fake.Published()).To(BeEmpty())

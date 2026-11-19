@@ -43,6 +43,29 @@ const e2eEmbeddingDim = 2000
 // configured to dial it as an external client (config.NATSConfig{URL: url}).
 // That is what makes this test "two processes talking over one real NATS
 // server" rather than two processes each humming to themselves.
+// startGraphRole bootstraps and starts a graph role against the database at
+// dsn and the shared NATS server at natsURL, stopped when the spec ends. A
+// job's graph stage completes only once a graph role confirms the job's graph
+// is written. A catalog seeded by SQL has no projected Control nodes, so its
+// edges are retried and then skipped; delivery is tuned so that finishes well
+// within a spec's wait.
+func startGraphRole(ctx context.Context, dsn, natsURL string) *runtime {
+	cfg := baseTestConfig(dsn)
+	cfg.Role = config.RoleGraph
+	cfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second,
+		Materialize: config.NATSMaterializeConfig{
+			MaxDeliver: 2, AckWait: time.Minute, RedeliverDelay: 500 * time.Millisecond, BarrierPollInterval: 200 * time.Millisecond,
+		}}
+	cfg.Health.Addr = "127.0.0.1:0"
+
+	rt, err := bootstrap(ctx, cfg)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "bootstrap graph role")
+	DeferCleanup(rt.close)
+	ExpectWithOffset(1, rt.start(ctx)).To(Succeed(), "start graph role")
+	DeferCleanup(func() { _ = rt.stop(context.Background()) })
+	return rt
+}
+
 func startSharedTestNATS(t GinkgoTInterface) string {
 	t.Helper()
 
@@ -144,7 +167,7 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 			cfg.Role = role
 			// External mode: both runtimes dial the one shared server started
 			// above instead of each starting their own embedded instance.
-			cfg.NATS = config.NATSConfig{URL: natsURL}
+			cfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 			// The real client buildSharedResources constructs is replaced by
 			// WithLLMClient(fakeLLM) below, but its startup probe still dials
 			// GatewayURL, so it must answer.
@@ -182,6 +205,9 @@ var _ = Describe("crosscodexd pipeline -> worker -> analysis, role=pipeline + ro
 		// attachPipeline.
 		pipelineCfg.TLS = testServerTLS()
 		workerCfg := configureRole(config.RoleWorker)
+		startGraphRole(ctx, dsn, natsURL)
+		// The pipeline role refuses a default tenant migrate has not provisioned.
+		Expect(migrateDatabase(ctx, pipelineCfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 
 		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")

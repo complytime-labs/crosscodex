@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -14,8 +15,8 @@ import (
 )
 
 // NATSAuditEmitter publishes LLM audit events to NATS. It implements
-// llmclient.AuditEmitter with best-effort semantics: publish failures
-// are logged but never propagated to the caller.
+// llmclient.AuditEmitter with store-or-fail semantics: a failure to store an
+// event is returned to the caller, never swallowed.
 type NATSAuditEmitter struct {
 	bus                 natsbus.Client
 	logger              *slog.Logger
@@ -23,7 +24,7 @@ type NATSAuditEmitter struct {
 }
 
 // NewNATSAuditEmitter creates an audit emitter backed by a NATS client.
-// Audit publish failures are logged but not metered. Use
+// Audit failures are logged and returned but not metered. Use
 // NewNATSAuditEmitterWithMetrics to enable observable failure counting.
 func NewNATSAuditEmitter(bus natsbus.Client, logger *slog.Logger) *NATSAuditEmitter {
 	if logger == nil {
@@ -33,7 +34,7 @@ func NewNATSAuditEmitter(bus natsbus.Client, logger *slog.Logger) *NATSAuditEmit
 }
 
 // NewNATSAuditEmitterWithMetrics creates an audit emitter that increments a
-// counter on every swallowed publish failure, enabling OWASP A09 alerting on
+// counter on every failure to store an event, enabling OWASP A09 alerting on
 // audit loss. The counter is named "crosscodex.worker.audit.failures.total".
 func NewNATSAuditEmitterWithMetrics(bus natsbus.Client, logger *slog.Logger, mp metric.MeterProvider) *NATSAuditEmitter {
 	if logger == nil {
@@ -54,73 +55,46 @@ func NewNATSAuditEmitterWithMetrics(bus natsbus.Client, logger *slog.Logger, mp 
 	return e
 }
 
-// EmitLLMAudit publishes an audit event to the NATS audit subject for the
-// event's tenant and job. Best-effort: returns nil on publish failure.
+// EmitLLMAudit stores an audit event on the audit stream for the event's
+// tenant and job and waits for the stream's acknowledgement. Every failure
+// (invalid subject or tenant, marshal, publish, no acknowledgement) is
+// returned, wrapped with what failed, and counted: the caller must treat the
+// LLM call as unaudited.
 func (e *NATSAuditEmitter) EmitLLMAudit(ctx context.Context, event *llmclient.AuditEvent) error {
-	subject, err := natsbus.AuditSubject(event.TenantID, natsbus.AuditLLM, event.JobID)
-	if err != nil {
-		e.logger.Warn("audit emit: invalid subject",
+	fail := func(reason, what string, err error) error {
+		e.logger.Error("audit emit failed",
+			"reason", reason,
 			"tenant_id", event.TenantID,
 			"job_id", event.JobID,
 			"error", err,
 		)
 		if e.auditFailureCounter != nil {
 			e.auditFailureCounter.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("reason", "invalid_subject"),
+				attribute.String("reason", reason),
 				attribute.String("tenant_id", event.TenantID),
 			))
 		}
-		return nil
+		return fmt.Errorf("audit emit for job %q: %s: %w", event.JobID, what, err)
+	}
+
+	subject, err := natsbus.AuditSubject(event.TenantID, natsbus.AuditLLM, event.JobID)
+	if err != nil {
+		return fail("invalid_subject", "building the audit subject", err)
 	}
 
 	data, err := json.Marshal(event)
 	if err != nil {
-		e.logger.Warn("audit emit: marshal failed",
-			"tenant_id", event.TenantID,
-			"job_id", event.JobID,
-			"error", err,
-		)
-		if e.auditFailureCounter != nil {
-			e.auditFailureCounter.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("reason", "marshal_failed"),
-				attribute.String("tenant_id", event.TenantID),
-			))
-		}
-		return nil
+		return fail("marshal_failed", "encoding the audit event", err)
 	}
 
 	// Ensure tenant is in context for natsbus provenance header injection.
 	pubCtx, err := tenant.WithTenant(ctx, event.TenantID)
 	if err != nil {
-		e.logger.Warn("audit emit: invalid tenant ID",
-			"tenant_id", event.TenantID,
-			"job_id", event.JobID,
-			"error", err,
-		)
-		if e.auditFailureCounter != nil {
-			e.auditFailureCounter.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("reason", "invalid_tenant"),
-				attribute.String("tenant_id", event.TenantID),
-			))
-		}
-		return nil
+		return fail("invalid_tenant", "validating the event tenant", err)
 	}
-	if err := e.bus.Publish(pubCtx, subject, data); err != nil {
-		e.logger.Warn("audit emit: publish failed",
-			"tenant_id", event.TenantID,
-			"job_id", event.JobID,
-			"subject", subject,
-			"error", err,
-		)
-		if e.auditFailureCounter != nil {
-			e.auditFailureCounter.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("reason", "publish_failed"),
-				attribute.String("tenant_id", event.TenantID),
-			))
-		}
-		return nil
+	if err := e.bus.PublishDurable(pubCtx, subject, data, nil); err != nil {
+		return fail("publish_failed", "the audit stream did not acknowledge the event", err)
 	}
-
 	return nil
 }
 

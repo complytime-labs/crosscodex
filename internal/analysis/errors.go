@@ -26,6 +26,18 @@ var (
 	// until pipeline.stage_timeout.
 	ErrNoSuccessTimeout = errors.New("analysis: collection has no success timeout")
 	ErrRetryExhausted   = errors.New("analysis: task retries exhausted")
+	// ErrTaskInvalid is the collector's category for a task result the
+	// worker rejected as malformed (natsbus.ResultErrorInvalidPayload). It
+	// is never retried.
+	ErrTaskInvalid = errors.New("task_invalid")
+	// ErrTenantMismatch is the collector's category for a task the worker
+	// refused because its provenance tenant differed from its subject's
+	// (natsbus.ResultErrorTenantMismatch). It is never retried.
+	ErrTenantMismatch = errors.New(categoryTenantMismatch)
+	// ErrTaskFailed is the collector's category for any task failure with
+	// no more specific code, including a code it does not recognise. The
+	// worker's own error text is never carried into it.
+	ErrTaskFailed       = errors.New("task_failed")
 	ErrAnalyzerFailed   = errors.New("analysis: analyzer execution failed")
 	ErrDependencyFailed = errors.New("analysis: dependency analyzer failed")
 	// ErrResultCacheNotWired reports a request that uses the result cache
@@ -40,7 +52,7 @@ var (
 // stage's tasks kept failing, and none succeeded, for Window. It unwraps to
 // ErrNoSuccessfulResult. Its fields let the engine write the tenant's
 // message; LastError is the sanitized error category of the last failed
-// result (see sanitizeError), never a worker's raw error text.
+// result (see classifyResult), never a worker's raw error text.
 type NoSuccessError struct {
 	JobID string
 	// Window is the collection's SuccessTimeout.

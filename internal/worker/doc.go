@@ -59,7 +59,9 @@
 // # Error Handling
 //
 // Errors are published as results with an X-Error header, matching the
-// collector protocol. The worker never crashes on a bad task; it reports the
+// collector protocol. The X-Error value is a natsbus.ResultError* code
+// (output_truncated, timeout, rate_limited, invalid_payload) chosen by
+// errorCategory; the collector retries by that code. The worker never crashes on a bad task; it reports the
 // error and moves on. See ErrInvalidMessage, ErrUnsupportedTaskType,
 // ErrInvalidPayload, ErrLLMCall, ErrTenantConfig.
 //
@@ -73,9 +75,10 @@
 //	llm, err := llmclient.New(cfg.LLM, llmclient.WithAuditEmitter(emitter))
 //	w := worker.New(bus, llm, cfg.Worker, worker.WithAbandonTTL(cfg.Pipeline.StageTimeout))
 //
-// Audit events are published best-effort: publish failures are logged and
-// counted via the crosscodex.worker.audit.failures.total metric, but never
-// propagated to the caller.
+// Audit events are stored durably: a failure to store one is logged, counted
+// via the crosscodex.worker.audit.failures.total metric, and returned to the
+// caller, so the LLM call fails with llmclient.ErrAuditFailed and is not
+// retried.
 //
 // # NATS Handler Contract
 //

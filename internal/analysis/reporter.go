@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -130,7 +132,7 @@ func (r *NATSStageReporter) publish(ctx context.Context, analyzerName, jobID str
 			"analyzer", analyzerName,
 			"stage", string(stage),
 			"raw_error", stageErr.Error())
-		event["error"] = sanitizeError(stageErr.Error()).Error()
+		event["error"] = stageErrorCategory(stageErr)
 	}
 
 	data, err := json.Marshal(event)
@@ -138,13 +140,56 @@ func (r *NATSStageReporter) publish(ctx context.Context, analyzerName, jobID str
 		return fmt.Errorf("stage report: marshaling event: %w", err)
 	}
 
+	// stage.completed drives graph materialization, so losing it silently
+	// loses edges: it is stored by the MATERIALIZE stream or the stage fails.
+	// started and failed have no consumer and stay fire-and-forget.
+	if stage == natsbus.StageCompleted {
+		if err := r.bus.PublishDurable(ctx, subject, data, nil); err != nil {
+			return fmt.Errorf("stage report: storing %s event for analyzer %q: %w", stage, analyzerName, err)
+		}
+		return nil
+	}
 	if err := r.bus.Publish(ctx, subject, data); err != nil {
 		r.logger.WarnContext(ctx, "failed to publish stage event",
 			"analyzer", analyzerName, "stage", string(stage), "error", err)
-		return nil
 	}
 	return nil
 }
 
 var _ StageReporter = (*NATSStageReporter)(nil)
 var _ StageReporter = noopReporter{}
+
+// stageErrorCategory names a failed stage in a stage event with the same
+// fixed category classifyResult uses for the same cause, never the error's
+// text (CWE-209). Mapping:
+//   - llmclient.ErrTimeout, ErrTaskTimeout, ErrStageTimeout, a bare
+//     context.DeadlineExceeded: task_timeout.
+//   - ErrNoSuccessfulResult (a NoSuccessError): task_timeout, keeping the
+//     category these stages reported before categories were sentinel-based;
+//     the window elapsing with no success is a timeout of the stage.
+//   - llmclient.ErrAuditFailed: task_audit_failed (checked first: an
+//     unaudited call outranks any other cause).
+//   - llmclient.ErrRateLimitExceeded: task_rate_limited.
+//   - llmclient.ErrOutputTruncated: task_output_truncated.
+//   - ErrTaskInvalid: task_invalid.
+//   - ErrTenantMismatch: task_tenant_mismatch.
+//   - anything else: task_failed.
+func stageErrorCategory(err error) string {
+	switch {
+	case errors.Is(err, llmclient.ErrAuditFailed):
+		return categoryAuditFailed
+	case errors.Is(err, llmclient.ErrTimeout), errors.Is(err, ErrTaskTimeout), errors.Is(err, ErrStageTimeout),
+		errors.Is(err, ErrNoSuccessfulResult), errors.Is(err, context.DeadlineExceeded):
+		return categoryTimeout
+	case errors.Is(err, llmclient.ErrRateLimitExceeded):
+		return categoryRateLimited
+	case errors.Is(err, llmclient.ErrOutputTruncated):
+		return categoryOutputTruncated
+	case errors.Is(err, ErrTaskInvalid):
+		return ErrTaskInvalid.Error()
+	case errors.Is(err, ErrTenantMismatch):
+		return categoryTenantMismatch
+	default:
+		return ErrTaskFailed.Error()
+	}
+}

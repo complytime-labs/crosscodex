@@ -24,7 +24,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
-	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache/resultcachetest"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
@@ -101,7 +100,7 @@ var _ = Describe("Attesting a job's result-cache use", Ordered, func() {
 			analyzer.ModelUse{Alias: "", Kind: analyzer.ModelCompletion}))).To(Succeed())
 		// requires runs in the candidate-dependent pass, after classify's.
 		Expect(analyzer.Register[*pb.Control](reg, newControlStub("requires", "classify"))).To(Succeed())
-		bus := &natsbustest.Fake{}
+		bus := newGraphRoleBus()
 		llm := &llmclienttest.Fake{CompleteFunc: func(context.Context, *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
 			return &llmclient.CompletionResponse{Model: "qwen-observed"}, nil
 		}}
@@ -346,7 +345,7 @@ var _ = Describe("The attestation layout of a job", func() {
 		attestor := newFakeAttestation()
 		reg := analyzer.NewRegistry()
 		Expect(analyzer.Register[*pb.Control](reg, newControlStub("classify"))).To(Succeed())
-		bus := &natsbustest.Fake{}
+		bus := newGraphRoleBus()
 		eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{},
 			config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},
 			map[string]natsbus.TaskType{"classify": natsbus.TaskClassify},

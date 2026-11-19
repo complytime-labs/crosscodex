@@ -4,6 +4,8 @@ package natsbus_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -34,7 +37,8 @@ func newEmbeddedClient() natsbus.Client {
 		Embedded: config.NATSEmbeddedConfig{
 			StoreDir: storeDir,
 		},
-		Streams: defaultTestStreamsConfig(),
+		Streams:           defaultTestStreamsConfig(),
+		PublishAckTimeout: 10 * time.Second,
 	}
 
 	client, err := natsbus.New(cfg)
@@ -209,6 +213,318 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			Eventually(receivedByA.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(5)))
 			Consistently(receivedByB.Load, 500*time.Millisecond, 10*time.Millisecond).Should(BeZero(),
 				"isolation violated: tenant B received messages meant for tenant A")
+		})
+	})
+
+	Describe("MATERIALIZE stream", func() {
+		It("creates MATERIALIZE as a work queue", func() {
+			client := newEmbeddedClient()
+			ctx := context.Background()
+
+			stream, err := natsbus.ExportJetStream(client).Stream(ctx, natsbus.MaterializeStream)
+			Expect(err).NotTo(HaveOccurred())
+			info, err := stream.Info(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.Config.Retention).To(Equal(jetstream.WorkQueuePolicy))
+			Expect(info.Config.Storage).To(Equal(jetstream.FileStorage))
+			Expect(info.Config.MaxAge).To(Equal(24 * time.Hour))
+		})
+	})
+
+	Describe("PublishDurable", func() {
+		const subject = "crosscodex.test.durable.item"
+
+		// newStream creates a stream capturing subject and returns its name.
+		newStream := func(client natsbus.Client) string {
+			Expect(client.CreateStream(context.Background(), natsbus.StreamConfig{
+				Name: "TEST_DURABLE", Subjects: []string{"crosscodex.test.durable.>"}, Replicas: 1,
+			})).To(Succeed())
+			return "TEST_DURABLE"
+		}
+
+		It("stores a durable publish in the stream that captures its subject", func() {
+			client := newEmbeddedClient()
+			name := newStream(client)
+			ctx := testTenantCtx("acme-corp")
+
+			Expect(client.PublishDurable(ctx, subject, []byte("payload"), nil)).To(Succeed())
+
+			stream, err := natsbus.ExportJetStream(client).Stream(ctx, name)
+			Expect(err).NotTo(HaveOccurred())
+			info, err := stream.Info(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.State.Msgs).To(BeEquivalentTo(1))
+		})
+
+		It("returns ErrNotStored when no stream captures the subject", func() {
+			client := newEmbeddedClient()
+			ctx := testTenantCtx("acme-corp")
+
+			err := client.PublishDurable(ctx, "crosscodex.test.uncaptured.item", []byte("payload"), nil)
+			Expect(err).To(MatchError(natsbus.ErrNotStored))
+			Expect(err).To(MatchError(natsbus.ErrPublishFailed))
+		})
+
+		It("fails closed, wrapping ErrNotStored, when publish_ack_timeout is not positive", func() {
+			client, err := natsbus.New(config.NATSConfig{
+				Embedded: config.NATSEmbeddedConfig{StoreDir: filepath.Join(GinkgoT().TempDir(), "nats-store")},
+				Streams:  defaultTestStreamsConfig(),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(client.Close)
+			newStream(client)
+
+			err = client.PublishDurable(testTenantCtx("acme-corp"), subject, []byte("payload"), nil)
+			Expect(err).To(MatchError(natsbus.ErrNotStored))
+			Expect(err).To(MatchError(ContainSubstring("nats.publish_ack_timeout")))
+		})
+
+		It("rejects a durable publish without a tenant and stores nothing", func() {
+			client := newEmbeddedClient()
+			name := newStream(client)
+
+			err := client.PublishDurable(context.Background(), subject, []byte("payload"), nil)
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+
+			stream, serr := natsbus.ExportJetStream(client).Stream(context.Background(), name)
+			Expect(serr).NotTo(HaveOccurred())
+			info, serr := stream.Info(context.Background())
+			Expect(serr).NotTo(HaveOccurred())
+			Expect(info.State.Msgs).To(BeZero())
+		})
+
+		It("carries the same provenance headers as PublishWithHeaders", func() {
+			client := newEmbeddedClient()
+			newStream(client)
+			ctx := testTenantCtx("acme-corp")
+			ch := subscribeOne(client, ctx, subject)
+			payload := []byte("payload")
+			userHeaders := map[string][]string{"X-Custom": {"v"}}
+
+			Expect(client.PublishWithHeaders(ctx, subject, payload, userHeaders)).To(Succeed())
+			core := receiveOne(ch, 5*time.Second)
+			Expect(core).NotTo(BeNil())
+
+			ch = subscribeOne(client, ctx, subject)
+			Expect(client.PublishDurable(ctx, subject, payload, userHeaders)).To(Succeed())
+			durable := receiveOne(ch, 5*time.Second)
+			Expect(durable).NotTo(BeNil())
+
+			assertProvenanceHeaders(durable, payload, "acme-corp")
+			Expect(durable.Headers).To(HaveKeyWithValue("X-Custom", []string{"v"}))
+			for key := range core.Headers {
+				Expect(durable.Headers).To(HaveKey(key))
+			}
+			Expect(durable.Headers).To(HaveLen(len(core.Headers)))
+		})
+	})
+
+	Describe("Durable consumers", func() {
+		const (
+			streamName = "TEST_CONSUME"
+			subject    = "crosscodex.test.consume.item"
+		)
+
+		// newQueue creates a work-queue stream capturing crosscodex.test.consume.>.
+		newQueue := func(client natsbus.Client) {
+			Expect(client.CreateStream(context.Background(), natsbus.StreamConfig{
+				Name: streamName, Subjects: []string{"crosscodex.test.consume.>"}, Replicas: 1, WorkQueue: true,
+			})).To(Succeed())
+		}
+		cfg := func(maxDeliver int) natsbus.ConsumerConfig {
+			return natsbus.ConsumerConfig{
+				Stream: streamName, Durable: "test-consumer",
+				FilterSubjects: []string{subject},
+				AckWait:        time.Second, MaxDeliver: maxDeliver, RedeliverDelay: 50 * time.Millisecond,
+			}
+		}
+		stored := func(client natsbus.Client) uint64 {
+			stream, err := natsbus.ExportJetStream(client).Stream(context.Background(), streamName)
+			Expect(err).NotTo(HaveOccurred())
+			info, err := stream.Info(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			return info.State.Msgs
+		}
+
+		It("redelivers a message whose handler failed, then acks it", func() {
+			client := newEmbeddedClient()
+			newQueue(client)
+			ctx := testTenantCtx("acme-corp")
+			var mu sync.Mutex
+			var deliveries []uint64
+			var tenantSeen string
+			var metaSeen natsbus.MessageMetadata
+			sub, err := client.ConsumeDurable(ctx, cfg(5), func(hctx context.Context, msg *natsbus.Message) error {
+				mu.Lock()
+				defer mu.Unlock()
+				deliveries = append(deliveries, msg.Metadata.NumDelivered)
+				tenantSeen, _ = tenant.FromContext(hctx)
+				metaSeen = msg.Metadata
+				if len(deliveries) == 1 {
+					return errors.New("transient")
+				}
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(sub.Unsubscribe)
+
+			Expect(client.PublishDurable(ctx, subject, []byte("payload"), nil)).To(Succeed())
+
+			Eventually(func() uint64 { return stored(client) }, 10*time.Second, 50*time.Millisecond).Should(BeZero())
+			mu.Lock()
+			defer mu.Unlock()
+			Expect(deliveries).To(Equal([]uint64{1, 2}))
+			Expect(tenantSeen).To(Equal("acme-corp"))
+			Expect(metaSeen.Stream).To(Equal(streamName))
+			Expect(metaSeen.Sequence).To(BeEquivalentTo(1))
+			Expect(metaSeen.TenantID).To(Equal("acme-corp"))
+		})
+
+		It("stops redelivering after MaxDeliver", func() {
+			client := newEmbeddedClient()
+			newQueue(client)
+			ctx := testTenantCtx("acme-corp")
+			var calls atomic.Int32
+			sub, err := client.ConsumeDurable(ctx, cfg(2), func(context.Context, *natsbus.Message) error {
+				calls.Add(1)
+				return errors.New("always fails")
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(sub.Unsubscribe)
+
+			Expect(client.PublishDurable(ctx, subject, []byte("payload"), nil)).To(Succeed())
+
+			Eventually(calls.Load, 10*time.Second, 25*time.Millisecond).Should(BeEquivalentTo(2))
+			Consistently(calls.Load, 1500*time.Millisecond, 100*time.Millisecond).Should(BeEquivalentTo(2))
+			Expect(stored(client)).To(BeEquivalentTo(1), "an exhausted message stays in the stream for an operator")
+		})
+
+		It("removes a Termed message from a work queue and does not redeliver it", func() {
+			client := newEmbeddedClient()
+			newQueue(client)
+			ctx := testTenantCtx("acme-corp")
+			var calls atomic.Int32
+			sub, err := client.ConsumeDurable(ctx, cfg(5), func(context.Context, *natsbus.Message) error {
+				calls.Add(1)
+				return fmt.Errorf("malformed: %w", natsbus.ErrPermanent)
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(sub.Unsubscribe)
+
+			Expect(client.PublishDurable(ctx, subject, []byte("payload"), nil)).To(Succeed())
+
+			Eventually(func() uint64 { return stored(client) }, 10*time.Second, 50*time.Millisecond).Should(BeZero())
+			Consistently(calls.Load, 500*time.Millisecond, 50*time.Millisecond).Should(BeEquivalentTo(1))
+		})
+
+		It("terminates a message without provenance and never calls the handler", func() {
+			client := newEmbeddedClient()
+			newQueue(client)
+			var calls atomic.Int32
+			sub, err := client.ConsumeDurable(context.Background(), cfg(5), func(context.Context, *natsbus.Message) error {
+				calls.Add(1)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(sub.Unsubscribe)
+
+			_, err = natsbus.ExportJetStream(client).Publish(context.Background(), subject, []byte("unprovenanced"))
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() uint64 { return stored(client) }, 10*time.Second, 50*time.Millisecond).Should(BeZero())
+			Expect(calls.Load()).To(BeZero())
+		})
+
+		It("terminates a message whose content hash does not match", func() {
+			client := newEmbeddedClient()
+			newQueue(client)
+			ctx := testTenantCtx("acme-corp")
+			var calls atomic.Int32
+			sub, err := client.ConsumeDurable(ctx, cfg(5), func(context.Context, *natsbus.Message) error {
+				calls.Add(1)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(sub.Unsubscribe)
+
+			// Provenance headers override user headers on publish, so build the
+			// tampered message by hand from a genuine one's headers. The probe
+			// subject is outside the stream.
+			good := subscribeOne(client, ctx, "crosscodex.test.probe")
+			Expect(client.Publish(ctx, "crosscodex.test.probe", []byte("x"))).To(Succeed())
+			probe := receiveOne(good, 5*time.Second)
+			Expect(probe).NotTo(BeNil())
+			headers := nats.Header{}
+			for k, v := range probe.Headers {
+				headers[k] = v
+			}
+			headers[natsbus.HeaderContentSHA256] = []string{"deadbeef"}
+			_, err = natsbus.ExportJetStream(client).PublishMsg(ctx, &nats.Msg{Subject: subject, Data: []byte("not x"), Header: headers})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() uint64 { return stored(client) }, 10*time.Second, 50*time.Millisecond).Should(BeZero())
+			Expect(calls.Load()).To(BeZero())
+		})
+
+		It("rejects an invalid consumer config and a missing stream", func() {
+			client := newEmbeddedClient()
+			h := func(context.Context, *natsbus.Message) error { return nil }
+
+			_, err := client.ConsumeDurable(context.Background(), natsbus.ConsumerConfig{Durable: "d"}, h)
+			Expect(err).To(MatchError(natsbus.ErrSubscribeFailed))
+			Expect(err).To(MatchError(ContainSubstring("Stream")))
+
+			_, err = client.ConsumeDurable(context.Background(), natsbus.ConsumerConfig{Stream: "NO_SUCH_STREAM", Durable: "d", MaxDeliver: 1}, h)
+			Expect(err).To(MatchError(natsbus.ErrSubscribeFailed))
+			Expect(err).To(MatchError(natsbus.ErrStreamNotFound))
+		})
+
+		It("counts messages per subject", func() {
+			client := newEmbeddedClient()
+			newQueue(client)
+			ctx := testTenantCtx("acme-corp")
+			for _, s := range []string{"crosscodex.test.consume.a", "crosscodex.test.consume.a", "crosscodex.test.consume.b"} {
+				Expect(client.PublishDurable(ctx, s, []byte("payload"), nil)).To(Succeed())
+			}
+
+			n, err := client.SubjectMessageCount(ctx, streamName, "crosscodex.test.consume.a")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n).To(BeEquivalentTo(2))
+			n, err = client.SubjectMessageCount(ctx, streamName, "crosscodex.test.consume.>")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n).To(BeEquivalentTo(3))
+			n, err = client.SubjectMessageCount(ctx, streamName, "crosscodex.test.consume.none")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(n).To(BeZero())
+
+			_, err = client.SubjectMessageCount(ctx, "NO_SUCH_STREAM", "x")
+			Expect(err).To(MatchError(natsbus.ErrStreamNotFound))
+		})
+
+		It("reports when the last message on a subject was stored, and that a subject has none", func() {
+			client := newEmbeddedClient()
+			newQueue(client)
+			ctx := testTenantCtx("acme-corp")
+			before := time.Now().Add(-time.Second)
+			Expect(client.PublishDurable(ctx, "crosscodex.test.consume.a", []byte("first"), nil)).To(Succeed())
+			first, found, err := client.LastMessageTime(ctx, streamName, "crosscodex.test.consume.a")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(first).To(BeTemporally(">=", before))
+			Expect(first).To(BeTemporally("<=", time.Now().Add(time.Second)))
+
+			Expect(client.PublishDurable(ctx, "crosscodex.test.consume.a", []byte("second"), nil)).To(Succeed())
+			last, found, err := client.LastMessageTime(ctx, streamName, "crosscodex.test.consume.a")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(last).To(BeTemporally(">=", first))
+
+			_, found, err = client.LastMessageTime(ctx, streamName, "crosscodex.test.consume.none")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+
+			_, _, err = client.LastMessageTime(ctx, "NO_SUCH_STREAM", "x")
+			Expect(err).To(MatchError(natsbus.ErrStreamNotFound))
 		})
 	})
 

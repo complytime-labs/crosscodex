@@ -44,7 +44,7 @@ var _ = Describe("gateway backend wiring", func() {
 
 		cfg := baseTestConfig(dsn)
 		cfg.Role = config.RoleAll
-		cfg.NATS = config.NATSConfig{Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
+		cfg.NATS = config.NATSConfig{PublishAckTimeout: 10 * time.Second, Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()}}
 		cfg.TLS = testServerTLS()
 		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Server.Addr = "127.0.0.1:0"

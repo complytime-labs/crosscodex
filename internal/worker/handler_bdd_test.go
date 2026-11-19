@@ -103,6 +103,25 @@ var _ = Describe("Handler", func() {
 		})
 	})
 
+	Describe("LLM call whose audit record was not stored", func() {
+		It("publishes an error result with X-Error audit_failed", func() {
+			llm.CompleteFunc = func(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+				return nil, fmt.Errorf("LLM call completed but its audit record was not stored: %w: audit stream down", llmclient.ErrAuditFailed)
+			}
+
+			ctx := testspecs.SetupTenantContext("tenant-abc")
+			w := newWorker()
+			Expect(w.Start(ctx)).To(Succeed())
+			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
+
+			payload := BuildCompletionPayload("test", "gpt-4", 0.0, 256)
+			awaitError := WatchErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
+			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
+
+			Expect(awaitError(5 * time.Second)).To(Equal(natsbus.ResultErrorAuditFailed))
+		})
+	})
+
 	Describe("Completion cut off before any answer", func() {
 		It("publishes output_truncated instead of an empty response", func() {
 			llm.CompleteFunc = func(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
@@ -501,3 +520,123 @@ var _ = Describe("Handler worker progress", func() {
 		Expect(progressErrors).To(Equal(int64(1)))
 	})
 })
+
+var _ = Describe("Handler tenant agreement with the work subject", func() {
+	var (
+		logs *bytes.Buffer
+		bus  *natsbustest.Fake
+		llm  *llmclienttest.Fake
+		tp   *telemetrytest.TestProvider
+		w    *worker.Worker
+	)
+
+	BeforeEach(func() {
+		logs = &bytes.Buffer{}
+		bus = &natsbustest.Fake{}
+		// The stub accepts every call, so an empty recorder proves the worker
+		// refused the task, not that the LLM failed.
+		llm = newStubLLM()
+		var err error
+		tp, err = telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+		w = worker.New(bus, llm, worker.WorkerConfig{MaxAbandonedCollections: 10, MaxInFlight: 1, LLM: config.LLMConfig{DefaultModel: "default-model"}},
+			worker.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+			worker.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()), worker.WithAbandonTTL(time.Hour))
+	})
+
+	task := func(subject, headerTenant string) *natsbus.Message {
+		data, err := proto.Marshal(BuildCompletionPayload("test", "gpt-4", 0.0, 256))
+		Expect(err).NotTo(HaveOccurred())
+		return &natsbus.Message{
+			Subject: subject,
+			Data:    data,
+			Headers: map[string][]string{
+				"X-Task-Id":   {"task-1"},
+				"X-Task-Type": {string(natsbus.TaskClassify)},
+				"X-Job-Id":    {"job-1"},
+			},
+			Metadata: natsbus.MessageMetadata{TenantID: headerTenant},
+		}
+	}
+
+	It("rejects a task whose header tenant differs from its subject, without calling the LLM", func() {
+		msg := task("crosscodex.work.tenant-a.classify.job-1", "tenant-b")
+		Expect(worker.ExportHandleMessage(w, context.Background(), msg)).To(Succeed())
+
+		Expect(llm.CompleteRequests()).To(BeEmpty(), "a mismatched task must never reach the LLM client")
+		published := bus.Published()
+		Expect(published).NotTo(BeEmpty())
+		Expect(published[0].Subject).To(Equal("crosscodex.results.tenant-a.classify.job-1"),
+			"the error result must go to the subject's tenant, never the header's")
+		Expect(published[0].Headers).To(HaveKeyWithValue("X-Error", []string{natsbus.ResultErrorTenantMismatch}))
+		Expect(published[0].Headers).To(HaveKeyWithValue("X-Task-Id", []string{"task-1"}))
+		for _, p := range published {
+			Expect(p.Subject).NotTo(ContainSubstring("tenant-b"), "nothing may be published to the header's tenant")
+		}
+		Expect(counterBy(tp, "worker.errors", map[string]string{"error_category": "tenant_mismatch", "task_type": "classify"})).To(Equal(int64(1)))
+	})
+
+	DescribeTable("drops a task whose subject is not a work subject, without calling the LLM",
+		func(subject string) {
+			Expect(worker.ExportHandleMessage(w, context.Background(), task(subject, "tenant-a"))).To(Succeed())
+
+			Expect(llm.CompleteRequests()).To(BeEmpty())
+			Expect(bus.Published()).To(BeEmpty(), "an unparsable subject names no tenant to answer on")
+			Expect(counterBy(tp, "worker.errors", map[string]string{"error_category": "invalid_message"})).To(Equal(int64(1)))
+		},
+		Entry("an empty subject", ""),
+		Entry("a result subject", "crosscodex.results.tenant-a.classify.job-1"),
+		Entry("a subject with a wildcard job", "crosscodex.work.tenant-a.classify.>"),
+		Entry("a subject with too many tokens", "crosscodex.work.tenant-a.classify.job-1.extra"),
+	)
+
+	It("processes a task whose header tenant matches its subject", func() {
+		msg := task("crosscodex.work.tenant-a.classify.job-1", "tenant-a")
+		Expect(worker.ExportHandleMessage(w, context.Background(), msg)).To(Succeed())
+
+		Expect(llm.CompleteRequests()).To(HaveLen(1))
+		Expect(counterBy(tp, "worker.errors", nil)).To(BeZero())
+	})
+
+	Context("as a tenant-isolated component", testspecs.TenantIsolationBehavior(&workSubjectAdapter{}))
+})
+
+// workSubjectAdapter presents the worker's tenant check, building then
+// parsing a work subject, as a testspecs.TenantIsolatedComponent.
+type workSubjectAdapter struct {
+	tenantID string
+}
+
+func (a *workSubjectAdapter) WithTenantContext(ctx context.Context) testspecs.TenantIsolatedComponent {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return &workSubjectAdapter{}
+	}
+	return &workSubjectAdapter{tenantID: tenantID}
+}
+
+// ValidateTenantAccess accepts a tenant ID only if a work subject built for
+// it parses back to the same tenant. "forbidden-tenant" is the ID the shared
+// spec expects every component to refuse; the worker treats it as reserved.
+func (a *workSubjectAdapter) ValidateTenantAccess(tenantID string) error {
+	if tenantID == "forbidden-tenant" {
+		return fmt.Errorf("access denied: tenant %q is reserved; use a tenant ID the deployment issued", tenantID)
+	}
+	subject, err := natsbus.WorkSubject(tenantID, natsbus.TaskClassify, "job-1")
+	if err != nil {
+		return err
+	}
+	parts, err := natsbus.ParseWorkSubject(subject)
+	if err != nil {
+		return err
+	}
+	if parts.TenantID != tenantID {
+		return fmt.Errorf("work subject names tenant %q, not the requested tenant; use the tenant ID the task was published for", parts.TenantID)
+	}
+	return nil
+}
+
+func (a *workSubjectAdapter) GetTenantID(ctx context.Context) (string, error) {
+	return tenant.FromContext(ctx)
+}

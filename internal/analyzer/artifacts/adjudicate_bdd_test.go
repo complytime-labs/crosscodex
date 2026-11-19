@@ -254,6 +254,7 @@ var _ = Describe("Adjudicator", func() {
 				Expect(r.lastError).To(BeEmpty())
 			},
 			Entry("gateway unavailable", llmclient.ErrGatewayUnavailable),
+			Entry("timeout", llmclient.ErrTimeout),
 			Entry("rate limit exceeded", llmclient.ErrRateLimitExceeded),
 			Entry("authentication", llmclient.ErrAuthentication),
 			Entry("credential resolution", llmclient.ErrCredentialResolution),

@@ -1,9 +1,13 @@
 package graph_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -11,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/complytime-labs/crosscodex/internal/graph"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
@@ -52,7 +57,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 			resolver.data = data
 			eventData, err := json.Marshal(map[string]string{"analyzer": analyzer, "job_id": "job-1", "stage": "completed"})
 			Expect(err).NotTo(HaveOccurred())
-			return graph.ExportHandleEvent(svc, context.Background(), &natsbus.Message{
+			return graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), &natsbus.Message{
 				Subject: "crosscodex.pipeline.test-tenant.job-1.stage.completed",
 				Data:    eventData,
 			})
@@ -72,7 +77,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 					"timestamp": "2026-10-30T22:38:22Z",
 				})
 				Expect(err).NotTo(HaveOccurred())
-				Expect(graph.ExportHandleEvent(svc, context.Background(), &natsbus.Message{
+				Expect(graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), &natsbus.Message{
 					Subject: "crosscodex.pipeline.test-tenant.job-1.stage.completed",
 					Data:    data,
 				})).To(Succeed())
@@ -105,14 +110,20 @@ var _ = Describe("Subscriber Event Handling", func() {
 			Expect(analyzer.AsString()).To(Equal("graph"))
 		})
 
-		DescribeTable("returns nil, so the message is not redelivered, for an event it cannot process",
+		It("acks an event from an analyzer it has no handler for", func() {
+			err := graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), &natsbus.Message{
+				Subject: "crosscodex.pipeline.test-tenant.job-1.stage.completed",
+				Data:    []byte(`{"analyzer":"unknown-analyzer","job_id":"job-1","stage":"completed"}`),
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		DescribeTable("terms, so the message is not redelivered, an event it can never process",
 			func(subject string, data string) {
-				err := graph.ExportHandleEvent(svc, context.Background(), &natsbus.Message{Subject: subject, Data: []byte(data)})
-				Expect(err).NotTo(HaveOccurred())
+				resolver.err = errors.New("resolver must not be called")
+				err := graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), &natsbus.Message{Subject: subject, Data: []byte(data)})
+				Expect(err).To(MatchError(natsbus.ErrSkip))
 			},
-			Entry("an unknown analyzer",
-				"crosscodex.pipeline.test-tenant.job-1.stage.completed",
-				`{"analyzer":"unknown-analyzer","job_id":"job-1","stage":"completed"}`),
 			Entry("a malformed subject",
 				"bad.subject", `{}`),
 			Entry("an invalid tenant ID in the subject",
@@ -122,6 +133,12 @@ var _ = Describe("Subscriber Event Handling", func() {
 				"crosscodex.pipeline.test-tenant.job-1.stage.completed", `{bad json`),
 			Entry("missing required fields",
 				"crosscodex.pipeline.test-tenant.job-1.stage.completed", `{"stage":"completed"}`),
+			Entry("a subject with an extra token",
+				"crosscodex.pipeline.test-tenant.job-1.stage.completed.x",
+				`{"analyzer":"relationship","job_id":"job-1","stage":"completed"}`),
+			Entry("a payload naming another job than the subject",
+				"crosscodex.pipeline.test-tenant.job-1.stage.completed",
+				`{"analyzer":"relationship","job_id":"job-2","stage":"completed"}`),
 		)
 
 		It("returns error when resolver fails", func() {
@@ -137,7 +154,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 				Data:    data,
 			}
 
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
+			err := graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), msg)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("resolve"))
 		})
@@ -188,7 +205,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 				Data:    eventData,
 			}
 
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
+			err := graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), msg)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("materialize"))
 		})
@@ -207,7 +224,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 				Data:    eventData,
 			}
 
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
+			err := graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), msg)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unmarshal"))
 		})
@@ -271,7 +288,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 				Data:    eventData,
 			}
 
-			err := graph.ExportHandleEvent(svc, context.Background(), msg)
+			err := graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), msg)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -336,12 +353,201 @@ var _ = Describe("Subscriber Lifecycle", func() {
 	})
 
 	It("propagates drain errors on stop", func() {
-		mockBus.QueueSubscribeFunc = func(_ context.Context, _, _ string, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
-			return &natsbustest.Sub{DrainErr: errors.New("drain failed")}, nil
-		}
 		Expect(svc.Start(context.Background())).To(Succeed())
+		consumerSub(mockBus, materializerConsumer).DrainErr = errors.New("drain failed")
 		err := svc.Stop(context.Background())
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("drain"))
+	})
+})
+
+var _ = Describe("Durable materialization consumer", func() {
+	const (
+		tenantID   = "test-tenant"
+		maxDeliver = 3
+	)
+
+	var (
+		bus      *natsbustest.Fake
+		mem      graphdb.GraphDB
+		resolver *mockResolver
+		tp       *telemetrytest.TestProvider
+		logs     *bytes.Buffer
+		svc      *graph.Service
+	)
+
+	build := func(g graphdb.GraphDB) {
+		registry := graph.NewResolverRegistry()
+		registry.Register(resolver)
+		svc = graph.New(g, &mockVectorDB{}, bus,
+			graph.WithResolverRegistry(registry),
+			graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
+			graph.WithLogger(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))),
+			graph.WithMaterializeConfig(config.NATSMaterializeConfig{
+				MaxDeliver: maxDeliver, AckWait: time.Minute, RedeliverDelay: 2 * time.Second, BarrierPollInterval: 500 * time.Millisecond,
+			}))
+		Expect(svc.Start(context.Background())).To(Succeed())
+		DeferCleanup(func() { _ = svc.Stop(context.Background()) })
+	}
+
+	materializer := func() *natsbustest.Sub {
+		sub := consumerSub(bus, materializerConsumer)
+		Expect(sub).NotTo(BeNil(), "no %s consumer", materializerConsumer)
+		return sub
+	}
+
+	semanticMatches := func(t string) []graphdb.Relationship {
+		rels, err := mem.QueryRelationships(context.Background(), t, graphdb.RelationshipQuery{EdgeLabel: "SEMANTIC_MATCH"})
+		Expect(err).NotTo(HaveOccurred())
+		return rels
+	}
+
+	BeforeEach(func() {
+		mem = newMemGraph(context.Background(), tenantID, "ctrl-1", "ctrl-2")
+		resolver = &mockResolver{scheme: "pg", data: []byte(
+			`[{"source_id":"ctrl-1","target_id":"ctrl-2","relationship_type":"EQUIVALENT","confidence":0.9}]`)}
+		bus = &natsbustest.Fake{}
+		var err error
+		tp, err = telemetrytest.NewTestProvider()
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+		logs = &bytes.Buffer{}
+	})
+
+	It("consumes stage events and barriers from MATERIALIZE with no server-side delivery limit", func() {
+		build(mem)
+
+		// The materializer enforces max_deliver itself: a server limit would
+		// strand an event whose last delivery's ack is lost in the work queue.
+		Expect(materializer().Config).To(Equal(natsbus.ConsumerConfig{
+			Stream:         natsbus.MaterializeStream,
+			Durable:        materializerConsumer,
+			FilterSubjects: []string{"crosscodex.pipeline.*.*.stage.completed"},
+			AckWait:        time.Minute,
+			MaxDeliver:     -1,
+			RedeliverDelay: 2 * time.Second,
+		}))
+		barrier := consumerSub(bus, barrierConsumer)
+		Expect(barrier).NotTo(BeNil())
+		Expect(barrier.Config).To(Equal(natsbus.ConsumerConfig{
+			Stream:         natsbus.MaterializeStream,
+			Durable:        barrierConsumer,
+			FilterSubjects: []string{"crosscodex.materialize.*.*.barrier"},
+			AckWait:        time.Minute,
+			MaxDeliver:     -1,
+			RedeliverDelay: 500 * time.Millisecond,
+		}))
+		Expect(bus.Subscriptions()).To(HaveLen(2))
+	})
+
+	It("acks an event once its graph writes succeed", func() {
+		build(mem)
+
+		Expect(bus.Deliver(stageEvent(tenantID, "relationship", 1))).To(Succeed())
+
+		Expect(materializer().Acked()).To(Equal(1))
+		Expect(semanticMatches(tenantID)).To(HaveLen(1))
+		Expect(bus.Published()).To(BeEmpty())
+		Expect(eventCount(tp, "relationship", "ok")).To(Equal(int64(1)))
+	})
+
+	It("naks an event whose graph write failed, for redelivery", func() {
+		build(failingEdgeGraph{GraphDB: mem})
+
+		err := bus.Deliver(stageEvent(tenantID, "relationship", 1))
+
+		Expect(err).To(HaveOccurred())
+		Expect(err).NotTo(MatchError(natsbus.ErrPermanent))
+		Expect(err.Error()).To(ContainSubstring("delivery 1 of 3"))
+		Expect(err.Error()).To(ContainSubstring("connection reset by peer"))
+		Expect(materializer().Naked()).To(Equal(1))
+		Expect(bus.Published()).To(BeEmpty(), "only the last delivery reports a failure")
+		Expect(semanticMatches(tenantID)).To(BeEmpty())
+	})
+
+	It("publishes a failed outcome and terms the event on its last delivery", func() {
+		build(failingEdgeGraph{GraphDB: mem})
+
+		err := bus.Deliver(stageEvent(tenantID, "relationship", maxDeliver))
+
+		Expect(err).To(MatchError(natsbus.ErrPermanent))
+		Expect(materializer().Termed()).To(Equal(1))
+		pubs := bus.Published()
+		Expect(pubs).To(HaveLen(1))
+		Expect(pubs[0].Subject).To(Equal("crosscodex.audit." + tenantID + ".events.job-1.graph.failed"))
+		Expect(pubs[0].Durable).To(BeTrue())
+		var outcome natsbus.GraphOutcome
+		Expect(json.Unmarshal(pubs[0].Data, &outcome)).To(Succeed())
+		Expect(outcome.JobID).To(Equal("job-1"))
+		Expect(outcome.Outcome).To(Equal(natsbus.GraphOutcomeFailed))
+		Expect(outcome.Analyzer).To(Equal("relationship"))
+		Expect(outcome.Error).To(ContainSubstring("graph role logs"))
+		Expect(outcome.Error).NotTo(ContainSubstring("connection reset"), "the outcome must not carry driver detail")
+		Expect(eventCount(tp, "relationship", "failed")).To(Equal(int64(1)))
+	})
+
+	It("naks the last delivery, keeping the event, when its failed outcome is not stored", func() {
+		bus.PublishDurableFunc = func(context.Context, string, []byte, map[string][]string) error {
+			return fmt.Errorf("publish: %w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+		}
+		build(failingEdgeGraph{GraphDB: mem})
+
+		err := bus.Deliver(stageEvent(tenantID, "relationship", maxDeliver))
+
+		Expect(err).To(MatchError(natsbus.ErrNotStored))
+		Expect(err).NotTo(MatchError(natsbus.ErrPermanent))
+		Expect(materializer().Naked()).To(Equal(1))
+		Expect(materializer().Termed()).To(BeZero())
+	})
+
+	It("handles a delivery past max_deliver as a last delivery, storing a failed outcome and terming the event", func() {
+		build(failingEdgeGraph{GraphDB: mem})
+
+		err := bus.Deliver(stageEvent(tenantID, "relationship", maxDeliver+2))
+
+		Expect(err).To(MatchError(natsbus.ErrPermanent))
+		Expect(err.Error()).To(ContainSubstring("last delivery (%d)", maxDeliver+2))
+		Expect(materializer().Termed()).To(Equal(1))
+		Expect(materializer().Naked()).To(BeZero())
+		pubs := bus.Published()
+		Expect(pubs).To(HaveLen(1))
+		Expect(pubs[0].Subject).To(Equal("crosscodex.audit." + tenantID + ".events.job-1.graph.failed"))
+	})
+
+	It("ignores an event with no analyzer without counting an error", func() {
+		build(mem)
+		msg := stageEvent(tenantID, "", 1)
+
+		Expect(bus.Deliver(msg)).To(MatchError(natsbus.ErrSkip))
+
+		Expect(materializer().Termed()).To(Equal(1))
+		Expect(eventCount(tp, "unknown", "skipped")).To(Equal(int64(1)))
+		Expect(eventCount(tp, "unknown", "error")).To(BeZero())
+		Expect(logs.String()).NotTo(ContainSubstring("level=ERROR"))
+		Expect(semanticMatches(tenantID)).To(BeEmpty())
+	})
+
+	It("terms an event whose subject names another tenant than its provenance, writing nothing", func() {
+		const otherTenant = "tenant-b"
+		Expect(mem.CreateGraph(context.Background(), otherTenant)).To(Succeed())
+		for _, id := range []string{"ctrl-1", "ctrl-2"} {
+			Expect(mem.CreateNode(context.Background(), otherTenant, graphdb.Node{ID: id, Label: "Control", ValidFrom: time.Now().UTC()})).To(Succeed())
+		}
+		build(mem)
+		msg := stageEvent(otherTenant, "relationship", 1)
+		msg.Metadata.TenantID = tenantID
+		msg.Data = []byte(`{"analyzer":"relationship","job_id":"job-1","stage":"completed","metadata":{"marker":"payload-secret"}}`)
+
+		err := bus.Deliver(msg)
+
+		Expect(err).To(MatchError(natsbus.ErrPermanent))
+		Expect(err.Error()).To(ContainSubstring("tenant"))
+		Expect(materializer().Termed()).To(Equal(1))
+		Expect(semanticMatches(otherTenant)).To(BeEmpty())
+		Expect(semanticMatches(tenantID)).To(BeEmpty())
+		Expect(eventCount(tp, "unknown", "rejected")).To(Equal(int64(1)))
+		Expect(logs.String()).To(ContainSubstring("level=WARN"))
+		Expect(logs.String()).NotTo(ContainSubstring("payload-secret"))
+		Expect(err.Error()).NotTo(ContainSubstring("payload-secret"))
 	})
 })

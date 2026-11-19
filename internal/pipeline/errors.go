@@ -36,6 +36,24 @@ var ErrAnalyzersChanged = errors.New("the enabled analyzers changed since the jo
 // until the key pair is fixed and crosscodexd restarted.
 var ErrAttestationSigning = errors.New("attestation could not be signed")
 
+// ErrMaterializationNotQueued reports that a stage's completion event, which
+// the graph role materializes from, was not stored by the event bus. It is
+// transient: once the bus accepts the event, the job can be retried from its
+// failure.
+var ErrMaterializationNotQueued = errors.New("materialization event was not stored")
+
+// ErrGraphMaterializeFailed reports that the graph role answered a job's
+// materialization barrier with a "failed" outcome: at least one of the
+// job's materialization events was not written to the graph. A retry may
+// succeed once the cause in the graph role's logs is fixed.
+var ErrGraphMaterializeFailed = errors.New("graph materialization failed")
+
+// ErrGraphMaterializeTimeout reports that no graph role answered a job's
+// materialization barrier within pipeline.graph_materialize_timeout: none
+// is running, it cannot reach NATS or the graph database, or the job's
+// events take longer to write than the timeout.
+var ErrGraphMaterializeTimeout = errors.New("graph materialization did not finish in time")
+
 // ErrAttestationStorage reports that object storage did not accept or return
 // part of a job's attestation, after every retry for a write. It is
 // transient: once storage works, the job can be retried from its failure.

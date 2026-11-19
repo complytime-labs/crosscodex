@@ -53,10 +53,15 @@ type Service struct {
 	// leaves the subscription off.
 	controls ControlsReader
 
-	// subscriber lifecycle (used in Task 4)
+	// delivery sets the delivery limits of the durable consumers Start
+	// creates (config nats.materialize).
+	delivery config.NATSMaterializeConfig
+
+	// consumer lifecycle: sub is the graph-materializer consumer, barrierSub
+	// the graph-barrier consumer.
 	mu         sync.Mutex
 	sub        natsbus.Subscription
-	catalogSub natsbus.Subscription
+	barrierSub natsbus.Subscription
 }
 
 // New creates a Graph Service.
@@ -70,6 +75,12 @@ func New(graph graphdb.GraphDB, vectors vectordb.VectorDB, bus natsbus.Client, o
 		maxBulkEdges:          config.DefaultGraphMaxBulkEdges,
 		maxSimilarityCatalogs: config.DefaultGraphMaxSimilarityCatalogs,
 		maxSimilarityLimit:    config.DefaultGraphMaxSimilarityLimit,
+		delivery: config.NATSMaterializeConfig{
+			MaxDeliver:          config.DefaultNATSMaterializeMaxDeliver,
+			AckWait:             config.DefaultNATSMaterializeAckWait,
+			RedeliverDelay:      config.DefaultNATSMaterializeRedeliverDelay,
+			BarrierPollInterval: config.DefaultNATSMaterializeBarrierPollInterval,
+		},
 	}
 	for _, opt := range opts {
 		opt(s)

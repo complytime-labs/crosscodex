@@ -31,7 +31,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
-	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache/resultcachetest"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
@@ -546,7 +545,7 @@ var _ = Describe("Result cache settings and the model probe", Ordered, func() {
 			jobs = newFakeStore()
 			jobReg := analyzer.NewRegistry()
 			Expect(analyzer.Register[*pb.Control](jobReg, cacheableControlStub("classify", completionUse))).To(Succeed())
-			bus := &natsbustest.Fake{}
+			bus := newGraphRoleBus()
 			dispatcher = &executorTestDispatcher{}
 			engine := analysis.New(jobReg, dispatcher, &executorTestCollector{},
 				config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},

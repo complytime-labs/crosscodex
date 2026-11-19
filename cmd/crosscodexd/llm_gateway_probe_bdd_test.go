@@ -84,6 +84,7 @@ var _ = Describe("buildSharedResources LLM gateway reachability probe", func() {
 		cfg.NATS.URL = natsSrv.ClientURL()
 		cfg.NATS.Streams.AuditLLMRetention = 90 * 24 * time.Hour
 		cfg.NATS.Streams.AuditEventsRetention = 30 * 24 * time.Hour
+		cfg.NATS.PublishAckTimeout = 10 * time.Second
 		cfg.LLM.Timeout = 5
 	})
 
@@ -309,7 +310,7 @@ var _ = Describe("buildSharedResources LLM gateway reachability probe", func() {
 			})
 		}
 		complete := func(c llmclient.Client) error {
-			_, err := c.Complete(context.Background(), &llmclient.CompletionRequest{Model: "chat", TenantID: "test-tenant",
+			_, err := c.Complete(context.Background(), &llmclient.CompletionRequest{Model: "chat", TenantID: "test-tenant", JobID: "probe-job",
 				Messages: []llmclient.ChatMessage{{Role: llmclient.RoleUser, Content: "probe"}}, MaxTokens: 1})
 			return err
 		}

@@ -239,8 +239,9 @@ func allRoleTestConfig(dsn, tenantID string) *config.Config {
 	cfg := baseTestConfig(dsn)
 	cfg.Role = config.RoleAll
 	cfg.NATS = config.NATSConfig{
-		URL:      "", // embedded mode
-		Embedded: config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
+		URL:               "", // embedded mode
+		PublishAckTimeout: 10 * time.Second,
+		Embedded:          config.NATSEmbeddedConfig{StoreDir: GinkgoT().TempDir()},
 	}
 	cfg.TLS = testServerTLS()
 	cfg.LLM = config.LLMConfig{

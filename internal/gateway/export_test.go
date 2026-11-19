@@ -27,7 +27,7 @@ func ExportAuthInterceptor(s *Service, ts TenantStatusChecker) connect.Intercept
 	return s.connectAuthInterceptor(ts)
 }
 
-// ExportContextWithTLSState stores a TLS state the way tlsMiddleware does.
+// ExportContextWithTLSState stores a TLS state the way authn.TLSStateMiddleware does.
 func ExportContextWithTLSState(ctx context.Context, state *tls.ConnectionState) context.Context {
-	return context.WithValue(ctx, ctxKeyTLSState, state)
+	return authn.WithTLSState(ctx, state)
 }

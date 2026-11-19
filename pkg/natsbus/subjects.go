@@ -13,6 +13,27 @@ import (
 // subjectPrefix is the root prefix for all CrossCodex NATS subjects.
 const subjectPrefix = "crosscodex"
 
+// MaterializeStream is the work-queue stream that carries the inputs the graph
+// role materializes (stage completions, parsed catalogs, job barriers). It is
+// not an audit stream: AuditStreamNames, backup and the retention drift check
+// leave it out.
+const MaterializeStream = "MATERIALIZE"
+
+// AuditEventsStream is the audit stream that captures every
+// crosscodex.audit.<tenant>.events.> subject, including the graph outcomes
+// GraphOutcomeSubject names.
+const AuditEventsStream = "AUDIT_EVENTS"
+
+// Graph outcomes, the last token of a GraphOutcomeSubject.
+const (
+	// GraphOutcomeMaterialized: every materialization event of the job was
+	// handled and none failed.
+	GraphOutcomeMaterialized = "materialized"
+	// GraphOutcomeFailed: at least one materialization event of the job
+	// exhausted its deliveries without being written.
+	GraphOutcomeFailed = "failed"
+)
+
 // WorkerProgressSubject is the one subject the worker progress signal uses:
 // LLM workers publish a tick on it after every task result they publish, and
 // analysis collections listen to it to tell a busy worker pool from a
@@ -78,6 +99,45 @@ func WorkSubject(tenantID string, taskType TaskType, jobID string) (string, erro
 		"work", tenantID, string(taskType), jobID)
 }
 
+// workSubjectFormat is the schema WorkSubject builds and ParseWorkSubject
+// accepts, quoted in parse errors.
+const workSubjectFormat = subjectPrefix + ".work.<tenant_id>.<task_type>.<job_id>"
+
+// WorkSubjectParts is what a work subject names. TaskType is a string, not a
+// TaskType: WorkSubject accepts any single token, so the parser cannot promise
+// a TaskType constant.
+type WorkSubjectParts struct {
+	TenantID string
+	TaskType string
+	JobID    string
+}
+
+// ParseWorkSubject is the inverse of WorkSubject. Workers call it on every
+// work message to learn the tenant the subject (the one thing NATS publish
+// permissions scope) names, so it validates the subject as untrusted input:
+// it accepts only subjects WorkSubject can build, with a non-empty task type,
+// and returns an ErrInvalidSubject error for anything else.
+func ParseWorkSubject(subject string) (WorkSubjectParts, error) {
+	parts := strings.Split(subject, ".")
+	if len(parts) != 5 || parts[0] != subjectPrefix || parts[1] != "work" {
+		return WorkSubjectParts{}, fmt.Errorf("subject %q is not a work subject %s: %w",
+			subject, workSubjectFormat, ErrInvalidSubject)
+	}
+	// Clone each field: the caller may keep the result past the message.
+	p := WorkSubjectParts{
+		TenantID: strings.Clone(parts[2]),
+		TaskType: strings.Clone(parts[3]),
+		JobID:    strings.Clone(parts[4]),
+	}
+	if err := validateToken(p.TaskType, "task type"); err != nil {
+		return WorkSubjectParts{}, fmt.Errorf("work subject %q: %w", subject, err)
+	}
+	if _, err := WorkSubject(p.TenantID, TaskType(p.TaskType), p.JobID); err != nil {
+		return WorkSubjectParts{}, fmt.Errorf("work subject %q: %w", subject, err)
+	}
+	return p, nil
+}
+
 // ResultSubject builds a result subject.
 //
 //	crosscodex.results.{tenant_id}.{task_type}.{job_id}
@@ -110,6 +170,53 @@ func FeedbackSubject(tenantID, edgeID string) (string, error) {
 func CatalogParsedSubject(tenantID, catalogID string) (string, error) {
 	return buildSubject(tenantID, validateToken(catalogID, "catalog ID"),
 		"catalog", tenantID, catalogID, "parsed")
+}
+
+// CatalogAuditSubject builds the subject of the audit record catalog ingest
+// publishes after it has stored a catalog; the AUDIT_EVENTS stream captures it.
+//
+//	crosscodex.audit.{tenant_id}.events.catalog.{catalog_id}.parsed
+func CatalogAuditSubject(tenantID, catalogID string) (string, error) {
+	return buildSubject(tenantID, validateToken(catalogID, "catalog ID"),
+		"audit", tenantID, string(AuditEvents), "catalog", catalogID, "parsed")
+}
+
+// MaterializeBarrierSubject builds the subject the pipeline executor publishes
+// when every materialization input of a job has been published; the graph role
+// consumes it from the MATERIALIZE stream to know the job's inputs are complete.
+//
+//	crosscodex.materialize.{tenant_id}.{job_id}.barrier
+func MaterializeBarrierSubject(tenantID, jobID string) (string, error) {
+	return buildSubject(tenantID, validateJobID(jobID),
+		"materialize", tenantID, jobID, "barrier")
+}
+
+// GraphOutcomeSubject builds the subject the graph role publishes a job's
+// materialization outcome on, GraphOutcomeMaterialized or GraphOutcomeFailed;
+// the AUDIT_EVENTS stream (AuditEventsStream) stores it. Any other outcome is
+// rejected with ErrInvalidSubject.
+//
+//	crosscodex.audit.{tenant_id}.events.{job_id}.graph.{materialized|failed}
+func GraphOutcomeSubject(tenantID, jobID, outcome string) (string, error) {
+	tokenErr := validateJobID(jobID)
+	if tokenErr == nil && outcome != GraphOutcomeMaterialized && outcome != GraphOutcomeFailed {
+		tokenErr = fmt.Errorf("graph outcome %q is neither %q nor %q: %w",
+			outcome, GraphOutcomeMaterialized, GraphOutcomeFailed, ErrInvalidSubject)
+	}
+	return buildSubject(tenantID, tokenErr,
+		"audit", tenantID, string(AuditEvents), jobID, "graph", outcome)
+}
+
+// GraphOutcomeFilter matches every GraphOutcomeSubject of one job. The
+// subjects outlive a run: a retried or resumed job keeps its job ID, and the
+// outcomes carry no message ID, so a barrier answered twice (a redelivery
+// racing its ack) publishes twice. A subscriber must ignore outcomes stored
+// before its run started and take the first answer.
+//
+//	crosscodex.audit.{tenant_id}.events.{job_id}.graph.*
+func GraphOutcomeFilter(tenantID, jobID string) (string, error) {
+	return buildSubject(tenantID, validateJobID(jobID),
+		"audit", tenantID, string(AuditEvents), jobID, "graph", "*")
 }
 
 // AbandonedSubjectFilter matches every abandon control subject, across all

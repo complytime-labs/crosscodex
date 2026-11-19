@@ -23,9 +23,32 @@ The `*` in each subject pattern is the tenant ID. All audit subjects are scoped 
 `buildSharedResources` (`cmd/crosscodexd/resources.go`) attaches an `internal/worker.NATSAuditEmitter` to every LLM client it opens, so each completion and embedding call from the daemon roles and the admin one-shots publishes an `llmclient.AuditEvent` to `crosscodex.audit.<tenant>.llm.<job_id>`. The event records the tenant, job ID, model, operation, a SHA-256 hash of the prompt, prompt name and version, tokens used, duration, success or error, and the trace ID.
 
 - **Fail closed at startup:** a caller that asks for the `llm` resource without `nats` is refused, so no LLM client is ever opened unaudited.
-- **Best effort per call:** a publish failure is logged and counted in `crosscodex.worker.audit.failures.total` (by `reason`), but does not fail the LLM call (the `llmclient.AuditEmitter` contract).
-- **Job ID:** the subject token, so it must be non-empty, free of `.`, `*` and `>`, and at most 128 bytes (`natsbus.MaxJobIDLength`); the emitter drops events that fail this check and counts them as `invalid_subject`. Worker calls (dispatched by the pipeline's analyzers) use the analysis job ID. `crosscodexd admin adjudicate artifacts` uses one ID per tenant run, `artifact-adjudication-<uuid>`, logged as `run.id` in the run's summary line; its events also carry the `artifact_same_as` prompt name and version stored in each verdict's evidence.
+- **Stored or failed, per call:** the emitter publishes with `PublishDurable` and waits for the stream's acknowledgement. A failure is logged, counted in `crosscodex.worker.audit.failures.total` (by `reason`) and returned, so the LLM call fails with `llmclient.ErrAuditFailed` and its result is withheld (the `llmclient.AuditEmitter` contract). The call was made and probably billed, so the worker reports `X-Error: audit_failed` and the collector never redispatches it (`task_audit_failed`).
+- **Job ID:** the subject token, so it must be non-empty, free of `.`, `*` and `>`, and at most 128 bytes (`natsbus.MaxJobIDLength`); an event that fails this check is not stored: the call fails with `ErrAuditFailed` and is counted as `invalid_subject`. Worker calls (dispatched by the pipeline's analyzers) use the analysis job ID. `crosscodexd admin adjudicate artifacts` uses one ID per tenant run, `artifact-adjudication-<uuid>`, logged as `run.id` in the run's summary line; its events also carry the `artifact_same_as` prompt name and version stored in each verdict's evidence.
 - **Admin one-shots attach to the daemon's NATS server:** see [Stream Creation](#stream-creation). Admin one-shots do not call `telemetry.Init` (see [telemetry.md](telemetry.md)), so their events carry an empty `trace_id` and the failure counter is not exported.
+
+### Graph Materialization Outcomes
+
+A job's graph stage completes only once the graph role confirms that every materialization event of the job is written to the graph. The exchange uses two subjects:
+
+| Subject                                                       | Stream         | Publisher          | Payload                                         |
+|---------------------------------------------------------------|----------------|--------------------|-------------------------------------------------|
+| `crosscodex.materialize.<tenant>.<job>.barrier`               | `MATERIALIZE`  | pipeline executor  | `natsbus.MaterializeBarrier` (`job_id`, `deadline`, `not_before`) |
+| `crosscodex.audit.<tenant>.events.<job>.graph.<outcome>`      | `AUDIT_EVENTS` | graph role         | `natsbus.GraphOutcome` (`job_id`, `outcome`, `analyzer`, `error`) |
+
+`<outcome>` is `materialized` or `failed`.
+
+1. After synthesis, the executor's graph stage (`internal/pipeline` `runGraph`) subscribes to the job's outcomes (`natsbus.GraphOutcomeFilter`), then stores a barrier with `deadline` = now + `pipeline.graph_materialize_timeout` (default 30m) and `not_before` = the start of this run of the job. It subscribes first so the answer cannot arrive unheard. Between the two, a retried or resumed job re-publishes (durably) the `stage.completed` event of every analyzer and of synthesis that an earlier run completed, with `graph_deferred` set as the analysis engine sets it (relationship and requires of a job that runs critique). Those stages are not run again and the barrier counts only this run's failures, so an earlier run's failed materialization would otherwise go unnoticed; graph writes are idempotent. A first run re-publishes nothing. A re-publish that is not stored fails the stage before any barrier is sent.
+2. The barrier sits in `MATERIALIZE` behind the job's stage completion events. The graph role (consumer `graph-barrier`) checks it every `nats.materialize.barrier_poll_interval` until none of the job's events is left, then publishes `materialized`, or `failed` if a `failed` outcome for the job was stored at or after `not_before`. It drops a barrier past its deadline unanswered.
+3. The executor takes the first outcome it receives for the job. It ignores an outcome received before the run started, one whose `job_id` is another job's, and one whose provenance tenant is not the job's: outcome subjects outlive a run (a retried or resumed job keeps its job ID) and carry no message ID, so a barrier answered twice publishes twice. A `failed` outcome that the graph role publishes for an event on its last delivery is an answer too, and fails the job at once.
+
+Only `materialized` marks the graph stage completed; the stage's `completed` event follows. The other ends fail the stage and the job with a message the tenant sees:
+
+- `failed`: `graph materialization failed for job <id>: <error>. Check the graph role's logs, then re-run the job.` (`pipeline.ErrGraphMaterializeFailed`; `<error>` is the outcome's `error`, at most 512 bytes).
+- No answer by the deadline: `graph materialization for job <id> did not finish within pipeline.graph_materialize_timeout (<d>). Check that a crosscodexd graph role (or role all) is running and can reach NATS and the graph database, then re-run the job, or raise the timeout.` (`pipeline.ErrGraphMaterializeTimeout`).
+- The subscription or the barrier failed: the job names the event bus and the `MATERIALIZE` stream and how to retry it (`pipeline.ErrMaterializationNotQueued`).
+
+A cancel or shutdown while the stage waits ends the wait; a resumed job whose graph stage did not complete stores a new barrier, which the graph role answers like the first. Waits are counted in `pipeline.graph_materialize.waits.total` by `outcome` (`materialized`, `failed`, `timeout`, `not_sent`, `interrupted`) and timed in `pipeline.graph_materialize.wait.duration_ms`.
 
 ### Retention Configuration
 
@@ -36,13 +59,14 @@ nats:
   streams:
     audit_llm_retention: 2160h      # 90 days (default)
     audit_events_retention: 720h    # 30 days (default)
+    materialize_retention: 168h     # MATERIALIZE work queue (not an audit stream)
 ```
 
 The decisions stream has no retention limit. Compliance determinations are kept indefinitely because auditors may need to review them years later.
 
 ### Stream Creation
 
-Streams are created or updated automatically when the NATS client starts (`natsbus.New`). If a stream already exists, its configuration is updated to match. Manual stream management is not required.
+Streams are created automatically when the NATS client starts (`natsbus.New`). A stream that already exists is verified, never updated: if its subjects, retention policy, storage, `max_age` or replicas differ from this role's `nats.streams`, startup fails with `natsbus.ErrStreamDrift`, naming each field with its live and configured values. Make `nats.streams` agree in every role, or edit the live stream (`nats stream edit <name> ...`) and restart.
 
 Admin one-shots that publish audit events (`crosscodexd admin retention scan`, and `admin adjudicate artifacts` without `--dry-run`) instead attach with `natsbus.WithExistingStreams` (`requiredResources.attachNATS` in `cmd/crosscodexd/resources.go`). That mode:
 
@@ -141,6 +165,19 @@ Every LLM worker subscribes to `crosscodex.control.*.*.*.*.abandoned` (`natsbus.
 - **Forgery.** The provenance tenant check is a consistency check that rejects mismatched messages, not authorization: provenance headers are unsigned, so any bus participant can set `X-Tenant-Id` to match the subject it publishes on, for any tenant. What protects a collection is that its ID is a random UUID seen only in work message headers, and NATS publish permissions on `crosscodex.control.>` (tenant isolation on NATS is subject-level only; per-tenant accounts are not implemented). A forged abandon makes the workers drop that collection's tasks, so the stage fails on its idle timeout or stage cap; it cannot alter or forge a result.
 
 Tasks already calling the LLM when the abandon arrives finish normally; their results are discarded by the collector, which no longer listens.
+
+### Work Messages: Tenant Agreement
+
+```
+crosscodex.work.{tenant_id}.{task_type}.{job_id}
+```
+
+The work subject is the only tenant claim that NATS publish permissions scope; the `X-Tenant-Id` provenance header is set by the publisher. Before any payload decoding or LLM call, the worker parses the subject with `natsbus.ParseWorkSubject` (the inverse of `natsbus.WorkSubject`) and compares its tenant to the header's:
+
+- **Unparsable subject.** Dropped, logged at error and counted (`worker.errors{error_category="invalid_message"}`). No result is published: the subject names no tenant to answer on.
+- **Header tenant differs from the subject's.** No LLM call. The worker counts `worker.errors{error_category="tenant_mismatch"}` (under the task type from the subject) and publishes an error result on the subject's tenant and job with `X-Error: tenant_mismatch`. The result is never addressed to the header's tenant, so a forged header cannot send anything to another tenant. The collector classifies it as `task_tenant_mismatch` (`analysis.ErrTenantMismatch`) and never retries it. The log, which only operators read, names both tenant IDs.
+
+As with the abandon check, this is a consistency check, not authorization: a publisher that sets the header to match the subject it publishes on passes. Tenant isolation on NATS is subject-level only; per-tenant accounts are not implemented.
 
 ## Trace Context Propagation
 

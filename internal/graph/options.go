@@ -3,6 +3,8 @@ package graph
 import (
 	"log/slog"
 
+	"github.com/complytime-labs/crosscodex/pkg/config"
+
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -99,4 +101,27 @@ func WithResolverRegistry(registry *ResolverRegistry) Option {
 // subscribe to catalog events.
 func WithControlsReader(r ControlsReader) Option {
 	return func(s *Service) { s.controls = r }
+}
+
+// WithMaterializeConfig sets the delivery limits of the durable MATERIALIZE
+// consumers Start creates. Wired from config nats.materialize
+// (config.NATSConfig.Materialize), whose validation keeps MaxDeliver at least
+// 1 and every duration positive. Options cannot return errors, so a field
+// outside those bounds is ignored and keeps its compiled default
+// (config.DefaultNATSMaterialize*).
+func WithMaterializeConfig(c config.NATSMaterializeConfig) Option {
+	return func(s *Service) {
+		if c.MaxDeliver >= 1 {
+			s.delivery.MaxDeliver = c.MaxDeliver
+		}
+		if c.AckWait > 0 {
+			s.delivery.AckWait = c.AckWait
+		}
+		if c.RedeliverDelay > 0 {
+			s.delivery.RedeliverDelay = c.RedeliverDelay
+		}
+		if c.BarrierPollInterval > 0 {
+			s.delivery.BarrierPollInterval = c.BarrierPollInterval
+		}
+	}
 }

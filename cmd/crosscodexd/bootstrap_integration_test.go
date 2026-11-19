@@ -23,6 +23,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
@@ -58,16 +59,25 @@ var (
 	testTLSServerKeyPath  string
 	testTLSClientCertPath string
 	testTLSClientKeyPath  string
+	// testClientX509Mappings maps the suite's client certificate, read from
+	// the generated PKI, to admin. Roles come only from auth.x509_mappings,
+	// and every spec that calls a gateway presents this certificate.
+	testClientX509Mappings []config.X509MappingConfig
+	// testServiceIdentities lists that same client certificate as the
+	// service identity a standalone pipeline role accepts tenant headers from.
+	testServiceIdentities []config.X509MatchConfig
 )
 
 // testServerTLS returns a mutual-TLS server config (CA + server cert/key)
-// for role=pipeline tests that bootstrap a real pipeline listener.
+// for role=pipeline tests that bootstrap a real pipeline listener. It lists
+// the suite's client certificate as a service identity.
 func testServerTLS() config.TLSConfig {
 	return config.TLSConfig{
-		Mode: "mutual",
-		CA:   testTLSCAPath,
-		Cert: testTLSServerCertPath,
-		Key:  testTLSServerKeyPath,
+		Mode:              "mutual",
+		CA:                testTLSCAPath,
+		Cert:              testTLSServerCertPath,
+		Key:               testTLSServerKeyPath,
+		ServiceIdentities: testServiceIdentities,
 	}
 }
 
@@ -122,6 +132,16 @@ var _ = BeforeSuite(func() {
 	testTLSServerKeyPath = filepath.Join(certDir, "server-key.pem")
 	testTLSClientCertPath = filepath.Join(certDir, "client.pem")
 	testTLSClientKeyPath = filepath.Join(certDir, "client-key.pem")
+	clientBlock, _ := pem.Decode(pki.ClientCert)
+	Expect(clientBlock).NotTo(BeNil(), "decode test client cert")
+	clientCert, err := x509.ParseCertificate(clientBlock.Bytes)
+	Expect(err).NotTo(HaveOccurred(), "parse test client cert")
+	Expect(clientCert.Subject.Organization).To(HaveLen(1), "test client cert organization")
+	testClientX509Mappings = []config.X509MappingConfig{{
+		Match: config.X509MatchConfig{CN: clientCert.Subject.CommonName, Organization: clientCert.Subject.Organization[0]},
+		Roles: []string{authn.RoleAdmin},
+	}}
+	testServiceIdentities = []config.X509MatchConfig{testClientX509Mappings[0].Match}
 
 	testGraphUserPassword, err = dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "generate graph_user password")
@@ -178,6 +198,7 @@ func baseTestConfig(suDSN string) *config.Config {
 		Catalog: config.CatalogConfig{RequirementPartNames: oscal.DefaultRequirementPartNames},
 		// The loader's default backend; specs set the base path they need.
 		Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+		Auth:    config.AuthConfig{X509Mappings: testClientX509Mappings},
 	}
 	Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "crosscodexd migrate")
 	return cfg
@@ -332,6 +353,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
@@ -386,6 +408,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 		cfg.Attestation = config.AttestationConfig{Enabled: true, ExpiryDuration: time.Hour}
 		// Valid TLS so this test fails on the attestation precondition, not
 		// attachPipeline's new mutual-TLS check.
@@ -437,6 +460,7 @@ var _ = Describe("bootstrap with role=pipeline", func() {
 		cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 		cfg.Pipeline.Addr = "127.0.0.1:0"
 		cfg.Tenants.DefaultTenant = "crosscodexd-test"
+		Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 		cfg.Storage.Objects.BasePath = ""
@@ -634,7 +658,8 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 	// defaultTenantConfig configures a gateway-serving role so bootstrap
 	// reaches the default-tenant check: role all needs its pipeline settings
 	// and a mutual-TLS gateway-server listener, role gateway a pipeline
-	// endpoint and a mutual-TLS identity serving both.
+	// endpoint and a mutual-TLS identity serving both, role pipeline its
+	// listener settings and a service identity.
 	defaultTenantConfig := func(role, tenantID string) *config.Config {
 		cfg := baseTestConfig(suDSN)
 		cfg.Role = role
@@ -650,6 +675,13 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 		case config.RoleGateway:
 			cfg.Pipeline.Endpoint = "127.0.0.1:0" // construction only -- no call is made
 			cfg.TLS = testClientTLS()
+		case config.RolePipeline:
+			cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
+			cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
+			cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
+			cfg.Pipeline.Addr = "127.0.0.1:0"
+			cfg.Health.Addr = "127.0.0.1:0"
+			cfg.TLS = testServerTLS()
 		default:
 			Fail("defaultTenantConfig: unsupported role " + role)
 		}
@@ -684,6 +716,7 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 		},
 		Entry("role all", config.RoleAll),
 		Entry("role gateway", config.RoleGateway),
+		Entry("role pipeline", config.RolePipeline),
 	)
 
 	DescribeTable("refuses a default tenant that was never provisioned",
@@ -705,5 +738,6 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 		},
 		Entry("role all", config.RoleAll),
 		Entry("role gateway", config.RoleGateway),
+		Entry("role pipeline", config.RolePipeline),
 	)
 })

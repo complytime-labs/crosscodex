@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	connectrpc "connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -64,8 +65,12 @@ var _ = Describe("embedded service telemetry wiring", func() {
 		// Built without the loader: set the default the parser would otherwise lack.
 		cfg.Catalog.RequirementPartNames = oscal.DefaultRequirementPartNames
 
+		// The auth registry maps the client certificate it is given.
+		pkiDir := filepath.Join(dataDir, "pki")
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-		svc, resources, err := buildEmbeddedService(ctx, cfg, logger)
+		svc, resources, err := buildEmbeddedService(ctx, cfg, pkiPaths(pkiDir).ClientCert, logger)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(resources.close)
 

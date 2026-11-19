@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -61,7 +62,9 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 		cfg.Retention.validate(tracker),
 		validateBackup(&cfg.Backup, &cfg.Storage.Objects, tracker),
 		validateGraph(&cfg.Graph, tracker),
+		validateNATS(&cfg.NATS, tracker),
 		validateTenants(&cfg.Tenants, tracker),
+		validateAuth(&cfg.Auth, &cfg.Tenants, tracker),
 		validateRole(cfg, tracker),
 	)
 	if tracker != nil {
@@ -89,6 +92,36 @@ func (p *problems) addFrom(source, path, format string, args ...any) {
 }
 
 func (p problems) err() error { return errors.Join(p...) }
+
+func validateNATS(nats *NATSConfig, tracker *sourceTracker) error {
+	var p problems
+	if nats.PublishAckTimeout <= 0 {
+		p.add("nats.publish_ack_timeout", "nats.publish_ack_timeout %s%s must be positive: it bounds how long a durable publish waits for JetStream to confirm storage, so set a positive duration such as 10s: %w",
+			nats.PublishAckTimeout, formatSource(tracker, "nats.publish_ack_timeout"), ErrInvalidConfig)
+	}
+	if nats.Streams.MaterializeRetention <= 0 {
+		p.add("nats.streams.materialize_retention", "nats.streams.materialize_retention %s%s must be positive: it bounds how long an unconsumed graph-materialization input is kept, so set a positive duration such as 168h: %w",
+			nats.Streams.MaterializeRetention, formatSource(tracker, "nats.streams.materialize_retention"), ErrInvalidConfig)
+	}
+	m := nats.Materialize
+	if m.MaxDeliver < 1 {
+		p.add("nats.materialize.max_deliver", "nats.materialize.max_deliver %d%s must be at least 1, such as 5: it is how many times the graph role tries a materialization event before reporting the job's graph as failed, and unlimited would retry a poison event forever: %w",
+			m.MaxDeliver, formatSource(tracker, "nats.materialize.max_deliver"), ErrInvalidConfig)
+	}
+	if m.AckWait <= 0 {
+		p.add("nats.materialize.ack_wait", "nats.materialize.ack_wait %s%s must be positive: it must exceed the time the graph role takes to materialize one event, so set a positive duration such as 10m: %w",
+			m.AckWait, formatSource(tracker, "nats.materialize.ack_wait"), ErrInvalidConfig)
+	}
+	if m.RedeliverDelay <= 0 {
+		p.add("nats.materialize.redeliver_delay", "nats.materialize.redeliver_delay %s%s must be positive: it spaces the retries of a failed materialization event, so set a positive duration such as 30s: %w",
+			m.RedeliverDelay, formatSource(tracker, "nats.materialize.redeliver_delay"), ErrInvalidConfig)
+	}
+	if m.BarrierPollInterval <= 0 {
+		p.add("nats.materialize.barrier_poll_interval", "nats.materialize.barrier_poll_interval %s%s must be positive: it is how often a job barrier checks whether the job's graph is complete, so set a positive duration such as 2s: %w",
+			m.BarrierPollInterval, formatSource(tracker, "nats.materialize.barrier_poll_interval"), ErrInvalidConfig)
+	}
+	return p.err()
+}
 
 func validateTLS(tls *TLSConfig, tracker *sourceTracker) error {
 	var p problems
@@ -119,6 +152,10 @@ func validateTLS(tls *TLSConfig, tracker *sourceTracker) error {
 			p.add(mapKeyPath("tls.targets", name)+".mode", "tls.targets.%s.mode %q must be one of off, server-only, mutual: %w",
 				name, override.Mode, ErrInvalidConfig)
 		}
+	}
+
+	for i, id := range tls.ServiceIdentities {
+		p.checkMatch(fmt.Sprintf("tls.service_identities[%d]", i), id, "service identity", tracker)
 	}
 
 	return p.err()
@@ -1077,4 +1114,86 @@ func validateCandidateGenerators(gens []CandidateGeneratorEntry, tracker *source
 		}
 	}
 	return p.err()
+}
+
+// x509MatchFields returns m's non-empty patterns keyed by their config name,
+// in declaration order.
+func x509MatchFields(m X509MatchConfig) []struct{ key, pattern string } {
+	var out []struct{ key, pattern string }
+	for _, f := range []struct{ key, pattern string }{
+		{"cn", m.CN}, {"organization", m.Organization}, {"org_unit", m.OrgUnit},
+		{"san_email", m.SANEmail}, {"san_dns", m.SANDNS}, {"san_uri", m.SANURI},
+	} {
+		if f.pattern != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// checkMatch reports under path a match block that sets no field (it would
+// match every certificate) and, under path.<field>, each pattern that is not
+// a valid glob. path is the block's own path; what names the block's role in
+// the messages.
+func (p *problems) checkMatch(path string, m X509MatchConfig, what string, tracker *sourceTracker) {
+	fields := x509MatchFields(m)
+	if len(fields) == 0 {
+		p.add(path, "%s%s sets no field, so it matches every certificate: set at least one of cn, organization, org_unit, san_email, san_dns, san_uri: %w",
+			path, formatSource(tracker, path), ErrInvalidConfig)
+		return
+	}
+	for _, f := range fields {
+		// authn matches with filepath.Match, which reports a malformed
+		// pattern only when it is evaluated, so a bad one fails silently.
+		if _, err := filepath.Match(f.pattern, ""); err != nil {
+			p.add(path+"."+f.key, "%s.%s %q%s is not a valid glob pattern, so this %s would never match: fix it (a literal [ must be written \\[): %w",
+				path, f.key, f.pattern, formatSource(tracker, path+"."+f.key), what, ErrInvalidConfig)
+		}
+	}
+}
+
+// validateAuth checks auth.x509_mappings at load time. Role names are not
+// checked here (pkg/authn imports pkg/config); authn.NewX509Authenticator
+// rejects unknown roles at startup. A config with no mappings is valid:
+// roles that need one refuse to start without it.
+func validateAuth(a *AuthConfig, t *TenantsConfig, tracker *sourceTracker) error {
+	var p problems
+	firstWith := map[X509MatchConfig]int{}
+	for i, m := range a.X509Mappings {
+		prefix := fmt.Sprintf("auth.x509_mappings[%d]", i)
+		matchPath := prefix + ".match"
+		p.checkMatch(matchPath, m.Match, "mapping", tracker)
+		if len(x509MatchFields(m.Match)) > 0 {
+			if first, dup := firstWith[m.Match]; dup {
+				p.add(matchPath, "%s%s is identical to auth.x509_mappings[%d].match, so this mapping is unreachable because mapping %d matches first: remove it or change its match: %w",
+					matchPath, formatSource(tracker, matchPath), first, first, ErrInvalidConfig)
+			} else {
+				firstWith[m.Match] = i
+			}
+		}
+		if len(m.Roles) == 0 {
+			p.add(prefix+".roles", "%s.roles%s is empty: a certificate matching this mapping would authenticate with no roles. List at least one role, such as admin or reviewer: %w",
+				prefix, formatSource(tracker, prefix+".roles"), ErrInvalidConfig)
+		}
+		p.checkMappingTenant(prefix+".tenant", m.Tenant, t, tracker)
+	}
+	return p.err()
+}
+
+// checkMappingTenant applies the tenant rule of a mapping: with
+// tenants.enabled a valid tenant is required; otherwise the mapping may name
+// only tenants.default_tenant or leave the tenant empty.
+func (p *problems) checkMappingTenant(path, id string, t *TenantsConfig, tracker *sourceTracker) {
+	switch {
+	case id == "" && t.Enabled:
+		p.add(path, "%s is required%s because tenants.enabled is true: set it to the tenant this certificate acts for (%s): %w",
+			path, formatSource(tracker, "tenants.enabled"), tenant.IDRule, ErrInvalidConfig)
+	case id == "":
+	case tenant.ValidateTenantID(id) != nil:
+		p.add(path, "%s %q%s is not a valid tenant ID: it must be %s: %w",
+			path, id, formatSource(tracker, path), tenant.IDRule, ErrInvalidConfig)
+	case !t.Enabled && id != t.DefaultTenant:
+		p.add(path, "%s %q%s names a tenant other than tenants.default_tenant %q while tenants.enabled is false: leave it empty or set it to the default tenant, or enable tenants: %w",
+			path, id, formatSource(tracker, path), t.DefaultTenant, ErrInvalidConfig)
+	}
 }

@@ -204,6 +204,8 @@ func FuzzCheckKnownKeys(f *testing.F) {
 	f.Add("analysis:\n  candidates:\n    generators:\n      - name: semantic\n        config:\n          top_k: 3\n          nested: {a: {b: {c: [1, 2]}}}\n")
 	f.Add("synthesis:\n  tenant_overrides:\n    acme:\n      viability:\n        skip_level_factor: 0.5\n        deep: {x: {y: {z: 1}}}\n")
 	f.Add("auth:\n  x509_mappings: &m\n    - &e {tenant: a, match: {cn: x}}\n    - *e\n  z: &z [*m, *m, *m, *m, *m, *m]\n")
+	f.Add("auth:\n  x509_mappings:\n    - {match: {cn: x}, roles: [admin]}\n    - {match: {cn: x}, roles: [reviewer]}\n")
+	f.Add("tls:\n  service_identities:\n    - {}\n    - {cn: \"[\"}\n")
 	f.Add("tls:\n  targets: &t\n    nats:\n      <<: *t\n      mode: mutual\n")
 	f.Add("tls:\n  targets:\n    a: &x {mode: off}\n    b: {<<: [*x, *x], ca: /c}\n")
 	f.Add("- just\n- a\n- list\n")

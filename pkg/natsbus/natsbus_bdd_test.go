@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -580,6 +581,76 @@ var _ = Describe("NATSBus System", Ordered, func() {
 			)
 		})
 
+		DescribeTable("builds MaterializeBarrierSubject, rejecting an invalid tenant or job",
+			func(tenant, jobID, want string, wantErr error) {
+				got, err := natsbus.MaterializeBarrierSubject(tenant, jobID)
+				if wantErr != nil {
+					Expect(err).To(MatchError(wantErr))
+					Expect(got).To(BeEmpty())
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(want))
+			},
+			Entry("valid", "acme-corp", "job-1", "crosscodex.materialize.acme-corp.job-1.barrier", nil),
+			Entry("invalid tenant", "a.b", "job-1", "", natsbus.ErrInvalidSubject),
+			Entry("empty job", "acme-corp", "", "", natsbus.ErrInvalidJobID),
+			Entry("job with wildcard", "acme-corp", "job>", "", natsbus.ErrInvalidJobID),
+			Entry("job with dot", "acme-corp", "job.x", "", natsbus.ErrInvalidJobID),
+		)
+
+		DescribeTable("builds GraphOutcomeSubject, rejecting an invalid tenant, job or outcome",
+			func(tenant, jobID, outcome, want string, wantErr error) {
+				got, err := natsbus.GraphOutcomeSubject(tenant, jobID, outcome)
+				if wantErr != nil {
+					Expect(err).To(MatchError(wantErr))
+					Expect(got).To(BeEmpty())
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(want))
+			},
+			Entry("materialized", "acme-corp", "job-1", natsbus.GraphOutcomeMaterialized,
+				"crosscodex.audit.acme-corp.events.job-1.graph.materialized", nil),
+			Entry("failed", "acme-corp", "job-1", natsbus.GraphOutcomeFailed,
+				"crosscodex.audit.acme-corp.events.job-1.graph.failed", nil),
+			Entry("unknown outcome", "acme-corp", "job-1", "done", "", natsbus.ErrInvalidSubject),
+			Entry("wildcard outcome", "acme-corp", "job-1", "*", "", natsbus.ErrInvalidSubject),
+			Entry("invalid tenant", "a.b", "job-1", natsbus.GraphOutcomeFailed, "", natsbus.ErrInvalidSubject),
+			Entry("empty job", "acme-corp", "", natsbus.GraphOutcomeFailed, "", natsbus.ErrInvalidJobID),
+			Entry("job with wildcard", "acme-corp", "job>", natsbus.GraphOutcomeFailed, "", natsbus.ErrInvalidJobID),
+		)
+
+		DescribeTable("builds GraphOutcomeFilter, rejecting an invalid tenant or job",
+			func(tenant, jobID, want string, wantErr error) {
+				got, err := natsbus.GraphOutcomeFilter(tenant, jobID)
+				if wantErr != nil {
+					Expect(err).To(MatchError(wantErr))
+					Expect(got).To(BeEmpty())
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(want))
+			},
+			Entry("valid", "acme-corp", "job-1", "crosscodex.audit.acme-corp.events.job-1.graph.*", nil),
+			Entry("invalid tenant", "a*b", "job-1", "", natsbus.ErrInvalidSubject),
+			Entry("job with dot", "acme-corp", "job.x", "", natsbus.ErrInvalidJobID),
+		)
+
+		It("captures graph outcomes in the AUDIT_EVENTS stream", func() {
+			subject, err := natsbus.GraphOutcomeSubject("acme-corp", "job-1", natsbus.GraphOutcomeFailed)
+			Expect(err).NotTo(HaveOccurred())
+			var events natsbus.StreamConfig
+			for _, sc := range natsbus.AuditStreamConfigs(config.NATSStreamsConfig{}) {
+				if sc.Name == natsbus.AuditEventsStream {
+					events = sc
+				}
+			}
+			Expect(events.Subjects).To(ContainElement(Satisfy(func(filter string) bool {
+				return server.SubjectMatchesFilter(subject, filter)
+			})))
+		})
+
 		Context("when building CatalogParsedSubject", func() {
 			type catalogCase struct {
 				tenant    string
@@ -616,6 +687,27 @@ var _ = Describe("NATSBus System", Ordered, func() {
 				Entry("invalid tenant", catalogCase{
 					tenant: "a.b", catalogID: "0123456789abcdef", wantErr: natsbus.ErrInvalidSubject,
 				}),
+			)
+		})
+
+		Context("when building CatalogAuditSubject", func() {
+			DescribeTable("builds a subject the AUDIT_EVENTS stream captures, and rejects bad tokens",
+				func(tenant, catalogID, want string, wantErr error) {
+					got, err := natsbus.CatalogAuditSubject(tenant, catalogID)
+					if wantErr != nil {
+						Expect(err).To(MatchError(wantErr))
+						Expect(got).To(BeEmpty())
+						return
+					}
+					Expect(err).NotTo(HaveOccurred())
+					Expect(got).To(Equal(want))
+				},
+				Entry("valid catalog", "acme-corp", "0123456789abcdef",
+					"crosscodex.audit.acme-corp.events.catalog.0123456789abcdef.parsed", nil),
+				Entry("empty catalog ID", "acme-corp", "", "", natsbus.ErrInvalidSubject),
+				Entry("catalog ID with dot", "acme-corp", "cat.x", "", natsbus.ErrInvalidSubject),
+				Entry("catalog ID with wildcard", "acme-corp", "cat>", "", natsbus.ErrInvalidSubject),
+				Entry("invalid tenant", "a.b", "0123456789abcdef", "", natsbus.ErrInvalidSubject),
 			)
 		})
 	})
@@ -875,5 +967,47 @@ var _ = Describe("WorkerProgressSubject", func() {
 			Expect(logs.String()).To(ContainSubstring("level=ERROR"))
 			Expect(logs.String()).To(ContainSubstring("rejecting message: missing provenance"))
 		})
+	})
+})
+
+var _ = Describe("ParseWorkSubject", func() {
+	DescribeTable("accepts what WorkSubject builds",
+		func(tenantID string, taskType natsbus.TaskType, jobID string) {
+			subject, err := natsbus.WorkSubject(tenantID, taskType, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(natsbus.ParseWorkSubject(subject)).To(Equal(natsbus.WorkSubjectParts{
+				TenantID: tenantID, TaskType: string(taskType), JobID: jobID,
+			}))
+		},
+		Entry("a UUID job", "acme-corp", natsbus.TaskClassify, "9b2f8c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d"),
+		Entry("the longest job ID", "acme-corp", natsbus.TaskEmbed, strings.Repeat("j", natsbus.MaxJobIDLength)),
+		Entry("a task type outside the TaskType constants", "acme-corp", natsbus.TaskType("custom"), "job-1"),
+	)
+
+	DescribeTable("rejects what WorkSubject would not build",
+		func(subject string) {
+			_, err := natsbus.ParseWorkSubject(subject)
+			Expect(err).To(MatchError(natsbus.ErrInvalidSubject))
+		},
+		Entry("empty subject", ""),
+		Entry("a result subject", "crosscodex.results.acme-corp.classify.job-1"),
+		Entry("another prefix", "other.work.acme-corp.classify.job-1"),
+		Entry("too few tokens", "crosscodex.work.acme-corp.classify"),
+		Entry("too many tokens", "crosscodex.work.acme-corp.classify.job-1.extra"),
+		Entry("an uppercase tenant", "crosscodex.work.ACME.classify.job-1"),
+		Entry("an empty tenant", "crosscodex.work..classify.job-1"),
+		Entry("an empty task type", "crosscodex.work.acme-corp..job-1"),
+		Entry("an empty job", "crosscodex.work.acme-corp.classify."),
+		Entry("a wildcard job", "crosscodex.work.acme-corp.classify.*"),
+		Entry("a full-wildcard job", "crosscodex.work.acme-corp.classify.>"),
+		Entry("a job over MaxJobIDLength", "crosscodex.work.acme-corp.classify."+strings.Repeat("j", natsbus.MaxJobIDLength+1)),
+	)
+
+	It("names the work subject schema and wraps ErrInvalidJobID for an over-long job", func() {
+		_, err := natsbus.ParseWorkSubject("crosscodex.work.acme-corp.classify")
+		Expect(err).To(MatchError(ContainSubstring("crosscodex.work.<tenant_id>.<task_type>.<job_id>")))
+
+		_, err = natsbus.ParseWorkSubject("crosscodex.work.acme-corp.classify." + strings.Repeat("j", natsbus.MaxJobIDLength+1))
+		Expect(err).To(MatchError(natsbus.ErrInvalidJobID))
 	})
 })

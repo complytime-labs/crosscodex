@@ -27,12 +27,14 @@ const (
 	// record a human decision. It is separate from RoleAdmin so that applying
 	// a cleaning pass and deciding a finding stay separate duties.
 	//
-	// Nothing grants it yet: auth.x509_mappings is parsed but not wired
-	// (#232) and single-tenant X.509 mode grants only admin, so DecideFinding
-	// is refused in every deployment until #232 lands. #288 tracks replacing
+	// Only an auth.x509_mappings entry grants it. #288 tracks replacing
 	// this role check with an IdP and authorization engine for human access.
 	RoleReviewer = "reviewer"
 )
+
+// KnownRoles lists the roles an X.509 mapping may grant, in the order error
+// messages report them.
+var KnownRoles = []string{RoleAdmin, RoleReviewer}
 
 // Identity represents an authenticated user or service.
 type Identity struct {

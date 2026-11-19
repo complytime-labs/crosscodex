@@ -19,6 +19,10 @@ import (
 // catalogSubject matches natsbus.CatalogParsedSubject for every tenant.
 const catalogSubject = "crosscodex.catalog.*.*.parsed"
 
+// catalogSubjectPrefix routes a graph-materializer message to the catalog
+// projection.
+const catalogSubjectPrefix = "crosscodex.catalog."
+
 // catalogAnalyzer labels catalog projection in the shared event and
 // materialize metrics, alongside the analyzer names.
 const catalogAnalyzer = "catalog"
@@ -32,8 +36,12 @@ func containerNodeID(catalogID, key string) string {
 // handleCatalogEvent projects a parsed catalog's containers and controls into
 // Container and Control nodes and PARENT_OF edges. The tenant and catalog come from the subject and the
 // content from the tenant's controls rows, so the payload is never trusted.
-// Core NATS does not redeliver: a failed projection stays absent until the
-// catalog is re-imported, which publishes the event again.
+// A malformed subject or one whose tenant is not the provenance tenant is
+// terminated. A failed projection is redelivered until its last delivery,
+// then terminated: it stays absent until the catalog is re-imported, which
+// publishes the event again. Upserts and existing edges make a redelivery
+// harmless. An edge whose endpoint is missing is skipped at once: the
+// projection writes its own endpoints, so a retry cannot supply them.
 func (s *Service) handleCatalogEvent(ctx context.Context, msg *natsbus.Message) error {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "graph.materialize.catalog")
 	defer span.End()
@@ -42,14 +50,17 @@ func (s *Service) handleCatalogEvent(ctx context.Context, msg *natsbus.Message) 
 	if err == nil {
 		err = tenant.ValidateTenantID(tenantID)
 	}
-	if err == nil {
-		ctx, err = tenant.WithTenant(ctx, tenantID)
-	}
 	if err != nil {
-		s.logger.ErrorContext(ctx, "invalid catalog event subject", "subject", msg.Subject, "error", err)
-		s.recordEvent(ctx, catalogAnalyzer, "error")
-		span.SetStatus(codes.Error, err.Error())
-		return nil // a malformed subject never becomes valid
+		s.recordEvent(ctx, catalogAnalyzer, "skipped")
+		span.SetStatus(codes.Ok, "skipped")
+		return fmt.Errorf("%w: %w", natsbus.ErrSkip, err) // a malformed subject never becomes valid
+	}
+	if err := verifySubjectTenant(ctx, tenantID); err != nil {
+		s.logger.WarnContext(ctx, "rejecting catalog event whose subject tenant is not its provenance tenant",
+			"subject", msg.Subject, "error", err)
+		s.recordEvent(ctx, catalogAnalyzer, "rejected")
+		span.SetStatus(codes.Error, "tenant mismatch")
+		return err
 	}
 	span.SetAttributes(attribute.String("tenant.id", tenantID), attribute.String("catalog.id", catalogID))
 
@@ -59,7 +70,12 @@ func (s *Service) handleCatalogEvent(ctx context.Context, msg *natsbus.Message) 
 	if err != nil {
 		s.recordEvent(ctx, catalogAnalyzer, "error")
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("project catalog %s: %w", catalogID, err) // logged by natsbus; core NATS does not redeliver
+		if s.lastDelivery(msg) {
+			return fmt.Errorf("%w: project catalog %s failed on its last delivery (%d); re-import the catalog to project it again: %w",
+				natsbus.ErrPermanent, catalogID, msg.Metadata.NumDelivered, err)
+		}
+		return fmt.Errorf("project catalog %s (delivery %d of %d; will be redelivered): %w",
+			catalogID, msg.Metadata.NumDelivered, s.delivery.MaxDeliver, err)
 	}
 	s.recordEvent(ctx, catalogAnalyzer, "ok")
 	span.SetStatus(codes.Ok, "")

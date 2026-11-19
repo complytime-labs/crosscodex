@@ -72,6 +72,11 @@ type Service struct {
 	panelProbe  PanelProbeClient
 	panelChecks metric.Int64Counter
 
+	// Graph stage telemetry (#231): waits for the graph role's answer to a
+	// job's materialization barrier, by outcome, and their duration.
+	graphWaits        metric.Int64Counter
+	graphWaitDuration metric.Float64Histogram
+
 	// Model probe telemetry (#243): probes by kind and outcome, and their
 	// duration.
 	probeOps      metric.Int64Counter

@@ -67,6 +67,24 @@ func (w *Worker) handleMessage(ctx context.Context, msg *natsbus.Message) error 
 		return nil
 	}
 
+	// The subject is the only tenant claim NATS publish permissions scope;
+	// the provenance header is set by the publisher. A task is trusted only
+	// when the two agree. Without a parsable subject there is no tenant to
+	// answer on, so the message is dropped.
+	subjectParts, err := natsbus.ParseWorkSubject(msg.Subject)
+	if err != nil {
+		w.logger.Error("work message subject is not a work subject: the task was discarded. "+
+			"Publish tasks with natsbus.WorkSubject",
+			"error", err,
+		)
+		w.recordError(ctx, metricTaskType, "invalid_message")
+		return nil
+	}
+	if subjectParts.TenantID != tenantID {
+		w.rejectTenantMismatch(ctx, subjectParts, tenantID, taskID)
+		return nil
+	}
+
 	ctx, span := telemetry.StartSpan(w.tracer, ctx, "worker.ExecuteTask")
 	defer span.End()
 
@@ -274,6 +292,33 @@ func (w *Worker) publishErrorResult(ctx context.Context, tenantID string, taskTy
 	w.publishProgress(ctx, string(taskType))
 }
 
+// rejectTenantMismatch refuses a task whose provenance tenant header
+// (headerTenantID) differs from the tenant in its work subject: no LLM call,
+// and an error result on the subject's tenant and job, which the collector
+// that dispatched the task listens on. The header tenant is never used to
+// route the result and is not echoed in it, so a forged header cannot
+// address another tenant. The logs are operator-only, so both IDs are logged.
+func (w *Worker) rejectTenantMismatch(ctx context.Context, subject natsbus.WorkSubjectParts, headerTenantID, taskID string) {
+	w.logger.Error("task rejected: the "+natsbus.HeaderTenantID+" header tenant differs from the work subject's tenant. "+
+		"Publish each task with an "+natsbus.HeaderTenantID+" header equal to the tenant in its subject",
+		"task_id", taskID,
+		"subject_tenant", subject.TenantID,
+		"header_tenant", headerTenantID,
+	)
+	// Count under the subject's task type: the X-Task-Type header is as
+	// forgeable as the tenant header.
+	w.recordError(ctx, subject.TaskType, natsbus.ResultErrorTenantMismatch)
+	// ctx carries the header tenant; the result must publish as the
+	// subject's tenant, which was validated by ParseWorkSubject.
+	subjectCtx, err := tenant.WithTenant(ctx, subject.TenantID)
+	if err != nil {
+		w.logger.Error("subject tenant rejected after parsing", "error", err)
+		return
+	}
+	w.publishErrorResult(subjectCtx, subject.TenantID, natsbus.TaskType(subject.TaskType), subject.JobID, taskID,
+		natsbus.ResultErrorTenantMismatch)
+}
+
 func (w *Worker) handleTaskError(ctx context.Context, span trace.Span, tenantID string, taskType natsbus.TaskType, jobID, taskID string, err error, category string) {
 	// Log only the sanitized category — not err.Error() — to prevent upstream
 	// LLM API responses (which may include credentials or prompt fragments)
@@ -318,10 +363,17 @@ func (w *Worker) recordError(ctx context.Context, taskType, category string) {
 
 func errorCategory(err error) string {
 	switch {
+	// First: an unaudited call must never be retried, whatever else failed.
+	case errors.Is(err, llmclient.ErrAuditFailed):
+		return natsbus.ResultErrorAuditFailed
 	case errors.Is(err, ErrInvalidPayload):
-		return "invalid_payload"
+		return natsbus.ResultErrorInvalidPayload
 	case errors.Is(err, llmclient.ErrOutputTruncated):
 		return natsbus.ResultErrorOutputTruncated
+	case errors.Is(err, llmclient.ErrTimeout):
+		return natsbus.ResultErrorTimeout
+	case errors.Is(err, llmclient.ErrRateLimitExceeded):
+		return natsbus.ResultErrorRateLimited
 	case errors.Is(err, ErrLLMCall):
 		return "llm_error"
 	case errors.Is(err, ErrTenantConfig):

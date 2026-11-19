@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -153,10 +154,14 @@ var _ = Describe("Retry Logic", func() {
 			Expect(retry).To(BeTrue())
 		})
 
-		It("retries on HTTP 504 (gateway timeout)", func() {
-			retry, _ := llmclient.ShouldRetry(504, "")
-			Expect(retry).To(BeTrue())
-		})
+		DescribeTable("does not retry an upstream timeout, which may have been billed",
+			func(status int) {
+				retry, _ := llmclient.ShouldRetry(status, "")
+				Expect(retry).To(BeFalse())
+			},
+			Entry("HTTP 408 (request timeout)", http.StatusRequestTimeout),
+			Entry("HTTP 504 (gateway timeout)", http.StatusGatewayTimeout),
+		)
 
 		It("does not retry on HTTP 400 (bad request)", func() {
 			retry, _ := llmclient.ShouldRetry(400, "")
@@ -624,6 +629,146 @@ var _ = Describe("Client", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("gateway"))
 		})
+
+		// blockingServer holds every request until the client gives up (or
+		// cleanup releases it) and counts the requests it received.
+		blockingServer := func() (*httptest.Server, *atomic.Int32) {
+			var requests atomic.Int32
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			DeferCleanup(srv.Close)
+			DeferCleanup(func() { close(release) })
+			return srv, &requests
+		}
+
+		completeOnce := func(ctx context.Context, cfg config.LLMConfig) error {
+			client, err := llmclient.NewClient(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { client.Close() })
+			_, err = client.Complete(ctx, &llmclient.CompletionRequest{
+				Model:    "gpt-4",
+				Messages: []llmclient.ChatMessage{{Role: "user", Content: "Hi"}},
+				TenantID: "test-tenant",
+			})
+			return err
+		}
+
+		It("does not retry a request that times out, and returns ErrTimeout", func() {
+			srv, requests := blockingServer()
+
+			err := completeOnce(testspecs.SetupTenantContext("test-tenant"), config.LLMConfig{
+				GatewayURL: srv.URL,
+				Timeout:    1,
+				MaxRetries: 3,
+			})
+			Expect(err).To(MatchError(llmclient.ErrTimeout))
+			Expect(err).NotTo(MatchError(llmclient.ErrGatewayUnavailable))
+			Expect(requests.Load()).To(BeEquivalentTo(1))
+		})
+
+		It("does not retry a response whose body stalls past the timeout, and returns ErrTimeout", func() {
+			var requests atomic.Int32
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"id":"chatcmpl-partial",`))
+				w.(http.Flusher).Flush()
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			DeferCleanup(srv.Close)
+			DeferCleanup(func() { close(release) })
+
+			err := completeOnce(testspecs.SetupTenantContext("test-tenant"), config.LLMConfig{
+				GatewayURL: srv.URL,
+				Timeout:    1,
+				MaxRetries: 3,
+			})
+			Expect(err).To(MatchError(llmclient.ErrTimeout))
+			Expect(requests.Load()).To(BeEquivalentTo(1))
+		})
+
+		It("returns ErrTimeout when the caller's deadline elapses", func() {
+			srv, requests := blockingServer()
+
+			ctx, cancel := context.WithTimeout(testspecs.SetupTenantContext("test-tenant"), 50*time.Millisecond)
+			DeferCleanup(cancel)
+			err := completeOnce(ctx, config.LLMConfig{
+				GatewayURL: srv.URL,
+				Timeout:    5,
+				MaxRetries: 3,
+			})
+			Expect(err).To(MatchError(llmclient.ErrTimeout))
+			Expect(err).To(MatchError(context.DeadlineExceeded))
+			Expect(requests.Load()).To(BeEquivalentTo(1))
+		})
+
+		DescribeTable("sends an upstream timeout status once per call and returns ErrTimeout",
+			func(status int, gatewayMode bool) {
+				var requests atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(status)
+					fmt.Fprint(w, `{"error":{"message":"upstream timed out","type":"timeout"}}`)
+				}))
+				DeferCleanup(srv.Close)
+				client, err := llmclient.NewClient(config.LLMConfig{
+					GatewayURL: srv.URL, Timeout: 5, MaxRetries: 3, GatewayMode: gatewayMode,
+				})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { client.Close() })
+
+				const calls = 4
+				for i := range calls {
+					_, err := client.Complete(testspecs.SetupTenantContext("test-tenant"), &llmclient.CompletionRequest{
+						Model:    "gpt-4",
+						Messages: []llmclient.ChatMessage{{Role: "user", Content: "Hi"}},
+						TenantID: "test-tenant",
+					})
+					Expect(err).To(MatchError(llmclient.ErrTimeout))
+					Expect(requests.Load()).To(BeEquivalentTo(i+1), "call %d must make exactly one HTTP attempt", i+1)
+				}
+			},
+			Entry("a 504 storm, direct mode", http.StatusGatewayTimeout, false),
+			Entry("a 504 storm, gateway mode", http.StatusGatewayTimeout, true),
+			Entry("a 408 storm, direct mode", http.StatusRequestTimeout, false),
+			Entry("a 408 storm, gateway mode", http.StatusRequestTimeout, true),
+		)
+
+		DescribeTable("a rate limit that outlasts every attempt wraps ErrRateLimitExceeded",
+			func(gatewayMode bool, wantRequests int32) {
+				var requests atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusTooManyRequests)
+					fmt.Fprint(w, `{"error":{"message":"rate limited","type":"rate_limit"}}`)
+				}))
+				DeferCleanup(srv.Close)
+
+				err := completeOnce(testspecs.SetupTenantContext("test-tenant"), config.LLMConfig{
+					GatewayURL:  srv.URL,
+					Timeout:     5,
+					MaxRetries:  2,
+					GatewayMode: gatewayMode,
+				})
+				Expect(err).To(MatchError(llmclient.ErrRateLimitExceeded))
+				Expect(requests.Load()).To(Equal(wantRequests))
+			},
+			Entry("gateway mode, one attempt", true, int32(1)),
+			Entry("direct mode, max_retries+1 attempts", false, int32(3)),
+		)
 	})
 
 	Describe("Embed", func() {
@@ -1280,7 +1425,7 @@ var _ = Describe("Audit Emission", func() {
 		Expect(evt.PromptVersion).To(BeEmpty())
 	})
 
-	It("does not fail the primary operation when audit emission fails", func() {
+	It("withholds the response and returns ErrAuditFailed when the audit record is not stored", func() {
 		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, `{
@@ -1303,9 +1448,73 @@ var _ = Describe("Audit Emission", func() {
 			Messages: []llmclient.ChatMessage{{Role: "user", Content: "audit fails"}},
 			TenantID: "test-tenant",
 		})
+		Expect(err).To(MatchError(llmclient.ErrAuditFailed))
+		Expect(err.Error()).To(ContainSubstring("result is withheld"))
+		Expect(resp).To(BeNil())
+	})
+
+	It("still stores the audit record of a call whose context deadline elapsed, and reports the timeout, not an audit failure", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			// Drain the body so the server notices the client hanging up.
+			_, _ = io.Copy(io.Discard, r.Body)
+			<-r.Context().Done()
+		}))
+		emitter := &ctxAwareAuditEmitter{}
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(emitter))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resp.Choices).To(HaveLen(1))
-		Expect(resp.Choices[0].Message.Content).To(Equal("still works"))
+		DeferCleanup(func() { client.Close() })
+
+		ctx, cancel := context.WithTimeout(testspecs.SetupTenantContext("test-tenant"), 100*time.Millisecond)
+		defer cancel()
+		resp, err := client.Complete(ctx, &llmclient.CompletionRequest{
+			Model:    "gpt-4",
+			Messages: []llmclient.ChatMessage{{Role: "user", Content: "slow"}},
+			TenantID: "test-tenant",
+		})
+
+		Expect(resp).To(BeNil())
+		Expect(err).To(MatchError(llmclient.ErrTimeout))
+		Expect(err).NotTo(MatchError(llmclient.ErrAuditFailed))
+		Expect(emitter.events).To(HaveLen(1))
+		Expect(emitter.events[0].Success).To(BeFalse())
+	})
+
+	It("withholds an embedding when the audit record is not stored", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data": [{"index": 0, "embedding": [0.1, 0.2]}], "model": "emb", "usage": {"prompt_tokens": 1, "total_tokens": 1}}`)
+		}))
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(&failingAuditEmitter{}))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		resp, err := client.Embed(testspecs.SetupTenantContext("test-tenant"), &llmclient.EmbeddingRequest{
+			Model: "emb", Input: []string{"x"}, TenantID: "test-tenant",
+		})
+		Expect(err).To(MatchError(llmclient.ErrAuditFailed))
+		Expect(resp).To(BeNil())
+	})
+
+	It("keeps the call error visible when the audit of a failed call is also not stored", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(&failingAuditEmitter{}))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		_, err = client.Complete(testspecs.SetupTenantContext("test-tenant"), &llmclient.CompletionRequest{
+			Model:    "gpt-4",
+			Messages: []llmclient.ChatMessage{{Role: "user", Content: "x"}},
+			TenantID: "test-tenant",
+		})
+		Expect(err).To(MatchError(llmclient.ErrAuthentication))
+		Expect(err).To(MatchError(llmclient.ErrAuditFailed))
+		Expect(err.Error()).To(ContainSubstring("the LLM call failed and its audit record was also not stored"))
+		Expect(err.Error()).NotTo(ContainSubstring("completed"))
 	})
 })
 
@@ -1711,7 +1920,19 @@ func (m *mockAuditEmitter) EmitLLMAudit(_ context.Context, event *llmclient.Audi
 	return nil
 }
 
-// failingAuditEmitter always returns an error, for testing best-effort emission.
+// ctxAwareAuditEmitter fails like a durable publish does when its context is
+// already done, and records the events it stores.
+type ctxAwareAuditEmitter struct{ events []*llmclient.AuditEvent }
+
+func (e *ctxAwareAuditEmitter) EmitLLMAudit(ctx context.Context, event *llmclient.AuditEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e.events = append(e.events, event)
+	return nil
+}
+
+// failingAuditEmitter always returns an error, for testing that an unstored audit record fails the operation.
 type failingAuditEmitter struct{}
 
 func (f *failingAuditEmitter) EmitLLMAudit(_ context.Context, _ *llmclient.AuditEvent) error {

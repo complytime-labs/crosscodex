@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -108,22 +109,20 @@ func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName
 		attribute.String("job.id", jobID),
 	)
 
-	if analyzerName == results.RelationshipAnalyzer || analyzerName == results.RequiresAnalyzer {
-		stages, err := r.store.GetStages(ctx, jobID)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return fmt.Errorf("pipeline.ReportStageCompleted: cannot tell whether job %s runs the critique stage, so its %s result was not recorded: "+
-				"reading the job's stages: %w. The %s stage fails; resume the job to run it again", jobID, analyzerName, err, analyzerName)
-		}
-		if slices.ContainsFunc(stages, func(st *Stage) bool { return st.StageName == results.CritiqueAnalyzer }) {
-			marked := *output
-			marked.Metadata = make(map[string]string, len(output.Metadata)+1)
-			maps.Copy(marked.Metadata, output.Metadata)
-			marked.Metadata[results.GraphDeferredMetadataKey] = "true"
-			output = &marked
-			span.SetAttributes(attribute.Bool("graph.deferred", true))
-		}
+	deferred, stagesErr := defersGraph(analyzerName, func() ([]*Stage, error) { return r.store.GetStages(ctx, jobID) })
+	if stagesErr != nil {
+		span.RecordError(stagesErr)
+		span.SetStatus(codes.Error, stagesErr.Error())
+		return fmt.Errorf("pipeline.ReportStageCompleted: cannot tell whether job %s runs the critique stage, so its %s result was not recorded: "+
+			"reading the job's stages: %w. The %s stage fails; resume the job to run it again", jobID, analyzerName, stagesErr, analyzerName)
+	}
+	if deferred {
+		marked := *output
+		marked.Metadata = make(map[string]string, len(output.Metadata)+1)
+		maps.Copy(marked.Metadata, output.Metadata)
+		marked.Metadata[results.GraphDeferredMetadataKey] = "true"
+		output = &marked
+		span.SetAttributes(attribute.Bool("graph.deferred", true))
 	}
 
 	// analysis_results.result_data is JSONB NOT NULL, and completion must
@@ -156,7 +155,43 @@ func (r *DBStageReporter) ReportStageCompleted(ctx context.Context, analyzerName
 		return fmt.Errorf("pipeline.ReportStageCompleted: persisting result: %w", err)
 	}
 
-	return r.nats.ReportStageCompleted(ctx, analyzerName, jobID, output)
+	publishErr := r.nats.ReportStageCompleted(ctx, analyzerName, jobID, output)
+	if publishErr == nil {
+		return nil
+	}
+	// The result and the completed row are committed together, so the stage
+	// is already completed. The graph role materializes from the event, and a
+	// completed stage is never re-run or re-published on resume, so the stage
+	// is marked failed here: a retry re-runs it (the result cache bounds the
+	// cost) and publishes again.
+	r.logger.ErrorContext(ctx, "analyzer completion event not stored",
+		"analyzer", analyzerName, "job_id", jobID, "error", publishErr)
+	err := &tenantError{sentinel: ErrMaterializationNotQueued, message: fmt.Sprintf(
+		"job %s: analyzer %s finished, but the graph could not be told to materialize it. "+
+			"Check that the event bus is running and its MATERIALIZE stream exists. "+
+			"Then resume this job: crosscodex run retry --from-failure %s", jobID, analyzerName, jobID)}
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	if updateErr := r.store.UpdateStageError(ctx, jobID, analyzerName, err); updateErr != nil {
+		return errors.Join(err, fmt.Errorf("pipeline.ReportStageCompleted: marking stage %s failed so a retry re-runs it: %w", analyzerName, updateErr))
+	}
+	return err
+}
+
+// defersGraph reports whether analyzerName's completion event must carry
+// results.GraphDeferredMetadataKey: the relationship and requires events of a
+// job whose stage rows include critique, since the graph cannot delete an
+// edge the critique later vetoes. stages is read only for those two
+// analyzers, and its error is returned.
+func defersGraph(analyzerName string, stages func() ([]*Stage, error)) (bool, error) {
+	if analyzerName != results.RelationshipAnalyzer && analyzerName != results.RequiresAnalyzer {
+		return false, nil
+	}
+	rows, err := stages()
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(rows, func(st *Stage) bool { return st.StageName == results.CritiqueAnalyzer }), nil
 }
 
 // ReportStageFailed updates DB with error, then publishes to NATS.

@@ -93,7 +93,7 @@ func startStuckClassifyJob(ctx context.Context, store pipeline.Store, tenantID, 
 		return []analyzer.Task{{TaskID: c.GetControlId() + "-task", Payload: &emptypb.Empty{}}}, nil
 	}
 	Expect(analyzer.Register[*pb.Control](reg, classify)).To(Succeed())
-	bus := &natsbustest.Fake{}
+	bus := newGraphRoleBus()
 	dispatcher := &executorTestDispatcher{}
 	eng := analysis.New(reg, dispatcher, analysis.NewNATSCollector(bus),
 		config.EngineConfig{TaskTimeout: time.Hour, SuccessTimeout: time.Hour, RetryBackoff: time.Millisecond},
@@ -288,7 +288,7 @@ var _ = Describe("Service", func() {
 					config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},
 					map[string]natsbus.TaskType{})
 				stageSvc := pipeline.New(store, eng, reg, &fakeSynthesis{}, pipeline.Attestors{},
-					pipelineattestation.NewConverter(), &natsbustest.Fake{}, &storagetest.Fake{},
+					pipelineattestation.NewConverter(), newGraphRoleBus(), &storagetest.Fake{},
 					config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}, nil, pipeline.WithCatalogNameReader(serviceTestCatalogs))
 				DeferCleanup(func() { Expect(stageSvc.Stop(context.Background())).To(Succeed()) })
 
@@ -352,7 +352,7 @@ var _ = Describe("Service", func() {
 				&fakeSynthesis{},
 				pipeline.Attestors{},
 				pipelineattestation.NewConverter(),
-				&natsbustest.Fake{},
+				newGraphRoleBus(),
 				&storagetest.Fake{},
 				config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour},
 				nil,
@@ -1155,7 +1155,7 @@ var _ = Describe("Service", func() {
 		newAttestedService := func(objects *storagetest.Fake, attestor attestation.Generator, holdBundle bool) attestedService {
 			reg := analyzer.NewRegistry()
 			Expect(analyzer.Register[*pb.Control](reg, newControlStub("classify"))).To(Succeed())
-			bus := &natsbustest.Fake{}
+			bus := newGraphRoleBus()
 			eng := analysis.New(reg, &executorTestDispatcher{}, &executorTestCollector{},
 				config.EngineConfig{TaskTimeout: time.Minute, MaxRetries: 1, RetryBackoff: time.Millisecond},
 				map[string]natsbus.TaskType{"classify": natsbus.TaskClassify},
@@ -1394,7 +1394,7 @@ var _ = Describe("Service", func() {
 					blocker,
 					pipeline.Attestors{},
 					pipelineattestation.NewConverter(),
-					&natsbustest.Fake{},
+					newGraphRoleBus(),
 					&storagetest.Fake{},
 					config.PipelineConfig{
 						MaxConcurrentJobs: 10,

@@ -413,13 +413,21 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		}
 	}
 
-	// Emit audit event if bus configured
+	// Store the audit record if a bus is configured. The catalog is already
+	// stored, so a failure here reports that and says re-import is safe (the
+	// upsert is idempotent) rather than claiming nothing was written.
 	if s.bus != nil {
 		auditEvent := []byte(fmt.Sprintf(`{"event":"catalog_parsed","catalog_id":%q,"tenant_id":%q,"control_count":%d,"timestamp":%q}`,
 			catalogID, tenantID, len(items), time.Now().UTC().Format(time.RFC3339)))
 
-		if err := s.bus.Publish(ctx, "audit.catalog.parsed", auditEvent); err != nil {
-			s.logger.Warn("publish audit event failed", "error", err)
+		subject, err := natsbus.CatalogAuditSubject(tenantID, catalogID)
+		if err != nil {
+			return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("build catalog audit subject: %w", err))
+		}
+		if err := s.bus.PublishDurable(ctx, subject, auditEvent, nil); err != nil {
+			s.logger.ErrorContext(ctx, "store catalog audit record failed", "catalog_id", catalogID, "error", err)
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+				"catalog %s was stored but its audit record was not: the audit stream did not acknowledge it. Re-import the same document to retry; re-import is safe and replaces the stored rows", catalogID))
 		}
 	}
 
@@ -466,8 +474,8 @@ func (s *Service) publishParsed(ctx context.Context, tenantID, catalogID string,
 	if err != nil {
 		return fmt.Errorf("encode catalog parsed event: %w", err)
 	}
-	if err := s.bus.Publish(ctx, subject, payload); err != nil {
-		return fmt.Errorf("publish %s: %w", subject, err)
+	if err := s.bus.PublishDurable(ctx, subject, payload, nil); err != nil {
+		return fmt.Errorf("store %s: %w", subject, err)
 	}
 	return nil
 }

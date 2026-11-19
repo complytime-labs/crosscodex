@@ -3,23 +3,26 @@ package authn
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // X509Config configures the X.509 mTLS authenticator.
 type X509Config struct {
-	SingleTenant  bool          // true when tenants.enabled == false
+	SingleTenant  bool          // true when tenants.enabled == false: every identity gets DefaultTenant
 	DefaultTenant string        // tenant ID for single-tenant mode
-	Mappings      []X509Mapping // ordered mapping rules (multi-tenant mode)
+	Mappings      []X509Mapping // ordered mapping rules, first match wins (required, both modes)
 }
 
 // X509Mapping maps a certificate field pattern to a tenant and roles.
 type X509Mapping struct {
 	Match  X509Match // Certificate field matchers (AND semantics)
-	Tenant string    // Target tenant ID
+	Tenant string    // Target tenant ID (single-tenant: empty or DefaultTenant)
 	Roles  []string  // Assigned roles
 }
 
@@ -50,27 +53,45 @@ type X509Authenticator struct {
 }
 
 // NewX509Authenticator creates an X509Authenticator with the given config.
-// Returns an error if tenant IDs in the config are invalid.
+//
+// Roles come only from Mappings, in both modes, so construction fails closed:
+// it errors on zero mappings, an empty match, a role outside KnownRoles and an
+// invalid tenant. In single-tenant mode a mapping's Tenant must be empty or
+// equal DefaultTenant; the identity's tenant is always DefaultTenant.
 func NewX509Authenticator(cfg X509Config) (*X509Authenticator, error) {
-	// Validate tenant IDs at construction time (fail fast)
 	if cfg.SingleTenant {
 		if err := tenant.ValidateTenantID(cfg.DefaultTenant); err != nil {
 			return nil, fmt.Errorf("invalid default tenant in X509 config: %w", err)
 		}
-	} else {
-		for i, m := range cfg.Mappings {
-			if err := tenant.ValidateTenantID(m.Tenant); err != nil {
-				return nil, fmt.Errorf("invalid tenant in X509 mapping %d: %w", i, err)
+	}
+	if len(cfg.Mappings) == 0 {
+		return nil, errors.New("no X509 mappings configured: add at least one entry to auth.x509_mappings; without one no certificate is granted any role")
+	}
+	for i, m := range cfg.Mappings {
+		if cfg.SingleTenant {
+			// Name no tenant in the message: a mapping for another tenant is a
+			// misconfiguration, and the value is not ours to echo.
+			if m.Tenant != "" && m.Tenant != cfg.DefaultTenant {
+				return nil, fmt.Errorf("X509 mapping %d names a tenant other than the default: in single-tenant mode leave tenant empty or set it to the default tenant", i)
 			}
-			if m.Match.isEmpty() {
-				return nil, fmt.Errorf("X509 mapping %d has empty match (would match all certificates): configure at least one match field", i)
+		} else if err := tenant.ValidateTenantID(m.Tenant); err != nil {
+			return nil, fmt.Errorf("invalid tenant in X509 mapping %d: %w", i, err)
+		}
+		if m.Match.isEmpty() {
+			return nil, fmt.Errorf("X509 mapping %d has empty match (would match all certificates): configure at least one match field", i)
+		}
+		for _, role := range m.Roles {
+			if !slices.Contains(KnownRoles, role) {
+				return nil, fmt.Errorf("X509 mapping %d grants unknown role %q: use one of %s", i, role, strings.Join(KnownRoles, ", "))
 			}
 		}
 	}
 	return &X509Authenticator{config: cfg}, nil
 }
 
-// Authenticate extracts identity from a client certificate.
+// Authenticate extracts identity from a client certificate. The first mapping
+// whose Match accepts the leaf certificate decides roles (and, in multi-tenant
+// mode, the tenant); no match is ErrAuthenticationFailed.
 //
 // SECURITY NOTE: This authenticator does not perform CRL or OCSP revocation
 // checking. A compromised or revoked certificate remains valid until it
@@ -88,32 +109,25 @@ func (a *X509Authenticator) Authenticate(_ context.Context, req *Request) (*Iden
 
 	leaf := req.TLSState.PeerCertificates[0]
 
-	// Single-tenant mode: any CA-signed cert gets default tenant + admin
-	if a.config.SingleTenant {
+	for _, m := range a.config.Mappings {
+		if !m.Match.Matches(leaf) {
+			continue
+		}
+		tenantID := a.config.DefaultTenant
+		if !a.config.SingleTenant {
+			tenantID = m.Tenant
+			// Defense in depth: validate tenant ID at auth time too
+			if err := tenant.ValidateTenantID(tenantID); err != nil {
+				return nil, fmt.Errorf("mapping resolved to invalid tenant %q: %w", tenantID, err)
+			}
+		}
 		return &Identity{
 			Subject:  leaf.Subject.CommonName,
-			TenantID: a.config.DefaultTenant,
-			Roles:    []string{"admin"},
+			TenantID: tenantID,
+			Roles:    m.Roles,
 			Method:   AuthMethodMTLS,
 			Claims:   certClaims(leaf),
 		}, nil
-	}
-
-	// Multi-tenant mode: iterate mappings, first match wins
-	for _, m := range a.config.Mappings {
-		if matchCert(leaf, m.Match) {
-			// Defense in depth: validate tenant ID at auth time too
-			if err := tenant.ValidateTenantID(m.Tenant); err != nil {
-				return nil, fmt.Errorf("mapping resolved to invalid tenant %q: %w", m.Tenant, err)
-			}
-			return &Identity{
-				Subject:  leaf.Subject.CommonName,
-				TenantID: m.Tenant,
-				Roles:    m.Roles,
-				Method:   AuthMethodMTLS,
-				Claims:   certClaims(leaf),
-			}, nil
-		}
 	}
 
 	return nil, fmt.Errorf("no mapping matched certificate CN=%q, O=%v: %w",
@@ -125,9 +139,10 @@ func (a *X509Authenticator) SupportedMethods() []AuthMethod {
 	return []AuthMethod{AuthMethodMTLS}
 }
 
-// matchCert evaluates an X509Match against a certificate.
-// All non-empty fields must match (AND semantics).
-func matchCert(cert *x509.Certificate, m X509Match) bool {
+// Matches reports whether cert satisfies every non-empty field (AND
+// semantics). An empty match accepts any certificate; constructors that take
+// mappings reject empty matches rather than rely on this.
+func (m X509Match) Matches(cert *x509.Certificate) bool {
 	if m.CN != "" && !globMatch(m.CN, cert.Subject.CommonName) {
 		return false
 	}

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // Config is the unified merge target for all configuration layers.
@@ -162,6 +164,10 @@ type TLSConfig struct {
 	CipherAllow []string               `yaml:"cipher_allow" json:"cipher_allow"` // Substring-match cipher allowlist
 	CipherDeny  []string               `yaml:"cipher_deny" json:"cipher_deny"`   // Substring-match cipher denylist
 	Targets     map[string]TLSOverride `yaml:"targets" json:"targets"`
+	// ServiceIdentities lists the client certificates the pipeline server
+	// accepts from peer services (glob patterns, as in auth.x509_mappings
+	// match blocks). A peer matching none is refused.
+	ServiceIdentities []X509MatchConfig `yaml:"service_identities" json:"service_identities"`
 }
 
 // FIPSConfig controls FIPS 140 enforcement.
@@ -242,17 +248,76 @@ type NATSConfig struct {
 	TLS      bool               `yaml:"tls" json:"tls"`           // Enable TLS
 	Embedded NATSEmbeddedConfig `yaml:"embedded" json:"embedded"` // Embedded server settings
 	Streams  NATSStreamsConfig  `yaml:"streams" json:"streams"`   // JetStream stream settings
+
+	// PublishAckTimeout bounds how long an acknowledged (durable) publish
+	// waits for JetStream to confirm the message is stored. Must be positive.
+	// Default: 10s. Global-only; not tenant-overridable.
+	PublishAckTimeout time.Duration `yaml:"publish_ack_timeout" json:"publish_ack_timeout"`
+
+	// Materialize configures the graph role's durable consumers of the
+	// MATERIALIZE stream. Global-only; not tenant-overridable.
+	Materialize NATSMaterializeConfig `yaml:"materialize" json:"materialize"`
 }
+
+// NATSMaterializeConfig configures how the graph role consumes the
+// MATERIALIZE stream: its graph-materializer consumer (stage completions and
+// parsed catalogs) and its graph-barrier consumer (job barriers). Every field
+// is global-only: one durable consumer serves every tenant.
+type NATSMaterializeConfig struct {
+	// MaxDeliver is how many times a materialization event is delivered
+	// before the graph role gives up on it: a failure on the last delivery
+	// publishes a "failed" graph outcome for the job and terminates the
+	// event, and an edge whose endpoint node is still missing on the last
+	// delivery is skipped. The graph role enforces it, not the server: the
+	// consumer redelivers an unsettled event without limit, so a delivery
+	// past it (the last one's ack was lost, the role crashed during it, or
+	// its failed outcome was not stored) is handled as a last delivery too.
+	// Must be at least 1. Default: 5. The barrier consumer ignores it.
+	MaxDeliver int `yaml:"max_deliver" json:"max_deliver"`
+
+	// AckWait is how long the server waits for a handler to finish one
+	// message before it redelivers it. Handlers send no progress heartbeat,
+	// so AckWait must exceed the worst-case time to materialize one event
+	// (the largest analyzer result of a job): an event still being written
+	// when AckWait ends is redelivered and handled again concurrently. Graph
+	// writes are idempotent, so that second run adds nothing, but it costs a
+	// delivery. Must be positive. Default: 10m.
+	AckWait time.Duration `yaml:"ack_wait" json:"ack_wait"`
+
+	// RedeliverDelay is how long a failed materialization event waits before
+	// its next delivery. Must be positive. Default: 30s.
+	RedeliverDelay time.Duration `yaml:"redeliver_delay" json:"redeliver_delay"`
+
+	// BarrierPollInterval is how long a job barrier whose job still has
+	// events queued waits before it is checked again (the graph-barrier
+	// consumer's redelivery delay). It bounds how late a job learns its
+	// graph is complete; each check costs one stream query. Must be
+	// positive. Default: 2s.
+	BarrierPollInterval time.Duration `yaml:"barrier_poll_interval" json:"barrier_poll_interval"`
+}
+
+// Compiled defaults for nats.materialize, also applied by internal/graph when
+// a field is not set.
+const (
+	DefaultNATSMaterializeMaxDeliver          = 5
+	DefaultNATSMaterializeAckWait             = 10 * time.Minute
+	DefaultNATSMaterializeRedeliverDelay      = 30 * time.Second
+	DefaultNATSMaterializeBarrierPollInterval = 2 * time.Second
+)
 
 // NATSEmbeddedConfig configures the embedded NATS server.
 type NATSEmbeddedConfig struct {
 	StoreDir string `yaml:"store_dir" json:"store_dir"` // JetStream storage dir; empty = $XDG_STATE_HOME/crosscodex/nats/
 }
 
-// NATSStreamsConfig configures JetStream audit stream retention.
+// NATSStreamsConfig configures JetStream stream retention. Every role of a
+// deployment that shares a NATS server must configure the same values: a role
+// creates a missing stream but refuses to start against a live stream whose
+// settings differ.
 type NATSStreamsConfig struct {
 	AuditLLMRetention    time.Duration `yaml:"audit_llm_retention" json:"audit_llm_retention"`       // Default: 2160h (90 days)
 	AuditEventsRetention time.Duration `yaml:"audit_events_retention" json:"audit_events_retention"` // Default: 720h (30 days)
+	MaterializeRetention time.Duration `yaml:"materialize_retention" json:"materialize_retention"`   // Default: 168h (7 days); must be > 0
 	// AuditDecisions is always indefinite; no config knob.
 }
 
@@ -518,10 +583,11 @@ func (p *PromptConfig) ForTenant(tenantID string) PromptTenantConfig {
 	return tc
 }
 
-// AnalysisConfig configures the analysis service. It has no tenant_overrides
-// map, so every setting under it, including the panel settings
-// (allow_shared_panel_models and the critique block), is global: analysis
-// config is global like its siblings and a tenant cannot loosen a panel.
+// AnalysisConfig configures the analysis service. Only analysis.engine and
+// analysis.result_cache have a tenant_overrides map, and engine overrides
+// only retry_on_timeout. Every other setting under it, including the panel
+// settings (allow_shared_panel_models and the critique block), is global:
+// a tenant cannot loosen a panel.
 type AnalysisConfig struct {
 	Engine               EngineConfig               `yaml:"engine" json:"engine"`
 	Classification       ClassificationConfig       `yaml:"classification" json:"classification"`
@@ -580,7 +646,8 @@ func (c *ResultCacheConfig) ForTenant(tenantID string) ResultCacheTenantConfig {
 	return tc
 }
 
-// EngineConfig configures the analysis engine orchestrator.
+// EngineConfig configures the analysis engine orchestrator. Every field
+// except retry_on_timeout is global-only.
 type EngineConfig struct {
 	// TaskTimeout is how long an analyzer stage waits while the whole LLM
 	// worker pool is silent before it fails. Any task result of the stage,
@@ -621,12 +688,40 @@ type EngineConfig struct {
 	// which asks whether the pool is alive, it asks whether this stage's
 	// model calls work. A stage's model call takes up to llm.timeout ×
 	// (llm.max_retries + 1) before its error arrives (2m with the
-	// defaults), so keep this well above that. Global only, like its
-	// siblings. Range (0, 24h], at least task_timeout and at most
+	// defaults), so keep this well above that. Global only. Range (0, 24h], at least task_timeout and at most
 	// pipeline.stage_timeout.
 	SuccessTimeout time.Duration `yaml:"success_timeout" json:"success_timeout"`
 	MaxRetries     int           `yaml:"max_retries" json:"max_retries"`
 	RetryBackoff   time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
+	// RetryOnTimeout makes the engine re-send an LLM call that timed out.
+	// Off by default: a timed-out call may already have been billed, so a
+	// re-send can bill it twice. Tenant-overridable.
+	RetryOnTimeout bool `yaml:"retry_on_timeout" json:"retry_on_timeout"`
+	// TenantOverrides holds per-tenant settings, keyed by tenant ID. Only
+	// retry_on_timeout can be overridden.
+	TenantOverrides map[string]EngineOverride `yaml:"tenant_overrides" json:"tenant_overrides"`
+}
+
+// EngineOverride is one tenant's analysis engine settings. Nil fields
+// inherit the global value.
+type EngineOverride struct {
+	RetryOnTimeout *bool `yaml:"retry_on_timeout" json:"retry_on_timeout"`
+}
+
+// EngineTenantConfig holds the resolved analysis engine settings for a
+// tenant.
+type EngineTenantConfig struct {
+	RetryOnTimeout bool
+}
+
+// ForTenant returns the effective engine settings for a tenant. Fields set
+// in TenantOverrides take precedence; nil fields inherit global values.
+func (c *EngineConfig) ForTenant(tenantID string) EngineTenantConfig {
+	tc := EngineTenantConfig{RetryOnTimeout: c.RetryOnTimeout}
+	if override, ok := c.TenantOverrides[tenantID]; ok && override.RetryOnTimeout != nil {
+		tc.RetryOnTimeout = *override.RetryOnTimeout
+	}
+	return tc
 }
 
 // Validate checks EngineConfig for consistency and required fields.
@@ -672,6 +767,12 @@ func (c *EngineConfig) validate(tracker *sourceTracker) error {
 	if c.RetryBackoff < 0 || c.RetryBackoff > 5*time.Minute {
 		p.add("analysis.engine.retry_backoff", "analysis.engine.retry_backoff %s%s must be in range [0, 5m]: %w",
 			c.RetryBackoff, formatSource(tracker, "analysis.engine.retry_backoff"), ErrInvalidConfig)
+	}
+	for _, key := range slices.Sorted(maps.Keys(c.TenantOverrides)) {
+		if err := tenant.ValidateTenantID(key); err != nil {
+			p.add(mapKeyPath("analysis.engine.tenant_overrides", key), "analysis.engine.tenant_overrides key %q is not a valid tenant ID: it must be %s: %w",
+				key, tenant.IDRule, ErrInvalidConfig)
+		}
 	}
 	return p.err()
 }
@@ -1077,6 +1178,13 @@ type PipelineConfig struct {
 	// remembers an abandoned collection (worker.WithAbandonTTL), since no
 	// collection outlives it. Global-only.
 	StageTimeout time.Duration `yaml:"stage_timeout" json:"stage_timeout"`
+	// GraphMaterializeTimeout is how long a job's graph stage waits for the
+	// graph role to confirm that every materialization event of the job was
+	// written to the graph (its answer to the job's barrier). The stage, and
+	// so the job, completes only on that answer; with no graph role running,
+	// the job fails after this long. Range (0, pipeline.stage_timeout].
+	// Default: 30m. Global-only.
+	GraphMaterializeTimeout time.Duration `yaml:"graph_materialize_timeout" json:"graph_materialize_timeout"`
 	// Addr is the bind address for the standalone "pipeline" role's own
 	// Connect RPC listener (see internal/pipeline.Server). Empty by
 	// default -- only required when running --role pipeline.
@@ -1088,6 +1196,11 @@ type PipelineConfig struct {
 	// its own role. RoleAll ignores this and wires pipeline in-process.
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
 }
+
+// DefaultPipelineGraphMaterializeTimeout is the compiled default for
+// pipeline.graph_materialize_timeout, also applied by internal/pipeline
+// when it is not set.
+const DefaultPipelineGraphMaterializeTimeout = 30 * time.Minute
 
 // Validate checks PipelineConfig for consistency.
 func (c *PipelineConfig) Validate() error { return c.validate(nil) }
@@ -1107,6 +1220,14 @@ func (c *PipelineConfig) validate(tracker *sourceTracker) error {
 	if !c.stageTimeoutInRange() {
 		p.add("pipeline.stage_timeout", "pipeline.stage_timeout %s%s must be in range (0, 168h]: it caps how long each analyzer stage may run, so set a positive duration such as 24h: %w",
 			c.StageTimeout, formatSource(tracker, "pipeline.stage_timeout"), ErrInvalidConfig)
+	}
+	// Compared with stage_timeout only when that is in range, so an
+	// out-of-range stage_timeout is reported once, by its own check.
+	if c.GraphMaterializeTimeout <= 0 || (c.stageTimeoutInRange() && c.GraphMaterializeTimeout > c.StageTimeout) {
+		p.add("pipeline.graph_materialize_timeout", "pipeline.graph_materialize_timeout %s%s must be in range (0, pipeline.stage_timeout %s]: "+
+			"it is how long a job's graph stage waits for the graph role to confirm the job's graph is written, so set a positive duration "+
+			"no longer than pipeline.stage_timeout, such as 30m: %w",
+			c.GraphMaterializeTimeout, formatSource(tracker, "pipeline.graph_materialize_timeout"), c.StageTimeout, ErrInvalidConfig)
 	}
 	return p.err()
 }

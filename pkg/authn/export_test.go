@@ -2,9 +2,6 @@ package authn
 
 import "crypto/x509"
 
-// MatchCert exposes matchCert for BDD tests in the authn_test package.
-var MatchCert = matchCert
-
 // CertClaims exposes certClaims for BDD tests.
 var CertClaims = certClaims
 

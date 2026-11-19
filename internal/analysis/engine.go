@@ -476,6 +476,11 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 	var results []analyzer.TaskResult
 	if len(dispatchTasks) > 0 {
 		taskType := e.taskTypes[name]
+		tenantID, err := tenant.FromContext(ctx)
+		if err != nil {
+			fail(fmt.Errorf("analysis: analyzer %q: %w", name, err), false)
+			return
+		}
 		expectedIDs := make([]string, len(dispatchTasks))
 		for i, t := range dispatchTasks {
 			expectedIDs[i] = t.TaskID
@@ -491,6 +496,7 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			SuccessTimeout: e.cfg.SuccessTimeout,
 			MaxRetries:     e.cfg.MaxRetries,
 			Backoff:        e.cfg.RetryBackoff,
+			RetryOnTimeout: e.cfg.ForTenant(tenantID).RetryOnTimeout,
 			Dispatcher:     e.dispatcher,
 		}
 

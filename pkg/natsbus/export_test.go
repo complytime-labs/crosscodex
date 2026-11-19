@@ -6,6 +6,8 @@ import (
 
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -103,6 +105,16 @@ func ExportTelemetryFields(c Client) TelemetryFields {
 	}
 }
 
+// ExportJetStream returns the JetStream handle of a client built by New, so
+// specs can inspect stored messages. It returns nil for any other Client.
+func ExportJetStream(c Client) jetstream.JetStream {
+	cc, ok := c.(*client)
+	if !ok {
+		return nil
+	}
+	return cc.js
+}
+
 // ExportEmbeddedServer wraps embeddedServer for external test access.
 type ExportEmbeddedServer struct{ es *embeddedServer }
 
@@ -140,4 +152,19 @@ func ExportWrapHandler(rawConn *nats.Conn, handler func(ctx context.Context, msg
 		opts: defaultClientOptions(),
 	}
 	return c.wrapHandler(handler)
+}
+
+// ExportHandleDurable feeds one JetStream message to the durable-consumer
+// handling path of a connectionless client that logs to logger and reports to
+// tracer and meter (either may be nil), for specs that assert how a message
+// is verified and acknowledged.
+func ExportHandleDurable(logger *slog.Logger, tracer trace.Tracer, meter metric.Meter, cfg ConsumerConfig, handler MessageHandler, msg jetstream.Msg) {
+	opts := defaultClientOptions()
+	opts.logger = logger
+	c := &client{opts: opts, tracer: tracer}
+	if meter != nil {
+		c.processCounter, _ = meter.Int64Counter("natsbus.process.total")
+		c.processLatency, _ = meter.Int64Histogram("natsbus.process.duration_ms")
+	}
+	c.handleDurable(context.Background(), cfg, handler, msg)
 }

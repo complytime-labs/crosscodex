@@ -345,7 +345,7 @@ var _ = Describe("Error paths", func() {
 	It("returns an actionable error when the database is unreachable", func() {
 		cfg := &config.Config{}
 		cfg.Database.DSN = "postgres://invalid:invalid@127.0.0.1:1/nope?sslmode=disable"
-		_, _, err := buildEmbeddedService(ctx, cfg, nil)
+		_, _, err := buildEmbeddedService(ctx, cfg, "", nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(MatchRegexp("(?i)databas|connect|dial"))
 	})

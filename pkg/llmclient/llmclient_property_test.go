@@ -2,6 +2,7 @@ package llmclient_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"reflect"
 	"time"
 
@@ -68,12 +69,12 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 
-		It("always retries on 500-599", func() {
+		It("always retries on 500-599 except 504 (gateway timeout)", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				code := rapid.IntRange(500, 599).Draw(t, "statusCode")
-				retry, _ := llmclient.ShouldRetry(code, "")
-				Expect(retry).To(BeTrue(),
-					"shouldRetry must return true for status %d", code)
+				code := rapid.IntRange(500, 599).Filter(func(c int) bool { return c != http.StatusGatewayTimeout }).Draw(t, "statusCode")
+				if retry, _ := llmclient.ShouldRetry(code, ""); !retry {
+					t.Fatalf("shouldRetry must return true for status %d", code)
+				}
 			})
 		})
 

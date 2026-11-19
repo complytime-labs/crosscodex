@@ -1,5 +1,8 @@
 package analysis
 
+// ExportStageErrorCategory exposes stageErrorCategory for specs.
+var ExportStageErrorCategory = stageErrorCategory
+
 // ExportComputeBackoff exposes computeBackoff for property testing.
 var ExportComputeBackoff = computeBackoff
 
