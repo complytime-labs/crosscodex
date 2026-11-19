@@ -151,12 +151,27 @@ func (r *NATSStageReporter) publish(ctx context.Context, analyzerName, jobID str
 var _ StageReporter = (*NATSStageReporter)(nil)
 var _ StageReporter = noopReporter{}
 
-// stageErrorCategory names a failed stage in a stage event with a fixed
-// category, never the error's text (CWE-209). It classifies by sentinel.
+// stageErrorCategory names a failed stage in a stage event with the same
+// fixed category classifyResult uses for the same cause, never the error's
+// text (CWE-209). Mapping:
+//   - llmclient.ErrTimeout, ErrTaskTimeout, ErrStageTimeout, a bare
+//     context.DeadlineExceeded: task_timeout.
+//   - ErrNoSuccessfulResult (a NoSuccessError): task_timeout, keeping the
+//     category these stages reported before categories were sentinel-based;
+//     the window elapsing with no success is a timeout of the stage.
+//   - llmclient.ErrRateLimitExceeded: task_rate_limited.
+//   - llmclient.ErrOutputTruncated: task_output_truncated.
+//   - ErrTaskInvalid: task_invalid.
+//   - anything else: task_failed.
 func stageErrorCategory(err error) string {
 	switch {
-	case errors.Is(err, llmclient.ErrTimeout), errors.Is(err, ErrTaskTimeout), errors.Is(err, ErrStageTimeout):
-		return "task_timeout"
+	case errors.Is(err, llmclient.ErrTimeout), errors.Is(err, ErrTaskTimeout), errors.Is(err, ErrStageTimeout),
+		errors.Is(err, ErrNoSuccessfulResult), errors.Is(err, context.DeadlineExceeded):
+		return categoryTimeout
+	case errors.Is(err, llmclient.ErrRateLimitExceeded):
+		return categoryRateLimited
+	case errors.Is(err, llmclient.ErrOutputTruncated):
+		return categoryOutputTruncated
 	case errors.Is(err, ErrTaskInvalid):
 		return ErrTaskInvalid.Error()
 	default:

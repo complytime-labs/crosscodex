@@ -706,6 +706,15 @@ func getHeader(headers map[string][]string, key string) string {
 	return vals[0]
 }
 
+// Fixed error categories shared by classifyResult (task errors) and
+// stageErrorCategory (stage events); ErrTaskInvalid and ErrTaskFailed name
+// the other two. Never built from a worker's or provider's text.
+const (
+	categoryTimeout         = "task_timeout"
+	categoryRateLimited     = "task_rate_limited"
+	categoryOutputTruncated = "task_output_truncated"
+)
+
 // classifyResult maps a worker's X-Error code to the collector's error
 // category. It matches the code exactly and never carries the worker's text
 // into the error (CWE-209); an unknown code is ErrTaskFailed. The returned
@@ -713,11 +722,11 @@ func getHeader(headers map[string][]string, key string) string {
 func classifyResult(code string) error {
 	switch code {
 	case natsbus.ResultErrorOutputTruncated:
-		return fmt.Errorf("task_output_truncated: %w", llmclient.ErrOutputTruncated)
+		return fmt.Errorf("%s: %w", categoryOutputTruncated, llmclient.ErrOutputTruncated)
 	case natsbus.ResultErrorTimeout:
-		return fmt.Errorf("task_timeout: %w", llmclient.ErrTimeout)
+		return fmt.Errorf("%s: %w", categoryTimeout, llmclient.ErrTimeout)
 	case natsbus.ResultErrorRateLimited:
-		return fmt.Errorf("task_rate_limited: %w", llmclient.ErrRateLimitExceeded)
+		return fmt.Errorf("%s: %w", categoryRateLimited, llmclient.ErrRateLimitExceeded)
 	case natsbus.ResultErrorInvalidPayload:
 		return ErrTaskInvalid
 	default:
