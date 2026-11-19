@@ -1,0 +1,46 @@
+internal/worker/handler_bdd_test.go
+  s_290b9f730df96c::t_d981b3e3a4c313 523-642
+pkg/natsbus/natsbus_bdd_test.go
+  s_290b9f730df96c::t_8a0ab636710f18 12,972-1011
+  s_290b9f730df96c::t_dc3a2ca5fc6807 1012-1013
+internal/analysis/doc.go
+  s_290b9f730df96c::t_2f1cb950e7d625 105
+  s_290b9f730df96c::t_1cef816982c046 104,106
+internal/analysis/collector_bdd_test.go
+  s_290b9f730df96c::t_ef3cc7c1426ad2 316-322,831
+internal/analysis/errors.go
+  s_290b9f730df96c::t_a0d6e21f45caa4 33-36
+pkg/natsbus/types.go
+  s_290b9f730df96c::t_03223577e6cad2 54-58
+pkg/natsbus/natsbus_property_test.go
+  s_290b9f730df96c::t_8a0ab636710f18 178-202
+internal/analysis/collector.go
+  s_290b9f730df96c::t_a0d6e21f45caa4 717,736-737,753-754,764
+pkg/natsbus/natsbus_fuzz_test.go
+  s_290b9f730df96c::t_8a0ab636710f18 100-129
+internal/worker/handler.go
+  s_290b9f730df96c::t_2f00c1eced536d 70-87,295-319
+  s_290b9f730df96c::t_e98382d89fdf11 320-321
+pkg/natsbus/subjects.go
+  s_290b9f730df96c::t_03223577e6cad2 102-140
+docs/dev/audit-streams.md
+  s_290b9f730df96c::t_3bd9fd71e1b438 169-181
+internal/analysis/reporter.go
+  s_290b9f730df96c::t_a0d6e21f45caa4 175,190-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0513782ed189cc26822191aa506a583a889fdea5",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
