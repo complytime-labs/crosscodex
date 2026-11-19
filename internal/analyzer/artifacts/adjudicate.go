@@ -48,7 +48,7 @@ var errNoChoices = errors.New("completion returned no choices")
 // systemLLMErrors are failures of the LLM service or its configuration, not
 // of one pair; they fail every pair alike.
 var systemLLMErrors = []error{
-	llmclient.ErrGatewayUnavailable, llmclient.ErrRateLimitExceeded, llmclient.ErrAuthentication,
+	llmclient.ErrGatewayUnavailable, llmclient.ErrTimeout, llmclient.ErrRateLimitExceeded, llmclient.ErrAuthentication,
 	llmclient.ErrCredentialResolution, llmclient.ErrModelNotAllowed, llmclient.ErrNoGateway,
 }
 

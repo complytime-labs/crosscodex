@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -288,8 +287,7 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
-			var netErr net.Error
-			if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+			if isTimeout(err) {
 				return nil, fmt.Errorf("LLM gateway request timed out: %w: %w", ErrTimeout, err)
 			}
 			// Other network errors are retryable.
@@ -300,6 +298,10 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 		resp.Body.Close()
 		if readErr != nil {
+			// The client timeout also covers the body read.
+			if isTimeout(readErr) {
+				return nil, fmt.Errorf("LLM gateway response timed out: %w: %w", ErrTimeout, readErr)
+			}
 			lastErr = fmt.Errorf("reading response body: %w", readErr)
 			continue
 		}
@@ -335,6 +337,13 @@ func (c *client) doWithRetry(ctx context.Context, path string, body []byte, resu
 		return nil, fmt.Errorf("LLM gateway request failed after %d attempts: %w", maxAttempts, lastErr)
 	}
 	return nil, fmt.Errorf("LLM gateway request failed: %w", ErrGatewayUnavailable)
+}
+
+// isTimeout reports whether err is a deadline or network timeout.
+func isTimeout(err error) bool {
+	// Not net.Error: net/http's body-read timeout has Timeout() but is not one.
+	var timeouter interface{ Timeout() bool }
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeouter) && timeouter.Timeout())
 }
 
 // parseAPIError extracts a structured error from the OpenAI error envelope.

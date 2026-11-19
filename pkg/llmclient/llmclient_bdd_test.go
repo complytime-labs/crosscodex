@@ -667,6 +667,32 @@ var _ = Describe("Client", func() {
 			Expect(requests.Load()).To(BeEquivalentTo(1))
 		})
 
+		It("does not retry a response whose body stalls past the timeout, and returns ErrTimeout", func() {
+			var requests atomic.Int32
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"id":"chatcmpl-partial",`))
+				w.(http.Flusher).Flush()
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			DeferCleanup(srv.Close)
+			DeferCleanup(func() { close(release) })
+
+			err := completeOnce(testspecs.SetupTenantContext("test-tenant"), config.LLMConfig{
+				GatewayURL: srv.URL,
+				Timeout:    1,
+				MaxRetries: 3,
+			})
+			Expect(err).To(MatchError(llmclient.ErrTimeout))
+			Expect(requests.Load()).To(BeEquivalentTo(1))
+		})
+
 		It("returns ErrTimeout when the caller's deadline elapses", func() {
 			srv, requests := blockingServer()
 
