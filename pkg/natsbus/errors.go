@@ -34,6 +34,11 @@ var (
 	// ErrEmbeddedStart indicates the embedded NATS server failed to start.
 	ErrEmbeddedStart = errors.New("failed to start embedded NATS server")
 
+	// ErrStreamDrift indicates a live JetStream stream differs from the
+	// configuration this process would create it with. Startup refuses it
+	// rather than overwrite a stream another role or an operator owns.
+	ErrStreamDrift = errors.New("live stream differs from configuration")
+
 	// ErrStreamCreate indicates a JetStream stream could not be created or updated.
 	ErrStreamCreate = errors.New("failed to create stream")
 

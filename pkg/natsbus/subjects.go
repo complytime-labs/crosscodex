@@ -13,6 +13,12 @@ import (
 // subjectPrefix is the root prefix for all CrossCodex NATS subjects.
 const subjectPrefix = "crosscodex"
 
+// MaterializeStream is the work-queue stream that carries the inputs the graph
+// role materializes (stage completions, parsed catalogs, job barriers). It is
+// not an audit stream: AuditStreamNames, backup and the retention drift check
+// leave it out.
+const MaterializeStream = "MATERIALIZE"
+
 // WorkerProgressSubject is the one subject the worker progress signal uses:
 // LLM workers publish a tick on it after every task result they publish, and
 // analysis collections listen to it to tell a busy worker pool from a
@@ -110,6 +116,16 @@ func FeedbackSubject(tenantID, edgeID string) (string, error) {
 func CatalogParsedSubject(tenantID, catalogID string) (string, error) {
 	return buildSubject(tenantID, validateToken(catalogID, "catalog ID"),
 		"catalog", tenantID, catalogID, "parsed")
+}
+
+// MaterializeBarrierSubject builds the subject the pipeline executor publishes
+// when every materialization input of a job has been published; the graph role
+// consumes it from the MATERIALIZE stream to know the job's inputs are complete.
+//
+//	crosscodex.materialize.{tenant_id}.{job_id}.barrier
+func MaterializeBarrierSubject(tenantID, jobID string) (string, error) {
+	return buildSubject(tenantID, validateJobID(jobID),
+		"materialize", tenantID, jobID, "barrier")
 }
 
 // AbandonedSubjectFilter matches every abandon control subject, across all

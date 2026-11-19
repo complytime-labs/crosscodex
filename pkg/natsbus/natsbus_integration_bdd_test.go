@@ -16,6 +16,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.opentelemetry.io/otel/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -210,6 +211,21 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			Eventually(receivedByA.Load, 5*time.Second, 10*time.Millisecond).Should(Equal(int64(5)))
 			Consistently(receivedByB.Load, 500*time.Millisecond, 10*time.Millisecond).Should(BeZero(),
 				"isolation violated: tenant B received messages meant for tenant A")
+		})
+	})
+
+	Describe("MATERIALIZE stream", func() {
+		It("creates MATERIALIZE as a work queue", func() {
+			client := newEmbeddedClient()
+			ctx := context.Background()
+
+			stream, err := natsbus.ExportJetStream(client).Stream(ctx, natsbus.MaterializeStream)
+			Expect(err).NotTo(HaveOccurred())
+			info, err := stream.Info(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.Config.Retention).To(Equal(jetstream.WorkQueuePolicy))
+			Expect(info.Config.Storage).To(Equal(jetstream.FileStorage))
+			Expect(info.Config.MaxAge).To(Equal(24 * time.Hour))
 		})
 	})
 

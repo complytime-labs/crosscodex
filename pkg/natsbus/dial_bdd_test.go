@@ -132,4 +132,44 @@ var _ = Describe("New with WithExistingStreams", func() {
 		Expect(after).To(Equal(before))
 		Expect(after["AUDIT_LLM"]).To(Equal(90 * 24 * time.Hour))
 	})
+
+	It("refuses a second role whose retention differs, leaving the live stream unchanged", func() {
+		srv := startExternalServer()
+		firstCfg := config.NATSConfig{URL: srv.ClientURL()}
+		firstCfg.Streams.AuditLLMRetention = 90 * 24 * time.Hour
+		firstCfg.Streams.AuditEventsRetention = 30 * 24 * time.Hour
+		firstCfg.Streams.MaterializeRetention = 168 * time.Hour
+		first, err := natsbus.New(firstCfg)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(first.Close)
+
+		secondCfg := firstCfg
+		secondCfg.Streams.AuditLLMRetention = time.Hour
+		second, err := natsbus.New(secondCfg)
+
+		Expect(second).To(BeNil())
+		Expect(err).To(MatchError(natsbus.ErrStreamDrift))
+		Expect(err.Error()).To(ContainSubstring("AUDIT_LLM"))
+		Expect(err.Error()).To(ContainSubstring("max_age"))
+		Expect(err.Error()).To(ContainSubstring("nats stream edit AUDIT_LLM"))
+		after, err := first.AuditStreamRetention(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after["AUDIT_LLM"]).To(Equal(90 * 24 * time.Hour))
+	})
+
+	It("accepts a second role with the same configuration", func() {
+		srv := startExternalServer()
+		cfg := config.NATSConfig{URL: srv.ClientURL()}
+		cfg.Streams.AuditLLMRetention = 90 * 24 * time.Hour
+		cfg.Streams.AuditEventsRetention = 30 * 24 * time.Hour
+		cfg.Streams.MaterializeRetention = 168 * time.Hour
+		first, err := natsbus.New(cfg)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(first.Close)
+
+		second, err := natsbus.New(cfg)
+
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(second.Close)
+	})
 })

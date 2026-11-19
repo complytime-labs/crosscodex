@@ -256,10 +256,14 @@ type NATSEmbeddedConfig struct {
 	StoreDir string `yaml:"store_dir" json:"store_dir"` // JetStream storage dir; empty = $XDG_STATE_HOME/crosscodex/nats/
 }
 
-// NATSStreamsConfig configures JetStream audit stream retention.
+// NATSStreamsConfig configures JetStream stream retention. Every role of a
+// deployment that shares a NATS server must configure the same values: a role
+// creates a missing stream but refuses to start against a live stream whose
+// settings differ.
 type NATSStreamsConfig struct {
 	AuditLLMRetention    time.Duration `yaml:"audit_llm_retention" json:"audit_llm_retention"`       // Default: 2160h (90 days)
 	AuditEventsRetention time.Duration `yaml:"audit_events_retention" json:"audit_events_retention"` // Default: 720h (30 days)
+	MaterializeRetention time.Duration `yaml:"materialize_retention" json:"materialize_retention"`   // Default: 168h (7 days); must be > 0
 	// AuditDecisions is always indefinite; no config knob.
 }
 

@@ -52,6 +52,7 @@ nats:
   streams:
     audit_llm_retention: 2160h
     audit_events_retention: 720h
+    materialize_retention: 168h
 server:
   addr: ":50051"
   workers: 4

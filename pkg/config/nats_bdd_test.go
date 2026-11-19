@@ -41,3 +41,30 @@ var _ = Describe("nats.publish_ack_timeout", func() {
 		Expect(err.Error()).To(ContainSubstring("nats.publish_ack_timeout"))
 	})
 })
+
+var _ = Describe("nats.streams.materialize_retention", func() {
+	It("defaults to 168h", func() {
+		_, cfg, err := loadConfigFile("")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.NATS.Streams.MaterializeRetention).To(Equal(168 * time.Hour))
+	})
+
+	It("accepts an override", func() {
+		_, cfg, err := loadConfigFile("nats:\n  streams:\n    materialize_retention: 24h\n")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.NATS.Streams.MaterializeRetention).To(Equal(24 * time.Hour))
+	})
+
+	DescribeTable("rejects a non-positive value, saying what to set",
+		func(retention time.Duration) {
+			cfg := validConfig()
+			cfg.NATS.Streams.MaterializeRetention = retention
+			err := config.ExportValidateConfig(cfg)
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err).To(MatchError(ContainSubstring("positive duration such as 168h")))
+			expectOnlyFieldError(err, "nats.streams.materialize_retention")
+		},
+		Entry("zero", time.Duration(0)),
+		Entry("negative", -time.Hour),
+	)
+})

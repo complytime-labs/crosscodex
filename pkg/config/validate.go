@@ -97,6 +97,10 @@ func validateNATS(nats *NATSConfig, tracker *sourceTracker) error {
 		p.add("nats.publish_ack_timeout", "nats.publish_ack_timeout %s%s must be positive: it bounds how long a durable publish waits for JetStream to confirm storage, so set a positive duration such as 10s: %w",
 			nats.PublishAckTimeout, formatSource(tracker, "nats.publish_ack_timeout"), ErrInvalidConfig)
 	}
+	if nats.Streams.MaterializeRetention <= 0 {
+		p.add("nats.streams.materialize_retention", "nats.streams.materialize_retention %s%s must be positive: it bounds how long an unconsumed graph-materialization input is kept, so set a positive duration such as 168h: %w",
+			nats.Streams.MaterializeRetention, formatSource(tracker, "nats.streams.materialize_retention"), ErrInvalidConfig)
+	}
 	return p.err()
 }
 

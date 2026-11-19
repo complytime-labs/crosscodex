@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -414,20 +416,7 @@ func (c *client) CreateStream(ctx context.Context, cfg StreamConfig) error {
 	)
 	defer span.End()
 
-	jsCfg := jetstream.StreamConfig{
-		Name:      cfg.Name,
-		Subjects:  cfg.Subjects,
-		MaxAge:    cfg.MaxAge,
-		Replicas:  cfg.Replicas,
-		Storage:   jetstream.FileStorage,
-		Retention: jetstream.LimitsPolicy,
-	}
-
-	if jsCfg.Replicas < 1 {
-		jsCfg.Replicas = 1
-	}
-
-	_, err := c.js.CreateOrUpdateStream(ctx, jsCfg)
+	_, err := c.js.CreateOrUpdateStream(ctx, jetStreamConfig(cfg))
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -535,14 +524,102 @@ func (c *client) startSpan(ctx context.Context, name string, opts ...trace.SpanS
 	return trace.SpanFromContext(ctx).TracerProvider().Tracer("natsbus").Start(ctx, name, opts...)
 }
 
-// ensureStreams creates or updates the three audit JetStream streams.
+// jetStreamConfig maps a StreamConfig to the JetStream configuration it is
+// created with (and compared against): file storage, and at least one replica.
+func jetStreamConfig(cfg StreamConfig) jetstream.StreamConfig {
+	jsCfg := jetstream.StreamConfig{
+		Name:      cfg.Name,
+		Subjects:  cfg.Subjects,
+		MaxAge:    cfg.MaxAge,
+		Replicas:  cfg.Replicas,
+		Storage:   jetstream.FileStorage,
+		Retention: jetstream.LimitsPolicy,
+	}
+	if cfg.WorkQueue {
+		jsCfg.Retention = jetstream.WorkQueuePolicy
+	}
+	if jsCfg.Replicas < 1 {
+		jsCfg.Replicas = 1
+	}
+	return jsCfg
+}
+
+// ensureStreams makes every stream this package owns exist. Any role may
+// create a missing stream, but none updates an existing one: with several
+// roles sharing a NATS server and each carrying its own nats.streams, an
+// update would let the last role to start overwrite the others' retention.
+// A live stream that differs from the configuration is refused with
+// ErrStreamDrift.
 func (c *client) ensureStreams(ctx context.Context, streamsCfg config.NATSStreamsConfig) error {
-	for _, cfg := range auditStreamConfigs(streamsCfg) {
-		if err := c.CreateStream(ctx, cfg); err != nil {
+	for _, sc := range streamConfigs(streamsCfg) {
+		if err := c.ensureStream(ctx, sc); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c *client) ensureStream(ctx context.Context, sc StreamConfig) error {
+	want := jetStreamConfig(sc)
+	live, err := c.liveStreamConfig(ctx, sc.Name)
+	if errors.Is(err, jetstream.ErrStreamNotFound) {
+		_, err = c.js.CreateStream(ctx, want)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
+			return fmt.Errorf("create stream %s: %w: %w", sc.Name, ErrStreamCreate, err)
+		}
+		// Another role created it between the lookup and the create: verify its
+		// settings like any live stream.
+		live, err = c.liveStreamConfig(ctx, sc.Name)
+	}
+	if err != nil {
+		return err
+	}
+	if diffs := streamDrift(live, want); len(diffs) > 0 {
+		return fmt.Errorf("%w: stream %s on the NATS server differs from this process's nats.streams configuration, and startup never overwrites a live stream: %s. "+
+			"To fix: make nats.streams in every role's config agree with the live stream, or update the stream (nats stream edit %s ...) and restart",
+			ErrStreamDrift, sc.Name, strings.Join(diffs, "; "), sc.Name)
+	}
+	return nil
+}
+
+func (c *client) liveStreamConfig(ctx context.Context, name string) (jetstream.StreamConfig, error) {
+	stream, err := c.js.Stream(ctx, name)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrStreamNotFound) {
+			return jetstream.StreamConfig{}, err
+		}
+		return jetstream.StreamConfig{}, fmt.Errorf("look up stream %s: %w", name, err)
+	}
+	info, err := stream.Info(ctx)
+	if err != nil {
+		return jetstream.StreamConfig{}, fmt.Errorf("stream info %s: %w", name, err)
+	}
+	return info.Config, nil
+}
+
+// streamDrift lists, one entry per field, how live differs from want on the
+// fields startup verifies. Subjects compare as a set.
+func streamDrift(live, want jetstream.StreamConfig) []string {
+	var diffs []string
+	if !slices.Equal(slices.Sorted(slices.Values(live.Subjects)), slices.Sorted(slices.Values(want.Subjects))) {
+		diffs = append(diffs, fmt.Sprintf("subjects (live %v, configured %v)", live.Subjects, want.Subjects))
+	}
+	if live.Retention != want.Retention {
+		diffs = append(diffs, fmt.Sprintf("retention (live %s, configured %s)", live.Retention, want.Retention))
+	}
+	if live.Storage != want.Storage {
+		diffs = append(diffs, fmt.Sprintf("storage (live %s, configured %s)", live.Storage, want.Storage))
+	}
+	if live.MaxAge != want.MaxAge {
+		diffs = append(diffs, fmt.Sprintf("max_age (live %s, configured %s)", live.MaxAge, want.MaxAge))
+	}
+	if live.Replicas != want.Replicas {
+		diffs = append(diffs, fmt.Sprintf("replicas (live %d, configured %d)", live.Replicas, want.Replicas))
+	}
+	return diffs
 }
 
 // verifyStreams checks that every audit stream exists, without creating or
@@ -570,6 +647,22 @@ func ConfiguredAuditRetention(cfg config.NATSStreamsConfig) map[string]time.Dura
 		out[sc.Name] = sc.MaxAge
 	}
 	return out
+}
+
+// streamConfigs returns every stream a role provisions at startup: the audit
+// streams, then MATERIALIZE.
+func streamConfigs(cfg config.NATSStreamsConfig) []StreamConfig {
+	return append(auditStreamConfigs(cfg), StreamConfig{
+		Name: MaterializeStream,
+		Subjects: []string{
+			subjectPrefix + ".pipeline.*.*.stage.completed",
+			subjectPrefix + ".catalog.*.*.parsed",
+			subjectPrefix + ".materialize.*.*.barrier",
+		},
+		MaxAge:    cfg.MaterializeRetention,
+		Replicas:  1,
+		WorkQueue: true,
+	})
 }
 
 // auditStreamConfigs returns the three audit stream configurations.

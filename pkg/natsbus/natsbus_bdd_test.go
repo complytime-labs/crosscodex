@@ -580,6 +580,24 @@ var _ = Describe("NATSBus System", Ordered, func() {
 			)
 		})
 
+		DescribeTable("builds MaterializeBarrierSubject, rejecting an invalid tenant or job",
+			func(tenant, jobID, want string, wantErr error) {
+				got, err := natsbus.MaterializeBarrierSubject(tenant, jobID)
+				if wantErr != nil {
+					Expect(err).To(MatchError(wantErr))
+					Expect(got).To(BeEmpty())
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(want))
+			},
+			Entry("valid", "acme-corp", "job-1", "crosscodex.materialize.acme-corp.job-1.barrier", nil),
+			Entry("invalid tenant", "a.b", "job-1", "", natsbus.ErrInvalidSubject),
+			Entry("empty job", "acme-corp", "", "", natsbus.ErrInvalidJobID),
+			Entry("job with wildcard", "acme-corp", "job>", "", natsbus.ErrInvalidJobID),
+			Entry("job with dot", "acme-corp", "job.x", "", natsbus.ErrInvalidJobID),
+		)
+
 		Context("when building CatalogParsedSubject", func() {
 			type catalogCase struct {
 				tenant    string

@@ -16,6 +16,11 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Streams are verified, not overwritten (#231):
+
+- **Behaviour.** A role creates a missing JetStream stream but never updates a live one. If a live stream's subjects, retention policy, storage, `max_age` or replicas differ from this role's `nats.streams`, startup fails with `ErrStreamDrift` naming each field with its live and configured values. Make `nats.streams` agree in every role, or run `nats stream edit <name> ...` and restart. Streams an earlier build created with different retention now need that one-time edit.
+- **Config.** New `nats.streams.materialize_retention` (default `168h`, must be positive) sets the `MATERIALIZE` work-queue stream, which is created at startup.
+
 Signed record of every applied cleaning run (#290):
 
 - **Database.** The new append-only table `edge_cleaning_runs` is folded into the baseline migration `001_initial_schema`, and `edge_finding_decisions` gains a foreign key from a policy decision to its run. A database created by an earlier build must be recreated (`task deploy:down VOLUMES=1`, start the stack, `crosscodexd migrate`); `crosscodexd` refuses to start on the old schema, reporting `edge_cleaning_runs.plan_token` as missing.

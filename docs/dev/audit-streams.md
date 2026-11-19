@@ -36,6 +36,7 @@ nats:
   streams:
     audit_llm_retention: 2160h      # 90 days (default)
     audit_events_retention: 720h    # 30 days (default)
+    materialize_retention: 168h     # MATERIALIZE work queue (not an audit stream)
 ```
 
 The decisions stream has no retention limit. Compliance determinations are kept indefinitely because auditors may need to review them years later.

@@ -88,10 +88,11 @@ type MessageHandler func(ctx context.Context, msg *Message) error
 
 // StreamConfig defines a JetStream stream.
 type StreamConfig struct {
-	Name     string        // Stream name
-	Subjects []string      // Subject patterns
-	MaxAge   time.Duration // Maximum message age; 0 = unlimited
-	Replicas int           // Replication factor
+	Name      string        // Stream name
+	Subjects  []string      // Subject patterns
+	MaxAge    time.Duration // Maximum message age; 0 = unlimited
+	Replicas  int           // Replication factor
+	WorkQueue bool          // true: work-queue retention (a message is removed once acknowledged); false: limits retention
 }
 
 // Subscription represents an active message subscription.

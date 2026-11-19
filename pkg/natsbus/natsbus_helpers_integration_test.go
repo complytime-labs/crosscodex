@@ -25,6 +25,7 @@ func defaultTestStreamsConfig() config.NATSStreamsConfig {
 	return config.NATSStreamsConfig{
 		AuditLLMRetention:    24 * time.Hour,
 		AuditEventsRetention: 24 * time.Hour,
+		MaterializeRetention: 24 * time.Hour,
 	}
 }
 
