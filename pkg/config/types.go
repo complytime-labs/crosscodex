@@ -164,6 +164,10 @@ type TLSConfig struct {
 	CipherAllow []string               `yaml:"cipher_allow" json:"cipher_allow"` // Substring-match cipher allowlist
 	CipherDeny  []string               `yaml:"cipher_deny" json:"cipher_deny"`   // Substring-match cipher denylist
 	Targets     map[string]TLSOverride `yaml:"targets" json:"targets"`
+	// ServiceIdentities lists the client certificates the pipeline server
+	// accepts from peer services (glob patterns, as in auth.x509_mappings
+	// match blocks). A peer matching none is refused.
+	ServiceIdentities []X509MatchConfig `yaml:"service_identities" json:"service_identities"`
 }
 
 // FIPSConfig controls FIPS 140 enforcement.

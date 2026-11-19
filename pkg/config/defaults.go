@@ -34,6 +34,7 @@ tls:
     enabled: false
   cipher_allow: []
   cipher_deny: []
+  service_identities: []
 database:
   dsn: ""
   migration_dsn: ""
