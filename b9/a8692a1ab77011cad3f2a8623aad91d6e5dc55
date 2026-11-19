@@ -1,0 +1,26 @@
+docs/dev/cleaning.md
+  s_7e89139204344e::t_92eb3c3699309b 474-481
+README.md
+  s_7e89139204344e::t_23f90539c887c8 26-35,762-763,1164
+docs/dev/service-runtime.md
+  s_7e89139204344e::t_92eb3c3699309b 18,21,26,48,50,53,97,105,136-172
+  s_7e89139204344e::t_26b327ed86217c 173
+deploy/config.yaml
+  s_7e89139204344e::t_e05339969b0a49 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b9a8692a1ab77011cad3f2a8623aad91d6e5dc55",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
