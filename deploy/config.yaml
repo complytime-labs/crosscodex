@@ -21,7 +21,10 @@ tls:
   cert: /certs/client.pem
   key: /certs/client-key.pem
   # Client certificates allowed to assert a tenant to the standalone pipeline
-  # role: the gateway's outbound client cert, which is this same client.pem.
+  # role: the gateway's outbound client cert. Here that is the same client.pem
+  # every role and the operator use, so this separates nothing. With
+  # tenants.enabled: true, give the gateway a dedicated client certificate
+  # issued to no user or other role, and list it alone here.
   service_identities:
     - cn: client
       organization: CrossCodex
