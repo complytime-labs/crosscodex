@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -157,6 +158,28 @@ var _ = Describe("durable message handling", func() {
 		Entry("content hash mismatch", "acme-corp", func(m *stubMsg) { m.data = []byte("tampered") }, "content hash mismatch"),
 	)
 
+	DescribeTable("settles a message by its handler's error, logging at that outcome's level",
+		func(handlerErr error, call, level string) {
+			data := []byte("payload")
+			msg := &stubMsg{subject: "s", data: data, headers: provenanceHeaders("acme-corp", data)}
+			natsbus.ExportHandleDurable(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+				tp.TracerProvider().Tracer("t"), tp.MeterProvider().Meter("m"), cfg,
+				func(context.Context, *natsbus.Message) error { return handlerErr }, msg)
+
+			Expect(msg.calls).To(Equal([]string{call}))
+			Expect(logs.String()).To(ContainSubstring("level=" + level + " msg=\"durable message handler"))
+			for _, other := range []string{"DEBUG", "WARN", "ERROR"} {
+				if other != level {
+					Expect(logs.String()).NotTo(ContainSubstring("level=" + other))
+				}
+			}
+		},
+		Entry("a plain error is redelivered and logged as an error", errors.New("transient"), "nak", "ERROR"),
+		Entry("ErrNotReady is redelivered and logged at debug", fmt.Errorf("still queued: %w", natsbus.ErrNotReady), "nak", "DEBUG"),
+		Entry("ErrPermanent is terminated and logged as a warning", fmt.Errorf("bad: %w", natsbus.ErrPermanent), "term", "WARN"),
+		Entry("ErrSkip is terminated and logged at debug", fmt.Errorf("not ours: %w", natsbus.ErrSkip), "term", "DEBUG"),
+	)
+
 	DescribeTable("counts a failed acknowledgement under <outcome>_failed",
 		func(handlerErr error, want string) {
 			data := []byte("payload")
@@ -167,5 +190,7 @@ var _ = Describe("durable message handling", func() {
 		Entry("ack", nil, "ack_failed"),
 		Entry("nak", errors.New("transient"), "nak_failed"),
 		Entry("term", natsbus.ErrPermanent, "term_failed"),
+		Entry("term of a skipped message", natsbus.ErrSkip, "term_failed"),
+		Entry("nak of a message not ready", natsbus.ErrNotReady, "nak_failed"),
 	)
 })

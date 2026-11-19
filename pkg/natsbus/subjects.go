@@ -168,7 +168,11 @@ func GraphOutcomeSubject(tenantID, jobID, outcome string) (string, error) {
 		"audit", tenantID, string(AuditEvents), jobID, "graph", outcome)
 }
 
-// GraphOutcomeFilter matches every GraphOutcomeSubject of one job.
+// GraphOutcomeFilter matches every GraphOutcomeSubject of one job. The
+// subjects outlive a run: a retried or resumed job keeps its job ID, and the
+// outcomes carry no message ID, so a barrier answered twice (a redelivery
+// racing its ack) publishes twice. A subscriber must ignore outcomes stored
+// before its run started and take the first answer.
 //
 //	crosscodex.audit.{tenant_id}.events.{job_id}.graph.*
 func GraphOutcomeFilter(tenantID, jobID string) (string, error) {

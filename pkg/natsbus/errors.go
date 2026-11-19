@@ -40,6 +40,18 @@ var (
 	// after ConsumerConfig.RedeliverDelay, up to MaxDeliver.
 	ErrPermanent = errors.New("message cannot be processed; not redelivered")
 
+	// ErrSkip is returned (or wrapped) by a durable-consumer handler for a
+	// message it ignores by design, such as an event no handler is meant for.
+	// Like ErrPermanent the message is terminated, but the consumer logs it at
+	// debug rather than as a warning, since nothing is wrong.
+	ErrSkip = errors.New("message skipped by its handler; not redelivered")
+
+	// ErrNotReady is returned (or wrapped) by a durable-consumer handler that
+	// polls a condition not met yet. Like any other error the message is
+	// redelivered after ConsumerConfig.RedeliverDelay, up to MaxDeliver, but
+	// the consumer logs it at debug rather than as an error.
+	ErrNotReady = errors.New("message not ready to be processed; redelivered")
+
 	// ErrStreamDrift indicates a live JetStream stream differs from the
 	// configuration this process would create it with. Startup refuses it
 	// rather than overwrite a stream another role or an operator owns.

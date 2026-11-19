@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -128,15 +129,19 @@ func (c *client) handleDurable(parent context.Context, cfg ConsumerConfig, handl
 	v.span.SetAttributes(attribute.Int64("messaging.delivery_attempt", int64(js.NumDelivered)))
 
 	handlerErr := handler(ctx, &Message{Subject: msg.Subject(), Data: msg.Data(), Headers: headers, Metadata: meta})
-	outcome := outcomeAck
+	outcome, level := outcomeAck, slog.LevelError
 	switch {
+	case errors.Is(handlerErr, ErrSkip):
+		outcome, level = outcomeTerm, slog.LevelDebug
 	case errors.Is(handlerErr, ErrPermanent):
-		outcome = outcomeTerm
+		outcome, level = outcomeTerm, slog.LevelWarn
+	case errors.Is(handlerErr, ErrNotReady):
+		outcome, level = outcomeNak, slog.LevelDebug
 	case handlerErr != nil:
 		outcome = outcomeNak
 	}
 	if handlerErr != nil {
-		c.opts.logger.Error("durable message handler error",
+		c.opts.logger.Log(ctx, level, "durable message handler error",
 			"stream", cfg.Stream, "consumer", cfg.Durable, "subject", msg.Subject(),
 			"outcome", outcome, "delivery", js.NumDelivered, "error", handlerErr)
 		v.span.RecordError(handlerErr)
@@ -210,6 +215,44 @@ func (c *client) SubjectMessageCount(ctx context.Context, stream, subject string
 		return 0, fmt.Errorf("count messages in %s: %w: %w", stream, ErrStreamNotFound, err)
 	}
 	return 0, fmt.Errorf("count messages in %s on %s: %w", stream, subject, err)
+}
+
+// LastMessageTime returns the server time of the last message stream holds on
+// subject.
+func (c *client) LastMessageTime(ctx context.Context, stream, subject string) (time.Time, bool, error) {
+	ctx, span := c.startSpan(ctx, "natsbus.LastMessageTime", trace.WithAttributes(
+		attribute.String("messaging.stream", stream),
+		attribute.String("messaging.subject", subject),
+	))
+	defer span.End()
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		span.SetStatus(codes.Error, "connection closed")
+		return time.Time{}, false, fmt.Errorf("read last message in %s: %w", stream, ErrConnectionClosed)
+	}
+	c.mu.Unlock()
+
+	js, err := c.js.Stream(ctx, stream)
+	if err == nil {
+		var msg *jetstream.RawStreamMsg
+		msg, err = js.GetLastMsgForSubject(ctx, subject)
+		switch {
+		case err == nil:
+			span.SetStatus(codes.Ok, "")
+			return msg.Time, true, nil
+		case errors.Is(err, jetstream.ErrMsgNotFound):
+			span.SetStatus(codes.Ok, "no message")
+			return time.Time{}, false, nil
+		}
+	}
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	if errors.Is(err, jetstream.ErrStreamNotFound) {
+		return time.Time{}, false, fmt.Errorf("read last message in %s: %w: %w", stream, ErrStreamNotFound, err)
+	}
+	return time.Time{}, false, fmt.Errorf("read last message in %s on %s: %w", stream, subject, err)
 }
 
 // durableSubscription adapts a jetstream.ConsumeContext to Subscription.

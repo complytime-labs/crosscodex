@@ -58,8 +58,8 @@ func clonePublication(p Publication) Publication {
 // Publish, PublishWithHeaders, PublishDurable and PublishWorkerProgress record and return nil;
 // Subscribe, QueueSubscribe, SubscribeWorkerProgress and ConsumeDurable record
 // a Sub and return it, unless their Func decides otherwise; Close returns nil.
-// Unset CreateStreamFunc, DeleteStreamFunc, AuditStreamRetentionFunc and
-// SubjectMessageCountFunc
+// Unset CreateStreamFunc, DeleteStreamFunc, AuditStreamRetentionFunc,
+// SubjectMessageCountFunc and LastMessageTimeFunc
 // return ErrUnscripted. The zero value is ready to use. Set the exported
 // fields before the first call; the methods are then safe for concurrent use.
 type Fake struct {
@@ -95,6 +95,9 @@ type Fake struct {
 	// SubjectMessageCountFunc decides what SubjectMessageCount returns; unset is
 	// ErrUnscripted.
 	SubjectMessageCountFunc func(ctx context.Context, stream, subject string) (uint64, error)
+	// LastMessageTimeFunc decides what LastMessageTime returns; unset is
+	// ErrUnscripted.
+	LastMessageTimeFunc func(ctx context.Context, stream, subject string) (time.Time, bool, error)
 	// CreateStreamFunc decides what CreateStream returns; unset is ErrUnscripted.
 	CreateStreamFunc func(ctx context.Context, cfg natsbus.StreamConfig) error
 	// DeleteStreamFunc decides what DeleteStream returns; unset is ErrUnscripted.
@@ -258,7 +261,8 @@ func (f *Fake) SubscribeWorkerProgress(ctx context.Context, handler func()) (nat
 // Deliver matches against every cfg.FilterSubjects pattern (every subject when
 // there are none). The Sub counts each delivery by the outcome the real
 // consumer would apply to the handler's result: nil is acked, an error
-// wrapping natsbus.ErrPermanent is termed, any other error is naked. The
+// wrapping natsbus.ErrSkip or natsbus.ErrPermanent is termed, any other error
+// (natsbus.ErrNotReady included) is naked. The
 // handler's ctx carries msg.Metadata.TenantID; a message whose tenant ID is
 // empty or invalid is termed without calling the handler, and Deliver returns
 // the tenant error. Fake never redelivers; a test redelivers by calling Deliver again.
@@ -286,7 +290,7 @@ func (f *Fake) ConsumeDurable(ctx context.Context, cfg natsbus.ConsumerConfig, h
 		switch {
 		case err == nil:
 			sub.acked++
-		case errors.Is(err, natsbus.ErrPermanent):
+		case errors.Is(err, natsbus.ErrSkip), errors.Is(err, natsbus.ErrPermanent):
 			sub.termed++
 		default:
 			sub.naked++
@@ -310,6 +314,18 @@ func (f *Fake) SubjectMessageCount(ctx context.Context, stream, subject string) 
 		return 0, unscripted("SubjectMessageCount")
 	}
 	return f.SubjectMessageCountFunc(ctx, stream, subject)
+}
+
+// LastMessageTime returns what LastMessageTimeFunc decides, or an
+// ErrUnscripted error when it is unset.
+func (f *Fake) LastMessageTime(ctx context.Context, stream, subject string) (time.Time, bool, error) {
+	if err := f.checkOpen("read last message in " + stream); err != nil {
+		return time.Time{}, false, err
+	}
+	if f.LastMessageTimeFunc == nil {
+		return time.Time{}, false, unscripted("LastMessageTime")
+	}
+	return f.LastMessageTimeFunc(ctx, stream, subject)
 }
 
 // finishSubscribe applies a subscribe Func's result: an error means no

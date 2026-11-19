@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
 	. "github.com/onsi/ginkgo/v2"
@@ -218,6 +219,25 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 			if got := s.Acked() + s.Naked() + s.Termed(); got != len(script) {
 				t.Fatalf("outcomes sum to %d, want %d deliveries", got, len(script))
+			}
+		})
+	})
+
+	It("LastMessageTime passes the stream and subject to LastMessageTimeFunc and returns its answer unchanged", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			stream := rapid.StringMatching(`[A-Z_]{1,12}`).Draw(t, "stream")
+			subject := rapid.StringMatching(`[a-z]{1,8}(\.[a-z]{1,8}){0,4}`).Draw(t, "subject")
+			found := rapid.Bool().Draw(t, "found")
+			at := time.Unix(rapid.Int64Range(0, 1<<40).Draw(t, "unix"), 0).UTC()
+			fake := &natsbustest.Fake{LastMessageTimeFunc: func(_ context.Context, gotStream, gotSubject string) (time.Time, bool, error) {
+				if gotStream != stream || gotSubject != subject {
+					t.Fatalf("got (%q, %q), want (%q, %q)", gotStream, gotSubject, stream, subject)
+				}
+				return at, found, nil
+			}}
+			got, gotFound, err := fake.LastMessageTime(context.Background(), stream, subject)
+			if err != nil || gotFound != found || !got.Equal(at) {
+				t.Fatalf("LastMessageTime = (%v, %v, %v), want (%v, %v, nil)", got, gotFound, err, at, found)
 			}
 		})
 	})

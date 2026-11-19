@@ -113,10 +113,18 @@ type GraphOutcome struct {
 // MaterializeBarrier is the JSON payload of a MaterializeBarrierSubject
 // event. The graph role answers it with a GraphOutcome once no
 // materialization event of the job is left in MaterializeStream, and drops it
-// unanswered after Deadline.
+// unanswered after Deadline. Both times are required.
+//
+// NotBefore is when the run the barrier belongs to started or resumed. A
+// retried or resumed job keeps its job ID, and AUDIT_EVENTS keeps an earlier
+// run's failed outcomes, so the graph role counts a failed outcome only when
+// the stream stored it at or after NotBefore. The comparison is against the
+// NATS server's clock, so a publisher clock running ahead of the server's
+// could hide a failure stored in this run's first moments.
 type MaterializeBarrier struct {
-	JobID    string    `json:"job_id"`
-	Deadline time.Time `json:"deadline"`
+	JobID     string    `json:"job_id"`
+	Deadline  time.Time `json:"deadline"`
+	NotBefore time.Time `json:"not_before"`
 }
 
 // ConsumerConfig defines a durable JetStream pull consumer. The caller owns

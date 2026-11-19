@@ -593,6 +593,8 @@ var _ = Describe("Fake", func() {
 			Entry("nil error is acked", nil, 1, 0, 0),
 			Entry("ErrPermanent is termed", natsbus.ErrPermanent, 0, 0, 1),
 			Entry("a wrapped ErrPermanent is termed", fmt.Errorf("bad: %w", natsbus.ErrPermanent), 0, 0, 1),
+			Entry("ErrSkip is termed", fmt.Errorf("not ours: %w", natsbus.ErrSkip), 0, 0, 1),
+			Entry("ErrNotReady is naked", fmt.Errorf("later: %w", natsbus.ErrNotReady), 0, 1, 0),
 			Entry("any other error is naked", errScripted, 0, 1, 0),
 		)
 
@@ -682,6 +684,35 @@ var _ = Describe("Fake", func() {
 		})
 	})
 
+	Describe("LastMessageTime", func() {
+		It("returns what LastMessageTimeFunc decides", func() {
+			at := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+			fake.LastMessageTimeFunc = func(_ context.Context, stream, subject string) (time.Time, bool, error) {
+				Expect([]string{stream, subject}).To(Equal([]string{"S", "a.b"}))
+				return at, true, nil
+			}
+			got, found, err := fake.LastMessageTime(ctx, "S", "a.b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(got).To(Equal(at))
+		})
+
+		It("returns the scripted error", func() {
+			fake.LastMessageTimeFunc = func(context.Context, string, string) (time.Time, bool, error) {
+				return time.Time{}, false, errScripted
+			}
+			_, _, err := fake.LastMessageTime(ctx, "S", "a")
+			Expect(err).To(MatchError(errScripted))
+		})
+
+		It("returns ErrUnscripted naming the field when unset", func() {
+			_, found, err := fake.LastMessageTime(ctx, "S", "a")
+			Expect(err).To(MatchError(natsbustest.ErrUnscripted))
+			Expect(err).To(MatchError(ContainSubstring("LastMessageTimeFunc")))
+			Expect(found).To(BeFalse())
+		})
+	})
+
 	Describe("Close", func() {
 		BeforeEach(func() {
 			fake.CreateStreamFunc = func(context.Context, natsbus.StreamConfig) error { return nil }
@@ -720,6 +751,13 @@ var _ = Describe("Fake", func() {
 			fake.SubjectMessageCountFunc = func(context.Context, string, string) (uint64, error) { reached = true; return 0, nil }
 			_, err = fake.SubjectMessageCount(ctx, "S", "a")
 			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+			fake.LastMessageTimeFunc = func(context.Context, string, string) (time.Time, bool, error) {
+				reached = true
+				return time.Time{}, true, nil
+			}
+			_, found, err := fake.LastMessageTime(ctx, "S", "a")
+			Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+			Expect(found).To(BeFalse())
 
 			Expect(reached).To(BeFalse())
 			Expect(fake.Published()).To(BeEmpty())

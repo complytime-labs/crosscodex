@@ -500,6 +500,32 @@ var _ = Describe("Embedded NATS Integration", Ordered, func() {
 			_, err = client.SubjectMessageCount(ctx, "NO_SUCH_STREAM", "x")
 			Expect(err).To(MatchError(natsbus.ErrStreamNotFound))
 		})
+
+		It("reports when the last message on a subject was stored, and that a subject has none", func() {
+			client := newEmbeddedClient()
+			newQueue(client)
+			ctx := testTenantCtx("acme-corp")
+			before := time.Now().Add(-time.Second)
+			Expect(client.PublishDurable(ctx, "crosscodex.test.consume.a", []byte("first"), nil)).To(Succeed())
+			first, found, err := client.LastMessageTime(ctx, streamName, "crosscodex.test.consume.a")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(first).To(BeTemporally(">=", before))
+			Expect(first).To(BeTemporally("<=", time.Now().Add(time.Second)))
+
+			Expect(client.PublishDurable(ctx, "crosscodex.test.consume.a", []byte("second"), nil)).To(Succeed())
+			last, found, err := client.LastMessageTime(ctx, streamName, "crosscodex.test.consume.a")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue())
+			Expect(last).To(BeTemporally(">=", first))
+
+			_, found, err = client.LastMessageTime(ctx, streamName, "crosscodex.test.consume.none")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+
+			_, _, err = client.LastMessageTime(ctx, "NO_SUCH_STREAM", "x")
+			Expect(err).To(MatchError(natsbus.ErrStreamNotFound))
+		})
 	})
 
 	Describe("Close Behavior", func() {

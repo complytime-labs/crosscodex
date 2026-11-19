@@ -49,10 +49,18 @@ type Client interface {
 	// ConsumeDurable creates or updates the durable pull consumer cfg describes
 	// (explicit acks) and calls handler for each message until the returned
 	// Subscription stops. The handler's context carries the message's tenant
-	// (validated) and the publisher's trace context. Outcome: nil acks; an
-	// error wrapping ErrPermanent terminates the message (removed from a
-	// work-queue stream); any other error redelivers it after
-	// cfg.RedeliverDelay, up to cfg.MaxDeliver. Message.Metadata carries
+	// (validated) and the publisher's trace context. Outcome, and the level
+	// the consumer logs a handler error at:
+	//   - nil acks the message.
+	//   - an error wrapping ErrSkip terminates it (removed from a work-queue
+	//     stream), logged at debug: a message the handler ignores by design.
+	//   - an error wrapping ErrPermanent terminates it, logged as a warning.
+	//   - an error wrapping ErrNotReady redelivers it after cfg.RedeliverDelay,
+	//     logged at debug: the handler polls a condition not met yet.
+	//   - any other error redelivers it after cfg.RedeliverDelay, logged as an
+	//     error.
+	// Redelivery stops after cfg.MaxDeliver deliveries. Termination takes
+	// precedence over redelivery when an error wraps both. Message.Metadata carries
 	// Stream, Sequence and NumDelivered. A message that fails the provenance or
 	// content-hash check is terminated and counted, never delivered to handler.
 	// Unsubscribe stops at once; Drain stops fetching and lets in-flight messages
@@ -64,6 +72,12 @@ type Client interface {
 	// not yet acknowledged, so a nonzero count means work is still queued.
 	// Errors wrap ErrStreamNotFound when stream does not exist.
 	SubjectMessageCount(ctx context.Context, stream, subject string) (uint64, error)
+
+	// LastMessageTime returns when stream stored its last message on subject
+	// (a literal subject, not a pattern), and found false with a zero time
+	// when stream holds none. The time is the server's, not the publisher's.
+	// Errors wrap ErrStreamNotFound when stream does not exist.
+	LastMessageTime(ctx context.Context, stream, subject string) (t time.Time, found bool, err error)
 
 	// PublishWorkerProgress publishes one tick on WorkerProgressSubject with
 	// an empty payload and no headers. It needs no tenant in ctx, which is
