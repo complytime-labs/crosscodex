@@ -1,0 +1,37 @@
+cmd/crosscodexd/e2e_integration_test.go
+  s_7e89139204344e::t_03663e8df67dc6 53
+cmd/crosscodexd/bootstrap_bdd_test.go
+  s_7e89139204344e::t_fdb3eb527d5eee 15,468,480-547
+cmd/crosscodexd/stage_record_client_bdd_test.go
+  s_7e89139204344e::t_304b341e69b87a 140
+  s_7e89139204344e::t_5deadb1e82e389 1-139,141-145
+cmd/crosscodexd/stage_record_client.go
+  s_7e89139204344e::t_8f3ddaccaf36c2 1-45
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_7e89139204344e::t_88a04471f0cab0 83,111,245
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_7e89139204344e::t_95b953b0172bd5 221,228-229
+  s_7e89139204344e::t_051684756824b1 351,682-683
+  s_7e89139204344e::t_03663e8df67dc6 95-107,220,225-227,316,699,701-704,746,769
+cmd/crosscodexd/bootstrap.go
+  s_7e89139204344e::t_c5812195561a65 52,109-113,129,152-156,191-194,253-261,768,987
+  s_7e89139204344e::t_d030078a5da75d 454,474-487,693-766,1055-1057,1067-1074,1084
+  s_7e89139204344e::t_e5c8b85a1147ce 1046-1050
+  s_7e89139204344e::t_d80b70398d883c 767,769
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a767ea78bb25eda8bea407de8b2db900a68fcaf7",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
