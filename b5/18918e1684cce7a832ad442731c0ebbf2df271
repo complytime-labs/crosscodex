@@ -1,0 +1,42 @@
+pkg/natsbus/interface.go
+  s_290b9f730df96c::t_56f70c095409d3 52-63,76-80
+  s_290b9f730df96c::t_e081dca1712b36 81
+pkg/natsbus/natsbustest/natsbustest_property_test.go
+  s_290b9f730df96c::t_6da3d1f7083575 9,226-240
+  s_290b9f730df96c::t_9045f7dbc78a44 241-244
+pkg/natsbus/errors.go
+  s_290b9f730df96c::t_56f70c095409d3 43-54
+pkg/natsbus/natsbustest/fake.go
+  s_290b9f730df96c::t_873e6076fa3f16 61-62,98-100,264-265,293,319-328
+  s_290b9f730df96c::t_f650c2956cd8db 329-330
+pkg/natsbus/natsbus_integration_bdd_test.go
+  s_290b9f730df96c::t_c36012344dbdc9 503-527
+  s_290b9f730df96c::t_9f28ea5df58a45 502
+pkg/natsbus/consumer.go
+  s_290b9f730df96c::t_56f70c095409d3 7,132,134-135,137-139,144,220-255
+  s_290b9f730df96c::t_a22b0351937fbc 256-257
+pkg/natsbus/durable_bdd_test.go
+  s_290b9f730df96c::t_7ef6389409b38f 7,161-182,193-194
+pkg/natsbus/subjects.go
+  s_290b9f730df96c::t_01a032a9b2555d 171-175
+pkg/natsbus/natsbustest/natsbustest_bdd_test.go
+  s_290b9f730df96c::t_6da3d1f7083575 596-597,687-715,754-760
+pkg/natsbus/types.go
+  s_290b9f730df96c::t_01a032a9b2555d 116-123,125-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b518918e1684cce7a832ad442731c0ebbf2df271",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
