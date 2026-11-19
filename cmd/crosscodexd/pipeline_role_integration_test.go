@@ -80,6 +80,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		pipelineCfg.TLS = testServerTLS()
 
 		workerCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RoleWorker)
+		startGraphRole(ctx, dsn, natsURL)
 
 		pipelineRT, err := bootstrap(ctx, pipelineCfg, WithLLMClient(fakeLLM))
 		Expect(err).NotTo(HaveOccurred(), "bootstrap pipeline role")
@@ -221,16 +222,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 
 		// The graph role is the only Control-node writer: catalog ingest in
 		// the gateway publishes the parsed catalog and stops there.
-		graphCfg := baseTestConfig(dsn)
-		graphCfg.Role = config.RoleGraph
-		graphCfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
-		graphCfg.Health.Addr = "127.0.0.1:0"
-
-		graphRT, err := bootstrap(ctx, graphCfg)
-		Expect(err).NotTo(HaveOccurred(), "bootstrap graph role")
-		defer graphRT.close()
-		Expect(graphRT.start(ctx)).To(Succeed(), "start graph role")
-		defer func() { _ = graphRT.stop(context.Background()) }()
+		graphRT := startGraphRole(ctx, dsn, natsURL)
 
 		// The gateway role refuses a default tenant migrate has not
 		// provisioned, so provision it before bootstrapping the gateway.

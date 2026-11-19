@@ -184,6 +184,56 @@ func attestedBy(gen attestation.Generator) pipeline.Attestors {
 	}
 }
 
+// publishDurableFunc is the signature of natsbustest.Fake.PublishDurableFunc.
+type publishDurableFunc = func(ctx context.Context, subject string, data []byte, headers map[string][]string) error
+
+// graphOutcome is the message the graph role publishes with a job's
+// materialization outcome, as a subscriber receives it at receivedAt.
+func graphOutcome(tenantID, jobID, outcome, reason string, receivedAt time.Time) *natsbus.Message {
+	GinkgoHelper()
+	subject, err := natsbus.GraphOutcomeSubject(tenantID, jobID, outcome)
+	Expect(err).NotTo(HaveOccurred())
+	data, err := json.Marshal(natsbus.GraphOutcome{JobID: jobID, Outcome: outcome, Error: reason})
+	Expect(err).NotTo(HaveOccurred())
+	return &natsbus.Message{Subject: subject, Data: data,
+		Metadata: natsbus.MessageMetadata{TenantID: tenantID, Timestamp: receivedAt}}
+}
+
+// answerBarriers returns a PublishDurableFunc for bus that stands in for a
+// running graph role: once next accepts a job's materialization barrier (a
+// nil next accepts every publish), it delivers a "materialized" outcome for
+// the job to bus's subscribers. Every spec whose job must get past the graph
+// stage needs it, because the stage completes only on that outcome.
+func answerBarriers(bus *natsbustest.Fake, next publishDurableFunc) publishDurableFunc {
+	return func(ctx context.Context, subject string, data []byte, headers map[string][]string) error {
+		if next != nil {
+			if err := next(ctx, subject, data, headers); err != nil {
+				return err
+			}
+		}
+		var barrier natsbus.MaterializeBarrier
+		if !strings.HasPrefix(subject, "crosscodex.materialize.") || json.Unmarshal(data, &barrier) != nil {
+			return nil
+		}
+		tenantID, err := tenant.FromContext(ctx)
+		if err != nil {
+			return err
+		}
+		if want, err := natsbus.MaterializeBarrierSubject(tenantID, barrier.JobID); err != nil || want != subject {
+			return nil
+		}
+		return bus.Deliver(graphOutcome(tenantID, barrier.JobID, natsbus.GraphOutcomeMaterialized, "", time.Now()))
+	}
+}
+
+// newGraphRoleBus is a bus with a running graph role that answers every
+// materialization barrier with "materialized" (answerBarriers).
+func newGraphRoleBus() *natsbustest.Fake {
+	bus := &natsbustest.Fake{}
+	bus.PublishDurableFunc = answerBarriers(bus, nil)
+	return bus
+}
+
 func (f *fakeAttestation) linkCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -461,7 +511,7 @@ var _ = Describe("Executor", func() {
 		synth = &fakeSynthesisExecutor{}
 		attestor = newFakeAttestation()
 		converter = pipelineattestation.NewConverter()
-		bus = &natsbustest.Fake{}
+		bus = newGraphRoleBus()
 		storage = &storagetest.Fake{}
 
 		// Register stub analyzers.
@@ -731,7 +781,9 @@ var _ = Describe("Executor", func() {
 
 			// Verify NATS events published (running, stage events, completed).
 			Expect(bus.Published()).NotTo(BeEmpty())
-			Expect(bus.Subscriptions()).To(BeEmpty(), "job execution only publishes")
+			for _, sub := range bus.Subscriptions() {
+				Expect(sub.Unsubscribed()).To(BeTrue(), "job execution subscribes only while its graph stage waits")
+			}
 		})
 
 		It("publishes its synthesis stage event in the shared stage schema", func() {
@@ -902,6 +954,237 @@ var _ = Describe("Executor", func() {
 			}, "1s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
 		})
 
+		Describe("graph stage", func() {
+			// Nothing answers a barrier unless a spec delivers the outcome.
+			BeforeEach(func() { bus.PublishDurableFunc = nil })
+
+			graphStage := func() *pipeline.Stage {
+				stages, err := store.GetStages(ctx, jobID)
+				if err != nil {
+					return nil
+				}
+				for _, st := range stages {
+					if st.StageName == "graph" {
+						return st
+					}
+				}
+				return nil
+			}
+			graphStatus := func() pipeline.StageStatus {
+				if st := graphStage(); st != nil {
+					return st.Status
+				}
+				return ""
+			}
+			barrierSubject := func() string {
+				GinkgoHelper()
+				subject, err := natsbus.MaterializeBarrierSubject(tenantID, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				return subject
+			}
+			// barriers returns every stored barrier of the job, in order.
+			barriers := func() []natsbus.MaterializeBarrier {
+				var out []natsbus.MaterializeBarrier
+				for _, p := range bus.Published() {
+					if p.Subject != barrierSubject() || !p.Durable {
+						continue
+					}
+					var b natsbus.MaterializeBarrier
+					Expect(json.Unmarshal(p.Data, &b)).To(Succeed())
+					out = append(out, b)
+				}
+				return out
+			}
+			// outcomeSubs returns the job's subscriptions to its graph outcomes.
+			outcomeSubs := func() []*natsbustest.Sub {
+				filter, err := natsbus.GraphOutcomeFilter(tenantID, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				var out []*natsbustest.Sub
+				for _, sub := range bus.Subscriptions() {
+					if sub.Subject == filter {
+						out = append(out, sub)
+					}
+				}
+				return out
+			}
+			expectUnsubscribed := func() {
+				GinkgoHelper()
+				subs := outcomeSubs()
+				Expect(subs).NotTo(BeEmpty())
+				for _, sub := range subs {
+					Expect(sub.Unsubscribed()).To(BeTrue(), "the outcome subscription must end with the stage")
+				}
+			}
+			// startJob resumes the job from its stages and waits for its
+			// barrier, returning when the run started.
+			startJob := func(s *pipeline.Service) time.Time {
+				GinkgoHelper()
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+				started := time.Now()
+				Expect(s.Start(ctx)).To(Succeed())
+				DeferCleanup(s.Stop, ctx)
+				Eventually(barriers).Should(HaveLen(1))
+				return started
+			}
+			errorOf := func() string {
+				j, err := store.GetJob(ctx, jobID)
+				Expect(err).NotTo(HaveOccurred())
+				return j.ErrorMessage
+			}
+
+			It("does not mark the graph stage completed before the materialized event", func() {
+				started := startJob(svc)
+
+				Consistently(graphStatus, "300ms", "20ms").Should(Equal(pipeline.StageStatusRunning))
+				Expect(jobStatusOf(jobID)()).To(Equal(pipeline.JobStatusRunning))
+
+				b := barriers()[0]
+				Expect(b.JobID).To(Equal(jobID))
+				Expect(b.NotBefore).To(BeTemporally(">=", started.Add(-time.Second)))
+				Expect(b.NotBefore).To(BeTemporally("<=", time.Now()))
+				Expect(b.Deadline).To(BeTemporally("~", b.NotBefore.Add(config.DefaultPipelineGraphMaterializeTimeout), 5*time.Second),
+					"an unset timeout waits the 30m default")
+				subs := outcomeSubs()
+				Expect(subs).To(HaveLen(1), "subscribed before the barrier was published")
+				Expect(subs[0].Unsubscribed()).To(BeFalse())
+			})
+
+			It("completes the job when the materialized event arrives", func() {
+				startJob(svc)
+
+				Expect(bus.Deliver(graphOutcome(tenantID, jobID, natsbus.GraphOutcomeMaterialized, "", time.Now()))).To(Succeed())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(graphStatus()).To(Equal(pipeline.StageStatusCompleted))
+				expectUnsubscribed()
+				completed, err := natsbus.PipelineStageSubject(tenantID, jobID, natsbus.StageCompleted)
+				Expect(err).NotTo(HaveOccurred())
+				var graphCompletedAfterBarrier, sawBarrier bool
+				for _, p := range bus.Published() {
+					if p.Subject == barrierSubject() {
+						sawBarrier = true
+					}
+					if p.Subject == completed && sawBarrier && strings.Contains(string(p.Data), `"analyzer":"graph"`) {
+						graphCompletedAfterBarrier = true
+					}
+				}
+				Expect(graphCompletedAfterBarrier).To(BeTrue(), "the graph stage's completed event follows its barrier")
+			})
+
+			It("ignores outcomes from before the run started or for another job, and takes the first remaining answer", func() {
+				started := startJob(svc)
+
+				stale := graphOutcome(tenantID, jobID, natsbus.GraphOutcomeMaterialized, "", started.Add(-time.Minute))
+				Expect(bus.Deliver(stale)).To(Succeed())
+				otherJob := graphOutcome(tenantID, jobID, natsbus.GraphOutcomeMaterialized, "", time.Now())
+				otherJob.Data = []byte(`{"job_id":"another-job","outcome":"materialized"}`)
+				Expect(bus.Deliver(otherJob)).To(Succeed())
+				otherTenant := graphOutcome(tenantID, jobID, natsbus.GraphOutcomeMaterialized, "", time.Now())
+				otherTenant.Metadata.TenantID = "other-tenant"
+				Expect(bus.Deliver(otherTenant)).To(Succeed())
+				Consistently(graphStatus, "200ms", "20ms").Should(Equal(pipeline.StageStatusRunning))
+
+				Expect(bus.Deliver(graphOutcome(tenantID, jobID, natsbus.GraphOutcomeFailed, "an edge could not be written", time.Now()))).To(Succeed())
+				Expect(bus.Deliver(graphOutcome(tenantID, jobID, natsbus.GraphOutcomeMaterialized, "", time.Now()))).To(Succeed())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(graphStatus()).To(Equal(pipeline.StageStatusFailed))
+			})
+
+			It("fails the job with the graph error when the failed event arrives", func() {
+				startJob(svc)
+
+				reason := "at least one materialization event of the job failed; see the earlier graph failure event for the analyzer"
+				Expect(bus.Deliver(graphOutcome(tenantID, jobID, natsbus.GraphOutcomeFailed, reason, time.Now()))).To(Succeed())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(errorOf()).To(Equal("graph materialization failed for job " + jobID + ": " + reason +
+					". Check the graph role's logs, then re-run the job."))
+				Expect(graphStatus()).To(Equal(pipeline.StageStatusFailed))
+				Expect(graphStage().ErrorMessage).To(ContainSubstring("graph materialization failed for job " + jobID))
+				expectUnsubscribed()
+				Expect(storage.Objects()).NotTo(HaveKey(fmt.Sprintf("attestation/%s/bundle.json", jobID)),
+					"a job whose graph failed is not finalized")
+			})
+
+			It("fails the job naming the timeout and a running graph role when nothing answers", func() {
+				s := pipeline.New(store, engine, registry, synth, attestedBy(attestor), converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10, GraphMaterializeTimeout: 50 * time.Millisecond}, nil)
+				started := startJob(s)
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(errorOf()).To(Equal("graph materialization for job " + jobID +
+					" did not finish within pipeline.graph_materialize_timeout (50ms). Check that a crosscodexd graph role " +
+					"(or role all) is running and can reach NATS and the graph database, then re-run the job, or raise the timeout."))
+				Expect(graphStatus()).To(Equal(pipeline.StageStatusFailed))
+				expectUnsubscribed()
+				b := barriers()[0]
+				Expect(b.Deadline).To(BeTemporally("~", b.NotBefore.Add(50*time.Millisecond), time.Second))
+				Expect(b.Deadline).To(BeTemporally(">", started))
+			})
+
+			It("fails the job when the barrier is not stored", func() {
+				bus.PublishDurableFunc = func(_ context.Context, subject string, _ []byte, _ map[string][]string) error {
+					if strings.HasPrefix(subject, "crosscodex.materialize.") {
+						return fmt.Errorf("%w: %w: nats: no responders", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+					}
+					return nil
+				}
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+				Expect(svc.Start(ctx)).To(Succeed())
+				DeferCleanup(svc.Stop, ctx)
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))
+				Expect(errorOf()).To(And(
+					ContainSubstring("the graph role could not be asked to confirm that the job's graph is materialized"),
+					ContainSubstring("MATERIALIZE stream"),
+					ContainSubstring("crosscodex run retry --from-failure "+jobID)))
+				Expect(errorOf()).NotTo(ContainSubstring("nats:"), "bus internals are logged, not shown to the tenant")
+				Expect(graphStatus()).To(Equal(pipeline.StageStatusFailed))
+				expectUnsubscribed()
+			})
+
+			It("republishes the barrier for a resumed job", func() {
+				bus.PublishDurableFunc = answerBarriers(bus, nil)
+				Expect(store.CreateJob(ctx, newRunningJob())).To(Succeed())
+				Expect(store.CreateStages(ctx, jobID, jobStages)).To(Succeed())
+				for _, name := range []string{"analyzer-a", "analyzer-b", "synthesis"} {
+					Expect(store.UpdateStageStatus(ctx, jobID, name, pipeline.StageStatusCompleted)).To(Succeed())
+				}
+				// A shutdown left the graph stage running after an earlier
+				// run published its barrier.
+				Expect(store.UpdateStageStatus(ctx, jobID, "graph", pipeline.StageStatusRunning)).To(Succeed())
+				resumed := time.Now()
+
+				// The earlier run's link of the completed synthesis stage
+				// is not stored, so this job is not attested.
+				s := pipeline.New(store, engine, registry, synth, pipeline.Attestors{}, converter, bus, storage,
+					config.PipelineConfig{MaxConcurrentJobs: 10}, nil)
+				Expect(s.Start(ctx)).To(Succeed())
+				DeferCleanup(s.Stop, ctx)
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				Expect(graphStatus()).To(Equal(pipeline.StageStatusCompleted))
+				Expect(synth.execCount()).To(Equal(0), "synthesis completed in the earlier run")
+				Expect(barriers()).To(HaveLen(1))
+				Expect(barriers()[0].NotBefore).To(BeTemporally(">=", resumed.Add(-time.Second)),
+					"the resumed run's barrier counts only failures from this run")
+			})
+
+			It("ends the job cancelled, unsubscribed, when it is cancelled while waiting for the graph", func() {
+				startJob(svc)
+
+				_, err := svc.CancelJob(ctx, connect.NewRequest(&pb.CancelJobRequest{JobId: jobID}))
+				Expect(err).NotTo(HaveOccurred())
+
+				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCancelled))
+				Eventually(graphStatus).Should(Equal(pipeline.StageStatusCancelled))
+				Eventually(func() bool { return outcomeSubs()[0].Unsubscribed() }).Should(BeTrue())
+			})
+		})
+
 		It("marks job as failed when analysis fails", func() {
 			// Create a registry with analyzers that generate tasks (so dispatch is called).
 			// Registered as Analyzer[*pb.Control] (matching production) and
@@ -1010,7 +1293,9 @@ var _ = Describe("Executor", func() {
 			// Verify state events published.
 			// Expect at least: running, synthesis.started, synthesis.completed, graph.started, graph.completed, completed.
 			Expect(len(bus.Published())).To(BeNumerically(">=", 6))
-			Expect(bus.Subscriptions()).To(BeEmpty(), "job execution only publishes")
+			for _, sub := range bus.Subscriptions() {
+				Expect(sub.Unsubscribed()).To(BeTrue(), "job execution subscribes only while its graph stage waits")
+			}
 		})
 
 		It("fails the job before any analyzer runs when its attestation layout cannot be signed", func() {
@@ -1497,12 +1782,12 @@ var _ = Describe("Executor", func() {
 			})
 
 			It("fails the job when the attestation bundle event is not stored, saying the bundle is stored and the job can be retried from its failure", func() {
-				bus.PublishDurableFunc = func(_ context.Context, subject string, _ []byte, _ map[string][]string) error {
+				bus.PublishDurableFunc = answerBarriers(bus, func(_ context.Context, subject string, _ []byte, _ map[string][]string) error {
 					if strings.HasPrefix(subject, "crosscodex.audit.") {
 						return fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
 					}
 					return nil
-				}
+				})
 				runJob(serviceWith(attestedBy(attestor), storage))
 
 				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusFailed))

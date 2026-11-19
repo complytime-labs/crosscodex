@@ -128,6 +128,10 @@ Catalog import runs in single-tenant mode: any client certificate signed by the 
 
 `pkg/tlsconfig` uses the target's CA as both the root pool and the client CA pool (`ClientCAs`) for a `mutual` server target, and `tls.targets.<target>.ca` overrides the global CA for that target. In a split deployment the inter-service CA also signs service identities such as `pipeline-client`, so by default those certificates would authenticate as admin at the gateway. Give `gateway-server` a dedicated client CA through `tls.targets.gateway-server.ca`, separate from the inter-service CA.
 
+## Job completion needs a graph role
+
+A pipeline job completes only once its graph is written: the graph stage stores a barrier behind the job's materialization events and waits for a `graph` role (or `all`) to answer it (see [Graph Materialization Outcomes](audit-streams.md#graph-materialization-outcomes)). A split deployment therefore needs a running `graph` role on the same NATS server as the `pipeline` role. Without one, every job fails at its graph stage after `pipeline.graph_materialize_timeout` (default 30m, at most `pipeline.stage_timeout`) with a message naming the timeout and the missing graph role. Its events stay in `MATERIALIZE`, so a graph role started later writes them; re-run the job to complete it.
+
 ## Tenant propagation between gateway and a standalone pipeline role
 
 `pipeline.Service`'s RPC methods resolve the caller's tenant via `tenant.FromContext(ctx)`. Inside a single process (`all`, or `cmd/crosscodex`'s embedded mode), that context value is populated once by `internal/gateway`'s mTLS auth interceptor and flows straight through an in-process Go call. Once gateway and pipeline are split into separate roles, that `ctx` value cannot cross the network on its own.

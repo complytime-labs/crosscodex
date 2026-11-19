@@ -1171,6 +1171,13 @@ type PipelineConfig struct {
 	// remembers an abandoned collection (worker.WithAbandonTTL), since no
 	// collection outlives it. Global-only.
 	StageTimeout time.Duration `yaml:"stage_timeout" json:"stage_timeout"`
+	// GraphMaterializeTimeout is how long a job's graph stage waits for the
+	// graph role to confirm that every materialization event of the job was
+	// written to the graph (its answer to the job's barrier). The stage, and
+	// so the job, completes only on that answer; with no graph role running,
+	// the job fails after this long. Range (0, pipeline.stage_timeout].
+	// Default: 30m. Global-only.
+	GraphMaterializeTimeout time.Duration `yaml:"graph_materialize_timeout" json:"graph_materialize_timeout"`
 	// Addr is the bind address for the standalone "pipeline" role's own
 	// Connect RPC listener (see internal/pipeline.Server). Empty by
 	// default -- only required when running --role pipeline.
@@ -1182,6 +1189,11 @@ type PipelineConfig struct {
 	// its own role. RoleAll ignores this and wires pipeline in-process.
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
 }
+
+// DefaultPipelineGraphMaterializeTimeout is the compiled default for
+// pipeline.graph_materialize_timeout, also applied by internal/pipeline
+// when it is not set.
+const DefaultPipelineGraphMaterializeTimeout = 30 * time.Minute
 
 // Validate checks PipelineConfig for consistency.
 func (c *PipelineConfig) Validate() error { return c.validate(nil) }
@@ -1201,6 +1213,14 @@ func (c *PipelineConfig) validate(tracker *sourceTracker) error {
 	if !c.stageTimeoutInRange() {
 		p.add("pipeline.stage_timeout", "pipeline.stage_timeout %s%s must be in range (0, 168h]: it caps how long each analyzer stage may run, so set a positive duration such as 24h: %w",
 			c.StageTimeout, formatSource(tracker, "pipeline.stage_timeout"), ErrInvalidConfig)
+	}
+	// Compared with stage_timeout only when that is in range, so an
+	// out-of-range stage_timeout is reported once, by its own check.
+	if c.GraphMaterializeTimeout <= 0 || (c.stageTimeoutInRange() && c.GraphMaterializeTimeout > c.StageTimeout) {
+		p.add("pipeline.graph_materialize_timeout", "pipeline.graph_materialize_timeout %s%s must be in range (0, pipeline.stage_timeout %s]: "+
+			"it is how long a job's graph stage waits for the graph role to confirm the job's graph is written, so set a positive duration "+
+			"no longer than pipeline.stage_timeout, such as 30m: %w",
+			c.GraphMaterializeTimeout, formatSource(tracker, "pipeline.graph_materialize_timeout"), c.StageTimeout, ErrInvalidConfig)
 	}
 	return p.err()
 }

@@ -16,16 +16,14 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
-The graph role consumes materialization events durably (#231):
+Graph materialization is durable, and a job completes only once its graph is written (#231):
 
+- **A split deployment needs a running graph role.** A job's graph stage now completes only when a `graph` role (or `all`) confirms that every materialization event of the job is written. Before, it completed as soon as the events were published, so a job could report `completed` with no graph written. Without a graph role on the pipeline's NATS server, every job fails at its graph stage after the new `pipeline.graph_materialize_timeout` (default `30m`, range `(0, pipeline.stage_timeout]`; global-only) with a message naming the timeout and the missing graph role; raise it if a large job's graph takes longer to write. A `failed` graph outcome fails the job with the graph role's reason. See [Job completion needs a graph role](docs/dev/service-runtime.md#job-completion-needs-a-graph-role).
 - **Behaviour.** The graph role now reads stage completions and parsed catalogs from the `MATERIALIZE` stream through the durable consumer `graph-materializer`, instead of a core NATS queue group. An event published while no graph role runs waits for one. A failed event is retried; an edge whose control node is not projected yet is retried instead of skipped at once, and is skipped only on the last delivery. When an event fails on its last delivery, the graph role stores a `failed` outcome on `crosscodex.audit.<tenant>.events.<job>.graph.failed` (stream `AUDIT_EVENTS`). A job barrier on `crosscodex.materialize.<tenant>.<job>.barrier` (consumer `graph-barrier`) is answered with `...graph.materialized` or `...graph.failed` once none of the job's events is left in `MATERIALIZE`. An event or barrier whose subject tenant differs from its provenance tenant is dropped.
 - **Config.** New global-only `nats.materialize`: `max_deliver` (default `5`, at least `1`), `ack_wait` (default `10m`, positive; must exceed the time to materialize one event, since a longer one is redelivered while it still runs) `redeliver_delay` (default `30s`, positive) and `barrier_poll_interval` (default `2s`, positive; how often a waiting barrier is checked). A barrier counts a `failed` outcome only if `AUDIT_EVENTS` stored it at or after the barrier's `not_before` (the run's start), so a retried job is not failed by its earlier run.
 - **Logging.** A durable handler that returns `natsbus.ErrSkip` (ignored message) or `natsbus.ErrNotReady` (condition not met yet; redelivered) is logged at debug, and `natsbus.ErrPermanent` terminations at warn; other handler errors stay at error.
-
-Streams are verified, not overwritten (#231):
-
-- **Behaviour.** A role creates a missing JetStream stream but never updates a live one. If a live stream's subjects, retention policy, storage, `max_age` or replicas differ from this role's `nats.streams`, startup fails with `ErrStreamDrift` naming each field with its live and configured values. Make `nats.streams` agree in every role, or run `nats stream edit <name> ...` and restart. Streams an earlier build created with different retention now need that one-time edit.
-- **Config.** New `nats.streams.materialize_retention` (default `168h`, must be positive) sets the `MATERIALIZE` work-queue stream, which is created at startup.
+- **Streams are verified, not overwritten.** A role creates a missing JetStream stream but never updates a live one. If a live stream's subjects, retention policy, storage, `max_age` or replicas differ from this role's `nats.streams`, startup fails with `ErrStreamDrift` naming each field with its live and configured values. Make `nats.streams` agree in every role, or run `nats stream edit <name> ...` and restart. Streams an earlier build created with different retention now need that one-time edit.
+- **New stream.** New `nats.streams.materialize_retention` (default `168h`, must be positive) sets the `MATERIALIZE` work-queue stream, which is created at startup.
 - **Audit records are stored or the operation fails.** An LLM call whose audit event the `AUDIT_LLM` stream does not acknowledge now fails with `ErrAuditFailed` (task result `audit_failed`, never retried: the call was made and probably billed). Catalog import returns `Unavailable` when its `catalog_parsed` audit record is not stored (the catalog stays stored; re-import is safe), and a job fails when its attestation bundle event is not stored. The catalog audit subject is now `crosscodex.audit.<tenant>.events.catalog.<catalog>.parsed` (was the unscoped `audit.catalog.parsed`, which no stream captured).
 
 Signed record of every applied cleaning run (#290):
@@ -729,6 +727,7 @@ worker:
 
 pipeline:
   stage_timeout: 24h                      # (0, 168h]; hard cap on each analyzer stage, which worker progress never extends; fails a stage whose task was lost; worker hosts must set the same or a larger value (they keep abandons that long)
+  graph_materialize_timeout: 30m          # (0, stage_timeout]; how long a job's graph stage waits for a graph role to confirm the job's graph is written before failing the job (global-only)
 
 graph:
   max_bulk_edges: 1000                    # Most edges per BulkCreateEdges request, range [1, 10000]; larger requests are rejected (global-only)

@@ -1997,10 +1997,13 @@ logging:
 			}),
 			Entry("accepts StageTimeout at the lower end (1s)", func(c *config.Config) {
 				c.Pipeline.StageTimeout = time.Second
-				// analysis.engine.success_timeout may not exceed it, nor be
-				// shorter than analysis.engine.task_timeout.
+				// analysis.engine.success_timeout and
+				// pipeline.graph_materialize_timeout may not exceed it, and
+				// success_timeout may not be shorter than
+				// analysis.engine.task_timeout.
 				c.Analysis.Engine.SuccessTimeout = time.Second
 				c.Analysis.Engine.TaskTimeout = time.Second
+				c.Pipeline.GraphMaterializeTimeout = time.Second
 			}),
 			Entry("accepts MaxConcurrentJobs at upper boundary (100)", func(c *config.Config) {
 				c.Pipeline.MaxConcurrentJobs = 100

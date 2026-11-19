@@ -240,6 +240,7 @@ cleaning:
 pipeline:
   max_concurrent_jobs: 10
   stage_timeout: 24h
+  graph_materialize_timeout: 30m
   addr: ""
   endpoint: ""
 graph:

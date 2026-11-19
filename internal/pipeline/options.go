@@ -29,6 +29,11 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 				metric.WithDescription("Total pipeline jobs by status"))
 			s.jobDuration, _ = meter.Float64Histogram("pipeline.job.duration_ms",
 				metric.WithDescription("Pipeline job duration"))
+			s.graphWaits, _ = meter.Int64Counter("pipeline.graph_materialize.waits.total",
+				metric.WithDescription("Graph stage waits for the graph role to confirm a job's graph is written, by outcome "+
+					"(materialized; failed; timeout; not_sent: the barrier could not be sent; interrupted: the job was cancelled or the service stopped)"))
+			s.graphWaitDuration, _ = meter.Float64Histogram("pipeline.graph_materialize.wait.duration_ms",
+				metric.WithDescription("Graph stage wait for the graph role's answer"), metric.WithUnit("ms"))
 			s.probeOps, _ = meter.Int64Counter("pipeline.result_cache.probes.total",
 				metric.WithDescription("Per-job model probes by kind and outcome (observed: the alias is cached; empty: no usable model name; "+
 					"uncached: no usable deployment ID, or only the alias named; failed)"))
