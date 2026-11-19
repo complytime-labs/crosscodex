@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package crosscodex.v1;
+
+import "crosscodex/v1/gateway.proto";
+
+option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
+
+// CrosswalkService is the graph role's crosswalk export, called by the
+// gateway. It lives apart from GraphService because gateway.proto, which
+// declares the Crosswalk* messages, imports graph.proto.
+service CrosswalkService {
+  // Export a crosswalk page. The gateway has already resolved the request:
+  // GetCrosswalkRequest.jobs holds the tenant's completed jobs for the mode
+  // and GetCrosswalkRequest.catalogs the catalogs it names, so this service
+  // reads only the graph. The tenant comes from the authenticated connection.
+  rpc GetCrosswalk(GetCrosswalkRequest) returns (GetCrosswalkResponse);
+}

@@ -33,7 +33,7 @@ func (s *Service) QueryGraph(ctx context.Context, req *connect.Request[pb.QueryG
 	}
 
 	if s.graph == nil {
-		return nil, connect.NewError(connect.CodeUnavailable, errors.New("graph backend not configured"))
+		return nil, needsGraphRole("graph queries")
 	}
 
 	tc := buildTenantContext(identity)
@@ -75,7 +75,7 @@ func (s *Service) FindSimilar(ctx context.Context, req *connect.Request[pb.FindS
 	}
 
 	if s.graph == nil {
-		return nil, connect.NewError(connect.CodeUnavailable, errors.New("graph backend not configured"))
+		return nil, needsGraphRole("graph queries")
 	}
 
 	tc := buildTenantContext(identity)

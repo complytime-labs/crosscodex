@@ -120,3 +120,47 @@ var _ = Describe("GraphConfig.MaxSimilarityCatalogs", func() {
 		Entry("above the upper bound", "10001"),
 	)
 })
+
+var _ = Describe("GraphConfig.Addr and Endpoint", func() {
+	It("default to empty strings", func() {
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Graph.Addr).To(Equal(""))
+		Expect(cfg.Graph.Endpoint).To(Equal(""))
+	})
+
+	DescribeTable("accept a host:port override",
+		func(envVar, value string, got func(*config.Config) string) {
+			GinkgoT().Setenv(envVar, value)
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got(cfg)).To(Equal(value))
+		},
+		Entry("addr, port only", "CROSSCODEX_GRAPH_ADDR", ":8083", func(c *config.Config) string { return c.Graph.Addr }),
+		Entry("addr, all interfaces", "CROSSCODEX_GRAPH_ADDR", "0.0.0.0:8083", func(c *config.Config) string { return c.Graph.Addr }),
+		Entry("addr, hostname", "CROSSCODEX_GRAPH_ADDR", "graph.internal:8083", func(c *config.Config) string { return c.Graph.Addr }),
+		Entry("addr, IPv6 literal", "CROSSCODEX_GRAPH_ADDR", "[::1]:8083", func(c *config.Config) string { return c.Graph.Addr }),
+		Entry("endpoint, port only", "CROSSCODEX_GRAPH_ENDPOINT", ":8083", func(c *config.Config) string { return c.Graph.Endpoint }),
+		Entry("endpoint, all interfaces", "CROSSCODEX_GRAPH_ENDPOINT", "0.0.0.0:8083", func(c *config.Config) string { return c.Graph.Endpoint }),
+		Entry("endpoint, hostname", "CROSSCODEX_GRAPH_ENDPOINT", "graph.internal:8083", func(c *config.Config) string { return c.Graph.Endpoint }),
+		Entry("endpoint, IPv6 literal", "CROSSCODEX_GRAPH_ENDPOINT", "[::1]:8083", func(c *config.Config) string { return c.Graph.Endpoint }),
+	)
+
+	DescribeTable("reject a value that is not host:port with an actionable message",
+		func(key, envVar, value string) {
+			GinkgoT().Setenv(envVar, value)
+			_, err := config.NewLoader().Load(context.Background())
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err).To(MatchError(ContainSubstring(key + " ")))
+			Expect(err).To(MatchError(ContainSubstring("host:port")))
+			Expect(err).To(MatchError(ContainSubstring(envVar)))
+			expectOnlyFieldError(err, key)
+		},
+		Entry("addr without a port", "graph.addr", "CROSSCODEX_GRAPH_ADDR", "graph"),
+		Entry("addr with an empty port", "graph.addr", "CROSSCODEX_GRAPH_ADDR", "graph:"),
+		Entry("addr with a URL scheme", "graph.addr", "CROSSCODEX_GRAPH_ADDR", "https://graph:8083"),
+		Entry("endpoint without a port", "graph.endpoint", "CROSSCODEX_GRAPH_ENDPOINT", "graph"),
+		Entry("endpoint with an empty port", "graph.endpoint", "CROSSCODEX_GRAPH_ENDPOINT", "graph:"),
+		Entry("endpoint with a URL scheme", "graph.endpoint", "CROSSCODEX_GRAPH_ENDPOINT", "https://graph:8083"),
+	)
+})

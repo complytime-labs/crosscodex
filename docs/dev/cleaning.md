@@ -471,8 +471,18 @@ Engine sentinels a caller can act on map to `PermissionDenied`, `NotFound`,
 `InvalidArgument` or `FailedPrecondition`. The engine's message is kept only
 when every leaf of the error is such a sentinel; if a driver error is wrapped
 too, only the sentinel's own text is sent. Anything else goes to the
-gateway's `publicErrorInterceptor`, which withholds it. Only role `all` mounts
-the service (see [Service Runtime](service-runtime.md)).
+gateway's `publicErrorInterceptor`, which withholds it. Role `all` mounts the
+service directly. In a split deployment the graph role runs the engine behind
+its listener (`internal/graph.Server`) and the `gateway` role forwards the four
+RPCs to it, asserting the caller's identity so the role checks above apply to
+the end user; the signing keys, the cleaning stores and the graph are the graph
+role's. The engine's current stage record comes from the pipeline role
+(`GetCurrentStageRecord`); when that call fails the run is refused with
+`Unavailable`. The gateway's `publicError` withholds the message, so the user
+sees only an error reference; the gateway log records the full text (naming
+`pipeline.endpoint` and `tls.service_identities`) under that reference and the
+graph role's log has the cause. Only a caller dialing the graph listener
+directly sees the `pipeline.endpoint` text. See [Service Runtime](service-runtime.md#graph-role-listener).
 
 ## Telemetry
 

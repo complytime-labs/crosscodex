@@ -24,7 +24,7 @@ Use `task` for everything; never run raw `go build` / `go test`.
 ## Imports
 
 - `pkg/` never imports `internal/`.
-- `internal/` packages do not import each other, except: `internal/pipeline` is the composition root (imports `analysis`, `synthesis`, `analyzer/*`, `gateway`, `rpcserver`); services implement backend interfaces defined in `internal/gateway` (e.g. `graph` → `gateway.GraphBackend`); `gateway` imports `rpcserver`. Analyzers may import the shared `internal/analyzer` helper package but never each other. New cross-service dependencies go through `pkg/` interfaces, not new `internal/` → `internal/` imports. Test helpers (`testspecs`, `testcerts`) and `version` are shared.
+- `internal/` packages do not import each other, except: `internal/pipeline` is the composition root (imports `analysis`, `synthesis`, `analyzer/*`, `gateway`, `rpcserver`); services implement backend interfaces defined in `internal/gateway` (e.g. `graph` → `gateway.GraphBackend`); `gateway` imports `rpcserver`. Analyzers may import the shared `internal/analyzer` helper package but never each other. New cross-service dependencies go through `pkg/` interfaces, not new `internal/` → `internal/` imports. Test helpers (`testspecs`, `testcerts`), `version` and `rpcserver` (for services that serve RPCs) are shared.
 - `pkg/graphdb/agedriver` is imported only by `cmd/crosscodexd/resources.go` (and integration tests). Everything else uses the `pkg/graphdb.GraphDB` interface; no AGE types or AGE SQL outside `agedriver`, and never assume the graph shares a PostgreSQL transaction with relational queries.
 
 ## Graph model

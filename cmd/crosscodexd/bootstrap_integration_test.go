@@ -92,6 +92,19 @@ func testClientTLS() config.TLSConfig {
 	}
 }
 
+// testGraphRoleTLS returns the graph role's TLS config: its listener
+// (graph-server) presents the server certificate and requires client
+// certificates, only the test client certificate may assert a tenant, and it
+// dials the pipeline role (pipeline-client) with the client certificate.
+func testGraphRoleTLS() config.TLSConfig {
+	tlsCfg := testClientTLS()
+	tlsCfg.ServiceIdentities = testServiceIdentities
+	tlsCfg.Targets = map[string]config.TLSOverride{
+		"graph-server": {Cert: testTLSServerCertPath, Key: testTLSServerKeyPath},
+	}
+	return tlsCfg
+}
+
 // BeforeSuite generates the shared test attestation keypair once, mirroring
 // the key-generation code in
 // internal/pipeline/pipeline_e2e_integration_test.go's e2eKeyProvider, but
@@ -204,10 +217,16 @@ func baseTestConfig(suDSN string) *config.Config {
 	return cfg
 }
 
-// testConfig is baseTestConfig for the graph role.
+// testConfig is baseTestConfig for the graph role, with its listener
+// settings and a provisioned default tenant, which the listener requires.
 func testConfig(suDSN string) *config.Config {
 	cfg := baseTestConfig(suDSN)
 	cfg.Role = config.RoleGraph
+	cfg.Graph.Addr = "127.0.0.1:0"
+	cfg.Pipeline.Endpoint = "127.0.0.1:0" // construction only -- no cleaning pass runs
+	cfg.TLS = testGraphRoleTLS()
+	cfg.Tenants.DefaultTenant = "crosscodexd-test"
+	Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "provision the default tenant")
 	return cfg
 }
 
@@ -294,6 +313,7 @@ var _ = Describe("bootstrap with role=gateway", func() {
 		cfg.Role = config.RoleGateway
 		cfg.Server.Addr = "127.0.0.1:0"
 		cfg.Pipeline.Endpoint = "127.0.0.1:0" // construction only -- no call is made in this test
+		cfg.Graph.Endpoint = "127.0.0.1:0"    // construction only -- no call is made in this test
 		// attachGateway now requires a mutual-TLS pipeline-client identity to
 		// reach a standalone pipeline role; without it, construction fails closed.
 		cfg.TLS = testClientTLS()
@@ -328,6 +348,7 @@ var _ = Describe("bootstrap with role=gateway", func() {
 			cfg.Role = config.RoleGateway
 			cfg.Server.Addr = "127.0.0.1:0"
 			cfg.Pipeline.Endpoint = endpoint
+			cfg.Graph.Endpoint = "127.0.0.1:0" // past its own guard, so the pipeline setup is what fails
 
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -658,7 +679,8 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 	// defaultTenantConfig configures a gateway-serving role so bootstrap
 	// reaches the default-tenant check: role all needs its pipeline settings
 	// and a mutual-TLS gateway-server listener, role gateway a pipeline
-	// endpoint and a mutual-TLS identity serving both, role pipeline its
+	// and graph endpoint and a mutual-TLS identity serving both, role graph
+	// its listener settings and a pipeline endpoint, role pipeline its
 	// listener settings and a service identity.
 	defaultTenantConfig := func(role, tenantID string) *config.Config {
 		cfg := baseTestConfig(suDSN)
@@ -674,7 +696,12 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 			cfg.TLS = testServerTLS()
 		case config.RoleGateway:
 			cfg.Pipeline.Endpoint = "127.0.0.1:0" // construction only -- no call is made
+			cfg.Graph.Endpoint = "127.0.0.1:0"    // construction only -- no call is made
 			cfg.TLS = testClientTLS()
+		case config.RoleGraph:
+			cfg.Graph.Addr = "127.0.0.1:0"
+			cfg.Pipeline.Endpoint = "127.0.0.1:0" // construction only -- no call is made
+			cfg.TLS = testGraphRoleTLS()
 		case config.RolePipeline:
 			cfg.LLM = config.LLMConfig{GatewayURL: reachableLLMGatewayURL(), DefaultModel: "test-model", EmbeddingModel: "test-model"}
 			cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
@@ -716,6 +743,7 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 		},
 		Entry("role all", config.RoleAll),
 		Entry("role gateway", config.RoleGateway),
+		Entry("role graph", config.RoleGraph),
 		Entry("role pipeline", config.RolePipeline),
 	)
 
@@ -738,6 +766,7 @@ var _ = Describe("buildSharedResources refuses an unrestricted or unmigrated dat
 		},
 		Entry("role all", config.RoleAll),
 		Entry("role gateway", config.RoleGateway),
+		Entry("role graph", config.RoleGraph),
 		Entry("role pipeline", config.RolePipeline),
 	)
 })

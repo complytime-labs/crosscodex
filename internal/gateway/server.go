@@ -38,7 +38,9 @@ type ServerConfig struct {
 	Admin crosscodexv1connect.AdminServiceHandler
 	// Cleaning, when non-nil, mounts the EdgeCleaningService on the same mux
 	// with the same interceptors and error policy as Admin: internal/cleaning
-	// returns raw store and graph errors.
+	// returns raw store and graph errors. A split gateway passes
+	// ConnectGraphBackend.Cleaning. Nil mounts a handler that refuses every
+	// RPC with Unavailable, naming the daemon that serves edge cleaning.
 	Cleaning crosscodexv1connect.EdgeCleaningServiceHandler
 	// TenantStatus is required: the auth interceptor refuses every
 	// non-health request from a tenant it reports inactive. Nil fails
@@ -88,14 +90,17 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		)
 		mux.Handle(adminPath, adminHandler)
 	}
-	if cfg.Cleaning != nil {
-		cleaningPath, cleaningHandler := crosscodexv1connect.NewEdgeCleaningServiceHandler(
-			cfg.Cleaning,
-			connect.WithInterceptors(interceptors...),
-			connect.WithInterceptors(publicErrorInterceptor{service: cfg.Service}),
-		)
-		mux.Handle(cleaningPath, cleaningHandler)
+	cleaningOpts := []connect.HandlerOption{connect.WithInterceptors(interceptors...)}
+	cleaning := cfg.Cleaning
+	if cleaning == nil {
+		// The refusal is Unavailable, whose message publicError withholds,
+		// so this mount skips the error policy: the copy is fixed text.
+		cleaning = noGraphRoleCleaning{}
+	} else {
+		cleaningOpts = append(cleaningOpts, connect.WithInterceptors(publicErrorInterceptor{service: cfg.Service}))
 	}
+	cleaningPath, cleaningHandler := crosscodexv1connect.NewEdgeCleaningServiceHandler(cleaning, cleaningOpts...)
+	mux.Handle(cleaningPath, cleaningHandler)
 	mux.HandleFunc("GET /api/version", versionHandler)
 	mux.HandleFunc("GET /healthz", healthzHandler(cfg.Service))
 

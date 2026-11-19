@@ -17,6 +17,13 @@ const (
 
 	// AuthMethodSAML indicates SAML assertion authentication.
 	AuthMethodSAML AuthMethod = "saml"
+
+	// AuthMethodServiceAsserted marks an end user whose subject and roles a
+	// service identity asserted over mTLS (pkg/tenant/connectutil's
+	// x-user-id and x-user-roles headers) rather than one this process
+	// authenticated itself. Handlers can tell a delegated user from one the
+	// process authenticated directly by checking Identity.Method.
+	AuthMethodServiceAsserted AuthMethod = "service-asserted"
 )
 
 const (
