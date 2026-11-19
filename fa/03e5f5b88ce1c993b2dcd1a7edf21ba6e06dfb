@@ -1,0 +1,68 @@
+cmd/crosscodexd/bootstrap.go
+  s_290b9f730df96c::t_81c4b6ccee5088 308-310,319-324
+  s_290b9f730df96c::t_7ba8e8848aa02e 232-258,260-262
+  s_290b9f730df96c::t_ffe246b4715060 272-273
+deploy/README.md
+  s_290b9f730df96c::t_5cc5c9fa24bfd2 101
+test/e2e/crosscodexd.e2e.llm.yaml
+  s_290b9f730df96c::t_f4d18ae352af01 22-32
+cmd/crosscodexd/bootstrap_bdd_test.go
+  s_290b9f730df96c::t_0ed0ff32c484ad 30,308,312,317-318
+  s_290b9f730df96c::t_a4a9fa8214c9ce 25
+  s_290b9f730df96c::t_c88c4cfda7eac6 242-243,249-251
+  s_290b9f730df96c::t_21e44411f994af 11
+  s_290b9f730df96c::t_48e51bbb0ece23 279-307,309-311,313-316,319-367
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_290b9f730df96c::t_bb7cfcfae261cb 26,62-65,130-138,195
+cmd/crosscodex/embedded.go
+  s_290b9f730df96c::t_3368593808629e 203-207
+  s_290b9f730df96c::t_904c47b8bc61ca 8,16,180-202,208-212,216,483,591
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_290b9f730df96c::t_bab13b96e79b5e 348
+internal/testgrpc/testgrpc_integration_bdd_test.go
+  s_290b9f730df96c::t_6af9cbab9da119 236-246
+  s_290b9f730df96c::t_a51b34494e28f2 247
+cmd/crosscodex/embedded_bdd_test.go
+  s_290b9f730df96c::t_56412fb460ad5a 411-430
+  s_290b9f730df96c::t_29211952427063 37,313-315,317-338,340-343,345-347,349-350,353,355-358,360-394,396-398,400,402-408,410,431-445
+  s_290b9f730df96c::t_955335fcf71a4f 5-7,10,13,17
+  s_290b9f730df96c::t_bab13b96e79b5e 542,639
+deploy/config.yaml
+  s_290b9f730df96c::t_f4d18ae352af01 56-67
+cmd/crosscodex/connect.go
+  s_290b9f730df96c::t_904c47b8bc61ca 152
+cmd/crosscodex/embedded_telemetry_integration_bdd_test.go
+  s_290b9f730df96c::t_d062308e45e806 68-71,73
+  s_290b9f730df96c::t_60ae8fcd4e5c59 10
+test/e2e/crosscodexd.e2e.yaml
+  s_290b9f730df96c::t_f4d18ae352af01 24-34
+internal/cleaning/service_bdd_test.go
+  s_290b9f730df96c::t_180c094553f4de 35-36
+internal/cleaning/service.go
+  s_290b9f730df96c::t_e193ebee1c1777 28-29
+cmd/crosscodex/admin_cleaning.go
+  s_290b9f730df96c::t_0a6fd31f93d001 176,247-248,298-299
+cmd/crosscodex/admin_cleaning_bdd_test.go
+  s_290b9f730df96c::t_fa3bcd8da43dd9 403
+README.md
+  s_290b9f730df96c::t_3fab1e37814bfb 43,616-619,621,625-626,629-632,634-636,1179,1643-1644
+  s_290b9f730df96c::t_ec67485195fca7 19-24
+docs/dev/service-runtime.md
+  s_290b9f730df96c::t_e02ba98bd5736c 125,127,129-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fa03e5f5b88ce1c993b2dcd1a7edf21ba6e06dfb",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
