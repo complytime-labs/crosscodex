@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -130,7 +132,7 @@ func (r *NATSStageReporter) publish(ctx context.Context, analyzerName, jobID str
 			"analyzer", analyzerName,
 			"stage", string(stage),
 			"raw_error", stageErr.Error())
-		event["error"] = sanitizeError(stageErr.Error()).Error()
+		event["error"] = stageErrorCategory(stageErr)
 	}
 
 	data, err := json.Marshal(event)
@@ -148,3 +150,16 @@ func (r *NATSStageReporter) publish(ctx context.Context, analyzerName, jobID str
 
 var _ StageReporter = (*NATSStageReporter)(nil)
 var _ StageReporter = noopReporter{}
+
+// stageErrorCategory names a failed stage in a stage event with a fixed
+// category, never the error's text (CWE-209). It classifies by sentinel.
+func stageErrorCategory(err error) string {
+	switch {
+	case errors.Is(err, llmclient.ErrTimeout), errors.Is(err, ErrTaskTimeout), errors.Is(err, ErrStageTimeout):
+		return "task_timeout"
+	case errors.Is(err, ErrTaskInvalid):
+		return ErrTaskInvalid.Error()
+	default:
+		return ErrTaskFailed.Error()
+	}
+}

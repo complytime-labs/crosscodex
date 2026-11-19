@@ -319,9 +319,13 @@ func (w *Worker) recordError(ctx context.Context, taskType, category string) {
 func errorCategory(err error) string {
 	switch {
 	case errors.Is(err, ErrInvalidPayload):
-		return "invalid_payload"
+		return natsbus.ResultErrorInvalidPayload
 	case errors.Is(err, llmclient.ErrOutputTruncated):
 		return natsbus.ResultErrorOutputTruncated
+	case errors.Is(err, llmclient.ErrTimeout):
+		return natsbus.ResultErrorTimeout
+	case errors.Is(err, llmclient.ErrRateLimitExceeded):
+		return natsbus.ResultErrorRateLimited
 	case errors.Is(err, ErrLLMCall):
 		return "llm_error"
 	case errors.Is(err, ErrTenantConfig):

@@ -744,6 +744,10 @@ synthesis:
     actionable_warn: 0.30                 # Actionable coverage warning threshold
 ```
 
+#### Task retries
+
+The collector retries a failed LLM task by the result code the worker reports. A rate limit that outlasts the gateway's own retries, and any other failure, are re-sent after `analysis.engine.retry_backoff` (doubling each attempt), at most `analysis.engine.max_retries` times, so one task makes at most (1 + `analysis.engine.max_retries`) × (1 + `llm.max_retries`) upstream calls. A task that timed out at the gateway is sent once unless `analysis.engine.retry_on_timeout` is true, because the provider may already have billed the call. A truncated answer (`max_tokens` too small) and a malformed payload are never re-sent: the same request fails the same way. `analysis.tasks.retried` counts re-sends by `cause` (`timeout`, `rate_limit`, `other`).
+
 #### Print-artefact patterns
 
 Documents converted from PDF can carry a publisher's running headers, footers and file paths in their text. `catalog.structuring.print_artifact_patterns` removes them from controls structured from a document. It never touches OSCAL imports or search queries, and none are on by default. Each entry is an RE2 pattern compiled with the multiline flag, so `^` and `$` match at line boundaries. End a pattern with `$\n?` to remove a whole line with its line break, or leave out the anchors to remove a span within a line. Keep patterns specific: a pattern that matches ordinary prose removes it, unless it would leave the control's text blank, in which case the text is kept whole.

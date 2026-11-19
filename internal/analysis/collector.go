@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -221,7 +220,7 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 				"task_id", taskID,
 				"raw_error", errorMsg,
 			)
-			taskErr = sanitizeError(errorMsg)
+			taskErr = classifyResult(errorMsg)
 		}
 
 		// Deserialize result payload
@@ -230,7 +229,7 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 			s := &structpb.Struct{}
 			if err := proto.Unmarshal(msg.Data, s); err != nil {
 				c.logger.Error("failed to unmarshal result", "task_id", taskID, "error", err)
-				taskErr = fmt.Errorf("task_failed")
+				taskErr = ErrTaskFailed
 			} else {
 				resultPayload = s
 			}
@@ -256,9 +255,8 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 			default:
 			}
 			retryCount := retryCounts[taskID]
-			// No answer within max_tokens is deterministic for the same request,
-			// so a retry would pay for the same empty reply.
-			if retryCount < req.MaxRetries && !errors.Is(taskErr, llmclient.ErrOutputTruncated) {
+			cause, retryable := retryCause(taskErr, req.RetryOnTimeout)
+			if retryCount < req.MaxRetries && retryable {
 				// Retry: redispatch and keep in pending
 				// The handler context comes from the NATS client and never
 				// carries a tenant, but the dispatcher requires one. Use the
@@ -273,7 +271,7 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 				retryCounts[taskID] = retryCount + 1
 
 				if c.retriedCounter != nil {
-					c.retriedCounter.Add(handlerCtx, 1)
+					c.retriedCounter.Add(handlerCtx, 1, metric.WithAttributes(attribute.String("cause", cause)))
 				}
 
 				// Get the original task for redispatch
@@ -334,8 +332,14 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 			}
 
 			delete(pending, taskID)
-			finalErr := fmt.Errorf("%w: %w", ErrRetryExhausted, taskErr)
-			if errors.Is(taskErr, llmclient.ErrOutputTruncated) {
+			var finalErr error
+			switch {
+			case retryable:
+				finalErr = fmt.Errorf("%w: %w", ErrRetryExhausted, taskErr)
+			case cause == causeTimeout:
+				finalErr = fmt.Errorf("task timed out at the LLM gateway and was not re-sent, because the provider may already have billed it. "+
+					"Set analysis.engine.retry_on_timeout: true to re-send timed-out calls: %w", taskErr)
+			default:
 				finalErr = taskErr
 			}
 			resultChan <- analyzer.TaskResult{
@@ -702,19 +706,52 @@ func getHeader(headers map[string][]string, key string) string {
 	return vals[0]
 }
 
-// sanitizeError wraps task errors with generic categories.
-func sanitizeError(errorMsg string) error {
-	if errorMsg == natsbus.ResultErrorOutputTruncated {
+// classifyResult maps a worker's X-Error code to the collector's error
+// category. It matches the code exactly and never carries the worker's text
+// into the error (CWE-209); an unknown code is ErrTaskFailed. The returned
+// error wraps the sentinel retryCause classifies on.
+func classifyResult(code string) error {
+	switch code {
+	case natsbus.ResultErrorOutputTruncated:
 		return fmt.Errorf("task_output_truncated: %w", llmclient.ErrOutputTruncated)
+	case natsbus.ResultErrorTimeout:
+		return fmt.Errorf("task_timeout: %w", llmclient.ErrTimeout)
+	case natsbus.ResultErrorRateLimited:
+		return fmt.Errorf("task_rate_limited: %w", llmclient.ErrRateLimitExceeded)
+	case natsbus.ResultErrorInvalidPayload:
+		return ErrTaskInvalid
+	default:
+		return ErrTaskFailed
 	}
-	lower := strings.ToLower(errorMsg)
-	if strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline") {
-		return fmt.Errorf("task_timeout")
+}
+
+// Values of the cause attribute on analysis.tasks.retried.
+const (
+	causeTimeout   = "timeout"
+	causeRateLimit = "rate_limit"
+	causeOther     = "other"
+)
+
+// retryCause names why a task failed and whether it may be re-sent. A new
+// non-retryable cause is a new case in the first switch.
+//
+// Not retried: a truncated answer and an invalid payload, which fail the
+// same way every time, and a timeout unless retryOnTimeout, since the
+// provider may already have billed it. A rate limit and any other failure
+// are retried (the caller bounds them by max_retries and backs off).
+func retryCause(err error, retryOnTimeout bool) (cause string, retry bool) {
+	switch {
+	case errors.Is(err, llmclient.ErrOutputTruncated):
+		return causeOther, false
+	case errors.Is(err, ErrTaskInvalid):
+		return causeOther, false
+	case errors.Is(err, llmclient.ErrTimeout):
+		return causeTimeout, retryOnTimeout
+	case errors.Is(err, llmclient.ErrRateLimitExceeded):
+		return causeRateLimit, true
+	default:
+		return causeOther, true
 	}
-	if strings.Contains(lower, "invalid") || strings.Contains(lower, "malformed") {
-		return fmt.Errorf("task_invalid")
-	}
-	return fmt.Errorf("task_failed")
 }
 
 // Compile-time interface check.

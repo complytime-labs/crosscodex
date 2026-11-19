@@ -26,12 +26,27 @@ const (
 	TaskCritique  TaskType = "critique"
 )
 
-// ResultErrorOutputTruncated is the X-Error value a worker publishes for a
-// completion task whose model gave no answer within max_tokens
-// (llmclient.ErrOutputTruncated). It is the worker/collector contract for
-// that failure: the collector matches it exactly and does not retry the
-// task, because the same request at the same budget gets the same result.
-const ResultErrorOutputTruncated = "output_truncated"
+// X-Error values a worker publishes on a failed task result. They are the
+// worker/collector contract: the collector matches a code exactly (never
+// the text of an error), and any other value is an unclassified failure.
+// The collector's retry rule for each code is in internal/analysis.
+const (
+	// ResultErrorOutputTruncated: the model gave no answer within
+	// max_tokens (llmclient.ErrOutputTruncated). Never retried: the same
+	// request at the same budget gets the same result.
+	ResultErrorOutputTruncated = "output_truncated"
+	// ResultErrorTimeout: the LLM call timed out (llmclient.ErrTimeout).
+	// Retried only when analysis.engine.retry_on_timeout is set, because
+	// the provider may already have billed the call.
+	ResultErrorTimeout = "timeout"
+	// ResultErrorRateLimited: the provider rate-limited the call past
+	// every gateway attempt (llmclient.ErrRateLimitExceeded). Retried
+	// with backoff, up to analysis.engine.max_retries.
+	ResultErrorRateLimited = "rate_limited"
+	// ResultErrorInvalidPayload: the task payload was malformed. Never
+	// retried: the same payload fails the same way.
+	ResultErrorInvalidPayload = "invalid_payload"
+)
 
 // taskTypes lists every TaskType constant, in declaration order.
 var taskTypes = []TaskType{TaskClassify, TaskRelate, TaskRequires, TaskArtifacts, TaskEmbed, TaskCritique}
