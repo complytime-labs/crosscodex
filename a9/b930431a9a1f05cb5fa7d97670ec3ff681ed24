@@ -1,0 +1,51 @@
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_290b9f730df96c::t_6ca723aa794def 66-68,72-73,76-80,144,661-662,678-684,719,741
+  s_290b9f730df96c::t_ca112c54dd6f5e 356,411,463
+pkg/tenant/connectutil/connectutil.go
+  s_290b9f730df96c::t_b657ea62c30801 10,57-66,69-71,73-78,80-87,89-91,93-95,115-122
+  s_290b9f730df96c::t_ba73b363599695 79,88
+internal/pipeline/server.go
+  s_290b9f730df96c::t_9d8cbe04a22651 15,26-30,47-50,58,77
+pkg/tenant/connectutil/connectutil_bdd_test.go
+  s_290b9f730df96c::t_bb1a22b8b83caf 180
+  s_290b9f730df96c::t_f50e87392f31e0 5-7,16,83-89,91-95,107,113,124,129,131,145,153-179,181-201
+README.md
+  s_290b9f730df96c::t_7ab532c7181533 24
+cmd/crosscodexd/pipeline_role_integration_test.go
+  s_290b9f730df96c::t_6ca723aa794def 85-91
+  s_290b9f730df96c::t_61ae6b5b6b5718 210-211
+  s_290b9f730df96c::t_e3a7505ec69de0 365
+cmd/crosscodexd/e2e_integration_test.go
+  s_290b9f730df96c::t_d5cc939996d2ef 209-210
+internal/pipeline/server_test.go
+  s_290b9f730df96c::t_9d8cbe04a22651 6,15-16,19,23-26,31-34,37-39,41-49,53,55-64,66,68-75,77-78,84-86,88-92,94-96
+cmd/crosscodexd/bootstrap.go
+  s_290b9f730df96c::t_5522fddeb2da1c 889-891
+  s_290b9f730df96c::t_8341646e51afbe 238-256,266,283-310,364-365,879-888,892-895,903-906
+  s_290b9f730df96c::t_4a39dcfc08fcfb 353-355
+  s_290b9f730df96c::t_74abbb3248892c 311
+docs/dev/service-runtime.md
+  s_290b9f730df96c::t_7ab532c7181533 129,143-145
+deploy/config.yaml
+  s_290b9f730df96c::t_5522fddeb2da1c 23-27
+docs/dev/design-principles.md
+  s_290b9f730df96c::t_7ab532c7181533 116
+cmd/crosscodexd/bootstrap_bdd_test.go
+  s_290b9f730df96c::t_17e59c0de01ed8 445-478
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a9b930431a9a1f05cb5fa7d97670ec3ff681ed24",
+  "prompts": {},
+  "sessions": {
+    "s_290b9f730df96c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32b12c80-cfab-43f1-85f9-984942614a43",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
