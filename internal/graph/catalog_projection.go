@@ -51,10 +51,9 @@ func (s *Service) handleCatalogEvent(ctx context.Context, msg *natsbus.Message) 
 		err = tenant.ValidateTenantID(tenantID)
 	}
 	if err != nil {
-		s.logger.DebugContext(ctx, "ignoring catalog event with a malformed subject", "subject", msg.Subject, "error", err)
 		s.recordEvent(ctx, catalogAnalyzer, "skipped")
 		span.SetStatus(codes.Ok, "skipped")
-		return fmt.Errorf("%w: %w", natsbus.ErrPermanent, err) // a malformed subject never becomes valid
+		return fmt.Errorf("%w: %w", natsbus.ErrSkip, err) // a malformed subject never becomes valid
 	}
 	if err := verifySubjectTenant(ctx, tenantID); err != nil {
 		s.logger.WarnContext(ctx, "rejecting catalog event whose subject tenant is not its provenance tenant",

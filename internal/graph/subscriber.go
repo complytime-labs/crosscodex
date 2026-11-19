@@ -65,7 +65,7 @@ func (s *Service) Start(ctx context.Context) error {
 		FilterSubjects: []string{barrierSubject},
 		AckWait:        s.delivery.AckWait,
 		MaxDeliver:     -1,
-		RedeliverDelay: s.delivery.RedeliverDelay,
+		RedeliverDelay: s.delivery.BarrierPollInterval,
 	}, s.handleBarrier)
 	if err != nil {
 		if uerr := sub.Unsubscribe(); uerr != nil {
@@ -174,9 +174,12 @@ func (e pipelineEvent) graphDeferred() bool {
 //
 //   - nil acks it: written, deferred to the critique stage, or from a stage
 //     the graph has no handler for.
-//   - an error wrapping natsbus.ErrPermanent terminates it: the subject or
-//     payload can never be processed, its tenants disagree, or it failed on
-//     its last delivery after a "failed" graph outcome was stored.
+//   - natsbus.ErrSkip terminates it quietly: the subject or payload can never
+//     be processed, or it names no analyzer.
+//   - natsbus.ErrPermanent terminates it: its tenants disagree, or it failed
+//     on its last delivery after a "failed" graph outcome was stored.
+//   - natsbus.ErrNotReady naks it quietly: an edge's endpoint node is not
+//     projected yet.
 //   - any other error naks it for redelivery after the redelivery delay.
 //
 // Every write is idempotent, so a redelivered event, including one still
@@ -188,12 +191,11 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 
 	// skip terminates an event that can never be processed. It is not an
 	// error of the graph role (the issue: ignore events not from analyzers),
-	// so it is logged at debug, without the payload.
+	// so ErrSkip has the consumer log it at debug, without the payload.
 	skip := func(reason string) error {
-		s.logger.DebugContext(ctx, "ignoring stage event", "subject", msg.Subject, "reason", reason)
 		s.recordEvent(ctx, "unknown", "skipped")
 		span.SetStatus(codes.Ok, "skipped")
-		return fmt.Errorf("%w: stage event on %s: %s", natsbus.ErrPermanent, msg.Subject, reason)
+		return fmt.Errorf("%w: stage event on %s: %s", natsbus.ErrSkip, msg.Subject, reason)
 	}
 
 	tenantID, jobID, err := parseStageSubject(msg.Subject)
@@ -265,9 +267,9 @@ func (s *Service) handleEvent(ctx context.Context, msg *natsbus.Message) error {
 		// skipped instead of counted.
 		s.recordEvent(ctx, event.Analyzer, "retry")
 		span.SetStatus(codes.Error, "endpoint nodes not projected yet")
-		return fmt.Errorf("%d edges of the %s results for job %s have an endpoint node that is not projected yet; "+
+		return fmt.Errorf("%w: %d edges of the %s results for job %s have an endpoint node that is not projected yet; "+
 			"retrying the event (delivery %d of %d) so the catalog projection can write it; "+
-			"on the last delivery those edges are skipped", pending.count, event.Analyzer, event.JobID,
+			"on the last delivery those edges are skipped", natsbus.ErrNotReady, pending.count, event.Analyzer, event.JobID,
 			msg.Metadata.NumDelivered, s.delivery.MaxDeliver)
 	}
 	if err != nil {

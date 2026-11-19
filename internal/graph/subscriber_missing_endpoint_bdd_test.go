@@ -102,7 +102,7 @@ var _ = Describe("Subscriber edge with a missing endpoint node", func() {
 		By("returning a retryable error before the last delivery, after writing every other edge")
 		for delivery := uint64(1); delivery < maxDeliver; delivery++ {
 			err := deliverOn(delivery, "relationship", results)
-			Expect(err).To(HaveOccurred())
+			Expect(err).To(MatchError(natsbus.ErrNotReady))
 			Expect(err).NotTo(MatchError(natsbus.ErrPermanent))
 			Expect(err.Error()).To(ContainSubstring("not projected"))
 			Expect(edgeCount("SEMANTIC_MATCH")).To(Equal(1))

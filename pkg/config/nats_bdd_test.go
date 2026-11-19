@@ -70,24 +70,26 @@ var _ = Describe("nats.streams.materialize_retention", func() {
 })
 
 var _ = Describe("nats.materialize", func() {
-	It("defaults to 5 deliveries, a 10m ack wait and a 30s redelivery delay", func() {
+	It("defaults to 5 deliveries, a 10m ack wait, a 30s redelivery delay and a 2s barrier poll", func() {
 		_, cfg, err := loadConfigFile("")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.NATS.Materialize).To(Equal(config.NATSMaterializeConfig{
-			MaxDeliver:     config.DefaultNATSMaterializeMaxDeliver,
-			AckWait:        config.DefaultNATSMaterializeAckWait,
-			RedeliverDelay: config.DefaultNATSMaterializeRedeliverDelay,
+			MaxDeliver:          config.DefaultNATSMaterializeMaxDeliver,
+			AckWait:             config.DefaultNATSMaterializeAckWait,
+			RedeliverDelay:      config.DefaultNATSMaterializeRedeliverDelay,
+			BarrierPollInterval: config.DefaultNATSMaterializeBarrierPollInterval,
 		}))
+		Expect(config.DefaultNATSMaterializeBarrierPollInterval).To(Equal(2 * time.Second))
 		Expect(config.DefaultNATSMaterializeMaxDeliver).To(Equal(5))
 		Expect(config.DefaultNATSMaterializeAckWait).To(Equal(10 * time.Minute))
 		Expect(config.DefaultNATSMaterializeRedeliverDelay).To(Equal(30 * time.Second))
 	})
 
 	It("accepts overrides of every field", func() {
-		_, cfg, err := loadConfigFile("nats:\n  materialize:\n    max_deliver: 1\n    ack_wait: 30m\n    redeliver_delay: 2s\n")
+		_, cfg, err := loadConfigFile("nats:\n  materialize:\n    max_deliver: 1\n    ack_wait: 30m\n    redeliver_delay: 2s\n    barrier_poll_interval: 1m\n")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.NATS.Materialize).To(Equal(config.NATSMaterializeConfig{
-			MaxDeliver: 1, AckWait: 30 * time.Minute, RedeliverDelay: 2 * time.Second,
+			MaxDeliver: 1, AckWait: 30 * time.Minute, RedeliverDelay: 2 * time.Second, BarrierPollInterval: time.Minute,
 		}))
 	})
 
@@ -112,6 +114,10 @@ var _ = Describe("nats.materialize", func() {
 			func(m *config.NATSMaterializeConfig) { m.RedeliverDelay = 0 }),
 		Entry("redeliver_delay negative", "nats.materialize.redeliver_delay", "positive duration such as 30s",
 			func(m *config.NATSMaterializeConfig) { m.RedeliverDelay = -time.Second }),
+		Entry("barrier_poll_interval 0", "nats.materialize.barrier_poll_interval", "positive duration such as 2s",
+			func(m *config.NATSMaterializeConfig) { m.BarrierPollInterval = 0 }),
+		Entry("barrier_poll_interval negative", "nats.materialize.barrier_poll_interval", "positive duration such as 2s",
+			func(m *config.NATSMaterializeConfig) { m.BarrierPollInterval = -time.Second }),
 	)
 
 	It("rejects max_deliver 0 from a config file under its path", func() {

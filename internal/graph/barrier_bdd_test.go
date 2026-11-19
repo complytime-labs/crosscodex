@@ -30,16 +30,19 @@ var _ = Describe("Materialization barrier", func() {
 	type countKey struct{ stream, subject string }
 
 	var (
-		bus    *natsbustest.Fake
-		mu     sync.Mutex
-		counts map[countKey]uint64
-		asked  []countKey
-		tp     *telemetrytest.TestProvider
-		logs   *bytes.Buffer
+		bus      *natsbustest.Fake
+		mu       sync.Mutex
+		counts   map[countKey]uint64
+		failedAt map[countKey]time.Time // stream time of the last failed outcome, per subject
+		asked    []countKey
+		runStart time.Time
+		tp       *telemetrytest.TestProvider
+		logs     *bytes.Buffer
 	)
 
+	// barrierMsg builds a barrier for a run that started at runStart.
 	barrierMsg := func(subject, provenance, payloadJob string, deadline time.Time) *natsbus.Message {
-		data, err := json.Marshal(natsbus.MaterializeBarrier{JobID: payloadJob, Deadline: deadline})
+		data, err := json.Marshal(natsbus.MaterializeBarrier{JobID: payloadJob, Deadline: deadline, NotBefore: runStart})
 		Expect(err).NotTo(HaveOccurred())
 		return &natsbus.Message{Subject: subject, Data: data,
 			Metadata: natsbus.MessageMetadata{TenantID: provenance, NumDelivered: 1}}
@@ -59,14 +62,26 @@ var _ = Describe("Materialization barrier", func() {
 
 	BeforeEach(func() {
 		counts = map[countKey]uint64{}
+		failedAt = map[countKey]time.Time{}
 		asked = nil
-		bus = &natsbustest.Fake{SubjectMessageCountFunc: func(_ context.Context, stream, subject string) (uint64, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			k := countKey{stream, subject}
-			asked = append(asked, k)
-			return counts[k], nil
-		}}
+		runStart = time.Now().Add(-time.Minute)
+		bus = &natsbustest.Fake{
+			SubjectMessageCountFunc: func(_ context.Context, stream, subject string) (uint64, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				k := countKey{stream, subject}
+				asked = append(asked, k)
+				return counts[k], nil
+			},
+			LastMessageTimeFunc: func(_ context.Context, stream, subject string) (time.Time, bool, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				k := countKey{stream, subject}
+				asked = append(asked, k)
+				at, ok := failedAt[k]
+				return at, ok, nil
+			},
+		}
 		var err error
 		tp, err = telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())
@@ -84,7 +99,7 @@ var _ = Describe("Materialization barrier", func() {
 
 		err := bus.Deliver(barrierMsg(barrierSubj, tenantID, jobID, time.Now().Add(time.Hour)))
 
-		Expect(err).To(HaveOccurred())
+		Expect(err).To(MatchError(natsbus.ErrNotReady))
 		Expect(err).NotTo(MatchError(natsbus.ErrPermanent))
 		Expect(err.Error()).To(ContainSubstring("2 materialization events"))
 		Expect(barrier().Naked()).To(Equal(1))
@@ -108,8 +123,8 @@ var _ = Describe("Materialization barrier", func() {
 		Expect(eventCount(tp, "barrier", natsbus.GraphOutcomeMaterialized)).To(Equal(int64(1)))
 	})
 
-	It("publishes failed when the job has a failure event", func() {
-		counts[countKey{natsbus.AuditEventsStream, failedEvents}] = 1
+	It("publishes failed when the job has a failure event stored during this run", func() {
+		failedAt[countKey{natsbus.AuditEventsStream, failedEvents}] = runStart.Add(time.Second)
 
 		Expect(bus.Deliver(barrierMsg(barrierSubj, tenantID, jobID, time.Now().Add(time.Hour)))).To(Succeed())
 
@@ -122,6 +137,41 @@ var _ = Describe("Materialization barrier", func() {
 		Expect(got.JobID).To(Equal(jobID))
 		Expect(got.Outcome).To(Equal(natsbus.GraphOutcomeFailed))
 		Expect(got.Error).To(ContainSubstring("see the earlier graph failure event"))
+	})
+
+	DescribeTable("publishes materialized when the job's only failure event predates this run",
+		func(age time.Duration) {
+			failedAt[countKey{natsbus.AuditEventsStream, failedEvents}] = runStart.Add(-age)
+
+			Expect(bus.Deliver(barrierMsg(barrierSubj, tenantID, jobID, time.Now().Add(time.Hour)))).To(Succeed())
+
+			pubs := bus.Published()
+			Expect(pubs).To(HaveLen(1))
+			Expect(outcome(pubs[0])).To(Equal(natsbus.GraphOutcome{JobID: jobID, Outcome: natsbus.GraphOutcomeMaterialized}))
+		},
+		Entry("a failure from the previous run, a day earlier", 24*time.Hour),
+		Entry("a failure a millisecond before the run resumed", time.Millisecond),
+	)
+
+	It("publishes failed when the job's failure event is stored exactly at the run's start", func() {
+		failedAt[countKey{natsbus.AuditEventsStream, failedEvents}] = runStart
+
+		Expect(bus.Deliver(barrierMsg(barrierSubj, tenantID, jobID, time.Now().Add(time.Hour)))).To(Succeed())
+
+		Expect(outcome(bus.Published()[0]).Outcome).To(Equal(natsbus.GraphOutcomeFailed))
+	})
+
+	It("retries when the failure events cannot be read", func() {
+		bus.LastMessageTimeFunc = func(context.Context, string, string) (time.Time, bool, error) {
+			return time.Time{}, false, fmt.Errorf("get last: %w", natsbus.ErrConnectionClosed)
+		}
+
+		err := bus.Deliver(barrierMsg(barrierSubj, tenantID, jobID, time.Now().Add(time.Hour)))
+
+		Expect(err).To(MatchError(natsbus.ErrConnectionClosed))
+		Expect(err).NotTo(MatchError(natsbus.ErrNotReady))
+		Expect(barrier().Naked()).To(Equal(1))
+		Expect(bus.Published()).To(BeEmpty())
 	})
 
 	It("drops a barrier past its deadline", func() {
@@ -171,9 +221,9 @@ var _ = Describe("Materialization barrier", func() {
 		Expect(logs.String()).To(ContainSubstring("level=WARN"))
 	})
 
-	DescribeTable("terms a barrier it can never answer, without counting or publishing",
+	DescribeTable("terms a barrier it can never answer as skipped, without counting or publishing",
 		func(msg func() *natsbus.Message) {
-			Expect(barrier().Handle(msg())).To(MatchError(natsbus.ErrPermanent))
+			Expect(barrier().Handle(msg())).To(MatchError(natsbus.ErrSkip))
 
 			Expect(barrier().Termed()).To(Equal(1))
 			Expect(asked).To(BeEmpty())
@@ -188,6 +238,10 @@ var _ = Describe("Materialization barrier", func() {
 		}),
 		Entry("a payload without a deadline", func() *natsbus.Message {
 			return barrierMsg(barrierSubj, tenantID, jobID, time.Time{})
+		}),
+		Entry("a payload without a not_before", func() *natsbus.Message {
+			runStart = time.Time{}
+			return barrierMsg(barrierSubj, tenantID, jobID, time.Now().Add(time.Hour))
 		}),
 		Entry("a payload that is not JSON", func() *natsbus.Message {
 			m := barrierMsg(barrierSubj, tenantID, jobID, time.Now().Add(time.Hour))

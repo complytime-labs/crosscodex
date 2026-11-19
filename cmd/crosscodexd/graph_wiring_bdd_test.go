@@ -135,7 +135,7 @@ var _ = Describe("attachGraph config wiring", func() {
 		bus := &natsbustest.Fake{}
 		rt := &runtime{}
 		cfg := &config.Config{NATS: config.NATSConfig{Materialize: config.NATSMaterializeConfig{
-			MaxDeliver: 7, AckWait: 3 * time.Minute, RedeliverDelay: 4 * time.Second,
+			MaxDeliver: 7, AckWait: 3 * time.Minute, RedeliverDelay: 4 * time.Second, BarrierPollInterval: 5 * time.Second,
 		}}}
 		Expect(attachGraph(cfg, &sharedResources{graphDB_: memdriver.New(), natsClient: bus}, rt)).To(Succeed())
 
@@ -156,7 +156,7 @@ var _ = Describe("attachGraph config wiring", func() {
 			natsbus.ConsumerConfig{
 				Stream: natsbus.MaterializeStream, Durable: "graph-barrier",
 				FilterSubjects: []string{"crosscodex.materialize.*.*.barrier"},
-				AckWait:        3 * time.Minute, MaxDeliver: -1, RedeliverDelay: 4 * time.Second,
+				AckWait:        3 * time.Minute, MaxDeliver: -1, RedeliverDelay: 5 * time.Second,
 			},
 		), "attachGraph must give the graph service a ControlsReader and nats.materialize")
 		Expect(bus.Published()).To(BeEmpty())

@@ -277,19 +277,25 @@ type NATSMaterializeConfig struct {
 	// delivery. Must be positive. Default: 10m.
 	AckWait time.Duration `yaml:"ack_wait" json:"ack_wait"`
 
-	// RedeliverDelay is how long a failed event, or a barrier whose job still
-	// has events queued, waits before its next delivery. It is the barrier's
-	// polling interval, so it bounds how late a job learns its graph is
-	// complete. Must be positive. Default: 30s.
+	// RedeliverDelay is how long a failed materialization event waits before
+	// its next delivery. Must be positive. Default: 30s.
 	RedeliverDelay time.Duration `yaml:"redeliver_delay" json:"redeliver_delay"`
+
+	// BarrierPollInterval is how long a job barrier whose job still has
+	// events queued waits before it is checked again (the graph-barrier
+	// consumer's redelivery delay). It bounds how late a job learns its
+	// graph is complete; each check costs one stream query. Must be
+	// positive. Default: 2s.
+	BarrierPollInterval time.Duration `yaml:"barrier_poll_interval" json:"barrier_poll_interval"`
 }
 
 // Compiled defaults for nats.materialize, also applied by internal/graph when
 // a field is not set.
 const (
-	DefaultNATSMaterializeMaxDeliver     = 5
-	DefaultNATSMaterializeAckWait        = 10 * time.Minute
-	DefaultNATSMaterializeRedeliverDelay = 30 * time.Second
+	DefaultNATSMaterializeMaxDeliver          = 5
+	DefaultNATSMaterializeAckWait             = 10 * time.Minute
+	DefaultNATSMaterializeRedeliverDelay      = 30 * time.Second
+	DefaultNATSMaterializeBarrierPollInterval = 2 * time.Second
 )
 
 // NATSEmbeddedConfig configures the embedded NATS server.

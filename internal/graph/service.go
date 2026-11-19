@@ -76,9 +76,10 @@ func New(graph graphdb.GraphDB, vectors vectordb.VectorDB, bus natsbus.Client, o
 		maxSimilarityCatalogs: config.DefaultGraphMaxSimilarityCatalogs,
 		maxSimilarityLimit:    config.DefaultGraphMaxSimilarityLimit,
 		delivery: config.NATSMaterializeConfig{
-			MaxDeliver:     config.DefaultNATSMaterializeMaxDeliver,
-			AckWait:        config.DefaultNATSMaterializeAckWait,
-			RedeliverDelay: config.DefaultNATSMaterializeRedeliverDelay,
+			MaxDeliver:          config.DefaultNATSMaterializeMaxDeliver,
+			AckWait:             config.DefaultNATSMaterializeAckWait,
+			RedeliverDelay:      config.DefaultNATSMaterializeRedeliverDelay,
+			BarrierPollInterval: config.DefaultNATSMaterializeBarrierPollInterval,
 		},
 	}
 	for _, opt := range opts {

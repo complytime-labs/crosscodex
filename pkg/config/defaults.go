@@ -51,6 +51,7 @@ nats:
     max_deliver: 5
     ack_wait: 10m
     redeliver_delay: 30s
+    barrier_poll_interval: 2s
   embedded:
     store_dir: ""
   streams:

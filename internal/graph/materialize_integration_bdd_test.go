@@ -150,9 +150,18 @@ var _ = Describe("Durable materialization on JetStream", func() {
 		}
 	})
 
-	It("answers the job's barrier with materialized once the job's events are handled", func() {
+	It("answers the job's barrier with materialized once the job's events are handled, ignoring an earlier run's failure", func() {
 		mem := newMemGraph(ctx, tenantID, "ctrl-1", "ctrl-2", "ctrl-3")
 		c := newClient()
+
+		By("storing a failed outcome from an earlier run of the same job ID")
+		failedSubject, err := natsbus.GraphOutcomeSubject(tenantID, jobID, natsbus.GraphOutcomeFailed)
+		Expect(err).NotTo(HaveOccurred())
+		earlier, err := json.Marshal(natsbus.GraphOutcome{JobID: jobID, Outcome: natsbus.GraphOutcomeFailed, Analyzer: "relationship"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.PublishDurable(ctx, failedSubject, earlier, nil)).To(Succeed())
+		runStart := time.Now()
+
 		filter, err := natsbus.GraphOutcomeFilter(tenantID, jobID)
 		Expect(err).NotTo(HaveOccurred())
 		outcomes := make(chan *natsbus.Message, 4)
@@ -166,7 +175,7 @@ var _ = Describe("Durable materialization on JetStream", func() {
 		publishStage(c)
 		barrierSubject, err := natsbus.MaterializeBarrierSubject(tenantID, jobID)
 		Expect(err).NotTo(HaveOccurred())
-		barrier, err := json.Marshal(natsbus.MaterializeBarrier{JobID: jobID, Deadline: time.Now().Add(time.Minute)})
+		barrier, err := json.Marshal(natsbus.MaterializeBarrier{JobID: jobID, Deadline: time.Now().Add(time.Minute), NotBefore: runStart})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(c.PublishDurable(ctx, barrierSubject, barrier, nil)).To(Succeed())
 

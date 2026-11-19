@@ -457,7 +457,7 @@ var _ = Describe("Catalog parsed event projection", func() {
 		DescribeTable("terms a malformed subject without reading or writing",
 			func(subj string) {
 				build()
-				Expect(deliver(subj)).To(MatchError(natsbus.ErrPermanent))
+				Expect(deliver(subj)).To(MatchError(natsbus.ErrSkip))
 				Expect(materializer().Termed()).To(Equal(1))
 				Expect(reader.calls).To(BeZero())
 				Expect(nodeCount()).To(BeZero())

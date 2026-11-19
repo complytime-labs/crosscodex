@@ -111,8 +111,12 @@ func validateNATS(nats *NATSConfig, tracker *sourceTracker) error {
 			m.AckWait, formatSource(tracker, "nats.materialize.ack_wait"), ErrInvalidConfig)
 	}
 	if m.RedeliverDelay <= 0 {
-		p.add("nats.materialize.redeliver_delay", "nats.materialize.redeliver_delay %s%s must be positive: it spaces the retries of a failed materialization event and of a job barrier, so set a positive duration such as 30s: %w",
+		p.add("nats.materialize.redeliver_delay", "nats.materialize.redeliver_delay %s%s must be positive: it spaces the retries of a failed materialization event, so set a positive duration such as 30s: %w",
 			m.RedeliverDelay, formatSource(tracker, "nats.materialize.redeliver_delay"), ErrInvalidConfig)
+	}
+	if m.BarrierPollInterval <= 0 {
+		p.add("nats.materialize.barrier_poll_interval", "nats.materialize.barrier_poll_interval %s%s must be positive: it is how often a job barrier checks whether the job's graph is complete, so set a positive duration such as 2s: %w",
+			m.BarrierPollInterval, formatSource(tracker, "nats.materialize.barrier_poll_interval"), ErrInvalidConfig)
 	}
 	return p.err()
 }

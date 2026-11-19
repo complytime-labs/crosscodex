@@ -122,7 +122,7 @@ var _ = Describe("Subscriber Event Handling", func() {
 			func(subject string, data string) {
 				resolver.err = errors.New("resolver must not be called")
 				err := graph.ExportHandleEvent(svc, tenantCtx("test-tenant"), &natsbus.Message{Subject: subject, Data: []byte(data)})
-				Expect(err).To(MatchError(natsbus.ErrPermanent))
+				Expect(err).To(MatchError(natsbus.ErrSkip))
 			},
 			Entry("a malformed subject",
 				"bad.subject", `{}`),
@@ -383,7 +383,9 @@ var _ = Describe("Durable materialization consumer", func() {
 			graph.WithResolverRegistry(registry),
 			graph.WithTelemetry(tp.TracerProvider(), tp.MeterProvider()),
 			graph.WithLogger(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))),
-			graph.WithMaterializeConfig(config.NATSMaterializeConfig{MaxDeliver: maxDeliver, AckWait: time.Minute, RedeliverDelay: 2 * time.Second}))
+			graph.WithMaterializeConfig(config.NATSMaterializeConfig{
+				MaxDeliver: maxDeliver, AckWait: time.Minute, RedeliverDelay: 2 * time.Second, BarrierPollInterval: 500 * time.Millisecond,
+			}))
 		Expect(svc.Start(context.Background())).To(Succeed())
 		DeferCleanup(func() { _ = svc.Stop(context.Background()) })
 	}
@@ -431,7 +433,7 @@ var _ = Describe("Durable materialization consumer", func() {
 			FilterSubjects: []string{"crosscodex.materialize.*.*.barrier"},
 			AckWait:        time.Minute,
 			MaxDeliver:     -1,
-			RedeliverDelay: 2 * time.Second,
+			RedeliverDelay: 500 * time.Millisecond,
 		}))
 		Expect(bus.Subscriptions()).To(HaveLen(2))
 	})
@@ -500,12 +502,11 @@ var _ = Describe("Durable materialization consumer", func() {
 		build(mem)
 		msg := stageEvent(tenantID, "", 1)
 
-		Expect(bus.Deliver(msg)).To(MatchError(natsbus.ErrPermanent))
+		Expect(bus.Deliver(msg)).To(MatchError(natsbus.ErrSkip))
 
 		Expect(materializer().Termed()).To(Equal(1))
 		Expect(eventCount(tp, "unknown", "skipped")).To(Equal(int64(1)))
 		Expect(eventCount(tp, "unknown", "error")).To(BeZero())
-		Expect(logs.String()).To(ContainSubstring("level=DEBUG"))
 		Expect(logs.String()).NotTo(ContainSubstring("level=ERROR"))
 		Expect(semanticMatches(tenantID)).To(BeEmpty())
 	})

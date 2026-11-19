@@ -106,7 +106,7 @@ func WithControlsReader(r ControlsReader) Option {
 // WithMaterializeConfig sets the delivery limits of the durable MATERIALIZE
 // consumers Start creates. Wired from config nats.materialize
 // (config.NATSConfig.Materialize), whose validation keeps MaxDeliver at least
-// 1 and both durations positive. Options cannot return errors, so a field
+// 1 and every duration positive. Options cannot return errors, so a field
 // outside those bounds is ignored and keeps its compiled default
 // (config.DefaultNATSMaterialize*).
 func WithMaterializeConfig(c config.NATSMaterializeConfig) Option {
@@ -119,6 +119,9 @@ func WithMaterializeConfig(c config.NATSMaterializeConfig) Option {
 		}
 		if c.RedeliverDelay > 0 {
 			s.delivery.RedeliverDelay = c.RedeliverDelay
+		}
+		if c.BarrierPollInterval > 0 {
+			s.delivery.BarrierPollInterval = c.BarrierPollInterval
 		}
 	}
 }

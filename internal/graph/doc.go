@@ -43,7 +43,8 @@
 // edge is skipped, which increments graph.materialize.edges_skipped.total,
 // adds a span event and logs a warning. A job's barrier is answered with a
 // "materialized" or "failed" outcome once none of the job's events is left in
-// the stream.
+// the stream; only a failed outcome stored since the barrier's NotBefore
+// counts, so an earlier run of the same job ID does not fail it.
 package graph
 
 import (

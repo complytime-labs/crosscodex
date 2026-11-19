@@ -29,18 +29,20 @@ const barrierAnalyzer = "barrier"
 // event that fails on its last delivery stores a "failed" outcome before it
 // is terminated. So once no stage completion event of the job is left in the
 // stream, every one was handled, and the AUDIT_EVENTS stream says whether any
-// failed. Until then the barrier is naked and asked again after the
-// redelivery delay; past its deadline it is dropped unanswered, since the
-// pipeline has stopped waiting.
+// failed: a failed outcome counts only if the stream stored it at or after
+// the barrier's NotBefore, since a retried or resumed job keeps its job ID and
+// an earlier run's failures stay in AUDIT_EVENTS. Until the queue is empty the
+// barrier returns natsbus.ErrNotReady and is asked again after
+// nats.materialize.barrier_poll_interval; past its deadline it is dropped
+// unanswered, since the pipeline has stopped waiting.
 func (s *Service) handleBarrier(ctx context.Context, msg *natsbus.Message) error {
 	ctx, span := telemetry.StartSpan(s.tracer, ctx, "graph.barrier.handle")
 	defer span.End()
 
 	skip := func(reason string) error {
-		s.logger.DebugContext(ctx, "ignoring materialization barrier", "subject", msg.Subject, "reason", reason)
 		s.recordEvent(ctx, barrierAnalyzer, "skipped")
 		span.SetStatus(codes.Ok, "skipped")
-		return fmt.Errorf("%w: barrier on %s: %s", natsbus.ErrPermanent, msg.Subject, reason)
+		return fmt.Errorf("%w: barrier on %s: %s", natsbus.ErrSkip, msg.Subject, reason)
 	}
 
 	tenantID, jobID, err := parseBarrierSubject(msg.Subject)
@@ -65,6 +67,9 @@ func (s *Service) handleBarrier(ctx context.Context, msg *natsbus.Message) error
 	}
 	if barrier.Deadline.IsZero() {
 		return skip("payload has no deadline")
+	}
+	if barrier.NotBefore.IsZero() {
+		return skip("payload has no not_before")
 	}
 	if time.Now().After(barrier.Deadline) {
 		s.logger.InfoContext(ctx, "dropping materialization barrier past its deadline",
@@ -93,20 +98,20 @@ func (s *Service) handleBarrier(ctx context.Context, msg *natsbus.Message) error
 	if queued > 0 {
 		s.recordEvent(ctx, barrierAnalyzer, "waiting")
 		span.SetStatus(codes.Ok, "waiting")
-		return fmt.Errorf("job %s still has %d materialization events queued in %s; asking again after the redelivery delay",
-			jobID, queued, natsbus.MaterializeStream)
+		return fmt.Errorf("%w: job %s still has %d materialization events queued in %s; asking again after the barrier poll interval",
+			natsbus.ErrNotReady, jobID, queued, natsbus.MaterializeStream)
 	}
 
 	failedSubject, err := natsbus.GraphOutcomeSubject(tenantID, jobID, natsbus.GraphOutcomeFailed)
 	if err != nil {
 		return retry(err)
 	}
-	failed, err := s.bus.SubjectMessageCount(ctx, natsbus.AuditEventsStream, failedSubject)
+	failedAt, found, err := s.bus.LastMessageTime(ctx, natsbus.AuditEventsStream, failedSubject)
 	if err != nil {
-		return retry(fmt.Errorf("count failed graph outcomes: %w", err))
+		return retry(fmt.Errorf("read failed graph outcomes: %w", err))
 	}
 	outcome, reason := natsbus.GraphOutcomeMaterialized, ""
-	if failed > 0 {
+	if found && !failedAt.Before(barrier.NotBefore) {
 		outcome = natsbus.GraphOutcomeFailed
 		reason = "at least one materialization event of the job failed; see the earlier graph failure event for the analyzer"
 	}
