@@ -1065,6 +1065,56 @@ var _ = Describe("GraphDB System", Ordered, func() {
 				"RETURN $a", nil,
 				"RETURN $a"),
 		)
+
+		DescribeTable("counts one result column per item of the last top-level RETURN",
+			func(cypher string, want int) {
+				Expect(agedriver.ReturnColumns(cypher)).To(Equal(want))
+			},
+			Entry("a single item", "MATCH (n) RETURN n", 1),
+			Entry("aliased items", "MATCH ()-[r]->() RETURN type(r) AS t, count(r) AS c", 2),
+			Entry("commas inside function arguments", "MATCH (a)-[r]->(b) RETURN count(r), coalesce(a, b)", 2),
+			Entry("commas inside a map literal", "RETURN {a: 1, b: 2}, 3", 2),
+			Entry("commas inside a list literal", "RETURN [1, 2], 3", 2),
+			Entry("commas and RETURN inside string literals", `RETURN 'a, RETURN b, c', "d, \" RETURN e, f", 'g\'s, h'`, 3),
+			Entry("commas inside a backtick identifier", "MATCH (n) RETURN n AS `a, b`, n.id", 2),
+			Entry("RETURN inside comments", "MATCH (n) // RETURN a, b, c\nRETURN n /* RETURN x, y */", 1),
+			Entry("a lowercase keyword", "match (n) return n, n.id", 2),
+			Entry("WITH items before RETURN", "MATCH (a), (b) WITH a, b RETURN a", 1),
+			Entry("RETURN DISTINCT", "MATCH (a), (b) RETURN DISTINCT a, b", 2),
+			Entry("ORDER BY, SKIP and LIMIT after RETURN", "MATCH (a), (b) RETURN a, b ORDER BY a, b SKIP 1 LIMIT 2", 2),
+			Entry("a property named like a keyword", "MATCH (n) RETURN n.limit, n.order, n.skip", 3),
+			Entry("label predicates named like keywords", "MATCH (n), (m) RETURN n:Limit, n:Order, n: Skip, n:Union, m", 5),
+			Entry("a non-ASCII alias containing a keyword", "MATCH (n), (m) RETURN n.x AS çlimit, m", 2),
+			Entry("exactly as many items as PostgreSQL allows", "RETURN 1"+strings.Repeat(", 1", agedriver.MaxReturnColumns-1), agedriver.MaxReturnColumns),
+			Entry("UNION of two RETURNs", "MATCH (a) RETURN a.id, a.x UNION MATCH (b) RETURN b.id, b.x", 2),
+			Entry("RETURN inside a subquery", "CALL { MATCH (a) RETURN a, a.id } RETURN 1", 1),
+			Entry("a trailing semicolon", "RETURN 1, 2;", 2),
+			Entry("multiplication", "RETURN 2 * 3, 4", 2),
+			Entry("no RETURN", "MATCH (n) DELETE n", 1),
+		)
+
+		DescribeTable("refuses a query whose result columns cannot be counted",
+			func(cypher, msg string) {
+				_, err := agedriver.ReturnColumns(cypher)
+				Expect(err).To(MatchError(graphdb.ErrInvalidCypher))
+				Expect(err.Error()).To(ContainSubstring(msg))
+			},
+			Entry("RETURN *", "MATCH (n) RETURN *", "Name each returned value instead of *"),
+			Entry("RETURN DISTINCT *", "MATCH (n) RETURN DISTINCT *", "Name each returned value instead of *"),
+			Entry("* beside a named item", "MATCH (n) RETURN *, n.id", "Name each returned value instead of *"),
+			Entry("an unterminated string", "RETURN 'a, b", "Close it"),
+			Entry("an unterminated backtick identifier", "RETURN n AS `a", "Close it"),
+			Entry("an unterminated block comment", "RETURN a /* b, c", "Close it"),
+			Entry("more items than PostgreSQL allows", "RETURN 1"+strings.Repeat(", 1", agedriver.MaxReturnColumns), fmt.Sprintf("at most %d", agedriver.MaxReturnColumns)),
+		)
+
+		// client wraps a nil *sql.DB, so reaching the database would panic:
+		// a returned error proves the check runs before any SQL is sent.
+		It("refuses RETURN * before sending SQL", func() {
+			_, err := client.ExecuteQuery(context.Background(), "tenant-a", "MATCH (n) RETURN *", nil)
+			Expect(err).To(MatchError(graphdb.ErrInvalidCypher))
+			Expect(err.Error()).To(HavePrefix("execute query: "))
+		})
 	})
 
 	Describe("SupersedeFact", func() {

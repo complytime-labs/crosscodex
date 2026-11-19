@@ -22,7 +22,8 @@ const cypherDollarTag = "$cypher$"
 // cypherSQL wraps a Cypher query for graph gn in the ag_catalog.cypher() SQL
 // call, dollar-quoted with cypherDollarTag. cols is the AS column list, such
 // as "v agtype". The graph name is escaped here; cypher must already be built
-// from escaped values and checked identifiers, and cols must be a constant.
+// from escaped values and checked identifiers, and cols must be built from
+// constants only.
 func cypherSQL(gn, cypher, cols string) string {
 	return fmt.Sprintf(
 		"SELECT * FROM ag_catalog.cypher('%s', "+cypherDollarTag+" %s "+cypherDollarTag+") AS (%s)",
@@ -188,6 +189,155 @@ func substituteParams(cypher string, params map[string]string) string {
 		}
 		return "'" + escapeCypher(v) + "'"
 	})
+}
+
+// maxReturnColumns is PostgreSQL's limit on the columns a query can return
+// (MaxTupleAttributeNumber); a longer AS list would fail there anyway.
+const maxReturnColumns = 1664
+
+// returnColumns counts the result columns of a caller-written query: the
+// items of its last top-level RETURN clause, which is the number of columns
+// AGE requires in the AS list of the wrapping SQL. Text in string literals,
+// backtick identifiers and comments, and anything nested in (), [] or {}, is
+// ignored; the items end at a top-level ORDER BY, SKIP, LIMIT, UNION or ";".
+// A query with no top-level RETURN counts as one column.
+//
+// The count only sizes the AS list, which ExecuteQuery builds from constants:
+// a miscount makes AGE refuse the query (SQLSTATE 42804), it cannot widen what
+// the query reads. RETURN * is refused because its width depends on the
+// query's variables, and so is unterminated quoting, whose extent is unknown.
+func returnColumns(cypher string) (int, error) {
+	var (
+		count, depth int
+		inReturn     bool
+		item         strings.Builder // the current item's top-level text, without spaces
+	)
+	endItem := func() error {
+		s := strings.ToUpper(item.String())
+		item.Reset()
+		if s == "*" || (count == 1 && s == "DISTINCT*") {
+			return fmt.Errorf("%w: the query returns *, whose number of columns is unknown before it runs. Name each returned value instead of *, for example RETURN n, m",
+				graphdb.ErrInvalidCypher)
+		}
+		return nil
+	}
+	unterminated := fmt.Errorf("%w: the query has an unterminated string literal, backtick identifier or block comment. Close it",
+		graphdb.ErrInvalidCypher)
+	// Bytes of non-ASCII characters are word bytes, so a keyword is never
+	// found inside a non-ASCII identifier such as çlimit.
+	isWordByte := func(c byte) bool {
+		return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') || c >= 0x80
+	}
+	// A word is not a keyword when it is a property (n.limit), a parameter
+	// ($limit) or a label (n:Limit, n: Limit).
+	isKeywordPosition := func(i int) bool {
+		if i > 0 && (isWordByte(cypher[i-1]) || cypher[i-1] == '.' || cypher[i-1] == '$') {
+			return false
+		}
+		return !strings.HasSuffix(strings.TrimRight(cypher[:i], " \t\n\r\f\v"), ":")
+	}
+
+	for i := 0; i < len(cypher); {
+		c := cypher[i]
+		switch {
+		case c == '\'' || c == '"' || c == '`':
+			j := i + 1
+			for j < len(cypher) && cypher[j] != c {
+				if cypher[j] == '\\' && c != '`' {
+					j++
+				}
+				j++
+			}
+			if j >= len(cypher) {
+				return 0, unterminated
+			}
+			if inReturn && depth == 0 {
+				item.WriteByte('x')
+			}
+			i = j + 1
+			continue
+		case strings.HasPrefix(cypher[i:], "//"):
+			nl := strings.IndexByte(cypher[i:], '\n')
+			if nl < 0 {
+				i = len(cypher)
+			} else {
+				i += nl + 1
+			}
+			continue
+		case strings.HasPrefix(cypher[i:], "/*"):
+			end := strings.Index(cypher[i+2:], "*/")
+			if end < 0 {
+				return 0, unterminated
+			}
+			i += 2 + end + 2
+			continue
+		case c == '(' || c == '[' || c == '{':
+			if inReturn && depth == 0 {
+				item.WriteByte('x')
+			}
+			depth++
+		case c == ')' || c == ']' || c == '}':
+			depth--
+		case depth != 0:
+		case isWordByte(c) && isKeywordPosition(i):
+			j := i
+			for j < len(cypher) && isWordByte(cypher[j]) {
+				j++
+			}
+			word := cypher[i:j]
+			switch strings.ToUpper(word) {
+			case "RETURN":
+				inReturn, count = true, 1
+				item.Reset()
+			case "ORDER", "SKIP", "LIMIT", "UNION":
+				if inReturn {
+					if err := endItem(); err != nil {
+						return 0, err
+					}
+					inReturn = false
+				}
+			default:
+				if inReturn {
+					item.WriteString(word)
+				}
+			}
+			i = j
+			continue
+		case c == ',':
+			if inReturn {
+				if err := endItem(); err != nil {
+					return 0, err
+				}
+				count++
+			}
+		case c == ';':
+			if inReturn {
+				if err := endItem(); err != nil {
+					return 0, err
+				}
+				inReturn = false
+			}
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v':
+		default:
+			if inReturn {
+				item.WriteByte(c)
+			}
+		}
+		i++
+	}
+	if inReturn {
+		if err := endItem(); err != nil {
+			return 0, err
+		}
+	}
+	if count == 0 {
+		return 1, nil
+	}
+	if count > maxReturnColumns {
+		return 0, fmt.Errorf("%w: the query returns %d values, but PostgreSQL returns at most %d columns. Return fewer values, for example by collecting them into a list",
+			graphdb.ErrInvalidCypher, count, maxReturnColumns)
+	}
+	return count, nil
 }
 
 // missingGraphPattern matches Apache AGE's error for a cypher() call naming

@@ -193,7 +193,10 @@ message TraverseResponse {
 //
 message QueryRequest {
   TenantContext tenant_context = 1;
-  // openCypher query with $param placeholders
+  // openCypher query with $param placeholders. Each row holds one value per
+  // item of the query's RETURN clause. RETURN * is refused with
+  // INVALID_ARGUMENT, because the number of result columns must be known
+  // before the query runs: name each returned value instead (RETURN n, m).
   string cypher = 2;
   // Parameter values for $param placeholders
   map<string, string> parameters = 3;
