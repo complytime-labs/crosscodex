@@ -28,7 +28,9 @@ const (
 // When statusCode is 429 and retryAfterHeader parses successfully, the
 // parsed duration is returned (capped at 60s). For 5xx or when the header
 // is empty/unparseable, the returned delay is 0 and the caller should use
-// normal exponential backoff.
+// normal exponential backoff. 504 (and 408, outside 5xx) is an upstream
+// timeout: the provider may have processed and billed the call, so it is
+// never retried (see classifyError).
 func shouldRetry(statusCode int, retryAfterHeader string) (bool, time.Duration) {
 	if statusCode == 429 {
 		if d := parseRetryAfter(retryAfterHeader); d > 0 {
@@ -39,7 +41,7 @@ func shouldRetry(statusCode int, retryAfterHeader string) (bool, time.Duration) 
 		}
 		return true, 0
 	}
-	if statusCode >= 500 && statusCode < 600 {
+	if statusCode >= 500 && statusCode < 600 && statusCode != http.StatusGatewayTimeout {
 		return true, 0
 	}
 	return false, 0

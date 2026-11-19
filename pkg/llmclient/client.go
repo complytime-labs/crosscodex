@@ -261,10 +261,11 @@ func (c *client) Close() error {
 }
 
 // doWithRetry executes a POST request with exponential backoff retry on
-// transient failures (HTTP 429, 5xx, and non-timeout network errors), and
-// returns the headers of the successful response it decoded into result.
-// A timeout is never retried, in any mode: the upstream may have processed
-// and billed the call, so it returns ErrTimeout at once. Gateway mode makes a
+// transient failures (HTTP 429, 5xx other than 504, and non-timeout network
+// errors), and returns the headers of the successful response it decoded into
+// result. A timeout (the client deadline, or HTTP 408 or 504 from upstream) is
+// never retried, in any mode: the upstream may have processed and billed the
+// call, so it returns ErrTimeout at once. Gateway mode makes a
 // single attempt. A retryable HTTP status that outlasts every attempt is
 // classified like a non-retryable one (429 wraps ErrRateLimitExceeded).
 func (c *client) doWithRetry(ctx context.Context, path string, body []byte, result any) (http.Header, error) {
@@ -379,9 +380,13 @@ func (c *client) parseAPIError(statusCode int, body []byte) *APIError {
 	}
 }
 
-// classifyError maps HTTP status codes to sentinel errors.
+// classifyError maps HTTP status codes to sentinel errors. 408 and 504 are a
+// timeout upstream of this client (the gateway's or the provider's), handled
+// like a client-side one: ErrTimeout, never retried.
 func (c *client) classifyError(apiErr *APIError) error {
 	switch apiErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		return fmt.Errorf("%w: upstream returned HTTP %d: %w", ErrTimeout, apiErr.StatusCode, apiErr)
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("%w: %s", ErrAuthentication, apiErr.Message)
 	case http.StatusTooManyRequests:

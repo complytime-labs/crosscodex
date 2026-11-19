@@ -154,10 +154,14 @@ var _ = Describe("Retry Logic", func() {
 			Expect(retry).To(BeTrue())
 		})
 
-		It("retries on HTTP 504 (gateway timeout)", func() {
-			retry, _ := llmclient.ShouldRetry(504, "")
-			Expect(retry).To(BeTrue())
-		})
+		DescribeTable("does not retry an upstream timeout, which may have been billed",
+			func(status int) {
+				retry, _ := llmclient.ShouldRetry(status, "")
+				Expect(retry).To(BeFalse())
+			},
+			Entry("HTTP 408 (request timeout)", http.StatusRequestTimeout),
+			Entry("HTTP 504 (gateway timeout)", http.StatusGatewayTimeout),
+		)
 
 		It("does not retry on HTTP 400 (bad request)", func() {
 			retry, _ := llmclient.ShouldRetry(400, "")
@@ -708,6 +712,39 @@ var _ = Describe("Client", func() {
 			Expect(err).To(MatchError(context.DeadlineExceeded))
 			Expect(requests.Load()).To(BeEquivalentTo(1))
 		})
+
+		DescribeTable("sends an upstream timeout status once per call and returns ErrTimeout",
+			func(status int, gatewayMode bool) {
+				var requests atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(status)
+					fmt.Fprint(w, `{"error":{"message":"upstream timed out","type":"timeout"}}`)
+				}))
+				DeferCleanup(srv.Close)
+				client, err := llmclient.NewClient(config.LLMConfig{
+					GatewayURL: srv.URL, Timeout: 5, MaxRetries: 3, GatewayMode: gatewayMode,
+				})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { client.Close() })
+
+				const calls = 4
+				for i := range calls {
+					_, err := client.Complete(testspecs.SetupTenantContext("test-tenant"), &llmclient.CompletionRequest{
+						Model:    "gpt-4",
+						Messages: []llmclient.ChatMessage{{Role: "user", Content: "Hi"}},
+						TenantID: "test-tenant",
+					})
+					Expect(err).To(MatchError(llmclient.ErrTimeout))
+					Expect(requests.Load()).To(BeEquivalentTo(i+1), "call %d must make exactly one HTTP attempt", i+1)
+				}
+			},
+			Entry("a 504 storm, direct mode", http.StatusGatewayTimeout, false),
+			Entry("a 504 storm, gateway mode", http.StatusGatewayTimeout, true),
+			Entry("a 408 storm, direct mode", http.StatusRequestTimeout, false),
+			Entry("a 408 storm, gateway mode", http.StatusRequestTimeout, true),
+		)
 
 		DescribeTable("a rate limit that outlasts every attempt wraps ErrRateLimitExceeded",
 			func(gatewayMode bool, wantRequests int32) {

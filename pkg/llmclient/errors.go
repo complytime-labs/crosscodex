@@ -6,9 +6,10 @@ var (
 	// ErrGatewayUnavailable indicates the LLM gateway is unreachable.
 	ErrGatewayUnavailable = errors.New("LLM gateway unavailable")
 
-	// ErrTimeout indicates a request exceeded its deadline (the client timeout
-	// or the caller's context). The upstream may still have processed, and
-	// billed, the call, so the client never retries it.
+	// ErrTimeout indicates a request exceeded its deadline (the client timeout,
+	// the caller's context, or an upstream timeout reported as HTTP 408 or
+	// 504). The upstream may still have processed, and billed, the call, so
+	// the client never retries it.
 	ErrTimeout = errors.New("LLM request timed out")
 
 	// ErrAuditFailed indicates the LLM call completed but its audit record
