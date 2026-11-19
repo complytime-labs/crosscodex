@@ -3,6 +3,7 @@ package natsbustest_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -217,6 +218,39 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 			if got := s.Acked() + s.Naked() + s.Termed(); got != len(script) {
 				t.Fatalf("outcomes sum to %d, want %d deliveries", got, len(script))
+			}
+		})
+	})
+
+	It("ConsumeDurableFunc records exactly the consumers it lets succeed", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			script := rapid.SliceOf(rapid.Bool()).Draw(t, "succeed")
+			fake := &natsbustest.Fake{ConsumeDurableFunc: func(_ context.Context, cfg natsbus.ConsumerConfig, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
+				if strings.HasPrefix(cfg.Durable, "fail-") {
+					return nil, errors.New("scripted")
+				}
+				return nil, nil
+			}}
+			var want []string
+			for i, ok := range script {
+				name := fmt.Sprintf("ok-%d", i)
+				if !ok {
+					name = fmt.Sprintf("fail-%d", i)
+				}
+				_, err := fake.ConsumeDurable(context.Background(), natsbus.ConsumerConfig{Stream: "S", Durable: name, MaxDeliver: 1}, nil)
+				if ok != (err == nil) {
+					t.Fatalf("consumer %s: err=%v, want success=%v", name, err, ok)
+				}
+				if ok {
+					want = append(want, name)
+				}
+			}
+			var got []string
+			for _, s := range fake.Subscriptions() {
+				got = append(got, s.Config.Durable)
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("recorded consumers %v, want %v", got, want)
 			}
 		})
 	})

@@ -19,6 +19,21 @@ const subjectPrefix = "crosscodex"
 // leave it out.
 const MaterializeStream = "MATERIALIZE"
 
+// AuditEventsStream is the audit stream that captures every
+// crosscodex.audit.<tenant>.events.> subject, including the graph outcomes
+// GraphOutcomeSubject names.
+const AuditEventsStream = "AUDIT_EVENTS"
+
+// Graph outcomes, the last token of a GraphOutcomeSubject.
+const (
+	// GraphOutcomeMaterialized: every materialization event of the job was
+	// handled and none failed.
+	GraphOutcomeMaterialized = "materialized"
+	// GraphOutcomeFailed: at least one materialization event of the job
+	// exhausted its deliveries without being written.
+	GraphOutcomeFailed = "failed"
+)
+
 // WorkerProgressSubject is the one subject the worker progress signal uses:
 // LLM workers publish a tick on it after every task result they publish, and
 // analysis collections listen to it to tell a busy worker pool from a
@@ -135,6 +150,30 @@ func CatalogAuditSubject(tenantID, catalogID string) (string, error) {
 func MaterializeBarrierSubject(tenantID, jobID string) (string, error) {
 	return buildSubject(tenantID, validateJobID(jobID),
 		"materialize", tenantID, jobID, "barrier")
+}
+
+// GraphOutcomeSubject builds the subject the graph role publishes a job's
+// materialization outcome on, GraphOutcomeMaterialized or GraphOutcomeFailed;
+// the AUDIT_EVENTS stream (AuditEventsStream) stores it. Any other outcome is
+// rejected with ErrInvalidSubject.
+//
+//	crosscodex.audit.{tenant_id}.events.{job_id}.graph.{materialized|failed}
+func GraphOutcomeSubject(tenantID, jobID, outcome string) (string, error) {
+	tokenErr := validateJobID(jobID)
+	if tokenErr == nil && outcome != GraphOutcomeMaterialized && outcome != GraphOutcomeFailed {
+		tokenErr = fmt.Errorf("graph outcome %q is neither %q nor %q: %w",
+			outcome, GraphOutcomeMaterialized, GraphOutcomeFailed, ErrInvalidSubject)
+	}
+	return buildSubject(tenantID, tokenErr,
+		"audit", tenantID, string(AuditEvents), jobID, "graph", outcome)
+}
+
+// GraphOutcomeFilter matches every GraphOutcomeSubject of one job.
+//
+//	crosscodex.audit.{tenant_id}.events.{job_id}.graph.*
+func GraphOutcomeFilter(tenantID, jobID string) (string, error) {
+	return buildSubject(tenantID, validateJobID(jobID),
+		"audit", tenantID, string(AuditEvents), jobID, "graph", "*")
 }
 
 // AbandonedSubjectFilter matches every abandon control subject, across all

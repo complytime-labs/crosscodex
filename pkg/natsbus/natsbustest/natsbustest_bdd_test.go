@@ -205,6 +205,35 @@ var _ = Describe("Fake", func() {
 			Expect(fake.Subscriptions()).To(HaveLen(1))
 		})
 
+		It("lets ConsumeDurableFunc fail selected consumers and still records the rest", func() {
+			fake.ConsumeDurableFunc = func(_ context.Context, cfg natsbus.ConsumerConfig, _ natsbus.MessageHandler) (natsbus.Subscription, error) {
+				if cfg.Durable == "bad" {
+					return nil, errScripted
+				}
+				return nil, nil
+			}
+			h := func(context.Context, *natsbus.Message) error { return nil }
+			sub, err := fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Stream: "S", Durable: "good", MaxDeliver: 1}, h)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(sub).To(BeIdenticalTo(fake.Subscriptions()[0]))
+			sub, err = fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Stream: "S", Durable: "bad", MaxDeliver: 1}, h)
+			Expect(err).To(MatchError(errScripted))
+			Expect(sub).To(BeNil())
+			Expect(fake.Subscriptions()).To(HaveLen(1))
+		})
+
+		It("rejects an invalid consumer config before ConsumeDurableFunc runs", func() {
+			called := false
+			fake.ConsumeDurableFunc = func(context.Context, natsbus.ConsumerConfig, natsbus.MessageHandler) (natsbus.Subscription, error) {
+				called = true
+				return nil, nil
+			}
+			_, err := fake.ConsumeDurable(ctx, natsbus.ConsumerConfig{Durable: "d", MaxDeliver: 1}, func(context.Context, *natsbus.Message) error { return nil })
+			Expect(err).To(MatchError(natsbus.ErrSubscribeFailed))
+			Expect(called).To(BeFalse())
+			Expect(fake.Subscriptions()).To(BeEmpty())
+		})
+
 		It("returns the subscription a Func hands back instead of the recorded Sub", func() {
 			custom := &natsbustest.Sub{Subject: "custom"}
 			fake.SubscribeFunc = func(context.Context, string, natsbus.MessageHandler) (natsbus.Subscription, error) {

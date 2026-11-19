@@ -684,7 +684,7 @@ func auditStreamConfigs(cfg config.NATSStreamsConfig) []StreamConfig {
 			Replicas: 1,
 		},
 		{
-			Name:     "AUDIT_EVENTS",
+			Name:     AuditEventsStream,
 			Subjects: []string{subjectPrefix + ".audit.*.events.>"},
 			MaxAge:   cfg.AuditEventsRetention,
 			Replicas: 1,

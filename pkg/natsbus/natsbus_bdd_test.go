@@ -598,6 +598,58 @@ var _ = Describe("NATSBus System", Ordered, func() {
 			Entry("job with dot", "acme-corp", "job.x", "", natsbus.ErrInvalidJobID),
 		)
 
+		DescribeTable("builds GraphOutcomeSubject, rejecting an invalid tenant, job or outcome",
+			func(tenant, jobID, outcome, want string, wantErr error) {
+				got, err := natsbus.GraphOutcomeSubject(tenant, jobID, outcome)
+				if wantErr != nil {
+					Expect(err).To(MatchError(wantErr))
+					Expect(got).To(BeEmpty())
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(want))
+			},
+			Entry("materialized", "acme-corp", "job-1", natsbus.GraphOutcomeMaterialized,
+				"crosscodex.audit.acme-corp.events.job-1.graph.materialized", nil),
+			Entry("failed", "acme-corp", "job-1", natsbus.GraphOutcomeFailed,
+				"crosscodex.audit.acme-corp.events.job-1.graph.failed", nil),
+			Entry("unknown outcome", "acme-corp", "job-1", "done", "", natsbus.ErrInvalidSubject),
+			Entry("wildcard outcome", "acme-corp", "job-1", "*", "", natsbus.ErrInvalidSubject),
+			Entry("invalid tenant", "a.b", "job-1", natsbus.GraphOutcomeFailed, "", natsbus.ErrInvalidSubject),
+			Entry("empty job", "acme-corp", "", natsbus.GraphOutcomeFailed, "", natsbus.ErrInvalidJobID),
+			Entry("job with wildcard", "acme-corp", "job>", natsbus.GraphOutcomeFailed, "", natsbus.ErrInvalidJobID),
+		)
+
+		DescribeTable("builds GraphOutcomeFilter, rejecting an invalid tenant or job",
+			func(tenant, jobID, want string, wantErr error) {
+				got, err := natsbus.GraphOutcomeFilter(tenant, jobID)
+				if wantErr != nil {
+					Expect(err).To(MatchError(wantErr))
+					Expect(got).To(BeEmpty())
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(want))
+			},
+			Entry("valid", "acme-corp", "job-1", "crosscodex.audit.acme-corp.events.job-1.graph.*", nil),
+			Entry("invalid tenant", "a*b", "job-1", "", natsbus.ErrInvalidSubject),
+			Entry("job with dot", "acme-corp", "job.x", "", natsbus.ErrInvalidJobID),
+		)
+
+		It("captures graph outcomes in the AUDIT_EVENTS stream", func() {
+			subject, err := natsbus.GraphOutcomeSubject("acme-corp", "job-1", natsbus.GraphOutcomeFailed)
+			Expect(err).NotTo(HaveOccurred())
+			var events natsbus.StreamConfig
+			for _, sc := range natsbus.AuditStreamConfigs(config.NATSStreamsConfig{}) {
+				if sc.Name == natsbus.AuditEventsStream {
+					events = sc
+				}
+			}
+			Expect(events.Subjects).To(ContainElement(Satisfy(func(filter string) bool {
+				return server.SubjectMatchesFilter(subject, filter)
+			})))
+		})
+
 		Context("when building CatalogParsedSubject", func() {
 			type catalogCase struct {
 				tenant    string

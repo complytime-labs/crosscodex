@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/nats-io/nats-server/v2/server"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"pgregory.net/rapid"
@@ -112,6 +113,34 @@ var _ = Describe("Property Specifications", Ordered, func() {
 						Expect(p).NotTo(ContainSubstring(">"),
 							"%s output contains wildcard >: %q", b.name, subject)
 					}
+				}
+			})
+		})
+
+		It("builds graph outcome subjects that the job's outcome filter matches and no other job's does", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				tenantID := validTenantGen().Draw(t, "tenant")
+				jobID := safeTokenGen().Draw(t, "job-id")
+				otherJob := safeTokenGen().Filter(func(s string) bool { return s != jobID }).Draw(t, "other-job")
+				outcome := rapid.SampledFrom([]string{natsbus.GraphOutcomeMaterialized, natsbus.GraphOutcomeFailed}).Draw(t, "outcome")
+
+				subject, err := natsbus.GraphOutcomeSubject(tenantID, jobID, outcome)
+				if err != nil {
+					t.Fatalf("GraphOutcomeSubject(%q, %q, %q): %v", tenantID, jobID, outcome, err)
+				}
+				own, err := natsbus.GraphOutcomeFilter(tenantID, jobID)
+				if err != nil {
+					t.Fatalf("GraphOutcomeFilter(%q, %q): %v", tenantID, jobID, err)
+				}
+				other, err := natsbus.GraphOutcomeFilter(tenantID, otherJob)
+				if err != nil {
+					t.Fatalf("GraphOutcomeFilter(%q, %q): %v", tenantID, otherJob, err)
+				}
+				if !server.SubjectMatchesFilter(subject, own) {
+					t.Fatalf("filter %q does not match its job's outcome subject %q", own, subject)
+				}
+				if server.SubjectMatchesFilter(subject, other) {
+					t.Fatalf("filter %q of another job matches outcome subject %q", other, subject)
 				}
 			})
 		})

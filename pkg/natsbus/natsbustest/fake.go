@@ -57,7 +57,7 @@ func clonePublication(p Publication) Publication {
 // tenant (PublishDurable included). PublishWorkerProgress needs no tenant, like the real client.
 // Publish, PublishWithHeaders, PublishDurable and PublishWorkerProgress record and return nil;
 // Subscribe, QueueSubscribe, SubscribeWorkerProgress and ConsumeDurable record
-// a Sub and return it; Close returns nil.
+// a Sub and return it, unless their Func decides otherwise; Close returns nil.
 // Unset CreateStreamFunc, DeleteStreamFunc, AuditStreamRetentionFunc and
 // SubjectMessageCountFunc
 // return ErrUnscripted. The zero value is ready to use. Set the exported
@@ -81,6 +81,11 @@ type Fake struct {
 	SubscribeFunc func(ctx context.Context, subject string, handler natsbus.MessageHandler) (natsbus.Subscription, error)
 	// QueueSubscribeFunc is SubscribeFunc for QueueSubscribe.
 	QueueSubscribeFunc func(ctx context.Context, subject, queue string, handler natsbus.MessageHandler) (natsbus.Subscription, error)
+	// ConsumeDurableFunc is SubscribeFunc for ConsumeDurable. It runs only for
+	// a config ConsumerConfig.Validate accepts, and is handed the caller's
+	// handler; the recorded Sub still applies the consumer's tenant context and
+	// ack, nak and term outcomes.
+	ConsumeDurableFunc func(ctx context.Context, cfg natsbus.ConsumerConfig, handler natsbus.MessageHandler) (natsbus.Subscription, error)
 	// PublishWorkerProgressErr is returned by PublishWorkerProgress, which
 	// records the tick in Published whether or not it is set. It affects no
 	// other method, so it fails ticks without failing result publishes.
@@ -257,7 +262,7 @@ func (f *Fake) SubscribeWorkerProgress(ctx context.Context, handler func()) (nat
 // handler's ctx carries msg.Metadata.TenantID; a message whose tenant ID is
 // empty or invalid is termed without calling the handler, and Deliver returns
 // the tenant error. Fake never redelivers; a test redelivers by calling Deliver again.
-func (f *Fake) ConsumeDurable(_ context.Context, cfg natsbus.ConsumerConfig, handler natsbus.MessageHandler) (natsbus.Subscription, error) {
+func (f *Fake) ConsumeDurable(ctx context.Context, cfg natsbus.ConsumerConfig, handler natsbus.MessageHandler) (natsbus.Subscription, error) {
 	if err := f.checkOpen("consume " + cfg.Durable); err != nil {
 		return nil, err
 	}
@@ -288,7 +293,11 @@ func (f *Fake) ConsumeDurable(_ context.Context, cfg natsbus.ConsumerConfig, han
 		}
 		return err
 	}
-	return f.register(sub), nil
+	if f.ConsumeDurableFunc == nil {
+		return f.register(sub), nil
+	}
+	got, err := f.ConsumeDurableFunc(ctx, cfg, handler)
+	return f.finishSubscribe(sub, got, err)
 }
 
 // SubjectMessageCount returns what SubjectMessageCountFunc decides, or an
