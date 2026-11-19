@@ -1,0 +1,23 @@
+internal/pipeline/executor.go
+  s_782aa7015bdc06::t_349fae851af790 995-997
+internal/pipeline/reporter.go
+  s_782aa7015bdc06::t_590ae5abe80e1f 5,160-180
+internal/pipeline/reporter_bdd_test.go
+  s_782aa7015bdc06::t_92dd6b52d53166 16,152-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "430bbe9e2de5c47ef842dcb175e673d54668fb29",
+  "prompts": {},
+  "sessions": {
+    "s_782aa7015bdc06": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa65ed4e65a0c8383",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
