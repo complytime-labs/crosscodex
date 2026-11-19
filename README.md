@@ -16,6 +16,12 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Client certificates get roles only from `auth.x509_mappings` (#232):
+
+- **Every client certificate needs a mapping; none is admin implicitly.** Roles `all` and `gateway` (and the embedded CLI daemon) used to grant `admin` to any certificate the CA signed. Now a certificate gets the roles of the first `auth.x509_mappings` entry it matches and is refused if it matches none, and the daemon refuses to start while `auth.x509_mappings` is empty. For the certificates `task deploy:certs` generates (deploy/certgen), add `auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]`; the shipped `deploy/config.yaml` already has it. Roles must be `admin` or `reviewer`, and every match needs at least one field. The embedded CLI daemon grants `admin` only to its own client certificate, matched by its exact common name and organization.
+- **`tenants.enabled` is honoured.** With `false`, every identity is in `tenants.default_tenant`, and a mapping's `tenant` must be empty or that tenant. With `true`, each mapping must name a `tenant`, and a caller works in its mapping's tenant.
+- **A reviewer needs a certificate of their own.** `crosscodex admin cleaning decide` needs the `reviewer` role, which `admin` does not include, so issue each reviewer a separate certificate and map it with `roles: [reviewer]`. Don't add `reviewer` to the shared admin mapping: one certificate holding both roles would let one person both apply a cleaning pass and decide its findings.
+
 Graph materialization is durable, and a job completes only once its graph is written (#231):
 
 - **A split deployment needs a running graph role.** A job's graph stage now completes only when a `graph` role (or `all`) confirms that every materialization event of the job is written. Before, it completed as soon as the events were published, so a job could report `completed` with no graph written. Without a graph role on the pipeline's NATS server, every job fails at its graph stage after the new `pipeline.graph_materialize_timeout` (default `30m`, range `(0, pipeline.stage_timeout]`; global-only) with a message naming the timeout and the missing graph role; raise it if a large job's graph takes longer to write. A `failed` graph outcome fails the job with the graph role's reason. A retried or resumed job re-publishes the completion events of the stages an earlier run completed, so their graph is written and checked again. See [Job completion needs a graph role](docs/dev/service-runtime.md#job-completion-needs-a-graph-role).
@@ -34,7 +40,7 @@ Signed record of every applied cleaning run (#290):
 Edge cleaning (#272):
 
 - **Database.** `job_stages` gains the column `stage_record`, and the new tables `edge_findings` and `edge_finding_decisions` are folded into the baseline migration `001_initial_schema`. A database created by an earlier build must be recreated (`task deploy:down VOLUMES=1`, start the stack, `crosscodexd migrate`); `crosscodexd` refuses to start on the old schema and names the missing column. Re-import your catalogs and re-run your jobs.
-- **New `reviewer` role.** `EdgeCleaningService.DecideFinding` (`crosscodex admin cleaning decide`) needs it; `admin` does not include it. It cannot be granted yet (#232), so decisions are refused in every deployment until then. `RunCleaning` needs `admin`; `ListFindings` and `GetFinding` need `reviewer` or `admin`.
+- **New `reviewer` role.** `EdgeCleaningService.DecideFinding` (`crosscodex admin cleaning decide`) needs it; `admin` does not include it. Grant it through `auth.x509_mappings` (see the #232 entry above). `RunCleaning` needs `admin`; `ListFindings` and `GetFinding` need `reviewer` or `admin`.
 - **New `cleaning` config section** (`max_retire_per_run`, `signals.<signal>.action`, `signals.low_agreement.min_agreement_fraction`, all tenant-overridable). The defaults report every signal and retire nothing. See [Edge Cleaning](#edge-cleaning-crosscodex-admin-cleaning).
 - **A restored edge has a new ID.** Restoring a retired verdict creates new edges whose IDs derive from the retired edge and the restore decision; the original edge keeps its ID and stays superseded. `mapping_id` in `results` output is still derived from the job and control pair, so it names the original, superseded analyzer edge, not the restored one.
 - **Signing.** `run --apply` and `decide` need `attestation.private_key_path` and `attestation.public_key_path`, even with `attestation.enabled: false`. Role `all` now loads those keys at startup whenever both are set, and refuses to start if they do not load.
@@ -607,20 +613,27 @@ attestation:
     sandbox:
       enabled: false              # this tenant's jobs and imports run unattested
 
-# Multi-tenant X.509 certificate-to-tenant mapping
+# X.509 client certificate -> tenant and roles. Required by roles all and
+# gateway: the first mapping a certificate matches decides; a certificate that
+# matches none is refused. Roles: admin, reviewer. Match fields are globs
+# (cn, organization, org_unit, san_email, san_dns, san_uri), ANDed.
 tenants:
-  enabled: true
+  enabled: true                   # false: omit tenant (or set tenants.default_tenant); every caller is in tenants.default_tenant
 auth:
   x509_mappings:
     - match:
-        organization: "Acme*"
+        cn: "ops-admin"
+        organization: "Acme"
         org_unit: "Engineering"
       tenant: acme-engineering
-      roles: [admin, writer]
+      roles: [admin]
+    # A reviewer gets a certificate of their own: admin does not include
+    # reviewer, and one certificate holding both would let one person apply a
+    # cleaning pass and decide its findings.
     - match:
-        san_email: "*@partner.com"
-      tenant: partner-org
-      roles: [reader]
+        san_email: "alice@acme.example"
+      tenant: acme-engineering
+      roles: [reviewer]
 
 # Analysis
 analysis:
@@ -1163,7 +1176,7 @@ crosscodex admin cleaning decide <finding-id> --verdict dismiss \
 - **Stale findings are per job.** `stale_prompt` and `stale_model` raise one finding per job, not per verdict: `show`, `findings` and `run` print the job's catalogs, when it completed and how many of its live verdicts the run read, and the detail lists each stale stage's recorded and current value. Its ID depends only on the signal and the job, so retiring or restoring one of the job's verdicts through another finding does not re-raise a dismissed one; a change to a stale stage or its values does. Under action `retire`, and for a reviewer's `retire`, it removes the job's live verdicts (all of them count against `max_retire_per_run` on a run), or only those `--retire-verdict` names, which must be among them; `restore` recreates exactly what was retired, whatever the job's size.
 - **Restore.** Restoring recreates each retired edge as a new live edge with a new ID, derived from the retired edge and the restore decision; the retired edge stays superseded. See the Upgrading note on `mapping_id`.
 - **Statuses.** `reported` (listed only), `pending` (in the review queue), `retired`, `dismissed`, `restored`, and `cleared` (a later pass over its catalog pair no longer detects it).
-- **Roles.** `run` needs `admin`. `findings` and `show` need `reviewer` or `admin`. `decide` needs `reviewer`, which `admin` does not include, and the caller must be an active reviewer of the tenant (`crosscodexd admin reviewer add`). The `reviewer` role cannot yet be granted, because the daemon does not read `auth.x509_mappings` (#232), so every `decide` is refused with `PermissionDenied` for now.
+- **Roles.** `run` needs `admin`. `findings` and `show` need `reviewer` or `admin`. `decide` needs `reviewer`, which `admin` does not include, and the caller must be an active reviewer of the tenant (`crosscodexd admin reviewer add`). Grant `reviewer` with an `auth.x509_mappings` entry for the reviewer's own certificate, not the admin's (see [Key Configuration Examples](#key-configuration-examples)); a caller without it is refused with `PermissionDenied`.
 - **Signing.** Apply and decide sign what they record as in-toto links with `attestation.private_key_path` and `attestation.public_key_path`, whatever `attestation.enabled` says. With either path empty, apply and decide are refused with a message naming both settings; preview, resume, `findings` and `show` still work. With both set but not loadable as a key pair, `crosscodexd` in role `all` refuses to start.
 - **JSON.** `--json` prints the response with the proto field names (snake_case), including zero counts and empty lists; protojson renders 64-bit integers such as `summary.skipped_edges` as strings.
 
@@ -1627,8 +1640,8 @@ recorded in the database's audit log. Without the keys or
   `crosscodexd admin tenant resume` to reactivate it. A hidden tenant must be
   unhidden first.
 - **`reviewer add`:** registers a reviewer so `adjudicate artifacts decide`
-  and, once the `reviewer` role can be granted (#232), `crosscodex admin
-  cleaning decide` accept them. Prints `added`, or `already registered`. A deleted
+  and `crosscodex admin cleaning decide` (which also needs the `reviewer`
+  role) accept them. Prints `added`, or `already registered`. A deleted
   reviewer is restored with `reviewer restore`, not added again.
 - **`reviewer delete` / `restore`:** a deleted reviewer's verdicts stay, but
   `decide` refuses new ones from them. Restoring makes them active again.

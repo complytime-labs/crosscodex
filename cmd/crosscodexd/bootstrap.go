@@ -229,14 +229,37 @@ type noopAuditEmitter struct{}
 
 func (noopAuditEmitter) EmitAuthEvent(_ context.Context, _ *authn.AuthEvent) error { return nil }
 
-// allTenantAuthRegistry builds a single-tenant X.509 registry that maps any
-// valid client certificate to cfg.Tenants.DefaultTenant. This mirrors the
-// embedded CLI's single-node identity model and is what SubmitDocument needs
-// to resolve a tenant for both gateway-serving roles (all and gateway).
-func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
+// errNoX509Mappings refuses a gateway-serving role whose auth.x509_mappings is
+// empty: roles come only from mappings, so every caller would be refused.
+var errNoX509Mappings = errors.New("no client certificate can sign in: auth.x509_mappings is empty, " +
+	"and certificates no longer get admin implicitly. Add a mapping, e.g. for the certificates from deploy/certgen: " +
+	"auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]")
+
+// allTenantAuthRegistry builds the X.509 registry both gateway-serving roles
+// (all and gateway) authenticate callers with. A client certificate gets the
+// roles of the first auth.x509_mappings entry it matches and no identity if it
+// matches none. With tenants.enabled false every identity's tenant is
+// tenants.default_tenant; otherwise it is the matching mapping's tenant.
+func allTenantAuthRegistry(cfg *config.Config) (*authn.Registry, error) {
+	mappings := make([]authn.X509Mapping, len(cfg.Auth.X509Mappings))
+	for i, m := range cfg.Auth.X509Mappings {
+		mappings[i] = authn.X509Mapping{
+			Match: authn.X509Match{
+				CN:           m.Match.CN,
+				Organization: m.Match.Organization,
+				OrgUnit:      m.Match.OrgUnit,
+				SANEmail:     m.Match.SANEmail,
+				SANDNS:       m.Match.SANDNS,
+				SANURI:       m.Match.SANURI,
+			},
+			Tenant: m.Tenant,
+			Roles:  m.Roles,
+		}
+	}
 	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
-		SingleTenant:  true,
-		DefaultTenant: defaultTenant,
+		SingleTenant:  !cfg.Tenants.Enabled,
+		DefaultTenant: cfg.Tenants.DefaultTenant,
+		Mappings:      mappings,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
@@ -246,7 +269,8 @@ func allTenantAuthRegistry(defaultTenant string) (*authn.Registry, error) {
 }
 
 // buildIngestGateway builds the gateway.Service that serves catalog import for
-// role (all or gateway): single-tenant X.509 authn, pass-through ingestion
+// role (all or gateway): X.509 authn through auth.x509_mappings (refusing
+// to start without one), pass-through ingestion
 // into the caller's tenant's object storage (objectStore), and a catalog
 // service that persists controls and publishes them for graph projection.
 // Each import's in-toto ingest attestation is signed with its tenant's
@@ -281,6 +305,9 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	if resolvedTLS == nil || resolvedTLS.ClientCAs == nil {
 		return nil, fmt.Errorf(`%s role: catalog import authenticates clients by X.509 certificate, so tls.mode (or tls.targets.gateway-server.mode) must be "mutual" with a CA configured`, role)
 	}
+	if len(cfg.Auth.X509Mappings) == 0 {
+		return nil, fmt.Errorf("%s role: %w", role, errNoX509Mappings)
+	}
 
 	// The default tenant is provisioned by `crosscodexd migrate` (as the
 	// schema owner); the daemon only checks it. enter_tenant refuses a
@@ -288,6 +315,12 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	tctx, err := tenant.WithTenant(ctx, cfg.Tenants.DefaultTenant)
 	if err != nil {
 		return nil, fmt.Errorf("%s role: tenants.default_tenant: %w", role, err)
+	}
+	// Built before the database check so a mapping it rejects refuses
+	// startup without a database round trip.
+	registry, err := allTenantAuthRegistry(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("%s role: create auth registry: %w", role, err)
 	}
 	tx, err := dbpkg.NewTenantPool(shared.appPool).Begin(tctx)
 	if dbpkg.IsPgErrorCode(err, "42501") {
@@ -305,11 +338,6 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s role: check default tenant %q: %w", role, cfg.Tenants.DefaultTenant, err)
-	}
-
-	registry, err := allTenantAuthRegistry(cfg.Tenants.DefaultTenant)
-	if err != nil {
-		return nil, fmt.Errorf("create auth registry: %w", err)
 	}
 
 	storageProvider := objectStore(cfg)

@@ -32,8 +32,8 @@ const (
 	tenantB  = "tenant-b"
 	reviewer = "rev-1"
 
-	decideDenied = "recording a decision needs the reviewer role; assign it through auth.x509_mappings " +
-		"(not yet wired, see #232). An admin alone cannot decide findings"
+	decideDenied = "recording a decision needs the reviewer role. Ask an operator to grant it to your " +
+		"client certificate through auth.x509_mappings. An admin alone cannot decide findings"
 )
 
 var (

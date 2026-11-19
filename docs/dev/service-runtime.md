@@ -122,11 +122,15 @@ Operational consequences:
 - **Storage.** Because the gateway writes uploaded blobs under its own `storage.objects.base_path`, that path is separate from the pipeline role's unless the two roles share a filesystem.
 - Role `all` runs the same ingestion path and additionally confirms the tenant graph exists at startup (`CreateGraph`).
 
-### Client certificate trust (known limitation)
+### Client certificate trust
 
-Catalog import runs in single-tenant mode: any client certificate signed by the `gateway-server` CA authenticates as `admin` of `tenants.default_tenant`. The `auth.x509_mappings` config field exists in `pkg/config` but the daemon does not read it, so there is no way to map certificates to other tenants or roles. This is a limitation of the current implementation, not a configured policy.
+Trust is two checks. The TLS handshake admits only a certificate the `gateway-server` CA signed; `pkg/tlsconfig` uses the target's CA as both the root pool and the client CA pool (`ClientCAs`) for a `mutual` server target, and `tls.targets.<target>.ca` overrides the global CA for that target. Then `pkg/authn.X509Authenticator`, built from `auth.x509_mappings` by `allTenantAuthRegistry` (`cmd/crosscodexd/bootstrap.go`), gives the certificate the roles of the first mapping whose match it satisfies (every non-empty field, as a `filepath.Match` glob). A certificate that matches no mapping gets no identity and the call fails `Unauthenticated`; there is no implicit role. Roles are `admin` and `reviewer` (`authn.KnownRoles`), and `admin` does not include `reviewer`, so the cleaning two-person rule holds only while no one certificate is mapped to both.
 
-`pkg/tlsconfig` uses the target's CA as both the root pool and the client CA pool (`ClientCAs`) for a `mutual` server target, and `tls.targets.<target>.ca` overrides the global CA for that target. In a split deployment the inter-service CA also signs service identities such as `pipeline-client`, so by default those certificates would authenticate as admin at the gateway. Give `gateway-server` a dedicated client CA through `tls.targets.gateway-server.ca`, separate from the inter-service CA.
+`tenants.enabled` picks the tenant: `false` puts every identity in `tenants.default_tenant` (a mapping's `tenant` must be empty or equal it), `true` takes the matching mapping's `tenant`. Roles `all` and `gateway` refuse to start with no mappings, or with a mapping `NewX509Authenticator` rejects, before touching the database.
+
+The embedded CLI daemon (`cmd/crosscodex/embedded.go`) builds its registry the same way from one mapping: the exact common name and organization of the client certificate in its PKI directory, glob characters escaped, with role `admin`. The daemon's own server certificate and any other certificate its CA signs match nothing.
+
+Mappings are globs, so a broad one (`cn: "*"`) admits every certificate the CA signs. In a split deployment the inter-service CA also signs service identities such as `pipeline-client`; map exact subjects, and give `gateway-server` a dedicated client CA through `tls.targets.gateway-server.ca`, separate from the inter-service CA, so a service identity cannot reach the gateway at all.
 
 ## Job completion needs a graph role
 

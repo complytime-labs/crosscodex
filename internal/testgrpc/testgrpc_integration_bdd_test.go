@@ -226,19 +226,24 @@ var _ = Describe("gRPC Integration", func() {
 		It("should resolve a TLS certificate to a tenant identity and flow through gRPC", func() {
 			tenantID := "grpc-authn-tenant"
 
-			authenticator, err := authn.NewX509Authenticator(authn.X509Config{
-				SingleTenant:  true,
-				DefaultTenant: tenantID,
-				Mappings:      []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
-			})
-			Expect(err).NotTo(HaveOccurred())
-
 			// Build a TLS connection state from the test client cert.
 			tlsCfg, err := integrationClientTLSConfig()
 			Expect(err).NotTo(HaveOccurred())
 
 			// Load the client certificate to simulate what the TLS handshake produces.
 			clientCert, err := x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
+			Expect(err).NotTo(HaveOccurred())
+			Expect(clientCert.Subject.Organization).To(HaveLen(1))
+
+			// Map exactly this certificate's subject, as a deployment would.
+			authenticator, err := authn.NewX509Authenticator(authn.X509Config{
+				SingleTenant:  true,
+				DefaultTenant: tenantID,
+				Mappings: []authn.X509Mapping{{
+					Match: authn.X509Match{CN: clientCert.Subject.CommonName, Organization: clientCert.Subject.Organization[0]},
+					Roles: []string{authn.RoleAdmin},
+				}},
+			})
 			Expect(err).NotTo(HaveOccurred())
 
 			identity, err := authenticator.Authenticate(context.Background(), &authn.Request{

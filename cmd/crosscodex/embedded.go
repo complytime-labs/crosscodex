@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	connectrpc "connectrpc.com/connect"
@@ -175,13 +177,43 @@ const (
 	embeddedTenantDisplayName = "Embedded Single-Node"
 )
 
-func embeddedAuthRegistry() (*authn.Registry, error) {
+// globLiteral escapes the glob metacharacters authn.X509Match patterns
+// (filepath.Match) interpret, so a subject value matches only itself.
+var globLiteral = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`)
+
+// embeddedAuthRegistry grants admin of embeddedTenantID to the client
+// certificate at clientCertPath, the one the CLI presents, matched by its
+// exact common name and organization. Any other certificate the embedded CA
+// signs, including the daemon's own server certificate, gets no identity.
+// The subject is read from the certificate, so a PKI set the operator
+// supplied works too.
+func embeddedAuthRegistry(clientCertPath string) (*authn.Registry, error) {
+	certPEM, err := os.ReadFile(clientCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("read embedded client certificate: %w", err)
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, fmt.Errorf("embedded client certificate %s is not PEM. Remove the PKI directory so the CLI generates a new set, or supply a valid one", clientCertPath)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse embedded client certificate %s: %w", clientCertPath, err)
+	}
+	// An empty CN pattern matches every CN, so without one the mapping could
+	// admit other certificates the CA signs.
+	if cert.Subject.CommonName == "" {
+		return nil, fmt.Errorf("embedded client certificate %s has no common name, so it cannot be told apart from other certificates its CA signs. Supply one with a common name, or remove the PKI directory so the CLI generates a new set", clientCertPath)
+	}
+	match := authn.X509Match{CN: globLiteral.Replace(cert.Subject.CommonName)}
+	if len(cert.Subject.Organization) > 0 {
+		match.Organization = globLiteral.Replace(cert.Subject.Organization[0])
+	}
+
 	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 		SingleTenant:  true,
 		DefaultTenant: embeddedTenantID,
-		// Embedded mode keeps its admin-for-any-CA-signed-cert behaviour;
-		// the explicit mapping replaces the removed implicit grant.
-		Mappings: []authn.X509Mapping{{Match: authn.X509Match{CN: "*"}, Roles: []string{authn.RoleAdmin}}},
+		Mappings:      []authn.X509Mapping{{Match: match, Roles: []string{authn.RoleAdmin}}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
@@ -448,7 +480,7 @@ func (r *embeddedResources) close() {
 	}
 }
 
-func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*gateway.Service, *embeddedResources, error) {
+func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPath string, logger *slog.Logger) (*gateway.Service, *embeddedResources, error) {
 	if cfg.Database.DSN == "" {
 		return nil, nil, fmt.Errorf("database not configured for embedded mode\n\n" +
 			"  Set a database DSN:\n" +
@@ -556,7 +588,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, logger *slog.
 	)
 
 	// Create auth registry
-	registry, err := embeddedAuthRegistry()
+	registry, err := embeddedAuthRegistry(clientCertPath)
 	if err != nil {
 		resources.close()
 		return nil, nil, fmt.Errorf("create auth registry: %w", err)

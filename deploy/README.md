@@ -98,7 +98,7 @@ Trade-off: `LOCAL=1` uses your host Go toolchain and the protobuf code already c
 
 ## First use: connect the CLI from the host
 
-The `crosscodex` CLI running on your host machine needs the client certificate to dial the production gateway. Use the `--endpoint`, `--tls-ca`, `--tls-cert`, and `--tls-key` flags to authenticate via mutual TLS:
+The `crosscodex` CLI running on your host machine needs the client certificate to dial the production gateway. The gateway grants it `admin` through the `auth.x509_mappings` entry in `config.yaml` (CN `client`, O `CrossCodex`); a certificate no mapping matches is refused. Use the `--endpoint`, `--tls-ca`, `--tls-cert`, and `--tls-key` flags to authenticate via mutual TLS:
 
 ```bash
 # Import a catalog

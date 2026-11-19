@@ -400,7 +400,7 @@ var _ = Describe("Admin Cleaning Commands", func() {
 			},
 			Entry("run: preview then apply", "preview, then apply with the preview's token", "run"),
 			Entry("show: show then decide", "Flow: show, then decide", "show"),
-			Entry("decide: reviewer role", "reviewer role, which cannot yet be\ngranted (#232)", "decide"),
+			Entry("decide: reviewer role", "needs the reviewer role, which admin does not\ninclude: the daemon grants it through auth.x509_mappings", "decide"),
 			Entry("decide: a stale finding's retire takes every live verdict of the job",
 				"retire without --retire-verdict removes every live verdict", "decide"),
 			Entry("decide: a stale finding's retire is not capped", "uncapped by max_retire_per_run", "decide"),

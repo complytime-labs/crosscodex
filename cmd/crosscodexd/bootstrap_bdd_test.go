@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"log/slog"
@@ -21,10 +22,12 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/graph"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient/llmclienttest"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
+	pkigen "github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 	"github.com/complytime-labs/crosscodex/pkg/vectordb/vectordbtest"
 )
 
@@ -236,12 +239,16 @@ var _ = Describe("buildPipelineService object storage", func() {
 // would accept the role and then fail every import as Unauthenticated. The
 // refusal must happen at startup, before any database access: the mutual case
 // uses an invalid tenant ID so the next guard (tenant.WithTenant) fails without
-// touching the absent pool, proving the TLS check let it through.
+// touching the absent pool, proving the TLS check let it through. A mapping is
+// set so the x509 mappings guard lets it through too.
 var _ = Describe("buildIngestGateway client-certificate guard", func() {
 	DescribeTable("requires a gateway-server listener that verifies client certificates",
 		func(role, mode string, wantRefused bool) {
 			cfg := &config.Config{}
 			cfg.Tenants.DefaultTenant = "Not A Valid Tenant!"
+			cfg.Auth.X509Mappings = []config.X509MappingConfig{
+				{Match: config.X509MatchConfig{CN: "client"}, Roles: []string{authn.RoleAdmin}},
+			}
 			cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "local", BasePath: GinkgoT().TempDir()}
 			if mode != "off" {
 				cfg.TLS = config.TLSConfig{
@@ -267,6 +274,95 @@ var _ = Describe("buildIngestGateway client-certificate guard", func() {
 		Entry("all role, server-only tls", config.RoleAll, "server-only", true),
 		Entry("all role, mutual tls", config.RoleAll, "mutual", false),
 	)
+})
+
+// Roles come only from auth.x509_mappings, so a gateway-serving role with none
+// would accept every TLS handshake and then refuse every caller. It refuses to
+// start instead, before any database access, showing a mapping to add.
+var _ = Describe("buildIngestGateway x509 mappings guard", func() {
+	DescribeTable("refuses to start the gateway with no x509 mappings, showing one to add",
+		func(role string) {
+			cfg := &config.Config{}
+			cfg.Tenants.DefaultTenant = "crosscodexd-test"
+			cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "local", BasePath: GinkgoT().TempDir()}
+			cfg.TLS = config.TLSConfig{
+				Mode: "mutual", CA: testTLSWiringCAPath, Cert: testTLSWiringClientCertPath, Key: testTLSWiringClientKeyPath,
+			}
+
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			Expect(svc).To(BeNil())
+			Expect(err).To(MatchError(errNoX509Mappings))
+			Expect(err).To(MatchError(role + " role: no client certificate can sign in: auth.x509_mappings is empty, " +
+				"and certificates no longer get admin implicitly. Add a mapping, e.g. for the certificates from deploy/certgen: " +
+				"auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]"))
+		},
+		Entry("gateway role", config.RoleGateway),
+		Entry("all role", config.RoleAll),
+	)
+})
+
+// allTenantAuthRegistry is the gateway's only source of identities: the first
+// mapping a certificate matches decides its roles and, with tenants.enabled,
+// its tenant; a certificate that matches none is refused.
+var _ = Describe("allTenantAuthRegistry", func() {
+	var ca *pkigen.CertKeyPair
+
+	BeforeEach(func() {
+		var err error
+		ca, err = pkigen.GenerateCA(pkigen.WithOrganization("Registry Test"))
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	authenticate := func(cfg *config.Config, cn, org string) (*authn.Identity, error) {
+		leaf, err := pkigen.GenerateCert(ca, pkigen.WithOrganization(org), pkigen.WithDNSNames(cn),
+			pkigen.WithExtKeyUsage(x509.ExtKeyUsageClientAuth))
+		Expect(err).NotTo(HaveOccurred())
+		registry, err := allTenantAuthRegistry(cfg)
+		Expect(err).NotTo(HaveOccurred())
+		return registry.Authenticate(context.Background(), &authn.Request{
+			Method:   authn.AuthMethodMTLS,
+			TLSState: &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf.Cert}},
+		})
+	}
+
+	mappingsConfig := func(tenantsEnabled bool, tenantID string) *config.Config {
+		cfg := &config.Config{}
+		cfg.Tenants = config.TenantsConfig{Enabled: tenantsEnabled, DefaultTenant: "crosscodexd-test"}
+		cfg.Auth.X509Mappings = []config.X509MappingConfig{
+			{Match: config.X509MatchConfig{CN: "operator", Organization: "Acme"}, Tenant: tenantID, Roles: []string{authn.RoleAdmin}},
+			{Match: config.X509MatchConfig{CN: "alice", Organization: "Acme"}, Tenant: tenantID, Roles: []string{authn.RoleReviewer}},
+		}
+		return cfg
+	}
+
+	DescribeTable("authenticates the mapped certificate with its mapped roles",
+		func(tenantsEnabled bool, mappingTenant, cn string, wantRoles []string, wantTenant string) {
+			identity, err := authenticate(mappingsConfig(tenantsEnabled, mappingTenant), cn, "Acme")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(identity.Roles).To(Equal(wantRoles))
+			Expect(identity.TenantID).To(Equal(wantTenant))
+		},
+		Entry("single-tenant admin mapping", false, "", "operator", []string{authn.RoleAdmin}, "crosscodexd-test"),
+		Entry("single-tenant reviewer mapping", false, "", "alice", []string{authn.RoleReviewer}, "crosscodexd-test"),
+		Entry("multi-tenant mapping, in the mapping's tenant", true, "acme", "operator", []string{authn.RoleAdmin}, "acme"),
+	)
+
+	DescribeTable("refuses a certificate no mapping matches",
+		func(tenantsEnabled bool, mappingTenant, cn, org string) {
+			identity, err := authenticate(mappingsConfig(tenantsEnabled, mappingTenant), cn, org)
+			Expect(identity).To(BeNil())
+			Expect(err).To(MatchError(authn.ErrAuthenticationFailed))
+		},
+		Entry("single-tenant, unmapped common name", false, "", "mallory", "Acme"),
+		Entry("single-tenant, mapped common name in another organization", false, "", "operator", "Other"),
+		Entry("multi-tenant, unmapped common name", true, "acme", "mallory", "Acme"),
+	)
+
+	It("refuses a mapping for another tenant when tenants.enabled is false", func() {
+		registry, err := allTenantAuthRegistry(mappingsConfig(false, "acme"))
+		Expect(registry).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("in single-tenant mode leave tenant empty or set it to the default tenant")))
+	})
 })
 
 // buildPipelineService resolves attestation before anything else, so these

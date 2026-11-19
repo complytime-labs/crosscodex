@@ -23,6 +23,7 @@ import (
 
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
 	"github.com/complytime-labs/crosscodex/internal/testspecs"
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
@@ -58,6 +59,10 @@ var (
 	testTLSServerKeyPath  string
 	testTLSClientCertPath string
 	testTLSClientKeyPath  string
+	// testClientX509Mappings maps the suite's client certificate, read from
+	// the generated PKI, to admin. Roles come only from auth.x509_mappings,
+	// and every spec that calls a gateway presents this certificate.
+	testClientX509Mappings []config.X509MappingConfig
 )
 
 // testServerTLS returns a mutual-TLS server config (CA + server cert/key)
@@ -122,6 +127,15 @@ var _ = BeforeSuite(func() {
 	testTLSServerKeyPath = filepath.Join(certDir, "server-key.pem")
 	testTLSClientCertPath = filepath.Join(certDir, "client.pem")
 	testTLSClientKeyPath = filepath.Join(certDir, "client-key.pem")
+	clientBlock, _ := pem.Decode(pki.ClientCert)
+	Expect(clientBlock).NotTo(BeNil(), "decode test client cert")
+	clientCert, err := x509.ParseCertificate(clientBlock.Bytes)
+	Expect(err).NotTo(HaveOccurred(), "parse test client cert")
+	Expect(clientCert.Subject.Organization).To(HaveLen(1), "test client cert organization")
+	testClientX509Mappings = []config.X509MappingConfig{{
+		Match: config.X509MatchConfig{CN: clientCert.Subject.CommonName, Organization: clientCert.Subject.Organization[0]},
+		Roles: []string{authn.RoleAdmin},
+	}}
 
 	testGraphUserPassword, err = dbtest.NewRolePassword()
 	Expect(err).NotTo(HaveOccurred(), "generate graph_user password")
@@ -178,6 +192,7 @@ func baseTestConfig(suDSN string) *config.Config {
 		Catalog: config.CatalogConfig{RequirementPartNames: oscal.DefaultRequirementPartNames},
 		// The loader's default backend; specs set the base path they need.
 		Storage: config.StorageConfig{Objects: config.ObjectStorageConfig{Backend: "local"}},
+		Auth:    config.AuthConfig{X509Mappings: testClientX509Mappings},
 	}
 	Expect(migrateDatabase(context.Background(), cfg, GinkgoWriter)).To(Succeed(), "crosscodexd migrate")
 	return cfg
