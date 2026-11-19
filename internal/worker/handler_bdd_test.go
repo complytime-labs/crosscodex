@@ -103,6 +103,25 @@ var _ = Describe("Handler", func() {
 		})
 	})
 
+	Describe("LLM call whose audit record was not stored", func() {
+		It("publishes an error result with X-Error audit_failed", func() {
+			llm.CompleteFunc = func(_ context.Context, _ *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {
+				return nil, fmt.Errorf("LLM call completed but its audit record was not stored: %w: audit stream down", llmclient.ErrAuditFailed)
+			}
+
+			ctx := testspecs.SetupTenantContext("tenant-abc")
+			w := newWorker()
+			Expect(w.Start(ctx)).To(Succeed())
+			defer func() { Expect(w.Stop(ctx)).To(Succeed()) }()
+
+			payload := BuildCompletionPayload("test", "gpt-4", 0.0, 256)
+			awaitError := WatchErrorResult(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1")
+			PublishWorkTask(ctx, bus, "tenant-abc", natsbus.TaskClassify, "job-1", "task-1", payload)
+
+			Expect(awaitError(5 * time.Second)).To(Equal(natsbus.ResultErrorAuditFailed))
+		})
+	})
+
 	Describe("Completion cut off before any answer", func() {
 		It("publishes output_truncated instead of an empty response", func() {
 			llm.CompleteFunc = func(_ context.Context, req *llmclient.CompletionRequest) (*llmclient.CompletionResponse, error) {

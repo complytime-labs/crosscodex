@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1415,6 +1416,33 @@ var _ = Describe("Audit Emission", func() {
 		Expect(resp).To(BeNil())
 	})
 
+	It("still stores the audit record of a call whose context deadline elapsed, and reports the timeout, not an audit failure", func() {
+		server = httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			// Drain the body so the server notices the client hanging up.
+			_, _ = io.Copy(io.Discard, r.Body)
+			<-r.Context().Done()
+		}))
+		emitter := &ctxAwareAuditEmitter{}
+		cfg := config.LLMConfig{GatewayURL: server.URL, Timeout: 5}
+		client, err := llmclient.NewClient(cfg, llmclient.WithAuditEmitter(emitter))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { client.Close() })
+
+		ctx, cancel := context.WithTimeout(testspecs.SetupTenantContext("test-tenant"), 100*time.Millisecond)
+		defer cancel()
+		resp, err := client.Complete(ctx, &llmclient.CompletionRequest{
+			Model:    "gpt-4",
+			Messages: []llmclient.ChatMessage{{Role: "user", Content: "slow"}},
+			TenantID: "test-tenant",
+		})
+
+		Expect(resp).To(BeNil())
+		Expect(err).To(MatchError(llmclient.ErrTimeout))
+		Expect(err).NotTo(MatchError(llmclient.ErrAuditFailed))
+		Expect(emitter.events).To(HaveLen(1))
+		Expect(emitter.events[0].Success).To(BeFalse())
+	})
+
 	It("withholds an embedding when the audit record is not stored", func() {
 		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -1448,6 +1476,8 @@ var _ = Describe("Audit Emission", func() {
 		})
 		Expect(err).To(MatchError(llmclient.ErrAuthentication))
 		Expect(err).To(MatchError(llmclient.ErrAuditFailed))
+		Expect(err.Error()).To(ContainSubstring("the LLM call failed and its audit record was also not stored"))
+		Expect(err.Error()).NotTo(ContainSubstring("completed"))
 	})
 })
 
@@ -1850,6 +1880,18 @@ func (m *mockAuditEmitter) EmitLLMAudit(_ context.Context, event *llmclient.Audi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, event)
+	return nil
+}
+
+// ctxAwareAuditEmitter fails like a durable publish does when its context is
+// already done, and records the events it stores.
+type ctxAwareAuditEmitter struct{ events []*llmclient.AuditEvent }
+
+func (e *ctxAwareAuditEmitter) EmitLLMAudit(ctx context.Context, event *llmclient.AuditEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e.events = append(e.events, event)
 	return nil
 }
 

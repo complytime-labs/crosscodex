@@ -307,7 +307,7 @@ Failures are classified with sentinels in `internal/pipeline/errors.go`, and eac
 | Sentinel | Cause | Recovery |
 |---|---|---|
 | `ErrAttestationSigning` | The layout, a link or the bundle could not be signed or encoded | Fix the key pair and restart `crosscodexd`, then retry or start a new job |
-| `ErrAttestationStorage` | Object storage refused a write after `storage_retries` retries `storage_retry_delay` apart (at most 10m of retry delay per write), or a stored link could not be read | Transient: fix storage, then `crosscodex run retry --from-failure <job-id>`, or start a new job |
+| `ErrAttestationStorage` | Object storage refused a write after `storage_retries` retries `storage_retry_delay` apart (at most 10m of retry delay per write), a stored link could not be read, or the event bus did not store the bundle's audit-trail event | Transient: fix storage, then `crosscodex run retry --from-failure <job-id>`, or start a new job |
 | `ErrAttestationInvalid` | A stored link is missing or does not verify, an analyzer has no stored result, or the chain does not verify | Permanent: start a new job |
 
 Retries happen in process, within the job's context, so a cancel or shutdown stops them. `crosscodex run retry --from-failure` (gateway `RetryJob`, then the pipeline's) resumes a failed or cancelled job whose stages did not fail, which is where a layout, analyzer-link, or bundle failure leaves it; it resets no stage, so a job whose bundle was not stored only finalizes again.
