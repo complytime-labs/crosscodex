@@ -474,8 +474,8 @@ func (s *Service) publishParsed(ctx context.Context, tenantID, catalogID string,
 	if err != nil {
 		return fmt.Errorf("encode catalog parsed event: %w", err)
 	}
-	if err := s.bus.Publish(ctx, subject, payload); err != nil {
-		return fmt.Errorf("publish %s: %w", subject, err)
+	if err := s.bus.PublishDurable(ctx, subject, payload, nil); err != nil {
+		return fmt.Errorf("store %s: %w", subject, err)
 	}
 	return nil
 }

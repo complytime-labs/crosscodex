@@ -140,10 +140,18 @@ func (r *NATSStageReporter) publish(ctx context.Context, analyzerName, jobID str
 		return fmt.Errorf("stage report: marshaling event: %w", err)
 	}
 
+	// stage.completed drives graph materialization, so losing it silently
+	// loses edges: it is stored by the MATERIALIZE stream or the stage fails.
+	// started and failed have no consumer and stay fire-and-forget.
+	if stage == natsbus.StageCompleted {
+		if err := r.bus.PublishDurable(ctx, subject, data, nil); err != nil {
+			return fmt.Errorf("stage report: storing %s event for analyzer %q: %w", stage, analyzerName, err)
+		}
+		return nil
+	}
 	if err := r.bus.Publish(ctx, subject, data); err != nil {
 		r.logger.WarnContext(ctx, "failed to publish stage event",
 			"analyzer", analyzerName, "stage", string(stage), "error", err)
-		return nil
 	}
 	return nil
 }

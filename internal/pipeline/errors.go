@@ -36,6 +36,12 @@ var ErrAnalyzersChanged = errors.New("the enabled analyzers changed since the jo
 // until the key pair is fixed and crosscodexd restarted.
 var ErrAttestationSigning = errors.New("attestation could not be signed")
 
+// ErrMaterializationNotQueued reports that a stage's completion event, which
+// the graph role materializes from, was not stored by the event bus. It is
+// transient: once the bus accepts the event, the job can be retried from its
+// failure.
+var ErrMaterializationNotQueued = errors.New("materialization event was not stored")
+
 // ErrAttestationStorage reports that object storage did not accept or return
 // part of a job's attestation, after every retry for a write. It is
 // transient: once storage works, the job can be retried from its failure.

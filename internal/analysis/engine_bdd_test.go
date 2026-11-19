@@ -1031,6 +1031,53 @@ var _ = Describe("Engine", func() {
 			Expect(result.Errors).To(HaveKey("classify"))
 		})
 
+		It("fails the analyzer when its completion event is not stored", func() {
+			Expect(analyzer.Register[*emptypb.Empty](registry,
+				newStubWithTasks("classify", makeTasks("classify", 1)))).To(Succeed())
+
+			bus := &natsbustest.Fake{PublishDurableFunc: func(context.Context, string, []byte, map[string][]string) error {
+				return fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+			}}
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes(), analysis.WithStageReporter(analysis.NewNATSStageReporter(bus)))
+
+			result, err := engine.Execute(ctx, analysis.ExecutionRequest{
+				JobID: "job-event-not-stored",
+				Input: &emptypb.Empty{},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Failed).To(ConsistOf("classify"))
+			Expect(result.Completed).NotTo(ContainElement("classify"))
+			Expect(result.Outputs).NotTo(HaveKey("classify"))
+			Expect(result.Errors).To(HaveKey("classify"))
+			Expect(result.Errors["classify"]).To(MatchError(ContainSubstring("classify")))
+			Expect(result.Errors["classify"]).To(MatchError(natsbus.ErrNotStored))
+		})
+
+		It("publishes stage.completed durably and stage.started over core NATS", func() {
+			Expect(analyzer.Register[*emptypb.Empty](registry,
+				newStubWithTasks("classify", makeTasks("classify", 1)))).To(Succeed())
+
+			bus := &natsbustest.Fake{}
+			engine := analysis.New(registry, dispatcher, collector,
+				validCfg(), allTaskTypes(), analysis.WithStageReporter(analysis.NewNATSStageReporter(bus)))
+
+			_, err := engine.Execute(ctx, analysis.ExecutionRequest{JobID: "job-durable", Input: &emptypb.Empty{}})
+			Expect(err).NotTo(HaveOccurred())
+
+			started, err := natsbus.PipelineStageSubject("test-tenant", "job-durable", natsbus.StageStarted)
+			Expect(err).NotTo(HaveOccurred())
+			completed, err := natsbus.PipelineStageSubject("test-tenant", "job-durable", natsbus.StageCompleted)
+			Expect(err).NotTo(HaveOccurred())
+			durableBySubject := map[string]bool{}
+			for _, p := range bus.Published() {
+				durableBySubject[p.Subject] = p.Durable
+			}
+			Expect(durableBySubject).To(HaveKeyWithValue(started, false))
+			Expect(durableBySubject).To(HaveKeyWithValue(completed, true))
+		})
+
 		It("completes the analyzer normally when ReportStageCompleted succeeds", func() {
 			Expect(analyzer.Register[*emptypb.Empty](registry,
 				newStubWithTasks("classify", makeTasks("classify", 1)))).To(Succeed())

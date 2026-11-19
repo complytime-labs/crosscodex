@@ -782,6 +782,88 @@ var _ = Describe("Executor", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("publishes stage.completed durably and stage.started over core NATS", func() {
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: jobID, TenantID: tenantID, Status: pipeline.JobStatusRunning,
+				Config: catalogJobConfig, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"analyzer-a", "analyzer-b", "synthesis", "graph"})).To(Succeed())
+
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			Expect(svc.Start(ctx)).To(Succeed())
+			Eventually(func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, jobID)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}, "1s", "50ms").Should(Equal(pipeline.JobStatusCompleted))
+
+			started, err := natsbus.PipelineStageSubject(tenantID, jobID, natsbus.StageStarted)
+			Expect(err).NotTo(HaveOccurred())
+			completed, err := natsbus.PipelineStageSubject(tenantID, jobID, natsbus.StageCompleted)
+			Expect(err).NotTo(HaveOccurred())
+			var sawStarted, sawCompleted bool
+			for _, p := range bus.Published() {
+				switch p.Subject {
+				case started:
+					sawStarted = true
+					Expect(p.Durable).To(BeFalse(), "stage.started has no consumer and stays on core NATS")
+				case completed:
+					sawCompleted = true
+					Expect(p.Durable).To(BeTrue(), "stage.completed drives materialization and must be stored")
+				}
+			}
+			Expect(sawStarted).To(BeTrue())
+			Expect(sawCompleted).To(BeTrue())
+		})
+
+		It("fails synthesis when its completion event is not stored", func() {
+			bus.PublishDurableFunc = func(_ context.Context, _ string, data []byte, _ map[string][]string) error {
+				var event map[string]any
+				Expect(json.Unmarshal(data, &event)).To(Succeed())
+				if event["analyzer"] == "synthesis" {
+					return fmt.Errorf("%w: %w: nats: no responders", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+				}
+				return nil
+			}
+			Expect(store.CreateJob(ctx, &pipeline.Job{
+				JobID: jobID, TenantID: tenantID, Status: pipeline.JobStatusRunning,
+				Config: catalogJobConfig, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			})).To(Succeed())
+			Expect(store.CreateStages(ctx, jobID, []string{"analyzer-a", "analyzer-b", "synthesis", "graph"})).To(Succeed())
+
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			Expect(svc.Start(ctx)).To(Succeed())
+			Eventually(func() pipeline.JobStatus {
+				j, _ := store.GetJob(ctx, jobID)
+				if j == nil {
+					return ""
+				}
+				return j.Status
+			}, "1s", "50ms").Should(Equal(pipeline.JobStatusFailed))
+
+			j, err := store.GetJob(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(j.ErrorMessage).To(And(
+				ContainSubstring("synthesis finished, but the graph could not be told to materialize it"),
+				ContainSubstring("MATERIALIZE stream"),
+				ContainSubstring("crosscodex run retry --from-failure "+jobID)))
+			Expect(j.ErrorMessage).NotTo(ContainSubstring("nats:"), "bus internals are logged, not shown to the tenant")
+			stages, err := store.GetStages(ctx, jobID)
+			Expect(err).NotTo(HaveOccurred())
+			for _, st := range stages {
+				switch st.StageName {
+				case "synthesis":
+					Expect(st.Status).NotTo(Equal(pipeline.StageStatusCompleted))
+				case "graph":
+					Expect(st.Status).NotTo(Equal(pipeline.StageStatusCompleted), "the graph stage must not run after a failed synthesis")
+				}
+			}
+		})
+
 		It("skips completed stages on resume", func() {
 			// Create job with some stages already completed.
 			configBytes := catalogJobConfig
@@ -1415,8 +1497,11 @@ var _ = Describe("Executor", func() {
 			})
 
 			It("fails the job when the attestation bundle event is not stored, saying the bundle is stored and the job can be retried from its failure", func() {
-				bus.PublishDurableFunc = func(context.Context, string, []byte, map[string][]string) error {
-					return fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+				bus.PublishDurableFunc = func(_ context.Context, subject string, _ []byte, _ map[string][]string) error {
+					if strings.HasPrefix(subject, "crosscodex.audit.") {
+						return fmt.Errorf("%w: %w", natsbus.ErrPublishFailed, natsbus.ErrNotStored)
+					}
+					return nil
 				}
 				runJob(serviceWith(attestedBy(attestor), storage))
 

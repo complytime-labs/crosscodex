@@ -656,7 +656,7 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("updating synthesis stage to running: %w", err)
 	}
-	s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageStarted)
+	_ = s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageStarted)
 
 	classifyOut, err := s.store.GetCompletedAnalysisResults(ctx, jobID,
 		[]string{"classify", results.RequiresAnalyzer, results.RelationshipAnalyzer, results.CritiqueAnalyzer})
@@ -723,7 +723,7 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 	synthResult, err := s.synthesis.Execute(ctx, jobID, inputs, classifications)
 	if err != nil {
 		_ = s.store.UpdateStageStatus(ctx, jobID, "synthesis", StageStatusFailed)
-		s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageFailed)
+		_ = s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageFailed)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("synthesis.Execute: %w", err)
@@ -740,10 +740,23 @@ func (s *Service) runSynthesis(ctx context.Context, tenantID, jobID string, job 
 		}
 	}
 
+	// The graph role materializes from this event, so a stage whose event was
+	// not stored is not completed: failing it here lets a retry from the
+	// failure resume at synthesis and publish again.
+	if err := s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageCompleted); err != nil {
+		s.logger.ErrorContext(ctx, "synthesis completion event not stored", "job_id", jobID, "error", err)
+		err = &tenantError{sentinel: ErrMaterializationNotQueued, message: fmt.Sprintf(
+			"job %s: synthesis finished, but the graph could not be told to materialize it. "+
+				"Check that the event bus is running and its MATERIALIZE stream exists. %s",
+			jobID, retryHint(job))}
+		s.failPipelineStage(ctx, job, "synthesis", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
 	if err := s.store.UpdateStageStatus(ctx, jobID, "synthesis", StageStatusCompleted); err != nil {
 		s.logger.WarnContext(ctx, "failed to update synthesis stage to completed", "job_id", jobID, "error", err)
 	}
-	s.publishStageEvent(ctx, tenantID, jobID, "synthesis", natsbus.StageCompleted)
 
 	span.SetStatus(codes.Ok, "")
 	return nil
@@ -787,7 +800,7 @@ func (s *Service) failPipelineStage(ctx context.Context, job *Job, stage string,
 	if uerr := s.store.UpdateStageError(ctx, job.JobID, stage, tenantFailure(ctx, job.JobID, job, err)); uerr != nil {
 		s.logger.WarnContext(ctx, "failed to record the stage failure", "job_id", job.JobID, "stage", stage, "error", uerr)
 	}
-	s.publishStageEvent(ctx, job.TenantID, job.JobID, stage, natsbus.StageFailed)
+	_ = s.publishStageEvent(ctx, job.TenantID, job.JobID, stage, natsbus.StageFailed)
 }
 
 // runGraph updates stage status and publishes completion event to NATS.
@@ -803,7 +816,7 @@ func (s *Service) runGraph(ctx context.Context, job *Job, exec *jobExecution) er
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("updating graph stage to running: %w", err)
 	}
-	s.publishStageEvent(ctx, tenantID, jobID, "graph", natsbus.StageStarted)
+	_ = s.publishStageEvent(ctx, tenantID, jobID, "graph", natsbus.StageStarted)
 
 	// The graph link's material is the synthesis product; like synthesis,
 	// the stage completes only once its link is stored.
@@ -828,7 +841,11 @@ func (s *Service) runGraph(ctx context.Context, job *Job, exec *jobExecution) er
 	if err := s.store.UpdateStageStatus(ctx, jobID, "graph", StageStatusCompleted); err != nil {
 		s.logger.WarnContext(ctx, "failed to update graph stage to completed", "job_id", jobID, "error", err)
 	}
-	s.publishStageEvent(ctx, tenantID, jobID, "graph", natsbus.StageCompleted)
+	if err := s.publishStageEvent(ctx, tenantID, jobID, "graph", natsbus.StageCompleted); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("runGraph: %w", err)
+	}
 
 	span.SetStatus(codes.Ok, "")
 	return nil
@@ -973,16 +990,19 @@ func (s *Service) interruptJob(ctx context.Context, tenantID, jobID string) {
 }
 
 // publishStageEvent builds PipelineStageSubject, marshals JSON event, publishes to NATS.
-func (s *Service) publishStageEvent(ctx context.Context, tenantID, jobID, stageName string, stage natsbus.Stage) {
+// stage.completed drives graph materialization, so it is published durably
+// and a failure to store it is returned; started and failed events have no
+// consumer, go over core NATS, and only log on failure.
+func (s *Service) publishStageEvent(ctx context.Context, tenantID, jobID, stageName string, stage natsbus.Stage) error {
 	if s.bus == nil {
-		return
+		return nil
 	}
 
 	subject, err := natsbus.PipelineStageSubject(tenantID, jobID, stage)
 	if err != nil {
 		s.logger.WarnContext(ctx, "failed to build pipeline stage subject",
 			"tenant_id", tenantID, "job_id", jobID, "stage", stage, "error", err)
-		return
+		return fmt.Errorf("building %s subject for stage %q: %w", stage, stageName, err)
 	}
 
 	// Same shape as internal/analysis/reporter.go publish, so subscribers of
@@ -999,13 +1019,20 @@ func (s *Service) publishStageEvent(ctx context.Context, tenantID, jobID, stageN
 	payload, err := json.Marshal(event)
 	if err != nil {
 		s.logger.WarnContext(ctx, "failed to marshal stage event", "error", err)
-		return
+		return fmt.Errorf("marshaling %s event for stage %q: %w", stage, stageName, err)
 	}
 
+	if stage == natsbus.StageCompleted {
+		if err := s.bus.PublishDurable(ctx, subject, payload, nil); err != nil {
+			return fmt.Errorf("storing %s event for stage %q: %w", stage, stageName, err)
+		}
+		return nil
+	}
 	if err := s.bus.Publish(ctx, subject, payload); err != nil {
 		s.logger.WarnContext(ctx, "failed to publish stage event",
 			"subject", subject, "error", err)
 	}
+	return nil
 }
 
 // completedStageSet returns a set of stage names with status "completed".
