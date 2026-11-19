@@ -1,0 +1,44 @@
+pkg/graphdb/agedriver/export_test.go
+  s_7e89139204344e::t_ee92ec13f9ab14 20-22
+  s_7e89139204344e::t_9517682323fcb0 19
+README.md
+  s_7e89139204344e::t_d93fc65d88e464 35
+pkg/graphdb/agedriver/cypher.go
+  s_7e89139204344e::t_bef2f9cef2a0fa 193
+  s_7e89139204344e::t_cfd64d7470369e 226-227,229-237,282
+  s_7e89139204344e::t_856f5f564a8567 194-225,228,238-281,283-340
+  s_7e89139204344e::t_9f60dd9626a346 25-26
+  s_7e89139204344e::t_73a53dd0de2715 341
+api/proto/crosscodex/v1/graph.proto
+  s_7e89139204344e::t_d93fc65d88e464 196-199
+pkg/graphdb/agedriver/graphdb_fuzz_test.go
+  s_7e89139204344e::t_b624f6414dd172 247-265,268-270
+  s_7e89139204344e::t_9920199d765fc9 266-267
+pkg/graphdb/agedriver/graphdb_integration_bdd_test.go
+  s_7e89139204344e::t_b624f6414dd172 708-721
+pkg/graphdb/agedriver/graphdb_bdd_test.go
+  s_7e89139204344e::t_2bc608dfd52464 1086-1088,1108
+  s_7e89139204344e::t_284045de7624f4 1068-1085,1089-1107,1109-1117
+pkg/graphdb/interface.go
+  s_7e89139204344e::t_9f60dd9626a346 176-179
+pkg/graphdb/agedriver/client.go
+  s_7e89139204344e::t_3e459c70017e13 927-932,936
+  s_7e89139204344e::t_9f60dd9626a346 909-911
+  s_7e89139204344e::t_2ef5343759855b 933-935,955
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3175a3d63c9731a634c2f3417386decea44d7c29",
+  "prompts": {},
+  "sessions": {
+    "s_7e89139204344e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "287816cc-7e39-4e27-b991-733060f46d37",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
