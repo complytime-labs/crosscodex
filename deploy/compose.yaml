@@ -85,10 +85,11 @@ services:
     # a non-root nats could not read them. With every capability dropped, root
     # cannot bypass file permissions, chown, or regain capabilities, but it
     # still owns every root-owned file it can reach. In /certs that is every
-    # file (deploy:certs chowns them to 0:10001), including ca-key.pem and
-    # client-key.pem: nats can read them, as any GID 10001 member can, and
-    # only the read-only mount stops it rewriting them. It can write only
-    # /data and /tmp; the root filesystem is read-only.
+    # file (deploy:certs chowns them to 0:10001), including client-key.pem:
+    # nats can read them, as any GID 10001 member can, and only the read-only
+    # mount stops it rewriting them. The CA key (ca-key.pem) is never copied
+    # into the volume. It can write only /data and /tmp; the root filesystem
+    # is read-only.
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: ${CROSSCODEX_NATS_MEM_LIMIT:-512m}

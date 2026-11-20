@@ -290,6 +290,25 @@ echo "Hardening checks passed for ${#smoke_containers[@]} running container(s)."
 # host->published-port path works, so the smoke CLI uses the same reach.
 #
 # Build the CLI on the host. The deploy tasks already require a Go toolchain
+# The CA private key must stay on the host: every service that mounts the certs
+# volume could read it and mint client certificates the whole stack trusts.
+# Checked through db, which mounts the volume and has a shell.
+db_cid="$("${engine}" ps --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+	--filter "label=com.docker.compose.service=db" --format '{{.ID}}' | head -n1)"
+if [ -z "${db_cid}" ]; then
+	echo "FAIL: certs volume: no running db container in project ${COMPOSE_PROJECT_NAME} to inspect /certs through." >&2
+	exit 1
+fi
+if ! "${engine}" exec "${db_cid}" test -r /certs/ca.pem; then
+	echo "FAIL: certs volume: cannot read /certs/ca.pem in db (error above, if any)." >&2
+	exit 1
+fi
+if "${engine}" exec "${db_cid}" test -e /certs/ca-key.pem; then
+	echo "FAIL: certs volume ${CROSSCODEX_CERTS_VOLUME} holds ca-key.pem; the certs:load task in .taskfiles/deploy.yml must not copy the CA key into it." >&2
+	exit 1
+fi
+echo "Certs volume holds no CA private key."
+
 # (deploy:certs runs `go run` for the PKI generator), so this adds no new
 # dependency. CGO_ENABLED=0 mirrors the release binary.
 CLI_BIN="${OUT_DIR}/crosscodex"

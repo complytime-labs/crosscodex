@@ -17,7 +17,7 @@
 set -euo pipefail
 
 compose="${1:?Usage: check-praxis-compose.sh <compose-cmd>}"
-why="Praxis must receive only ca.pem, server.pem and server-key.pem; a compose tool that ignores volume subpath mounts the whole cert volume, exposing the CA private key (ca-key.pem) to the third-party Praxis container."
+why="Praxis must receive only ca.pem, server.pem and server-key.pem; a compose tool that ignores volume subpath mounts the whole cert volume, exposing the daemon's client key (client-key.pem) and the attestation signing key (attestation-key.pem) to the third-party Praxis container."
 
 if [ "$compose" != podman-compose ]; then
 	echo "Refusing LLM_GATEWAY=praxis: the compose tool is '$compose', but the Praxis gateway is verified only with podman-compose 1.6.0 or later. $why Install podman-compose 1.6.0+ (pip install --user --upgrade podman-compose) and use CONTAINER_ENGINE=podman, or deploy with LLM_GATEWAY=litellm." >&2

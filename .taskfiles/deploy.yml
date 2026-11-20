@@ -222,6 +222,11 @@ tasks:
       # owned root:CERT_GID; certs 0644, private keys 0640 (group-read only).
       # PostgreSQL accepts a root-owned 0640 key, and each service is added to
       # CERT_GID via group_add in compose.yaml so it can read the key group.
+      # ca-key.pem is never copied: no service signs certificates, and any
+      # GID 10001 member that could read it could mint client certificates the
+      # whole stack trusts. A volume loaded by an older release still holds it,
+      # so it is removed before the copy (the status check forces that reload).
+      # .fingerprint is copied last, so it marks a complete load.
       # Reuse the db image (has a shell) as the copy helper.
       # Caps (issue #236), measured with this command: CHOWN for the chown to
       # group CERT_GID. DAC_READ_SEARCH because certgen writes its keys 0600
@@ -236,16 +241,17 @@ tasks:
           -v {{.CERTS_DIR}}:/src:ro,z \
           --entrypoint sh \
           crosscodex-db:{{.TAG}} \
-          -c 'cp /src/*.pem /src/.fingerprint /certs/ && chown 0:{{.CERT_GID}} /certs/* && chmod 0644 /certs/*.pem && chmod 0640 /certs/*-key.pem'
-    # Re-load whenever the volume is absent or its fingerprint no longer matches
-    # the host PKI. `deploy:down VOLUMES=1` explicitly removes this volume (the
+          -c 'rm -f /certs/ca-key.pem /certs/.fingerprint && for f in /src/*.pem; do [ "$f" = /src/ca-key.pem ] || cp "$f" /certs/ || exit 1; done && cp /src/.fingerprint /certs/ && chown 0:{{.CERT_GID}} /certs/* && chmod 0644 /certs/*.pem && chmod 0640 /certs/*-key.pem'
+    # Re-load whenever the volume is absent, its fingerprint no longer matches
+    # the host PKI, or it still holds ca-key.pem (loaded by an older release).
+    # `deploy:down VOLUMES=1` explicitly removes this volume (the
     # external volume survives compose's own `down --volumes`), so after a
     # teardown the fingerprint read below returns empty, the check fails, and
     # the volume is repopulated on the next `up`.
     status:
       - >
         test "$({{.CONTAINER_ENGINE}} run --rm -v {{.CERTS_VOLUME}}:/certs:ro,z
-        --entrypoint sh crosscodex-db:{{.TAG}} -c 'cat /certs/.fingerprint 2>/dev/null')"
+        --entrypoint sh crosscodex-db:{{.TAG}} -c 'test ! -e /certs/ca-key.pem && cat /certs/.fingerprint 2>/dev/null')"
         = "$(cat {{.CERTS_DIR}}/.fingerprint)"
 
   up:

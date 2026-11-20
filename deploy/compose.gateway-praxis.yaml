@@ -25,8 +25,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       # Praxis is a third-party image, so it gets only these three files, not
-      # the whole PKI volume: ca-key.pem (the CA key) and client-key.pem (the
-      # daemon's NATS identity) must stay out of it.
+      # the whole PKI volume: client-key.pem (the daemon's NATS identity) and
+      # attestation-key.pem (the attestation signing key) must stay out of it.
       - type: volume
         source: crosscodex-certs
         target: /certs/ca.pem
